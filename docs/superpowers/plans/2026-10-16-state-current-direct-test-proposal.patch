@@ -1,0 +1,72 @@
+--- a/tests/test_quality_gate.py
++++ b/tests/test_quality_gate.py
+@@ -5,0 +6 @@
++from app.state_storage import insert_state
+@@ -275,7 +276,6 @@
+-        db.execute(
+-            """insert into runtime_route_pauses
+-               (route_name, failure_code, retry_at, opened_at, updated_at)
+-               values ('codex_oauth', 'codex_login_required',
+-                       '2026-08-07 02:00:00', '2026-08-07 00:00:00',
+-                       '2026-08-07 00:00:00')"""
+-        )
++        db.execute("begin")
++        insert_state(db, "runtime_route_pauses", {
++            "route_name": "codex_oauth", "failure_code": "codex_login_required",
++            "retry_at": "2026-08-07 02:00:00", "opened_at": "2026-08-07 00:00:00",
++            "updated_at": "2026-08-07 00:00:00",
++        })
+--- a/tests/test_rule_question_retirement.py
++++ b/tests/test_rule_question_retirement.py
+@@ -18,0 +19 @@
++from app.state_definitions import state_projection
+@@ -163 +164 @@
+-        assert json.loads(db.execute("select value from service_state where key=?",
++        assert json.loads(db.execute("select value from (" + state_projection("service_state") + ") where key=?",
+--- a/tests/test_reply_task_deferral.py
++++ b/tests/test_reply_task_deferral.py
+@@ -10,0 +11 @@
++from app.state_storage import insert_state
+@@ -218,2 +219,5 @@
+-        db.execute("""insert into dispatcher_claim_leases(adapter_name,source_id,owner,owner_pid,lease_expires_at)
+-            values ('reply',?,?,?,'2026-10-05 11:00:00')""", (str(task_id), 'worker', os.getpid()))
++        db.execute("begin")
++        insert_state(db, "dispatcher_claim_leases", {
++            "adapter_name": "reply", "source_id": str(task_id), "owner": "worker",
++            "owner_pid": os.getpid(), "lease_expires_at": "2026-10-05 11:00:00",
++        })
+@@ -297 +301,4 @@
+-    ("insert into dispatcher_claim_leases(adapter_name,source_id,owner,lease_expires_at) values ('reply',?,'worker','2026-10-05 13:00:00')", ('TASK',)),
++    (lambda db, values: (db.execute("begin"), insert_state(db, "dispatcher_claim_leases", {
++        "adapter_name": "reply", "source_id": values[0], "owner": "worker",
++        "lease_expires_at": "2026-10-05 13:00:00",
++    })), ('TASK',)),
+@@ -385 +392,4 @@
+-    "insert into dispatcher_claim_leases(adapter_name,source_id,owner,lease_expires_at) values ('reply','TASK','worker','2026-10-05 13:00:00')",
++    lambda db, task_id: insert_state(db, "dispatcher_claim_leases", {
++        "adapter_name": "reply", "source_id": str(task_id), "owner": "worker",
++        "lease_expires_at": "2026-10-05 13:00:00",
++    }),
+@@ -390,5 +400,9 @@
+-    statement = change.replace('TASK', str(task_id))
+-    with sqlite3.connect(path) as db:
+-        db.execute(statement + (" where record_type='reply_tasks' and id=?" if statement.startswith('update tasks') else
+-                                (' and task_id=?' if statement.startswith("update runs ") else '')),
+-                   ((task_id,) if statement.startswith('update ') else ()))
++    with sqlite3.connect(path) as db:
++        db.execute("begin")
++        if callable(change):
++            change(db, task_id)
++        else:
++            statement = change.replace('TASK', str(task_id))
++            db.execute(statement + (" where record_type='reply_tasks' and id=?" if statement.startswith('update tasks') else
++                                    (' and task_id=?' if statement.startswith("update runs ") else '')),
++                       ((task_id,) if statement.startswith('update ') else ()))
+@@ -407,3 +421,4 @@
+-            claiming.execute("""insert into dispatcher_claim_leases
+-                (adapter_name,source_id,owner,lease_expires_at)
+-                values ('reply',?,'worker','2026-10-05 13:00:00')""", (str(task_id),))
++            insert_state(claiming, "dispatcher_claim_leases", {
++                "adapter_name": "reply", "source_id": str(task_id), "owner": "worker",
++                "lease_expires_at": "2026-10-05 13:00:00",
++            })

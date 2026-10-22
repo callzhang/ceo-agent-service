@@ -1,0 +1,25 @@
+{
+  "recorded_at": "2026-10-18T00:27:44.903290+00:00",
+  "status": "PASS_NATIVE_SYNTHETIC_FIXTURE_ONLY",
+  "immutable_predecessor": "4f3d52a0ef9ab20530707dcc9ca290496355b6f4",
+  "fixture_sha256": "9010d93ae830ffb901b3f77200a477d73f4ac6dfcaeee5ef871aeeba753f80a0",
+  "execution_session": 19729,
+  "child_exit": 0,
+  "elapsed_seconds": 2.237,
+  "validated": [
+    "processed scan and cursor",
+    "exact replay retains classification/plan IDs",
+    "stored readable body/context",
+    "targeted exact action claim",
+    "paired locator MOVE completion",
+    "synthetic successful receipt readback",
+    "settled exact action cannot be reclaimed"
+  ],
+  "synthetic_classification_id": 4774153316844667108,
+  "receipt_result_id": "copy-only-fake-receipt:native-dryrun",
+  "managed_temp_removed": true,
+  "production_database_access": false,
+  "current_runtime_acceptance": false,
+  "native_cli_invocations": 0,
+  "provider_or_send_invocations": 0
+}

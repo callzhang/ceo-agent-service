@@ -1,7 +1,12 @@
+from tests.support.legacy_todo_facts import seed_legacy_work_project
 import json
+import pytest
 from datetime import datetime
 
 from app.store import AutoReplyStore
+from app.business_source_reader import AvailableSource, RequestSourceReader
+from app.business_storage import update_business
+from app.business_candidate_storage import update_business_candidate
 from app.project_context_service import ProjectContextService
 from app.task_attention_projection import AttentionProposal, BusinessAttentionProjection
 from app.task_semantic_models import AttentionCategory, BusinessTaskStatus
@@ -37,7 +42,7 @@ def test_attention_order_and_filter_before_pagination(tmp_path):
 
 def test_semantic_routes_do_not_return_legacy_projects(tmp_path):
     store = AutoReplyStore(tmp_path / "worker.sqlite3")
-    legacy_id = store.create_work_project(title="Legacy", category="dev", status="active", priority="P1", risk_level="low")
+    legacy_id = seed_legacy_work_project(store, title="Legacy", category="dev", status="active")
     task_id = store.create_business_task(title="Real task", stage="formal", formal_basis="explicit_assignment", business_relevance="relevant")
     with _client(tmp_path) as client:
         all_response = client.get("/api/console/tasks/all")
@@ -49,7 +54,7 @@ def test_semantic_routes_do_not_return_legacy_projects(tmp_path):
         assert client.get("/api/console/tasks/projects").status_code == 200
 
 
-def test_detail_routes_show_source_evidence_and_confirmed_membership(tmp_path):
+def test_detail_routes_show_source_evidence_and_confirmed_membership(tmp_path, monkeypatch):
     store = AutoReplyStore(tmp_path / "worker.sqlite3")
     task_id = store.create_business_task(title="Launch", stage="formal", formal_basis="explicit_assignment", business_relevance="relevant")
     closed_id = store.create_business_task(title="Closed project task", stage="candidate", status="done", business_relevance="relevant")
@@ -62,14 +67,28 @@ def test_detail_routes_show_source_evidence_and_confirmed_membership(tmp_path):
         project_id = store.create_business_project_in_transaction(canonical_anchor_id=anchor_id, title="Official launch", registry_source="registry", _db=db)
         store.create_business_task_anchor_link_in_transaction(task_id=task_id, anchor_id=anchor_id, status="confirmed", active=True, evidence_signal_id=signal_id, _db=db)
         store.create_business_task_anchor_link_in_transaction(task_id=closed_id, anchor_id=anchor_id, status="confirmed", active=True, evidence_signal_id=signal_id, _db=db)
-        db.execute("insert into business_task_evidence (task_id, signal_id, evidence_role) values (?, ?, ?)", (task_id, signal_id, "assignment"))
+        store.link_business_task_evidence_in_transaction(
+            task_id=task_id, signal_id=signal_id, evidence_role="assignment", _db=db,
+        )
         attention_id = store.create_business_attention_item_in_transaction(stable_key="launch", category="decision", title="Launch decision", business_area="Product", why_attention="Gate", current_state="Pending", ceo_action="Decide", anchor_id=anchor_id, evidence_signal_id=signal_id, now="2026-09-02T00:00:00+00:00", _db=db)
         store.link_business_attention_task_in_transaction(attention_item_id=attention_id, task_id=task_id, _db=db)
+    source_binding = store.get_business_task_signal(signal_id).source
+    source_body = "Derek assigned Launch"
+    assert source_binding.matches_body(source_body)
+
+    class SyntheticMeetingSourceReader(RequestSourceReader):
+        def _read(self, binding):
+            if binding == source_binding:
+                return AvailableSource(binding, source_body)
+            return super()._read(binding)
+
+    monkeypatch.setattr(AutoReplyStore, "business_source_reader", lambda self, *, provider_reader=None: SyntheticMeetingSourceReader(provider_reader=provider_reader))
     with _client(tmp_path) as client:
         task = client.get(f"/api/console/tasks/items/{task_id}").json()["item"]
         attention = client.get(f"/api/console/tasks/attention/{attention_id}").json()["item"]
         project = client.get(f"/api/console/tasks/projects/{project_id}").json()["item"]
     assert task["evidence"][0]["signal"]["evidence_text"] == "Derek assigned Launch"
+    assert task["evidence"][0]["signal"]["source_ref"] == "minutes-1"
     assert task["official_projects"][0]["id"] == project_id
     assert [row["id"] for row in attention["linked_tasks"]] == [task_id]
     assert attention["assessment"] == {}
@@ -92,7 +111,10 @@ def test_attention_detail_returns_saved_assessment_and_all_referenced_signals(tm
             {"signal_id": primary_id, "source_ref": "Multisource", "source_excerpt": "Multisource", "source_time": now, "source_link": ""},
             {"signal_id": ids[0], "source_ref": "minutes-0", "source_excerpt": "Exact quote 0", "source_time": now, "source_link": "https://example.com/minutes/0"},
         ]}
-        db.execute("update business_attention_items set assessment_json=?, status='resolved', resolution_signal_id=?, resolved_at=? where id=?", (json.dumps(assessment), ids[1], now, attention_id))
+        update_business_candidate(db, "attention_item", attention_id, {
+            "assessment_json": json.dumps(assessment), "status": "resolved",
+            "resolution_signal_id": ids[1], "resolved_at": now,
+        })
         store.append_business_attention_event_in_transaction(attention_item_id=attention_id, event_type="opened", signal_id=ids[2], before_json="{}", after_json="{}", reason="Observed", _db=db)
     with _client(tmp_path) as client:
         response = client.get(f"/api/console/tasks/attention/{attention_id}")
@@ -163,8 +185,12 @@ def test_task_list_filters_by_owner_and_sorts_by_creation_or_update(tmp_path):
     owned = store.create_business_task(title="有人负责", stage="candidate", owner_name="王明")
     bare = store.create_business_task(title="无人负责", stage="candidate")
     with store._immediate_write_transaction() as db:
-        db.execute("update business_tasks set created_at='2026-09-01 00:00:00', updated_at='2026-09-03 00:00:00' where id=?", (owned,))
-        db.execute("update business_tasks set created_at='2026-09-02 00:00:00', updated_at='2026-09-02 00:00:00' where id=?", (bare,))
+        update_business(db, "task", owned, {
+            "created_at": "2026-09-01 00:00:00", "updated_at": "2026-09-03 00:00:00",
+        })
+        update_business(db, "task", bare, {
+            "created_at": "2026-09-02 00:00:00", "updated_at": "2026-09-02 00:00:00",
+        })
     with _client(tmp_path) as client:
         def ids(query):
             response = client.get(f"/api/console/tasks/all?{query}")
@@ -177,3 +203,38 @@ def test_task_list_filters_by_owner_and_sorts_by_creation_or_update(tmp_path):
         assert ids("sort=created") == [bare, owned]
         assert client.get("/api/console/tasks/all?owner=nobody").status_code == 400
         assert client.get("/api/console/tasks/all?sort=title").status_code == 400
+
+
+def test_signal_response_view_requires_honest_original_availability():
+    from pydantic import ValidationError
+    from app.web_api.tasks import ConsoleBusinessTaskSignalView
+
+    fields = dict(
+        id=7, source_type="message", source_ref="m:7", source_time="",
+        conversation_id="", conversation_title="", author_user_id="",
+        author_name="", author_kind="unknown", context_json="{}",
+        dedupe_key="source:7", created_at="2026-10-18T00:00:00Z",
+    )
+    available = ConsoleBusinessTaskSignalView.model_validate({
+        **fields, "source_available": True, "evidence_text": "原始来源",
+        "source_unavailable_reason": None,
+    })
+    unavailable = ConsoleBusinessTaskSignalView.model_validate({
+        **fields, "source_available": False, "evidence_text": None,
+        "source_unavailable_reason": "source_missing",
+    })
+    assert available.evidence_text == "原始来源"
+    assert unavailable.evidence_text is None and unavailable.source_ref == "m:7"
+    for changes in (
+        {"source_available": True, "evidence_text": None, "source_unavailable_reason": None},
+        {"source_available": False, "evidence_text": "", "source_unavailable_reason": "source_missing"},
+        {"source_available": False, "evidence_text": None, "source_unavailable_reason": None},
+        {"source_type": " ", "source_available": False, "evidence_text": None, "source_unavailable_reason": "source_missing"},
+        {"source_ref": "", "source_available": False, "evidence_text": None, "source_unavailable_reason": "source_missing"},
+        {"author_kind": "invented", "source_available": False, "evidence_text": None, "source_unavailable_reason": "source_missing"},
+        {"context_json": "[]", "source_available": False, "evidence_text": None, "source_unavailable_reason": "source_missing"},
+        {"dedupe_key": "", "source_available": False, "evidence_text": None, "source_unavailable_reason": "source_missing"},
+        {"source_available": False, "evidence_text": None, "source_unavailable_reason": "invented"},
+    ):
+        with pytest.raises(ValidationError):
+            ConsoleBusinessTaskSignalView.model_validate({**fields, **changes})

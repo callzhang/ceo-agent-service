@@ -1,0 +1,37 @@
+{
+  "date": "2026-10-16",
+  "status": "accepted_unselected_proposal",
+  "app_patch_sha256": "a6d7fa9d9712ca0b1b1ed6bb20697759ee992489933d1380d126a95b6525e5d7",
+  "base_module_sha256": "434db55b6aa8be6b1f70e88904d1aa5eca012810fa3e1e0a31ab3842f3dcf51d",
+  "candidate_module_sha256": "c9963c3f8d993c8031c01ee42e55564c7370f35cfc5e3b0ff7b362350735eb63",
+  "regression_sha256": "397d5b8a8541e18005c137b2662f16c6b74bb8d79f2bfca938928bd57a746858",
+  "root": {
+    "red": "22 failed11passed3.92s on original code",
+    "green": "61passed8.24s exact candidate; owned temp removed"
+  },
+  "spec": {
+    "status": "PASS_revised_artifact",
+    "tests": "61passed11.69s +7selector/snapshot cases",
+    "scope": "Class docstring, __init__, new committed role selector and _persist only; getter/setter/protocol/dataclass/status/callbacks unchanged",
+    "composition": "Publication patch then contextual progress patch clean+1line offsets; exact3methodbytes; removing progress changes yields publication-only wholemoduleAST; all350appmodules compile"
+  },
+  "quality": {
+    "status": "PASS",
+    "tests": "61passed8.29s +6independent cases3.04s",
+    "coverage": [
+      "Inverse commits then raises: existing needs_manual policy, progress correctly stored in source",
+      "Current no-migration deployment persists succeeded in State",
+      "Unrelated State index verification failure plus failed inverse persists needs_manual in State"
+    ],
+    "artifact": "Default git apply --check/apply reproduces exact unchanged candidate; owned temp removed"
+  },
+  "correction": "Original zero-context artifact5b076202 inserted pure-add hunk at wrong offset after publication import. Caught during disposable whole-State collection before app activation. Replaced only diff context with3lines; candidate bytes unchanged. Superseded zero-context artifact is not accepted for integration.",
+  "contracts": [
+    "One read-only committed snapshot for role selection at construction and before native DAO progress persistence",
+    "Retained Email ledger first; exact target52 current; positive native versions through source51 remain native",
+    "Unknown future/malformed selected ledger visible, no source fallback",
+    "No ledger current State uses exact Store marker; missingpath/emptydatabase preserved",
+    "Getters/setters retain explicit binding, originaltransactions and lock retry; generic protocol stores untouched"
+  ],
+  "boundary": "No application activation or production change. Whole-State integration matrix, actual-copy/current-fact inverse, genuine latest predecessor cold read/write/reforward, fake-outbound native CLI/UI and final10core+ledger remain open."
+}

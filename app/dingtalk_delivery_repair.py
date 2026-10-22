@@ -1,16 +1,27 @@
 """Explicit repair of historical reply receipts using provider task readback."""
 
+from app.model_action_schema import selected_branch
+from app.execution_owner_storage import update_plan_execution
+
 import hashlib
 import json
 from datetime import datetime, timedelta, timezone
 
 from app.action_storage import (
-    CANDIDATE_ACTION_ATTEMPT_SQL, CANDIDATE_EXECUTION_SQL, CANDIDATE_REVIEW_SQL,
+    CANDIDATE_ACTION_ATTEMPT_SQL, candidate_action_attempt_row, CANDIDATE_EXECUTION_SQL, CANDIDATE_REVIEW_SQL,
     CANDIDATE_SELECTION_SQL, EXTERNAL_ACTION_RESULT_SQL, REVIEW_CANDIDATE_SQL,
-    REPLY_ATTEMPT_COMMON_SQL, SENT_REPLY_SQL, update_action,
+    REPLY_ATTEMPT_COMMON_SQL, SENT_REPLY_SQL,
 )
 from app.agent_contracts import SystemExecutionResult
-from app.run_storage import AGENT_RUN_SQL
+from app.logical_run_storage import AGENT_RUN_SQL
+from app.task20_definitions import task20_column, task20_projection
+from app.task8_storage import task8_set_parts
+
+from app import shared_action_lifecycle
+
+
+REPLY_TASK_SQL = task20_projection('reply_tasks')
+
 
 
 def _same_timestamp_instant(actual: object, expected: object) -> bool:
@@ -42,8 +53,6 @@ def native_reply_text_matches(actual: object, sent_body: object, trigger_sender:
 
 def collect_native_chat_readback(store, dws, task_id: int) -> dict:
     """Read one reply's exact conversation window and bind it to the current principal."""
-    from app.store import REPLY_TASK_SQL
-
     with store._connect() as db:
         task = db.execute(f"select * from ({REPLY_TASK_SQL}) where id=?", (task_id,)).fetchone()
         if task is None:
@@ -111,7 +120,7 @@ def apply_delivery_reverification(store, proof: dict) -> bool:
             "source_digest": source_digest, "queried_at": proof["queried_at"],
             "previous_verification": before, "previous_execution_results": [], "previous_task_state": None,
         }}
-        attempts = db.execute(f"select * from ({CANDIDATE_ACTION_ATTEMPT_SQL}) where external_action_key=?", (key,)).fetchall()
+        attempts = [candidate_action_attempt_row(row) for row in db.execute(f"select * from ({CANDIDATE_ACTION_ATTEMPT_SQL}) where external_action_key=?", (key,))]
         for attempt in attempts:
             if verification["state"] != "sent":
                 execution = db.execute(f"select * from ({CANDIDATE_EXECUTION_SQL}) where id=?", (attempt["execution_id"],)).fetchone()
@@ -126,7 +135,7 @@ def apply_delivery_reverification(store, proof: dict) -> bool:
                     error={"code": error_code, "retryable": False,
                            "stage": "system_execution", "authorization_required": False},
                 )
-                update_action(db, "candidate_executions", execution["id"], {
+                update_plan_execution(db, execution["id"], {
                     "status": action_status, "result_json": pending.model_dump_json(),
                     "lease_owner": "", "lease_expires_at": "", "updated_at": proof["queried_at"],
                 })
@@ -135,35 +144,49 @@ def apply_delivery_reverification(store, proof: dict) -> bool:
             # Agent runs and historical Attempt rows are never rewritten.
             run = db.execute(f"select * from ({AGENT_RUN_SQL}) where id=?", (row["first_agent_run_id"],)).fetchone()
             if run is not None:
-                task = db.execute("select * from tasks where record_type='reply_tasks' and legacy_key=?", (str(run["reply_task_id"]),)).fetchone()
-                if task is not None and task["execution_generation"] == run["execution_generation"]:
-                    if task["status"] in ("pending", "processing"):
+                task = db.execute(f"select tasks.*, {task20_column('reply_tasks', 'execution_generation')} as repair_generation, {task20_column('reply_tasks', 'status')} as repair_status, {task20_column('reply_tasks', 'error')} as repair_error from tasks where record_type='reply_tasks' and legacy_key=?", (str(run["reply_task_id"]),)).fetchone()
+                if task is not None and task["repair_generation"] == run["execution_generation"]:
+                    if task["repair_status"] in ("pending", "processing"):
                         raise ValueError("delivery task is active")
-                    if task["status"] == "done":
+                    if task["repair_status"] == "done":
                         changed["verification_repair"]["previous_task_state"] = {
-                            "id": run["reply_task_id"], "execution_generation": task["execution_generation"],
-                            "status": task["status"], "error": task["error"],
+                            "id": run["reply_task_id"], "execution_generation": task["repair_generation"],
+                            "status": task["repair_status"], "error": task["repair_error"],
                         }
-                        db.execute("update tasks set status='failed',error=?,updated_at=? where id=?",
+                        db.execute(f"""update tasks set {task8_set_parts('reply_tasks', {}, update_sql={'status': "'failed'", 'error': '?', 'updated_at': '?'}).sql} where id=?""",
                                    (error_code, proof["queried_at"], task["id"]))
         body = json.dumps(changed, ensure_ascii=False, sort_keys=True, separators=(",", ":"))
-        update_action(db, "external_action_results", key, {
-            "provider_result_json": body, "result_digest": hashlib.sha256(body.encode()).hexdigest(),
-        })
+        provider_receipt_id = shared_action_lifecycle.record_reviewed_provider_receipt(
+            db, external_action_key=key, operation=row["operation"],
+            target_json=row["target_identifiers_json"], provider_json=body,
+            result_digest=hashlib.sha256(body.encode()).hexdigest(),
+            agent_run_id=row["first_agent_run_id"], observed_at=proof["queried_at"],
+            status=action_status,
+        )
+        shared_action_lifecycle.advance_canonical_provider_reference(
+            db, action_id=shared_action_lifecycle._reviewed_action_by_key(db, key)['id'],
+            provider_receipt_id=provider_receipt_id,
+        )
+        shared_action_lifecycle.advance_sent_provider_reference(
+            db, external_action_key=key, provider_receipt_id=provider_receipt_id,
+        )
         for attempt in attempts:
-            update_action(db, "candidate_action_attempts", attempt["id"], {
-                "result_json": body, "status": action_status,
-                "updated_at": proof["queried_at"],
-            })
-        for sent in db.execute(f"select id from ({SENT_REPLY_SQL}) where external_action_key=?", (key,)).fetchall():
-            update_action(db, "sent_replies", sent["id"], {"send_result_json": body})
+            shared_action_lifecycle.record_reviewed_action_outcome(
+                db, attempt=attempt, result_json=None if action_status == "verified" else body,
+                provider_receipt_id=provider_receipt_id if action_status == "verified" else None,
+                status=action_status, agent_run_id=attempt["agent_run_id"],
+                updated_at=proof["queried_at"],
+            )
+        shared_action_lifecycle.retire_unreferenced_provider_receipt(
+            db, action_id=shared_action_lifecycle._reviewed_action_by_key(db, key)['id'],
+            receipt_id=row['provider_receipt_id'],
+            expected_provider_json=row['provider_result_json'],
+        )
     return True
 
 
 def apply_native_chat_readback(store, proof: dict) -> bool:
     """Settle one uncertain native reply from a complete, exact DWS history read."""
-    from app.store import REPLY_TASK_SQL
-
     task_id = proof.get("task_id")
     payload = proof.get("payload")
     if not isinstance(task_id, int) or task_id < 1:
@@ -265,7 +288,7 @@ def apply_native_chat_readback(store, proof: dict) -> bool:
             f"""select c.*, r.id as review_id, r.decision, r.candidate_digest as review_digest,
                        e.id as execution_id, e.status as execution_status,
                        e.lease_owner, e.lease_expires_at, e.selection_id, e.result_json,
-                       s.branch_json, a.id as action_attempt_id, a.status as action_status
+                       s.option_key, a.id as action_attempt_id, a.status as action_status
                 from ({CANDIDATE_EXECUTION_SQL}) e
                 join ({REVIEW_CANDIDATE_SQL}) c on c.id=e.candidate_id
                 join ({CANDIDATE_REVIEW_SQL}) r on r.id=e.review_id
@@ -337,26 +360,37 @@ def apply_native_chat_readback(store, proof: dict) -> bool:
                 },
             }}
             result_json = json.dumps(changed, ensure_ascii=False, sort_keys=True, separators=(",", ":"))
-            receipt_cursor = update_action(db, "external_action_results", sent["external_action_key"], {
-                "provider_result_json": result_json,
-                "result_digest": hashlib.sha256(result_json.encode()).hexdigest(),
-            }, where_sql="provider_result_json=?", parameters=(original,))
-            if receipt_cursor.rowcount != 1:
-                raise ValueError("external receipt changed during reconciliation")
+            provider_receipt_id = shared_action_lifecycle.record_reviewed_provider_receipt(
+                db, external_action_key=sent["external_action_key"],
+                operation=receipt["operation"],
+                target_json=receipt["target_identifiers_json"],
+                provider_json=result_json,
+                result_digest=hashlib.sha256(result_json.encode()).hexdigest(),
+                agent_run_id=receipt["first_agent_run_id"], observed_at=queried_at,
+                status="verified",
+            )
+            shared_action_lifecycle.advance_canonical_provider_reference(
+                db, action_id=shared_action_lifecycle._reviewed_action_by_key(
+                    db, sent['external_action_key'])['id'],
+                provider_receipt_id=provider_receipt_id,
+            )
+            shared_action_lifecycle.advance_sent_provider_reference(
+                db, external_action_key=sent["external_action_key"],
+                provider_receipt_id=provider_receipt_id,
+            )
+            shared_action_lifecycle.retire_unreferenced_provider_receipt(
+                db, action_id=shared_action_lifecycle._reviewed_action_by_key(
+                    db, sent['external_action_key'])['id'],
+                receipt_id=receipt['provider_receipt_id'],
+                expected_provider_json=receipt['provider_result_json'],
+            )
             task_cursor = db.execute(
-                "update tasks set status='done',error='',available_at='',locked_at=null,updated_at=? "
-                "where record_type='reply_tasks' and id=? and status='failed' "
-                "and error='external_action_uncertain' and execution_generation=?",
+                f"""update tasks set {task8_set_parts('reply_tasks', {}, update_sql={'status': "'done'", 'error': "''", 'available_at': "''", 'locked_at': 'null', 'updated_at': '?'}).sql} where record_type='reply_tasks' and id=? and {task20_column('reply_tasks', 'status')}='failed' and {task20_column('reply_tasks', 'error')}='external_action_uncertain' and {task20_column('reply_tasks', 'execution_generation')}=?""",
                 (queried_at, task_id, task["execution_generation"]),
             )
             if task_cursor.rowcount != 1:
                 raise ValueError("legacy reply task changed during reconciliation")
             store._compact_settled_reply_task_input(db, task_id)
-            for sent_row in db.execute(
-                f"select id from ({SENT_REPLY_SQL}) where external_action_key=?",
-                (sent["external_action_key"],),
-            ).fetchall():
-                update_action(db, "sent_replies", sent_row["id"], {"send_result_json": result_json})
             return True
         if len(candidate) != 1:
             raise ValueError("reply receipt is not bound to one current approved action")
@@ -382,15 +416,15 @@ def apply_native_chat_readback(store, proof: dict) -> bool:
             raise ValueError("original Agent run identity is not settled")
 
         candidate_json = json.loads(candidate["candidate_json"])
-        selection = json.loads(candidate["branch_json"]) if candidate["branch_json"] else None
+        selection = selected_branch(db, candidate["selection_id"]) if candidate["selection_id"] is not None else None
         plan = selection.get("plan") if selection else candidate_json.get("proposal")
         actions = plan.get("actions") if isinstance(plan, dict) else None
         if not isinstance(actions, list) or len(actions) != 1:
             raise ValueError("approved candidate is not a single-action reply")
-        attempts = db.execute(
+        attempts = [candidate_action_attempt_row(row) for row in db.execute(
             f"select * from ({CANDIDATE_ACTION_ATTEMPT_SQL}) where execution_id=? "
             "order by action_index", (candidate["execution_id"],),
-        ).fetchall()
+        )]
         if len(attempts) != 1:
             raise ValueError("approved action attempt set is incomplete")
         action_index = next((i for i, attempt in enumerate(attempts)
@@ -448,40 +482,53 @@ def apply_native_chat_readback(store, proof: dict) -> bool:
         }}
         result_json = json.dumps(changed, ensure_ascii=False, sort_keys=True, separators=(",", ":"))
         result_digest = hashlib.sha256(result_json.encode()).hexdigest()
-        receipt_cursor = update_action(db, "external_action_results", sent["external_action_key"], {
-            "provider_result_json": result_json, "result_digest": result_digest,
-        }, where_sql="provider_result_json=?", parameters=(original,))
-        if receipt_cursor.rowcount != 1:
-            raise ValueError("external receipt changed during reconciliation")
+        provider_receipt_id = shared_action_lifecycle.record_reviewed_provider_receipt(
+            db, external_action_key=sent["external_action_key"],
+            operation=receipt["operation"], target_json=receipt["target_identifiers_json"],
+            provider_json=result_json, result_digest=result_digest,
+            agent_run_id=receipt["first_agent_run_id"], observed_at=queried_at,
+            status="verified",
+        )
+        shared_action_lifecycle.advance_canonical_provider_reference(
+            db, action_id=shared_action_lifecycle._reviewed_action_by_key(
+                db, sent['external_action_key'])['id'],
+            provider_receipt_id=provider_receipt_id,
+        )
+        shared_action_lifecycle.advance_sent_provider_reference(
+            db, external_action_key=sent["external_action_key"],
+            provider_receipt_id=provider_receipt_id,
+        )
 
         for attempt in attempts:
             status = "verified" if attempt["id"] == candidate["action_attempt_id"] else attempt["status"]
-            result = result_json if attempt["id"] == candidate["action_attempt_id"] else attempt["result_json"]
-            update_action(db, "candidate_action_attempts", attempt["id"], {
-                "status": status, "result_json": result, "updated_at": queried_at,
-            })
+            confirmed = attempt["id"] == candidate["action_attempt_id"]
+            result = None if confirmed else attempt["result_json"]
+            shared_action_lifecycle.record_reviewed_action_outcome(
+                db, attempt=attempt, status=status, result_json=result,
+                provider_receipt_id=(provider_receipt_id if confirmed else attempt["provider_receipt_id"]),
+                agent_run_id=attempt["agent_run_id"], updated_at=queried_at,
+            )
+        shared_action_lifecycle.retire_unreferenced_provider_receipt(
+            db, action_id=shared_action_lifecycle._reviewed_action_by_key(
+                db, sent['external_action_key'])['id'],
+            receipt_id=receipt['provider_receipt_id'],
+            expected_provider_json=receipt['provider_result_json'],
+        )
         execution_result = SystemExecutionResult(
             outcome="executed", summary="Existing DingTalk reply verified by complete native chat history readback",
             external_result={"operation_id": sent["external_action_key"],
                              "live_result_reference": verification},
             completed_action_keys=(sent["external_action_key"],),
         ).model_dump_json()
-        update_action(db, "candidate_executions", candidate["execution_id"], {
+        update_plan_execution(db, candidate["execution_id"], {
             "status": "done", "result_json": execution_result,
             "lease_owner": "", "lease_expires_at": "", "updated_at": queried_at,
         })
         task_cursor = db.execute(
-            "update tasks set status='done',error='',available_at='',locked_at=null,updated_at=? "
-            "where record_type='reply_tasks' and id=? and status='failed' "
-            "and error='external_action_uncertain' and execution_generation=?",
+            f"""update tasks set {task8_set_parts('reply_tasks', {}, update_sql={'status': "'done'", 'error': "''", 'available_at': "''", 'locked_at': 'null', 'updated_at': '?'}).sql} where record_type='reply_tasks' and id=? and {task20_column('reply_tasks', 'status')}='failed' and {task20_column('reply_tasks', 'error')}='external_action_uncertain' and {task20_column('reply_tasks', 'execution_generation')}=?""",
             (queried_at, task_id, task["execution_generation"]),
         )
         if task_cursor.rowcount != 1:
             raise ValueError("reply task changed during reconciliation")
         store._compact_settled_reply_task_input(db, task_id)
-        for sent_row in db.execute(
-            f"select id from ({SENT_REPLY_SQL}) where external_action_key=?",
-            (sent["external_action_key"],),
-        ).fetchall():
-            update_action(db, "sent_replies", sent_row["id"], {"send_result_json": result_json})
     return True

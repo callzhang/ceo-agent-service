@@ -1,0 +1,30 @@
+{
+  "recorded_at": "2026-10-17T17:32:45.225635+00:00",
+  "scope": "Unselected Business3 component only; default current28 unchanged; not caller25/copy/final11/release acceptance",
+  "files": {
+    "app/business_candidate_definitions.py": "77bf14dc2f6fc728cbc49499aff6198e5c103ca095016b2c78d869664f7aa085",
+    "app/business_candidate_storage.py": "215450a88c861560814a546a5e4be2469236460b3a15101e00c8ae8d3e969954",
+    "app/business_definitions.py": "53006512c814b22d25037c04b400efcc607cd75505e544446cb9f217ee8390dc",
+    "tests/test_business_candidate_storage.py": "1b5742d12f5dc97535852fccd72cdd808f65ff5f3b75b89b72ff481339c94f0a",
+    "docs/architecture.md": "1f3b762627b081428ab764e8d4f448cdd8a6eb8d19cbd1a6e4544d144f96d98a",
+    "docs/runtime-mechanism.md": "80a6c66e85d5a86b634e7518abedf95ad03bc548443e7a5504081576009fbc20",
+    "app/business_storage.py": "5f28ed253623ebc11319de92b0ac83d222f6355c1d1a131c067d55c69b21abfa",
+    "app/business_schema_release.py": "0f540277f9dafb590e3e4631d6c11c18e3f3c7a22a89e7a63370e3e9bc9e9747",
+    "app/action_storage.py": "278fd95aa17c42a5d5e8527e75424f91d5395ca304528988bc20c1fea747f533",
+    "app/action_followup_sync_storage.py": "718f152fb59f1be841c58ea9f370e6375badcc433037d7eea9f43e763f40473a",
+    "tests/test_business_storage.py": "1ef3ee0033f86268c686521070c7c50714c69688d2d238c987df62f58df746b3",
+    "tests/test_business_schema_release.py": "57b1957e79a521cb682ca0f09704eeb420c1604cb9b2dd163e081fc4bb5297b9",
+    "tests/test_business_core_source.py": "05bfc2cec1482eaef701457530cfd1800a9b371d6899b7665938c286b1d76767",
+    "tests/test_business_legacy_schema.py": "1022debb8472defe297df551ce0096f2550ba50af6b12e04b0402795526ce764",
+    "docs/superpowers/plans/2026-10-17-business-candidates-component-plan.md": "587540e0a400006d1bb09649f9d6d0f5ff9cbab6dbc2e315e119b807d38b4ce8",
+    "docs/superpowers/specs/2026-10-17-business-three-current-source-metadata.json": "922f03417c477b17b0df1bf1541eb5c89d36799ce80ca4e2134c73ddb10c5cd1",
+    "docs/superpowers/specs/2026-10-11-database-redesign-field-map.csv": "888fcf45f6e6bcdfd533c9deec26a681b7c3c992465a4eb23b7fdcb5684ba8b5"
+  },
+  "author_validation": {
+    "scoped_tests": "721 passed in 13.32s",
+    "post_import_only_smoke": "4 passed in 0.22s",
+    "default_business_tuple_sha256": "91fedd3da844ec56624767b78fac27210d342414de7b79c01f02de5f038d9d91",
+    "temporary_roots_removed": true
+  },
+  "source_metadata_sha256": "922f03417c477b17b0df1bf1541eb5c89d36799ce80ca4e2134c73ddb10c5cd1"
+}

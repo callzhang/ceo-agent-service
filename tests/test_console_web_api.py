@@ -1,4 +1,11 @@
-from app.action_storage import update_action
+from tests.support.legacy_todo_facts import seed_legacy_work_project, seed_legacy_work_todo, seed_legacy_work_update
+from app.action_storage import (
+    insert_email_action,
+    error_set_parts,
+    update_action,
+    update_sync_action,
+    update_task_delivery_action,
+)
 import sqlite3
 import json
 import os
@@ -11,6 +18,7 @@ from contextlib import contextmanager
 from unittest.mock import patch
 
 import pytest
+from tests.support.email_source import stored_email_source as _stored_email_source  # noqa: F401
 from fastapi.testclient import TestClient
 from pydantic import ValidationError
 
@@ -18,6 +26,7 @@ import app.audit_web as audit_web_module
 import app.config as app_config_module
 import app.web_api.registration as registration_module
 from tests.run_reader_fixtures import insert_native_run_fixture
+from tests.feedback_processing_fixtures import resolve_feedback_fixture
 from app.audit_web import create_audit_app
 from app.email_classifier_contracts import (
     EmailCategory,
@@ -29,8 +38,11 @@ from app.email_classifier_learning import EmailClassifierLearningService
 from app.email_model_registry import EmailModelRegistry
 from app.store import AutoReplyStore
 from app.run_storage import insert_run
+from app.task20_definitions import task20_column
+from app.task8_storage import task8_set_parts
+from app.action_task_delivery_definitions import task_delivery_projection
 from app.setup_wizard_models import SetupWizardEvent
-from app.wechat.models import WechatReplyScope
+from app.wechat.models import WechatMessage, WechatReplyScope
 from tests.test_audit_web import seed_attempt
 from app.web_api.attention import group_attention_rows
 from app.web_api.status import ComponentStatus, DispatcherQueueStatus, SystemHealth
@@ -111,12 +123,10 @@ def test_console_client_restores_settings_environment_after_close(tmp_path: Path
 
 
 def _project(store: AutoReplyStore, title: str) -> int:
-    return store.create_work_project(
+    return seed_legacy_work_project(store,
         title=title,
         category="dev",
         status="active",
-        priority="P1",
-        risk_level="low",
         facts_json=json.dumps(
             [
                 {
@@ -124,10 +134,6 @@ def _project(store: AutoReplyStore, title: str) -> int:
                     "source": {"title": "Roadmap.md"},
                 }
             ],
-            ensure_ascii=False,
-        ),
-        memory_context_json=json.dumps(
-            {"summary": {"text": f"Memory for {title}"}},
             ensure_ascii=False,
         ),
     )
@@ -233,6 +239,69 @@ def test_console_api_reuses_the_initialized_audit_store(
 
     assert constructed_for_app == 1
     assert len(constructions) == constructed_for_app
+
+
+def test_console_oa_approval_projects_latest_attempt_from_current_task_generation(
+    tmp_path: Path,
+):
+    db_path = tmp_path / "worker.sqlite3"
+    store = AutoReplyStore(db_path)
+    attempt_id = store.record_reply_attempt(
+        conversation_id="oa-projection-conversation",
+        conversation_title="OA approval",
+        trigger_message_id="oa-projection-message",
+        trigger_sender="Derek OA",
+        trigger_text="Review the OA approval",
+        action="oa_approval",
+        sensitivity_kind="general",
+        codex_reason="The comment was verified in the current task generation.",
+        draft_reply_text="Access was requested.",
+        oa_process_instance_id="oa-projection-process",
+        oa_task_id="oa-projection-task",
+        oa_action="comment",
+        oa_remark="Access was requested.",
+        send_status="failed",
+    )
+    assert store.enqueue_reply_task(
+        conversation_id="oa-projection-conversation",
+        conversation_title="OA approval",
+        single_chat=False,
+        trigger_message_id="oa-projection-message",
+        trigger_create_time="2026-10-19T18:00:00Z",
+        trigger_sender="Derek OA",
+        trigger_text="Review the OA approval",
+    )
+    task = store.get_reply_task_for_message(
+        "oa-projection-conversation", "oa-projection-message"
+    )
+    assert task is not None
+    claimed = store.claim_reply_task(task.id)
+    assert claimed is not None
+    store.complete_reply_task(
+        task.id,
+        expected_execution_generation=task.execution_generation,
+    )
+
+    with _client(tmp_path) as client:
+        detail = client.get(f"/api/console/history/{attempt_id}").json()["item"]
+        response = client.get(
+            "/api/console/oa-approvals/oa-projection-process"
+        )
+
+    assert response.status_code == 200
+    approval = response.json()["item"]
+    assert approval["status"] == detail["status"]["raw"] == "done"
+    assert approval["attempts"] == [
+        {
+            "id": attempt_id,
+            "status": "done",
+            "recorded_status": "failed",
+            "action": "comment",
+            "remark": "Access was requested.",
+            "created_at": approval["attempts"][0]["created_at"],
+        }
+    ]
+    assert store.get_reply_attempt(attempt_id).send_status == "failed"
 
 
 def test_console_tutorial_run_persists_resulting_step_and_uses_sync_endpoint(
@@ -675,24 +744,22 @@ def test_console_tasks_endpoint_does_not_project_legacy_progress_as_semantic_tas
     assert response.json()["meta"]["total"] == 0
 
 
-def test_console_task_detail_contains_facts_todos_updates_and_memory_context(
+def test_console_task_detail_contains_persisted_project_facts_todos_and_updates(
     tmp_path: Path,
 ):
     store = AutoReplyStore(tmp_path / "worker.sqlite3")
     project_id = _project(store, "Detailed project")
-    store.create_work_todo(
+    seed_legacy_work_todo(store,
         project_id=project_id,
         title="Prepare release",
         description="Keep the description available to React.",
         status="open",
-        priority="P1",
     )
-    todo_id = store.create_work_todo(
+    todo_id = seed_legacy_work_todo(store,
         project_id=project_id,
         title="Confirm release evidence",
         description="Evidence candidate should be visible in detail.",
         status="open",
-        priority="P1",
     )
     store.upsert_todo_evidence_candidate(
         project_id=project_id,
@@ -712,7 +779,7 @@ def test_console_task_detail_contains_facts_todos_updates_and_memory_context(
     item = response.json()["item"]
     assert item["project"]["id"] == project_id
     assert item["project"]["facts"][0]["description"] == "Fact for Detailed project"
-    assert item["project"]["memory_context"]["summary"] == "Memory for Detailed project"
+    assert "memory_context" not in item["project"]
     assert item["todos"][0]["title"] == "Prepare release"
     assert isinstance(item["updates"], list)
     assert item["evidence_candidates"][0]["todo_id"] == todo_id
@@ -931,12 +998,13 @@ def test_console_history_sends_a_running_scheduled_task_to_its_own_run_history(
     # generic Status page. It has a real home: that scheduled task's run
     # history, the same place a completed run's row already links to.
     store = AutoReplyStore(tmp_path / "worker.sqlite3")
-    with store._connect() as db:
-        db.execute(
-            "insert into scheduled_tasks (id, name, prompt, command, cron_expression, "
-            "timezone, runtime_id, enabled) values (13, '准备 CEO 管理周报', 'p', '', "
-            "'0 12 * * 6', 'America/Los_Angeles', '', 1)"
-        )
+    scheduled_task = store.create_scheduled_task(
+        name="准备 CEO 管理周报",
+        prompt="p",
+        cron_expression="0 12 * * 6",
+        timezone_name="America/Los_Angeles",
+        runtime_id="codex_oauth",
+    )
     store.enqueue_reply_task(
         conversation_id="scheduled-conversation",
         conversation_title="准备 CEO 管理周报",
@@ -951,13 +1019,13 @@ def test_console_history_sends_a_running_scheduled_task_to_its_own_run_history(
         "scheduled-conversation", "scheduled-run-91606", channel="scheduled"
     )
     assert task is not None
-    with store._connect() as db:
+    with store._immediate_write_transaction() as db:
         from app.scheduled_config_storage import intern_scheduled_config
 
         snapshot_id = intern_scheduled_config(db, '{}')
         insert_run(db, 'scheduled_task_runs', {
             'event_id': 'event-91606',
-            'scheduled_task_id': 13,
+            'scheduled_task_id': scheduled_task.id,
             'trigger_kind': 'scheduled',
             'scheduled_for': '2026-09-26T19:00:00Z',
             'first_scheduled_for': '2026-09-26T19:00:00Z',
@@ -972,32 +1040,28 @@ def test_console_history_sends_a_running_scheduled_task_to_its_own_run_history(
         rows = client.get("/api/console/history?object_type=queue").json()["items"]
 
     assert len(rows) == 1
-    assert rows[0]["detail_url"] == "/scheduled-tasks?id=13"
+    assert rows[0]["detail_url"] == f"/scheduled-tasks?id={scheduled_task.id}"
 
 
 def test_console_history_uses_operation_logs_for_task_and_meeting_links(tmp_path: Path):
     store = AutoReplyStore(tmp_path / "worker.sqlite3")
     project_id = _project(store, "History project")
-    store.create_work_todo(
+    seed_legacy_work_todo(store,
         project_id=project_id,
         title="Review history links",
         description="Check that history entries jump back to the task detail page.",
         owner_name="Avery",
-        priority="P1",
     )
-    update_id = store.create_work_update(
+    update_id = seed_legacy_work_update(store,
         project_id=project_id,
         source_type="reply_attempt",
         source_ref="update-1",
         summary="Task update for history links",
         changes_json='{"todo_id":1}',
-        merge_reason="manual test",
-        confidence=0.9,
     )
     with sqlite3.connect(store.path) as db:
-        db.execute(
-            "update work_updates set created_at='2026-08-29 10:00:00' where id=?",
-            (update_id,),
+        update_sync_action(
+            db, "work_updates", update_id, {"created_at": "2026-08-29 10:00:00"}
         )
 
     job_id = store.upsert_meeting_alignment_job(
@@ -1014,14 +1078,7 @@ def test_console_history_uses_operation_logs_for_task_and_meeting_links(tmp_path
         status="sent",
         final_message="会后对齐：请确认需求。",
     )
-    meeting_run_id = store.record_meeting_alignment_run(
-        job_id=job_id,
-        codex_session_id="history-session",
-        decision_json='{"action":"send"}',
-        audit_summary="会后对齐：请确认需求。",
-        status="sent",
-        error="",
-    )
+    meeting_run_id = store.create_logical_run('meeting_alignment_runs', task_public_id=job_id, codex_session_id="history-session", status="sent", error="")
 
     with _client(tmp_path) as client:
         task_response = client.get("/api/console/history?page=1&page_size=20&object_type=task")
@@ -1063,19 +1120,12 @@ def test_meeting_history_page_uses_adopted_message_without_reading_native_run(
             store.update_meeting_alignment_job(
                 job_id, status="sent", final_message=final_message,
             )
-        run_ids.append(store.record_meeting_alignment_run(
-            job_id=job_id,
-            codex_session_id=f"meeting-history-session-{index}",
-            decision_json='{"action":"send"}',
-            audit_summary=f"原生审计摘要 {index}",
-            status="sent",
-            error="",
-        ))
+        run_ids.append(store.create_logical_run('meeting_alignment_runs', task_public_id=job_id, codex_session_id=f"meeting-history-session-{index}", status="sent", error=""))
 
     def reject_native_run(*_args, **_kwargs):
         raise AssertionError("History list must not hydrate a native meeting run")
 
-    monkeypatch.setattr(AutoReplyStore, "get_meeting_alignment_run", reject_native_run)
+    monkeypatch.setattr("app.native_standalone.latest_standalone_ref", reject_native_run)
     with _client(tmp_path) as client:
         first = client.get("/api/console/history?object_type=meeting&page=1&page_size=1")
         second = client.get("/api/console/history?object_type=meeting&page=2&page_size=1")
@@ -1112,29 +1162,7 @@ def test_console_meeting_detail_uses_meeting_run_id(tmp_path: Path):
         target_id="cid-meeting-console",
         final_message="会后对齐：请确认上线范围。",
     )
-    run_id = store.record_meeting_alignment_run(
-        job_id=job_id,
-        codex_session_id="internal-session-must-not-leak",
-        decision_json='{"action":"send","target":{"conversation_id":"cid-meeting-console","title":"项目评审会"}}',
-        audit_summary="上线范围需要确认。",
-        status="sent",
-        error="",
-        audit_tool_events_json=json.dumps([
-            {
-                "title": "读取会议记忆",
-                "tool": "memory_recall",
-                "call_id": "call-meeting-1",
-                "relevance": "确认历史判断",
-                "path": "memory.md",
-                "args": {"query": "上线范围"},
-            },
-            {
-                "tool": "tool_output",
-                "call_id": "call-meeting-1",
-                "output": '{"summary":"风险预算需要确认"}',
-            }
-        ], ensure_ascii=False),
-    )
+    run_id = store.create_logical_run('meeting_alignment_runs', task_public_id=job_id, codex_session_id="internal-session-must-not-leak", status="sent", error="")
 
     with _client(tmp_path) as client:
         response = client.get(f"/api/console/meeting-attempts/{run_id}")
@@ -1170,7 +1198,7 @@ def test_console_feedback_pending_badge_is_global_when_filtered_to_resolved(
         comment="已处理",
         received_at="2026-08-29T07:00:00.000Z",
     )
-    store.resolve_feedback_event("resolved-feedback")
+    resolve_feedback_fixture(store, "resolved-feedback")
 
     with _client(tmp_path) as client:
         response = client.get("/api/console/feedback?status=resolved")
@@ -1543,29 +1571,20 @@ def test_worker_status_projects_email_health_and_queues_without_double_counting(
         ),
     )
     with sqlite3.connect(database) as db:
-        db.execute(
-            """
-            insert into email_actions (
-                action_id, action_plan_id, classification_id, account_id,
-                action_type, parameters_json, config_version, status,
-                attempt_count, error, created_at, updated_at
-            ) values (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-            """,
-            (
-                "email-action:test-label",
-                "email-plan:test",
-                1,
-                "account-a",
-                "label",
-                "{}",
-                "email-config:test",
-                "pending",
-                0,
-                "",
-                "2026-09-05T00:00:00+00:00",
-                "2026-09-05T00:00:00+00:00",
-            ),
-        )
+        insert_email_action(db, "email_actions", {
+            "action_id": "email-action:test-label",
+            "action_plan_id": "email-plan:test",
+            "classification_id": 1,
+            "account_id": "account-a",
+            "action_type": "label",
+            "parameters_json": "{}",
+            "config_version": "email-config:test",
+            "status": "pending",
+            "attempt_count": 0,
+            "error": "",
+            "created_at": "2026-09-05T00:00:00+00:00",
+            "updated_at": "2026-09-05T00:00:00+00:00",
+        })
     store.ensure_reply_task(
         channel="email",
         conversation_id="email:account-a:thread-a",
@@ -1658,25 +1677,21 @@ def _seed_email_queue_classification(
     current_action_plan_id: str,
     status: str = "processed",
 ) -> None:
+    from app.email_canonical_storage import upsert_email_message, insert_email_classification
+    from tests.test_email_canonical_storage import _message, _classification
+
+    identity = f"message-{classification_id}"
     with sqlite3.connect(database) as db:
-        db.execute(
-            """
-            insert into email_classifications (
-                id, account_id, folder, uidvalidity, uid,
-                stable_message_identity, category, confidence, margin,
-                probabilities_json, model_id, config_version, status,
-                classification_source, current_action_plan_id
-            ) values (?, 'account-a', 'INBOX', 1, ?, ?, 'work', 0.9, 0.8,
-                      '{}', 'model-a', 'config-a', ?, 'model', ?)
-            """,
-            (
-                classification_id,
-                classification_id,
-                f"message-{classification_id}",
-                status,
-                current_action_plan_id,
-            ),
-        )
+        upsert_email_message(db, _message(
+            identity, account_id="account-a", folder="INBOX", uidvalidity=1,
+            uid=classification_id,
+        ))
+        insert_email_classification(db, _classification(
+            identity, id=classification_id, account_id="account-a", folder="INBOX",
+            uidvalidity=1, uid=classification_id, category="work", confidence=0.9,
+            margin=0.8, probabilities_json="{}", model_id="model-a", config_version="config-a",
+            status=status, classification_source="model", current_action_plan_id=current_action_plan_id,
+        ))
 
 
 def test_worker_status_counts_retryable_email_action_separately_from_failed(
@@ -1691,20 +1706,21 @@ def test_worker_status_counts_retryable_email_action_separately_from_failed(
     )
     store = AutoReplyStore(database)
     with sqlite3.connect(database) as db:
-        db.execute(
-            """
-            insert into email_actions (
-                action_id, action_plan_id, classification_id, account_id,
-                action_type, parameters_json, config_version, status,
-                attempt_count, next_attempt_at, error, created_at, updated_at
-            ) values (
-                'email-action:retryable', 'email-plan:current', 1, 'account-a',
-                'mark_read', '{}', 'config-a', 'failed', 1,
-                '2026-09-05T01:00:00+00:00', 'imap_timeout',
-                '2026-09-05T00:00:00+00:00', '2026-09-05T00:30:00+00:00'
-            )
-            """
-        )
+        insert_email_action(db, "email_actions", {
+            "action_id": "email-action:retryable",
+            "action_plan_id": "email-plan:current",
+            "classification_id": 1,
+            "account_id": "account-a",
+            "action_type": "mark_read",
+            "parameters_json": "{}",
+            "config_version": "config-a",
+            "status": "failed",
+            "attempt_count": 1,
+            "next_attempt_at": "2026-09-05T01:00:00+00:00",
+            "error": "imap_timeout",
+            "created_at": "2026-09-05T00:00:00+00:00",
+            "updated_at": "2026-09-05T00:30:00+00:00",
+        })
     monkeypatch.setattr(
         audit_web_module,
         "_launchd_service_status",
@@ -1738,48 +1754,36 @@ def test_worker_status_excludes_actions_from_superseded_email_action_plan(
     )
     store = AutoReplyStore(database)
     with sqlite3.connect(database) as db:
-        db.executemany(
-            """
-            insert into email_actions (
-                action_id, action_plan_id, classification_id, account_id,
-                action_type, parameters_json, config_version, status,
-                attempt_count, next_attempt_at, error, created_at, updated_at
-            ) values (?, ?, 1, 'account-a', ?, '{}', 'config-a', ?, ?, ?, ?,
-                      '2026-09-05T00:00:00+00:00', ?)
-            """,
+        for action_id, action_plan_id, action_type, status, attempt_count, next_attempt_at, error, updated_at in (
             (
-                (
-                    "email-action:current",
-                    "email-plan:current",
-                    "mark_read",
-                    "pending",
-                    0,
-                    "",
-                    "",
-                    "2026-09-05T00:30:00+00:00",
-                ),
-                (
-                    "email-action:stale-pending",
-                    "email-plan:stale",
-                    "label",
-                    "pending",
-                    0,
-                    "",
-                    "",
-                    "2026-09-05T00:20:00+00:00",
-                ),
-                (
-                    "email-action:stale-failed",
-                    "email-plan:stale",
-                    "trash",
-                    "failed",
-                    1,
-                    "2026-09-05T01:00:00+00:00",
-                    "imap_timeout",
-                    "2026-09-05T00:25:00+00:00",
-                ),
+                "email-action:current", "email-plan:current", "mark_read",
+                "pending", 0, "", "", "2026-09-05T00:30:00+00:00",
             ),
-        )
+            (
+                "email-action:stale-pending", "email-plan:stale", "label",
+                "pending", 0, "", "", "2026-09-05T00:20:00+00:00",
+            ),
+            (
+                "email-action:stale-failed", "email-plan:stale", "trash",
+                "failed", 1, "2026-09-05T01:00:00+00:00", "imap_timeout",
+                "2026-09-05T00:25:00+00:00",
+            ),
+        ):
+            insert_email_action(db, "email_actions", {
+                "action_id": action_id,
+                "action_plan_id": action_plan_id,
+                "classification_id": 1,
+                "account_id": "account-a",
+                "action_type": action_type,
+                "parameters_json": "{}",
+                "config_version": "config-a",
+                "status": status,
+                "attempt_count": attempt_count,
+                "next_attempt_at": next_attempt_at,
+                "error": error,
+                "created_at": "2026-09-05T00:00:00+00:00",
+                "updated_at": updated_at,
+            })
     monkeypatch.setattr(
         audit_web_module,
         "_launchd_service_status",
@@ -1814,19 +1818,21 @@ def test_worker_status_excludes_current_plan_until_classification_is_processed(
     )
     store = AutoReplyStore(database)
     with sqlite3.connect(database) as db:
-        db.execute(
-            """
-            insert into email_actions (
-                action_id, action_plan_id, classification_id, account_id,
-                action_type, parameters_json, config_version, status,
-                attempt_count, next_attempt_at, error, created_at, updated_at
-            ) values (
-                'email-action:not-ready', 'email-plan:current', 1, 'account-a',
-                'mark_read', '{}', 'config-a', 'pending', 0, '', '',
-                '2026-09-05T00:00:00+00:00', '2026-09-05T00:30:00+00:00'
-            )
-            """
-        )
+        insert_email_action(db, "email_actions", {
+            "action_id": "email-action:not-ready",
+            "action_plan_id": "email-plan:current",
+            "classification_id": 1,
+            "account_id": "account-a",
+            "action_type": "mark_read",
+            "parameters_json": "{}",
+            "config_version": "config-a",
+            "status": "pending",
+            "attempt_count": 0,
+            "next_attempt_at": "",
+            "error": "",
+            "created_at": "2026-09-05T00:00:00+00:00",
+            "updated_at": "2026-09-05T00:30:00+00:00",
+        })
     monkeypatch.setattr(
         audit_web_module,
         "_launchd_service_status",
@@ -2136,6 +2142,7 @@ def test_console_agent_runtime_adds_a_runtime_and_keeps_its_order(
                 "CEO_RUNTIME_QWEN_GPU4_KIND": "codex_api",
                 "CEO_RUNTIME_QWEN_GPU4_BASE_URL": "http://100.93.145.69:8900/v1",
                 "CEO_RUNTIME_QWEN_GPU4_MODEL": "qwen3.8-27b",
+                "CEO_RUNTIME_QWEN_GPU4_REASONING_EFFORT": "medium",
                 "CEO_RUNTIME_QWEN_GPU4_API_KEY": "gateway-key",
             }},
         )
@@ -2145,8 +2152,10 @@ def test_console_agent_runtime_adds_a_runtime_and_keeps_its_order(
     env_text = env_path.read_text(encoding="utf-8")
     assert "CEO_AGENT_RUNTIME_ROUTES=qwen_gpu4,codex_oauth" in env_text
     assert "CEO_RUNTIME_QWEN_GPU4_MODEL=qwen3.8-27b" in env_text
+    assert "CEO_RUNTIME_QWEN_GPU4_REASONING_EFFORT=medium" in env_text
     assert "CEO_RUNTIME_QWEN_GPU4_BASE_URL=http://100.93.145.69:8900/v1" in env_text
     fields = reloaded.json()["item"]["fields"]
+    assert fields["CEO_RUNTIME_QWEN_GPU4_REASONING_EFFORT"] == "medium"
     assert fields["CEO_RUNTIME_QWEN_GPU4_API_KEY"] == "****"
     assert "gateway-key" not in response.text
     assert "CEO_RUNTIME_QWEN_GPU4_API_KEY" in reloaded.json()["item"]["secrets"]
@@ -2161,6 +2170,7 @@ def test_console_agent_runtime_removing_an_added_runtime_clears_its_settings(
         "CEO_RUNTIME_QWEN_GPU4_KIND=codex_api\n"
         "CEO_RUNTIME_QWEN_GPU4_BASE_URL=http://100.93.145.69:8900/v1\n"
         "CEO_RUNTIME_QWEN_GPU4_MODEL=qwen3.8-27b\n"
+        "CEO_RUNTIME_QWEN_GPU4_REASONING_EFFORT=medium\n"
         "CEO_RUNTIME_QWEN_GPU4_API_KEY=gateway-key\n"
         "CEO_CLAUDE_MODEL=sonnet\n"
         "CEO_CLAUDE_MODEL_REASONING_EFFORT=medium\n",
@@ -2186,6 +2196,7 @@ def test_console_agent_runtime_removing_an_added_runtime_clears_its_settings(
     assert "CEO_AGENT_RUNTIME_ROUTES=codex_oauth\n" in env_text
     assert 'CEO_RUNTIME_QWEN_GPU4_API_KEY=""' in env_text
     assert 'CEO_RUNTIME_QWEN_GPU4_MODEL=""' in env_text
+    assert 'CEO_RUNTIME_QWEN_GPU4_REASONING_EFFORT=""' in env_text
 
 
 def test_console_agent_runtime_refuses_an_added_runtime_without_a_token(
@@ -2788,10 +2799,14 @@ def test_queue_attention_rows_excludes_legacy_audit_revision_needs_human(tmp_pat
     )
     with store._connect() as db:
         task_id = db.execute(
-            "select id from tasks where record_type='reply_tasks' and conversation_id=? and trigger_message_id=?",
+            f"select id from tasks where record_type='reply_tasks' and {task20_column('reply_tasks', 'conversation_id')}=? and {task20_column('reply_tasks', 'trigger_message_id')}=?",
             ("audit-revision-conversation", "audit-revision-message"),
         ).fetchone()[0]
-        db.execute("update tasks set status='done' where record_type='reply_tasks' and id=?", (task_id,))
+        parts = task8_set_parts("reply_tasks", {"status": "done"})
+        db.execute(
+            f"update tasks set {parts.sql} where record_type='reply_tasks' and id=?",
+            (*parts.parameters, task_id),
+        )
         run = insert_native_run_fixture(
             db, {
                 'task_id': task_id,
@@ -2851,10 +2866,14 @@ def test_queue_attention_rows_excludes_actionable_structured_needs_human_attempt
     }
     with store._connect() as db:
         task_id = db.execute(
-            "select id from tasks where record_type='reply_tasks' and conversation_id=? and trigger_message_id=?",
+            f"select id from tasks where record_type='reply_tasks' and {task20_column('reply_tasks', 'conversation_id')}=? and {task20_column('reply_tasks', 'trigger_message_id')}=?",
             ("needs-human-conversation", "needs-human-message"),
         ).fetchone()[0]
-        db.execute("update tasks set status='done' where record_type='reply_tasks' and id=?", (task_id,))
+        parts = task8_set_parts("reply_tasks", {"status": "done"})
+        db.execute(
+            f"update tasks set {parts.sql} where record_type='reply_tasks' and id=?",
+            (*parts.parameters, task_id),
+        )
         run = insert_native_run_fixture(
             db, {
                 'task_id': task_id,
@@ -2896,11 +2915,15 @@ def test_queue_attention_rows_includes_unresolved_service_errors_older_than_heal
         "producer_loop_error",
         "database is locked",
     )
+    error_id = store.list_errors(limit=1)[0].id
     with store._connect() as db:
+        assignment, arguments = error_set_parts({"created_at": "2020-01-01 00:00:00"})
         db.execute(
-            "update errors set created_at='2020-01-01 00:00:00' "
-            "where conversation_id='old-conversation'"
+            f"update actions set {assignment} where record_type='errors' "
+            "and cast(legacy_key as integer)=?",
+            (*arguments, error_id),
         )
+    assert store.get_error(error_id).created_at == "2020-01-01 00:00:00"
 
     rows = audit_web_module._queue_attention_rows(store)
 
@@ -3499,14 +3522,26 @@ def test_current_wechat_delivery_failure_remains_in_history_after_candidate_done
         sensitivity_kind="normal", send_status="failed", channel="wechat",
     )
     with store._connect() as db:
-        db.execute("update tasks set status='done' where record_type='reply_tasks' and cast(legacy_key as integer)=?", (task.id,))
+        parts = task8_set_parts("reply_tasks", {"status": "done"})
         db.execute(
-            "update wechat_deliveries set status=?, error='wechat_ui_not_ready', "
-            "pre_action_failure=1, execution_generation=?, conversation_id=? where id=?",
-            (delivery_status, delivery_generation, delivery_conversation, delivery_id),
+            f"update tasks set {parts.sql} where record_type='reply_tasks' and id=?",
+            (*parts.parameters, task.id),
+        )
+        update_task_delivery_action(
+            db,
+            "wechat_deliveries",
+            delivery_id,
+            {
+                "status": delivery_status,
+                "error": "wechat_ui_not_ready",
+                "pre_action_failure": 1,
+                "execution_generation": delivery_generation,
+                "conversation_id": delivery_conversation,
+            },
         )
         before = tuple(db.execute(
-            "select status, error from wechat_deliveries where id=?", (delivery_id,)
+            f"select status, error from ({task_delivery_projection('wechat_deliveries')}) where id=?",
+            (delivery_id,),
         ).fetchone())
     with _client(tmp_path) as client:
         response = client.get("/api/console/history?status=failed")
@@ -3518,7 +3553,8 @@ def test_current_wechat_delivery_failure_remains_in_history_after_candidate_done
         assert detail.json()["item"]["status"]["raw"] == ("failed" if expected_failed else "done")
     with store._connect() as db:
         assert tuple(db.execute(
-            "select status, error from wechat_deliveries where id=?", (delivery_id,)
+            f"select status, error from ({task_delivery_projection('wechat_deliveries')}) where id=?",
+            (delivery_id,),
         ).fetchone()) == before
     assert store.get_reply_task(task.id).status == "done"
     assert store.get_reply_attempt(attempt_id).send_status == "failed"
@@ -3538,7 +3574,11 @@ def test_principal_superseded_wechat_delivery_is_terminal_in_detail_and_retry_ap
         inactive_before="2026-07-30 10:10:00",
     )
     with store._connect() as db:
-        db.execute("update tasks set status='done' where record_type='reply_tasks' and cast(legacy_key as integer)=1")
+        parts = task8_set_parts("reply_tasks", {"status": "done"})
+        db.execute(
+            f"update tasks set {parts.sql} where record_type='reply_tasks' and cast(legacy_key as integer)=1",
+            parts.parameters,
+        )
     before = _wechat_delivery_and_attempt_state(store, delivery_id)
     sends = []
     monkeypatch.setattr("app.wechat.service.build_sender", lambda: SimpleNamespace())
@@ -3570,11 +3610,93 @@ def test_old_principal_supersession_does_not_describe_current_pending_task(tmp_p
         inactive_before="2026-07-30 10:10:00",
     )
     with store._connect() as db:
-        db.execute("update tasks set execution_generation=?,status='pending' where record_type='reply_tasks' and cast(legacy_key as integer)=1", (generation,))
-        db.execute("update wechat_deliveries set conversation_id=? where id=?", (conversation, delivery_id))
+        parts = task8_set_parts("reply_tasks", {"execution_generation": generation, "status": "pending"})
+        db.execute(
+            f"update tasks set {parts.sql} where record_type='reply_tasks' and cast(legacy_key as integer)=1",
+            parts.parameters,
+        )
+        update_task_delivery_action(db, "wechat_deliveries", delivery_id, {"conversation_id": conversation})
     before = _wechat_delivery_and_attempt_state(store, delivery_id)
     with _client(tmp_path) as client:
         item = client.get(f"/api/console/history/{attempt_id}").json()["item"]
     assert item["status"]["raw"] == "pending"
     assert "已在后续消息中亲自回复" not in item["status"]["message"]
     assert _wechat_delivery_and_attempt_state(store, delivery_id) == before
+
+
+def test_reply_memory_queue_reads_current_action_schema_and_its_own_events(tmp_path):
+    from app.action_storage import insert_action
+
+    path = tmp_path / "reply-memory-queue.sqlite3"
+    store = AutoReplyStore(path)
+    EmailStore(path)
+    attempt_id = seed_attempt(store)
+    with store._connect() as db:
+        insert_action(db, "memory_write_events", {
+            "attempt_id": attempt_id, "event_type": "profile", "status": "pending",
+        })
+        insert_action(db, "memory_write_events", {
+            "attempt_id": attempt_id, "event_type": "summary", "status": "failed",
+            "last_error": "source unavailable",
+        })
+        result = audit_web_module._memory_write_queue_snapshot(db, "Reply Memory")
+    assert result["table"] == "memory_write_events"
+    assert result["counts"] == {"failed": 1, "pending": 1}
+    assert result["pending"] == result["failed"] == 1
+    assert result["latest_error"] == "source unavailable"
+
+
+def test_sent_wechat_history_has_separate_exact_message_resend_route(tmp_path: Path):
+    store = AutoReplyStore(tmp_path / "worker.sqlite3")
+    trigger = WechatMessage(
+        account_id="acct-1", conversation_id="melody115", message_id="wx-1",
+        sender_id="melody115", sender_display_name="Melody",
+        conversation_type="direct", direction="inbound",
+        sent_at="2026-09-26T14:12:52-07:00", kind="text",
+        text="他说 memory 不仅是 data", source_version="4.1.10",
+    )
+    store.enqueue_reply_task(
+        channel="wechat", conversation_id=trigger.conversation_id,
+        conversation_title="Melody", single_chat=True,
+        trigger_message_id=trigger.message_id, trigger_create_time=trigger.sent_at,
+        trigger_sender="Melody", trigger_text=trigger.text,
+        trigger_message_json=trigger.model_dump_json(),
+    )
+    task = store.get_reply_task_for_message("melody115", "wx-1", channel="wechat")
+    assert task is not None
+    with store._connect() as db:
+        parts = task8_set_parts("reply_tasks", {"status": "done"})
+        db.execute(
+            f"update tasks set {parts.sql} where record_type='reply_tasks' and id=?",
+            (*parts.parameters, task.id),
+        )
+    attempt_id = store.record_reply_attempt(
+        channel="wechat", conversation_id=trigger.conversation_id,
+        conversation_title="Melody", trigger_message_id=trigger.message_id,
+        trigger_sender="Melody", trigger_text=trigger.text,
+        action="send_reply", sensitivity_kind="normal", send_status="sent",
+    )
+    task = store.get_reply_task_for_message("melody115", "wx-1", channel="wechat")
+    assert task is not None
+    original_generation = task.execution_generation
+
+    with _client(tmp_path) as client:
+        detail = client.get(f"/api/console/history/{attempt_id}")
+        assert detail.status_code == 200
+        actions = detail.json()["item"]["actions"]
+        assert actions["can_rerun"] is False
+        assert actions["can_resend_wechat"] is True
+        assert actions["resend_message_id"] == "wx-1"
+        assert client.post(f"/api/console/history/{attempt_id}/rerun").status_code == 409
+        assert client.post(
+            f"/api/console/history/{attempt_id}/resend-wechat",
+            json={"trigger_message_id": "wx-other"},
+        ).status_code == 409
+        assert store.get_reply_task(task.id).execution_generation == original_generation
+        response = client.post(
+            f"/api/console/history/{attempt_id}/resend-wechat",
+            json={"trigger_message_id": "wx-1"},
+        )
+        assert response.status_code == 200
+        assert response.json()["ok"] is True
+    assert store.get_reply_task(task.id).execution_generation != original_generation

@@ -1,5 +1,6 @@
 from datetime import datetime
 from enum import StrEnum
+from math import isfinite
 from typing import Literal
 
 from pydantic import (
@@ -12,6 +13,7 @@ from pydantic import (
     ValidationInfo,
     field_validator,
     model_validator,
+    model_serializer,
 )
 
 from app.agent_result import AgentError
@@ -79,7 +81,7 @@ def _consumer_result_json_schema(schema: dict[str, object]) -> None:
             "type": "object",
             "properties": {
                 "outcome": {
-                    "enum": ["no_action", "failed"],
+                    "enum": ["no_action", "failed", "retry"],
                 },
                 "proposal": {"type": "null"},
                 "decision_options": {"type": "array", "maxItems": 0},
@@ -95,7 +97,7 @@ def _consumer_result_json_schema(schema: dict[str, object]) -> None:
                 "proposal": {"type": "null"},
                 "decision_options": {"type": "array", "minItems": 2, "maxItems": 4},
                 "requested_input": {"type": "null"},
-                "needs_human_reason": {"type": "string", "minLength": 1},
+                "needs_human_reason": {"type": "string", "minLength": 1, "maxLength": 100},
                 "decision_basis": {"type": "object"},
             },
             "required": [
@@ -121,6 +123,7 @@ def _audit_result_json_schema(schema: dict[str, object]) -> None:
 
 class ConsumerOutcome(StrEnum):
     PROPOSAL = "proposal"
+    RETRY = "retry"
     NO_ACTION = "no_action"
     NEEDS_HUMAN = "needs_human"  # legacy wire name; semantically a policy gap
     FAILED = "failed"
@@ -229,6 +232,27 @@ class ProposedAction(BaseModel):
 
     @model_validator(mode="after")
     def validate_dingtalk_message_target(self) -> "ProposedAction":
+        if self.capability == "dingtang-okr" and self.operation == "score_kr":
+            required_target = {
+                "period_id", "objective_id", "batch_id", "kr_id", "evaluator_user_id"
+            }
+            if set(self.target) != required_target or any(
+                not isinstance(self.target[key], str) or not self.target[key].strip()
+                for key in required_target
+            ):
+                raise ValueError("dingtang-okr score_kr needs exact provider target IDs")
+            score = self.payload.get("score")
+            description = self.payload.get("score_description")
+            if (
+                set(self.payload) != {"score", "score_description"}
+                or type(score) not in (int, float)
+                or not isfinite(score)
+                or not 0 <= score <= 1
+                or not isinstance(description, str)
+                or not description.strip()
+                or self.effect != "external"
+            ):
+                raise ValueError("dingtang-okr score_kr needs a 0-1 score and description")
         if self.capability == "dingtalk-oa":
             for field in _OA_ACTION_TARGET_FIELDS.get(self.operation, ()):
                 value = self.target.get(field)
@@ -485,16 +509,26 @@ class ConsumerAgentResult(BaseModel):
     confidence: float = Field(ge=0.0, le=1.0)
     rule_coverage: float = Field(ge=0.0, le=1.0)
     information_completeness: float = Field(ge=0.0, le=1.0)
+    # Historical persisted results remain readable; new model output is bounded
+    # by ConsumerAgentWireResult and the transport JSON Schema.
     needs_human_reason: str | None = None
     decision_basis: DecisionBasis | None = None
     requested_input: str | None = None
     stage_index: int = Field(default=0, ge=0)
     predecessor_review_id: int | None = Field(default=None, ge=1)
     continue_after_execution: bool = False
+    purpose_output: dict[str, JsonValue] | None = None
     source_bindings: tuple[ReviewedSourceBinding, ...] = ()
     # Required on the wire the Agent answers in; results stored before the
     # field existed read back as having none.
     durable_memories: tuple[DurableMemory, ...] = ()
+
+    @model_serializer(mode="wrap")
+    def serialize_purpose_metadata(self, handler):
+        data = handler(self)
+        if self.purpose_output is None:
+            data.pop("purpose_output", None)
+        return data
 
     @field_validator("outcome", mode="before")
     @classmethod
@@ -513,8 +547,10 @@ class ConsumerAgentResult(BaseModel):
 
     @model_validator(mode="after")
     def validate_payload(self, info: ValidationInfo) -> "ConsumerAgentResult":
-        if (self.stage_index > 0) != (self.predecessor_review_id is not None):
-            raise ValueError("later stage requires predecessor_review_id")
+        if self.stage_index == 0 and self.predecessor_review_id is not None:
+            raise ValueError("stage_index=0 requires predecessor_review_id=null")
+        if self.stage_index > 0 and self.predecessor_review_id is None:
+            raise ValueError("stage_index>0 requires predecessor_review_id")
         if (self.outcome is ConsumerOutcome.PROPOSAL) != (self.proposal is not None):
             raise ValueError("proposal is required only for proposal outcome")
         if self.outcome is ConsumerOutcome.NEEDS_HUMAN:
@@ -568,6 +604,11 @@ class ConsumerAgentResult(BaseModel):
             )
         ):
             raise ValueError("needs_human fields are only valid for needs_human")
+        if self.outcome is ConsumerOutcome.RETRY:
+            if not self.purpose_output or self.purpose_output.get("action") != "retry":
+                raise ValueError("retry requires a purpose retry output")
+            if self.error.code:
+                raise ValueError("purpose retry is not a technical error")
         if self.continue_after_execution and self.outcome is not ConsumerOutcome.PROPOSAL:
             raise ValueError("only a proposal can continue after execution")
         return self

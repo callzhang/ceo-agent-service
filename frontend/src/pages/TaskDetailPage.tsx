@@ -27,6 +27,7 @@ export function SourceRecordRows({ rows }: { rows: Array<Record<string, unknown>
   return <ol className="business-source-list">{rows.map((row, index) => {
     const signal = row.signal && typeof row.signal === "object" ? row.signal as Record<string, unknown> : null;
     const rawText = [signal?.evidence_text, row.evidence_text].find(nonEmpty);
+    const sourceUnavailable = signal?.source_available === false || row.source_available === false;
     const raw = parseJson(rawText);
     const contextJson = signal?.context_json ?? row.context_json;
     const context = parseJson(contextJson) as Record<string, unknown> | undefined;
@@ -50,6 +51,7 @@ export function SourceRecordRows({ rows }: { rows: Array<Record<string, unknown>
     ].filter((value) => nonEmpty(value) && value !== primary);
     return <li key={String(row.id ?? index)}><span className="business-source-text">{typeof primary === "string" ? primary : "记录"}</span>{secondary.length > 0 && <small>{secondary.join(" · ")}</small>}
       {sourceLink && <a href={sourceLink} target="_blank" rel="noreferrer">打开来源</a>}
+      {sourceUnavailable && <small>原文不可用</small>}
       {raw !== undefined && <details className="business-source-raw"><summary>查看原始记录</summary><pre>{JSON.stringify(raw, null, 2)}</pre></details>}</li>;
   })}</ol>;
 }

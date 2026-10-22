@@ -87,7 +87,7 @@ function query(params: Record<string, string | number | undefined>) {
   return search.size ? `?${search.toString()}` : "";
 }
 
-export interface TaskSummary { id: string; title: string; status: string; category: string; priority: string; risk: string; owner: string; progress: string; todo_count: number; state_summary: string; next_summary: string; integrity_issues?: string[]; }
+export interface TaskSummary { id: string; title: string; status: string; category: string; owner: string; progress: string; todo_count: number; state_summary: string; next_summary: string; integrity_issues?: string[]; }
 export type TaskView = "attention" | "formal" | "candidates" | "all" | "projects" | "projects_by_customer";
 export type AttentionCategory = "fyi" | "watch" | "decision" | "push";
 export interface BusinessAttentionSummary {
@@ -205,7 +205,9 @@ export interface BusinessTaskSignal extends Record<string, unknown> {
   source_type: string;
   source_ref: string;
   source_time: string;
-  evidence_text: string;
+  evidence_text: string | null;
+  source_available: boolean;
+  source_unavailable_reason: string | null;
   context_json: string;
 }
 export interface ProjectContextRevision {
@@ -258,12 +260,12 @@ export interface BusinessProjectDetail {
 }
 export interface TaskFilters { categories: string[]; task_states: string[]; }
 export interface TaskList extends ConsoleList<TaskSummary> { filters: TaskFilters; }
-export interface TaskDetail extends TaskSummary { description: string; background: string; blocker: string; follow_up_mode: string; tags: string[]; facts: Array<{ id: string; description: unknown; source: unknown; created: string; updated: string }>; todos: Array<Record<string, unknown>>; updates: Array<Record<string, unknown>>; evidence_candidates: Array<Record<string, unknown>>; memory: Array<Record<string, unknown>>; unlinked_follow_ups: Array<Record<string, unknown>>; }
+export interface TaskDetail extends TaskSummary { description: string; background: string; blocker: string; tags: string[]; facts: Array<{ id: string; description: unknown; source: unknown; created: string; updated: string }>; todos: Array<Record<string, unknown>>; updates: Array<Record<string, unknown>>; evidence_candidates: Array<Record<string, unknown>>; unlinked_follow_ups: Array<Record<string, unknown>>; }
 export interface HistoryItem { id: string; occurred_at: string; title: string; type: string; status: string; summary: unknown; actor: string; detail_url: string; kind?: string; input?: string; output?: string; action?: string; }
 /** One History type as the service names it (Derek 2026-09-25: the filter lists every kind of work the service runs). */
 export interface HistoryTypeOption { value: string; label: string; }
 export interface HistoryChart { labels: string[]; series: Array<{ name: string; data: number[] }>; total: number; range: string; }
-export interface AttentionItem { id: string; category: string; root_cause: string; context: string; severity: string; count: number; summary: unknown; error: unknown; detail_label: string; detail: unknown; updated_at: string; links: Array<{ label: string; href: string }>; }
+export interface AttentionItem { statuses?: string[]; id: string; category: string; root_cause: string; context: string; severity: string; count: number; summary: unknown; error: unknown; detail_label: string; detail: unknown; updated_at: string; links: Array<{ label: string; href: string }>; }
 export interface FeedbackReference { label: string; route: string; }
 export interface FeedbackProcessingRound {
   id: number;
@@ -416,6 +418,7 @@ export interface EmailClassificationItem {
 export type EmailClassificationStatus = "all" | "pending_feedback" | "processed" | "unsubscribe";
 export interface EmailClassificationListParams {
   q?: string;
+  search_scope?: "preview" | "full";
   category?: string;
   action_status?: string;
   source?: string;
@@ -832,7 +835,6 @@ function mapTaskSummary(value: unknown): TaskSummary {
   return {
     id: String(row.id ?? ""), title: displayValue(row.title),
     status: displayValue(row.status), category: displayValue(row.category),
-    priority: displayValue(row.priority), risk: displayValue(row.risk_level),
     owner: resolveOwnerDisplay(row),
     progress: `${done}/${total}（${Number(row.progress_ratio || 0)}%）`,
     todo_count: Number(row.todo_count || 0),
@@ -853,8 +855,7 @@ function mapTaskDetail(value: unknown): TaskDetail {
   return {
     ...mapTaskSummary({
       id: project.id, title: project.title, status: project.status,
-      category: project.category, priority: project.priority,
-      risk_level: project.risk_level,
+      category: project.category,
       owner: resolveOwnerDisplay(project, todos),
       progress_count: progress.done,
       progress_total: progress.total,
@@ -864,12 +865,11 @@ function mapTaskDetail(value: unknown): TaskDetail {
     }),
     description: displayValue(project.goal || project.description),
     background: displayValue(project.background), blocker: displayValue(project.blocker),
-    follow_up_mode: displayValue(project.follow_up_mode), tags: Array.isArray(project.tags) ? project.tags.map(displayValue) : [],
+    tags: Array.isArray(project.tags) ? project.tags.map(displayValue) : [],
     facts: facts.map((fact, index) => { const item = asRecord(fact); return { id: String(item.id ?? index), description: item.description, source: item.source, created: displayValue(item.created || item.created_at), updated: displayValue(item.updated || item.updated_at) }; }),
     todos,
     updates: Array.isArray(payload.updates) ? payload.updates.map(asRecord) : [],
     evidence_candidates: Array.isArray(payload.evidence_candidates) ? payload.evidence_candidates.map(asRecord) : [],
-    memory: project.memory_context && isRecord(project.memory_context) ? [project.memory_context] : [],
     unlinked_follow_ups: Array.isArray(payload.unlinked_follow_ups) ? payload.unlinked_follow_ups.map(asRecord) : [],
   };
 }
@@ -917,6 +917,12 @@ const isProjectSummary = (item: Record<string, unknown>) => isIdentity(item.id)
 const isCitation = (value: unknown) => isRecord(value)
   && (value.signal_id === null || typeof value.signal_id === "number")
   && isString(value.source_ref) && isString(value.source_excerpt);
+const isBusinessTaskSignal = (value: unknown): value is BusinessTaskSignal => isRecord(value)
+  && typeof value.id === "number"
+  && ["source_type", "source_ref", "source_time", "context_json"].every((field) => isString(value[field]))
+  && (value.source_available === true
+    ? isString(value.evidence_text) && value.evidence_text.length > 0 && value.source_unavailable_reason === null
+    : value.source_available === false && value.evidence_text === null && isString(value.source_unavailable_reason) && value.source_unavailable_reason.length > 0);
 const isResponsibility = (value: unknown) => isRecord(value)
   && ["person_user_id", "person_name", "responsibility"].every((field) => isString(value[field]))
   && Array.isArray(value.evidence) && value.evidence.every(isCitation);
@@ -975,7 +981,7 @@ export function getBusinessProjectDetail(id: string, signal?: AbortSignal): Prom
     && (item.context === null || isProjectContext(item.context))
     && Array.isArray(item.responsibilities) && item.responsibilities.every(isResponsibility)
     && [item.confirmed_tasks, item.suggestions].every((rows) => Array.isArray(rows) && rows.every((row) => isRecord(row) && isTaskSummary(row)))
-    && Array.isArray(item.evidence_signals) && item.evidence_signals.every((row) => isRecord(row) && typeof row.id === "number" && ["source_type", "source_ref", "source_time", "evidence_text", "context_json"].every((field) => isString(row[field])))
+    && Array.isArray(item.evidence_signals) && item.evidence_signals.every(isBusinessTaskSignal)
     && Array.isArray(item.context_revisions) && item.context_revisions.every((row) => isRecord(row) && typeof row.id === "number" && typeof row.project_id === "number" && isProjectContext(row.context) && Array.isArray(row.evidence_signal_ids) && row.evidence_signal_ids.every((id) => typeof id === "number") && isString(row.created_at))
     && isListMeta(item.evidence_meta) && isListMeta(item.context_revision_meta)));
 }
@@ -1232,10 +1238,14 @@ export function listAttention(signal?: AbortSignal) {
         const item = asRecord(record);
         const detailUrl = typeof item.detail_url === "string" ? item.detail_url.trim() : "";
         if (!detailUrl) return null;
-        const label = displayValue(item.category) === "Service error" ? "查看错误详情" : "查看详情";
+        const label = detailUrl.startsWith("/attempts/")
+          ? `查看 Attempt #${detailUrl.split("/").pop()}`
+          : detailUrl.startsWith("/meeting-attempts/")
+            ? `查看 Meeting Attempt #${detailUrl.split("/").pop()}`
+            : displayValue(item.category) === "Service error" ? "查看错误详情" : "查看详情";
         return { label, href: detailUrl };
       }).filter((link): link is { label: string; href: string } => Boolean(link));
-      return { id: `${displayValue(row.category)}:${displayValue(row.root_cause)}:${displayValue(row.context)}`, category: displayValue(row.category), root_cause: displayValue(row.root_cause), context: displayValue(row.context), severity: displayValue(row.severity), count: Number(row.count || records.length), summary: row.summary, error: row.error, detail_label: displayValue(row.detail_label || "状态"), detail: row.detail ?? row.error, updated_at: displayValue(row.updated_at), links } satisfies AttentionItem;
+      return { statuses: [...new Set(records.map((record) => displayValue(asRecord(record).status)))], id: `${displayValue(row.category)}:${displayValue(row.root_cause)}:${displayValue(row.context)}`, category: displayValue(row.category), root_cause: displayValue(row.root_cause), context: displayValue(row.context), severity: displayValue(row.severity), count: Number(row.count || records.length), summary: row.summary, error: row.error, detail_label: displayValue(row.detail_label || "状态"), detail: row.detail ?? row.error, updated_at: displayValue(row.updated_at), links } satisfies AttentionItem;
     }),
   }));
 }

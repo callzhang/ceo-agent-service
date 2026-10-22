@@ -1,0 +1,23 @@
+{
+  "recorded_utc": "2026-10-16T20:43:47.732314+00:00",
+  "status": "installed_unselected_current_schema_helpers_spec_quality_pass",
+  "commit": "da5c6f27b05406558067d95f0af65b3119fe5086",
+  "files": {
+    "app/task20_current_schema.py": "48d5bd3817e0189eec0aa7744da94592286e307a7fdff3a51adab6e6b078e462",
+    "tests/test_task20_current_schema.py": "6e7cba7a807114b12b16013a2db9845c867aeb227c47c9520ac2acdf1c95280b"
+  },
+  "writer": {
+    "cases": 103,
+    "seconds": 2.19
+  },
+  "fresh_applied_spec": {
+    "cases": 103,
+    "seconds": 2.04
+  },
+  "fresh_applied_quality": {
+    "cases": 103,
+    "seconds": 2.2,
+    "findings": []
+  },
+  "boundary": "No existing app source imports this helper. Caller/constructor/publication/coordinator and current actual-copy proof are separate. Production unchanged."
+}

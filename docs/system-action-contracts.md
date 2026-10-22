@@ -48,6 +48,7 @@ an example or a previous instance. An unsupported operation fails explicitly.
 | `dingtalk-oa` | `comment` | `process_instance_id` | `content` | Provider comment ID; otherwise uncertain |
 | `dingtalk-doc` | `create_document` | `name` | Markdown `content` | Provider `nodeId` plus exact document name and Markdown readback |
 | `dingtalk-doc` | `create_doc_comment` | `node_id` | `content` | Provider `commentKey`; otherwise uncertain |
+| `dingtang-okr` | `score_kr` | `period_id`, `objective_id`, current `batch_id`, `kr_id`, `evaluator_user_id` from the live score detail; evaluator must equal the logged-in page user | `score` on the 0-1 API scale, `score_description` with evidence | Exact period, objective, current batch, KR, evaluator, score, description and `complete` status in a fresh `getScoreDetail` readback |
 
 For these registered OA operations, `process_instance_id`, `task_id`,
 `target_activity_id` and `to_actioner_id`, where required above, are exact
@@ -73,3 +74,12 @@ completion. After an unknown dispatch, the service preserves the action as
 uncertain and does not resend it on restart. Xiaoqing transcript and interview
 uploads have no service-owned native client and are not registered system
 actions.
+
+## Consumer purpose action names
+
+Consumer purpose output uses action/reason/target/payload/evidence_refs. Purpose definitions select the available names and strict arguments before the turn. OA approve/reject/comment map to the registered same-named OA operations; return maps to revert_task, with exact target_activity_id and revert_action REVERT_FOR_APPROVAL or REVERT_FOR_RESUBMIT. General reply/react map to reply_to_message/add_message_emoji. A typed plan preserves the existing multi-action proposal and all action contracts above.
+
+request_access is a Consumer purpose action that asks the verified responsible party through an OA comment or source-conversation reply. Its receipt proves the request was sent, not that access was granted. Only a verified request_access source candidate can anchor permission retries. While access is still unavailable, Consumer may return `retry` with empty target/payload and a reference to that request's `external_action_key`; the service strips one known `receipt:` or `prior_receipt_id=` label before exact key matching. This permission-wait retry is not an approval-result proposal, does not enter Audit, and has no provider dispatch. The service persists at most three later Consumer reads, 12 hours apart, and a 72-hour hard deadline from the original verified request's dispatch record, independent of sessions/revisions/restarts. All other executable actions retain the completion evidence specified above.
+
+For field definitions, OA return and retry JSON examples, reservation semantics,
+and recovery boundaries, see [Consumer purpose output](consumer-purpose-output.md).

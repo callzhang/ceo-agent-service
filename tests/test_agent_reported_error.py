@@ -80,6 +80,37 @@ def test_a_provider_duplicate_does_not_retry_into_the_same_suppression():
     assert payload["source_code"] == "PROVIDER_DUPLICATE_NO_READBACK"
 
 
+def test_absent_declared_operation_is_terminal_but_failed_dependency_read_retries():
+    absent = agent_error_payload("OPERATION_UNAVAILABLE", failed=True)
+    assert absent == {
+        "code": "operation_unavailable",
+        "retryable": False,
+        "authorization_required": False,
+        "source": "agent",
+        "source_code": "OPERATION_UNAVAILABLE",
+    }
+    failed_read = agent_error_payload("dependency_read_unavailable", failed=True)
+    assert failed_read["retryable"] is True
+
+
+@pytest.mark.parametrize(
+    "reported_code",
+    ["capability_unavailable", "write_capability_unavailable"],
+)
+def test_missing_capability_variants_are_terminal_and_preserve_the_reported_code(
+    reported_code,
+):
+    payload = agent_error_payload(reported_code, failed=True)
+
+    assert payload == {
+        "code": reported_code,
+        "retryable": False,
+        "authorization_required": False,
+        "source": "agent",
+        "source_code": reported_code,
+    }
+
+
 def test_a_runtime_risk_rejection_never_enters_automatic_retry():
     payload = agent_error_payload("PROVIDER_RISK_REJECTED", failed=True)
 

@@ -1,0 +1,32 @@
+{
+  "recorded_at": "2026-10-17T22:52:15.973267+00:00",
+  "status": "failed_before_target_acceptance",
+  "session": 58148,
+  "freeze_sha256": "39d4353ed34507d33fdefd3d7c21a5364bc5baaccdb904754641f8394898ff27",
+  "source_access": "URI mode=ro/query_only online backup; source and production never opened for writes",
+  "production_predecessor": "83c1d7f030bb16cb6ef1fc729efc322be409dda2",
+  "observed_source": {
+    "ordinary_tables": 116,
+    "distinct_retained_families": 40,
+    "history_rows": 183,
+    "historical_operation_rows": 0,
+    "task_memory_rows": 613,
+    "errors": 15455,
+    "provider_observations": 72245,
+    "signals": 929,
+    "source_documents": 220
+  },
+  "error": {
+    "type": "subprocess.TimeoutExpired",
+    "location": "app/action_email_schema_release.py:_migrate_pair",
+    "command": "python -c from app.action_email_schema_release import _paired_initializer; _paired_initializer()",
+    "existing_timeout_seconds": 300
+  },
+  "target13_or_inverse_or_capacity_pass": false,
+  "full_pass_receipt_exists": false,
+  "root_owned_failed_copy_temp_removed": true,
+  "freeze_files_15_requirements_6_runtime_371_and_pathset_unchanged": true,
+  "production_git_unchanged": true,
+  "diagnosis": "Actual child stage timing unknown; existing current15 proof total firstcold289.35s does not establish initializer time. Investigate measured stage costs and existing release timeout before choosing fix. No blind runtime cap increase/retry.",
+  "limits": "Fresh independent SPEC and QUALITY approvals remain local-code evidence only. This failed real-data gate does not prove corruption or data equality. Denied author temporary directories remain untouched."
+}

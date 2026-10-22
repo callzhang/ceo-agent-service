@@ -1,0 +1,87 @@
+{
+  "observed_at_utc": "2026-10-18T01:30:18.029282+00:00",
+  "previous_deployed_predecessor": "4f3d52a0ef9ab20530707dcc9ca290496355b6f4",
+  "current_deployed_predecessor": "1fcbddda5fe1e13d7c71cc0462e428d66e336370",
+  "production_tracked_clean": true,
+  "changed_app_paths": [
+    "app/attempt_what_happened.py",
+    "app/reviewed_candidate_store.py",
+    "app/web_api/attempts.py"
+  ],
+  "changed_app_diff_sha256": "66398703e58b385300358c2382175d69add6759c40e88e2e775f0da8f9a6b2e6",
+  "source_spec_tree": "f7f6355b58da66e5f20f641349f0d6c304369fde",
+  "source_capsule_sha256": "79f04ccf0dcf7fcc7c6c1b903ce82df03f10f0f9bf19f299bc672d4988560eff",
+  "raw_native_email_hashes": {
+    "email_classifications": "12d962924856637010ba6a4342cda56392e7a82abf9428f70d440c2f4a1ddd00",
+    "email_messages": "b62fab188f81a472a5d921f4b8208dfc3b1117d204e6f9b9629c673deb31576d"
+  },
+  "raw_vs_intermediate13": {
+    "email_classifications": {
+      "same_columns": true,
+      "same_foreign_keys": true,
+      "same_indexes": true,
+      "different_objects": [
+        "trg_email_direct_action_blocks_plan_switch",
+        "trg_email_reply_dispatch_blocks_plan_switch",
+        "trg_email_unsubscribe_blocks_plan_switch"
+      ]
+    },
+    "email_messages": {
+      "same_columns": true,
+      "same_foreign_keys": true,
+      "same_indexes": true,
+      "different_objects": [
+        "trg_email_reply_dispatch_blocks_message_delete",
+        "trg_email_reply_dispatch_blocks_thread_update",
+        "trg_email_unsubscribe_blocks_message_delete",
+        "trg_email_unsubscribe_blocks_message_update"
+      ]
+    }
+  },
+  "initial_readonly_assertion": {
+    "outcome": "STOPPED",
+    "reason": "Compared post-Actions intermediate13 capsule with raw production116; its seven action-dependent triggers are translated by earlier migration stages",
+    "source_write": false,
+    "migration_started": false
+  },
+  "source_store_marker": "2026-10-13.5",
+  "source_email_version": 51,
+  "source_non_sqlite_table_count": 121,
+  "unchanged_schema_runtime_blobs": {
+    "app/email_store.py": {
+      "previous": "f08656683f96220087ed6b68331a96a7e97e16ae",
+      "current": "f08656683f96220087ed6b68331a96a7e97e16ae"
+    },
+    "app/store.py": {
+      "previous": "bbb1587b111188378ac93c8ff8660a7a05c2d8c2",
+      "current": "bbb1587b111188378ac93c8ff8660a7a05c2d8c2"
+    },
+    "app/action_storage.py": {
+      "previous": "ba84b50c56c90e7db0180283572ae6b948ad4bae",
+      "current": "ba84b50c56c90e7db0180283572ae6b948ad4bae"
+    },
+    "app/email_schema_release.py": {
+      "previous": "6508cf50ebff4d02658f07f3782123d18ead2644",
+      "current": "6508cf50ebff4d02658f07f3782123d18ead2644"
+    },
+    "app/action_schema_release.py": {
+      "previous": "61c83aeaa452002b69e5df6e1b0b0b4439f0042d",
+      "current": "61c83aeaa452002b69e5df6e1b0b0b4439f0042d"
+    },
+    "app/task_schema_release.py": {
+      "previous": "acc95b9032d8a9d944f35896c5e7a7843f62d732",
+      "current": "acc95b9032d8a9d944f35896c5e7a7843f62d732"
+    }
+  },
+  "change_meaning": "Read-only History current-vs-reused receipt attribution, existing first_agent_run_id; no schema/migration runtime change",
+  "scope": "Preliminary baseline observation only. Fresh-copy coordinator must validate raw116 source, then match intermediate13 exact canonical-source declarations before conversion. Reverify current production HEAD/full caller freeze before DB access; archive1fcb genuine predecessor for old read/write. Final integrated release must preserve History fix.",
+  "full_source_preflight_accepted": false,
+  "actual_copy_started": false,
+  "source_access": "URI mode=ro/query_only metadata transaction",
+  "database_write": false,
+  "deployment": false,
+  "source_ordinary_tables": 116,
+  "source_virtual_tables": 1,
+  "source_shadow_tables": 4,
+  "table_count_definition": "121 non-internal sqlite_schema table entries =116 ordinary +1virtual +4shadow; consistent with prior actual-copy ordinary count"
+}

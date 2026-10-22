@@ -1,0 +1,87 @@
+--- a/app/task20_definitions.py
++++ b/app/task20_definitions.py
+@@ -859,7 +859,7 @@
+             + " before "
+             + event
+             + " on tasks when old.record_type='feedback_iteration_decisions' begin "
+-            "select raise(abort,'feedback iteration decision is immutable'); end"
++            "select raise(abort,'feedback iteration decisions are append-only'); end"
+         )
+     number = "new." + task20_column("feedback_processing_rounds", "round_number")
+     for event, suffix in (("insert", "insert"), ("update of payload_json", "update")):
+@@ -870,7 +870,7 @@
+             + event
+             + " on tasks when new.record_type='feedback_processing_rounds' and "
+             "(typeof(" + number + ")<>'integer' or " + number + "<=0) begin "
+-            "select raise(abort,'feedback round number must be a positive integer'); end"
++            "select raise(abort,'feedback_processing_round_number_must_be_positive'); end"
+         )
+     for kind in TASK12_AUTOINCREMENT_KINDS:
+         name = "tasks:" + kind
+--- a/app/task12_storage.py
++++ b/app/task12_storage.py
+@@ -109,7 +109,7 @@
+         source.execute(
+             "create trigger validate_number before insert on number "
+             "when typeof(new.value)<>'integer' or new.value<=0 begin "
+-            "select raise(abort,'feedback round number must be a positive integer'); end"
++            "select raise(abort,'feedback_processing_round_number_must_be_positive'); end"
+         )
+         source.execute("insert into number values(?)", (value,))
+ 
+--- a/tests/test_task12_storage.py
++++ b/tests/test_task12_storage.py
+@@ -248,6 +248,7 @@
+         with pytest.raises(sqlite3.IntegrityError) as error:
+             operation()
+         assert error.value.sqlite_errorcode == sqlite3.SQLITE_CONSTRAINT_TRIGGER
++        assert str(error.value) == "feedback_processing_round_number_must_be_positive"
+     assert db.in_transaction and target.in_transaction
+ 
+ 
+@@ -639,8 +640,10 @@
+         ),
+         lambda: delete_task12(target, "feedback_iteration_decisions", identity),
+     ):
+-        with pytest.raises(sqlite3.IntegrityError):
++        with pytest.raises(sqlite3.IntegrityError) as error:
+             operation()
++        assert error.value.sqlite_errorcode == sqlite3.SQLITE_CONSTRAINT_TRIGGER
++        assert str(error.value) == "feedback iteration decisions are append-only"
+     snapshot(db, target, "feedback_iteration_decisions")
+ 
+ 
+@@ -856,3 +859,33 @@
+             type(expected[0][field]),
+             expected[0][field],
+         )
++
++
++@pytest.mark.parametrize("value", (None, 0, -1, "bad", 2.5))
++def test_round_regular_insert_update_preserve_native_error(db, target, value):
++    kind = "feedback_processing_rounds"
++    data = supplied(kind) | {"round_number": value}
++    for operation in (
++        lambda: insert(db, kind, supplied=data),
++        lambda: insert_task12(target, kind, data),
++    ):
++        with pytest.raises(sqlite3.IntegrityError) as error:
++            operation()
++        assert error.value.sqlite_errorcode == sqlite3.SQLITE_CONSTRAINT_TRIGGER
++        assert str(error.value) == "feedback_processing_round_number_must_be_positive"
++    assert db.in_transaction and target.in_transaction
++    good = supplied(kind)
++    identity = insert(db, kind, supplied=good).lastrowid
++    assert insert_task12(target, kind, good).lastrowid == identity
++    for operation in (
++        lambda: db.execute(
++            "update feedback_processing_rounds set round_number=? where id=?",
++            (value, identity),
++        ),
++        lambda: update_task12(target, kind, identity, {"round_number": value}),
++    ):
++        with pytest.raises(sqlite3.IntegrityError) as error:
++            operation()
++        assert error.value.sqlite_errorcode == sqlite3.SQLITE_CONSTRAINT_TRIGGER
++        assert str(error.value) == "feedback_processing_round_number_must_be_positive"
++    snapshot(db, target, kind)

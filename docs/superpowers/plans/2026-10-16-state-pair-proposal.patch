@@ -1,0 +1,43 @@
+--- a/app/action_email_schema_release.py
++++ b/app/action_email_schema_release.py
+@@ -23,0 +24,4 @@
++from app.state_definitions import state_projection
++from app.state_schema_release import (capture_state_source, migrate_state_schema,
++    restore_state_schema, state_schema_is_current)
++from app.state_storage import update_state_rows
+@@ -252 +256,4 @@
+-def _markers(db):
++def _markers(db, *, current=False):
++    if current and not state_schema_is_current(db):
++        raise ValueError("Email paired State target declaration mismatch")
++    source = state_projection("service_state") if current else "select * from main.service_state"
+@@ -254 +261 @@
+-        "select value,updated_at from main.service_state where key=?", (VERSION_KEY,)
++        f"select value,updated_at from ({source}) where key=?", (VERSION_KEY,)
+@@ -273,0 +281 @@
++        "state": source["state"],
+@@ -361,0 +370 @@
++        current["state"] = capture_state_source(db)
+@@ -367 +376 @@
+-        marker, versions = _markers(db)
++        marker, versions = _markers(db, current=True)
+@@ -425,0 +435 @@
++                migrate_state_schema(db, self.source_schema["state"])
+@@ -427,4 +437,3 @@
+-                db.execute(
+-                    "update main.service_state set value=?,updated_at=? where key=?",
+-                    (self.target_store_version, now, VERSION_KEY),
+-                )
++                update_state_rows(db, "service_state",
++                    {"value": self.target_store_version, "updated_at": now},
++                    where_sql="key=?", parameters=(VERSION_KEY,))
+@@ -452 +461,4 @@
+-                if _markers(db) == (self.original_version, self.versions):
++                current = db.execute(
++                    "select 1 from main.sqlite_schema where name='state' collate nocase"
++                ).fetchone() is not None
++                if not current:
+@@ -456,0 +469 @@
++                restore_state_schema(db, self.source_schema["state"])
+@@ -523,0 +537 @@
++        source["state"] = capture_state_source(db)

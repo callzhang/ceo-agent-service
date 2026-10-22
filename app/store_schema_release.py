@@ -117,8 +117,230 @@ def prepare_store_schema_release(
         )
 
 
-def prepare_database_schema_release(root: Path, path: Path):
+def prepare_database_schema_release(root: Path, path: Path, *, recovery_source_path: Path | None = None):
     from app import email_schema_release
+
+    from app.action_email_schema_release import (
+        TARGET_STORE_VERSION, TARGET_EMAIL_VERSION, require_current_email_pair,
+        prepare_action_email_schema_release, _migrate_pair,
+    )
+    target = (_target_store_version(root), email_schema_release._target_schema_version(root) if (root / "app" / "email_store.py").exists() else None)
+    from app.current_schema_manifest import STORE_VERSION as CURRENT_STORE_VERSION, EMAIL_VERSION as CURRENT_EMAIL_VERSION, require_current_pair
+    if target == (CURRENT_STORE_VERSION, CURRENT_EMAIL_VERSION) and path.exists():
+        from app.action_entity_schema_release import (
+            SOURCE_STORE_VERSION as ACTION_ENTITY_SOURCE_VERSION,
+            ActionEntitySchemaRelease,
+            prepare_action_entity_release,
+        )
+        from app.state_definitions import state_projection
+        with closing(sqlite3.connect(path.resolve().as_uri() + "?mode=ro", uri=True)) as db:
+            db.execute("begin")
+            tables = {row[0] for row in db.execute("select name from main.sqlite_schema where type='table'")}
+            marker = db.execute(f"select value from ({state_projection('service_state')}) where key=?",
+                                (VERSION_KEY,)).fetchone() if "state" in tables else None
+        if not tables or marker == (CURRENT_STORE_VERSION,):
+            require_current_pair(path)
+            return None
+        if marker == (ACTION_ENTITY_SOURCE_VERSION,):
+            return ActionEntitySchemaRelease(root, path, prepare_action_entity_release(path))
+        raise ValueError("unsupported current Action source schema; explicit paired release required")
+    from app.business_legacy_field_schema_release import (
+        TARGET_STORE_VERSION as LEGACY_FIELD_STORE_VERSION, EMAIL_VERSION as LEGACY_FIELD_EMAIL_VERSION,
+        prepare_legacy_business_field_schema_release, require_target_pair,
+    )
+    if target == (LEGACY_FIELD_STORE_VERSION, LEGACY_FIELD_EMAIL_VERSION) and path.exists():
+        from app.state_definitions import state_projection
+        with closing(sqlite3.connect(path.resolve().as_uri() + "?mode=ro", uri=True)) as db:
+            db.execute("begin")
+            tables = {row[0] for row in db.execute("select name from main.sqlite_schema where type='table'")}
+            marker = db.execute(f"select value from ({state_projection('service_state')}) "
+                                "where key=?", (VERSION_KEY,)).fetchone() if "state" in tables else None
+        if "state" not in tables or marker == (LEGACY_FIELD_STORE_VERSION,):
+            require_target_pair(path)
+            return None
+        return prepare_legacy_business_field_schema_release(root, path)
+    from app.logical_run_schema_release import (
+        TARGET_STORE_VERSION as LOGICAL_RUN_STORE_VERSION, EMAIL_VERSION as LOGICAL_RUN_EMAIL_VERSION,
+        prepare_logical_run_schema_release,
+    )
+    if target == (LOGICAL_RUN_STORE_VERSION, LOGICAL_RUN_EMAIL_VERSION) and path.exists():
+        from app.state_definitions import state_projection
+        with closing(sqlite3.connect(path.resolve().as_uri() + "?mode=ro", uri=True)) as db:
+            db.execute("begin")
+            tables = {row[0] for row in db.execute("select name from main.sqlite_schema where type='table'")}
+            marker = db.execute(f"select value from ({state_projection('service_state')}) "
+                                "where key=?", (VERSION_KEY,)).fetchone() if "state" in tables else None
+        if "state" not in tables or marker == (LOGICAL_RUN_STORE_VERSION,):
+            require_current_email_pair(path, store_version=LOGICAL_RUN_STORE_VERSION,
+                email_version=LOGICAL_RUN_EMAIL_VERSION, selection_references=True, result_references=True,
+                metadata_owner=True, execution_owner=True, sent_result_references=True,
+                shared_lifecycle=True, specialized_claims=True, task_lifecycle=True, postfix_owner=True, logical_owner=True)
+            return None
+        return prepare_logical_run_schema_release(root, path)
+    from app.prepared_action_schema_release import (
+        TARGET_STORE_VERSION as PREPARED_ACTION_STORE_VERSION, EMAIL_VERSION as PREPARED_ACTION_EMAIL_VERSION,
+        prepare_prepared_action_schema_release,
+    )
+    if target == (PREPARED_ACTION_STORE_VERSION, PREPARED_ACTION_EMAIL_VERSION) and path.exists():
+        from app.state_definitions import state_projection
+        with closing(sqlite3.connect(path.resolve().as_uri() + "?mode=ro", uri=True)) as db:
+            db.execute("begin")
+            tables = {row[0] for row in db.execute("select name from main.sqlite_schema where type='table'")}
+            marker = db.execute(f"select value from ({state_projection('service_state')}) "
+                                "where key=?", (VERSION_KEY,)).fetchone() if "state" in tables else None
+        if "state" not in tables or marker == (PREPARED_ACTION_STORE_VERSION,):
+            require_current_email_pair(path, store_version=PREPARED_ACTION_STORE_VERSION,
+                email_version=PREPARED_ACTION_EMAIL_VERSION, selection_references=True, result_references=True,
+                metadata_owner=True, execution_owner=True, sent_result_references=True,
+                shared_lifecycle=True, specialized_claims=True, task_lifecycle=True, postfix_owner=True)
+            return None
+        return prepare_prepared_action_schema_release(root, path)
+    from app.task_lifecycle_schema_release import (
+        TARGET_STORE_VERSION as TASK_LIFECYCLE_STORE_VERSION, EMAIL_VERSION as TASK_LIFECYCLE_EMAIL_VERSION,
+        prepare_task_lifecycle_schema_release,
+    )
+    if target == (TASK_LIFECYCLE_STORE_VERSION, TASK_LIFECYCLE_EMAIL_VERSION) and path.exists():
+        from app.state_definitions import state_projection
+        with closing(sqlite3.connect(path.resolve().as_uri() + "?mode=ro", uri=True)) as db:
+            db.execute("begin")
+            tables = {row[0] for row in db.execute("select name from main.sqlite_schema where type='table'")}
+            marker = db.execute(f"select value from ({state_projection('service_state')}) "
+                                "where key=?", (VERSION_KEY,)).fetchone() if "state" in tables else None
+        if "state" not in tables or marker == (TASK_LIFECYCLE_STORE_VERSION,):
+            require_current_email_pair(path, store_version=TASK_LIFECYCLE_STORE_VERSION,
+                email_version=TASK_LIFECYCLE_EMAIL_VERSION, selection_references=True, result_references=True,
+                metadata_owner=True, execution_owner=True, sent_result_references=True,
+                shared_lifecycle=True, specialized_claims=True, task_lifecycle=True)
+            return None
+        return prepare_task_lifecycle_schema_release(root, path)
+    from app.specialized_action_schema_release import (
+        TARGET_STORE_VERSION as SPECIALIZED_STORE_VERSION, EMAIL_VERSION as SPECIALIZED_EMAIL_VERSION,
+        prepare_specialized_action_schema_release,
+    )
+    if target == (SPECIALIZED_STORE_VERSION, SPECIALIZED_EMAIL_VERSION) and path.exists():
+        from app.state_definitions import state_projection
+        with closing(sqlite3.connect(path.resolve().as_uri() + "?mode=ro", uri=True)) as db:
+            db.execute("begin")
+            tables = {row[0] for row in db.execute("select name from main.sqlite_schema where type='table'")}
+            marker = db.execute(f"select value from ({state_projection('service_state')}) "
+                                "where key=?", (VERSION_KEY,)).fetchone() if "state" in tables else None
+        if "state" not in tables or marker == (SPECIALIZED_STORE_VERSION,):
+            require_current_email_pair(path, store_version=SPECIALIZED_STORE_VERSION,
+                email_version=SPECIALIZED_EMAIL_VERSION, selection_references=True, result_references=True,
+                metadata_owner=True, execution_owner=True, sent_result_references=True, shared_lifecycle=True, specialized_claims=True)
+            return None
+        return prepare_specialized_action_schema_release(root, path)
+    from app.shared_action_schema_release import (
+        TARGET_STORE_VERSION as SHARED_STORE_VERSION, EMAIL_VERSION as SHARED_EMAIL_VERSION,
+        prepare_shared_action_schema_release,
+    )
+    if target == (SHARED_STORE_VERSION, SHARED_EMAIL_VERSION) and path.exists():
+        from app.state_definitions import state_projection
+        with closing(sqlite3.connect(path.resolve().as_uri() + "?mode=ro", uri=True)) as db:
+            db.execute("begin")
+            tables = {row[0] for row in db.execute("select name from main.sqlite_schema where type='table'")}
+            marker = db.execute(f"select value from ({state_projection('service_state')}) "
+                                "where key=?", (VERSION_KEY,)).fetchone() if "state" in tables else None
+        if "state" not in tables or marker == (SHARED_STORE_VERSION,):
+            require_current_email_pair(path, store_version=SHARED_STORE_VERSION,
+                email_version=SHARED_EMAIL_VERSION, selection_references=True, result_references=True,
+                metadata_owner=True, execution_owner=True, sent_result_references=True, shared_lifecycle=True)
+            return None
+        return prepare_shared_action_schema_release(root, path)
+    from app.sent_result_schema_release import (
+        TARGET_STORE_VERSION as SENT_STORE_VERSION, EMAIL_VERSION as SENT_EMAIL_VERSION,
+        prepare_sent_result_schema_release,
+    )
+    if target == (SENT_STORE_VERSION, SENT_EMAIL_VERSION) and path.exists():
+        from app.state_definitions import state_projection
+        with closing(sqlite3.connect(path.resolve().as_uri() + "?mode=ro", uri=True)) as db:
+            db.execute("begin")
+            tables = {row[0] for row in db.execute("select name from main.sqlite_schema where type='table'")}
+            marker = db.execute(f"select value from ({state_projection('service_state')}) "
+                                "where key=?", (VERSION_KEY,)).fetchone() if "state" in tables else None
+        if "state" not in tables or marker == (SENT_STORE_VERSION,):
+            require_current_email_pair(path, store_version=SENT_STORE_VERSION,
+                email_version=SENT_EMAIL_VERSION, selection_references=True, result_references=True,
+                metadata_owner=True, execution_owner=True, sent_result_references=True)
+            return None
+        return prepare_sent_result_schema_release(root, path)
+    from app.execution_owner_schema_release import (
+        TARGET_STORE_VERSION as EXECUTION_STORE_VERSION, EMAIL_VERSION as EXECUTION_EMAIL_VERSION,
+        prepare_execution_owner_schema_release,
+    )
+    if target == (EXECUTION_STORE_VERSION, EXECUTION_EMAIL_VERSION) and path.exists():
+        from app.state_definitions import state_projection
+        with closing(sqlite3.connect(path.resolve().as_uri() + "?mode=ro", uri=True)) as db:
+            db.execute("begin")
+            tables = {row[0] for row in db.execute("select name from main.sqlite_schema where type='table'")}
+            marker = db.execute(f"select value from ({state_projection('service_state')}) "
+                                "where key=?", (VERSION_KEY,)).fetchone() if "state" in tables else None
+        if "state" not in tables or marker == (EXECUTION_STORE_VERSION,):
+            require_current_email_pair(path, store_version=EXECUTION_STORE_VERSION,
+                email_version=EXECUTION_EMAIL_VERSION, selection_references=True, result_references=True,
+                metadata_owner=True, execution_owner=True)
+            return None
+        return prepare_execution_owner_schema_release(root, path)
+    from app.email_metadata_schema_release import (
+        TARGET_STORE_VERSION as METADATA_STORE_VERSION, TARGET_EMAIL_VERSION as METADATA_EMAIL_VERSION,
+        prepare_email_metadata_schema_release,
+    )
+    if target == (METADATA_STORE_VERSION, METADATA_EMAIL_VERSION) and path.exists():
+        from app.state_definitions import state_projection
+        with closing(sqlite3.connect(path.resolve().as_uri() + "?mode=ro", uri=True)) as db:
+            db.execute("begin")
+            tables = {row[0] for row in db.execute("select name from main.sqlite_schema where type='table'")}
+            marker = db.execute(f"select value from ({state_projection('service_state')}) "
+                                "where key=?", (VERSION_KEY,)).fetchone() if "state" in tables else None
+        if "state" not in tables or marker == (METADATA_STORE_VERSION,):
+            require_current_email_pair(path, store_version=METADATA_STORE_VERSION,
+                email_version=METADATA_EMAIL_VERSION, selection_references=True, result_references=True, metadata_owner=True)
+            return None
+        return prepare_email_metadata_schema_release(root, path)
+    from app.result_schema_release import (
+        TARGET_STORE_VERSION as RESULT_STORE_VERSION, EMAIL_VERSION as RESULT_EMAIL_VERSION,
+        prepare_result_schema_release,
+    )
+    if target == (RESULT_STORE_VERSION, RESULT_EMAIL_VERSION) and path.exists():
+        from app.state_definitions import state_projection
+        with closing(sqlite3.connect(path.resolve().as_uri() + "?mode=ro", uri=True)) as db:
+            db.execute("begin")
+            tables = {row[0] for row in db.execute("select name from main.sqlite_schema where type='table'")}
+            marker = db.execute(f"select value from ({state_projection('service_state')}) "
+                                "where key=?", (VERSION_KEY,)).fetchone() if "state" in tables else None
+        if "state" not in tables or marker == (RESULT_STORE_VERSION,):
+            require_current_email_pair(path, store_version=RESULT_STORE_VERSION,
+                email_version=RESULT_EMAIL_VERSION, selection_references=True, result_references=True)
+            return None
+        return prepare_result_schema_release(root, path)
+    from app.selection_schema_release import (
+        TARGET_STORE_VERSION as SELECTION_STORE_VERSION, EMAIL_VERSION,
+        prepare_selection_schema_release,
+    )
+    if target == (SELECTION_STORE_VERSION, EMAIL_VERSION) and path.exists():
+        from app.state_definitions import state_projection
+        with closing(sqlite3.connect(path.resolve().as_uri() + "?mode=ro", uri=True)) as db:
+            db.execute("begin")
+            tables = {row[0] for row in db.execute("select name from main.sqlite_schema where type='table'")}
+            marker = db.execute(f"select value from ({state_projection('service_state')}) "
+                                "where key=?", (VERSION_KEY,)).fetchone() if "state" in tables else None
+        if "state" not in tables or marker == (SELECTION_STORE_VERSION,):
+            require_current_email_pair(path, store_version=SELECTION_STORE_VERSION,
+                                       email_version=EMAIL_VERSION, selection_references=True)
+            return None
+        return prepare_selection_schema_release(root, path)
+    if target == (TARGET_STORE_VERSION, TARGET_EMAIL_VERSION) and path.exists():
+        with closing(sqlite3.connect(path.resolve().as_uri() + "?mode=ro", uri=True)) as db:
+            db.execute("begin")
+            tables = {row[0] for row in db.execute("select name from main.sqlite_schema where type='table'")}
+            marker = db.execute("select value from main.service_state where key=?", (VERSION_KEY,)).fetchone() if "service_state" in tables else None
+            email = db.execute("select coalesce(max(version),0) from main.email_schema_migrations").fetchone()[0] if "email_schema_migrations" in tables else None
+        if marker == ("2026-10-13.5",) and email == 51:
+            paired = prepare_action_email_schema_release(root, path, target_store_version=target[0], target_email_version=target[1], recovery_source_path=recovery_source_path)
+            paired.migrate = _migrate_pair
+            return paired
+        require_current_email_pair(path, store_version=target[0], email_version=target[1])
+        return None
 
     store = prepare_store_schema_release(root, path)
     email = email_schema_release.prepare_email_schema_release(root, path)

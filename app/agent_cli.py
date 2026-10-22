@@ -1,5 +1,5 @@
 from __future__ import annotations
-from app.task_storage import REPLY_TASK_INPUT_SQL, REPLY_TASK_SQL
+from app.task20_definitions import task20_projection
 
 import asyncio
 import atexit
@@ -7,7 +7,6 @@ import base64
 import argparse
 import hashlib
 import errno
-import importlib
 import json
 import mimetypes
 import os
@@ -23,18 +22,23 @@ from contextlib import closing
 from dataclasses import dataclass, replace
 from io import BytesIO
 from pathlib import Path
-from urllib.parse import quote
+from typing import Annotated
+from urllib.error import HTTPError
+from urllib.parse import quote, urlsplit
+from urllib.request import HTTPRedirectHandler, Request, build_opener
 from xml.etree import ElementTree
 
 from mcp.server.fastmcp import FastMCP
 from mcp.types import ToolAnnotations
+from pydantic import Field
 from pypdf import PdfReader
 from pypdf.errors import PdfReadError
 from pydantic_core import to_json
 
-from app.action_contract_catalog import read_system_action_contract as load_system_action_contract
+from app.action_contract_catalog import (
+    read_system_action_contract as load_system_action_contract,
+)
 from app.agent_result import EffectKind
-from app.weekly_report_contracts import WeeklyReport, WeeklyReportManifest
 from app.agent_effects import McpToolEffectRegistry
 from app.agent_skill_usage import resolve_authorized_skill_path
 from app.bounded_process import (
@@ -43,6 +47,8 @@ from app.bounded_process import (
 )
 from app.channel_gate import classify_cli_read_failure, classify_cli_write_failure
 from app.config import feedback_spike_vercel_base_url
+from app.dingtalk_message_payload_sharing import share_message_raw_payload
+from app.dingtalk_sheet_style_sharing import share_sheet_cell_styles
 from app.feedback_spike import sanitize_configured_feedback_links
 from app.leak_check import contains_credential, is_sensitive_field_name
 from app.native_cli_metadata import (
@@ -55,6 +61,9 @@ from app.native_cli_metadata import (
     prepare_material_output_root,
 )
 from app.task_artifacts import migrate_legacy_task_artifacts, task_artifact_directory
+
+REPLY_TASK_INPUT_SQL = task20_projection("reply_task_inputs")
+REPLY_TASK_SQL = task20_projection("reply_tasks")
 
 # Codex truncates one MCP text block at 1 MiB. Keep command output below that
 # boundary even after JSON escaping so the controlled receipt remains valid.
@@ -69,6 +78,7 @@ MAX_SPREADSHEET_COLUMNS = 64
 MAX_SPREADSHEET_PREVIEW_CHARS = 128 * 1024
 MAX_PDF_PAGES = 100
 MAX_OCR_AGENT_INPUT_BYTES = 700 * 1024
+MAX_OA_COMMENT_IMAGE_BYTES = 20 * 1024 * 1024
 CLI_TIMEOUT_SECONDS = 15 * 60
 CliOutputLimitError = ProcessOutputLimitError
 SPREADSHEET_MATERIAL_ROOTS = (
@@ -76,8 +86,9 @@ SPREADSHEET_MATERIAL_ROOTS = (
     Path(tempfile.gettempdir()).resolve(),
 )
 TEXT_MATERIAL_ROOTS = SPREADSHEET_MATERIAL_ROOTS
-MAX_TASK_FILE_BYTES = MAX_CLI_OUTPUT_BYTES
+MAX_TASK_FILE_BYTES = 2 * 1024 * 1024
 _TASK_ARTIFACT_TEMP_PREFIX = ".task-artifact-"
+CONSUMER_SCRIPT_SOURCE_ROOT = Path(__file__).resolve().parent.parent / "ci" / "shared-skills"
 
 
 @dataclass(frozen=True, slots=True)
@@ -474,7 +485,68 @@ def read_text_file(path: str) -> dict[str, object]:
 
 
 def _read_image_material(material_file, material_path: Path) -> dict[str, object]:
-    return _ocr_input_for_agent(material_file, material_path, file_format="image")
+    material_file.seek(0)
+    source_sha256 = hashlib.file_digest(material_file, "sha256").hexdigest()
+    material_file.seek(0)
+    original = material_file.read(MAX_OCR_AGENT_INPUT_BYTES + 1)
+    if len(original) <= MAX_OCR_AGENT_INPUT_BYTES:
+        return {
+            "format": "image",
+            "ocr_required": True,
+            "ocr_input_base64": base64.b64encode(original).decode("ascii"),
+            "ocr_mime_type": mimetypes.guess_type(material_path.name)[0]
+            or "application/octet-stream",
+            "path": str(material_path),
+            "sha256": source_sha256,
+        }
+
+    try:
+        from PIL import Image, ImageOps
+
+        material_file.seek(0)
+        with Image.open(material_file) as source:
+            width, height = source.size
+            image = ImageOps.exif_transpose(source).convert("RGBA")
+        background = Image.new("RGB", image.size, "white")
+        background.paste(image, mask=image.getchannel("A"))
+        image.close()
+        if max(background.size) > 3000:
+            background.thumbnail((3000, 3000))
+        try:
+            for scale in (1.0, 0.85, 0.7, 0.55):
+                current = background.copy()
+                try:
+                    if scale < 1.0:
+                        current.thumbnail((
+                            int(background.width * scale),
+                            int(background.height * scale),
+                        ))
+                    for quality in (88, 80, 72, 64):
+                        encoded = BytesIO()
+                        current.save(encoded, format="JPEG", quality=quality, optimize=True)
+                        payload = encoded.getvalue()
+                        if len(payload) <= MAX_OCR_AGENT_INPUT_BYTES:
+                            return {
+                                "format": "image",
+                                "ocr_required": True,
+                                "ocr_input_base64": base64.b64encode(payload).decode("ascii"),
+                                "ocr_mime_type": "image/jpeg",
+                                "ocr_source_mime_type": mimetypes.guess_type(material_path.name)[0]
+                                or "application/octet-stream",
+                                "ocr_source_dimensions": {"width": width, "height": height},
+                                "ocr_input_transformed": True,
+                                "path": str(material_path),
+                                "sha256": source_sha256,
+                            }
+                finally:
+                    current.close()
+        finally:
+            background.close()
+        raise AgentReadOnlyViolationError("image_ocr_bounded_render_too_large")
+    except AgentReadOnlyViolationError:
+        raise
+    except Exception as exc:
+        raise AgentReadOnlyViolationError("image_ocr_bounded_render_failed") from exc
 
 
 def _read_pdf_material(material_file, material_path: Path) -> dict[str, object]:
@@ -655,6 +727,179 @@ def _download_dingtalk_drive_file(
         }
         if len(to_json(result, indent=2)) > MAX_MCP_MATERIAL_RESPONSE_BYTES:
             raise AgentReadOnlyViolationError("drive_material_response_too_large")
+        return result
+    except BaseException:
+        material_path.unlink()
+        raise
+
+
+def _download_dingtalk_oa_comment_attachment(
+    *,
+    dws,
+    process_instance_id: str,
+    file_id: str,
+    file_name: str,
+    material_root: Path,
+) -> dict[str, object]:
+    """Read one exact OA operation-record attachment through its premium endpoint."""
+    if not process_instance_id.strip() or not file_id.strip():
+        raise AgentReadOnlyViolationError("oa_comment_attachment_identity_required")
+    if not _task_file_component(file_name) or len(file_name) > 255:
+        raise AgentReadOnlyViolationError("oa_comment_attachment_file_name_invalid")
+    is_pdf = Path(file_name).suffix.casefold() == ".pdf"
+    max_bytes = MAX_PDF_BYTES if is_pdf else MAX_SPREADSHEET_BYTES
+    contents = dws.download_oa_process_comment_attachment(
+        process_instance_id, file_id,
+    )
+    return _materialize_oa_attachment(
+        contents, process_instance_id=process_instance_id, file_id=file_id,
+        file_name=file_name, material_root=material_root,
+        error_prefix="oa_comment_attachment", max_bytes=max_bytes,
+    )
+
+
+def _download_dingtalk_oa_process_attachment(
+    *, dws, process_instance_id: str, file_id: str, file_name: str,
+    material_root: Path,
+) -> dict[str, object]:
+    """Read an OA form attachment without requiring Drive node permissions."""
+    if not process_instance_id.strip() or not file_id.strip():
+        raise AgentReadOnlyViolationError("oa_process_attachment_identity_required")
+    if not _task_file_component(file_name) or len(file_name) > 255:
+        raise AgentReadOnlyViolationError("oa_process_attachment_file_name_invalid")
+    is_pdf = Path(file_name).suffix.casefold() == ".pdf"
+    max_bytes = MAX_PDF_BYTES if is_pdf else MAX_SPREADSHEET_BYTES
+    contents = dws.download_oa_process_attachment_via_cli(
+        process_instance_id, file_id, max_bytes=max_bytes,
+    )
+    return _materialize_oa_attachment(
+        contents, process_instance_id=process_instance_id, file_id=file_id,
+        file_name=file_name, material_root=material_root,
+        error_prefix="oa_process_attachment", max_bytes=max_bytes,
+    )
+
+
+def _materialize_oa_attachment(
+    contents: bytes, *, process_instance_id: str, file_id: str,
+    file_name: str, material_root: Path, error_prefix: str, max_bytes: int,
+) -> dict[str, object]:
+    material_root.mkdir(parents=True, exist_ok=True)
+    if len(contents) > max_bytes:
+        raise AgentReadOnlyViolationError(f"{error_prefix}_file_too_large")
+    package_source = BytesIO(contents)
+    if zipfile.is_zipfile(package_source):
+        with zipfile.ZipFile(package_source) as package:
+            if sum(member.file_size for member in package.infolist()) > MAX_SPREADSHEET_BYTES:
+                raise AgentReadOnlyViolationError(
+                    f"{error_prefix}_expanded_package_too_large"
+                )
+    extension = Path(file_name).suffix
+    suffix = extension if extension[1:].isalnum() and len(extension) <= 16 else ""
+    prefix = hashlib.sha256(file_id.encode()).hexdigest()[:12] + "-"
+    with tempfile.NamedTemporaryFile(
+        mode="wb", prefix=prefix, suffix=suffix, dir=material_root, delete=False
+    ) as material_file:
+        material_file.write(contents)
+        material_path = Path(material_file.name)
+    try:
+        extracted = read_text_file(str(material_path))
+        result = {
+            "process_instance_id": process_instance_id,
+            "file_id": file_id,
+            "file_name": file_name,
+            **extracted,
+            "path": str(material_path),
+            "sha256": hashlib.sha256(contents).hexdigest(),
+        }
+        if len(to_json(result, indent=2)) > MAX_MCP_MATERIAL_RESPONSE_BYTES:
+            raise AgentReadOnlyViolationError(f"{error_prefix}_response_too_large")
+        return result
+    except BaseException:
+        material_path.unlink()
+        raise
+
+
+def _download_dingtalk_oa_comment_image(
+    *,
+    process_instance_id: str,
+    image_url: str,
+    material_root: Path,
+) -> dict[str, object]:
+    """Read one exact DingTalk OA comment image URL into bounded OCR input."""
+    if not process_instance_id.strip():
+        raise AgentReadOnlyViolationError("oa_comment_image_identity_required")
+    try:
+        parsed = urlsplit(image_url)
+        port = parsed.port
+    except ValueError as exc:
+        raise AgentReadOnlyViolationError("oa_comment_image_url_invalid") from exc
+    if (
+        parsed.scheme != "https"
+        or parsed.hostname != "static.dingtalk.com"
+        or parsed.username is not None
+        or parsed.password is not None
+        or port not in (None, 443)
+        or parsed.fragment
+        or not parsed.path.startswith("/media/")
+    ):
+        raise AgentReadOnlyViolationError("oa_comment_image_url_invalid")
+
+    class RejectRedirects(HTTPRedirectHandler):
+        def redirect_request(self, req, fp, code, msg, headers, newurl):
+            return None
+
+    material_root.mkdir(parents=True, exist_ok=True)
+    request = Request(image_url, headers={"User-Agent": "ceo-agent-service"})
+    try:
+        with build_opener(RejectRedirects()).open(request, timeout=15) as response:
+            if response.status != 200:
+                raise AgentReadOnlyViolationError(
+                    f"oa_comment_image_http_{response.status}"
+                )
+            if urlsplit(response.geturl()).hostname != "static.dingtalk.com":
+                raise AgentReadOnlyViolationError("oa_comment_image_origin_changed")
+            content_type = response.headers.get("Content-Type", "").split(";", 1)[0].lower()
+            if not content_type.startswith("image/"):
+                raise AgentReadOnlyViolationError("oa_comment_image_content_type_invalid")
+            declared_size = response.headers.get("Content-Length")
+            if declared_size:
+                try:
+                    declared_bytes = int(declared_size)
+                except ValueError as exc:
+                    raise AgentReadOnlyViolationError(
+                        "oa_comment_image_content_length_invalid"
+                    ) from exc
+                if declared_bytes > MAX_OA_COMMENT_IMAGE_BYTES:
+                    raise AgentReadOnlyViolationError("oa_comment_image_file_too_large")
+            contents = response.read(MAX_OA_COMMENT_IMAGE_BYTES + 1)
+    except HTTPError as exc:
+        raise AgentReadOnlyViolationError(
+            f"oa_comment_image_http_{exc.code}"
+        ) from exc
+    except OSError as exc:
+        raise AgentReadOnlyViolationError("oa_comment_image_download_failed") from exc
+    if len(contents) > MAX_OA_COMMENT_IMAGE_BYTES:
+        raise AgentReadOnlyViolationError("oa_comment_image_file_too_large")
+
+    suffix = mimetypes.guess_extension(content_type) or ".img"
+    digest = hashlib.sha256(contents).hexdigest()
+    with tempfile.NamedTemporaryFile(
+        mode="wb", prefix=digest[:12] + "-", suffix=suffix,
+        dir=material_root, delete=False,
+    ) as material_file:
+        material_file.write(contents)
+        material_path = Path(material_file.name)
+    try:
+        extracted = read_text_file(str(material_path))
+        result = {
+            "process_instance_id": process_instance_id,
+            "image_url": image_url,
+            "file_name": material_path.name,
+            **extracted,
+            "sha256": digest,
+        }
+        if len(to_json(result, indent=2)) > MAX_MCP_MATERIAL_RESPONSE_BYTES:
+            raise AgentReadOnlyViolationError("oa_comment_image_response_too_large")
         return result
     except BaseException:
         material_path.unlink()
@@ -1052,17 +1297,17 @@ async def unsubscribe_email_tool(task_id: int) -> dict[str, object]:
     ),
 )
 def read_skill_tool(
-    path: str | None = None, name: str | None = None
+    path: str | None = None, name: str | None = None,
+    query: str | None = None,
 ) -> dict[str, object]:
     """Read an installed Agent skill or its referenced Markdown safely.
 
-    With no source, return body-free name/use/path TSV with exact root aliases. Otherwise
-    pass exactly one source. `path` identifies a Markdown file inside an
-    installed Skill directory. `name` resolves one exact installed Skill's
-    metadata name and reads its SKILL.md through the same path authorization.
+    With no argument, return all names and paths without descriptions. `query`
+    returns full metadata for entries whose name/description contains every query term. `path` identifies
+    Markdown inside an installed Skill; `name` reads one exact SKILL.md.
     """
-    if path is not None and name is not None:
-        raise ValueError("read_skill accepts only one of path or name")
+    if sum(value is not None for value in (path, name, query)) > 1:
+        raise ValueError("read_skill accepts only one of path, name or query")
     from app import agent_skill_usage
     from app.business_skills import (
         installed_skill_catalog,
@@ -1071,9 +1316,22 @@ def read_skill_tool(
     )
 
     if path is None and name is None:
+        if query is not None:
+            terms = query.casefold().split()
+            if not terms:
+                raise ValueError("read_skill query must not be empty")
+        catalog = installed_skill_catalog(roots=agent_skill_usage.AGENT_SKILL_ROOTS)
+        if query is not None:
+            catalog = tuple(
+                entry for entry in catalog
+                if all(
+                    term in f"{entry.name} {entry.description}".casefold()
+                    for term in terms
+                )
+            )
         return {
             "catalog": render_skill_catalog_metadata(
-                installed_skill_catalog(roots=agent_skill_usage.AGENT_SKILL_ROOTS)
+                catalog, include_descriptions=query is not None
             )
         }
     if name is not None:
@@ -1143,6 +1401,44 @@ def _current_task_generation(db_path: Path | None, task_id: int | None) -> str:
     return row[0]
 
 
+def _bound_direct_chat_sender(
+    db_path: Path | None,
+    task_id: int | None,
+    generation: str | None,
+    conversation_id: str,
+) -> str | None:
+    """Use the claimed task's exact trigger as a direct-chat read target."""
+    if db_path is None or task_id is None:
+        return None
+    database = Path(db_path).resolve()
+    with closing(sqlite3.connect(f"file:{quote(str(database))}?mode=ro", uri=True)) as connection:
+        row = connection.execute(
+            "select tasks.execution_generation, tasks.channel, tasks.single_chat, "
+            "tasks.conversation_id, tasks.trigger_message_id, "
+            "inputs.trigger_message_json, inputs.input_compacted "
+            f"from ({REPLY_TASK_SQL}) tasks join ({REPLY_TASK_INPUT_SQL}) inputs "
+            "on inputs.id=tasks.claimed_input_id and inputs.reply_task_id=tasks.id "
+            "where tasks.id=?",
+            (task_id,),
+        ).fetchone()
+    if row is None or row[0] != generation:
+        raise ValueError("bound task generation or input changed")
+    if row[1] != "dingtalk" or not row[2] or row[3] != conversation_id:
+        return None
+    if row[6]:
+        raise ValueError("bound direct trigger identity is unavailable")
+    from app.dingtalk_models import DingTalkMessage
+
+    source = DingTalkMessage.model_validate_json(row[5])
+    if (
+        source.open_message_id != row[4]
+        or source.open_conversation_id != conversation_id
+        or not source.sender_open_dingtalk_id
+    ):
+        raise ValueError("bound direct trigger identity does not match the task")
+    return source.sender_open_dingtalk_id
+
+
 def _read_bound_task_skill(
     db_path: Path | None,
     task_id: int | None,
@@ -1196,6 +1492,68 @@ def _read_bound_task_skill(
     }
 
 
+def _approved_consumer_skill_script(name: str, script: str) -> Path:
+    """Resolve a reviewed script from the service-managed Skill package.
+
+    The task binding selects a Skill, not every executable shipped with it.
+    A package's explicit Consumer entrypoints and script-source digest
+    keep sender/approval helpers outside the Consumer tool surface.
+    """
+    source = CONSUMER_SCRIPT_SOURCE_ROOT / name
+    installed = Path.home() / ".agents" / "skills" / name
+    manifest_path = source / "consumer-scripts.json"
+    try:
+        manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError) as exc:
+        raise ValueError("Consumer Skill script is not reviewed") from exc
+    if (
+        not isinstance(manifest, dict)
+        or manifest.get("version") != 1
+        or not isinstance(manifest.get("entrypoints"), list)
+        or script not in manifest["entrypoints"]
+        or not isinstance(manifest.get("script_tree_sha256"), str)
+    ):
+        raise ValueError("Consumer Skill script is not reviewed")
+
+    def script_tree_digest(root: Path) -> str:
+        scripts_root = root / "scripts"
+        if not scripts_root.is_dir() or scripts_root.is_symlink():
+            raise ValueError("Consumer Skill scripts are unavailable")
+        digest = hashlib.sha256()
+        paths = sorted({
+            path for path in (
+                *scripts_root.rglob("*"),
+                *(path for path in root.rglob("*.py")
+                  if path.relative_to(root).parts[0] != "tests"),
+            )
+            if "__pycache__" not in path.relative_to(root).parts
+            and (path.is_file() or path.is_symlink())
+        })
+        if not paths:
+            raise ValueError("Consumer Skill scripts are unavailable")
+        for path in paths:
+            if path.is_symlink() or not path.is_file():
+                raise ValueError("Consumer Skill scripts are unavailable")
+            relative = path.relative_to(root).as_posix().encode("utf-8")
+            content = path.read_bytes()
+            digest.update(len(relative).to_bytes(4, "big"))
+            digest.update(relative)
+            digest.update(len(content).to_bytes(8, "big"))
+            digest.update(content)
+        return digest.hexdigest()
+
+    selected = (installed / script).resolve()
+    if (
+        not selected.is_relative_to((installed / "scripts").resolve())
+        or selected.suffix != ".py"
+        or not selected.is_file()
+        or script_tree_digest(source) != manifest["script_tree_sha256"]
+        or script_tree_digest(installed) != manifest["script_tree_sha256"]
+    ):
+        raise ValueError("Consumer Skill script is not reviewed")
+    return selected
+
+
 def _task_file_root(
     db_path: Path | None, task_id: int | None, generation: str | None, *, create: bool,
 ) -> Path:
@@ -1219,187 +1577,164 @@ def _task_file_path(root: Path, name: str) -> Path:
     return path
 
 
-def _read_task_file(root: Path, name: str) -> dict[str, str]:
+def _read_task_file(
+    root: Path, name: str, offset: int = 0, max_chars: int = 20000
+) -> dict[str, object]:
     path = _task_file_path(root, name)
     if not path.is_file():
         raise ValueError("task file is unavailable")
     data = path.read_bytes()
     if len(data) > MAX_TASK_FILE_BYTES:
         raise ValueError("task file is too large")
-    item = {"name": name, "content": data.decode("utf-8"),
-            "sha256": hashlib.sha256(data).hexdigest()}
+    text = data.decode("utf-8")
+    if type(offset) is not int or offset < 0 or not 1 <= max_chars <= 20000:
+        raise ValueError("invalid artifact read interval")
+    item = {
+        "name": name,
+        "content": text[offset : offset + max_chars],
+        "sha256": hashlib.sha256(data).hexdigest(),
+    }
+    item.update(
+        offset=offset,
+        total_chars=len(text),
+        next_offset=offset + max_chars if offset + max_chars < len(text) else None,
+    )
     if len(json.dumps(item).encode("utf-8")) > MAX_CLI_OUTPUT_BYTES:
         raise ValueError("task file readback is too large")
     return item
 
 
-def _bound_report(db_path: Path | None, task_id: int | None):
+def _bound_scheduled_run(db_path: Path | None, task_id: int | None):
     from app.store import AutoReplyStore
 
     if db_path is None or type(task_id) is not int or task_id <= 0:
-        raise AgentReadOnlyViolationError("agent_cli_task_binding_missing")
+        raise ValueError("scheduled task binding is missing")
     store = AutoReplyStore(db_path)
     task = store.get_reply_task(task_id)
     if task is None or task.channel != "scheduled":
-        raise AgentReadOnlyViolationError("agent_cli_report_task_invalid")
+        raise ValueError("scheduled task required")
     run = store.get_scheduled_task_run_for_reply_execution(task_id)
     if run is None:
-        raise AgentReadOnlyViolationError("agent_cli_report_run_missing")
-    skill_names = {ref.skill_name for ref in run.snapshot.skill_refs}
-    if "ceo-daily-report" in skill_names:
-        return store, run, "daily"
-    if "ceo-weekly-report" in skill_names:
-        return store, run, "weekly"
-    raise AgentReadOnlyViolationError("agent_cli_report_skill_missing")
+        raise ValueError("scheduled run is missing")
+    return store, run
 
 
-def _weekly_skill_module(name: str):
-    """Import one installed, fixed weekly-report script as a Python module."""
-    skill_root = Path.home() / ".agents" / "skills" / "ceo-weekly-report"
-    if not (skill_root / "scripts" / f"{name}.py").is_file():
-        raise AgentReadOnlyViolationError("weekly_report_script_unavailable")
-    skill_path = str(skill_root)
-    if skill_path not in sys.path:
-        sys.path.insert(0, skill_path)
-    module = importlib.import_module(f"scripts.{name}")
-    if not Path(module.__file__).resolve().is_relative_to(skill_root.resolve()):
-        raise AgentReadOnlyViolationError("weekly_report_script_mismatch")
-    return module
-
-
-def _write_bound_report_document(
-    *, db_path: Path | None, task_id: int | None, content: str,
-    expected_revision: int | None,
+def _write_document_artifact(
+    *,
+    root: Path,
+    artifact_name: str,
+    title: str,
+    doc_format: str,
+    node_id: str = "",
+    parent_id: str = "",
+    workspace_id: str = "",
+    expected_revision: int | None = None,
 ) -> dict[str, object]:
-    """Write only the report document resolved from this scheduled run."""
-    from app.config import workspace_path
-    from app.daily_report_facts import report_window_for_run
+    """Submit an exact task artifact to an explicit provider target."""
     from app.dws_client import DwsClient
-    from app.minutes_sync import MINUTES_ARCHIVE_DIRECTORY
-    from app.weekly_report_materials import (
-        MANAGEMENT_WIKI_NAME,
-        _at_most_one, _data_list, _nodes, _single,
-        collect_weekly_report_materials,
-    )
 
-    store, run, kind = _bound_report(db_path, task_id)
-    if not isinstance(content, str) or not content.strip():
-        raise ValueError("report document content is required")
-    if len(content.encode("utf-8")) > 2 * 1024 * 1024:
-        raise ValueError("report document content is too large")
+    material = _task_file_path(root, artifact_name)
+    if not material.is_file() or material.stat().st_size > MAX_TASK_FILE_BYTES:
+        raise ValueError("document artifact is unavailable or too large")
+    content = material.read_bytes().decode("utf-8")
+    if not content.strip() or not title.strip():
+        raise ValueError("document title and content are required")
+    if doc_format not in {"markdown", "jsonml"}:
+        raise ValueError("unsupported document format")
     dws = DwsClient()
-    if kind == "weekly":
-        try:
-            parsed = json.loads(content)
-        except json.JSONDecodeError as exc:
-            raise ValueError("weekly report JSONML is invalid") from exc
-        if not isinstance(parsed, list):
-            raise ValueError("weekly report JSONML must be an array")
-        errors = _weekly_skill_module("jsonml_check").check_document(parsed)
-        if errors:
-            raise ValueError("weekly report JSONML invalid: " + "; ".join(errors))
-        native_parse = dws.validate_report_jsonml(content)
-        assessment = native_parse.get("assessment")
-        if assessment is None and isinstance(native_parse.get("data"), dict):
-            assessment = native_parse["data"].get("assessment")
+    if doc_format == "jsonml":
+        parsed = dws.validate_report_jsonml(content)
+        assessment = parsed.get(
+            "assessment", (parsed.get("data") or {}).get("assessment")
+        )
         if assessment != "passed":
-            raise ValueError("weekly report document parser did not pass")
-    if kind == "daily":
-        report_date = report_window_for_run(store, run.id).report_date
-        title = f"CEO 每日总结 {report_date.isoformat()}"
-        workspace_id = _single(
-            [
-                item for item in _data_list(dws.run_json([
-                    dws.dws_bin, "wiki", "+space-list", "--type", "orgWikiSpace",
-                    "--limit", "50", "--page-all", "--format", "json",
-                ]), "spaces")
-                if item.get("name") == MANAGEMENT_WIKI_NAME
-            ],
-            "CEO management wiki",
-        )["workspaceId"]
-        folder = _at_most_one(
-            [node for node in _nodes(dws, workspace_id, parent_id=None)
-             if node.get("name") == "CEO 每日总结"],
-            "CEO daily report folder",
-        )
-        if folder is None:
-            dws.run_json([
-                dws.dws_bin, "wiki", "+node-create", "--workspace", workspace_id,
-                "--name", "CEO 每日总结", "--type", "folder", "--format", "json",
-            ])
-            folder = _single(
-                [node for node in _nodes(dws, workspace_id, parent_id=None)
-                 if node.get("name") == "CEO 每日总结"],
-                "CEO daily report folder",
-            )
-        folder_id = folder["nodeId"]
-        doc_format = "markdown"
-    else:
-        materials = collect_weekly_report_materials(
-            store, dws, workspace_path() / MINUTES_ARCHIVE_DIRECTORY,
-            run.scheduled_for,
-        )
-        docs = materials["documents"]
-        title = docs["target"]["title"]
-        folder_id = docs["target"]["year_page_id"]
-        workspace_id = docs["workspace_id"]
-        if not folder_id:
-            dws.run_json([
-                dws.dws_bin, "wiki", "+node-create", "--workspace", workspace_id,
-                "--folder", docs["meeting_folder_id"],
-                "--name", docs["target"]["year_page_name"],
-                "--type", "adoc", "--format", "json",
-            ])
-            folder_id = _single(
-                [node for node in _nodes(dws, workspace_id, parent_id=docs["meeting_folder_id"])
-                 if node.get("name") == docs["target"]["year_page_name"]],
-                "meeting year page",
-            )["nodeId"]
-        doc_format = "jsonml"
-
-    found = _at_most_one(
-        [node for node in _nodes(dws, workspace_id, parent_id=folder_id)
-         if node.get("name") == title],
-        "current report document",
-    )
-    if found is None:
-        result = dws.create_report_document(
-            name=title, content=content, doc_format=doc_format,
-            folder_id=folder_id,
-        )
-        found = _single(
-            [node for node in _nodes(dws, workspace_id, parent_id=folder_id)
-             if node.get("name") == title],
-            "created report document",
-        )
-        operation = "created"
-    else:
-        version = None
-        if kind == "weekly":
+            raise ValueError("document JSONML parser did not pass")
+    version = None
+    if node_id:
+        if parent_id:
+            raise ValueError("document update takes node_id, not parent_id")
+        if doc_format == "jsonml":
             if type(expected_revision) is not int or expected_revision < 0:
-                raise ValueError("weekly report requires expected revision")
-            version = dws.save_report_document_version(found["nodeId"])
+                raise ValueError("JSONML update requires expected_revision")
+            version = dws.save_report_document_version(node_id)
         result = dws.overwrite_report_document(
-            node_id=found["nodeId"], content=content, doc_format=doc_format,
+            node_id=node_id,
+            content=content,
+            doc_format=doc_format,
             expected_revision=expected_revision,
         )
         operation = "updated"
+    else:
+        if not parent_id or not workspace_id or expected_revision is not None:
+            raise ValueError(
+                "document creation requires parent_id and workspace_id without revision"
+            )
+
+        def matching_nodes():
+            payload = dws.run_json(
+                [
+                    dws.dws_bin,
+                    "wiki",
+                    "+node-list",
+                    "--workspace",
+                    workspace_id,
+                    "--folder",
+                    parent_id,
+                    "--page-all",
+                    "--format",
+                    "json",
+                ]
+            )
+            data = payload.get("data")
+            if (
+                not isinstance(data, dict)
+                or not isinstance(data.get("nodes"), list)
+                or data.get("hasMore")
+            ):
+                raise ValueError("document parent listing is incomplete")
+            return [item for item in data["nodes"] if item.get("name") == title]
+
+        if matching_nodes():
+            raise ValueError("document target appeared before creation; reread target")
+        result = dws.create_report_document(
+            name=title, content=content, doc_format=doc_format, folder_id=parent_id
+        )
+        found = matching_nodes()
+        if len(found) != 1:
+            raise ValueError("created document target is ambiguous")
+        node_id = found[0]["nodeId"]
+        operation = "created"
     readback = (
-        dws.fetch_report_document_full(found["nodeId"])
-        if kind == "weekly" else dws.read_doc(found["nodeId"])
+        dws.fetch_report_document_full(node_id)
+        if doc_format == "jsonml"
+        else dws.read_doc(node_id)
     )
-    receipt = {
-        "operation": operation, "node_id": found["nodeId"], "title": title,
-        "provider_result": result, "readback": readback,
-        "saved_version": version if kind == "weekly" and operation == "updated" else None,
+    raw = json.dumps(readback, ensure_ascii=False).encode("utf-8")
+    receipt_name = (
+        hashlib.sha256(raw).hexdigest()
+        + ".readback.json"
+    )
+    _task_file_path(root, receipt_name).write_bytes(raw)
+    return {
+        "operation": operation,
+        "node_id": node_id,
+        "title": title,
+        "provider_result": result,
+        "saved_version": version,
+        "content_sha256": hashlib.sha256(content.encode()).hexdigest(),
+        "readback": {
+            "artifact_name": receipt_name,
+            "sha256": hashlib.sha256(raw).hexdigest(),
+            "bytes": len(raw),
+        },
     }
-    if kind == "daily":
-        receipt["folder"] = folder
-    return receipt
 
 
 def build_role_server(
-    role: str, *, task_id: int | None = None, db_path: Path | None = None,
+    role: str,
+    *,
+    task_id: int | None = None,
+    db_path: Path | None = None,
     execution_generation: str | None = None,
 ) -> FastMCP:
     """Expose only the operations owned by one Agent role."""
@@ -1407,20 +1742,34 @@ def build_role_server(
         raise ValueError("unsupported agent role")
     artifact_generation = (
         _current_task_generation(db_path, task_id)
-        if task_id is not None and db_path is not None else None
+        if task_id is not None and db_path is not None
+        else None
     )
     if execution_generation is not None and artifact_generation != execution_generation:
         raise ValueError("task file generation changed")
-    bound = FastMCP("agent_cli", instructions="Task-bound Agent reads and Consumer report documents")
-    read = ToolAnnotations(readOnlyHint=True, destructiveHint=False,
-                           idempotentHint=True, openWorldHint=True)
-    write = ToolAnnotations(readOnlyHint=False, destructiveHint=False,
-                            idempotentHint=False, openWorldHint=True)
+    bound = FastMCP(
+        "agent_cli",
+        instructions="Task-bound Agent reads, artifacts and explicit documents",
+    )
+    read = ToolAnnotations(
+        readOnlyHint=True,
+        destructiveHint=False,
+        idempotentHint=True,
+        openWorldHint=True,
+    )
+    write = ToolAnnotations(
+        readOnlyHint=False,
+        destructiveHint=False,
+        idempotentHint=False,
+        openWorldHint=True,
+    )
     bound.add_tool(read_skill_tool, name="read_skill", annotations=read)
     bound.add_tool(read_text_file_tool, name="read_text_file", annotations=read)
     bound.add_tool(read_spreadsheet_tool, name="read_spreadsheet", annotations=read)
     drive_material_directory: tempfile.TemporaryDirectory[str] | None = None
     drive_material_paths: dict[tuple[str, str, str], Path] = {}
+    oa_comment_material_paths: dict[tuple[str, str, str], Path] = {}
+    oa_process_material_paths: dict[tuple[str, str, str], Path] = {}
 
     def read_dingtalk_drive_file(
         node_id: str, space_id: str, file_name: str,
@@ -1478,6 +1827,175 @@ def build_role_server(
         annotations=read,
     )
 
+    def read_dingtalk_oa_process_attachment(
+        process_instance_id: str,
+        file_id: str,
+        file_name: str,
+        page_number: int | None = None,
+    ) -> dict[str, object]:
+        """Read one exact OA form attachment through the process-scoped download.
+
+        Use the process instance and file ID from read_dingtalk_oa, even when
+        generic Drive access is denied. Scanned PDFs return one-based
+        ocr_page_numbers; pass a listed page_number for bounded OCR input.
+        """
+        nonlocal drive_material_directory
+        if not process_instance_id.strip() or not file_id.strip():
+            raise AgentReadOnlyViolationError("oa_process_attachment_identity_required")
+        if not _task_file_component(file_name) or len(file_name) > 255:
+            raise AgentReadOnlyViolationError("oa_process_attachment_file_name_invalid")
+        key = (process_instance_id, file_id, file_name)
+        if page_number is not None:
+            material_path = oa_process_material_paths.get(key)
+            if material_path is None or not material_path.is_file():
+                raise AgentReadOnlyViolationError("oa_process_attachment_page_source_unavailable")
+            if material_path.suffix.casefold() != ".pdf":
+                raise AgentReadOnlyViolationError("oa_process_attachment_page_requires_pdf")
+            with material_path.open("rb") as source:
+                source_sha256 = hashlib.file_digest(source, "sha256").hexdigest()
+            return _pdf_page_ocr_input(
+                material_path, page_number=page_number,
+                source_sha256=source_sha256,
+            )
+        if drive_material_directory is None:
+            drive_material_directory = tempfile.TemporaryDirectory(prefix="oa-review-")
+            atexit.register(drive_material_directory.cleanup)
+        from app.dws_client import DwsClient
+        result = _download_dingtalk_oa_process_attachment(
+            dws=DwsClient(), process_instance_id=process_instance_id,
+            file_id=file_id, file_name=file_name,
+            material_root=Path(drive_material_directory.name),
+        )
+        oa_process_material_paths[key] = Path(str(result["path"]))
+        return result
+
+    bound.add_tool(
+        read_dingtalk_oa_process_attachment,
+        name="read_dingtalk_oa_process_attachment",
+        annotations=read,
+    )
+
+    def read_dingtalk_oa_comment_attachment(
+        process_instance_id: str,
+        file_id: str,
+        file_name: str,
+        page_number: int | None = None,
+    ) -> dict[str, object]:
+        """Read one exact premium OA comment attachment and return bounded OCR input.
+
+        Use the file_id and file_name from read_dingtalk_oa_records. Scanned PDFs
+        return one-based ocr_page_numbers; pass a listed page_number to receive
+        a bounded JPEG for ai_services.ocr_document. The exact file remains only
+        for this MCP process lifetime. An unavailable premium download is a
+        technical read failure, never evidence that the applicant omitted it.
+        """
+        nonlocal drive_material_directory
+        if not process_instance_id.strip() or not file_id.strip():
+            raise AgentReadOnlyViolationError("oa_comment_attachment_identity_required")
+        if not _task_file_component(file_name) or len(file_name) > 255:
+            raise AgentReadOnlyViolationError("oa_comment_attachment_file_name_invalid")
+        key = (process_instance_id, file_id, file_name)
+        if page_number is not None:
+            material_path = oa_comment_material_paths.get(key)
+            if material_path is None or not material_path.is_file():
+                raise AgentReadOnlyViolationError(
+                    "oa_comment_attachment_page_source_unavailable"
+                )
+            if material_path.suffix.casefold() != ".pdf":
+                raise AgentReadOnlyViolationError(
+                    "oa_comment_attachment_page_requires_pdf"
+                )
+            with material_path.open("rb") as source:
+                source_sha256 = hashlib.file_digest(source, "sha256").hexdigest()
+            return _pdf_page_ocr_input(
+                material_path, page_number=page_number,
+                source_sha256=source_sha256,
+            )
+
+        if drive_material_directory is None:
+            drive_material_directory = tempfile.TemporaryDirectory(
+                prefix="oa-review-"
+            )
+            atexit.register(drive_material_directory.cleanup)
+        from app.dws_client import DwsClient
+        result = _download_dingtalk_oa_comment_attachment(
+            dws=DwsClient(),
+            process_instance_id=process_instance_id,
+            file_id=file_id,
+            file_name=file_name,
+            material_root=Path(drive_material_directory.name),
+        )
+        oa_comment_material_paths[key] = Path(str(result["path"]))
+        return result
+
+    bound.add_tool(
+        read_dingtalk_oa_comment_attachment,
+        name="read_dingtalk_oa_comment_attachment",
+        annotations=read,
+    )
+
+    def authorize_dingtalk_oa_attachment_preview(
+        process_instance_id: str, file_id: str
+    ) -> dict[str, object]:
+        """Open preview access to one exact OA attachment for the service account.
+
+        Use when the OA attachment readers cannot download a file (for example
+        an unavailable premium comment download). Pass the process instance and
+        file ID from read_dingtalk_oa or read_dingtalk_oa_records, then read the
+        body with read_dingtalk_drive_file(node_id=file_id, space_id=<returned
+        space_id>, file_name). It grants the same preview access as opening the
+        attachment in DingTalk and changes nothing else.
+        """
+        if not process_instance_id.strip() or not file_id.strip():
+            raise AgentReadOnlyViolationError("oa_attachment_preview_identity_required")
+        from app.dws_client import DwsClient
+        return {
+            "process_instance_id": process_instance_id,
+            "file_id": file_id,
+            "space_id": DwsClient().authorize_oa_attachment_preview(
+                process_instance_id, file_id
+            ),
+        }
+
+    bound.add_tool(
+        authorize_dingtalk_oa_attachment_preview,
+        name="authorize_dingtalk_oa_attachment_preview",
+        annotations=ToolAnnotations(
+            readOnlyHint=False, destructiveHint=False,
+            idempotentHint=True, openWorldHint=True,
+        ),
+    )
+
+    def read_dingtalk_oa_comment_image(
+        process_instance_id: str,
+        image_url: str,
+    ) -> dict[str, object]:
+        """Read one image URL returned by read_dingtalk_oa_records for OCR.
+
+        Use this when an OA operation-record comment exposes an image URL
+        instead of a file_id. The fetch is limited to DingTalk's media origin,
+        does not follow redirects, and returns bounded OCR input and a digest.
+        The image remains only for this MCP process lifetime. Read failures are
+        technical evidence gaps, never evidence that material is missing.
+        """
+        nonlocal drive_material_directory
+        if drive_material_directory is None:
+            drive_material_directory = tempfile.TemporaryDirectory(
+                prefix="oa-review-"
+            )
+            atexit.register(drive_material_directory.cleanup)
+        return _download_dingtalk_oa_comment_image(
+            process_instance_id=process_instance_id,
+            image_url=image_url,
+            material_root=Path(drive_material_directory.name),
+        )
+
+    bound.add_tool(
+        read_dingtalk_oa_comment_image,
+        name="read_dingtalk_oa_comment_image",
+        annotations=read,
+    )
+
     def read_system_action_contract(
         capability: str,
         operation: str | None = None,
@@ -1505,12 +2023,25 @@ def build_role_server(
         """
         return _read_bound_task_skill(db_path, task_id, artifact_generation, name)
 
-    bound.add_tool(read_task_skill, name="read_task_skill", annotations=read)
+    bound.add_tool(
+        read_task_skill, name="read_task_skill", annotations=read,
+        structured_output=False,
+    )
 
-    def read_task_artifact(name: str) -> dict[str, str]:
-        """Read a text artifact from this task's current execution generation."""
+    def read_task_artifact(
+        name: str, offset: int = 0, max_chars: int = 20000
+    ) -> dict[str, object]:
+        """Read a text artifact using a zero-based character offset (default 0).
+
+        Start at 0 for the full document; offset=1 omits its first character.
+        Follow next_offset until null. Every response includes offset and
+        total_chars; sha256 identifies the entire file, not the returned slice.
+        """
         return _read_task_file(
-            _task_file_root(db_path, task_id, artifact_generation, create=False), name
+            _task_file_root(db_path, task_id, artifact_generation, create=False),
+            name,
+            offset,
+            max_chars,
         )
 
     def list_task_artifacts() -> dict[str, object]:
@@ -1597,15 +2128,15 @@ def build_role_server(
     def read_dingtalk_sheet_range(
         node_id: str, sheet_id: str, cell_range: str,
     ) -> dict[str, object]:
-        """Read an explicit A1 workbook range, bounded by the DWS read API."""
+        """Read a DWS-bounded A1 range. cellStyleRef indexes sharedCellStyles."""
         from app.dws_client import DwsClient
         if not node_id.strip() or not sheet_id.strip() or not cell_range.strip():
             raise ValueError("sheet node, ID, and range are required")
         dws = DwsClient()
-        return dws.run_json([
+        return share_sheet_cell_styles(dws.run_json([
             dws.dws_bin, "sheet", "range", "read", "--node", node_id,
             "--sheet-id", sheet_id, "--range", cell_range, "--format", "json",
-        ])
+        ]))
 
     def read_dingtalk_oa(process_instance_id: str) -> dict[str, object]:
         """Read the live DingTalk OA process and its current facts."""
@@ -1713,7 +2244,9 @@ def build_role_server(
         profiles = DwsClient().search_user_profiles(query)
         return {"users": [item.model_dump(mode="json") for item in profiles]}
 
-    def search_dingtalk_documents(query: str, page_size: int = 10) -> dict[str, object]:
+    def search_dingtalk_documents(
+        query: str, page_size: Annotated[int, Field(ge=1, le=20)] = 10,
+    ) -> dict[str, object]:
         """Find DingTalk documents by title before reading an exact node."""
         from app.dws_client import DwsClient
         if not query.strip() or type(page_size) is not int or not 1 <= page_size <= 20:
@@ -1723,19 +2256,44 @@ def build_role_server(
 
     def read_dingtalk_messages(
         conversation_id: str, title: str = "", single_chat: bool = False,
-        limit: int = 50,
+        limit: int = 50, direct_open_dingtalk_id: str = "",
     ) -> dict[str, object]:
-        """Read recent messages of an identified DingTalk conversation."""
+        """Read recent messages of an identified DingTalk conversation.
+
+        For the current bound direct-chat task, the exact trigger supplies the
+        sender's openDingTalkId when omitted. Other direct chats require
+        direct_open_dingtalk_id or a title. Groups need only conversation_id.
+
+        For repeated raw strings, raw_payload_field_refs maps each null raw
+        field to the same message's top-level field holding its exact value.
+        Unreferenced raw fields retain their original values.
+        """
         from app.dingtalk_models import DingTalkConversation
         from app.dws_client import DwsClient
         if type(limit) is not int or not 1 <= limit <= 100:
             raise ValueError("message read limit is invalid")
+        bound_sender = None
+        if not direct_open_dingtalk_id.strip() and not title.strip():
+            bound_sender = _bound_direct_chat_sender(
+                db_path, task_id, artifact_generation, conversation_id,
+            )
+            direct_open_dingtalk_id = bound_sender or ""
+        is_direct_chat = single_chat or bool(direct_open_dingtalk_id.strip())
+        if is_direct_chat and not direct_open_dingtalk_id.strip() and not title.strip():
+            raise ValueError("direct chat sender openDingTalkId or title is required")
         conversation = DingTalkConversation(
             open_conversation_id=conversation_id, title=title,
-            single_chat=single_chat, unread_point=0,
+            single_chat=is_direct_chat, unread_point=0,
+            direct_open_dingtalk_id=direct_open_dingtalk_id,
         )
         messages = DwsClient().read_recent_messages(conversation, limit=limit)
-        return {"messages": [item.model_dump(mode="json") for item in messages]}
+        if bound_sender and any(
+            message.open_conversation_id != conversation_id for message in messages
+        ):
+            raise ValueError("bound direct messages belong to another conversation")
+        return {"messages": [
+            share_message_raw_payload(item.model_dump(mode="json")) for item in messages
+        ]}
 
     def search_dingtalk_messages(
         query: str, start: str, end: str, limit: int = 100,
@@ -1814,64 +2372,195 @@ def build_role_server(
     def read_dingtalk_messages_in_window(
         conversation_id: str, start: str, end: str,
     ) -> dict[str, object]:
-        """Read one identified group's messages over the report window."""
+        """Read one identified conversation over an explicit time window."""
+        from app.dingtalk_models import DingTalkConversation
         from app.dws_client import DwsClient
         if not conversation_id.strip() or not start.strip() or not end.strip():
-            raise ValueError("group conversation and window are required")
+            raise ValueError("conversation and window are required")
         dws = DwsClient()
+        bound_sender = _bound_direct_chat_sender(
+            db_path, task_id, artifact_generation, conversation_id,
+        )
+        if bound_sender:
+            conversation = DingTalkConversation(
+                open_conversation_id=conversation_id, title="", single_chat=True,
+                unread_point=0, direct_open_dingtalk_id=bound_sender,
+            )
+            messages = dws.read_complete_message_window(conversation, start, end)
+            if any(message.open_conversation_id != conversation_id for message in messages):
+                raise ValueError("bound direct messages belong to another conversation")
+            return {
+                "complete": True, "hasMore": False,
+                "messages": [
+                    share_message_raw_payload(item.model_dump(mode="json"))
+                    for item in messages
+                ],
+            }
         return dws.run_json([
             dws.dws_bin, "chat", "+chat-messages", "--group", conversation_id,
             "--start", start, "--end", end, "--order", "asc", "--page-all",
             "--page-limit", "50", "--max-items", "1000", "--format", "json",
         ])
 
-    def daily_report_facts() -> dict[str, object]:
-        """Read the fixed service facts for this scheduled daily report."""
-        from app.daily_report_facts import collect_daily_report_facts, report_window_for_run
+    def read_scheduled_context() -> dict[str, object]:
+        """Read trigger, task version and raw historical completion facts."""
+        from app.service_activity import scheduled_context
+
+        store, run = _bound_scheduled_run(db_path, task_id)
+        context = scheduled_context(store, run.id)
+        context["artifact_directory"] = str(
+            _task_file_root(
+                db_path, task_id, artifact_generation, create=role == "consumer"
+            )
+        )
+        return context
+
+    def read_service_activity(
+        start: str, end: str, sources: list[str] | None = None
+    ) -> dict[str, object]:
+        """Read selected service facts in an explicit aware [start, end) interval.
+
+        sources: meetings, tasks, attention, emails, attempts, waiting. Attention
+        and waiting return current unresolved records with their timestamps.
+        """
+        from datetime import datetime
+        from app.service_activity import collect_service_activity
         from app.email_store import EmailStore
-        store, run, kind = _bound_report(db_path, task_id)
-        if kind != "daily":
-            raise AgentReadOnlyViolationError("daily_report_task_required")
-        return collect_daily_report_facts(
+
+        store, _run = _bound_scheduled_run(db_path, task_id)
+        return collect_service_activity(
             store,
             EmailStore(db_path, validate_rows=False),
-            report_window_for_run(store, run.id),
+            datetime.fromisoformat(start),
+            datetime.fromisoformat(end),
+            sources,
         )
 
-    def weekly_report_materials() -> dict[str, object]:
-        """Read the fixed inputs for this scheduled CEO weekly report."""
-        from app.config import workspace_path
-        from app.dws_client import DwsClient
-        from app.minutes_sync import MINUTES_ARCHIVE_DIRECTORY
-        from app.weekly_report_materials import collect_weekly_report_materials
-        store, run, kind = _bound_report(db_path, task_id)
-        if kind != "weekly":
-            raise AgentReadOnlyViolationError("weekly_report_task_required")
-        return collect_weekly_report_materials(
-            store, DwsClient(), workspace_path() / MINUTES_ARCHIVE_DIRECTORY,
-            run.scheduled_for,
-        )
-
-    def read_weekly_report_archive(path: str) -> dict[str, object]:
-        """Read one transcript named in this run's meeting archive index."""
-        from app.config import workspace_path
-        from app.minutes_sync import MINUTES_ARCHIVE_DIRECTORY
-        from app.weekly_report_materials import minutes_index, weekly_window
-        store, run, kind = _bound_report(db_path, task_id)
-        if kind != "weekly":
-            raise AgentReadOnlyViolationError("weekly_report_task_required")
-        archive_dir = workspace_path() / MINUTES_ARCHIVE_DIRECTORY
-        allowed = {
-            item["archive_path"]
-            for item in minutes_index(store, archive_dir, weekly_window(run.scheduled_for))
-            if item["archive_path"]
+    def _source_artifact(name: str, payload: dict) -> dict[str, object]:
+        if role == "audit":
+            name = "audit-" + name
+        root = _task_file_root(db_path, task_id, artifact_generation, create=True)
+        raw = json.dumps(payload, ensure_ascii=False).encode("utf-8")
+        _task_file_path(root, name).write_bytes(raw)
+        return {
+            "artifact_name": name,
+            "path": str(root / name),
+            "sha256": hashlib.sha256(raw).hexdigest(),
+            "bytes": len(raw),
         }
-        if path not in allowed:
-            raise AgentReadOnlyViolationError("weekly_report_archive_not_in_run")
-        material = Path(path)
-        if not material.is_file() or material.stat().st_size > MAX_TEXT_MATERIAL_BYTES:
-            raise AgentReadOnlyViolationError("weekly_report_archive_unavailable")
-        return {"path": path, "content": material.read_text(encoding="utf-8")}
+
+    def read_okr_roster(group_name: str) -> dict[str, object]:
+        """Read a group's stable roster; save complete source JSON as a task artifact."""
+        from app.cli import build_parser, settings_from_args
+        from app.weekly_okr_report import weekly_okr_roster
+
+        payload = weekly_okr_roster(
+            settings_from_args(
+                build_parser().parse_args(
+                    [
+                        "weekly-okr-roster",
+                        "--group-name",
+                        group_name,
+                        "--db",
+                        str(db_path),
+                    ]
+                )
+            ),
+            group_name=group_name,
+        )
+        return {
+            **_source_artifact("okr-roster.json", payload),
+            "member_count": len(payload["managers"]),
+        }
+
+    def read_okr_member(
+        user_id: str,
+        name: str,
+        period_label: str,
+        title: str = "",
+        open_dingtalk_id: str = "",
+    ) -> dict[str, object]:
+        """Read one member's live OKR and provenance, bounded to one source request."""
+        from app.cli import build_parser, settings_from_args
+        from app.weekly_okr_report import weekly_okr_member
+
+        payload = weekly_okr_member(
+            settings_from_args(
+                build_parser().parse_args(
+                    [
+                        "weekly-okr-member",
+                        "--user-id",
+                        user_id,
+                        "--name",
+                        name,
+                        "--period-label",
+                        period_label,
+                        "--db",
+                        str(db_path),
+                    ]
+                )
+            ),
+            user_id=user_id,
+            name=name,
+            period_label=period_label,
+            title=title,
+            open_dingtalk_id=open_dingtalk_id,
+        )
+        filename = (
+            "okr-member-" + hashlib.sha256(user_id.encode()).hexdigest() + ".json"
+        )
+        return {
+            **_source_artifact(filename, payload),
+            "user_id": user_id,
+            "source_outcome": payload.get("sourceOutcome"),
+        }
+
+    def read_dingtang_okr_score_detail(
+        period_id: str, objective_id: str
+    ) -> dict[str, object]:
+        """Read the current score batch and evaluator details from Dingteam OKR."""
+        from app.dingtang_okr_action import DingtangOkrBrowserClient
+
+        payload = DingtangOkrBrowserClient().read_score_detail(
+            period_id=period_id, objective_id=objective_id
+        )
+        filename = (
+            "okr-score-detail-"
+            + hashlib.sha256((period_id + ":" + objective_id).encode()).hexdigest()
+            + ".json"
+        )
+        return {
+            **_source_artifact(filename, payload),
+            "period_id": period_id,
+            "objective_id": objective_id,
+            "batch_id": payload.get("batch_id"),
+        }
+
+    def read_meeting_archive(meeting_id: str) -> dict[str, str]:
+        """Read the archive attached to a discovered meeting's stable source ID."""
+        from app.config import workspace_path
+        from app.minutes_sync import MINUTES_ARCHIVE_DIRECTORY, archive_path_for
+
+        store, _run = _bound_scheduled_run(db_path, task_id)
+        job = store.get_meeting_alignment_job_by_meeting_id(meeting_id)
+        if job is None:
+            raise ValueError("meeting archive source is missing")
+        source = json.loads(job.source_json or "{}")
+        basic = (source.get("minutes_info") or {}).get("result") or {}
+        path = archive_path_for(
+            workspace_path() / MINUTES_ARCHIVE_DIRECTORY, basic, task_uuid=meeting_id
+        )
+        if (
+            path is None
+            or not path.is_file()
+            or path.stat().st_size > MAX_TEXT_MATERIAL_BYTES
+        ):
+            raise ValueError("meeting archive is unavailable")
+        return {
+            "meeting_id": meeting_id,
+            "path": str(path),
+            "content": path.read_text(encoding="utf-8"),
+        }
 
     for name, tool in (
         ("read_dingtalk_document", read_dingtalk_document),
@@ -1906,23 +2595,29 @@ def build_role_server(
         ("read_dingtalk_minutes", read_dingtalk_minutes),
         ("recent_dingtalk_conversations", recent_dingtalk_conversations),
         ("read_dingtalk_messages_in_window", read_dingtalk_messages_in_window),
-        ("daily_report_facts", daily_report_facts),
-        ("weekly_report_materials", weekly_report_materials),
-        ("read_weekly_report_archive", read_weekly_report_archive),
+        ("read_scheduled_context", read_scheduled_context),
+        ("read_okr_roster", read_okr_roster),
+        ("read_okr_member", read_okr_member),
+        ("read_dingtang_okr_score_detail", read_dingtang_okr_score_detail),
+        ("read_service_activity", read_service_activity),
+        ("read_meeting_archive", read_meeting_archive),
     ):
         bound.add_tool(tool, name=name, annotations=read)
 
     if role == "consumer":
-        def consumer_artifact_write(name: str, content: str) -> dict[str, str]:
+
+        def consumer_artifact_write(name: str, content: str) -> dict[str, object]:
             """Write a text artifact only in this task's current workspace generation."""
-            if not isinstance(content, str) or len(content.encode("utf-8")) > MAX_TASK_FILE_BYTES:
+            if (
+                not isinstance(content, str)
+                or len(content.encode("utf-8")) > MAX_TASK_FILE_BYTES
+            ):
                 raise ValueError("task file content is invalid or too large")
             root = _task_file_root(db_path, task_id, artifact_generation, create=True)
             path = _task_file_path(root, name)
-            if len(json.dumps({"name": name, "content": content,
-                               "sha256": "0" * 64}).encode("utf-8")) > MAX_CLI_OUTPUT_BYTES:
-                raise ValueError("task file readback is too large")
-            descriptor, temporary = tempfile.mkstemp(prefix=_TASK_ARTIFACT_TEMP_PREFIX, dir=root)
+            descriptor, temporary = tempfile.mkstemp(
+                prefix=_TASK_ARTIFACT_TEMP_PREFIX, dir=root
+            )
             try:
                 with os.fdopen(descriptor, "wb") as output:
                     output.write(content.encode("utf-8"))
@@ -1934,59 +2629,78 @@ def build_role_server(
                     os.unlink(temporary)
             return _read_task_file(root, name)
 
-        bound.add_tool(consumer_artifact_write, name="consumer_artifact_write", annotations=write)
+        bound.add_tool(
+            consumer_artifact_write, name="consumer_artifact_write", annotations=write
+        )
 
-        def validate_weekly_report(
-            manifest: WeeklyReportManifest, report: WeeklyReport, previous_issues: list[dict],
+        def consumer_run_skill_script(
+            name: str, script: str, arguments: list[str] | None = None
         ) -> dict[str, object]:
-            """Validate a scheduled CEO weekly report using its installed Skill."""
-            _store, _run, kind = _bound_report(db_path, task_id)
-            if kind != "weekly":
-                raise AgentReadOnlyViolationError("weekly_report_task_required")
-            return _weekly_skill_module("validate_run").validate_run(
-                manifest, report, previous_issues
-            )
+            """Run a selected Skill's Python script in this task's artifact directory.
 
-        def render_weekly_report(
-            report: WeeklyReport, before: list,
-        ) -> dict[str, object]:
-            """Render and validate weekly report JSONML and its full draft."""
-            from app.dws_client import DwsClient
-            _store, _run, kind = _bound_report(db_path, task_id)
-            if kind != "weekly":
-                raise AgentReadOnlyViolationError("weekly_report_task_required")
-            renderer = _weekly_skill_module("render_dingtalk_jsonml")
-            checker = _weekly_skill_module("jsonml_check")
-            target_after = renderer.render_meeting_document(before, report)
-            draft = renderer.render_draft(report)
-            errors = checker.check_document(target_after) + checker.check_document(draft)
-            if errors:
-                raise ValueError("weekly report JSONML invalid: " + "; ".join(errors))
-            native_parse = DwsClient().validate_report_jsonml(
-                json.dumps(target_after, ensure_ascii=False)
+            Use relative script paths such as scripts/window.py. Arguments are
+            passed directly without a shell. Scripts should emit compact JSON
+            and save large inputs/outputs as task artifacts.
+            """
+            _read_bound_task_skill(db_path, task_id, artifact_generation, name)
+            path = _approved_consumer_skill_script(name, script)
+            skill_root = Path.home() / ".agents" / "skills" / name
+            root = _task_file_root(db_path, task_id, artifact_generation, create=True)
+            result = subprocess.run(
+                [sys.executable, str(path), *(arguments or [])],
+                cwd=root,
+                env={**os.environ, "PYTHONPATH": str(skill_root)},
+                capture_output=True,
+                text=True,
+                timeout=120,
             )
+            if len((result.stdout + result.stderr).encode()) > MAX_CLI_OUTPUT_BYTES:
+                raise ValueError(
+                    "Skill script output is too large; save output as an artifact"
+                )
             return {
-                "target_after": target_after,
-                "draft": draft,
-                "native_parse": native_parse,
+                "exit_code": result.returncode,
+                "stdout": result.stdout,
+                "stderr": result.stderr,
             }
 
+        bound.add_tool(
+            consumer_run_skill_script,
+            name="consumer_run_skill_script",
+            annotations=write,
+        )
+
         def consumer_document_write(
-            content: str, expected_revision: int | None = None,
+            artifact_name: str,
+            title: str,
+            doc_format: str = "markdown",
+            node_id: str = "",
+            parent_id: str = "",
+            workspace_id: str = "",
+            expected_revision: int | None = None,
         ) -> dict[str, object]:
-            """Publish this scheduled CEO report to its service-resolved document."""
-            if artifact_generation is None:
-                raise ValueError("task file binding is missing")
-            if _current_task_generation(db_path, task_id) != artifact_generation:
-                raise ValueError("task file generation changed")
-            return _write_bound_report_document(
-                db_path=db_path, task_id=task_id, content=content,
+            """Write an exact artifact to an explicit document and return its readback receipt.
+
+            Update: node_id, plus expected_revision for JSONML. Create: parent_id
+            and workspace_id. Decide titles, destinations and business readiness
+            using the selected Skill. Read the returned readback artifact to verify.
+            """
+            _bound_scheduled_run(db_path, task_id)
+            root = _task_file_root(db_path, task_id, artifact_generation, create=False)
+            return _write_document_artifact(
+                root=root,
+                artifact_name=artifact_name,
+                title=title,
+                doc_format=doc_format,
+                node_id=node_id,
+                parent_id=parent_id,
+                workspace_id=workspace_id,
                 expected_revision=expected_revision,
             )
 
-        bound.add_tool(validate_weekly_report, name="validate_weekly_report", annotations=read)
-        bound.add_tool(render_weekly_report, name="render_weekly_report", annotations=read)
-        bound.add_tool(consumer_document_write, name="consumer_document_write", annotations=write)
+        bound.add_tool(
+            consumer_document_write, name="consumer_document_write", annotations=write
+        )
     return bound
 
 
@@ -1997,5 +2711,9 @@ if __name__ == "__main__":
     parser.add_argument("--db", type=Path, required=True)
     parser.add_argument("--execution-generation", required=True)
     args = parser.parse_args()
-    build_role_server(args.role, task_id=args.task_id, db_path=args.db,
-                      execution_generation=args.execution_generation).run(transport="stdio")
+    build_role_server(
+        args.role,
+        task_id=args.task_id,
+        db_path=args.db,
+        execution_generation=args.execution_generation,
+    ).run(transport="stdio")

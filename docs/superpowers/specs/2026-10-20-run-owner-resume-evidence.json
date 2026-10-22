@@ -1,0 +1,197 @@
+{
+  "source_head": "45f3324be3c568b9f91709c25306e19d73a15087",
+  "recovery_snapshot": "6a863f1bb7872a9a6b3bc5c5b2583c65d7ed05c6",
+  "recovered_worktree": "/Users/derek/.codex/worktrees/business-model-run-owner-resume/ceo-agent-service",
+  "created_at": "2026-10-20T21:20:35.838510+00:00",
+  "original_candidate_sha256": "db3590667e9733d74239c822e63bb994e7b7a54dfc5de4260bcc8314bdf01acd",
+  "original_source_manifest_sha256": "26b37dd671a2b12f5871c31956a4f7a0c6368c38acbe6e639c7fb2ef23994fba",
+  "original_evidence_directory_missing": true,
+  "old_raw_hashes_are_historical_only": true,
+  "root_prior_resume_evidence": {
+    "path": "/tmp/ceo-run-owner-resume.hNYHlS/resumption-evidence.json",
+    "sha256": "ef9f45382bf2df20d85c66d275d17cc875ef298f37ccedfcc05feafa450f57dc",
+    "original_1232_hashes_checked_by_root": true,
+    "core": {
+      "files": [
+        "tests/test_logical_run_owner.py",
+        "tests/test_logical_run_release.py"
+      ],
+      "passed": 17,
+      "seconds": 87.23,
+      "exit_code": 0,
+      "raw_log": "/tmp/ceo-run-owner-resume.hNYHlS/core.log",
+      "sha256": "5506edf100cb97e13b2e57148304e6443a672210452406a41c11880ea1044f44"
+    },
+    "red": {
+      "node_files": [
+        "tests/test_repository_updater.py::test_quiet_counts_meeting_preparation_and_claimed_delivery",
+        "tests/test_error_code_migration.py::test_migration_updates_projection_and_preserves_run_history"
+      ],
+      "exit_code": 1,
+      "failed": 6,
+      "seconds": 3.43,
+      "raw_log": "/tmp/ceo-run-owner-resume.hNYHlS/fixture-red.log",
+      "sha256": "b4f765f2cf352016deb80e6c1a20eae28d250142e68aee337e0adc76b6407d10",
+      "conclusions": [
+        "processing quiet fixture inserts retired Run kind",
+        "four other quiet cases demonstrate real current marker19.10 refusal",
+        "error migration fixture fails earlier generated record_type insert; exact45f baseline not yet established"
+      ]
+    }
+  },
+  "evidence_directory": "/tmp/ceo-c2-run-owner-resume.AsVSoz",
+  "source_archive": {
+    "source_ref": "45f3324be3c568b9f91709c25306e19d73a15087",
+    "archive_sha256": "554449d5e6da694b55aabaa7bce7ec44022dd59a8ee6f42b78387b553d0345cf",
+    "source_root": "/tmp/ceo-c2-run-owner-resume.AsVSoz/actual45f",
+    "files": {
+      "tests/test_error_code_migration.py": "9f95f3cf62a72ddc0a52880b93cef119de21e737b36b01ce950c6bd5999c9bec",
+      "app/error_code_migration.py": "ed9fbcc4115b6123cc339c91a70046af0f760997db5e3f4d73acc173cedb246e",
+      "app/task_storage.py": "e53c32df9a8ff18d0c2804071267c7e630a19c8451f1590e49c977b4e4ad9f86"
+    }
+  },
+  "source_error_baseline_nodes": {
+    "test_migration_updates_projection_and_preserves_run_history": "7548dd73bf6cfe32345d964d6d06994251a6d8555bcf5dffeadca40d2595ba66",
+    "test_migration_maps_meeting_target_failure": "807ebefedbdeca8c7017011e96b41391aef260fc25477fdb1c019c6b93ec60c0"
+  },
+  "source_equivalent_fixture": {
+    "path": "/tmp/ceo-c2-run-owner-resume.AsVSoz/actual45f/tests/test_error_code_migration_c2_equivalent.py",
+    "sha256": "4816ba265214f8f7ae5f1cdb5baebf9bb2267453a4076aee39d2c1b590726160",
+    "assertions_exact": 9,
+    "changes": "Task fixture writer/projection only; source Meeting Run writer and original assertions retained"
+  },
+  "fresh_runs": {
+    "publication-red.log": {
+      "exit_code": 1,
+      "failed": 11,
+      "passed": 2,
+      "seconds": 23.87,
+      "path": "/tmp/ceo-c2-run-owner-resume.AsVSoz/publication-red.log",
+      "sha256": "18158c39626a6ebfd4c8a9ce688e22a055f108246143d8c686122042aa8ec9c9"
+    },
+    "source-error-baseline.log": {
+      "exit_code": 1,
+      "failed": 2,
+      "seconds": 1.82,
+      "actual45f_original_input": true,
+      "path": "/tmp/ceo-c2-run-owner-resume.AsVSoz/source-error-baseline.log",
+      "sha256": "1cc876b7868ed14219b261f00f052fa83bbc9145534d1b80e22d53e452e40590"
+    },
+    "source-error-equivalent.log": {
+      "exit_code": 0,
+      "passed": 2,
+      "seconds": 2.61,
+      "separate_equivalent_fixture": true,
+      "path": "/tmp/ceo-c2-run-owner-resume.AsVSoz/source-error-equivalent.log",
+      "sha256": "61d96350a11d3c29b7079ad5bbfcb1dc8afa648f6a7a34e092cd0e08ca08cd45"
+    },
+    "current-error-red.log": {
+      "exit_code": 1,
+      "failed": 1,
+      "passed": 1,
+      "seconds": 4.64,
+      "path": "/tmp/ceo-c2-run-owner-resume.AsVSoz/current-error-red.log",
+      "sha256": "f974924e07dc06cfdc196aac6184a7d4576825cb89fb91515ef805b60ebcc149"
+    },
+    "publication-green.log": {
+      "exit_code": 0,
+      "passed": 15,
+      "seconds": 27.21,
+      "path": "/tmp/ceo-c2-run-owner-resume.AsVSoz/publication-green.log",
+      "sha256": "6e5aa4a26539fd5cc2e150c12ff6dd6e8dee74ec8a30f1b0b643a096596e7ff9"
+    },
+    "publication-regressions.log": {
+      "exit_code": 0,
+      "passed": 96,
+      "seconds": 101.93,
+      "includes_publication_green_15": true,
+      "path": "/tmp/ceo-c2-run-owner-resume.AsVSoz/publication-regressions.log",
+      "sha256": "7fe3ad3c6db885281f7f4cccd3ec50407db6c94a64b78a30564b66db76626876"
+    },
+    "core.log": {
+      "exit_code": 0,
+      "passed": 17,
+      "seconds": 99.42,
+      "original_core18_not_claimed_reproduced": true,
+      "path": "/tmp/ceo-c2-run-owner-resume.AsVSoz/core.log",
+      "sha256": "36b67730c29dd3aeda05449639a44095756dd1b5c286660ff4f92ba5b74fdc08"
+    },
+    "frozen-verification.log": {
+      "exit_code": 0,
+      "frozen_files": 16,
+      "factory_outputs": 7,
+      "three_way_equal": true,
+      "path": "/tmp/ceo-c2-run-owner-resume.AsVSoz/frozen-verification.log",
+      "sha256": "10a4d8a197c100e94eb86f28cd3f4fe27e77a3716c9b44b0d57ce95596816901"
+    },
+    "lint.log": {
+      "exit_code": 0,
+      "python_files": 8,
+      "path": "/tmp/ceo-c2-run-owner-resume.AsVSoz/lint.log",
+      "sha256": "82b3e6a6c090a57601d22943bd23fca9218d1031dbe5a7b754092f9a156b4f18"
+    },
+    "final-checks.log": {
+      "exit_code": 0,
+      "path": "/tmp/ceo-c2-run-owner-resume.AsVSoz/final-checks.log",
+      "sha256": "0d22c25e98622ef330efad9d0b60d89f9710b970491c903e465be4d7ab60b23b"
+    }
+  },
+  "frozen_source_proof": {
+    "frozen_files": {
+      "app/run_storage.py": "ae57fb5d13aac35672cb07de38c9b515d49651ffebce20cf3b88398e40845718",
+      "app/runs11_definitions.py": "4e39bd7fb03c1ffb0f476c7d8b0251e430bb1d865528edba8cd67f03de570176",
+      "app/runs11_storage.py": "3a6fbd0064720236d1a90ed079b2921331305114f7601fb5373097d32a944bd5",
+      "app/runs11_schema_release.py": "9730fae5af1e1a2b6735e2dafe1c84901ae632eabba41cb70805077dbf5e1281",
+      "app/runs11_current_schema.py": "9ed26805186e659c14e7761eea6858221e9845f212c47d6bb4fcb692707ac7d1",
+      "app/native_standalone.py": "949cd583697806fd53b286fea125955677ab14c9ff230bcf5677e36381dd48b7",
+      "app/agent_runtime_contracts.py": "5647a468732f9d4f7e7f503a6db3c130969cf4cd61aed6b8b21431bad86999ba",
+      "app/task_lifecycle_definitions.py": "c01fcfd25260dd19d608f22eb93cccc9b17b4033f58a577ba0e590a9b0e5e32b",
+      "app/task_lifecycle_storage.py": "c47362748125407d4b44071fd25c03dcab980d1e5b67457b8b34a5b412a4845c",
+      "app/task_lifecycle_schema.py": "e11ebda1a234eeb820c000a4015dc2164884f1fbb795b48a2fbc3be2b4f776aa",
+      "app/task_lifecycle_current_schema.py": "0dc11e5827db806ba71f21bcb412ef4bb23a2769a4f8233999bd0d96fa4b51e3",
+      "app/task_lifecycle_schema_release.py": "ef3945e4344d782b6a37df700bcf8cef9b4dee9b76b53e0ce4f14874216180ef",
+      "app/prepared_action_schema.py": "71c908b11f6dedb059df837f3f7bc3e4f767744e47a9228db6c155fd2ec61c44",
+      "app/prepared_action_definitions.py": "777c6c082e76c40f9f6f9fef0f2909dba38dd333a55a3d6b3c08598d29d23d10",
+      "app/prepared_action_schema_release.py": "f062b115ff8fd20ffc79b03eee19272ae1403ed829daaf472aeacdf7ec09f22d",
+      "app/shared_action_lifecycle.py": "11c69b49047ef78cf838087420080658adcedb9a28f4f0ae2db3cf838d674e78"
+    },
+    "factory_output_hashes": {
+      "RunsOriginal": "d8e70e59bb03dcf9765e91f5acde5ed98862607a67bc1b8b07173d59117f6ed7",
+      "RunsTask": "af951904da641a3a6b040608aeca321964260a8b1e2ca2a740f02898ca5d5efc",
+      "RunsTaskWorkbench": "f3e6b43e2a4421b94b75a379ce1c30e31b2e3e3323bdcec00e12fbffcf7fb264",
+      "Runs11": "568d343317b3b006df0a162d1894f96c02cf1e187b0016fceb15fbdf2b358ebe",
+      "ActionsDefault": "2554bafa7a8bd63299a29c9de746937bff6ae2a7f7cf3250abc1b18676bb9a54",
+      "ActionsPreparedFresh": "ad4d929ebeb00abe30fbcc0c023489e77c95b03e37fe3e22c3bb4b988971ade6",
+      "ActionsPreparedActual": "0ce5c28e9e54b691b2ce0e54a5efc603f05b2872d7d91418668373c37612c5b0"
+    },
+    "actual45f_candidate_manifest_equal": true,
+    "error_migration_original_assertions_exact": 9,
+    "original_fixture_sha256": "9f95f3cf62a72ddc0a52880b93cef119de21e737b36b01ce950c6bd5999c9bec",
+    "equivalent_source_fixture_sha256": "4816ba265214f8f7ae5f1cdb5baebf9bb2267453a4076aee39d2c1b590726160",
+    "current_fixture_sha256": "a4dec7634022aa350b4bb6ff7f023300ae55d4d8880d5c86284a79b81dff4a72"
+  },
+  "final_checks": {
+    "python": "3.12.11",
+    "sqlite": "3.53.4",
+    "ast_compiled": [
+      "app/deploy_maintenance.py",
+      "app/repository_updater.py",
+      "app/run_schema_release.py",
+      "app/store.py",
+      "tests/test_deploy_maintenance.py",
+      "tests/test_error_code_migration.py",
+      "tests/test_repository_updater.py",
+      "tests/test_run_schema_release.py"
+    ],
+    "git_diff_check": true,
+    "stage_empty": true,
+    "only_own_claim_removed": true
+  },
+  "full_suite_run": false,
+  "native_executed": false,
+  "provider_called": false,
+  "production_accessed": false,
+  "stage_commit_push_deploy_by_implementer": false,
+  "release_ready": false,
+  "pending": "fresh SPEC then QUALITY; root-owned full-copy/native/publication gates"
+}

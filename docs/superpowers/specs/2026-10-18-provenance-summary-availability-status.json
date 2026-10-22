@@ -1,0 +1,51 @@
+{
+  "observed_at": "2026-10-18T03:31:22.954493+00:00",
+  "hypothesis": "Earlier meeting/todos equal but summary mismatch may be failed/partial summary retrieval, not demonstrated content change",
+  "scope": "Only source document31,46,51;2distinct exact source_ref UUIDs; summaries only",
+  "method": "Native dws profile list:1profile/uniqueisOrgCurrent; dws minutes +detail --ids exactKnownUUIDs --artifacts summary --format json withsame one-offprofile; no profile switch",
+  "source_access": "URI mode=ro/query_only/readtransaction; closedbeforeprovider",
+  "session": 30333,
+  "exit_code": 0,
+  "probe_process_exit": 0,
+  "native_dws_exit_code": 1,
+  "elapsed_seconds": 1.731,
+  "requested_distinct_uuids": 2,
+  "provider_summary_results": {
+    "complete": false,
+    "requested": 2,
+    "failed": 2,
+    "succeeded": 0,
+    "failure_count": 2,
+    "retryable": false,
+    "error_text_retained": false,
+    "error_text_utf8_bytes_each": 49,
+    "retry_performed": false
+  },
+  "documents": [
+    {
+      "source_document_id": 31,
+      "source_body_utf8_bytes": 14368,
+      "stored_summary_utf8_bytes": 12837,
+      "matching_summary_leaf_found": false
+    },
+    {
+      "source_document_id": 46,
+      "source_body_utf8_bytes": 45424,
+      "stored_summary_utf8_bytes": 42664,
+      "matching_summary_leaf_found": false
+    },
+    {
+      "source_document_id": 51,
+      "source_body_utf8_bytes": 45424,
+      "stored_summary_utf8_bytes": 42664,
+      "matching_summary_leaf_found": false
+    }
+  ],
+  "conclusion": "This method currently failed to retrieve the2summary artifacts, not a successful read proving source content changed. Exact lower-level error cause was not retained and remains unknown. Preserve original bodies and availability gaps; no automatic retry after retryable=false.",
+  "source_database_write": false,
+  "provider_write": false,
+  "outbound_send": false,
+  "raw_body_or_response_persisted": false,
+  "proof_promotion": false,
+  "body_retirement": false
+}

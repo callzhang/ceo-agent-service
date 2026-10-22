@@ -26,11 +26,9 @@ from pydantic import BaseModel, ConfigDict, Field, ValidationError, field_valida
 
 from app.workbench.executor import WorkbenchExecutor
 from app.workbench.models import (
-    ConfirmationStatus,
     TurnStatus,
     WorkbenchArtifact,
     WorkbenchAttachment,
-    WorkbenchConfirmation,
     WorkbenchEvent,
     WorkbenchTask,
     WorkbenchTurn,
@@ -127,39 +125,18 @@ class PublicArtifact(_StrictModel):
     download_url: str
 
 
-class PublicConfirmation(_StrictModel):
-    id: str
-    turn_id: str
-    action_kind: str
-    target: str
-    summary: str
-    risk: str
-    canonical_capability: str
-    canonical_operation: str
-    canonical_targets: list[str]
-    status: ConfirmationStatus
-    decision_requested: str
-    decision_requested_at: str
-    proposer_quiesced: bool
-    created_at: str
-    decided_at: str
-
-
 class PublicTimeline(_StrictModel):
     task: PublicTask
     turns: list[PublicTurn]
     events: list[PublicEvent]
     attachments: list[WorkbenchAttachment]
     artifacts: list[PublicArtifact]
-    confirmations: list[PublicConfirmation]
     next_cursor: str = ""
     has_more: bool = False
     events_has_more: bool = False
     events_next_cursor: int = 0
     artifacts_has_more: bool = False
     artifacts_next_cursor: str = ""
-    confirmations_has_more: bool = False
-    confirmations_next_cursor: str = ""
     attachments_has_more: bool = False
     attachments_next_cursor: str = ""
 
@@ -184,7 +161,6 @@ class DurationSummary(_StrictModel):
 class WorkbenchStatsResponse(_StrictModel):
     tasks: CountSummary
     turns: dict[str, int]
-    confirmations: dict[str, int]
     events: dict[str, int]
     attachments: int
     artifacts: int
@@ -337,7 +313,6 @@ _PUBLIC_ERROR_DETAILS = {
     "client_request_conflict": "Client request ID conflicts with an existing turn",
     "attachment_request_conflict": "Client request ID conflicts with an existing attachment",
     "attachment_invalid": "Attachment data is invalid",
-    "confirmation_history_read_only": "Historical confirmations are read-only",
 }
 
 
@@ -534,14 +509,9 @@ _PUBLIC_EVENT_FIELDS: dict[str, frozenset[str]] = {
     "artifact_created": frozenset(
         {"artifact_id", "label", "filename", "path", "media_type"}
     ),
-    "confirmation_required": frozenset(
-        {"action_kind", "confirmation_id", "target", "summary", "risk"}
-    ),
-    "status_changed": frozenset(
-        {"status", "code", "confirmation_id", "confirmation_status"}
-    ),
+    "status_changed": frozenset({"status", "code"}),
     "turn_completed": frozenset({"status"}),
-    "turn_failed": frozenset({"status", "code", "confirmation_id"}),
+    "turn_failed": frozenset({"status", "code"}),
 }
 
 
@@ -602,66 +572,12 @@ def _public_attachment(
     return WorkbenchAttachment.model_validate(_public_record(values, workspace))
 
 
-def _public_confirmation(
-    store: WorkbenchStore,
-    confirmation: WorkbenchConfirmation,
-    *,
-    proposer_quiesced: bool | None = None,
-    workspace: Path | None = None,
-) -> PublicConfirmation:
-    workspace = workspace or Path.cwd()
-    try:
-        canonical_targets = json.loads(confirmation.canonical_targets_json)
-    except json.JSONDecodeError:
-        canonical_targets = []
-    if not isinstance(canonical_targets, list) or not all(
-        isinstance(item, str) for item in canonical_targets
-    ):
-        canonical_targets = []
-    return PublicConfirmation.model_validate(
-        _public_record(
-            {
-                "id": confirmation.id,
-                "turn_id": confirmation.turn_id,
-                "action_kind": confirmation.action_kind,
-                "target": confirmation.target,
-                "summary": confirmation.summary,
-                "risk": confirmation.risk,
-                "canonical_capability": confirmation.canonical_capability,
-                "canonical_operation": confirmation.canonical_operation,
-                "canonical_targets": canonical_targets,
-                "status": confirmation.status,
-                "decision_requested": confirmation.decision_requested,
-                "decision_requested_at": confirmation.decision_requested_at,
-                "proposer_quiesced": (
-                    bool(store.confirmation_is_quiesced(confirmation.id))
-                    if proposer_quiesced is None
-                    else proposer_quiesced
-                ),
-                "created_at": confirmation.created_at,
-                "decided_at": confirmation.decided_at,
-            },
-            workspace,
-        )
-    )
-
-
 def _owned_turn(store: WorkbenchStore, task_id: str, turn_id: str) -> WorkbenchTurn:
     task = store.get_task(task_id)
     turn = store.get_turn(turn_id)
     if task is None or turn is None or turn.task_id != task_id:
         raise _not_found()
     return turn
-
-
-def _owned_confirmation(
-    store: WorkbenchStore, task_id: str, turn_id: str, confirmation_id: str
-) -> WorkbenchConfirmation:
-    _owned_turn(store, task_id, turn_id)
-    confirmation = store.get_confirmation(confirmation_id)
-    if confirmation is None or confirmation.turn_id != turn_id:
-        raise _not_found()
-    return confirmation
 
 
 def _media_type_permitted(media_type: str) -> bool:
@@ -1046,12 +962,11 @@ def register_workbench_routes(
         before: str | None = None,
         event_before: int | None = Query(default=None, ge=1),
         artifact_after: str | None = None,
-        confirmation_after: str | None = None,
         attachment_after: str | None = None,
     ) -> PublicTimeline:
         task_id_text = _uuid_text(task_id)
         try:
-            task, turns, events, attachments, artifacts, confirmations, page = (
+            task, turns, events, attachments, artifacts, page = (
                 store.timeline_snapshot(
                     task_id_text,
                     turn_limit=turn_limit,
@@ -1059,7 +974,6 @@ def register_workbench_routes(
                     before_sequence=_parse_turn_cursor(before, task_id=task_id_text),
                     event_before=event_before,
                     artifact_after=_parse_resource_cursor(artifact_after),
-                    confirmation_after=_parse_resource_cursor(confirmation_after),
                     attachment_after=_parse_resource_cursor(attachment_after),
                 )
             )
@@ -1081,17 +995,6 @@ def register_workbench_routes(
                 _public_artifact(task_id_text, artifact, executor.workspace)
                 for artifact in artifacts
             ],
-            confirmations=[
-                _public_confirmation(
-                    store,
-                    confirmation,
-                    proposer_quiesced=page["confirmation_quiescence"].get(
-                        confirmation.id, False
-                    ),
-                    workspace=executor.workspace,
-                )
-                for confirmation in confirmations
-            ],
             next_cursor=(
                 _turn_cursor(task_id_text, turns[-1])
                 if page["has_more"] and turns
@@ -1106,12 +1009,6 @@ def register_workbench_routes(
                 if page["artifacts_has_more"] and artifacts
                 else ""
             ),
-            confirmations_has_more=page["confirmations_has_more"],
-            confirmations_next_cursor=(
-                _resource_cursor(confirmations[-1])
-                if page["confirmations_has_more"] and confirmations
-                else ""
-            ),
             attachments_has_more=page["attachments_has_more"],
             attachments_next_cursor=(
                 _resource_cursor(attachments[-1])
@@ -1119,40 +1016,6 @@ def register_workbench_routes(
                 else ""
             ),
         )
-
-    @app.post(
-        "/api/workbench/tasks/{task_id}/turns/{turn_id}/confirmations/{confirmation_id}/confirm",
-        response_model=PublicConfirmation,
-    )
-    async def confirm(
-        task_id: UUID, turn_id: UUID, confirmation_id: UUID, request: Request
-    ) -> PublicConfirmation:
-        await _request_model(request, _StrictModel, mutation_guard=mutation_guard)
-        await anyio.to_thread.run_sync(
-            _owned_confirmation,
-            store,
-            _uuid_text(task_id),
-            _uuid_text(turn_id),
-            _uuid_text(confirmation_id),
-        )
-        raise _public_error(410, "confirmation_history_read_only")
-
-    @app.post(
-        "/api/workbench/tasks/{task_id}/turns/{turn_id}/confirmations/{confirmation_id}/cancel",
-        response_model=PublicConfirmation,
-    )
-    async def cancel(
-        task_id: UUID, turn_id: UUID, confirmation_id: UUID, request: Request
-    ) -> PublicConfirmation:
-        await _request_model(request, _StrictModel, mutation_guard=mutation_guard)
-        await anyio.to_thread.run_sync(
-            _owned_confirmation,
-            store,
-            _uuid_text(task_id),
-            _uuid_text(turn_id),
-            _uuid_text(confirmation_id),
-        )
-        raise _public_error(410, "confirmation_history_read_only")
 
     @app.get(
         "/api/workbench/runtimes", response_model=list[RuntimeCapabilitiesResponse]

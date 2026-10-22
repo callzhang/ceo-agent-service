@@ -1,0 +1,1040 @@
+{
+  "actual": {
+    "parents": {
+      "work_projects": {
+        "sql": "CREATE TABLE work_projects (\n                    id integer primary key autoincrement,\n                    title text not null,\n                    category text not null default 'other',\n                    tags_json text not null default '[]',\n                    status text not null default 'active',\n                    priority text not null default 'none',\n                    risk_level text not null default 'none',\n                    needs_derek_attention integer not null default 0,\n                    owner_user_id text not null default '',\n                    owner_name text not null default '',\n                    related_people_json text not null default '[]',\n                    goal text not null default '',\n                    background text not null default '',\n                    facts_json text not null default '[]',\n                    current_state text not null default '',\n                    blocker text not null default '',\n                    next_step text not null default '',\n                    next_follow_up_at text not null default '',\n                    follow_up_mode text not null default 'none',\n                    source_conversations_json text not null default '[]',\n                    memory_context_json text not null default '{}',\n                    created_at text not null default current_timestamp,\n                    updated_at text not null default current_timestamp,\n                    last_activity_at text not null default current_timestamp\n                , owner_evidence_json text not null default '{}')",
+        "columns": [
+          {
+            "cid": 0,
+            "name": "id",
+            "type": "INTEGER",
+            "notnull": 0,
+            "dflt_value": null,
+            "pk": 1,
+            "hidden": 0
+          },
+          {
+            "cid": 1,
+            "name": "title",
+            "type": "TEXT",
+            "notnull": 1,
+            "dflt_value": null,
+            "pk": 0,
+            "hidden": 0
+          },
+          {
+            "cid": 2,
+            "name": "category",
+            "type": "TEXT",
+            "notnull": 1,
+            "dflt_value": "'other'",
+            "pk": 0,
+            "hidden": 0
+          },
+          {
+            "cid": 3,
+            "name": "tags_json",
+            "type": "TEXT",
+            "notnull": 1,
+            "dflt_value": "'[]'",
+            "pk": 0,
+            "hidden": 0
+          },
+          {
+            "cid": 4,
+            "name": "status",
+            "type": "TEXT",
+            "notnull": 1,
+            "dflt_value": "'active'",
+            "pk": 0,
+            "hidden": 0
+          },
+          {
+            "cid": 5,
+            "name": "priority",
+            "type": "TEXT",
+            "notnull": 1,
+            "dflt_value": "'none'",
+            "pk": 0,
+            "hidden": 0
+          },
+          {
+            "cid": 6,
+            "name": "risk_level",
+            "type": "TEXT",
+            "notnull": 1,
+            "dflt_value": "'none'",
+            "pk": 0,
+            "hidden": 0
+          },
+          {
+            "cid": 7,
+            "name": "needs_derek_attention",
+            "type": "INTEGER",
+            "notnull": 1,
+            "dflt_value": "0",
+            "pk": 0,
+            "hidden": 0
+          },
+          {
+            "cid": 8,
+            "name": "owner_user_id",
+            "type": "TEXT",
+            "notnull": 1,
+            "dflt_value": "''",
+            "pk": 0,
+            "hidden": 0
+          },
+          {
+            "cid": 9,
+            "name": "owner_name",
+            "type": "TEXT",
+            "notnull": 1,
+            "dflt_value": "''",
+            "pk": 0,
+            "hidden": 0
+          },
+          {
+            "cid": 10,
+            "name": "related_people_json",
+            "type": "TEXT",
+            "notnull": 1,
+            "dflt_value": "'[]'",
+            "pk": 0,
+            "hidden": 0
+          },
+          {
+            "cid": 11,
+            "name": "goal",
+            "type": "TEXT",
+            "notnull": 1,
+            "dflt_value": "''",
+            "pk": 0,
+            "hidden": 0
+          },
+          {
+            "cid": 12,
+            "name": "background",
+            "type": "TEXT",
+            "notnull": 1,
+            "dflt_value": "''",
+            "pk": 0,
+            "hidden": 0
+          },
+          {
+            "cid": 13,
+            "name": "facts_json",
+            "type": "TEXT",
+            "notnull": 1,
+            "dflt_value": "'[]'",
+            "pk": 0,
+            "hidden": 0
+          },
+          {
+            "cid": 14,
+            "name": "current_state",
+            "type": "TEXT",
+            "notnull": 1,
+            "dflt_value": "''",
+            "pk": 0,
+            "hidden": 0
+          },
+          {
+            "cid": 15,
+            "name": "blocker",
+            "type": "TEXT",
+            "notnull": 1,
+            "dflt_value": "''",
+            "pk": 0,
+            "hidden": 0
+          },
+          {
+            "cid": 16,
+            "name": "next_step",
+            "type": "TEXT",
+            "notnull": 1,
+            "dflt_value": "''",
+            "pk": 0,
+            "hidden": 0
+          },
+          {
+            "cid": 17,
+            "name": "next_follow_up_at",
+            "type": "TEXT",
+            "notnull": 1,
+            "dflt_value": "''",
+            "pk": 0,
+            "hidden": 0
+          },
+          {
+            "cid": 18,
+            "name": "follow_up_mode",
+            "type": "TEXT",
+            "notnull": 1,
+            "dflt_value": "'none'",
+            "pk": 0,
+            "hidden": 0
+          },
+          {
+            "cid": 19,
+            "name": "source_conversations_json",
+            "type": "TEXT",
+            "notnull": 1,
+            "dflt_value": "'[]'",
+            "pk": 0,
+            "hidden": 0
+          },
+          {
+            "cid": 20,
+            "name": "memory_context_json",
+            "type": "TEXT",
+            "notnull": 1,
+            "dflt_value": "'{}'",
+            "pk": 0,
+            "hidden": 0
+          },
+          {
+            "cid": 21,
+            "name": "created_at",
+            "type": "TEXT",
+            "notnull": 1,
+            "dflt_value": "current_timestamp",
+            "pk": 0,
+            "hidden": 0
+          },
+          {
+            "cid": 22,
+            "name": "updated_at",
+            "type": "TEXT",
+            "notnull": 1,
+            "dflt_value": "current_timestamp",
+            "pk": 0,
+            "hidden": 0
+          },
+          {
+            "cid": 23,
+            "name": "last_activity_at",
+            "type": "TEXT",
+            "notnull": 1,
+            "dflt_value": "current_timestamp",
+            "pk": 0,
+            "hidden": 0
+          },
+          {
+            "cid": 24,
+            "name": "owner_evidence_json",
+            "type": "TEXT",
+            "notnull": 1,
+            "dflt_value": "'{}'",
+            "pk": 0,
+            "hidden": 0
+          }
+        ],
+        "foreign_keys": [],
+        "indexes": [
+          {
+            "seq": 0,
+            "name": "idx_work_projects_status_priority",
+            "unique": 0,
+            "origin": "c",
+            "partial": 0,
+            "columns": [
+              {
+                "seqno": 0,
+                "cid": 4,
+                "name": "status",
+                "desc": 0,
+                "coll": "BINARY",
+                "key": 1
+              },
+              {
+                "seqno": 1,
+                "cid": 5,
+                "name": "priority",
+                "desc": 0,
+                "coll": "BINARY",
+                "key": 1
+              },
+              {
+                "seqno": 2,
+                "cid": 22,
+                "name": "updated_at",
+                "desc": 0,
+                "coll": "BINARY",
+                "key": 1
+              },
+              {
+                "seqno": 3,
+                "cid": -1,
+                "name": null,
+                "desc": 0,
+                "coll": "BINARY",
+                "key": 0
+              }
+            ],
+            "sql": "CREATE INDEX idx_work_projects_status_priority\n                    on work_projects(status, priority, updated_at)"
+          }
+        ],
+        "triggers": []
+      },
+      "work_todos": {
+        "sql": "CREATE TABLE work_todos (\n                    id integer primary key autoincrement,\n                    project_id integer not null,\n                    title text not null,\n                    owner_user_id text not null default '',\n                    owner_name text not null default '',\n                    status text not null default 'open',\n                    priority text not null default 'none',\n                    deadline_at text not null default '',\n                    next_follow_up_at text not null default '',\n                    follow_up_question text not null default '',\n                    blocker text not null default '',\n                    completion_evidence_json text not null default '{}',\n                    created_from_update_id integer not null default 0,\n                    created_at text not null default current_timestamp,\n                    updated_at text not null default current_timestamp,\n                    completed_at text not null default ''\n                , description text not null default '', owner_evidence_json text not null default '{}')",
+        "columns": [
+          {
+            "cid": 0,
+            "name": "id",
+            "type": "INTEGER",
+            "notnull": 0,
+            "dflt_value": null,
+            "pk": 1,
+            "hidden": 0
+          },
+          {
+            "cid": 1,
+            "name": "project_id",
+            "type": "INTEGER",
+            "notnull": 1,
+            "dflt_value": null,
+            "pk": 0,
+            "hidden": 0
+          },
+          {
+            "cid": 2,
+            "name": "title",
+            "type": "TEXT",
+            "notnull": 1,
+            "dflt_value": null,
+            "pk": 0,
+            "hidden": 0
+          },
+          {
+            "cid": 3,
+            "name": "owner_user_id",
+            "type": "TEXT",
+            "notnull": 1,
+            "dflt_value": "''",
+            "pk": 0,
+            "hidden": 0
+          },
+          {
+            "cid": 4,
+            "name": "owner_name",
+            "type": "TEXT",
+            "notnull": 1,
+            "dflt_value": "''",
+            "pk": 0,
+            "hidden": 0
+          },
+          {
+            "cid": 5,
+            "name": "status",
+            "type": "TEXT",
+            "notnull": 1,
+            "dflt_value": "'open'",
+            "pk": 0,
+            "hidden": 0
+          },
+          {
+            "cid": 6,
+            "name": "priority",
+            "type": "TEXT",
+            "notnull": 1,
+            "dflt_value": "'none'",
+            "pk": 0,
+            "hidden": 0
+          },
+          {
+            "cid": 7,
+            "name": "deadline_at",
+            "type": "TEXT",
+            "notnull": 1,
+            "dflt_value": "''",
+            "pk": 0,
+            "hidden": 0
+          },
+          {
+            "cid": 8,
+            "name": "next_follow_up_at",
+            "type": "TEXT",
+            "notnull": 1,
+            "dflt_value": "''",
+            "pk": 0,
+            "hidden": 0
+          },
+          {
+            "cid": 9,
+            "name": "follow_up_question",
+            "type": "TEXT",
+            "notnull": 1,
+            "dflt_value": "''",
+            "pk": 0,
+            "hidden": 0
+          },
+          {
+            "cid": 10,
+            "name": "blocker",
+            "type": "TEXT",
+            "notnull": 1,
+            "dflt_value": "''",
+            "pk": 0,
+            "hidden": 0
+          },
+          {
+            "cid": 11,
+            "name": "completion_evidence_json",
+            "type": "TEXT",
+            "notnull": 1,
+            "dflt_value": "'{}'",
+            "pk": 0,
+            "hidden": 0
+          },
+          {
+            "cid": 12,
+            "name": "created_from_update_id",
+            "type": "INTEGER",
+            "notnull": 1,
+            "dflt_value": "0",
+            "pk": 0,
+            "hidden": 0
+          },
+          {
+            "cid": 13,
+            "name": "created_at",
+            "type": "TEXT",
+            "notnull": 1,
+            "dflt_value": "current_timestamp",
+            "pk": 0,
+            "hidden": 0
+          },
+          {
+            "cid": 14,
+            "name": "updated_at",
+            "type": "TEXT",
+            "notnull": 1,
+            "dflt_value": "current_timestamp",
+            "pk": 0,
+            "hidden": 0
+          },
+          {
+            "cid": 15,
+            "name": "completed_at",
+            "type": "TEXT",
+            "notnull": 1,
+            "dflt_value": "''",
+            "pk": 0,
+            "hidden": 0
+          },
+          {
+            "cid": 16,
+            "name": "description",
+            "type": "TEXT",
+            "notnull": 1,
+            "dflt_value": "''",
+            "pk": 0,
+            "hidden": 0
+          },
+          {
+            "cid": 17,
+            "name": "owner_evidence_json",
+            "type": "TEXT",
+            "notnull": 1,
+            "dflt_value": "'{}'",
+            "pk": 0,
+            "hidden": 0
+          }
+        ],
+        "foreign_keys": [],
+        "indexes": [
+          {
+            "seq": 0,
+            "name": "idx_work_todos_follow_up",
+            "unique": 0,
+            "origin": "c",
+            "partial": 0,
+            "columns": [
+              {
+                "seqno": 0,
+                "cid": 5,
+                "name": "status",
+                "desc": 0,
+                "coll": "BINARY",
+                "key": 1
+              },
+              {
+                "seqno": 1,
+                "cid": 8,
+                "name": "next_follow_up_at",
+                "desc": 0,
+                "coll": "BINARY",
+                "key": 1
+              },
+              {
+                "seqno": 2,
+                "cid": -1,
+                "name": null,
+                "desc": 0,
+                "coll": "BINARY",
+                "key": 0
+              }
+            ],
+            "sql": "CREATE INDEX idx_work_todos_follow_up\n                    on work_todos(status, next_follow_up_at)"
+          },
+          {
+            "seq": 1,
+            "name": "idx_work_todos_project_status",
+            "unique": 0,
+            "origin": "c",
+            "partial": 0,
+            "columns": [
+              {
+                "seqno": 0,
+                "cid": 1,
+                "name": "project_id",
+                "desc": 0,
+                "coll": "BINARY",
+                "key": 1
+              },
+              {
+                "seqno": 1,
+                "cid": 5,
+                "name": "status",
+                "desc": 0,
+                "coll": "BINARY",
+                "key": 1
+              },
+              {
+                "seqno": 2,
+                "cid": -1,
+                "name": null,
+                "desc": 0,
+                "coll": "BINARY",
+                "key": 0
+              }
+            ],
+            "sql": "CREATE INDEX idx_work_todos_project_status\n                    on work_todos(project_id, status)"
+          }
+        ],
+        "triggers": []
+      }
+    }
+  },
+  "fresh": {
+    "parents": {
+      "work_projects": {
+        "sql": "CREATE TABLE work_projects (\n                    id integer primary key autoincrement,\n                    title text not null,\n                    category text not null default 'other',\n                    tags_json text not null default '[]',\n                    status text not null default 'active',\n                    priority text not null default 'none',\n                    risk_level text not null default 'none',\n                    needs_derek_attention integer not null default 0,\n                    owner_user_id text not null default '',\n                    owner_name text not null default '',\n                    owner_evidence_json text not null default '{}',\n                    related_people_json text not null default '[]',\n                    goal text not null default '',\n                    background text not null default '',\n                    facts_json text not null default '[]',\n                    current_state text not null default '',\n                    blocker text not null default '',\n                    next_step text not null default '',\n                    next_follow_up_at text not null default '',\n                    follow_up_mode text not null default 'none',\n                    source_conversations_json text not null default '[]',\n                    memory_context_json text not null default '{}',\n                    created_at text not null default current_timestamp,\n                    updated_at text not null default current_timestamp,\n                    last_activity_at text not null default current_timestamp\n                )",
+        "columns": [
+          {
+            "cid": 0,
+            "name": "id",
+            "type": "INTEGER",
+            "notnull": 0,
+            "dflt_value": null,
+            "pk": 1,
+            "hidden": 0
+          },
+          {
+            "cid": 1,
+            "name": "title",
+            "type": "TEXT",
+            "notnull": 1,
+            "dflt_value": null,
+            "pk": 0,
+            "hidden": 0
+          },
+          {
+            "cid": 2,
+            "name": "category",
+            "type": "TEXT",
+            "notnull": 1,
+            "dflt_value": "'other'",
+            "pk": 0,
+            "hidden": 0
+          },
+          {
+            "cid": 3,
+            "name": "tags_json",
+            "type": "TEXT",
+            "notnull": 1,
+            "dflt_value": "'[]'",
+            "pk": 0,
+            "hidden": 0
+          },
+          {
+            "cid": 4,
+            "name": "status",
+            "type": "TEXT",
+            "notnull": 1,
+            "dflt_value": "'active'",
+            "pk": 0,
+            "hidden": 0
+          },
+          {
+            "cid": 5,
+            "name": "priority",
+            "type": "TEXT",
+            "notnull": 1,
+            "dflt_value": "'none'",
+            "pk": 0,
+            "hidden": 0
+          },
+          {
+            "cid": 6,
+            "name": "risk_level",
+            "type": "TEXT",
+            "notnull": 1,
+            "dflt_value": "'none'",
+            "pk": 0,
+            "hidden": 0
+          },
+          {
+            "cid": 7,
+            "name": "needs_derek_attention",
+            "type": "INTEGER",
+            "notnull": 1,
+            "dflt_value": "0",
+            "pk": 0,
+            "hidden": 0
+          },
+          {
+            "cid": 8,
+            "name": "owner_user_id",
+            "type": "TEXT",
+            "notnull": 1,
+            "dflt_value": "''",
+            "pk": 0,
+            "hidden": 0
+          },
+          {
+            "cid": 9,
+            "name": "owner_name",
+            "type": "TEXT",
+            "notnull": 1,
+            "dflt_value": "''",
+            "pk": 0,
+            "hidden": 0
+          },
+          {
+            "cid": 10,
+            "name": "owner_evidence_json",
+            "type": "TEXT",
+            "notnull": 1,
+            "dflt_value": "'{}'",
+            "pk": 0,
+            "hidden": 0
+          },
+          {
+            "cid": 11,
+            "name": "related_people_json",
+            "type": "TEXT",
+            "notnull": 1,
+            "dflt_value": "'[]'",
+            "pk": 0,
+            "hidden": 0
+          },
+          {
+            "cid": 12,
+            "name": "goal",
+            "type": "TEXT",
+            "notnull": 1,
+            "dflt_value": "''",
+            "pk": 0,
+            "hidden": 0
+          },
+          {
+            "cid": 13,
+            "name": "background",
+            "type": "TEXT",
+            "notnull": 1,
+            "dflt_value": "''",
+            "pk": 0,
+            "hidden": 0
+          },
+          {
+            "cid": 14,
+            "name": "facts_json",
+            "type": "TEXT",
+            "notnull": 1,
+            "dflt_value": "'[]'",
+            "pk": 0,
+            "hidden": 0
+          },
+          {
+            "cid": 15,
+            "name": "current_state",
+            "type": "TEXT",
+            "notnull": 1,
+            "dflt_value": "''",
+            "pk": 0,
+            "hidden": 0
+          },
+          {
+            "cid": 16,
+            "name": "blocker",
+            "type": "TEXT",
+            "notnull": 1,
+            "dflt_value": "''",
+            "pk": 0,
+            "hidden": 0
+          },
+          {
+            "cid": 17,
+            "name": "next_step",
+            "type": "TEXT",
+            "notnull": 1,
+            "dflt_value": "''",
+            "pk": 0,
+            "hidden": 0
+          },
+          {
+            "cid": 18,
+            "name": "next_follow_up_at",
+            "type": "TEXT",
+            "notnull": 1,
+            "dflt_value": "''",
+            "pk": 0,
+            "hidden": 0
+          },
+          {
+            "cid": 19,
+            "name": "follow_up_mode",
+            "type": "TEXT",
+            "notnull": 1,
+            "dflt_value": "'none'",
+            "pk": 0,
+            "hidden": 0
+          },
+          {
+            "cid": 20,
+            "name": "source_conversations_json",
+            "type": "TEXT",
+            "notnull": 1,
+            "dflt_value": "'[]'",
+            "pk": 0,
+            "hidden": 0
+          },
+          {
+            "cid": 21,
+            "name": "memory_context_json",
+            "type": "TEXT",
+            "notnull": 1,
+            "dflt_value": "'{}'",
+            "pk": 0,
+            "hidden": 0
+          },
+          {
+            "cid": 22,
+            "name": "created_at",
+            "type": "TEXT",
+            "notnull": 1,
+            "dflt_value": "current_timestamp",
+            "pk": 0,
+            "hidden": 0
+          },
+          {
+            "cid": 23,
+            "name": "updated_at",
+            "type": "TEXT",
+            "notnull": 1,
+            "dflt_value": "current_timestamp",
+            "pk": 0,
+            "hidden": 0
+          },
+          {
+            "cid": 24,
+            "name": "last_activity_at",
+            "type": "TEXT",
+            "notnull": 1,
+            "dflt_value": "current_timestamp",
+            "pk": 0,
+            "hidden": 0
+          }
+        ],
+        "foreign_keys": [],
+        "indexes": [
+          {
+            "seq": 0,
+            "name": "idx_work_projects_status_priority",
+            "unique": 0,
+            "origin": "c",
+            "partial": 0,
+            "columns": [
+              {
+                "seqno": 0,
+                "cid": 4,
+                "name": "status",
+                "desc": 0,
+                "coll": "BINARY",
+                "key": 1
+              },
+              {
+                "seqno": 1,
+                "cid": 5,
+                "name": "priority",
+                "desc": 0,
+                "coll": "BINARY",
+                "key": 1
+              },
+              {
+                "seqno": 2,
+                "cid": 23,
+                "name": "updated_at",
+                "desc": 0,
+                "coll": "BINARY",
+                "key": 1
+              },
+              {
+                "seqno": 3,
+                "cid": -1,
+                "name": null,
+                "desc": 0,
+                "coll": "BINARY",
+                "key": 0
+              }
+            ],
+            "sql": "CREATE INDEX idx_work_projects_status_priority\n                    on work_projects(status, priority, updated_at)"
+          }
+        ],
+        "triggers": []
+      },
+      "work_todos": {
+        "sql": "CREATE TABLE work_todos (\n                    id integer primary key autoincrement,\n                    project_id integer not null,\n                    title text not null,\n                    description text not null default '',\n                    owner_user_id text not null default '',\n                    owner_name text not null default '',\n                    owner_evidence_json text not null default '{}',\n                    status text not null default 'open',\n                    priority text not null default 'none',\n                    deadline_at text not null default '',\n                    next_follow_up_at text not null default '',\n                    follow_up_question text not null default '',\n                    blocker text not null default '',\n                    completion_evidence_json text not null default '{}',\n                    created_from_update_id integer not null default 0,\n                    created_at text not null default current_timestamp,\n                    updated_at text not null default current_timestamp,\n                    completed_at text not null default ''\n                )",
+        "columns": [
+          {
+            "cid": 0,
+            "name": "id",
+            "type": "INTEGER",
+            "notnull": 0,
+            "dflt_value": null,
+            "pk": 1,
+            "hidden": 0
+          },
+          {
+            "cid": 1,
+            "name": "project_id",
+            "type": "INTEGER",
+            "notnull": 1,
+            "dflt_value": null,
+            "pk": 0,
+            "hidden": 0
+          },
+          {
+            "cid": 2,
+            "name": "title",
+            "type": "TEXT",
+            "notnull": 1,
+            "dflt_value": null,
+            "pk": 0,
+            "hidden": 0
+          },
+          {
+            "cid": 3,
+            "name": "description",
+            "type": "TEXT",
+            "notnull": 1,
+            "dflt_value": "''",
+            "pk": 0,
+            "hidden": 0
+          },
+          {
+            "cid": 4,
+            "name": "owner_user_id",
+            "type": "TEXT",
+            "notnull": 1,
+            "dflt_value": "''",
+            "pk": 0,
+            "hidden": 0
+          },
+          {
+            "cid": 5,
+            "name": "owner_name",
+            "type": "TEXT",
+            "notnull": 1,
+            "dflt_value": "''",
+            "pk": 0,
+            "hidden": 0
+          },
+          {
+            "cid": 6,
+            "name": "owner_evidence_json",
+            "type": "TEXT",
+            "notnull": 1,
+            "dflt_value": "'{}'",
+            "pk": 0,
+            "hidden": 0
+          },
+          {
+            "cid": 7,
+            "name": "status",
+            "type": "TEXT",
+            "notnull": 1,
+            "dflt_value": "'open'",
+            "pk": 0,
+            "hidden": 0
+          },
+          {
+            "cid": 8,
+            "name": "priority",
+            "type": "TEXT",
+            "notnull": 1,
+            "dflt_value": "'none'",
+            "pk": 0,
+            "hidden": 0
+          },
+          {
+            "cid": 9,
+            "name": "deadline_at",
+            "type": "TEXT",
+            "notnull": 1,
+            "dflt_value": "''",
+            "pk": 0,
+            "hidden": 0
+          },
+          {
+            "cid": 10,
+            "name": "next_follow_up_at",
+            "type": "TEXT",
+            "notnull": 1,
+            "dflt_value": "''",
+            "pk": 0,
+            "hidden": 0
+          },
+          {
+            "cid": 11,
+            "name": "follow_up_question",
+            "type": "TEXT",
+            "notnull": 1,
+            "dflt_value": "''",
+            "pk": 0,
+            "hidden": 0
+          },
+          {
+            "cid": 12,
+            "name": "blocker",
+            "type": "TEXT",
+            "notnull": 1,
+            "dflt_value": "''",
+            "pk": 0,
+            "hidden": 0
+          },
+          {
+            "cid": 13,
+            "name": "completion_evidence_json",
+            "type": "TEXT",
+            "notnull": 1,
+            "dflt_value": "'{}'",
+            "pk": 0,
+            "hidden": 0
+          },
+          {
+            "cid": 14,
+            "name": "created_from_update_id",
+            "type": "INTEGER",
+            "notnull": 1,
+            "dflt_value": "0",
+            "pk": 0,
+            "hidden": 0
+          },
+          {
+            "cid": 15,
+            "name": "created_at",
+            "type": "TEXT",
+            "notnull": 1,
+            "dflt_value": "current_timestamp",
+            "pk": 0,
+            "hidden": 0
+          },
+          {
+            "cid": 16,
+            "name": "updated_at",
+            "type": "TEXT",
+            "notnull": 1,
+            "dflt_value": "current_timestamp",
+            "pk": 0,
+            "hidden": 0
+          },
+          {
+            "cid": 17,
+            "name": "completed_at",
+            "type": "TEXT",
+            "notnull": 1,
+            "dflt_value": "''",
+            "pk": 0,
+            "hidden": 0
+          }
+        ],
+        "foreign_keys": [],
+        "indexes": [
+          {
+            "seq": 0,
+            "name": "idx_work_todos_follow_up",
+            "unique": 0,
+            "origin": "c",
+            "partial": 0,
+            "columns": [
+              {
+                "seqno": 0,
+                "cid": 7,
+                "name": "status",
+                "desc": 0,
+                "coll": "BINARY",
+                "key": 1
+              },
+              {
+                "seqno": 1,
+                "cid": 10,
+                "name": "next_follow_up_at",
+                "desc": 0,
+                "coll": "BINARY",
+                "key": 1
+              },
+              {
+                "seqno": 2,
+                "cid": -1,
+                "name": null,
+                "desc": 0,
+                "coll": "BINARY",
+                "key": 0
+              }
+            ],
+            "sql": "CREATE INDEX idx_work_todos_follow_up\n                    on work_todos(status, next_follow_up_at)"
+          },
+          {
+            "seq": 1,
+            "name": "idx_work_todos_project_status",
+            "unique": 0,
+            "origin": "c",
+            "partial": 0,
+            "columns": [
+              {
+                "seqno": 0,
+                "cid": 1,
+                "name": "project_id",
+                "desc": 0,
+                "coll": "BINARY",
+                "key": 1
+              },
+              {
+                "seqno": 1,
+                "cid": 7,
+                "name": "status",
+                "desc": 0,
+                "coll": "BINARY",
+                "key": 1
+              },
+              {
+                "seqno": 2,
+                "cid": -1,
+                "name": null,
+                "desc": 0,
+                "coll": "BINARY",
+                "key": 0
+              }
+            ],
+            "sql": "CREATE INDEX idx_work_todos_project_status\n                    on work_todos(project_id, status)"
+          }
+        ],
+        "triggers": []
+      }
+    }
+  }
+}

@@ -1,6 +1,4 @@
 from __future__ import annotations
-from app.run_storage import SCHEDULED_RUN_SQL
-
 from collections import deque
 from dataclasses import replace
 from datetime import UTC, datetime, timedelta
@@ -37,7 +35,10 @@ from app.dispatcher.adapters import (
 from app.dispatcher.models import ClaimGuard
 from app.dws_client import DwsError
 from app.skill_files import SkillDocument
-from app.store import AgentRole, AutoReplyStore
+from app.store import AgentRole, AutoReplyStore, REPLY_TASK_SQL, SCHEDULED_RUN_SQL
+from app.state_definitions import state_projection
+from app.task8_storage import task8_set_parts
+from app.task_storage import task_id_expression
 
 NOW = datetime(2026, 9, 8, 12, 0, tzinfo=UTC)
 
@@ -140,7 +141,6 @@ def commands(produce_once=lambda: "produce-once queued=0"):
         "scan-meeting-todos-once": lambda: "scan-meeting-todos-once queued=0",
         "request-minutes-access": lambda: "request-minutes-access requested=0",
         "sync-minutes-once": lambda: "sync-minutes-once queued=0",
-        "weekly-okr-report": lambda: "weekly-okr-report status=sent",
         "sync-chrome-cookies": lambda: "sync-chrome-cookies copied=0",
     })
 
@@ -166,10 +166,7 @@ def command_task_run(store):
 
 
 def error_rows(store):
-    with store._connect() as db:
-        return [dict(row) for row in db.execute(
-            "select conversation_id, message_id, kind, detail from errors order by id"
-        ).fetchall()]
+    return [row.model_dump() for row in reversed(store.list_errors())]
 
 
 def audit(outcome, revision, digest):
@@ -397,10 +394,11 @@ def test_trigger_dispatches_once_and_generic_reply_adapter_excludes_it(tmp_path)
 
     with store._connect() as db:
         visible = db.execute(
-            "select runs.dispatch_status from tasks "
-            f"join ({SCHEDULED_RUN_SQL}) runs on runs.execution_kind='reply_task' "
-            "and runs.execution_id=tasks.legacy_key "
-            "where tasks.record_type='reply_tasks' and tasks.channel='scheduled'"
+            "select runs.dispatch_status from "
+            f"({REPLY_TASK_SQL}) tasks join ({SCHEDULED_RUN_SQL}) runs "
+            "on runs.execution_kind='reply_task' "
+            "and runs.execution_id=cast(tasks.id as text) "
+            "where tasks.channel='scheduled'"
         ).fetchall()
     assert visible and {row["dispatch_status"] for row in visible} == {"dispatched"}
 
@@ -425,10 +423,10 @@ def test_atomic_dispatch_rolls_back_source_link_run_and_ledger_on_interrupt(tmp_
     assert persisted.dispatch_status == "pending" and persisted.execution_id == ""
     with store._connect() as db:
         assert db.execute(
-            "select count(*) from tasks where record_type='reply_tasks' and channel='scheduled'"
+            f"select count(*) from ({REPLY_TASK_SQL}) where channel='scheduled'"
         ).fetchone()[0] == 0
         ledger = db.execute(
-            "select terminal_at from dispatcher_claim_leases "
+            f"select terminal_at from ({state_projection('dispatcher_claim_leases')}) "
             "where adapter_name='scheduled' and source_id=?", (str(run.id),)
         ).fetchone()
     assert ledger["terminal_at"] == ""
@@ -763,9 +761,14 @@ def test_damaged_duplicate_frozen_material_is_not_repaired_or_replaced(tmp_path)
         {"name": "managed-check", "content": ""}
     )
     with store._immediate_write_transaction() as db:
+        parts = task8_set_parts("reply_task_inputs", {
+            "trigger_message_json": json.dumps(trigger),
+        })
         db.execute(
-            "update tasks set trigger_message_json=? where record_type='reply_task_inputs' and id=(select current_input_id from tasks where record_type='reply_tasks' and cast(legacy_key as integer)=?)",
-            (json.dumps(trigger), task_id),
+            f"update tasks set {parts.sql} where record_type='reply_task_inputs' "
+            "and id=(select current_input_id from tasks where record_type='reply_tasks' "
+            f"and id={task_id_expression('reply_tasks', '?')})",
+            (*parts.parameters, task_id),
         )
     store.claim_reply_task(task_id)
     read = build_role_server(
@@ -785,9 +788,14 @@ def test_malformed_persisted_execution_context_is_audited_skip(tmp_path):
     store, run, options = fixture(tmp_path)
     task_id = int(dispatch(store, run, options).execution_id)
     with store._immediate_write_transaction() as db:
+        parts = task8_set_parts("reply_task_inputs", {
+            "trigger_message_json": '{"schema":"old_context"}',
+        })
         db.execute(
-            "update tasks set trigger_message_json=? where record_type='reply_task_inputs' and id=(select current_input_id from tasks where record_type='reply_tasks' and cast(legacy_key as integer)=?)",
-            ("{\"schema\":\"old_context\"}", task_id),
+            f"update tasks set {parts.sql} where record_type='reply_task_inputs' "
+            "and id=(select current_input_id from tasks where record_type='reply_tasks' "
+            f"and id={task_id_expression('reply_tasks', '?')})",
+            (*parts.parameters, task_id),
         )
     adapter = ScheduledExecutionQueueAdapter(store, owner_alive=lambda _pid: False)
     envelope, guard = claim(adapter, task_id, "execution")
@@ -855,7 +863,7 @@ def test_execution_availability_loss_is_skipped_without_agent_run(tmp_path, loss
     assert store.list_errors()
     with store._connect() as db:
         ledger = db.execute(
-            "select terminal_at from dispatcher_claim_leases "
+            f"select terminal_at from ({state_projection('dispatcher_claim_leases')}) "
             "where adapter_name='scheduled_execution' and source_id=?",
             (str(task_id),),
         ).fetchone()
@@ -968,6 +976,154 @@ def test_real_orchestrator_preserves_feedback_revision_chain(tmp_path):
     assert json.loads(runs[2].adopted_result_json)["outcome"] == "no_action"
     assert task.status == "done"
     assert store.get_scheduled_task_run(run.id).dispatch_status == "dispatched"
+
+
+def test_scheduled_audit_receives_exact_consumer_document_return(tmp_path, monkeypatch):
+    store, scheduled_run, options = fixture(tmp_path)
+    execution_id = int(dispatch(store, scheduled_run, options).execution_id)
+    captured_events = {}
+
+    class ConsumerWithDocumentReturn(Consumer):
+        def run(self, task, _context, *, proposal_revision, parent_agent_run_id, feedback=None):
+            claimed = self.store.claim_agent_run(
+                task.id, task.execution_generation, role=AgentRole.CONSUMER,
+                proposal_revision=proposal_revision, turn_attempt=0,
+                parent_agent_run_id=parent_agent_run_id, operation_id="", owner="consumer",
+            )
+            event = {"type": "item.completed", "item": {
+                "type": "mcp_tool_call", "server": "agent_cli",
+                "tool": "consumer_document_write", "id": "write-1",
+                "result": {"structuredContent": {
+                    "operation": "updated", "node_id": "document-9", "title": "Report",
+                    "provider_result": {"nodeId": "document-9"},
+                    "readback": {"content": "private synthetic report body"},
+                }},
+            }}
+            captured_events[claimed.run.id] = event
+            result = self.results.popleft()
+            self.store.complete_agent_run(
+                claimed.run.id, result.model_dump(mode="json"), owner="consumer"
+            )
+            return AgentTurnRunResult(claimed.run.id, result, 0, 1)
+
+    get_agent_run = store.get_agent_run
+
+    def get_agent_run_with_native_events(run_id, *, load_events=True):
+        run = get_agent_run(run_id, load_events=load_events)
+        if load_events and run_id in captured_events:
+            return run.model_copy(update={"tool_events": [captured_events[run_id]]})
+        return run
+
+    monkeypatch.setattr(store, "get_agent_run", get_agent_run_with_native_events)
+
+    class CapturingAudit(Audit):
+        def __init__(self, store, *results):
+            super().__init__(store, *results)
+            self.contexts = []
+
+        def run(self, task, context, *, turn_attempt, parent_agent_run_id):
+            self.contexts.append(context)
+            return super().run(
+                task, context, turn_attempt=turn_attempt,
+                parent_agent_run_id=parent_agent_run_id,
+            )
+
+    audit_runner = CapturingAudit(store, "approve")
+    orchestrator = AgentOrchestrator(
+        store=store, consumer=ConsumerWithDocumentReturn(store, proposal("Report")),
+        audit=audit_runner,
+    )
+    adapter = ScheduledExecutionQueueAdapter(store, owner_alive=lambda _pid: False)
+    envelope, guard = claim(adapter, execution_id, "execution")
+    ScheduledAgentConsumer(
+        store=store, option_service=options,
+        orchestrator_factory=lambda _built: orchestrator, now=lambda: NOW,
+    )(envelope, guard)
+
+    task = store.get_reply_task(execution_id)
+    consumer_run = next(
+        run for run in store.list_agent_runs_for_task_generation(
+            execution_id, task.execution_generation
+        ) if run.role is AgentRole.CONSUMER
+    )
+    [receipt] = audit_runner.contexts[0].scheduled_work_receipts
+    assert receipt["consumer_run_id"] == consumer_run.id
+    assert receipt["document_node_id"] == "document-9"
+    assert "private synthetic report body" not in audit_runner.contexts[0].render()
+
+
+def test_scheduled_audit_retains_document_return_across_feedback_revision(tmp_path, monkeypatch):
+    store, scheduled_run, options = fixture(tmp_path)
+    execution_id = int(dispatch(store, scheduled_run, options).execution_id)
+    captured_events = {}
+
+    class ConsumerWithOneDocumentReturn(Consumer):
+        def run(self, task, _context, *, proposal_revision, parent_agent_run_id, feedback=None):
+            claimed = self.store.claim_agent_run(
+                task.id, task.execution_generation, role=AgentRole.CONSUMER,
+                proposal_revision=proposal_revision, turn_attempt=0,
+                parent_agent_run_id=parent_agent_run_id, operation_id="", owner="consumer",
+            )
+            result = self.results.popleft()
+            if proposal_revision == 0:
+                captured_events[claimed.run.id] = {"type": "item.completed", "item": {
+                    "type": "mcp_tool_call", "server": "agent_cli",
+                    "tool": "consumer_document_write", "id": "write-1",
+                    "result": {"structuredContent": {
+                        "operation": "updated", "node_id": "document-9", "title": "Report",
+                        "readback": {"content": "private synthetic report body"},
+                    }},
+                }}
+            self.store.complete_agent_run(
+                claimed.run.id, result.model_dump(mode="json"), owner="consumer"
+            )
+            return AgentTurnRunResult(claimed.run.id, result, 0, 1)
+
+    get_agent_run = store.get_agent_run
+
+    def get_agent_run_with_native_events(run_id, *, load_events=True):
+        run = get_agent_run(run_id, load_events=load_events)
+        if load_events and run_id in captured_events:
+            return run.model_copy(update={"tool_events": [captured_events[run_id]]})
+        return run
+
+    monkeypatch.setattr(store, "get_agent_run", get_agent_run_with_native_events)
+
+    class CapturingAudit(Audit):
+        def __init__(self, store, *results):
+            super().__init__(store, *results)
+            self.contexts = []
+
+        def run(self, task, context, *, turn_attempt, parent_agent_run_id):
+            self.contexts.append(context)
+            return super().run(
+                task, context, turn_attempt=turn_attempt,
+                parent_agent_run_id=parent_agent_run_id,
+            )
+
+    audit_runner = CapturingAudit(store, "return", "approve")
+    orchestrator = AgentOrchestrator(
+        store=store,
+        consumer=ConsumerWithOneDocumentReturn(store, proposal("Report v1"), proposal("Report v2")),
+        audit=audit_runner,
+    )
+    adapter = ScheduledExecutionQueueAdapter(store, owner_alive=lambda _pid: False)
+    envelope, guard = claim(adapter, execution_id, "execution")
+    ScheduledAgentConsumer(
+        store=store, option_service=options,
+        orchestrator_factory=lambda _built: orchestrator, now=lambda: NOW,
+    )(envelope, guard)
+
+    assert len(audit_runner.contexts) == 2
+    [first_receipt] = audit_runner.contexts[0].scheduled_work_receipts
+    [revision_receipt] = audit_runner.contexts[1].scheduled_work_receipts
+    assert revision_receipt == first_receipt
+    assert revision_receipt["consumer_run_id"] != next(
+        run.id for run in store.list_agent_runs_for_task_generation(
+            execution_id, store.get_reply_task(execution_id).execution_generation
+        ) if run.role is AgentRole.CONSUMER and run.proposal_revision == 1
+    )
+    assert "private synthetic report body" not in audit_runner.contexts[1].render()
 
 
 class FailingAudit:
@@ -1149,3 +1305,59 @@ def test_scheduled_context_refresh_failures_stop_after_three_attempts(tmp_path):
     attempts = store.list_reply_attempts_for_conversation(task.conversation_id)
     assert attempts[0].send_status == 'failed'
     assert 'CTX503' in attempts[0].audit_summary
+
+
+def test_new_ordinary_report_uses_configured_skill_and_generic_tools(tmp_path, monkeypatch):
+    """A previously unknown report name needs no core report-category branch."""
+    from app import task_artifacts
+
+    store, run, options = fixture(tmp_path)
+    persisted = dispatch(store, run, options)
+    task_id = int(persisted.execution_id)
+    claim(ScheduledExecutionQueueAdapter(store, owner_alive=lambda _pid: False),
+          task_id, "new-report")
+    task = store.get_reply_task(task_id)
+    monkeypatch.setattr(Path, "home", classmethod(lambda cls: tmp_path))
+    monkeypatch.setattr(task_artifacts, "TASK_ARTIFACT_ROOT", tmp_path / "artifacts")
+    scripts = tmp_path / ".agents/skills/managed-check/scripts"
+    scripts.mkdir(parents=True)
+    (scripts / "render.py").write_text(
+        "from pathlib import Path\n"
+        "Path('ordinary.md').write_text('New ordinary report\\n')\n"
+        "print('ordinary.md')\n"
+    )
+    source_scripts = tmp_path / "reviewed-skills/managed-check/scripts"
+    source_scripts.mkdir(parents=True)
+    source_script = source_scripts / "render.py"
+    source_script.write_bytes((scripts / "render.py").read_bytes())
+    relative = b"scripts/render.py"
+    body = source_script.read_bytes()
+    tree_digest = hashlib.sha256(
+        len(relative).to_bytes(4, "big") + relative
+        + len(body).to_bytes(8, "big") + body
+    ).hexdigest()
+    (source_scripts.parent / "consumer-scripts.json").write_text(json.dumps({
+        "version": 1,
+        "entrypoints": ["scripts/render.py"],
+        "script_tree_sha256": tree_digest,
+    }))
+    monkeypatch.setattr("app.agent_cli.CONSUMER_SCRIPT_SOURCE_ROOT", tmp_path / "reviewed-skills")
+    tool_manager = build_role_server(
+        "consumer", task_id=task_id, db_path=store.path,
+        execution_generation=task.execution_generation,
+    )._tool_manager
+    context = tool_manager.get_tool("read_scheduled_context").fn()
+    assert context["scheduled_task_id"] == run.scheduled_task_id
+    result = tool_manager.get_tool("consumer_run_skill_script").fn(
+        "managed-check", "scripts/render.py", []
+    )
+    assert result["exit_code"] == 0 and result["stdout"].strip() == "ordinary.md"
+    assert tool_manager.get_tool("read_task_artifact").fn("ordinary.md")["content"] == "New ordinary report\n"
+    submitted = []
+    monkeypatch.setattr("app.agent_cli._write_document_artifact",
+                        lambda **kw: submitted.append(kw) or {"node_id": "ordinary-node"})
+    receipt = tool_manager.get_tool("consumer_document_write").fn(
+        "ordinary.md", "An ordinary report", parent_id="folder", workspace_id="wiki"
+    )
+    assert receipt["node_id"] == "ordinary-node"
+    assert submitted[0]["artifact_name"] == "ordinary.md"

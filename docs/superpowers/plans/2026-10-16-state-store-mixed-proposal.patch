@@ -1,0 +1,292 @@
+--- a/app/store.py
++++ b/app/store.py
+@@ -4397 +4397 @@
+-            target = db.execute("select value from service_state where key=?", (state_key,)).fetchone()
++            target = db.execute(f"select value from ({state_projection('service_state')}) where key=?", (state_key,)).fetchone()
+@@ -4412 +4412 @@
+-                db.execute("insert into service_state(key,value) values (?,?)", (state_key, target_json))
++                insert_state(db, 'service_state', {'key': state_key, 'value': target_json})
+@@ -7455 +7455 @@
+-                "select 1 from dispatcher_claim_leases where adapter_name='scheduled' "
++                f"select 1 from ({state_projection('dispatcher_claim_leases')}) where adapter_name='scheduled' "
+@@ -7485,8 +7485,9 @@
+-            ledger = db.execute(
+-                "update dispatcher_claim_leases set owner='', lease_expires_at='', "
+-                "terminal_at=?, last_error='', updated_at=? where adapter_name='scheduled' "
+-                "and source_id=? and owner=? and generation=? and lease_expires_at>? "
+-                "and terminal_at=''",
+-                (now_text, now_text, str(run.id), owner, claim_generation, now_text),
+-            )
+-            if ledger.rowcount != 1:
++            ledger = update_state_rows(
++                db, 'dispatcher_claim_leases',
++                {'owner': '', 'lease_expires_at': '', 'terminal_at': now_text,
++                 'last_error': '', 'updated_at': now_text},
++                where_sql="adapter_name='scheduled' and source_id=? and owner=? "
++                          "and generation=? and lease_expires_at>? and terminal_at=''",
++                parameters=(str(run.id), owner, claim_generation, now_text),
++            )
++            if ledger != 1:
+@@ -7780 +7781 @@
+-                f"select key, value from service_state where key in ({placeholders})",
++                f"select key, value from ({state_projection('service_state')}) where key in ({placeholders})",
+@@ -7814 +7815 @@
+-                f"select key, value from service_state where key in ({placeholders})",
++                f"select key, value from ({state_projection('service_state')}) where key in ({placeholders})",
+@@ -8943 +8944 @@
+-            """select 1 from dispatcher_claim_leases where source_id=?
++            f"""select 1 from ({state_projection('dispatcher_claim_leases')}) where source_id=?
+@@ -10758,2 +10759,2 @@
+-                """
+-                select 1 from runtime_route_pauses
++                f"""
++                select 1 from ({state_projection('runtime_route_pauses')})
+@@ -12839,8 +12840,7 @@
+-                    db.execute(
+-                        """
+-                        update dispatcher_claim_leases
+-                        set owner='', lease_expires_at='', updated_at=current_timestamp
+-                        where adapter_name='reply' and source_id=?
+-                          and owner<>'' and lease_expires_at<=current_timestamp
+-                        """,
+-                        (str(row["id"]),),
++                    update_state_rows(
++                        db, 'dispatcher_claim_leases',
++                        {'owner': '', 'lease_expires_at': ''},
++                        update_json={'updated_at': 'json_quote(current_timestamp)'},
++                        where_sql="adapter_name='reply' and source_id=? "
++                                  "and owner<>'' and lease_expires_at<=current_timestamp",
++                        parameters=(str(row["id"]),),
+@@ -13325 +13325 @@
+-            if db.execute("select 1 from service_state where key=?", (key,)).fetchone():
++            if db.execute(f"select 1 from ({state_projection('service_state')}) where key=?", (key,)).fetchone():
+@@ -13342 +13342 @@
+-            db.execute("insert into service_state(key,value) values (?,?)", (key, value))
++            insert_state(db, 'service_state', {'key': key, 'value': value})
+@@ -13351 +13351 @@
+-                "delete from service_state where key=? and value=?",
++                "delete from state where record_type='service_state' and key=? and value=?",
+@@ -14230 +14230 @@
+-                "select 1 from dispatcher_claim_leases "
++                f"select 1 from ({state_projection('dispatcher_claim_leases')}) "
+@@ -14261,11 +14261,9 @@
+-            ledger = db.execute(
+-                "update dispatcher_claim_leases set owner='', lease_expires_at='', "
+-                "terminal_at=?, last_error='', updated_at=? "
+-                "where adapter_name='scheduled_execution' and source_id=? "
+-                "and owner=? and generation=? and lease_expires_at>? and terminal_at=''",
+-                (
+-                    now_text, now_text, str(task_id), dispatcher_owner,
+-                    dispatcher_generation, now_text,
+-                ),
+-            )
+-            if ledger.rowcount != 1:
++            ledger = update_state_rows(
++                db, 'dispatcher_claim_leases',
++                {'owner': '', 'lease_expires_at': '', 'terminal_at': now_text,
++                 'last_error': '', 'updated_at': now_text},
++                where_sql="adapter_name='scheduled_execution' and source_id=? "
++                          "and owner=? and generation=? and lease_expires_at>? and terminal_at=''",
++                parameters=(str(task_id), dispatcher_owner, dispatcher_generation, now_text),
++            )
++            if ledger != 1:
+@@ -17124,7 +17122,5 @@
+-                db.execute(
+-                    "update dispatcher_claim_leases "
+-                    "set owner='', owner_pid=0, lease_expires_at='', updated_at=? "
+-                    "where adapter_name='meeting' and source_id in ("
+-                    + placeholders
+-                    + ")",
+-                    [now_text, *[str(job_id) for job_id in job_ids]],
++                update_state_rows(
++                    db, 'dispatcher_claim_leases',
++                    {'owner': '', 'owner_pid': 0, 'lease_expires_at': '', 'updated_at': now_text},
++                    where_sql="adapter_name='meeting' and source_id in (" + placeholders + ")",
++                    parameters=tuple(str(job_id) for job_id in job_ids),
+@@ -17209 +17205 @@
+-                        select 1 from dispatcher_claim_leases claim
++                        select 1 from ({state_projection('dispatcher_claim_leases')}) claim
+@@ -17338 +17334 @@
+-            target = db.execute("select value from service_state where key=?",
++            target = db.execute(f"select value from ({state_projection('service_state')}) where key=?",
+@@ -17345 +17341 @@
+-            if db.execute("select 1 from dispatcher_claim_leases where adapter_name='meeting' and source_id=? "
++            if db.execute(f"select 1 from ({state_projection('dispatcher_claim_leases')}) where adapter_name='meeting' and source_id=? "
+@@ -29273 +29269 @@
+-                "select value from service_state where key=?", (key,)
++                f"select value from ({state_projection('service_state')}) where key=?", (key,)
+@@ -29298,6 +29294,5 @@
+-            db.execute(
+-                """insert into service_state (key, value, updated_at)
+-                   values (?, ?, current_timestamp)
+-                   on conflict(key) do update set
+-                     value=excluded.value, updated_at=current_timestamp""",
+-                (key, json.dumps(payload, ensure_ascii=False, sort_keys=True)),
++            upsert_state(
++                db, 'service_state',
++                {'key': key, 'value': json.dumps(payload, ensure_ascii=False, sort_keys=True)},
++                {'value': state_json_field('value'),
++                 'updated_at': 'json_quote(current_timestamp)'},
+@@ -29310 +29305 @@
+-                """
++                f"""
+@@ -29312 +29307 @@
+-                from service_state
++                from ({state_projection('service_state')})
+@@ -30633 +30628 @@
+-                "select value from service_state where key=?",
++                f"select value from ({state_projection('service_state')}) where key=?",
+@@ -30641,19 +30636,9 @@
+-            db.execute(
+-                """
+-                insert into service_state (key, value, updated_at)
+-                values (?, ?, current_timestamp)
+-                on conflict(key) do update set
+-                    value=excluded.value,
+-                    updated_at=current_timestamp
+-                """,
+-                (
+-                    WEEKLY_OKR_REPORT_RUN_STATE_KEY,
+-                    json.dumps(
+-                        {
+-                            "owner": normalized_owner,
+-                            "lease_expires_at": expires_at.isoformat(),
+-                        },
+-                        ensure_ascii=False,
+-                        sort_keys=True,
+-                    ),
+-                ),
++            upsert_state(
++                db, 'service_state',
++                {'key': WEEKLY_OKR_REPORT_RUN_STATE_KEY,
++                 'value': json.dumps(
++                     {'owner': normalized_owner, 'lease_expires_at': expires_at.isoformat()},
++                     ensure_ascii=False, sort_keys=True,
++                 )},
++                {'value': state_json_field('value'),
++                 'updated_at': 'json_quote(current_timestamp)'},
+@@ -30680 +30665 @@
+-                "select value from service_state where key=?",
++                f"select value from ({state_projection('service_state')}) where key=?",
+@@ -30692,17 +30677,8 @@
+-            db.execute(
+-                """
+-                update service_state
+-                set value=?, updated_at=current_timestamp
+-                where key=?
+-                """,
+-                (
+-                    json.dumps(
+-                        {
+-                            "owner": normalized_owner,
+-                            "lease_expires_at": expires_at.isoformat(),
+-                        },
+-                        ensure_ascii=False,
+-                        sort_keys=True,
+-                    ),
+-                    WEEKLY_OKR_REPORT_RUN_STATE_KEY,
+-                ),
++            update_state_rows(
++                db, 'service_state',
++                {'value': json.dumps(
++                    {'owner': normalized_owner, 'lease_expires_at': expires_at.isoformat()},
++                    ensure_ascii=False, sort_keys=True,
++                )},
++                update_json={'updated_at': 'json_quote(current_timestamp)'},
++                where_sql='key=?', parameters=(WEEKLY_OKR_REPORT_RUN_STATE_KEY,),
+@@ -30719 +30695 @@
+-                "select value from service_state where key=?",
++                f"select value from ({state_projection('service_state')}) where key=?",
+@@ -30728 +30704 @@
+-                "delete from service_state where key=?",
++                "delete from state where record_type='service_state' and key=?",
+@@ -30786 +30762 @@
+-                "delete from service_state where key=?",
++                "delete from state where record_type='service_state' and key=?",
+@@ -30800 +30776 @@
+-                "select value from service_state where key=?",
++                f"select value from ({state_projection('service_state')}) where key=?",
+@@ -30827,20 +30803,10 @@
+-            db.execute(
+-                """
+-                insert into service_state (key, value, updated_at)
+-                values (?, ?, current_timestamp)
+-                on conflict(key) do update set
+-                    value=excluded.value,
+-                    updated_at=current_timestamp
+-                """,
+-                (
+-                    CODEX_CAPACITY_PAUSE_STATE_KEY,
+-                    json.dumps(
+-                        {
+-                            "reason_code": "workspace_credits_exhausted",
+-                            "retry_at": retry_at,
+-                            "failure_count": failure_count,
+-                        },
+-                        ensure_ascii=False,
+-                        sort_keys=True,
+-                    ),
+-                ),
++            upsert_state(
++                db, 'service_state',
++                {'key': CODEX_CAPACITY_PAUSE_STATE_KEY,
++                 'value': json.dumps(
++                     {'reason_code': 'workspace_credits_exhausted',
++                      'retry_at': retry_at, 'failure_count': failure_count},
++                     ensure_ascii=False, sort_keys=True,
++                 )},
++                {'value': state_json_field('value'),
++                 'updated_at': 'json_quote(current_timestamp)'},
+@@ -30863 +30829 @@
+-                "select value from service_state where key=?",
++                f"select value from ({state_projection('service_state')}) where key=?",
+@@ -30868 +30834 @@
+-                """
++                f"""
+@@ -30870 +30836 @@
+-                from channel_login_reservations
++                from ({state_projection('channel_login_reservations')})
+@@ -30901,10 +30867,6 @@
+-            db.execute(
+-                """
+-                insert into channel_login_reservations (
+-                    channel, reservation_owner, reserved_at
+-                ) values (?, ?, ?)
+-                on conflict(channel) do update set
+-                    reservation_owner=excluded.reservation_owner,
+-                    reserved_at=excluded.reserved_at
+-                """,
+-                (channel, reservation_owner, now_utc.isoformat()),
++            upsert_state(
++                db, 'channel_login_reservations',
++                {'channel': channel, 'reservation_owner': reservation_owner,
++                 'reserved_at': now_utc.isoformat()},
++                {'reservation_owner': state_json_field('reservation_owner'),
++                 'reserved_at': state_json_field('reserved_at')},
+@@ -30925 +30887 @@
+-                """
++                f"""
+@@ -30927 +30889 @@
+-                from channel_login_reservations
++                from ({state_projection('channel_login_reservations')})
+@@ -30938 +30900 @@
+-                "select value from service_state where key=?",
++                f"select value from ({state_projection('service_state')}) where key=?",
+@@ -30944 +30906 @@
+-                "delete from channel_login_reservations where channel=?",
++                "delete from state where record_type='channel_login_reservations' and channel=?",
+@@ -30993,9 +30955,5 @@
+-        db.execute(
+-            """
+-            insert into service_state (key, value, updated_at)
+-            values (?, ?, current_timestamp)
+-            on conflict(key) do update set
+-                value=excluded.value,
+-                updated_at=current_timestamp
+-            """,
+-            (key, json.dumps(safe_state, ensure_ascii=False, sort_keys=True)),
++        upsert_state(
++            db, 'service_state',
++            {'key': key, 'value': json.dumps(safe_state, ensure_ascii=False, sort_keys=True)},
++            {'value': state_json_field('value'),
++             'updated_at': 'json_quote(current_timestamp)'},

@@ -7,7 +7,6 @@ const eventTypes: readonly EventType[] = [
   "tool_completed",
   "file_changed",
   "artifact_created",
-  "confirmation_required",
   "status_changed",
   "turn_completed",
   "turn_failed",
@@ -26,10 +25,9 @@ const payloadFields: Record<EventType, ReadonlySet<string>> = {
   ]),
   file_changed: new Set(["filename", "path", "change", "status"]),
   artifact_created: new Set(["artifact_id", "label", "filename", "path", "media_type"]),
-  confirmation_required: new Set(["action_kind", "confirmation_id", "target", "summary", "risk"]),
-  status_changed: new Set(["status", "code", "confirmation_id", "confirmation_status"]),
+  status_changed: new Set(["status", "code"]),
   turn_completed: new Set(["status"]),
-  turn_failed: new Set(["status", "code", "confirmation_id"]),
+  turn_failed: new Set(["status", "code"]),
 };
 
 export interface EventState {
@@ -38,13 +36,12 @@ export interface EventState {
 }
 
 export interface TimelineBlock {
-  kind: "markdown" | "thinking" | "tool" | "file" | "confirmation" | "artifact";
+  kind: "markdown" | "thinking" | "tool" | "file" | "artifact";
   key: string;
   eventId: number;
   text?: string;
   status?: string;
   payload?: Record<string, unknown>;
-  confirmationId?: string;
   artifactId?: string;
   startedAt?: string;
   completedAt?: string;
@@ -72,7 +69,6 @@ export function isPublicEventPayload(eventType: EventType, payload: Record<strin
   if (eventType === "text_delta") return typeof payload.text === "string";
   if (eventType === "thinking_summary") return typeof payload.text === "string" || typeof payload.summary === "string";
   if (eventType === "artifact_created") return typeof payload.artifact_id === "string";
-  if (eventType === "confirmation_required") return typeof payload.confirmation_id === "string";
   if (["status_changed", "turn_completed", "turn_failed"].includes(eventType)) return typeof payload.status === "string";
   return true;
 }
@@ -187,11 +183,6 @@ export function timelineBlocks(turnId: string, events: WorkbenchEvent[], turnSta
     }
     if (event.event_type === "file_changed") {
       blocks.push({ kind: "file", key: `event:${event.id}`, eventId: event.id, status: payloadText(event.payload, "status"), payload: event.payload });
-      continue;
-    }
-    if (event.event_type === "confirmation_required") {
-      const confirmationId = payloadText(event.payload, "confirmation_id");
-      if (confirmationId) blocks.push({ kind: "confirmation", key: `confirmation:${confirmationId}`, eventId: event.id, confirmationId });
       continue;
     }
     if (event.event_type === "artifact_created") {

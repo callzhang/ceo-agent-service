@@ -10,11 +10,15 @@ from app.task_models import WorkItem, WorkProject, WorkTodo
 from app.task_semantic_models import (
     AttentionStatus, BusinessAttentionItem, BusinessAttentionTask,
     BusinessActorKind, BusinessAnchor, BusinessProject, BusinessTask, BusinessTaskAnchorLink,
-    BusinessTaskEvidence, BusinessTaskRelation, BusinessTaskSignal,
+    BusinessTaskEvidence, BusinessTaskRelation,
     BusinessWorkCluster, BusinessWorkClusterTask, BusinessRelationStatus, FormalTaskBasis,
     BusinessProjectContextRevision, BusinessProjectEvidence, SourceCitation,
 )
 from app.task_source_documents import source_bundle, source_contains_quote
+from app.business_source_reader import (
+    AvailableSource, BusinessTaskSignalFact, PreparedSources, RequestSourceReader,
+)
+from app.task_source_projection_sharing import share_source_document_projections
 
 
 TOKEN_RE = re.compile(r"[A-Za-z0-9_]+|[\u4e00-\u9fff]")
@@ -44,7 +48,8 @@ class TaskSemanticContext:
     formal_tasks: tuple[BusinessTask, ...]
     unverified_formal_tasks: tuple[BusinessTask, ...]
     task_evidence: tuple[BusinessTaskEvidence, ...]
-    evidence_signals: tuple[BusinessTaskSignal, ...]
+    evidence_signals: tuple[BusinessTaskSignalFact, ...]
+    prepared_sources: PreparedSources
     task_relations: tuple[BusinessTaskRelation, ...]
     task_anchor_links: tuple[BusinessTaskAnchorLink, ...]
     clusters: tuple[BusinessWorkCluster, ...]
@@ -90,7 +95,8 @@ def _bounded_task_evidence(
 
 
 def _source_backed_owner_signal_id(
-    store: AutoReplyStore, task: BusinessTask, evidence: tuple[BusinessTaskEvidence, ...]
+    store: AutoReplyStore, task: BusinessTask, evidence: tuple[BusinessTaskEvidence, ...],
+    prepared_sources: PreparedSources,
 ) -> int | None:
     if not (task.owner_name.strip() or task.owner_user_id.strip()):
         return None
@@ -113,7 +119,12 @@ def _source_backed_owner_signal_id(
         if row.evidence_role.value != required_role:
             continue
         signal = store.get_business_task_signal(row.signal_id)
-        if signal is None or signal.source_ref != source_ref or not source_contains_quote(signal.evidence_text, excerpt):
+        if signal is None:
+            continue
+        prepared_sources.add(signal)
+        reading = prepared_sources.reading_for(signal)
+        if (signal.source_ref != source_ref or not isinstance(reading, AvailableSource)
+                or not source_contains_quote(reading.body, excerpt)):
             continue
         if not task.owner_user_id:
             return signal.id if task.owner_name else None
@@ -177,7 +188,8 @@ def _semantic_citations(project_contexts, tasks, attention_items) -> tuple[Sourc
 
 
 def retrieve_task_semantic_context(
-    store: AutoReplyStore, work_item: WorkItem, *, limit_per_kind: int = 20
+    store: AutoReplyStore, work_item: WorkItem, *, limit_per_kind: int = 20,
+    source_reader: RequestSourceReader | None = None,
 ) -> TaskSemanticContext:
     if limit_per_kind < 1:
         raise ValueError("limit_per_kind must be positive")
@@ -240,13 +252,20 @@ def retrieve_task_semantic_context(
     unverified_rows: list[BusinessTask] = []
     evidence_by_task: dict[int, tuple[BusinessTaskEvidence, ...]] = {}
     owner_signal_by_task: dict[int, int] = {}
+    prepared_sources = PreparedSources(source_reader or store.business_source_reader())
     # Reserve the bucket for all known same-source Tasks before filling its
     # remaining lexical/Project budget; a forced overflow must not retain noise.
     for score, task in sorted(ranked_tasks, key=lambda pair: pair[1].id not in same_source_task_ids):
+        if (len(formal_rows) >= limit_per_kind
+                and len(unverified_rows) >= limit_per_kind
+                and task.id not in same_source_task_ids):
+            break
         if (score <= 0 and task.id not in same_source_task_ids and task.id not in project_task_ids) or task.stage.value != "formal":
             continue
         task_evidence = store.list_business_task_evidence(task.id)
-        owner_signal_id = _source_backed_owner_signal_id(store, task, task_evidence)
+        owner_signal_id = _source_backed_owner_signal_id(
+            store, task, task_evidence, prepared_sources
+        )
         bucket = formal_rows if owner_signal_id is not None else unverified_rows
         if len(bucket) < limit_per_kind or task.id in same_source_task_ids:
             bucket.append(task)
@@ -351,12 +370,15 @@ def retrieve_task_semantic_context(
         signal for signal_id in sorted(signal_ids)
         if (signal := store.get_business_task_signal(signal_id)) is not None
     )
+    for signal in signals:
+        prepared_sources.add(signal)
     return TaskSemanticContext(
         task_candidates=candidates,
         formal_tasks=formal,
         unverified_formal_tasks=unverified,
         task_evidence=evidence,
         evidence_signals=signals,
+        prepared_sources=prepared_sources,
         task_relations=relations,
         task_anchor_links=links,
         clusters=clusters,
@@ -390,7 +412,14 @@ def render_task_semantic_context(context: TaskSemanticContext, *, work_item: Wor
         "existing_formal_tasks": [_model_payload(value) for value in context.formal_tasks],
         "unverified_formal_tasks": [_model_payload(value) for value in context.unverified_formal_tasks],
         "task_evidence": [_model_payload(value) for value in context.task_evidence],
-        **source_bundle(context.evidence_signals, current_work_item=work_item, citations=citations),
+        **share_source_document_projections(
+            source_bundle(
+                context.evidence_signals,
+                prepared_sources=context.prepared_sources,
+                current_work_item=work_item,
+                citations=citations,
+            )
+        ),
         "task_relations": [_model_payload(value) for value in context.task_relations],
         "task_anchor_links": [_model_payload(value) for value in context.task_anchor_links],
         "work_clusters": [_model_payload(value) for value in context.clusters],
@@ -564,10 +593,6 @@ def render_candidate_prompt(candidates: list[ProjectCandidate]) -> str:
     payload = []
     for candidate in candidates:
         project = candidate.project
-        try:
-            memory_context = json.loads(project.memory_context_json or "{}")
-        except (TypeError, json.JSONDecodeError):
-            memory_context = {}
         payload.append(
             {
                 "id": project.id,
@@ -584,7 +609,6 @@ def render_candidate_prompt(candidates: list[ProjectCandidate]) -> str:
                 "current_state": project.current_state,
                 "blocker": project.blocker,
                 "next_step": project.next_step,
-                "memory_context": memory_context,
                 "source_conversations": _parse_json_list(
                     project.source_conversations_json
                 ),
@@ -737,8 +761,6 @@ def render_project_task_details(details: list[ProjectTaskDetail]) -> str:
                     "title": project.title,
                     "category": _enum_value(project.category),
                     "status": _enum_value(project.status),
-                    "priority": _enum_value(project.priority),
-                    "risk_level": _enum_value(project.risk_level),
                     "owner": resolve_task_owner_display(project, detail.todos),
                     "owner_user_id": project.owner_user_id,
                     "owner_name": project.owner_name,
@@ -748,7 +770,6 @@ def render_project_task_details(details: list[ProjectTaskDetail]) -> str:
                     "current_state": project.current_state,
                     "blocker": project.blocker,
                     "next_step": project.next_step,
-                    "next_follow_up_at": project.next_follow_up_at,
                     "source_conversations": _parse_json_list(
                         project.source_conversations_json
                     ),
@@ -760,12 +781,10 @@ def render_project_task_details(details: list[ProjectTaskDetail]) -> str:
                         "title": todo.title,
                         "description": todo.description,
                         "status": _enum_value(todo.status),
-                        "priority": _enum_value(todo.priority),
                         "owner": todo.owner_name or todo.owner_user_id,
                         "owner_user_id": todo.owner_user_id,
                         "owner_name": todo.owner_name,
                         "deadline_at": todo.deadline_at,
-                        "next_follow_up_at": todo.next_follow_up_at,
                         "follow_up_question": todo.follow_up_question,
                         "blocker": todo.blocker,
                         "completion_evidence": _parse_json_object(

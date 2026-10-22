@@ -1,5 +1,10 @@
-from app.action_storage import update_action
+from tests.support.legacy_todo_facts import seed_legacy_work_project
+from app.task8_storage import task8_set_parts
+from app.task20_definitions import task20_projection
+from app.action_error_definitions import error_projection
+from app.action_storage import error_set_parts, update_action
 import json
+import hashlib
 import sqlite3
 import sys
 import threading
@@ -16,7 +21,6 @@ from app.agent_runtime_config import SUPPORTED_RUNTIME_ROUTES
 from tests.runtime_route_env import claude_api_env
 from app.cli import (
     WorkerSettings,
-    backfill_task_memory_context_command,
     build_work_profile_command,
     build_parser,
     build_style_corpus,
@@ -52,6 +56,46 @@ from app.store import AgentRunLeaseLostError, AutoReplyStore
 from app.task_agent_session import TASK_AGENT_SESSION_SCOPE_ID, TaskAgentSessionLeaseLost
 from app.task_models import TaskAgentDecision, WorkItem
 
+
+
+def _verified_reply_fixture(conversation, trigger, text):
+    """Synthetic native exact-message readback; never a provider call."""
+    digest = hashlib.sha256("".join(text.split()).encode()).hexdigest()
+    return {
+        "success": True,
+        "result": {
+            "processQueryKey": "okr-recall-1",
+            "openMessageId": "sent-okr-1",
+        },
+        "readbackVerification": {
+            "contractVersion": "dingtalk.reply-readback.v1",
+            "messageId": "sent-okr-1",
+            "conversationId": conversation.open_conversation_id,
+            "quotedMessageId": trigger.open_message_id,
+            "senderUserId": "fixture-sender",
+            "bodySha256": digest,
+            "expectedBodySha256": digest,
+            "exactMatchCount": 1,
+            "completeWindowReadback": True,
+            "recalled": False,
+        },
+        "readback": {
+            "open_message_id": "sent-okr-1",
+            "open_conversation_id": conversation.open_conversation_id,
+            "quoted_message_id": trigger.open_message_id,
+            "sender_user_id": "fixture-sender",
+            "content": text,
+        },
+    }
+
+
+def _update_task_fixture(db, kind, public_id, values):
+    """Set existing native-shaped fixture fields using the current typed writer."""
+    parts = task8_set_parts(kind, values)
+    return db.execute(
+        f"update tasks set {parts.sql} where record_type=? and cast(legacy_key as integer)=?",
+        (*parts.parameters, kind, public_id),
+    ).rowcount
 
 def test_email_unsubscribe_cancellation_requires_exact_identity_and_explicit_apply():
     arguments = [
@@ -105,7 +149,7 @@ def test_native_chat_readback_cli_preview_uses_read_only_database_connection(
     assert db_path.read_bytes() == before
 
 
-def test_task_project_repair_commands_parse_required_paths():
+def test_task_project_repair_plan_parses_required_paths():
     plan = build_parser().parse_args(
         [
             "repair-task-projects-plan",
@@ -117,21 +161,31 @@ def test_task_project_repair_commands_parse_required_paths():
             "/tmp/repair.json",
         ]
     )
-    apply = build_parser().parse_args(
-        [
-            "repair-task-projects-apply",
-            "--db",
-            "/tmp/current.sqlite3",
-            "--manifest",
-            "/tmp/repair.json",
-            "--archive-limit",
-            "10",
-        ]
-    )
-
     assert plan.historical_db == "/tmp/historical.sqlite3"
     assert plan.manifest == "/tmp/repair.json"
-    assert apply.archive_limit == 10
+
+
+@pytest.mark.parametrize("command,options", [
+    ("backfill-routine-process-todos", ["--todo-id", "1", "--reason", "retired"]),
+    ("backfill-todo-deadlines", []),
+    ("backfill-todo-owner-ids", []),
+    ("repair-task-projects-apply", ["--manifest", "/tmp/repair.json"]),
+])
+def test_retired_legacy_mutation_commands_are_not_parsed(command, options):
+    with pytest.raises(SystemExit) as error:
+        build_parser().parse_args([command, *options])
+    assert error.value.code == 2
+
+
+@pytest.mark.parametrize("command,options", [
+    ("repair-task-projects-plan", ["--manifest", "/tmp/repair.json"]),
+    ("task-semantic-import-plan", ["--output", "/tmp/import.json"]),
+    ("task-semantic-import-apply", ["--manifest", "/tmp/import.json"]),
+    ("backfill-minutes-owners", []),
+    ("process-work-items", []),
+])
+def test_retained_task_commands_still_parse(command, options):
+    assert build_parser().parse_args([command, *options]).command == command
 
 
 def test_task_semantic_import_commands_parse_manifest_and_limits():
@@ -154,7 +208,7 @@ def test_task_semantic_import_plan_cli_writes_manifest_without_database_changes(
 ):
     db_path = tmp_path / "copy.sqlite3"
     store = AutoReplyStore(db_path)
-    store.create_work_project(title="待核实事项")
+    seed_legacy_work_project(store, title="待核实事项")
     output = tmp_path / "manifest.json"
     before_bytes = db_path.read_bytes()
     monkeypatch.setattr(sys, "argv", [
@@ -165,6 +219,7 @@ def test_task_semantic_import_plan_cli_writes_manifest_without_database_changes(
     printed = json.loads(capsys.readouterr().out)
     assert printed["history_only"] == 1
     assert printed["formal_task"] == 0
+    assert "official_project_match" not in printed
     assert output.exists()
     assert db_path.read_bytes() == before_bytes
 
@@ -179,7 +234,7 @@ def test_task_semantic_import_apply_cli_uses_reviewed_fixture_manifest(
 
     db_path = tmp_path / "fixture.sqlite3"
     store = AutoReplyStore(db_path)
-    store.create_work_project(title="待核实事项")
+    seed_legacy_work_project(store, title="待核实事项")
     manifest_path = tmp_path / "manifest.json"
     write_task_semantic_import_manifest(
         build_task_semantic_import_manifest(db_path), manifest_path
@@ -189,13 +244,15 @@ def test_task_semantic_import_apply_cli_uses_reviewed_fixture_manifest(
         "--manifest", str(manifest_path), "--limit", "1",
     ])
     cli.main()
-    assert json.loads(capsys.readouterr().out)["history_only"] == 1
+    first = json.loads(capsys.readouterr().out)
+    assert first["history_only"] == 1
+    assert "official_project_matches" not in first
     cli.main()
-    assert json.loads(capsys.readouterr().out)["history_only"] == 1
+    second = json.loads(capsys.readouterr().out)
+    assert second["history_only"] == 1
+    assert "official_project_matches" not in second
     with sqlite3.connect(db_path) as db:
-        assert db.execute(
-            "select work_project_id from business_legacy_links"
-        ).fetchone() is None
+        assert db.execute("select 1 from sqlite_schema where name='business_legacy_links'").fetchone() is None
 
 
 def enqueue_trigger_task(
@@ -1438,48 +1495,8 @@ def test_retry_work_summary_input_command_requeues_failed_input(tmp_path, capsys
     assert store.claim_work_summary_inputs(1)[0].id == input_id
 
 
-def test_parser_supports_backfill_task_memory_context():
-    args = build_parser().parse_args(
-        ["backfill-task-memory-context", "--max-batches", "2"]
-    )
-
-    assert args.command == "backfill-task-memory-context"
-    assert args.max_batches == 2
 
 
-def test_parser_supports_backfill_routine_process_todos():
-    args = build_parser().parse_args(
-        [
-            "backfill-routine-process-todos",
-            "--todo-id",
-            "2622",
-            "--todo-id",
-            "2623",
-            "--reason",
-            "routine HR offer-flow step",
-            "--apply",
-        ]
-    )
-
-    assert args.command == "backfill-routine-process-todos"
-    assert args.todo_id == [2622, 2623]
-    assert args.reason == "routine HR offer-flow step"
-    assert args.apply is True
-
-
-def test_parser_supports_backfill_todo_owner_ids():
-    args = build_parser().parse_args(
-        [
-            "backfill-todo-owner-ids",
-            "--limit",
-            "50",
-            "--apply",
-        ]
-    )
-
-    assert args.command == "backfill-todo-owner-ids"
-    assert args.limit == 50
-    assert args.apply is True
 
 
 def test_parser_supports_process_okr_reviews():
@@ -1489,14 +1506,13 @@ def test_parser_supports_process_okr_reviews():
     assert args.max_batches == 1
 
 
-def test_parser_supports_forced_weekly_okr_report():
-    args = build_parser().parse_args(
-        ["weekly-okr-report", "--force", "--period-label", "2026 Q3"]
-    )
-
-    assert args.command == "weekly-okr-report"
-    assert args.force is True
-    assert args.period_label == "2026 Q3"
+def test_parser_supports_okr_source_reads_instead_of_hidden_report_workflow():
+    args = build_parser().parse_args(["weekly-okr-roster", "--group-name", "Team"])
+    assert args.command == "weekly-okr-roster" and args.group_name == "Team"
+    member = build_parser().parse_args(["weekly-okr-member", "--user-id", "u1", "--name", "A", "--period-label", "2026 Q3"])
+    assert member.command == "weekly-okr-member" and member.user_id == "u1"
+    with pytest.raises(SystemExit):
+        build_parser().parse_args(["weekly-okr-report"])
 
 
 def test_parser_supports_refresh_okr_archive():
@@ -1846,12 +1862,7 @@ def test_process_okr_reviews_command_processes_and_sends_reply(
                     text,
                 )
             )
-            return {
-                "result": {
-                    "processQueryKey": "okr-recall-1",
-                    "openMessageId": "sent-okr-1",
-                }
-            }
+            return _verified_reply_fixture(conversation, trigger, text)
 
     def fake_process(*, store, runner, request, single_chat):
         calls.append(
@@ -1916,7 +1927,7 @@ def test_process_okr_reviews_command_processes_and_sends_reply(
     assert prepared.final_body == sent_reply.reply_text
     assert calls == [
         ("runner", "RoutedCodexExecution", "okr_review"),
-        ("dws", 4),
+        ("dws", 3),
         ("process", request_id, "帮我审核 OKR", "FakeStructuredRunner", True),
         (
             "send",
@@ -2207,11 +2218,7 @@ def test_process_okr_reviews_command_does_not_reclaim_active_dispatcher_owner(
     )
     assert claimed is not None
     with store._connect() as db:
-        db.execute(
-            "update tasks set updated_at=datetime('now', '-31 minutes') "
-            "where record_type='okr_review_requests' and cast(legacy_key as integer)=?",
-            (request_id,),
-        )
+        _update_task_fixture(db, 'okr_review_requests', ((request_id,))[0], {'updated_at': db.execute("select datetime('now', '-31 minutes')").fetchone()[0]})
     monkeypatch.setattr(cli, "_build_okr_review_runner", lambda *_args: object())
     monkeypatch.setattr(
         "app.okr_review.process_okr_review_request",
@@ -2250,12 +2257,7 @@ def test_process_okr_reviews_command_requeues_stale_processing_request(
 
         def send_reply_to_trigger(self, conversation, trigger, text, at_users=None):
             calls.append(("send", trigger.open_message_id, text))
-            return {
-                "result": {
-                    "processQueryKey": "okr-recall-1",
-                    "openMessageId": "sent-okr-1",
-                }
-            }
+            return _verified_reply_fixture(conversation, trigger, text)
 
     def fake_process(*, store, runner, request, single_chat):
         calls.append(("process", request.id, single_chat))
@@ -2293,10 +2295,7 @@ def test_process_okr_reviews_command_requeues_stale_processing_request(
     store.claim_okr_review_requests(limit=1)
     assert store.acquire_codex_session_lock("cid-1", f"okr_review:{request_id}")
     with sqlite3.connect(db_path) as db:
-        db.execute(
-            "update tasks set updated_at=datetime('now', '-31 minutes') where record_type='okr_review_requests' and cast(legacy_key as integer)=?",
-            (request_id,),
-        )
+        _update_task_fixture(db, 'okr_review_requests', ((request_id,))[0], {'updated_at': db.execute("select datetime('now', '-31 minutes')").fetchone()[0]})
 
     processed = process_okr_reviews_command(
         WorkerSettings(db_path=db_path, workspace=tmp_path)
@@ -2529,7 +2528,7 @@ def test_process_work_items_command_processes_claimed_input(tmp_path, monkeypatc
     assert loaded.claim_work_summary_inputs(limit=1) == []
     with loaded._connect() as db:
         status = db.execute(
-            "select status from tasks where record_type='work_summary_inputs' and cast(legacy_key as integer)=?",
+            f"select status from ({task20_projection('work_summary_inputs')}) where id=?",
             (input_id,),
         ).fetchone()["status"]
     assert status == "done"
@@ -2580,7 +2579,7 @@ def test_process_work_items_command_leaves_input_pending_when_shared_session_is_
     assert loaded.get_work_summary_input(input_id).status.value == "pending"
     with loaded._connect() as db:
         row = db.execute(
-            "select attempts from tasks where record_type='work_summary_inputs' and cast(legacy_key as integer)=?",
+            f"select attempts from ({task20_projection('work_summary_inputs')}) where id=?",
             (input_id,),
         ).fetchone()
     assert row["attempts"] == 0
@@ -2636,7 +2635,7 @@ def test_process_work_items_command_does_not_claim_when_lease_is_lost_before_cla
     assert store.get_work_summary_input(input_id).status.value == "pending"
     with store._connect() as db:
         row = db.execute(
-            "select attempts from tasks where record_type='work_summary_inputs' and cast(legacy_key as integer)=?",
+            f"select attempts from ({task20_projection('work_summary_inputs')}) where id=?",
             (input_id,),
         ).fetchone()
     assert row["attempts"] == 0
@@ -2841,7 +2840,7 @@ def test_process_work_items_command_processes_existing_input_without_feature_gat
     assert capsys.readouterr().out == "process-work-items processed=1\n"
     with store._connect() as db:
         assert db.execute(
-            "select status from tasks where record_type='work_summary_inputs' and cast(legacy_key as integer)=?", (input_id,)
+            f"select status from ({task20_projection('work_summary_inputs')}) where id=?", (input_id,)
         ).fetchone()["status"] == "done"
 def test_process_work_items_command_reclaims_stale_processing_input(
     tmp_path,
@@ -2916,10 +2915,7 @@ def test_process_work_items_command_reclaims_stale_processing_input(
     )
     claimed = store.claim_work_summary_inputs(limit=1)
     with store._connect() as db:
-        db.execute(
-            "update tasks set updated_at=datetime('now', '-25 minutes') where record_type='work_summary_inputs' and cast(legacy_key as integer)=?",
-            (claimed[0].id,),
-        )
+        _update_task_fixture(db, 'work_summary_inputs', ((claimed[0].id,))[0], {'updated_at': db.execute("select datetime('now', '-25 minutes')").fetchone()[0]})
 
     processed = process_work_items_command(
         WorkerSettings(db_path=db_path, workspace=tmp_path, max_batches=5)
@@ -2930,7 +2926,7 @@ def test_process_work_items_command_reclaims_stale_processing_input(
     assert capsys.readouterr().out == "process-work-items processed=1\n"
     with loaded._connect() as db:
         row = db.execute(
-            "select status, attempts from tasks where record_type='work_summary_inputs' and cast(legacy_key as integer)=?",
+            f"select status, attempts from ({task20_projection('work_summary_inputs')}) where id=?",
             (input_id,),
         ).fetchone()
     assert dict(row) == {"status": "done", "attempts": 1}
@@ -3001,12 +2997,7 @@ def test_process_work_items_command_does_not_batch_claim_after_failure(
     assert capsys.readouterr().out == "process-work-items processed=0\n"
     with AutoReplyStore(db_path)._connect() as db:
         rows = db.execute(
-            """
-            select cast(legacy_key as integer) as id, status, attempts, error
-            from tasks
-            where record_type='work_summary_inputs' and cast(legacy_key as integer) in (?, ?)
-            order by cast(legacy_key as integer)
-            """,
+            f"\n            select id as id, status, attempts, error\n            from ({task20_projection('work_summary_inputs')})\n            where id in (?, ?)\n            order by id\n            ",
             (first_id, second_id),
         ).fetchall()
     assert [dict(row) for row in rows] == [
@@ -3069,11 +3060,7 @@ def test_process_work_items_command_backoffs_transient_codex_failure(
     assert capsys.readouterr().out == "process-work-items processed=0\n"
     with AutoReplyStore(db_path)._connect() as db:
         row = db.execute(
-            """
-            select status, attempts, error, available_at
-            from tasks
-            where record_type='work_summary_inputs' and cast(legacy_key as integer)=?
-            """,
+            f"\n            select status, attempts, error, available_at\n            from ({task20_projection('work_summary_inputs')})\n            where id=?\n            ",
             (input_id,),
         ).fetchone()
     assert row["status"] == "pending"
@@ -3133,11 +3120,7 @@ def test_process_work_items_command_fails_native_codex_missing_auth_header(
     assert capsys.readouterr().out == "process-work-items processed=0\n"
     with AutoReplyStore(db_path)._connect() as db:
         row = db.execute(
-            """
-            select status, attempts, error, available_at
-            from tasks
-            where record_type='work_summary_inputs' and cast(legacy_key as integer)=?
-            """,
+            f"\n            select status, attempts, error, available_at\n            from ({task20_projection('work_summary_inputs')})\n            where id=?\n            ",
             (input_id,),
         ).fetchone()
     assert row["status"] == "failed"
@@ -3197,10 +3180,7 @@ def test_process_work_items_command_keeps_native_missing_header_terminal_after_l
         item.model_dump_json(),
     )
     with store._connect() as db:
-        db.execute(
-            "update tasks set attempts=3 where record_type='work_summary_inputs' and cast(legacy_key as integer)=?",
-            (input_id,),
-        )
+        _update_task_fixture(db, 'work_summary_inputs', ((input_id,))[0], {'attempts': 3})
 
     processed = process_work_items_command(
         WorkerSettings(db_path=db_path, workspace=tmp_path, max_batches=1)
@@ -3210,11 +3190,7 @@ def test_process_work_items_command_keeps_native_missing_header_terminal_after_l
     assert capsys.readouterr().out == "process-work-items processed=0\n"
     with AutoReplyStore(db_path)._connect() as db:
         row = db.execute(
-            """
-            select status, attempts, error, available_at
-            from tasks
-            where record_type='work_summary_inputs' and cast(legacy_key as integer)=?
-            """,
+            f"\n            select status, attempts, error, available_at\n            from ({task20_projection('work_summary_inputs')})\n            where id=?\n            ",
             (input_id,),
         ).fetchone()
     assert row["status"] == "failed"
@@ -3265,10 +3241,7 @@ def test_process_work_items_command_fails_codex_transport_failure_after_limit(
         item.model_dump_json(),
     )
     with store._connect() as db:
-        db.execute(
-            "update tasks set attempts=3 where record_type='work_summary_inputs' and cast(legacy_key as integer)=?",
-            (input_id,),
-        )
+        _update_task_fixture(db, 'work_summary_inputs', ((input_id,))[0], {'attempts': 3})
 
     processed = process_work_items_command(
         WorkerSettings(db_path=db_path, workspace=tmp_path, max_batches=1)
@@ -3278,11 +3251,7 @@ def test_process_work_items_command_fails_codex_transport_failure_after_limit(
     assert capsys.readouterr().out == "process-work-items processed=0\n"
     with AutoReplyStore(db_path)._connect() as db:
         row = db.execute(
-            """
-            select status, attempts, error, available_at
-            from tasks
-            where record_type='work_summary_inputs' and cast(legacy_key as integer)=?
-            """,
+            f"\n            select status, attempts, error, available_at\n            from ({task20_projection('work_summary_inputs')})\n            where id=?\n            ",
             (input_id,),
         ).fetchone()
     assert row["status"] == "failed"
@@ -3335,9 +3304,10 @@ def test_process_work_items_pauses_after_codex_capacity_exhaustion(
             item.model_dump_json(),
         )
     with store._connect() as db:
-        db.execute(
-            "update tasks set attempts=3 where record_type='work_summary_inputs' and source_ref='1'"
-        )
+        [row] = db.execute(
+            f"select id from ({task20_projection('work_summary_inputs')}) where source_ref='1'"
+        ).fetchall()
+        _update_task_fixture(db, 'work_summary_inputs', row['id'], {'attempts': 3})
 
     assert process_work_items_command(
         WorkerSettings(db_path=db_path, workspace=tmp_path, max_batches=5)
@@ -3346,7 +3316,7 @@ def test_process_work_items_pauses_after_codex_capacity_exhaustion(
 
     with AutoReplyStore(db_path)._connect() as db:
         rows = db.execute(
-            "select status, attempts, error from tasks where record_type='work_summary_inputs' order by cast(legacy_key as integer)"
+            f"select status, attempts, error from ({task20_projection('work_summary_inputs')}) where 1 order by id"
         ).fetchall()
     assert [(row["status"], row["attempts"], row["error"]) for row in rows] == [
         ("pending", 3, "codex_provider_capacity_exhausted"),
@@ -3398,7 +3368,7 @@ def test_work_summary_process_failure_continues_prior_capacity_wait(
         ).model_dump_json(),
     )
     with store._connect() as db:
-        db.execute("update tasks set attempts=3 where record_type='work_summary_inputs' and cast(legacy_key as integer)=?", (input_id,))
+        _update_task_fixture(db, 'work_summary_inputs', ((input_id,))[0], {'attempts': 3})
 
     settings = WorkerSettings(db_path=db_path, workspace=tmp_path, max_batches=1)
     assert process_work_items_command(settings) == 0
@@ -3407,17 +3377,14 @@ def test_work_summary_process_failure_continues_prior_capacity_wait(
     state["retry_at"] = "2000-01-01T00:00:00+00:00"
     store.set_service_state("codex_capacity_pause", json.dumps(state))
     with store._connect() as db:
-        db.execute(
-            "update tasks set available_at='' where record_type='work_summary_inputs' and cast(legacy_key as integer)=?",
-            (input_id,),
-        )
+        _update_task_fixture(db, 'work_summary_inputs', ((input_id,))[0], {'available_at': ''})
 
     assert process_work_items_command(settings) == 0
     capsys.readouterr()
 
     with store._connect() as db:
         row = db.execute(
-            "select status, attempts, error from tasks where record_type='work_summary_inputs' and cast(legacy_key as integer)=?",
+            f"select status, attempts, error from ({task20_projection('work_summary_inputs')}) where id=?",
             (input_id,),
         ).fetchone()
     assert (row["status"], row["attempts"], row["error"]) == (
@@ -3470,10 +3437,7 @@ def test_process_work_items_command_fails_typed_external_failure_after_limit(
         item.model_dump_json(),
     )
     with store._connect() as db:
-        db.execute(
-            "update tasks set attempts=3 where record_type='work_summary_inputs' and cast(legacy_key as integer)=?",
-            (input_id,),
-        )
+        _update_task_fixture(db, 'work_summary_inputs', ((input_id,))[0], {'attempts': 3})
 
     processed = process_work_items_command(
         WorkerSettings(db_path=db_path, workspace=tmp_path, max_batches=1)
@@ -3483,7 +3447,7 @@ def test_process_work_items_command_fails_typed_external_failure_after_limit(
     assert capsys.readouterr().out == "process-work-items processed=0\n"
     with AutoReplyStore(db_path)._connect() as db:
         row = db.execute(
-            "select status, error, available_at from tasks where record_type='work_summary_inputs' and cast(legacy_key as integer)=?",
+            f"select status, error, available_at from ({task20_projection('work_summary_inputs')}) where id=?",
             (input_id,),
         ).fetchone()
     assert row["status"] == "failed"
@@ -3540,11 +3504,7 @@ def test_process_work_items_command_fails_missing_memory_recall_tool_event(
     assert capsys.readouterr().out == "process-work-items processed=0\n"
     with AutoReplyStore(db_path)._connect() as db:
         row = db.execute(
-            """
-            select status, attempts, error, available_at
-            from tasks
-            where record_type='work_summary_inputs' and cast(legacy_key as integer)=?
-            """,
+            f"\n            select status, attempts, error, available_at\n            from ({task20_projection('work_summary_inputs')})\n            where id=?\n            ",
             (input_id,),
         ).fetchone()
     assert row["status"] == "failed"
@@ -3602,11 +3562,7 @@ def test_process_work_items_command_discards_cross_project_follow_up_draft(
     assert capsys.readouterr().out == "process-work-items processed=0\n"
     with AutoReplyStore(db_path)._connect() as db:
         row = db.execute(
-            """
-            select status, attempts, error
-            from tasks
-            where record_type='work_summary_inputs' and cast(legacy_key as integer)=?
-            """,
+            f"\n            select status, attempts, error\n            from ({task20_projection('work_summary_inputs')})\n            where id=?\n            ",
             (input_id,),
         ).fetchone()
     assert row["status"] == "skipped"
@@ -3751,7 +3707,7 @@ def test_process_work_items_command_passes_dws_client_to_task_agent(
         "ding_robot_code": "robot-code",
         "ding_robot_name": "Friday",
         "ding_receiver_user_id": "derek-id",
-        "transient_retry_attempts": 4,
+        "transient_retry_attempts": 3,
         "transient_retry_delay_seconds": 0.25,
     }
 
@@ -3803,531 +3759,18 @@ def test_process_work_items_command_respects_zero_max_batches(
     assert len(AutoReplyStore(db_path).claim_work_summary_inputs(limit=1)) == 1
 
 
-def test_backfill_task_memory_context_command_updates_missing_context(
-    tmp_path,
-    monkeypatch,
-    capsys,
-):
-    class FakeProjectMemoryContextCodexRunner:
-        last_audit_tool_events = [{"tool": "memory_recall"}]
-
-        def __init__(self, **kwargs):
-            self.kwargs = kwargs
-
-        def build(self, *, project, todos, updates):
-            assert project.title == "候选人筛选项目"
-            assert [todo.title for todo in todos] == ["确认候选人名单"]
-            assert [update.summary for update in updates] == ["新增候选人筛选待办"]
-            return {
-                "query": "候选人筛选项目 recruiting",
-                "summary": "memory_recall 显示候选人筛选和招聘项目相关。",
-                "memories": [
-                    {
-                        "source": "memory_recall",
-                        "uuid": "mem-candidate",
-                        "text": "历史记录提到候选人筛选项目。",
-                        "summary": "候选人筛选项目已有上下文。",
-                        "created_at": "2026-06-08",
-                    }
-                ],
-            }
-
-    monkeypatch.setattr(
-        cli,
-        "ProjectMemoryContextCodexRunner",
-        FakeProjectMemoryContextCodexRunner,
-    )
-    db_path = tmp_path / "task.sqlite3"
-    store = AutoReplyStore(db_path)
-    project_id = store.create_work_project(
-        title="候选人筛选项目",
-        category="recruiting",
-        status="active",
-        priority="P1",
-        risk_level="medium",
-    )
-    store.create_work_project(
-        title="已有背景项目",
-        category="sales",
-        status="active",
-        priority="P2",
-        risk_level="low",
-        memory_context_json='{"query":"已有","summary":"已有背景","memories":[]}',
-    )
-    todo_id = store.create_work_todo(
-        project_id=project_id,
-        title="确认候选人名单",
-        owner_name="Derek",
-        priority="P1",
-    )
-    store.create_work_update(
-        project_id=project_id,
-        source_type="reply_attempt",
-        source_ref="1",
-        summary="新增候选人筛选待办",
-    )
-
-    updated = backfill_task_memory_context_command(
-        WorkerSettings(db_path=db_path, workspace=tmp_path, max_batches=5)
-    )
-
-    project = AutoReplyStore(db_path).get_work_project(project_id)
-    assert project is not None
-    context = json.loads(project.memory_context_json)
-    assert updated == 1
-    assert context["memories"][0]["uuid"] == "mem-candidate"
-    assert capsys.readouterr().out == (
-        "backfill-task-memory-context updated=1 failed=0\n"
-    )
-    assert [todo.id for todo in AutoReplyStore(db_path).list_work_todos()] == [todo_id]
 
 
-def test_backfill_task_memory_context_command_records_missing_memory_recall(
-    tmp_path,
-    monkeypatch,
-    capsys,
-):
-    class FakeProjectMemoryContextCodexRunner:
-        last_audit_tool_events = []
-
-        def __init__(self, **kwargs):
-            pass
-
-        def build(self, *, project, todos, updates):
-            return {
-                "query": "候选人筛选项目",
-                "summary": "缺少真实工具事件。",
-                "memories": [],
-            }
-
-    monkeypatch.setattr(
-        cli,
-        "ProjectMemoryContextCodexRunner",
-        FakeProjectMemoryContextCodexRunner,
-    )
-    db_path = tmp_path / "task.sqlite3"
-    store = AutoReplyStore(db_path)
-    store.create_work_project(
-        title="候选人筛选项目",
-        category="recruiting",
-        status="active",
-        priority="P1",
-        risk_level="medium",
-    )
-
-    updated = backfill_task_memory_context_command(
-        WorkerSettings(db_path=db_path, workspace=tmp_path, max_batches=5)
-    )
-
-    assert updated == 0
-    assert capsys.readouterr().out == (
-        "backfill-task-memory-context updated=0 failed=1\n"
-    )
-    errors = AutoReplyStore(db_path).list_errors(limit=1)
-    assert errors[0].kind == "task_memory_backfill"
-    assert "memory_recall tool event" in errors[0].detail
 
 
-def test_backfill_routine_process_todos_dry_run_reports_without_writing(
-    tmp_path, capsys
-):
-    from app.cli import backfill_routine_process_todos_command
-
-    db_path = tmp_path / "task.sqlite3"
-    store = AutoReplyStore(db_path)
-    project_id = store.create_work_project(
-        title="【招聘】Marketing L4-L5",
-        category="recruiting",
-        status="active",
-    )
-    todo_id = store.create_work_todo(
-        project_id=project_id,
-        title="将唐华 offer 和试用目标压实成一页纸",
-        owner_user_id="mina-user-1",
-        owner_name="Avery",
-        status="open",
-        priority="P1",
-    )
-    follow_up_id = store.create_follow_up_draft(
-        project_id=project_id,
-        todo_id=todo_id,
-        owner_user_id="mina-user-1",
-        owner_name="Avery",
-        target_conversation_id="cid-mina",
-        target_kind="direct",
-        question_text="这个一页纸完成了吗？",
-        status="draft",
-    )
-
-    result = backfill_routine_process_todos_command(
-        WorkerSettings(db_path=db_path),
-        todo_ids=[todo_id],
-        reason="routine HR offer-flow step",
-        apply=False,
-        now="2026-07-02 12:00:00",
-    )
-
-    captured = capsys.readouterr()
-    todo = store.get_work_todo(todo_id)
-    follow_up = store.get_follow_up_draft(follow_up_id)
-
-    assert result.changed == 0
-    assert result.planned == 1
-    assert todo is not None
-    assert todo.status == "open"
-    assert follow_up is not None
-    assert follow_up.status == "draft"
-    assert "dry_run=True planned=1 changed=0" in captured.out
-    assert str(todo_id) in captured.out
 
 
-def test_backfill_routine_process_todos_apply_cancels_todo_and_suppresses_followup(
-    tmp_path, capsys
-):
-    from app.cli import backfill_routine_process_todos_command
-
-    db_path = tmp_path / "task.sqlite3"
-    store = AutoReplyStore(db_path)
-    project_id = store.create_work_project(
-        title="【招聘】Marketing L4-L5",
-        category="recruiting",
-        status="active",
-    )
-    todo_id = store.create_work_todo(
-        project_id=project_id,
-        title="将唐华 offer 和试用目标压实成一页纸",
-        owner_user_id="mina-user-1",
-        owner_name="Avery",
-        status="open",
-        priority="P1",
-    )
-    follow_up_id = store.create_follow_up_draft(
-        project_id=project_id,
-        todo_id=todo_id,
-        owner_user_id="mina-user-1",
-        owner_name="Avery",
-        target_conversation_id="cid-mina",
-        target_kind="direct",
-        question_text="这个一页纸完成了吗？",
-        status="draft",
-    )
-    link_id = store.create_work_todo_dingtalk_link(
-        work_todo_id=todo_id,
-        executor_user_id="mina-user-1",
-        executor_name="Avery",
-        title_snapshot="将唐华 offer 和试用目标压实成一页纸",
-        deadline_at_snapshot="2026-07-03 18:00:00",
-        priority_snapshot="P1",
-        status="active",
-        dingtalk_task_id="dt-task-1",
-    )
-
-    result = backfill_routine_process_todos_command(
-        WorkerSettings(db_path=db_path),
-        todo_ids=[todo_id],
-        reason="routine HR offer-flow step",
-        apply=True,
-        now="2026-07-02 12:00:00",
-    )
-
-    captured = capsys.readouterr()
-    todo = store.get_work_todo(todo_id)
-    follow_up = store.get_follow_up_draft(follow_up_id)
-    link = store.get_work_todo_dingtalk_link(link_id)
-    updates = store.list_work_updates(project_id=project_id)
-
-    assert result.changed == 1
-    assert result.planned == 1
-    assert todo is not None
-    assert todo.status == "cancelled"
-    assert todo.blocker == "routine HR offer-flow step"
-    assert follow_up is not None
-    assert follow_up.status == "skipped"
-    assert follow_up.suppressed_reason == "routine HR offer-flow step"
-    assert link is not None
-    assert link.status == "cancelled"
-    assert "external cancellation is not part of this change" in link.last_error
-    assert updates[-1].source_type == "routine_process_backfill"
-    assert "routine HR offer-flow step" in updates[-1].summary
-    assert "dry_run=False planned=1 changed=1" in captured.out
-
-    second_result = backfill_routine_process_todos_command(
-        WorkerSettings(db_path=db_path),
-        todo_ids=[todo_id],
-        reason="routine HR offer-flow step",
-        apply=True,
-        now="2026-07-02 12:05:00",
-    )
-    second_updates = store.list_work_updates(project_id=project_id)
-
-    assert second_result.changed == 0
-    assert second_result.planned == 0
-    assert len(second_updates) == len(updates)
 
 
-def test_backfill_routine_process_todos_rerun_repairs_partial_cancellation(
-    tmp_path,
-):
-    from app.cli import backfill_routine_process_todos_command
-
-    db_path = tmp_path / "task.sqlite3"
-    store = AutoReplyStore(db_path)
-    project_id = store.create_work_project(
-        title="【招聘】Marketing L4-L5",
-        category="recruiting",
-        status="active",
-    )
-    todo_id = store.create_work_todo(
-        project_id=project_id,
-        title="将唐华 offer 和试用目标压实成一页纸",
-        owner_user_id="mina-user-1",
-        owner_name="Avery",
-        status="cancelled",
-        priority="P1",
-        blocker="routine HR offer-flow step",
-    )
-    follow_up_id = store.create_follow_up_draft(
-        project_id=project_id,
-        todo_id=todo_id,
-        owner_user_id="mina-user-1",
-        owner_name="Avery",
-        target_conversation_id="cid-mina",
-        target_kind="direct",
-        question_text="这个一页纸完成了吗？",
-        status="draft",
-    )
-
-    result = backfill_routine_process_todos_command(
-        WorkerSettings(db_path=db_path),
-        todo_ids=[todo_id],
-        reason="routine HR offer-flow step",
-        apply=True,
-        now="2026-07-02 12:00:00",
-    )
-
-    follow_up = store.get_follow_up_draft(follow_up_id)
-    updates = store.list_work_updates(project_id=project_id)
-
-    assert result.changed == 1
-    assert result.planned == 1
-    assert result.items[0].before_status == "cancelled"
-    assert result.items[0].suppressed_follow_up_ids == [follow_up_id]
-    assert follow_up is not None
-    assert follow_up.status == "skipped"
-    assert updates[-1].source_type == "routine_process_backfill"
 
 
-def test_backfill_routine_process_todos_rerun_repairs_missing_audit(tmp_path):
-    from app.cli import backfill_routine_process_todos_command
-
-    db_path = tmp_path / "task.sqlite3"
-    store = AutoReplyStore(db_path)
-    project_id = store.create_work_project(
-        title="【招聘】Marketing L4-L5",
-        category="recruiting",
-        status="active",
-    )
-    todo_id = store.create_work_todo(
-        project_id=project_id,
-        title="将唐华 offer 和试用目标压实成一页纸",
-        owner_user_id="mina-user-1",
-        owner_name="Avery",
-        status="cancelled",
-        priority="P1",
-        blocker="routine HR offer-flow step",
-    )
-
-    result = backfill_routine_process_todos_command(
-        WorkerSettings(db_path=db_path),
-        todo_ids=[todo_id],
-        reason="routine HR offer-flow step",
-        apply=True,
-        now="2026-07-02 12:00:00",
-    )
-
-    updates = store.list_work_updates(project_id=project_id)
-
-    assert result.changed == 1
-    assert result.planned == 1
-    assert result.items[0].before_status == "cancelled"
-    assert result.items[0].suppressed_follow_up_ids == []
-    assert result.items[0].dingtalk_link_ids == []
-    assert updates[-1].source_type == "routine_process_backfill"
-    assert updates[-1].source_ref == str(todo_id)
 
 
-def test_backfill_routine_process_todos_rerun_complete_is_noop(tmp_path):
-    from app.cli import backfill_routine_process_todos_command
-
-    db_path = tmp_path / "task.sqlite3"
-    store = AutoReplyStore(db_path)
-    project_id = store.create_work_project(
-        title="【招聘】Marketing L4-L5",
-        category="recruiting",
-        status="active",
-    )
-    todo_id = store.create_work_todo(
-        project_id=project_id,
-        title="将唐华 offer 和试用目标压实成一页纸",
-        owner_user_id="mina-user-1",
-        owner_name="Avery",
-        status="cancelled",
-        priority="P1",
-        blocker="routine HR offer-flow step",
-    )
-    store.create_work_update(
-        project_id=project_id,
-        source_type="routine_process_backfill",
-        source_ref=str(todo_id),
-        summary="Cancelled routine-process TODO.",
-    )
-
-    first = backfill_routine_process_todos_command(
-        WorkerSettings(db_path=db_path),
-        todo_ids=[todo_id],
-        reason="routine HR offer-flow step",
-        apply=True,
-        now="2026-07-02 12:00:00",
-    )
-    second = backfill_routine_process_todos_command(
-        WorkerSettings(db_path=db_path),
-        todo_ids=[todo_id],
-        reason="routine HR offer-flow step",
-        apply=True,
-        now="2026-07-02 12:05:00",
-    )
-
-    updates = store.list_work_updates(project_id=project_id)
-
-    assert first.changed == 0
-    assert first.planned == 0
-    assert first.items[0].skipped_reason == "todo already cancelled and cleanup complete"
-    assert second.changed == 0
-    assert second.planned == 0
-    assert len(updates) == 1
-
-
-def test_backfill_routine_process_todos_targets_followups_beyond_global_page(
-    tmp_path,
-):
-    from app.cli import backfill_routine_process_todos_command
-
-    db_path = tmp_path / "task.sqlite3"
-    store = AutoReplyStore(db_path)
-    unrelated_project_id = store.create_work_project(
-        title="Unrelated project",
-        category="ops",
-        status="active",
-    )
-    unrelated_todo_id = store.create_work_todo(
-        project_id=unrelated_project_id,
-        title="Unrelated TODO",
-        owner_user_id="ops-user-1",
-        owner_name="Ops",
-        status="open",
-    )
-    for index in range(501):
-        store.create_follow_up_draft(
-            project_id=unrelated_project_id,
-            todo_id=unrelated_todo_id,
-            owner_user_id="ops-user-1",
-            owner_name="Ops",
-            target_conversation_id="cid-ops",
-            target_kind="direct",
-            question_text=f"Unrelated follow-up {index}",
-            status="draft",
-        )
-    project_id = store.create_work_project(
-        title="【招聘】Marketing L4-L5",
-        category="recruiting",
-        status="active",
-    )
-    todo_id = store.create_work_todo(
-        project_id=project_id,
-        title="将唐华 offer 和试用目标压实成一页纸",
-        owner_user_id="mina-user-1",
-        owner_name="Avery",
-        status="open",
-        priority="P1",
-    )
-    follow_up_id = store.create_follow_up_draft(
-        project_id=project_id,
-        todo_id=todo_id,
-        owner_user_id="mina-user-1",
-        owner_name="Avery",
-        target_conversation_id="cid-mina",
-        target_kind="direct",
-        question_text="这个一页纸完成了吗？",
-        status="draft",
-    )
-
-    result = backfill_routine_process_todos_command(
-        WorkerSettings(db_path=db_path),
-        todo_ids=[todo_id],
-        reason="routine HR offer-flow step",
-        apply=True,
-        now="2026-07-02 12:00:00",
-    )
-
-    follow_up = store.get_follow_up_draft(follow_up_id)
-
-    assert result.changed == 1
-    assert result.items[0].suppressed_follow_up_ids == [follow_up_id]
-    assert follow_up is not None
-    assert follow_up.status == "skipped"
-
-
-def test_backfill_routine_process_todos_suppresses_all_followups_for_todo(
-    tmp_path,
-):
-    from app.cli import backfill_routine_process_todos_command
-
-    db_path = tmp_path / "task.sqlite3"
-    store = AutoReplyStore(db_path)
-    project_id = store.create_work_project(
-        title="【招聘】Marketing L4-L5",
-        category="recruiting",
-        status="active",
-    )
-    todo_id = store.create_work_todo(
-        project_id=project_id,
-        title="将唐华 offer 和试用目标压实成一页纸",
-        owner_user_id="mina-user-1",
-        owner_name="Avery",
-        status="open",
-        priority="P1",
-    )
-    follow_up_ids = [
-        store.create_follow_up_draft(
-            project_id=project_id,
-            todo_id=todo_id,
-            owner_user_id="mina-user-1",
-            owner_name="Avery",
-            target_conversation_id="cid-mina",
-            target_kind="direct",
-            question_text=f"这个一页纸完成了吗？#{index}",
-            status="draft",
-        )
-        for index in range(1001)
-    ]
-
-    result = backfill_routine_process_todos_command(
-        WorkerSettings(db_path=db_path),
-        todo_ids=[todo_id],
-        reason="routine HR offer-flow step",
-        apply=True,
-        now="2026-07-02 12:00:00",
-    )
-
-    remaining = store.list_follow_up_drafts(
-        todo_id=todo_id,
-        statuses=("draft", "approved"),
-        limit=2000,
-    )
-
-    assert result.changed == 1
-    assert result.items[0].suppressed_follow_up_ids == follow_up_ids
-    assert remaining == []
 
 
 def test_scan_task_sources_command_reads_minutes_only(
@@ -4884,18 +4327,18 @@ def test_send_attempt_command_refuses_unavailable_original_without_queue(
             original = store.get_reply_task_for_message("cid-1", "msg-1")
             provenance = store._reply_input_provenance(original.trigger_text, original.trigger_message_json)
             with sqlite3.connect(settings.db_path) as db:
-                db.execute(
-                    "update tasks set input_compacted=1, trigger_text='', "
-                    "trigger_message_json='', input_provenance_json=? where record_type='reply_task_inputs' and id in "
-                    "(select current_input_id from tasks where record_type='reply_tasks' and conversation_id='cid-1')",
-                    (provenance,),
-                )
+                parts = task8_set_parts('reply_task_inputs', {
+                    'input_compacted': 1, 'trigger_text': '',
+                    'trigger_message_json': '', 'input_provenance_json': provenance,
+                })
+                db.execute(f"update tasks set {parts.sql} where id=?",
+                           (*parts.parameters, original.current_input_id))
         else:
             with sqlite3.connect(settings.db_path) as db:
-                db.execute(
-                    "update tasks set trigger_message_json='{}' "
-                    "where record_type='reply_task_inputs' and id in (select current_input_id from tasks where record_type='reply_tasks' and conversation_id='cid-1')"
-                )
+                original = store.get_reply_task_for_message('cid-1', 'msg-1')
+                parts = task8_set_parts('reply_task_inputs', {'trigger_message_json': '{}'})
+                db.execute(f"update tasks set {parts.sql} where id=?",
+                           (*parts.parameters, original.current_input_id))
     attempt_id = store.record_reply_attempt(
         conversation_id="cid-1", conversation_title="Friday",
         trigger_message_id="msg-1", trigger_sender="Phina",
@@ -4957,12 +4400,12 @@ def test_send_attempt_email_requires_exact_uncompacted_action_payload(
         original = store.get_reply_task_for_message(conversation_id, action_identity, channel="email")
         provenance = store._reply_input_provenance(original.trigger_text, original.trigger_message_json)
         with sqlite3.connect(settings.db_path) as db:
-            db.execute(
-                "update tasks set input_compacted=1, trigger_text='', "
-                "trigger_message_json='', input_provenance_json=? where record_type='reply_task_inputs' and id in "
-                "(select current_input_id from tasks where record_type='reply_tasks' and channel='email')",
-                (provenance,),
-            )
+            parts = task8_set_parts('reply_task_inputs', {
+                'input_compacted': 1, 'trigger_text': '',
+                'trigger_message_json': '', 'input_provenance_json': provenance,
+            })
+            db.execute(f"update tasks set {parts.sql} where id=?",
+                       (*parts.parameters, original.current_input_id))
         with pytest.raises(SystemExit, match="original trigger is unavailable"):
             send_attempt_command(settings, attempt_id)
         assert store.get_reply_task_for_message(
@@ -5146,15 +4589,11 @@ def test_send_attempt_command_rotates_pending_task_with_previous_error(
     )
     first = send_attempt_command(settings, attempt_id)
     with sqlite3.connect(settings.db_path) as db:
-        db.execute(
-            """
-            update tasks
-            set error='reviewed_write_not_authorized',
-                available_at='2099-01-01 00:00:00'
-            where record_type='reply_tasks' and id=?
-            """,
-            (first["task_id"],),
-        )
+        parts = task8_set_parts('reply_tasks', {
+            'error': 'reviewed_write_not_authorized', 'available_at': '2099-01-01 00:00:00',
+        })
+        db.execute(f"update tasks set {parts.sql} where record_type='reply_tasks' and id=?",
+                   (*parts.parameters, first['task_id']))
     second = send_attempt_command(settings, attempt_id)
     updated = store.get_reply_task(int(second["task_id"]))
 
@@ -5600,7 +5039,7 @@ def test_parser_supports_dws_transient_retry_options():
     )
     settings = settings_from_args(args)
 
-    assert settings.dws_transient_retry_attempts == 5
+    assert settings.dws_transient_retry_attempts == 3
     assert settings.dws_transient_retry_delay_seconds == 0.25
 
 
@@ -6993,7 +6432,7 @@ def test_scan_meetings_once_command_writes_one_job_with_fixed_ten_minute_window(
     assert job.eligible_at == "2026-09-08T19:50:00+08:00"
     with AutoReplyStore(db_path)._connect() as db:
         memory_events = db.execute(
-            "select count(*) from meeting_memory_write_events"
+            "select count(*) from actions where record_type='meeting_memory_write_events'"
         ).fetchone()[0]
     assert memory_events == 0
 
@@ -8063,7 +7502,6 @@ def test_agent_cron_dispatcher_owns_all_migrated_consumer_queues(
         "meeting",
         "work_summary",
         "okr_review",
-        "task_todo_sync_outbox",
         "business_task_todo_sync_outbox",
         "task_memory_write",
     ]
@@ -8074,12 +7512,11 @@ def test_agent_cron_dispatcher_owns_all_migrated_consumer_queues(
         "meeting",
         "work_summary",
         "okr_review",
-        "task_todo_sync_outbox",
         "business_task_todo_sync_outbox",
         "task_memory_write",
     }
     assert set(captured["executors"]) == set(captured["consumers"])
-    assert len({id(executor) for executor in captured["executors"].values()}) == 9
+    assert len({id(executor) for executor in captured["executors"].values()}) == 8
     assert captured["max_in_flight"] == {
         name: 1 if name in {"meeting", "work_summary"} else 2
         for name in captured["consumers"]
@@ -8277,7 +7714,7 @@ def test_run_service_requeues_processing_work_summary_inputs_on_startup(
 
     with store._connect() as db:
         row = db.execute(
-            "select status, attempts, error from tasks where record_type='work_summary_inputs' and cast(legacy_key as integer)=?",
+            f"select status, attempts, error from ({task20_projection('work_summary_inputs')}) where id=?",
             (input_id,),
         ).fetchone()
     errors = store.list_errors(limit=10)
@@ -8808,7 +8245,6 @@ def test_service_command_registry_binds_the_catalog_to_service_operations(
         "request-minutes-access",
         "sync-chrome-cookies",
         "sync-minutes-once",
-        "weekly-okr-report",
     }
     assert registry.run("produce-once") == "produce-once queued=3"
     assert registry.run("calendar-invites-once") == "calendar-invites-once queued=3"
@@ -8870,7 +8306,7 @@ def test_process_work_items_waits_for_paused_routes_without_spending_attempts(
         ).model_dump_json(),
     )
     with store._connect() as db:
-        db.execute("update tasks set attempts=3 where record_type='work_summary_inputs' and cast(legacy_key as integer)=?", (input_id,))
+        _update_task_fixture(db, 'work_summary_inputs', ((input_id,))[0], {'attempts': 3})
 
     settings = WorkerSettings(db_path=db_path, workspace=tmp_path, max_batches=1)
     assert process_work_items_command(settings) == 0
@@ -8878,10 +8314,12 @@ def test_process_work_items_waits_for_paused_routes_without_spending_attempts(
 
     with store._connect() as db:
         row = db.execute(
-            "select status, attempts, error, available_at from tasks where record_type='work_summary_inputs' and cast(legacy_key as integer)=?",
+            f"select status, attempts, error, available_at from ({task20_projection('work_summary_inputs')}) where id=?",
             (input_id,),
         ).fetchone()
-        error_rows = db.execute("select count(*) from errors").fetchone()[0]
+        error_rows = db.execute(
+            f"select count(*) from ({error_projection()})"
+        ).fetchone()[0]
     assert (row["status"], row["attempts"], row["error"]) == (
         "pending",
         3,
@@ -8948,7 +8386,7 @@ def test_process_work_items_waits_for_provider_outage_after_failed_attempt_witho
     store = AutoReplyStore(db_path)
     input_id = _route_outage_work_input(store)
     with store._connect() as db:
-        db.execute("update tasks set attempts=3 where record_type='work_summary_inputs' and cast(legacy_key as integer)=?", (input_id,))
+        _update_task_fixture(db, 'work_summary_inputs', ((input_id,))[0], {'attempts': 3})
 
     settings = WorkerSettings(db_path=db_path, workspace=tmp_path, max_batches=1)
     assert process_work_items_command(settings) == 0
@@ -8956,10 +8394,12 @@ def test_process_work_items_waits_for_provider_outage_after_failed_attempt_witho
 
     with store._connect() as db:
         row = db.execute(
-            "select status, attempts, error, available_at from tasks where record_type='work_summary_inputs' and cast(legacy_key as integer)=?",
+            f"select status, attempts, error, available_at from ({task20_projection('work_summary_inputs')}) where id=?",
             (input_id,),
         ).fetchone()
-        error_rows = db.execute("select count(*) from errors").fetchone()[0]
+        error_rows = db.execute(
+            f"select count(*) from ({error_projection()})"
+        ).fetchone()[0]
     assert (row["status"], row["attempts"], row["error"]) == (
         "pending",
         3,
@@ -9001,7 +8441,7 @@ def test_process_work_items_keeps_execution_failures_bounded(
     store = AutoReplyStore(db_path)
     input_id = _route_outage_work_input(store)
     with store._connect() as db:
-        db.execute("update tasks set attempts=3 where record_type='work_summary_inputs' and cast(legacy_key as integer)=?", (input_id,))
+        _update_task_fixture(db, 'work_summary_inputs', ((input_id,))[0], {'attempts': 3})
 
     settings = WorkerSettings(db_path=db_path, workspace=tmp_path, max_batches=1)
     assert process_work_items_command(settings) == 0
@@ -9009,10 +8449,12 @@ def test_process_work_items_keeps_execution_failures_bounded(
 
     with store._connect() as db:
         row = db.execute(
-            "select status, attempts, error from tasks where record_type='work_summary_inputs' and cast(legacy_key as integer)=?",
+            f"select status, attempts, error from ({task20_projection('work_summary_inputs')}) where id=?",
             (input_id,),
         ).fetchone()
-        error_rows = db.execute("select kind, detail from errors").fetchall()
+        error_rows = db.execute(
+            f"select kind, detail from ({error_projection()})"
+        ).fetchall()
     # Unlike an outage, a genuine failure keeps the claim's attempt increment
     # and surfaces in Attention.
     assert (row["status"], row["attempts"], row["error"]) == (
@@ -9030,7 +8472,7 @@ def test_repair_exhausted_work_item_is_retried_then_bounded():
 
     exhausted = TaskDecisionRepairExhausted(
         "task decision repair exhausted after 2 rounds: "
-        "non-skip task decision requires project.memory_context"
+        "non-skip task decision requires persisted project evidence"
     )
     assert cli._should_retry_work_summary_input(exhausted, 1) is True
     assert (
@@ -9157,9 +8599,29 @@ def test_scheduler_success_closes_only_earlier_same_component_errors(monkeypatch
         ("agent-cron-dispatcher", "other"),
     ):
         store.record_error("", "", kind, detail)
+    error_ids = {error.detail: error.id for error in store.list_errors()}
     with store._connect() as db:
-        db.execute("update errors set created_at='2026-10-10 10:00:00'")
-        db.execute("update errors set created_at='2026-10-10 12:00:00' where detail='later'")
+        assignment, arguments = error_set_parts(
+            {"created_at": "2026-10-10 10:00:00"}
+        )
+        db.execute(
+            f"update actions set {assignment} where record_type='errors'",
+            arguments,
+        )
+        assignment, arguments = error_set_parts(
+            {"created_at": "2026-10-10 12:00:00"}
+        )
+        db.execute(
+            f"update actions set {assignment} where record_type='errors' "
+            "and cast(legacy_key as integer)=?",
+            (*arguments, error_ids["later"]),
+        )
+    timestamps = {error.detail: error.created_at for error in store.list_errors()}
+    assert timestamps == {
+        "earlier": "2026-10-10 10:00:00",
+        "later": "2026-10-10 12:00:00",
+        "other": "2026-10-10 10:00:00",
+    }
     cli.run_agent_cron_scheduler_loop(
         SimpleNamespace(db_path=store.path), object(), wake_event=threading.Event()
     )
@@ -9186,7 +8648,14 @@ def test_cron_recovery_preserves_incident_from_tick_second(tmp_path):
     store = AutoReplyStore(tmp_path / "worker.sqlite3")
     store.record_error("", "", "agent-cron-scheduler", "during tick")
     with store._connect() as db:
-        db.execute("update errors set created_at='2026-10-10 11:00:00'")
+        assignment, arguments = error_set_parts(
+            {"created_at": "2026-10-10 11:00:00"}
+        )
+        db.execute(
+            f"update actions set {assignment} where record_type='errors'",
+            arguments,
+        )
+    assert store.list_errors()[0].created_at == "2026-10-10 11:00:00"
     assert store.resolve_errors_before_successful_component_tick(
         "agent-cron-scheduler",
         tick_at=datetime.fromisoformat("2026-10-10T11:00:00.500000+00:00"),

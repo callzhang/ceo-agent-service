@@ -10,8 +10,11 @@ from app.agent_runtime_contracts import (
     runtime_route_surface_capabilities,
 )
 from app.dws_client import DwsClient
-from app.consumer_agent import AGENT_CAPABILITY_INSTRUCTIONS, audit_developer_sections
-from app.native_cli_metadata import AgentReadOnlyViolationError
+from app.consumer_agent import (
+    AGENT_CAPABILITY_INSTRUCTIONS,
+    audit_developer_sections,
+    consumer_developer_sections,
+)
 from app.service_codex_config import ServiceMcpServer, service_mcp_config_options
 from app.system_action_handlers import native_dws_handlers
 from app.wechat.codex_safety import make_audit_agent_command, make_consumer_agent_command
@@ -30,6 +33,7 @@ def _codex_command() -> list[str]:
         "codex", "exec", "--json", "-c",
         'mcp_servers.memory_connector.url="https://memory.example/mcp"',
         "-c", 'mcp_servers.xiaoqing_interview.url="https://interview.example/mcp"',
+        "-c", 'mcp_servers.ai_services.url="https://ai.example/mcp"',
         "-c", "features.browser_use=true",
         "-c", "features.image_generation=true",
         "-c", "features.code_mode_host=false",
@@ -74,7 +78,7 @@ def test_codex_roles_scope_native_execution_and_select_service_tools(tmp_path, m
         assert "features.code_mode_only=false" not in command
         assert "features.code_mode.enabled=true" in command
         assert "features.code_mode.enabled=false" not in command
-        assert 'features.code_mode.direct_only_tool_namespaces=["mcp__agent_cli"]' in command
+        assert 'features.code_mode.direct_only_tool_namespaces=["mcp__agent_cli", "mcp__ai_services"]' in command
         assert sum(option.startswith("features.code_mode.direct_only_tool_namespaces=") for option in command) == 1
         assert "mcp_servers.node_repl.enabled=false" in command
         assert "mcp_servers.plaud.enabled=false" in command
@@ -83,6 +87,8 @@ def test_codex_roles_scope_native_execution_and_select_service_tools(tmp_path, m
         assert 'approval_policy="never"' in command
         assert 'mcp_servers.memory_connector.enabled_tools=["user_get", "memory_recall", "memory_get", "timeline_get"]' in command
         assert 'mcp_servers.xiaoqing_interview.enabled_tools=["search_candidates", "get_dashboard_stats", "get_interview_context", "download_attachment", "list_candidate_interviews"]' in command
+        assert 'mcp_servers.ai_services.enabled_tools=["ocr_document"]' in command
+        assert "mcp_servers.ai_services.enabled=false" not in command
         assert not any(option.startswith("tools.enabled_tools=") for option in command)
         assert "--dangerously-bypass-approvals-and-sandbox" not in command
         assert not any("execute_reviewed_read" in option for option in command)
@@ -110,19 +116,92 @@ def test_codex_roles_scope_native_execution_and_select_service_tools(tmp_path, m
     assert "consumer_artifact_write" not in audit_tools
     assert "read_task_artifact" in consumer_tools + audit_tools
     assert "list_task_artifacts" in consumer_tools + audit_tools
+    assert "read_dingtalk_oa_process_attachment" in consumer_tools
+    assert "read_dingtalk_oa_process_attachment" in audit_tools
     assert "send_approved_dingtalk_message" not in consumer_tools + audit_tools
     assert "unsubscribe_email" not in consumer_tools + audit_tools
 
 
+def test_oa_consumer_can_handoff_ocr_bytes_inside_code_mode(tmp_path, monkeypatch) -> None:
+    home = tmp_path / "codex-home"
+    home.mkdir()
+    (home / "config.toml").write_text("", encoding="utf-8")
+    monkeypatch.setenv("CODEX_HOME", str(home))
+    consumer = _codex_command()
+    audit = _codex_command()
+
+    make_consumer_agent_command(
+        consumer, task_workspace=str(tmp_path / "task-workspace"), purpose_name="oa",
+    )
+    make_audit_agent_command(audit)
+
+    # The same role-scoped MCP tools can now be composed in one V8 cell, so
+    # the model never needs to receive and recopy a large base64 image.
+    assert "features.code_mode.direct_only_tool_namespaces=[]" in consumer
+    assert 'mcp_servers.ai_services.enabled_tools=["ocr_document"]' in consumer
+    assert "mcp_servers.ai_services.enabled=false" not in consumer
+    assert 'features.code_mode.excluded_tool_namespaces=[]' in consumer
+    assert (
+        'features.code_mode.direct_only_tool_namespaces='
+        '["mcp__agent_cli", "mcp__ai_services"]'
+    ) in audit
+    assert 'features.code_mode.excluded_tool_namespaces=["functions"]' in audit
+
+
+def test_oa_audit_composes_only_declared_read_and_ocr_mcp_tools(tmp_path, monkeypatch) -> None:
+    home = tmp_path / "codex-home"
+    home.mkdir()
+    (home / "config.toml").write_text("", encoding="utf-8")
+    monkeypatch.setenv("CODEX_HOME", str(home))
+    ordinary = _codex_command()
+    oa = _codex_command()
+    make_audit_agent_command(ordinary)
+    make_audit_agent_command(oa, purpose_name="oa")
+
+    assert 'features.code_mode.direct_only_tool_namespaces=["mcp__agent_cli", "mcp__ai_services"]' in ordinary
+    assert 'features.code_mode.excluded_tool_namespaces=["functions"]' in ordinary
+    assert 'features.code_mode.direct_only_tool_namespaces=["mcp__memory_connector", "mcp__xiaoqing_interview"]' in oa
+    assert 'features.code_mode.excluded_tool_namespaces=["functions", "image_gen", "multi_agent_v1", "web"]' in oa
+    assert 'sandbox_mode="read-only"' in oa
+    assert 'mcp_servers.ai_services.enabled_tools=["ocr_document"]' in oa
+    assert next(option for option in ordinary if option.startswith("mcp_servers.agent_cli.enabled_tools=")) == next(
+        option for option in oa if option.startswith("mcp_servers.agent_cli.enabled_tools=")
+    )
+
+
 def test_service_agent_instructions_use_native_dingtalk_read_tools() -> None:
     audit = "\n".join(section.text for section in audit_developer_sections("rules"))
+    oa_consumer = "\n".join(
+        section.text for section in consumer_developer_sections(purpose_name="oa")
+    )
 
     for instructions in (AGENT_CAPABILITY_INSTRUCTIONS, audit):
-        normalized = instructions.replace("`", "").lower()
+        normalized = " ".join(instructions.replace("`", "").split()).lower()
         assert "call" in normalized
         assert "mcp__agent_cli" in normalized
         assert "never run local dws commands through" in normalized
         assert "interactive sessions" in normalized
+        assert "ai_services.ocr_document" in normalized
+        assert "call the native" in normalized
+        assert "do not infer" in normalized
+        assert "all_tools" in normalized
+
+    oa_normalized = " ".join(oa_consumer.replace("`", "").split()).lower()
+    assert "functions.exec" in oa_normalized
+    assert "mcp__agent_cli" in oa_normalized
+    assert "mcp__ai_services__ocr_document" in oa_normalized
+    assert "same js cell" in oa_normalized
+    assert "do not print" in oa_normalized
+    assert "do not pass its original pdf page number as ocr page_numbers" in oa_normalized
+    assert "confidence, warnings" in oa_normalized
+    assert "call the native ai_services.ocr_document mcp directly" not in oa_normalized
+
+    oa_audit = " ".join(
+        section.text for section in audit_developer_sections("rules", purpose_name="oa")
+    ).replace("`", "").lower()
+    assert "same js cell" in oa_audit
+    assert "mcp__ai_services__ocr_document" in oa_audit
+    assert "call the native ai_services.ocr_document mcp directly" not in oa_audit
 
 
 def test_codex_manifest_restricts_direct_third_party_tools() -> None:
@@ -174,11 +253,27 @@ def test_agent_cli_role_catalogue_excludes_controlled_effects() -> None:
     assert "ocr_original_page_number" in audit_catalogue[
         "read_dingtalk_drive_file"
     ].description
+    assert "premium OA comment attachment" in audit_catalogue[
+        "read_dingtalk_oa_comment_attachment"
+    ].description
+    assert "OA form attachment" in audit_catalogue[
+        "read_dingtalk_oa_process_attachment"
+    ].description
+    assert "ocr_page_numbers" in audit_catalogue[
+        "read_dingtalk_oa_comment_attachment"
+    ].description
+    assert "authorize_dingtalk_oa_attachment_preview" in audit_tools
+    assert "authorize_dingtalk_oa_attachment_preview" in consumer_tools
+    assert "instead of a file_id" in audit_catalogue[
+        "read_dingtalk_oa_comment_image"
+    ].description
     assert {
         "list_dingtalk_minutes", "read_dingtalk_minutes", "search_dingtalk_messages",
         "search_dingtalk_conversations", "search_dingtalk_contacts",
         "list_dingtalk_calendar_events", "list_dingtalk_pending_oa",
         "read_dingtalk_oa_records", "read_dingtalk_oa_tasks",
+        "read_dingtalk_oa_comment_attachment",
+        "read_dingtalk_oa_comment_image",
         "read_dingtalk_oa_revert_activities", "search_dingtalk_documents",
         "read_dingtalk_document_info", "read_dingtalk_document_permissions",
         "read_dingtalk_drive_info", "read_dingtalk_drive_file", "list_dingtalk_sheets",
@@ -196,7 +291,12 @@ def test_agent_cli_role_catalogue_excludes_controlled_effects() -> None:
         assert "execute_reviewed_read" not in tools
         assert "send_approved_dingtalk_message" not in tools
         assert "unsubscribe_email" not in tools
-    assert all(tool.annotations.readOnlyHint for tool in audit_catalogue.values())
+    # Derek chose (2026-10-22) to let Audit open preview access for one OA attachment;
+    # it is the only Audit tool allowed to change DingTalk access.
+    assert {
+        name for name, tool in audit_catalogue.items()
+        if not tool.annotations.readOnlyHint
+    } == {"authorize_dingtalk_oa_attachment_preview"}
     assert consumer_catalogue["consumer_document_write"].annotations.readOnlyHint is False
     assert consumer_catalogue["consumer_artifact_write"].annotations.readOnlyHint is False
 
@@ -295,12 +395,9 @@ def test_report_document_client_has_only_fixed_dws_commands() -> None:
     ]
 
 
-def test_consumer_document_write_requires_a_bound_scheduled_report(tmp_path) -> None:
-    with pytest.raises(AgentReadOnlyViolationError, match="report_task_invalid"):
-        agent_cli._write_bound_report_document(
-            db_path=tmp_path / "empty.sqlite3", task_id=1,
-            content="# Unbound report", expected_revision=None,
-        )
+def test_consumer_document_write_requires_a_bound_scheduled_task(tmp_path) -> None:
+    with pytest.raises(ValueError, match="scheduled task required"):
+        agent_cli._bound_scheduled_run(tmp_path / "empty.sqlite3", 1)
 
 
 def test_consumer_resume_uses_global_cwd_and_keeps_session_prompt_positions(tmp_path, monkeypatch):

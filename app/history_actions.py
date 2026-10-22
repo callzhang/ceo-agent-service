@@ -8,6 +8,7 @@ from app.meeting_alignment import DEFAULT_MEETING_MAX_ATTEMPTS
 from app.meeting_alignment_models import MeetingAlignmentJob, MeetingAlignmentRun
 from app.store import ReplyAttempt, ReplyTask
 from app.worker import MAX_REPLY_TASK_ATTEMPTS
+from app.consumer_purpose_retry import RETRY_EXHAUSTED
 
 
 _READABLE_FAILURE_REASONS = {
@@ -95,10 +96,58 @@ def reply_history_attention(
         choices = tuple(HistoryAction(o.key, o.label, o.instruction, o.consequence) for o in decision_options)
         return HistoryAttention(kind="needs_manager", reason=reason, external_effect=external_effect,
             actions=choices + _management_tail(include_retry=False))
+    if status == "blocked" and attempt.send_error == RETRY_EXHAUSTED:
+        return HistoryAttention(
+            kind="permission_wait",
+            reason=(
+                "权限申请后的 3 次自动重读已用完；审批仍待处理。"
+                "确认权限已开通后，可手动重新读取并审核。"
+            ),
+            external_effect="没有执行 OA 同意、拒绝或退回",
+            actions=(
+                HistoryAction("retry", "权限开通后重新读取"),
+                HistoryAction("details", "技术详情"),
+            ),
+        )
     if status == "failed":
-        return HistoryAttention(kind="needs_manager", reason=reason, external_effect=external_effect,
-            actions=_management_tail(include_retry=True))
+        return HistoryAttention(
+            kind="failed",
+            reason=reason,
+            external_effect=external_effect,
+            actions=(
+                HistoryAction("retry", "重试当前任务"),
+                HistoryAction("details", "技术详情"),
+            ),
+        )
     return None
+
+
+def can_reopen_skipped_oa_review(attempt, task) -> bool:
+    """Whether explicit reviewer feedback may start a fresh OA review turn.
+
+    This does not reopen business actions. It only permits the Agent to
+    re-evaluate a skipped review when the same DingTalk OA task is still
+    pending and the prior turn recorded no OA effect.
+    """
+    if attempt is None or task is None:
+        return False
+    process_id = str(getattr(attempt, "oa_process_instance_id", "") or "").strip()
+    oa_task_id = str(getattr(attempt, "oa_task_id", "") or "").strip()
+    return bool(
+        str(getattr(attempt, "send_status", "") or "").strip().lower() == "skipped"
+        and str(getattr(attempt, "reviewer_feedback", "") or "").strip()
+        and str(getattr(attempt, "action", "") or "").strip() == "agent_run"
+        and str(getattr(attempt, "oa_action", "") or "").strip() == "review"
+        and str(getattr(attempt, "oa_action_result_json", "") or "").strip()
+        in {"", "{}", "null"}
+        and process_id and oa_task_id
+        and str(getattr(task, "channel", "") or "").strip() == "dingtalk"
+        and str(getattr(task, "conversation_id", "") or "").strip()
+        == f"oa_pending_scan:{process_id}"
+        and str(getattr(task, "business_object_key", "") or "").strip()
+        == f"oa:{process_id}:{oa_task_id}"
+        and str(getattr(task, "status", "") or "").strip().lower() in {"done", "skipped"}
+    )
 
 
 def _management_tail(

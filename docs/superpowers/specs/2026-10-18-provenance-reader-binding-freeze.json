@@ -1,0 +1,39 @@
+{
+  "status": "unselected_a1_awaiting_fresh_spec_then_quality",
+  "files": {
+    "app/business_source_reader.py": "ad1fe4b16e27ac1afc6b3583ca2c54bee5bdf8ef84398c4c1f95a283cdbf8933",
+    "app/native_trajectory.py": "5b5ea4c0b880f78c08f0f020dde45c26ae1c38e21d012253b38cd50c30cadc04",
+    "tests/test_business_source_reader.py": "a10d36969e40d7f49bd15ad5c2c43249812cfa00e1cac65bed7376d7734d6e81",
+    "docs/database-redesign-provenance-reader-binding-validation-20261018.md": "ebd9faa5ef1e76390aa3c3d5e45bd74108c3ba35e96f2b7d6f3cd1d227cd2dcb"
+  },
+  "requirement_pins": {
+    "docs/superpowers/specs/2026-10-11-database-redesign-design.md": "345223707fdd39d09c6b13a8101dfc8543a0cc7f9603f6ea13c8210f8498ce80",
+    "docs/superpowers/plans/2026-10-18-provenance-reader-runtime-implementation-plan.md": "b0368db725ab87872e192afda8a373b48e62c5f46b03679cc35eeacb97bcbfe3",
+    "app/task_source_documents.py": "b5fc08f38ba596057db048460882454cf5c969e5db85e38b1739fe346063b290",
+    "app/task_semantic_models.py": "feb1576846412936882f4afaba141483deee075c74843167523c955a839759ff",
+    "app/task_semantic_service.py": "6ad0ac48afd7f096bc7ab9b67f2cc9bb2138676e7325a21491a1a3873238d231",
+    "tests/test_native_source_documents.py": "8c1e6815e097f0130cb199fa5bce2ff1f15c18b3389a0c04dc5c3a088d90e5ea"
+  },
+  "scope": "A1 immutable eight-field binding, derived complete-body hash/UTF8bytes and exact locator; body-free Signal metadata fact; request identity map, native adapter available/unavailable and quote checks. Native expected missing and changed errors typed as LookupError subclasses preserving old messages.",
+  "not_selected": [
+    "provider/Console adapters",
+    "Store/API/model replacement",
+    "transaction/bundle/backfill callers",
+    "DDL/provenance migration",
+    "source body retirement",
+    "release"
+  ],
+  "requirements": [
+    "unchanged eight-field source_document_key and complete-body checks",
+    "all existing identity facts checked in fact construction",
+    "exact native helper coordinates reused, missing/changed/invalid/incomplete outcomes truthful",
+    "reference-only sources cannot become observed originals",
+    "same version fetch once per request; conflicting samekey binding refused; distinct Signal metadata facts retained",
+    "unavailable never fabricates body; unexpected helper failures visible",
+    "no body persistence or durable cache",
+    "exact source-ref/quote checks through existing source_contains_quote",
+    "provider locator without exact implemented reader explicitly unavailable",
+    "new typed native errors retain LookupError catch compatibility"
+  ],
+  "evidence_boundary": "Author82focusedPASS only, no fresh reviewer result yet; immutable actual11 rehearsal separately running old frozen native code."
+}

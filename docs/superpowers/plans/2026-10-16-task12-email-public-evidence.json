@@ -1,0 +1,496 @@
+{
+  "scope": "synthetic full fresh source, two native queues only, empty Tasks20 fixture",
+  "constructor": "source ordinary AutoReplyStore and EmailStore; target EmailStore.__new__ with actual path/training_run_id attributes after explicit template preparation",
+  "patch_sha256": "610bd87fb49ee22fca098fdaf887ccf62bd37e5462a9a8d2945440057304b8cc",
+  "source_files": {
+    "app/store.py": "ce66a4dd7302080126fb178b4dc8e3983acbc68b2f70c9107bd3e584c4207d5f",
+    "app/email_store.py": "c7f80cd9607cc0b1d500a698f341065e3b22f41b73a536f0ab3c8af88db5ecc9",
+    "app/email_task_adapter.py": "dce93db6266af53c5a846f8f59ef14807ef8c7ebd79840c4a83b0ea093448230",
+    "app/task12_storage.py": "8a7a84db53006065697ae44a2e39dc27a2008ca2687b6ddfc54e23ff9cc1729a",
+    "app/task20_definitions.py": "cf58403bcc9dc7bf4c3ef5b9a777ff941c7a6de210e04b29e4cb7abb1e0df4d0"
+  },
+  "clock": "2040-01-01T00:00:00+00:00",
+  "clock_controls": "same current_timestamp UDF, EmailStore._now seconds and adapter aware datetime callback; no output time normalization",
+  "companions": "none; only exact Email proposal applied; progress/readers using old Store/Email REPLY projection are outside this two-queue proof",
+  "providers_native_cli_network": "not invoked",
+  "copied_source_files": {
+    "app/store.py": "ce66a4dd7302080126fb178b4dc8e3983acbc68b2f70c9107bd3e584c4207d5f",
+    "app/email_store.py": "c7f80cd9607cc0b1d500a698f341065e3b22f41b73a536f0ab3c8af88db5ecc9",
+    "app/email_task_adapter.py": "dce93db6266af53c5a846f8f59ef14807ef8c7ebd79840c4a83b0ea093448230",
+    "app/task12_storage.py": "8a7a84db53006065697ae44a2e39dc27a2008ca2687b6ddfc54e23ff9cc1729a",
+    "app/task20_definitions.py": "cf58403bcc9dc7bf4c3ef5b9a777ff941c7a6de210e04b29e4cb7abb1e0df4d0"
+  },
+  "bootstrap": {
+    "empty_counts": {
+      "tasks": 0,
+      "email_agent_classification_tasks": 0,
+      "email_historical_candidates": 0
+    },
+    "sqlite_schema_table_entries": 73,
+    "native_queue_ddl_sha256": {
+      "email_agent_classification_tasks": "8c08e7f99f10d78de9ed358260d12272bb5220a87829fbe21a070b722b6c71d4",
+      "email_historical_candidates": "0ff836ede42acf909d5c3f6a7cc24b60c32047c9fc41242b4e9a7e7c6778f2fa"
+    },
+    "fk_findings": []
+  },
+  "preparation": {
+    "empty_tasks_replaced": true,
+    "empty_native_queues_removed": [
+      "email_agent_classification_tasks",
+      "email_historical_candidates"
+    ],
+    "published_water": 0
+  },
+  "negative_control": {
+    "mutation": "omit only done-branch input compaction assignment in copied target caller",
+    "source": {
+      "method": "EmailClassificationTaskAdapter.complete",
+      "status": "done",
+      "input_compacted": true,
+      "message_retained": false,
+      "identity_sha256": "26c8eaa414b49ccefc39b3c7209769619c1cc42cec59d211222fde006101c204",
+      "input_bytes": 531
+    },
+    "mutated_target": {
+      "method": "EmailClassificationTaskAdapter.complete",
+      "status": "done",
+      "input_compacted": false,
+      "message_retained": true,
+      "identity_sha256": null,
+      "input_bytes": 687
+    }
+  },
+  "coverage_assertions": {
+    "unique_worker_labels": true,
+    "same_public_method_set": true,
+    "fixed_checkpoints_per_worker": 79
+  },
+  "source_checkpoints": 79,
+  "target_checkpoints": 79,
+  "equal_checkpoints": 79,
+  "public_methods": [
+    "EmailClassificationTaskAdapter.claim_next",
+    "EmailClassificationTaskAdapter.close_offline_task",
+    "EmailClassificationTaskAdapter.complete",
+    "EmailClassificationTaskAdapter.ensure_task",
+    "EmailClassificationTaskAdapter.fail",
+    "EmailClassificationTaskAdapter.get_task",
+    "EmailClassificationTaskAdapter.has_stable_record",
+    "EmailClassificationTaskAdapter.open_offline_task",
+    "EmailClassificationTaskAdapter.purge_offline_tasks",
+    "EmailClassificationTaskAdapter.recover_running_tasks",
+    "EmailClassificationTaskAdapter.retry_failed_tasks",
+    "EmailClassificationTaskAdapter.stable_provider_uids",
+    "EmailStore.enqueue_historical_page",
+    "EmailStore.historical_traversal_cursor",
+    "EmailStore.list_historical_candidates",
+    "EmailStore.set_historical_candidate_state"
+  ],
+  "differences": [],
+  "fixture_aborts": [],
+  "comparison_digests": {
+    "source": "587cafd82cf8f35c240474fb7989df42ccd1fd0eb4d0c25764508327dc784c57",
+    "target": "587cafd82cf8f35c240474fb7989df42ccd1fd0eb4d0c25764508327dc784c57"
+  },
+  "source_errors": {
+    "immutable_changed": {
+      "type": "ValueError",
+      "message": "stable classification task input changed"
+    },
+    "claim_blank_owner": {
+      "type": "ValueError",
+      "message": "owner must be nonblank"
+    },
+    "fail_wrong_owner": {
+      "type": "ValueError",
+      "message": "classification task lease changed"
+    },
+    "retry_empty": {
+      "type": "ValueError",
+      "message": "task_ids must contain nonblank task identifiers"
+    },
+    "complete_stale_generation": {
+      "type": "ValueError",
+      "message": "classification task lease changed"
+    },
+    "done_replay_changed": {
+      "type": "ValueError",
+      "message": "stable classification task input changed"
+    },
+    "stale_expired_complete": {
+      "type": "ValueError",
+      "message": "classification task lease changed"
+    },
+    "bulk_retry_abort": {
+      "type": "IntegrityError",
+      "message": "fixture bulk retry abort"
+    },
+    "historical_limit_bool": {
+      "type": "ValueError",
+      "message": "historical candidate limit must be positive"
+    },
+    "historical_bad_state": {
+      "type": "ValueError",
+      "message": "historical candidate state is invalid"
+    },
+    "historical_missing_state": {
+      "type": "ValueError",
+      "message": "historical queued candidate is missing"
+    },
+    "historical_page_second_invalid": {
+      "type": "ValueError",
+      "message": "historical candidate folder does not match queue"
+    }
+  },
+  "physical_coordinates": {
+    "source": [
+      {
+        "record_type": "email_agent_classification_tasks",
+        "source_rowid": 1
+      },
+      {
+        "record_type": "email_agent_classification_tasks",
+        "source_rowid": 2
+      },
+      {
+        "record_type": "email_agent_classification_tasks",
+        "source_rowid": 3
+      },
+      {
+        "record_type": "email_agent_classification_tasks",
+        "source_rowid": 4
+      },
+      {
+        "record_type": "email_historical_candidates",
+        "source_rowid": 1
+      },
+      {
+        "record_type": "email_historical_candidates",
+        "source_rowid": 2
+      },
+      {
+        "record_type": "email_historical_candidates",
+        "source_rowid": 3
+      },
+      {
+        "record_type": "email_historical_candidates",
+        "source_rowid": 4
+      },
+      {
+        "record_type": "email_historical_candidates",
+        "source_rowid": 5
+      },
+      {
+        "record_type": "email_historical_candidates",
+        "source_rowid": 6
+      }
+    ],
+    "target": [
+      {
+        "physical_id": 1,
+        "record_type": "email_agent_classification_tasks",
+        "source_rowid": 1
+      },
+      {
+        "physical_id": 2,
+        "record_type": "email_agent_classification_tasks",
+        "source_rowid": 2
+      },
+      {
+        "physical_id": 6,
+        "record_type": "email_agent_classification_tasks",
+        "source_rowid": 3
+      },
+      {
+        "physical_id": 7,
+        "record_type": "email_agent_classification_tasks",
+        "source_rowid": 4
+      },
+      {
+        "physical_id": 8,
+        "record_type": "email_historical_candidates",
+        "source_rowid": 1
+      },
+      {
+        "physical_id": 9,
+        "record_type": "email_historical_candidates",
+        "source_rowid": 2
+      },
+      {
+        "physical_id": 10,
+        "record_type": "email_historical_candidates",
+        "source_rowid": 3
+      },
+      {
+        "physical_id": 12,
+        "record_type": "email_historical_candidates",
+        "source_rowid": 4
+      },
+      {
+        "physical_id": 13,
+        "record_type": "email_historical_candidates",
+        "source_rowid": 5
+      },
+      {
+        "physical_id": 14,
+        "record_type": "email_historical_candidates",
+        "source_rowid": 6
+      }
+    ]
+  },
+  "final_fk_findings": {
+    "source": [],
+    "target": []
+  },
+  "source_rowid_observations": {
+    "offline_open": [
+      {
+        "source_rowid": 1,
+        "task_id": "email-classification:5e1af4da6b842424d04acbcb92437c4b8bb0bec9fe545966225b876cd18f2a5c"
+      },
+      {
+        "source_rowid": 2,
+        "task_id": "email-classification:6f228f97c75fe3f6e3ddf84fc3c4599dd00be57569345eaf8448fc533ea1c7a2"
+      },
+      {
+        "source_rowid": 3,
+        "task_id": "offline-A"
+      }
+    ],
+    "offline_replace": [
+      {
+        "source_rowid": 1,
+        "task_id": "email-classification:5e1af4da6b842424d04acbcb92437c4b8bb0bec9fe545966225b876cd18f2a5c"
+      },
+      {
+        "source_rowid": 2,
+        "task_id": "email-classification:6f228f97c75fe3f6e3ddf84fc3c4599dd00be57569345eaf8448fc533ea1c7a2"
+      },
+      {
+        "source_rowid": 4,
+        "task_id": "offline-A"
+      }
+    ],
+    "offline_purge_multirow": [
+      {
+        "source_rowid": 1,
+        "task_id": "email-classification:5e1af4da6b842424d04acbcb92437c4b8bb0bec9fe545966225b876cd18f2a5c"
+      },
+      {
+        "source_rowid": 2,
+        "task_id": "email-classification:6f228f97c75fe3f6e3ddf84fc3c4599dd00be57569345eaf8448fc533ea1c7a2"
+      },
+      {
+        "source_rowid": 6,
+        "task_id": "offline-C"
+      }
+    ]
+  },
+  "observations": {
+    "get_done": {
+      "equal": true,
+      "source_outcome": {
+        "return": {
+          "task_id": "email-classification:5e1af4da6b842424d04acbcb92437c4b8bb0bec9fe545966225b876cd18f2a5c",
+          "channel": "email",
+          "stable_message_identity": "account-synthetic:message-id:<synthetic-41@example.invalid>",
+          "status": "done",
+          "owner": "",
+          "generation": 3,
+          "attempt_count": 1,
+          "lease_expires_at": "",
+          "available_at": "",
+          "input_json": "{\"config_version\":\"config-synthetic-v1\",\"identity_sha256\":\"e11276d3d09a77f63bb582fa7bf3136fdac30d5c9c73a6027194773014ec3231\",\"input_bytes\":683,\"input_compacted\":true,\"input_sha256\":\"e11276d3d09a77f63bb582fa7bf3136fdac30d5c9c73a6027194773014ec3231\",\"provider_locator\":{\"account_id\":\"account-synthetic\",\"folder\":\"INBOX\",\"rfc_message_id\":\"<synthetic-41@example.invalid>\",\"thread_id\":null,\"uid\":41,\"uidvalidity\":42},\"stable_message_identity\":\"account-synthetic:message-id:<synthetic-41@example.invalid>\",\"unsubscribe_candidates\":[]}",
+          "result_json": "{\"synthetic\":true}",
+          "error": ""
+        }
+      },
+      "transactions": [],
+      "fault_rows_touched": []
+    },
+    "offline_get": {
+      "equal": true,
+      "source_outcome": {
+        "return": {
+          "task_id": "offline-A",
+          "channel": "email",
+          "stable_message_identity": "offline:offline-A",
+          "status": "running",
+          "owner": "batch-two",
+          "generation": 1,
+          "attempt_count": 1,
+          "lease_expires_at": "2040-01-01T06:00:12.000000+00:00",
+          "available_at": "",
+          "input_json": "{}",
+          "result_json": "null",
+          "error": ""
+        }
+      },
+      "transactions": [],
+      "fault_rows_touched": []
+    },
+    "offline_purge_multirow": {
+      "equal": true,
+      "source_outcome": {
+        "return": 2
+      },
+      "transactions": [
+        "BEGIN",
+        "COMMIT"
+      ],
+      "fault_rows_touched": []
+    },
+    "bulk_retry_abort": {
+      "equal": true,
+      "source_outcome": {
+        "error": {
+          "type": "IntegrityError",
+          "message": "fixture bulk retry abort"
+        }
+      },
+      "transactions": [
+        "BEGIN IMMEDIATE",
+        "ROLLBACK"
+      ],
+      "fault_rows_touched": [
+        "email-classification:d360db6bd3364dfce8686f95e0d0aab26492945789095a262cdf55ae1e914e1f",
+        "email-classification:122b665d8eddd64fc91becca01acf0980377404276a4842468f7c62d454f6496"
+      ]
+    },
+    "bulk_retry_success": {
+      "equal": true,
+      "source_outcome": {
+        "return": 2
+      },
+      "transactions": [
+        "BEGIN IMMEDIATE",
+        "COMMIT"
+      ],
+      "fault_rows_touched": []
+    },
+    "historical_upsert_existing": {
+      "equal": true,
+      "source_outcome": {
+        "return": null
+      },
+      "transactions": [
+        "BEGIN IMMEDIATE",
+        "COMMIT"
+      ],
+      "fault_rows_touched": []
+    },
+    "historical_missing_state": {
+      "equal": true,
+      "source_outcome": {
+        "error": {
+          "type": "ValueError",
+          "message": "historical queued candidate is missing"
+        }
+      },
+      "transactions": [
+        "BEGIN",
+        "COMMIT"
+      ],
+      "fault_rows_touched": []
+    },
+    "historical_page_second_invalid": {
+      "equal": true,
+      "source_outcome": {
+        "error": {
+          "type": "ValueError",
+          "message": "historical candidate folder does not match queue"
+        }
+      },
+      "transactions": [
+        "BEGIN IMMEDIATE",
+        "ROLLBACK"
+      ],
+      "fault_rows_touched": []
+    },
+    "historical_deferred_quota": {
+      "equal": true,
+      "source_outcome": {
+        "return": [
+          {
+            "account_id": "account-synthetic",
+            "folder": "Archive",
+            "model_id": "model-synthetic",
+            "stable_message_identity": "account-synthetic:historical-1",
+            "normalized_text": "409ff85e76ef3766724b219fa5e7846ade48f3948cb0864126012c91f0cf93b6",
+            "provider_message_json": "{\"accountId\":\"account-synthetic\",\"folder\":\"Archive\",\"messageId\":\"<history-1@example.invalid>\",\"stableMessageIdentity\":\"account-synthetic:historical-1\",\"threadId\":null,\"uid\":9,\"uidValidity\":43}",
+            "uidvalidity": 43,
+            "uid": 9,
+            "state": "deferred",
+            "reason": "wait",
+            "attempted_at": "2040-01-01T00:00:12+00:00",
+            "next_retry_at": "2040-01-01T00:01:12+00:00",
+            "updated_at": "2040-01-01T00:00:13+00:00",
+            "normalized_input_hash": "409ff85e76ef3766724b219fa5e7846ade48f3948cb0864126012c91f0cf93b6",
+            "provider_message": {
+              "accountId": "account-synthetic",
+              "folder": "Archive",
+              "messageId": "<history-1@example.invalid>",
+              "stableMessageIdentity": "account-synthetic:historical-1",
+              "threadId": null,
+              "uid": 9,
+              "uidValidity": 43
+            }
+          },
+          {
+            "account_id": "account-synthetic",
+            "folder": "Archive",
+            "model_id": "model-synthetic",
+            "stable_message_identity": "account-synthetic:historical-6",
+            "normalized_text": "f2c6639e792303b2c6a0db304dc3ca9a3612ebee2bc159c14bcec5bc9afdbf03",
+            "provider_message_json": "{\"accountId\":\"account-synthetic\",\"folder\":\"Archive\",\"messageId\":\"<history-6@example.invalid>\",\"stableMessageIdentity\":\"account-synthetic:historical-6\",\"threadId\":null,\"uid\":1,\"uidValidity\":42}",
+            "uidvalidity": 42,
+            "uid": 1,
+            "state": "deferred",
+            "reason": "defer_6",
+            "attempted_at": "2040-01-01T00:00:13+00:00",
+            "next_retry_at": "2040-01-01T00:01:13+00:00",
+            "updated_at": "2040-01-01T00:00:13+00:00",
+            "normalized_input_hash": "f2c6639e792303b2c6a0db304dc3ca9a3612ebee2bc159c14bcec5bc9afdbf03",
+            "provider_message": {
+              "accountId": "account-synthetic",
+              "folder": "Archive",
+              "messageId": "<history-6@example.invalid>",
+              "stableMessageIdentity": "account-synthetic:historical-6",
+              "threadId": null,
+              "uid": 1,
+              "uidValidity": 42
+            }
+          },
+          {
+            "account_id": "account-synthetic",
+            "folder": "Archive",
+            "model_id": "model-synthetic",
+            "stable_message_identity": "account-synthetic:historical-3",
+            "normalized_text": "c8dfe273b4f8031ade32b079d611e77ee36741e07eac47390705899fb3fd5abf",
+            "provider_message_json": "{\"accountId\":\"account-synthetic\",\"folder\":\"Archive\",\"messageId\":\"<history-3@example.invalid>\",\"stableMessageIdentity\":\"account-synthetic:historical-3\",\"threadId\":null,\"uid\":8,\"uidValidity\":42}",
+            "uidvalidity": 42,
+            "uid": 8,
+            "state": "pending",
+            "reason": "",
+            "attempted_at": "",
+            "next_retry_at": "",
+            "updated_at": "2040-01-01T00:00:12+00:00",
+            "normalized_input_hash": "c8dfe273b4f8031ade32b079d611e77ee36741e07eac47390705899fb3fd5abf",
+            "provider_message": {
+              "accountId": "account-synthetic",
+              "folder": "Archive",
+              "messageId": "<history-3@example.invalid>",
+              "stableMessageIdentity": "account-synthetic:historical-3",
+              "threadId": null,
+              "uid": 8,
+              "uidValidity": 42
+            }
+          }
+        ]
+      },
+      "transactions": [],
+      "fault_rows_touched": []
+    }
+  },
+  "owned_temp_removed": true
+}

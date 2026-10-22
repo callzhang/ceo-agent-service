@@ -1,0 +1,27 @@
+{
+  "recorded_at": "2026-10-18T00:28:32.239180+00:00",
+  "status": "PASS_NATIVE_SYNTHETIC_FIXTURE_ONLY",
+  "immutable_predecessor": "4f3d52a0ef9ab20530707dcc9ca290496355b6f4",
+  "fixture_sha256": "8e557504d2d21fea0cec98c17e91c1e05aa230e53ae07f02b1740d290565f827",
+  "execution_session": 39224,
+  "child_exit": 0,
+  "elapsed_seconds": 1.948,
+  "validated": [
+    "Message-only through existing _upsert_message writer, public context read, then public scan attaches Class",
+    "processed scan and cursor",
+    "exact replay retains classification/plan IDs",
+    "stored readable body/context",
+    "targeted exact action claim",
+    "paired locator MOVE completion",
+    "synthetic successful receipt readback",
+    "settled exact action cannot be reclaimed"
+  ],
+  "synthetic_classification_id": 4774153316844667108,
+  "receipt_result_id": "copy-only-fake-receipt:native-dryrun",
+  "managed_temp_removed": true,
+  "production_database_access": false,
+  "current_runtime_acceptance": false,
+  "native_cli_invocations": 0,
+  "provider_or_send_invocations": 0,
+  "source_boundary": "Message-only fixture uses existing private store writer; remaining scan/replay/context/targeted claim/completion/readback are public methods. Synthetic old-code baseline only."
+}

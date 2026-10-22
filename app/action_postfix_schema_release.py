@@ -1,4 +1,5 @@
 """Paired Store16 -> Store17 publication of the three postfix action types."""
+from app.state_publication_sources import publication_store_version
 
 from contextlib import closing
 from dataclasses import dataclass
@@ -9,6 +10,9 @@ from typing import Callable
 from app.action_postfix_storage import (
     capture_action_postfix_schema,
     restore_action_postfix_schema,
+)
+from app.business_legacy_field_schema_release import (
+    TARGET_STORE_VERSION, PREVIOUS_STORE_VERSIONS, publication_action_schema_is_current,
 )
 from app.action_storage import (
     ACTION_PROJECTIONS,
@@ -28,8 +32,8 @@ VERSION_KEY = "store_schema_version"
 
 def publication_postfix_sources(db):
     """The exact previous/target declarations used only in the deploy window."""
-    marker = db.execute("select value from service_state where key=?", (VERSION_KEY,)).fetchone()
-    version = marker[0] if marker else None
+    version = publication_store_version(db, current_version=TARGET_STORE_VERSION,
+                                        previous_versions=PREVIOUS_STORE_VERSIONS)
     if version == SOURCE_ACTION_POSTFIX_VERSION:
         capture_action_postfix_schema(db)
         return {kind: f"select {','.join(SOURCE_COLUMNS[kind])} from {kind}" for kind in POSTFIX_ACTION_TYPES}
@@ -38,6 +42,12 @@ def publication_postfix_sources(db):
     if version == "2026-10-13.4" and action_schema_is_current(db, include_delivery=True):
         return {kind: ACTION_PROJECTIONS[kind] for kind in POSTFIX_ACTION_TYPES}
     if version == "2026-10-13.5" and reply_schema_is_current(db):
+        return {kind: ACTION_PROJECTIONS[kind] for kind in POSTFIX_ACTION_TYPES}
+    if version in ("2026-10-19.9", "2026-10-19.10", TARGET_STORE_VERSION) and publication_action_schema_is_current(db, version):
+        from app.prepared_action_definitions import CHILDREN, prepared_child_projection
+        return {kind: prepared_child_projection(kind) if kind in CHILDREN else ACTION_PROJECTIONS[kind]
+                for kind in POSTFIX_ACTION_TYPES}
+    if publication_action_schema_is_current(db, version):
         return {kind: ACTION_PROJECTIONS[kind] for kind in POSTFIX_ACTION_TYPES}
     raise ValueError("unknown or mixed postfix publication source schema")
 

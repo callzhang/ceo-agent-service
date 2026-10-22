@@ -33,10 +33,6 @@ PINNED: dict[str, tuple[str, str]] = {
         "app.meeting_alignment_models",
         "MeetingAlignmentDecision",
     ),
-    "todo_deadline_decision.schema.json": (
-        "app.task_deadline_backfill",
-        "TodoDeadlineDecision",
-    ),
 }
 
 # Snapshots that do NOT equal their model. Each of these files is read at run
@@ -58,13 +54,6 @@ KNOWN_DRIFT: dict[str, tuple[str, str, str]] = {
         "made optional, and never mentions system_actions, failure_code or "
         "external_dependency_failed, which the model now carries",
     ),
-    "project_memory_context.schema.json": (
-        "app.task_models",
-        "ProjectMemoryContext",
-        "file requires memories/query/summary and names its item definition "
-        "memory_context_item; the model makes every field optional and names "
-        "it ProjectMemoryContextItem",
-    ),
     "task_agent_decision.schema.json": (
         "app.task_models",
         "TaskAgentDecision",
@@ -83,23 +72,17 @@ KNOWN_DRIFT: dict[str, tuple[str, str, str]] = {
         "same fields, types and constraints; differs only in the per-property "
         "and top-level `title` strings pydantic v2 emits",
     ),
-    "weekly_okr_report.schema.json": (
-        "app.weekly_okr_report",
-        "WeeklyOkrAnalysis",
-        "file requires six top-level fields where the model requires two, and "
-        "keeps a flat `dimensions` definition the model has split into "
-        "CeoAttentionItem, DimensionScoreReview, KrScoreReview and "
-        "ManagerReportAnalysis",
-    ),
 }
 
-# Hand-authored envelopes with no single root model: each wraps a list of an
-# inner model (ExtractedMemoryCandidate, DurableMemoryMatch) that carries no
-# top-level schema of its own, so there is nothing to compare them against.
+# Composite envelopes with no single root model to compare in PINNED.
+# Any component snapshot checks belong with the owning module's tests.
 NO_SINGLE_MODEL: dict[str, str] = {
+    "okr_review.schema.json": (
+        "agent_envelope snapshot with app.okr_models.OkrReviewPayload as the strict "
+        "domain_payload; tests/test_okr_output_schema.py pins both parts"
+    ),
     "wechat_memory_candidates.schema.json": (
-        "envelope around a list of app.wechat.memory_import."
-        "ExtractedMemoryCandidate"
+        "envelope around a list of app.wechat.memory_import.ExtractedMemoryCandidate"
     ),
     "wechat_memory_dedupe.schema.json": (
         "envelope around a list of app.wechat.memory_import.DurableMemoryMatch"

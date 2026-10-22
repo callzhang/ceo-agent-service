@@ -1,0 +1,1210 @@
+{
+  "harness_sha256": "29406eed4e29f7547d7080a1d21721eaa51afa4706034e28debbb9b1c191021b",
+  "source_store_sha256": "ce66a4dd7302080126fb178b4dc8e3983acbc68b2f70c9107bd3e584c4207d5f",
+  "target_store_sha256": "13dbf3724919fbeac89b7d2aca895ca2651339b3fcb35a322e56ef10d108d55b",
+  "canonical_helper_sha256": "7174fc6da84370fda1eda1733fd4e3337cae0bd0a7c776a665964efcc79c8833",
+  "helper_git_pin": "ef26ceadf:app/task12_storage.py",
+  "patches": {
+    "2026-10-16-task8-store-caller-proposal.patch": "691cc165fdbaaa4e56a04b907dc6c76cbbc717c4e0c3fc9f3c31a95857cc873c",
+    "2026-10-16-task12-store-misc-caller-proposal.patch": "aeb1ffd38995428d61f9f01bf4d0a58dfdd223b510b358ff6a7c2e01976706c4",
+    "2026-10-16-task12-feedback-caller-proposal.patch": "9bf3323406b39fc06fff84496bd6fb2bcda6c3eb990e96a550b878e433a8105d"
+  },
+  "scope": "real Feedback4 public methods on normal fresh source and constructor-bypassed explicitly empty Tasks20+retained3FK target fixture",
+  "normalization": [
+    "Synthetic SQL current_timestamp increments one second per recorded public call identically on both sides.",
+    "Deterministic Store uuid4 integer stream; explicitly supplied batch IDs.",
+    "No feedback public IDs, field values, storage classes, rowcounts or statuses are normalized. Absent source AUTO water and target zero both mean initial effective water zero."
+  ],
+  "limitations": [
+    "Target is prepared from an EMPTY synthetic source; no nonempty forward copy, preserved captured rows, inverse/current facts, predecessor/reforward or cold constructor proof.",
+    "Exactly three retained decision-items FK REFERENCES are rebound in the fixture; production migration companion and final child Actions conversion remain unimplemented by this proof.",
+    "Only source code scope decisions and synthetic prevalidated commit ancestry/receipt values are exercised; no Git ancestry, actual launchd/health/network/native CLI/provider/outbound action occurs.",
+    "Two temporary abort/IGNORE triggers are explicit fault-injection fixtures; two unreferenced item deletions create pending/resolved source events with absent projections; original methods and all observed connections keep foreign_keys=ON.",
+    "The helper is frozen from ef26ceadf at7174fc6d; a later separate REPLACE+expression-NULL-default repair is outside these actual plain/UPSERT feedback statements."
+  ],
+  "no_app_test_live_db_provider_native_cli_network_main_push_deploy_changes": true,
+  "bootstrap": {
+    "constructor": "original complete AutoReplyStore fresh constructor",
+    "counts": {
+      "tasks": 0,
+      "feedback_iteration_decisions": 0,
+      "feedback_processing_batches": 0,
+      "feedback_processing_items": 0,
+      "feedback_processing_rounds": 0,
+      "feedback_iteration_decision_items": 0,
+      "feedback_processing_transitions": 0,
+      "feedback_events": 0
+    },
+    "source_fields": {
+      "feedback_iteration_decisions": [
+        "id",
+        "batch_id",
+        "workbench_task_id",
+        "workbench_turn_id",
+        "decision_json",
+        "created_at"
+      ],
+      "feedback_processing_batches": [
+        "batch_id",
+        "status",
+        "requested_count",
+        "created_at",
+        "updated_at",
+        "resolved_at"
+      ],
+      "feedback_processing_items": [
+        "feedback_key",
+        "current_round_id",
+        "batch_id",
+        "status",
+        "workbench_task_id",
+        "workbench_turn_id",
+        "attempt_id",
+        "agent_run_id",
+        "commit_sha",
+        "test_evidence_json",
+        "restart_evidence_json",
+        "health_evidence_json",
+        "note",
+        "resolved_at",
+        "created_at",
+        "updated_at"
+      ],
+      "feedback_processing_rounds": [
+        "id",
+        "feedback_key",
+        "round_number",
+        "batch_id",
+        "status",
+        "workbench_task_id",
+        "workbench_turn_id",
+        "attempt_id",
+        "agent_run_id",
+        "commit_sha",
+        "test_evidence_json",
+        "restart_evidence_json",
+        "health_evidence_json",
+        "backlog_evidence_json",
+        "scope_receipt_json",
+        "receipt_version",
+        "note",
+        "started_at",
+        "resolved_at",
+        "reopened_at",
+        "reopen_reason",
+        "created_at",
+        "updated_at"
+      ]
+    },
+    "foreign_keys": 1
+  },
+  "prepared_fixture": {
+    "boundary": "fixture-only empty replacement and exact retained-child3FK rebind; no migration/cold constructor proof",
+    "empty_feedback_sources_retired": [
+      "feedback_iteration_decisions",
+      "feedback_processing_batches",
+      "feedback_processing_items",
+      "feedback_processing_rounds"
+    ],
+    "other_table_ddl_exact": true,
+    "child_ddl_only_references_translated": {
+      "references feedback_iteration_decisions(id)": "references tasks(\"feedback_iteration_decisions__id\")",
+      "references feedback_processing_items(feedback_key)": "references tasks(\"feedback_processing_items__feedback_key\")",
+      "references feedback_processing_rounds(id)": "references tasks(\"feedback_processing_rounds__id\")"
+    },
+    "child_index_trigger_sql_exact": true,
+    "rebound_child_fks": [
+      [
+        0,
+        0,
+        "tasks",
+        "round_id",
+        "feedback_processing_rounds__id",
+        "NO ACTION",
+        "NO ACTION",
+        "NONE"
+      ],
+      [
+        1,
+        0,
+        "tasks",
+        "feedback_key",
+        "feedback_processing_items__feedback_key",
+        "NO ACTION",
+        "NO ACTION",
+        "NONE"
+      ],
+      [
+        2,
+        0,
+        "tasks",
+        "decision_id",
+        "feedback_iteration_decisions__id",
+        "NO ACTION",
+        "NO ACTION",
+        "NONE"
+      ]
+    ],
+    "observed_methods_foreign_keys": 1
+  },
+  "fixed_coverage_assertions": {
+    "paired_checkpoints": 75,
+    "public_methods": 21,
+    "entered_scoped_owners": 20,
+    "expected_public_errors": 11,
+    "constraint_probes": 7,
+    "independent_source_public_auto_ids": true,
+    "physical_row_and_water_rollback_asserted": true,
+    "missing_item_source_expression_fixtures": 2,
+    "no_equal_error_as_success": true
+  },
+  "checkpoint_count": 75,
+  "equal_checkpoints": 75,
+  "differences": [],
+  "public_methods": [
+    "associate_feedback_processing_turn",
+    "claim_feedback_processing_items",
+    "count_pending_user_feedback_items",
+    "create_feedback_processing_batch",
+    "get_feedback_event",
+    "get_feedback_processing_batch",
+    "get_feedback_processing_item",
+    "list_feedback_events_for_token",
+    "list_feedback_events_for_tokens",
+    "list_feedback_iteration_decisions",
+    "list_feedback_processing_rounds",
+    "list_feedback_processing_rounds_for_batch",
+    "list_feedback_processing_transitions",
+    "list_user_feedback_items",
+    "list_user_feedback_items_by_keys",
+    "patch_feedback_processing_item_evidence",
+    "record_feedback_iteration_decision",
+    "reopen_feedback_processing_item",
+    "resolve_feedback_event",
+    "resolve_feedback_processing_batch",
+    "upsert_feedback_event"
+  ],
+  "owner_entry_counts": {
+    "get_feedback_processing_item": 9,
+    "resolve_feedback_event": 3,
+    "upsert_feedback_event": 11,
+    "create_feedback_processing_batch": 9,
+    "resolve_feedback_processing_batch": 7,
+    "claim_feedback_processing_items": 8,
+    "_validate_current_feedback_processing_batch_lineage": 6,
+    "reopen_feedback_processing_item": 4,
+    "associate_feedback_processing_turn": 3,
+    "patch_feedback_processing_item_evidence": 5,
+    "record_feedback_iteration_decision": 4,
+    "list_feedback_iteration_decisions": 1,
+    "_resolution_feedback_iteration_decision": 8,
+    "get_feedback_processing_batch": 1,
+    "_validate_resolved_feedback_processing_batch": 5,
+    "list_feedback_processing_rounds_for_batch": 1,
+    "list_feedback_processing_rounds": 2,
+    "list_user_feedback_items": 1,
+    "list_user_feedback_items_by_keys": 1,
+    "count_pending_user_feedback_items": 1
+  },
+  "expected_error_count": 11,
+  "transactions": {
+    "": 22,
+    "BEGIN,COMMIT": 14,
+    "BEGIN IMMEDIATE,ROLLBACK": 10,
+    "BEGIN IMMEDIATE,COMMIT": 29
+  },
+  "checkpoint_labels": [
+    "missing_item",
+    "missing_event_resolve",
+    "pending_insert",
+    "pending_conflict",
+    "standalone_pending",
+    "standalone_resolve",
+    "standalone_resolved_read",
+    "resolved_event_conflict_preserves_time",
+    "standalone_time_preserved",
+    "resolved_event_repeat_native_clock",
+    "resolved_event_clock_rewritten",
+    "resolved_source_native_insert_missing_projection",
+    "resolved_source_native_insert_readback",
+    "batch_missing_source_rejected",
+    "resolved_batch_source_rejected",
+    "seed_alpha",
+    "seed_beta",
+    "batch_create",
+    "batch_create_idempotent",
+    "batch_membership_conflict",
+    "pending_no_receipt_close",
+    "batch_claim",
+    "same_claim_retry",
+    "claim_membership_conflict",
+    "processing_event_conflict_keeps_projection",
+    "processing_projection_unchanged",
+    "reopen_processing_rejected",
+    "associate_alpha",
+    "evidence_alpha",
+    "associate_beta",
+    "evidence_beta",
+    "evidence_noop",
+    "evidence_cannot_resolve",
+    "decision_first",
+    "decision_second_append",
+    "decision_readback",
+    "decision_wrong_association",
+    "resolution_bad_ancestry_rollback",
+    "batch_resolve",
+    "batch_resolved_read",
+    "resolved_idempotent_receipt",
+    "resolved_idempotent_no_receipt",
+    "rounds_for_batch",
+    "batch_recreate_resolved_idempotent",
+    "reopen_alpha",
+    "reopen_pending_idempotent",
+    "alpha_history_after_reopen",
+    "new_batch",
+    "new_round_claim",
+    "new_round_associate",
+    "new_round_evidence",
+    "new_round_decision",
+    "new_round_resolve",
+    "old_batch_new_lineage_readback",
+    "alpha_two_round_history",
+    "alpha_transitions",
+    "native_source_readback",
+    "source_token_readback",
+    "source_tokens_bulk",
+    "user_feedback_list",
+    "user_feedback_by_key",
+    "pending_feedback_count",
+    "beta_resolved_projection",
+    "resolved_batch_event_upsert",
+    "resolved_batch_and_time_preserved",
+    "reopen_after_source_edit_rejected",
+    "seed_rollback-a",
+    "seed_rollback-b",
+    "rollback_batch_create",
+    "native_partial_claim_rollback",
+    "claim_after_native_rollback",
+    "seed_cas_zero",
+    "cas_batch_create",
+    "native_zero_cas_rollback",
+    "claim_after_cas_rollback"
+  ],
+  "constraint_probes": [
+    {
+      "label": "decision_append_only_update",
+      "error": "feedback iteration decisions are append-only",
+      "facts_unchanged": true
+    },
+    {
+      "label": "decision_append_only_delete",
+      "error": "feedback iteration decisions are append-only",
+      "facts_unchanged": true
+    },
+    {
+      "label": "decision_item_append_only_update",
+      "error": "feedback iteration decision items are append-only",
+      "facts_unchanged": true
+    },
+    {
+      "label": "decision_item_append_only_delete",
+      "error": "feedback iteration decision items are append-only",
+      "facts_unchanged": true
+    },
+    {
+      "label": "decision_fk",
+      "error": "FOREIGN KEY constraint failed",
+      "facts_unchanged": true
+    },
+    {
+      "label": "item_fk",
+      "error": "FOREIGN KEY constraint failed",
+      "facts_unchanged": true
+    },
+    {
+      "label": "round_fk",
+      "error": "FOREIGN KEY constraint failed",
+      "facts_unchanged": true
+    }
+  ],
+  "explicit_fixture_actions": [
+    {
+      "label": "resolved_source_missing_projection_fixture",
+      "error": null,
+      "facts_unchanged": false
+    },
+    {
+      "label": "pending_source_missing_projection_fixture",
+      "error": null,
+      "facts_unchanged": false
+    },
+    {
+      "label": "decision_append_only_update",
+      "error": "feedback iteration decisions are append-only",
+      "facts_unchanged": true
+    },
+    {
+      "label": "decision_append_only_delete",
+      "error": "feedback iteration decisions are append-only",
+      "facts_unchanged": true
+    },
+    {
+      "label": "decision_item_append_only_update",
+      "error": "feedback iteration decision items are append-only",
+      "facts_unchanged": true
+    },
+    {
+      "label": "decision_item_append_only_delete",
+      "error": "feedback iteration decision items are append-only",
+      "facts_unchanged": true
+    },
+    {
+      "label": "decision_fk",
+      "error": "FOREIGN KEY constraint failed",
+      "facts_unchanged": true
+    },
+    {
+      "label": "item_fk",
+      "error": "FOREIGN KEY constraint failed",
+      "facts_unchanged": true
+    },
+    {
+      "label": "round_fk",
+      "error": "FOREIGN KEY constraint failed",
+      "facts_unchanged": true
+    },
+    {
+      "label": "install_native_abort",
+      "error": null,
+      "facts_unchanged": true
+    },
+    {
+      "label": "remove_native_abort",
+      "error": null,
+      "facts_unchanged": true
+    },
+    {
+      "label": "install_zero_cas",
+      "error": null,
+      "facts_unchanged": true
+    },
+    {
+      "label": "remove_zero_cas",
+      "error": null,
+      "facts_unchanged": true
+    }
+  ],
+  "final_three_endpoint_join": [
+    {
+      "decision_id": 1,
+      "feedback_key": "alpha",
+      "round_id": 1,
+      "batch_id": "main",
+      "round_feedback_key": "alpha"
+    },
+    {
+      "decision_id": 1,
+      "feedback_key": "beta",
+      "round_id": 2,
+      "batch_id": "main",
+      "round_feedback_key": "beta"
+    },
+    {
+      "decision_id": 2,
+      "feedback_key": "alpha",
+      "round_id": 1,
+      "batch_id": "main",
+      "round_feedback_key": "alpha"
+    },
+    {
+      "decision_id": 2,
+      "feedback_key": "beta",
+      "round_id": 2,
+      "batch_id": "main",
+      "round_feedback_key": "beta"
+    },
+    {
+      "decision_id": 3,
+      "feedback_key": "alpha",
+      "round_id": 3,
+      "batch_id": "follow-up",
+      "round_feedback_key": "alpha"
+    }
+  ],
+  "record_sha256": {
+    "source": "5a403e14594408685f416d25d7788b4d36d4e1cee61a15b4733fd0bd1fcf2985",
+    "target": "5a403e14594408685f416d25d7788b4d36d4e1cee61a15b4733fd0bd1fcf2985"
+  },
+  "final_row_counts": {
+    "feedback_iteration_decisions": 3,
+    "feedback_processing_batches": 4,
+    "feedback_processing_items": 6,
+    "feedback_processing_rounds": 6,
+    "feedback_iteration_decision_items": 5,
+    "feedback_processing_transitions": 10,
+    "feedback_events": 6
+  },
+  "raw_target_physical_witness": {
+    "checkpoint": 76,
+    "target_physical_rows": [
+      [
+        6,
+        "feedback_processing_items",
+        "1",
+        null
+      ],
+      [
+        7,
+        "feedback_processing_items",
+        "2",
+        null
+      ],
+      [
+        9,
+        "feedback_processing_batches",
+        "1",
+        null
+      ],
+      [
+        11,
+        "feedback_processing_items",
+        "3",
+        null
+      ],
+      [
+        13,
+        "feedback_processing_rounds",
+        "1",
+        null
+      ],
+      [
+        14,
+        "feedback_processing_rounds",
+        "2",
+        null
+      ],
+      [
+        16,
+        "feedback_iteration_decisions",
+        "1",
+        9
+      ],
+      [
+        17,
+        "feedback_iteration_decisions",
+        "2",
+        9
+      ],
+      [
+        18,
+        "feedback_processing_batches",
+        "2",
+        null
+      ],
+      [
+        21,
+        "feedback_processing_rounds",
+        "3",
+        null
+      ],
+      [
+        22,
+        "feedback_iteration_decisions",
+        "3",
+        18
+      ],
+      [
+        24,
+        "feedback_processing_items",
+        "4",
+        null
+      ],
+      [
+        25,
+        "feedback_processing_items",
+        "5",
+        null
+      ],
+      [
+        26,
+        "feedback_processing_batches",
+        "3",
+        null
+      ],
+      [
+        30,
+        "feedback_processing_rounds",
+        "4",
+        null
+      ],
+      [
+        31,
+        "feedback_processing_rounds",
+        "5",
+        null
+      ],
+      [
+        32,
+        "feedback_processing_items",
+        "6",
+        null
+      ],
+      [
+        33,
+        "feedback_processing_batches",
+        "4",
+        null
+      ],
+      [
+        36,
+        "feedback_processing_rounds",
+        "6",
+        null
+      ]
+    ],
+    "global_tasks_water": 36
+  },
+  "final_fk_findings": {
+    "source": [],
+    "target": []
+  },
+  "negative_control": {
+    "mutation": "only explicit resolve_feedback_event native INSERT resolved_at changes current_timestamp to empty SQL string; UPSERT tail stays original",
+    "passing_source_resolved_at": "2040-01-01 00:00:02",
+    "passing_target_resolved_at": "2040-01-01 00:00:02",
+    "mutant_resolved_at": "",
+    "mutant_status_and_boolean_still_success": true,
+    "detected_by_readback": true
+  },
+  "decisive_outcomes": {
+    "resolved_source_native_insert_readback": {
+      "return": {
+        "feedback_key": "standalone",
+        "current_round_id": 0,
+        "batch_id": "",
+        "status": "resolved",
+        "workbench_task_id": "",
+        "workbench_turn_id": "",
+        "attempt_id": 0,
+        "agent_run_id": 0,
+        "commit_sha": "",
+        "test_evidence": {},
+        "restart_evidence": {},
+        "health_evidence": {},
+        "note": "",
+        "resolved_at": "2040-01-01 00:00:10",
+        "created_at": "2040-01-01 00:00:12",
+        "updated_at": "2040-01-01 00:00:12"
+      }
+    },
+    "batch_claim": {
+      "return": [
+        {
+          "feedback_key": "alpha",
+          "current_round_id": 1,
+          "batch_id": "main",
+          "status": "processing",
+          "workbench_task_id": "",
+          "workbench_turn_id": "",
+          "attempt_id": 0,
+          "agent_run_id": 0,
+          "commit_sha": "",
+          "test_evidence": {},
+          "restart_evidence": {},
+          "health_evidence": {},
+          "note": "",
+          "resolved_at": "",
+          "created_at": "2040-01-01 00:00:16",
+          "updated_at": "2040-01-01 00:00:22"
+        },
+        {
+          "feedback_key": "beta",
+          "current_round_id": 2,
+          "batch_id": "main",
+          "status": "processing",
+          "workbench_task_id": "",
+          "workbench_turn_id": "",
+          "attempt_id": 0,
+          "agent_run_id": 0,
+          "commit_sha": "",
+          "test_evidence": {},
+          "restart_evidence": {},
+          "health_evidence": {},
+          "note": "",
+          "resolved_at": "",
+          "created_at": "2040-01-01 00:00:18",
+          "updated_at": "2040-01-01 00:00:22"
+        }
+      ]
+    },
+    "same_claim_retry": {
+      "return": [
+        {
+          "feedback_key": "alpha",
+          "current_round_id": 1,
+          "batch_id": "main",
+          "status": "processing",
+          "workbench_task_id": "",
+          "workbench_turn_id": "",
+          "attempt_id": 0,
+          "agent_run_id": 0,
+          "commit_sha": "",
+          "test_evidence": {},
+          "restart_evidence": {},
+          "health_evidence": {},
+          "note": "",
+          "resolved_at": "",
+          "created_at": "2040-01-01 00:00:16",
+          "updated_at": "2040-01-01 00:00:22"
+        },
+        {
+          "feedback_key": "beta",
+          "current_round_id": 2,
+          "batch_id": "main",
+          "status": "processing",
+          "workbench_task_id": "",
+          "workbench_turn_id": "",
+          "attempt_id": 0,
+          "agent_run_id": 0,
+          "commit_sha": "",
+          "test_evidence": {},
+          "restart_evidence": {},
+          "health_evidence": {},
+          "note": "",
+          "resolved_at": "",
+          "created_at": "2040-01-01 00:00:18",
+          "updated_at": "2040-01-01 00:00:22"
+        }
+      ]
+    },
+    "decision_first": {
+      "return": {
+        "id": 1,
+        "batch_id": "main",
+        "feedback_keys": [
+          "alpha",
+          "beta"
+        ],
+        "round_ids": [
+          1,
+          2
+        ],
+        "workbench_task_id": "task-shared",
+        "workbench_turn_id": "turn-shared",
+        "decision": {
+          "scope": "code",
+          "root_cause": "Synthetic code boundary needs an existing-column repair.",
+          "feedback_keys": [
+            "alpha",
+            "beta"
+          ],
+          "source_references": [
+            "fixture:feedback"
+          ],
+          "target_skill_revisions": [],
+          "target_runtime_config_id": null,
+          "why_not_code": "Code scope is selected explicitly for this synthetic receipt.",
+          "acceptance": {
+            "scenario": "synthetic feedback",
+            "expected_behavior": "Source and target return the same persisted round and receipt.",
+            "verification": [
+              "public API parity"
+            ]
+          }
+        },
+        "created_at": "2040-01-01 00:00:34"
+      }
+    },
+    "decision_second_append": {
+      "return": {
+        "id": 2,
+        "batch_id": "main",
+        "feedback_keys": [
+          "alpha",
+          "beta"
+        ],
+        "round_ids": [
+          1,
+          2
+        ],
+        "workbench_task_id": "task-shared",
+        "workbench_turn_id": "turn-shared",
+        "decision": {
+          "scope": "code",
+          "root_cause": "Second adopted code classification.",
+          "feedback_keys": [
+            "alpha",
+            "beta"
+          ],
+          "source_references": [
+            "fixture:feedback"
+          ],
+          "target_skill_revisions": [],
+          "target_runtime_config_id": null,
+          "why_not_code": "Code scope is selected explicitly for this synthetic receipt.",
+          "acceptance": {
+            "scenario": "synthetic feedback",
+            "expected_behavior": "Source and target return the same persisted round and receipt.",
+            "verification": [
+              "public API parity"
+            ]
+          }
+        },
+        "created_at": "2040-01-01 00:00:35"
+      }
+    },
+    "batch_resolve": {
+      "return": true
+    },
+    "rounds_for_batch": {
+      "return": [
+        {
+          "id": 1,
+          "feedback_key": "alpha",
+          "round_number": 1,
+          "batch_id": "main",
+          "status": "resolved",
+          "workbench_task_id": "task-shared",
+          "workbench_turn_id": "turn-shared",
+          "attempt_id": 1,
+          "agent_run_id": 101,
+          "commit_sha": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+          "test_evidence": {
+            "pytest": {
+              "exit_code": 0
+            }
+          },
+          "restart_evidence": {
+            "after_pid": 11,
+            "before_pid": 10,
+            "launchd_label": "com.ceo-agent-service.main"
+          },
+          "health_evidence": {
+            "ok": true,
+            "status_code": 200,
+            "url": "http://127.0.0.1:8765/healthz"
+          },
+          "backlog_evidence": {
+            "failed": 0,
+            "processing": 0,
+            "retryable": 0
+          },
+          "scope_receipt": {
+            "decision_id": 2,
+            "evidence": {
+              "associations": {},
+              "backlog_evidence": {
+                "failed": 0,
+                "processing": 0,
+                "retryable": 0
+              },
+              "commit_sha": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+              "health_evidence": {
+                "ok": true,
+                "status_code": 200,
+                "url": "http://127.0.0.1:8765/healthz"
+              },
+              "load_receipt_id": 0,
+              "previous_runtime_config_id": 0,
+              "restart_evidence": {
+                "after_pid": 11,
+                "before_pid": 10,
+                "launchd_label": "com.ceo-agent-service.main"
+              },
+              "runtime_config_id": 0,
+              "skill_revisions": [],
+              "test_evidence": {
+                "pytest": {
+                  "exit_code": 0
+                }
+              }
+            },
+            "scope": "code"
+          },
+          "receipt_version": 2,
+          "note": "adopted synthetic fix",
+          "started_at": "2040-01-01 00:00:22",
+          "resolved_at": "2040-01-01 00:00:39",
+          "reopened_at": "",
+          "reopen_reason": "",
+          "created_at": "2040-01-01 00:00:22",
+          "updated_at": "2040-01-01 00:00:39"
+        },
+        {
+          "id": 2,
+          "feedback_key": "beta",
+          "round_number": 1,
+          "batch_id": "main",
+          "status": "resolved",
+          "workbench_task_id": "task-shared",
+          "workbench_turn_id": "turn-shared",
+          "attempt_id": 2,
+          "agent_run_id": 102,
+          "commit_sha": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+          "test_evidence": {
+            "pytest": {
+              "exit_code": 0
+            }
+          },
+          "restart_evidence": {
+            "after_pid": 11,
+            "before_pid": 10,
+            "launchd_label": "com.ceo-agent-service.main"
+          },
+          "health_evidence": {
+            "ok": true,
+            "status_code": 200,
+            "url": "http://127.0.0.1:8765/healthz"
+          },
+          "backlog_evidence": {
+            "failed": 0,
+            "processing": 0,
+            "retryable": 0
+          },
+          "scope_receipt": {
+            "decision_id": 2,
+            "evidence": {
+              "associations": {},
+              "backlog_evidence": {
+                "failed": 0,
+                "processing": 0,
+                "retryable": 0
+              },
+              "commit_sha": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+              "health_evidence": {
+                "ok": true,
+                "status_code": 200,
+                "url": "http://127.0.0.1:8765/healthz"
+              },
+              "load_receipt_id": 0,
+              "previous_runtime_config_id": 0,
+              "restart_evidence": {
+                "after_pid": 11,
+                "before_pid": 10,
+                "launchd_label": "com.ceo-agent-service.main"
+              },
+              "runtime_config_id": 0,
+              "skill_revisions": [],
+              "test_evidence": {
+                "pytest": {
+                  "exit_code": 0
+                }
+              }
+            },
+            "scope": "code"
+          },
+          "receipt_version": 2,
+          "note": "adopted synthetic fix",
+          "started_at": "2040-01-01 00:00:22",
+          "resolved_at": "2040-01-01 00:00:39",
+          "reopened_at": "",
+          "reopen_reason": "",
+          "created_at": "2040-01-01 00:00:22",
+          "updated_at": "2040-01-01 00:00:39"
+        }
+      ]
+    },
+    "reopen_alpha": {
+      "return": {
+        "feedback_key": "alpha",
+        "current_round_id": 0,
+        "batch_id": "",
+        "status": "pending",
+        "workbench_task_id": "",
+        "workbench_turn_id": "",
+        "attempt_id": 0,
+        "agent_run_id": 0,
+        "commit_sha": "",
+        "test_evidence": {},
+        "restart_evidence": {},
+        "health_evidence": {},
+        "note": "",
+        "resolved_at": "",
+        "created_at": "2040-01-01 00:00:16",
+        "updated_at": "2040-01-01 00:00:45"
+      }
+    },
+    "new_round_claim": {
+      "return": [
+        {
+          "feedback_key": "alpha",
+          "current_round_id": 3,
+          "batch_id": "follow-up",
+          "status": "processing",
+          "workbench_task_id": "",
+          "workbench_turn_id": "",
+          "attempt_id": 0,
+          "agent_run_id": 0,
+          "commit_sha": "",
+          "test_evidence": {},
+          "restart_evidence": {},
+          "health_evidence": {},
+          "note": "",
+          "resolved_at": "",
+          "created_at": "2040-01-01 00:00:16",
+          "updated_at": "2040-01-01 00:00:49"
+        }
+      ]
+    },
+    "old_batch_new_lineage_readback": {
+      "return": true
+    },
+    "alpha_two_round_history": {
+      "return": [
+        {
+          "id": 3,
+          "feedback_key": "alpha",
+          "round_number": 2,
+          "batch_id": "follow-up",
+          "status": "resolved",
+          "workbench_task_id": "task-follow-up",
+          "workbench_turn_id": "turn-follow-up",
+          "attempt_id": 3,
+          "agent_run_id": 103,
+          "commit_sha": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+          "test_evidence": {
+            "pytest": {
+              "exit_code": 0
+            }
+          },
+          "restart_evidence": {
+            "after_pid": 11,
+            "before_pid": 10,
+            "launchd_label": "com.ceo-agent-service.main"
+          },
+          "health_evidence": {
+            "ok": true,
+            "status_code": 200,
+            "url": "http://127.0.0.1:8765/healthz"
+          },
+          "backlog_evidence": {
+            "failed": 0,
+            "processing": 0,
+            "retryable": 0
+          },
+          "scope_receipt": {
+            "decision_id": 3,
+            "evidence": {
+              "associations": {},
+              "backlog_evidence": {
+                "failed": 0,
+                "processing": 0,
+                "retryable": 0
+              },
+              "commit_sha": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+              "health_evidence": {
+                "ok": true,
+                "status_code": 200,
+                "url": "http://127.0.0.1:8765/healthz"
+              },
+              "load_receipt_id": 0,
+              "previous_runtime_config_id": 0,
+              "restart_evidence": {
+                "after_pid": 11,
+                "before_pid": 10,
+                "launchd_label": "com.ceo-agent-service.main"
+              },
+              "runtime_config_id": 0,
+              "skill_revisions": [],
+              "test_evidence": {
+                "pytest": {
+                  "exit_code": 0
+                }
+              }
+            },
+            "scope": "code"
+          },
+          "receipt_version": 2,
+          "note": "second round receipt",
+          "started_at": "2040-01-01 00:00:49",
+          "resolved_at": "2040-01-01 00:00:53",
+          "reopened_at": "",
+          "reopen_reason": "",
+          "created_at": "2040-01-01 00:00:49",
+          "updated_at": "2040-01-01 00:00:53"
+        },
+        {
+          "id": 1,
+          "feedback_key": "alpha",
+          "round_number": 1,
+          "batch_id": "main",
+          "status": "resolved",
+          "workbench_task_id": "task-shared",
+          "workbench_turn_id": "turn-shared",
+          "attempt_id": 1,
+          "agent_run_id": 101,
+          "commit_sha": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+          "test_evidence": {
+            "pytest": {
+              "exit_code": 0
+            }
+          },
+          "restart_evidence": {
+            "after_pid": 11,
+            "before_pid": 10,
+            "launchd_label": "com.ceo-agent-service.main"
+          },
+          "health_evidence": {
+            "ok": true,
+            "status_code": 200,
+            "url": "http://127.0.0.1:8765/healthz"
+          },
+          "backlog_evidence": {
+            "failed": 0,
+            "processing": 0,
+            "retryable": 0
+          },
+          "scope_receipt": {
+            "decision_id": 2,
+            "evidence": {
+              "associations": {},
+              "backlog_evidence": {
+                "failed": 0,
+                "processing": 0,
+                "retryable": 0
+              },
+              "commit_sha": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+              "health_evidence": {
+                "ok": true,
+                "status_code": 200,
+                "url": "http://127.0.0.1:8765/healthz"
+              },
+              "load_receipt_id": 0,
+              "previous_runtime_config_id": 0,
+              "restart_evidence": {
+                "after_pid": 11,
+                "before_pid": 10,
+                "launchd_label": "com.ceo-agent-service.main"
+              },
+              "runtime_config_id": 0,
+              "skill_revisions": [],
+              "test_evidence": {
+                "pytest": {
+                  "exit_code": 0
+                }
+              }
+            },
+            "scope": "code"
+          },
+          "receipt_version": 2,
+          "note": "adopted synthetic fix",
+          "started_at": "2040-01-01 00:00:22",
+          "resolved_at": "2040-01-01 00:00:39",
+          "reopened_at": "2040-01-01 00:00:45",
+          "reopen_reason": "a distinct synthetic follow-up",
+          "created_at": "2040-01-01 00:00:22",
+          "updated_at": "2040-01-01 00:00:39"
+        }
+      ]
+    },
+    "resolved_batch_and_time_preserved": {
+      "return": {
+        "feedback_key": "beta",
+        "current_round_id": 2,
+        "batch_id": "main",
+        "status": "resolved",
+        "workbench_task_id": "task-shared",
+        "workbench_turn_id": "turn-shared",
+        "attempt_id": 2,
+        "agent_run_id": 102,
+        "commit_sha": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+        "test_evidence": {
+          "pytest": {
+            "exit_code": 0
+          }
+        },
+        "restart_evidence": {
+          "after_pid": 11,
+          "before_pid": 10,
+          "launchd_label": "com.ceo-agent-service.main"
+        },
+        "health_evidence": {
+          "ok": true,
+          "status_code": 200,
+          "url": "http://127.0.0.1:8765/healthz"
+        },
+        "note": "adopted synthetic fix",
+        "resolved_at": "2040-01-01 00:00:39",
+        "created_at": "2040-01-01 00:00:18",
+        "updated_at": "2040-01-01 00:01:04"
+      }
+    },
+    "native_partial_claim_rollback": {
+      "error": {
+        "type": "IntegrityError",
+        "message": "fixture round write abort",
+        "error_code": null
+      }
+    },
+    "claim_after_native_rollback": {
+      "return": [
+        {
+          "feedback_key": "rollback-a",
+          "current_round_id": 4,
+          "batch_id": "rollback",
+          "status": "processing",
+          "workbench_task_id": "",
+          "workbench_turn_id": "",
+          "attempt_id": 0,
+          "agent_run_id": 0,
+          "commit_sha": "",
+          "test_evidence": {},
+          "restart_evidence": {},
+          "health_evidence": {},
+          "note": "",
+          "resolved_at": "",
+          "created_at": "2040-01-01 00:01:07",
+          "updated_at": "2040-01-01 00:01:11"
+        },
+        {
+          "feedback_key": "rollback-b",
+          "current_round_id": 5,
+          "batch_id": "rollback",
+          "status": "processing",
+          "workbench_task_id": "",
+          "workbench_turn_id": "",
+          "attempt_id": 0,
+          "agent_run_id": 0,
+          "commit_sha": "",
+          "test_evidence": {},
+          "restart_evidence": {},
+          "health_evidence": {},
+          "note": "",
+          "resolved_at": "",
+          "created_at": "2040-01-01 00:01:08",
+          "updated_at": "2040-01-01 00:01:11"
+        }
+      ]
+    },
+    "native_zero_cas_rollback": {
+      "error": {
+        "type": "FeedbackProcessingClaimError",
+        "message": "feedback processing claim rejected",
+        "error_code": "feedback_already_processing"
+      }
+    },
+    "claim_after_cas_rollback": {
+      "return": [
+        {
+          "feedback_key": "cas-zero",
+          "current_round_id": 6,
+          "batch_id": "cas-zero",
+          "status": "processing",
+          "workbench_task_id": "",
+          "workbench_turn_id": "",
+          "attempt_id": 0,
+          "agent_run_id": 0,
+          "commit_sha": "",
+          "test_evidence": {},
+          "restart_evidence": {},
+          "health_evidence": {},
+          "note": "",
+          "resolved_at": "",
+          "created_at": "2040-01-01 00:01:12",
+          "updated_at": "2040-01-01 00:01:15"
+        }
+      ]
+    }
+  },
+  "owned_temp_removed": true
+}

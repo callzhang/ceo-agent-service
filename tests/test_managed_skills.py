@@ -67,41 +67,16 @@ def _repository_classifier_content() -> str:
     ).read_text(encoding="utf-8")
 
 
-def _copy_existing_feedback_schema_without_managed_skill_tables(path: Path) -> None:
-    """Build a pre-managed-Skill database containing a persisted feedback item.
-
-    The fixture begins from the repository's existing feedback schema, then
-    removes only the tables introduced by the managed-Skill migration.  This
-    keeps the fixture aligned with the real legacy feedback projection while
-    exercising the additive upgrade path rather than an empty database path.
-    """
-    legacy = AutoReplyStore(path)
-    legacy.upsert_feedback_event(
+def test_selected_skill_import_preserves_existing_feedback_item(tmp_path: Path) -> None:
+    path = tmp_path / "existing-feedback.sqlite3"
+    store = AutoReplyStore(path)
+    store.upsert_feedback_event(
         key="manual:8308",
         feedback_token="manual-attempt:8308",
-        comment="existing feedback must survive the managed-Skill migration",
+        comment="existing feedback must survive Skill import",
         source="workbench",
     )
-    with legacy._connect() as db:
-        for table in (
-            "runtime_feedback_iteration_capabilities",
-            "runtime_skill_load_receipts",
-            "runtime_skill_bindings",
-            "runtime_skill_configs",
-            "managed_skill_revisions",
-            "managed_skills",
-        ):
-            db.execute(f"drop table {table}")
-    store_module._INITIALIZED_STORE_PATHS.discard(path.resolve())
-
-
-def test_managed_skill_migration_is_additive_for_existing_feedback_database(
-    tmp_path: Path,
-) -> None:
-    db_path = tmp_path / "existing-feedback.sqlite3"
-    _copy_existing_feedback_schema_without_managed_skill_tables(db_path)
-
-    migrated = AutoReplyStore(db_path)
+    migrated = AutoReplyStore(path)
 
     assert migrated.get_feedback_processing_item("manual:8308") is not None
     assert migrated.list_managed_skills() == ()
@@ -674,7 +649,7 @@ def test_bound_reserved_classifier_collision_rebinds_without_overwriting_user_re
     EmailClassifierAgent(object(), runtime_skill_snapshot=snapshot)
 
 
-def test_exact_content_settings_classifier_collision_migrates_and_starts_agent(
+def test_exact_content_settings_classifier_collision_imports_and_starts_agent(
     tmp_path: Path,
 ) -> None:
     path = tmp_path / "exact-content-collision.sqlite3"
@@ -692,16 +667,6 @@ def test_exact_content_settings_classifier_collision_migrates_and_starts_agent(
     store.record_runtime_skill_load(
         original.id, pid=8400, loaded={collision.id: user_revision.sha256}
     )
-    with store._connect() as db:
-        db.execute("drop index if exists idx_managed_skill_revisions_identity")
-        db.execute(
-            """
-            create unique index if not exists idx_managed_skill_revisions_sha256
-            on managed_skill_revisions(skill_id, sha256)
-            """
-        )
-    store_module._INITIALIZED_STORE_PATHS.discard(path.resolve())
-
     reopened = AutoReplyStore(path)
     snapshot = resolve_pending_runtime_skills(reopened, pid=8401)
 
@@ -727,18 +692,11 @@ def test_exact_content_settings_classifier_collision_migrates_and_starts_agent(
         repository_revision.sha256
     )
     with reopened._connect() as db:
-        identity_columns = tuple(
-            row[2]
-            for row in db.execute(
-                "pragma index_info(idx_managed_skill_revisions_identity)"
-            )
-        )
-        legacy_index = db.execute(
-            "select 1 from sqlite_master where type='index' "
-            "and name='idx_managed_skill_revisions_sha256'"
-        ).fetchone()
-    assert identity_columns == ("skill_id", "sha256", "source")
-    assert legacy_index is None
+        assert db.execute(
+            "select count(*) from configs where record_type='managed_skill_revisions' "
+            "and skill_revision_skill_id=? and skill_revision_sha256=?",
+            (collision.id, user_revision.sha256),
+        ).fetchone()[0] == 2
     EmailClassifierAgent(object(), runtime_skill_snapshot=snapshot)
 
 
@@ -778,7 +736,9 @@ def test_repository_import_serializes_two_independent_store_initializers(
     } == set(REPOSITORY_MANAGED_SKILL_NAMES)
     with final._connect() as db:
         assert (
-            db.execute("select count(*) from runtime_skill_configs").fetchone()[0] == 1
+            db.execute(
+                "select count(*) from configs where record_type='runtime_skill_configs'"
+            ).fetchone()[0] == 1
         )
 
 
@@ -895,14 +855,24 @@ def test_revision_number_is_unique_within_a_managed_skill(tmp_path: Path) -> Non
     skill = store.create_managed_skill("ceo-test", "Test Skill")
     first = store.create_managed_skill_revision(skill.id, SKILL_V1, source="settings")
 
-    with store._connect() as db, pytest.raises(sqlite3.IntegrityError):
+    with store._connect() as db:
+        with pytest.raises(sqlite3.IntegrityError, match="UNIQUE constraint failed"):
+            db.execute(
+            "insert into configs(record_type,legacy_key,source_key,payload_json,"
+            "skill_revision_skill_ref) "
+            "select record_type,'999',999,json_set(payload_json,'$.sha256','other-hash'),"
+            "skill_revision_skill_ref from configs "
+            "where record_type='managed_skill_revisions' and numeric_public_key=?",
+            (first.id,),
+            )
         db.execute(
-            """
-            insert into managed_skill_revisions (
-                skill_id, revision_number, content, sha256, source
-            ) values (?, ?, ?, ?, ?)
-            """,
-            (skill.id, first.revision_number, SKILL_V2, "other-hash", "test"),
+            "insert into configs(record_type,legacy_key,source_key,payload_json,"
+            "skill_revision_skill_ref) "
+            "select record_type,'999',999,json_set(payload_json,'$.sha256','other-hash',"
+            "'$.revision_number',json_extract(payload_json,'$.revision_number')+1),"
+            "skill_revision_skill_ref from configs "
+            "where record_type='managed_skill_revisions' and numeric_public_key=?",
+            (first.id,),
         )
 
 
@@ -936,22 +906,19 @@ def test_schema_initialization_is_idempotent_and_has_provenance_revision_identit
     AutoReplyStore(path)
 
     with sqlite3.connect(path) as db:
-        indexes = {
-            row[1] for row in db.execute("pragma index_list(managed_skill_revisions)")
-        }
-        identity_columns = tuple(
-            row[2]
-            for row in db.execute(
-                "pragma index_info(idx_managed_skill_revisions_identity)"
-            )
-        )
+        indexes = {row[1] for row in db.execute("pragma index_list(configs)")}
+        identity_columns = tuple(row[2] for row in db.execute(
+            "pragma index_info(idx_configs_revision_identity)"
+        ))
 
     assert {
-        "idx_managed_skill_revisions_number",
-        "idx_managed_skill_revisions_identity",
+        "idx_configs_revision_number",
+        "idx_configs_revision_identity",
     } <= indexes
     assert "idx_managed_skill_revisions_sha256" not in indexes
-    assert identity_columns == ("skill_id", "sha256", "source")
+    assert identity_columns == (
+        "skill_revision_skill_id", "skill_revision_sha256", "skill_revision_source"
+    )
 
 
 def test_revision_rows_reject_sql_update_and_delete_without_data_loss(
@@ -970,7 +937,8 @@ def test_revision_rows_reject_sql_update_and_delete_without_data_loss(
         ),
     ):
         db.execute(
-            "update managed_skill_revisions set content=? where id=?",
+            "update configs set payload_json=json_set(payload_json,'$.content',?) "
+            "where record_type='managed_skill_revisions' and numeric_public_key=?",
             (SKILL_V2, revision.id),
         )
     with (
@@ -979,12 +947,35 @@ def test_revision_rows_reject_sql_update_and_delete_without_data_loss(
             sqlite3.IntegrityError, match="managed Skill revisions are immutable"
         ),
     ):
-        db.execute("delete from managed_skill_revisions where id=?", (revision.id,))
+        db.execute(
+            "delete from configs where record_type='managed_skill_revisions' "
+            "and numeric_public_key=?", (revision.id,)
+        )
 
     persisted = store.get_managed_skill_revision(revision.id)
     assert persisted is not None
     assert persisted.content == SKILL_V1
     assert persisted.sha256 == revision.sha256
+
+
+def test_skill_receipt_readers_reuse_existing_read_snapshot(tmp_path: Path) -> None:
+    store = AutoReplyStore(tmp_path / "skills.sqlite3")
+    skill = store.create_managed_skill("ceo-test", "Test Skill")
+    revision = store.create_managed_skill_revision(skill.id, SKILL_V1, source="settings")
+    exported = store.record_managed_skill_export(
+        revision.id, sha256=revision.sha256, path=str(tmp_path / "SKILL.md")
+    )
+    config = store.create_runtime_skill_config(
+        {skill.id: revision.id}, expected_parent_id=None
+    )
+    loaded = store.record_runtime_skill_load(
+        config.id, pid=4812, loaded={skill.id: revision.sha256}
+    )
+    with store.read_snapshot():
+        assert store.latest_managed_skill_export_receipt(revision.id) == exported
+        assert store.list_runtime_skill_load_receipts(config.id) == (loaded,)
+        assert store.latest_runtime_skill_load_receipt_for_pid(4812) == loaded
+    assert store.latest_managed_skill_export_receipt(revision.id) == exported
 
 
 def test_padded_skill_names_are_rejected_before_persistence(tmp_path: Path) -> None:
@@ -996,7 +987,7 @@ def test_padded_skill_names_are_rejected_before_persistence(tmp_path: Path) -> N
     assert store.list_managed_skills() == ()
 
 
-def test_reopening_an_existing_database_repairs_missing_immutability_triggers(
+def test_reopening_current_database_repairs_missing_immutability_trigger(
     tmp_path: Path,
 ) -> None:
     path = tmp_path / "skills.sqlite3"
@@ -1006,22 +997,21 @@ def test_reopening_an_existing_database_repairs_missing_immutability_triggers(
         skill.id, SKILL_V1, source="settings"
     )
     with store._connect() as db:
-        db.execute("drop trigger trg_managed_skill_revisions_immutable_update")
-        db.execute("drop trigger trg_managed_skill_revisions_immutable_delete")
+        db.execute("drop trigger trg_configs_skill_revision_update")
     store_module._INITIALIZED_STORE_PATHS.discard(path.resolve())
-
     reopened = AutoReplyStore(path)
-
-    with (
-        reopened._connect() as db,
-        pytest.raises(
-            sqlite3.IntegrityError, match="managed Skill revisions are immutable"
-        ),
-    ):
-        db.execute(
-            "update managed_skill_revisions set content=? where id=?",
-            (SKILL_V2, revision.id),
-        )
+    with reopened._connect() as db:
+        assert db.execute(
+            "select 1 from sqlite_schema where type='trigger' "
+            "and name='trg_configs_skill_revision_update'"
+        ).fetchone()
+        with pytest.raises(sqlite3.IntegrityError, match="managed Skill revisions are immutable"):
+            db.execute(
+                "update configs set payload_json=json_set(payload_json,'$.content',?) "
+                "where record_type='managed_skill_revisions' and numeric_public_key=?",
+                (SKILL_V2, revision.id),
+            )
+    assert reopened.get_managed_skill_revision(revision.id) == revision
 
 
 def _runtime_skill_file(root: Path, name: str, body: str) -> Path:

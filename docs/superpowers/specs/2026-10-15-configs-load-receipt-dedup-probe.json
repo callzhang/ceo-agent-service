@@ -1,0 +1,194 @@
+{
+  "source": "/private/tmp/ceo-business-combined-actual-u6i3ldg0/source.sqlite3",
+  "source_sha256": "970a909a9cfcb4fe604d2111d5572560d4744978df20fb317c4e433059566320",
+  "kind": "runtime_skill_load_receipts",
+  "rows": 4105,
+  "successful_rows": 4105,
+  "failed_rows": 0,
+  "utf8_bytes": 3678270,
+  "distinct_raw_body_hashes": 17,
+  "byte_exact_reconstructions": 4105,
+  "reconstruction": "json.dumps({int(binding.skill_id): str(revision.sha256) for enabled bindings of receipt.config_id}, sort_keys=True); public failure writer uses '{}'",
+  "scope": "Read-only frozen source; no target, inverse, capacity or failed-row corpus acceptance",
+  "actual_frozen_receipt_metadata": {
+    "managed_skill_export_receipts": {
+      "objects": [
+        {
+          "type": "index",
+          "name": "idx_managed_skill_export_receipts_revision",
+          "sql": "CREATE INDEX idx_managed_skill_export_receipts_revision\n                    on managed_skill_export_receipts(revision_id, id)"
+        },
+        {
+          "type": "table",
+          "name": "managed_skill_export_receipts",
+          "sql": "CREATE TABLE managed_skill_export_receipts (\n                    id integer primary key autoincrement,\n                    revision_id integer not null,\n                    sha256 text not null,\n                    path text not null,\n                    created_at text not null default current_timestamp,\n                    foreign key(revision_id) references managed_skill_revisions(id)\n                )"
+        },
+        {
+          "type": "trigger",
+          "name": "trg_managed_skill_export_receipts_immutable_delete",
+          "sql": "CREATE TRIGGER trg_managed_skill_export_receipts_immutable_delete\nbefore delete on managed_skill_export_receipts\nbegin\n    select raise(abort, 'managed Skill export receipts are append-only');\nend"
+        },
+        {
+          "type": "trigger",
+          "name": "trg_managed_skill_export_receipts_immutable_update",
+          "sql": "CREATE TRIGGER trg_managed_skill_export_receipts_immutable_update\nbefore update on managed_skill_export_receipts\nbegin\n    select raise(abort, 'managed Skill export receipts are append-only');\nend"
+        }
+      ],
+      "columns": [
+        {
+          "cid": 0,
+          "name": "id",
+          "type": "INTEGER",
+          "notnull": 0,
+          "dflt_value": null,
+          "pk": 1,
+          "hidden": 0
+        },
+        {
+          "cid": 1,
+          "name": "revision_id",
+          "type": "INTEGER",
+          "notnull": 1,
+          "dflt_value": null,
+          "pk": 0,
+          "hidden": 0
+        },
+        {
+          "cid": 2,
+          "name": "sha256",
+          "type": "TEXT",
+          "notnull": 1,
+          "dflt_value": null,
+          "pk": 0,
+          "hidden": 0
+        },
+        {
+          "cid": 3,
+          "name": "path",
+          "type": "TEXT",
+          "notnull": 1,
+          "dflt_value": null,
+          "pk": 0,
+          "hidden": 0
+        },
+        {
+          "cid": 4,
+          "name": "created_at",
+          "type": "TEXT",
+          "notnull": 1,
+          "dflt_value": "current_timestamp",
+          "pk": 0,
+          "hidden": 0
+        }
+      ],
+      "foreign_keys": [
+        [
+          0,
+          0,
+          "managed_skill_revisions",
+          "revision_id",
+          "id",
+          "NO ACTION",
+          "NO ACTION",
+          "NONE"
+        ]
+      ],
+      "row_count": 1939,
+      "sequence": 1939
+    },
+    "runtime_skill_load_receipts": {
+      "objects": [
+        {
+          "type": "index",
+          "name": "idx_runtime_skill_load_receipts_config",
+          "sql": "CREATE INDEX idx_runtime_skill_load_receipts_config\n                    on runtime_skill_load_receipts(config_id, id)"
+        },
+        {
+          "type": "table",
+          "name": "runtime_skill_load_receipts",
+          "sql": "CREATE TABLE runtime_skill_load_receipts (\n                    id integer primary key autoincrement,\n                    config_id integer not null,\n                    pid integer not null check(pid > 0),\n                    loaded_json text not null default '{}',\n                    error text not null default '',\n                    created_at text not null default current_timestamp,\n                    foreign key(config_id) references runtime_skill_configs(id)\n                )"
+        },
+        {
+          "type": "trigger",
+          "name": "trg_runtime_skill_load_receipts_immutable_delete",
+          "sql": "CREATE TRIGGER trg_runtime_skill_load_receipts_immutable_delete\nbefore delete on runtime_skill_load_receipts\nbegin\n    select raise(abort, 'runtime Skill load receipts are append-only');\nend"
+        },
+        {
+          "type": "trigger",
+          "name": "trg_runtime_skill_load_receipts_immutable_update",
+          "sql": "CREATE TRIGGER trg_runtime_skill_load_receipts_immutable_update\nbefore update on runtime_skill_load_receipts\nbegin\n    select raise(abort, 'runtime Skill load receipts are append-only');\nend"
+        }
+      ],
+      "columns": [
+        {
+          "cid": 0,
+          "name": "id",
+          "type": "INTEGER",
+          "notnull": 0,
+          "dflt_value": null,
+          "pk": 1,
+          "hidden": 0
+        },
+        {
+          "cid": 1,
+          "name": "config_id",
+          "type": "INTEGER",
+          "notnull": 1,
+          "dflt_value": null,
+          "pk": 0,
+          "hidden": 0
+        },
+        {
+          "cid": 2,
+          "name": "pid",
+          "type": "INTEGER",
+          "notnull": 1,
+          "dflt_value": null,
+          "pk": 0,
+          "hidden": 0
+        },
+        {
+          "cid": 3,
+          "name": "loaded_json",
+          "type": "TEXT",
+          "notnull": 1,
+          "dflt_value": "'{}'",
+          "pk": 0,
+          "hidden": 0
+        },
+        {
+          "cid": 4,
+          "name": "error",
+          "type": "TEXT",
+          "notnull": 1,
+          "dflt_value": "''",
+          "pk": 0,
+          "hidden": 0
+        },
+        {
+          "cid": 5,
+          "name": "created_at",
+          "type": "TEXT",
+          "notnull": 1,
+          "dflt_value": "current_timestamp",
+          "pk": 0,
+          "hidden": 0
+        }
+      ],
+      "foreign_keys": [
+        [
+          0,
+          0,
+          "runtime_skill_configs",
+          "config_id",
+          "id",
+          "NO ACTION",
+          "NO ACTION",
+          "NONE"
+        ]
+      ],
+      "row_count": 4105,
+      "sequence": 4105
+    }
+  }
+}

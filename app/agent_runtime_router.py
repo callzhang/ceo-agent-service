@@ -183,6 +183,8 @@ class CodexCommandFactory:
     image_paths: tuple[Path, ...] = ()
     skill_names: tuple[str, ...] | None = None
     inlined_skill_names: tuple[str, ...] = ()
+    project_doc_max_bytes: int | None = None
+    model_only: bool = False
 
     def __post_init__(self) -> None:
         if not self.developer_instructions.strip():
@@ -198,6 +200,8 @@ class CodexCommandFactory:
         image_paths: Sequence[Path] = (),
         skill_names: Sequence[str] | None = None,
         inlined_skill_names: Sequence[str] = (),
+        project_doc_max_bytes: int | None = None,
+        model_only: bool = False,
     ) -> "CodexCommandFactory":
         return cls(
             developer_instructions=developer_instructions,
@@ -206,6 +210,8 @@ class CodexCommandFactory:
             image_paths=tuple(image_paths),
             skill_names=tuple(skill_names) if skill_names is not None else None,
             inlined_skill_names=tuple(inlined_skill_names),
+            project_doc_max_bytes=project_doc_max_bytes,
+            model_only=model_only,
         )
 
     def build(
@@ -231,11 +237,17 @@ class CodexCommandFactory:
         )
         if self.skill_names is not None:
             build_options["skill_names"] = self.skill_names
+        if self.project_doc_max_bytes is not None:
+            build_options["project_doc_max_bytes"] = self.project_doc_max_bytes
         if skip_git_repo_check:
             build_options["skip_git_repo_check"] = True
         if self.inlined_skill_names:
             build_options["inlined_skill_names"] = self.inlined_skill_names
         command = adapter.build_command(**build_options)
+        if self.model_only:
+            from app.wechat.codex_safety import make_model_only_agent_command
+
+            make_model_only_agent_command(command)
         return command, adapter.build_env(route)
 
 
@@ -1010,6 +1022,7 @@ class RoutedCodexExecution:
         conversation_id: str | None = None,
         continuation_prompt: str | None = None,
         continuation_session_id: str | None = None,
+        route_prompt_overrides: Mapping[RuntimeKind, str] | None = None,
         required_capabilities: frozenset[str] = frozenset(),
         result_validation_retry: RoutedResultValidationRetry | None = None,
         on_stdout_line: Callable[[str], None] | None = None,
@@ -1035,6 +1048,13 @@ class RoutedCodexExecution:
         if not prompt:
             raise ValueError("prompt must be non-empty")
         original_prompt = prompt
+        route_prompts = dict(route_prompt_overrides or {})
+        if any(not value.strip() for value in route_prompts.values()):
+            raise ValueError("route prompt override must be non-empty")
+
+        def prompt_for(runtime_kind: RuntimeKind) -> str:
+            return route_prompts.get(runtime_kind, original_prompt)
+
         if (continuation_prompt is None) != (continuation_session_id is None):
             raise ValueError("continuation prompt and session must be paired")
         if continuation_prompt is not None:
@@ -1043,6 +1063,7 @@ class RoutedCodexExecution:
             if not continuation_prompt or not continuation_session_id:
                 raise ValueError("continuation prompt and session must be non-empty")
         result_validation_retries_used = 0
+        capacity_retry_resume = False
         forced_retry_session_id: str | None = None
         terminal_failure: RuntimeFailure | None = None
         next_attempt_purpose = "normal"
@@ -1144,7 +1165,7 @@ class RoutedCodexExecution:
                 )
                 forced_retry_session_id = latest.session_id
                 prompt = result_validation_retry.corrected_prompt(
-                    original_prompt,
+                    prompt_for(decision.route.runtime_kind),
                     RoutedResultValidationError(
                         "the prior persisted result did not satisfy validation"
                     ),
@@ -1169,7 +1190,7 @@ class RoutedCodexExecution:
                     if result_validation_retry.resume_same_session:
                         forced_retry_session_id = latest.session_id
                     prompt = result_validation_retry.corrected_prompt(
-                        original_prompt,
+                        prompt_for(decision.route.runtime_kind),
                         RoutedResultValidationError(
                             "the prior persisted result did not satisfy validation"
                         ),
@@ -1290,11 +1311,15 @@ class RoutedCodexExecution:
         while True:
             if result_validation_retries_used == 0:
                 prompt = (
-                    continuation_prompt
-                    if continuation_prompt is not None
-                    and route.runtime_kind in {RuntimeKind.CODEX_CLI, RuntimeKind.CLAUDE_CLI}
-                    and route_session_id == continuation_session_id
-                    else original_prompt
+                    "continue"
+                    if capacity_retry_resume and route_session_id
+                    else (
+                        continuation_prompt
+                        if continuation_prompt is not None
+                        and route.runtime_kind in {RuntimeKind.CODEX_CLI, RuntimeKind.CLAUDE_CLI}
+                        and route_session_id == continuation_session_id
+                        else prompt_for(route.runtime_kind)
+                    )
                 )
             from app.native_trajectory import count_claude_session_lines
 
@@ -1663,7 +1688,7 @@ class RoutedCodexExecution:
                     active_attempt = successor
                     route_session_id = successor_session_id
                     prompt = result_validation_retry.corrected_prompt(
-                        original_prompt, exc
+                        prompt_for(route.runtime_kind), exc
                     )
                     result_validation_retries_used = 1
                     continue
@@ -1826,13 +1851,23 @@ class RoutedCodexExecution:
                 # The wait budget is spent: the correction session stays on
                 # the failed provider, so the successor route restarts from
                 # the original prompt with its own correction turn.
-                prompt = original_prompt
+                prompt = prompt_for(route.runtime_kind)
                 result_validation_retries_used = 0
-            route_session_id = (
-                None
-                if next_decision.fresh_session
-                else self._session_for_route(conversation_id, route.name)
-            )
+            if plan.reason == "capacity_retry":
+                # A cold run has no completed conversation-session mapping yet,
+                # but the failed attempt may already have observed the native
+                # session created before the provider returned 429.
+                route_session_id = failed_attempt.session_id or self._session_for_route(
+                    conversation_id, route.name
+                )
+                capacity_retry_resume = bool(route_session_id)
+            else:
+                capacity_retry_resume = False
+                route_session_id = (
+                    None
+                    if next_decision.fresh_session
+                    else self._session_for_route(conversation_id, route.name)
+                )
             successor = self._claim_and_start(
                 workload_kind, workload_key, route, route_session_id
             )
@@ -1869,10 +1904,16 @@ class RoutedCodexExecution:
         """
         adapter = self._claude_adapter
         assert adapter is not None
+        from app.claude_runtime_adapter import ClaudeCommandPolicy
+
         command = adapter.build_command(
             route=route,
             session_id=session_id,
             max_turns=CLAUDE_MAX_TURNS_PER_INVOCATION,
+            policy=(
+                ClaudeCommandPolicy.no_tools()
+                if command_factory.model_only else ClaudeCommandPolicy.normal()
+            ),
         )
         env = adapter.build_env(route)
         normalizer = adapter.new_event_normalizer(expected_session_id=session_id)

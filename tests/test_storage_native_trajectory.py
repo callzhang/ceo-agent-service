@@ -146,6 +146,59 @@ def test_native_codex_reader_restores_completed_tool_and_exact_window(tmp_path, 
     assert provider_receipts(events) == ("receipt-1",)
 
 
+def test_complete_native_event_evidence_normalizes_mcp_call_for_scheduled_audit_receipt(monkeypatch):
+    from types import SimpleNamespace
+
+    from app.agent_orchestrator import _scheduled_consumer_work_receipts
+    from app.native_trajectory import read_run_event_evidence
+    from app.store import AgentRole
+
+    item = {
+        "type": "McpToolCall", "id": "write-native-1", "server": "agent_cli",
+        "tool": "consumer_document_write", "arguments": {"content": "private report"},
+        "result": {"structuredContent": {
+            "operation": "updated", "node_id": "doc-7", "title": "Weekly report",
+            "readback": {"content": "private report"},
+        }},
+    }
+    native_record = {"type": "event_msg", "payload": {"type": "item_completed", "item": item}}
+    monkeypatch.setattr("app.native_trajectory._codex_turn_records", lambda *args: [native_record])
+
+    class FakeDb:
+        def execute(self, query, params=()):
+            if query.startswith("select runtime_kind"):
+                rows = [{
+                    "runtime_kind": "codex_cli", "session_id": "native-session",
+                    "transcript_start": 0, "transcript_end": 1, "status": "completed",
+                    "transcript_reference": "codex_session:native-session",
+                    "source_session_id": "", "first_effect_started_at": "",
+                }]
+            else:
+                rows = [("", "main", "/tmp/synthetic.sqlite3")]
+            class Cursor:
+                def fetchall(self):
+                    return rows
+
+                def __iter__(self):
+                    return iter(rows)
+
+            return Cursor()
+
+    evidence, available = read_run_event_evidence(FakeDb(), {"id": 77, "status": "completed"})
+    run = SimpleNamespace(
+        id=77, reply_task_id=42, execution_generation="generation-1",
+        role=AgentRole.CONSUMER, status="completed", tool_events=evidence,
+    )
+    task = SimpleNamespace(id=42, channel="scheduled", execution_generation="generation-1")
+
+    assert available is True
+    [receipt] = _scheduled_consumer_work_receipts(task, run)
+    assert receipt["tool_call_id"] == "write-native-1"
+    assert receipt["operation"] == "updated"
+    assert receipt["document_node_id"] == "doc-7"
+    assert "private report" not in str(receipt)
+
+
 def test_zero_native_range_does_not_read_reused_session(tmp_path, monkeypatch):
     from app import native_trajectory
     store = AutoReplyStore(tmp_path / "runs.sqlite3")

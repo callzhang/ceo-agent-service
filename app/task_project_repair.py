@@ -1,8 +1,11 @@
-"""Auditable, idempotent repair planning for task project metadata."""
+"""Read-only repair planning for historical task project metadata."""
 
 from __future__ import annotations
-from app.task_storage import WORK_SUMMARY_INPUT_SQL
-from app.run_storage import TASK_AGENT_RUN_SQL
+from app.task20_definitions import task20_projection
+from app.logical_run_storage import logical_run_projection
+
+from app.business_legacy_fields import CURRENT_BUSINESS_PROJECTIONS as BUSINESS_PROJECTIONS
+from app.business_legacy_fields import CURRENT_SYNC_PROJECTIONS as SYNC_ACTION_PROJECTIONS
 
 import hashlib
 import json
@@ -13,6 +16,17 @@ from pathlib import Path
 from typing import Any
 
 from app.work_summary_payload import decode_work_summary_payload
+
+TASK_LOGICAL_RUN_SQL = logical_run_projection("task_agent_runs")
+WORK_SUMMARY_INPUT_SQL = task20_projection('work_summary_inputs')
+
+
+def _project_sql(db: sqlite3.Connection) -> str:
+    return BUSINESS_PROJECTIONS["work_project"]
+
+
+def _todo_sql(db: sqlite3.Connection) -> str:
+    return BUSINESS_PROJECTIONS["work_todo"]
 
 
 RESTORABLE_FIELDS = (
@@ -67,15 +81,6 @@ class RepairManifest:
     unresolved_project_ids: tuple[int, ...]
 
 
-@dataclass(frozen=True)
-class ApplyResult:
-    changed_fields: int
-    archived_projects: int
-    skipped_fields: int
-    skipped_archives: int
-    audit_updates: int
-
-
 def build_repair_manifest(
     db_path: str | Path,
     historical_db_path: str | Path | None = None,
@@ -83,9 +88,7 @@ def build_repair_manifest(
     current_path = Path(db_path)
     with _connect(current_path) as db:
         fingerprint = _database_fingerprint(db)
-        projects = db.execute(
-            "select * from work_projects order by id"
-        ).fetchall()
+        projects = db.execute(f"select * from ({_project_sql(db)}) order by id").fetchall()
         agent_refs = _latest_agent_refs(db)
         archives = tuple(_archive_candidates(db, projects))
     agent_values = _latest_agent_values(agent_refs)
@@ -96,7 +99,7 @@ def build_repair_manifest(
             historical_rows = {
                 int(row["id"]): row
                 for row in historical_db.execute(
-                    "select * from work_projects order by id"
+                    f"select * from ({_project_sql(historical_db)}) order by id"
                 )
             }
 
@@ -164,144 +167,15 @@ def write_manifest(manifest: RepairManifest, path: str | Path) -> None:
     )
 
 
-def read_manifest(path: str | Path) -> RepairManifest:
-    payload = json.loads(Path(path).read_text(encoding="utf-8"))
-    return RepairManifest(
-        version=int(payload["version"]),
-        manifest_id=str(payload["manifest_id"]),
-        database_fingerprint=str(payload["database_fingerprint"]),
-        created_at=str(payload["created_at"]),
-        restorations=tuple(FieldRestoration(**item) for item in payload["restorations"]),
-        archives=tuple(
-            ArchiveDecision(
-                **{**item, "evidence_refs": tuple(item["evidence_refs"])}
-            )
-            for item in payload["archives"]
-        ),
-        unresolved_project_ids=tuple(payload.get("unresolved_project_ids", ())),
-    )
 
 
-def apply_manifest(
-    db_path: str | Path,
-    manifest: RepairManifest,
-    *,
-    archive_limit: int | None = None,
-) -> ApplyResult:
-    changed_fields = 0
-    archived_projects = 0
-    skipped_fields = 0
-    skipped_archives = 0
-    changed_by_project: dict[int, list[dict[str, str]]] = {}
-    path = Path(db_path)
-    with _connect(path) as db:
-        db.execute("begin immediate")
-        try:
-            if manifest.version != 1:
-                raise RuntimeError(f"unsupported repair manifest version: {manifest.version}")
-            if _database_fingerprint(db) != manifest.database_fingerprint:
-                raise RuntimeError("repair manifest database fingerprint mismatch")
-            for restoration in manifest.restorations:
-                if restoration.field not in RESTORABLE_FIELDS:
-                    raise RuntimeError(
-                        f"unsupported repair field: {restoration.field}"
-                    )
-                row = db.execute(
-                    f"select {restoration.field} from work_projects where id=?",
-                    (restoration.project_id,),
-                ).fetchone()
-                if row is None:
-                    raise RuntimeError(f"project {restoration.project_id} no longer exists")
-                current = str(row[restoration.field] or "")
-                if current == restoration.replacement:
-                    skipped_fields += 1
-                    continue
-                if current != restoration.expected:
-                    raise RuntimeError(
-                        f"project {restoration.project_id} field {restoration.field} "
-                        "changed since manifest planning"
-                    )
-                db.execute(
-                    f"update work_projects set {restoration.field}=?, "
-                    "updated_at=current_timestamp where id=?",
-                    (restoration.replacement, restoration.project_id),
-                )
-                changed_fields += 1
-                changed_by_project.setdefault(restoration.project_id, []).append(
-                    {
-                        "field": restoration.field,
-                        "evidence_kind": restoration.evidence_kind,
-                        "evidence_ref": restoration.evidence_ref,
-                    }
-                )
-
-            archive_decisions = manifest.archives
-            if archive_limit is not None:
-                archive_decisions = archive_decisions[: max(0, archive_limit)]
-            for archive in archive_decisions:
-                row = db.execute(
-                    "select status from work_projects where id=?",
-                    (archive.project_id,),
-                ).fetchone()
-                if row is None:
-                    raise RuntimeError(f"project {archive.project_id} no longer exists")
-                current_status = str(row["status"] or "")
-                if current_status == "archived":
-                    skipped_archives += 1
-                    continue
-                if current_status != archive.expected_status:
-                    raise RuntimeError(
-                        f"project {archive.project_id} status changed since manifest planning"
-                    )
-                db.execute(
-                    "update work_projects set status='archived', "
-                    "updated_at=current_timestamp where id=?",
-                    (archive.project_id,),
-                )
-                archived_projects += 1
-                changed_by_project.setdefault(archive.project_id, []).append(
-                    {
-                        "field": "status",
-                        "evidence_kind": archive.reason,
-                        "evidence_ref": ";".join(archive.evidence_refs),
-                    }
-                )
-
-            for project_id, changes in changed_by_project.items():
-                db.execute(
-                    """
-                    insert into work_updates(
-                        project_id, source_type, source_ref, summary,
-                        changes_json, merge_reason, confidence
-                    ) values(?, 'repair_task_projects', ?, ?, ?, ?, 1.0)
-                    """,
-                    (
-                        project_id,
-                        f"manifest:{manifest.manifest_id}",
-                        "Restored or archived by reviewed task-project repair manifest.",
-                        _canonical_json({"changes": changes}),
-                        "auditable_repair",
-                    ),
-                )
-            db.commit()
-        except Exception:
-            db.rollback()
-            raise
-
-    return ApplyResult(
-        changed_fields=changed_fields,
-        archived_projects=archived_projects,
-        skipped_fields=skipped_fields,
-        skipped_archives=skipped_archives,
-        audit_updates=len(changed_by_project),
-    )
 
 
 def _latest_agent_refs(db: sqlite3.Connection) -> list[tuple[int, str, object]]:
     from app.native_standalone import latest_task_ref
 
     rows = db.execute(
-        f"select id, created_at from ({TASK_AGENT_RUN_SQL}) "
+        f"select id, created_at from ({TASK_LOGICAL_RUN_SQL}) "
         "where status='completed' order by id desc"
     ).fetchall()
     return [
@@ -355,15 +229,15 @@ def _archive_candidates(
         if str(project["status"]) not in {"active", "waiting"}:
             continue
         if db.execute(
-            "select 1 from work_todos where project_id=? limit 1", (project_id,)
+            f"select 1 from ({_todo_sql(db)}) where project_id=? limit 1", (project_id,)
         ).fetchone():
             continue
         if db.execute(
-            "select 1 from follow_up_drafts where project_id=? limit 1", (project_id,)
+            f"select 1 from ({SYNC_ACTION_PROJECTIONS['follow_up_drafts']}) where project_id=? limit 1", (project_id,)
         ).fetchone():
             continue
         updates = db.execute(
-            "select source_type, source_ref from work_updates "
+            f"select source_type, source_ref from ({SYNC_ACTION_PROJECTIONS['work_updates']}) "
             "where project_id=? and source_type!='repair_task_projects' order by id",
             (project_id,),
         ).fetchall()
@@ -443,18 +317,18 @@ def _database_fingerprint(db: sqlite3.Connection) -> str:
     schema_version = db.execute("pragma user_version").fetchone()[0]
     projects = [
         [int(row["id"]), str(row["created_at"])]
-        for row in db.execute("select id, created_at from work_projects order by id")
+        for row in db.execute(f"select id, created_at from ({_project_sql(db)}) order by id")
     ]
     related_state = {
-        "todos": db.execute("select count(*), coalesce(max(id), 0) from work_todos").fetchone(),
-        "follow_ups": db.execute(
-            "select count(*), coalesce(max(id), 0) from follow_up_drafts"
+        "todos": db.execute(f"select count(*), coalesce(max(id), 0) from ({_todo_sql(db)})").fetchone(),
+            "follow_ups": db.execute(
+            f"select count(*), coalesce(max(id), 0) from ({SYNC_ACTION_PROJECTIONS['follow_up_drafts']})"
         ).fetchone(),
         "source_inputs": db.execute(
             f"select count(*), coalesce(max(id), 0) from ({WORK_SUMMARY_INPUT_SQL})"
         ).fetchone(),
         "business_updates": db.execute(
-            "select count(*), coalesce(max(id), 0) from work_updates "
+            f"select count(*), coalesce(max(id), 0) from ({SYNC_ACTION_PROJECTIONS['work_updates']}) "
             "where source_type!='repair_task_projects'"
         ).fetchone(),
     }

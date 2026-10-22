@@ -1,0 +1,403 @@
+--- a/app/store.py
++++ b/app/store.py
+@@ -95,0 +96,2 @@
++from app.state_definitions import state_projection
++from app.state_storage import insert_state, state_json_field, upsert_state
+@@ -14495,37 +14497,26 @@
+-        with self._connect() as db:
+-            db.execute(
+-                """
+-                insert into wechat_read_state (
+-                    account_id, account_dir, db_dir, app_version, self_user_id,
+-                    capability_status, capability_reason, watermark_sent_at,
+-                    watermark_message_id, last_scan_at
+-                ) values (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+-                on conflict(account_id) do update set
+-                    account_dir=excluded.account_dir, db_dir=excluded.db_dir,
+-                    app_version=excluded.app_version,
+-                    self_user_id=coalesce(
+-                        nullif(excluded.self_user_id, ''),
+-                        wechat_read_state.self_user_id
+-                    ),
+-                    capability_status=excluded.capability_status,
+-                    capability_reason=excluded.capability_reason,
+-                    watermark_sent_at=coalesce(
+-                        nullif(excluded.watermark_sent_at, ''),
+-                        wechat_read_state.watermark_sent_at
+-                    ),
+-                    watermark_message_id=coalesce(
+-                        nullif(excluded.watermark_message_id, ''),
+-                        wechat_read_state.watermark_message_id
+-                    ),
+-                    last_scan_at=coalesce(
+-                        nullif(excluded.last_scan_at, ''),
+-                        wechat_read_state.last_scan_at
+-                    ),
+-                    updated_at=current_timestamp
+-                """,
+-                (
+-                    account_id, account_dir, db_dir, app_version, self_user_id,
+-                    capability_status, capability_reason, watermark_sent_at,
+-                    watermark_message_id, last_scan_at,
+-                ),
+-            )
++        values = {
++            "account_id": account_id, "account_dir": account_dir, "db_dir": db_dir,
++            "app_version": app_version, "self_user_id": self_user_id,
++            "capability_status": capability_status,
++            "capability_reason": capability_reason,
++            "watermark_sent_at": watermark_sent_at,
++            "watermark_message_id": watermark_message_id,
++            "last_scan_at": last_scan_at,
++        }
++        updates = {
++            field: state_json_field(field) for field in (
++                "account_dir", "db_dir", "app_version", "capability_status",
++                "capability_reason",
++            )
++        }
++        for field in ("self_user_id", "watermark_sent_at",
++                      "watermark_message_id", "last_scan_at"):
++            updates[field] = (
++                f"case when nullif(excluded.{field}, '') is not null then " +
++                state_json_field(field) + " else " +
++                state_json_field(field, "state") + " end"
++            )
++        updates["updated_at"] = "json_quote(current_timestamp)"
++        with self._connect() as db:
++            db.execute("begin")
++            upsert_state(db, "wechat_read_state", values, updates)
+@@ -14533,0 +14525 @@
++        projection = "(" + state_projection("wechat_read_state") + ")"
+@@ -14536 +14528 @@
+-                "select * from wechat_read_state where account_id=?", (account_id,)
++                f"select * from {projection} where account_id=?", (account_id,)
+@@ -14540,0 +14533 @@
++        projection = "(" + state_projection("wechat_read_state") + ")"
+@@ -14543 +14536 @@
+-                "select * from wechat_read_state order by account_id"
++                f"select * from {projection} order by account_id"
+@@ -17943,15 +17936,12 @@
+-            db.execute(
+-                """
+-                insert into conversations (
+-                    conversation_id, title, single_chat, codex_session_id
+-                )
+-                values (?, ?, ?, ?)
+-                on conflict(conversation_id) do update set
+-                    title=excluded.title,
+-                    single_chat=excluded.single_chat,
+-                    codex_session_id=coalesce(
+-                        excluded.codex_session_id,
+-                        conversations.codex_session_id
+-                    )
+-                """,
+-                (conversation_id, title, int(single_chat), codex_session_id),
++            db.execute("begin")
++            upsert_state(
++                db, "conversations",
++                {"conversation_id": conversation_id, "title": title,
++                 "single_chat": int(single_chat), "codex_session_id": codex_session_id},
++                {"title": state_json_field("title"),
++                 "single_chat": state_json_field("single_chat"),
++                 "codex_session_id": (
++                     "case when excluded.codex_session_id is not null then " +
++                     state_json_field("codex_session_id") + " else " +
++                     state_json_field("codex_session_id", "state") + " end"
++                 )},
+@@ -17960,0 +17951 @@
++        projection = "(" + state_projection("conversations") + ")"
+@@ -17963 +17954 @@
+-                "select codex_session_id from conversations where conversation_id=?",
++                f"select codex_session_id from {projection} where conversation_id=?",
+@@ -18296,0 +18288 @@
++        projection = "(" + state_projection("conversations") + ")"
+@@ -18299 +18291 @@
+-                """
++                f"""
+@@ -18301 +18293 @@
+-                from conversations
++                from {projection}
+@@ -18842,0 +18835 @@
++        projection = "(" + state_projection("conversations") + ")"
+@@ -18845 +18838 @@
+-                """
++                f"""
+@@ -18847 +18840 @@
+-                from conversations
++                from {projection}
+@@ -18866,0 +18860,2 @@
++        seen_projection = "(" + state_projection("seen_messages") + ")"
++        conversation_projection = "(" + state_projection("conversations") + ")"
+@@ -18874 +18869 @@
+-                        from seen_messages
++                        from {seen_projection}
+@@ -18907 +18902 @@
+-                from conversations c
++                from {conversation_projection} c
+@@ -18927,0 +18923 @@
++        projection = "(" + state_projection("conversations") + ")"
+@@ -18930 +18926 @@
+-                """
++                f"""
+@@ -18932 +18928 @@
+-                from conversations
++                from {projection}
+@@ -18948,0 +18945 @@
++        projection = "(" + state_projection("conversations") + ")"
+@@ -18951 +18948 @@
+-                """
++                f"""
+@@ -18953 +18950 @@
+-                from conversations
++                from {projection}
+@@ -18970,0 +18968 @@
++        projection = "(" + state_projection("conversations") + ")"
+@@ -18973 +18971 @@
+-                """
++                f"""
+@@ -18975 +18973 @@
+-                from conversations
++                from {projection}
+@@ -18992,0 +18991 @@
++        projection = "(" + state_projection("seen_messages") + ")"
+@@ -18995 +18994 @@
+-                "select 1 from seen_messages where message_id=?",
++                f"select 1 from {projection} where message_id=?",
+@@ -19002,8 +19001,7 @@
+-            cursor = db.execute(
+-                """
+-                insert or ignore into seen_messages (message_id, conversation_id)
+-                values (?, ?)
+-                """,
+-                (message_id, conversation_id),
+-            )
+-            return cursor.rowcount == 1
++            db.execute("begin")
++            result = insert_state(
++                db, "seen_messages",
++                {"message_id": message_id, "conversation_id": conversation_id},
++                ignore=True,
++            )
++            return result.rowcount == 1
+@@ -28944,16 +28942,9 @@
+-            db.execute(
+-                """
+-                insert into daily_scan_state (
+-                    scanner_name,
+-                    last_success_at,
+-                    cursor_json,
+-                    last_error
+-                )
+-                values (?, ?, ?, ?)
+-                on conflict(scanner_name) do update set
+-                    last_success_at=excluded.last_success_at,
+-                    cursor_json=excluded.cursor_json,
+-                    last_error=excluded.last_error,
+-                    updated_at=current_timestamp
+-                """,
+-                (scanner_name, last_success_at, cursor_json, last_error),
++            db.execute("begin")
++            upsert_state(
++                db, "daily_scan_state",
++                {"scanner_name": scanner_name, "last_success_at": last_success_at,
++                 "cursor_json": cursor_json, "last_error": last_error},
++                {"last_success_at": state_json_field("last_success_at"),
++                 "cursor_json": state_json_field("cursor_json"),
++                 "last_error": state_json_field("last_error"),
++                 "updated_at": "json_quote(current_timestamp)"},
+@@ -28962,0 +28954 @@
++        projection = "(" + state_projection("daily_scan_state") + ")"
+@@ -28965 +28957 @@
+-                """
++                f"""
+@@ -28967 +28959 @@
+-                from daily_scan_state
++                from {projection}
+@@ -30639,9 +30631,4 @@
+-                    db.execute(
+-                        """
+-                        insert into service_state (key, value, updated_at)
+-                        values (?, ?, current_timestamp)
+-                        on conflict(key) do update set
+-                            value=excluded.value,
+-                            updated_at=current_timestamp
+-                        """,
+-                        (key, value),
++                    upsert_state(
++                        db, "service_state", {"key": key, "value": value},
++                        {"value": state_json_field("value"),
++                         "updated_at": "json_quote(current_timestamp)"},
+@@ -31047,0 +31035 @@
++        projection = "(" + state_projection("service_state") + ")"
+@@ -31050 +31038 @@
+-                "select value from service_state where key=?",
++                f"select value from {projection} where key=?",
+@@ -31064,30 +31052,21 @@
+-            db.execute(
+-                """
+-                insert into setup_wizard_steps (
+-                    step_id,
+-                    status,
+-                    summary,
+-                    manual_confirmed_at,
+-                    manual_confirmed_by
+-                )
+-                values (?, ?, ?, case when ? != '' then current_timestamp else '' end, ?)
+-                on conflict(step_id) do update set
+-                    status=excluded.status,
+-                    summary=excluded.summary,
+-                    manual_confirmed_at=case
+-                        when excluded.manual_confirmed_by != '' then current_timestamp
+-                        else setup_wizard_steps.manual_confirmed_at
+-                    end,
+-                    manual_confirmed_by=case
+-                        when excluded.manual_confirmed_by != '' then excluded.manual_confirmed_by
+-                        else setup_wizard_steps.manual_confirmed_by
+-                    end,
+-                    updated_at=current_timestamp
+-                """,
+-                (
+-                    step_id,
+-                    status,
+-                    summary,
+-                    manual_confirmed_by,
+-                    manual_confirmed_by,
+-                ),
++            db.execute("begin")
++            upsert_state(
++                db, "setup_wizard_steps",
++                {"step_id": step_id, "status": status, "summary": summary,
++                 "manual_confirmed_by": manual_confirmed_by},
++                {"status": state_json_field("status"),
++                 "summary": state_json_field("summary"),
++                 "manual_confirmed_at": (
++                     "case when excluded.manual_confirmed_by != '' "
++                     "then json_quote(current_timestamp) else " +
++                     state_json_field("manual_confirmed_at", "state") + " end"
++                 ),
++                 "manual_confirmed_by": (
++                     "case when excluded.manual_confirmed_by != '' then " +
++                     state_json_field("manual_confirmed_by") + " else " +
++                     state_json_field("manual_confirmed_by", "state") + " end"
++                 ),
++                 "updated_at": "json_quote(current_timestamp)"},
++                insert_json={"manual_confirmed_at":
++                             "json_quote(case when ? != '' then current_timestamp else '' end)"},
++                insert_parameters=(manual_confirmed_by,),
+@@ -31096,0 +31076 @@
++        projection = "(" + state_projection("setup_wizard_steps") + ")"
+@@ -31099 +31079 @@
+-                """
++                f"""
+@@ -31102 +31082 @@
+-                from setup_wizard_steps
++                from {projection}
+@@ -31109,0 +31090 @@
++        projection = "(" + state_projection("setup_wizard_steps") + ")"
+@@ -31112 +31093 @@
+-                """
++                f"""
+@@ -31115 +31096 @@
+-                from setup_wizard_steps
++                from {projection}
+@@ -31206,41 +31187,15 @@
+-        with self._connect() as db:
+-            db.execute(
+-                """
+-                insert into org_user_profiles (
+-                    user_id,
+-                    name,
+-                    title,
+-                    open_dingtalk_id,
+-                    manager_user_id,
+-                    manager_name,
+-                    department_ids_json,
+-                    department_names_json,
+-                    org_labels_json,
+-                    has_subordinate,
+-                    fetched_at
+-                )
+-                values (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, current_timestamp)
+-                on conflict(user_id) do update set
+-                    name=excluded.name,
+-                    title=excluded.title,
+-                    open_dingtalk_id=excluded.open_dingtalk_id,
+-                    manager_user_id=excluded.manager_user_id,
+-                    manager_name=excluded.manager_name,
+-                    department_ids_json=excluded.department_ids_json,
+-                    department_names_json=excluded.department_names_json,
+-                    org_labels_json=excluded.org_labels_json,
+-                    has_subordinate=excluded.has_subordinate,
+-                    fetched_at=current_timestamp
+-                """,
+-                (
+-                    user_id,
+-                    name,
+-                    title,
+-                    open_dingtalk_id,
+-                    manager_user_id,
+-                    manager_name,
+-                    json.dumps(sorted(department_ids), ensure_ascii=False),
+-                    json.dumps(sorted(department_names), ensure_ascii=False),
+-                    json.dumps(org_labels, ensure_ascii=False),
+-                    None if has_subordinate is None else int(has_subordinate),
+-                ),
++        values = {
++            "user_id": user_id, "name": name, "title": title,
++            "open_dingtalk_id": open_dingtalk_id,
++            "manager_user_id": manager_user_id, "manager_name": manager_name,
++            "department_ids_json": json.dumps(sorted(department_ids), ensure_ascii=False),
++            "department_names_json": json.dumps(sorted(department_names), ensure_ascii=False),
++            "org_labels_json": json.dumps(org_labels, ensure_ascii=False),
++            "has_subordinate": None if has_subordinate is None else int(has_subordinate),
++        }
++        with self._connect() as db:
++            db.execute("begin")
++            upsert_state(
++                db, "org_user_profiles", values,
++                {field: state_json_field(field) for field in values if field != "user_id"}
++                | {"fetched_at": "json_quote(current_timestamp)"},
+@@ -31249,0 +31205 @@
++        projection = "(" + state_projection("org_user_profiles") + ")"
+@@ -31252 +31208 @@
+-                "select * from org_user_profiles where user_id=?",
++                f"select * from {projection} where user_id=?",
+@@ -31259,0 +31216 @@
++        projection = "(" + state_projection("org_user_profiles") + ")"
+@@ -31262,2 +31219,2 @@
+-                """
+-                select * from org_user_profiles
++                f"""
++                select * from {projection}
+@@ -31270,0 +31228 @@
++        projection = "(" + state_projection("org_user_profiles") + ")"
+@@ -31273 +31231 @@
+-                "select * from org_user_profiles where name=? order by user_id",
++                f"select * from {projection} where name=? order by user_id",
+@@ -31282,0 +31241 @@
++        projection = "(" + state_projection("org_user_profiles") + ")"
+@@ -31285 +31244 @@
+-                "select user_id from org_user_profiles order by user_id"
++                f"select user_id from {projection} order by user_id"
+@@ -31306,9 +31265,6 @@
+-            db.execute(
+-                """
+-                insert into org_cache_metadata (key, value_json, updated_at)
+-                values (?, ?, current_timestamp)
+-                on conflict(key) do update set
+-                    value_json=excluded.value_json,
+-                    updated_at=current_timestamp
+-                """,
+-                (key, json.dumps(value, ensure_ascii=False)),
++            db.execute("begin")
++            upsert_state(
++                db, "org_cache_metadata",
++                {"key": key, "value_json": json.dumps(value, ensure_ascii=False)},
++                {"value_json": state_json_field("value_json"),
++                 "updated_at": "json_quote(current_timestamp)"},
+@@ -31317,0 +31274 @@
++        projection = "(" + state_projection("org_cache_metadata") + ")"
+@@ -31320 +31277 @@
+-                "select value_json from org_cache_metadata where key=?",
++                f"select value_json from {projection} where key=?",

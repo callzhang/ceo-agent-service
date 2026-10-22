@@ -1,0 +1,66 @@
+{
+  "version": "consumer-revision-context-native.v1",
+  "scope": "Synthetic Consumer-only native Codex cold/resume context-retention comparison. No business MCP, tools, production records, Work Profile, or external actions.",
+  "runtime": {
+    "model": "gpt-5.6-luna",
+    "reasoning_effort": "low",
+    "execution": "native Codex CLI",
+    "native_tool_events": 0,
+    "mcp_servers_disabled": true
+  },
+  "source": {
+    "characters": 628,
+    "sha256": "b1790c17a49eea5c8e7e3451c0cca410850600fa1ba14f67faacb860a6a4f92d",
+    "scenario": "Fictional meeting proposal with a withdrawn previous slot, an unaccepted new proposal during a repeated daylight-saving hour, and a draft unsent invitation card."
+  },
+  "schema": {
+    "constraints": "Required object fields and primitive types only; no answer literals or const values.",
+    "same_for_both_arms": true
+  },
+  "arms": {
+    "full": {
+      "session_id": "01a149eb-4383-7d03-bc5f-f4ccb46e1871",
+      "cold_start_exit": 0,
+      "cold_start_reply": "READY",
+      "resume_exit": 0,
+      "resume_prompt_characters": 1041,
+      "tool_events": 0,
+      "result": {
+        "old_proposal_status": "withdrawn",
+        "new_proposal_status": "proposed",
+        "local_time": "2026-11-01 01:30",
+        "timezone": "America/Los_Angeles",
+        "dst_occurrence": "unresolved",
+        "card_status": "draft",
+        "invitation_sent": false
+      }
+    },
+    "compact": {
+      "session_id": "01a149eb-5e75-7be0-98ca-b41bba5296c4",
+      "cold_start_exit": 0,
+      "cold_start_reply": "READY",
+      "resume_exit": 0,
+      "resume_prompt_characters": 519,
+      "tool_events": 0,
+      "result": {
+        "old_proposal_status": "withdrawn",
+        "new_proposal_status": "proposed_not_accepted",
+        "local_time": "2026-11-01 01:30",
+        "timezone": "America/Los_Angeles",
+        "dst_occurrence": "unresolved; 01:30 occurs twice and neither occurrence was selected",
+        "card_status": "draft",
+        "invitation_sent": false
+      }
+    }
+  },
+  "comparison": {
+    "compact_resume_prompt_reduction_percent": 50.1,
+    "semantic_observation": "Both arms preserve the withdrawn old slot, current local time and zone, unresolved repeated-hour ambiguity, draft state, and not-sent status. The compact arm states unaccepted status and the ambiguity more explicitly.",
+    "excluded_attempt": "An earlier run used const-valued schema constraints that revealed expected answers; its output is excluded. The results above came from independent cold sessions and a type-only schema."
+  },
+  "limits": [
+    "One synthetic scenario and one model do not establish general quality, latency, or provider gains.",
+    "The comparison evaluates native session retention; local service tests separately cover exact transcript gating, prompt selection, fallback, and saved prompt snapshot behavior.",
+    "No production release or live service behavior is claimed."
+  ]
+}

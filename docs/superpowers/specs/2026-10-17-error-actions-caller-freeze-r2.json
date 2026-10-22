@@ -1,0 +1,33 @@
+{
+  "observed_at": "2026-10-17T13:12:38.855361+00:00",
+  "scope": "caller freeze-r2 after shared numeric projection qualifier fix; pending SPEC re-review then fresh QUALITY",
+  "prior_freeze": "2026-10-17-error-actions-caller-freeze.json",
+  "sha256": {
+    "app/action_email_definitions.py": "4c30aee15744e568614f134dc8a8e35de0f8f54ad5a6acd035cf7385e032f8a7",
+    "app/action_error_definitions.py": "9141d90add33f0733078faf395c2b1f977d2ba4ac38fd5a93fc59813dfab43eb",
+    "app/action_error_storage.py": "3b2ca78f78ef65e772f11d0bfb89ed2022ce078d0075ac2c65b7bb7add6bb6db",
+    "app/action_storage.py": "385c45b3023495de7b78d0450144ae0533e61fa64cd6229d3113891830fd7b47",
+    "app/action_followup_sync_storage.py": "e89851352e9a31b967de457007289272697e73763ba2ddc8131e42a5e4dd2f4a",
+    "app/action_email_schema_release.py": "36fbc47c14750147c12369a09bc0b9392acd1c3406b6f0d53b4b9f04ea2f0ff2",
+    "app/configs_schema_release.py": "8ae225e97910c4c5f4a1299a1147a74fc577b830d7ed7a6fdbf6d81358c300c9",
+    "app/runs11_current_schema.py": "d439177fea17c1ab83ff13e9e57bb5fc30c2d9582a0953d589b36f8a57059627",
+    "app/email_store.py": "1f0e59052537ff864ba4b3d8f258b95078eb4dee81e03c28aa90230958626469",
+    "app/store.py": "9566ec988ea929f2e1f3a937f55039cf2be97f901324cd361da1fb7339b2e63a",
+    "app/audit_web.py": "3cbca59e9b8a7e78a39bc2018f015f5c200b101775d33df081ba6c203b8c8702",
+    "app/quality_gate.py": "8956e0f727ab92e6c4a646cdff71629c36abf2c9a028e2e3af5676c4ea0903f9",
+    "tests/test_action_error_storage.py": "bf8c424be332a7a22bd78673abf19338278159c346a5d9edc4a68399decc263c",
+    "tests/test_action_task_delivery_storage.py": "433598f74de4c012202dcddbd7328e20cf91118b2688614c913e032007f0b475",
+    "tests/test_error_actions_runtime.py": "74e3ec64dce01f6163c18c4aefe174a0308c8918703d6c05faf9f0ccffd8013c",
+    "tests/test_store.py": "a25f65fe1725e7ff888c73d52e009c181aef187db805d07293a452cd088a83d5",
+    "tests/test_audit_web.py": "8e8068944930129646b08ab95a9c032670c620c4d33d77443e3f384918d3025f",
+    "tests/test_quality_gate.py": "30bbbf1bc110bae2ee5436b6d6bdc0a0c4092d2e67bc39c7a7544d4f1fdc2107",
+    "tests/test_unresolved_error_query_plan.py": "0b65b2cd63d30f7ae3016d2427d3f471d99b194d85984fd1c9283b7451431f2f",
+    "docs/architecture.md": "6be20e41c65894e165656862d27daa664027d23897cbead5c967748f1e3951ba",
+    "docs/runtime-mechanism.md": "10fdfa1d940d7b1ec0ad43bdcf914df46e951b5ea7c57d6230354d52b17e0cd5"
+  },
+  "author_tests": "19 passed80.44s;13component+4runtime+2Attentionbudget",
+  "schema_change_for_fix": false,
+  "actual_copy_proof": "not executed",
+  "native_all24_public_differential": "not yet complete",
+  "production_modified": false
+}

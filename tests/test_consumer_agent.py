@@ -19,12 +19,16 @@ from app.agent_cron.commands import (
     ServiceCommandConsumerContext,
     ServiceCommandSkillMaterial,
 )
-from app.agent_contracts import AuditAgentResult, ConsumerAgentResult, ConsumerProposal
+from app.agent_contracts import AuditAgentResult, AuditFeedback, ConsumerAgentResult, ConsumerProposal
 from app.agent_result import ResultParseError
 from app.agent_wire_contracts import (
     ConsumerAgentWireResult,
+    claude_consumer_output_schema,
+    consumer_wire_model,
     parse_consumer_agent_wire_result,
 )
+from app.native_agent_output import native_output_schema_path
+from app.prompt_composition import CONSUMER_OUTBOUND_INSTRUCTION, render_prompt_sections
 from app.agent_runtime_config import load_runtime_config
 from app.agent_runtime_contracts import RuntimeCapabilitySnapshot
 from app.agent_runtime_router import AgentRuntimeRouter
@@ -36,8 +40,13 @@ from app.consumer_agent import (
     CONSUMER_DYNAMIC_SKILL_BODY,
     ConsumerAgentRunner,
     audit_developer_instructions,
+    consumer_developer_sections,
+    consumer_developer_sections_by_runtime,
     consumer_developer_instructions,
     consumer_wire_contract_hash,
+    _consumer_source_context_fingerprint,
+    _consumer_revision_prompt,
+    _consumer_revision_context_reusable,
 )
 from app.developer_prompt import DeveloperPromptTemplateError
 from app.outbound_postfix import PreparedOutboundMessage
@@ -46,6 +55,7 @@ from app.process_runner import ProcessRunResult
 from app.store import AgentRole, AutoReplyStore
 from tests.runtime_route_env import claude_api_env, codex_api_env, set_env
 from tests.support.native_protocol import install_protocol_native_trajectories
+from tests.support.native_consumer_output_fixture import native_consumer_stream_for_command
 
 
 @pytest.fixture(autouse=True)
@@ -57,6 +67,201 @@ def native_executor_records(tmp_path, monkeypatch):
 
     monkeypatch.setattr(task_artifacts, "TASK_ARTIFACT_ROOT", tmp_path / "task-artifacts")
     monkeypatch.setattr("app.config.workspace_path", lambda: tmp_path / "workspace")
+
+
+def test_consumer_source_fingerprint_binds_task_sources_contract_and_images():
+    base = {
+        "task_id": 7,
+        "execution_generation": "generation-a",
+        "contract_hash": "contract-a",
+        "developer_instructions": "developer-v1",
+        "stable_task_prompt": "source facts",
+        "image_sources": ("image-a:sha256-a",),
+    }
+    original = _consumer_source_context_fingerprint(**base)
+
+    assert _consumer_source_context_fingerprint(**base) == original
+    for field, value in (
+        ("task_id", 8),
+        ("execution_generation", "generation-b"),
+        ("contract_hash", "contract-b"),
+        ("developer_instructions", "developer-v2"),
+        ("stable_task_prompt", "changed source facts"),
+        ("image_sources", ("image-a:sha256-b",)),
+    ):
+        changed = {**base, field: value}
+        assert _consumer_source_context_fingerprint(**changed) != original
+
+
+def test_consumer_revision_prompt_keeps_feedback_time_and_replacement_contract():
+    feedback = AuditFeedback(
+        rule="source accuracy",
+        observation="The date is unsupported.",
+        requested_revision="Remove the unsupported date and return a complete candidate.",
+    )
+
+    prompt = _consumer_revision_prompt(
+        feedback,
+        proposal_revision=1,
+        continuation="Keep the source boundary explicit.",
+        context_marker="consumer-source-context-sha256:abc123",
+        current_time="2026-10-17 09:05 -0700",
+    )
+
+    assert "The date is unsupported." in prompt
+    assert "complete replacement Consumer candidate" in prompt
+    assert "2026-10-17 09:05 -0700" in prompt
+    assert "Keep the source boundary explicit." in prompt
+    assert "<!-- consumer-source-context-sha256:abc123 -->" in prompt
+    assert "source facts" not in prompt
+
+
+def test_consumer_revision_context_reuse_requires_matching_audit_chain(
+    monkeypatch,
+):
+    from pathlib import Path
+    from types import SimpleNamespace
+
+    feedback = AuditFeedback(
+        rule="source accuracy",
+        observation="Keep the source boundary explicit.",
+        requested_revision="Return a complete corrected candidate.",
+    )
+    audit_result = AuditAgentResult.model_validate({
+        "outcome": "return",
+        "summary": "Revise the source boundary.",
+        "proposal_revision": 0,
+        "candidate_digest": "a" * 64,
+        "evidence_refs": [],
+        "feedback": feedback.model_dump(mode="json"),
+        "error": {"code": "", "retryable": False, "authorization_required": False},
+        "risk": "low",
+        "confidence": 1.0,
+        "rule_coverage": 1.0,
+        "information_completeness": 1.0,
+    })
+    prior = SimpleNamespace(
+        id=20, role=AgentRole.CONSUMER, status="completed", reply_task_id=7,
+        execution_generation="generation-a", proposal_revision=0,
+        codex_session_id="session-a",
+    )
+    audit = SimpleNamespace(
+        id=21, role=AgentRole.AUDIT, status="completed", reply_task_id=7,
+        execution_generation="generation-a", proposal_revision=0,
+        parent_agent_run_id=prior.id, adopted_result_json=audit_result.model_dump_json(),
+    )
+    attempt = SimpleNamespace(
+        status="completed", runtime_kind="codex_cli", session_id="session-a",
+        transcript_start=2, transcript_end=8,
+    )
+
+    class Store:
+        def get_agent_run(self, run_id, *, load_events):
+            assert load_events is False
+            return {audit.id: audit, prior.id: prior}.get(run_id)
+
+        def list_agent_runtime_attempts(self, run_id):
+            assert run_id == prior.id
+            return [attempt]
+
+        def list_agent_runs_for_task_generation(self, *_args, **_kwargs):
+            return [prior]
+
+    expected_codex_home = Path("/configured/codex-home")
+    count_calls = []
+    monkeypatch.setattr(consumer_agent, "_codex_home", lambda: expected_codex_home)
+    monkeypatch.setattr(
+        consumer_agent,
+        "count_codex_session_lines",
+        lambda _session_id, **kwargs: count_calls.append(kwargs) or 8,
+    )
+    marker_calls = []
+    monkeypatch.setattr(
+        consumer_agent,
+        "codex_session_has_final_user_marker_without_compaction",
+        lambda *args, **kwargs: marker_calls.append((args, kwargs)) or True,
+    )
+
+    assert _consumer_revision_context_reusable(
+        Store(),
+        SimpleNamespace(id=7, execution_generation="generation-a"),
+        proposal_revision=1,
+        session_id="session-a",
+        fingerprint="b" * 64,
+        parent_agent_run_id=audit.id,
+        feedback=feedback,
+    )
+    assert marker_calls[0][0][1] == "consumer-source-context-sha256:" + "b" * 64
+    assert count_calls == [{"codex_home": expected_codex_home}]
+    assert marker_calls[0][1]["codex_home"] == expected_codex_home
+
+
+@pytest.mark.parametrize(
+    ("session_lines", "marker_valid"),
+    [(9, True), (8, False)],
+)
+def test_consumer_revision_context_reuse_fails_closed_on_grown_or_compacted_session(
+    monkeypatch, session_lines, marker_valid
+):
+    from types import SimpleNamespace
+
+    feedback = AuditFeedback(
+        rule="source accuracy", observation="Keep the boundary.",
+        requested_revision="Return a complete candidate.",
+    )
+    audit_result = AuditAgentResult.model_validate({
+        "outcome": "return", "summary": "Revise.", "proposal_revision": 0,
+        "candidate_digest": "a" * 64, "evidence_refs": [],
+        "feedback": feedback.model_dump(mode="json"),
+        "error": {"code": "", "retryable": False, "authorization_required": False},
+        "risk": "low", "confidence": 1.0, "rule_coverage": 1.0,
+        "information_completeness": 1.0,
+    })
+    prior = SimpleNamespace(
+        id=20, role=AgentRole.CONSUMER, status="completed", reply_task_id=7,
+        execution_generation="generation-a", proposal_revision=0,
+        codex_session_id="session-a",
+    )
+    audit = SimpleNamespace(
+        id=21, role=AgentRole.AUDIT, status="completed", reply_task_id=7,
+        execution_generation="generation-a", proposal_revision=0,
+        parent_agent_run_id=prior.id, adopted_result_json=audit_result.model_dump_json(),
+    )
+    attempt = SimpleNamespace(
+        status="completed", runtime_kind="codex_cli", session_id="session-a",
+        transcript_start=2, transcript_end=8,
+    )
+
+    class Store:
+        def get_agent_run(self, run_id, *, load_events):
+            return {audit.id: audit, prior.id: prior}.get(run_id)
+
+        def list_agent_runtime_attempts(self, _run_id):
+            return [attempt]
+
+        def list_agent_runs_for_task_generation(self, *_args, **_kwargs):
+            return [prior]
+
+    monkeypatch.setattr(
+        consumer_agent,
+        "count_codex_session_lines",
+        lambda _session_id, **_kwargs: session_lines,
+    )
+    monkeypatch.setattr(
+        consumer_agent,
+        "codex_session_has_final_user_marker_without_compaction",
+        lambda *_args, **_kwargs: marker_valid,
+    )
+
+    assert not _consumer_revision_context_reusable(
+        Store(),
+        SimpleNamespace(id=7, execution_generation="generation-a"),
+        proposal_revision=1,
+        session_id="session-a",
+        fingerprint="b" * 64,
+        parent_agent_run_id=audit.id,
+        feedback=feedback,
+    )
 
 
 def test_consumer_records_specific_missing_agent_cli_receipt(
@@ -189,9 +394,10 @@ class CapturingExecutor:
     def __call__(self, command, *, on_stdout_line, **kwargs):
         self.prompts.append(str(kwargs["prompt"]))
         self.commands.append(command)
-        for line in self.stdout.splitlines():
+        stdout = native_consumer_stream_for_command(self.stdout, command)
+        for line in stdout.splitlines():
             on_stdout_line(line)
-        return ProcessRunResult(0, self.stdout, "")
+        return ProcessRunResult(0, stdout, "")
 
 
 def test_consumer_and_audit_receive_durable_memory_and_temporary_work_rules():
@@ -372,8 +578,8 @@ class FailingExecutor(CapturingExecutor):
         self.stderr = stderr
 
     def __call__(self, command, *, on_stdout_line, **kwargs):
-        super().__call__(command, on_stdout_line=on_stdout_line, **kwargs)
-        return ProcessRunResult(1, self.stdout, self.stderr)
+        converted = super().__call__(command, on_stdout_line=on_stdout_line, **kwargs)
+        return ProcessRunResult(1, converted.stdout, self.stderr)
 
 
 class SequencedRuntimeExecutor(CapturingExecutor):
@@ -386,8 +592,8 @@ class SequencedRuntimeExecutor(CapturingExecutor):
         result = self.results.pop(0)
         self.stdout = result.stdout
         self.environments.append(dict(kwargs["env"]))
-        super().__call__(command, on_stdout_line=on_stdout_line, **kwargs)
-        return result
+        converted = super().__call__(command, on_stdout_line=on_stdout_line, **kwargs)
+        return replace(result, stdout=converted.stdout)
 
 
 @pytest.mark.parametrize("started_session", [None, "new-session-before-capacity"])
@@ -496,9 +702,10 @@ def _wire_result(result: dict[str, object]) -> dict[str, object]:
     error = result["error"]
     assert isinstance(error, dict)
     return {
-        "outcome": result["outcome"],
+        "action": "plan" if result["outcome"] == "proposal" else result["outcome"],
+        "reason": result["summary"], "target": {}, "evidence_refs": [],
         "summary": result["summary"],
-        "proposal": result["proposal"],
+        "payload": result["proposal"] if result["outcome"] == "proposal" else {},
         "decision_options": result.get("decision_options", []),
         "risk": result.get("risk", "low"),
         "confidence": result.get("confidence", 1.0),
@@ -704,6 +911,38 @@ def _result_jsonl(*, session: str = "session-a") -> str:
     )
 
 
+@pytest.mark.parametrize("purpose", ["general", "oa"])
+def test_consumer_codex_turn_uses_matching_native_schema_and_parser(
+    store, task, context, purpose,
+):
+    if purpose == "oa":
+        context = replace(context, required_proposal_action={"capability": "dingtalk-oa"})
+    wire_model = consumer_wire_model(purpose)
+    wire = wire_model.model_validate({
+        "action": "no_action", "reason": "Already handled", "target": {},
+        "payload": {}, "evidence_refs": [], "summary": "Already handled",
+        "risk": "low", "confidence": 1.0, "rule_coverage": 1.0,
+        "information_completeness": 1.0, "durable_memories": [],
+    }).model_dump(mode="json")
+    stream = "\n".join((
+        json.dumps({"type": "thread.started", "thread_id": f"native-{purpose}"}),
+        json.dumps({"type": "item.completed", "item": {
+            "type": "agent_message", "text": json.dumps(wire),
+        }}),
+    ))
+    executor = CapturingExecutor(stream)
+
+    result = ConsumerAgentRunner(
+        store=store, workspace=Path("/workspace"), executor=executor,
+    ).run(task, context, proposal_revision=0, parent_agent_run_id=None)
+
+    command = executor.commands[0]
+    assert command[command.index("--output-schema") + 1] == str(
+        native_output_schema_path("consumer", purpose=purpose)
+    )
+    assert result.result.outcome.value == "no_action"
+
+
 @pytest.mark.parametrize("summary", [
     "来源人在后续会话已发送参考文档；本轮没有发送，当前无需追加动作。",
     "本轮已发送通知。",
@@ -878,6 +1117,33 @@ def test_consumer_instructions_include_the_runtime_proposal_schema():
     assert "do not return a nested error object" in instructions
 
 
+def test_consumer_common_instruction_blocks_direct_external_delivery_without_changing_audit():
+    instruction = "Do not directly send external messages or email or execute approvals."
+    consumer = consumer_developer_instructions(runtime_context="", work_profile="")
+    audit = audit_developer_instructions(
+        "Verify the candidate.", runtime_context="", work_profile=""
+    )
+
+    assert consumer.count(instruction) == 1
+    assert instruction not in audit
+
+
+def test_consumer_capability_section_keeps_tool_contract_without_repeating_common_rules():
+    sections = consumer_developer_sections(runtime_context="", work_profile="")
+    capability = next(section.text for section in sections if section.name == "能力边界")
+    common = next(section.text for section in sections if section.name == "共同工作原则")
+
+    assert len(capability) <= 3556
+    assert "Consumer 可做本轮普通文档" in common
+    assert "只有当前系统任务已注册且要求 Audit 的动作" in common
+    assert "consumer_artifact_write" in capability
+    assert "consumer_document_write" in capability
+    assert "consumer_run_skill_script" in capability
+    assert "mcp__agent_cli" in capability
+    assert "dependency_read_unavailable" in capability
+    assert "provider-risk refusal" in capability
+
+
 def test_consumer_document_action_keeps_body_out_of_description():
     from app.action_contract_catalog import read_system_action_contract
 
@@ -902,6 +1168,39 @@ def test_consumer_prompt_schema_is_the_parser_schema():
         consumer_agent.parse_consumer_agent_wire_result
         is parse_consumer_agent_wire_result
     )
+
+
+def test_only_consumer_routes_with_native_output_schema_omit_wire_schema_text():
+    sections_by_runtime = consumer_developer_sections_by_runtime(
+        runtime_context="", work_profile="",
+    )
+    for runtime in ("codex_cli", "claude_cli"):
+        developer = render_prompt_sections(
+            sections_by_runtime[runtime], placement="developer",
+        )
+        assert "## Pydantic Wire Contract" not in developer
+        assert CONSUMER_OUTBOUND_INSTRUCTION in developer
+        assert "return the typed wire contract" in developer
+
+    friday = render_prompt_sections(
+        sections_by_runtime["friday_runtime"], placement="developer",
+    )
+    assert "## Pydantic Wire Contract" in friday
+    assert CONSUMER_OUTBOUND_INSTRUCTION in friday
+
+
+def test_claude_native_schema_projection_preserves_final_outcome_validation():
+    native_schema = claude_consumer_output_schema()
+    assert "oneOf" not in native_schema
+
+    result = _wire_result({
+        "outcome": "proposal",
+        "summary": "A proposal must contain a plan.",
+        "proposal": None,
+        "error": {"code": "", "retryable": False, "authorization_required": False},
+    })
+    with pytest.raises(ValueError):
+        ConsumerAgentWireResult.model_validate(result)
 
 
 @pytest.mark.parametrize(
@@ -1002,7 +1301,7 @@ def test_consumer_prompt_declares_common_quality_fields_and_priority(monkeypatch
     assert "Technical/provider, authentication-route, schema, model-output and retry failures are failed" in instructions
     assert "complete plans for continuing this item under the selected reusable rule" in instructions
     assert "never with requested_input as a zero-option needs_human" in instructions
-    assert "For proposal, no_action, and failed, decision_options must be empty" in instructions
+    assert "For direct business actions, plan, retry, no_action, and failed, decision_options must be empty" in instructions
     assert "requested_input, needs_human_reason, and decision_basis must be null" in instructions
     assert "never writes a reusable policy or edits a Skill itself" in instructions
     assert "user feedback may independently select one-time application and Skill update" in instructions
@@ -1249,6 +1548,94 @@ def _return_fixture_candidate(store, audit, summary):
     assert adopted["decision"] == "return"
 
 
+@pytest.mark.parametrize("context_reusable", [True, False])
+def test_consumer_feedback_compacts_only_for_verified_session(
+    store, task, context, monkeypatch, context_reusable
+):
+    config, router, adapter = _consumer_runtime_dependencies(
+        store, routes="codex_oauth"
+    )
+    first_executor = CapturingExecutor(_result_jsonl(session="session-a"))
+    first = ConsumerAgentRunner(
+        store=store,
+        workspace=Path("/workspace"),
+        executor=first_executor,
+        runtime_config=config,
+        runtime_router=router,
+        codex_adapter=adapter,
+        forced_runtime_route=config.routes[0],
+        codex_session_exists=lambda _: True,
+    ).run(task, context, proposal_revision=0, parent_agent_run_id=None)
+    assert "Check this" in first_executor.prompts[0]
+    assert "consumer-source-context-sha256:" in first_executor.prompts[0]
+
+    audit = store.claim_agent_run(
+        task.id,
+        task.execution_generation,
+        role=AgentRole.AUDIT,
+        proposal_revision=0,
+        turn_attempt=0,
+        parent_agent_run_id=first.run_id,
+        operation_id="audit-compact-context",
+        owner="audit-test",
+    ).run
+    feedback = AuditFeedback(
+        rule="source accuracy",
+        observation="Keep the source boundary explicit.",
+        requested_revision="Return a complete corrected candidate.",
+    )
+    _return_fixture_candidate(store, audit, feedback.observation)
+    monkeypatch.setattr(
+        consumer_agent,
+        "_consumer_revision_context_reusable",
+        lambda *_args, **_kwargs: context_reusable,
+    )
+    revision_executor = CapturingExecutor(_result_jsonl(session="session-a"))
+
+    ConsumerAgentRunner(
+        store=store,
+        workspace=Path("/workspace"),
+        executor=revision_executor,
+        runtime_config=config,
+        runtime_router=router,
+        codex_adapter=adapter,
+        forced_runtime_route=config.routes[0],
+        codex_session_exists=lambda _: True,
+    ).run(
+        task,
+        context,
+        proposal_revision=1,
+        parent_agent_run_id=audit.id,
+        feedback=feedback,
+    )
+
+    prompt = revision_executor.prompts[0]
+    assert ("Check this" not in prompt) is context_reusable
+    assert "Keep the source boundary explicit." in prompt
+    if context_reusable:
+        assert len(prompt) < len(first_executor.prompts[0])
+    else:
+        assert len(prompt) > len(first_executor.prompts[0])
+    [revision] = [
+        run
+        for run in store.list_agent_runs_for_task_generation(
+            task.id, task.execution_generation
+        )
+        if run.role is AgentRole.CONSUMER and run.proposal_revision == 1
+    ]
+    snapshot = next(
+        event
+        for event in _prompt_observations(store, revision.id)
+        if event.get("type") == "runtime.prompt"
+    )
+    assert snapshot["task_prompt"] == prompt
+    assert any(
+        section["name"]
+        == ("Consumer Audit-feedback revision" if context_reusable else "当前任务事实")
+        for section in snapshot["sections"]
+    )
+
+
 @pytest.fixture
 def task(store):
     store.enqueue_reply_task(
@@ -1356,7 +1743,7 @@ def test_consumer_is_read_only_and_reuses_conversation_session(store, task, cont
     )
 
 
-def test_consumer_resumes_session_when_wire_contract_changes(store, task, context):
+def test_consumer_resumes_session_when_unrelated_contract_hash_changes(store, task, context):
     store.upsert_conversation(task.conversation_id, "Group", False, "session-old")
     store.set_codex_session_contract_hash(task.conversation_id, "old-contract")
     executor = CapturingExecutor(_result_jsonl(session="session-old"))
@@ -1375,6 +1762,92 @@ def test_consumer_resumes_session_when_wire_contract_changes(store, task, contex
         store.get_codex_session_contract_hash(task.conversation_id)
         == consumer_wire_contract_hash()
     )
+
+
+@pytest.mark.parametrize("saved_schema", [
+    {"properties": {"outcome": {"type": "string"}}}, None,
+])
+def test_consumer_starts_fresh_when_saved_native_wire_schema_is_old_or_missing(
+    store, task, context, saved_schema
+):
+    store.upsert_conversation(task.conversation_id, "Group", False, "session-old")
+    store.set_codex_session_contract_hash(task.conversation_id, "old-contract")
+    executor = CapturingExecutor(_result_jsonl(session="session-new"))
+
+    ConsumerAgentRunner(
+        store=store,
+        workspace=Path("/workspace"),
+        executor=executor,
+        codex_session_exists=lambda _: True,
+        codex_session_wire_schema=lambda _: saved_schema,
+    ).run(task, context, proposal_revision=0, parent_agent_run_id=None)
+
+    assert executor.commands[0][3] == "exec"
+    assert "resume" not in executor.commands[0]
+    assert store.get_codex_session_id(task.conversation_id) == "session-new"
+
+
+def test_consumer_reuses_matching_native_wire_despite_prompt_hash_change(store, task, context):
+    store.upsert_conversation(task.conversation_id, "Group", False, "session-old")
+    store.set_codex_session_contract_hash(task.conversation_id, "old-contract")
+    executor = CapturingExecutor(_result_jsonl(session="session-old"))
+    current_schema = json.loads(
+        consumer_agent._schema_json(consumer_agent.consumer_wire_model("general"))
+    )
+
+    ConsumerAgentRunner(
+        store=store,
+        workspace=Path("/workspace"),
+        executor=executor,
+        codex_session_exists=lambda _: True,
+        codex_session_wire_schema=lambda _: current_schema,
+    ).run(task, context, proposal_revision=0, parent_agent_run_id=None)
+
+    assert executor.commands[0][3:5] == ["exec", "resume"]
+    assert executor.commands[0][-2:] == ["session-old", "-"]
+
+
+def test_consumer_default_path_rejects_incompatible_native_wire_before_resume(
+    store, task, context, monkeypatch, tmp_path
+):
+    session = tmp_path / "old-session.jsonl"
+    developer = (
+        "## Pydantic Wire Contract\n"
+        '{"type":"object","properties":{"outcome":{"type":"string"}}}'
+        "\n\n## Capability Instructions\nexisting guidance"
+    )
+    session.write_text(json.dumps({
+        "type": "response_item",
+        "payload": {
+            "type": "message", "role": "developer",
+            "content": [{"type": "input_text", "text": developer}],
+            "internal_chat_message_metadata_passthrough": {
+                "content_item_kinds": ["generic.developer_instructions"]
+            },
+        },
+    }) + "\n")
+    monkeypatch.setattr(consumer_agent, "find_codex_session_path", lambda *_args, **_kwargs: session)
+    monkeypatch.setattr(
+        "app.native_prompt_input.native.find_codex_session_path",
+        lambda *_args, **_kwargs: session,
+    )
+    store.upsert_conversation(task.conversation_id, "Group", False, "session-old")
+    executor = CapturingExecutor(_result_jsonl(session="session-new"))
+
+    ConsumerAgentRunner(
+        store=store, workspace=Path("/workspace"), executor=executor
+    ).run(task, context, proposal_revision=0, parent_agent_run_id=None)
+
+    assert "resume" not in executor.commands[0]
+    assert context.trigger_text in executor.prompts[0]
+    developer_option = next(
+        option for option in executor.commands[0]
+        if option.startswith("developer_instructions=")
+    )
+    submitted_developer = json.loads(developer_option.partition("=")[2])
+    assert "## Pydantic Wire Contract" not in submitted_developer
+    assert CONSUMER_OUTBOUND_INSTRUCTION in submitted_developer
+    assert store.get_codex_session_id(task.conversation_id) == "session-new"
 
 
 def test_consumer_forced_rerun_resumes_the_compatible_session(store, task, context):
@@ -1750,6 +2223,19 @@ def test_consumer_claude_runtime_receives_parent_execution_mode(
     assert executor.environments[0]["CEO_DRY_RUN"] == "1"
     assert executor.environments[0]["CEO_NOT_SEND_MESSAGE"] == "1"
     assert executor.environments[0]["ANTHROPIC_API_KEY"] == "test-claude-secret"
+    command = executor.commands[0]
+    assert "--json-schema" in command
+    assert json.loads(command[command.index("--json-schema") + 1])["type"] == "object"
+    [saved_run] = store.list_agent_runs_for_task_generation(
+        task.id, task.execution_generation,
+    )
+    snapshot = next(
+        event for event in _prompt_observations(store, saved_run.id)
+        if event.get("type") == "runtime.prompt"
+    )
+    assert "## Pydantic Wire Contract" not in snapshot["developer_instructions"]
+    assert CONSUMER_OUTBOUND_INSTRUCTION in snapshot["developer_instructions"]
+    assert all(section["source"] != "Pydantic 业务模型" for section in snapshot["sections"])
 
 
 @pytest.mark.parametrize("failure_count", [1, 2])
@@ -2424,14 +2910,14 @@ def test_consumer_rejects_malformed_nested_output_locally(
         )
     )
 
-    with pytest.raises(ResultParseError, match="failed schema validation"):
+    with pytest.raises(ResultParseError, match="native result failed current Consumer wire contract"):
         ConsumerAgentRunner(
             store=store,
             workspace=Path("/workspace"),
             executor=executor,
         ).run(task, context, proposal_revision=0, parent_agent_run_id=None)
 
-    assert "--output-schema" not in executor.commands[0]
+    assert "--output-schema" in executor.commands[0]
 
 
 def test_consumer_accepts_valid_nested_output_locally(store, task, context):
@@ -2448,7 +2934,7 @@ def test_consumer_accepts_valid_nested_output_locally(store, task, context):
     assert result.result.proposal.actions[0].payload == {
         "text": "Verified notice."
     }
-    assert "--output-schema" not in executor.commands[0]
+    assert "--output-schema" in executor.commands[0]
 
 
 @pytest.mark.parametrize(
@@ -3560,9 +4046,9 @@ def test_claude_route_session_is_not_checked_as_local_codex_history(store, task)
 def _consumer_failure_wire(error_code: str, outcome: str = "failed") -> str:
     payload = json.dumps(
         {
-            "outcome": outcome,
+            "action": outcome, "reason": "Observed tool failure", "target": {}, "evidence_refs": [],
             "summary": "The unsubscribe page state could not be determined.",
-            "proposal": None,
+            "payload": {},
             "decision_options": [],
             "risk": "low",
             "confidence": 1.0,
@@ -3754,6 +4240,7 @@ def test_audit_reviews_proposal_and_human_question_as_separate_stages():
     assert "An approved human request authorizes only publication of the question" in text
     assert "no branch executes until the person selects it" in text
     assert "Audit never originates a human question" in text
+    assert "needs_human reason is one short sentence in ordinary Chinese, at most 100 characters" in text
 
 
 def test_consumer_writes_dingtalk_in_markdown_and_reasons_in_plain_language():
@@ -3764,7 +4251,12 @@ def test_consumer_writes_dingtalk_in_markdown_and_reasons_in_plain_language():
     text = " ".join(CONSUMER_ROLE_BOUNDARY.split())
     assert "DingTalk bodies use structured Markdown" not in text
     assert "OA comments and email use plain text" not in text
-    assert "the reusable task class rule that is missing and why it matters" in text
+
+
+def test_needs_human_reason_prompt_is_plain_language_and_bounded():
+    text = " ".join(consumer_agent.DECISION_QUALITY_GATE_INSTRUCTIONS.split())
+    assert "one plain-Chinese sentence of at most 100 characters" in text
+    assert "Avoid jargon; keep evidence in decision_basis" in text
 
 
 def test_a_scheduled_task_message_to_derek_gets_a_prepared_body(tmp_path):
@@ -3820,6 +4312,58 @@ def test_a_scheduled_task_message_to_derek_gets_a_prepared_body(tmp_path):
             proposal_revision=0,
         ),
     ) is not None
+
+
+def test_generic_dingtalk_send_to_conversation_gets_prepared_before_audit(tmp_path):
+    """A generic send_message may target a conversation without a recipient ID."""
+    from types import SimpleNamespace
+
+    from app.agent_contracts import ConsumerAgentResult
+    from app.consumer_agent import _prepare_outgoing_dingtalk_messages
+    from app.service_message_sender import agent_message_delivery_key
+
+    store = AutoReplyStore(tmp_path / "worker.sqlite3")
+    task = SimpleNamespace(
+        id=1, business_object_key="reply-task:405687",
+        execution_generation="generation-1",
+    )
+    context = SimpleNamespace(
+        channel="dingtalk", trigger_text="原始触发消息", trigger_raw_payload={},
+    )
+    result = ConsumerAgentResult.model_validate({
+        "outcome": "proposal", "summary": "Send a reviewed message.",
+        "proposal": {
+            "objective": "Answer in the current conversation",
+            "actions": [{
+                "description": "在当前会话发送回复",
+                "action_identity": "conversation-reply",
+                "capability": "dingtalk-chat", "operation": "send_message",
+                "effect": "external", "target": {"conversation_id": "group-1"},
+                "payload": {"content": "有依据的回复"},
+            }],
+            "sourced_facts": [], "authored_judgment": "Reply once.",
+        },
+        "decision_options": [],
+        "error": {"code": "", "retryable": False, "authorization_required": False},
+        "risk": "low", "confidence": 1.0, "rule_coverage": 1.0,
+        "information_completeness": 1.0,
+    })
+
+    prepared_result = _prepare_outgoing_dingtalk_messages(
+        result, store=store, task=task, context=context, proposal_revision=0,
+    )
+
+    action = prepared_result.proposal.actions[0]
+    key = agent_message_delivery_key(
+        business_object_key=task.business_object_key,
+        action_identity=action.action_identity,
+        execution_generation=task.execution_generation,
+        proposal_revision=0,
+    )
+    prepared = store.get_outbound_postfix("dingtalk", key)
+    assert prepared is not None
+    assert action.payload["content"] == prepared.final_body
+    assert "有依据的回复" in prepared.final_body
 
 
 def test_source_capture_failure_preserves_native_error_and_authentication(store, task, context):

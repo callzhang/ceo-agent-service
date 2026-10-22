@@ -1,0 +1,5462 @@
+{
+  "scope": "two actual methods only; full fresh source and explicit EMPTY Tasks20 fixture; no migration/cold target constructor",
+  "script_sha256": "91f6db9085a2b4b9b7405e586ba1453212295c7387a381c61961d86a1c27c0c9",
+  "source_sha256": {
+    "app/store.py": "ce66a4dd7302080126fb178b4dc8e3983acbc68b2f70c9107bd3e584c4207d5f",
+    "app/storage_maintenance.py": "d1021d40b06d5e78c680625a200fff3bb92eaa6d95338e72ad966c06acf522f6",
+    "app/email_task_adapter.py": "dce93db6266af53c5a846f8f59ef14807ef8c7ebd79840c4a83b0ea093448230",
+    "app/email_store.py": "c7f80cd9607cc0b1d500a698f341065e3b22f41b73a536f0ab3c8af88db5ecc9",
+    "app/task12_storage.py": "127311aa2ed303066fc3dd325a5642c0e61725a2d8db3b5bedfc218e804e013f",
+    "app/task8_storage.py": "bdc1809e75725d7364058b0e4e1c81a53cf9aa11621bda44ed2bce68823ff03f",
+    "app/task20_definitions.py": "cf58403bcc9dc7bf4c3ef5b9a777ff941c7a6de210e04b29e4cb7abb1e0df4d0"
+  },
+  "patches_in_order": [
+    {
+      "path": "docs/superpowers/plans/2026-10-16-task8-store-caller-proposal.patch",
+      "sha256": "691cc165fdbaaa4e56a04b907dc6c76cbbc717c4e0c3fc9f3c31a95857cc873c"
+    },
+    {
+      "path": "docs/superpowers/plans/2026-10-16-task8-workbench-caller-proposal.patch",
+      "sha256": "66d1c19cfee4fd636d596400b228b0926f9fca46aee177d180a6701b33386c26"
+    },
+    {
+      "path": "docs/superpowers/plans/2026-10-16-task12-email-native-caller-proposal.patch",
+      "sha256": "610bd87fb49ee22fca098fdaf887ccf62bd37e5462a9a8d2945440057304b8cc"
+    },
+    {
+      "path": "docs/superpowers/plans/2026-10-16-task12-store-misc-caller-proposal.patch",
+      "sha256": "aeb1ffd38995428d61f9f01bf4d0a58dfdd223b510b358ff6a7c2e01976706c4"
+    },
+    {
+      "path": "docs/superpowers/plans/2026-10-16-task12-feedback-caller-proposal.patch",
+      "sha256": "9bf3323406b39fc06fff84496bd6fb2bcda6c3eb990e96a550b878e433a8105d"
+    },
+    {
+      "path": "docs/superpowers/plans/2026-10-16-task12-workbench-children-caller-proposal.patch",
+      "sha256": "f9e64c543a9aec532184a99ee9832d691635bdbaf4dfade9c515e25e3f268cc7"
+    },
+    {
+      "path": "docs/superpowers/plans/2026-10-16-task20-external-writers-caller-proposal.patch",
+      "sha256": "c52007327727e670dd55f434375b8aba3416112f369732717eba998102423415"
+    },
+    {
+      "path": "docs/superpowers/plans/2026-10-16-task20-console-readers-caller-proposal.patch",
+      "sha256": "a823ff570d1d8b6045f1289853831f7893531f78badc1281134bb80389f717df"
+    },
+    {
+      "path": "docs/superpowers/plans/2026-10-16-task20-remaining-readers-caller-proposal.patch",
+      "sha256": "618c2033a0ca47185819dad4a24a9f4f6409d1d368a1655bc8da4b13efa8898c"
+    }
+  ],
+  "candidate_sha256": {
+    "app/store.py": "2d82e4140b34a38025b9b7129d4c90d6262e806d49a9239401f990b633a8c6e5",
+    "app/storage_maintenance.py": "07f965f76e5583f0edd09be82ec53be838604594ab469bcafe93f301ed5f503c",
+    "app/email_task_adapter.py": "e47e1a967839b4fa22cd3e8c9f35ab174a223964802ca0501192db114afcf682",
+    "app/email_store.py": "27042bcf1233ddf31c0843e337d1aeb8863091aa3ab85d9e6bc9b7970c2f90e6",
+    "app/task12_storage.py": "127311aa2ed303066fc3dd325a5642c0e61725a2d8db3b5bedfc218e804e013f",
+    "app/task8_storage.py": "bdc1809e75725d7364058b0e4e1c81a53cf9aa11621bda44ed2bce68823ff03f",
+    "app/task20_definitions.py": "cf58403bcc9dc7bf4c3ef5b9a777ff941c7a6de210e04b29e4cb7abb1e0df4d0"
+  },
+  "bootstrap": {
+    "normal_full_fresh_store_constructor": true,
+    "normal_full_fresh_email_constructor": true,
+    "empty_counts": {
+      "tasks": 0,
+      "email_agent_classification_tasks": 0
+    },
+    "classification_fields": [
+      "task_id",
+      "channel",
+      "stable_message_identity",
+      "status",
+      "owner",
+      "generation",
+      "attempt_count",
+      "lease_expires_at",
+      "available_at",
+      "input_json",
+      "result_json",
+      "error",
+      "created_at",
+      "updated_at"
+    ],
+    "table_count": 73,
+    "fk_findings": [],
+    "source_ddl_sha256": {
+      "tasks": "ee4330cb187a80d4699db16e56b61e47f992165ed44a840f4ecbe8059888374c",
+      "email_agent_classification_tasks": "8c08e7f99f10d78de9ed358260d12272bb5220a87829fbe21a070b722b6c71d4"
+    }
+  },
+  "target_preparation": {
+    "explicit_empty_target_preparation": true,
+    "removed_empty_native_queue": "email_agent_classification_tasks",
+    "all_other_table_ddl_exact": true,
+    "target_constructor": "bypassed; not tested",
+    "migration": "not tested",
+    "target_tasks_ddl_sha256": "903e2952423e3398a6268e14d40ef2a8ea8e6333956ff50b96791933b9ea600d"
+  },
+  "source_checkpoints": 17,
+  "target_checkpoints": 17,
+  "equal_checkpoints": 17,
+  "entered_actual_owners": {
+    "AutoReplyStore._runtime_operation_parent_exists": 12,
+    "compact_done_email_classification_inputs": 5
+  },
+  "records": [
+    {
+      "label": "parent:'key-running'",
+      "return": true,
+      "expected": true,
+      "read_only": true
+    },
+    {
+      "label": "parent:'key-done'",
+      "return": false,
+      "expected": false,
+      "read_only": true
+    },
+    {
+      "label": "parent:'key-pending'",
+      "return": false,
+      "expected": false,
+      "read_only": true
+    },
+    {
+      "label": "parent:'key-failed'",
+      "return": false,
+      "expected": false,
+      "read_only": true
+    },
+    {
+      "label": "parent:'missing'",
+      "return": false,
+      "expected": false,
+      "read_only": true
+    },
+    {
+      "label": "parent:'007'",
+      "return": true,
+      "expected": true,
+      "read_only": true
+    },
+    {
+      "label": "parent:'7'",
+      "return": false,
+      "expected": false,
+      "read_only": true
+    },
+    {
+      "label": "parent:'键:unicode'",
+      "return": true,
+      "expected": true,
+      "read_only": true
+    },
+    {
+      "label": "parent:None",
+      "return": false,
+      "expected": false,
+      "read_only": true
+    },
+    {
+      "label": "parent:'101'",
+      "return": false,
+      "expected": false,
+      "read_only": true
+    },
+    {
+      "label": "parent:'1'",
+      "return": false,
+      "expected": false,
+      "read_only": true
+    },
+    {
+      "label": "parent:caller_transaction",
+      "before_equals_after_explicit_rollback": true,
+      "method_preserves_open_transaction": true,
+      "before": [
+        {
+          "rowid": {
+            "value": 101,
+            "scalar_type": "int"
+          },
+          "task_id": {
+            "value": "key-running",
+            "scalar_type": "str"
+          },
+          "channel": {
+            "value": "email",
+            "scalar_type": "str"
+          },
+          "stable_message_identity": {
+            "value": "identity:101",
+            "scalar_type": "str"
+          },
+          "status": {
+            "value": "running",
+            "scalar_type": "str"
+          },
+          "owner": {
+            "value": "fixture-owner",
+            "scalar_type": "str"
+          },
+          "generation": {
+            "value": 3,
+            "scalar_type": "int"
+          },
+          "attempt_count": {
+            "value": 4,
+            "scalar_type": "int"
+          },
+          "lease_expires_at": {
+            "value": "2040-01-02",
+            "scalar_type": "str"
+          },
+          "available_at": {
+            "value": "2040-01-03",
+            "scalar_type": "str"
+          },
+          "input_json": {
+            "scalar_type": "str",
+            "utf8_bytes": 2,
+            "sha256": "44136fa355b3678a1146ad16f7e8649e94fb4fc21fe77e8310c060f61caaff8a",
+            "input_compacted": null
+          },
+          "result_json": {
+            "value": "{\"sentinel\":\"result\"}",
+            "scalar_type": "str"
+          },
+          "error": {
+            "value": "preserve error sentinel",
+            "scalar_type": "str"
+          },
+          "created_at": {
+            "value": "2040-01-01 00:00:00",
+            "scalar_type": "str"
+          },
+          "updated_at": {
+            "value": "2040-01-01 00:00:00",
+            "scalar_type": "str"
+          }
+        },
+        {
+          "rowid": {
+            "value": 205,
+            "scalar_type": "int"
+          },
+          "task_id": {
+            "value": "key-done",
+            "scalar_type": "str"
+          },
+          "channel": {
+            "value": "email",
+            "scalar_type": "str"
+          },
+          "stable_message_identity": {
+            "value": "identity:205",
+            "scalar_type": "str"
+          },
+          "status": {
+            "value": "done",
+            "scalar_type": "str"
+          },
+          "owner": {
+            "value": "fixture-owner",
+            "scalar_type": "str"
+          },
+          "generation": {
+            "value": 3,
+            "scalar_type": "int"
+          },
+          "attempt_count": {
+            "value": 4,
+            "scalar_type": "int"
+          },
+          "lease_expires_at": {
+            "value": "2040-01-02",
+            "scalar_type": "str"
+          },
+          "available_at": {
+            "value": "2040-01-03",
+            "scalar_type": "str"
+          },
+          "input_json": {
+            "scalar_type": "str",
+            "utf8_bytes": 2,
+            "sha256": "44136fa355b3678a1146ad16f7e8649e94fb4fc21fe77e8310c060f61caaff8a",
+            "input_compacted": null
+          },
+          "result_json": {
+            "value": "{\"sentinel\":\"result\"}",
+            "scalar_type": "str"
+          },
+          "error": {
+            "value": "preserve error sentinel",
+            "scalar_type": "str"
+          },
+          "created_at": {
+            "value": "2040-01-01 00:00:00",
+            "scalar_type": "str"
+          },
+          "updated_at": {
+            "value": "2040-01-01 00:00:00",
+            "scalar_type": "str"
+          }
+        },
+        {
+          "rowid": {
+            "value": 309,
+            "scalar_type": "int"
+          },
+          "task_id": {
+            "value": "key-pending",
+            "scalar_type": "str"
+          },
+          "channel": {
+            "value": "email",
+            "scalar_type": "str"
+          },
+          "stable_message_identity": {
+            "value": "identity:309",
+            "scalar_type": "str"
+          },
+          "status": {
+            "value": "pending",
+            "scalar_type": "str"
+          },
+          "owner": {
+            "value": "fixture-owner",
+            "scalar_type": "str"
+          },
+          "generation": {
+            "value": 3,
+            "scalar_type": "int"
+          },
+          "attempt_count": {
+            "value": 4,
+            "scalar_type": "int"
+          },
+          "lease_expires_at": {
+            "value": "2040-01-02",
+            "scalar_type": "str"
+          },
+          "available_at": {
+            "value": "2040-01-03",
+            "scalar_type": "str"
+          },
+          "input_json": {
+            "scalar_type": "str",
+            "utf8_bytes": 2,
+            "sha256": "44136fa355b3678a1146ad16f7e8649e94fb4fc21fe77e8310c060f61caaff8a",
+            "input_compacted": null
+          },
+          "result_json": {
+            "value": "{\"sentinel\":\"result\"}",
+            "scalar_type": "str"
+          },
+          "error": {
+            "value": "preserve error sentinel",
+            "scalar_type": "str"
+          },
+          "created_at": {
+            "value": "2040-01-01 00:00:00",
+            "scalar_type": "str"
+          },
+          "updated_at": {
+            "value": "2040-01-01 00:00:00",
+            "scalar_type": "str"
+          }
+        },
+        {
+          "rowid": {
+            "value": 411,
+            "scalar_type": "int"
+          },
+          "task_id": {
+            "value": "key-failed",
+            "scalar_type": "str"
+          },
+          "channel": {
+            "value": "email",
+            "scalar_type": "str"
+          },
+          "stable_message_identity": {
+            "value": "identity:411",
+            "scalar_type": "str"
+          },
+          "status": {
+            "value": "failed",
+            "scalar_type": "str"
+          },
+          "owner": {
+            "value": "fixture-owner",
+            "scalar_type": "str"
+          },
+          "generation": {
+            "value": 3,
+            "scalar_type": "int"
+          },
+          "attempt_count": {
+            "value": 4,
+            "scalar_type": "int"
+          },
+          "lease_expires_at": {
+            "value": "2040-01-02",
+            "scalar_type": "str"
+          },
+          "available_at": {
+            "value": "2040-01-03",
+            "scalar_type": "str"
+          },
+          "input_json": {
+            "scalar_type": "str",
+            "utf8_bytes": 2,
+            "sha256": "44136fa355b3678a1146ad16f7e8649e94fb4fc21fe77e8310c060f61caaff8a",
+            "input_compacted": null
+          },
+          "result_json": {
+            "value": "{\"sentinel\":\"result\"}",
+            "scalar_type": "str"
+          },
+          "error": {
+            "value": "preserve error sentinel",
+            "scalar_type": "str"
+          },
+          "created_at": {
+            "value": "2040-01-01 00:00:00",
+            "scalar_type": "str"
+          },
+          "updated_at": {
+            "value": "2040-01-01 00:00:00",
+            "scalar_type": "str"
+          }
+        },
+        {
+          "rowid": {
+            "value": 513,
+            "scalar_type": "int"
+          },
+          "task_id": {
+            "value": null,
+            "scalar_type": "NoneType"
+          },
+          "channel": {
+            "value": "email",
+            "scalar_type": "str"
+          },
+          "stable_message_identity": {
+            "value": "identity:513",
+            "scalar_type": "str"
+          },
+          "status": {
+            "value": "running",
+            "scalar_type": "str"
+          },
+          "owner": {
+            "value": "fixture-owner",
+            "scalar_type": "str"
+          },
+          "generation": {
+            "value": 3,
+            "scalar_type": "int"
+          },
+          "attempt_count": {
+            "value": 4,
+            "scalar_type": "int"
+          },
+          "lease_expires_at": {
+            "value": "2040-01-02",
+            "scalar_type": "str"
+          },
+          "available_at": {
+            "value": "2040-01-03",
+            "scalar_type": "str"
+          },
+          "input_json": {
+            "scalar_type": "str",
+            "utf8_bytes": 2,
+            "sha256": "44136fa355b3678a1146ad16f7e8649e94fb4fc21fe77e8310c060f61caaff8a",
+            "input_compacted": null
+          },
+          "result_json": {
+            "value": "{\"sentinel\":\"result\"}",
+            "scalar_type": "str"
+          },
+          "error": {
+            "value": "preserve error sentinel",
+            "scalar_type": "str"
+          },
+          "created_at": {
+            "value": "2040-01-01 00:00:00",
+            "scalar_type": "str"
+          },
+          "updated_at": {
+            "value": "2040-01-01 00:00:00",
+            "scalar_type": "str"
+          }
+        },
+        {
+          "rowid": {
+            "value": 615,
+            "scalar_type": "int"
+          },
+          "task_id": {
+            "value": "007",
+            "scalar_type": "str"
+          },
+          "channel": {
+            "value": "email",
+            "scalar_type": "str"
+          },
+          "stable_message_identity": {
+            "value": "identity:615",
+            "scalar_type": "str"
+          },
+          "status": {
+            "value": "running",
+            "scalar_type": "str"
+          },
+          "owner": {
+            "value": "fixture-owner",
+            "scalar_type": "str"
+          },
+          "generation": {
+            "value": 3,
+            "scalar_type": "int"
+          },
+          "attempt_count": {
+            "value": 4,
+            "scalar_type": "int"
+          },
+          "lease_expires_at": {
+            "value": "2040-01-02",
+            "scalar_type": "str"
+          },
+          "available_at": {
+            "value": "2040-01-03",
+            "scalar_type": "str"
+          },
+          "input_json": {
+            "scalar_type": "str",
+            "utf8_bytes": 2,
+            "sha256": "44136fa355b3678a1146ad16f7e8649e94fb4fc21fe77e8310c060f61caaff8a",
+            "input_compacted": null
+          },
+          "result_json": {
+            "value": "{\"sentinel\":\"result\"}",
+            "scalar_type": "str"
+          },
+          "error": {
+            "value": "preserve error sentinel",
+            "scalar_type": "str"
+          },
+          "created_at": {
+            "value": "2040-01-01 00:00:00",
+            "scalar_type": "str"
+          },
+          "updated_at": {
+            "value": "2040-01-01 00:00:00",
+            "scalar_type": "str"
+          }
+        },
+        {
+          "rowid": {
+            "value": 717,
+            "scalar_type": "int"
+          },
+          "task_id": {
+            "value": "7",
+            "scalar_type": "str"
+          },
+          "channel": {
+            "value": "email",
+            "scalar_type": "str"
+          },
+          "stable_message_identity": {
+            "value": "identity:717",
+            "scalar_type": "str"
+          },
+          "status": {
+            "value": "done",
+            "scalar_type": "str"
+          },
+          "owner": {
+            "value": "fixture-owner",
+            "scalar_type": "str"
+          },
+          "generation": {
+            "value": 3,
+            "scalar_type": "int"
+          },
+          "attempt_count": {
+            "value": 4,
+            "scalar_type": "int"
+          },
+          "lease_expires_at": {
+            "value": "2040-01-02",
+            "scalar_type": "str"
+          },
+          "available_at": {
+            "value": "2040-01-03",
+            "scalar_type": "str"
+          },
+          "input_json": {
+            "scalar_type": "str",
+            "utf8_bytes": 2,
+            "sha256": "44136fa355b3678a1146ad16f7e8649e94fb4fc21fe77e8310c060f61caaff8a",
+            "input_compacted": null
+          },
+          "result_json": {
+            "value": "{\"sentinel\":\"result\"}",
+            "scalar_type": "str"
+          },
+          "error": {
+            "value": "preserve error sentinel",
+            "scalar_type": "str"
+          },
+          "created_at": {
+            "value": "2040-01-01 00:00:00",
+            "scalar_type": "str"
+          },
+          "updated_at": {
+            "value": "2040-01-01 00:00:00",
+            "scalar_type": "str"
+          }
+        },
+        {
+          "rowid": {
+            "value": 819,
+            "scalar_type": "int"
+          },
+          "task_id": {
+            "value": "键:unicode",
+            "scalar_type": "str"
+          },
+          "channel": {
+            "value": "email",
+            "scalar_type": "str"
+          },
+          "stable_message_identity": {
+            "value": "identity:819",
+            "scalar_type": "str"
+          },
+          "status": {
+            "value": "running",
+            "scalar_type": "str"
+          },
+          "owner": {
+            "value": "fixture-owner",
+            "scalar_type": "str"
+          },
+          "generation": {
+            "value": 3,
+            "scalar_type": "int"
+          },
+          "attempt_count": {
+            "value": 4,
+            "scalar_type": "int"
+          },
+          "lease_expires_at": {
+            "value": "2040-01-02",
+            "scalar_type": "str"
+          },
+          "available_at": {
+            "value": "2040-01-03",
+            "scalar_type": "str"
+          },
+          "input_json": {
+            "scalar_type": "str",
+            "utf8_bytes": 2,
+            "sha256": "44136fa355b3678a1146ad16f7e8649e94fb4fc21fe77e8310c060f61caaff8a",
+            "input_compacted": null
+          },
+          "result_json": {
+            "value": "{\"sentinel\":\"result\"}",
+            "scalar_type": "str"
+          },
+          "error": {
+            "value": "preserve error sentinel",
+            "scalar_type": "str"
+          },
+          "created_at": {
+            "value": "2040-01-01 00:00:00",
+            "scalar_type": "str"
+          },
+          "updated_at": {
+            "value": "2040-01-01 00:00:00",
+            "scalar_type": "str"
+          }
+        }
+      ],
+      "after": [
+        {
+          "rowid": {
+            "value": 101,
+            "scalar_type": "int"
+          },
+          "task_id": {
+            "value": "key-running",
+            "scalar_type": "str"
+          },
+          "channel": {
+            "value": "email",
+            "scalar_type": "str"
+          },
+          "stable_message_identity": {
+            "value": "identity:101",
+            "scalar_type": "str"
+          },
+          "status": {
+            "value": "running",
+            "scalar_type": "str"
+          },
+          "owner": {
+            "value": "fixture-owner",
+            "scalar_type": "str"
+          },
+          "generation": {
+            "value": 3,
+            "scalar_type": "int"
+          },
+          "attempt_count": {
+            "value": 4,
+            "scalar_type": "int"
+          },
+          "lease_expires_at": {
+            "value": "2040-01-02",
+            "scalar_type": "str"
+          },
+          "available_at": {
+            "value": "2040-01-03",
+            "scalar_type": "str"
+          },
+          "input_json": {
+            "scalar_type": "str",
+            "utf8_bytes": 2,
+            "sha256": "44136fa355b3678a1146ad16f7e8649e94fb4fc21fe77e8310c060f61caaff8a",
+            "input_compacted": null
+          },
+          "result_json": {
+            "value": "{\"sentinel\":\"result\"}",
+            "scalar_type": "str"
+          },
+          "error": {
+            "value": "preserve error sentinel",
+            "scalar_type": "str"
+          },
+          "created_at": {
+            "value": "2040-01-01 00:00:00",
+            "scalar_type": "str"
+          },
+          "updated_at": {
+            "value": "2040-01-01 00:00:00",
+            "scalar_type": "str"
+          }
+        },
+        {
+          "rowid": {
+            "value": 205,
+            "scalar_type": "int"
+          },
+          "task_id": {
+            "value": "key-done",
+            "scalar_type": "str"
+          },
+          "channel": {
+            "value": "email",
+            "scalar_type": "str"
+          },
+          "stable_message_identity": {
+            "value": "identity:205",
+            "scalar_type": "str"
+          },
+          "status": {
+            "value": "done",
+            "scalar_type": "str"
+          },
+          "owner": {
+            "value": "fixture-owner",
+            "scalar_type": "str"
+          },
+          "generation": {
+            "value": 3,
+            "scalar_type": "int"
+          },
+          "attempt_count": {
+            "value": 4,
+            "scalar_type": "int"
+          },
+          "lease_expires_at": {
+            "value": "2040-01-02",
+            "scalar_type": "str"
+          },
+          "available_at": {
+            "value": "2040-01-03",
+            "scalar_type": "str"
+          },
+          "input_json": {
+            "scalar_type": "str",
+            "utf8_bytes": 2,
+            "sha256": "44136fa355b3678a1146ad16f7e8649e94fb4fc21fe77e8310c060f61caaff8a",
+            "input_compacted": null
+          },
+          "result_json": {
+            "value": "{\"sentinel\":\"result\"}",
+            "scalar_type": "str"
+          },
+          "error": {
+            "value": "preserve error sentinel",
+            "scalar_type": "str"
+          },
+          "created_at": {
+            "value": "2040-01-01 00:00:00",
+            "scalar_type": "str"
+          },
+          "updated_at": {
+            "value": "2040-01-01 00:00:00",
+            "scalar_type": "str"
+          }
+        },
+        {
+          "rowid": {
+            "value": 309,
+            "scalar_type": "int"
+          },
+          "task_id": {
+            "value": "key-pending",
+            "scalar_type": "str"
+          },
+          "channel": {
+            "value": "email",
+            "scalar_type": "str"
+          },
+          "stable_message_identity": {
+            "value": "identity:309",
+            "scalar_type": "str"
+          },
+          "status": {
+            "value": "pending",
+            "scalar_type": "str"
+          },
+          "owner": {
+            "value": "fixture-owner",
+            "scalar_type": "str"
+          },
+          "generation": {
+            "value": 3,
+            "scalar_type": "int"
+          },
+          "attempt_count": {
+            "value": 4,
+            "scalar_type": "int"
+          },
+          "lease_expires_at": {
+            "value": "2040-01-02",
+            "scalar_type": "str"
+          },
+          "available_at": {
+            "value": "2040-01-03",
+            "scalar_type": "str"
+          },
+          "input_json": {
+            "scalar_type": "str",
+            "utf8_bytes": 2,
+            "sha256": "44136fa355b3678a1146ad16f7e8649e94fb4fc21fe77e8310c060f61caaff8a",
+            "input_compacted": null
+          },
+          "result_json": {
+            "value": "{\"sentinel\":\"result\"}",
+            "scalar_type": "str"
+          },
+          "error": {
+            "value": "preserve error sentinel",
+            "scalar_type": "str"
+          },
+          "created_at": {
+            "value": "2040-01-01 00:00:00",
+            "scalar_type": "str"
+          },
+          "updated_at": {
+            "value": "2040-01-01 00:00:00",
+            "scalar_type": "str"
+          }
+        },
+        {
+          "rowid": {
+            "value": 411,
+            "scalar_type": "int"
+          },
+          "task_id": {
+            "value": "key-failed",
+            "scalar_type": "str"
+          },
+          "channel": {
+            "value": "email",
+            "scalar_type": "str"
+          },
+          "stable_message_identity": {
+            "value": "identity:411",
+            "scalar_type": "str"
+          },
+          "status": {
+            "value": "failed",
+            "scalar_type": "str"
+          },
+          "owner": {
+            "value": "fixture-owner",
+            "scalar_type": "str"
+          },
+          "generation": {
+            "value": 3,
+            "scalar_type": "int"
+          },
+          "attempt_count": {
+            "value": 4,
+            "scalar_type": "int"
+          },
+          "lease_expires_at": {
+            "value": "2040-01-02",
+            "scalar_type": "str"
+          },
+          "available_at": {
+            "value": "2040-01-03",
+            "scalar_type": "str"
+          },
+          "input_json": {
+            "scalar_type": "str",
+            "utf8_bytes": 2,
+            "sha256": "44136fa355b3678a1146ad16f7e8649e94fb4fc21fe77e8310c060f61caaff8a",
+            "input_compacted": null
+          },
+          "result_json": {
+            "value": "{\"sentinel\":\"result\"}",
+            "scalar_type": "str"
+          },
+          "error": {
+            "value": "preserve error sentinel",
+            "scalar_type": "str"
+          },
+          "created_at": {
+            "value": "2040-01-01 00:00:00",
+            "scalar_type": "str"
+          },
+          "updated_at": {
+            "value": "2040-01-01 00:00:00",
+            "scalar_type": "str"
+          }
+        },
+        {
+          "rowid": {
+            "value": 513,
+            "scalar_type": "int"
+          },
+          "task_id": {
+            "value": null,
+            "scalar_type": "NoneType"
+          },
+          "channel": {
+            "value": "email",
+            "scalar_type": "str"
+          },
+          "stable_message_identity": {
+            "value": "identity:513",
+            "scalar_type": "str"
+          },
+          "status": {
+            "value": "running",
+            "scalar_type": "str"
+          },
+          "owner": {
+            "value": "fixture-owner",
+            "scalar_type": "str"
+          },
+          "generation": {
+            "value": 3,
+            "scalar_type": "int"
+          },
+          "attempt_count": {
+            "value": 4,
+            "scalar_type": "int"
+          },
+          "lease_expires_at": {
+            "value": "2040-01-02",
+            "scalar_type": "str"
+          },
+          "available_at": {
+            "value": "2040-01-03",
+            "scalar_type": "str"
+          },
+          "input_json": {
+            "scalar_type": "str",
+            "utf8_bytes": 2,
+            "sha256": "44136fa355b3678a1146ad16f7e8649e94fb4fc21fe77e8310c060f61caaff8a",
+            "input_compacted": null
+          },
+          "result_json": {
+            "value": "{\"sentinel\":\"result\"}",
+            "scalar_type": "str"
+          },
+          "error": {
+            "value": "preserve error sentinel",
+            "scalar_type": "str"
+          },
+          "created_at": {
+            "value": "2040-01-01 00:00:00",
+            "scalar_type": "str"
+          },
+          "updated_at": {
+            "value": "2040-01-01 00:00:00",
+            "scalar_type": "str"
+          }
+        },
+        {
+          "rowid": {
+            "value": 615,
+            "scalar_type": "int"
+          },
+          "task_id": {
+            "value": "007",
+            "scalar_type": "str"
+          },
+          "channel": {
+            "value": "email",
+            "scalar_type": "str"
+          },
+          "stable_message_identity": {
+            "value": "identity:615",
+            "scalar_type": "str"
+          },
+          "status": {
+            "value": "running",
+            "scalar_type": "str"
+          },
+          "owner": {
+            "value": "fixture-owner",
+            "scalar_type": "str"
+          },
+          "generation": {
+            "value": 3,
+            "scalar_type": "int"
+          },
+          "attempt_count": {
+            "value": 4,
+            "scalar_type": "int"
+          },
+          "lease_expires_at": {
+            "value": "2040-01-02",
+            "scalar_type": "str"
+          },
+          "available_at": {
+            "value": "2040-01-03",
+            "scalar_type": "str"
+          },
+          "input_json": {
+            "scalar_type": "str",
+            "utf8_bytes": 2,
+            "sha256": "44136fa355b3678a1146ad16f7e8649e94fb4fc21fe77e8310c060f61caaff8a",
+            "input_compacted": null
+          },
+          "result_json": {
+            "value": "{\"sentinel\":\"result\"}",
+            "scalar_type": "str"
+          },
+          "error": {
+            "value": "preserve error sentinel",
+            "scalar_type": "str"
+          },
+          "created_at": {
+            "value": "2040-01-01 00:00:00",
+            "scalar_type": "str"
+          },
+          "updated_at": {
+            "value": "2040-01-01 00:00:00",
+            "scalar_type": "str"
+          }
+        },
+        {
+          "rowid": {
+            "value": 717,
+            "scalar_type": "int"
+          },
+          "task_id": {
+            "value": "7",
+            "scalar_type": "str"
+          },
+          "channel": {
+            "value": "email",
+            "scalar_type": "str"
+          },
+          "stable_message_identity": {
+            "value": "identity:717",
+            "scalar_type": "str"
+          },
+          "status": {
+            "value": "done",
+            "scalar_type": "str"
+          },
+          "owner": {
+            "value": "fixture-owner",
+            "scalar_type": "str"
+          },
+          "generation": {
+            "value": 3,
+            "scalar_type": "int"
+          },
+          "attempt_count": {
+            "value": 4,
+            "scalar_type": "int"
+          },
+          "lease_expires_at": {
+            "value": "2040-01-02",
+            "scalar_type": "str"
+          },
+          "available_at": {
+            "value": "2040-01-03",
+            "scalar_type": "str"
+          },
+          "input_json": {
+            "scalar_type": "str",
+            "utf8_bytes": 2,
+            "sha256": "44136fa355b3678a1146ad16f7e8649e94fb4fc21fe77e8310c060f61caaff8a",
+            "input_compacted": null
+          },
+          "result_json": {
+            "value": "{\"sentinel\":\"result\"}",
+            "scalar_type": "str"
+          },
+          "error": {
+            "value": "preserve error sentinel",
+            "scalar_type": "str"
+          },
+          "created_at": {
+            "value": "2040-01-01 00:00:00",
+            "scalar_type": "str"
+          },
+          "updated_at": {
+            "value": "2040-01-01 00:00:00",
+            "scalar_type": "str"
+          }
+        },
+        {
+          "rowid": {
+            "value": 819,
+            "scalar_type": "int"
+          },
+          "task_id": {
+            "value": "键:unicode",
+            "scalar_type": "str"
+          },
+          "channel": {
+            "value": "email",
+            "scalar_type": "str"
+          },
+          "stable_message_identity": {
+            "value": "identity:819",
+            "scalar_type": "str"
+          },
+          "status": {
+            "value": "running",
+            "scalar_type": "str"
+          },
+          "owner": {
+            "value": "fixture-owner",
+            "scalar_type": "str"
+          },
+          "generation": {
+            "value": 3,
+            "scalar_type": "int"
+          },
+          "attempt_count": {
+            "value": 4,
+            "scalar_type": "int"
+          },
+          "lease_expires_at": {
+            "value": "2040-01-02",
+            "scalar_type": "str"
+          },
+          "available_at": {
+            "value": "2040-01-03",
+            "scalar_type": "str"
+          },
+          "input_json": {
+            "scalar_type": "str",
+            "utf8_bytes": 2,
+            "sha256": "44136fa355b3678a1146ad16f7e8649e94fb4fc21fe77e8310c060f61caaff8a",
+            "input_compacted": null
+          },
+          "result_json": {
+            "value": "{\"sentinel\":\"result\"}",
+            "scalar_type": "str"
+          },
+          "error": {
+            "value": "preserve error sentinel",
+            "scalar_type": "str"
+          },
+          "created_at": {
+            "value": "2040-01-01 00:00:00",
+            "scalar_type": "str"
+          },
+          "updated_at": {
+            "value": "2040-01-01 00:00:00",
+            "scalar_type": "str"
+          }
+        }
+      ]
+    },
+    {
+      "label": "compact:empty",
+      "outcome": {
+        "return": {
+          "tasks_compacted": 0,
+          "logical_bytes_removed": 0
+        }
+      },
+      "transactions": [
+        "BEGIN IMMEDIATE",
+        "COMMIT"
+      ],
+      "native_update_calls": [],
+      "native_close": [
+        {
+          "transaction_open_before_native_close": false
+        }
+      ],
+      "before": [],
+      "after": []
+    },
+    {
+      "label": "compact:mixed",
+      "outcome": {
+        "return": {
+          "tasks_compacted": 2,
+          "logical_bytes_removed": 20772
+        }
+      },
+      "transactions": [
+        "BEGIN IMMEDIATE",
+        "COMMIT"
+      ],
+      "native_update_calls": [
+        {
+          "rowcount": 0
+        },
+        {
+          "rowcount": 1
+        },
+        {
+          "rowcount": 1
+        }
+      ],
+      "native_close": [
+        {
+          "transaction_open_before_native_close": false
+        }
+      ],
+      "before": [
+        {
+          "rowid": {
+            "value": 101,
+            "scalar_type": "int"
+          },
+          "task_id": {
+            "value": null,
+            "scalar_type": "NoneType"
+          },
+          "channel": {
+            "value": "email",
+            "scalar_type": "str"
+          },
+          "stable_message_identity": {
+            "value": "identity:101",
+            "scalar_type": "str"
+          },
+          "status": {
+            "value": "done",
+            "scalar_type": "str"
+          },
+          "owner": {
+            "value": "fixture-owner",
+            "scalar_type": "str"
+          },
+          "generation": {
+            "value": 3,
+            "scalar_type": "int"
+          },
+          "attempt_count": {
+            "value": 4,
+            "scalar_type": "int"
+          },
+          "lease_expires_at": {
+            "value": "2040-01-02",
+            "scalar_type": "str"
+          },
+          "available_at": {
+            "value": "2040-01-03",
+            "scalar_type": "str"
+          },
+          "input_json": {
+            "scalar_type": "str",
+            "utf8_bytes": 11247,
+            "sha256": "eacb7adc9f5d19de7694a85d82367492376252da1bb10d176a398cce477b44d8",
+            "input_compacted": null
+          },
+          "result_json": {
+            "value": "{\"sentinel\":\"result\"}",
+            "scalar_type": "str"
+          },
+          "error": {
+            "value": "preserve error sentinel",
+            "scalar_type": "str"
+          },
+          "created_at": {
+            "value": "2040-01-01 00:00:00",
+            "scalar_type": "str"
+          },
+          "updated_at": {
+            "value": "2040-01-01 00:00:00",
+            "scalar_type": "str"
+          }
+        },
+        {
+          "rowid": {
+            "value": 205,
+            "scalar_type": "int"
+          },
+          "task_id": {
+            "value": "a-done",
+            "scalar_type": "str"
+          },
+          "channel": {
+            "value": "email",
+            "scalar_type": "str"
+          },
+          "stable_message_identity": {
+            "value": "identity:205",
+            "scalar_type": "str"
+          },
+          "status": {
+            "value": "done",
+            "scalar_type": "str"
+          },
+          "owner": {
+            "value": "fixture-owner",
+            "scalar_type": "str"
+          },
+          "generation": {
+            "value": 3,
+            "scalar_type": "int"
+          },
+          "attempt_count": {
+            "value": 4,
+            "scalar_type": "int"
+          },
+          "lease_expires_at": {
+            "value": "2040-01-02",
+            "scalar_type": "str"
+          },
+          "available_at": {
+            "value": "2040-01-03",
+            "scalar_type": "str"
+          },
+          "input_json": {
+            "scalar_type": "str",
+            "utf8_bytes": 11244,
+            "sha256": "f3f4f2bfdacfb585b10fc14bafbf7c9a558948eab4acd03bceb5086b7c143656",
+            "input_compacted": null
+          },
+          "result_json": {
+            "value": "{\"sentinel\":\"result\"}",
+            "scalar_type": "str"
+          },
+          "error": {
+            "value": "preserve error sentinel",
+            "scalar_type": "str"
+          },
+          "created_at": {
+            "value": "2040-01-01 00:00:00",
+            "scalar_type": "str"
+          },
+          "updated_at": {
+            "value": "2040-01-01 00:00:00",
+            "scalar_type": "str"
+          }
+        },
+        {
+          "rowid": {
+            "value": 309,
+            "scalar_type": "int"
+          },
+          "task_id": {
+            "value": "b-done",
+            "scalar_type": "str"
+          },
+          "channel": {
+            "value": "email",
+            "scalar_type": "str"
+          },
+          "stable_message_identity": {
+            "value": "identity:309",
+            "scalar_type": "str"
+          },
+          "status": {
+            "value": "done",
+            "scalar_type": "str"
+          },
+          "owner": {
+            "value": "fixture-owner",
+            "scalar_type": "str"
+          },
+          "generation": {
+            "value": 3,
+            "scalar_type": "int"
+          },
+          "attempt_count": {
+            "value": 4,
+            "scalar_type": "int"
+          },
+          "lease_expires_at": {
+            "value": "2040-01-02",
+            "scalar_type": "str"
+          },
+          "available_at": {
+            "value": "2040-01-03",
+            "scalar_type": "str"
+          },
+          "input_json": {
+            "scalar_type": "str",
+            "utf8_bytes": 11244,
+            "sha256": "a30879a0d49f32d3bb04129e5283c3eb7e0b569e2ca27d6413239fb9710ff348",
+            "input_compacted": null
+          },
+          "result_json": {
+            "value": "{\"sentinel\":\"result\"}",
+            "scalar_type": "str"
+          },
+          "error": {
+            "value": "preserve error sentinel",
+            "scalar_type": "str"
+          },
+          "created_at": {
+            "value": "2040-01-01 00:00:00",
+            "scalar_type": "str"
+          },
+          "updated_at": {
+            "value": "2040-01-01 00:00:00",
+            "scalar_type": "str"
+          }
+        },
+        {
+          "rowid": {
+            "value": 411,
+            "scalar_type": "int"
+          },
+          "task_id": {
+            "value": "already",
+            "scalar_type": "str"
+          },
+          "channel": {
+            "value": "email",
+            "scalar_type": "str"
+          },
+          "stable_message_identity": {
+            "value": "identity:411",
+            "scalar_type": "str"
+          },
+          "status": {
+            "value": "done",
+            "scalar_type": "str"
+          },
+          "owner": {
+            "value": "fixture-owner",
+            "scalar_type": "str"
+          },
+          "generation": {
+            "value": 3,
+            "scalar_type": "int"
+          },
+          "attempt_count": {
+            "value": 4,
+            "scalar_type": "int"
+          },
+          "lease_expires_at": {
+            "value": "2040-01-02",
+            "scalar_type": "str"
+          },
+          "available_at": {
+            "value": "2040-01-03",
+            "scalar_type": "str"
+          },
+          "input_json": {
+            "scalar_type": "str",
+            "utf8_bytes": 47,
+            "sha256": "c1728d8ef47c1273b64d191f84f5f09502e14bda9d32553bf2c009b6763a712d",
+            "input_compacted": true
+          },
+          "result_json": {
+            "value": "{\"sentinel\":\"result\"}",
+            "scalar_type": "str"
+          },
+          "error": {
+            "value": "preserve error sentinel",
+            "scalar_type": "str"
+          },
+          "created_at": {
+            "value": "2040-01-01 00:00:00",
+            "scalar_type": "str"
+          },
+          "updated_at": {
+            "value": "2040-01-01 00:00:00",
+            "scalar_type": "str"
+          }
+        },
+        {
+          "rowid": {
+            "value": 513,
+            "scalar_type": "int"
+          },
+          "task_id": {
+            "value": "flag-one",
+            "scalar_type": "str"
+          },
+          "channel": {
+            "value": "email",
+            "scalar_type": "str"
+          },
+          "stable_message_identity": {
+            "value": "identity:513",
+            "scalar_type": "str"
+          },
+          "status": {
+            "value": "done",
+            "scalar_type": "str"
+          },
+          "owner": {
+            "value": "fixture-owner",
+            "scalar_type": "str"
+          },
+          "generation": {
+            "value": 3,
+            "scalar_type": "int"
+          },
+          "attempt_count": {
+            "value": 4,
+            "scalar_type": "int"
+          },
+          "lease_expires_at": {
+            "value": "2040-01-02",
+            "scalar_type": "str"
+          },
+          "available_at": {
+            "value": "2040-01-03",
+            "scalar_type": "str"
+          },
+          "input_json": {
+            "scalar_type": "str",
+            "utf8_bytes": 44,
+            "sha256": "4ca8d4577912aab56bdab311036b28234b60a7fb58dbe33f90658802525aab53",
+            "input_compacted": 1
+          },
+          "result_json": {
+            "value": "{\"sentinel\":\"result\"}",
+            "scalar_type": "str"
+          },
+          "error": {
+            "value": "preserve error sentinel",
+            "scalar_type": "str"
+          },
+          "created_at": {
+            "value": "2040-01-01 00:00:00",
+            "scalar_type": "str"
+          },
+          "updated_at": {
+            "value": "2040-01-01 00:00:00",
+            "scalar_type": "str"
+          }
+        },
+        {
+          "rowid": {
+            "value": 615,
+            "scalar_type": "int"
+          },
+          "task_id": {
+            "value": "failed",
+            "scalar_type": "str"
+          },
+          "channel": {
+            "value": "email",
+            "scalar_type": "str"
+          },
+          "stable_message_identity": {
+            "value": "identity:615",
+            "scalar_type": "str"
+          },
+          "status": {
+            "value": "failed",
+            "scalar_type": "str"
+          },
+          "owner": {
+            "value": "fixture-owner",
+            "scalar_type": "str"
+          },
+          "generation": {
+            "value": 3,
+            "scalar_type": "int"
+          },
+          "attempt_count": {
+            "value": 4,
+            "scalar_type": "int"
+          },
+          "lease_expires_at": {
+            "value": "2040-01-02",
+            "scalar_type": "str"
+          },
+          "available_at": {
+            "value": "2040-01-03",
+            "scalar_type": "str"
+          },
+          "input_json": {
+            "scalar_type": "str",
+            "utf8_bytes": 2,
+            "sha256": "44136fa355b3678a1146ad16f7e8649e94fb4fc21fe77e8310c060f61caaff8a",
+            "input_compacted": null
+          },
+          "result_json": {
+            "value": "{\"sentinel\":\"result\"}",
+            "scalar_type": "str"
+          },
+          "error": {
+            "value": "preserve error sentinel",
+            "scalar_type": "str"
+          },
+          "created_at": {
+            "value": "2040-01-01 00:00:00",
+            "scalar_type": "str"
+          },
+          "updated_at": {
+            "value": "2040-01-01 00:00:00",
+            "scalar_type": "str"
+          }
+        },
+        {
+          "rowid": {
+            "value": 717,
+            "scalar_type": "int"
+          },
+          "task_id": {
+            "value": "pending",
+            "scalar_type": "str"
+          },
+          "channel": {
+            "value": "email",
+            "scalar_type": "str"
+          },
+          "stable_message_identity": {
+            "value": "identity:717",
+            "scalar_type": "str"
+          },
+          "status": {
+            "value": "pending",
+            "scalar_type": "str"
+          },
+          "owner": {
+            "value": "fixture-owner",
+            "scalar_type": "str"
+          },
+          "generation": {
+            "value": 3,
+            "scalar_type": "int"
+          },
+          "attempt_count": {
+            "value": 4,
+            "scalar_type": "int"
+          },
+          "lease_expires_at": {
+            "value": "2040-01-02",
+            "scalar_type": "str"
+          },
+          "available_at": {
+            "value": "2040-01-03",
+            "scalar_type": "str"
+          },
+          "input_json": {
+            "scalar_type": "str",
+            "utf8_bytes": 2,
+            "sha256": "44136fa355b3678a1146ad16f7e8649e94fb4fc21fe77e8310c060f61caaff8a",
+            "input_compacted": null
+          },
+          "result_json": {
+            "value": "{\"sentinel\":\"result\"}",
+            "scalar_type": "str"
+          },
+          "error": {
+            "value": "preserve error sentinel",
+            "scalar_type": "str"
+          },
+          "created_at": {
+            "value": "2040-01-01 00:00:00",
+            "scalar_type": "str"
+          },
+          "updated_at": {
+            "value": "2040-01-01 00:00:00",
+            "scalar_type": "str"
+          }
+        },
+        {
+          "rowid": {
+            "value": 819,
+            "scalar_type": "int"
+          },
+          "task_id": {
+            "value": "running",
+            "scalar_type": "str"
+          },
+          "channel": {
+            "value": "email",
+            "scalar_type": "str"
+          },
+          "stable_message_identity": {
+            "value": "identity:819",
+            "scalar_type": "str"
+          },
+          "status": {
+            "value": "running",
+            "scalar_type": "str"
+          },
+          "owner": {
+            "value": "fixture-owner",
+            "scalar_type": "str"
+          },
+          "generation": {
+            "value": 3,
+            "scalar_type": "int"
+          },
+          "attempt_count": {
+            "value": 4,
+            "scalar_type": "int"
+          },
+          "lease_expires_at": {
+            "value": "2040-01-02",
+            "scalar_type": "str"
+          },
+          "available_at": {
+            "value": "2040-01-03",
+            "scalar_type": "str"
+          },
+          "input_json": {
+            "scalar_type": "str",
+            "utf8_bytes": 2,
+            "sha256": "44136fa355b3678a1146ad16f7e8649e94fb4fc21fe77e8310c060f61caaff8a",
+            "input_compacted": null
+          },
+          "result_json": {
+            "value": "{\"sentinel\":\"result\"}",
+            "scalar_type": "str"
+          },
+          "error": {
+            "value": "preserve error sentinel",
+            "scalar_type": "str"
+          },
+          "created_at": {
+            "value": "2040-01-01 00:00:00",
+            "scalar_type": "str"
+          },
+          "updated_at": {
+            "value": "2040-01-01 00:00:00",
+            "scalar_type": "str"
+          }
+        }
+      ],
+      "after": [
+        {
+          "rowid": {
+            "value": 101,
+            "scalar_type": "int"
+          },
+          "task_id": {
+            "value": null,
+            "scalar_type": "NoneType"
+          },
+          "channel": {
+            "value": "email",
+            "scalar_type": "str"
+          },
+          "stable_message_identity": {
+            "value": "identity:101",
+            "scalar_type": "str"
+          },
+          "status": {
+            "value": "done",
+            "scalar_type": "str"
+          },
+          "owner": {
+            "value": "fixture-owner",
+            "scalar_type": "str"
+          },
+          "generation": {
+            "value": 3,
+            "scalar_type": "int"
+          },
+          "attempt_count": {
+            "value": 4,
+            "scalar_type": "int"
+          },
+          "lease_expires_at": {
+            "value": "2040-01-02",
+            "scalar_type": "str"
+          },
+          "available_at": {
+            "value": "2040-01-03",
+            "scalar_type": "str"
+          },
+          "input_json": {
+            "scalar_type": "str",
+            "utf8_bytes": 11247,
+            "sha256": "eacb7adc9f5d19de7694a85d82367492376252da1bb10d176a398cce477b44d8",
+            "input_compacted": null
+          },
+          "result_json": {
+            "value": "{\"sentinel\":\"result\"}",
+            "scalar_type": "str"
+          },
+          "error": {
+            "value": "preserve error sentinel",
+            "scalar_type": "str"
+          },
+          "created_at": {
+            "value": "2040-01-01 00:00:00",
+            "scalar_type": "str"
+          },
+          "updated_at": {
+            "value": "2040-01-01 00:00:00",
+            "scalar_type": "str"
+          }
+        },
+        {
+          "rowid": {
+            "value": 205,
+            "scalar_type": "int"
+          },
+          "task_id": {
+            "value": "a-done",
+            "scalar_type": "str"
+          },
+          "channel": {
+            "value": "email",
+            "scalar_type": "str"
+          },
+          "stable_message_identity": {
+            "value": "identity:205",
+            "scalar_type": "str"
+          },
+          "status": {
+            "value": "done",
+            "scalar_type": "str"
+          },
+          "owner": {
+            "value": "fixture-owner",
+            "scalar_type": "str"
+          },
+          "generation": {
+            "value": 3,
+            "scalar_type": "int"
+          },
+          "attempt_count": {
+            "value": 4,
+            "scalar_type": "int"
+          },
+          "lease_expires_at": {
+            "value": "2040-01-02",
+            "scalar_type": "str"
+          },
+          "available_at": {
+            "value": "2040-01-03",
+            "scalar_type": "str"
+          },
+          "input_json": {
+            "scalar_type": "str",
+            "utf8_bytes": 858,
+            "sha256": "c589ce39bc5d6be23bd427458453fbfd1d9c2f928aee4394514bc4edd6cc7fda",
+            "input_compacted": true,
+            "compacted_provenance": {
+              "config_version": "fixture-v1",
+              "identity_sha256": "406234e57e14acd1a9a30b8927daecb13856f752cadec605e6f6c97c95784173",
+              "input_bytes": 11244,
+              "input_compacted": true,
+              "input_sha256": "f3f4f2bfdacfb585b10fc14bafbf7c9a558948eab4acd03bceb5086b7c143656",
+              "provider_locator": {
+                "account_id": "synthetic",
+                "folder": "INBOX",
+                "uid": 41,
+                "uidvalidity": 73
+              },
+              "scheduled_consumer_reference": {
+                "prompt_sha256": "b51d051bfd62b3e35e4da7c91ebf28008b8591bd05dc480b8abbef6d0f118e78",
+                "scheduled_task_id": 7,
+                "scheduled_task_run_id": 8,
+                "schema": "fixture-scheduled-v1",
+                "skill_materials": [
+                  {
+                    "content_sha256": "95ffe902337382b8f26fce2b5a34d4824105b0caa1e3b71b016a5f1a862dc974",
+                    "name": "fixture"
+                  }
+                ],
+                "skill_names": [
+                  "fixture"
+                ],
+                "skill_protocol_sha256": "75ad35fbecfe8766535433db5cf35428fe881df7166e95b8a3b96296b69558e6",
+                "skill_protocol_source": "fixture"
+              },
+              "stable_message_identity": "a",
+              "unsubscribe_candidates": []
+            }
+          },
+          "result_json": {
+            "value": "{\"sentinel\":\"result\"}",
+            "scalar_type": "str"
+          },
+          "error": {
+            "value": "preserve error sentinel",
+            "scalar_type": "str"
+          },
+          "created_at": {
+            "value": "2040-01-01 00:00:00",
+            "scalar_type": "str"
+          },
+          "updated_at": {
+            "value": "2040-01-01 00:00:00",
+            "scalar_type": "str"
+          }
+        },
+        {
+          "rowid": {
+            "value": 309,
+            "scalar_type": "int"
+          },
+          "task_id": {
+            "value": "b-done",
+            "scalar_type": "str"
+          },
+          "channel": {
+            "value": "email",
+            "scalar_type": "str"
+          },
+          "stable_message_identity": {
+            "value": "identity:309",
+            "scalar_type": "str"
+          },
+          "status": {
+            "value": "done",
+            "scalar_type": "str"
+          },
+          "owner": {
+            "value": "fixture-owner",
+            "scalar_type": "str"
+          },
+          "generation": {
+            "value": 3,
+            "scalar_type": "int"
+          },
+          "attempt_count": {
+            "value": 4,
+            "scalar_type": "int"
+          },
+          "lease_expires_at": {
+            "value": "2040-01-02",
+            "scalar_type": "str"
+          },
+          "available_at": {
+            "value": "2040-01-03",
+            "scalar_type": "str"
+          },
+          "input_json": {
+            "scalar_type": "str",
+            "utf8_bytes": 858,
+            "sha256": "3ca3dd1564757ee31758de5836365e4c4de3c683e6361ec0c902e4f8fb8bf3b0",
+            "input_compacted": true,
+            "compacted_provenance": {
+              "config_version": "fixture-v1",
+              "identity_sha256": "3b8ae287feead8741e7a662f2fc62827503d9173e8cb80b4c53f266b7ba9ac1c",
+              "input_bytes": 11244,
+              "input_compacted": true,
+              "input_sha256": "a30879a0d49f32d3bb04129e5283c3eb7e0b569e2ca27d6413239fb9710ff348",
+              "provider_locator": {
+                "account_id": "synthetic",
+                "folder": "INBOX",
+                "uid": 41,
+                "uidvalidity": 73
+              },
+              "scheduled_consumer_reference": {
+                "prompt_sha256": "b51d051bfd62b3e35e4da7c91ebf28008b8591bd05dc480b8abbef6d0f118e78",
+                "scheduled_task_id": 7,
+                "scheduled_task_run_id": 8,
+                "schema": "fixture-scheduled-v1",
+                "skill_materials": [
+                  {
+                    "content_sha256": "95ffe902337382b8f26fce2b5a34d4824105b0caa1e3b71b016a5f1a862dc974",
+                    "name": "fixture"
+                  }
+                ],
+                "skill_names": [
+                  "fixture"
+                ],
+                "skill_protocol_sha256": "75ad35fbecfe8766535433db5cf35428fe881df7166e95b8a3b96296b69558e6",
+                "skill_protocol_source": "fixture"
+              },
+              "stable_message_identity": "b",
+              "unsubscribe_candidates": []
+            }
+          },
+          "result_json": {
+            "value": "{\"sentinel\":\"result\"}",
+            "scalar_type": "str"
+          },
+          "error": {
+            "value": "preserve error sentinel",
+            "scalar_type": "str"
+          },
+          "created_at": {
+            "value": "2040-01-01 00:00:00",
+            "scalar_type": "str"
+          },
+          "updated_at": {
+            "value": "2040-01-01 00:00:00",
+            "scalar_type": "str"
+          }
+        },
+        {
+          "rowid": {
+            "value": 411,
+            "scalar_type": "int"
+          },
+          "task_id": {
+            "value": "already",
+            "scalar_type": "str"
+          },
+          "channel": {
+            "value": "email",
+            "scalar_type": "str"
+          },
+          "stable_message_identity": {
+            "value": "identity:411",
+            "scalar_type": "str"
+          },
+          "status": {
+            "value": "done",
+            "scalar_type": "str"
+          },
+          "owner": {
+            "value": "fixture-owner",
+            "scalar_type": "str"
+          },
+          "generation": {
+            "value": 3,
+            "scalar_type": "int"
+          },
+          "attempt_count": {
+            "value": 4,
+            "scalar_type": "int"
+          },
+          "lease_expires_at": {
+            "value": "2040-01-02",
+            "scalar_type": "str"
+          },
+          "available_at": {
+            "value": "2040-01-03",
+            "scalar_type": "str"
+          },
+          "input_json": {
+            "scalar_type": "str",
+            "utf8_bytes": 47,
+            "sha256": "c1728d8ef47c1273b64d191f84f5f09502e14bda9d32553bf2c009b6763a712d",
+            "input_compacted": true
+          },
+          "result_json": {
+            "value": "{\"sentinel\":\"result\"}",
+            "scalar_type": "str"
+          },
+          "error": {
+            "value": "preserve error sentinel",
+            "scalar_type": "str"
+          },
+          "created_at": {
+            "value": "2040-01-01 00:00:00",
+            "scalar_type": "str"
+          },
+          "updated_at": {
+            "value": "2040-01-01 00:00:00",
+            "scalar_type": "str"
+          }
+        },
+        {
+          "rowid": {
+            "value": 513,
+            "scalar_type": "int"
+          },
+          "task_id": {
+            "value": "flag-one",
+            "scalar_type": "str"
+          },
+          "channel": {
+            "value": "email",
+            "scalar_type": "str"
+          },
+          "stable_message_identity": {
+            "value": "identity:513",
+            "scalar_type": "str"
+          },
+          "status": {
+            "value": "done",
+            "scalar_type": "str"
+          },
+          "owner": {
+            "value": "fixture-owner",
+            "scalar_type": "str"
+          },
+          "generation": {
+            "value": 3,
+            "scalar_type": "int"
+          },
+          "attempt_count": {
+            "value": 4,
+            "scalar_type": "int"
+          },
+          "lease_expires_at": {
+            "value": "2040-01-02",
+            "scalar_type": "str"
+          },
+          "available_at": {
+            "value": "2040-01-03",
+            "scalar_type": "str"
+          },
+          "input_json": {
+            "scalar_type": "str",
+            "utf8_bytes": 44,
+            "sha256": "4ca8d4577912aab56bdab311036b28234b60a7fb58dbe33f90658802525aab53",
+            "input_compacted": 1
+          },
+          "result_json": {
+            "value": "{\"sentinel\":\"result\"}",
+            "scalar_type": "str"
+          },
+          "error": {
+            "value": "preserve error sentinel",
+            "scalar_type": "str"
+          },
+          "created_at": {
+            "value": "2040-01-01 00:00:00",
+            "scalar_type": "str"
+          },
+          "updated_at": {
+            "value": "2040-01-01 00:00:00",
+            "scalar_type": "str"
+          }
+        },
+        {
+          "rowid": {
+            "value": 615,
+            "scalar_type": "int"
+          },
+          "task_id": {
+            "value": "failed",
+            "scalar_type": "str"
+          },
+          "channel": {
+            "value": "email",
+            "scalar_type": "str"
+          },
+          "stable_message_identity": {
+            "value": "identity:615",
+            "scalar_type": "str"
+          },
+          "status": {
+            "value": "failed",
+            "scalar_type": "str"
+          },
+          "owner": {
+            "value": "fixture-owner",
+            "scalar_type": "str"
+          },
+          "generation": {
+            "value": 3,
+            "scalar_type": "int"
+          },
+          "attempt_count": {
+            "value": 4,
+            "scalar_type": "int"
+          },
+          "lease_expires_at": {
+            "value": "2040-01-02",
+            "scalar_type": "str"
+          },
+          "available_at": {
+            "value": "2040-01-03",
+            "scalar_type": "str"
+          },
+          "input_json": {
+            "scalar_type": "str",
+            "utf8_bytes": 2,
+            "sha256": "44136fa355b3678a1146ad16f7e8649e94fb4fc21fe77e8310c060f61caaff8a",
+            "input_compacted": null
+          },
+          "result_json": {
+            "value": "{\"sentinel\":\"result\"}",
+            "scalar_type": "str"
+          },
+          "error": {
+            "value": "preserve error sentinel",
+            "scalar_type": "str"
+          },
+          "created_at": {
+            "value": "2040-01-01 00:00:00",
+            "scalar_type": "str"
+          },
+          "updated_at": {
+            "value": "2040-01-01 00:00:00",
+            "scalar_type": "str"
+          }
+        },
+        {
+          "rowid": {
+            "value": 717,
+            "scalar_type": "int"
+          },
+          "task_id": {
+            "value": "pending",
+            "scalar_type": "str"
+          },
+          "channel": {
+            "value": "email",
+            "scalar_type": "str"
+          },
+          "stable_message_identity": {
+            "value": "identity:717",
+            "scalar_type": "str"
+          },
+          "status": {
+            "value": "pending",
+            "scalar_type": "str"
+          },
+          "owner": {
+            "value": "fixture-owner",
+            "scalar_type": "str"
+          },
+          "generation": {
+            "value": 3,
+            "scalar_type": "int"
+          },
+          "attempt_count": {
+            "value": 4,
+            "scalar_type": "int"
+          },
+          "lease_expires_at": {
+            "value": "2040-01-02",
+            "scalar_type": "str"
+          },
+          "available_at": {
+            "value": "2040-01-03",
+            "scalar_type": "str"
+          },
+          "input_json": {
+            "scalar_type": "str",
+            "utf8_bytes": 2,
+            "sha256": "44136fa355b3678a1146ad16f7e8649e94fb4fc21fe77e8310c060f61caaff8a",
+            "input_compacted": null
+          },
+          "result_json": {
+            "value": "{\"sentinel\":\"result\"}",
+            "scalar_type": "str"
+          },
+          "error": {
+            "value": "preserve error sentinel",
+            "scalar_type": "str"
+          },
+          "created_at": {
+            "value": "2040-01-01 00:00:00",
+            "scalar_type": "str"
+          },
+          "updated_at": {
+            "value": "2040-01-01 00:00:00",
+            "scalar_type": "str"
+          }
+        },
+        {
+          "rowid": {
+            "value": 819,
+            "scalar_type": "int"
+          },
+          "task_id": {
+            "value": "running",
+            "scalar_type": "str"
+          },
+          "channel": {
+            "value": "email",
+            "scalar_type": "str"
+          },
+          "stable_message_identity": {
+            "value": "identity:819",
+            "scalar_type": "str"
+          },
+          "status": {
+            "value": "running",
+            "scalar_type": "str"
+          },
+          "owner": {
+            "value": "fixture-owner",
+            "scalar_type": "str"
+          },
+          "generation": {
+            "value": 3,
+            "scalar_type": "int"
+          },
+          "attempt_count": {
+            "value": 4,
+            "scalar_type": "int"
+          },
+          "lease_expires_at": {
+            "value": "2040-01-02",
+            "scalar_type": "str"
+          },
+          "available_at": {
+            "value": "2040-01-03",
+            "scalar_type": "str"
+          },
+          "input_json": {
+            "scalar_type": "str",
+            "utf8_bytes": 2,
+            "sha256": "44136fa355b3678a1146ad16f7e8649e94fb4fc21fe77e8310c060f61caaff8a",
+            "input_compacted": null
+          },
+          "result_json": {
+            "value": "{\"sentinel\":\"result\"}",
+            "scalar_type": "str"
+          },
+          "error": {
+            "value": "preserve error sentinel",
+            "scalar_type": "str"
+          },
+          "created_at": {
+            "value": "2040-01-01 00:00:00",
+            "scalar_type": "str"
+          },
+          "updated_at": {
+            "value": "2040-01-01 00:00:00",
+            "scalar_type": "str"
+          }
+        }
+      ]
+    },
+    {
+      "label": "compact:idempotent",
+      "outcome": {
+        "return": {
+          "tasks_compacted": 0,
+          "logical_bytes_removed": 0
+        }
+      },
+      "transactions": [
+        "BEGIN IMMEDIATE",
+        "COMMIT"
+      ],
+      "native_update_calls": [
+        {
+          "rowcount": 0
+        }
+      ],
+      "native_close": [
+        {
+          "transaction_open_before_native_close": false
+        }
+      ],
+      "before": [
+        {
+          "rowid": {
+            "value": 101,
+            "scalar_type": "int"
+          },
+          "task_id": {
+            "value": null,
+            "scalar_type": "NoneType"
+          },
+          "channel": {
+            "value": "email",
+            "scalar_type": "str"
+          },
+          "stable_message_identity": {
+            "value": "identity:101",
+            "scalar_type": "str"
+          },
+          "status": {
+            "value": "done",
+            "scalar_type": "str"
+          },
+          "owner": {
+            "value": "fixture-owner",
+            "scalar_type": "str"
+          },
+          "generation": {
+            "value": 3,
+            "scalar_type": "int"
+          },
+          "attempt_count": {
+            "value": 4,
+            "scalar_type": "int"
+          },
+          "lease_expires_at": {
+            "value": "2040-01-02",
+            "scalar_type": "str"
+          },
+          "available_at": {
+            "value": "2040-01-03",
+            "scalar_type": "str"
+          },
+          "input_json": {
+            "scalar_type": "str",
+            "utf8_bytes": 11247,
+            "sha256": "eacb7adc9f5d19de7694a85d82367492376252da1bb10d176a398cce477b44d8",
+            "input_compacted": null
+          },
+          "result_json": {
+            "value": "{\"sentinel\":\"result\"}",
+            "scalar_type": "str"
+          },
+          "error": {
+            "value": "preserve error sentinel",
+            "scalar_type": "str"
+          },
+          "created_at": {
+            "value": "2040-01-01 00:00:00",
+            "scalar_type": "str"
+          },
+          "updated_at": {
+            "value": "2040-01-01 00:00:00",
+            "scalar_type": "str"
+          }
+        },
+        {
+          "rowid": {
+            "value": 205,
+            "scalar_type": "int"
+          },
+          "task_id": {
+            "value": "a-done",
+            "scalar_type": "str"
+          },
+          "channel": {
+            "value": "email",
+            "scalar_type": "str"
+          },
+          "stable_message_identity": {
+            "value": "identity:205",
+            "scalar_type": "str"
+          },
+          "status": {
+            "value": "done",
+            "scalar_type": "str"
+          },
+          "owner": {
+            "value": "fixture-owner",
+            "scalar_type": "str"
+          },
+          "generation": {
+            "value": 3,
+            "scalar_type": "int"
+          },
+          "attempt_count": {
+            "value": 4,
+            "scalar_type": "int"
+          },
+          "lease_expires_at": {
+            "value": "2040-01-02",
+            "scalar_type": "str"
+          },
+          "available_at": {
+            "value": "2040-01-03",
+            "scalar_type": "str"
+          },
+          "input_json": {
+            "scalar_type": "str",
+            "utf8_bytes": 858,
+            "sha256": "c589ce39bc5d6be23bd427458453fbfd1d9c2f928aee4394514bc4edd6cc7fda",
+            "input_compacted": true,
+            "compacted_provenance": {
+              "config_version": "fixture-v1",
+              "identity_sha256": "406234e57e14acd1a9a30b8927daecb13856f752cadec605e6f6c97c95784173",
+              "input_bytes": 11244,
+              "input_compacted": true,
+              "input_sha256": "f3f4f2bfdacfb585b10fc14bafbf7c9a558948eab4acd03bceb5086b7c143656",
+              "provider_locator": {
+                "account_id": "synthetic",
+                "folder": "INBOX",
+                "uid": 41,
+                "uidvalidity": 73
+              },
+              "scheduled_consumer_reference": {
+                "prompt_sha256": "b51d051bfd62b3e35e4da7c91ebf28008b8591bd05dc480b8abbef6d0f118e78",
+                "scheduled_task_id": 7,
+                "scheduled_task_run_id": 8,
+                "schema": "fixture-scheduled-v1",
+                "skill_materials": [
+                  {
+                    "content_sha256": "95ffe902337382b8f26fce2b5a34d4824105b0caa1e3b71b016a5f1a862dc974",
+                    "name": "fixture"
+                  }
+                ],
+                "skill_names": [
+                  "fixture"
+                ],
+                "skill_protocol_sha256": "75ad35fbecfe8766535433db5cf35428fe881df7166e95b8a3b96296b69558e6",
+                "skill_protocol_source": "fixture"
+              },
+              "stable_message_identity": "a",
+              "unsubscribe_candidates": []
+            }
+          },
+          "result_json": {
+            "value": "{\"sentinel\":\"result\"}",
+            "scalar_type": "str"
+          },
+          "error": {
+            "value": "preserve error sentinel",
+            "scalar_type": "str"
+          },
+          "created_at": {
+            "value": "2040-01-01 00:00:00",
+            "scalar_type": "str"
+          },
+          "updated_at": {
+            "value": "2040-01-01 00:00:00",
+            "scalar_type": "str"
+          }
+        },
+        {
+          "rowid": {
+            "value": 309,
+            "scalar_type": "int"
+          },
+          "task_id": {
+            "value": "b-done",
+            "scalar_type": "str"
+          },
+          "channel": {
+            "value": "email",
+            "scalar_type": "str"
+          },
+          "stable_message_identity": {
+            "value": "identity:309",
+            "scalar_type": "str"
+          },
+          "status": {
+            "value": "done",
+            "scalar_type": "str"
+          },
+          "owner": {
+            "value": "fixture-owner",
+            "scalar_type": "str"
+          },
+          "generation": {
+            "value": 3,
+            "scalar_type": "int"
+          },
+          "attempt_count": {
+            "value": 4,
+            "scalar_type": "int"
+          },
+          "lease_expires_at": {
+            "value": "2040-01-02",
+            "scalar_type": "str"
+          },
+          "available_at": {
+            "value": "2040-01-03",
+            "scalar_type": "str"
+          },
+          "input_json": {
+            "scalar_type": "str",
+            "utf8_bytes": 858,
+            "sha256": "3ca3dd1564757ee31758de5836365e4c4de3c683e6361ec0c902e4f8fb8bf3b0",
+            "input_compacted": true,
+            "compacted_provenance": {
+              "config_version": "fixture-v1",
+              "identity_sha256": "3b8ae287feead8741e7a662f2fc62827503d9173e8cb80b4c53f266b7ba9ac1c",
+              "input_bytes": 11244,
+              "input_compacted": true,
+              "input_sha256": "a30879a0d49f32d3bb04129e5283c3eb7e0b569e2ca27d6413239fb9710ff348",
+              "provider_locator": {
+                "account_id": "synthetic",
+                "folder": "INBOX",
+                "uid": 41,
+                "uidvalidity": 73
+              },
+              "scheduled_consumer_reference": {
+                "prompt_sha256": "b51d051bfd62b3e35e4da7c91ebf28008b8591bd05dc480b8abbef6d0f118e78",
+                "scheduled_task_id": 7,
+                "scheduled_task_run_id": 8,
+                "schema": "fixture-scheduled-v1",
+                "skill_materials": [
+                  {
+                    "content_sha256": "95ffe902337382b8f26fce2b5a34d4824105b0caa1e3b71b016a5f1a862dc974",
+                    "name": "fixture"
+                  }
+                ],
+                "skill_names": [
+                  "fixture"
+                ],
+                "skill_protocol_sha256": "75ad35fbecfe8766535433db5cf35428fe881df7166e95b8a3b96296b69558e6",
+                "skill_protocol_source": "fixture"
+              },
+              "stable_message_identity": "b",
+              "unsubscribe_candidates": []
+            }
+          },
+          "result_json": {
+            "value": "{\"sentinel\":\"result\"}",
+            "scalar_type": "str"
+          },
+          "error": {
+            "value": "preserve error sentinel",
+            "scalar_type": "str"
+          },
+          "created_at": {
+            "value": "2040-01-01 00:00:00",
+            "scalar_type": "str"
+          },
+          "updated_at": {
+            "value": "2040-01-01 00:00:00",
+            "scalar_type": "str"
+          }
+        },
+        {
+          "rowid": {
+            "value": 411,
+            "scalar_type": "int"
+          },
+          "task_id": {
+            "value": "already",
+            "scalar_type": "str"
+          },
+          "channel": {
+            "value": "email",
+            "scalar_type": "str"
+          },
+          "stable_message_identity": {
+            "value": "identity:411",
+            "scalar_type": "str"
+          },
+          "status": {
+            "value": "done",
+            "scalar_type": "str"
+          },
+          "owner": {
+            "value": "fixture-owner",
+            "scalar_type": "str"
+          },
+          "generation": {
+            "value": 3,
+            "scalar_type": "int"
+          },
+          "attempt_count": {
+            "value": 4,
+            "scalar_type": "int"
+          },
+          "lease_expires_at": {
+            "value": "2040-01-02",
+            "scalar_type": "str"
+          },
+          "available_at": {
+            "value": "2040-01-03",
+            "scalar_type": "str"
+          },
+          "input_json": {
+            "scalar_type": "str",
+            "utf8_bytes": 47,
+            "sha256": "c1728d8ef47c1273b64d191f84f5f09502e14bda9d32553bf2c009b6763a712d",
+            "input_compacted": true
+          },
+          "result_json": {
+            "value": "{\"sentinel\":\"result\"}",
+            "scalar_type": "str"
+          },
+          "error": {
+            "value": "preserve error sentinel",
+            "scalar_type": "str"
+          },
+          "created_at": {
+            "value": "2040-01-01 00:00:00",
+            "scalar_type": "str"
+          },
+          "updated_at": {
+            "value": "2040-01-01 00:00:00",
+            "scalar_type": "str"
+          }
+        },
+        {
+          "rowid": {
+            "value": 513,
+            "scalar_type": "int"
+          },
+          "task_id": {
+            "value": "flag-one",
+            "scalar_type": "str"
+          },
+          "channel": {
+            "value": "email",
+            "scalar_type": "str"
+          },
+          "stable_message_identity": {
+            "value": "identity:513",
+            "scalar_type": "str"
+          },
+          "status": {
+            "value": "done",
+            "scalar_type": "str"
+          },
+          "owner": {
+            "value": "fixture-owner",
+            "scalar_type": "str"
+          },
+          "generation": {
+            "value": 3,
+            "scalar_type": "int"
+          },
+          "attempt_count": {
+            "value": 4,
+            "scalar_type": "int"
+          },
+          "lease_expires_at": {
+            "value": "2040-01-02",
+            "scalar_type": "str"
+          },
+          "available_at": {
+            "value": "2040-01-03",
+            "scalar_type": "str"
+          },
+          "input_json": {
+            "scalar_type": "str",
+            "utf8_bytes": 44,
+            "sha256": "4ca8d4577912aab56bdab311036b28234b60a7fb58dbe33f90658802525aab53",
+            "input_compacted": 1
+          },
+          "result_json": {
+            "value": "{\"sentinel\":\"result\"}",
+            "scalar_type": "str"
+          },
+          "error": {
+            "value": "preserve error sentinel",
+            "scalar_type": "str"
+          },
+          "created_at": {
+            "value": "2040-01-01 00:00:00",
+            "scalar_type": "str"
+          },
+          "updated_at": {
+            "value": "2040-01-01 00:00:00",
+            "scalar_type": "str"
+          }
+        },
+        {
+          "rowid": {
+            "value": 615,
+            "scalar_type": "int"
+          },
+          "task_id": {
+            "value": "failed",
+            "scalar_type": "str"
+          },
+          "channel": {
+            "value": "email",
+            "scalar_type": "str"
+          },
+          "stable_message_identity": {
+            "value": "identity:615",
+            "scalar_type": "str"
+          },
+          "status": {
+            "value": "failed",
+            "scalar_type": "str"
+          },
+          "owner": {
+            "value": "fixture-owner",
+            "scalar_type": "str"
+          },
+          "generation": {
+            "value": 3,
+            "scalar_type": "int"
+          },
+          "attempt_count": {
+            "value": 4,
+            "scalar_type": "int"
+          },
+          "lease_expires_at": {
+            "value": "2040-01-02",
+            "scalar_type": "str"
+          },
+          "available_at": {
+            "value": "2040-01-03",
+            "scalar_type": "str"
+          },
+          "input_json": {
+            "scalar_type": "str",
+            "utf8_bytes": 2,
+            "sha256": "44136fa355b3678a1146ad16f7e8649e94fb4fc21fe77e8310c060f61caaff8a",
+            "input_compacted": null
+          },
+          "result_json": {
+            "value": "{\"sentinel\":\"result\"}",
+            "scalar_type": "str"
+          },
+          "error": {
+            "value": "preserve error sentinel",
+            "scalar_type": "str"
+          },
+          "created_at": {
+            "value": "2040-01-01 00:00:00",
+            "scalar_type": "str"
+          },
+          "updated_at": {
+            "value": "2040-01-01 00:00:00",
+            "scalar_type": "str"
+          }
+        },
+        {
+          "rowid": {
+            "value": 717,
+            "scalar_type": "int"
+          },
+          "task_id": {
+            "value": "pending",
+            "scalar_type": "str"
+          },
+          "channel": {
+            "value": "email",
+            "scalar_type": "str"
+          },
+          "stable_message_identity": {
+            "value": "identity:717",
+            "scalar_type": "str"
+          },
+          "status": {
+            "value": "pending",
+            "scalar_type": "str"
+          },
+          "owner": {
+            "value": "fixture-owner",
+            "scalar_type": "str"
+          },
+          "generation": {
+            "value": 3,
+            "scalar_type": "int"
+          },
+          "attempt_count": {
+            "value": 4,
+            "scalar_type": "int"
+          },
+          "lease_expires_at": {
+            "value": "2040-01-02",
+            "scalar_type": "str"
+          },
+          "available_at": {
+            "value": "2040-01-03",
+            "scalar_type": "str"
+          },
+          "input_json": {
+            "scalar_type": "str",
+            "utf8_bytes": 2,
+            "sha256": "44136fa355b3678a1146ad16f7e8649e94fb4fc21fe77e8310c060f61caaff8a",
+            "input_compacted": null
+          },
+          "result_json": {
+            "value": "{\"sentinel\":\"result\"}",
+            "scalar_type": "str"
+          },
+          "error": {
+            "value": "preserve error sentinel",
+            "scalar_type": "str"
+          },
+          "created_at": {
+            "value": "2040-01-01 00:00:00",
+            "scalar_type": "str"
+          },
+          "updated_at": {
+            "value": "2040-01-01 00:00:00",
+            "scalar_type": "str"
+          }
+        },
+        {
+          "rowid": {
+            "value": 819,
+            "scalar_type": "int"
+          },
+          "task_id": {
+            "value": "running",
+            "scalar_type": "str"
+          },
+          "channel": {
+            "value": "email",
+            "scalar_type": "str"
+          },
+          "stable_message_identity": {
+            "value": "identity:819",
+            "scalar_type": "str"
+          },
+          "status": {
+            "value": "running",
+            "scalar_type": "str"
+          },
+          "owner": {
+            "value": "fixture-owner",
+            "scalar_type": "str"
+          },
+          "generation": {
+            "value": 3,
+            "scalar_type": "int"
+          },
+          "attempt_count": {
+            "value": 4,
+            "scalar_type": "int"
+          },
+          "lease_expires_at": {
+            "value": "2040-01-02",
+            "scalar_type": "str"
+          },
+          "available_at": {
+            "value": "2040-01-03",
+            "scalar_type": "str"
+          },
+          "input_json": {
+            "scalar_type": "str",
+            "utf8_bytes": 2,
+            "sha256": "44136fa355b3678a1146ad16f7e8649e94fb4fc21fe77e8310c060f61caaff8a",
+            "input_compacted": null
+          },
+          "result_json": {
+            "value": "{\"sentinel\":\"result\"}",
+            "scalar_type": "str"
+          },
+          "error": {
+            "value": "preserve error sentinel",
+            "scalar_type": "str"
+          },
+          "created_at": {
+            "value": "2040-01-01 00:00:00",
+            "scalar_type": "str"
+          },
+          "updated_at": {
+            "value": "2040-01-01 00:00:00",
+            "scalar_type": "str"
+          }
+        }
+      ],
+      "after": [
+        {
+          "rowid": {
+            "value": 101,
+            "scalar_type": "int"
+          },
+          "task_id": {
+            "value": null,
+            "scalar_type": "NoneType"
+          },
+          "channel": {
+            "value": "email",
+            "scalar_type": "str"
+          },
+          "stable_message_identity": {
+            "value": "identity:101",
+            "scalar_type": "str"
+          },
+          "status": {
+            "value": "done",
+            "scalar_type": "str"
+          },
+          "owner": {
+            "value": "fixture-owner",
+            "scalar_type": "str"
+          },
+          "generation": {
+            "value": 3,
+            "scalar_type": "int"
+          },
+          "attempt_count": {
+            "value": 4,
+            "scalar_type": "int"
+          },
+          "lease_expires_at": {
+            "value": "2040-01-02",
+            "scalar_type": "str"
+          },
+          "available_at": {
+            "value": "2040-01-03",
+            "scalar_type": "str"
+          },
+          "input_json": {
+            "scalar_type": "str",
+            "utf8_bytes": 11247,
+            "sha256": "eacb7adc9f5d19de7694a85d82367492376252da1bb10d176a398cce477b44d8",
+            "input_compacted": null
+          },
+          "result_json": {
+            "value": "{\"sentinel\":\"result\"}",
+            "scalar_type": "str"
+          },
+          "error": {
+            "value": "preserve error sentinel",
+            "scalar_type": "str"
+          },
+          "created_at": {
+            "value": "2040-01-01 00:00:00",
+            "scalar_type": "str"
+          },
+          "updated_at": {
+            "value": "2040-01-01 00:00:00",
+            "scalar_type": "str"
+          }
+        },
+        {
+          "rowid": {
+            "value": 205,
+            "scalar_type": "int"
+          },
+          "task_id": {
+            "value": "a-done",
+            "scalar_type": "str"
+          },
+          "channel": {
+            "value": "email",
+            "scalar_type": "str"
+          },
+          "stable_message_identity": {
+            "value": "identity:205",
+            "scalar_type": "str"
+          },
+          "status": {
+            "value": "done",
+            "scalar_type": "str"
+          },
+          "owner": {
+            "value": "fixture-owner",
+            "scalar_type": "str"
+          },
+          "generation": {
+            "value": 3,
+            "scalar_type": "int"
+          },
+          "attempt_count": {
+            "value": 4,
+            "scalar_type": "int"
+          },
+          "lease_expires_at": {
+            "value": "2040-01-02",
+            "scalar_type": "str"
+          },
+          "available_at": {
+            "value": "2040-01-03",
+            "scalar_type": "str"
+          },
+          "input_json": {
+            "scalar_type": "str",
+            "utf8_bytes": 858,
+            "sha256": "c589ce39bc5d6be23bd427458453fbfd1d9c2f928aee4394514bc4edd6cc7fda",
+            "input_compacted": true,
+            "compacted_provenance": {
+              "config_version": "fixture-v1",
+              "identity_sha256": "406234e57e14acd1a9a30b8927daecb13856f752cadec605e6f6c97c95784173",
+              "input_bytes": 11244,
+              "input_compacted": true,
+              "input_sha256": "f3f4f2bfdacfb585b10fc14bafbf7c9a558948eab4acd03bceb5086b7c143656",
+              "provider_locator": {
+                "account_id": "synthetic",
+                "folder": "INBOX",
+                "uid": 41,
+                "uidvalidity": 73
+              },
+              "scheduled_consumer_reference": {
+                "prompt_sha256": "b51d051bfd62b3e35e4da7c91ebf28008b8591bd05dc480b8abbef6d0f118e78",
+                "scheduled_task_id": 7,
+                "scheduled_task_run_id": 8,
+                "schema": "fixture-scheduled-v1",
+                "skill_materials": [
+                  {
+                    "content_sha256": "95ffe902337382b8f26fce2b5a34d4824105b0caa1e3b71b016a5f1a862dc974",
+                    "name": "fixture"
+                  }
+                ],
+                "skill_names": [
+                  "fixture"
+                ],
+                "skill_protocol_sha256": "75ad35fbecfe8766535433db5cf35428fe881df7166e95b8a3b96296b69558e6",
+                "skill_protocol_source": "fixture"
+              },
+              "stable_message_identity": "a",
+              "unsubscribe_candidates": []
+            }
+          },
+          "result_json": {
+            "value": "{\"sentinel\":\"result\"}",
+            "scalar_type": "str"
+          },
+          "error": {
+            "value": "preserve error sentinel",
+            "scalar_type": "str"
+          },
+          "created_at": {
+            "value": "2040-01-01 00:00:00",
+            "scalar_type": "str"
+          },
+          "updated_at": {
+            "value": "2040-01-01 00:00:00",
+            "scalar_type": "str"
+          }
+        },
+        {
+          "rowid": {
+            "value": 309,
+            "scalar_type": "int"
+          },
+          "task_id": {
+            "value": "b-done",
+            "scalar_type": "str"
+          },
+          "channel": {
+            "value": "email",
+            "scalar_type": "str"
+          },
+          "stable_message_identity": {
+            "value": "identity:309",
+            "scalar_type": "str"
+          },
+          "status": {
+            "value": "done",
+            "scalar_type": "str"
+          },
+          "owner": {
+            "value": "fixture-owner",
+            "scalar_type": "str"
+          },
+          "generation": {
+            "value": 3,
+            "scalar_type": "int"
+          },
+          "attempt_count": {
+            "value": 4,
+            "scalar_type": "int"
+          },
+          "lease_expires_at": {
+            "value": "2040-01-02",
+            "scalar_type": "str"
+          },
+          "available_at": {
+            "value": "2040-01-03",
+            "scalar_type": "str"
+          },
+          "input_json": {
+            "scalar_type": "str",
+            "utf8_bytes": 858,
+            "sha256": "3ca3dd1564757ee31758de5836365e4c4de3c683e6361ec0c902e4f8fb8bf3b0",
+            "input_compacted": true,
+            "compacted_provenance": {
+              "config_version": "fixture-v1",
+              "identity_sha256": "3b8ae287feead8741e7a662f2fc62827503d9173e8cb80b4c53f266b7ba9ac1c",
+              "input_bytes": 11244,
+              "input_compacted": true,
+              "input_sha256": "a30879a0d49f32d3bb04129e5283c3eb7e0b569e2ca27d6413239fb9710ff348",
+              "provider_locator": {
+                "account_id": "synthetic",
+                "folder": "INBOX",
+                "uid": 41,
+                "uidvalidity": 73
+              },
+              "scheduled_consumer_reference": {
+                "prompt_sha256": "b51d051bfd62b3e35e4da7c91ebf28008b8591bd05dc480b8abbef6d0f118e78",
+                "scheduled_task_id": 7,
+                "scheduled_task_run_id": 8,
+                "schema": "fixture-scheduled-v1",
+                "skill_materials": [
+                  {
+                    "content_sha256": "95ffe902337382b8f26fce2b5a34d4824105b0caa1e3b71b016a5f1a862dc974",
+                    "name": "fixture"
+                  }
+                ],
+                "skill_names": [
+                  "fixture"
+                ],
+                "skill_protocol_sha256": "75ad35fbecfe8766535433db5cf35428fe881df7166e95b8a3b96296b69558e6",
+                "skill_protocol_source": "fixture"
+              },
+              "stable_message_identity": "b",
+              "unsubscribe_candidates": []
+            }
+          },
+          "result_json": {
+            "value": "{\"sentinel\":\"result\"}",
+            "scalar_type": "str"
+          },
+          "error": {
+            "value": "preserve error sentinel",
+            "scalar_type": "str"
+          },
+          "created_at": {
+            "value": "2040-01-01 00:00:00",
+            "scalar_type": "str"
+          },
+          "updated_at": {
+            "value": "2040-01-01 00:00:00",
+            "scalar_type": "str"
+          }
+        },
+        {
+          "rowid": {
+            "value": 411,
+            "scalar_type": "int"
+          },
+          "task_id": {
+            "value": "already",
+            "scalar_type": "str"
+          },
+          "channel": {
+            "value": "email",
+            "scalar_type": "str"
+          },
+          "stable_message_identity": {
+            "value": "identity:411",
+            "scalar_type": "str"
+          },
+          "status": {
+            "value": "done",
+            "scalar_type": "str"
+          },
+          "owner": {
+            "value": "fixture-owner",
+            "scalar_type": "str"
+          },
+          "generation": {
+            "value": 3,
+            "scalar_type": "int"
+          },
+          "attempt_count": {
+            "value": 4,
+            "scalar_type": "int"
+          },
+          "lease_expires_at": {
+            "value": "2040-01-02",
+            "scalar_type": "str"
+          },
+          "available_at": {
+            "value": "2040-01-03",
+            "scalar_type": "str"
+          },
+          "input_json": {
+            "scalar_type": "str",
+            "utf8_bytes": 47,
+            "sha256": "c1728d8ef47c1273b64d191f84f5f09502e14bda9d32553bf2c009b6763a712d",
+            "input_compacted": true
+          },
+          "result_json": {
+            "value": "{\"sentinel\":\"result\"}",
+            "scalar_type": "str"
+          },
+          "error": {
+            "value": "preserve error sentinel",
+            "scalar_type": "str"
+          },
+          "created_at": {
+            "value": "2040-01-01 00:00:00",
+            "scalar_type": "str"
+          },
+          "updated_at": {
+            "value": "2040-01-01 00:00:00",
+            "scalar_type": "str"
+          }
+        },
+        {
+          "rowid": {
+            "value": 513,
+            "scalar_type": "int"
+          },
+          "task_id": {
+            "value": "flag-one",
+            "scalar_type": "str"
+          },
+          "channel": {
+            "value": "email",
+            "scalar_type": "str"
+          },
+          "stable_message_identity": {
+            "value": "identity:513",
+            "scalar_type": "str"
+          },
+          "status": {
+            "value": "done",
+            "scalar_type": "str"
+          },
+          "owner": {
+            "value": "fixture-owner",
+            "scalar_type": "str"
+          },
+          "generation": {
+            "value": 3,
+            "scalar_type": "int"
+          },
+          "attempt_count": {
+            "value": 4,
+            "scalar_type": "int"
+          },
+          "lease_expires_at": {
+            "value": "2040-01-02",
+            "scalar_type": "str"
+          },
+          "available_at": {
+            "value": "2040-01-03",
+            "scalar_type": "str"
+          },
+          "input_json": {
+            "scalar_type": "str",
+            "utf8_bytes": 44,
+            "sha256": "4ca8d4577912aab56bdab311036b28234b60a7fb58dbe33f90658802525aab53",
+            "input_compacted": 1
+          },
+          "result_json": {
+            "value": "{\"sentinel\":\"result\"}",
+            "scalar_type": "str"
+          },
+          "error": {
+            "value": "preserve error sentinel",
+            "scalar_type": "str"
+          },
+          "created_at": {
+            "value": "2040-01-01 00:00:00",
+            "scalar_type": "str"
+          },
+          "updated_at": {
+            "value": "2040-01-01 00:00:00",
+            "scalar_type": "str"
+          }
+        },
+        {
+          "rowid": {
+            "value": 615,
+            "scalar_type": "int"
+          },
+          "task_id": {
+            "value": "failed",
+            "scalar_type": "str"
+          },
+          "channel": {
+            "value": "email",
+            "scalar_type": "str"
+          },
+          "stable_message_identity": {
+            "value": "identity:615",
+            "scalar_type": "str"
+          },
+          "status": {
+            "value": "failed",
+            "scalar_type": "str"
+          },
+          "owner": {
+            "value": "fixture-owner",
+            "scalar_type": "str"
+          },
+          "generation": {
+            "value": 3,
+            "scalar_type": "int"
+          },
+          "attempt_count": {
+            "value": 4,
+            "scalar_type": "int"
+          },
+          "lease_expires_at": {
+            "value": "2040-01-02",
+            "scalar_type": "str"
+          },
+          "available_at": {
+            "value": "2040-01-03",
+            "scalar_type": "str"
+          },
+          "input_json": {
+            "scalar_type": "str",
+            "utf8_bytes": 2,
+            "sha256": "44136fa355b3678a1146ad16f7e8649e94fb4fc21fe77e8310c060f61caaff8a",
+            "input_compacted": null
+          },
+          "result_json": {
+            "value": "{\"sentinel\":\"result\"}",
+            "scalar_type": "str"
+          },
+          "error": {
+            "value": "preserve error sentinel",
+            "scalar_type": "str"
+          },
+          "created_at": {
+            "value": "2040-01-01 00:00:00",
+            "scalar_type": "str"
+          },
+          "updated_at": {
+            "value": "2040-01-01 00:00:00",
+            "scalar_type": "str"
+          }
+        },
+        {
+          "rowid": {
+            "value": 717,
+            "scalar_type": "int"
+          },
+          "task_id": {
+            "value": "pending",
+            "scalar_type": "str"
+          },
+          "channel": {
+            "value": "email",
+            "scalar_type": "str"
+          },
+          "stable_message_identity": {
+            "value": "identity:717",
+            "scalar_type": "str"
+          },
+          "status": {
+            "value": "pending",
+            "scalar_type": "str"
+          },
+          "owner": {
+            "value": "fixture-owner",
+            "scalar_type": "str"
+          },
+          "generation": {
+            "value": 3,
+            "scalar_type": "int"
+          },
+          "attempt_count": {
+            "value": 4,
+            "scalar_type": "int"
+          },
+          "lease_expires_at": {
+            "value": "2040-01-02",
+            "scalar_type": "str"
+          },
+          "available_at": {
+            "value": "2040-01-03",
+            "scalar_type": "str"
+          },
+          "input_json": {
+            "scalar_type": "str",
+            "utf8_bytes": 2,
+            "sha256": "44136fa355b3678a1146ad16f7e8649e94fb4fc21fe77e8310c060f61caaff8a",
+            "input_compacted": null
+          },
+          "result_json": {
+            "value": "{\"sentinel\":\"result\"}",
+            "scalar_type": "str"
+          },
+          "error": {
+            "value": "preserve error sentinel",
+            "scalar_type": "str"
+          },
+          "created_at": {
+            "value": "2040-01-01 00:00:00",
+            "scalar_type": "str"
+          },
+          "updated_at": {
+            "value": "2040-01-01 00:00:00",
+            "scalar_type": "str"
+          }
+        },
+        {
+          "rowid": {
+            "value": 819,
+            "scalar_type": "int"
+          },
+          "task_id": {
+            "value": "running",
+            "scalar_type": "str"
+          },
+          "channel": {
+            "value": "email",
+            "scalar_type": "str"
+          },
+          "stable_message_identity": {
+            "value": "identity:819",
+            "scalar_type": "str"
+          },
+          "status": {
+            "value": "running",
+            "scalar_type": "str"
+          },
+          "owner": {
+            "value": "fixture-owner",
+            "scalar_type": "str"
+          },
+          "generation": {
+            "value": 3,
+            "scalar_type": "int"
+          },
+          "attempt_count": {
+            "value": 4,
+            "scalar_type": "int"
+          },
+          "lease_expires_at": {
+            "value": "2040-01-02",
+            "scalar_type": "str"
+          },
+          "available_at": {
+            "value": "2040-01-03",
+            "scalar_type": "str"
+          },
+          "input_json": {
+            "scalar_type": "str",
+            "utf8_bytes": 2,
+            "sha256": "44136fa355b3678a1146ad16f7e8649e94fb4fc21fe77e8310c060f61caaff8a",
+            "input_compacted": null
+          },
+          "result_json": {
+            "value": "{\"sentinel\":\"result\"}",
+            "scalar_type": "str"
+          },
+          "error": {
+            "value": "preserve error sentinel",
+            "scalar_type": "str"
+          },
+          "created_at": {
+            "value": "2040-01-01 00:00:00",
+            "scalar_type": "str"
+          },
+          "updated_at": {
+            "value": "2040-01-01 00:00:00",
+            "scalar_type": "str"
+          }
+        }
+      ]
+    },
+    {
+      "label": "compact:ignore",
+      "outcome": {
+        "return": {
+          "tasks_compacted": 1,
+          "logical_bytes_removed": 10386
+        }
+      },
+      "transactions": [
+        "BEGIN IMMEDIATE",
+        "COMMIT"
+      ],
+      "native_update_calls": [
+        {
+          "rowcount": 1
+        },
+        {
+          "rowcount": 0
+        }
+      ],
+      "native_close": [
+        {
+          "transaction_open_before_native_close": false
+        }
+      ],
+      "before": [
+        {
+          "rowid": {
+            "value": 101,
+            "scalar_type": "int"
+          },
+          "task_id": {
+            "value": "a-done",
+            "scalar_type": "str"
+          },
+          "channel": {
+            "value": "email",
+            "scalar_type": "str"
+          },
+          "stable_message_identity": {
+            "value": "identity:101",
+            "scalar_type": "str"
+          },
+          "status": {
+            "value": "done",
+            "scalar_type": "str"
+          },
+          "owner": {
+            "value": "fixture-owner",
+            "scalar_type": "str"
+          },
+          "generation": {
+            "value": 3,
+            "scalar_type": "int"
+          },
+          "attempt_count": {
+            "value": 4,
+            "scalar_type": "int"
+          },
+          "lease_expires_at": {
+            "value": "2040-01-02",
+            "scalar_type": "str"
+          },
+          "available_at": {
+            "value": "2040-01-03",
+            "scalar_type": "str"
+          },
+          "input_json": {
+            "scalar_type": "str",
+            "utf8_bytes": 11244,
+            "sha256": "f3f4f2bfdacfb585b10fc14bafbf7c9a558948eab4acd03bceb5086b7c143656",
+            "input_compacted": null
+          },
+          "result_json": {
+            "value": "{\"sentinel\":\"result\"}",
+            "scalar_type": "str"
+          },
+          "error": {
+            "value": "preserve error sentinel",
+            "scalar_type": "str"
+          },
+          "created_at": {
+            "value": "2040-01-01 00:00:00",
+            "scalar_type": "str"
+          },
+          "updated_at": {
+            "value": "2040-01-01 00:00:00",
+            "scalar_type": "str"
+          }
+        },
+        {
+          "rowid": {
+            "value": 205,
+            "scalar_type": "int"
+          },
+          "task_id": {
+            "value": "b-done",
+            "scalar_type": "str"
+          },
+          "channel": {
+            "value": "email",
+            "scalar_type": "str"
+          },
+          "stable_message_identity": {
+            "value": "identity:205",
+            "scalar_type": "str"
+          },
+          "status": {
+            "value": "done",
+            "scalar_type": "str"
+          },
+          "owner": {
+            "value": "fixture-owner",
+            "scalar_type": "str"
+          },
+          "generation": {
+            "value": 3,
+            "scalar_type": "int"
+          },
+          "attempt_count": {
+            "value": 4,
+            "scalar_type": "int"
+          },
+          "lease_expires_at": {
+            "value": "2040-01-02",
+            "scalar_type": "str"
+          },
+          "available_at": {
+            "value": "2040-01-03",
+            "scalar_type": "str"
+          },
+          "input_json": {
+            "scalar_type": "str",
+            "utf8_bytes": 11244,
+            "sha256": "a30879a0d49f32d3bb04129e5283c3eb7e0b569e2ca27d6413239fb9710ff348",
+            "input_compacted": null
+          },
+          "result_json": {
+            "value": "{\"sentinel\":\"result\"}",
+            "scalar_type": "str"
+          },
+          "error": {
+            "value": "preserve error sentinel",
+            "scalar_type": "str"
+          },
+          "created_at": {
+            "value": "2040-01-01 00:00:00",
+            "scalar_type": "str"
+          },
+          "updated_at": {
+            "value": "2040-01-01 00:00:00",
+            "scalar_type": "str"
+          }
+        }
+      ],
+      "after": [
+        {
+          "rowid": {
+            "value": 101,
+            "scalar_type": "int"
+          },
+          "task_id": {
+            "value": "a-done",
+            "scalar_type": "str"
+          },
+          "channel": {
+            "value": "email",
+            "scalar_type": "str"
+          },
+          "stable_message_identity": {
+            "value": "identity:101",
+            "scalar_type": "str"
+          },
+          "status": {
+            "value": "done",
+            "scalar_type": "str"
+          },
+          "owner": {
+            "value": "fixture-owner",
+            "scalar_type": "str"
+          },
+          "generation": {
+            "value": 3,
+            "scalar_type": "int"
+          },
+          "attempt_count": {
+            "value": 4,
+            "scalar_type": "int"
+          },
+          "lease_expires_at": {
+            "value": "2040-01-02",
+            "scalar_type": "str"
+          },
+          "available_at": {
+            "value": "2040-01-03",
+            "scalar_type": "str"
+          },
+          "input_json": {
+            "scalar_type": "str",
+            "utf8_bytes": 858,
+            "sha256": "c589ce39bc5d6be23bd427458453fbfd1d9c2f928aee4394514bc4edd6cc7fda",
+            "input_compacted": true,
+            "compacted_provenance": {
+              "config_version": "fixture-v1",
+              "identity_sha256": "406234e57e14acd1a9a30b8927daecb13856f752cadec605e6f6c97c95784173",
+              "input_bytes": 11244,
+              "input_compacted": true,
+              "input_sha256": "f3f4f2bfdacfb585b10fc14bafbf7c9a558948eab4acd03bceb5086b7c143656",
+              "provider_locator": {
+                "account_id": "synthetic",
+                "folder": "INBOX",
+                "uid": 41,
+                "uidvalidity": 73
+              },
+              "scheduled_consumer_reference": {
+                "prompt_sha256": "b51d051bfd62b3e35e4da7c91ebf28008b8591bd05dc480b8abbef6d0f118e78",
+                "scheduled_task_id": 7,
+                "scheduled_task_run_id": 8,
+                "schema": "fixture-scheduled-v1",
+                "skill_materials": [
+                  {
+                    "content_sha256": "95ffe902337382b8f26fce2b5a34d4824105b0caa1e3b71b016a5f1a862dc974",
+                    "name": "fixture"
+                  }
+                ],
+                "skill_names": [
+                  "fixture"
+                ],
+                "skill_protocol_sha256": "75ad35fbecfe8766535433db5cf35428fe881df7166e95b8a3b96296b69558e6",
+                "skill_protocol_source": "fixture"
+              },
+              "stable_message_identity": "a",
+              "unsubscribe_candidates": []
+            }
+          },
+          "result_json": {
+            "value": "{\"sentinel\":\"result\"}",
+            "scalar_type": "str"
+          },
+          "error": {
+            "value": "preserve error sentinel",
+            "scalar_type": "str"
+          },
+          "created_at": {
+            "value": "2040-01-01 00:00:00",
+            "scalar_type": "str"
+          },
+          "updated_at": {
+            "value": "2040-01-01 00:00:00",
+            "scalar_type": "str"
+          }
+        },
+        {
+          "rowid": {
+            "value": 205,
+            "scalar_type": "int"
+          },
+          "task_id": {
+            "value": "b-done",
+            "scalar_type": "str"
+          },
+          "channel": {
+            "value": "email",
+            "scalar_type": "str"
+          },
+          "stable_message_identity": {
+            "value": "identity:205",
+            "scalar_type": "str"
+          },
+          "status": {
+            "value": "done",
+            "scalar_type": "str"
+          },
+          "owner": {
+            "value": "fixture-owner",
+            "scalar_type": "str"
+          },
+          "generation": {
+            "value": 3,
+            "scalar_type": "int"
+          },
+          "attempt_count": {
+            "value": 4,
+            "scalar_type": "int"
+          },
+          "lease_expires_at": {
+            "value": "2040-01-02",
+            "scalar_type": "str"
+          },
+          "available_at": {
+            "value": "2040-01-03",
+            "scalar_type": "str"
+          },
+          "input_json": {
+            "scalar_type": "str",
+            "utf8_bytes": 11244,
+            "sha256": "a30879a0d49f32d3bb04129e5283c3eb7e0b569e2ca27d6413239fb9710ff348",
+            "input_compacted": null
+          },
+          "result_json": {
+            "value": "{\"sentinel\":\"result\"}",
+            "scalar_type": "str"
+          },
+          "error": {
+            "value": "preserve error sentinel",
+            "scalar_type": "str"
+          },
+          "created_at": {
+            "value": "2040-01-01 00:00:00",
+            "scalar_type": "str"
+          },
+          "updated_at": {
+            "value": "2040-01-01 00:00:00",
+            "scalar_type": "str"
+          }
+        }
+      ]
+    },
+    {
+      "label": "compact:abort",
+      "outcome": {
+        "error": "IntegrityError",
+        "message": "fixture second classifier abort"
+      },
+      "transactions": [
+        "BEGIN IMMEDIATE"
+      ],
+      "native_update_calls": [
+        {
+          "rowcount": 1
+        },
+        {
+          "rowcount": null,
+          "error": "IntegrityError",
+          "message": "fixture second classifier abort"
+        }
+      ],
+      "native_close": [
+        {
+          "transaction_open_before_native_close": true
+        }
+      ],
+      "before": [
+        {
+          "rowid": {
+            "value": 101,
+            "scalar_type": "int"
+          },
+          "task_id": {
+            "value": "a-done",
+            "scalar_type": "str"
+          },
+          "channel": {
+            "value": "email",
+            "scalar_type": "str"
+          },
+          "stable_message_identity": {
+            "value": "identity:101",
+            "scalar_type": "str"
+          },
+          "status": {
+            "value": "done",
+            "scalar_type": "str"
+          },
+          "owner": {
+            "value": "fixture-owner",
+            "scalar_type": "str"
+          },
+          "generation": {
+            "value": 3,
+            "scalar_type": "int"
+          },
+          "attempt_count": {
+            "value": 4,
+            "scalar_type": "int"
+          },
+          "lease_expires_at": {
+            "value": "2040-01-02",
+            "scalar_type": "str"
+          },
+          "available_at": {
+            "value": "2040-01-03",
+            "scalar_type": "str"
+          },
+          "input_json": {
+            "scalar_type": "str",
+            "utf8_bytes": 11244,
+            "sha256": "f3f4f2bfdacfb585b10fc14bafbf7c9a558948eab4acd03bceb5086b7c143656",
+            "input_compacted": null
+          },
+          "result_json": {
+            "value": "{\"sentinel\":\"result\"}",
+            "scalar_type": "str"
+          },
+          "error": {
+            "value": "preserve error sentinel",
+            "scalar_type": "str"
+          },
+          "created_at": {
+            "value": "2040-01-01 00:00:00",
+            "scalar_type": "str"
+          },
+          "updated_at": {
+            "value": "2040-01-01 00:00:00",
+            "scalar_type": "str"
+          }
+        },
+        {
+          "rowid": {
+            "value": 205,
+            "scalar_type": "int"
+          },
+          "task_id": {
+            "value": "b-done",
+            "scalar_type": "str"
+          },
+          "channel": {
+            "value": "email",
+            "scalar_type": "str"
+          },
+          "stable_message_identity": {
+            "value": "identity:205",
+            "scalar_type": "str"
+          },
+          "status": {
+            "value": "done",
+            "scalar_type": "str"
+          },
+          "owner": {
+            "value": "fixture-owner",
+            "scalar_type": "str"
+          },
+          "generation": {
+            "value": 3,
+            "scalar_type": "int"
+          },
+          "attempt_count": {
+            "value": 4,
+            "scalar_type": "int"
+          },
+          "lease_expires_at": {
+            "value": "2040-01-02",
+            "scalar_type": "str"
+          },
+          "available_at": {
+            "value": "2040-01-03",
+            "scalar_type": "str"
+          },
+          "input_json": {
+            "scalar_type": "str",
+            "utf8_bytes": 11244,
+            "sha256": "a30879a0d49f32d3bb04129e5283c3eb7e0b569e2ca27d6413239fb9710ff348",
+            "input_compacted": null
+          },
+          "result_json": {
+            "value": "{\"sentinel\":\"result\"}",
+            "scalar_type": "str"
+          },
+          "error": {
+            "value": "preserve error sentinel",
+            "scalar_type": "str"
+          },
+          "created_at": {
+            "value": "2040-01-01 00:00:00",
+            "scalar_type": "str"
+          },
+          "updated_at": {
+            "value": "2040-01-01 00:00:00",
+            "scalar_type": "str"
+          }
+        }
+      ],
+      "after": [
+        {
+          "rowid": {
+            "value": 101,
+            "scalar_type": "int"
+          },
+          "task_id": {
+            "value": "a-done",
+            "scalar_type": "str"
+          },
+          "channel": {
+            "value": "email",
+            "scalar_type": "str"
+          },
+          "stable_message_identity": {
+            "value": "identity:101",
+            "scalar_type": "str"
+          },
+          "status": {
+            "value": "done",
+            "scalar_type": "str"
+          },
+          "owner": {
+            "value": "fixture-owner",
+            "scalar_type": "str"
+          },
+          "generation": {
+            "value": 3,
+            "scalar_type": "int"
+          },
+          "attempt_count": {
+            "value": 4,
+            "scalar_type": "int"
+          },
+          "lease_expires_at": {
+            "value": "2040-01-02",
+            "scalar_type": "str"
+          },
+          "available_at": {
+            "value": "2040-01-03",
+            "scalar_type": "str"
+          },
+          "input_json": {
+            "scalar_type": "str",
+            "utf8_bytes": 11244,
+            "sha256": "f3f4f2bfdacfb585b10fc14bafbf7c9a558948eab4acd03bceb5086b7c143656",
+            "input_compacted": null
+          },
+          "result_json": {
+            "value": "{\"sentinel\":\"result\"}",
+            "scalar_type": "str"
+          },
+          "error": {
+            "value": "preserve error sentinel",
+            "scalar_type": "str"
+          },
+          "created_at": {
+            "value": "2040-01-01 00:00:00",
+            "scalar_type": "str"
+          },
+          "updated_at": {
+            "value": "2040-01-01 00:00:00",
+            "scalar_type": "str"
+          }
+        },
+        {
+          "rowid": {
+            "value": 205,
+            "scalar_type": "int"
+          },
+          "task_id": {
+            "value": "b-done",
+            "scalar_type": "str"
+          },
+          "channel": {
+            "value": "email",
+            "scalar_type": "str"
+          },
+          "stable_message_identity": {
+            "value": "identity:205",
+            "scalar_type": "str"
+          },
+          "status": {
+            "value": "done",
+            "scalar_type": "str"
+          },
+          "owner": {
+            "value": "fixture-owner",
+            "scalar_type": "str"
+          },
+          "generation": {
+            "value": 3,
+            "scalar_type": "int"
+          },
+          "attempt_count": {
+            "value": 4,
+            "scalar_type": "int"
+          },
+          "lease_expires_at": {
+            "value": "2040-01-02",
+            "scalar_type": "str"
+          },
+          "available_at": {
+            "value": "2040-01-03",
+            "scalar_type": "str"
+          },
+          "input_json": {
+            "scalar_type": "str",
+            "utf8_bytes": 11244,
+            "sha256": "a30879a0d49f32d3bb04129e5283c3eb7e0b569e2ca27d6413239fb9710ff348",
+            "input_compacted": null
+          },
+          "result_json": {
+            "value": "{\"sentinel\":\"result\"}",
+            "scalar_type": "str"
+          },
+          "error": {
+            "value": "preserve error sentinel",
+            "scalar_type": "str"
+          },
+          "created_at": {
+            "value": "2040-01-01 00:00:00",
+            "scalar_type": "str"
+          },
+          "updated_at": {
+            "value": "2040-01-01 00:00:00",
+            "scalar_type": "str"
+          }
+        }
+      ]
+    }
+  ],
+  "physical_coordinates": {
+    "source": [
+      {
+        "case": "case-parent",
+        "source_rowid": 101,
+        "task_id": "key-running",
+        "physical_tasks_id": null
+      },
+      {
+        "case": "case-parent",
+        "source_rowid": 205,
+        "task_id": "key-done",
+        "physical_tasks_id": null
+      },
+      {
+        "case": "case-parent",
+        "source_rowid": 309,
+        "task_id": "key-pending",
+        "physical_tasks_id": null
+      },
+      {
+        "case": "case-parent",
+        "source_rowid": 411,
+        "task_id": "key-failed",
+        "physical_tasks_id": null
+      },
+      {
+        "case": "case-parent",
+        "source_rowid": 513,
+        "task_id": null,
+        "physical_tasks_id": null
+      },
+      {
+        "case": "case-parent",
+        "source_rowid": 615,
+        "task_id": "007",
+        "physical_tasks_id": null
+      },
+      {
+        "case": "case-parent",
+        "source_rowid": 717,
+        "task_id": "7",
+        "physical_tasks_id": null
+      },
+      {
+        "case": "case-parent",
+        "source_rowid": 819,
+        "task_id": "键:unicode",
+        "physical_tasks_id": null
+      },
+      {
+        "case": "case-mixed",
+        "source_rowid": 101,
+        "task_id": null,
+        "physical_tasks_id": null
+      },
+      {
+        "case": "case-mixed",
+        "source_rowid": 205,
+        "task_id": "a-done",
+        "physical_tasks_id": null
+      },
+      {
+        "case": "case-mixed",
+        "source_rowid": 309,
+        "task_id": "b-done",
+        "physical_tasks_id": null
+      },
+      {
+        "case": "case-mixed",
+        "source_rowid": 411,
+        "task_id": "already",
+        "physical_tasks_id": null
+      },
+      {
+        "case": "case-mixed",
+        "source_rowid": 513,
+        "task_id": "flag-one",
+        "physical_tasks_id": null
+      },
+      {
+        "case": "case-mixed",
+        "source_rowid": 615,
+        "task_id": "failed",
+        "physical_tasks_id": null
+      },
+      {
+        "case": "case-mixed",
+        "source_rowid": 717,
+        "task_id": "pending",
+        "physical_tasks_id": null
+      },
+      {
+        "case": "case-mixed",
+        "source_rowid": 819,
+        "task_id": "running",
+        "physical_tasks_id": null
+      },
+      {
+        "case": "case-ignore",
+        "source_rowid": 101,
+        "task_id": "a-done",
+        "physical_tasks_id": null
+      },
+      {
+        "case": "case-ignore",
+        "source_rowid": 205,
+        "task_id": "b-done",
+        "physical_tasks_id": null
+      },
+      {
+        "case": "case-abort",
+        "source_rowid": 101,
+        "task_id": "a-done",
+        "physical_tasks_id": null
+      },
+      {
+        "case": "case-abort",
+        "source_rowid": 205,
+        "task_id": "b-done",
+        "physical_tasks_id": null
+      }
+    ],
+    "target": [
+      {
+        "case": "case-parent",
+        "source_rowid": 101,
+        "task_id": "key-running",
+        "physical_tasks_id": 1
+      },
+      {
+        "case": "case-parent",
+        "source_rowid": 205,
+        "task_id": "key-done",
+        "physical_tasks_id": 2
+      },
+      {
+        "case": "case-parent",
+        "source_rowid": 309,
+        "task_id": "key-pending",
+        "physical_tasks_id": 3
+      },
+      {
+        "case": "case-parent",
+        "source_rowid": 411,
+        "task_id": "key-failed",
+        "physical_tasks_id": 4
+      },
+      {
+        "case": "case-parent",
+        "source_rowid": 513,
+        "task_id": null,
+        "physical_tasks_id": 5
+      },
+      {
+        "case": "case-parent",
+        "source_rowid": 615,
+        "task_id": "007",
+        "physical_tasks_id": 6
+      },
+      {
+        "case": "case-parent",
+        "source_rowid": 717,
+        "task_id": "7",
+        "physical_tasks_id": 7
+      },
+      {
+        "case": "case-parent",
+        "source_rowid": 819,
+        "task_id": "键:unicode",
+        "physical_tasks_id": 8
+      },
+      {
+        "case": "case-mixed",
+        "source_rowid": 101,
+        "task_id": null,
+        "physical_tasks_id": 1
+      },
+      {
+        "case": "case-mixed",
+        "source_rowid": 205,
+        "task_id": "a-done",
+        "physical_tasks_id": 2
+      },
+      {
+        "case": "case-mixed",
+        "source_rowid": 309,
+        "task_id": "b-done",
+        "physical_tasks_id": 3
+      },
+      {
+        "case": "case-mixed",
+        "source_rowid": 411,
+        "task_id": "already",
+        "physical_tasks_id": 4
+      },
+      {
+        "case": "case-mixed",
+        "source_rowid": 513,
+        "task_id": "flag-one",
+        "physical_tasks_id": 5
+      },
+      {
+        "case": "case-mixed",
+        "source_rowid": 615,
+        "task_id": "failed",
+        "physical_tasks_id": 6
+      },
+      {
+        "case": "case-mixed",
+        "source_rowid": 717,
+        "task_id": "pending",
+        "physical_tasks_id": 7
+      },
+      {
+        "case": "case-mixed",
+        "source_rowid": 819,
+        "task_id": "running",
+        "physical_tasks_id": 8
+      },
+      {
+        "case": "case-ignore",
+        "source_rowid": 101,
+        "task_id": "a-done",
+        "physical_tasks_id": 1
+      },
+      {
+        "case": "case-ignore",
+        "source_rowid": 205,
+        "task_id": "b-done",
+        "physical_tasks_id": 2
+      },
+      {
+        "case": "case-abort",
+        "source_rowid": 101,
+        "task_id": "a-done",
+        "physical_tasks_id": 1
+      },
+      {
+        "case": "case-abort",
+        "source_rowid": 205,
+        "task_id": "b-done",
+        "physical_tasks_id": 2
+      }
+    ]
+  },
+  "external_calls": {
+    "source": [],
+    "target": []
+  },
+  "negative_controls": [
+    {
+      "mutation": "parent",
+      "fixture_seed_verified": true,
+      "actual_owner_entered": {
+        "AutoReplyStore._runtime_operation_parent_exists": 11
+      },
+      "distinguishing_checkpoint": {
+        "label": "parent:'key-running'",
+        "return": false,
+        "expected": true,
+        "read_only": true
+      }
+    },
+    {
+      "mutation": "compactor",
+      "fixture_seed_verified": true,
+      "actual_owner_entered": {
+        "AutoReplyStore._runtime_operation_parent_exists": 12,
+        "compact_done_email_classification_inputs": 2
+      },
+      "distinguishing_checkpoint": {
+        "label": "compact:mixed",
+        "outcome": {
+          "return": {
+            "tasks_compacted": 0,
+            "logical_bytes_removed": 0
+          }
+        },
+        "transactions": [
+          "BEGIN IMMEDIATE",
+          "COMMIT"
+        ],
+        "native_update_calls": [
+          {
+            "rowcount": 0
+          },
+          {
+            "rowcount": 0
+          },
+          {
+            "rowcount": 0
+          }
+        ],
+        "native_close": [
+          {
+            "transaction_open_before_native_close": false
+          }
+        ],
+        "before": [
+          {
+            "rowid": {
+              "value": 101,
+              "scalar_type": "int"
+            },
+            "task_id": {
+              "value": null,
+              "scalar_type": "NoneType"
+            },
+            "channel": {
+              "value": "email",
+              "scalar_type": "str"
+            },
+            "stable_message_identity": {
+              "value": "identity:101",
+              "scalar_type": "str"
+            },
+            "status": {
+              "value": "done",
+              "scalar_type": "str"
+            },
+            "owner": {
+              "value": "fixture-owner",
+              "scalar_type": "str"
+            },
+            "generation": {
+              "value": 3,
+              "scalar_type": "int"
+            },
+            "attempt_count": {
+              "value": 4,
+              "scalar_type": "int"
+            },
+            "lease_expires_at": {
+              "value": "2040-01-02",
+              "scalar_type": "str"
+            },
+            "available_at": {
+              "value": "2040-01-03",
+              "scalar_type": "str"
+            },
+            "input_json": {
+              "scalar_type": "str",
+              "utf8_bytes": 11247,
+              "sha256": "eacb7adc9f5d19de7694a85d82367492376252da1bb10d176a398cce477b44d8",
+              "input_compacted": null
+            },
+            "result_json": {
+              "value": "{\"sentinel\":\"result\"}",
+              "scalar_type": "str"
+            },
+            "error": {
+              "value": "preserve error sentinel",
+              "scalar_type": "str"
+            },
+            "created_at": {
+              "value": "2040-01-01 00:00:00",
+              "scalar_type": "str"
+            },
+            "updated_at": {
+              "value": "2040-01-01 00:00:00",
+              "scalar_type": "str"
+            }
+          },
+          {
+            "rowid": {
+              "value": 205,
+              "scalar_type": "int"
+            },
+            "task_id": {
+              "value": "a-done",
+              "scalar_type": "str"
+            },
+            "channel": {
+              "value": "email",
+              "scalar_type": "str"
+            },
+            "stable_message_identity": {
+              "value": "identity:205",
+              "scalar_type": "str"
+            },
+            "status": {
+              "value": "done",
+              "scalar_type": "str"
+            },
+            "owner": {
+              "value": "fixture-owner",
+              "scalar_type": "str"
+            },
+            "generation": {
+              "value": 3,
+              "scalar_type": "int"
+            },
+            "attempt_count": {
+              "value": 4,
+              "scalar_type": "int"
+            },
+            "lease_expires_at": {
+              "value": "2040-01-02",
+              "scalar_type": "str"
+            },
+            "available_at": {
+              "value": "2040-01-03",
+              "scalar_type": "str"
+            },
+            "input_json": {
+              "scalar_type": "str",
+              "utf8_bytes": 11244,
+              "sha256": "f3f4f2bfdacfb585b10fc14bafbf7c9a558948eab4acd03bceb5086b7c143656",
+              "input_compacted": null
+            },
+            "result_json": {
+              "value": "{\"sentinel\":\"result\"}",
+              "scalar_type": "str"
+            },
+            "error": {
+              "value": "preserve error sentinel",
+              "scalar_type": "str"
+            },
+            "created_at": {
+              "value": "2040-01-01 00:00:00",
+              "scalar_type": "str"
+            },
+            "updated_at": {
+              "value": "2040-01-01 00:00:00",
+              "scalar_type": "str"
+            }
+          },
+          {
+            "rowid": {
+              "value": 309,
+              "scalar_type": "int"
+            },
+            "task_id": {
+              "value": "b-done",
+              "scalar_type": "str"
+            },
+            "channel": {
+              "value": "email",
+              "scalar_type": "str"
+            },
+            "stable_message_identity": {
+              "value": "identity:309",
+              "scalar_type": "str"
+            },
+            "status": {
+              "value": "done",
+              "scalar_type": "str"
+            },
+            "owner": {
+              "value": "fixture-owner",
+              "scalar_type": "str"
+            },
+            "generation": {
+              "value": 3,
+              "scalar_type": "int"
+            },
+            "attempt_count": {
+              "value": 4,
+              "scalar_type": "int"
+            },
+            "lease_expires_at": {
+              "value": "2040-01-02",
+              "scalar_type": "str"
+            },
+            "available_at": {
+              "value": "2040-01-03",
+              "scalar_type": "str"
+            },
+            "input_json": {
+              "scalar_type": "str",
+              "utf8_bytes": 11244,
+              "sha256": "a30879a0d49f32d3bb04129e5283c3eb7e0b569e2ca27d6413239fb9710ff348",
+              "input_compacted": null
+            },
+            "result_json": {
+              "value": "{\"sentinel\":\"result\"}",
+              "scalar_type": "str"
+            },
+            "error": {
+              "value": "preserve error sentinel",
+              "scalar_type": "str"
+            },
+            "created_at": {
+              "value": "2040-01-01 00:00:00",
+              "scalar_type": "str"
+            },
+            "updated_at": {
+              "value": "2040-01-01 00:00:00",
+              "scalar_type": "str"
+            }
+          },
+          {
+            "rowid": {
+              "value": 411,
+              "scalar_type": "int"
+            },
+            "task_id": {
+              "value": "already",
+              "scalar_type": "str"
+            },
+            "channel": {
+              "value": "email",
+              "scalar_type": "str"
+            },
+            "stable_message_identity": {
+              "value": "identity:411",
+              "scalar_type": "str"
+            },
+            "status": {
+              "value": "done",
+              "scalar_type": "str"
+            },
+            "owner": {
+              "value": "fixture-owner",
+              "scalar_type": "str"
+            },
+            "generation": {
+              "value": 3,
+              "scalar_type": "int"
+            },
+            "attempt_count": {
+              "value": 4,
+              "scalar_type": "int"
+            },
+            "lease_expires_at": {
+              "value": "2040-01-02",
+              "scalar_type": "str"
+            },
+            "available_at": {
+              "value": "2040-01-03",
+              "scalar_type": "str"
+            },
+            "input_json": {
+              "scalar_type": "str",
+              "utf8_bytes": 47,
+              "sha256": "c1728d8ef47c1273b64d191f84f5f09502e14bda9d32553bf2c009b6763a712d",
+              "input_compacted": true
+            },
+            "result_json": {
+              "value": "{\"sentinel\":\"result\"}",
+              "scalar_type": "str"
+            },
+            "error": {
+              "value": "preserve error sentinel",
+              "scalar_type": "str"
+            },
+            "created_at": {
+              "value": "2040-01-01 00:00:00",
+              "scalar_type": "str"
+            },
+            "updated_at": {
+              "value": "2040-01-01 00:00:00",
+              "scalar_type": "str"
+            }
+          },
+          {
+            "rowid": {
+              "value": 513,
+              "scalar_type": "int"
+            },
+            "task_id": {
+              "value": "flag-one",
+              "scalar_type": "str"
+            },
+            "channel": {
+              "value": "email",
+              "scalar_type": "str"
+            },
+            "stable_message_identity": {
+              "value": "identity:513",
+              "scalar_type": "str"
+            },
+            "status": {
+              "value": "done",
+              "scalar_type": "str"
+            },
+            "owner": {
+              "value": "fixture-owner",
+              "scalar_type": "str"
+            },
+            "generation": {
+              "value": 3,
+              "scalar_type": "int"
+            },
+            "attempt_count": {
+              "value": 4,
+              "scalar_type": "int"
+            },
+            "lease_expires_at": {
+              "value": "2040-01-02",
+              "scalar_type": "str"
+            },
+            "available_at": {
+              "value": "2040-01-03",
+              "scalar_type": "str"
+            },
+            "input_json": {
+              "scalar_type": "str",
+              "utf8_bytes": 44,
+              "sha256": "4ca8d4577912aab56bdab311036b28234b60a7fb58dbe33f90658802525aab53",
+              "input_compacted": 1
+            },
+            "result_json": {
+              "value": "{\"sentinel\":\"result\"}",
+              "scalar_type": "str"
+            },
+            "error": {
+              "value": "preserve error sentinel",
+              "scalar_type": "str"
+            },
+            "created_at": {
+              "value": "2040-01-01 00:00:00",
+              "scalar_type": "str"
+            },
+            "updated_at": {
+              "value": "2040-01-01 00:00:00",
+              "scalar_type": "str"
+            }
+          },
+          {
+            "rowid": {
+              "value": 615,
+              "scalar_type": "int"
+            },
+            "task_id": {
+              "value": "failed",
+              "scalar_type": "str"
+            },
+            "channel": {
+              "value": "email",
+              "scalar_type": "str"
+            },
+            "stable_message_identity": {
+              "value": "identity:615",
+              "scalar_type": "str"
+            },
+            "status": {
+              "value": "failed",
+              "scalar_type": "str"
+            },
+            "owner": {
+              "value": "fixture-owner",
+              "scalar_type": "str"
+            },
+            "generation": {
+              "value": 3,
+              "scalar_type": "int"
+            },
+            "attempt_count": {
+              "value": 4,
+              "scalar_type": "int"
+            },
+            "lease_expires_at": {
+              "value": "2040-01-02",
+              "scalar_type": "str"
+            },
+            "available_at": {
+              "value": "2040-01-03",
+              "scalar_type": "str"
+            },
+            "input_json": {
+              "scalar_type": "str",
+              "utf8_bytes": 2,
+              "sha256": "44136fa355b3678a1146ad16f7e8649e94fb4fc21fe77e8310c060f61caaff8a",
+              "input_compacted": null
+            },
+            "result_json": {
+              "value": "{\"sentinel\":\"result\"}",
+              "scalar_type": "str"
+            },
+            "error": {
+              "value": "preserve error sentinel",
+              "scalar_type": "str"
+            },
+            "created_at": {
+              "value": "2040-01-01 00:00:00",
+              "scalar_type": "str"
+            },
+            "updated_at": {
+              "value": "2040-01-01 00:00:00",
+              "scalar_type": "str"
+            }
+          },
+          {
+            "rowid": {
+              "value": 717,
+              "scalar_type": "int"
+            },
+            "task_id": {
+              "value": "pending",
+              "scalar_type": "str"
+            },
+            "channel": {
+              "value": "email",
+              "scalar_type": "str"
+            },
+            "stable_message_identity": {
+              "value": "identity:717",
+              "scalar_type": "str"
+            },
+            "status": {
+              "value": "pending",
+              "scalar_type": "str"
+            },
+            "owner": {
+              "value": "fixture-owner",
+              "scalar_type": "str"
+            },
+            "generation": {
+              "value": 3,
+              "scalar_type": "int"
+            },
+            "attempt_count": {
+              "value": 4,
+              "scalar_type": "int"
+            },
+            "lease_expires_at": {
+              "value": "2040-01-02",
+              "scalar_type": "str"
+            },
+            "available_at": {
+              "value": "2040-01-03",
+              "scalar_type": "str"
+            },
+            "input_json": {
+              "scalar_type": "str",
+              "utf8_bytes": 2,
+              "sha256": "44136fa355b3678a1146ad16f7e8649e94fb4fc21fe77e8310c060f61caaff8a",
+              "input_compacted": null
+            },
+            "result_json": {
+              "value": "{\"sentinel\":\"result\"}",
+              "scalar_type": "str"
+            },
+            "error": {
+              "value": "preserve error sentinel",
+              "scalar_type": "str"
+            },
+            "created_at": {
+              "value": "2040-01-01 00:00:00",
+              "scalar_type": "str"
+            },
+            "updated_at": {
+              "value": "2040-01-01 00:00:00",
+              "scalar_type": "str"
+            }
+          },
+          {
+            "rowid": {
+              "value": 819,
+              "scalar_type": "int"
+            },
+            "task_id": {
+              "value": "running",
+              "scalar_type": "str"
+            },
+            "channel": {
+              "value": "email",
+              "scalar_type": "str"
+            },
+            "stable_message_identity": {
+              "value": "identity:819",
+              "scalar_type": "str"
+            },
+            "status": {
+              "value": "running",
+              "scalar_type": "str"
+            },
+            "owner": {
+              "value": "fixture-owner",
+              "scalar_type": "str"
+            },
+            "generation": {
+              "value": 3,
+              "scalar_type": "int"
+            },
+            "attempt_count": {
+              "value": 4,
+              "scalar_type": "int"
+            },
+            "lease_expires_at": {
+              "value": "2040-01-02",
+              "scalar_type": "str"
+            },
+            "available_at": {
+              "value": "2040-01-03",
+              "scalar_type": "str"
+            },
+            "input_json": {
+              "scalar_type": "str",
+              "utf8_bytes": 2,
+              "sha256": "44136fa355b3678a1146ad16f7e8649e94fb4fc21fe77e8310c060f61caaff8a",
+              "input_compacted": null
+            },
+            "result_json": {
+              "value": "{\"sentinel\":\"result\"}",
+              "scalar_type": "str"
+            },
+            "error": {
+              "value": "preserve error sentinel",
+              "scalar_type": "str"
+            },
+            "created_at": {
+              "value": "2040-01-01 00:00:00",
+              "scalar_type": "str"
+            },
+            "updated_at": {
+              "value": "2040-01-01 00:00:00",
+              "scalar_type": "str"
+            }
+          }
+        ],
+        "after": [
+          {
+            "rowid": {
+              "value": 101,
+              "scalar_type": "int"
+            },
+            "task_id": {
+              "value": null,
+              "scalar_type": "NoneType"
+            },
+            "channel": {
+              "value": "email",
+              "scalar_type": "str"
+            },
+            "stable_message_identity": {
+              "value": "identity:101",
+              "scalar_type": "str"
+            },
+            "status": {
+              "value": "done",
+              "scalar_type": "str"
+            },
+            "owner": {
+              "value": "fixture-owner",
+              "scalar_type": "str"
+            },
+            "generation": {
+              "value": 3,
+              "scalar_type": "int"
+            },
+            "attempt_count": {
+              "value": 4,
+              "scalar_type": "int"
+            },
+            "lease_expires_at": {
+              "value": "2040-01-02",
+              "scalar_type": "str"
+            },
+            "available_at": {
+              "value": "2040-01-03",
+              "scalar_type": "str"
+            },
+            "input_json": {
+              "scalar_type": "str",
+              "utf8_bytes": 11247,
+              "sha256": "eacb7adc9f5d19de7694a85d82367492376252da1bb10d176a398cce477b44d8",
+              "input_compacted": null
+            },
+            "result_json": {
+              "value": "{\"sentinel\":\"result\"}",
+              "scalar_type": "str"
+            },
+            "error": {
+              "value": "preserve error sentinel",
+              "scalar_type": "str"
+            },
+            "created_at": {
+              "value": "2040-01-01 00:00:00",
+              "scalar_type": "str"
+            },
+            "updated_at": {
+              "value": "2040-01-01 00:00:00",
+              "scalar_type": "str"
+            }
+          },
+          {
+            "rowid": {
+              "value": 205,
+              "scalar_type": "int"
+            },
+            "task_id": {
+              "value": "a-done",
+              "scalar_type": "str"
+            },
+            "channel": {
+              "value": "email",
+              "scalar_type": "str"
+            },
+            "stable_message_identity": {
+              "value": "identity:205",
+              "scalar_type": "str"
+            },
+            "status": {
+              "value": "done",
+              "scalar_type": "str"
+            },
+            "owner": {
+              "value": "fixture-owner",
+              "scalar_type": "str"
+            },
+            "generation": {
+              "value": 3,
+              "scalar_type": "int"
+            },
+            "attempt_count": {
+              "value": 4,
+              "scalar_type": "int"
+            },
+            "lease_expires_at": {
+              "value": "2040-01-02",
+              "scalar_type": "str"
+            },
+            "available_at": {
+              "value": "2040-01-03",
+              "scalar_type": "str"
+            },
+            "input_json": {
+              "scalar_type": "str",
+              "utf8_bytes": 11244,
+              "sha256": "f3f4f2bfdacfb585b10fc14bafbf7c9a558948eab4acd03bceb5086b7c143656",
+              "input_compacted": null
+            },
+            "result_json": {
+              "value": "{\"sentinel\":\"result\"}",
+              "scalar_type": "str"
+            },
+            "error": {
+              "value": "preserve error sentinel",
+              "scalar_type": "str"
+            },
+            "created_at": {
+              "value": "2040-01-01 00:00:00",
+              "scalar_type": "str"
+            },
+            "updated_at": {
+              "value": "2040-01-01 00:00:00",
+              "scalar_type": "str"
+            }
+          },
+          {
+            "rowid": {
+              "value": 309,
+              "scalar_type": "int"
+            },
+            "task_id": {
+              "value": "b-done",
+              "scalar_type": "str"
+            },
+            "channel": {
+              "value": "email",
+              "scalar_type": "str"
+            },
+            "stable_message_identity": {
+              "value": "identity:309",
+              "scalar_type": "str"
+            },
+            "status": {
+              "value": "done",
+              "scalar_type": "str"
+            },
+            "owner": {
+              "value": "fixture-owner",
+              "scalar_type": "str"
+            },
+            "generation": {
+              "value": 3,
+              "scalar_type": "int"
+            },
+            "attempt_count": {
+              "value": 4,
+              "scalar_type": "int"
+            },
+            "lease_expires_at": {
+              "value": "2040-01-02",
+              "scalar_type": "str"
+            },
+            "available_at": {
+              "value": "2040-01-03",
+              "scalar_type": "str"
+            },
+            "input_json": {
+              "scalar_type": "str",
+              "utf8_bytes": 11244,
+              "sha256": "a30879a0d49f32d3bb04129e5283c3eb7e0b569e2ca27d6413239fb9710ff348",
+              "input_compacted": null
+            },
+            "result_json": {
+              "value": "{\"sentinel\":\"result\"}",
+              "scalar_type": "str"
+            },
+            "error": {
+              "value": "preserve error sentinel",
+              "scalar_type": "str"
+            },
+            "created_at": {
+              "value": "2040-01-01 00:00:00",
+              "scalar_type": "str"
+            },
+            "updated_at": {
+              "value": "2040-01-01 00:00:00",
+              "scalar_type": "str"
+            }
+          },
+          {
+            "rowid": {
+              "value": 411,
+              "scalar_type": "int"
+            },
+            "task_id": {
+              "value": "already",
+              "scalar_type": "str"
+            },
+            "channel": {
+              "value": "email",
+              "scalar_type": "str"
+            },
+            "stable_message_identity": {
+              "value": "identity:411",
+              "scalar_type": "str"
+            },
+            "status": {
+              "value": "done",
+              "scalar_type": "str"
+            },
+            "owner": {
+              "value": "fixture-owner",
+              "scalar_type": "str"
+            },
+            "generation": {
+              "value": 3,
+              "scalar_type": "int"
+            },
+            "attempt_count": {
+              "value": 4,
+              "scalar_type": "int"
+            },
+            "lease_expires_at": {
+              "value": "2040-01-02",
+              "scalar_type": "str"
+            },
+            "available_at": {
+              "value": "2040-01-03",
+              "scalar_type": "str"
+            },
+            "input_json": {
+              "scalar_type": "str",
+              "utf8_bytes": 47,
+              "sha256": "c1728d8ef47c1273b64d191f84f5f09502e14bda9d32553bf2c009b6763a712d",
+              "input_compacted": true
+            },
+            "result_json": {
+              "value": "{\"sentinel\":\"result\"}",
+              "scalar_type": "str"
+            },
+            "error": {
+              "value": "preserve error sentinel",
+              "scalar_type": "str"
+            },
+            "created_at": {
+              "value": "2040-01-01 00:00:00",
+              "scalar_type": "str"
+            },
+            "updated_at": {
+              "value": "2040-01-01 00:00:00",
+              "scalar_type": "str"
+            }
+          },
+          {
+            "rowid": {
+              "value": 513,
+              "scalar_type": "int"
+            },
+            "task_id": {
+              "value": "flag-one",
+              "scalar_type": "str"
+            },
+            "channel": {
+              "value": "email",
+              "scalar_type": "str"
+            },
+            "stable_message_identity": {
+              "value": "identity:513",
+              "scalar_type": "str"
+            },
+            "status": {
+              "value": "done",
+              "scalar_type": "str"
+            },
+            "owner": {
+              "value": "fixture-owner",
+              "scalar_type": "str"
+            },
+            "generation": {
+              "value": 3,
+              "scalar_type": "int"
+            },
+            "attempt_count": {
+              "value": 4,
+              "scalar_type": "int"
+            },
+            "lease_expires_at": {
+              "value": "2040-01-02",
+              "scalar_type": "str"
+            },
+            "available_at": {
+              "value": "2040-01-03",
+              "scalar_type": "str"
+            },
+            "input_json": {
+              "scalar_type": "str",
+              "utf8_bytes": 44,
+              "sha256": "4ca8d4577912aab56bdab311036b28234b60a7fb58dbe33f90658802525aab53",
+              "input_compacted": 1
+            },
+            "result_json": {
+              "value": "{\"sentinel\":\"result\"}",
+              "scalar_type": "str"
+            },
+            "error": {
+              "value": "preserve error sentinel",
+              "scalar_type": "str"
+            },
+            "created_at": {
+              "value": "2040-01-01 00:00:00",
+              "scalar_type": "str"
+            },
+            "updated_at": {
+              "value": "2040-01-01 00:00:00",
+              "scalar_type": "str"
+            }
+          },
+          {
+            "rowid": {
+              "value": 615,
+              "scalar_type": "int"
+            },
+            "task_id": {
+              "value": "failed",
+              "scalar_type": "str"
+            },
+            "channel": {
+              "value": "email",
+              "scalar_type": "str"
+            },
+            "stable_message_identity": {
+              "value": "identity:615",
+              "scalar_type": "str"
+            },
+            "status": {
+              "value": "failed",
+              "scalar_type": "str"
+            },
+            "owner": {
+              "value": "fixture-owner",
+              "scalar_type": "str"
+            },
+            "generation": {
+              "value": 3,
+              "scalar_type": "int"
+            },
+            "attempt_count": {
+              "value": 4,
+              "scalar_type": "int"
+            },
+            "lease_expires_at": {
+              "value": "2040-01-02",
+              "scalar_type": "str"
+            },
+            "available_at": {
+              "value": "2040-01-03",
+              "scalar_type": "str"
+            },
+            "input_json": {
+              "scalar_type": "str",
+              "utf8_bytes": 2,
+              "sha256": "44136fa355b3678a1146ad16f7e8649e94fb4fc21fe77e8310c060f61caaff8a",
+              "input_compacted": null
+            },
+            "result_json": {
+              "value": "{\"sentinel\":\"result\"}",
+              "scalar_type": "str"
+            },
+            "error": {
+              "value": "preserve error sentinel",
+              "scalar_type": "str"
+            },
+            "created_at": {
+              "value": "2040-01-01 00:00:00",
+              "scalar_type": "str"
+            },
+            "updated_at": {
+              "value": "2040-01-01 00:00:00",
+              "scalar_type": "str"
+            }
+          },
+          {
+            "rowid": {
+              "value": 717,
+              "scalar_type": "int"
+            },
+            "task_id": {
+              "value": "pending",
+              "scalar_type": "str"
+            },
+            "channel": {
+              "value": "email",
+              "scalar_type": "str"
+            },
+            "stable_message_identity": {
+              "value": "identity:717",
+              "scalar_type": "str"
+            },
+            "status": {
+              "value": "pending",
+              "scalar_type": "str"
+            },
+            "owner": {
+              "value": "fixture-owner",
+              "scalar_type": "str"
+            },
+            "generation": {
+              "value": 3,
+              "scalar_type": "int"
+            },
+            "attempt_count": {
+              "value": 4,
+              "scalar_type": "int"
+            },
+            "lease_expires_at": {
+              "value": "2040-01-02",
+              "scalar_type": "str"
+            },
+            "available_at": {
+              "value": "2040-01-03",
+              "scalar_type": "str"
+            },
+            "input_json": {
+              "scalar_type": "str",
+              "utf8_bytes": 2,
+              "sha256": "44136fa355b3678a1146ad16f7e8649e94fb4fc21fe77e8310c060f61caaff8a",
+              "input_compacted": null
+            },
+            "result_json": {
+              "value": "{\"sentinel\":\"result\"}",
+              "scalar_type": "str"
+            },
+            "error": {
+              "value": "preserve error sentinel",
+              "scalar_type": "str"
+            },
+            "created_at": {
+              "value": "2040-01-01 00:00:00",
+              "scalar_type": "str"
+            },
+            "updated_at": {
+              "value": "2040-01-01 00:00:00",
+              "scalar_type": "str"
+            }
+          },
+          {
+            "rowid": {
+              "value": 819,
+              "scalar_type": "int"
+            },
+            "task_id": {
+              "value": "running",
+              "scalar_type": "str"
+            },
+            "channel": {
+              "value": "email",
+              "scalar_type": "str"
+            },
+            "stable_message_identity": {
+              "value": "identity:819",
+              "scalar_type": "str"
+            },
+            "status": {
+              "value": "running",
+              "scalar_type": "str"
+            },
+            "owner": {
+              "value": "fixture-owner",
+              "scalar_type": "str"
+            },
+            "generation": {
+              "value": 3,
+              "scalar_type": "int"
+            },
+            "attempt_count": {
+              "value": 4,
+              "scalar_type": "int"
+            },
+            "lease_expires_at": {
+              "value": "2040-01-02",
+              "scalar_type": "str"
+            },
+            "available_at": {
+              "value": "2040-01-03",
+              "scalar_type": "str"
+            },
+            "input_json": {
+              "scalar_type": "str",
+              "utf8_bytes": 2,
+              "sha256": "44136fa355b3678a1146ad16f7e8649e94fb4fc21fe77e8310c060f61caaff8a",
+              "input_compacted": null
+            },
+            "result_json": {
+              "value": "{\"sentinel\":\"result\"}",
+              "scalar_type": "str"
+            },
+            "error": {
+              "value": "preserve error sentinel",
+              "scalar_type": "str"
+            },
+            "created_at": {
+              "value": "2040-01-01 00:00:00",
+              "scalar_type": "str"
+            },
+            "updated_at": {
+              "value": "2040-01-01 00:00:00",
+              "scalar_type": "str"
+            }
+          }
+        ]
+      }
+    }
+  ],
+  "owned_temp_removed": true,
+  "facts_report": "full typed raw-field/text equality asserted before output; input_json evidence stores type/bytes/hash and compacted provenance"
+}

@@ -45,6 +45,18 @@ describe("AttentionPage", () => {
     expect(within(scheduledCard as HTMLElement).getByRole("link", { name: "查看详情" })).toHaveAttribute("href", "/scheduled-tasks?id=42");
   });
 
+  it("opens the persisted Attempt directly from a collapsed Failed card", async () => {
+    render(<MemoryRouter initialEntries={["/attention"]}><Routes>
+      <Route path="/attention" element={<AttentionPage />} />
+      <Route path="/attempts/:id" element={<p>Attempt detail opened</p>} />
+    </Routes></MemoryRouter>);
+    const link = await screen.findByRole("link", { name: "查看 Attempt" });
+    expect(link).toBeVisible();
+    expect(screen.queryByText("retryable")).not.toBeVisible();
+    fireEvent.click(link);
+    expect(screen.getByText("Attempt detail opened")).toBeInTheDocument();
+  });
+
   it("refreshes the current attention snapshot automatically", async () => {
     vi.useFakeTimers();
     listAttention

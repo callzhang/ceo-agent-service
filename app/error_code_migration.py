@@ -11,7 +11,12 @@ import json
 from dataclasses import dataclass
 from typing import Any
 
-from app.task_storage import MEETING_JOB_SQL, task_id_expression
+from app.task_storage import task_id_expression
+from app.task20_definitions import task20_projection
+from app.task8_storage import task8_set_parts
+
+
+MEETING_JOB_SQL = task20_projection('meeting_alignment_jobs')
 
 
 @dataclass(frozen=True)
@@ -83,9 +88,7 @@ def migrate_legacy_meeting_projections(
             updates.append((json.dumps(migrated, ensure_ascii=False), int(row["id"])))
         if not dry_run:
             db.executemany(
-                "update tasks set error=?, updated_at=current_timestamp where id="
-                + task_id_expression("meeting_alignment_jobs", "?")
-                + " and record_type='meeting_alignment_jobs'",
+                f"""update tasks set {task8_set_parts('meeting_alignment_jobs', {}, update_sql={'error': '?', 'updated_at': 'current_timestamp'}).sql} where id={task_id_expression('meeting_alignment_jobs', '?')} and record_type='meeting_alignment_jobs'""",
                 updates,
             )
         return ProjectionMigrationResult(

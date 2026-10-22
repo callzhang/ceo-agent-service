@@ -45,6 +45,8 @@ class RuntimeRoute(BaseModel):
     runtime_kind: RuntimeKind
     credential_mode: CredentialMode
     model: str
+    # Optional per-route override; empty keeps the Codex global default.
+    reasoning_effort: str = ""
     # A service-API route carries its own provider endpoint, so several routes
     # of one kind can point at different providers.
     base_url: str = ""

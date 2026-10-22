@@ -1,0 +1,60 @@
+{
+  "frozen_source_manifest": "/tmp/ceo-d2-legacy-writers.mcMs23/d2-final-manifest.json",
+  "frozen_source_manifest_sha256": "d6c82737347b20f530a406cdd79e260b5bebf9f30261780f578b058c0ac8953c",
+  "source_base": "765488f678b8673848a364912ec9ed5052ddab90",
+  "five_old_writer_APIs_present_in_actual_predecessor": true,
+  "five_old_writer_APIs_absent_in_current_reopen": true,
+  "all_12_tables_raw_SQL_types_values_rowids_sequences_schema_markers_FK_exact": true,
+  "new_synthetic_tasks_736_done_737_open_and_3_receipts_read": true,
+  "old_links_and_242_outbox_history_read": true,
+  "actual_predecessor_app_files_verified": 444,
+  "D2_new_DDL": false,
+  "existing_combined_schema_recovery": "previous same-copy 19.10 ->19.9 ->19.8 actual b6 cold ->19.9 ->19.10; no repeated schema migration for this no-DDL deletion",
+  "artifacts": {
+    "d2_predecessor_cold.py": "61f7b90bd7f1e4f6c5428f22375825eb80fb3f06023aa5de17140ad4f09f22b8",
+    "d2_current_reopen.py": "08db26849a09752fa2581d2c265f7b6ecbb7498626f6fb8093ae6ac00ddf6b62",
+    "d2-predecessor-cold.log": "087cea4e8012ea6ec4ea3c5f279a3ddc0473b0ec915b0382a1b1df68374ee5ae",
+    "d2-current-reopen.log": "37febacc2b67fa71de68493d2e5f99daa1d5ca6abbccb9a97d82939b34d344a1",
+    "d2-actual-predecessor-files.json": "49472a8d9ae67258acbd5aae691de488e96b0be25b3052bf7d66e1409cfe11ed",
+    "d2-baseline-source-fixture.log": "30924297f62d5033b73784a9026808bfa8513b956cf1a8cf77ced6c42e010a70",
+    "d2-baseline-adjacent-fixtures.log": "6456620bb3070f6db0f71f1020d4ceea96bcdff96f2565b34a3c0827bc0a373d",
+    "d2-baseline-status.log": "c5251864b05297effa1c59343a94f70766112717cc42c1d9e018f43f4da07dc6"
+  },
+  "native_or_Audit_agents_executed": false,
+  "real_external_sends": 0,
+  "production_modified": false,
+  "A5_prior_native_failures_retained": 2,
+  "release_ready": false,
+  "independent_SPEC": {
+    "D2": "PASS",
+    "D1c_followup": "PASS"
+  },
+  "independent_QUALITY": {
+    "D2": "PASS",
+    "D1c_followup": "PASS",
+    "independent_copy_12_tables_511607_rows": "PASS"
+  },
+  "D2_source_artifacts": {
+    "core-green.log": "abdc6d3018e2c22d7dd2139c3d05a31b8b23f39ecb467b0816abb70d34d2146f",
+    "other-nodes.json": "250f0b11d4735cc19ea542850b993242494e45ce593a3b3e5d6119ec665a6916",
+    "audit-nodes.json": "612c1fd4f030ffc13feacd6ac2b118dc859f7bba97f8dc55092af34088f44a68",
+    "d2-final-combined.patch": "ca19e97e4e7c31c4e4771b26057c239bb25d46fedf1c295abf2584a2857aa43e",
+    "d1c-followup.patch": "552e8677afc2e58d084ab9e2eca92605ae532cb1dc51b83d6fa6c56d3ca1f687",
+    "other-selected.log": "0abdf2c4c23799d0b27d3b488cd8af4c88cafd0643bb4c7ea0b47bb94ea551f6",
+    "adjacent-fixtures-green.log": "a164e3ad0d43fed2074697bf53eed0492671604821d07a784e6cae10e21c7ea6",
+    "current-fixture-green.log": "c036b726f980bb166231094d3df058c3414e4c4d452940cb6ea6be9813c2b520",
+    "current-baseline-failure.log": "cc28fc3fda9f6c40ddd2d19a984098000bdc8331ad301ec9a086ba958402f245",
+    "ruff.log": "82b3e6a6c090a57601d22943bd23fca9218d1031dbe5a7b754092f9a156b4f18",
+    "audit-selected.log": "fc630bfa103b208e6275d683a4236cd26ab559de50dccb5d4b4d6fe4d87f8731",
+    "renamed-mixed-test-green.log": "1736591f96825c595673d7486b1a75ab149dbcd669439977e54b1dfca1296bf0",
+    "ast-retention-proof.json": "085483ae377208dd9fd62143ff496cc3d6f2cba7ddf9884df5fa13e0c94504e2",
+    "status-fixture-green.log": "e46162c392fc0ffd1ed4648aa5c7926d5b02620b4b3152c2ae2e3774e8a667be",
+    "d2-final-manifest.json": "d6c82737347b20f530a406cdd79e260b5bebf9f30261780f578b058c0ac8953c"
+  },
+  "root_copy_artifact_path": "/tmp/ceo-d1b-copy.JbC2V9/d2-current-copy-result.json",
+  "root_copy_artifact_sha256": "c5d59f7773e573305c1433873f2225d2128c39e5bac87b133f38173355cb13b7",
+  "retained_methods_AST_exact": 757,
+  "runtime_scope": "Only five orphan Store methods removed; no changed retained Store method or schema",
+  "no_business_fact_data_deleted": true,
+  "separate_D1c_followup_commit": "137237e8477ca483ae3cd08cf159c588e6cc0322"
+}

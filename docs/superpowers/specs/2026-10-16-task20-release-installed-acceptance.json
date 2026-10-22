@@ -1,0 +1,53 @@
+{
+  "recorded_utc": "2026-10-16T20:17:50.780840+00:00",
+  "status": "installed_unselected_component_spec_quality_and_frozen_copy_pass",
+  "implementation_commit": "dfbfc07bdfe580269a05ec165e48c7d3929e0ef1",
+  "installed_sha256": {
+    "app/task20_definitions.py": "d3e84f6d3ce871bf01b85fb160b1cf13162ca73b2644e39e593edc0b0c258773",
+    "app/task12_storage.py": "592da58189962bee520ae87b3504742495f5132fc481902bc72c11aa4766cf0d",
+    "app/task20_schema_release.py": "90fab9be52f04e03d826587851d4ae893e1abb0a57145a6c1133c0ee140f2715",
+    "tests/test_task20_main_sequence.py": "9999ea20a894f2fb8c64b00a96b483c9f2dced8d67b5f5e5017c30c84d13eb36",
+    "tests/test_task20_schema_release.py": "98195f21b893a18dfeb968961db80b316086e82948d611c0815bf366919ca479"
+  },
+  "mechanical_apply": {
+    "cases": 184,
+    "seconds": 8.13
+  },
+  "fresh_applied_spec": {
+    "cases": 184,
+    "seconds": 8.62,
+    "byte_exact_canonical": true,
+    "existing_function_asts_changed": 3,
+    "sql_literals_changed": 4,
+    "all_declaration_values_unchanged": true
+  },
+  "fresh_applied_quality": {
+    "cases": 184,
+    "seconds": 7.83,
+    "no_findings": true,
+    "no_current_caller_selection": true
+  },
+  "frozen_nonempty_component_copy": {
+    "receipt": "docs/superpowers/specs/2026-10-16-task20-release-actual-copy.json",
+    "script": "docs/superpowers/plans/2026-10-16-task20-release-actual-copy-preflight.py",
+    "script_sha256": "35e79467c7cf8ed0d18280ad139d06cbde5615e3262ae8237ccba1026c24d4b4",
+    "seconds": 56.058,
+    "original_ordinary_tables": 116,
+    "target_ordinary_tables": 104,
+    "inverse_all_original_tables_typed_equal": 116,
+    "source_unchanged": true,
+    "unrelated_temp_auto_conflicting_counters_unchanged": true,
+    "current_fact_inverse_native_sql_reforward": true,
+    "owned_temp_removed": true
+  },
+  "last_integrated_copy_ordinary_tables": 67,
+  "production_ordinary_tables_last_readonly_confirmed": 116,
+  "unproved": [
+    "Complete constructor/caller/schema-map/codec/manifest/publication/coordinator selection and integrated55 intermediate",
+    "Cold complete Store/Email/Workbench target convergence",
+    "Genuine archived production predecessor reads/writes/reforward",
+    "Real native CLI fake-outbound audit/revision/result/receipts and UI/performance/final11",
+    "Current production migration/merge/push/restart/deploy"
+  ],
+  "production_changed": false
+}

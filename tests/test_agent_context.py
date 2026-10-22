@@ -786,9 +786,49 @@ def test_audit_context_preserves_complete_proposal_and_raw_oa_commands():
     assert "Audit reads and judges it without executing actions" in audit_developer_instructions("Only publish supported facts.")
     assert _has_json_field(rendered, "candidate_digest", "b" * 64)
     assert "Candidate revision" in rendered
+    assert "Service-recorded scheduled work receipts" not in rendered
+    assert "report body" not in rendered
     assert "group-send candidate" not in rendered
     assert "OA factual gap" not in rendered
     assert "exact OA comment and applicant notification" not in rendered
     assert "Effective Audit Rules" not in rendered
     assert "Only publish supported facts." in rendered
     _assert_no_service_oa_resolution_fields(rendered)
+
+
+def test_scheduled_audit_context_shows_empty_receipt_boundary():
+    proposal = ConsumerProposal.model_validate({
+        "objective": "Review report",
+        "actions": [{
+            "description": "Send report", "action_identity": "send-report",
+            "capability": "dingtalk-chat", "operation": "send_message",
+            "target": {"conversation_id": "cid"},
+            "payload": {"text": "Report ready"},
+        }],
+        "sourced_facts": [], "authored_judgment": "Review report",
+    })
+    context = AuditTurnContext(
+        task=replace(_context(), channel="scheduled"),
+        proposal_revision=0, operation_id="scheduled-op",
+        candidate=_candidate(proposal), candidate_digest="a" * 64,
+        audit_rules="Review facts",
+    )
+
+    rendered = context.render()
+
+    assert "Service-recorded scheduled work receipts" in rendered
+    assert "[]" in rendered
+    assert "completed Consumer runs in this task and execution generation" in rendered
+    assert "exact completed Consumer parent run" not in rendered
+    assert "an empty list means none was captured" in rendered
+
+
+def test_exhausted_permission_turn_reads_the_file_once_before_proposing_a_return():
+    context = replace(_context(), permission_return_required=True)
+
+    rendered = context.render()
+
+    section = rendered.split("### Permission Retry Exhausted", 1)[1]
+    assert "Read the blocked file once now" in section
+    assert "ignore the rest of this section and review the approval normally" in section
+    assert "attempt another read" not in section

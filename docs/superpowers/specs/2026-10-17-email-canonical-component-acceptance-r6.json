@@ -1,0 +1,35 @@
+{
+  "recorded_at": "2026-10-18T01:18:34.334708+00:00",
+  "status": "ACCEPTED_COMPONENT_R6_ONLY",
+  "freeze_sha256": "aaeeed85f0191551fb6ce8d03c94892639753a3dba80929043653d16263d1951",
+  "author": {
+    "focused_pass": 30,
+    "seconds": 95.08,
+    "ruff": "PASS",
+    "ast": "PASS"
+  },
+  "spec": {
+    "verdict": "APPROVE",
+    "focused_pass": 7,
+    "seconds": 46.22
+  },
+  "quality": {
+    "verdict": "APPROVE",
+    "independent_probe": "Exact populated historical13 source, sqlite3.Row throughout, forward aliases, equivalent shared update, target body/model writes, inverse retained currentfacts/types/DDL/Message sequence; prior R5failedcondition nowGREEN",
+    "pytest_run_claim": false
+  },
+  "repair_scope": [
+    "Normalize fetched shared values for comparison",
+    "Normalize projected values/storage-type rows for snapshot comparison and inverse"
+  ],
+  "pins": {
+    "files": 4,
+    "requirements": 12,
+    "runtime": 373
+  },
+  "prior_r5_rejection_preserved": "docs/superpowers/specs/2026-10-17-email-canonical-component-review-r5.json",
+  "caller_integration_approval": false,
+  "actual_data_proof": false,
+  "capacity_acceptance": false,
+  "deployment": false
+}

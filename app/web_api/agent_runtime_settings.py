@@ -272,6 +272,14 @@ def _added_routes(
         model = submitted("MODEL")
         if not model:
             raise AgentRuntimeSettingsError(f"Runtime {name} requires a model.")
+        reasoning_effort = submitted("REASONING_EFFORT")
+        if reasoning_effort and (
+            not kind.startswith("codex")
+            or reasoning_effort not in SUPPORTED_RUNTIME_REASONING_EFFORTS
+        ):
+            raise AgentRuntimeSettingsError(
+                f"Runtime {name} has an unsupported reasoning effort."
+            )
         api_key = ""
         if kind in ADDED_ROUTE_KINDS_WITH_KEY:
             api_key = submitted("API_KEY") or persisted.get(f"{prefix}API_KEY", "").strip()
@@ -289,6 +297,7 @@ def _added_routes(
                 "kind": kind,
                 "base_url": base_url,
                 "model": model,
+                "reasoning_effort": reasoning_effort,
                 "api_key": api_key,
             }
         )
@@ -306,6 +315,7 @@ def _added_route_updates(
         updates[f"{prefix}KIND"] = route["kind"]
         updates[f"{prefix}BASE_URL"] = route["base_url"]
         updates[f"{prefix}MODEL"] = route["model"]
+        updates[f"{prefix}REASONING_EFFORT"] = route["reasoning_effort"]
         updates[f"{prefix}API_KEY"] = route["api_key"]
     kept = {route["name"] for route in added_routes}
     previous = set(_names(persisted.get("CEO_AGENT_RUNTIME_ROUTES", "")))

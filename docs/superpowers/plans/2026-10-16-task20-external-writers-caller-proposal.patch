@@ -1,0 +1,495 @@
+--- a/app/reviewed_candidate_store.py
++++ b/app/reviewed_candidate_store.py
+@@ -1,6 +1,7 @@
+ """Durable, generation-bound Consumer candidates and system execution progress."""
+
+-from app.task_storage import REPLY_TASK_SQL
++from app.task20_definitions import task20_column, task20_projection
++from app.task8_storage import task8_set_parts
+ import hashlib
+ import json
+ import sqlite3
+@@ -18,6 +19,9 @@
+     insert_action,
+     update_action,
+ )
++
++
++REPLY_TASK_SQL = task20_projection('reply_tasks')
+
+
+
+@@ -287,8 +291,7 @@
+                 raise ValueError("stale candidate")
+             task = db.execute(f"select * from ({REPLY_TASK_SQL}) where id=?", (candidate["task_id"],)).fetchone()
+             if task["status"] == "needs_human":
+-                db.execute("""update tasks set status='pending',available_at='',locked_at=null,
+-                    updated_at=current_timestamp where record_type='reply_tasks' and id=? and execution_generation=? and status='needs_human'""",
++                db.execute(f"""update tasks set {task8_set_parts('reply_tasks', {}, update_sql={'status': "'pending'", 'available_at': "''", 'locked_at': 'null', 'updated_at': 'current_timestamp'}).sql} where record_type='reply_tasks' and id=? and {task20_column('reply_tasks', 'execution_generation')}=? and {task20_column('reply_tasks', 'status')}='needs_human'""",
+                     (candidate["task_id"],candidate["execution_generation"]))
+             elif task["status"] not in ("pending", "processing", "done", "skipped"):
+                 raise ValueError("selected candidate task is unavailable")
+--- a/app/dispatcher/adapters.py
++++ b/app/dispatcher/adapters.py
+@@ -2,7 +2,9 @@
+ from app.run_storage import SCHEDULED_RUN_SQL
+ from app.state_definitions import state_projection
+ from app.state_storage import state_json_field, update_state, upsert_state
+-from app.task_storage import MEETING_JOB_SQL, OKR_REQUEST_SQL, task_id_expression, REPLY_TASK_SQL, WORK_SUMMARY_INPUT_SQL
++from app.task_storage import task_id_expression
++from app.task20_definitions import task20_column, task20_projection
++from app.task8_storage import task8_set_parts
+
+ from app.store import REPLY_TASK_CURRENT_SQL
+
+@@ -17,6 +19,12 @@
+     QueueMetrics,
+ )
+ from app.store import AutoReplyStore
++
++
++MEETING_JOB_SQL = task20_projection('meeting_alignment_jobs')
++OKR_REQUEST_SQL = task20_projection('okr_review_requests')
++REPLY_TASK_SQL = task20_projection('reply_tasks')
++WORK_SUMMARY_INPUT_SQL = task20_projection('work_summary_inputs')
+
+
+ _CLAIM_SCAN_PAGE_SIZE = 32
+@@ -395,7 +403,7 @@
+             self.store._compact_settled_reply_task_input(db, int(envelope.source_id))
+
+     def _channel_clause(self, alias: str = "task") -> str:
+-        return f"{alias}.channel in ('dingtalk','wechat')"
++        return f"{alias}.{task20_column('reply_tasks', 'channel') if alias == 'tasks' else 'channel'} in ('dingtalk','wechat')"
+
+     def metrics(self, now: datetime) -> QueueMetrics:
+         now_text = _sqlite_time(now)
+@@ -519,10 +527,7 @@
+                 return None
+             source_id = str(row["id"])
+             cursor = db.execute(
+-                "update tasks set status='processing', attempts=attempts+1, "
+-                "claimed_input_version=input_version, claimed_input_id=current_input_id, locked_at=?, available_at='', "
+-                "updated_at=? where record_type='reply_tasks' and id=? and status in ('pending','processing') and "
+-                + self._channel_clause("tasks"),
++                f"""update tasks set {task8_set_parts('reply_tasks', {}, update_sql={'status': "'processing'", 'attempts': f"{task20_column('reply_tasks', 'attempts')}+1", 'claimed_input_version': f"{task20_column('reply_tasks', 'input_version')}", 'locked_at': '?', 'available_at': "''", 'updated_at': '?'}, structural_sql={'claimed_input_id': 'current_input_id'}).sql} where record_type='reply_tasks' and id=? and {task20_column('reply_tasks', 'status')} in ('pending','processing') and {self._channel_clause('tasks')}""",
+                 (now_text, now_text, row["id"]),
+             )
+             if cursor.rowcount != 1:
+@@ -560,8 +565,7 @@
+         with self.store._immediate_write_transaction() as db:
+             _release_lease(db, envelope=envelope, owner=owner, now=_sqlite_time(now))
+             cursor = db.execute(
+-                "update tasks set status='pending', attempts=max(attempts-1,0), "
+-                "locked_at=null, updated_at=? where record_type='reply_tasks' and id=? and status='processing'",
++                f"""update tasks set {task8_set_parts('reply_tasks', {}, update_sql={'status': "'pending'", 'attempts': f"max({task20_column('reply_tasks', 'attempts')}-1,0)", 'locked_at': 'null', 'updated_at': '?'}).sql} where record_type='reply_tasks' and id=? and {task20_column('reply_tasks', 'status')}='processing'""",
+                 (_sqlite_time(now), int(envelope.source_id)),
+             )
+             if cursor.rowcount != 1:
+@@ -587,11 +591,10 @@
+         with self.store._immediate_write_transaction() as db:
+             _release_lease(db, envelope=envelope, owner=owner, now=now_text)
+             cursor = db.execute(
+-                """
++                f"""
+                 update tasks
+-                set status=?,
+-                    locked_at=null, available_at=?, error=?, updated_at=?
+-                where record_type='reply_tasks' and id=? and status='processing'
++                set {task8_set_parts('reply_tasks', {}, update_sql={'status': '?', 'locked_at': 'null', 'available_at': '?', 'error': '?', 'updated_at': '?'}).sql}
++                where record_type='reply_tasks' and id=? and {task20_column('reply_tasks', 'status')}='processing'
+                 """,
+                 ('failed' if terminal else 'pending', available_at, error[:2000], now_text, int(envelope.source_id)),
+             )
+@@ -619,7 +622,7 @@
+     name = "scheduled_execution"
+
+     def _channel_clause(self, alias: str = "task") -> str:
+-        return f"{alias}.channel='scheduled'"
++        return f"{alias}.{task20_column('reply_tasks', 'channel') if alias == 'tasks' else 'channel'}='scheduled'"
+
+
+ class MeetingQueueAdapter(_LedgerClaimLifecycle):
+@@ -777,10 +780,7 @@
+                 return None
+             source_id = str(row["id"])
+             cursor = db.execute(
+-                "update tasks set status='processing', "
+-                "attempts=attempts+1, locked_at=?, updated_at=? "
+-                "where id=" + task_id_expression("meeting_alignment_jobs", "?")
+-                + " and record_type='meeting_alignment_jobs' and status in ('waiting','pending','retry','processing')",
++                f"""update tasks set {task8_set_parts('meeting_alignment_jobs', {}, update_sql={'status': "'processing'", 'attempts': f"{task20_column('meeting_alignment_jobs', 'attempts')}+1", 'locked_at': '?', 'updated_at': '?'}).sql} where id={task_id_expression('meeting_alignment_jobs', '?')} and record_type='meeting_alignment_jobs' and {task20_column('meeting_alignment_jobs', 'status')} in ('waiting','pending','retry','processing')""",
+                 (now_text, now_text, row["id"]),
+             )
+             if cursor.rowcount != 1:
+@@ -818,10 +818,7 @@
+         with self.store._immediate_write_transaction() as db:
+             _release_lease(db, envelope=envelope, owner=owner, now=_sqlite_time(now))
+             cursor = db.execute(
+-                "update tasks set status='retry', "
+-                "attempts=max(attempts-1,0), locked_at=null, updated_at=? "
+-                "where id=" + task_id_expression("meeting_alignment_jobs", "?")
+-                + " and record_type='meeting_alignment_jobs' and status='processing'",
++                f"""update tasks set {task8_set_parts('meeting_alignment_jobs', {}, update_sql={'status': "'retry'", 'attempts': f"max({task20_column('meeting_alignment_jobs', 'attempts')}-1,0)", 'locked_at': 'null', 'updated_at': '?'}).sql} where id={task_id_expression('meeting_alignment_jobs', '?')} and record_type='meeting_alignment_jobs' and {task20_column('meeting_alignment_jobs', 'status')}='processing'""",
+                 (_sqlite_time(now), int(envelope.source_id)),
+             )
+             if cursor.rowcount != 1:
+@@ -857,7 +854,7 @@
+         now_text = _sqlite_time(now)
+         with self.store._connect() as db:
+             pending = db.execute(
+-                "select count(*) from tasks where record_type='okr_review_requests' and status='pending'"
++                f"select count(*) from tasks where record_type='okr_review_requests' and {task20_column('okr_review_requests', 'status')}='pending'"
+             ).fetchone()[0]
+             due = db.execute(
+                 f"select count(*) from ({OKR_REQUEST_SQL}) request "
+@@ -963,9 +960,7 @@
+                 return None
+             source_id = str(row["id"])
+             cursor = db.execute(
+-                "update tasks set status='processing', error='', "
+-                "updated_at=? where record_type='okr_review_requests' "
+-                "and cast(legacy_key as integer)=? and status in ('pending','processing')",
++                f"""update tasks set {task8_set_parts('okr_review_requests', {}, update_sql={'status': "'processing'", 'error': "''", 'updated_at': '?'}).sql} where record_type='okr_review_requests' and cast(legacy_key as integer)=? and {task20_column('okr_review_requests', 'status')} in ('pending','processing')""",
+                 (now_text, row["id"]),
+             )
+             if cursor.rowcount != 1:
+@@ -999,9 +994,7 @@
+         with self.store._immediate_write_transaction() as db:
+             _release_lease(db, envelope=envelope, owner=owner, now=_sqlite_time(now))
+             cursor = db.execute(
+-                "update tasks set status='pending', updated_at=? "
+-                "where record_type='okr_review_requests' "
+-                "and cast(legacy_key as integer)=? and status='processing'",
++                f"""update tasks set {task8_set_parts('okr_review_requests', {}, update_sql={'status': "'pending'", 'updated_at': '?'}).sql} where record_type='okr_review_requests' and cast(legacy_key as integer)=? and {task20_column('okr_review_requests', 'status')}='processing'""",
+                 (_sqlite_time(now), int(envelope.source_id)),
+             )
+             if cursor.rowcount != 1:
+@@ -1150,9 +1143,7 @@
+                 return None
+             source_id = str(row["id"])
+             cursor = db.execute(
+-                "update tasks set status='processing', "
+-                "attempts=attempts+1, error='', available_at='', updated_at=? "
+-                f"where record_type='work_summary_inputs' and id={task_id_expression('work_summary_inputs', '?')} and status in ('pending','processing')",
++                f"""update tasks set {task8_set_parts('work_summary_inputs', {}, update_sql={'status': "'processing'", 'attempts': f"{task20_column('work_summary_inputs', 'attempts')}+1", 'error': "''", 'available_at': "''", 'updated_at': '?'}).sql} where record_type='work_summary_inputs' and id={task_id_expression('work_summary_inputs', '?')} and {task20_column('work_summary_inputs', 'status')} in ('pending','processing')""",
+                 (now_text, row["id"]),
+             )
+             if cursor.rowcount != 1:
+@@ -1190,9 +1181,7 @@
+         with self.store._immediate_write_transaction() as db:
+             _release_lease(db, envelope=envelope, owner=owner, now=_sqlite_time(now))
+             cursor = db.execute(
+-                "update tasks set status='pending', "
+-                "attempts=max(attempts-1,0), updated_at=? "
+-                f"where record_type='work_summary_inputs' and id={task_id_expression('work_summary_inputs', '?')} and status='processing'",
++                f"""update tasks set {task8_set_parts('work_summary_inputs', {}, update_sql={'status': "'pending'", 'attempts': f"max({task20_column('work_summary_inputs', 'attempts')}-1,0)", 'updated_at': '?'}).sql} where record_type='work_summary_inputs' and id={task_id_expression('work_summary_inputs', '?')} and {task20_column('work_summary_inputs', 'status')}='processing'""",
+                 (_sqlite_time(now), int(envelope.source_id)),
+             )
+             if cursor.rowcount != 1:
+--- a/app/scheduled_task_recovery.py
++++ b/app/scheduled_task_recovery.py
+@@ -1,6 +1,7 @@
+ from __future__ import annotations
+ from app.run_storage import SCHEDULED_RUN_SQL
+-from app.task_storage import REPLY_TASK_SQL
++from app.task20_definitions import task20_column, task20_projection
++from app.task8_storage import task8_set_parts
+ from app.action_storage import EXTERNAL_ACTION_RESULT_SQL, SENT_REPLY_SQL, REPLY_ATTEMPT_COMMON_SQL, update_action
+
+ from datetime import datetime, timezone
+@@ -9,6 +10,9 @@
+ from app.run_storage import AGENT_RUN_SQL
+ from app.configs_definitions import config_projection
+ from app.schedules_definitions import schedule_projection
++
++
++REPLY_TASK_SQL = task20_projection('reply_tasks')
+
+
+ _LEGACY_AGENT_FAILURES = (
+@@ -121,15 +125,10 @@
+         closed = 0
+         for row in rows:
+             task_cursor = db.execute(
+-                """
++                f"""
+                 update tasks
+-                   set status='done',
+-                       error='',
+-                       available_at='',
+-                       locked_at=null,
+-                       recovery_code='superseded_by_service_command',
+-                       updated_at=?
+-                 where record_type='reply_tasks' and id=? and status='failed'
++                   set {task8_set_parts('reply_tasks', {}, update_sql={'status': "'done'", 'error': "''", 'available_at': "''", 'locked_at': 'null', 'recovery_code': "'superseded_by_service_command'", 'updated_at': '?'}).sql}
++                 where record_type='reply_tasks' and id=? and {task20_column('reply_tasks', 'status')}='failed'
+                 """,
+                 (now_text, int(row["task_id"])),
+             )
+--- a/app/reply_task_deferral.py
++++ b/app/reply_task_deferral.py
+@@ -6,7 +6,8 @@
+
+ from __future__ import annotations
+ from app.state_definitions import state_projection
+-from app.task_storage import REPLY_TASK_SQL
++from app.task20_definitions import task20_column, task20_projection
++from app.task8_storage import register_task8_functions, task8_set_parts
+
+ import argparse
+ import hashlib
+@@ -27,6 +28,9 @@
+     EXTERNAL_ACTION_RESULT_SQL,
+     REVIEW_CANDIDATE_SQL, SENT_REPLY_SQL,
+ )
++
++
++REPLY_TASK_SQL = task20_projection('reply_tasks')
+
+
+ _RECEIPT_DDL = """
+@@ -89,6 +93,7 @@
+         db.execute('pragma query_only=on')
+     else:
+         db = sqlite3.connect(resolved, timeout=5, isolation_level=None)
++        register_task8_functions(db)
+     db.row_factory = sqlite3.Row
+     try:
+         yield db
+@@ -301,8 +306,7 @@
+             until = _stamp(instant + timedelta(seconds=duration_seconds))
+             if snap['available_at'] and snap['available_at'] >= until:
+                 raise ValueError('existing deferral is later')
+-            db.execute("""update tasks set status='pending', available_at=?,
+-                locked_at=null, updated_at=? where record_type='reply_tasks' and id=? and status in ('pending','processing')""",
++            db.execute(f"""update tasks set {task8_set_parts('reply_tasks', {}, update_sql={'status': "'pending'", 'available_at': '?', 'locked_at': 'null', 'updated_at': '?'}).sql} where record_type='reply_tasks' and id=? and {task20_column('reply_tasks', 'status')} in ('pending','processing')""",
+                 (until, _stamp(instant), task_id))
+             db.execute("""insert into reply_task_deferral_receipts
+                 (request_id,task_id,business_object_key,execution_generation,input_version,
+@@ -353,7 +357,7 @@
+                 row['latest_failed_run_id'],row['latest_failed_run_fingerprint'],
+                 'pending',row['deferred_until']):
+                 raise ValueError('deferral state changed')
+-            db.execute("update tasks set available_at=?,updated_at=? where record_type='reply_tasks' and id=? and status='pending'",
++            db.execute(f"""update tasks set {task8_set_parts('reply_tasks', {}, update_sql={'available_at': '?', 'updated_at': '?'}).sql} where record_type='reply_tasks' and id=? and {task20_column('reply_tasks', 'status')}='pending'""",
+                        (row['original_available_at'],_stamp(instant),task_id))
+             db.execute("""update reply_task_deferral_receipts set status='resumed',
+                 resume_request_id=?,resumed_at=? where id=? and status='paused'""",
+--- a/app/dingtalk_delivery_repair.py
++++ b/app/dingtalk_delivery_repair.py
+@@ -11,6 +11,12 @@
+ )
+ from app.agent_contracts import SystemExecutionResult
+ from app.run_storage import AGENT_RUN_SQL
++from app.task20_definitions import task20_column, task20_projection
++from app.task8_storage import task8_set_parts
++
++
++REPLY_TASK_SQL = task20_projection('reply_tasks')
++
+
+
+ def _same_timestamp_instant(actual: object, expected: object) -> bool:
+@@ -42,8 +48,6 @@
+
+ def collect_native_chat_readback(store, dws, task_id: int) -> dict:
+     """Read one reply's exact conversation window and bind it to the current principal."""
+-    from app.store import REPLY_TASK_SQL
+-
+     with store._connect() as db:
+         task = db.execute(f"select * from ({REPLY_TASK_SQL}) where id=?", (task_id,)).fetchone()
+         if task is None:
+@@ -135,7 +139,7 @@
+             # Agent runs and historical Attempt rows are never rewritten.
+             run = db.execute(f"select * from ({AGENT_RUN_SQL}) where id=?", (row["first_agent_run_id"],)).fetchone()
+             if run is not None:
+-                task = db.execute("select * from tasks where record_type='reply_tasks' and legacy_key=?", (str(run["reply_task_id"]),)).fetchone()
++                task = db.execute(f"select tasks.*, {task20_column('reply_tasks', 'execution_generation')} as execution_generation, {task20_column('reply_tasks', 'status')} as status, {task20_column('reply_tasks', 'error')} as error from tasks where record_type='reply_tasks' and legacy_key=?", (str(run["reply_task_id"]),)).fetchone()
+                 if task is not None and task["execution_generation"] == run["execution_generation"]:
+                     if task["status"] in ("pending", "processing"):
+                         raise ValueError("delivery task is active")
+@@ -144,7 +148,7 @@
+                             "id": run["reply_task_id"], "execution_generation": task["execution_generation"],
+                             "status": task["status"], "error": task["error"],
+                         }
+-                        db.execute("update tasks set status='failed',error=?,updated_at=? where id=?",
++                        db.execute(f"""update tasks set {task8_set_parts('reply_tasks', {}, update_sql={'status': "'failed'", 'error': '?', 'updated_at': '?'}).sql} where id=?""",
+                                    (error_code, proof["queried_at"], task["id"]))
+         body = json.dumps(changed, ensure_ascii=False, sort_keys=True, separators=(",", ":"))
+         update_action(db, "external_action_results", key, {
+@@ -162,8 +166,6 @@
+
+ def apply_native_chat_readback(store, proof: dict) -> bool:
+     """Settle one uncertain native reply from a complete, exact DWS history read."""
+-    from app.store import REPLY_TASK_SQL
+-
+     task_id = proof.get("task_id")
+     payload = proof.get("payload")
+     if not isinstance(task_id, int) or task_id < 1:
+@@ -344,9 +346,7 @@
+             if receipt_cursor.rowcount != 1:
+                 raise ValueError("external receipt changed during reconciliation")
+             task_cursor = db.execute(
+-                "update tasks set status='done',error='',available_at='',locked_at=null,updated_at=? "
+-                "where record_type='reply_tasks' and id=? and status='failed' "
+-                "and error='external_action_uncertain' and execution_generation=?",
++                f"""update tasks set {task8_set_parts('reply_tasks', {}, update_sql={'status': "'done'", 'error': "''", 'available_at': "''", 'locked_at': 'null', 'updated_at': '?'}).sql} where record_type='reply_tasks' and id=? and {task20_column('reply_tasks', 'status')}='failed' and {task20_column('reply_tasks', 'error')}='external_action_uncertain' and {task20_column('reply_tasks', 'execution_generation')}=?""",
+                 (queried_at, task_id, task["execution_generation"]),
+             )
+             if task_cursor.rowcount != 1:
+@@ -471,9 +471,7 @@
+             "lease_owner": "", "lease_expires_at": "", "updated_at": queried_at,
+         })
+         task_cursor = db.execute(
+-            "update tasks set status='done',error='',available_at='',locked_at=null,updated_at=? "
+-            "where record_type='reply_tasks' and id=? and status='failed' "
+-            "and error='external_action_uncertain' and execution_generation=?",
++            f"""update tasks set {task8_set_parts('reply_tasks', {}, update_sql={'status': "'done'", 'error': "''", 'available_at': "''", 'locked_at': 'null', 'updated_at': '?'}).sql} where record_type='reply_tasks' and id=? and {task20_column('reply_tasks', 'status')}='failed' and {task20_column('reply_tasks', 'error')}='external_action_uncertain' and {task20_column('reply_tasks', 'execution_generation')}=?""",
+             (queried_at, task_id, task["execution_generation"]),
+         )
+         if task_cursor.rowcount != 1:
+--- a/app/error_code_migration.py
++++ b/app/error_code_migration.py
+@@ -11,7 +11,12 @@
+ from dataclasses import dataclass
+ from typing import Any
+
+-from app.task_storage import MEETING_JOB_SQL, task_id_expression
++from app.task_storage import task_id_expression
++from app.task20_definitions import task20_projection
++from app.task8_storage import task8_set_parts
++
++
++MEETING_JOB_SQL = task20_projection('meeting_alignment_jobs')
+
+
+ @dataclass(frozen=True)
+@@ -83,9 +88,7 @@
+             updates.append((json.dumps(migrated, ensure_ascii=False), int(row["id"])))
+         if not dry_run:
+             db.executemany(
+-                "update tasks set error=?, updated_at=current_timestamp where id="
+-                + task_id_expression("meeting_alignment_jobs", "?")
+-                + " and record_type='meeting_alignment_jobs'",
++                f"""update tasks set {task8_set_parts('meeting_alignment_jobs', {}, update_sql={'error': '?', 'updated_at': 'current_timestamp'}).sql} where id={task_id_expression('meeting_alignment_jobs', '?')} and record_type='meeting_alignment_jobs'""",
+                 updates,
+             )
+         return ProjectionMigrationResult(
+--- a/app/storage_maintenance.py
++++ b/app/storage_maintenance.py
+@@ -1,7 +1,9 @@
+ """Remove persisted trajectory copies and reclaim SQLite pages."""
+
+ from __future__ import annotations
+-from app.task_storage import task_id_expression, REPLY_TASK_INPUT_SQL, WORK_SUMMARY_INPUT_SQL
++from app.task_storage import task_id_expression
++from app.task20_definitions import task20_column, task20_projection
++from app.task8_storage import register_task8_functions, task8_set_parts
+
+ import argparse
+ import json
+@@ -11,6 +13,10 @@
+
+ from app.store import AutoReplyStore, REPLY_TASK_CURRENT_SQL
+ from app.action_storage import REPLY_ATTEMPT_COMMON_SQL
++
++
++REPLY_TASK_INPUT_SQL = task20_projection('reply_task_inputs')
++WORK_SUMMARY_INPUT_SQL = task20_projection('work_summary_inputs')
+
+
+ def compact_done_email_classification_inputs(database: Path) -> dict[str, int]:
+@@ -58,6 +64,7 @@
+     counts = {"tasks_compacted": 0, "inputs_compacted": 0,
+               "attempts_cleared": 0, "logical_bytes_removed": 0}
+     with closing(sqlite3.connect(database, timeout=60)) as db:
++        register_task8_functions(db)
+         db.row_factory = sqlite3.Row
+         db.execute("begin immediate")
+         task_ids = [int(row["id"]) for row in db.execute(
+@@ -114,6 +121,7 @@
+     """
+     counts = {"rows_compacted": 0, "logical_bytes_removed": 0}
+     with closing(sqlite3.connect(database, timeout=60)) as db:
++        register_task8_functions(db)
+         db.row_factory = sqlite3.Row
+         db.execute("begin immediate")
+         rows = db.execute(
+@@ -125,9 +133,7 @@
+             payload = row["payload_json"]
+             source_created_at, digest, body_bytes = AutoReplyStore._work_summary_input_provenance(payload)
+             db.execute(
+-                "update tasks set payload_json='{}', source_created_at=?, "
+-                "body_sha256=?, body_bytes=?, body_compacted=1 "
+-                f"where record_type='work_summary_inputs' and id={task_id_expression('work_summary_inputs', '?')} and status in ('done', 'skipped') and body_compacted=0",
++                f"""update tasks set {task8_set_parts('work_summary_inputs', {}, update_sql={'payload_json': "'{}'", 'source_created_at': '?', 'body_sha256': '?', 'body_bytes': '?', 'body_compacted': '1'}).sql} where record_type='work_summary_inputs' and id={task_id_expression('work_summary_inputs', '?')} and {task20_column('work_summary_inputs', 'status')} in ('done', 'skipped') and {task20_column('work_summary_inputs', 'body_compacted')}=0""",
+                 (source_created_at, digest, body_bytes, row["id"]),
+             )
+             counts["rows_compacted"] += 1
+@@ -145,19 +151,20 @@
+     """
+     counts = {"event_runs_cleared": 0, "payload_fields_cleared": 0, "payload_bytes_removed": 0}
+     columns = {
+-        "tasks": {"error_detail": ""},
++        "workbench_turns": {"error_detail": ""},
+     }
+     with closing(sqlite3.connect(database, timeout=60)) as db:
++        register_task8_functions(db)
+         db.execute("begin immediate")
+         _clear_workbench_event_bodies(db, counts)
+-        for table, fields in columns.items():
++        for kind, fields in columns.items():
+             for column, empty in fields.items():
+                 counts["payload_bytes_removed"] += db.execute(
+-                    f"select coalesce(sum(max(length(cast({column} as blob))-length(cast(? as blob)),0)),0) "
+-                    f"from {table} where {column}<>?", (empty, empty),
++                    f"select coalesce(sum(max(length(cast({task20_column(kind, column)} as blob))-length(cast(? as blob)),0)),0) "
++                    f"from tasks where record_type=? and {task20_column(kind, column)}<>?", (empty, kind, empty),
+                 ).fetchone()[0]
+                 counts["payload_fields_cleared"] += db.execute(
+-                    f"update {table} set {column}=? where {column}<>?", (empty, empty)
++                    f"update tasks set {task8_set_parts(kind, {}, update_sql={column: '?'}).sql} where record_type=? and {task20_column(kind, column)}<>?", (empty, kind, empty)
+                 ).rowcount
+         db.execute(
+             "insert into codex_session_search_fts(codex_session_search_fts) values('rebuild')"
+--- a/app/work_summary_payload.py
++++ b/app/work_summary_payload.py
+@@ -1,7 +1,9 @@
+ """Versioned, lossless storage codec for work-summary input JSON."""
+
+ from __future__ import annotations
+-from app.task_storage import task_id_expression, WORK_SUMMARY_INPUT_SQL
++from app.task_storage import task_id_expression
++from app.task20_definitions import task20_column, task20_projection
++from app.task8_storage import register_task8_functions, task8_set_parts
+
+ import argparse
+ import json
+@@ -9,6 +11,9 @@
+ import zlib
+ from contextlib import closing
+ from pathlib import Path
++
++
++WORK_SUMMARY_INPUT_SQL = task20_projection('work_summary_inputs')
+
+ _MAGIC = b"\x00WSI1"
+ _COMPRESSION_LEVEL = 6
+@@ -49,6 +54,7 @@
+         raise ValueError("batch_size must be positive")
+     counts = {"scanned": 0, "compressed": 0, "bytes_before": 0, "bytes_after": 0}
+     with closing(sqlite3.connect(database, timeout=30)) as db:
++        register_task8_functions(db)
+         db.execute("pragma busy_timeout=30000")
+         last_id = 0
+         while True:
+@@ -78,7 +84,7 @@
+                     if stored == raw:
+                         continue
+                     cursor = db.execute(
+-                        f"update tasks set payload_json=? where record_type='work_summary_inputs' and id={task_id_expression('work_summary_inputs', '?')} and payload_json=?",
++                        f"""update tasks set {task8_set_parts('work_summary_inputs', {}, update_sql={'payload_json': '?'}).sql} where record_type='work_summary_inputs' and id={task_id_expression('work_summary_inputs', '?')} and {task20_column('work_summary_inputs', 'payload_json')}=?""",
+                         (encoded, row_id, current),
+                     )
+                     if cursor.rowcount:

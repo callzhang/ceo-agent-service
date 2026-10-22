@@ -1,0 +1,166 @@
+diff --git a/app/email_store.py b/app/email_store.py
+--- a/app/email_store.py
++++ b/app/email_store.py
+@@ -75,6 +75,8 @@
+ from app.task20_current_schema import task20_schema_is_current
+ from app.task8_storage import register_task8_functions
+ from app.state_definitions import STATE_FIELDS, state_projection
++from app.runs11_definitions import run11_projection
++from app.runs11_storage import insert_run11_fact
+ from app.state_storage import insert_state, state_json_field, update_state_rows, upsert_state
+ from app.state_schema_release import state_schema_is_current
+ from app.provider_state_definitions import FRESH_OBSERVATION_FIELDS
+@@ -14685,30 +14687,31 @@
+         ):
+             raise ValueError("runtime timings must be finite and non-negative")
+         with self._connect() as db:
++            insert_run11_fact(
++                db, "email_classifier_runtime_samples",
++                {
++                    "model_id": model_id.strip(),
++                    "outcome": outcome,
++                    "fallback_code": fallback_code,
++                    "cache_hit": int(cache_hit),
++                    "runtime_warm": int(runtime_warm),
++                    "queue_ms": float(queue_ms),
++                    "http_ms": float(http_ms),
++                    "embedding_ms": float(embedding_ms),
++                    "head_ms": float(head_ms),
++                    "total_ms": float(total_ms),
++                    "recorded_at": self._now(),
++                },
++            )
+             db.execute(
+                 """
+-                insert into email_classifier_runtime_samples (
+-                    model_id, outcome, fallback_code, cache_hit, runtime_warm,
+-                    queue_ms, http_ms, embedding_ms, head_ms, total_ms, recorded_at
+-                ) values (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+-                """,
+-                (
+-                    model_id.strip(),
+-                    outcome,
+-                    fallback_code,
+-                    int(cache_hit),
+-                    int(runtime_warm),
+-                    *(float(value) for value in values),
+-                    self._now(),
+-                ),
+-            )
+-            db.execute(
+-                """
+-                delete from email_classifier_runtime_samples
+-                where id not in (
+-                    select id from email_classifier_runtime_samples
+-                    order by id desc limit ?
+-                )
++                delete from runs
++                where record_type='email_classifier_runtime_samples'
++                  and id not in (
++                    select id from runs indexed by idx_runs11_sample_id
++                    where record_type='email_classifier_runtime_samples'
++                    order by cast(legacy_key as integer) desc limit ?
++                  )
+                 """,
+                 (MAX_CLASSIFIER_RUNTIME_SAMPLES,),
+             )
+@@ -14785,10 +14788,8 @@
+         ).isoformat()
+         with self._connect() as db:
+             rows = db.execute(
+-                """
+-                select total_ms, recorded_at from email_classifier_runtime_samples
+-                where recorded_at >= ?
+-                """,
++                "select total_ms, recorded_at from (" + run11_projection("email_classifier_runtime_samples")
++                + ") where recorded_at >= ?",
+                 (cutoff,),
+             ).fetchall()
+         times = sorted(float(row["total_ms"]) for row in rows)
+@@ -14799,10 +14800,8 @@
+             # changed for that, so report the last batch it did judge and say so.
+             with self._connect() as db:
+                 last = db.execute(
+-                    """
+-                    select total_ms, recorded_at from email_classifier_runtime_samples
+-                    order by id desc limit ?
+-                    """,
++                    "select total_ms, recorded_at from (" + run11_projection("email_classifier_runtime_samples")
++                    + ") order by id desc limit ?",
+                     (_RUNTIME_LATENCY_FALLBACK_SAMPLES,),
+                 ).fetchall()
+             times = sorted(float(row["total_ms"]) for row in last)
+@@ -14840,12 +14839,10 @@
+             raise ValueError("model_id must be non-empty")
+         with self._connect() as db:
+             rows = db.execute(
+-                """
+-                select outcome, fallback_code, cache_hit, runtime_warm,
+-                       queue_ms, http_ms, embedding_ms, head_ms, total_ms
+-                from email_classifier_runtime_samples
+-                where model_id=? order by id desc limit ?
+-                """,
++                "select outcome, fallback_code, cache_hit, runtime_warm, "
++                "queue_ms, http_ms, embedding_ms, head_ms, total_ms from ("
++                + run11_projection("email_classifier_runtime_samples")
++                + ") where model_id=? order by id desc limit ?",
+                 (model_id.strip(), MAX_CLASSIFIER_RUNTIME_SAMPLES),
+             ).fetchall()
+ 
+diff --git a/app/quality_gate.py b/app/quality_gate.py
+--- a/app/quality_gate.py
++++ b/app/quality_gate.py
+@@ -9,6 +9,7 @@
+ 
+ from __future__ import annotations
+ from app.state_definitions import state_projection
++from app.runs11_definitions import run11_projection
+ from app.task20_definitions import task20_projection
+ from app.task12_storage import task12_projection
+ 
+@@ -142,7 +143,7 @@
+             str(row["name"])
+             for row in db.execute("select name from sqlite_master where type='table'")
+         }
+-        physical_source = {"sent_replies": "actions", "reply_attempts": "actions", "memory_write_events": "actions", "agent_runs": "runs", "reply_tasks": "tasks", "work_summary_inputs": "tasks", "meeting_alignment_jobs": "tasks", "okr_review_requests": "tasks", "daily_scan_state": "state", "wechat_read_state": "state", "email_agent_classification_tasks": "tasks"}
++        physical_source = {"sent_replies": "actions", "reply_attempts": "actions", "memory_write_events": "actions", "agent_runs": "runs", "reply_tasks": "tasks", "work_summary_inputs": "tasks", "meeting_alignment_jobs": "tasks", "okr_review_requests": "tasks", "daily_scan_state": "state", "wechat_read_state": "state", "email_agent_classification_tasks": "tasks", "email_classifier_runtime_samples": "runs"}
+         missing = tuple(source for source in REQUIRED_SOURCES if physical_source.get(source, source) not in existing)
+         checked = (
+             *(source for source in REQUIRED_SOURCES if physical_source.get(source, source) in existing),
+@@ -181,7 +182,7 @@
+         _check_work_items(db, checked_now, violations, attention)
+         if physical_source["email_agent_classification_tasks"] in existing:
+             _check_email_classification_tasks(db, checked_now, violations)
+-        if "email_classifier_runtime_samples" in existing:
++        if physical_source["email_classifier_runtime_samples"] in existing:
+             _check_email_model_runtime(db, checked_now, violations, attention)
+         _check_email_model_left_active(Path(db_path), violations)
+         # Legacy follow_up_drafts are history only (Derek 2026-09-25: a
+@@ -753,10 +754,9 @@
+     counts = {
+         str(row["outcome"]): int(row["total"])
+         for row in db.execute(
+-            """select outcome, count(*) as total
+-               from email_classifier_runtime_samples
+-               where recorded_at >= ?
+-               group by outcome""",
++            "select outcome, count(*) as total from ("
++            + run11_projection("email_classifier_runtime_samples")
++            + ") where recorded_at >= ? group by outcome",
+             (cutoff,),
+         )
+     }
+@@ -766,10 +766,9 @@
+     recent_outcomes = [
+         str(row["outcome"] or "")
+         for row in db.execute(
+-            """select outcome
+-               from email_classifier_runtime_samples
+-               where recorded_at >= ?
+-               order by recorded_at desc, id desc""",
++            "select outcome from ("
++            + run11_projection("email_classifier_runtime_samples")
++            + ") where recorded_at >= ? order by recorded_at desc, id desc",
+             (cutoff,),
+         )
+     ]

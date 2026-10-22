@@ -1,0 +1,11 @@
+{
+  "scope": "Unselected declarations and new-source writer native actual/fresh differential only; no migration/callers/constructor/production acceptance.",
+  "hashes": {
+    "app/runs11_definitions.py": "4d30e887cb72c1b68c16d7bbe2f28b85854d5d5ac532a29b1c4b21391582bd34",
+    "app/runs11_storage.py": "3a6fbd0064720236d1a90ed079b2921331305114f7601fb5373097d32a944bd5",
+    "tests/test_runs11_definitions.py": "580302dba17fd7cf3370a2d5b57ad1bbcb762803c4d5820ef7be70e672cfa58e",
+    "tests/test_runs11_storage.py": "7815e6e00888cf1da9e5abcd55b9cf11b47ebd551a28bbad92fdbbb69b50d5e4"
+  },
+  "pytest": "........................................................................ [ 39%]\n........................................................................ [ 79%]\n......................................                                   [100%]\n182 passed in 0.74s",
+  "status": "passed"
+}

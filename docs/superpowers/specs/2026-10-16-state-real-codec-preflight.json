@@ -1,0 +1,43 @@
+{
+  "scope": "Root independently executed synthetic in-memory preflight only; no actual database rows or production changes",
+  "candidate_app_commit": "80682552",
+  "runtime": {
+    "python": "3.13.12",
+    "sqlite": "3.50.4",
+    "interpreter": "/Users/derek/Projects/ceo-agent-service/.worktrees/task-first-tasks/.venv/bin/python",
+    "enable_math_functions": true,
+    "correction": "Earlier brief described a different SQLite version; these results bind the interpreter above"
+  },
+  "confirmed_counterexample": {
+    "input": "-2.2101102838387424e-85",
+    "native_ieee_hex": "-0x1.b7a7da9f7e03cp-282",
+    "decoded_ieee_hex": "-0x1.b7a7da9f7e03dp-282",
+    "storage_class_both": "real",
+    "minimal_paths": [
+      "Bound float inserted into ordinary native INTEGER-affinity column versus json_extract(json.dumps(value))",
+      "CAST(repr(value) AS REAL) also differs from the original bound float",
+      "Captured actual wechat_reply_scopes.enabled versus create_action_schema/create_schedules_schema/create_configs_schema and insert_config, read through CONFIG_PROJECTIONS"
+    ],
+    "meaning": "Current candidate JSON scalar encoding does not preserve every native finite REAL value. This is not evidence of corruption in real source rows"
+  },
+  "independent_candidate_probe": {
+    "selected_or_implemented": false,
+    "encoding": "For nonzero finite v: n,d=v.as_integer_ratio(); shift=max(0,abs(n).bit_length()-53); m=n>>shift; e=shift-(d.bit_length()-1). For signed zero: m=v,e=0",
+    "decoding": "json_extract(payload,'$.m') * pow(2.0,json_extract(payload,'$.e'))",
+    "random_seed": 20261016,
+    "random_generator": "random.Random(seed).getrandbits(64), big-endian IEEE double, finite values only",
+    "cases": 10007,
+    "explicit_cases": ["0.0", "-0.0", "5e-324", "-5e-324", "2.2250738585072014e-308", "1.7976931348623157e308", "-2.2101102838387424e-85"],
+    "raw_ieee_bit_mismatches": 0,
+    "native_text_integer_value_and_type_mismatches": 0,
+    "quick_check": "ok",
+    "limitations": "A bounded probe is not complete codec acceptance. Validate tag structure, zero handling, BLOB/nonfinite behavior, supported runtime math functions, shared generated-declaration fingerprints and current-fact inverse before adoption"
+  },
+  "remaining_work": [
+    "Commit regression tests that fail with existing scalar encoding",
+    "Choose the smallest lossless encoding and account for generated schema declarations and source-bound migration fingerprints",
+    "Obtain independent review and copied-source forward/inverse/current-write proof before current callers use it",
+    "Continue state consolidation and the complete ten-core-tables-plus-ledger goal"
+  ],
+  "effects": {"repository_runtime_changes": 0, "actual_database_access": 0, "native_cli_starts": 0, "external_sends": 0, "production_writes": 0, "temporary_files_created": 0}
+}

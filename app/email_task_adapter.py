@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from app.deployment_drain import claim_connection
+
 from collections.abc import Mapping, Sequence
 from dataclasses import dataclass, field
 from datetime import datetime, timedelta, timezone
@@ -30,6 +32,7 @@ from app.email_store import EmailStore, is_valid_unsubscribe_opaque_reference
 from app.email_reply_delivery import EmailReplyEffect, email_action_identity
 from app.external_retry import (
     DEFAULT_MAX_RETRY_DELAY_SECONDS,
+    MAX_AUTOMATIC_ATTEMPTS,
     retry_delay_seconds,
 )
 from app.email_unsubscribe import (
@@ -58,6 +61,18 @@ from app.store import (
     ReplyTaskSpec,
 )
 from app.skill_features import FeatureRegistry
+
+
+from app.task12_storage import insert_task12, task12_projection, task12_set_parts
+from app.task20_definitions import TASK20_FIELDS, task20_column
+
+_EMAIL_CLASSIFICATION_KIND = 'email_agent_classification_tasks'
+EMAIL_CLASSIFICATION_MAX_ATTEMPTS = MAX_AUTOMATIC_ATTEMPTS
+_EMAIL_CLASSIFICATION_SQL = task12_projection(_EMAIL_CLASSIFICATION_KIND)
+_EMAIL_CLASSIFICATION_COLUMNS = {
+    field: task20_column(_EMAIL_CLASSIFICATION_KIND, field)
+    for field in TASK20_FIELDS[_EMAIL_CLASSIFICATION_KIND]
+}
 
 
 _PAYLOAD_SCHEMA = "email_agent_action.v1"
@@ -300,20 +315,17 @@ class EmailClassificationTaskAdapter:
         with self.email_store._connect() as db:
             db.execute("begin immediate")
             row = db.execute(
-                "select * from email_agent_classification_tasks where stable_message_identity=?",
+                f"select * from ({_EMAIL_CLASSIFICATION_SQL}) where stable_message_identity=?",
                 (task_input.stable_message_identity,),
             ).fetchone()
             if row is None:
-                db.execute(
-                    """
-                    insert into email_agent_classification_tasks (
-                        task_id, channel, stable_message_identity, status, input_json
-                    ) values (?, 'email', ?, 'pending', ?)
-                    """,
-                    (task_id, task_input.stable_message_identity, input_json),
-                )
+                insert_task12(db, _EMAIL_CLASSIFICATION_KIND, {
+                    'task_id': task_id, 'channel': 'email',
+                    'stable_message_identity': task_input.stable_message_identity,
+                    'status': 'pending', 'input_json': input_json,
+                })
                 row = db.execute(
-                    "select * from email_agent_classification_tasks where task_id=?",
+                    f"select * from ({_EMAIL_CLASSIFICATION_SQL}) where task_id=?",
                     (task_id,),
                 ).fetchone()
             elif row["input_json"] != input_json:
@@ -342,26 +354,19 @@ class EmailClassificationTaskAdapter:
         """
 
         with self.email_store._connect() as db:
-            db.execute(
-                """
-                insert or replace into email_agent_classification_tasks (
-                    task_id, channel, stable_message_identity, status, owner,
-                    generation, attempt_count, lease_expires_at, input_json
-                ) values (?, 'email', ?, 'running', ?, 1, 1, ?, '{}')
-                """,
-                (
-                    task_id,
-                    "offline:" + task_id,
-                    owner,
-                    self._timestamp(self._now() + timedelta(hours=6)),
-                ),
-            )
+            insert_task12(db, _EMAIL_CLASSIFICATION_KIND, {
+                'task_id': task_id, 'channel': 'email',
+                'stable_message_identity': 'offline:' + task_id,
+                'status': 'running', 'owner': owner, 'generation': 1,
+                'attempt_count': 1,
+                'lease_expires_at': self._timestamp(self._now() + timedelta(hours=6)),
+                'input_json': '{}',
+            }, replace=True)
 
     def close_offline_task(self, task_id: str) -> None:
         with self.email_store._connect() as db:
             db.execute(
-                "delete from email_agent_classification_tasks "
-                "where task_id=? and input_json='{}'",
+                f"delete from tasks where record_type='email_agent_classification_tasks' and {_EMAIL_CLASSIFICATION_COLUMNS['task_id']}=? and {_EMAIL_CLASSIFICATION_COLUMNS['input_json']}='{{}}'",
                 (task_id,),
             )
 
@@ -370,8 +375,7 @@ class EmailClassificationTaskAdapter:
 
         with self.email_store._connect() as db:
             return db.execute(
-                "delete from email_agent_classification_tasks "
-                "where owner=? and input_json='{}'",
+                f"delete from tasks where record_type='email_agent_classification_tasks' and {_EMAIL_CLASSIFICATION_COLUMNS['owner']}=? and {_EMAIL_CLASSIFICATION_COLUMNS['input_json']}='{{}}'",
                 (owner,),
             ).rowcount
 
@@ -379,7 +383,7 @@ class EmailClassificationTaskAdapter:
         with self.email_store._connect() as db:
             return (
                 db.execute(
-                    "select 1 from email_agent_classification_tasks where stable_message_identity=?",
+                    f"select 1 from ({_EMAIL_CLASSIFICATION_SQL}) where stable_message_identity=?",
                     (stable_message_identity,),
                 ).fetchone()
                 is not None
@@ -392,9 +396,9 @@ class EmailClassificationTaskAdapter:
 
         with self.email_store._connect() as db:
             rows = db.execute(
-                """
+                f"""
                 select json_extract(input_json, '$.provider_locator.uid') as uid
-                from email_agent_classification_tasks
+                from ({_EMAIL_CLASSIFICATION_SQL})
                 where json_extract(input_json, '$.provider_locator.account_id')=?
                   and json_extract(input_json, '$.provider_locator.folder')=?
                   and json_extract(input_json, '$.provider_locator.uidvalidity')=?
@@ -408,7 +412,7 @@ class EmailClassificationTaskAdapter:
     def get_task(self, task_id: str) -> EmailClassificationTask | None:
         with self.email_store._connect() as db:
             row = db.execute(
-                "select * from email_agent_classification_tasks where task_id=?",
+                f"select * from ({_EMAIL_CLASSIFICATION_SQL}) where task_id=?",
                 (task_id,),
             ).fetchone()
         return None if row is None else self._row(row)
@@ -418,7 +422,9 @@ class EmailClassificationTaskAdapter:
 
         with self.email_store._connect() as db:
             db.execute("begin immediate")
-            return self._expire_running_claims(db, now=self._timestamp())
+            now = self._timestamp()
+            return (self._expire_running_claims(db, now=now)
+                    + self._close_exhausted_pending_tasks(db, now=now))
 
     def retry_failed_tasks(self, task_ids: Sequence[str]) -> int:
         """Requeue explicitly reviewed failed tasks without changing identity."""
@@ -430,15 +436,16 @@ class EmailClassificationTaskAdapter:
         now = self._timestamp()
         with self.email_store._connect() as db:
             db.execute("begin immediate")
+            parts = task12_set_parts(_EMAIL_CLASSIFICATION_KIND, {
+                'status': 'pending', 'owner': '', 'attempt_count': 0,
+                'lease_expires_at': '', 'available_at': '', 'result_json': 'null',
+                'error': '', 'updated_at': now,
+            })
             return db.execute(
-                f"""
-                update email_agent_classification_tasks
-                set status='pending', owner='', attempt_count=0,
-                    lease_expires_at='', available_at='', result_json='null',
-                    error='', updated_at=?
-                where status='failed' and task_id in ({placeholders})
-                """,
-                (now, *selected),
+                f"update tasks set {parts.sql} where record_type='email_agent_classification_tasks' "
+                f"and {_EMAIL_CLASSIFICATION_COLUMNS['status']}='failed' "
+                f"and {_EMAIL_CLASSIFICATION_COLUMNS['task_id']} in ({placeholders})",
+                (*parts.parameters, *selected),
             ).rowcount
 
     def claim_next(self, *, owner: str) -> EmailClassificationTask | None:
@@ -448,15 +455,17 @@ class EmailClassificationTaskAdapter:
         lease_expires_at = self._timestamp(
             self._now() + timedelta(seconds=self.lease_seconds)
         )
-        with self.email_store._connect() as db:
+        with claim_connection(self.email_store) as db:
+            if db is None:
+                return None
             eligible = db.execute(
-                """
-                select 1 from email_agent_classification_tasks
-                where (status='pending' and (available_at='' or available_at <= ?))
+                f"""
+                select 1 from ({_EMAIL_CLASSIFICATION_SQL})
+                where (status='pending' and (attempt_count >= ? or available_at='' or available_at <= ?))
                    or (status='running' and lease_expires_at <= ?)
                 limit 1
                 """,
-                (now, now),
+                (EMAIL_CLASSIFICATION_MAX_ATTEMPTS, now, now),
             ).fetchone()
             if eligible is None:
                 return None
@@ -464,9 +473,10 @@ class EmailClassificationTaskAdapter:
             # recomputed under the writer lock, never from this snapshot.
             db.execute("begin immediate")
             self._expire_running_claims(db, now=now)
+            self._close_exhausted_pending_tasks(db, now=now)
             row = db.execute(
-                """
-                select * from email_agent_classification_tasks
+                f"""
+                select * from ({_EMAIL_CLASSIFICATION_SQL})
                 where status='pending'
                   and (available_at='' or available_at <= ?)
                 order by created_at, task_id limit 1
@@ -475,19 +485,23 @@ class EmailClassificationTaskAdapter:
             ).fetchone()
             if row is None:
                 return None
+            parts = task12_set_parts(_EMAIL_CLASSIFICATION_KIND, {
+                'status': 'running', 'owner': owner.strip(),
+                'lease_expires_at': lease_expires_at, 'updated_at': now,
+            }, update_sql={
+                'generation': _EMAIL_CLASSIFICATION_COLUMNS['generation'] + '+1',
+                'attempt_count': _EMAIL_CLASSIFICATION_COLUMNS['attempt_count'] + '+1',
+            })
             updated = db.execute(
-                """
-                update email_agent_classification_tasks
-                set status='running', owner=?, generation=generation+1,
-                    attempt_count=attempt_count+1, lease_expires_at=?, updated_at=?
-                where task_id=? and status='pending'
-                """,
-                (owner.strip(), lease_expires_at, now, row["task_id"]),
+                f"update tasks set {parts.sql} where record_type='email_agent_classification_tasks' "
+                f"and {_EMAIL_CLASSIFICATION_COLUMNS['task_id']}=? "
+                f"and {_EMAIL_CLASSIFICATION_COLUMNS['status']}='pending'",
+                (*parts.parameters, row['task_id']),
             ).rowcount
             if updated != 1:
                 return None
             claimed = db.execute(
-                "select * from email_agent_classification_tasks where task_id=?",
+                f"select * from ({_EMAIL_CLASSIFICATION_SQL}) where task_id=?",
                 (row["task_id"],),
             ).fetchone()
         assert claimed is not None
@@ -495,29 +509,44 @@ class EmailClassificationTaskAdapter:
 
     def _expire_running_claims(self, db: sqlite3.Connection, *, now: str) -> int:
         expired = db.execute(
-            """
-            select task_id
-            from email_agent_classification_tasks
+            f"""
+            select task_id, attempt_count
+            from ({_EMAIL_CLASSIFICATION_SQL})
             where status='running' and lease_expires_at <= ?
             """,
             (now,),
         ).fetchall()
         for row in expired:
+            exhausted = row['attempt_count'] >= EMAIL_CLASSIFICATION_MAX_ATTEMPTS
+            parts = task12_set_parts(_EMAIL_CLASSIFICATION_KIND, {
+                'status': 'failed' if exhausted else 'pending',
+                'owner': '', 'lease_expires_at': '',
+                'available_at': '' if exhausted else now,
+                'error': 'classification task lease expired',
+                'updated_at': now,
+            })
             db.execute(
-                """
-                update email_agent_classification_tasks
-                set status='pending', owner='', lease_expires_at='',
-                    available_at=?, error='classification task lease expired',
-                    updated_at=?
-                where task_id=? and status='running'
-                """,
-                (
-                    now,
-                    now,
-                    row["task_id"],
-                ),
+                f"update tasks set {parts.sql} where record_type='email_agent_classification_tasks' "
+                f"and {_EMAIL_CLASSIFICATION_COLUMNS['task_id']}=? "
+                f"and {_EMAIL_CLASSIFICATION_COLUMNS['status']}='running'",
+                (*parts.parameters, row['task_id']),
             )
         return len(expired)
+
+    def _close_exhausted_pending_tasks(self, db: sqlite3.Connection, *, now: str) -> int:
+        error = _EMAIL_CLASSIFICATION_COLUMNS['error']
+        parts = task12_set_parts(_EMAIL_CLASSIFICATION_KIND, {
+            'status': 'failed', 'owner': '', 'lease_expires_at': '',
+            'available_at': '', 'updated_at': now,
+        }, update_sql={
+            'error': f"case when {error}='' then 'classification_retry_exhausted' else {error} end",
+        })
+        return db.execute(
+            f"update tasks set {parts.sql} where record_type='email_agent_classification_tasks' "
+            f"and {_EMAIL_CLASSIFICATION_COLUMNS['status']}='pending' "
+            f"and {_EMAIL_CLASSIFICATION_COLUMNS['attempt_count']}>=?",
+            (*parts.parameters, EMAIL_CLASSIFICATION_MAX_ATTEMPTS),
+        ).rowcount
 
     def complete(
         self, task: EmailClassificationTask, result: Mapping[str, object]
@@ -527,6 +556,7 @@ class EmailClassificationTaskAdapter:
     def fail(
         self, task: EmailClassificationTask, *, error: str, retryable: bool
     ) -> None:
+        retryable = retryable and task.attempt_count < EMAIL_CLASSIFICATION_MAX_ATTEMPTS
         available_at = (
             self._retry_available_at(task.attempt_count)
             if retryable
@@ -571,33 +601,39 @@ class EmailClassificationTaskAdapter:
             if status == "done":
                 db.execute("begin immediate")
                 row = db.execute(
-                    "select input_json from email_agent_classification_tasks "
+                    f"select input_json from ({_EMAIL_CLASSIFICATION_SQL}) "
                     "where task_id=? and status='running' and owner=? and generation=?",
                     (task.task_id, task.owner, task.generation),
                 ).fetchone()
                 if row is None:
                     raise ValueError("classification task lease changed")
                 compact = self.compact_done_input_json(row["input_json"])
+                parts = task12_set_parts(_EMAIL_CLASSIFICATION_KIND, {
+                    'status': status, 'result_json': result_json, 'error': error,
+                    'owner': '', 'lease_expires_at': '', 'available_at': available_at,
+                    'input_json': compact, 'updated_at': self._timestamp(),
+                })
                 updated = db.execute(
-                    """
-                    update email_agent_classification_tasks
-                    set status=?, result_json=?, error=?, owner='', lease_expires_at='',
-                        available_at=?, input_json=?, updated_at=?
-                    where task_id=? and status='running' and owner=? and generation=?
-                    """,
-                    (status, result_json, error, available_at, compact,
-                     self._timestamp(), task.task_id, task.owner, task.generation),
+                    f"update tasks set {parts.sql} where record_type='email_agent_classification_tasks' "
+                    f"and {_EMAIL_CLASSIFICATION_COLUMNS['task_id']}=? "
+                    f"and {_EMAIL_CLASSIFICATION_COLUMNS['status']}='running' "
+                    f"and {_EMAIL_CLASSIFICATION_COLUMNS['owner']}=? "
+                    f"and {_EMAIL_CLASSIFICATION_COLUMNS['generation']}=?",
+                    (*parts.parameters, task.task_id, task.owner, task.generation),
                 ).rowcount
             else:
+                parts = task12_set_parts(_EMAIL_CLASSIFICATION_KIND, {
+                    'status': status, 'result_json': result_json, 'error': error,
+                    'owner': '', 'lease_expires_at': '', 'available_at': available_at,
+                    'updated_at': self._timestamp(),
+                })
                 updated = db.execute(
-                    """
-                    update email_agent_classification_tasks
-                    set status=?, result_json=?, error=?, owner='', lease_expires_at='',
-                        available_at=?, updated_at=?
-                    where task_id=? and status='running' and owner=? and generation=?
-                    """,
-                    (status, result_json, error, available_at,
-                     self._timestamp(), task.task_id, task.owner, task.generation),
+                    f"update tasks set {parts.sql} where record_type='email_agent_classification_tasks' "
+                    f"and {_EMAIL_CLASSIFICATION_COLUMNS['task_id']}=? "
+                    f"and {_EMAIL_CLASSIFICATION_COLUMNS['status']}='running' "
+                    f"and {_EMAIL_CLASSIFICATION_COLUMNS['owner']}=? "
+                    f"and {_EMAIL_CLASSIFICATION_COLUMNS['generation']}=?",
+                    (*parts.parameters, task.task_id, task.owner, task.generation),
                 ).rowcount
             if updated != 1:
                 raise ValueError("classification task lease changed")
@@ -1000,7 +1036,6 @@ class EmailAgentTaskInput:
 class EmailAgentTaskRoute:
     action_type: EmailAction
     task: ReplyTask
-    context: AgentTaskContext
 
 
 def _digest_identity(prefix: str, payload: Mapping[str, object]) -> str:
@@ -1699,11 +1734,6 @@ class EmailAgentTaskAdapter:
                 EmailAgentTaskRoute(
                     action_type=action_type,
                     task=task,
-                    context=self._build_context(
-                        task=task,
-                        payload=payload,
-                        task_input=task_input,
-                    ),
                 )
                 for (action_type, payload, _), task in zip(
                     prepared, existing_tasks, strict=True
@@ -1733,11 +1763,6 @@ class EmailAgentTaskAdapter:
                 EmailAgentTaskRoute(
                     action_type=action_type,
                     task=task,
-                    context=self._build_context(
-                        task=task,
-                        payload=payload,
-                        task_input=task_input,
-                    ),
                 )
             )
         return tuple(routes)

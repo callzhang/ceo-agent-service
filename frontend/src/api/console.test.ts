@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 
-import { ConsoleApiError, displayValue, parseConsoleList, request, listEmailClassifications, confirmEmailClassification, getStatus, listBusinessProjects, listBusinessTasks, getBusinessProjectDetail, listHistoryTypes, renameRuntimeRoute } from "./console";
+import { ConsoleApiError, listAttention, displayValue, parseConsoleList, request, listEmailClassifications, confirmEmailClassification, getStatus, listBusinessProjects, listBusinessTasks, getBusinessProjectDetail, listHistoryTypes, renameRuntimeRoute } from "./console";
 
 function statusEnvelope() {
   return {
@@ -76,6 +76,22 @@ describe("console API helpers", () => {
         await expect(getBusinessProjectDetail("2")).rejects.toThrow("invalid business project detail");
         item[field] = saved;
       }
+    } finally { globalThis.fetch = originalFetch; }
+  });
+  it("accepts unavailable project originals only with a null body and reason", async () => {
+    const summary = { id: "2", title: "客户项目", registry_source: "经营会", canonical_anchor_id: 3, confirmed_task_count: 0, detail_url: "/tasks/project/2", overall_owner: "", overall_responsibility: "", attention_reason: "", updated_at: "now" };
+    const pageMeta = { page: 1, page_size: 20, total: 1, next_cursor: "", has_more: false, snapshot_at: "now" };
+    const signal: Record<string, unknown> = { id: 7, source_type: "ai_minutes", source_ref: "meeting-7", source_time: "now", conversation_id: "", conversation_title: "", author_user_id: "", author_name: "", author_kind: "unknown", context_json: "{}", dedupe_key: "signal-7", created_at: "now", evidence_text: null, source_available: false, source_unavailable_reason: "source_missing" };
+    const item = { summary, confirmed_tasks: [], context: null, responsibilities: [], suggestions: [], evidence_signals: [signal], context_revisions: [], evidence_meta: pageMeta, context_revision_meta: pageMeta };
+    const originalFetch = globalThis.fetch;
+    globalThis.fetch = async () => new Response(JSON.stringify({ item, meta: { snapshot_at: "now" } }), { status: 200 });
+    try {
+      expect((await getBusinessProjectDetail("2")).item.evidence_signals[0].evidence_text).toBeNull();
+      signal.source_unavailable_reason = null;
+      await expect(getBusinessProjectDetail("2")).rejects.toThrow("invalid business project detail");
+      signal.source_unavailable_reason = "source_missing";
+      signal.evidence_text = "fabricated";
+      await expect(getBusinessProjectDetail("2")).rejects.toThrow("invalid business project detail");
     } finally { globalThis.fetch = originalFetch; }
   });
   it("preserves 64-bit email IDs from JSON through the feedback URL", async () => {
@@ -388,8 +404,6 @@ describe("console API helpers", () => {
         title: "客户项目",
         status: "active",
         category: "projects",
-        priority: "high",
-        risk_level: "low",
         owner: "Avery",
         owner_name: "",
         owner_user_id: "",
@@ -406,6 +420,8 @@ describe("console API helpers", () => {
       const { listTasks } = await import("./console");
       const page = await listTasks();
       expect(page.items[0].owner).toBe("Avery");
+      expect(page.items[0]).not.toHaveProperty("priority");
+      expect(page.items[0]).not.toHaveProperty("risk");
     } finally {
       globalThis.fetch = originalFetch;
     }
@@ -445,8 +461,6 @@ describe("console API helpers", () => {
           title: "客户项目",
           status: "active",
           category: "projects",
-          priority: "P1",
-          risk_level: "medium",
           owner: "",
           owner_name: "",
           owner_user_id: "",
@@ -483,8 +497,6 @@ describe("console API helpers", () => {
           title: "客户项目",
           status: "active",
           category: "projects",
-          priority: "P1",
-          risk_level: "medium",
           owner_name: "Avery",
           current_state: "执行中",
           next_step: "继续推进",
@@ -508,3 +520,19 @@ describe("console API helpers", () => {
     }
   });
 });
+
+ it("labels grouped Failed links with each actual Attempt identity", async () => {
+    const originalFetch = globalThis.fetch;
+    globalThis.fetch = async () => new Response(JSON.stringify({items: [{category: "Reply task", records: [
+      {category: "Reply task", id: "4100", detail_url: "/attempts/12"},
+      {category: "Meeting", id: "4200", detail_url: "/meeting-attempts/35"},
+      {category: "Reply task", id: "4300", detail_url: ""},
+    ]}], meta: {total: 3}}), {status: 200});
+    try {
+      const page = await listAttention();
+      expect(page.items[0].links).toEqual([
+        {label: "查看 Attempt #12", href: "/attempts/12"},
+        {label: "查看 Meeting Attempt #35", href: "/meeting-attempts/35"},
+      ]);
+    } finally { globalThis.fetch = originalFetch; }
+  });

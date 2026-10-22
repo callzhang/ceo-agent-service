@@ -2,17 +2,31 @@ from __future__ import annotations
 
 from datetime import UTC, date, datetime
 import json
+import importlib.util
+import sys
 from pathlib import Path
 
 import pytest
 
-from app.dws_client import DwsError
 from app.store import AutoReplyStore
-from app.weekly_report_materials import (
-    collect_weekly_report_materials,
-    meeting_title,
-    weekly_window,
+from app.service_activity import meeting_activity
+from app.minutes_sync import MINUTES_ARCHIVE_DIRECTORY
+
+
+_materials_path = (
+    Path(__file__).resolve().parents[1]
+    / "ci/shared-skills/ceo-weekly-report/scripts/materials.py"
 )
+_materials_spec = importlib.util.spec_from_file_location(
+    "weekly_report_materials_tests", _materials_path
+)
+_materials_module = importlib.util.module_from_spec(_materials_spec)
+sys.modules[_materials_spec.name] = _materials_module
+_materials_spec.loader.exec_module(_materials_module)
+weekly_window = _materials_module.weekly_window
+meeting_title = _materials_module.meeting_title
+DwsError = _materials_module.DwsError
+RUN_AT = datetime(2026, 9, 26, 19, 0, tzinfo=UTC)
 
 
 def test_saturday_run_reports_for_the_monday_two_days_later():
@@ -48,14 +62,18 @@ class FakeDws:
 
     def __init__(self, tree: dict[str | None, list[dict]], spaces=None):
         self.tree = tree
-        self.spaces = spaces if spaces is not None else [
-            {"name": "🎯  目标与执行", "workspaceId": "ws1"}
-        ]
+        self.spaces = (
+            spaces
+            if spaces is not None
+            else [{"name": "🎯  目标与执行", "workspaceId": "ws1"}]
+        )
 
     def run_json(self, command):
         if command[1:3] == ["wiki", "+space-list"]:
             return {"data": {"spaces": self.spaces, "hasMore": False}}
-        folder = command[command.index("--folder") + 1] if "--folder" in command else None
+        folder = (
+            command[command.index("--folder") + 1] if "--folder" in command else None
+        )
         return {"data": {"nodes": self.tree.get(folder, []), "hasMore": False}}
 
 
@@ -67,21 +85,26 @@ def _tree(*titles, year_page="2026 年：管理层周会"):
     return {
         None: [_node("1. 管理层周会", "root")],
         "root": [_node(year_page, "year", has_children=True)],
-        "year": [_node(title, f"id-{index}", url=f"https://doc/{index}") for index, title in enumerate(titles)],
+        "year": [
+            _node(title, f"id-{index}", url=f"https://doc/{index}")
+            for index, title in enumerate(titles)
+        ],
     }
 
 
-def _materials(tmp_path: Path, dws: FakeDws, store=None):
-    store = store or AutoReplyStore(tmp_path / "db.sqlite3")
-    return collect_weekly_report_materials(
-        store, dws, tmp_path / "archive", datetime(2026, 9, 26, 19, 0, tzinfo=UTC)
-    )
+def _documents(dws):
+    return _materials_module.resolve_meeting_documents(dws, weekly_window(RUN_AT))
+
+
+def _meetings(store):
+    window = weekly_window(RUN_AT)
+    return meeting_activity(store, window.start, window.cutoff)
 
 
 def test_finds_target_and_previous_documents_by_title(tmp_path):
     dws = FakeDws(_tree("2026年9月21日管理层周会", "2026年9月28日管理层周会 "))
 
-    documents = _materials(tmp_path, dws)["documents"]
+    documents = _documents(dws)
 
     assert documents["target"]["exists"] is True
     assert documents["target"]["node_id"] == "id-1"
@@ -90,10 +113,43 @@ def test_finds_target_and_previous_documents_by_title(tmp_path):
     assert documents["target"]["year_page_id"] == "year"
 
 
+def test_previous_document_uses_nearest_canonical_date_when_meeting_moves_before_monday(
+    tmp_path,
+):
+    dws = FakeDws(
+        _tree(
+            "2026年9月20日管理层周会",
+            "2026年9月21日管理层周会｜90分钟新版周报",
+            "2026年9月28日管理层周会",
+        )
+    )
+
+    documents = _documents(dws)
+
+    assert documents["previous"]["exists"] is True
+    assert documents["previous"]["title"] == "2026年9月20日管理层周会"
+    assert documents["previous"]["node_id"] == "id-0"
+    assert documents["previous"]["expected_title"] == "2026年9月21日管理层周会"
+
+
+def test_previous_document_does_not_guess_a_suffixed_draft(tmp_path):
+    dws = FakeDws(
+        _tree(
+            "2026年9月21日管理层周会｜90分钟新版周报",
+            "2026年9月28日管理层周会",
+        )
+    )
+
+    documents = _documents(dws)
+
+    assert documents["previous"]["exists"] is False
+    assert documents["previous"]["node_id"] == ""
+
+
 def test_missing_target_is_reported_not_guessed(tmp_path):
     dws = FakeDws(_tree("2026年9月21日管理层周会"))
 
-    documents = _materials(tmp_path, dws)["documents"]
+    documents = _documents(dws)
 
     assert documents["target"]["exists"] is False
     assert documents["target"]["node_id"] == ""
@@ -104,32 +160,34 @@ def test_missing_target_is_reported_not_guessed(tmp_path):
 def test_year_page_name_spacing_variants_match(tmp_path):
     dws = FakeDws(_tree("2026年9月28日管理层周会", year_page="2026年：管理层周会"))
 
-    assert _materials(tmp_path, dws)["documents"]["target"]["exists"] is True
+    assert _documents(dws)["target"]["exists"] is True
 
 
 def test_two_documents_with_the_target_title_is_an_error(tmp_path):
     dws = FakeDws(_tree("2026年9月28日管理层周会", "2026年9月28日管理层周会"))
 
     with pytest.raises(DwsError, match="more than one"):
-        _materials(tmp_path, dws)
+        _documents(dws)
 
 
 def test_incomplete_listing_is_an_error(tmp_path):
     dws = FakeDws(_tree("2026年9月28日管理层周会"))
     original = dws.run_json
     dws.run_json = lambda command: (
-        {"data": {"nodes": [], "hasMore": True}} if "--folder" in command else original(command)
+        {"data": {"nodes": [], "hasMore": True}}
+        if "--folder" in command
+        else original(command)
     )
 
     with pytest.raises(DwsError, match="incomplete"):
-        _materials(tmp_path, dws)
+        _documents(dws)
 
 
 def test_wiki_that_cannot_be_found_is_an_error(tmp_path):
     dws = FakeDws(_tree(), spaces=[])
 
     with pytest.raises(DwsError, match="exactly one wiki"):
-        _materials(tmp_path, dws)
+        _documents(dws)
 
 
 def _job(store, meeting_id, ended_at, *, started_at="2026-09-21T01:00:00+00:00"):
@@ -159,30 +217,29 @@ def test_lists_the_meetings_that_ended_inside_the_window(tmp_path):
     _job(store, "before", "2026-09-20T15:59:00+00:00")
     _job(store, "inside", "2026-09-21T01:30:00+00:00")
     _job(store, "after-cutoff", "2026-09-26T19:00:01+00:00")
-    dws = FakeDws(_tree("2026年9月28日管理层周会"))
+    minutes = _meetings(store)
 
-    materials = _materials(tmp_path, dws, store)
-
-    assert [entry["meeting_id"] for entry in materials["minutes"]] == ["inside"]
-    entry = materials["minutes"][0]
+    assert [entry["meeting_id"] for entry in minutes] == ["inside"]
+    entry = minutes[0]
     assert entry["participants"] == [{"name": "Alice", "user_id": "u1"}]
     assert entry["source_url"] == "https://shanji/inside"
-    assert materials["coverage"]["meetings"] == 1
+    assert len(minutes) == 1
 
 
-def test_archive_path_is_reported_only_when_the_file_exists(tmp_path):
+def test_archive_path_is_reported_only_when_the_file_exists(tmp_path, monkeypatch):
+    monkeypatch.setattr("app.config.workspace_path", lambda: tmp_path)
     store = AutoReplyStore(tmp_path / "db.sqlite3")
     _job(store, "with-file", "2026-09-21T01:30:00+00:00")
     _job(store, "without-file", "2026-09-21T02:30:00+00:00")
-    archive_dir = tmp_path / "archive"
+    archive_dir = tmp_path / MINUTES_ARCHIVE_DIRECTORY
     (archive_dir / "with-file 会").mkdir(parents=True)
     started = datetime.fromisoformat("2026-09-21T01:00:00+00:00").astimezone()
-    (archive_dir / "with-file 会" / f"with-file 会 {started:%Y-%m-%d %H:%M}.md").write_text("x")
-    dws = FakeDws(_tree("2026年9月28日管理层周会"))
-
-    minutes = _materials(tmp_path, dws, store)["minutes"]
+    (
+        archive_dir / "with-file 会" / f"with-file 会 {started:%Y-%m-%d %H:%M}.md"
+    ).write_text("x")
+    minutes = _meetings(store)
 
     by_id = {entry["meeting_id"]: entry for entry in minutes}
     assert by_id["with-file"]["archive_path"].endswith(".md")
     assert by_id["without-file"]["archive_path"] == ""
-    assert _materials(tmp_path, dws, store)["coverage"]["archived_transcripts"] == 1
+    assert sum(bool(item["archive_path"]) for item in _meetings(store)) == 1

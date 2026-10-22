@@ -244,6 +244,19 @@ def test_claim_phase_and_attempt_count_trigger(db):
     assert not db.execute("pragma foreign_key_check").fetchall()
 
 
+def test_attempt_count_insert_trigger_checks_existing_attempts(db):
+    _plan(db)
+    db.commit()
+    db.execute("pragma foreign_keys=off")
+    _attempt(db)
+    with pytest.raises(sqlite3.IntegrityError, match="email_action_attempt_count_drift"):
+        _action(db)
+    _action(db, attempt_count=1)
+    db.commit()
+    db.execute("pragma foreign_keys=on")
+    assert not db.execute("pragma foreign_key_check").fetchall()
+
+
 def test_declared_unique_membership_and_parent_keys(db):
     _plan(db)
     _action(db)

@@ -1,3 +1,4 @@
+from app.state_definitions import state_projection
 import json
 from datetime import UTC, datetime, timedelta
 
@@ -589,7 +590,7 @@ def test_refresher_reprobes_unclassified_route_on_health_cadence(monkeypatch, tm
     )
     with store._connect() as db:
         row = db.execute(
-            "select retry_at from runtime_route_pauses where route_name=?",
+            f"select retry_at from ({state_projection('runtime_route_pauses')}) where route_name=?",
             ("codex_oauth",),
         ).fetchone()
     assert row is not None

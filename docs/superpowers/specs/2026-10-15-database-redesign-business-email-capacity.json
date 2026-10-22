@@ -1,0 +1,3162 @@
+{
+  "evidence_type": "metadata_only_same_input_capacity_and_direction_map",
+  "scope": "Read-only source and post-publication pre-native target snapshots; direction map is not executable migration DDL",
+  "table_count_definition": "sqlite_schema type='table' and name not like 'sqlite_%'; includes FTS virtual and shadow tables, excludes SQLite internal tables",
+  "immutable_source_sha256": "970a909a9cfcb4fe604d2111d5572560d4744978df20fb317c4e433059566320",
+  "source_bytes": 485212160,
+  "target_bytes": 507965440,
+  "main_bytes_delta": 22753280,
+  "source_user_table_count": 121,
+  "target_user_table_count": 105,
+  "source_freelist_pages": 0,
+  "target_freelist_pages": 0,
+  "source_tables": [
+    {
+      "table": "runs",
+      "rows": 231340,
+      "total_bytes": 124985344,
+      "data_bytes": 76156928,
+      "index_bytes": 48828416
+    },
+    {
+      "table": "actions",
+      "rows": 23001,
+      "total_bytes": 91938816,
+      "data_bytes": 80715776,
+      "index_bytes": 11223040
+    },
+    {
+      "table": "tasks",
+      "rows": 25826,
+      "total_bytes": 49573888,
+      "data_bytes": 43274240,
+      "index_bytes": 6299648
+    },
+    {
+      "table": "email_classifications",
+      "rows": 8937,
+      "total_bytes": 39817216,
+      "data_bytes": 36573184,
+      "index_bytes": 3244032
+    },
+    {
+      "table": "email_messages",
+      "rows": 8937,
+      "total_bytes": 35516416,
+      "data_bytes": 33972224,
+      "index_bytes": 1544192
+    },
+    {
+      "table": "email_provider_observations",
+      "rows": 72142,
+      "total_bytes": 24948736,
+      "data_bytes": 13328384,
+      "index_bytes": 11620352
+    },
+    {
+      "table": "email_action_plans",
+      "rows": 9971,
+      "total_bytes": 15069184,
+      "data_bytes": 13766656,
+      "index_bytes": 1302528
+    },
+    {
+      "table": "email_actions",
+      "rows": 10365,
+      "total_bytes": 13881344,
+      "data_bytes": 9052160,
+      "index_bytes": 4829184
+    },
+    {
+      "table": "work_updates",
+      "rows": 5468,
+      "total_bytes": 12365824,
+      "data_bytes": 12115968,
+      "index_bytes": 249856
+    },
+    {
+      "table": "follow_up_drafts",
+      "rows": 2477,
+      "total_bytes": 11206656,
+      "data_bytes": 10596352,
+      "index_bytes": 610304
+    },
+    {
+      "table": "errors",
+      "rows": 15397,
+      "total_bytes": 8552448,
+      "data_bytes": 7585792,
+      "index_bytes": 966656
+    },
+    {
+      "table": "work_projects",
+      "rows": 975,
+      "total_bytes": 6684672,
+      "data_bytes": 6643712,
+      "index_bytes": 40960
+    },
+    {
+      "table": "business_source_documents",
+      "rows": 188,
+      "total_bytes": 6160384,
+      "data_bytes": 6139904,
+      "index_bytes": 20480
+    },
+    {
+      "table": "email_action_attempts",
+      "rows": 12371,
+      "total_bytes": 5419008,
+      "data_bytes": 4120576,
+      "index_bytes": 1298432
+    },
+    {
+      "table": "managed_skill_revisions",
+      "rows": 172,
+      "total_bytes": 4784128,
+      "data_bytes": 4755456,
+      "index_bytes": 28672
+    },
+    {
+      "table": "runtime_skill_load_receipts",
+      "rows": 4105,
+      "total_bytes": 4505600,
+      "data_bytes": 4452352,
+      "index_bytes": 53248
+    },
+    {
+      "table": "email_agent_classification_tasks",
+      "rows": 1367,
+      "total_bytes": 3215360,
+      "data_bytes": 2732032,
+      "index_bytes": 483328
+    },
+    {
+      "table": "work_todos",
+      "rows": 3327,
+      "total_bytes": 2609152,
+      "data_bytes": 2420736,
+      "index_bytes": 188416
+    },
+    {
+      "table": "work_todo_dingtalk_links",
+      "rows": 875,
+      "total_bytes": 2572288,
+      "data_bytes": 2510848,
+      "index_bytes": 61440
+    },
+    {
+      "table": "email_unsubscribe_receipts",
+      "rows": 1091,
+      "total_bytes": 2379776,
+      "data_bytes": 2125824,
+      "index_bytes": 253952
+    },
+    {
+      "table": "business_object_tasks",
+      "rows": 7349,
+      "total_bytes": 1933312,
+      "data_bytes": 1077248,
+      "index_bytes": 856064
+    },
+    {
+      "table": "dispatcher_claim_leases",
+      "rows": 10059,
+      "total_bytes": 1892352,
+      "data_bytes": 966656,
+      "index_bytes": 925696
+    },
+    {
+      "table": "business_task_events",
+      "rows": 893,
+      "total_bytes": 1687552,
+      "data_bytes": 1650688,
+      "index_bytes": 36864
+    },
+    {
+      "table": "email_unsubscribe_claims",
+      "rows": 1091,
+      "total_bytes": 1417216,
+      "data_bytes": 1159168,
+      "index_bytes": 258048
+    },
+    {
+      "table": "seen_messages",
+      "rows": 7196,
+      "total_bytes": 1011712,
+      "data_bytes": 696320,
+      "index_bytes": 315392
+    },
+    {
+      "table": "business_task_signals",
+      "rows": 833,
+      "total_bytes": 995328,
+      "data_bytes": 614400,
+      "index_bytes": 380928
+    },
+    {
+      "table": "okr_review_items",
+      "rows": 413,
+      "total_bytes": 937984,
+      "data_bytes": 937984,
+      "index_bytes": 0
+    },
+    {
+      "table": "daily_scan_state",
+      "rows": 9,
+      "total_bytes": 872448,
+      "data_bytes": 868352,
+      "index_bytes": 4096
+    },
+    {
+      "table": "email_historical_candidates",
+      "rows": 924,
+      "total_bytes": 864256,
+      "data_bytes": 692224,
+      "index_bytes": 172032
+    },
+    {
+      "table": "email_unsubscribe_effects",
+      "rows": 1178,
+      "total_bytes": 819200,
+      "data_bytes": 581632,
+      "index_bytes": 237568
+    },
+    {
+      "table": "conversation_runtime_sessions",
+      "rows": 5312,
+      "total_bytes": 704512,
+      "data_bytes": 524288,
+      "index_bytes": 180224
+    },
+    {
+      "table": "email_feedback_requests",
+      "rows": 1413,
+      "total_bytes": 692224,
+      "data_bytes": 368640,
+      "index_bytes": 323584
+    },
+    {
+      "table": "business_tasks",
+      "rows": 594,
+      "total_bytes": 532480,
+      "data_bytes": 430080,
+      "index_bytes": 102400
+    },
+    {
+      "table": "email_classifier_runtime_samples",
+      "rows": 2048,
+      "total_bytes": 425984,
+      "data_bytes": 299008,
+      "index_bytes": 126976
+    },
+    {
+      "table": "email_unsubscribe_steps",
+      "rows": 827,
+      "total_bytes": 339968,
+      "data_bytes": 245760,
+      "index_bytes": 94208
+    },
+    {
+      "table": "managed_skill_export_receipts",
+      "rows": 1939,
+      "total_bytes": 319488,
+      "data_bytes": 290816,
+      "index_bytes": 28672
+    },
+    {
+      "table": "scheduled_task_config_versions",
+      "rows": 69,
+      "total_bytes": 303104,
+      "data_bytes": 102400,
+      "index_bytes": 200704
+    },
+    {
+      "table": "follow_up_send_attempts",
+      "rows": 65,
+      "total_bytes": 262144,
+      "data_bytes": 249856,
+      "index_bytes": 12288
+    },
+    {
+      "table": "email_training_snapshots",
+      "rows": 122,
+      "total_bytes": 200704,
+      "data_bytes": 167936,
+      "index_bytes": 32768
+    },
+    {
+      "table": "oa_notification_events",
+      "rows": 30,
+      "total_bytes": 184320,
+      "data_bytes": 172032,
+      "index_bytes": 12288
+    },
+    {
+      "table": "codex_session_search_index",
+      "rows": 700,
+      "total_bytes": 172032,
+      "data_bytes": 102400,
+      "index_bytes": 69632
+    },
+    {
+      "table": "wechat_deliveries",
+      "rows": 133,
+      "total_bytes": 143360,
+      "data_bytes": 131072,
+      "index_bytes": 12288
+    },
+    {
+      "table": "meeting_memory_write_events",
+      "rows": 572,
+      "total_bytes": 135168,
+      "data_bytes": 90112,
+      "index_bytes": 45056
+    },
+    {
+      "table": "task_memory_write_events",
+      "rows": 567,
+      "total_bytes": 122880,
+      "data_bytes": 69632,
+      "index_bytes": 53248
+    },
+    {
+      "table": "conversations",
+      "rows": 523,
+      "total_bytes": 118784,
+      "data_bytes": 81920,
+      "index_bytes": 36864
+    },
+    {
+      "table": "business_task_evidence",
+      "rows": 897,
+      "total_bytes": 110592,
+      "data_bytes": 45056,
+      "index_bytes": 65536
+    },
+    {
+      "table": "task_todo_sync_outbox",
+      "rows": 242,
+      "total_bytes": 110592,
+      "data_bytes": 81920,
+      "index_bytes": 28672
+    },
+    {
+      "table": "feedback_events",
+      "rows": 48,
+      "total_bytes": 98304,
+      "data_bytes": 90112,
+      "index_bytes": 8192
+    },
+    {
+      "table": "service_state",
+      "rows": 252,
+      "total_bytes": 98304,
+      "data_bytes": 69632,
+      "index_bytes": 28672
+    },
+    {
+      "table": "email_historical_classification_history",
+      "rows": 183,
+      "total_bytes": 86016,
+      "data_bytes": 65536,
+      "index_bytes": 20480
+    },
+    {
+      "table": "business_attention_events",
+      "rows": 14,
+      "total_bytes": 61440,
+      "data_bytes": 57344,
+      "index_bytes": 4096
+    },
+    {
+      "table": "todo_evidence_candidates",
+      "rows": 3,
+      "total_bytes": 45056,
+      "data_bytes": 24576,
+      "index_bytes": 20480
+    },
+    {
+      "table": "workbench_confirmations",
+      "rows": 0,
+      "total_bytes": 45056,
+      "data_bytes": 4096,
+      "index_bytes": 40960
+    },
+    {
+      "table": "org_user_profiles",
+      "rows": 76,
+      "total_bytes": 36864,
+      "data_bytes": 24576,
+      "index_bytes": 12288
+    },
+    {
+      "table": "business_anchors",
+      "rows": 50,
+      "total_bytes": 28672,
+      "data_bytes": 12288,
+      "index_bytes": 16384
+    },
+    {
+      "table": "business_attention_items",
+      "rows": 8,
+      "total_bytes": 28672,
+      "data_bytes": 20480,
+      "index_bytes": 8192
+    },
+    {
+      "table": "business_project_context_revisions",
+      "rows": 6,
+      "total_bytes": 28672,
+      "data_bytes": 24576,
+      "index_bytes": 4096
+    },
+    {
+      "table": "business_task_anchor_links",
+      "rows": 97,
+      "total_bytes": 28672,
+      "data_bytes": 20480,
+      "index_bytes": 8192
+    },
+    {
+      "table": "codex_session_search_fts_data",
+      "rows": 16,
+      "total_bytes": 24576,
+      "data_bytes": 24576,
+      "index_bytes": 0
+    },
+    {
+      "table": "feedback_processing_items",
+      "rows": 48,
+      "total_bytes": 24576,
+      "data_bytes": 12288,
+      "index_bytes": 12288
+    },
+    {
+      "table": "runtime_skill_bindings",
+      "rows": 241,
+      "total_bytes": 24576,
+      "data_bytes": 12288,
+      "index_bytes": 12288
+    },
+    {
+      "table": "scheduled_tasks",
+      "rows": 15,
+      "total_bytes": 24576,
+      "data_bytes": 16384,
+      "index_bytes": 8192
+    },
+    {
+      "table": "business_legacy_links",
+      "rows": 0,
+      "total_bytes": 20480,
+      "data_bytes": 4096,
+      "index_bytes": 16384
+    },
+    {
+      "table": "email_category_description_revisions",
+      "rows": 24,
+      "total_bytes": 20480,
+      "data_bytes": 20480,
+      "index_bytes": 0
+    },
+    {
+      "table": "feedback_processing_rounds",
+      "rows": 3,
+      "total_bytes": 20480,
+      "data_bytes": 4096,
+      "index_bytes": 16384
+    },
+    {
+      "table": "business_projects",
+      "rows": 32,
+      "total_bytes": 16384,
+      "data_bytes": 12288,
+      "index_bytes": 4096
+    },
+    {
+      "table": "business_task_relations",
+      "rows": 0,
+      "total_bytes": 16384,
+      "data_bytes": 4096,
+      "index_bytes": 12288
+    },
+    {
+      "table": "email_category_configs",
+      "rows": 11,
+      "total_bytes": 16384,
+      "data_bytes": 12288,
+      "index_bytes": 4096
+    },
+    {
+      "table": "email_reply_dispatch_claims",
+      "rows": 0,
+      "total_bytes": 16384,
+      "data_bytes": 4096,
+      "index_bytes": 12288
+    },
+    {
+      "table": "email_training_snapshot_observations",
+      "rows": 0,
+      "total_bytes": 16384,
+      "data_bytes": 4096,
+      "index_bytes": 12288
+    },
+    {
+      "table": "feedback_processing_transitions",
+      "rows": 5,
+      "total_bytes": 16384,
+      "data_bytes": 4096,
+      "index_bytes": 12288
+    },
+    {
+      "table": "setup_wizard_events",
+      "rows": 22,
+      "total_bytes": 16384,
+      "data_bytes": 12288,
+      "index_bytes": 4096
+    },
+    {
+      "table": "workbench_artifacts",
+      "rows": 0,
+      "total_bytes": 16384,
+      "data_bytes": 4096,
+      "index_bytes": 12288
+    },
+    {
+      "table": "workbench_attachments",
+      "rows": 0,
+      "total_bytes": 16384,
+      "data_bytes": 4096,
+      "index_bytes": 12288
+    },
+    {
+      "table": "business_attention_proposal_tasks",
+      "rows": 18,
+      "total_bytes": 12288,
+      "data_bytes": 4096,
+      "index_bytes": 8192
+    },
+    {
+      "table": "business_attention_tasks",
+      "rows": 18,
+      "total_bytes": 12288,
+      "data_bytes": 4096,
+      "index_bytes": 8192
+    },
+    {
+      "table": "business_task_dingtalk_links",
+      "rows": 0,
+      "total_bytes": 12288,
+      "data_bytes": 4096,
+      "index_bytes": 8192
+    },
+    {
+      "table": "business_task_follow_up_send_attempts",
+      "rows": 0,
+      "total_bytes": 12288,
+      "data_bytes": 4096,
+      "index_bytes": 8192
+    },
+    {
+      "table": "business_task_follow_ups",
+      "rows": 0,
+      "total_bytes": 12288,
+      "data_bytes": 4096,
+      "index_bytes": 8192
+    },
+    {
+      "table": "business_task_todo_sync_outbox",
+      "rows": 0,
+      "total_bytes": 12288,
+      "data_bytes": 4096,
+      "index_bytes": 8192
+    },
+    {
+      "table": "business_work_cluster_tasks",
+      "rows": 16,
+      "total_bytes": 12288,
+      "data_bytes": 4096,
+      "index_bytes": 8192
+    },
+    {
+      "table": "codex_session_search_fts_docsize",
+      "rows": 700,
+      "total_bytes": 12288,
+      "data_bytes": 12288,
+      "index_bytes": 0
+    },
+    {
+      "table": "email_category_folder_bindings",
+      "rows": 22,
+      "total_bytes": 12288,
+      "data_bytes": 4096,
+      "index_bytes": 8192
+    },
+    {
+      "table": "email_historical_operations",
+      "rows": 0,
+      "total_bytes": 12288,
+      "data_bytes": 4096,
+      "index_bytes": 8192
+    },
+    {
+      "table": "email_reply_receipts",
+      "rows": 0,
+      "total_bytes": 12288,
+      "data_bytes": 4096,
+      "index_bytes": 8192
+    },
+    {
+      "table": "feedback_iteration_decision_items",
+      "rows": 0,
+      "total_bytes": 12288,
+      "data_bytes": 4096,
+      "index_bytes": 8192
+    },
+    {
+      "table": "scheduled_task_skill_refs",
+      "rows": 34,
+      "total_bytes": 12288,
+      "data_bytes": 4096,
+      "index_bytes": 8192
+    },
+    {
+      "table": "service_bugfix_candidates",
+      "rows": 3,
+      "total_bytes": 12288,
+      "data_bytes": 4096,
+      "index_bytes": 8192
+    },
+    {
+      "table": "business_project_candidates",
+      "rows": 10,
+      "total_bytes": 8192,
+      "data_bytes": 4096,
+      "index_bytes": 4096
+    },
+    {
+      "table": "business_project_evidence",
+      "rows": 33,
+      "total_bytes": 8192,
+      "data_bytes": 4096,
+      "index_bytes": 4096
+    },
+    {
+      "table": "business_task_date_evidence",
+      "rows": 0,
+      "total_bytes": 8192,
+      "data_bytes": 4096,
+      "index_bytes": 4096
+    },
+    {
+      "table": "channel_login_reservations",
+      "rows": 0,
+      "total_bytes": 8192,
+      "data_bytes": 4096,
+      "index_bytes": 4096
+    },
+    {
+      "table": "codex_session_locks",
+      "rows": 0,
+      "total_bytes": 8192,
+      "data_bytes": 4096,
+      "index_bytes": 4096
+    },
+    {
+      "table": "corpus_sources",
+      "rows": 0,
+      "total_bytes": 8192,
+      "data_bytes": 4096,
+      "index_bytes": 4096
+    },
+    {
+      "table": "email_accounts",
+      "rows": 2,
+      "total_bytes": 8192,
+      "data_bytes": 4096,
+      "index_bytes": 4096
+    },
+    {
+      "table": "email_direct_retry_requests",
+      "rows": 1,
+      "total_bytes": 8192,
+      "data_bytes": 4096,
+      "index_bytes": 4096
+    },
+    {
+      "table": "email_historical_traversals",
+      "rows": 2,
+      "total_bytes": 8192,
+      "data_bytes": 4096,
+      "index_bytes": 4096
+    },
+    {
+      "table": "email_provider_folder_observation_generations",
+      "rows": 55,
+      "total_bytes": 8192,
+      "data_bytes": 4096,
+      "index_bytes": 4096
+    },
+    {
+      "table": "email_scan_cursors",
+      "rows": 2,
+      "total_bytes": 8192,
+      "data_bytes": 4096,
+      "index_bytes": 4096
+    },
+    {
+      "table": "email_unsubscribe_cancellations",
+      "rows": 1,
+      "total_bytes": 8192,
+      "data_bytes": 4096,
+      "index_bytes": 4096
+    },
+    {
+      "table": "email_unsubscribe_continuations",
+      "rows": 0,
+      "total_bytes": 8192,
+      "data_bytes": 4096,
+      "index_bytes": 4096
+    },
+    {
+      "table": "feedback_iteration_decisions",
+      "rows": 0,
+      "total_bytes": 8192,
+      "data_bytes": 4096,
+      "index_bytes": 4096
+    },
+    {
+      "table": "feedback_processing_batches",
+      "rows": 3,
+      "total_bytes": 8192,
+      "data_bytes": 4096,
+      "index_bytes": 4096
+    },
+    {
+      "table": "managed_skills",
+      "rows": 21,
+      "total_bytes": 8192,
+      "data_bytes": 4096,
+      "index_bytes": 4096
+    },
+    {
+      "table": "org_cache_metadata",
+      "rows": 2,
+      "total_bytes": 8192,
+      "data_bytes": 4096,
+      "index_bytes": 4096
+    },
+    {
+      "table": "runtime_route_pauses",
+      "rows": 2,
+      "total_bytes": 8192,
+      "data_bytes": 4096,
+      "index_bytes": 4096
+    },
+    {
+      "table": "setup_wizard_steps",
+      "rows": 12,
+      "total_bytes": 8192,
+      "data_bytes": 4096,
+      "index_bytes": 4096
+    },
+    {
+      "table": "wechat_memory_candidates",
+      "rows": 0,
+      "total_bytes": 8192,
+      "data_bytes": 4096,
+      "index_bytes": 4096
+    },
+    {
+      "table": "wechat_memory_import_jobs",
+      "rows": 0,
+      "total_bytes": 8192,
+      "data_bytes": 4096,
+      "index_bytes": 4096
+    },
+    {
+      "table": "wechat_read_state",
+      "rows": 1,
+      "total_bytes": 8192,
+      "data_bytes": 4096,
+      "index_bytes": 4096
+    },
+    {
+      "table": "wechat_reply_scopes",
+      "rows": 4,
+      "total_bytes": 8192,
+      "data_bytes": 4096,
+      "index_bytes": 4096
+    },
+    {
+      "table": "business_work_clusters",
+      "rows": 16,
+      "total_bytes": 4096,
+      "data_bytes": 4096,
+      "index_bytes": 0
+    },
+    {
+      "table": "codex_session_search_fts_config",
+      "rows": 1,
+      "total_bytes": 4096,
+      "data_bytes": 4096,
+      "index_bytes": 0
+    },
+    {
+      "table": "codex_session_search_fts_idx",
+      "rows": 14,
+      "total_bytes": 4096,
+      "data_bytes": 4096,
+      "index_bytes": 0
+    },
+    {
+      "table": "email_model_mode_transitions",
+      "rows": 0,
+      "total_bytes": 4096,
+      "data_bytes": 4096,
+      "index_bytes": 0
+    },
+    {
+      "table": "email_model_promotion_configs",
+      "rows": 4,
+      "total_bytes": 4096,
+      "data_bytes": 4096,
+      "index_bytes": 0
+    },
+    {
+      "table": "email_schema_migrations",
+      "rows": 38,
+      "total_bytes": 4096,
+      "data_bytes": 4096,
+      "index_bytes": 0
+    },
+    {
+      "table": "meeting_alignment_delivery_claims",
+      "rows": 0,
+      "total_bytes": 4096,
+      "data_bytes": 4096,
+      "index_bytes": 0
+    },
+    {
+      "table": "runtime_feedback_iteration_capabilities",
+      "rows": 19,
+      "total_bytes": 4096,
+      "data_bytes": 4096,
+      "index_bytes": 0
+    },
+    {
+      "table": "runtime_skill_configs",
+      "rows": 19,
+      "total_bytes": 4096,
+      "data_bytes": 4096,
+      "index_bytes": 0
+    },
+    {
+      "table": "codex_session_search_fts",
+      "rows": 700,
+      "total_bytes": 0,
+      "data_bytes": 0,
+      "index_bytes": 0
+    }
+  ],
+  "target_tables": [
+    {
+      "table": "actions",
+      "rows": 61310,
+      "total_bytes": 154271744,
+      "data_bytes": 127959040,
+      "index_bytes": 26312704,
+      "approved_spec_destination_group": "selected_core"
+    },
+    {
+      "table": "runs",
+      "rows": 231340,
+      "total_bytes": 124985344,
+      "data_bytes": 76156928,
+      "index_bytes": 48828416,
+      "approved_spec_destination_group": "selected_core"
+    },
+    {
+      "table": "tasks",
+      "rows": 25826,
+      "total_bytes": 49573888,
+      "data_bytes": 43274240,
+      "index_bytes": 6299648,
+      "approved_spec_destination_group": "selected_core"
+    },
+    {
+      "table": "email_classifications",
+      "rows": 8937,
+      "total_bytes": 39817216,
+      "data_bytes": 36573184,
+      "index_bytes": 3244032,
+      "approved_spec_destination_group": "emails"
+    },
+    {
+      "table": "email_messages",
+      "rows": 8937,
+      "total_bytes": 35516416,
+      "data_bytes": 33972224,
+      "index_bytes": 1544192,
+      "approved_spec_destination_group": "emails"
+    },
+    {
+      "table": "email_provider_observations",
+      "rows": 72142,
+      "total_bytes": 24948736,
+      "data_bytes": 13328384,
+      "index_bytes": 11620352,
+      "approved_spec_destination_group": "provider_state"
+    },
+    {
+      "table": "work_updates",
+      "rows": 5468,
+      "total_bytes": 12365824,
+      "data_bytes": 12115968,
+      "index_bytes": 249856,
+      "approved_spec_destination_group": "actions"
+    },
+    {
+      "table": "follow_up_drafts",
+      "rows": 2477,
+      "total_bytes": 11206656,
+      "data_bytes": 10596352,
+      "index_bytes": 610304,
+      "approved_spec_destination_group": "actions"
+    },
+    {
+      "table": "errors",
+      "rows": 15397,
+      "total_bytes": 8552448,
+      "data_bytes": 7585792,
+      "index_bytes": 966656,
+      "approved_spec_destination_group": "actions"
+    },
+    {
+      "table": "work_projects",
+      "rows": 975,
+      "total_bytes": 6684672,
+      "data_bytes": 6643712,
+      "index_bytes": 40960,
+      "approved_spec_destination_group": "business"
+    },
+    {
+      "table": "business_source_documents",
+      "rows": 188,
+      "total_bytes": 6160384,
+      "data_bytes": 6139904,
+      "index_bytes": 20480,
+      "approved_spec_destination_group": "provenance"
+    },
+    {
+      "table": "managed_skill_revisions",
+      "rows": 172,
+      "total_bytes": 4784128,
+      "data_bytes": 4755456,
+      "index_bytes": 28672,
+      "approved_spec_destination_group": "configs"
+    },
+    {
+      "table": "runtime_skill_load_receipts",
+      "rows": 4105,
+      "total_bytes": 4505600,
+      "data_bytes": 4452352,
+      "index_bytes": 53248,
+      "approved_spec_destination_group": "actions"
+    },
+    {
+      "table": "email_agent_classification_tasks",
+      "rows": 1367,
+      "total_bytes": 3215360,
+      "data_bytes": 2732032,
+      "index_bytes": 483328,
+      "approved_spec_destination_group": "tasks"
+    },
+    {
+      "table": "work_todos",
+      "rows": 3327,
+      "total_bytes": 2609152,
+      "data_bytes": 2420736,
+      "index_bytes": 188416,
+      "approved_spec_destination_group": "business"
+    },
+    {
+      "table": "work_todo_dingtalk_links",
+      "rows": 875,
+      "total_bytes": 2572288,
+      "data_bytes": 2510848,
+      "index_bytes": 61440,
+      "approved_spec_destination_group": "actions"
+    },
+    {
+      "table": "business_object_tasks",
+      "rows": 7349,
+      "total_bytes": 1933312,
+      "data_bytes": 1077248,
+      "index_bytes": 856064,
+      "approved_spec_destination_group": "tasks"
+    },
+    {
+      "table": "dispatcher_claim_leases",
+      "rows": 10059,
+      "total_bytes": 1892352,
+      "data_bytes": 966656,
+      "index_bytes": 925696,
+      "approved_spec_destination_group": "state"
+    },
+    {
+      "table": "business_task_events",
+      "rows": 893,
+      "total_bytes": 1687552,
+      "data_bytes": 1650688,
+      "index_bytes": 36864,
+      "approved_spec_destination_group": "actions"
+    },
+    {
+      "table": "seen_messages",
+      "rows": 7196,
+      "total_bytes": 1011712,
+      "data_bytes": 696320,
+      "index_bytes": 315392,
+      "approved_spec_destination_group": "state"
+    },
+    {
+      "table": "business_task_signals",
+      "rows": 833,
+      "total_bytes": 995328,
+      "data_bytes": 614400,
+      "index_bytes": 380928,
+      "approved_spec_destination_group": "actions"
+    },
+    {
+      "table": "okr_review_items",
+      "rows": 413,
+      "total_bytes": 937984,
+      "data_bytes": 937984,
+      "index_bytes": 0,
+      "approved_spec_destination_group": "tasks"
+    },
+    {
+      "table": "business",
+      "rows": 682,
+      "total_bytes": 917504,
+      "data_bytes": 704512,
+      "index_bytes": 212992,
+      "approved_spec_destination_group": "selected_core"
+    },
+    {
+      "table": "daily_scan_state",
+      "rows": 9,
+      "total_bytes": 872448,
+      "data_bytes": 868352,
+      "index_bytes": 4096,
+      "approved_spec_destination_group": "state"
+    },
+    {
+      "table": "email_historical_candidates",
+      "rows": 924,
+      "total_bytes": 864256,
+      "data_bytes": 692224,
+      "index_bytes": 172032,
+      "approved_spec_destination_group": "tasks"
+    },
+    {
+      "table": "conversation_runtime_sessions",
+      "rows": 5312,
+      "total_bytes": 704512,
+      "data_bytes": 524288,
+      "index_bytes": 180224,
+      "approved_spec_destination_group": "state"
+    },
+    {
+      "table": "email_classifier_runtime_samples",
+      "rows": 2048,
+      "total_bytes": 425984,
+      "data_bytes": 299008,
+      "index_bytes": 126976,
+      "approved_spec_destination_group": "runs"
+    },
+    {
+      "table": "managed_skill_export_receipts",
+      "rows": 1939,
+      "total_bytes": 319488,
+      "data_bytes": 290816,
+      "index_bytes": 28672,
+      "approved_spec_destination_group": "actions"
+    },
+    {
+      "table": "scheduled_task_config_versions",
+      "rows": 69,
+      "total_bytes": 303104,
+      "data_bytes": 102400,
+      "index_bytes": 200704,
+      "approved_spec_destination_group": "configs"
+    },
+    {
+      "table": "follow_up_send_attempts",
+      "rows": 65,
+      "total_bytes": 262144,
+      "data_bytes": 249856,
+      "index_bytes": 12288,
+      "approved_spec_destination_group": "actions"
+    },
+    {
+      "table": "email_training_snapshots",
+      "rows": 122,
+      "total_bytes": 200704,
+      "data_bytes": 167936,
+      "index_bytes": 32768,
+      "approved_spec_destination_group": "configs"
+    },
+    {
+      "table": "oa_notification_events",
+      "rows": 30,
+      "total_bytes": 184320,
+      "data_bytes": 172032,
+      "index_bytes": 12288,
+      "approved_spec_destination_group": "tasks"
+    },
+    {
+      "table": "codex_session_search_index",
+      "rows": 700,
+      "total_bytes": 172032,
+      "data_bytes": 102400,
+      "index_bytes": 69632,
+      "approved_spec_destination_group": "approved_retirement"
+    },
+    {
+      "table": "wechat_deliveries",
+      "rows": 133,
+      "total_bytes": 143360,
+      "data_bytes": 131072,
+      "index_bytes": 12288,
+      "approved_spec_destination_group": "actions"
+    },
+    {
+      "table": "meeting_memory_write_events",
+      "rows": 572,
+      "total_bytes": 135168,
+      "data_bytes": 90112,
+      "index_bytes": 45056,
+      "approved_spec_destination_group": "actions"
+    },
+    {
+      "table": "task_memory_write_events",
+      "rows": 567,
+      "total_bytes": 122880,
+      "data_bytes": 69632,
+      "index_bytes": 53248,
+      "approved_spec_destination_group": "actions"
+    },
+    {
+      "table": "conversations",
+      "rows": 523,
+      "total_bytes": 118784,
+      "data_bytes": 81920,
+      "index_bytes": 36864,
+      "approved_spec_destination_group": "state"
+    },
+    {
+      "table": "business_task_evidence",
+      "rows": 897,
+      "total_bytes": 110592,
+      "data_bytes": 45056,
+      "index_bytes": 65536,
+      "approved_spec_destination_group": "actions"
+    },
+    {
+      "table": "task_todo_sync_outbox",
+      "rows": 242,
+      "total_bytes": 110592,
+      "data_bytes": 81920,
+      "index_bytes": 28672,
+      "approved_spec_destination_group": "actions"
+    },
+    {
+      "table": "feedback_events",
+      "rows": 48,
+      "total_bytes": 98304,
+      "data_bytes": 90112,
+      "index_bytes": 8192,
+      "approved_spec_destination_group": "actions"
+    },
+    {
+      "table": "service_state",
+      "rows": 252,
+      "total_bytes": 98304,
+      "data_bytes": 69632,
+      "index_bytes": 28672,
+      "approved_spec_destination_group": "state"
+    },
+    {
+      "table": "email_historical_classification_history",
+      "rows": 183,
+      "total_bytes": 86016,
+      "data_bytes": 65536,
+      "index_bytes": 20480,
+      "approved_spec_destination_group": "actions"
+    },
+    {
+      "table": "business_attention_events",
+      "rows": 14,
+      "total_bytes": 61440,
+      "data_bytes": 57344,
+      "index_bytes": 4096,
+      "approved_spec_destination_group": "actions"
+    },
+    {
+      "table": "todo_evidence_candidates",
+      "rows": 3,
+      "total_bytes": 45056,
+      "data_bytes": 24576,
+      "index_bytes": 20480,
+      "approved_spec_destination_group": "business"
+    },
+    {
+      "table": "workbench_confirmations",
+      "rows": 0,
+      "total_bytes": 45056,
+      "data_bytes": 4096,
+      "index_bytes": 40960,
+      "approved_spec_destination_group": "approved_retirement"
+    },
+    {
+      "table": "org_user_profiles",
+      "rows": 76,
+      "total_bytes": 36864,
+      "data_bytes": 24576,
+      "index_bytes": 12288,
+      "approved_spec_destination_group": "state"
+    },
+    {
+      "table": "business_attention_items",
+      "rows": 8,
+      "total_bytes": 28672,
+      "data_bytes": 20480,
+      "index_bytes": 8192,
+      "approved_spec_destination_group": "business"
+    },
+    {
+      "table": "business_task_anchor_links",
+      "rows": 97,
+      "total_bytes": 28672,
+      "data_bytes": 20480,
+      "index_bytes": 8192,
+      "approved_spec_destination_group": "actions"
+    },
+    {
+      "table": "codex_session_search_fts_data",
+      "rows": 16,
+      "total_bytes": 24576,
+      "data_bytes": 24576,
+      "index_bytes": 0,
+      "approved_spec_destination_group": "approved_retirement"
+    },
+    {
+      "table": "feedback_processing_items",
+      "rows": 48,
+      "total_bytes": 24576,
+      "data_bytes": 12288,
+      "index_bytes": 12288,
+      "approved_spec_destination_group": "tasks"
+    },
+    {
+      "table": "runtime_skill_bindings",
+      "rows": 241,
+      "total_bytes": 24576,
+      "data_bytes": 12288,
+      "index_bytes": 12288,
+      "approved_spec_destination_group": "configs"
+    },
+    {
+      "table": "scheduled_tasks",
+      "rows": 15,
+      "total_bytes": 24576,
+      "data_bytes": 16384,
+      "index_bytes": 8192,
+      "approved_spec_destination_group": "schedules"
+    },
+    {
+      "table": "business_legacy_links",
+      "rows": 0,
+      "total_bytes": 20480,
+      "data_bytes": 4096,
+      "index_bytes": 16384,
+      "approved_spec_destination_group": "inline_proven_legacy_identity"
+    },
+    {
+      "table": "email_category_description_revisions",
+      "rows": 24,
+      "total_bytes": 20480,
+      "data_bytes": 20480,
+      "index_bytes": 0,
+      "approved_spec_destination_group": "configs"
+    },
+    {
+      "table": "feedback_processing_rounds",
+      "rows": 3,
+      "total_bytes": 20480,
+      "data_bytes": 4096,
+      "index_bytes": 16384,
+      "approved_spec_destination_group": "tasks"
+    },
+    {
+      "table": "business_task_relations",
+      "rows": 0,
+      "total_bytes": 16384,
+      "data_bytes": 4096,
+      "index_bytes": 12288,
+      "approved_spec_destination_group": "actions"
+    },
+    {
+      "table": "email_category_configs",
+      "rows": 11,
+      "total_bytes": 16384,
+      "data_bytes": 12288,
+      "index_bytes": 4096,
+      "approved_spec_destination_group": "configs"
+    },
+    {
+      "table": "email_training_snapshot_observations",
+      "rows": 0,
+      "total_bytes": 16384,
+      "data_bytes": 4096,
+      "index_bytes": 12288,
+      "approved_spec_destination_group": "approved_retirement"
+    },
+    {
+      "table": "feedback_processing_transitions",
+      "rows": 5,
+      "total_bytes": 16384,
+      "data_bytes": 4096,
+      "index_bytes": 12288,
+      "approved_spec_destination_group": "actions"
+    },
+    {
+      "table": "setup_wizard_events",
+      "rows": 22,
+      "total_bytes": 16384,
+      "data_bytes": 12288,
+      "index_bytes": 4096,
+      "approved_spec_destination_group": "runs"
+    },
+    {
+      "table": "workbench_artifacts",
+      "rows": 0,
+      "total_bytes": 16384,
+      "data_bytes": 4096,
+      "index_bytes": 12288,
+      "approved_spec_destination_group": "tasks"
+    },
+    {
+      "table": "workbench_attachments",
+      "rows": 0,
+      "total_bytes": 16384,
+      "data_bytes": 4096,
+      "index_bytes": 12288,
+      "approved_spec_destination_group": "tasks"
+    },
+    {
+      "table": "business_attention_proposal_tasks",
+      "rows": 18,
+      "total_bytes": 12288,
+      "data_bytes": 4096,
+      "index_bytes": 8192,
+      "approved_spec_destination_group": "actions"
+    },
+    {
+      "table": "business_attention_tasks",
+      "rows": 18,
+      "total_bytes": 12288,
+      "data_bytes": 4096,
+      "index_bytes": 8192,
+      "approved_spec_destination_group": "actions"
+    },
+    {
+      "table": "business_task_dingtalk_links",
+      "rows": 0,
+      "total_bytes": 12288,
+      "data_bytes": 4096,
+      "index_bytes": 8192,
+      "approved_spec_destination_group": "actions"
+    },
+    {
+      "table": "business_task_follow_up_send_attempts",
+      "rows": 0,
+      "total_bytes": 12288,
+      "data_bytes": 4096,
+      "index_bytes": 8192,
+      "approved_spec_destination_group": "actions"
+    },
+    {
+      "table": "business_task_follow_ups",
+      "rows": 0,
+      "total_bytes": 12288,
+      "data_bytes": 4096,
+      "index_bytes": 8192,
+      "approved_spec_destination_group": "actions"
+    },
+    {
+      "table": "business_task_todo_sync_outbox",
+      "rows": 0,
+      "total_bytes": 12288,
+      "data_bytes": 4096,
+      "index_bytes": 8192,
+      "approved_spec_destination_group": "actions"
+    },
+    {
+      "table": "business_work_cluster_tasks",
+      "rows": 16,
+      "total_bytes": 12288,
+      "data_bytes": 4096,
+      "index_bytes": 8192,
+      "approved_spec_destination_group": "actions"
+    },
+    {
+      "table": "codex_session_search_fts_docsize",
+      "rows": 700,
+      "total_bytes": 12288,
+      "data_bytes": 12288,
+      "index_bytes": 0,
+      "approved_spec_destination_group": "approved_retirement"
+    },
+    {
+      "table": "email_category_folder_bindings",
+      "rows": 22,
+      "total_bytes": 12288,
+      "data_bytes": 4096,
+      "index_bytes": 8192,
+      "approved_spec_destination_group": "configs"
+    },
+    {
+      "table": "email_historical_operations",
+      "rows": 0,
+      "total_bytes": 12288,
+      "data_bytes": 4096,
+      "index_bytes": 8192,
+      "approved_spec_destination_group": "actions"
+    },
+    {
+      "table": "feedback_iteration_decision_items",
+      "rows": 0,
+      "total_bytes": 12288,
+      "data_bytes": 4096,
+      "index_bytes": 8192,
+      "approved_spec_destination_group": "actions"
+    },
+    {
+      "table": "scheduled_task_skill_refs",
+      "rows": 34,
+      "total_bytes": 12288,
+      "data_bytes": 4096,
+      "index_bytes": 8192,
+      "approved_spec_destination_group": "configs"
+    },
+    {
+      "table": "service_bugfix_candidates",
+      "rows": 3,
+      "total_bytes": 12288,
+      "data_bytes": 4096,
+      "index_bytes": 8192,
+      "approved_spec_destination_group": "business"
+    },
+    {
+      "table": "business_project_candidates",
+      "rows": 10,
+      "total_bytes": 8192,
+      "data_bytes": 4096,
+      "index_bytes": 4096,
+      "approved_spec_destination_group": "business"
+    },
+    {
+      "table": "business_project_evidence",
+      "rows": 33,
+      "total_bytes": 8192,
+      "data_bytes": 4096,
+      "index_bytes": 4096,
+      "approved_spec_destination_group": "actions"
+    },
+    {
+      "table": "business_task_date_evidence",
+      "rows": 0,
+      "total_bytes": 8192,
+      "data_bytes": 4096,
+      "index_bytes": 4096,
+      "approved_spec_destination_group": "actions"
+    },
+    {
+      "table": "channel_login_reservations",
+      "rows": 0,
+      "total_bytes": 8192,
+      "data_bytes": 4096,
+      "index_bytes": 4096,
+      "approved_spec_destination_group": "state"
+    },
+    {
+      "table": "codex_session_locks",
+      "rows": 0,
+      "total_bytes": 8192,
+      "data_bytes": 4096,
+      "index_bytes": 4096,
+      "approved_spec_destination_group": "state"
+    },
+    {
+      "table": "corpus_sources",
+      "rows": 0,
+      "total_bytes": 8192,
+      "data_bytes": 4096,
+      "index_bytes": 4096,
+      "approved_spec_destination_group": "state"
+    },
+    {
+      "table": "email_accounts",
+      "rows": 2,
+      "total_bytes": 8192,
+      "data_bytes": 4096,
+      "index_bytes": 4096,
+      "approved_spec_destination_group": "configs"
+    },
+    {
+      "table": "email_historical_traversals",
+      "rows": 2,
+      "total_bytes": 8192,
+      "data_bytes": 4096,
+      "index_bytes": 4096,
+      "approved_spec_destination_group": "state"
+    },
+    {
+      "table": "email_provider_folder_observation_generations",
+      "rows": 55,
+      "total_bytes": 8192,
+      "data_bytes": 4096,
+      "index_bytes": 4096,
+      "approved_spec_destination_group": "provider_state"
+    },
+    {
+      "table": "email_scan_cursors",
+      "rows": 2,
+      "total_bytes": 8192,
+      "data_bytes": 4096,
+      "index_bytes": 4096,
+      "approved_spec_destination_group": "state"
+    },
+    {
+      "table": "feedback_iteration_decisions",
+      "rows": 0,
+      "total_bytes": 8192,
+      "data_bytes": 4096,
+      "index_bytes": 4096,
+      "approved_spec_destination_group": "tasks"
+    },
+    {
+      "table": "feedback_processing_batches",
+      "rows": 3,
+      "total_bytes": 8192,
+      "data_bytes": 4096,
+      "index_bytes": 4096,
+      "approved_spec_destination_group": "tasks"
+    },
+    {
+      "table": "managed_skills",
+      "rows": 21,
+      "total_bytes": 8192,
+      "data_bytes": 4096,
+      "index_bytes": 4096,
+      "approved_spec_destination_group": "configs"
+    },
+    {
+      "table": "org_cache_metadata",
+      "rows": 2,
+      "total_bytes": 8192,
+      "data_bytes": 4096,
+      "index_bytes": 4096,
+      "approved_spec_destination_group": "state"
+    },
+    {
+      "table": "runtime_route_pauses",
+      "rows": 2,
+      "total_bytes": 8192,
+      "data_bytes": 4096,
+      "index_bytes": 4096,
+      "approved_spec_destination_group": "state"
+    },
+    {
+      "table": "setup_wizard_steps",
+      "rows": 12,
+      "total_bytes": 8192,
+      "data_bytes": 4096,
+      "index_bytes": 4096,
+      "approved_spec_destination_group": "state"
+    },
+    {
+      "table": "wechat_memory_candidates",
+      "rows": 0,
+      "total_bytes": 8192,
+      "data_bytes": 4096,
+      "index_bytes": 4096,
+      "approved_spec_destination_group": "business"
+    },
+    {
+      "table": "wechat_memory_import_jobs",
+      "rows": 0,
+      "total_bytes": 8192,
+      "data_bytes": 4096,
+      "index_bytes": 4096,
+      "approved_spec_destination_group": "tasks"
+    },
+    {
+      "table": "wechat_read_state",
+      "rows": 1,
+      "total_bytes": 8192,
+      "data_bytes": 4096,
+      "index_bytes": 4096,
+      "approved_spec_destination_group": "state"
+    },
+    {
+      "table": "wechat_reply_scopes",
+      "rows": 4,
+      "total_bytes": 8192,
+      "data_bytes": 4096,
+      "index_bytes": 4096,
+      "approved_spec_destination_group": "configs"
+    },
+    {
+      "table": "business_work_clusters",
+      "rows": 16,
+      "total_bytes": 4096,
+      "data_bytes": 4096,
+      "index_bytes": 0,
+      "approved_spec_destination_group": "business"
+    },
+    {
+      "table": "codex_session_search_fts_config",
+      "rows": 1,
+      "total_bytes": 4096,
+      "data_bytes": 4096,
+      "index_bytes": 0,
+      "approved_spec_destination_group": "approved_retirement"
+    },
+    {
+      "table": "codex_session_search_fts_idx",
+      "rows": 14,
+      "total_bytes": 4096,
+      "data_bytes": 4096,
+      "index_bytes": 0,
+      "approved_spec_destination_group": "approved_retirement"
+    },
+    {
+      "table": "email_model_mode_transitions",
+      "rows": 0,
+      "total_bytes": 4096,
+      "data_bytes": 4096,
+      "index_bytes": 0,
+      "approved_spec_destination_group": "configs"
+    },
+    {
+      "table": "email_model_promotion_configs",
+      "rows": 4,
+      "total_bytes": 4096,
+      "data_bytes": 4096,
+      "index_bytes": 0,
+      "approved_spec_destination_group": "configs"
+    },
+    {
+      "table": "email_schema_migrations",
+      "rows": 39,
+      "total_bytes": 4096,
+      "data_bytes": 4096,
+      "index_bytes": 0,
+      "approved_spec_destination_group": "migration_ledger"
+    },
+    {
+      "table": "meeting_alignment_delivery_claims",
+      "rows": 0,
+      "total_bytes": 4096,
+      "data_bytes": 4096,
+      "index_bytes": 0,
+      "approved_spec_destination_group": "actions"
+    },
+    {
+      "table": "runtime_feedback_iteration_capabilities",
+      "rows": 19,
+      "total_bytes": 4096,
+      "data_bytes": 4096,
+      "index_bytes": 0,
+      "approved_spec_destination_group": "configs"
+    },
+    {
+      "table": "runtime_skill_configs",
+      "rows": 19,
+      "total_bytes": 4096,
+      "data_bytes": 4096,
+      "index_bytes": 0,
+      "approved_spec_destination_group": "configs"
+    },
+    {
+      "table": "codex_session_search_fts",
+      "rows": 700,
+      "total_bytes": 0,
+      "data_bytes": 0,
+      "index_bytes": 0,
+      "approved_spec_destination_group": "approved_retirement"
+    }
+  ],
+  "moved_family_comparison": {
+    "source_combined_family": {
+      "total_bytes": 132616192,
+      "data_bytes": 112635904,
+      "index_bytes": 19980288
+    },
+    "target_combined_family": {
+      "total_bytes": 155189248,
+      "data_bytes": 128663552,
+      "index_bytes": 26525696
+    },
+    "source_actions": {
+      "table": "actions",
+      "rows": 23001,
+      "total_bytes": 91938816,
+      "data_bytes": 80715776,
+      "index_bytes": 11223040
+    },
+    "target_actions": {
+      "table": "actions",
+      "total_bytes": 154271744,
+      "data_bytes": 127959040,
+      "index_bytes": 26312704
+    },
+    "target_business": {
+      "table": "business",
+      "total_bytes": 917504,
+      "data_bytes": 704512,
+      "index_bytes": 212992
+    },
+    "unchanged_others_allocated_delta": 0
+  },
+  "target_action_indexes": [
+    {
+      "name": "idx_actions_email_public_key",
+      "bytes": 4042752,
+      "unique": true,
+      "origin": "c",
+      "partial": false,
+      "columns": [
+        {
+          "name": "record_type",
+          "collation": "BINARY",
+          "key": 1
+        },
+        {
+          "name": "email_public_key",
+          "collation": "BINARY",
+          "key": 1
+        },
+        {
+          "name": null,
+          "collation": "BINARY",
+          "key": 0
+        }
+      ]
+    },
+    {
+      "name": "idx_actions_reply_current_trigger",
+      "bytes": 2826240,
+      "unique": false,
+      "origin": "c",
+      "partial": true,
+      "columns": [
+        {
+          "name": "attempt_channel",
+          "collation": "BINARY",
+          "key": 1
+        },
+        {
+          "name": "attempt_conversation_id",
+          "collation": "BINARY",
+          "key": 1
+        },
+        {
+          "name": "attempt_trigger_message_id",
+          "collation": "BINARY",
+          "key": 1
+        },
+        {
+          "name": "attempt_updated_at",
+          "collation": "BINARY",
+          "key": 1
+        },
+        {
+          "name": null,
+          "collation": "BINARY",
+          "key": 1
+        },
+        {
+          "name": null,
+          "collation": "BINARY",
+          "key": 0
+        }
+      ]
+    },
+    {
+      "name": "idx_actions_reply_trigger_history",
+      "bytes": 2596864,
+      "unique": false,
+      "origin": "c",
+      "partial": true,
+      "columns": [
+        {
+          "name": "attempt_conversation_id",
+          "collation": "BINARY",
+          "key": 1
+        },
+        {
+          "name": "attempt_trigger_message_id",
+          "collation": "BINARY",
+          "key": 1
+        },
+        {
+          "name": "attempt_action",
+          "collation": "BINARY",
+          "key": 1
+        },
+        {
+          "name": null,
+          "collation": "BINARY",
+          "key": 1
+        },
+        {
+          "name": null,
+          "collation": "BINARY",
+          "key": 0
+        }
+      ]
+    },
+    {
+      "name": "idx_actions_postfix_identity",
+      "bytes": 2142208,
+      "unique": true,
+      "origin": "c",
+      "partial": false,
+      "columns": [
+        {
+          "name": "record_type",
+          "collation": "BINARY",
+          "key": 1
+        },
+        {
+          "name": "channel",
+          "collation": "BINARY",
+          "key": 1
+        },
+        {
+          "name": "delivery_key",
+          "collation": "BINARY",
+          "key": 1
+        },
+        {
+          "name": null,
+          "collation": "BINARY",
+          "key": 0
+        }
+      ]
+    },
+    {
+      "name": "idx_actions_public_id",
+      "bytes": 1884160,
+      "unique": true,
+      "origin": "c",
+      "partial": true,
+      "columns": [
+        {
+          "name": "record_type",
+          "collation": "BINARY",
+          "key": 1
+        },
+        {
+          "name": null,
+          "collation": "BINARY",
+          "key": 1
+        },
+        {
+          "name": null,
+          "collation": "BINARY",
+          "key": 0
+        }
+      ]
+    },
+    {
+      "name": "idx_actions_email_email_actions_1",
+      "bytes": 1396736,
+      "unique": false,
+      "origin": "c",
+      "partial": true,
+      "columns": [
+        {
+          "name": "email_status",
+          "collation": "BINARY",
+          "key": 1
+        },
+        {
+          "name": "email_updated_at",
+          "collation": "BINARY",
+          "key": 1
+        },
+        {
+          "name": "email_action_id",
+          "collation": "BINARY",
+          "key": 1
+        },
+        {
+          "name": null,
+          "collation": "BINARY",
+          "key": 0
+        }
+      ]
+    },
+    {
+      "name": "idx_actions_email_email_action_attempts_0",
+      "bytes": 1232896,
+      "unique": true,
+      "origin": "c",
+      "partial": true,
+      "columns": [
+        {
+          "name": "email_action_id",
+          "collation": "BINARY",
+          "key": 1
+        },
+        {
+          "name": "email_attempt_number",
+          "collation": "BINARY",
+          "key": 1
+        },
+        {
+          "name": null,
+          "collation": "BINARY",
+          "key": 0
+        }
+      ]
+    },
+    {
+      "name": "idx_actions_email_email_actions_0",
+      "bytes": 1224704,
+      "unique": false,
+      "origin": "c",
+      "partial": true,
+      "columns": [
+        {
+          "name": "email_classification_id",
+          "collation": "BINARY",
+          "key": 1
+        },
+        {
+          "name": "email_action_plan_id",
+          "collation": "BINARY",
+          "key": 1
+        },
+        {
+          "name": null,
+          "collation": "BINARY",
+          "key": 0
+        }
+      ]
+    },
+    {
+      "name": "idx_actions_email_email_actions_2",
+      "bytes": 1187840,
+      "unique": true,
+      "origin": "c",
+      "partial": true,
+      "columns": [
+        {
+          "name": "email_action_plan_id",
+          "collation": "BINARY",
+          "key": 1
+        },
+        {
+          "name": "email_action_type",
+          "collation": "BINARY",
+          "key": 1
+        },
+        {
+          "name": null,
+          "collation": "BINARY",
+          "key": 0
+        }
+      ]
+    },
+    {
+      "name": "idx_actions_email_email_actions_3",
+      "bytes": 1056768,
+      "unique": true,
+      "origin": "c",
+      "partial": true,
+      "columns": [
+        {
+          "name": "email_action_id",
+          "collation": "BINARY",
+          "key": 1
+        },
+        {
+          "name": null,
+          "collation": "BINARY",
+          "key": 0
+        }
+      ]
+    },
+    {
+      "name": "idx_actions_email_email_action_plans_1",
+      "bytes": 1040384,
+      "unique": true,
+      "origin": "c",
+      "partial": true,
+      "columns": [
+        {
+          "name": "email_action_plan_id",
+          "collation": "BINARY",
+          "key": 1
+        },
+        {
+          "name": null,
+          "collation": "BINARY",
+          "key": 0
+        }
+      ]
+    },
+    {
+      "name": "idx_actions_reply_trigger_message",
+      "bytes": 937984,
+      "unique": false,
+      "origin": "c",
+      "partial": true,
+      "columns": [
+        {
+          "name": "attempt_trigger_message_id",
+          "collation": "BINARY",
+          "key": 1
+        },
+        {
+          "name": null,
+          "collation": "BINARY",
+          "key": 0
+        }
+      ]
+    },
+    {
+      "name": "idx_actions_reply_status",
+      "bytes": 876544,
+      "unique": false,
+      "origin": "c",
+      "partial": true,
+      "columns": [
+        {
+          "name": "record_type",
+          "collation": "BINARY",
+          "key": 1
+        },
+        {
+          "name": "attempt_send_status",
+          "collation": "BINARY",
+          "key": 1
+        },
+        {
+          "name": "attempt_created_at",
+          "collation": "BINARY",
+          "key": 1
+        },
+        {
+          "name": null,
+          "collation": "BINARY",
+          "key": 0
+        }
+      ]
+    },
+    {
+      "name": "idx_actions_reply_created",
+      "bytes": 782336,
+      "unique": false,
+      "origin": "c",
+      "partial": true,
+      "columns": [
+        {
+          "name": "record_type",
+          "collation": "BINARY",
+          "key": 1
+        },
+        {
+          "name": "attempt_created_at",
+          "collation": "BINARY",
+          "key": 1
+        },
+        {
+          "name": null,
+          "collation": "BINARY",
+          "key": 1
+        },
+        {
+          "name": null,
+          "collation": "BINARY",
+          "key": 0
+        }
+      ]
+    },
+    {
+      "name": "idx_actions_reply_run_recovery",
+      "bytes": 450560,
+      "unique": false,
+      "origin": "c",
+      "partial": true,
+      "columns": [
+        {
+          "name": "attempt_agent_run_id",
+          "collation": "BINARY",
+          "key": 1
+        },
+        {
+          "name": "attempt_send_error",
+          "collation": "BINARY",
+          "key": 1
+        },
+        {
+          "name": null,
+          "collation": "BINARY",
+          "key": 1
+        },
+        {
+          "name": null,
+          "collation": "BINARY",
+          "key": 0
+        }
+      ]
+    },
+    {
+      "name": "idx_actions_reply_public_order",
+      "bytes": 430080,
+      "unique": true,
+      "origin": "c",
+      "partial": true,
+      "columns": [
+        {
+          "name": "record_type",
+          "collation": "BINARY",
+          "key": 1
+        },
+        {
+          "name": null,
+          "collation": "BINARY",
+          "key": 1
+        },
+        {
+          "name": null,
+          "collation": "BINARY",
+          "key": 0
+        }
+      ]
+    },
+    {
+      "name": "idx_actions_sent_history",
+      "bytes": 249856,
+      "unique": false,
+      "origin": "c",
+      "partial": true,
+      "columns": [
+        {
+          "name": "conversation_id",
+          "collation": "BINARY",
+          "key": 1
+        },
+        {
+          "name": "trigger_message_id",
+          "collation": "BINARY",
+          "key": 1
+        },
+        {
+          "name": "sent_at",
+          "collation": "BINARY",
+          "key": 1
+        },
+        {
+          "name": null,
+          "collation": "BINARY",
+          "key": 0
+        }
+      ]
+    },
+    {
+      "name": "idx_actions_email_email_unsubscribe_effects_0",
+      "bytes": 212992,
+      "unique": true,
+      "origin": "c",
+      "partial": true,
+      "columns": [
+        {
+          "name": "email_action_identity",
+          "collation": "BINARY",
+          "key": 1
+        },
+        {
+          "name": "email_effect_digest",
+          "collation": "BINARY",
+          "key": 1
+        },
+        {
+          "name": null,
+          "collation": "BINARY",
+          "key": 0
+        }
+      ]
+    },
+    {
+      "name": "idx_actions_email_email_action_plans_0",
+      "bytes": 192512,
+      "unique": true,
+      "origin": "c",
+      "partial": true,
+      "columns": [
+        {
+          "name": "email_classification_id",
+          "collation": "BINARY",
+          "key": 1
+        },
+        {
+          "name": "email_action_plan_version",
+          "collation": "BINARY",
+          "key": 1
+        },
+        {
+          "name": null,
+          "collation": "BINARY",
+          "key": 0
+        }
+      ]
+    },
+    {
+      "name": "idx_actions_email_email_unsubscribe_claims_0",
+      "bytes": 155648,
+      "unique": false,
+      "origin": "c",
+      "partial": true,
+      "columns": [
+        {
+          "name": "email_status",
+          "collation": "BINARY",
+          "key": 1
+        },
+        {
+          "name": "email_updated_at",
+          "collation": "BINARY",
+          "key": 1
+        },
+        {
+          "name": "email_action_identity",
+          "collation": "BINARY",
+          "key": 1
+        },
+        {
+          "name": null,
+          "collation": "BINARY",
+          "key": 0
+        }
+      ]
+    },
+    {
+      "name": "idx_actions_email_email_feedback_requests_0",
+      "bytes": 147456,
+      "unique": true,
+      "origin": "c",
+      "partial": true,
+      "columns": [
+        {
+          "name": "email_resulting_action_plan_id",
+          "collation": "BINARY",
+          "key": 1
+        },
+        {
+          "name": null,
+          "collation": "BINARY",
+          "key": 0
+        }
+      ]
+    },
+    {
+      "name": "idx_actions_email_email_unsubscribe_receipts_0",
+      "bytes": 122880,
+      "unique": false,
+      "origin": "c",
+      "partial": true,
+      "columns": [
+        {
+          "name": "email_classification_id",
+          "collation": "BINARY",
+          "key": 1
+        },
+        {
+          "name": "email_action_identity",
+          "collation": "BINARY",
+          "key": 1
+        },
+        {
+          "name": null,
+          "collation": "BINARY",
+          "key": 0
+        }
+      ]
+    },
+    {
+      "name": "idx_actions_email_email_feedback_requests_1",
+      "bytes": 114688,
+      "unique": true,
+      "origin": "c",
+      "partial": true,
+      "columns": [
+        {
+          "name": "email_expected_current_action_plan_id",
+          "collation": "BINARY",
+          "key": 1
+        },
+        {
+          "name": null,
+          "collation": "BINARY",
+          "key": 0
+        }
+      ]
+    },
+    {
+      "name": "idx_actions_email_email_unsubscribe_claims_1",
+      "bytes": 110592,
+      "unique": true,
+      "origin": "c",
+      "partial": true,
+      "columns": [
+        {
+          "name": "email_action_identity",
+          "collation": "BINARY",
+          "key": 1
+        },
+        {
+          "name": null,
+          "collation": "BINARY",
+          "key": 0
+        }
+      ]
+    },
+    {
+      "name": "idx_actions_email_email_unsubscribe_receipts_1",
+      "bytes": 110592,
+      "unique": true,
+      "origin": "c",
+      "partial": true,
+      "columns": [
+        {
+          "name": "email_action_identity",
+          "collation": "BINARY",
+          "key": 1
+        },
+        {
+          "name": null,
+          "collation": "BINARY",
+          "key": 0
+        }
+      ]
+    },
+    {
+      "name": "idx_actions_email_email_feedback_requests_2",
+      "bytes": 98304,
+      "unique": true,
+      "origin": "c",
+      "partial": true,
+      "columns": [
+        {
+          "name": "email_feedback_request_id",
+          "collation": "BINARY",
+          "key": 1
+        },
+        {
+          "name": null,
+          "collation": "BINARY",
+          "key": 0
+        }
+      ]
+    },
+    {
+      "name": "idx_actions_email_email_unsubscribe_steps_0",
+      "bytes": 86016,
+      "unique": true,
+      "origin": "c",
+      "partial": true,
+      "columns": [
+        {
+          "name": "email_action_identity",
+          "collation": "BINARY",
+          "key": 1
+        },
+        {
+          "name": "email_sequence",
+          "collation": "BINARY",
+          "key": 1
+        },
+        {
+          "name": null,
+          "collation": "BINARY",
+          "key": 0
+        }
+      ]
+    },
+    {
+      "name": "idx_actions_reply_oa_history",
+      "bytes": 86016,
+      "unique": false,
+      "origin": "c",
+      "partial": true,
+      "columns": [
+        {
+          "name": "attempt_oa_process_instance_id",
+          "collation": "BINARY",
+          "key": 1
+        },
+        {
+          "name": "attempt_created_at",
+          "collation": "BINARY",
+          "key": 1
+        },
+        {
+          "name": null,
+          "collation": "BINARY",
+          "key": 1
+        },
+        {
+          "name": null,
+          "collation": "BINARY",
+          "key": 0
+        }
+      ]
+    },
+    {
+      "name": "idx_actions_global_business",
+      "bytes": 73728,
+      "unique": false,
+      "origin": "c",
+      "partial": true,
+      "columns": [
+        {
+          "name": "business_object_key",
+          "collation": "BINARY",
+          "key": 1
+        },
+        {
+          "name": "external_action_key",
+          "collation": "BINARY",
+          "key": 1
+        },
+        {
+          "name": null,
+          "collation": "BINARY",
+          "key": 0
+        }
+      ]
+    },
+    {
+      "name": "idx_actions_intent_operation",
+      "bytes": 69632,
+      "unique": true,
+      "origin": "c",
+      "partial": true,
+      "columns": [
+        {
+          "name": "agent_run_id",
+          "collation": "BINARY",
+          "key": 1
+        },
+        {
+          "name": "receipt_operation_id",
+          "collation": "BINARY",
+          "key": 1
+        },
+        {
+          "name": null,
+          "collation": "BINARY",
+          "key": 0
+        }
+      ]
+    },
+    {
+      "name": "idx_actions_text_public_key",
+      "bytes": 45056,
+      "unique": true,
+      "origin": "c",
+      "partial": true,
+      "columns": [
+        {
+          "name": "legacy_key",
+          "collation": "BINARY",
+          "key": 1
+        },
+        {
+          "name": "record_type",
+          "collation": "BINARY",
+          "key": 1
+        },
+        {
+          "name": null,
+          "collation": "BINARY",
+          "key": 0
+        }
+      ]
+    },
+    {
+      "name": "idx_actions_execution_receipt_operation",
+      "bytes": 36864,
+      "unique": true,
+      "origin": "c",
+      "partial": true,
+      "columns": [
+        {
+          "name": "agent_run_id",
+          "collation": "BINARY",
+          "key": 1
+        },
+        {
+          "name": "operation_id",
+          "collation": "BINARY",
+          "key": 1
+        },
+        {
+          "name": null,
+          "collation": "BINARY",
+          "key": 0
+        }
+      ]
+    },
+    {
+      "name": "idx_actions_sent_external_key",
+      "bytes": 32768,
+      "unique": true,
+      "origin": "c",
+      "partial": true,
+      "columns": [
+        {
+          "name": "external_action_key",
+          "collation": "BINARY",
+          "key": 1
+        },
+        {
+          "name": null,
+          "collation": "BINARY",
+          "key": 0
+        }
+      ]
+    },
+    {
+      "name": "idx_actions_candidates_task",
+      "bytes": 28672,
+      "unique": false,
+      "origin": "c",
+      "partial": true,
+      "columns": [
+        {
+          "name": "task_id",
+          "collation": "BINARY",
+          "key": 1
+        },
+        {
+          "name": "execution_generation",
+          "collation": "BINARY",
+          "key": 1
+        },
+        {
+          "name": null,
+          "collation": "BINARY",
+          "key": 1
+        },
+        {
+          "name": null,
+          "collation": "BINARY",
+          "key": 0
+        }
+      ]
+    },
+    {
+      "name": "idx_actions_external_key",
+      "bytes": 24576,
+      "unique": false,
+      "origin": "c",
+      "partial": true,
+      "columns": [
+        {
+          "name": "external_action_key",
+          "collation": "BINARY",
+          "key": 1
+        },
+        {
+          "name": null,
+          "collation": "BINARY",
+          "key": 0
+        }
+      ]
+    },
+    {
+      "name": "idx_actions_intent_authorization",
+      "bytes": 24576,
+      "unique": true,
+      "origin": "c",
+      "partial": true,
+      "columns": [
+        {
+          "name": "agent_run_id",
+          "collation": "BINARY",
+          "key": 1
+        },
+        {
+          "name": "authorization_id",
+          "collation": "BINARY",
+          "key": 1
+        },
+        {
+          "name": null,
+          "collation": "BINARY",
+          "key": 0
+        }
+      ]
+    },
+    {
+      "name": "idx_actions_memory_public_order",
+      "bytes": 20480,
+      "unique": false,
+      "origin": "c",
+      "partial": true,
+      "columns": [
+        {
+          "name": "record_type",
+          "collation": "BINARY",
+          "key": 1
+        },
+        {
+          "name": null,
+          "collation": "BINARY",
+          "key": 1
+        },
+        {
+          "name": null,
+          "collation": "BINARY",
+          "key": 0
+        }
+      ]
+    },
+    {
+      "name": "idx_actions_audit_run",
+      "bytes": 16384,
+      "unique": true,
+      "origin": "c",
+      "partial": true,
+      "columns": [
+        {
+          "name": "audit_run_id",
+          "collation": "BINARY",
+          "key": 1
+        },
+        {
+          "name": null,
+          "collation": "BINARY",
+          "key": 0
+        }
+      ]
+    },
+    {
+      "name": "idx_actions_consumer_run",
+      "bytes": 16384,
+      "unique": true,
+      "origin": "c",
+      "partial": true,
+      "columns": [
+        {
+          "name": "consumer_run_id",
+          "collation": "BINARY",
+          "key": 1
+        },
+        {
+          "name": null,
+          "collation": "BINARY",
+          "key": 0
+        }
+      ]
+    },
+    {
+      "name": "idx_actions_memory_status",
+      "bytes": 16384,
+      "unique": false,
+      "origin": "c",
+      "partial": true,
+      "columns": [
+        {
+          "name": "memory_status",
+          "collation": "BINARY",
+          "key": 1
+        },
+        {
+          "name": null,
+          "collation": "BINARY",
+          "key": 1
+        },
+        {
+          "name": null,
+          "collation": "BINARY",
+          "key": 0
+        }
+      ]
+    },
+    {
+      "name": "idx_actions_memory_unique",
+      "bytes": 16384,
+      "unique": true,
+      "origin": "c",
+      "partial": true,
+      "columns": [
+        {
+          "name": "memory_attempt_id",
+          "collation": "BINARY",
+          "key": 1
+        },
+        {
+          "name": "memory_event_type",
+          "collation": "BINARY",
+          "key": 1
+        },
+        {
+          "name": null,
+          "collation": "BINARY",
+          "key": 0
+        }
+      ]
+    },
+    {
+      "name": "idx_actions_reviews_candidate",
+      "bytes": 16384,
+      "unique": false,
+      "origin": "c",
+      "partial": true,
+      "columns": [
+        {
+          "name": "candidate_id",
+          "collation": "BINARY",
+          "key": 1
+        },
+        {
+          "name": null,
+          "collation": "BINARY",
+          "key": 1
+        },
+        {
+          "name": null,
+          "collation": "BINARY",
+          "key": 0
+        }
+      ]
+    },
+    {
+      "name": "idx_actions_memory_attempt",
+      "bytes": 12288,
+      "unique": false,
+      "origin": "c",
+      "partial": true,
+      "columns": [
+        {
+          "name": "memory_attempt_id",
+          "collation": "BINARY",
+          "key": 1
+        },
+        {
+          "name": null,
+          "collation": "BINARY",
+          "key": 1
+        },
+        {
+          "name": null,
+          "collation": "BINARY",
+          "key": 0
+        }
+      ]
+    },
+    {
+      "name": "idx_actions_observer_identity",
+      "bytes": 12288,
+      "unique": true,
+      "origin": "c",
+      "partial": true,
+      "columns": [
+        {
+          "name": "sent_reply_id",
+          "collation": "BINARY",
+          "key": 1
+        },
+        {
+          "name": "agent_run_id",
+          "collation": "BINARY",
+          "key": 1
+        },
+        {
+          "name": null,
+          "collation": "BINARY",
+          "key": 0
+        }
+      ]
+    },
+    {
+      "name": "idx_actions_attempt_sequence",
+      "bytes": 4096,
+      "unique": true,
+      "origin": "c",
+      "partial": true,
+      "columns": [
+        {
+          "name": "execution_id",
+          "collation": "BINARY",
+          "key": 1
+        },
+        {
+          "name": "action_index",
+          "collation": "BINARY",
+          "key": 1
+        },
+        {
+          "name": null,
+          "collation": "BINARY",
+          "key": 0
+        }
+      ]
+    },
+    {
+      "name": "idx_actions_email_email_direct_retry_requests_0",
+      "bytes": 4096,
+      "unique": true,
+      "origin": "c",
+      "partial": true,
+      "columns": [
+        {
+          "name": "email_action_id",
+          "collation": "BINARY",
+          "key": 1
+        },
+        {
+          "name": "email_attempt_number",
+          "collation": "BINARY",
+          "key": 1
+        },
+        {
+          "name": null,
+          "collation": "BINARY",
+          "key": 0
+        }
+      ]
+    },
+    {
+      "name": "idx_actions_email_email_reply_dispatch_claims_0",
+      "bytes": 4096,
+      "unique": false,
+      "origin": "c",
+      "partial": true,
+      "columns": [
+        {
+          "name": "email_status",
+          "collation": "BINARY",
+          "key": 1
+        },
+        {
+          "name": "email_updated_at",
+          "collation": "BINARY",
+          "key": 1
+        },
+        {
+          "name": "email_action_identity",
+          "collation": "BINARY",
+          "key": 1
+        },
+        {
+          "name": null,
+          "collation": "BINARY",
+          "key": 0
+        }
+      ]
+    },
+    {
+      "name": "idx_actions_email_email_reply_dispatch_claims_1",
+      "bytes": 4096,
+      "unique": true,
+      "origin": "c",
+      "partial": true,
+      "columns": [
+        {
+          "name": "email_outgoing_message_id",
+          "collation": "BINARY",
+          "key": 1
+        },
+        {
+          "name": null,
+          "collation": "BINARY",
+          "key": 0
+        }
+      ]
+    },
+    {
+      "name": "idx_actions_email_email_reply_dispatch_claims_2",
+      "bytes": 4096,
+      "unique": true,
+      "origin": "c",
+      "partial": true,
+      "columns": [
+        {
+          "name": "email_action_identity",
+          "collation": "BINARY",
+          "key": 1
+        },
+        {
+          "name": null,
+          "collation": "BINARY",
+          "key": 0
+        }
+      ]
+    },
+    {
+      "name": "idx_actions_email_email_reply_receipts_0",
+      "bytes": 4096,
+      "unique": true,
+      "origin": "c",
+      "partial": true,
+      "columns": [
+        {
+          "name": "email_outgoing_message_id",
+          "collation": "BINARY",
+          "key": 1
+        },
+        {
+          "name": null,
+          "collation": "BINARY",
+          "key": 0
+        }
+      ]
+    },
+    {
+      "name": "idx_actions_email_email_reply_receipts_1",
+      "bytes": 4096,
+      "unique": true,
+      "origin": "c",
+      "partial": true,
+      "columns": [
+        {
+          "name": "email_action_identity",
+          "collation": "BINARY",
+          "key": 1
+        },
+        {
+          "name": null,
+          "collation": "BINARY",
+          "key": 0
+        }
+      ]
+    },
+    {
+      "name": "idx_actions_email_email_unsubscribe_cancellations_0",
+      "bytes": 4096,
+      "unique": true,
+      "origin": "c",
+      "partial": true,
+      "columns": [
+        {
+          "name": "email_action_identity",
+          "collation": "BINARY",
+          "key": 1
+        },
+        {
+          "name": null,
+          "collation": "BINARY",
+          "key": 0
+        }
+      ]
+    },
+    {
+      "name": "idx_actions_email_email_unsubscribe_continuations_0",
+      "bytes": 4096,
+      "unique": true,
+      "origin": "c",
+      "partial": true,
+      "columns": [
+        {
+          "name": "email_action_identity",
+          "collation": "BINARY",
+          "key": 1
+        },
+        {
+          "name": null,
+          "collation": "BINARY",
+          "key": 0
+        }
+      ]
+    },
+    {
+      "name": "idx_actions_execution_candidate",
+      "bytes": 4096,
+      "unique": true,
+      "origin": "c",
+      "partial": true,
+      "columns": [
+        {
+          "name": "candidate_id",
+          "collation": "BINARY",
+          "key": 1
+        },
+        {
+          "name": null,
+          "collation": "BINARY",
+          "key": 0
+        }
+      ]
+    },
+    {
+      "name": "idx_actions_execution_receipt_run",
+      "bytes": 4096,
+      "unique": false,
+      "origin": "c",
+      "partial": true,
+      "columns": [
+        {
+          "name": "agent_run_id",
+          "collation": "BINARY",
+          "key": 1
+        },
+        {
+          "name": null,
+          "collation": "BINARY",
+          "key": 1
+        },
+        {
+          "name": null,
+          "collation": "BINARY",
+          "key": 0
+        }
+      ]
+    },
+    {
+      "name": "idx_actions_intent_run",
+      "bytes": 4096,
+      "unique": false,
+      "origin": "c",
+      "partial": true,
+      "columns": [
+        {
+          "name": "agent_run_id",
+          "collation": "BINARY",
+          "key": 1
+        },
+        {
+          "name": "action_index",
+          "collation": "BINARY",
+          "key": 1
+        },
+        {
+          "name": null,
+          "collation": "BINARY",
+          "key": 1
+        },
+        {
+          "name": null,
+          "collation": "BINARY",
+          "key": 0
+        }
+      ]
+    },
+    {
+      "name": "idx_actions_selection_candidate",
+      "bytes": 4096,
+      "unique": true,
+      "origin": "c",
+      "partial": true,
+      "columns": [
+        {
+          "name": "candidate_id",
+          "collation": "BINARY",
+          "key": 1
+        },
+        {
+          "name": null,
+          "collation": "BINARY",
+          "key": 0
+        }
+      ]
+    }
+  ],
+  "remaining_direction_summary": {
+    "actions": {
+      "source_table_count": 32,
+      "allocated_bytes": 43528192
+    },
+    "approved_retirement": {
+      "source_table_count": 8,
+      "allocated_bytes": 278528
+    },
+    "business": {
+      "source_table_count": 8,
+      "allocated_bytes": 9400320
+    },
+    "configs": {
+      "source_table_count": 15,
+      "allocated_bytes": 5414912
+    },
+    "emails": {
+      "source_table_count": 2,
+      "allocated_bytes": 75333632
+    },
+    "inline_proven_legacy_identity": {
+      "source_table_count": 1,
+      "allocated_bytes": 20480
+    },
+    "migration_ledger": {
+      "source_table_count": 1,
+      "allocated_bytes": 4096
+    },
+    "provenance": {
+      "source_table_count": 1,
+      "allocated_bytes": 6160384
+    },
+    "provider_state": {
+      "source_table_count": 2,
+      "allocated_bytes": 24956928
+    },
+    "runs": {
+      "source_table_count": 2,
+      "allocated_bytes": 442368
+    },
+    "schedules": {
+      "source_table_count": 1,
+      "allocated_bytes": 24576
+    },
+    "selected_core": {
+      "source_table_count": 4,
+      "allocated_bytes": 329748480
+    },
+    "state": {
+      "source_table_count": 16,
+      "allocated_bytes": 4808704
+    },
+    "tasks": {
+      "source_table_count": 12,
+      "allocated_bytes": 7237632
+    }
+  },
+  "approved_final_core_tables": [
+    "tasks",
+    "runs",
+    "actions",
+    "business",
+    "emails",
+    "provenance",
+    "configs",
+    "provider_state",
+    "schedules",
+    "state"
+  ],
+  "approved_final_migration_ledgers": 1,
+  "remaining_net_table_reduction": 94,
+  "interpretation": "The moved families gained allocated data/index pages; unchanged user-table families had zero allocated-page delta. This is not a space-saving acceptance or authority to delete any index or historical row. The final ten-core-plus-ledger layout is not implemented yet.",
+  "target_baseline_candidate_commit": "076f30749f3392324ad2e3ebcd77afaadcf77d88",
+  "target_baseline_sha256": "bf13a27a1606c55b9f6463a0a79d0793136d5d40a71c179dc740025101c9c6be",
+  "target_native_code_identical_to_final_copy_candidate": true
+}

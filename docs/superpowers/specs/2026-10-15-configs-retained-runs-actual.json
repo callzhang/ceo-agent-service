@@ -1,0 +1,81 @@
+{
+  "after_append_and_inverse": {
+    "rows": 231341,
+    "sequence_waters": {
+      "runs": 362317
+    },
+    "values_and_types_sha256": "2cad3c085fa888c438e91b06f7a6eb2b990dcc41850f8f7e9c8b2dfaa2cd26db"
+  },
+  "appended_physical_run_id": 362317,
+  "before": {
+    "rows": 231340,
+    "sequence_waters": {
+      "runs": 362316
+    },
+    "values_and_types_sha256": "4d1de44901b9cab42f5a8c7a7795556c4a1b33860045858f07577a182754cb9d"
+  },
+  "code_commit": "5fec73f3",
+  "elapsed_seconds": 736.176,
+  "executed_module_sha256": {
+    "action_email_storage": "12d58eaa12cb3bd0ab5f9d080b3d06742d3da1230a69a6d2102d8345a8398c3c",
+    "business_schema_release": "2f61b469c0f65742e946f90533ac9ca4639775d44238c7c09e1719b5f0379e78",
+    "configs_definitions": "4ed439f7be8e99d8159bbd57ac703d72d63f43819ca7cf39212f989dafa989a3",
+    "configs_run_schema": "f1530fe9b695e1ad0113c071b942c826cc0cdfa1c359935cad35f9f9cec8dc99",
+    "configs_storage": "2f5ea76c7f5cebc53775a9a65e3ed81c0ccd64778e2a3bf657dd3d851d66a540",
+    "provider_state_schema_release": "7422971f430892d6e89ce7d7d24dc97f17954f3352d62bbc97704eee9a7873e5",
+    "run_storage": "ae57fb5d13aac35672cb07de38c9b515d49651ffebce20cf3b88398e40845718",
+    "schedules_storage": "9e0a80bfb164b802cb22c8e70a6551f2d660bd3cabdf08eb7ff1d6dfdbff74f7"
+  },
+  "inverse_fk_findings": [
+    [
+      "runs",
+      190042,
+      "tasks",
+      1
+    ]
+  ],
+  "mapped": {
+    "rows": 231340,
+    "sequence_waters": {
+      "runs": 362316
+    },
+    "values_and_types_sha256": "4d1de44901b9cab42f5a8c7a7795556c4a1b33860045858f07577a182754cb9d"
+  },
+  "mapped_fk_findings": [
+    [
+      "runs",
+      190042,
+      "tasks",
+      1
+    ]
+  ],
+  "original_source_sha256_unchanged": true,
+  "owned_temp_absent": true,
+  "quick_check": "ok",
+  "schedule_parent_rows": 15,
+  "scope": "Retained-runs-only copy proof after existing Email/Business/Provider conversions. Install only existing schedule and schedule-snapshot parents in unselected targets; native parents retained. No config release coordinator, source retirement, constructor/marker activation, native CLI, provider or send. Append uses raw insert_run only.",
+  "snapshot_parent_rows": 69,
+  "source_fk_findings": [
+    [
+      "runs",
+      190042,
+      "tasks",
+      1
+    ]
+  ],
+  "source_runs_exact_current_declared": true,
+  "source_runs_schema_objects": 41,
+  "source_sha256": "970a909a9cfcb4fe604d2111d5572560d4744978df20fb317c4e433059566320",
+  "acceptance": "Current-fact correctness passed on the frozen copied source; Python materialization performance remains unsuitable for adoption without correction and a new copied proof.",
+  "performance_observation": {
+    "code_commit": "5fec73f3",
+    "pid": 93627,
+    "observation": "During owned real-copy run: >8 minutes elapsed; macOS vmmap physical footprint peak 2.3 GiB, current 1.2 GiB, writable swapped about 1.2 GiB. One-second sample 756 main-thread samples in Python dict/tuple rich comparison. No end-to-end acceptance result yet.",
+    "sample_owned_temp_absent": true,
+    "process_control_rejection": {
+      "action": "kill -INT 93627",
+      "reason": "approval required by policy, but AskForApproval is set to Never",
+      "retry_prohibited": true
+    }
+  }
+}

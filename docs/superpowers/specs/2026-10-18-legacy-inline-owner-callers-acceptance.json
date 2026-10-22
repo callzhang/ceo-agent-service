@@ -1,0 +1,15 @@
+{
+  "status": "local_frozen_caller_accepted",
+  "freeze": "docs/superpowers/specs/2026-10-18-legacy-inline-owner-callers-freeze-r3.json",
+  "freeze_sha256": "4f75c826b6534c6143d3167e98fa98b24ea6d69debf3f014a3939ff7391b7e04",
+  "spec_review": {
+    "path": "docs/superpowers/specs/2026-10-18-legacy-inline-owner-callers-spec-review-r3.json",
+    "sha256": "b8ca4c3b68d9aed6044c9c73d265d5208a052ef2a36941c31440237557172ba8"
+  },
+  "quality_review": {
+    "path": "docs/superpowers/specs/2026-10-18-legacy-inline-owner-callers-quality-review-r3.json",
+    "sha256": "b9bbbc2876306232325cd239b5ea850daf6ac621b942aa4fdcef4d2952aa2f2a"
+  },
+  "accepted_scope": "Intermediate eleven-table caller integration retaining business_source_documents body; indexed transactional importer and fresh-only Legacy source DDL.",
+  "evidence_boundary": "Local exact frozen source and independent focused seven-node verification; no actual-copy, capacity, final provenance lifecycle or release acceptance."
+}

@@ -1,9 +1,14 @@
 from __future__ import annotations
-from app.scheduled_config_storage import publication_scheduled_source
 
-from contextlib import closing, nullcontext
-from dataclasses import dataclass
-from datetime import datetime, timedelta, timezone
+from app.deployment_drain import QUIET_WAIT_SECONDS, deployment_drain
+from app.task20_definitions import task20_projection
+from app.current_publication_sources import publication_dispatcher_source
+from app.current_publication_sources import TARGET_STORE_VERSION, PREVIOUS_STORE_VERSIONS
+from app.current_publication_sources import publication_scheduled_source
+
+from contextlib import ExitStack, closing, nullcontext
+from dataclasses import dataclass, replace
+from datetime import datetime, timezone
 import json
 import os
 from pathlib import Path
@@ -14,21 +19,16 @@ import time
 from typing import Callable, Protocol
 from urllib.request import urlopen
 
-from app.database_backup import (
-    _backup_directory_lock,
-    backup_is_complete,
-    create_database_backup,
-    prune_database_backups,
-)
+from app.database_backup import _backup_directory_lock, create_database_backup
+from app.external_retry import MAX_AUTOMATIC_ATTEMPTS
 from app.repository_upgrade import GitRepository
-from app.run_schema_release import publication_run_sources
-from app.task_schema_release import publication_meeting_sources, publication_task_sources
+from app.current_publication_sources import publication_run_sources
+from app.current_publication_sources import publication_meeting_sources, publication_task_sources
 
 
 UPGRADE_OPERATION_STATE_KEY = "repository_upgrade_operation:v1"
-UPGRADE_STATE_WRITE_RETRY_ATTEMPTS = 3
+UPGRADE_STATE_WRITE_RETRY_ATTEMPTS = MAX_AUTOMATIC_ATTEMPTS
 UPGRADE_STATE_WRITE_RETRY_DELAY_SECONDS = 0.25
-DEPLOY_BACKUP_MAX_AGE = timedelta(hours=24)
 LAUNCHD_STOP_TIMEOUT_SECONDS = 10.0
 LAUNCHD_STOP_POLL_SECONDS = 0.1
 
@@ -48,37 +48,106 @@ class UpgradeStateStore(Protocol):
 
 
 class ExistingSchemaUpgradeStateStore:
-    """Persist deploy progress without constructing a newer application store.
+    """Persist deploy progress using the release's explicitly selected schema.
 
-    A full AutoReplyStore construction can migrate the live database before
-    the quiet wait and backup. The existing service_state table is enough for
-    this upgrader's progress record.
+    This DAO never constructs an application store or migrates the database.
+    It selects the committed release role at construction and before updater
+    progress writes; explicit getters and setters never reselect a backend.
     """
 
     def __init__(self, database_path: Path) -> None:
         self.database_path = Path(database_path)
+        self.bind_schema_source()
+        self.bind_committed_schema()
+
+    def bind_committed_schema(self) -> None:
+        """Select the progress backend from one committed, read-only snapshot."""
+        from app.action_email_schema_release import SOURCE_EMAIL_VERSION
+        from app.email_metadata_schema_release import (
+            SOURCE_EMAIL_VERSION as PREVIOUS_EMAIL_VERSION, TARGET_EMAIL_VERSION,
+        )
+        from app.current_publication_sources import TARGET_STORE_VERSION, PREVIOUS_STORE_VERSIONS
+        from app.state_definitions import state_projection
+
+        if not self.database_path.exists():
+            self.bind_schema_source()
+            return
+        with closing(sqlite3.connect(
+            self.database_path.resolve().as_uri() + "?mode=ro", uri=True, timeout=30
+        )) as db:
+            db.execute("begin")
+            ledger = db.execute(
+                "select 1 from main.sqlite_schema where type='table' "
+                "and name='email_schema_migrations' collate nocase"
+            ).fetchone()
+            version = db.execute(
+                "select max(version) from main.email_schema_migrations"
+            ).fetchone()[0] if ledger else None
+            if version is not None:
+                if type(version) is not int or not (
+                    0 < version <= SOURCE_EMAIL_VERSION or version in (PREVIOUS_EMAIL_VERSION, TARGET_EMAIL_VERSION)
+                ):
+                    raise ValueError("unsupported committed Email schema role")
+                current = version in (PREVIOUS_EMAIL_VERSION, TARGET_EMAIL_VERSION)
+            elif db.execute(
+                "select 1 from main.sqlite_schema where name='state' collate nocase"
+            ).fetchone():
+                marker = db.execute(
+                    f"select value from ({state_projection('service_state')}) "
+                    "where key='store_schema_version'"
+                ).fetchone()
+                if marker is None or marker[0] not in (*PREVIOUS_STORE_VERSIONS, TARGET_STORE_VERSION):
+                    raise ValueError("unsupported committed Store-only State schema role")
+                current = True
+            else:
+                current = False
+        if current:
+            self.bind_schema_current()
+        else:
+            self.bind_schema_source()
+
+    def bind_schema_source(self) -> None:
+        self._state_schema_current = False
+
+    def bind_schema_current(self) -> None:
+        self._state_schema_current = True
 
     def get_service_state(self, key: str) -> str | None:
+        from app.state_definitions import state_projection
+
+        projection = ("(" + state_projection("service_state") + ")"
+                      if self._state_schema_current else "service_state")
         with sqlite3.connect(
             f"file:{self.database_path}?mode=rw", uri=True, timeout=30
         ) as db:
-            row = db.execute("select value from service_state where key=?", (key,)).fetchone()
+            row = db.execute(
+                f"select value from {projection} where key=?", (key,)
+            ).fetchone()
             return None if row is None else str(row[0])
 
     def set_service_state(self, key: str, value: str) -> None:
+        from app.state_storage import state_json_field, upsert_state
+
         for attempt in range(UPGRADE_STATE_WRITE_RETRY_ATTEMPTS):
             try:
                 with sqlite3.connect(
                     f"file:{self.database_path}?mode=rw", uri=True, timeout=30
                 ) as db:
                     db.execute("begin immediate")
-                    db.execute(
-                        """insert into service_state (key, value, updated_at)
-                           values (?, ?, current_timestamp)
-                           on conflict(key) do update set
-                             value=excluded.value, updated_at=current_timestamp""",
-                        (key, value),
-                    )
+                    if self._state_schema_current:
+                        upsert_state(
+                            db, "service_state", {"key": key, "value": value},
+                            {"value": state_json_field("value"),
+                             "updated_at": "json_quote(current_timestamp)"},
+                        )
+                    else:
+                        db.execute(
+                            """insert into service_state (key, value, updated_at)
+                               values (?, ?, current_timestamp)
+                               on conflict(key) do update set
+                                 value=excluded.value, updated_at=current_timestamp""",
+                            (key, value),
+                        )
                 return
             except sqlite3.OperationalError as exc:
                 message = str(exc).casefold()
@@ -315,7 +384,6 @@ def _default_health() -> bool:
 #: under load that took eight minutes on 2026-09-25, so one ten-second probe
 #: would roll back a healthy upgrade.
 HEALTH_WAIT_SECONDS = 15 * 60
-QUIET_WAIT_SECONDS = 30 * 60
 POLL_SECONDS = 5.0
 
 
@@ -344,34 +412,65 @@ def in_flight_work(database_path: Path) -> int:
         reply_source, work_source = publication_task_sources(db)
         scheduled_source = publication_scheduled_source(db)
         meeting_jobs, meeting_runs = publication_meeting_sources(db)
+        email_action_source = None
+        if db.execute(
+            "select 1 from sqlite_schema where type='table' and name='email_schema_migrations'"
+        ).fetchone():
+            from app.email_publication_sources import publication_email_action_source
+
+            email_action_source = publication_email_action_source(db)
+        email_action_count = (
+            f"(select count(*) from ({email_action_source}) where status='processing')"
+            if email_action_source is not None else "0"
+        )
         return int(db.execute(
-            f"select (select count(*) from ({runtime_source}) as agent_runtime_attempts "
-            "        where status not in ('completed','failed','superseded'))"
+            f"select (select count(*) from ({runtime_source}) as runtime "
+            "        where runtime.status not in ('completed','failed','superseded') "
+            "        and ((runtime.lease_owner<>'' "
+            "          and julianday(runtime.lease_expires_at)>julianday('now')) "
+            "          or not exists ("
+            f"            select 1 from ({agent_source}) as parent "
+            f"            join ({reply_source}) as current on current.id=parent.reply_task_id "
+            "            where parent.id=runtime.agent_run_id "
+            "              and parent.execution_generation<>current.execution_generation)))"
             f" + (select count(*) from ({reply_source}) as task "
-            "    where task.status='processing' and ("
+            "    where task.status='processing' and (task.channel='email' or "
             f"      exists (select 1 from ({agent_source}) as runs "
             "        where runs.reply_task_id=task.id "
             "          and runs.status in ('starting','running')) "
-            "      or exists (select 1 from dispatcher_claim_leases as claim "
+            f"      or exists (select 1 from ({publication_dispatcher_source(db, current_version=TARGET_STORE_VERSION, previous_versions=PREVIOUS_STORE_VERSIONS)}) as claim "
             "        where claim.adapter_name='reply' "
             "          and claim.source_id=cast(task.id as text) "
-            "          and coalesce(claim.terminal_at,'')='' "
+            "          and claim.claim_active "
             "          and julianday(claim.lease_expires_at)>julianday('now'))))"
             f" + (select count(*) from ({work_source}) where status='processing')"
             f" + (select count(*) from ({meeting_jobs}) as jobs "
             "    where (jobs.status='processing' and ("
             f"      exists (select 1 from ({meeting_runs}) as runs "
             "        where runs.job_id=jobs.id and runs.status='running') "
-            "      or exists (select 1 from dispatcher_claim_leases as claim "
+            f"      or exists (select 1 from ({publication_dispatcher_source(db, current_version=TARGET_STORE_VERSION, previous_versions=PREVIOUS_STORE_VERSIONS)}) as claim "
             "        where claim.adapter_name='meeting' "
             "          and claim.source_id=cast(jobs.id as text) "
-            "          and coalesce(claim.terminal_at,'')='' "
+            "          and claim.claim_active "
             "          and julianday(claim.lease_expires_at)>julianday('now')))) "
             "    or (jobs.status='ready_to_send' "
             "      and coalesce(jobs.locked_at,'')<>''))"
-            " + (select count(*) from dispatcher_claim_leases"
-            "    where coalesce(terminal_at,'')=''"
+            f" + (select count(*) from ({publication_dispatcher_source(db, current_version=TARGET_STORE_VERSION, previous_versions=PREVIOUS_STORE_VERSIONS)})"
+            "    where claim_active"
             "    and julianday(lease_expires_at)>julianday('now'))"
+            f" + (select count(*) from ({task20_projection('email_agent_classification_tasks')}) "
+            "    where status='running' and owner<>'' "
+            "    and julianday(lease_expires_at)>julianday('now'))"
+            f" + (select count(*) from ({task20_projection('workbench_turns')}) "
+            "    where status='running' and lease_owner<>'' "
+            "    and julianday(lease_expires_at)>julianday('now'))"
+            f" + (select count(*) from ({task20_projection('weekly_okr_analysis_jobs')}) "
+            "    where status='running' and lease_owner<>'' "
+            "    and julianday(lease_expires_at)>julianday('now'))"
+            f" + {email_action_count}"
+            " + (select count(*) from actions where record_type='meeting_memory_write_events' "
+            "    and td_status='processing' and td_lease_owner<>'' "
+            "    and julianday(td_lease_expires_at)>julianday('now'))"
             f" + (select count(*) from ({scheduled_source}) where dispatch_status='pending'"
             "    and lease_owner<>'' and lease_expires_at>strftime('%Y-%m-%dT%H:%M:%S+00:00','now'))"
         ).fetchone()[0])
@@ -466,8 +565,9 @@ class RepositoryUpdater:
         health: Callable[[], bool] = _default_health,
         wait_for_quiet: Callable[[], None] = lambda: None,
         publication: Callable[[], UpgradePublication] | None = None,
-        database_publication: Callable[[], UpgradePublication | None] | None = None,
+        database_publication: Callable[[Path | None], UpgradePublication | None] | None = None,
         pre_checkout_cleanup: Callable[[], None] | None = None,
+        pin_target_commit: bool = False,
     ) -> None:
         self.repository = GitRepository(repository_root)
         self.store = store
@@ -483,6 +583,7 @@ class RepositoryUpdater:
         self.publication = publication
         self.database_publication = database_publication
         self.pre_checkout_cleanup = pre_checkout_cleanup
+        self.pin_target_commit = pin_target_commit
 
     @property
     def target_ref(self) -> str:
@@ -496,10 +597,12 @@ class RepositoryUpdater:
         self, operation: UpgradeOperation, *, already_locked: bool = False
     ) -> UpgradeResult:
         lock = nullcontext() if already_locked else self.repository.mutex()
-        with lock:
+        drain = deployment_drain(self.database_path) if self.database_path is not None else nullcontext()
+        with lock, drain, ExitStack() as backup_hold:
             self.repository.fetch(self.remote)
             records = self._recheck(operation)
             self.wait_for_quiet()
+            operation = self._follow_main_after_quiet(operation)
             self.stop()
             backup_path = None
             published: UpgradePublication | None = None
@@ -507,18 +610,23 @@ class RepositoryUpdater:
             replacement_started = False
             try:
                 backup_path = self._backup(operation)
+                if backup_path is not None:
+                    # The restarted daily loop may otherwise prune the
+                    # pre-deployment recovery source before verification ends.
+                    backup_hold.enter_context(_backup_directory_lock(backup_path.parent))
                 self._persist(operation, "updating", backup_path=backup_path)
                 if self.pre_checkout_cleanup is not None:
                     self.pre_checkout_cleanup()
                     records = self.repository.status_records()
                 if records:
                     self._preserve_local_changes(operation)
+                merge_ref = operation.target_commit if self.pin_target_commit else self.remote_ref
                 self.repository._run(
-                    ["merge", "--ff-only", self.remote_ref],
+                    ["merge", "--ff-only", merge_ref],
                     category="upgrade_merge",
                 )
                 if self.database_publication is not None:
-                    database_release = self.database_publication()
+                    database_release = self.database_publication(backup_path)
                 self._persist(operation, "verifying", backup_path=backup_path)
                 self.dependency_sync()
                 if database_release is not None:
@@ -620,9 +728,17 @@ class RepositoryUpdater:
     def _recheck(self, operation: UpgradeOperation) -> list[object]:
         current = self.repository.resolve_ref(self.target_ref)
         remote = self.repository.resolve_ref(self.remote_ref)
-        if current != operation.original_commit or remote != operation.target_commit:
+        if current != operation.original_commit:
             raise UpgradePreconditionError("repository revision changed")
-        if not self.repository.is_ancestor(current, remote):
+        if self.pin_target_commit:
+            if not self.repository.is_ancestor(operation.target_commit, remote):
+                raise UpgradePreconditionError("target commit is not in origin/main")
+            selected_target = operation.target_commit
+        else:
+            if remote != operation.target_commit:
+                raise UpgradePreconditionError("repository revision changed")
+            selected_target = remote
+        if not self.repository.is_ancestor(current, selected_target):
             raise UpgradePreconditionError("repository target is diverged")
         records = self.repository.status_records()
         if records and not operation.branch_name.strip():
@@ -630,12 +746,39 @@ class RepositoryUpdater:
         fingerprint = self.repository.fingerprint(
             self.branch,
             current,
-            remote,
+            selected_target,
             records,
         )
         if fingerprint != operation.expected_fingerprint:
             raise UpgradePreconditionError("repository fingerprint changed")
         return records
+
+    def _follow_main_after_quiet(self, operation: UpgradeOperation) -> UpgradeOperation:
+        """Install the newest main once the drain is quiet, not the one seen before it.
+
+        The quiet wait keeps claims closed for as long as in-flight work runs.
+        Commits pushed meanwhile ride this deploy, so the sessions queued behind
+        it find production already current and leave without draining again. A
+        pinned deploy installs exactly the commit it was given.
+        """
+        if self.pin_target_commit:
+            return operation
+        self.repository.fetch(self.remote)
+        latest = self.repository.resolve_ref(self.remote_ref)
+        if latest == operation.target_commit:
+            return operation
+        if not self.repository.is_ancestor(operation.target_commit, latest):
+            raise UpgradePreconditionError("repository revision changed")
+        return replace(
+            operation,
+            target_commit=latest,
+            expected_fingerprint=self.repository.fingerprint(
+                self.branch,
+                operation.original_commit,
+                latest,
+                self.repository.status_records(),
+            ),
+        )
 
     def _preserve_local_changes(self, operation: UpgradeOperation) -> None:
         if not operation.commit_message.strip():
@@ -688,28 +831,11 @@ class RepositoryUpdater:
         if self.database_path is None or not self.database_path.exists():
             return None
         backup_dir = self.database_path.parent / "backups"
-        now = datetime.now(timezone.utc).timestamp()
-        oldest_allowed = now - DEPLOY_BACKUP_MAX_AGE.total_seconds()
-        with _backup_directory_lock(backup_dir):
-            recent = [
-                path
-                for path in backup_dir.glob(f"{self.database_path.stem}-*.sqlite3")
-                if oldest_allowed <= path.stat().st_mtime <= now
-                and backup_is_complete(path)
-            ]
-            if recent:
-                return max(recent, key=lambda path: path.stat().st_mtime)
         destination = (
             backup_dir
             / f"{self.database_path.stem}-before-upgrade-{operation.operation_id}.sqlite3"
         )
-        backup_path = create_database_backup(self.database_path, destination)
-        prune_database_backups(
-            destination.parent,
-            today=datetime.now(timezone.utc).date(),
-            keep_path=backup_path,
-        )
-        return backup_path
+        return create_database_backup(self.database_path, destination)
 
     def _persist(
         self,
@@ -733,6 +859,8 @@ class RepositoryUpdater:
             "error": error,
             "updated_at": datetime.now(timezone.utc).isoformat(),
         }
+        if isinstance(self.store, ExistingSchemaUpgradeStateStore):
+            self.store.bind_committed_schema()
         self.store.set_service_state(
             UPGRADE_OPERATION_STATE_KEY,
             json.dumps(payload, ensure_ascii=False, sort_keys=True),
@@ -770,7 +898,7 @@ def main() -> int:
         wait_for_quiet=lambda: wait_until_quiet(Path(args.db)),
         stop=_default_stop,
         restart=_default_start,
-        database_publication=lambda: prepare_database_schema_release(repository_root, Path(args.db)),
+        database_publication=lambda backup: prepare_database_schema_release(repository_root, Path(args.db), recovery_source_path=backup),
         dependency_sync=lambda: build_frontend(repository_root, changed_paths()),
         verification=lambda: verify_imports(repository_root),
         health=lambda: wait_for_health(),

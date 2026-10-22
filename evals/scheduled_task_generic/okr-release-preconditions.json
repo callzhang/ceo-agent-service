@@ -1,0 +1,151 @@
+{
+  "observed_at": "2026-10-22T09:21:29Z",
+  "production_commit": "25eea1dc99e75ef7a18a7331f67b2e6274abe374",
+  "runtime_skill_config_id": 361,
+  "files": [
+    {
+      "source": "ci/shared-skills/ceo-weekly-report/SKILL.md",
+      "installed_sha256": "ececf8bf22e740573b68c0a4e1f1d6cd7db166a2fb2c6991737cce03890d22a9",
+      "approved_new_sha256": "ececf8bf22e740573b68c0a4e1f1d6cd7db166a2fb2c6991737cce03890d22a9",
+      "managed_revision_id": 202,
+      "managed_sha256": "ececf8bf22e740573b68c0a4e1f1d6cd7db166a2fb2c6991737cce03890d22a9"
+    },
+    {
+      "source": "ci/shared-skills/ceo-weekly-report/scripts/report_contract.py",
+      "installed_sha256": "bc90cfe6efa735675fd833003363776aea5463e0cdf1f543357971dfaad8e13a",
+      "approved_new_sha256": "bc90cfe6efa735675fd833003363776aea5463e0cdf1f543357971dfaad8e13a"
+    },
+    {
+      "source": "ci/shared-skills/ceo-weekly-report/scripts/validate_run.py",
+      "installed_sha256": "3a4a2f00138492780b54107ddd37303649bb11e333ea1d13ed092a897299587e",
+      "approved_new_sha256": "3a4a2f00138492780b54107ddd37303649bb11e333ea1d13ed092a897299587e"
+    },
+    {
+      "source": "ci/shared-skills/ceo-weekly-report/references/dingtalk-runbook.md",
+      "installed_sha256": "3007b9dbabbe3316628be23b697433e2ec364237f3d80d7ea43f54d2a6973785",
+      "approved_new_sha256": "3007b9dbabbe3316628be23b697433e2ec364237f3d80d7ea43f54d2a6973785"
+    },
+    {
+      "source": "app/defaults/audit_rules.md",
+      "installed_sha256": "5dcfd33f48d23268296da5d89346eaf3a76ffec665e5d9a353c33654a5de8237",
+      "approved_new_sha256": "5dcfd33f48d23268296da5d89346eaf3a76ffec665e5d9a353c33654a5de8237"
+    },
+    {
+      "source": "ci/shared-skills/ceo-calendar-invite/SKILL.md",
+      "installed_sha256": "8fa06610ac6f272b3d9121167dd71da211ab7659d43e0f60f4f40f374a68137f",
+      "approved_new_sha256": "8fa06610ac6f272b3d9121167dd71da211ab7659d43e0f60f4f40f374a68137f",
+      "managed_revision_id": 174,
+      "managed_sha256": "8fa06610ac6f272b3d9121167dd71da211ab7659d43e0f60f4f40f374a68137f"
+    },
+    {
+      "source": "ci/shared-skills/ceo-daily-report/SKILL.md",
+      "installed_sha256": "45e10866372b48f484af27310a9bc07f9ea0538ca3cc1d675fd1bd45ce1fddce",
+      "approved_new_sha256": "45e10866372b48f484af27310a9bc07f9ea0538ca3cc1d675fd1bd45ce1fddce",
+      "managed_revision_id": 203,
+      "managed_sha256": "45e10866372b48f484af27310a9bc07f9ea0538ca3cc1d675fd1bd45ce1fddce"
+    },
+    {
+      "source": "ci/shared-skills/ceo-document-review/SKILL.md",
+      "installed_sha256": "112826bef758efa9f495697624769bf42ee265d92628cca662450f16ccea16a7",
+      "approved_new_sha256": "112826bef758efa9f495697624769bf42ee265d92628cca662450f16ccea16a7",
+      "managed_revision_id": 214,
+      "managed_sha256": "112826bef758efa9f495697624769bf42ee265d92628cca662450f16ccea16a7"
+    },
+    {
+      "source": "ci/shared-skills/ceo-mail-review/SKILL.md",
+      "installed_sha256": "108e258426ec8f66a0907722d4a1034fba48c8628544eccc69aa5e0162163b9d",
+      "approved_new_sha256": "108e258426ec8f66a0907722d4a1034fba48c8628544eccc69aa5e0162163b9d",
+      "managed_revision_id": 139,
+      "managed_sha256": "108e258426ec8f66a0907722d4a1034fba48c8628544eccc69aa5e0162163b9d"
+    },
+    {
+      "source": "ci/shared-skills/ceo-message-triage/SKILL.md",
+      "installed_sha256": "35070baeda959d85b5e1188bb89e003778331880252abf7143e889d476b11d36",
+      "approved_new_sha256": "35070baeda959d85b5e1188bb89e003778331880252abf7143e889d476b11d36",
+      "managed_revision_id": 173,
+      "managed_sha256": "35070baeda959d85b5e1188bb89e003778331880252abf7143e889d476b11d36"
+    },
+    {
+      "source": "ci/shared-skills/ceo-wechat/SKILL.md",
+      "installed_sha256": "dc2ae1f5aa4b3466d9fa03bf7bb608cba6734b84b7eeb64b8491c1e465472fae",
+      "approved_new_sha256": "dc2ae1f5aa4b3466d9fa03bf7bb608cba6734b84b7eeb64b8491c1e465472fae"
+    },
+    {
+      "source": "ci/shared-skills/dingtalk-oa-approval/SKILL.md",
+      "installed_sha256": "fc9a16dce789e1f2640c2896758b6cb5adfadeb1e343efec5b1d56efe2698f52",
+      "approved_new_sha256": "fc9a16dce789e1f2640c2896758b6cb5adfadeb1e343efec5b1d56efe2698f52"
+    },
+    {
+      "source": "ci/shared-skills/stardust-oa-finance-review/SKILL.md",
+      "installed_sha256": "bd4abac4109216f2ee32d919469e49be15b293e508f1366d0fa7d26fcfa107b9",
+      "approved_new_sha256": "bd4abac4109216f2ee32d919469e49be15b293e508f1366d0fa7d26fcfa107b9"
+    },
+    {
+      "source": "ci/shared-skills/stardust-oa-finance-review/references/finance-rule-cards.md",
+      "installed_sha256": "921e027819b0de5a2f0fbfc10ed6eace25d08151016ba9cb1d1055a69188f584",
+      "approved_new_sha256": "921e027819b0de5a2f0fbfc10ed6eace25d08151016ba9cb1d1055a69188f584"
+    },
+    {
+      "source": "ci/shared-skills/stardust-oa-people-review/SKILL.md",
+      "installed_sha256": "888516678b5f4118acf18d972d1ad6227b22022924eb2c36f7cdc57d6f229fc6",
+      "approved_new_sha256": "888516678b5f4118acf18d972d1ad6227b22022924eb2c36f7cdc57d6f229fc6"
+    },
+    {
+      "source": "ci/shared-skills/stardust-oa-attendance-travel-review/SKILL.md",
+      "installed_sha256": "6fd80713c61886e5f42d8bfea419f0db8ae00412e4805d9620068973917e5d46",
+      "approved_new_sha256": "6fd80713c61886e5f42d8bfea419f0db8ae00412e4805d9620068973917e5d46"
+    },
+    {
+      "source": "ci/shared-skills/ceo-daily-report/scripts/destination.py",
+      "installed_sha256": "8458d3910b0ce94a3ded4c44264ff2a343107b7ce259b10edcfb4efefe1867ab",
+      "approved_new_sha256": "8458d3910b0ce94a3ded4c44264ff2a343107b7ce259b10edcfb4efefe1867ab"
+    },
+    {
+      "source": "ci/shared-skills/ceo-daily-report/scripts/window.py",
+      "installed_sha256": "516921590066f2d19b0cb8a46eaa57b02f6927db5b4980fc3516e94b1fee0480",
+      "approved_new_sha256": "516921590066f2d19b0cb8a46eaa57b02f6927db5b4980fc3516e94b1fee0480"
+    },
+    {
+      "source": "ci/shared-skills/ceo-weekly-okr-report/SKILL.md",
+      "installed_sha256": "f2781a3505e57bd7e6815f35f0d94b3fb4535b31b07900e1a28b5377ec140701",
+      "approved_new_sha256": "18b23c5c6762ce0fa6cceedf8f1a7a14591327269897fcc56ba4ea32e9c78744",
+      "managed_revision_id": 222,
+      "managed_sha256": "f2781a3505e57bd7e6815f35f0d94b3fb4535b31b07900e1a28b5377ec140701"
+    },
+    {
+      "source": "ci/shared-skills/ceo-weekly-okr-report/scripts/analysis.schema.json",
+      "installed_sha256": "2893dd0b0c0f20da0a097194ad97a6ff7605f68b061194c45a7b9660474aa52b",
+      "approved_new_sha256": "2893dd0b0c0f20da0a097194ad97a6ff7605f68b061194c45a7b9660474aa52b"
+    },
+    {
+      "source": "ci/shared-skills/ceo-weekly-okr-report/scripts/report.py",
+      "installed_sha256": "ab61de2c7e1f715069592f5a44292737ff4be5863dbb2f2203622322c250a653",
+      "approved_new_sha256": "ab61de2c7e1f715069592f5a44292737ff4be5863dbb2f2203622322c250a653"
+    },
+    {
+      "source": "ci/shared-skills/ceo-weekly-report/scripts/jsonml_check.py",
+      "installed_sha256": "759e6a61f4b8f093712d15baee0cceb97ad870ff591fe5e34ba9f7dc98d7ce12",
+      "approved_new_sha256": "759e6a61f4b8f093712d15baee0cceb97ad870ff591fe5e34ba9f7dc98d7ce12"
+    },
+    {
+      "source": "ci/shared-skills/ceo-weekly-report/scripts/materials.py",
+      "installed_sha256": "9669e3000d2a319bfb36ac5d069a0a58ffb99452216714bc548056f6c45cae8e",
+      "approved_new_sha256": "9669e3000d2a319bfb36ac5d069a0a58ffb99452216714bc548056f6c45cae8e"
+    },
+    {
+      "source": "ci/shared-skills/ceo-weekly-report/scripts/render_dingtalk_jsonml.py",
+      "installed_sha256": "0b283435922f7e3b3989f18147416572366b73763ac36ec6a462c704a58ae356",
+      "approved_new_sha256": "0b283435922f7e3b3989f18147416572366b73763ac36ec6a462c704a58ae356"
+    },
+    {
+      "source": "ci/shared-skills/ceo-weekly-okr-report/scripts/destination.py",
+      "installed_sha256": "9d2fad8841dfdab69d6da94b34eb04acb3cfcdbfab8e793f640b8395d2cc5a0a",
+      "approved_new_sha256": "9d2fad8841dfdab69d6da94b34eb04acb3cfcdbfab8e793f640b8395d2cc5a0a"
+    },
+    {
+      "source": "ci/shared-skills/ceo-weekly-report/README.md",
+      "installed_sha256": "7da8b2af66835b6ea0c124bc9016e70d10995677a0f728994165d7ffeafd32a2",
+      "approved_new_sha256": "7da8b2af66835b6ea0c124bc9016e70d10995677a0f728994165d7ffeafd32a2"
+    }
+  ]
+}

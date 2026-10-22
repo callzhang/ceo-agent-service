@@ -1,0 +1,79 @@
+{
+  "model": "gpt-5.6-luna",
+  "scope": "fictional Meeting source and directory notes; read-only native Codex OAuth",
+  "same_prompt_per_pair": true,
+  "workspace_doc_chars": 8335,
+  "skill_sha256": "bded378210a24cedf4fc0464ccd5cecc416bba4291164f66f96f5332f476686e",
+  "results": [
+    {
+      "case": "business_alignment",
+      "arm": "baseline",
+      "accepted": true,
+      "checks": {
+        "send": true,
+        "no_private": true,
+        "business_group": true,
+        "aligned": true,
+        "agreed_rollout": true,
+        "only_assigned_owners": true
+      },
+      "exit_code": 0,
+      "pydantic_valid": true,
+      "validation_error": "",
+      "tool_calls": 0,
+      "error_excerpt": ""
+    },
+    {
+      "case": "business_alignment",
+      "arm": "candidate",
+      "accepted": true,
+      "checks": {
+        "send": true,
+        "no_private": true,
+        "business_group": true,
+        "aligned": true,
+        "agreed_rollout": true,
+        "only_assigned_owners": true
+      },
+      "exit_code": 0,
+      "pydantic_valid": true,
+      "validation_error": "",
+      "tool_calls": 0,
+      "error_excerpt": ""
+    },
+    {
+      "case": "mixed_sensitive",
+      "arm": "baseline",
+      "accepted": true,
+      "checks": {
+        "send": true,
+        "no_private": true,
+        "business_group": true,
+        "business_assignments": true,
+        "no_sensitive_hint": true
+      },
+      "exit_code": 0,
+      "pydantic_valid": true,
+      "validation_error": "",
+      "tool_calls": 0,
+      "error_excerpt": ""
+    },
+    {
+      "case": "mixed_sensitive",
+      "arm": "candidate",
+      "accepted": true,
+      "checks": {
+        "send": true,
+        "no_private": true,
+        "business_group": true,
+        "business_assignments": true,
+        "no_sensitive_hint": true
+      },
+      "exit_code": 0,
+      "pydantic_valid": true,
+      "validation_error": "",
+      "tool_calls": 0,
+      "error_excerpt": ""
+    }
+  ]
+}

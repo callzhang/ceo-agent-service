@@ -1,0 +1,34 @@
+{
+  "recorded_at": "2026-10-18T02:07:08.895444+00:00",
+  "status": "local_frozen_caller_accepted",
+  "freeze": "docs/superpowers/specs/2026-10-17-email-canonical-current12-freeze-r2.json",
+  "freeze_sha256": "1be1ab809a81c58eed59f82e7258418e0b8f4969c6406e32e093e82c1e454edf",
+  "SPEC": {
+    "reviewer": "/root/email_canonical_current12_spec",
+    "verdict": "APPROVE",
+    "independent_passed": 2,
+    "elapsed_seconds": 46.98
+  },
+  "QUALITY": {
+    "reviewer": "/root/email_canonical_current12_quality",
+    "verdict": "APPROVE",
+    "independent_passed": 2,
+    "elapsed_seconds": 49.63,
+    "session_id": 72746,
+    "exit_code": 0,
+    "temporary_directory_removed": true
+  },
+  "earlier_quality_rejection": "2026-10-17-email-canonical-current12-quality-review.json",
+  "root_all_pins_reverified": {
+    "files": 20,
+    "requirements": 36,
+    "python": 373,
+    "json": 12
+  },
+  "genuine_predecessor_reverified": "1fcbddda5fe1e13d7c71cc0462e428d66e336370",
+  "production_checkout_clean": true,
+  "actual_copy_or_capacity_accepted": false,
+  "broader_test_sql_closure_required": true,
+  "latest_main_integration_accepted": false,
+  "deployed": false
+}

@@ -1,0 +1,372 @@
+--- a/app/workbench/store.py
++++ b/app/workbench/store.py
+@@ -13,10 +13,9 @@
+ from uuid import UUID, uuid4
+
+ from app.store import SQLITE_BUSY_TIMEOUT_SECONDS, AutoReplyStore, _utc_store_time
+-from app.task_storage import (
+-    WORKBENCH_TASK_SQL, WORKBENCH_TURN_SQL, insert_task, task_physical_id,
+-    task_id_expression,
+-)
++from app.task_storage import task_physical_id, task_id_expression
++from app.task8_storage import task8_insert_parts, task8_set_parts
++from app.task20_definitions import task20_column, task20_projection
+ from app.run_storage import WORKBENCH_EVENT_SQL, insert_run
+ from app.workbench.native_events import (
+     AGENT_EVENTS,
+@@ -85,6 +84,10 @@
+             time.sleep(delay_seconds * (attempt + 1))
+
+
++WORKBENCH_TASK_SQL = task20_projection("workbench_tasks")
++WORKBENCH_TURN_SQL = task20_projection("workbench_turns")
++
++
+ # Retained child tables store physical parents and return the original public IDs.
+ WORKBENCH_ATTACHMENT_SQL = """select c.id,t.legacy_key as task_id,
+     c.client_request_id,c.filename,c.media_type,c.size_bytes,c.content_sha256,
+@@ -212,9 +215,13 @@
+             raise ValueError("runtime_kind must be non-empty")
+         task_id = str(uuid4())
+         with self._connect() as db:
+-            insert_task(db, "workbench_tasks", {
++            insert_parts = task8_insert_parts('workbench_tasks', {
+                 "legacy_key": task_id, "title": title, "runtime_kind": runtime_kind,
+             })
++            db.execute(
++                f"insert into tasks ({insert_parts.columns}) values ({insert_parts.values})",
++                insert_parts.parameters,
++            )
+             return self._task_from_row(self._require_task(db, task_id))
+
+     def get_task(self, task_id: str) -> WorkbenchTask | None:
+@@ -229,12 +236,12 @@
+             row = db.execute(
+                 f"""
+                 select tasks.*,
+-                       coalesce((select status from tasks turns
++                       coalesce((select turns.{task20_column('workbench_turns', 'status')} from tasks turns
+                                  where turns.record_type='workbench_turns'
+                                    and turns.parent_id=(select parent.id from tasks parent
+                                        where parent.record_type='workbench_tasks'
+                                          and parent.legacy_key=tasks.id)
+-                                 order by turns.task_sequence desc limit 1), 'idle')
++                                 order by turns.{task20_column('workbench_turns', 'task_sequence')} desc limit 1), 'idle')
+                            as latest_state
+                 from ({WORKBENCH_TASK_SQL}) tasks where tasks.id=?
+                 """,
+@@ -275,12 +282,12 @@
+             rows = db.execute(
+                 f"""
+                 select tasks.*,
+-                       coalesce((select status from tasks turns
++                       coalesce((select turns.{task20_column('workbench_turns', 'status')} from tasks turns
+                                  where turns.record_type='workbench_turns'
+                                    and turns.parent_id=(select parent.id from tasks parent
+                                        where parent.record_type='workbench_tasks'
+                                          and parent.legacy_key=tasks.id)
+-                                 order by turns.task_sequence desc limit 1), 'idle')
++                                 order by turns.{task20_column('workbench_turns', 'task_sequence')} desc limit 1), 'idle')
+                            as latest_state
+                 from ({WORKBENCH_TASK_SQL}) as tasks
+                 {where}
+@@ -295,10 +302,17 @@
+         if not title:
+             raise ValueError("title must be non-empty")
+         with self._connect() as db:
++            set_parts = task8_set_parts(
++                'workbench_tasks', {},
++                update_sql={
++                    'title': '?',
++                    'updated_at': 'current_timestamp',
++                },
++            )
+             if db.execute(
+-                """
++                f"""
+                 update tasks
+-                set title=?, updated_at=current_timestamp
++                set {set_parts.sql}
+                 where record_type='workbench_tasks' and legacy_key=?
+                 """,
+                 (title, task_id),
+@@ -325,10 +339,17 @@
+                 raise WorkbenchConflictError(
+                     "task_has_active_turn", "workbench task has an active turn"
+                 )
++            set_parts = task8_set_parts(
++                'workbench_tasks', {},
++                update_sql={
++                    'archived_at': '?',
++                    'updated_at': '?',
++                },
++            )
+             if db.execute(
+-                """
++                f"""
+                 update tasks
+-                set archived_at=?, updated_at=?
++                set {set_parts.sql}
+                 where record_type='workbench_tasks' and legacy_key=?
+                 """,
+                 (now_text, now_text, task_id),
+@@ -499,21 +520,32 @@
+                 ).fetchone()[0]
+             )
+             try:
+-                insert_task(db, "workbench_turns", {
++                insert_parts = task8_insert_parts('workbench_turns', {
+                     "legacy_key": turn_id,
+                     "parent_id": task_physical_id(db, "workbench_tasks", task_id),
+                     "client_request_id": client_request_id,
+                     "task_sequence": task_sequence, "user_text": user_text,
+                     "status": TurnStatus.QUEUED.value,
+                 })
++                db.execute(
++                    f"insert into tasks ({insert_parts.columns}) values ({insert_parts.values})",
++                    insert_parts.parameters,
++                )
+             except sqlite3.IntegrityError as exc:
+                 raise ValueError("task already has an active turn") from exc
+             if task_sequence == 1 and task["title"] == _DEFAULT_WORKBENCH_TASK_TITLE:
++                set_parts = task8_set_parts(
++                    'workbench_tasks', {},
++                    update_sql={
++                        'title': '?',
++                        'updated_at': 'current_timestamp',
++                    },
++                )
+                 db.execute(
+                     f"""
+                     update tasks
+-                    set title=?, updated_at=current_timestamp
+-                    where record_type='workbench_tasks' and legacy_key=? and title=?
++                    set {set_parts.sql}
++                    where record_type='workbench_tasks' and legacy_key=? and {task20_column('workbench_tasks', 'title')}=?
+                       and not exists (
+                           select 1 from ({WORKBENCH_TURN_SQL}) as workbench_turns
+                           where task_id=? and id<>?
+@@ -659,14 +691,23 @@
+             ).fetchone()
+             if row is None:
+                 return None
++            set_parts = task8_set_parts(
++                'workbench_turns', {},
++                update_sql={
++                    'status': "'running'",
++                    'lease_owner': '?',
++                    'lease_expires_at': '?',
++                    'execution_run_id': '?',
++                    'runtime_quiesced_run_id': "''",
++                    'started_at': f"case when {task20_column('workbench_turns', 'started_at')}='' then ? else {task20_column('workbench_turns', 'started_at')} end",
++                    'updated_at': '?',
++                },
++            )
+             if db.execute(
+-                """
++                f"""
+                 update tasks
+-                set status='running', lease_owner=?, lease_expires_at=?,
+-                    execution_run_id=?, runtime_quiesced_run_id='',
+-                    started_at=case when started_at='' then ? else started_at end,
+-                    updated_at=?
+-                where record_type='workbench_turns' and legacy_key=? and status='queued'
++                set {set_parts.sql}
++                where record_type='workbench_turns' and legacy_key=? and {task20_column('workbench_turns', 'status')}='queued'
+                 """,
+                 (
+                     owner,
+@@ -700,11 +741,18 @@
+         with self._connect() as db:
+             db.execute("begin immediate")
+             self._require_lease(db, turn_id, owner=owner, now_text=now_text)
++            set_parts = task8_set_parts(
++                'workbench_turns', {},
++                update_sql={
++                    'lease_expires_at': '?',
++                    'updated_at': '?',
++                },
++            )
+             if db.execute(
+-                """
++                f"""
+                 update tasks
+-                set lease_expires_at=?, updated_at=?
+-                where record_type='workbench_turns' and legacy_key=? and status='running' and lease_owner=? and lease_expires_at>?
++                set {set_parts.sql}
++                where record_type='workbench_turns' and legacy_key=? and {task20_column('workbench_turns', 'status')}='running' and {task20_column('workbench_turns', 'lease_owner')}=? and {task20_column('workbench_turns', 'lease_expires_at')}>?
+                 """,
+                 (lease_expires_at, now_text, turn_id, owner, now_text),
+             ).rowcount != 1:
+@@ -727,8 +775,16 @@
+                 return self._turn_from_row(row)
+             if TurnStatus.STOPPED not in _TURN_TRANSITIONS[status]:
+                 raise ValueError("invalid turn transition")
++            set_parts = task8_set_parts(
++                'workbench_turns', {},
++                update_sql={
++                    'stop_requested': '1',
++                    'updated_at': '?',
++                },
++            )
+             db.execute(
+-                "update tasks set stop_requested=1, updated_at=? where record_type='workbench_turns' and legacy_key=?",
++                f"""update tasks set {set_parts.sql}
++                where record_type='workbench_turns' and legacy_key=?""",
+                 (now_text, turn_id),
+             )
+             self._append_control_event(
+@@ -968,9 +1024,9 @@
+             db.execute("begin")
+             task_row = self._require_task(db, task_id)
+             state_row = db.execute(
+-                f"""select status from tasks where record_type='workbench_turns'
++                f"""select {task20_column('workbench_turns', 'status')} as status from tasks where record_type='workbench_turns'
+                    and parent_id={task_id_expression('workbench_tasks', '?')}
+-                   order by task_sequence desc limit 1""",
++                   order by {task20_column('workbench_turns', 'task_sequence')} desc limit 1""",
+                 (task_id,),
+             ).fetchone()
+             task_state = state_row["status"] if state_row is not None else "idle"
+@@ -982,7 +1038,7 @@
+             turn_parameters.append(turn_limit + 1)
+             turn_rows = db.execute(
+                 f"""select * from ({WORKBENCH_TURN_SQL}
+-                    and t.parent_id={task_id_expression('workbench_tasks', '?')}) as workbench_turns
++                    and tasks.parent_id={task_id_expression('workbench_tasks', '?')}) as workbench_turns
+                     {cursor_sql} order by task_sequence desc limit ?""",
+                 tuple(turn_parameters),
+             ).fetchall()
+@@ -1212,10 +1268,17 @@
+             turn = self._require_executor_lease(
+                 db, turn_id, owner=owner, now_text=now_text
+             )
++            set_parts = task8_set_parts(
++                'workbench_tasks', {},
++                update_sql={
++                    'provider_session_ref': '?',
++                    'updated_at': '?',
++                },
++            )
+             if db.execute(
+-                """
++                f"""
+                 update tasks
+-                set provider_session_ref=?, updated_at=?
++                set {set_parts.sql}
+                 where record_type='workbench_tasks' and legacy_key=?
+                 """,
+                 (provider_session_ref.strip(), now_text, turn["task_id"]),
+@@ -1428,8 +1491,15 @@
+                 "update workbench_confirmations set proposer_quiesced_at=? where id=?",
+                 (now_text, row["id"]),
+             )
++            set_parts = task8_set_parts(
++                'workbench_turns', {},
++                update_sql={
++                    'runtime_quiesced_run_id': '?',
++                },
++            )
+             db.execute(
+-                "update tasks set runtime_quiesced_run_id=? where record_type='workbench_turns' and legacy_key=?",
++                f"""update tasks set {set_parts.sql}
++                where record_type='workbench_turns' and legacy_key=?""",
+                 (proposer_run_id, turn_id),
+             )
+             return row["id"], str(row["decision_requested"] or "")
+@@ -1821,11 +1891,20 @@
+                 target=TurnStatus.QUEUED,
+                 now_text=now_text,
+             )
++            set_parts = task8_set_parts(
++                'workbench_turns', {},
++                update_sql={
++                    'resume_context': '?',
++                    'error_code': '?',
++                    'error_detail': '?',
++                    'updated_at': '?',
++                },
++            )
+             db.execute(
+-                """
++                f"""
+                 update tasks
+-                set resume_context=?, error_code=?, error_detail=?, updated_at=?
+-                where record_type='workbench_turns' and legacy_key=? and status='queued'
++                set {set_parts.sql}
++                where record_type='workbench_turns' and legacy_key=? and {task20_column('workbench_turns', 'status')}='queued'
+                 """,
+                 (
+                     resume_context,
+@@ -1907,8 +1986,15 @@
+                 target=TurnStatus.QUEUED,
+                 now_text=now_text,
+             )
++            set_parts = task8_set_parts(
++                'workbench_turns', {},
++                update_sql={
++                    'resume_context': '?',
++                },
++            )
+             db.execute(
+-                "update tasks set resume_context=? where record_type='workbench_turns' and legacy_key=?",
++                f"""update tasks set {set_parts.sql}
++                where record_type='workbench_turns' and legacy_key=?""",
+                 (resume_context, row["turn_id"]),
+             )
+             return self._confirmation_from_row(
+@@ -2134,11 +2220,20 @@
+                     clear_lease=True,
+                 )
+                 continue
++            set_parts = task8_set_parts(
++                'workbench_turns', {},
++                update_sql={
++                    'status': "'queued'",
++                    'lease_owner': "''",
++                    'lease_expires_at': "''",
++                    'updated_at': '?',
++                },
++            )
+             db.execute(
+-                """
++                f"""
+                 update tasks
+-                set status='queued', lease_owner='', lease_expires_at='', updated_at=?
+-                where record_type='workbench_turns' and legacy_key=? and status='running' and lease_expires_at<=?
++                set {set_parts.sql}
++                where record_type='workbench_turns' and legacy_key=? and {task20_column('workbench_turns', 'status')}='running' and {task20_column('workbench_turns', 'lease_expires_at')}<=?
+                 """,
+                 (now_text, row["id"], now_text),
+             )
+@@ -2463,15 +2558,23 @@
+         if target not in _TURN_TRANSITIONS[current]:
+             raise ValueError("invalid turn transition")
+         terminal = target in {TurnStatus.COMPLETED, TurnStatus.STOPPED, TurnStatus.FAILED}
++        set_parts = task8_set_parts(
++            'workbench_turns', {},
++            update_sql={
++                'status': '?',
++                'error_code': '?',
++                'error_detail': '?',
++                'lease_owner': f"case when ? then '' else {task20_column('workbench_turns', 'lease_owner')} end",
++                'lease_expires_at': f"case when ? then '' else {task20_column('workbench_turns', 'lease_expires_at')} end",
++                'completed_at': f"case when ? then ? else {task20_column('workbench_turns', 'completed_at')} end",
++                'updated_at': '?',
++            },
++        )
+         cursor = db.execute(
+-            """
++            f"""
+             update tasks
+-            set status=?, error_code=?, error_detail=?,
+-                lease_owner=case when ? then '' else lease_owner end,
+-                lease_expires_at=case when ? then '' else lease_expires_at end,
+-                completed_at=case when ? then ? else completed_at end,
+-                updated_at=?
+-            where record_type='workbench_turns' and legacy_key=? and status=?
++            set {set_parts.sql}
++            where record_type='workbench_turns' and legacy_key=? and {task20_column('workbench_turns', 'status')}=?
+             """,
+             (
+                 target.value,

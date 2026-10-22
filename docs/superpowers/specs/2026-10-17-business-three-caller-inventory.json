@@ -1,0 +1,354 @@
+{
+  "recorded_at": "2026-10-17T16:53:46.257700+00:00",
+  "scope": "Readonly current candidate source code literal caller inventory for three native Business families; not exhaustive dynamic call graph, no implementation/selection",
+  "tables": [
+    "business_attention_items",
+    "business_project_candidates",
+    "wechat_memory_candidates"
+  ],
+  "files": {
+    "app/store.py": {
+      "sha256": "1adc99372a68a24fc5c09a46322e7d25fed57fc14cd7cc42d033d8452dbdf31c",
+      "literal_scopes": [
+        {
+          "name": "<module>",
+          "literal_lines": [
+            524,
+            525,
+            577,
+            578,
+            655,
+            659
+          ],
+          "tables": [
+            "business_attention_items",
+            "business_project_candidates"
+          ]
+        },
+        {
+          "name": "AutoReplyStore._initialize",
+          "literal_lines": [
+            2447,
+            2619,
+            2690,
+            2724,
+            2763,
+            2939,
+            2943,
+            3123,
+            3128
+          ],
+          "tables": [
+            "business_attention_items",
+            "business_project_candidates",
+            "wechat_memory_candidates"
+          ]
+        },
+        {
+          "name": "AutoReplyStore._migrate_project_attention_evidence",
+          "literal_lines": [
+            3250
+          ],
+          "tables": [
+            "business_attention_items"
+          ]
+        },
+        {
+          "name": "AutoReplyStore.get_business_project_candidate_in_transaction",
+          "literal_lines": [
+            4750
+          ],
+          "tables": [
+            "business_project_candidates"
+          ]
+        },
+        {
+          "name": "AutoReplyStore.create_business_project_candidate_in_transaction",
+          "literal_lines": [
+            5051
+          ],
+          "tables": [
+            "business_project_candidates"
+          ]
+        },
+        {
+          "name": "AutoReplyStore.confirm_business_project_candidate_in_transaction",
+          "literal_lines": [
+            5078
+          ],
+          "tables": [
+            "business_project_candidates"
+          ]
+        },
+        {
+          "name": "AutoReplyStore.get_business_project_candidate",
+          "literal_lines": [
+            5088
+          ],
+          "tables": [
+            "business_project_candidates"
+          ]
+        },
+        {
+          "name": "AutoReplyStore.get_business_attention_item_in_transaction",
+          "literal_lines": [
+            5218
+          ],
+          "tables": [
+            "business_attention_items"
+          ]
+        },
+        {
+          "name": "AutoReplyStore.get_business_attention_item_by_stable_key_in_transaction",
+          "literal_lines": [
+            5226
+          ],
+          "tables": [
+            "business_attention_items"
+          ]
+        },
+        {
+          "name": "AutoReplyStore.create_business_attention_item_in_transaction",
+          "literal_lines": [
+            5254
+          ],
+          "tables": [
+            "business_attention_items"
+          ]
+        },
+        {
+          "name": "AutoReplyStore.update_business_attention_item_in_transaction",
+          "literal_lines": [
+            5267
+          ],
+          "tables": [
+            "business_attention_items"
+          ]
+        },
+        {
+          "name": "AutoReplyStore.list_business_attention_items",
+          "literal_lines": [
+            5375
+          ],
+          "tables": [
+            "business_attention_items"
+          ]
+        },
+        {
+          "name": "AutoReplyStore._runtime_operation_parent_exists",
+          "literal_lines": [
+            9268
+          ],
+          "tables": [
+            "wechat_memory_candidates"
+          ]
+        },
+        {
+          "name": "AutoReplyStore.add_wechat_memory_candidate",
+          "literal_lines": [
+            14333,
+            14349,
+            14358
+          ],
+          "tables": [
+            "wechat_memory_candidates"
+          ]
+        },
+        {
+          "name": "AutoReplyStore.get_wechat_memory_candidate",
+          "literal_lines": [
+            14381
+          ],
+          "tables": [
+            "wechat_memory_candidates"
+          ]
+        },
+        {
+          "name": "AutoReplyStore.list_wechat_memory_candidates",
+          "literal_lines": [
+            14398
+          ],
+          "tables": [
+            "wechat_memory_candidates"
+          ]
+        },
+        {
+          "name": "AutoReplyStore.review_wechat_memory_candidate",
+          "literal_lines": [
+            14409,
+            14426,
+            14435,
+            14446
+          ],
+          "tables": [
+            "wechat_memory_candidates"
+          ]
+        },
+        {
+          "name": "AutoReplyStore.claim_wechat_memory_candidate_write",
+          "literal_lines": [
+            14460,
+            14476
+          ],
+          "tables": [
+            "wechat_memory_candidates"
+          ]
+        },
+        {
+          "name": "AutoReplyStore.finish_wechat_memory_candidate_write",
+          "literal_lines": [
+            14498,
+            14506,
+            14513,
+            14520
+          ],
+          "tables": [
+            "wechat_memory_candidates"
+          ]
+        },
+        {
+          "name": "AutoReplyStore.resolve_wechat_memory_candidate_write_unknown",
+          "literal_lines": [
+            14540
+          ],
+          "tables": [
+            "wechat_memory_candidates"
+          ]
+        }
+      ]
+    },
+    "app/task_retrieval.py": {
+      "sha256": "ff514e24434897fb35dafe7172a2114b1e17bec7400c0e71b243c7b11fde0721",
+      "literal_scopes": []
+    },
+    "app/daily_report_facts.py": {
+      "sha256": "d3703429b7c257e8c8d0185419c4d34ae5209d3f8c1a8d6ba52be28a2227296a",
+      "literal_scopes": []
+    },
+    "app/wechat/audit_web.py": {
+      "sha256": "7b9b319b523aa6d95f41d128bbf854562d9c85ea2431837494d07036bc792f01",
+      "literal_scopes": []
+    },
+    "app/wechat/memory_import.py": {
+      "sha256": "558c00e5aa4651155fd682142d95a1ebd3b48bb5173fc448c96a9a7e9faaa4fe",
+      "literal_scopes": [
+        {
+          "name": "<module>",
+          "literal_lines": [
+            17
+          ],
+          "tables": [
+            "wechat_memory_candidates"
+          ]
+        },
+        {
+          "name": "CodexMemoryExtractionRunner.extract",
+          "literal_lines": [
+            249
+          ],
+          "tables": [
+            "wechat_memory_candidates"
+          ]
+        }
+      ]
+    },
+    "app/task_agent.py": {
+      "sha256": "f4384abea0a5da207182f1ea882bafa8d7c2cae3c37a19b35ebdc637a0b7a2cb",
+      "literal_scopes": [
+        {
+          "name": "apply_task_agent_decision.apply",
+          "literal_lines": [
+            2404,
+            2437
+          ],
+          "tables": [
+            "business_project_candidates"
+          ]
+        }
+      ]
+    },
+    "app/web_api/tasks.py": {
+      "sha256": "450b284edeb66ef84cbb44ab100b06385ddc4d58c7436698a9862f0056230808",
+      "literal_scopes": [
+        {
+          "name": "_project_summary_context_and_activity",
+          "literal_lines": [
+            1021
+          ],
+          "tables": [
+            "business_attention_items"
+          ]
+        },
+        {
+          "name": "_project_summary_payload",
+          "literal_lines": [
+            1071
+          ],
+          "tables": [
+            "business_attention_items"
+          ]
+        },
+        {
+          "name": "business_project_list_response",
+          "literal_lines": [
+            1146,
+            1150,
+            1155,
+            1158
+          ],
+          "tables": [
+            "business_project_candidates"
+          ]
+        }
+      ]
+    },
+    "app/task_business_resolution.py": {
+      "sha256": "69c9d3648b3dde8ba2a0b474a14dde9f5d48383a106f5066bca26c92555491ca",
+      "literal_scopes": [
+        {
+          "name": "BusinessResolutionService.confirm_project_candidate",
+          "literal_lines": [
+            384
+          ],
+          "tables": [
+            "business_project_candidates"
+          ]
+        }
+      ]
+    },
+    "app/web_api/registration.py": {
+      "sha256": "947cde14a28dd1d3ae768400160d7d0e0f1c991191ea97c4d7fe9708624cfd4e",
+      "literal_scopes": []
+    },
+    "app/business_schema_release.py": {
+      "sha256": "0f540277f9dafb590e3e4631d6c11c18e3f3c7a22a89e7a63370e3e9bc9e9747",
+      "literal_scopes": [
+        {
+          "name": "<module>",
+          "literal_lines": [
+            50,
+            51
+          ],
+          "tables": [
+            "business_attention_items",
+            "business_project_candidates"
+          ]
+        }
+      ]
+    },
+    "app/task_attention_projection.py": {
+      "sha256": "b4e17b949c6395d4b94a0b577e44694257631a066d15ce714ba0b60e964ea06c",
+      "literal_scopes": [
+        {
+          "name": "BusinessAttentionProjection.recompute_for_tasks",
+          "literal_lines": [
+            313
+          ],
+          "tables": [
+            "business_attention_items"
+          ]
+        }
+      ]
+    }
+  }
+}

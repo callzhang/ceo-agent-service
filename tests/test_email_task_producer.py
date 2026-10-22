@@ -141,3 +141,29 @@ def test_classification_producer_captures_the_current_cron_consumer_context():
     )
 
     assert calls[0].scheduled_consumer == context.to_payload()
+
+
+def test_enqueue_only_uses_current_scan_original_not_stored_thread_text():
+    plan = _plan((EmailAction.UNSUBSCRIBE,))
+    producer = object.__new__(EmailActionTaskProducer)
+
+    class Metadata(dict):
+        def get(self, key, default=None):
+            if key == "normalized_text":
+                raise AssertionError("enqueue read a stored body")
+            return super().get(key, default)
+
+    identity = "account-1:message-id:<current@example.com>"
+    producer.email_store = SimpleNamespace(list_email_context_thread=lambda **kwargs: [
+        Metadata(stable_message_identity="prior", thread_identity="thread-1",
+                 sender="prior@example.com", received_at="2026-08-30T08:00:00Z"),
+        Metadata(stable_message_identity=identity, thread_identity="thread-1",
+                 sender="current@example.com", received_at="2026-08-30T09:00:00Z"),
+    ])
+    task_input = producer._task_input(plan, {
+        "accountId": "account-1", "folder": "INBOX", "uidValidity": 42,
+        "uid": 17, "messageId": "<current@example.com>", "textBody": "",
+        "listUnsubscribe": "<https://news.example.com/unsubscribe>",
+    })
+    assert task_input.trigger.text == ""
+    assert task_input.thread_messages == ()

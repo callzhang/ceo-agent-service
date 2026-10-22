@@ -48,12 +48,15 @@ AGENT_CLI_READ_TOOLS = (
     "read_dingtalk_document_permissions",
     "read_dingtalk_drive_info",
     "read_dingtalk_drive_file",
+    "read_dingtalk_oa_process_attachment",
     "list_dingtalk_sheets",
     "read_dingtalk_sheet_info",
     "read_dingtalk_sheet_range",
     "read_dingtalk_oa",
     "list_dingtalk_pending_oa",
     "read_dingtalk_oa_records",
+    "read_dingtalk_oa_comment_attachment",
+    "read_dingtalk_oa_comment_image",
     "read_dingtalk_oa_tasks",
     "read_dingtalk_oa_revert_activities",
     "read_dingtalk_calendar_event",
@@ -74,22 +77,25 @@ AGENT_CLI_READ_TOOLS = (
     "read_dingtalk_minutes",
     "recent_dingtalk_conversations",
     "read_dingtalk_messages_in_window",
-    "daily_report_facts",
-    "weekly_report_materials",
-    "read_weekly_report_archive",
+    "read_scheduled_context",
+    "read_service_activity",
+    "read_meeting_archive",
+    "read_okr_roster",
+    "read_okr_member",
+    "read_dingtang_okr_score_detail",
     "read_task_artifact",
     "list_task_artifacts",
 )
 AGENT_CLI_CONSUMER_TOOLS = AGENT_CLI_READ_TOOLS + (
     "consumer_document_write",
     "consumer_artifact_write",
-    "validate_weekly_report",
-    "render_weekly_report",
+    "consumer_run_skill_script",
 )
 
 # Exact tools from the service's reviewed MCP effect registry. New provider
 # operations stay unavailable until their effect is reviewed and named here.
 ROLE_MCP_READ_TOOLS = {
+    "ai_services": ("ocr_document",),
     "memory_connector": (
         "user_get", "memory_recall", "memory_get", "timeline_get",
     ),
@@ -212,6 +218,7 @@ def make_role_agent_command(
     command: list[str],
     *,
     role: str,
+    purpose_name: str = "general",
     task_workspace: str | None = None,
     controlled_cli: ControlledCliConfig | None = None,
 ) -> None:
@@ -222,6 +229,8 @@ def make_role_agent_command(
         raise ValueError("Consumer task workspace is required")
     while CODEX_BYPASS_APPROVALS_AND_SANDBOX in command:
         command.remove(CODEX_BYPASS_APPROVALS_AND_SANDBOX)
+    configured_names = set(configured_transport_server_names(command))
+    oa_audit_ocr = role == "audit" and purpose_name == "oa"
     _remove_config_options(
         command,
         prefixes=(
@@ -242,14 +251,22 @@ def make_role_agent_command(
               role == "consumer" and feature in {"shell_tool", "unified_exec"}
           )
           for option in ("-c", f"features.{feature}=false")),
-        # Expose the task-bound MCP namespace directly; keep native CodeMode
-        # for the remaining tools. Role tool selection and sandbox stay intact.
+        # Only OA Consumer/Audit compose source bytes and OCR inside CodeMode.
+        # Other role tools and the sandbox retain their existing boundaries.
         "-c", "features.code_mode_host=true",
         "-c", "features.code_mode_only=true",
         "-c", "features.code_mode.enabled=true",
         "-c", "features.code_mode.excluded_tool_namespaces="
-        + json.dumps([] if role == "consumer" else ["functions"]),
-        "-c", 'features.code_mode.direct_only_tool_namespaces=["mcp__agent_cli"]',
+        + json.dumps(
+            ["functions", "image_gen", "multi_agent_v1", "web"]
+            if oa_audit_ocr else [] if role == "consumer" else ["functions"]
+        ),
+        "-c", "features.code_mode.direct_only_tool_namespaces="
+        + json.dumps(
+            [f"mcp__{name}" for name in sorted(configured_names - {"agent_cli", "ai_services"})]
+            if oa_audit_ocr else [] if role == "consumer" and purpose_name == "oa"
+            else ["mcp__agent_cli", "mcp__ai_services"]
+        ),
         "-c",
         'sandbox_mode="workspace-write"' if role == "consumer" else 'sandbox_mode="read-only"',
         "-c",
@@ -286,7 +303,6 @@ def make_role_agent_command(
             while flag in command:
                 index = command.index(flag)
                 del command[index:index + 2]
-    configured_names = set(configured_transport_server_names(command))
     for name in sorted(configured_names):
         if name != "agent_cli":
             options.extend([
@@ -330,22 +346,65 @@ def make_consumer_agent_command(
     command: list[str],
     *,
     task_workspace: str,
+    purpose_name: str = "general",
     controlled_cli: ControlledCliConfig | None = None,
 ) -> None:
-    make_role_agent_command(command, role="consumer", task_workspace=task_workspace,
+    make_role_agent_command(command, role="consumer", purpose_name=purpose_name,
+                            task_workspace=task_workspace,
                             controlled_cli=controlled_cli)
 
 
 def make_audit_agent_command(
     command: list[str],
     *,
+    purpose_name: str = "general",
     controlled_cli: ControlledCliConfig | None = None,
 ) -> None:
     make_role_agent_command(
         command,
         role="audit",
+        purpose_name=purpose_name,
         controlled_cli=controlled_cli,
     )
+
+
+def make_model_only_agent_command(command: list[str]) -> None:
+    """Keep a decision turn inside the model, with no native or MCP tools."""
+    while CODEX_BYPASS_APPROVALS_AND_SANDBOX in command:
+        command.remove(CODEX_BYPASS_APPROVALS_AND_SANDBOX)
+    if "--skip-git-repo-check" not in command:
+        exec_index = command.index("exec")
+        option_index = exec_index + (2 if command[exec_index + 1] == "resume" else 1)
+        command.insert(option_index, "--skip-git-repo-check")
+    configured = set(configured_transport_server_names(command))
+    _remove_config_options(
+        command,
+        prefixes=(
+            "approval_policy=", "sandbox_mode=", "tools.enabled_tools=",
+            "project_doc_max_bytes=", "skills.config=",
+            "features.code_mode_only=", "features.code_mode.enabled=",
+            *(f"features.{feature}=" for feature in ROLE_DISABLED_NATIVE_FEATURES),
+        ),
+    )
+    options = [
+        "-c", 'approval_policy="never"',
+        "-c", 'sandbox_mode="read-only"',
+        "-c", "tools.enabled_tools=[]",
+        "-c", "project_doc_max_bytes=0",
+        "-c", "features.code_mode_only=false",
+        "-c", "features.code_mode.enabled=false",
+        *(
+            option
+            for feature in ROLE_DISABLED_NATIVE_FEATURES
+            for option in ("-c", f"features.{feature}=false")
+        ),
+    ]
+    skill_override = codex_skill_config_override(())
+    if skill_override:
+        options.extend(("-c", skill_override))
+    for name in sorted(configured | set(inherited_native_server_names())):
+        options.extend(("-c", f"mcp_servers.{name}.enabled=false"))
+    _insert_command_options(command, options)
 
 
 def disable_automatic_review(command: list[str]) -> None:

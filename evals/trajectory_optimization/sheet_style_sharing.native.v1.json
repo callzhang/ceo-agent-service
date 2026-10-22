@@ -1,0 +1,126 @@
+{
+  "case": "sheet-style-sharing-native-v1",
+  "date": "2026-10-18",
+  "scope": "Anonymous read-only local MCP, Codex OAuth gpt-5.6-luna; no business MCP or provider action.",
+  "small_fixed_case": {
+    "expected": {
+      "red_cells": [
+        {
+          "address": "G2",
+          "value": 15
+        },
+        {
+          "address": "F7",
+          "value": 54
+        },
+        {
+          "address": "D12",
+          "value": 92
+        }
+      ],
+      "sum": 161,
+      "D12": {
+        "value": 92,
+        "fontColor": "#ff0000"
+      }
+    },
+    "original": {
+      "tool_calls": 1,
+      "tool_json_bytes": 22491,
+      "tool_json_sha256": "9482420b45a9671c41c0930fd9619441689544e841616fc7e997409ad29b69cd",
+      "style_references_present": false,
+      "agent_answer": {
+        "redFontCells": [
+          {
+            "address": "G2",
+            "value": 15
+          },
+          {
+            "address": "F7",
+            "value": 54
+          },
+          {
+            "address": "D12",
+            "value": 92
+          }
+        ],
+        "sum": 161,
+        "D12": {
+          "value": 92,
+          "fontColor": "#ff0000"
+        }
+      }
+    },
+    "projected": {
+      "tool_calls": 1,
+      "tool_json_bytes": 7036,
+      "tool_json_sha256": "77ec6f6ff6a83a746e71f73c4a959bcd62fc79b4e379a4db47448c08500aa357",
+      "style_references_present": true,
+      "agent_answer": {
+        "redCells": [
+          {
+            "address": "G2",
+            "value": 15
+          },
+          {
+            "address": "F7",
+            "value": 54
+          },
+          {
+            "address": "D12",
+            "value": 92
+          }
+        ],
+        "sum": 161,
+        "D12": {
+          "value": 92,
+          "fontColor": "#ff0000"
+        }
+      }
+    },
+    "semantic_match": true
+  },
+  "large_fixed_case": {
+    "expected": {
+      "value": 4884,
+      "fontColor": "#000003",
+      "hasMore": false
+    },
+    "projected": {
+      "tool_calls": 1,
+      "tool_json_bytes": 346039,
+      "tool_json_sha256": "b6c90f80cf5558181e57a0ced652e68f490b9bc1b72e4259f20ec86ca3ad71d6",
+      "style_references_present": true,
+      "agent_answer": {
+        "value": 4884,
+        "fontColor": "#000003",
+        "hasMore": false
+      },
+      "shape": {
+        "rows": 66,
+        "columns": 74,
+        "shared_styles": 80
+      },
+      "last_cell_value": 4884
+    },
+    "json_complete": true
+  },
+  "transport_probe": {
+    "synthetic_style_shared_chars": 352640,
+    "last_value_seen": 2999,
+    "end_marker_seen": true
+  },
+  "evidence_boundary": "Native tests verify anonymous model visibility and judgments. They do not establish a post-release real-sheet business result.",
+  "current_provider_read_only_probe": {
+    "returned_range": "A1:BV66",
+    "success": true,
+    "rows": 66,
+    "columns": 74,
+    "unique_styles": 79,
+    "original_fastmcp_bytes": 1327319,
+    "projected_fastmcp_bytes": 367854,
+    "exact_ordered_json_reconstruction": true,
+    "projected_json_parseable": true,
+    "business_cells_sent_to_model": false
+  }
+}

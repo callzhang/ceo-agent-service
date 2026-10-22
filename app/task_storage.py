@@ -873,19 +873,21 @@ def validate_reply_input_references(db: sqlite3.Connection) -> None:
         raise ValueError("reply input ownership mismatch")
 
 
-def validate_meeting_run_references(db: sqlite3.Connection) -> None:
+def validate_meeting_run_references(
+    db: sqlite3.Connection, *, runs_sql: str = "select * from runs",
+) -> None:
     """Typed parents and reserved absent parents are distinct source relations."""
-    if db.execute("""select 1 from runs r left join tasks p on p.id=r.task_id
+    if db.execute(f"""select 1 from ({runs_sql}) r left join tasks p on p.id=r.task_id
         where r.record_type='meeting_alignment_runs' and (
             (p.id is not null and (p.record_type<>'meeting_alignment_jobs' or r.job_id is not null))
             or (p.id is null and r.job_id is null)) limit 1""").fetchone():
         raise ValueError("meeting run parent mapping mismatch")
     for group, target in (("job_id", "task_id"), ("task_id", "job_id")):
         if db.execute(
-            f"select 1 from runs where record_type='meeting_alignment_runs' and job_id is not null group by {group} having count(distinct {target})<>1 limit 1"
+            f"select 1 from ({runs_sql}) where record_type='meeting_alignment_runs' and job_id is not null group by {group} having count(distinct {target})<>1 limit 1"
         ).fetchone():
             raise ValueError("meeting orphan parent mapping mismatch")
-    if db.execute("""select 1 from runs r where r.record_type='meeting_alignment_runs'
+    if db.execute(f"""select 1 from ({runs_sql}) r where r.record_type='meeting_alignment_runs'
         and r.job_id is not null and r.task_id>coalesce(
             (select seq from sqlite_sequence where name='tasks'),0) limit 1""").fetchone():
         raise ValueError("meeting orphan parent allocator is not reserved")

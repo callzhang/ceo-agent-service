@@ -1,0 +1,81 @@
+{
+  "date": "2026-10-16",
+  "scope": "Unselected9-method current Email State caller proposal only",
+  "base_email_store_sha256": "9e02860962447adad7f62fcea9e74b2d9a1b244790b4dd02e95dba94c58d4e9d",
+  "candidate_sha256": "c7f80cd9607cc0b1d500a698f341065e3b22f41b73a536f0ab3c8af88db5ecc9",
+  "patch_sha256": "03580218eb9ee7ead234878ae6cced0b4a5ac0c90c4c0e55d5f6f072e950a5e4",
+  "methods": [
+    "_advance_cursor",
+    "persist_empty_scan_cursor",
+    "historical_traversal_cursor",
+    "enqueue_historical_page",
+    "get_scan_cursor",
+    "record_scan_cursor",
+    "model_scan_progress",
+    "email_processing_progress",
+    "_unsubscribe_cancellation_decision"
+  ],
+  "current_native_sql_statements": 13,
+  "initial_root_preflight": {
+    "tests_passed": 9,
+    "test_fixture_failures": 1,
+    "seconds": 4.15,
+    "failure": "test_atomic_scan_persistence_rolls_back_message_plan_actions_and_cursor final assertion directly queries retired email_scan_cursors; adapt only that test assertion to State projection before accepting full10",
+    "harness_correction": "Initial temp app import assertion compared /private/tmp resolved path with /tmp unresolved; fixed path resolution before running tests."
+  },
+  "required_preservation": [
+    "Scan cursor positive generation/nonnegative integer API checks and existing expected-generation CAS, writer transaction/rollback",
+    "Historical nullable generation and source max semantics, encoded original leaf on win/tie; no scan constraints added",
+    "Six-field cursor public DTO without rowid",
+    "Progress JSON reduction/existing error handling",
+    "Cancellation supplied connection, exact pending fence, same task ID, onlyreply/scheduled_execution adapters, owner nonempty and terminal empty; no newexpiry/generation/PID predicate"
+  ],
+  "app_selected": false,
+  "production_changed": false,
+  "independent_review_pending": true,
+  "remaining": [
+    "Complete fixture adaptation and focused10 rerun",
+    "Current historical/progress/cancellation integration tests and scalar/CAS adversarial proof",
+    "Independent SPEC then QUALITY",
+    "Current directconsumers/version/progress/pairedpublication closure",
+    "Whole actualcopy inverse/nativeCLI/UI/final10+ledger proof"
+  ],
+  "root_cursor_model_progress_preflight": {
+    "tests": 10,
+    "seconds": 2.37,
+    "scope": "Six current cursor/CAS behaviors, atomic scan message/plan/action/cursor rollback, three model-progress reductions, actual constructors in disposable application tree",
+    "fixture_adaptation": "Only atomic rollback final assertion reads the retired scan cursor table via State projection; new source import. No application compatibility table or fallback.",
+    "harness_corrections": "Resolved /tmp vs /private/tmp import check before running; corrected driver quoting and unqualified pytest module import so the adapted assertion is the function actually collected. Earlier9pass/1obsoleteassert runs are not accepted10-pass evidence.",
+    "test_proposal": "2026-10-16-state-email-current-test-proposal.patch",
+    "other_families_not_yet_proved": "historical candidate/traversal, progress API, unsubscribe cancellation branches and crossmodule version/progress/publication closure"
+  },
+  "root_current_integration_preflight": {
+    "tests": 27,
+    "seconds": 16.14,
+    "scope": "Prior10 plus current historical provider-reread/queue and fair durable queue, three HTTPprogress API cases, principal unsubscribe cancellation/identity/serialization/pending-reconciliation and allthree dispatcher namespaces, public readonlypreview matches native source and preserves bytes/facts.",
+    "fixtures": "Only explicit physical-target adjustments in the adjacentthree-file testpatch: scan rollback assertion projection; dispatcher seed uses State inside same explicit transaction; typed current validation fixture selects State migration before committing current markers.",
+    "harness_dependencies": "Copied only trackedstatic data/config/skill-features.json andmcp-tool-effects.json into owned app tree. Initialmissingstatic registry preventedone workerfixture bootstrap, not accepted as functional failure. The initial read-onlypreview targetfixture omitted State and was correctlyrefused; fixture now applies exactpureState migration, nativeoracleoriginal untouched.",
+    "warning": "Existing Starlette anyio BlockingPortal deprecation only.",
+    "actual_or_production_db_access": false
+  },
+  "test_patch_sha256": "51ef1038786bd0d005964d8db3174a2471053bf82d5891d26c4e347260be18e8",
+  "independent_spec": {
+    "status": "PASS",
+    "focused_tests": 27,
+    "seconds": 17.4,
+    "native_actual_fresh_differential_checkpoints": 468,
+    "scope": "Exactly9changedmethods/270unchanged/signatures/nativearchives preserved; exact3fixturefunctions; bothfreshconstructororders67ordinary only.",
+    "doc_correction": "Stale initial single-fixture description corrected to current3file patch beforeQUALITY; bothpatches unchanged."
+  },
+  "independent_quality": {
+    "status": "PASS",
+    "focused_tests": 13,
+    "seconds": 9.17,
+    "new_adversarial_instances": 7,
+    "existing_regression_instances": 6,
+    "cancellation_native_differential_checkpoints": 12,
+    "coverage": "Actual/fresh transactionrollback/kindisolation; realIMMEDIATEwritercontention/CAS; nullablehistory/midpage/lateconstraintall-or-nothing; BLOB/malformed/LIKEprogress; exactsuppliedconnection fence/leaseownershipincludingexpired/stalegen/nonexistentPID/namespace/leadingzeroID/owner/terminal variations; readonlypreviewbyte/factpreservation andprocessingAPI.",
+    "harness_corrections": "Missing trackedmetadata andincompletehistoricalsyntheticcandidate fixed onlyunderownedtmp beforeaccepted13pass run.",
+    "warning": "ExistingStarletteBlockingPortal deprecationonly."
+  }
+}

@@ -1,21 +1,21 @@
-"""Complete metadata-only Email context projected from durable message relations."""
+"""Execution context from durable relations and exact external Email originals."""
 
 from __future__ import annotations
 
 from collections.abc import Callable, Mapping, Sequence
-import imaplib
 import json
 from typing import Any
 
 from app.agent_context import PriorReceipt
 from app.email_classifier_contracts import EmailAttachmentMetadata
 from app.email_imap_readonly import ephemeral_body_html
+from app.email_source_reader import EmailSourceReader
 from app.email_task_adapter import EmailAgentTaskInput, EmailThreadMessage
 from app.email_unsubscribe import UnsubscribeAuthenticationEvidence
 
 
 class EmailContextSource:
-    """Load one task from durable context instead of a fixed recent-UID window."""
+    """Resolve the complete related thread without a stored-body fallback."""
 
     def __init__(
         self,
@@ -65,26 +65,32 @@ class EmailContextSource:
         if trigger_row is None:
             raise ValueError("email task source message is unavailable")
 
-        provider_trigger = self._read_current_provider_message(
-            account_id=account_id,
-            classification=classification,
+        if self.source_factory is None:
+            raise ValueError("email context source factory is unavailable")
+        originals = EmailSourceReader(
+            self.store, source_factory=self.source_factory,
+        ).read_many(
+            account_id,
+            [_required_text(row, "stable_message_identity") for row in rows],
         )
-        source_row = dict(trigger_row)
-        if provider_trigger is not None:
-            source_row.update(
-                {
-                    "sender": _message_sender(provider_trigger),
-                    "subject": provider_trigger.get("subject") or source_row["subject"],
-                    "normalized_text": _message_text(provider_trigger),
-                    "attachment_metadata": provider_trigger.get("attachments") or (),
-                }
-            )
+        source_rows = []
+        for row in rows:
+            original = originals[row["stable_message_identity"]]
+            source_rows.append(dict(row) | {
+                "sender": _message_sender(original),
+                "subject": original.get("subject") or row["subject"],
+                "normalized_text": _message_text(original),
+                "attachment_metadata": original.get("attachments") or (),
+            })
+        source_row = next(
+            row for row in source_rows if row["stable_message_identity"] == stable_identity
+        )
+        provider_trigger = originals[stable_identity]
         trigger = _thread_message(source_row)
         thread_messages = tuple(
             _thread_message(row)
-            for row in rows
-            if isinstance(row, Mapping)
-            and row.get("stable_message_identity") != stable_identity
+            for row in source_rows
+            if row["stable_message_identity"] != stable_identity
         )
         attachment_values = source_row.get("attachment_metadata") or ()
         if not isinstance(attachment_values, Sequence) or isinstance(
@@ -123,74 +129,12 @@ class EmailContextSource:
             thread_messages=thread_messages,
             attachments=attachments,
             prior_receipts=prior_receipts,
-            list_unsubscribe=(
-                str(provider_trigger.get("listUnsubscribe") or "")
-                if provider_trigger is not None
-                else ""
-            ),
-            list_unsubscribe_post=(
-                str(provider_trigger.get("listUnsubscribePost") or "")
-                if provider_trigger is not None
-                else ""
-            ),
+            list_unsubscribe=str(provider_trigger.get("listUnsubscribe") or ""),
+            list_unsubscribe_post=str(provider_trigger.get("listUnsubscribePost") or ""),
             body_text=trigger.text,
-            body_html=(
-                ephemeral_body_html(provider_trigger)
-                if provider_trigger is not None
-                else ""
-            ),
+            body_html=ephemeral_body_html(provider_trigger),
             unsubscribe_authentication=authentication,
         )
-
-    def _read_current_provider_message(
-        self,
-        *,
-        account_id: str,
-        classification: Mapping[str, object],
-    ) -> Mapping[str, object] | None:
-        if self.source_factory is None:
-            return None
-        try:
-            account = self.store.get_account(account_id)
-            if not isinstance(account, Mapping):
-                return None
-            source = self.source_factory(account)
-            folder = str(classification.get("folder") or "")
-            if not folder:
-                return None
-        except _PROVIDER_CONTEXT_UNAVAILABLE:
-            return None
-        try:
-            uid = _required_int(classification, "uid")
-            batch = source.fetch_uid_batch(
-                folder,
-                cursor_uidvalidity=_required_int(classification, "uidvalidity"),
-                last_seen_uid=max(0, uid - 1),
-                limit=2,
-            )
-            if int(batch.uidvalidity) != _required_int(classification, "uidvalidity"):
-                raise ValueError("email task provider generation changed")
-            for message in batch.messages:
-                if _message_identity(message) == str(
-                    classification["stable_message_identity"]
-                ):
-                    return message
-            raise ValueError("email task source message is unavailable")
-        except _PROVIDER_CONTEXT_UNAVAILABLE:
-            return None
-        finally:
-            close = getattr(source, "logout", None)
-            if callable(close):
-                close()
-
-
-_PROVIDER_CONTEXT_UNAVAILABLE = (
-    ConnectionError,
-    OSError,
-    TimeoutError,
-    imaplib.IMAP4.error,
-    ValueError,
-)
 
 
 def _task_payload(task: object) -> dict[str, object]:
@@ -244,10 +188,6 @@ def _thread_message(row: Mapping[str, object]) -> EmailThreadMessage:
         text=str(row.get("normalized_text") or ""),
         create_time=_required_text(row, "received_at"),
     )
-
-
-def _message_identity(message: Mapping[str, object]) -> str:
-    return str(message.get("stableMessageIdentity") or message.get("id") or "").strip()
 
 
 def _message_sender(message: Mapping[str, object]) -> str:

@@ -6,8 +6,12 @@ from pathlib import Path
 from uuid import uuid4
 import pytest
 
-from app.run_storage import create_run_schema, insert_run
-from app.task_storage import TASK_AGENT_RUN_SQL, create_task_schema, insert_task
+from app.logical_run_storage import create_logical_run
+from app.run_storage import insert_run
+from app.store import AutoReplyStore,WORK_SUMMARY_INPUT_SQL
+from app.store import TASK_LOGICAL_RUN_SQL
+from app.task20_definitions import task20_column
+from app.task8_storage import task8_set_parts
 
 from tests.support.task_native import read_task_fixture_decision
 
@@ -37,31 +41,56 @@ def _database(path, monkeypatch):
          })}]}},
         {"type": "event_msg", "payload": {"type": "task_complete"}},
     ]), encoding="utf-8")
-    with sqlite3.connect(path) as db:
-        create_task_schema(db)
-        create_run_schema(db, include_task_runs=True)
-        insert_task(db, "work_summary_inputs", {
-            "id": 107, "legacy_key": "7", "source_type": "management_weekly_report",
-            "source_ref": "report:fixture", "status": "completed", "payload_json": "private payload",
-        })
+    store = AutoReplyStore(path)
+    for index in range(6):
+        store.enqueue_work_summary_input("fixture", f"placeholder:{index}", "{}")
+    input_id = store.enqueue_work_summary_input(
+        "management_weekly_report", "report:fixture", "private payload",
+    )
+    assert input_id == 7
+    assert store.enqueue_work_summary_input("fixture", "unrelated-input", "{}") == 8
+    with store._connect() as db:
+        db.execute(
+            "update tasks set id=107 where record_type='work_summary_inputs' "
+            f"and {task20_column('work_summary_inputs', 'id')}=?", (input_id,),
+        )
+        completed_status = task8_set_parts(
+            'work_summary_inputs', {'status': 'completed'},
+            payload_source='tasks.payload_json',
+        )
+        db.execute(
+            f"update tasks set {completed_status.sql} "
+            "where record_type='work_summary_inputs' and id=107",
+            completed_status.parameters,
+        )
         for physical_id, public_id, input_id, status, projection in (
             (1010, 10, 7, "completed", {}),
             (1009, 11, 7, "completed", {"status": "pending", "proposal_count": 2,
                                      "applied_count": 0, "project_assessments": []}),
             (1008, 12, 8, "failed", {}),
         ):
-            insert_run(db, "task_agent_runs", {
-                "id": physical_id, "legacy_key": str(public_id),
-                "summary_input_id": input_id, "status": status,
-                "projection_json": json.dumps(projection),
-            })
+            created = create_logical_run(db, "task_agent_runs", input_id, status=status)
+            db.execute("update runs set id=?,legacy_key=?,projection_json=? where id=?",
+                       (physical_id, str(public_id), json.dumps(projection), created))
         insert_run(db, 'agent_runtime_attempts', {
-            'id': 1, 'workload_kind': 'task', 'workload_key': '11',
+            'id': 1, 'legacy_key': '1',
+            'workload_kind': 'task', 'workload_key': '11',
             'status': 'completed', 'runtime_kind': 'codex_cli',
             'session_id': session_id, 'transcript_start': 1, 'transcript_end': 3,
             'attempt_number': 1, 'route_name': 'test', 'credential_mode': 'oauth',
             'model': 'test',
         })
+        assert db.execute(
+            f"select id from ({WORK_SUMMARY_INPUT_SQL}) where id=?", (7,),
+        ).fetchone()[0] == 7
+        assert db.execute(
+            "select id from tasks where record_type='work_summary_inputs' "
+            f"and {task20_column('work_summary_inputs', 'id')}=?", (7,),
+        ).fetchone()[0] == 107
+        assert [row[0] for row in db.execute(
+            f"select id from ({TASK_LOGICAL_RUN_SQL}) where summary_input_id=? order by id",
+            (7,),
+        ).fetchall()] == [10, 11]
 
 
 def test_inspect_task_attention_reads_exact_input_receipts_without_payload(tmp_path, monkeypatch):
@@ -168,6 +197,7 @@ def test_inspector_closes_query_connections_before_native_reads(tmp_path, monkey
 
 def test_inspector_reads_actual_zero_task_project_revision_without_rewriting_old_runs(tmp_path, monkeypatch):
     from app.store import AutoReplyStore
+    from app.business_source_reader import PreparedSources
     from app.project_context_service import ProjectContextService
     from app.task_business_resolution import BusinessResolutionService
     from app.task_semantic_models import ProjectContext
@@ -185,6 +215,10 @@ def test_inspector_reads_actual_zero_task_project_revision_without_rewriting_old
     signal_id = store.create_business_task_signal(
         source_type="message", source_ref="m:inspect", evidence_text="李四总负责交付项目。", dedupe_key="inspect:source"
     )
+    prepared_sources = PreparedSources(store.business_source_reader())
+    prepared_sources.add_current(
+        store.get_business_task_signal(signal_id), "李四总负责交付项目。",
+    )
     context = ProjectContext.model_validate({
         "goal": "完成交付", "scope": "一期", "overall_owner": {
             "person_name": "李四", "responsibility": "交付",
@@ -192,13 +226,16 @@ def test_inspector_reads_actual_zero_task_project_revision_without_rewriting_old
         }, "responsibilities": [], "facts": [],
     })
     with store.business_task_transaction() as db:
-        revision_id = ProjectContextService(store).apply(project_id=project_id, context=context, signal_ids=(signal_id,), db=db)
+        revision_id = ProjectContextService(store).apply(
+            project_id=project_id, context=context, signal_ids=(signal_id,), db=db,
+            prepared_sources=prepared_sources,
+        )
     input_id = store.enqueue_work_summary_input("reply_attempt", "m:inspect", '{"private": "input body"}')
-    old_id = store.record_task_agent_run(input_id, decision_json='{"private":"old"}')
+    old_id = store.create_logical_run('task_agent_runs', input_id)
     decision = {"project_decisions": [], "task_decisions": [], "project_assessments": [],
                 "update_summary": "No new Project judgment is proposed; inspect the saved receipt."}
     session_id = str(uuid4())
-    run_id = store.record_task_agent_run(input_id, codex_session_id=session_id)
+    run_id = store.create_logical_run('task_agent_runs', input_id, codex_session_id=session_id)
     records = [
         {"type": "session_meta", "payload": {"id": session_id}},
         {"type": "event_msg", "payload": {"type": "task_started"}},
@@ -248,14 +285,15 @@ def test_inspector_reads_actual_zero_task_project_revision_without_rewriting_old
     ).model_dump(mode="json")
     store.record_task_agent_projection(run_id, json.dumps(projection))
     with sqlite3.connect(path) as db:
-        original = db.execute(f"select id, decision_json, projection_json from ({TASK_AGENT_RUN_SQL}) order by id").fetchall()
-    assert [row[1] for row in original] == ["{}", "{}"]
+        original = db.execute(f"select id, projection_json from ({TASK_LOGICAL_RUN_SQL}) order by id").fetchall()
+    assert original[0][1] == "{}"
+    assert "decision_json" not in {column[0] for column in db.execute(f"select * from ({TASK_LOGICAL_RUN_SQL})").description}
     inspected = _inspect(path, input_id)
     assert inspected.returncode == 0, inspected.stderr
     assert "private" not in inspected.stdout
     assert store.list_business_tasks() == ()
     with sqlite3.connect(path) as db:
-        assert db.execute(f"select id, decision_json, projection_json from ({TASK_AGENT_RUN_SQL}) order by id").fetchall() == original
+        assert db.execute(f"select id, projection_json from ({TASK_LOGICAL_RUN_SQL}) order by id").fetchall() == original
     runs = json.loads(inspected.stdout)["runs"]
     assert runs[0]["run_id"] == old_id
     assert "project_decisions" not in runs[0]

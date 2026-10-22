@@ -1,3 +1,4 @@
+from tests.support.legacy_todo_facts import seed_legacy_work_project
 from datetime import datetime, timezone
 
 from app.store import AutoReplyStore
@@ -6,7 +7,7 @@ from app.web_api.tasks import business_task_list_response
 
 def test_semantic_task_filter_and_pagination_precede_serialization(tmp_path):
     store = AutoReplyStore(tmp_path / "worker.sqlite3")
-    store.create_work_project(title="Legacy project", category="dev", status="active", priority="P1", risk_level="low")
+    seed_legacy_work_project(store, title="Legacy project", category="dev", status="active")
     older = store.create_business_task(title="Alpha", stage="formal", formal_basis="explicit_assignment", business_relevance="relevant", now=datetime(2026, 9, 1, tzinfo=timezone.utc))
     store.create_business_task(title="Excluded candidate", stage="candidate", business_relevance="relevant")
     newer = store.create_business_task(title="Beta", stage="formal", formal_basis="explicit_assignment", business_relevance="relevant", now=datetime(2026, 9, 2, tzinfo=timezone.utc))

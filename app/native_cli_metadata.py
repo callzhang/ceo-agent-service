@@ -21,8 +21,10 @@ _SERVICE_READ_ONLY_PYTHON_COMMANDS = frozenset(
     {
         "read-oa-approval-detail",
         "read-dingteam-okr",
-        "daily-report-facts",
-        "weekly-report-materials",
+        "scheduled-context",
+        "service-activity",
+        "weekly-okr-roster",
+        "weekly-okr-member",
     }
 )
 MATERIAL_OUTPUT_ROOT = Path("/tmp").resolve() / "ceo-agent-service-materials"
@@ -561,7 +563,22 @@ def _is_service_read_only_python_command(argv: tuple[str, ...]) -> bool:
                 and _has_required_flag_value(argv, "--period-label")
             )
             or (
-                command in {"daily-report-facts", "weekly-report-materials"}
+                command == "service-activity"
+                and _has_required_flag_value(argv, "--start")
+                and _has_required_flag_value(argv, "--end")
+            )
+            or (
+                command == "weekly-okr-roster"
+                and _has_required_flag_value(argv, "--group-name")
+            )
+            or (
+                command == "weekly-okr-member"
+                and _has_required_flag_value(argv, "--user-id")
+                and _has_required_flag_value(argv, "--name")
+                and _has_required_flag_value(argv, "--period-label")
+            )
+            or (
+                command == "scheduled-context"
                 and len(argv) == 6
                 and argv[4] == "--scheduled-run"
                 and argv[5].isdigit()

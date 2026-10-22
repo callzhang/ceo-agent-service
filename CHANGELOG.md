@@ -1,5 +1,67 @@
 # Changelog
 
+## 2026-10-22 — Action Entity Phase 1 production release
+
+- Deployed the first external-Action unit at runtime code `87a34d299d5749af1af454bfdd01c48a936799a4`, Store `2026-10-21.1` / Email53, with 14 ordinary tables. Production readback confirmed 15,472 common Actions, 18,621 receipts, 506 observers, and zero rows for each of seven retired populated source kinds.
+- Health, status, queues, Attention, History and sent-detail readback succeeded. The original sole FK finding remains; failed count stayed 36 and Attention stayed 19. The verified backup and bounded same-cohort capacity evidence are recorded in [production acceptance](docs/action-entity-production-acceptance.md).
+- Phase 1 is complete; other Action kinds, unsubscribe continuation, Task/Run, Email ownership and remaining business unification work remain separate and incomplete.
+
+## 2026-10-22 — OA 附件预览授权工具
+
+- 评论附件的高级版下载在租户权益过期时返回 `benefit.status.invalid`，表单附件下载返回 `noPermission` 或 `success=false`，分身因此把可读的 PDF 报成没有权限（审批 202601071711000531430）。
+- Consumer/Audit 新增 `authorize_dingtalk_oa_attachment_preview(process_instance_id, file_id)`：只为指定审批的指定附件开通预览授权并返回 `space_id`，再由 `read_dingtalk_drive_file` 读取正文。这是两角色唯一改变钉钉访问的工具，由 Derek 于 2026-10-22 选定。
+- `dingtalk-oa-approval` Skill 与发布清单摘要、`docs/runtime-mechanism.md` 同步更新；增加回归测试。
+
+## 2026-10-20 — 权限申请阶段停止语义修复
+
+- 保留 Consumer 对 `request_access` 明确给出的 `continue_after_execution=false`，不再由 wire adapter 强行改为 true。
+- 经 Audit 批准且执行回执验证成功后，编排器独立启动原有的有界权限等待；重启恢复路径一致处理，并保持后续候选阶段关系正确。
+- 保留最多 10 次后续读取、从原始申请起最长 72 小时的退避预算；不把申请送达当成权限恢复。
+- 增加回归测试；部署与线上读回结果记录在 [验证记录](docs/consumer-purpose-actions-validation.md)。
+
+## 2026-10-20 — 人工决策说明改为白话短句
+
+- Attempt 人工决策卡片改用“这次要你决定什么”；Consumer/Audit 要求原因用一句中文说明要决定什么及原因，不超过100字。
+- Consumer 新输出契约和 JSON Schema 强制限制 `needs_human_reason` 为100字以内；历史结果读取保持兼容，详细依据继续显示在独立证据区。
+- 保留是否需要规则反馈及现有选项不变；增加超长理由和页面标题回归测试。
+
+## 2026-10-20 — OKR 原生综合验收与恢复修复
+
+- 正式发布发现已部署财务 Skill/规则卡的旧摘要清单过期；记录当前安装与 managed 摘要，只刷新两项精确旧摘要，并增加冻结前置值回归，严格发布代码保持不变。
+
+- 新增四场景原生 Consumer/Audit 工作流验收，固定事实和预期，保留失败轨迹；严格核对本次来源、复用分析、公式、真实父子页、完整读回与精确消息提案。
+- OKR Skill 保留未评分成员的已知职级与逐人来源缺口，分开业务完成档位和领导力/文化行为档位，修正正式维度及80/90包含边界；prepare 明确标记可复用分析，恢复更新现有附录。
+- 记录日报、管理周报、OKR 旧版实际发布及读回；新版自然执行单独等待，不重放已发布报告。
+- 产物读取明确0起字符偏移，并为整页/分页统一返回范围元数据；按人准备的 schema 提供稳定身份标签，防止同名负责人在合并后丢失归属。
+- 原七案例验收和历史失败均保留；详见 docs/scheduled-okr-agent-acceptance.md。
+
+## 2026-10-19 — 定时任务 Agent 验收协议修复
+
+- 统一离线评测 Consumer、Audit 和修订的字段及结果标签，区分最终内容与排除说明的来源追踪。
+- 原七案例和评分函数冻结；原失败结果完整保留，schema 约束只接受原标签及输入身份，不提供标准答案。
+- 增加回归测试及实际正文/生产动作解析探针，分别记录首轮、审核修订、代码解析与真实外部执行的证据边界。
+- 本次只修改评测与文档，生产服务与业务 Skill 无变更。
+
+## 2026-10-19 — 定时任务业务逻辑迁入 Skill
+
+- 14 项默认任务改为声明配置；保留 ID、周期、启停、自定义 prompt 与历史快照。
+- 增加通用触发历史、活动事实、Skill 脚本与显式文档接口，支持分页产物和完整文档读回。
+- 日报/周报窗口、目标解析、渲染及 OKR 精确公式进入 Skill；业务要求由 Skill/Audit 判断，系统不再强制 publishable。
+- OKR 报告使用普通 Agent 生命周期，实时读取按成员完成；部署记录并回滚报告配置迁移及新增 Skill 文件。
+
+## 2026-10-19 — Consumer purpose actions and bounded permission retries
+
+- Use ordinary Consumer `action/reason/target/payload/evidence_refs` output, with
+  purpose-specific strict parameters; OA `return` maps to the real `revert_task` action.
+- Bind permission waits to a verified request receipt and persist at most ten
+  subsequent attempts within 72 hours of the original dispatch. Sessions, revisions
+  and restarts cannot reset the budget; waits use exponential backoff.
+- Preserve technical read failures as technical failures, and do not infer applicant
+  fault or automatically return/reject an OA when retries run out.
+- Protocol examples and exact counting/recovery boundaries:
+  [Consumer purpose output](docs/consumer-purpose-output.md). Production publication
+  and test evidence: [validation record](docs/consumer-purpose-actions-validation.md).
+
 ## Fresh message identifier types
 
 - Reject nonstring or blank DingTalk message identifiers when parsing new Consumer
@@ -2534,6 +2596,10 @@
 
 - Clarify reconciled invalid `needs_human` projections as technical failures in Attention, so malformed historical decision payloads cannot be mistaken for live human authorization requests.
 # Unreleased
+
+- Let permission retries use the exact verified legacy OA material-access
+  comment receipt when its candidate predates `purpose_output`; ordinary
+  comments still cannot authorize a permission retry.
 
 - Count live dispatcher leases, meeting preparation and claimed meeting delivery
   in the deployment quiet gate, including before an Agent runtime is created.

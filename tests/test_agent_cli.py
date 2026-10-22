@@ -21,74 +21,48 @@ from app.native_cli_metadata import NativeCliMetadataClassifier
 from app.native_cli_metadata import AgentReadOnlyViolationError
 
 
-def test_weekly_report_tool_declares_metric_array_and_rejects_object_mapping():
-    tool = agent_cli.build_role_server("consumer")._tool_manager.get_tool("validate_weekly_report")
-    arguments = {"manifest": {}, "report": {"company_metrics": {"orders": {"current": "无数据"}}}, "previous_issues": []}
-    with pytest.raises(ValidationError) as error:
-        tool.fn_metadata.arg_model.model_validate(arguments)
-    assert ("report", "company_metrics") in [entry["loc"] for entry in error.value.errors()]
-    report_schema = tool.parameters["$defs"]["WeeklyReport"]
-    assert report_schema["properties"]["company_metrics"]["type"] == "array"
+def test_document_search_native_tool_declares_existing_page_size_limit():
+    tool = agent_cli.build_role_server("consumer")._tool_manager.get_tool(
+        "search_dingtalk_documents"
+    )
+    page_size = tool.parameters["properties"]["page_size"]
+    assert page_size["minimum"] == 1
+    assert page_size["maximum"] == 20
+    assert tool.fn_metadata.arg_model.model_validate({"query": "example"}).page_size == 10
+    assert tool.fn_metadata.arg_model.model_validate(
+        {"query": "example", "page_size": 20}
+    ).page_size == 20
+    for invalid in (0, 50, 100):
+        with pytest.raises(ValidationError) as error:
+            tool.fn_metadata.arg_model.model_validate(
+                {"query": "example", "page_size": invalid}
+            )
+        assert ("page_size",) in [entry["loc"] for entry in error.value.errors()]
 
 
-def test_weekly_report_tool_preserves_complete_input_and_business_checks():
-    tool = agent_cli.build_role_server("consumer")._tool_manager.get_tool("validate_weekly_report")
-    arguments = {
-        "manifest": {"future_metadata": {"nested": [None, True, 3]}},
-        "report": {"company_metrics": [{"key": "orders", "current": "无数据", "future_value": {"a": [1, None]}}], "future_section": {"data": True}},
-        "previous_issues": [{"id": "COMP-001", "future_evidence": [False]}],
+def test_document_search_native_call_preserves_valid_queries_and_rejects_oversize_before_provider(
+    monkeypatch,
+):
+    calls = []
+
+    class FakeDws:
+        def search_documents(self, query, page_size):
+            calls.append((query, page_size))
+            return []
+
+    monkeypatch.setattr("app.dws_client.DwsClient", FakeDws)
+    tool = agent_cli.build_role_server("consumer")._tool_manager.get_tool(
+        "search_dingtalk_documents"
+    )
+    assert asyncio.run(tool.run({"query": "example"})) == {"documents": []}
+    assert asyncio.run(tool.run({"query": "example", "page_size": 20})) == {
+        "documents": []
     }
-    assert tool.fn_metadata.arg_model.model_validate(arguments).model_dump() == arguments
-
-
-@pytest.mark.parametrize("field", ["minutes", "messages", "target", "previous", "business_reports"])
-def test_weekly_report_tool_rejects_list_where_manifest_requires_object(field):
-    tool = agent_cli.build_role_server("consumer")._tool_manager.get_tool("validate_weekly_report")
-    with pytest.raises(ValidationError) as error:
-        tool.fn_metadata.arg_model.model_validate({"manifest": {field: []}, "report": {}, "previous_issues": []})
-    assert ("manifest", field) in [entry["loc"] for entry in error.value.errors()]
-
-
-def test_weekly_report_native_tool_reports_shape_error_before_business_call(monkeypatch):
-    def unexpected_business_call(*args):
-        pytest.fail("malformed input reached business validation")
-
-    monkeypatch.setattr(agent_cli, "_bound_report", unexpected_business_call)
-    tool = agent_cli.build_role_server("consumer")._tool_manager.get_tool("validate_weekly_report")
-    with pytest.raises(ToolError, match=r"report.company_metrics"):
-        asyncio.run(tool.run({"manifest": {}, "report": {"company_metrics": {"orders": {}}}, "previous_issues": []}))
-
-
-def test_weekly_report_tool_preserves_nullable_business_values():
-    arguments = {"manifest": {}, "report": {
-        "company_metrics": [{"key": "orders", "current": "无数据", "data_date": None, "decision_critical": False, "responsible_user_id": None}],
-        "issues": [{"id": "COMP-001", "deadline": None, "as_of": None, "status": None}],
-        "claims": [{"type": "hypothesis_pending_validation", "evidence": None}],
-    }, "previous_issues": []}
-    tool = agent_cli.build_role_server("consumer")._tool_manager.get_tool("validate_weekly_report")
-    assert tool.fn_metadata.arg_model.model_validate(arguments).model_dump() == arguments
-
-
-def test_weekly_report_complete_skill_fixture_remains_publishable():
-    # Isolate the standalone Skill's `scripts` package from the service package.
-    code = '''
-import pathlib, runpy, sys
-from app.agent_cli import build_role_server
-root = pathlib.Path("ci/shared-skills/ceo-weekly-report").resolve()
-sys.path.insert(0, str(root))
-fixture = runpy.run_path(str(root / "tests/test_report_contract.py"))
-sample = fixture["ReportContractTests"]()
-report = sample.complete_report()
-report["company_metrics"][0]["data_date"] = None
-report["issues"] = [{"id": "COMP-001", "deadline": None}]
-report["claims"] = [{"type": "hypothesis_pending_validation", "evidence": None}]
-arguments = {"manifest": sample.complete_manifest(), "report": report, "previous_issues": []}
-tool = build_role_server("consumer")._tool_manager.get_tool("validate_weekly_report")
-validated = tool.fn_metadata.arg_model.model_validate(arguments).model_dump()
-assert validated == arguments
-assert fixture["validate_run"](**arguments) == fixture["validate_run"](**validated) == {"publishable": True, "errors": []}
-'''
-    subprocess.run([sys.executable, "-c", code], cwd=Path(__file__).resolve().parents[1], check=True, capture_output=True, text=True)
+    for invalid in (50, 100):
+        with pytest.raises(ToolError) as error:
+            asyncio.run(tool.run({"query": "example", "page_size": invalid}))
+        assert isinstance(error.value.__cause__, ValidationError)
+    assert calls == [("example", 10), ("example", 20)]
 
 
 def test_agent_cli_mcp_tools_publish_searchable_descriptions():
@@ -554,11 +528,14 @@ def test_read_skill_tool_discovers_metadata_and_reads_exact_name(
 
     assert decode_catalog(discovered) == [{
         "name": "business-review",
-        "description": "Review business material: with evidence.",
+        "description": "",
         "path": str(skill_path.resolve()),
     }]
+    assert decode_catalog(tool(query="business evidence"))[0]["description"] == (
+        "Review business material: with evidence."
+    )
     assert "EXACT BODY" not in json.dumps(discovered)
-    assert set(descriptor.inputSchema["properties"]) == {"path", "name"}
+    assert set(descriptor.inputSchema["properties"]) == {"path", "name", "query"}
     assert "required" not in descriptor.inputSchema
     by_name = tool(name="business-review")
     by_path = tool(path=str(skill_path))
@@ -570,6 +547,57 @@ def test_read_skill_tool_discovers_metadata_and_reads_exact_name(
         tool(path=str(skill_path), name="business-review")
     with pytest.raises(ValueError, match="unknown"):
         tool(name="missing")
+
+
+def test_read_skill_query_finds_full_metadata_without_returning_unrelated_bodies(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+):
+    from tests.test_skill_discovery_transport import decode_catalog
+
+    roots = (tmp_path / "root-a", tmp_path / "root-b")
+    sources = (
+        (roots[0], "okr-review", "Score OKR records", "OKR BODY"),
+        (roots[0], "dingtalk-doc", "读取文档", "DOCUMENT BODY"),
+        (roots[0], "shared-review", "Review projects", "FIRST BODY"),
+        (roots[1], "shared-review", "Review contracts", "SECOND BODY"),
+    )
+    for root, name, description, body in sources:
+        path = root / name / "SKILL.md"
+        path.parent.mkdir(parents=True)
+        path.write_text(
+            f"---\nname: {name}\ndescription: {description}\n---\n\n{body}\n",
+            encoding="utf-8",
+        )
+    monkeypatch.setattr("app.agent_skill_usage.AGENT_SKILL_ROOTS", roots)
+    tool = agent_cli.build_role_server("consumer")._tool_manager.get_tool("read_skill").fn
+
+    full = decode_catalog(tool())
+    okr = decode_catalog(tool(query="OKR"))
+    natural_query = decode_catalog(tool(query="OKR score review"))
+    document = decode_catalog(tool(query="文档"))
+    duplicates = decode_catalog(tool(query="shared-review"))
+    assert len(full) == 4
+    assert all(item["description"] == "" for item in full)
+    assert [(item["name"], item["description"]) for item in okr] == [
+        ("okr-review", "Score OKR records")
+    ]
+    assert natural_query == okr
+    assert [item["name"] for item in document] == ["dingtalk-doc"]
+    assert decode_catalog(tool(query="not-present")) == []
+    assert len(duplicates) == 2
+    assert {item["path"] for item in duplicates} == {
+        str((root / "shared-review" / "SKILL.md").resolve()) for root in roots
+    }
+    assert "BODY" not in tool(query="OKR")["catalog"]
+    assert tool(name="okr-review")["content"].endswith("OKR BODY\n")
+    assert tool(name="dingtalk-doc")["content"].endswith("DOCUMENT BODY\n")
+    assert tool(path=duplicates[1]["path"])["content"].endswith("SECOND BODY\n")
+    with pytest.raises(ValueError, match="ambiguous"):
+        tool(name="shared-review")
+    with pytest.raises(ValueError, match="query"):
+        tool(query="  ")
+    with pytest.raises(ValueError, match="only one"):
+        tool(name="okr-review", query="OKR")
 
 
 def test_read_skill_tool_rejects_ambiguous_installed_name(
@@ -1027,3 +1055,16 @@ def test_oa_revert_task_passes_write_review():
     assert descriptor is not None
     assert descriptor.command_path == "oa approval revert-task"
     assert agent_cli._is_registered_native_write(descriptor)
+
+
+def test_weekly_report_blank_template_policy_is_skill_local():
+    import importlib.util
+    name = "weekly_template_policy"
+    path = Path(__file__).resolve().parents[1] / "ci/shared-skills/ceo-weekly-report/scripts/materials.py"
+    spec = importlib.util.spec_from_file_location(name, path)
+    module = importlib.util.module_from_spec(spec)
+    sys.modules[name] = module
+    spec.loader.exec_module(module)
+    blank = module._weekly_report_jsonml_is_blank
+    assert blank(["root", {}, ["p", {}, ["span", {"data-type":"text"}, ["span", {"data-type":"leaf"}, ""]]]])
+    assert not blank(["root", {}, ["p", {}, "existing content"]])

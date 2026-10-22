@@ -1,8 +1,6 @@
 import type {
   Artifact,
   Attachment,
-  Confirmation,
-  ConfirmationStatus,
   EventType,
   RuntimeCapabilities,
   Task,
@@ -23,7 +21,6 @@ const taskStates: readonly TaskState[] = [
   "idle",
   "queued",
   "running",
-  "waiting_confirmation",
   "completed",
   "stopped",
   "failed",
@@ -36,19 +33,10 @@ const eventTypes: readonly EventType[] = [
   "tool_completed",
   "file_changed",
   "artifact_created",
-  "confirmation_required",
   "status_changed",
   "turn_completed",
   "turn_failed",
 ];
-const confirmationStatuses: readonly ConfirmationStatus[] = [
-  "pending",
-  "confirmed",
-  "cancelled",
-  "executed",
-  "failed",
-];
-
 export class ApiError extends Error {
   readonly status: number;
   readonly code: string;
@@ -79,7 +67,6 @@ export interface TimelineOptions extends RequestOptions {
   before?: string;
   eventBefore?: number;
   artifactAfter?: string;
-  confirmationAfter?: string;
   attachmentAfter?: string;
 }
 
@@ -216,29 +203,6 @@ function parseArtifact(value: unknown): Artifact {
   };
 }
 
-function parseConfirmation(value: unknown): Confirmation {
-  if (!isRecord(value)) throwInvalidResponse();
-  const targets = arrayField(value, "canonical_targets");
-  if (!targets.every((target) => typeof target === "string")) throwInvalidResponse();
-  return {
-    id: stringField(value, "id"),
-    turn_id: stringField(value, "turn_id"),
-    action_kind: stringField(value, "action_kind"),
-    target: stringField(value, "target"),
-    summary: stringField(value, "summary"),
-    risk: stringField(value, "risk"),
-    canonical_capability: stringField(value, "canonical_capability"),
-    canonical_operation: stringField(value, "canonical_operation"),
-    canonical_targets: targets as string[],
-    status: enumField(value, "status", confirmationStatuses),
-    decision_requested: stringField(value, "decision_requested"),
-    decision_requested_at: stringField(value, "decision_requested_at"),
-    proposer_quiesced: booleanField(value, "proposer_quiesced"),
-    created_at: stringField(value, "created_at"),
-    decided_at: stringField(value, "decided_at"),
-  };
-}
-
 function parseTimeline(value: unknown): Timeline {
   if (!isRecord(value)) throwInvalidResponse();
   return {
@@ -247,15 +211,12 @@ function parseTimeline(value: unknown): Timeline {
     events: arrayField(value, "events").map(parseEvent),
     attachments: arrayField(value, "attachments").map(parseAttachment),
     artifacts: arrayField(value, "artifacts").map(parseArtifact),
-    confirmations: arrayField(value, "confirmations").map(parseConfirmation),
     next_cursor: stringField(value, "next_cursor"),
     has_more: booleanField(value, "has_more"),
     events_has_more: booleanField(value, "events_has_more"),
     events_next_cursor: integerField(value, "events_next_cursor"),
     artifacts_has_more: booleanField(value, "artifacts_has_more"),
     artifacts_next_cursor: stringField(value, "artifacts_next_cursor"),
-    confirmations_has_more: booleanField(value, "confirmations_has_more"),
-    confirmations_next_cursor: stringField(value, "confirmations_next_cursor"),
     attachments_has_more: booleanField(value, "attachments_has_more"),
     attachments_next_cursor: stringField(value, "attachments_next_cursor"),
   };
@@ -295,10 +256,6 @@ function parseStats(value: unknown): WorkbenchStats {
       archived: integerField(value.tasks, "archived"),
     },
     turns: parseCountRecord(value.turns, turnStatuses) as Record<TurnStatus, number>,
-    confirmations: parseCountRecord(
-      value.confirmations,
-      confirmationStatuses,
-    ) as Record<ConfirmationStatus, number>,
     events: isRecord(value.events)
       ? Object.fromEntries(
           Object.entries(value.events).map(([key, count]) => {
@@ -383,10 +340,6 @@ function jsonMutation(method: "POST" | "PATCH", body: unknown, options?: Request
 
 function taskPath(taskId: string): string {
   return `${basePath}/tasks/${encodeURIComponent(taskId)}`;
-}
-
-function confirmationPath(taskId: string, turnId: string, confirmationId: string): string {
-  return `${taskPath(taskId)}/turns/${encodeURIComponent(turnId)}/confirmations/${encodeURIComponent(confirmationId)}`;
 }
 
 export async function listTasks(options: ListTasksOptions = {}): Promise<TaskPage> {
@@ -487,36 +440,6 @@ export async function stopTurn(
   ).data;
 }
 
-export async function confirmAction(
-  taskId: string,
-  turnId: string,
-  confirmationId: string,
-  options?: RequestOptions,
-): Promise<Confirmation> {
-  return (
-    await request(
-      `${confirmationPath(taskId, turnId, confirmationId)}/confirm`,
-      parseConfirmation,
-      jsonMutation("POST", {}, options),
-    )
-  ).data;
-}
-
-export async function cancelAction(
-  taskId: string,
-  turnId: string,
-  confirmationId: string,
-  options?: RequestOptions,
-): Promise<Confirmation> {
-  return (
-    await request(
-      `${confirmationPath(taskId, turnId, confirmationId)}/cancel`,
-      parseConfirmation,
-      jsonMutation("POST", {}, options),
-    )
-  ).data;
-}
-
 export async function getTimeline(
   taskId: string,
   options: TimelineOptions = {},
@@ -527,7 +450,6 @@ export async function getTimeline(
   if (options.before) params.set("before", options.before);
   if (options.eventBefore !== undefined) params.set("event_before", String(options.eventBefore));
   if (options.artifactAfter) params.set("artifact_after", options.artifactAfter);
-  if (options.confirmationAfter) params.set("confirmation_after", options.confirmationAfter);
   if (options.attachmentAfter) params.set("attachment_after", options.attachmentAfter);
   const query = params.size ? `?${params.toString()}` : "";
   return (

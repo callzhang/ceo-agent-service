@@ -8,6 +8,9 @@ CEO Agent Service 会从钉钉读取私聊、群聊、在线文档、OA 审批�
 
 > 这个项目的目标不是替人“随便自动回复”，而是把企业 IM 中可结构化处理的信息流接入一个可审计、可回滚、可人工接管的本地 agent 工作流。
 
+Consumer 的通用输出字段、OA `return` 语义和权限申请后最多 10 次／72 小时的重试规则，见
+[Consumer purpose 输出与权限重试](docs/consumer-purpose-output.md)。
+
 ## 适用场景
 
 - 管理者每天收到大量钉钉消息，需要区分真正需要本人判断的事项、普通同步、系统通知和可自动处理事项。
@@ -202,8 +205,8 @@ OKR 审核 runner 默认使用叮当 OKR Web live source，不再依赖本地 xl
 - `CEO_OKR_SOURCE_KIND=dingteam_web` 时，必须设置 `CEO_OKR_LIVE_SOURCE_COMMAND`。该命令接收
   `{user_id}` 和 `{period_label}` 占位符，并返回 worker 可用的实时 OKR JSON。
   本机 Dingteam Web source 命令示例：
-  `CEO_OKR_LIVE_SOURCE_COMMAND=/Users/derek/miniforge3/bin/python /Users/derek/.agents/skills/dingtang-okr-review/scripts/dingteam_okr_browser_source.py fetch --user-id {user_id} --period-label {period_label}`。
-  该命令使用 `dingtang-okr-review` skill 的专用 headless browser profile 和 token cache；登录态过期时先运行
+  `CEO_OKR_LIVE_SOURCE_COMMAND=/Users/derek/miniforge3/bin/python /Users/derek/Services/ceo-agent-service/scripts/dingteam_okr_headless_source.py --user-id {user_id} --period-label {period_label}`。
+  该入口复用 `dingtang-okr-review` Skill 的专用 browser profile 和 token cache；完整个人周期列表确认当前季度不存在时，返回可验证的成员级未建目标收据。登录态过期时先运行
   `/Users/derek/miniforge3/bin/python /Users/derek/.agents/skills/dingtang-okr-review/scripts/dingteam_okr_browser_source.py login`
   并扫码。脚本不读取普通 Chrome cookie、localStorage 或 session 文件。
 - 只有确认企业 OKR 数据暴露在 Agoal objective API 中时，才设置 `CEO_OKR_SOURCE_KIND=agoal`。
@@ -295,7 +298,7 @@ cp .env.example .env
 | `CEO_REPOSITORY_UPGRADE_CHECK_INTERVAL_SECONDS` | 自动检查远端更新的周期，默认 21600 秒（6 小时） |
 | `CEO_REPOSITORY_UPGRADE_DISABLED` | 设为 `1` 禁用周期检查；History 页面仍可手动查看已保存状态 |
 | `CEO_CODEX_MODEL` / `CEO_CODEX_MODEL_REASONING_EFFORT` / `CEO_CODEX_MODEL_PROVIDER` | Codex OAuth 默认模型、thinking 强度和可选 provider；默认 `gpt-5.5` + `medium`。在 `Settings → Agent Runtime` 中用下拉菜单修改；模型可选 `gpt-5.5`、`gpt-5.6-sol`、`gpt-5.6-terra`、`gpt-5.6-luna`。不提供 `gpt-5.6` 别名，因为 Codex CLI 的 ChatGPT OAuth 会拒绝该别名。保存到 `.env` 后重启主服务统一生效，认证与 MCP/skills 保持沿用当前安装用户配置。 |
-| `CEO_AGENT_RUNTIME_ROUTES` / `CEO_RUNTIME_<名字>_KIND` / `_BASE_URL` / `_MODEL` / `_API_KEY` | 可选的 API 路由（Codex API 或 Claude API）：在 `Settings → Agent Runtime` 用「新增 runtime」添加，名字自己起、可改名，模型自由填写。Token 留空保存会保留已有 Token。旧的 `CEO_CODEX_API_*` / `CEO_CLAUDE_API_*` 在服务启动时一次性迁移为名为 `codex_api` / `claude_api` 的添加线路。 |
+| `CEO_AGENT_RUNTIME_ROUTES` / `CEO_RUNTIME_<名字>_KIND` / `_BASE_URL` / `_MODEL` / `_REASONING_EFFORT` / `_API_KEY` | 可选的 Codex/Claude 路由：在 `Settings → Agent Runtime` 添加、改名和配置。Codex 添加线路可单独选择 thinking 强度；留空沿用全局 Codex 值。Token 留空保存会保留已有 Token。旧的 `CEO_CODEX_API_*` / `CEO_CLAUDE_API_*` 在服务启动时一次性迁移为名为 `codex_api` / `claude_api` 的添加线路。 |
 | `CEO_AGENT_RUNTIME_ROUTES` / `CEO_FRIDAY_RUNTIME_BASE_URL` / `CEO_FRIDAY_RUNTIME_PROJECT_ID` / `CEO_FRIDAY_RUNTIME_MODEL` / `CEO_FRIDAY_RUNTIME_PROVIDER_BASE_URL` / `CEO_FRIDAY_RUNTIME_PROVIDER_MODEL` / `CEO_FRIDAY_RUNTIME_PROVIDER_API_KEY` / `CEO_FRIDAY_RUNTIME_TICKET`（或 `CEO_FRIDAY_SESSION_TOKEN`） | 可选 Friday Runtime fallback：启用 `friday_runtime` 后填写 Friday Runtime 地址、project ID、Runtime provider 地址/模型/API Token 和一个 Runtime 凭据。Friday provider 配置使用独立的 `CEO_FRIDAY_RUNTIME_PROVIDER_*` 字段，不与 Codex API URL/key 共享；Runtime ticket/session token 仍只用于访问 Friday Runtime。本地无鉴权测试必须显式设置 `CEO_FRIDAY_RUNTIME_AUTH_DISABLED=1`。 |
 | `CEO_CODEX_CAPACITY_RETRY_DELAY` | Codex 明确返回 workspace credits、quota 或 usage limit 后的全局暂停期；默认 30 分钟，暂停期内不再启动新的 Codex 回复、工作汇总或会议分析，过期后自动恢复 |
 | `CEO_CODEX_CAPACITY_RETRY_MAX_DELAY` | Codex 容量持续不足时的最长探测间隔；默认 4 小时。探测从 `CEO_CODEX_CAPACITY_RETRY_DELAY` 开始逐次翻倍，成功后重置 |
@@ -484,6 +487,10 @@ Tasks 不再把 Project 当作所有事项的容器。来源先形成候选 Task
 
 核心语义表以 `business_*` 命名：来源信号、Task、证据、日期、Task 事件、关系/聚类、业务锚点、正式 Project/候选 Project、CEO Attention 投影、Task 键控跟进与钉钉 TODO 链接。旧 `work_projects`、`work_todos`、`work_updates` 仍作为历史证据读取；`task-semantic-import-plan` 生成带来源指纹的只读导入计划，`task-semantic-import-apply` 只接受与清单完全匹配的有界批次。**生产库导入须在审阅清单后另行明确批准；目前没有执行生产导入。**
 
+旧 Work Project、Work Todo、Work Update 的五个 Store 创建/更新入口已退休。历史行仍由现有 reader、History 和 legacy-project 详情读取；语义导入仍须依据来源证据与已审阅清单显式执行。
+
+Store `2026-10-19.11`／Email53 进一步按明确批准永久退休九个旧运营控制/评估字段，51 个源字段保留 42 个；`follow_up_question`、`changes_json`、业务事实、来源与 provider 回执继续可读。当前 DTO/API/UI 不再暴露九字段。配对发布支持准确的19.8/19.9/19.10来源，逆迁保留当前新增事实，仅为九字段恢复中性默认值；不保存旧值副本。见[完整字段映射](docs/business-model-legacy-fields-mapping.md)和[验证边界](docs/business-model-legacy-fields-validation.md)。
+
 Task Agent 为每个来源判断 0 到多个 Task 决定。正式任务必须有来源明确的负责人以及四种正式依据之一；明确指派不等于负责人已接受。外部钉钉 TODO 只是 Task 的镜像，只有正式、开放、已接受且有可解析承诺期限的 Task 才能排入创建队列。Agent 不直接创建、修改或完成外部 TODO；本地完成、提供者回执和有界重试按 Task ID 关联保存。跟进日期必须是来源明确的 `next_check_at`，不从通用截止日推算，也不猜收件人：群聊发回精确来源会话并提及有证据的负责人；单聊只发给来源明确指定的负责人。
 
 Task Agent 与完成检查共用 `task-agent:work-tracking:v1` 会话范围，每个 Work Item 仍有独立处理记录；后续输入续接同一路由会话，context compact 由 CLI 原生管理。主服务每 `CEO_TASK_WORK_ITEM_INTERVAL_SECONDS` 秒消费 reply worker 写入的 Work Item（默认 60 秒）；每日维护由 `CEO_TASK_DAILY_INTERVAL_SECONDS` 控制（默认 86400 秒），包含开放正式 Task 的完成检查且无需先有 Project。旧历史读取/排空路径仍暂时保留；历史队列和待跟进的最终排空边界须在切换时核实。
@@ -505,15 +512,17 @@ Task Agent 与完成检查共用 `task-agent:work-tracking:v1` 会话范围，�
   对同一流程的后续扫描，服务会把已核验的审批动作作为幂等依据交给 Agent：先读取实时状态，
   不重复已确认的同一动作；只有新增证据要求不同动作时才可再次处理。
 
-钉钉 Todo 是 owner 执行层，不替代 `/tasks` 里的内部项目管理视图。只有明确 owner、due time、非敏感且未完成的高置信 TODO 会创建钉钉 Todo；Derek 默认不作为执行人加入。内部 `work_todos` 仍是主数据，钉钉 Todo 只同步创建、完成状态拉取和有强证据时的完成推送。发送 follow-up 前会先检查已关联的钉钉 Todo 状态：如果钉钉侧已经完成，系统会关闭内部 TODO 并跳过提醒，避免重复催办。创建阶段没有取得外部 task id 的 `TOKEN_VERIFIED_FAILED` 或安全校验调用失败，会保留原始提交内容并自动重试一次；第二次仍失败保留明确错误，不会无限创建重复待办。
+钉钉 Todo 是当前 BusinessTask 的外部执行镜像。只有正式、开放、负责人明确、承诺已接受，且来源支持可解析 `committed_deadline_at` 的 Task 才进入镜像 outbox；其他日期不作为镜像期限。创建先保存 provider task ID 再读回，结果未知时沿用当前回执核对流程，不盲目重复创建。钉钉完成扫描只按当前 Task 的准确 provider 链接关闭该 Task、记录完成证据并关闭其 follow-up。
 
-Follow-up 发送使用稳定的幂等键。若钉钉返回登录、权限或已识别的目标错误，服务保留明确原因；若发送命令仅返回无业务码的未知结果，服务将草稿延迟重试并复用同一幂等键，而不是标记为不可恢复的失败。重复请求会由钉钉幂等回执收敛，避免重复催办。
+旧 Work Todo 的创建、重试、完成同步和 outbox 调度已退休。无法核验 current Task 身份的旧记录按原身份保留来源、业务事实和执行回执，公共整数 ID 相同也不建立关联或晋升 Task。已保存的 `active` 状态仅表示历史记录；本次退休不取消、完成或重发真实钉钉 Todo。旧 link/outbox 历史查询继续可用，旧状态修补脚本 `reclassify_unmirrored_todo_outbox.py` 已移除。
+
+当前 follow-up 由 Derek 在 Task 详情页点击发送；到期不自动发送。新信息更新 Task 时撤回该 Task 尚未发送的 follow-up；发送失败或结果未知保留原 attempt 和回执，由再次点击创建新 revision。旧 follow-up 仍按历史记录读取。
 
 可见性：
 
-- `/tasks/{project_id}` 的每个 TODO 下会显示钉钉 Todo 的 task id、状态、最近 pull/push 时间和错误。
-- `/logs` 会显示 `DingTalk Todo` 类别的创建、拉取和完成同步记录。
-- `daily-task-maintenance` 输出包含 `dingtalk_todos_closed`，表示本次从钉钉 Todo 拉取后关闭的内部 TODO 数量。
+- `/tasks/item/{task_id}` 展示当前 Task；旧 Todo 深链接使用 `/tasks/legacy-project/{legacyProjectId}`，保留原来的外部 ID、状态、pull/push 时间和错误。
+- `/logs` 的 `DingTalk Todo` 历史记录继续可查询；Status 的 dispatcher adapter 队列已移除旧 Todo outbox，保留 `business_task_todo_sync_outbox`。独立 D1c 已从 Status 聚合和小时质量检查移除旧 link/outbox 的运营计数；旧事实、回执与 History 读取仍按原身份保留。
+- 定时任务「补查遗漏的钉钉消息和日历更新」执行当前 Task 的完成扫描，输出中的 `dingtalk_todos_closed` 是本次关闭的当前 Task 数量。需要补跑时在 Console 手动运行该定时任务。
 
 手动补跑命令：
 
@@ -526,29 +535,21 @@ cd /path/to/ceo-agent-service
 # 扫描新增 AI 听记和 CEO_WORKSPACE 下的新增 Markdown/text 文件
 "$HOME/miniforge3/bin/ceo-agent" scan-task-sources
 
-# 只读生成 task project 修复清单；应用前必须先审阅 JSON 并备份数据库
+# 只读生成历史 task project 修复清单，供核查候选和来源证据
 "$HOME/miniforge3/bin/python" -m app.cli repair-task-projects-plan \
   --db /absolute/current.sqlite3 \
   --historical-db /absolute/historical.sqlite3 \
   --manifest /absolute/task-project-repair.json
 
-# 按数据库指纹和 expected old value 原子应用已审阅清单
-"$HOME/miniforge3/bin/python" -m app.cli repair-task-projects-apply \
-  --db /absolute/current.sqlite3 \
-  --manifest /absolute/task-project-repair.json
-
 # 扫描当前登录人的钉钉 OA 待审批
 "$HOME/miniforge3/bin/ceo-agent" scan-oa-approvals
-
-# 扫描、处理 Work Item、处理到期 follow-up
-CEO_NOT_SEND_MESSAGE=1 "$HOME/miniforge3/bin/ceo-agent" daily-task-maintenance --not-send-message
 ```
 
 `scan-task-sources` 的本地文件扫描只读取 `CEO_WORKSPACE` 指定路径，不会全盘扫描。`local_file` Work Item 只能更新明确匹配的现有项目；没有可靠匹配时必须跳过，不能从历史文档自动新建项目。AI 听记通过当前 `dws` 登录态从最新页读取到已记录的时间边界；首次只建立最新页基线，后续在到达该边界时停止，不会为查找历史 ID 持续使用易失效分页游标。旧版仅含 ID 的状态会安全读取一页、处理该恢复窗口中未记录的条目，并建立时间边界。
 
 Task Agent 创建 project 时必须提供非空标题。更新采用受保护的稀疏语义：结构化输出里的空字符串、空数组或枚举默认值不能覆盖已有的标题、分类、owner、目标、背景、facts 或来源记录；需要有意清除这些字段时必须走单独、可审计的人工修复流程。项目匹配会遍历全部 active/waiting project，再只把最高分候选交给 Agent，避免旧项目因超过 500 条窗口而不可见。
 
-`repair-task-projects-plan` 不修改数据库。它只恢复当前为空且能由历史 task-agent 决策或指定历史快照追溯的字段，并只把“来源文件比入库时间早至少 14 天、所有业务更新均为 local_file、且没有 TODO/follow-up”的项目列为归档候选。`repair-task-projects-apply` 使用 manifest 中的数据库指纹与 expected old value 防止错库或并发覆盖，在同一事务中写入字段、归档状态和 `repair_task_projects` 审计 update；重复应用不会重复修改或重复写审计记录。生产执行前使用 SQLite 在线备份 API 创建并验证备份，不要在服务运行时直接复制 WAL 数据库文件。
+`repair-task-projects-plan` 不修改数据库，只把当前为空且能由历史 task-agent 决策或指定历史快照追溯的字段列为恢复候选，并只把“来源文件比入库时间早至少 14 天、所有业务更新均为 local_file、且没有 TODO/follow-up”的项目列为归档候选。它将候选和来源证据写入指定的 JSON 清单；手工应用该清单的 `repair-task-projects-apply` 命令已退休。已有历史项目、TODO、更新和回执仍可查询；当前 Task 写入及 `task-semantic-import-plan`／`task-semantic-import-apply` 保持原有行为。
 
 CEO reply agent 使用原生 `codex exec`，沿用启动服务的安装用户现有 `~/.codex` 配置、MCP、
 plugins、Skills 和认证状态；hooks 不沿用（`--disable hooks`），以免插件的收尾钩子在一轮里生成第二份结果。服务不会把 MCP transport、OAuth header、bearer token 或

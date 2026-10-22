@@ -1,0 +1,674 @@
+{
+  "schema": "ceo-task-lifecycle-field-map-v1",
+  "source_commit": "1aed63ec3c9abb345b685749e70852958bf22776",
+  "source_pair": [
+    "2026-10-19.7",
+    53
+  ],
+  "target_pair": [
+    "2026-10-19.8",
+    53
+  ],
+  "physical_columns": {
+    "id": {
+      "source": "tasks.id",
+      "representation": "INTEGER PRIMARY KEY; global physical Task identity unchanged"
+    },
+    "_kind": {
+      "source": "tasks._kind",
+      "representation": "existing integer kind code; record_type remains generated"
+    },
+    "legacy_key": {
+      "source": "tasks.legacy_key",
+      "representation": "source-qualified public identity unchanged"
+    },
+    "payload_json": {
+      "source": "tasks.payload_json retained domain cells",
+      "representation": "one JSONB array; mapped cells removed; existing root framing preserved"
+    },
+    "parent_id": {
+      "source": "tasks.parent_id",
+      "representation": "original typed physical FK"
+    },
+    "current_input_id": {
+      "source": "tasks.current_input_id",
+      "representation": "original reply input FK"
+    },
+    "claimed_input_id": {
+      "source": "tasks.claimed_input_id",
+      "representation": "original claimed reply input FK"
+    },
+    "status": {
+      "source": "per_kind_sources below",
+      "representation": "single exact encoded JSONB scalar; absent source fact SQL NULL; original SQL NULL encoded JSONB null",
+      "read_alias": "lifecycle_status",
+      "decoded_affinity": "TEXT"
+    },
+    "available_at": {
+      "source": "per_kind_sources below",
+      "representation": "single exact encoded JSONB scalar; absent source fact SQL NULL; original SQL NULL encoded JSONB null",
+      "read_alias": "lifecycle_available_at",
+      "decoded_affinity": "TEXT"
+    },
+    "attempts": {
+      "source": "per_kind_sources below",
+      "representation": "single exact encoded JSONB scalar; absent source fact SQL NULL; original SQL NULL encoded JSONB null",
+      "read_alias": "lifecycle_attempts",
+      "decoded_affinity": "INTEGER"
+    },
+    "error": {
+      "source": "per_kind_sources below",
+      "representation": "single exact encoded JSONB scalar; absent source fact SQL NULL; original SQL NULL encoded JSONB null",
+      "read_alias": "lifecycle_error",
+      "decoded_affinity": "TEXT"
+    },
+    "created_at": {
+      "source": "per_kind_sources below",
+      "representation": "single exact encoded JSONB scalar; absent source fact SQL NULL; original SQL NULL encoded JSONB null",
+      "read_alias": "lifecycle_created_at",
+      "decoded_affinity": "TEXT"
+    },
+    "updated_at": {
+      "source": "per_kind_sources below",
+      "representation": "single exact encoded JSONB scalar; absent source fact SQL NULL; original SQL NULL encoded JSONB null",
+      "read_alias": "lifecycle_updated_at",
+      "decoded_affinity": "TEXT"
+    },
+    "locked_at": {
+      "source": "per_kind_sources below",
+      "representation": "single exact encoded JSONB scalar; absent source fact SQL NULL; original SQL NULL encoded JSONB null",
+      "read_alias": "lifecycle_locked_at",
+      "decoded_affinity": "TEXT"
+    },
+    "lease_owner": {
+      "source": "per_kind_sources below",
+      "representation": "single exact encoded JSONB scalar; absent source fact SQL NULL; original SQL NULL encoded JSONB null",
+      "read_alias": "lifecycle_lease_owner",
+      "decoded_affinity": "TEXT"
+    },
+    "lease_expires_at": {
+      "source": "per_kind_sources below",
+      "representation": "single exact encoded JSONB scalar; absent source fact SQL NULL; original SQL NULL encoded JSONB null",
+      "read_alias": "lifecycle_lease_expires_at",
+      "decoded_affinity": "TEXT"
+    },
+    "owner_pid": {
+      "source": "per_kind_sources below",
+      "representation": "single exact encoded JSONB scalar; absent source fact SQL NULL; original SQL NULL encoded JSONB null",
+      "read_alias": "lifecycle_owner_pid",
+      "decoded_affinity": "INTEGER"
+    },
+    "generation": {
+      "source": "per_kind_sources below",
+      "representation": "single exact encoded JSONB scalar; absent source fact SQL NULL; original SQL NULL encoded JSONB null",
+      "read_alias": "lifecycle_generation",
+      "decoded_affinity": "INTEGER"
+    },
+    "adapter_name": {
+      "source": "per_kind_sources below",
+      "representation": "single exact encoded JSONB scalar; absent source fact SQL NULL; original SQL NULL encoded JSONB null",
+      "read_alias": "lifecycle_adapter_name",
+      "decoded_affinity": "TEXT"
+    }
+  },
+  "per_kind_sources": {
+    "reply_tasks": {
+      "status": "tasks.payload_json[11] (status)",
+      "available_at": "tasks.payload_json[7] (available_at)",
+      "attempts": "tasks.payload_json[12] (attempts)",
+      "error": "tasks.payload_json[14] (error)",
+      "created_at": "tasks.payload_json[15] (created_at)",
+      "updated_at": "tasks.payload_json[16] (updated_at)",
+      "locked_at": "tasks.payload_json[13] (locked_at)",
+      "lease_owner": "state.dispatcher_claim_leases.owner (exact eligible adapter + source_id=Task legacy_key)",
+      "lease_expires_at": "state.dispatcher_claim_leases.lease_expires_at (exact eligible adapter + source_id=Task legacy_key)",
+      "owner_pid": "state.dispatcher_claim_leases.owner_pid (exact eligible adapter + source_id=Task legacy_key)",
+      "generation": "state.dispatcher_claim_leases.generation (exact eligible adapter + source_id=Task legacy_key)",
+      "adapter_name": "state.dispatcher_claim_leases.adapter_name (exact eligible adapter + source_id=Task legacy_key)"
+    },
+    "reply_task_inputs": {
+      "status": null,
+      "available_at": null,
+      "attempts": null,
+      "error": null,
+      "created_at": null,
+      "updated_at": null,
+      "locked_at": null,
+      "lease_owner": null,
+      "lease_expires_at": null,
+      "owner_pid": null,
+      "generation": null,
+      "adapter_name": null
+    },
+    "work_summary_inputs": {
+      "status": "tasks.payload_json[3] (status)",
+      "available_at": "tasks.payload_json[8] (available_at)",
+      "attempts": "tasks.payload_json[4] (attempts)",
+      "error": "tasks.payload_json[5] (error)",
+      "created_at": "tasks.payload_json[6] (created_at)",
+      "updated_at": "tasks.payload_json[7] (updated_at)",
+      "locked_at": null,
+      "lease_owner": "state.dispatcher_claim_leases.owner (exact eligible adapter + source_id=Task legacy_key)",
+      "lease_expires_at": "state.dispatcher_claim_leases.lease_expires_at (exact eligible adapter + source_id=Task legacy_key)",
+      "owner_pid": "state.dispatcher_claim_leases.owner_pid (exact eligible adapter + source_id=Task legacy_key)",
+      "generation": "state.dispatcher_claim_leases.generation (exact eligible adapter + source_id=Task legacy_key)",
+      "adapter_name": "state.dispatcher_claim_leases.adapter_name (exact eligible adapter + source_id=Task legacy_key)"
+    },
+    "meeting_alignment_jobs": {
+      "status": "tasks.payload_json[6] (status)",
+      "available_at": "tasks.payload_json[9] (available_at)",
+      "attempts": "tasks.payload_json[7] (attempts)",
+      "error": "tasks.payload_json[10] (error)",
+      "created_at": "tasks.payload_json[18] (created_at)",
+      "updated_at": "tasks.payload_json[19] (updated_at)",
+      "locked_at": "tasks.payload_json[8] (locked_at)",
+      "lease_owner": "state.dispatcher_claim_leases.owner (exact eligible adapter + source_id=Task legacy_key)",
+      "lease_expires_at": "state.dispatcher_claim_leases.lease_expires_at (exact eligible adapter + source_id=Task legacy_key)",
+      "owner_pid": "state.dispatcher_claim_leases.owner_pid (exact eligible adapter + source_id=Task legacy_key)",
+      "generation": "state.dispatcher_claim_leases.generation (exact eligible adapter + source_id=Task legacy_key)",
+      "adapter_name": "state.dispatcher_claim_leases.adapter_name (exact eligible adapter + source_id=Task legacy_key)"
+    },
+    "okr_review_requests": {
+      "status": "tasks.payload_json[10] (status)",
+      "available_at": null,
+      "attempts": null,
+      "error": "tasks.payload_json[11] (error)",
+      "created_at": "tasks.payload_json[13] (created_at)",
+      "updated_at": "tasks.payload_json[14] (updated_at)",
+      "locked_at": null,
+      "lease_owner": "state.dispatcher_claim_leases.owner (exact eligible adapter + source_id=Task legacy_key)",
+      "lease_expires_at": "state.dispatcher_claim_leases.lease_expires_at (exact eligible adapter + source_id=Task legacy_key)",
+      "owner_pid": "state.dispatcher_claim_leases.owner_pid (exact eligible adapter + source_id=Task legacy_key)",
+      "generation": "state.dispatcher_claim_leases.generation (exact eligible adapter + source_id=Task legacy_key)",
+      "adapter_name": "state.dispatcher_claim_leases.adapter_name (exact eligible adapter + source_id=Task legacy_key)"
+    },
+    "weekly_okr_analysis_jobs": {
+      "status": "tasks.payload_json[3] (status)",
+      "available_at": null,
+      "attempts": null,
+      "error": "tasks.payload_json[6] (error)",
+      "created_at": "tasks.payload_json[7] (created_at)",
+      "updated_at": "tasks.payload_json[9] (updated_at)",
+      "locked_at": null,
+      "lease_owner": "tasks.payload_json[4] (lease_owner)",
+      "lease_expires_at": "tasks.payload_json[5] (lease_expires_at)",
+      "owner_pid": null,
+      "generation": null,
+      "adapter_name": null
+    },
+    "workbench_tasks": {
+      "status": null,
+      "available_at": null,
+      "attempts": null,
+      "error": null,
+      "created_at": null,
+      "updated_at": null,
+      "locked_at": null,
+      "lease_owner": null,
+      "lease_expires_at": null,
+      "owner_pid": null,
+      "generation": null,
+      "adapter_name": null
+    },
+    "workbench_turns": {
+      "status": "tasks.payload_json[3] (status)",
+      "available_at": null,
+      "attempts": null,
+      "error": null,
+      "created_at": "tasks.payload_json[14] (created_at)",
+      "updated_at": "tasks.payload_json[15] (updated_at)",
+      "locked_at": null,
+      "lease_owner": "tasks.payload_json[8] (lease_owner)",
+      "lease_expires_at": "tasks.payload_json[9] (lease_expires_at)",
+      "owner_pid": null,
+      "generation": null,
+      "adapter_name": null
+    },
+    "business_object_tasks": {
+      "status": null,
+      "available_at": null,
+      "attempts": null,
+      "error": null,
+      "created_at": null,
+      "updated_at": null,
+      "locked_at": null,
+      "lease_owner": null,
+      "lease_expires_at": null,
+      "owner_pid": null,
+      "generation": null,
+      "adapter_name": null
+    },
+    "email_agent_classification_tasks": {
+      "status": "tasks.payload_json[3] (status)",
+      "available_at": "tasks.payload_json[8] (available_at)",
+      "attempts": "tasks.payload_json[6] (attempt_count)",
+      "error": "tasks.payload_json[11] (error)",
+      "created_at": "tasks.payload_json[12] (created_at)",
+      "updated_at": "tasks.payload_json[13] (updated_at)",
+      "locked_at": null,
+      "lease_owner": "tasks.payload_json[4] (owner)",
+      "lease_expires_at": "tasks.payload_json[7] (lease_expires_at)",
+      "owner_pid": null,
+      "generation": "tasks.payload_json[5] (generation)",
+      "adapter_name": null
+    },
+    "email_historical_candidates": {
+      "status": null,
+      "available_at": null,
+      "attempts": null,
+      "error": null,
+      "created_at": null,
+      "updated_at": null,
+      "locked_at": null,
+      "lease_owner": null,
+      "lease_expires_at": null,
+      "owner_pid": null,
+      "generation": null,
+      "adapter_name": null
+    },
+    "feedback_iteration_decisions": {
+      "status": null,
+      "available_at": null,
+      "attempts": null,
+      "error": null,
+      "created_at": null,
+      "updated_at": null,
+      "locked_at": null,
+      "lease_owner": null,
+      "lease_expires_at": null,
+      "owner_pid": null,
+      "generation": null,
+      "adapter_name": null
+    },
+    "feedback_processing_batches": {
+      "status": null,
+      "available_at": null,
+      "attempts": null,
+      "error": null,
+      "created_at": null,
+      "updated_at": null,
+      "locked_at": null,
+      "lease_owner": null,
+      "lease_expires_at": null,
+      "owner_pid": null,
+      "generation": null,
+      "adapter_name": null
+    },
+    "feedback_processing_items": {
+      "status": "tasks.payload_json[2] (status)",
+      "available_at": null,
+      "attempts": null,
+      "error": null,
+      "created_at": "tasks.payload_json[13] (created_at)",
+      "updated_at": "tasks.payload_json[14] (updated_at)",
+      "locked_at": null,
+      "lease_owner": null,
+      "lease_expires_at": null,
+      "owner_pid": null,
+      "generation": null,
+      "adapter_name": null
+    },
+    "feedback_processing_rounds": {
+      "status": null,
+      "available_at": null,
+      "attempts": null,
+      "error": null,
+      "created_at": null,
+      "updated_at": null,
+      "locked_at": null,
+      "lease_owner": null,
+      "lease_expires_at": null,
+      "owner_pid": null,
+      "generation": null,
+      "adapter_name": null
+    },
+    "oa_notification_events": {
+      "status": null,
+      "available_at": null,
+      "attempts": null,
+      "error": null,
+      "created_at": null,
+      "updated_at": null,
+      "locked_at": null,
+      "lease_owner": null,
+      "lease_expires_at": null,
+      "owner_pid": null,
+      "generation": null,
+      "adapter_name": null
+    },
+    "okr_review_items": {
+      "status": null,
+      "available_at": null,
+      "attempts": null,
+      "error": null,
+      "created_at": null,
+      "updated_at": null,
+      "locked_at": null,
+      "lease_owner": null,
+      "lease_expires_at": null,
+      "owner_pid": null,
+      "generation": null,
+      "adapter_name": null
+    },
+    "wechat_memory_import_jobs": {
+      "status": "tasks.payload_json[2] (status)",
+      "available_at": null,
+      "attempts": null,
+      "error": "tasks.payload_json[3] (error)",
+      "created_at": "tasks.payload_json[4] (created_at)",
+      "updated_at": "tasks.payload_json[6] (updated_at)",
+      "locked_at": null,
+      "lease_owner": null,
+      "lease_expires_at": null,
+      "owner_pid": null,
+      "generation": null,
+      "adapter_name": null
+    },
+    "workbench_artifacts": {
+      "status": null,
+      "available_at": null,
+      "attempts": null,
+      "error": null,
+      "created_at": null,
+      "updated_at": null,
+      "locked_at": null,
+      "lease_owner": null,
+      "lease_expires_at": null,
+      "owner_pid": null,
+      "generation": null,
+      "adapter_name": null
+    },
+    "workbench_attachments": {
+      "status": null,
+      "available_at": null,
+      "attempts": null,
+      "error": null,
+      "created_at": null,
+      "updated_at": null,
+      "locked_at": null,
+      "lease_owner": null,
+      "lease_expires_at": null,
+      "owner_pid": null,
+      "generation": null,
+      "adapter_name": null
+    }
+  },
+  "normalized_read_status_mappings": {
+    "meeting_alignment_jobs": {
+      "waiting": "pending",
+      "retry": "pending",
+      "ready_to_send": "processing",
+      "sent": "done",
+      "no_action": "skipped"
+    },
+    "weekly_okr_analysis_jobs": {
+      "running": "processing",
+      "completed": "done"
+    },
+    "workbench_turns": {
+      "queued": "pending",
+      "running": "processing",
+      "completed": "done"
+    },
+    "email_agent_classification_tasks": {
+      "running": "processing"
+    },
+    "feedback_processing_items": {
+      "resolved": "done"
+    },
+    "wechat_memory_import_jobs": {
+      "running": "processing",
+      "completed": "done"
+    }
+  },
+  "eligible_adapters": {
+    "reply_tasks": {
+      "dingtalk": "reply",
+      "wechat": "reply",
+      "scheduled": "scheduled_execution",
+      "otherwise": null
+    },
+    "work_summary_inputs": "work_summary",
+    "meeting_alignment_jobs": "meeting",
+    "okr_review_requests": "okr_review"
+  },
+  "unmapped_lifecycle_default": null,
+  "source_status_storage": "Original source encoded scalar only; lifecycle_status and meeting_phase read-only derived",
+  "payload_field_order": {
+    "reply_tasks": [
+      "channel",
+      "conversation_id",
+      "conversation_title",
+      "single_chat",
+      "trigger_message_id",
+      "trigger_create_time",
+      "trigger_sender",
+      "force_new_decision",
+      "oa_url",
+      "manual_rerun_attempt_id",
+      "execution_generation",
+      "manual_rerun_revision_key",
+      "recovery_code",
+      "business_object_key",
+      "input_version",
+      "claimed_input_version"
+    ],
+    "reply_task_inputs": [
+      "channel",
+      "conversation_id",
+      "conversation_title",
+      "single_chat",
+      "trigger_message_id",
+      "trigger_create_time",
+      "trigger_sender",
+      "trigger_text",
+      "trigger_message_json",
+      "oa_url",
+      "business_object_key",
+      "input_revision_key",
+      "created_at",
+      "input_provenance_json",
+      "input_compacted"
+    ],
+    "work_summary_inputs": [
+      "source_type",
+      "source_ref",
+      "payload_json",
+      "source_created_at",
+      "body_sha256",
+      "body_bytes",
+      "body_compacted"
+    ],
+    "meeting_alignment_jobs": [
+      "meeting_id",
+      "title",
+      "source_json",
+      "participants_json",
+      "ended_at",
+      "eligible_at",
+      "decision_json",
+      "target_kind",
+      "target_id",
+      "target_title",
+      "mentions_json",
+      "final_message",
+      "send_result_json",
+      "calendar_summary_status",
+      "calendar_summary_result_json"
+    ],
+    "okr_review_requests": [
+      "conversation_id",
+      "conversation_title",
+      "trigger_message_id",
+      "trigger_sender",
+      "trigger_sender_user_id",
+      "trigger_text",
+      "period_label",
+      "period_start",
+      "period_end",
+      "okr_source_json",
+      "codex_session_id"
+    ],
+    "weekly_okr_analysis_jobs": [
+      "week_end",
+      "manager_user_id",
+      "source_digest",
+      "finished_at"
+    ],
+    "workbench_tasks": [
+      "title",
+      "runtime_kind",
+      "provider_session_ref",
+      "archived_at",
+      "created_at",
+      "updated_at"
+    ],
+    "workbench_turns": [
+      "client_request_id",
+      "task_sequence",
+      "user_text",
+      "stop_requested",
+      "error_code",
+      "error_detail",
+      "resume_context",
+      "execution_run_id",
+      "runtime_quiesced_run_id",
+      "started_at",
+      "completed_at"
+    ],
+    "business_object_tasks": [
+      "business_object_key",
+      "created_at",
+      "updated_at"
+    ],
+    "email_agent_classification_tasks": [
+      "task_id",
+      "channel",
+      "stable_message_identity",
+      "input_json",
+      "result_json"
+    ],
+    "email_historical_candidates": [
+      "account_id",
+      "folder",
+      "model_id",
+      "stable_message_identity",
+      "normalized_text",
+      "provider_message_json",
+      "uidvalidity",
+      "uid",
+      "state",
+      "reason",
+      "attempted_at",
+      "next_retry_at",
+      "updated_at"
+    ],
+    "feedback_iteration_decisions": [
+      "batch_id",
+      "workbench_task_id",
+      "workbench_turn_id",
+      "decision_json",
+      "created_at"
+    ],
+    "feedback_processing_batches": [
+      "batch_id",
+      "status",
+      "requested_count",
+      "created_at",
+      "updated_at",
+      "resolved_at"
+    ],
+    "feedback_processing_items": [
+      "feedback_key",
+      "batch_id",
+      "workbench_task_id",
+      "workbench_turn_id",
+      "attempt_id",
+      "agent_run_id",
+      "commit_sha",
+      "test_evidence_json",
+      "restart_evidence_json",
+      "health_evidence_json",
+      "note",
+      "resolved_at",
+      "current_round_id"
+    ],
+    "feedback_processing_rounds": [
+      "feedback_key",
+      "round_number",
+      "batch_id",
+      "status",
+      "workbench_task_id",
+      "workbench_turn_id",
+      "attempt_id",
+      "agent_run_id",
+      "commit_sha",
+      "test_evidence_json",
+      "restart_evidence_json",
+      "health_evidence_json",
+      "backlog_evidence_json",
+      "receipt_version",
+      "note",
+      "started_at",
+      "resolved_at",
+      "reopened_at",
+      "reopen_reason",
+      "created_at",
+      "updated_at",
+      "scope_receipt_json"
+    ],
+    "oa_notification_events": [
+      "event_kind",
+      "requires_reply",
+      "process_instance_id",
+      "task_id",
+      "channel",
+      "conversation_id",
+      "conversation_title",
+      "trigger_message_id",
+      "trigger_create_time",
+      "trigger_sender",
+      "trigger_text",
+      "trigger_message_json",
+      "oa_url",
+      "status",
+      "claimed_attempt_id",
+      "result_attempt_id",
+      "last_error",
+      "created_at",
+      "updated_at",
+      "sent_at"
+    ],
+    "okr_review_items": [
+      "request_id",
+      "objective_title",
+      "objective_weight",
+      "kr_title",
+      "kr_weight",
+      "item_json",
+      "created_at"
+    ],
+    "wechat_memory_import_jobs": [
+      "import_run_id",
+      "account_id",
+      "finished_at"
+    ],
+    "workbench_artifacts": [
+      "id",
+      "label",
+      "path",
+      "media_type",
+      "created_at"
+    ],
+    "workbench_attachments": [
+      "id",
+      "client_request_id",
+      "filename",
+      "media_type",
+      "size_bytes",
+      "content_sha256",
+      "storage_path",
+      "created_at"
+    ]
+  }
+}

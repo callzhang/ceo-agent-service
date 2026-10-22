@@ -16,6 +16,7 @@ from app.action_storage import ACTION_PROJECTIONS, insert_action, update_action
 from app.audit_web import _reply_attempt_queue_snapshot, handle_rerun_attempt_post
 from app.quality_gate import scan_hourly_quality
 from app.store import AutoReplyStore
+from app.state_definitions import state_projection
 from app.web_api.attempts import build_attempt_detail
 
 
@@ -160,7 +161,7 @@ def test_explicit_retirement_records_provenance_preserves_history_and_is_idempot
                       "candidate_action_attempts", "external_action_results", "sent_replies"):
             source = f'({ACTION_PROJECTIONS[table]})' if table in ACTION_PROJECTIONS else table
             assert db.execute(f"select count(*) from {source}").fetchone()[0] == 0
-        assert json.loads(db.execute("select value from service_state where key=?",
+        assert json.loads(db.execute("select value from (" + state_projection("service_state") + ") where key=?",
                           (f"rule_question_retirement:{attempt_id}",)).fetchone()[0]) == receipt
 
 

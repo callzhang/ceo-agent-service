@@ -1,0 +1,18 @@
+{
+  "schema": "ceo-execution-owner-publication-freeze-v1",
+  "commit": "36004d4b0dd76a5d01797e8a40f3a3f4969eabe0",
+  "files": 1202,
+  "sha256": "e191bdc1b0ae0c4c4becbf6ba0c593d3ac0e522bb65a20b1f8064f16f3a67cce",
+  "digest_format": "sorted unique path UTF-8 + NUL + raw SHA256(file bytes) + NUL",
+  "native_full_copy_source": "bf6b71ebfa9e0e67cb4c5b9f56e9da59ec8a8052",
+  "native_full_copy_sha256": "423b5e5a2b81527ea63753a5fdc797fc138e1181771ffdb96a7673ba2e07597d",
+  "upstream": "d88c9395f",
+  "a3_storage_release_files_unchanged": true,
+  "latest_delta": [
+    "app/consumer_agent.py",
+    "app/wechat/codex_safety.py",
+    "tests/test_agent_role_tool_boundary.py",
+    "tests/test_prompt.py"
+  ],
+  "evidence_boundary": "Full copy and native proof belong to bf6 source. Latest Consumer/OCR upstream integrated with separate focused checks; no new native run claim."
+}

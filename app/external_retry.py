@@ -6,6 +6,8 @@ from typing import TypeVar
 
 T = TypeVar("T")
 DEFAULT_MAX_RETRY_DELAY_SECONDS = 15 * 60
+MAX_AUTOMATIC_RETRIES = 3
+MAX_AUTOMATIC_ATTEMPTS = MAX_AUTOMATIC_RETRIES + 1
 
 
 class ExternalDependencyError(RuntimeError):
@@ -71,7 +73,7 @@ def run_external(
     operation: str,
     call: Callable[[], T],
     *,
-    max_attempts: int = 3,
+    max_attempts: int = MAX_AUTOMATIC_ATTEMPTS,
     delay_seconds: float = 1.0,
     backoff_multiplier: float = 2.0,
     max_delay_seconds: float = DEFAULT_MAX_RETRY_DELAY_SECONDS,
@@ -81,6 +83,7 @@ def run_external(
 ) -> T:
     if max_attempts < 1:
         raise ValueError("max_attempts must be at least 1")
+    max_attempts = min(max_attempts, MAX_AUTOMATIC_ATTEMPTS)
     retry_delay_seconds(
         delay_seconds,
         0,

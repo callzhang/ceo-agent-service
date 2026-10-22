@@ -204,15 +204,41 @@ describe("workbench event reducer", () => {
       event(12, "tool_started", { tool: "read", tool_call_id: "call-1" }),
       event(13, "tool_completed", { tool: "read", tool_call_id: "call-1", status: "completed" }),
       event(14, "artifact_created", { artifact_id: "artifact-1" }),
-      event(15, "confirmation_required", { confirmation_id: "confirmation-1" }),
     ]).events);
 
     expect(blocks.map((block) => block.key)).toEqual([
       "event:10",
       "event:12",
       "event:14",
-      "confirmation:confirmation-1",
     ]);
+  });
+
+  it("removes the retired confirmation SSE subscription while keeping native events", () => {
+    const source = new FakeEventSource("unused");
+    const connection = new EventStreamConnection({
+      turnId: "turn-1", after: 0, eventSourceFactory: () => source,
+      onEvent: vi.fn(), onConnectionError: vi.fn(),
+    });
+    connection.start();
+    try {
+      expect([...source.listeners.keys()]).toEqual([
+        "text_delta", "thinking_summary", "tool_started", "tool_completed", "file_changed",
+        "artifact_created", "status_changed", "turn_completed", "turn_failed",
+      ]);
+    } finally {
+      connection.close();
+    }
+  });
+
+  it("rejects retired confirmation events and progress fields while preserving native tool review output", () => {
+    const retired = { ...event(1, "status_changed", { status: "running" }), event_type: "confirmation_required", payload: { confirmation_id: "old" } } as unknown as WorkbenchEvent;
+    expect(createEventState([retired]).events).toEqual([]);
+    for (const eventType of ["status_changed", "turn_failed"] as const) {
+      expect(parseStreamEvent(JSON.stringify(event(2, eventType, { status: "failed", confirmation_id: "old" })), eventType)).toBeNull();
+    }
+    expect(parseStreamEvent(JSON.stringify(event(3, "status_changed", { status: "running", confirmation_status: "executed" })), "status_changed")).toBeNull();
+    const tool = event(4, "tool_completed", { tool_call_id: "native-review", kind: "command", output: "native auto_review approved", provider_item: { type: "command_execution", review: { status: "approved" } } });
+    expect(parseStreamEvent(JSON.stringify(tool), "tool_completed")).toEqual(tool);
   });
 
   it("rejects fields and value types outside the public event payload schema", () => {

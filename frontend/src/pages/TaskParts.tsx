@@ -44,7 +44,7 @@ export function CitationList({ citations, signals = [] }: { citations: SourceCit
     const link = signal ? signalSourceLink(signal.context_json) : "";
     return <li key={`${citation.signal_id}-${citation.source_ref}-${index}`}>
       <blockquote>{citation.source_excerpt}</blockquote>
-      <small>{link ? <a href={link} target="_blank" rel="noreferrer">来源：{citation.source_ref}</a> : <span>来源：{citation.source_ref}</span>}{signal?.source_time && <> · <time dateTime={signal.source_time}>{signal.source_time}</time></>}</small>
+      <small>{link ? <a href={link} target="_blank" rel="noreferrer">来源：{citation.source_ref}</a> : <span>来源：{citation.source_ref}</span>}{signal?.source_time && <> · <time dateTime={signal.source_time}>{signal.source_time}</time></>}{signal?.source_available === false && <> · 原文不可用</>}</small>
     </li>;
   })}</ul>;
 }

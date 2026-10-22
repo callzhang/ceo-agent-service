@@ -1,0 +1,77 @@
+{
+  "scope": "Retained-runs-only frozen-source full-data proof of the SQLite-staged translator. Existing Email/Business/Provider conversions are not rerun here: this validates the identical canonical runs declarations and existing native parent facts directly. Native parents retained; no complete config release, source retirement, current constructor/marker activation, provider/native CLI/send. Current write is raw insert_run into copied database only.",
+  "code_commit": "ffe327e1",
+  "source_sha256": "970a909a9cfcb4fe604d2111d5572560d4744978df20fb317c4e433059566320",
+  "runs_objects": 41,
+  "runs_columns": 95,
+  "schedule_parent_rows": 15,
+  "snapshot_parent_rows": 69,
+  "before": {
+    "rows": 231340,
+    "typed_row_pickle5_sha256": "40f906f110e574858235ec8240a0d4bb52c8cfe4630f5c1c62ca5b3adfcea788",
+    "sequence_waters": {
+      "runs": 362316
+    }
+  },
+  "mapped": {
+    "rows": 231340,
+    "typed_row_pickle5_sha256": "40f906f110e574858235ec8240a0d4bb52c8cfe4630f5c1c62ca5b3adfcea788",
+    "sequence_waters": {
+      "runs": 362316
+    }
+  },
+  "after_append_and_inverse": {
+    "rows": 231341,
+    "typed_row_pickle5_sha256": "8fd7d7393df3ec7b61f712811a40f79953dcf02aa6a4c1f47c8c4392c3ae4769",
+    "sequence_waters": {
+      "runs": 362317
+    }
+  },
+  "appended_physical_run_id": 362317,
+  "source_fk_findings": [
+    [
+      "runs",
+      190042,
+      "tasks",
+      1
+    ]
+  ],
+  "mapped_fk_findings": [
+    [
+      "runs",
+      190042,
+      "tasks",
+      1
+    ]
+  ],
+  "inverse_fk_findings": [
+    [
+      "runs",
+      190042,
+      "tasks",
+      1
+    ]
+  ],
+  "forward_seconds": 2.93,
+  "inverse_seconds": 2.955,
+  "phase_elapsed_seconds": {
+    "backup_complete": 0.82,
+    "source_digest_complete": 2.122,
+    "forward_complete": 5.132,
+    "current_write_complete": 6.885,
+    "inverse_complete": 9.84,
+    "verification_complete": 15.354
+  },
+  "peak_rss_bytes_darwin": 60047360,
+  "quick_check": "ok",
+  "executed_module_sha256": {
+    "configs_run_schema": "3d911e9ffc223ba4ad1579ce87d7271f6f806cd8c9191657774f1bc94c79881d",
+    "configs_definitions": "4ed439f7be8e99d8159bbd57ac703d72d63f43819ca7cf39212f989dafa989a3",
+    "configs_storage": "2f5ea76c7f5cebc53775a9a65e3ed81c0ccd64778e2a3bf657dd3d851d66a540",
+    "schedules_storage": "9e0a80bfb164b802cb22c8e70a6551f2d660bd3cabdf08eb7ff1d6dfdbff74f7",
+    "run_storage": "ae57fb5d13aac35672cb07de38c9b515d49651ffebce20cf3b88398e40845718"
+  },
+  "owned_temp_absent": true,
+  "original_source_sha256_unchanged": true,
+  "elapsed_seconds": 15.562
+}

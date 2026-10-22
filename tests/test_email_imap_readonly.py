@@ -1,3 +1,4 @@
+from tests.support.email_listing_oracle import StoredEmailListingOracle
 from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
 import email.message
@@ -1409,7 +1410,7 @@ def test_multi_account_folder_scan_isolates_auth_failure_and_sanitizes_result(
         "Archive",
     ]
     assert "DO-NOT-RETURN" not in repr(result)
-    rows, total = store.list_classifications(
+    rows, total = StoredEmailListingOracle(store).list_classifications(
         status=EmailClassificationStatus.PENDING_FEEDBACK,
         limit=10,
         offset=0,
@@ -1514,10 +1515,10 @@ def test_scan_persists_processed_or_pending_without_mailbox_actions(tmp_path: Pa
     assert source.requested_mailbox == "Archive"
     assert source.requested_limit == 2
     assert result == type(result)(2, 2, 1, 1)
-    processed, processed_total = store.list_classifications(
+    processed, processed_total = StoredEmailListingOracle(store).list_classifications(
         status=EmailClassificationStatus.PROCESSED, limit=20, offset=0
     )
-    pending, pending_total = store.list_classifications(
+    pending, pending_total = StoredEmailListingOracle(store).list_classifications(
         status=EmailClassificationStatus.PENDING_FEEDBACK, limit=20, offset=0
     )
     assert processed_total == 1
@@ -1550,7 +1551,7 @@ def test_scan_preserves_business_identity_when_provider_locator_moves(tmp_path: 
     store = EmailStore(tmp_path / "worker.sqlite3")
 
     scan_readonly_batch(source, classifier, store, EmailScanConfig.cold_start())
-    first, first_total = store.list_classifications(
+    first, first_total = StoredEmailListingOracle(store).list_classifications(
         status=EmailClassificationStatus.PENDING_FEEDBACK,
         limit=10,
         offset=0,
@@ -1580,7 +1581,7 @@ def test_scan_preserves_business_identity_when_provider_locator_moves(tmp_path: 
         mailbox="Archive/2026",
     )
 
-    moved, moved_total = store.list_classifications(
+    moved, moved_total = StoredEmailListingOracle(store).list_classifications(
         status=EmailClassificationStatus.PENDING_FEEDBACK,
         limit=10,
         offset=0,

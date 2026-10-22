@@ -11,7 +11,9 @@ from scripts.report_contract import (
     validate_metric,
     validate_privacy,
 )
-from scripts.validate_run import FIXED_METRICS, validate_run
+from scripts.validate_run import validate_render_input
+
+FIXED_METRICS = ("example_a", "example_b")
 
 
 class ReportContractTests(unittest.TestCase):
@@ -21,6 +23,7 @@ class ReportContractTests(unittest.TestCase):
                 "title": "2026年9月14日管理层周会",
                 "node_id": "node",
                 "revision": 7,
+            "exists": True,
             },
             "previous": {
                 "title": "2026年9月7日管理层周会",
@@ -49,7 +52,14 @@ class ReportContractTests(unittest.TestCase):
         metrics = [
             {
                 "key": key,
+                "name": key,
+                "target": "无数据",
+                "previous": "无数据",
                 "current": "无数据",
+                "change": "无数据",
+                "status": "❓",
+                "data_date": "2026-09-27",
+                "definition_evidence": "synthetic fixture",
                 "decision_critical": False,
             }
             for key in FIXED_METRICS
@@ -99,6 +109,42 @@ class ReportContractTests(unittest.TestCase):
 
     def test_complete_manifest_has_no_errors(self):
         self.assertEqual(validate_manifest(self.complete_manifest()), [])
+
+    def test_missing_target_needs_title_and_resolved_creation_parent(self):
+        manifest = self.complete_manifest()
+        manifest["target"] = {
+            "title": "2026年9月14日管理层周会",
+            "exists": False,
+            "year_page_id": "parent",
+        }
+        self.assertEqual(validate_manifest(manifest), [])
+
+    def test_missing_target_requires_resolved_creation_parent(self):
+        manifest = self.complete_manifest()
+        manifest["target"] = {
+            "title": "2026年9月14日管理层周会",
+            "exists": False,
+        }
+        self.assertIn(
+            "target creation parent is incomplete", validate_manifest(manifest)
+        )
+
+    def test_existing_target_requires_integer_revision_and_identity(self):
+        manifest = self.complete_manifest()
+        manifest["target"] = {
+            "title": "2026年9月14日管理层周会",
+            "node_id": "node",
+            "revision": -1,
+            "exists": True,
+        }
+        self.assertIn(
+            "target identity or revision is incomplete", validate_manifest(manifest)
+        )
+
+    def test_existing_target_accepts_provider_revision_string(self):
+        manifest = self.complete_manifest()
+        manifest["target"]["revision"] = "7"
+        self.assertEqual(validate_manifest(manifest), [])
 
     def test_manifest_rejects_incomplete_pagination(self):
         manifest = self.complete_manifest()
@@ -278,84 +324,32 @@ class ReportContractTests(unittest.TestCase):
             validate_issue(issue),
         )
 
-    def test_complete_run_blocks_missing_fixed_metric(self):
+    def test_missing_business_metrics_are_a_skill_review_decision(self):
         report = self.complete_report()
         report["company_metrics"] = []
-        result = validate_run(self.complete_manifest(), report, [])
-        self.assertFalse(result["publishable"])
-        self.assertIn(
-            "fixed metric new_signed_orders is missing", result["errors"]
-        )
+        self.assertEqual(validate_render_input(report), [])
 
-    def test_complete_run_requires_all_business_line_views(self):
+    def test_missing_renderer_field_is_a_mechanical_error(self):
         report = self.complete_report()
-        report["business_lines"].pop("MorningStar")
-        result = validate_run(self.complete_manifest(), report, [])
-        self.assertIn(
-            "business line MorningStar is missing from report",
-            result["errors"],
-        )
+        del report["company_metrics"][0]["name"]
+        self.assertIn("company_metrics[0] is missing renderer field name", validate_render_input(report))
 
-    def test_complete_run_limits_exception_metrics(self):
+    def test_issue_owner_and_fields_are_checked(self):
         report = self.complete_report()
-        report["company_metrics"].extend(
-            {"key": f"exception_{index}", "current": "无数据"}
-            for index in range(4)
-        )
-        result = validate_run(self.complete_manifest(), report, [])
-        self.assertIn(
-            "company report has more than 3 exception metrics",
-            result["errors"],
-        )
+        report["issues"] = [{"owner": {}}]
+        errors = validate_render_input(report)
+        self.assertIn("issues[0] is missing renderer field question", errors)
+        self.assertIn("issues[0].owner is missing renderer field name", errors)
 
-    def test_complete_run_is_publishable(self):
-        result = validate_run(
-            self.complete_manifest(), self.complete_report(), []
-        )
-        self.assertEqual(result, {"publishable": True, "errors": []})
+    def test_no_fixed_business_line_list_is_required_for_meeting_render(self):
+        report = {"ceo_judgment": [], "company_metrics": [], "issues": []}
+        self.assertEqual(validate_render_input(report), [])
 
-    def test_cockpit_item_must_be_plain_text(self):
-        # 2026-09-26: an object here rendered into a text leaf and the
-        # document service rejected the whole overwrite.
+    def test_company_metric_shape_is_checked_without_business_thresholds(self):
         report = self.complete_report()
-        report["cockpit"] = [
-            "正常一句话",
-            {"status": "⚠️", "text": "对象不是合法的段落文本"},
-        ]
-        result = validate_run(self.complete_manifest(), report, [])
-        self.assertFalse(result["publishable"])
-        self.assertIn("cockpit[1] must be a string, got dict", result["errors"])
-
-    def test_discussion_and_judgment_shapes_are_checked(self):
-        report = self.complete_report()
-        report["discussion"] = [{"text": "x"}]
-        report["ceo_judgment"] = ["缺少状态的裸字符串"]
-        report["root_causes"] = [{"status": "⚠️"}]
-        errors = validate_run(self.complete_manifest(), report, [])["errors"]
-        self.assertIn("discussion[0] must be a string, got dict", errors)
-        self.assertIn(
-            "ceo_judgment[0] must be an object with string status/text", errors
-        )
-        self.assertIn("root_causes[0] must be an object with string text", errors)
-
-    def test_business_line_source_nodes_must_be_valid_jsonml(self):
-        report = self.complete_report()
-        report["business_lines"]["Friday"]["full_report_jsonml"] = [
-            ["p", {}, ["span", {"data-type": "leaf"}, {"text": "x"}]]
-        ]
-        errors = validate_run(self.complete_manifest(), report, [])["errors"]
-        self.assertTrue(
-            any(e.startswith("Friday full_report_jsonml[0] $[2][2]") for e in errors)
-        )
-
-    def test_business_line_source_must_be_a_list_of_block_nodes(self):
-        report = self.complete_report()
-        report["business_lines"]["Friday"]["full_report_jsonml"] = '["root",{}]'
-        errors = validate_run(self.complete_manifest(), report, [])["errors"]
-        self.assertIn("Friday full_report_jsonml must be an array", errors)
-        report["business_lines"]["Friday"]["full_report_jsonml"] = ["x"]
-        errors = validate_run(self.complete_manifest(), report, [])["errors"]
-        self.assertIn("Friday full_report_jsonml[0] must be a block node", errors)
+        self.assertEqual(validate_render_input(report), [])
+        report["company_metrics"] = {"metric": {}}
+        self.assertIn("company_metrics must be an array", validate_render_input(report))
 
 
 if __name__ == "__main__":

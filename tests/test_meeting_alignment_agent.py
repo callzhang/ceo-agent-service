@@ -12,6 +12,7 @@ from app.meeting_alignment_agent import (
     MeetingAlignmentCodexRunner,
     MeetingAlignmentTargetError,
     MeetingOrganizerIdentityError,
+    _meeting_decision_skill_protocol,
     build_meeting_alignment_prompt,
     parse_meeting_alignment_decision,
 )
@@ -141,6 +142,43 @@ def source(*, participant_count: int = 3) -> MeetingSource:
             "source_url": "https://example.test/minutes-1",
         }
     )
+
+
+def test_meeting_decision_keeps_only_frozen_managed_skill():
+    from app.agent_cron.commands import ServiceCommandSkillMaterial
+
+    managed = ServiceCommandSkillMaterial(
+        name="ceo-meeting-work",
+        content="## Managed Skill: ceo-meeting-work\nrevision_id: 4\nsha256: frozen\n\nMeeting judgment",
+    )
+    operation = ServiceCommandSkillMaterial(
+        name="dingtalk-calendar",
+        content="## Operation Skill: dingtalk-calendar\nsha256: frozen\n\nCalendar procedure",
+    )
+
+    assert _meeting_decision_skill_protocol((managed, operation)) == managed.content
+    assert _meeting_decision_skill_protocol((operation,)) is None
+
+
+def test_meeting_runner_routes_compact_prompt_only_to_codex():
+    from app.agent_runtime_contracts import RuntimeKind
+
+    routed = FakeRoutedMeetingExecution(json.dumps(summary_payload(), ensure_ascii=False))
+    runner = MeetingAlignmentCodexRunner(routed_execution=routed)
+
+    runner.decide(prompt="FULL FROZEN PROTOCOL", compact_prompt="MEETING RULE", run_id=9)
+
+    call = routed.calls[0]
+    assert call["prompt"] == "FULL FROZEN PROTOCOL"
+    assert call["route_prompt_overrides"] == {RuntimeKind.CODEX_CLI: "MEETING RULE"}
+    assert call["command_factory"].skill_names == ("dingtalk-chat",)
+    assert call["command_factory"].project_doc_max_bytes == 0
+    instructions = call["command_factory"].developer_instructions
+    assert "DWS 只用于群与身份的只读取证。" in instructions
+    assert instructions.count(
+        "Do not directly send external messages or email or execute approvals."
+    ) == 1
+    assert "不要直接发消息、邮件" not in instructions
 
 
 def source_with_unresolved_one_to_one_counterpart() -> MeetingSource:
@@ -489,6 +527,28 @@ def test_prompt_requires_content_based_group_discovery_before_direct_fallback():
     assert "没有预置候选或首次搜索零命中，不等于业务群发现失败" in prompt
     assert "不得为完成发送而选择宽泛群" in prompt
     assert "候选群中含非授权受众" in prompt
+
+
+def test_candidate_audience_instruction_is_shared_once_without_changing_empty_case():
+    candidates = [
+        {"conversation_id": "cid-project", "member_open_dingtalk_ids": ["open-a"]},
+        {"conversation_id": "cid-other", "member_open_dingtalk_ids": ["open-b"]},
+    ]
+    prompt = build_meeting_alignment_prompt(
+        source(), work_profile="", work_profile_source="profile",
+        group_candidates=candidates,
+    )
+    empty_prompt = build_meeting_alignment_prompt(
+        source(), work_profile="", work_profile_source="profile",
+        group_candidates=[],
+    )
+
+    assert prompt.count("Before selecting effects, verify live full relevant discussion") == 1
+    assert '"conversation_id":"cid-project"' in prompt
+    assert '"conversation_id":"cid-other"' in prompt
+    assert '"member_open_dingtalk_ids":["open-a"]' in prompt
+    assert '"member_open_dingtalk_ids":["open-b"]' in prompt
+    assert "Before selecting effects, verify live full relevant discussion" not in empty_prompt
 
 
 def test_prompt_requires_a_summary_even_for_candidate_interviews():
@@ -1422,7 +1482,7 @@ def test_runner_correction_turn_uses_repair_prompt_with_field_errors(tmp_path):
         status="pending",
     )
     [job] = store.claim_meeting_alignment_jobs(limit=1, now=NOW.isoformat())
-    run_id = store.begin_meeting_alignment_run(job.id)
+    run_id = store.claim_logical_run('meeting_alignment_runs', job.id)
     snapshots = {
         route.name: RuntimeCapabilitySnapshot(
             route_name=route.name,
@@ -1451,7 +1511,12 @@ def test_runner_correction_turn_uses_repair_prompt_with_field_errors(tmp_path):
             "",
         )
 
-    adapter = FakeAdapter()
+    class MeetingAdapter(FakeAdapter):
+        def build_command(self, **kwargs):
+            assert kwargs.pop("project_doc_max_bytes") == 0
+            return super().build_command(**kwargs)
+
+    adapter = MeetingAdapter()
     runner = MeetingAlignmentCodexRunner(
         routed_execution=RoutedCodexExecution(
             store=store,

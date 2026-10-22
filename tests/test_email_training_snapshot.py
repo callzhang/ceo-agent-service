@@ -18,6 +18,8 @@ from app.email_classifier_learning import EmailClassifierLearningService
 from app.email_classifier_retrain import TrainingSubprocessRun
 from app.email_model_registry import EmailModelRegistry
 from app.email_store import EmailStore
+from app.configs_definitions import config_projection
+from app.configs_storage import update_config
 
 
 OBSERVED_AT = datetime(2026, 9, 7, 18, 0, tzinfo=timezone.utc)
@@ -79,10 +81,12 @@ def test_production_snapshot_job_builds_persists_and_triggers_with_real_store(
 ) -> None:
     store = EmailStore(tmp_path / "email.sqlite3")
     with sqlite3.connect(tmp_path / "email.sqlite3") as db:
-        db.execute("update email_category_configs set enabled=0")
-        db.execute(
-            "update email_category_configs set enabled=1 where category_key='work'"
-        )
+        db.execute("begin immediate")
+        for rowid, category_key in db.execute(
+            f"select rowid,category_key from ({config_projection('email_category_configs', include_rowid=True)})"
+        ).fetchall():
+            assert update_config(db, "email_category_configs", rowid,
+                                 {"enabled": int(category_key == "work")}) == 1
     registry = EmailModelRegistry(tmp_path / "email-models")
 
     class Controller:
@@ -281,7 +285,7 @@ def test_pending_trigger_crash_replay_keeps_one_snapshot_and_one_durable_trigger
     assert calls == ["publish", "recover-pending"]
     with sqlite3.connect(store.path) as db:
         assert db.execute(
-            "select count(*) from email_training_snapshots"
+            f"select count(*) from ({config_projection('email_training_snapshots')})"
         ).fetchone() == (1,)
 
 

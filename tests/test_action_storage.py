@@ -17,6 +17,14 @@ SOURCE = json.loads(INVENTORY.read_text())["tables"]
 TYPES = tuple(SOURCE)
 
 
+@pytest.fixture(autouse=True)
+def _historical_text_action_dml(monkeypatch):
+    """The six-family migration target is historical TEXT, not final compact."""
+    from tests.historical_action_text_fixture import install
+
+    install(monkeypatch)
+
+
 def source_database(path, row_factory=None):
     db = sqlite3.connect(path)
     db.row_factory = row_factory

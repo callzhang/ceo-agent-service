@@ -106,6 +106,7 @@ class AgentTaskContext:
     predecessor_review_id: int | None = None
     prior_human_decisions: tuple[dict[str, object], ...] = ()
     business_state_changes: tuple[dict[str, object], ...] = ()
+    permission_return_required: bool = False
 
     @property
     def unresolved_image_count(self) -> int:
@@ -140,6 +141,23 @@ class AgentTaskContext:
                         "feedback": feedback.model_dump(mode="json"),
                     }
                 )
+            )
+            sections.append(
+                "### Replacement Stage Constraint\n"
+                "An Audit return does not advance the stage. For this replacement revision, "
+                "keep the exact service-bound stage_index and predecessor_review_id above. "
+                "Advance only after Audit approves this stage and its action has a verified completed execution receipt."
+            )
+        if self.permission_return_required:
+            sections.append(
+                "### Permission Retry Exhausted\n"
+                "The permitted file-access retries are exhausted, or the one permission request could not be completed. "
+                "Do not request access again or schedule another retry. Read the blocked file once now: access may have been granted since the last attempt. "
+                "If it reads, ignore the rest of this section and review the approval normally. "
+                "Only if it still cannot be read, prepare a normal `return` proposal asking the verified applicant or responsible source owner "
+                "to provide an accessible copy or correct the access path. State only the known access limitation; do not claim the file is missing or the business evidence is deficient. "
+                "Cite the persisted permission-request receipt or the exact failed-request evidence when available. "
+                "This is an OA business proposal and must pass Audit before execution. The service will not synthesize or execute the return."
             )
         return "\n\n".join(sections)
 
@@ -374,6 +392,7 @@ class AuditTurnContext:
     candidate_digest: str
     audit_rules: str
     previous_revision_review: AuditAgentResult | None = None
+    scheduled_work_receipts: tuple[dict[str, object], ...] = ()
 
     def render(self, *, current_time: str | None = None) -> str:
         from app.reviewed_sources import context_source
@@ -409,6 +428,16 @@ class AuditTurnContext:
                     current_time=current_time,
                     include_heading=False,
                     source_reference=source_reference,
+                ),
+                *(
+                    (
+                        "Service-recorded scheduled work receipts (Consumer tool output; metadata only)\n"
+                        + _json(self.scheduled_work_receipts)
+                        + "\nFrom completed Consumer runs in this task and execution generation, including prior feedback revisions. "
+                        "Each identifies a returned readback, not report validity; an empty list means none was captured. "
+                        "Review source facts independently."
+                    ,)
+                    if self.task.channel == "scheduled" else ()
                 ),
                 "Service-prepared outbound message postfix\n"
                 "DingTalk message bodies in this candidate are prepared by the service before Audit: "
@@ -528,7 +557,7 @@ def _seconds_between(start: datetime | None, end: datetime | None) -> int | floa
 
 _CONSUMER_AGENT_RULES = """## Application Result Contract
 1. [role_boundary] Consumer Agent A forms the candidate; Audit Agent B reviews it.
-2. [output_contracts] Return exactly one valid structured result matching the supplied schema.
+2. [output_contracts] Return exactly one valid structured result matching the supplied purpose schema. Use its action/reason/target/payload/evidence_refs fields. A plan action carries the existing complete multi-operation proposal in payload; direct purpose actions carry their declared target and payload. OA return is a real business return. Retry requests delayed re-execution after a verified access request; it is not a technical failed result. Preserve assessment and stage metadata.
 3. [supported_facts] Use the supplied context and do not invent unsupported facts or targets.
 4. [meaning_preservation] Audit feedback must preserve the candidate's business intent while asking for a concrete regenerated result.
 5. [terminal_outcomes] Use only the declared terminal outcomes; a failed attempt is failed or retried by the runtime.
@@ -539,6 +568,6 @@ _AUDIT_AGENT_RULES = """## Application Result Contract
 1. Consumer forms the whole candidate. Audit reads and judges it without executing actions, sending messages, editing documents, or rewriting any option. Return exactly one structured review: approve, return, reject, or failed. Failed is a technical outcome, not a business judgment.
 2. Review the exact candidate supplied below. The service binds your review to that candidate's digest and proposal revision; do not output candidate_digest or proposal_revision. Return or reject must give concrete feedback with the rule, observation, and requested revision. Audit never originates a human question or an alternative action plan.
 3. Review the whole action plan or all branches of a human request. Check business appropriateness, sourced facts, audience, timing, target, exact payload, action order, applicable rules and prior-stage receipts. An approved human request authorizes only publication of the question; no branch executes until the person selects it.
-4. Independently apply the same outcome gate: information_completeness < 0.5 means ask one focused factual question in a normal proposal; otherwise, needs_human is allowed only when (risk is high and confidence < 0.5) or rule_coverage < 0.5; otherwise do not return needs_human. For every needs_human candidate check all seven conditions: (a) is there a genuine reusable rule gap for this task class, (b) can existing code, business Skill, memory, session context or read tools settle it, (c) should the applicant or source owner supply missing material through an ordinary reply, (d) is this a business-rule question rather than a current-instance decision or technical/provider/authentication/schema/runtime/retry failure, (e) is the context and reason concrete enough, (f) are two to four options mutually exclusive reusable rule choices marked applies_to=task_class with honest tradeoffs, and (g) is every directly executable option complete and supported by facts and rules. Reject a request for Derek to decide the current business action; return it for a bounded ordinary proposal. An open-ended requested_input cannot itself justify needs_human.
+4. Independently apply the same outcome gate: information_completeness < 0.5 means ask one focused factual question in a normal proposal; otherwise, needs_human is allowed only when (risk is high and confidence < 0.5) or rule_coverage < 0.5; otherwise do not return needs_human. For every needs_human candidate check all seven conditions: (a) is there a genuine reusable rule gap for this task class, (b) can existing code, business Skill, memory, session context or read tools settle it, (c) should the applicant or source owner supply missing material through an ordinary reply, (d) is this a business-rule question rather than a current-instance decision or technical/provider/authentication/schema/runtime/retry failure, (e) is the context and reason concrete enough, (f) are two to four options mutually exclusive reusable rule choices marked applies_to=task_class with honest tradeoffs, and (g) is every directly executable option complete and supported by facts and rules. The needs_human reason is one short sentence in ordinary Chinese, at most 100 characters; it must name the missing reusable rule and why the user's choice is needed, without internal terms or repeated evidence. Reject a request for Derek to decide the current business action; return it for a bounded ordinary proposal. An open-ended requested_input cannot itself justify needs_human.
 5. Preserve action_identity and exact candidate content. A return may request evidence while the actions stay the same; a reject means the proposed content is unsuitable. Do not turn provider confirmation, a missing route, or runtime failure into a human business question. Candidate Field Facts are System-produced JSON type facts for this validated, digest-bound candidate, not business approval or proof of current authority. For feedback about a candidate field, set observation_basis=candidate_fields and provide candidate_field_assertions with its exact JSON path, literal value and JSON type; paths are relative to the candidate. A quoted identifier is a string even when its characters are digits. System checks those assertions before adopting feedback; a contradiction corrects Audit, never approves an action or asks Consumer to change a correct field. Do not infer current values or types from a prior revision or prior feedback, and do not request a change already present in the current candidate. Keep reviewing real business, evidence, ownership, authorization and payload violations.
 6. Verify provider identity from current source facts, not from a similarly named business object. Read the exact provider object when identity is missing; return a target correction if the plan invents a mapping, or failed if the required dependency cannot be read. Review complete effects, not just the outcome label: a notification or acknowledgment does not perform a different business action. A material-request receipt proves delivery of the request, not arrival of the material; reject immediate continuation that depends on a future source update. A later action may continue immediately only from a verified prior result that actually supplies its required facts."""

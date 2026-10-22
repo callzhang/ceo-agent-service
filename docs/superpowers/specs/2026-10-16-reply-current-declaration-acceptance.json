@@ -1,0 +1,33 @@
+{
+  "date": "2026-10-16",
+  "scope": "Explicit current Reply declaration option, unselected callers",
+  "implementation_commit": "68a1374907e9b77cb315ee2d332c662580d94e7a",
+  "module_sha256": "344517a1ba52525358d5baf195ced97284010b0d710c5155593c82abc8ba607b",
+  "change": "Two existing selectors forward include_skill_config_receipts=False to exact action recognizer; defaults remain historical.",
+  "root": {
+    "red": "18 unexpected-keyword failures on original selectors",
+    "green": "360 passed, 6 skipped, 6.68s; copied app and test isolation"
+  },
+  "spec": {
+    "status": "PASS",
+    "tests": "360 passed, 6 skipped, 7.04s",
+    "unchanged_top_level_nodes": 155,
+    "canonical_source_and_test_bytes": true
+  },
+  "quality": {
+    "status": "PASS",
+    "tests": "360 passed, 6 skipped, 7.28s",
+    "additional_matrix_cases": 741,
+    "coverage": [
+      "individual auxiliary removals and alterations",
+      "expected names on unrelated tables",
+      "all auxiliaries missing allowed only explicitly",
+      "uppercase native-table mixtures rejected",
+      "row factories, caller transactions/savepoints, query_only and read authorizer",
+      "byte equality, total_changes and savepoint usability",
+      "Followup/Sync supersets rejected"
+    ]
+  },
+  "boundary": "No current caller/publication/coordinator selection, actual database, native CLI or production acceptance; final10 core plus Email ledger remains incomplete.",
+  "cleanup": "All owned review/preflight TemporaryDirectories removed."
+}

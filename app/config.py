@@ -422,7 +422,7 @@ def repository_upgrade_branch() -> str:
 
 
 def repository_upgrade_check_interval_seconds() -> int:
-    return env_int("CEO_REPOSITORY_UPGRADE_CHECK_INTERVAL_SECONDS", 6 * 60 * 60)
+    return env_int("CEO_REPOSITORY_UPGRADE_CHECK_INTERVAL_SECONDS", 5 * 60)
 
 
 def repository_upgrade_enabled() -> bool:

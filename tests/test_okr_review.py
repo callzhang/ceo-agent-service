@@ -1,6 +1,8 @@
 import json
+from pathlib import Path
 
 import pytest
+from jsonschema import Draft202012Validator
 from pydantic import ValidationError
 
 from app.agent_envelope import AgentEnvelope
@@ -707,6 +709,12 @@ def test_process_okr_review_request_persists_items_and_marks_done(tmp_path):
             "audit": {"summary": "审核完成。", "documents": [], "confidence": 0.8},
         }
     )
+    schema_path = (
+        Path(__file__).resolve().parents[1] / "app" / "schemas" / "okr_review.schema.json"
+    )
+    schema = json.loads(schema_path.read_text(encoding="utf-8"))
+    Draft202012Validator.check_schema(schema)
+    Draft202012Validator(schema).validate(envelope.model_dump(mode="json"))
     runner = FakeStructuredRunnerForOkr(envelope)
 
     reply = process_okr_review_request(

@@ -22,10 +22,10 @@ from app.email_classifier_contracts import (
     EmailCategory,
     EmailClassification,
     EmailClassificationStatus,
-    EmailProviderLocator,
     build_versioned_email_action_plan,
 )
-from app.email_store import EmailPersistenceCorruption, EmailStore
+from app.email_store import EmailStore
+from app.email_canonical_storage import email_classification_projection, email_message_projection
 from app.email_imap_readonly import parse_rfc822_message
 from app.email_task_adapter import (
     EmailAgentTaskAdapter,
@@ -41,6 +41,8 @@ from app.email_task_adapter import (
     EmailClassificationTaskInput,
 )
 from app.email_task_producer import EmailActionTaskProducer
+from app.task12_storage import task12_set_parts
+from app.task20_definitions import task20_column
 from app.email_unsubscribe import (
     EmailUnsubscribeEffect,
     UnsubscribeAuthenticationEvidence,
@@ -393,13 +395,11 @@ def test_classifier_queue_schema_is_owned_by_email_store_not_adapter(tmp_path: P
     with store._connect() as db:
         columns = {
             row["name"]
-            for row in db.execute("pragma table_info(email_agent_classification_tasks)")
+            for row in db.execute("pragma table_xinfo(tasks)")
         }
     assert {
-        "generation",
-        "attempt_count",
-        "lease_expires_at",
-        "available_at",
+        "email_agent_classification_tasks__" + field
+        for field in ("generation", "attempt_count", "lease_expires_at", "available_at")
     } <= columns
     assert (
         "create table"
@@ -411,611 +411,12 @@ def test_email_store_rejects_malformed_classifier_queue_schema(tmp_path: Path):
     database = tmp_path / "malformed-classifier.sqlite3"
     EmailStore(database)
     with sqlite3.connect(database) as db:
-        db.execute("drop index idx_email_agent_classification_tasks_status")
-
-    with pytest.raises(
-        EmailPersistenceCorruption, match="classifier.*index|idx_email_agent"
-    ):
+        db.execute("drop index idx_task20_native_1")
+        db.execute("create index idx_task20_native_1 on tasks(id)")
+    before = database.read_bytes()
+    with pytest.raises(sqlite3.IntegrityError, match="malformed current Task lifecycle declaration"):
         EmailStore(database)
-
-
-def test_v25_classifier_queue_migration_preserves_task_and_scrubs_private_url(
-    tmp_path: Path,
-) -> None:
-    database = tmp_path / "v25-classifier.sqlite3"
-    store = EmailStore(database)
-    adapter = EmailClassificationTaskAdapter(store)
-    task = adapter.ensure_task(_classification_input(uid=144))
-    private_url = "https://news.example.test/unsubscribe?token=legacy-secret"
-    payload = json.loads(task.input_json)
-    payload["unsubscribe_candidates"] = [private_url]
-    payload["message"]["text"] = "Click " + private_url
-    with sqlite3.connect(database) as db:
-        db.execute(
-            "update email_agent_classification_tasks set input_json=? where task_id=?",
-            (json.dumps(payload), task.task_id),
-        )
-    _downgrade_email_database_to_v25(database)
-
-    migrated = EmailClassificationTaskAdapter(EmailStore(database)).get_task(
-        task.task_id
-    )
-
-    assert migrated is not None and migrated.status == "pending"
-    assert private_url not in migrated.input_json
-    assert "unsubscribe-entry:" in migrated.input_json
-    assert private_url.encode() not in database.read_bytes()
-
-
-def test_v25_completed_null_unsubscribe_result_migrates_nullable_projection(
-    tmp_path: Path,
-) -> None:
-    database = tmp_path / "v25-null-result.sqlite3"
-    store = EmailStore(database)
-    adapter = EmailClassificationTaskAdapter(store)
-    task = adapter.ensure_task(_classification_input(uid=145))
-    legacy_result = {
-        "decision_status": "processed",
-        "category": "work",
-        "important": False,
-        "certainty": "certain",
-        "confidence": 0.91,
-        "reason": "Business correspondence.",
-        "unsubscribe_candidate_index": None,
-        "unsubscribe_url": None,
-        "classification_id": 145,
-    }
-    with sqlite3.connect(database) as db:
-        db.execute(
-            """
-            update email_agent_classification_tasks
-            set status='done', result_json=?
-            where task_id=?
-            """,
-            (json.dumps(legacy_result), task.task_id),
-        )
-    _downgrade_email_database_to_v25(database)
-
-    migrated = EmailClassificationTaskAdapter(EmailStore(database)).get_task(
-        task.task_id
-    )
-
-    assert migrated is not None and migrated.status == "done"
-    result = json.loads(migrated.result_json)
-    assert "unsubscribe_url" not in result
-    assert result["unsubscribe_candidate_index"] is None
-    assert result["unsubscribe_candidate_source"] is None
-    assert result["unsubscribe_candidate_digest"] is None
-    assert result["unsubscribe_candidate_reference"] is None
-
-
-def test_v25_completed_selected_result_preserves_schema_keys_and_replays(
-    tmp_path: Path,
-) -> None:
-    from app.email_classifier_agent import (
-        AgentClassificationResult,
-        DurableAgentClassificationResult,
-    )
-
-    database = tmp_path / "v25-selected-result.sqlite3"
-    store = EmailStore(database)
-    adapter = EmailClassificationTaskAdapter(store)
-    task = adapter.ensure_task(_classification_input(uid=147))
-    private_token = "legacy-secret"
-    private_url = f"https://news.example.test/unsubscribe?token={private_token}"
-    legacy_agent_result = {
-        "category": "junk",
-        "important": False,
-        "certainty": "certain",
-        "confidence": 0.97,
-        "reason": f"Unwanted subscription: {private_url}",
-        "unsubscribe_candidate_index": 0,
-        "unsubscribe_url": private_url,
-    }
-    assert (
-        AgentClassificationResult.model_validate(legacy_agent_result).unsubscribe_url
-        == private_url
-    )
-    queue_result = legacy_agent_result | {
-        "decision_status": "processed",
-        "classification_id": 147,
-    }
-    payload = json.loads(task.input_json)
-    payload["unsubscribe_candidates"] = [private_url]
-    payload["message"]["text"] = f"Select {private_url}"
-
-    classification_id = 9147
-    plan = build_versioned_email_action_plan(
-        action_plan_version=1,
-        classification_id=classification_id,
-        account_id="account-primary",
-        category=EmailCategory.JUNK,
-        classification_source="agent",
-        confidence=0.97,
-        model_id="email-classifier-agent:v1",
-        config_version="config-v1",
-        actions=(),
-        action_parameters={},
-        created_at=datetime(2026, 9, 8, tzinfo=timezone.utc),
-    )
-    store.persist_scan_result(
-        EmailClassification(
-            classification_id=classification_id,
-            stable_message_identity=(
-                "account-primary:message-id:<legacy-canonical-147@example.com>"
-            ),
-            provider_locator=EmailProviderLocator(
-                account_id="account-primary",
-                folder="INBOX",
-                uidvalidity=42,
-                uid=9147,
-                rfc_message_id="<legacy-canonical-147@example.com>",
-            ),
-            category=EmailCategory.JUNK,
-            confidence=0.97,
-            margin=0.97,
-            probabilities={EmailCategory.JUNK: 1.0},
-            model_id="email-classifier-agent:v1",
-            config_version="config-v1",
-            status=EmailClassificationStatus.PROCESSED,
-            classification_source="agent",
-            action_plan=plan,
-        ),
-        agent_result=DurableAgentClassificationResult(
-            category="junk",
-            important=False,
-            certainty="certain",
-            confidence=0.97,
-            reason="Unwanted subscription.",
-            unsubscribe_candidate_index=None,
-            unsubscribe_candidate_source=None,
-            unsubscribe_candidate_digest=None,
-            unsubscribe_candidate_reference=None,
-        ),
-        sender="sender@example.com",
-        subject="Legacy selected Agent result",
-        model_text="__subject__legacy selected agent result",
-    )
-    with sqlite3.connect(database) as db:
-        db.execute(
-            """
-            update email_agent_classification_tasks
-            set status='done', input_json=?, result_json=? where task_id=?
-            """,
-            (json.dumps(payload), json.dumps(queue_result), task.task_id),
-        )
-        db.execute(
-            "update email_classifications set agent_result_json=? where id=?",
-            (json.dumps(legacy_agent_result), classification_id),
-        )
-    _downgrade_email_database_to_v25(database)
-
-    EmailStore(database)
-    with sqlite3.connect(database) as db:
-        migrated_task = db.execute(
-            "select input_json, result_json from email_agent_classification_tasks "
-            "where task_id=?",
-            (task.task_id,),
-        ).fetchone()
-        migrated_canonical = db.execute(
-            "select agent_result_json from email_classifications where id=?",
-            (classification_id,),
-        ).fetchone()
-    assert migrated_task is not None and migrated_canonical is not None
-    migrated_payload = json.loads(migrated_task[0])
-    migrated_queue_result = json.loads(migrated_task[1])
-    migrated_canonical_result = json.loads(migrated_canonical[0])
-    durable_keys = {
-        "category",
-        "important",
-        "certainty",
-        "confidence",
-        "reason",
-        "unsubscribe_candidate_index",
-        "unsubscribe_candidate_source",
-        "unsubscribe_candidate_digest",
-        "unsubscribe_candidate_reference",
-    }
-
-    assert set(migrated_queue_result) == durable_keys | {
-        "decision_status",
-        "classification_id",
-    }
-    assert set(migrated_canonical_result) == durable_keys
-    queue_projection = {key: migrated_queue_result[key] for key in durable_keys}
-    assert DurableAgentClassificationResult.model_validate(queue_projection)
-    assert DurableAgentClassificationResult.model_validate(migrated_canonical_result)
-    assert migrated_queue_result["unsubscribe_candidate_index"] == 0
-    assert migrated_canonical_result["unsubscribe_candidate_index"] == 0
-    assert migrated_queue_result["unsubscribe_candidate_source"] == "legacy"
-    assert migrated_canonical_result["unsubscribe_candidate_source"] == "legacy"
-    all_durable_json = json.dumps(
-        [migrated_payload, migrated_queue_result, migrated_canonical_result],
-        ensure_ascii=False,
-        sort_keys=True,
-    )
-    assert private_url not in all_durable_json
-    assert private_token not in all_durable_json
-
-
-def test_v25_migration_redacts_only_sensitive_query_and_fragment_values(
-    tmp_path: Path,
-) -> None:
-    database = tmp_path / "v25-path-segment-privacy.sqlite3"
-    store = EmailStore(database)
-    adapter = EmailClassificationTaskAdapter(store)
-    task = adapter.ensure_task(_classification_input(uid=148))
-    unsubscribe_token = "legacy-secret"
-    provider_auth_token = "provider-secret"
-    signature = "signature-secret"
-    private_url = (
-        "https://news.example.test/email/unsubscribe"
-        f"?unsubscribe_token={unsubscribe_token}&utm_medium=email"
-        f"&campaign=newsletter&X-AmZ-SiGnAtUrE={signature}"
-        f"#Provider-Auth-Token={provider_auth_token}&source=footer"
-    )
-    payload = json.loads(task.input_json)
-    payload["unsubscribe_candidates"] = [private_url]
-    payload["message"]["text"] = (
-        f"Private candidate: {private_url}; echoed values: "
-        f"{unsubscribe_token} {provider_auth_token} {signature}"
-    )
-    expected_unrelated_values = {
-        "config_version": "config-email-newsletter-footer-v1",
-        "category_descriptions": {
-            "work": {"core": "Classify ordinary email and newsletter requests."},
-            "junk": {"core": "Newsletter footer metadata."},
-        },
-        "folder_targets": {"work": "email/newsletter/footer"},
-        "subject": "email newsletter footer metadata",
-        "metadata": {"routing_note": "email/newsletter/footer are ordinary values"},
-    }
-    payload["config_version"] = expected_unrelated_values["config_version"]
-    payload["category_descriptions"] = expected_unrelated_values[
-        "category_descriptions"
-    ]
-    payload["folder_targets"] = expected_unrelated_values["folder_targets"]
-    payload["message"]["subject"] = expected_unrelated_values["subject"]
-    payload["message"]["metadata"] = expected_unrelated_values["metadata"]
-    legacy_result = {
-        "decision_status": "processed",
-        "category": "junk",
-        "important": False,
-        "certainty": "certain",
-        "confidence": 0.97,
-        "reason": f"Unwanted candidate: {private_url}",
-        "unsubscribe_candidate_index": 0,
-        "unsubscribe_url": private_url,
-        "classification_id": 148,
-    }
-    with sqlite3.connect(database) as db:
-        db.execute(
-            """
-            update email_agent_classification_tasks
-            set status='done', input_json=?, result_json=? where task_id=?
-            """,
-            (json.dumps(payload), json.dumps(legacy_result), task.task_id),
-        )
-    _downgrade_email_database_to_v25(database)
-
-    migrated = EmailClassificationTaskAdapter(EmailStore(database)).get_task(
-        task.task_id
-    )
-
-    assert migrated is not None
-    migrated_payload = json.loads(migrated.input_json)
-    migrated_result = json.loads(migrated.result_json)
-    assert (
-        migrated_payload["config_version"]
-        == expected_unrelated_values["config_version"]
-    )
-    assert (
-        migrated_payload["category_descriptions"]
-        == expected_unrelated_values["category_descriptions"]
-    )
-    assert (
-        migrated_payload["folder_targets"]
-        == expected_unrelated_values["folder_targets"]
-    )
-    assert (
-        migrated_payload["message"]["subject"] == expected_unrelated_values["subject"]
-    )
-    assert (
-        migrated_payload["message"]["metadata"] == expected_unrelated_values["metadata"]
-    )
-    durable_json = json.dumps(
-        [migrated_payload, migrated_result], ensure_ascii=False, sort_keys=True
-    )
-    assert private_url not in durable_json
-    assert unsubscribe_token not in durable_json
-    assert provider_auth_token not in durable_json
-    assert signature not in durable_json
-
-
-@pytest.mark.parametrize(
-    ("uid", "parameter_name", "component", "sensitive"),
-    (
-        (160, "auth_code", "query", True),
-        (161, "Authorization-Code", "query", True),
-        (162, "oauth%5Fcode", "query", True),
-        (163, "VERIFICATION-CODE", "query", True),
-        (164, "login%2Dcode", "fragment", True),
-        (165, "Access_Code", "fragment", True),
-        (166, "unsubscribe-code", "fragment", True),
-        (167, "Provider%5FAuth%5FCode", "fragment", True),
-        (168, "campaign_code", "query", False),
-        (169, "Promo-Code", "fragment", False),
-        (170, "zip%5Fcode", "query", False),
-        (171, "session_token", "query", True),
-        (172, "client_secret", "fragment", True),
-        (173, "account_password", "query", True),
-        (174, "session_cookie", "fragment", True),
-        (175, "proxy_authorization", "query", True),
-        (176, "X-AmZ-SiGnAtUrE", "fragment", True),
-        (177, "access_key", "query", True),
-        (178, "private-key", "fragment", True),
-        (179, "api%5Fkey", "query", True),
-        (180, "service_credential", "fragment", True),
-        (181, "signed", "query", True),
-        (182, "PreSigned", "fragment", True),
-        (183, "signed%5Fquery", "query", True),
-        (184, "bearer", "fragment", True),
-        (185, "X-Bearer", "query", True),
-        (186, "webhook", "fragment", True),
-        (187, "x%5Fwebhook", "query", True),
-        (188, "client_auth", "fragment", True),
-        (189, "Provider-Auth", "query", True),
-        (190, "app_key", "fragment", True),
-        (191, "Client-Key", "query", True),
-        (192, "subscription%5Fkey", "fragment", True),
-        (193, "service-token-value", "query", True),
-        (194, "provider_credential_hint", "fragment", True),
-        (195, "request-secret-value", "query", True),
-        (196, "utm_medium", "fragment", False),
-        (197, "campaign", "query", False),
-        (198, "source", "fragment", False),
-        (199, "tracking_id", "query", False),
-        (200, "auth", "query", True),
-        (201, "key", "fragment", True),
-        (202, "sig", "query", True),
-        (203, "code", "fragment", True),
-        (204, "hmac", "query", True),
-        (205, "nonce", "fragment", True),
-    ),
-)
-def test_v25_migration_classifies_shared_sensitive_parameter_families(
-    tmp_path: Path,
-    uid: int,
-    parameter_name: str,
-    component: str,
-    sensitive: bool,
-) -> None:
-    database = tmp_path / f"v25-code-parameter-{uid}.sqlite3"
-    store = EmailStore(database)
-    adapter = EmailClassificationTaskAdapter(store)
-    task = adapter.ensure_task(_classification_input(uid=uid))
-    parameter_value = f"standalone-value-{uid}"
-    ordinary_query = "utm_medium=email&campaign=newsletter&source=footer"
-    if component == "query":
-        private_url = (
-            "https://news.example.test/email/unsubscribe?"
-            f"{parameter_name}={parameter_value}&{ordinary_query}#source=footer"
-        )
-    else:
-        private_url = (
-            "https://news.example.test/email/unsubscribe?"
-            f"{ordinary_query}#{parameter_name}={parameter_value}&source=footer"
-        )
-    unrelated_values = {
-        "config_version": "config-email-newsletter-footer-v1",
-        "category_descriptions": {
-            "work": {"core": "Ordinary email campaign code."},
-            "junk": {"core": "Newsletter footer source."},
-        },
-        "folder_targets": {"work": "email/newsletter/footer"},
-        "subject": "email newsletter footer campaign source",
-        "metadata": {"campaign_code": "visible-campaign-code"},
-    }
-    payload = json.loads(task.input_json)
-    payload["unsubscribe_candidates"] = [private_url]
-    payload["config_version"] = unrelated_values["config_version"]
-    payload["category_descriptions"] = unrelated_values["category_descriptions"]
-    payload["folder_targets"] = unrelated_values["folder_targets"]
-    payload["message"]["subject"] = unrelated_values["subject"]
-    payload["message"]["metadata"] = unrelated_values["metadata"]
-    payload["message"]["text"] = (
-        f"Candidate: {private_url}; standalone echo: {parameter_value}"
-    )
-    legacy_result = {
-        "decision_status": "processed",
-        "category": "junk",
-        "important": False,
-        "certainty": "certain",
-        "confidence": 0.97,
-        "reason": f"Unwanted candidate: {private_url}",
-        "unsubscribe_candidate_index": 0,
-        "unsubscribe_url": private_url,
-        "classification_id": uid,
-    }
-    with sqlite3.connect(database) as db:
-        db.execute(
-            """
-            update email_agent_classification_tasks
-            set status='done', input_json=?, result_json=? where task_id=?
-            """,
-            (json.dumps(payload), json.dumps(legacy_result), task.task_id),
-        )
-    _downgrade_email_database_to_v25(database)
-
-    migrated = EmailClassificationTaskAdapter(EmailStore(database)).get_task(
-        task.task_id
-    )
-
-    assert migrated is not None
-    migrated_payload = json.loads(migrated.input_json)
-    migrated_result = json.loads(migrated.result_json)
-    assert migrated_payload["config_version"] == unrelated_values["config_version"]
-    assert (
-        migrated_payload["category_descriptions"]
-        == unrelated_values["category_descriptions"]
-    )
-    assert migrated_payload["folder_targets"] == unrelated_values["folder_targets"]
-    assert migrated_payload["message"]["subject"] == unrelated_values["subject"]
-    assert migrated_payload["message"]["metadata"] == unrelated_values["metadata"]
-    durable_json = json.dumps(
-        [migrated_payload, migrated_result], ensure_ascii=False, sort_keys=True
-    )
-    assert private_url not in durable_json
-    if sensitive:
-        assert parameter_value not in durable_json
-    else:
-        assert parameter_value in migrated_payload["message"]["text"]
-
-
-def test_v25_migration_structurally_redacts_unicode_url_and_token_everywhere(
-    tmp_path: Path,
-) -> None:
-    from app.email_classifier_agent import DurableAgentClassificationResult
-
-    database = tmp_path / "v25-unicode-private-data.sqlite3"
-    store = EmailStore(database)
-    adapter = EmailClassificationTaskAdapter(store)
-    task = adapter.ensure_task(_classification_input(uid=146))
-    private_token = "密钥Ω"
-    private_url = f"https://例子.测试/退订?令牌={private_token}"
-    payload = json.loads(task.input_json)
-    payload["unsubscribe_candidates"] = [private_url]
-    payload["message"]["text"] = f"请点击 {private_url}"
-    payload["message"]["subject"] = f"私人值 {private_token}"
-    payload["migration_probe"] = {
-        "nested_url": [private_url],
-        "nested_token": {"value": private_token},
-    }
-    legacy_result = {
-        "decision_status": "processed",
-        "category": "junk",
-        "important": False,
-        "certainty": "certain",
-        "confidence": 0.97,
-        "reason": f"垃圾邮件 {private_url} token={private_token}",
-        "unsubscribe_candidate_index": 0,
-        "unsubscribe_url": private_url,
-        "classification_id": 146,
-    }
-    classification_id = 9146
-    plan = build_versioned_email_action_plan(
-        action_plan_version=1,
-        classification_id=classification_id,
-        account_id="account-primary",
-        category=EmailCategory.JUNK,
-        classification_source="agent",
-        confidence=0.97,
-        model_id="email-classifier-agent:v1",
-        config_version="config-v1",
-        actions=(),
-        action_parameters={},
-        created_at=datetime(2026, 9, 8, tzinfo=timezone.utc),
-    )
-    durable_result = DurableAgentClassificationResult(
-        category="junk",
-        important=False,
-        certainty="certain",
-        confidence=0.97,
-        reason="Unwanted subscription.",
-        unsubscribe_candidate_index=None,
-        unsubscribe_candidate_source=None,
-        unsubscribe_candidate_digest=None,
-        unsubscribe_candidate_reference=None,
-    )
-    store.persist_scan_result(
-        EmailClassification(
-            classification_id=classification_id,
-            stable_message_identity=(
-                "account-primary:message-id:<legacy-canonical-146@example.com>"
-            ),
-            provider_locator=EmailProviderLocator(
-                account_id="account-primary",
-                folder="INBOX",
-                uidvalidity=42,
-                uid=9146,
-                rfc_message_id="<legacy-canonical-146@example.com>",
-            ),
-            category=EmailCategory.JUNK,
-            confidence=0.97,
-            margin=0.97,
-            probabilities={EmailCategory.JUNK: 1.0},
-            model_id="email-classifier-agent:v1",
-            config_version="config-v1",
-            status=EmailClassificationStatus.PROCESSED,
-            classification_source="agent",
-            action_plan=plan,
-        ),
-        agent_result=durable_result,
-        sender="sender@example.com",
-        subject="Legacy canonical Agent result",
-        model_text="__subject__legacy canonical agent result",
-    )
-    canonical_legacy_result = {
-        key: value
-        for key, value in legacy_result.items()
-        if key not in {"decision_status", "classification_id"}
-    }
-    with sqlite3.connect(database) as db:
-        db.execute(
-            """
-            update email_agent_classification_tasks
-            set status='done', input_json=?, result_json=?
-            where task_id=?
-            """,
-            (json.dumps(payload), json.dumps(legacy_result), task.task_id),
-        )
-        db.execute(
-            "update email_classifications set agent_result_json=? where id=?",
-            (json.dumps(canonical_legacy_result), classification_id),
-        )
-    _downgrade_email_database_to_v25(database)
-
-    EmailStore(database)
-    with sqlite3.connect(database) as db:
-        task_documents = db.execute(
-            """
-            select input_json, result_json
-            from email_agent_classification_tasks where task_id=?
-            """,
-            (task.task_id,),
-        ).fetchone()
-        canonical_document = db.execute(
-            "select agent_result_json from email_classifications where id=?",
-            (classification_id,),
-        ).fetchone()
-    assert task_documents is not None and canonical_document is not None
-    decoded_documents = [
-        json.loads(task_documents[0]),
-        json.loads(task_documents[1]),
-        json.loads(canonical_document[0]),
-    ]
-
-    def decoded_strings(value: object) -> list[str]:
-        if isinstance(value, str):
-            return [value]
-        if isinstance(value, list):
-            return [text for item in value for text in decoded_strings(item)]
-        if isinstance(value, dict):
-            return [
-                text
-                for key, item in value.items()
-                for text in [*decoded_strings(key), *decoded_strings(item)]
-            ]
-        return []
-
-    all_strings = [
-        text for document in decoded_documents for text in decoded_strings(document)
-    ]
-    assert all(private_url not in text for text in all_strings)
-    assert all(private_token not in text for text in all_strings)
-    assert all("unsubscribe_url" not in document for document in decoded_documents[1:])
-    assert decoded_documents[1]["unsubscribe_candidate_source"] == "legacy"
-    assert decoded_documents[2]["unsubscribe_candidate_source"] == "legacy"
+    assert database.read_bytes() == before
 
 
 @pytest.mark.parametrize("state", ["empty", "done", "delayed", "live"])
@@ -1027,20 +428,20 @@ def test_ineligible_classification_poll_does_not_acquire_writer_lock(
     if state != "empty":
         task = adapter.ensure_task(_classification_input(uid=142))
         with store._connect() as db:
+            parts = task12_set_parts("email_agent_classification_tasks", {
+                "status": "pending" if state == "delayed" else "running" if state == "live" else "done",
+                "available_at": "2099-01-01 00:00:00" if state == "delayed" else "",
+                "lease_expires_at": "2099-01-01 00:00:00" if state == "live" else "",
+            })
             db.execute(
-                "update email_agent_classification_tasks set status=?, "
-                "available_at=?, lease_expires_at=? where task_id=?",
-                (
-                    "pending" if state == "delayed" else "running" if state == "live" else "done",
-                    "2099-01-01 00:00:00" if state == "delayed" else "",
-                    "2099-01-01 00:00:00" if state == "live" else "",
-                    task.task_id,
-                ),
+                f"update tasks set {parts.sql} where record_type='email_agent_classification_tasks' "
+                f"and {task20_column('email_agent_classification_tasks', 'task_id')}=?",
+                (*parts.parameters, task.task_id),
             )
     original_open = store._open_connection
 
-    def short_wait_connection():
-        db = original_open()
+    def short_wait_connection(**kwargs):
+        db = original_open(**kwargs)
         db.execute("pragma busy_timeout=20")
         return db
 
@@ -1061,8 +462,8 @@ def test_classification_claim_rechecks_after_an_intervening_owner(tmp_path: Path
     original_open = store._open_connection
     claims = []
 
-    def competing_connection():
-        db = original_open()
+    def competing_connection(**kwargs):
+        db = original_open(**kwargs)
 
         def before_begin(statement):
             if statement.lower() == "begin immediate":
@@ -1225,6 +626,66 @@ def test_classifier_retry_uses_shared_capped_backoff_until_success(tmp_path: Pat
     assert third is not None
     adapter.complete(third, {"decision_status": "processed"})
     assert adapter.get_task(third.task_id).status == "done"
+
+
+def test_classifier_retryable_failure_stops_after_four_attempts(tmp_path: Path):
+    adapter = EmailClassificationTaskAdapter(_email_store(tmp_path), retry_base_seconds=0)
+    original = adapter.ensure_task(_classification_input(uid=245))
+    for attempt in range(1, 5):
+        claimed = adapter.claim_next(owner="worker")
+        assert claimed is not None
+        assert claimed.attempt_count == attempt
+        adapter.fail(claimed, error="LookupError:email source UID is unavailable", retryable=True)
+    exhausted = adapter.get_task(original.task_id)
+    assert exhausted.status == "failed"
+    assert exhausted.available_at == ""
+    assert exhausted.error == "LookupError:email source UID is unavailable"
+    assert exhausted.input_json == original.input_json
+    assert adapter.claim_next(owner="worker") is None
+    assert adapter.retry_failed_tasks((original.task_id,)) == 1
+    assert adapter.claim_next(owner="worker").attempt_count == 1
+
+
+def test_classifier_repeated_expired_claims_stop_after_four_attempts(tmp_path: Path):
+    now = [datetime(2026, 9, 8, tzinfo=timezone.utc)]
+    adapter = EmailClassificationTaskAdapter(
+        _email_store(tmp_path), now=lambda: now[0], lease_seconds=1,
+    )
+    original = adapter.ensure_task(_classification_input(uid=246))
+    for attempt in range(1, 5):
+        claimed = adapter.claim_next(owner="crashed-worker")
+        assert claimed is not None
+        assert claimed.attempt_count == attempt
+        now[0] = now[0].replace(second=attempt * 2)
+        adapter.recover_running_tasks()
+    exhausted = adapter.get_task(original.task_id)
+    assert exhausted.status == "failed"
+    assert exhausted.attempt_count == 4
+    assert exhausted.error == "classification task lease expired"
+    assert adapter.claim_next(owner="replacement") is None
+
+
+def test_classifier_closes_legacy_exhausted_pending_before_claiming(tmp_path: Path):
+    store = _email_store(tmp_path)
+    adapter = EmailClassificationTaskAdapter(store)
+    original = adapter.ensure_task(_classification_input(uid=247))
+    with store._connect() as db:
+        parts = task12_set_parts("email_agent_classification_tasks", {
+            "attempt_count": 58, "available_at": "2099-01-01T00:00:00+00:00",
+            "error": "LookupError:email source UID is unavailable",
+        })
+        db.execute(
+            f"update tasks set {parts.sql} where record_type='email_agent_classification_tasks'",
+            parts.parameters,
+        )
+    assert adapter.claim_next(owner="worker") is None
+    exhausted = adapter.get_task(original.task_id)
+    assert exhausted.status == "failed"
+    assert exhausted.attempt_count == 58
+    assert exhausted.error == "LookupError:email source UID is unavailable"
+    assert exhausted.input_json == original.input_json
+    fresh = adapter.ensure_task(_classification_input(uid=248))
+    assert adapter.claim_next(owner="worker").task_id == fresh.task_id
 
 
 def test_explicit_classifier_repair_reopens_only_selected_failed_tasks(
@@ -1495,7 +956,7 @@ def test_task_producer_projects_html_only_unsubscribe_as_opaque_reference(
     )
     assert private_url not in route.task.trigger_message_json
     assert "html-only-private" not in route.task.trigger_message_json
-    assert private_url not in repr(route.context)
+    assert private_url not in repr(route)
     assert private_url.encode() not in (tmp_path / "email-agent.sqlite3").read_bytes()
 
 
@@ -1922,10 +1383,9 @@ def test_email_context_contains_text_metadata_receipts_and_no_image_inputs(
 ):
     plan = _plan((EmailAction.UNSUBSCRIBE,))
     task_input = _task_input()
-    route = _authorized_adapter(tmp_path, plan, task_input).ensure_action_plan_tasks(
-        plan, task_input
-    )[0]
-    context = route.context
+    adapter = _authorized_adapter(tmp_path, plan, task_input)
+    route = adapter.ensure_action_plan_tasks(plan, task_input)[0]
+    context = adapter.load_existing_task_context(route.task, task_input)
     rendered = context.render_business_context(current_time="2026-08-30T09:00:00+00:00")
 
     assert context.channel == "email"
@@ -2039,7 +1499,9 @@ def test_refreshed_email_context_contains_one_opaque_continuation_receipt(
         lambda _identity: continuation,
     )
 
-    refreshed = adapter.ensure_action_plan_tasks(plan, task_input)[0].context
+    refreshed = adapter.load_existing_task_context(
+        adapter.ensure_action_plan_tasks(plan, task_input)[0].task, task_input
+    )
 
     continuation_receipts = [
         receipt
@@ -2157,7 +1619,7 @@ def test_refreshed_email_context_rejects_private_continuation_evidence(
     )
 
     with pytest.raises(EmailAgentTaskMetadataError):
-        adapter.ensure_action_plan_tasks(plan, task_input)
+        adapter.load_existing_task_context(first.task, task_input)
 
 
 def test_terminal_unsubscribe_claim_without_continuation_adds_no_receipt(
@@ -2189,7 +1651,9 @@ def test_terminal_unsubscribe_claim_without_continuation_adds_no_receipt(
         lambda _identity: None,
     )
 
-    refreshed = adapter.ensure_action_plan_tasks(plan, task_input)[0].context
+    refreshed = adapter.load_existing_task_context(
+        adapter.ensure_action_plan_tasks(plan, task_input)[0].task, task_input
+    )
 
     assert [
         receipt
@@ -2243,7 +1707,7 @@ def test_current_plan_switch_cannot_interleave_after_authorization_read(
 
     def observed_authorization_read(db, classification_id: int):
         row = db.execute(
-            """
+                f"""
             select
                 classifications.id as classification_id,
                 classifications.account_id as account_id,
@@ -2252,8 +1716,8 @@ def test_current_plan_switch_cannot_interleave_after_authorization_read(
                 messages.thread_identity as thread_identity,
                 classifications.current_action_plan_id
                     as current_action_plan_id
-            from email_classifications as classifications
-            join email_messages as messages
+                from ({email_classification_projection()}) as classifications
+                join ({email_message_projection()}) as messages
               on messages.account_id=classifications.account_id
              and messages.stable_message_identity=
                  classifications.stable_message_identity
@@ -2285,10 +1749,10 @@ def test_current_plan_switch_cannot_interleave_after_authorization_read(
             assert authorization_checked.wait(timeout=1)
             competing_email_store = EmailStore(database)
 
-            def zero_timeout_open_connection() -> sqlite3.Connection:
+            def zero_timeout_open_connection(*, foreign_keys: bool = True) -> sqlite3.Connection:
                 connection = sqlite3.connect(database, timeout=0)
                 connection.execute("pragma busy_timeout = 0")
-                connection.execute("pragma foreign_keys = on")
+                connection.execute("pragma foreign_keys = " + ("on" if foreign_keys else "off"))
                 connection.row_factory = sqlite3.Row
                 return connection
 
@@ -2390,7 +1854,7 @@ def test_agent_action_identity_conflict_rolls_back_the_whole_plan(tmp_path: Path
     with sqlite3.connect(tmp_path / "email-agent.sqlite3") as db:
         assert (
             db.execute(
-                "select count(*) from tasks where record_type='reply_tasks' and trigger_message_id=?",
+                f"select count(*) from tasks where record_type='reply_tasks' and {task20_column('reply_tasks', 'trigger_message_id')}=?",
                 (auto_reply_identity,),
             ).fetchone()[0]
             == 0
@@ -2525,4 +1989,20 @@ def test_thread_identity_is_normalized_once_for_identity_payload_and_context(
     assert json.loads(first.task.trigger_message_json)["thread_identity"] == (
         "thread-customer-41"
     )
-    assert first.context.conversation_id == replay.context.conversation_id
+    assert adapter.load_existing_task_context(first.task, spaced).conversation_id == (
+        adapter.load_existing_task_context(replay.task, _task_input()).conversation_id
+    )
+
+
+def test_enqueue_does_not_build_unused_execution_context(tmp_path, monkeypatch):
+    plan = _plan((EmailAction.UNSUBSCRIBE,))
+    task_input = _task_input()
+    adapter = _authorized_adapter(tmp_path, plan, task_input)
+
+    def unexpected(**kwargs):
+        raise AssertionError("enqueue should not build execution context")
+
+    monkeypatch.setattr(adapter, "_build_context", unexpected)
+    [route] = adapter.ensure_action_plan_tasks(plan, task_input)
+    assert route.task.channel == "email"
+    assert not hasattr(route, "context")

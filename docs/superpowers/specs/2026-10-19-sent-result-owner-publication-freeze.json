@@ -1,0 +1,22 @@
+{
+  "schema": "ceo-sent-result-owner-publication-freeze-v1",
+  "commit": "df42e9449546d9021f0ca58a058e1979a9a037b2",
+  "files": 1209,
+  "sha256": "efd3ab6e7be0a6203dc1a30e51214500debeaedc06cb46c29ef9b4ad48b3758e",
+  "digest_format": "sorted unique path UTF-8 + NUL + raw SHA256(file bytes) + NUL",
+  "native_acceptance_source": "804386b12/1208/07995baffd63214a516366631228479e0b3fb67cdc66940bff8b289126333720",
+  "upstream_merge": "05bb1a187",
+  "changed_source_paths": [
+    "app/consumer_purpose_retry.py",
+    "app/wechat/codex_safety.py",
+    "app/wechat/decision_runner.py",
+    "app/worker.py",
+    "tests/test_agent_role_tool_boundary.py",
+    "tests/test_consumer_purpose_retry.py",
+    "tests/test_oa_ai_services_namespace.py",
+    "tests/test_worker.py",
+    "tests/wechat/test_decision_runner.py"
+  ],
+  "sent_storage_release_paths_unchanged": true,
+  "publication": "pending"
+}

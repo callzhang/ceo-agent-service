@@ -330,7 +330,10 @@ class DeterministicEmailActionExecutor:
             provider_target=action.locator.stable_message_identity,
             provider_result_id="",
             error=f"{prefix}:{error_type}",
-            retryable=not isinstance(exc, ImapPermanentProviderError),
+            retryable=not isinstance(
+                exc,
+                (ImapPermanentProviderError, ImapMessageLookupAmbiguous),
+            ),
         )
 
 
@@ -436,6 +439,10 @@ class ImapPermanentFlagsUnsupported(ImapPermanentProviderError):
 
 class ImapMessageUnavailable(ImapProviderError):
     """The stable message could not be located uniquely."""
+
+
+class ImapMessageLookupAmbiguous(ImapMessageUnavailable):
+    """The stable message lookup matched multiple messages."""
 
 
 _UID_RESPONSE = re.compile(rb"\bUID\s+(?P<uid>[1-9][0-9]*)\b")
@@ -593,7 +600,7 @@ class ImapDeterministicProvider:
         if not matches:
             raise ImapMessageUnavailable("message lookup was missing")
         if len(matches) > 1:
-            raise ImapMessageUnavailable("message lookup was ambiguous")
+            raise ImapMessageLookupAmbiguous("message lookup was ambiguous")
         return matches[0]
 
     def find_states(

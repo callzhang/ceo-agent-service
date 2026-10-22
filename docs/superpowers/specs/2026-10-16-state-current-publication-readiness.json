@@ -1,0 +1,52 @@
+{
+  "date": "2026-10-16",
+  "status": "accepted_unselected_proposal",
+  "base_app_commit": "68a1374907e9b77cb315ee2d332c662580d94e7a",
+  "app_patches": {
+    "2026-10-16-state-current-direct-proposal.patch": "d8b63673755399c81153f2ad8fb8c3cbdc635be628be0c727eb08a79a74cc66f",
+    "2026-10-16-state-publication-proposal.patch": "62fcca01a989f2e729d1b9bcf378a335482907a54a5f5ffff5e3d450b69de2ae"
+  },
+  "test_patches": {
+    "2026-10-16-state-current-direct-test-proposal.patch": "39ef8b632d4fb1cd1b50125a83f0f2727aeab5a391c9b58814a4c5bb83e65827",
+    "2026-10-16-state-publication-test-proposal.patch": "48cc567cecd2e2831d69890a183d1baadd43e4e0d3c6ff0d83255bc7a54577ef"
+  },
+  "scope": {
+    "existing_direct_functions": 13,
+    "existing_publication_quiescence_functions": 10,
+    "new_read_only_helpers": 2,
+    "changed_signatures": 0,
+    "business_fields_added": 0,
+    "historical_release_class_changes": 0
+  },
+  "root": "149 passed, 29.29s; exact sequential artifacts, original conftest and static JSON, owned temp removed",
+  "spec": {
+    "status": "PASS",
+    "tests": "149 passed,27.73s +5 native source controls,0.33s",
+    "ast": "exact23 existing functions; unrelated functions/signatures retained"
+  },
+  "quality": {
+    "status": "PASS",
+    "tests": "149 passed,28.98s +29 adversarial/differential cases,1.46s",
+    "coverage": [
+      "main versus TEMP marker/dispatcher shadows",
+      "case and malformed State declarations",
+      "current TEMP native/index collisions, extra triggers, renamed declarations",
+      "all seven generic readers reject malformed Actions",
+      "historical Reply variants accepted without Skill extension",
+      "native/current dispatcher PID BLOB/integer and owner/expiry/terminal facts"
+    ]
+  },
+  "preserved_contracts": [
+    "All original runtime predicates, error labels, transaction ownership and current DTOs",
+    "Email availability/publication public functions remain marker-pair-only; _markers source is now explicit State/native",
+    "Generic seven current publication selectors retain complete Actions/Skill declaration checks",
+    "Native historical release prepare/verify/inverse code remains unchanged"
+  ],
+  "corrections_before_acceptance": [
+    "Initial direct harness omitted conftest; discarded as acceptance; final carries original isolation",
+    "Earlier integration exposed missing current Skill receipt selector and native publication marker paths; explicit selector prerequisite accepted separately",
+    "Added quiet-wait fixture initially omitted BEGIN; fixed fixture transaction; no application primitive or query predicate weakened"
+  ],
+  "boundary": "Proposal only. No app activation, coordinator/progress closure, actual-copy migration/inverse, predecessor cold CLI, final table-count acceptance or deployment.",
+  "cleanup": "All owned root/reviewer TemporaryDirectories removed; unrelated pending cleanup authorization not retried."
+}

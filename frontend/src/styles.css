@@ -1402,7 +1402,6 @@ h1, h2, h3, p { margin-top: 0; }
 .task-state { color: var(--ink-soft); font-size: 0.72rem; }
 .task-activity { color: var(--ink-soft); font-size: 0.7rem; }
 .task-state-running, .task-state-queued { color: var(--accent); }
-.task-state-waiting_confirmation { color: var(--warning); }
 .task-state-failed { color: var(--danger); }
 
 .task-actions { display: flex; padding-right: 6px; opacity: 0; transition: opacity 120ms ease; }
@@ -1502,16 +1501,6 @@ h1, h2, h3, p { margin-top: 0; }
 .execution-failed summary > svg:first-child { color: var(--danger); }
 .execution-aborted summary > svg:first-child { color: var(--ink-soft); }
 
-.confirmation-card { padding: 15px; border: 1px solid #e1c67f; border-radius: 12px; background: #fffaf0; }
-.confirmation-title { display: flex; align-items: center; gap: 8px; color: #7b5210; }
-.confirmation-card dl { margin: 12px 0; }
-.confirmation-card dl div { display: grid; grid-template-columns: 56px 1fr; gap: 8px; padding: 5px 0; }
-.confirmation-card dt { color: var(--ink-soft); font-size: 0.75rem; }
-.confirmation-card dd { margin: 0; font-size: 0.82rem; overflow-wrap: anywhere; }
-.confirmation-card small { color: var(--ink-soft); }
-.confirmation-wait { margin: 9px 0; color: var(--warning); font-size: 0.78rem; }
-.confirmation-actions { display: flex; gap: 8px; }
-.confirmation-actions button { min-width: 96px; padding: 6px 12px; }
 
 .artifact-list { display: grid; gap: 7px; margin: 0; padding: 0; list-style: none; }
 .artifact-list a { display: grid; grid-template-columns: auto minmax(0, 1fr) auto; align-items: center; gap: 9px; padding: 10px 12px; color: var(--ink); text-decoration: none; border: 1px solid var(--line); border-radius: 10px; background: var(--surface); }
@@ -2018,3 +2007,48 @@ h1, h2, h3, p { margin-top: 0; }
   .business-detail-facts > div { grid-template-columns: minmax(0, 1fr); gap: 3px; }
   .business-task-tabs a { padding: 9px 10px; }
 }
+
+/* Global service update: links scroll independently; the action stays visible. */
+.global-nav.has-service-update { overflow: visible; }
+.global-nav.has-service-update .global-nav-track { width: 0; overflow-x: auto; justify-content: safe center; }
+.global-nav.has-service-update .global-nav-item { flex-shrink: 0; }
+.service-update-control { display: flex; align-items: center; flex-shrink: 0; padding: 8px 18px 8px 8px; }
+.service-update-button { display: inline-flex; gap: 7px; align-items: center; min-height: 34px; padding: 0 13px; border: 1px solid var(--accent); border-radius: 999px; background: var(--accent-soft); color: var(--ink); font-size: 12px; font-weight: 650; white-space: nowrap; cursor: pointer; }
+.service-update-scrim { position: fixed; inset: 0; z-index: 500; display: grid; place-items: center; padding: 24px; background: rgb(16 24 20 / 42%); }
+.service-update-dialog { width: min(100%, 620px); max-height: calc(100dvh - 48px); display: flex; flex-direction: column; border: 1px solid var(--line); border-radius: 18px; background: var(--surface); color: var(--ink); box-shadow: 0 20px 80px rgb(0 0 0 / 18%); }
+.service-update-dialog header { display: flex; justify-content: space-between; align-items: flex-start; padding: 24px 26px 18px; border-bottom: 1px solid var(--line); }
+.service-update-dialog h2 { margin: 5px 0 0; font-size: 22px; }
+.service-update-close { border: 0; background: transparent; color: var(--ink-soft); padding: 4px; cursor: pointer; }
+.service-update-body { padding: 20px 26px; overflow-y: auto; min-height: 0; }
+.service-update-version { display: flex; gap: 10px; align-items: center; flex-wrap: wrap; margin: 0 0 20px; color: var(--ink-soft); font-size: 12px; }
+.service-update-version code { background: var(--surface-muted); padding: 4px 7px; border-radius: 5px; }
+.service-update-summary h3 { margin: 0 0 10px; font-size: 14px; }
+.service-update-summary p { margin: 0 0 20px; line-height: 1.8; white-space: pre-wrap; overflow-wrap: anywhere; font-size: 14px; }
+.service-update-commits { font-size: 12px; margin-bottom: 20px; }
+.service-update-commits summary { cursor: pointer; color: var(--ink-soft); }
+.service-update-commits ol { list-style: none; padding: 0; }
+.service-update-commits li { padding: 12px 0; border-bottom: 1px solid var(--line); overflow-wrap: anywhere; }
+.service-update-commits strong { display: block; margin-top: 5px; font-weight: 600; }
+.service-update-commits pre { white-space: pre-wrap; overflow-wrap: anywhere; font: inherit; line-height: 1.65; }
+.service-update-explanation { padding: 14px; margin: 20px 0 0; background: var(--surface-muted); border-radius: 10px; line-height: 1.7; color: var(--ink-soft); font-size: 12px; }
+.service-update-dialog footer { display: flex; justify-content: flex-end; gap: 10px; padding: 16px 26px; border-top: 1px solid var(--line); }
+.service-update-dialog footer button { min-height: 36px; padding: 0 17px; border: 1px solid var(--line); border-radius: 8px; background: var(--surface); color: var(--ink); cursor: pointer; }
+.service-update-dialog button:disabled { opacity: .5; cursor: default; }
+.service-update-dialog footer .service-update-confirm { background: var(--accent); color: var(--on-accent); border-color: var(--accent); }
+.service-update-progress { display: flex; gap: 10px; align-items: center; line-height: 1.6; font-size: 13px; }
+.service-update-error { color: var(--danger, #b43b31); font-size: 13px; line-height: 1.65; }
+.service-update-spinner { animation: service-update-spin 1.2s linear infinite; flex-shrink: 0; }
+@keyframes service-update-spin { to { transform: rotate(360deg); } }
+@media (max-width: 720px) {
+  .global-nav.has-service-update .global-nav-track { width: 100%; justify-content: flex-start; }
+  .global-nav:has(.service-update-control) .global-brand { padding-right: 165px; }
+  .global-nav:has(.service-update-control) .global-brand > span:last-child { min-width: 0; }
+  .global-nav:has(.service-update-control) .global-brand strong, .global-nav:has(.service-update-control) .global-brand small { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  .service-update-control { position: absolute; top: 6px; right: 0; padding-right: 12px; }
+  .service-update-button { padding: 0 10px; font-size: 11px; }
+  .service-update-scrim { padding: 12px; }
+  .service-update-dialog { max-height: calc(100dvh - 24px); border-radius: 14px; }
+  .service-update-dialog header, .service-update-body { padding: 18px; }
+  .service-update-dialog footer { padding: 14px 18px; }
+}
+@media (prefers-reduced-motion: reduce) { .service-update-spinner { animation: none; } }

@@ -30,6 +30,8 @@ from app.process_runner import ProcessRunResult
 from app.runtime_environment import central_python
 from app.worker import ORCHESTRATION_ATTEMPT_STATUS, DingTalkAutoReplyWorker
 from tests.support.image_bytes import TINY_PNG
+from tests.test_agent_contracts import _decision_options
+from app.task8_storage import task8_set_parts
 from tests.support.native_protocol import install_protocol_native_trajectories
 
 from app.business_skills import bundled_business_skills_root
@@ -55,6 +57,14 @@ def _protocol_memory_transport(monkeypatch: pytest.MonkeyPatch):
     monkeypatch.setenv("MEMORY_CONNECTOR_CONTENT_TYPE", "application/json")
 
 
+def _update_reply_task_fixture(db, task_id, values, *, update_sql=None):
+    parts = task8_set_parts("reply_tasks", values, update_sql=update_sql)
+    return db.execute(
+        f"update tasks set {parts.sql} where record_type='reply_tasks' and cast(legacy_key as integer)=?",
+        (*parts.parameters, task_id),
+    ).rowcount
+
+
 class ScriptOutcome(StrEnum):
     COMPLETED = "completed"
     NO_ACTION = "no_action"
@@ -78,6 +88,7 @@ def test_worker_orchestration_status_mapping_is_exact():
         "dry_run": ("dry_run", "done"),
         "failed_retryable": ("failed", "pending"),
         "failed_terminal": ("failed", "failed"),
+        "permission_blocked": ("blocked", "needs_human"),
     }
 
 
@@ -644,10 +655,8 @@ class ScriptedTaskOrchestrator:
                 "outcome": consumer_outcome,
                 "summary": direct_result.summary,
                 "proposal": proposal,
-                "decision_options": [],
-                "requested_input": (
-                    direct_result.summary if consumer_outcome == "needs_human" else None
-                ),
+                "decision_options": _decision_options() if consumer_outcome == "needs_human" else [],
+                "requested_input": None,
                 "error": {
                     "code": (
                         ""
@@ -966,8 +975,8 @@ def _consumer_protocol_result(
             "outcome": outcome,
             "summary": summary,
             "proposal": proposal,
-            "decision_options": [],
-            "requested_input": summary if outcome == "needs_human" else None,
+            "decision_options": _decision_options() if outcome == "needs_human" else [],
+            "requested_input": None,
             "error": {
                 "code": "" if outcome == "needs_human" else code,
                 "retryable": retryable,
@@ -2806,10 +2815,7 @@ def test_stale_worker_recovers_completed_consumer_turn_without_legacy_parsing(
     )
     store.record_candidate_review(candidate["id"], audit_run.id, review)
     with store._connect() as db:
-        db.execute(
-            "update tasks set locked_at=datetime('now', '-31 minutes') where record_type='reply_tasks' and cast(legacy_key as integer)=?",
-            (task.id,),
-        )
+        _update_reply_task_fixture(db, task.id, {}, update_sql={"locked_at": "datetime('now', '-31 minutes')"})
     worker = DingTalkAutoReplyWorker(
         store=store,
         dws=ContextOnlyDws([trigger]),
@@ -3167,10 +3173,7 @@ def test_worker_stops_retryable_orchestration_at_attempt_limit(tmp_path: Path):
     ]
     assert [run.turn_attempt for run in audit_runs] == [0, 1]
     with worker.store._connect() as db:
-        db.execute(
-            "update tasks set available_at='' where record_type='reply_tasks' and cast(legacy_key as integer)=?",
-            (task_id,),
-        )
+        _update_reply_task_fixture(db, task_id, {"available_at": ""})
 
     assert worker.consume_once(max_tasks=1) == 0
 
@@ -3510,10 +3513,7 @@ def test_retryable_failure_reuses_generation_and_session_with_new_turn_then_succ
     first = worker.store.get_reply_task(task_id)
     assert first is not None and first.status == "pending"
     with worker.store._connect() as db:
-        db.execute(
-            "update tasks set available_at='' where record_type='reply_tasks' and cast(legacy_key as integer)=?",
-            (task_id,),
-        )
+        _update_reply_task_fixture(db, task_id, {"available_at": ""})
 
     worker.consume_once(max_tasks=1)
 
@@ -3562,7 +3562,7 @@ def test_retryable_failure_becomes_terminal_at_worker_attempt_limit(tmp_path: Pa
 
     worker.consume_once(max_tasks=1)
     with worker.store._connect() as db:
-        db.execute("update tasks set available_at='' where record_type='reply_tasks' and cast(legacy_key as integer)=?", (task_id,))
+        _update_reply_task_fixture(db, task_id, {"available_at": ""})
     worker.consume_once(max_tasks=1)
 
     assert len(runner.calls) == 2
@@ -3740,11 +3740,7 @@ def test_manual_rerun_rotates_generation_and_allows_changed_work(tmp_path: Path)
     assert worker.consume_once(max_tasks=1) == 1
 
     with worker.store._connect() as db:
-        db.execute(
-            "update tasks set status='pending', available_at='', locked_at='' "
-            "where record_type='reply_tasks' and cast(legacy_key as integer)=?",
-            (first_id,),
-        )
+        _update_reply_task_fixture(db, first_id, {"status": "pending", "available_at": "", "locked_at": ""})
     assert worker.consume_once(max_tasks=1) == 1
 
     assert rerun.execution_generation != first_generation
@@ -3922,11 +3918,7 @@ def test_completed_generation_is_not_executed_again(tmp_path: Path):
     task_id = _enqueue(worker.store, trigger)
     assert worker.consume_once(max_tasks=1) == 1
     with worker.store._connect() as db:
-        db.execute(
-            "update tasks set status='pending', available_at='', locked_at='' "
-            "where record_type='reply_tasks' and cast(legacy_key as integer)=?",
-            (task_id,),
-        )
+        _update_reply_task_fixture(db, task_id, {"status": "pending", "available_at": "", "locked_at": ""})
 
     assert worker.consume_once(max_tasks=1) == 1
 
@@ -3966,10 +3958,7 @@ def test_stale_processing_resumes_same_generation_and_session(tmp_path: Path):
         "session-stale",
     )
     with worker.store._connect() as db:
-        db.execute(
-            "update tasks set locked_at='2026-07-28 07:00:00' where record_type='reply_tasks' and cast(legacy_key as integer)=?",
-            (task.id,),
-        )
+        _update_reply_task_fixture(db, task.id, {"locked_at": "2026-07-28 07:00:00"})
 
     worker.consume_once(max_tasks=1)
 
@@ -4074,10 +4063,7 @@ def test_stale_retryable_failed_run_resumes_same_generation_and_session(
         now="2026-07-28 07:00:01",
     )
     with worker.store._connect() as db:
-        db.execute(
-            "update tasks set locked_at='2026-07-28 07:00:00' where record_type='reply_tasks' and cast(legacy_key as integer)=?",
-            (task.id,),
-        )
+        _update_reply_task_fixture(db, task.id, {"locked_at": "2026-07-28 07:00:00"})
 
     assert worker.consume_once(max_tasks=1) == 1
 
@@ -4141,10 +4127,7 @@ def test_stale_recovery_keeps_turn_history_for_orchestrator_at_task_limit(
         now="2026-07-28 07:00:01",
     )
     with worker.store._connect() as db:
-        db.execute(
-            "update tasks set locked_at='2026-07-28 07:00:00' where record_type='reply_tasks' and cast(legacy_key as integer)=?",
-            (task_id,),
-        )
+        _update_reply_task_fixture(db, task_id, {"locked_at": "2026-07-28 07:00:00"})
 
     worker._recover_stale_agent_reply_tasks()
 
@@ -4154,10 +4137,7 @@ def test_stale_recovery_keeps_turn_history_for_orchestrator_at_task_limit(
     assert notifications == []
     notifications.clear()
     with worker.store._connect() as db:
-        db.execute(
-            "update tasks set available_at='' where record_type='reply_tasks' and cast(legacy_key as integer)=?",
-            (task_id,),
-        )
+        _update_reply_task_fixture(db, task_id, {"available_at": ""})
 
     second_task = worker.store.claim_reply_task(
         task_id,
@@ -4181,10 +4161,7 @@ def test_stale_recovery_keeps_turn_history_for_orchestrator_at_task_limit(
         now="2026-07-28 07:01:01",
     )
     with worker.store._connect() as db:
-        db.execute(
-            "update tasks set locked_at='2026-07-28 07:00:00' where record_type='reply_tasks' and cast(legacy_key as integer)=?",
-            (task_id,),
-        )
+        _update_reply_task_fixture(db, task_id, {"locked_at": "2026-07-28 07:00:00"})
 
     worker._recover_stale_agent_reply_tasks()
 

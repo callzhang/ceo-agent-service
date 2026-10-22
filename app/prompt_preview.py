@@ -8,7 +8,8 @@ from app.agent_runtime_config import AgentRuntimeConfig
 from app.agent_runtime_contracts import RuntimeKind
 from app.audit_rules import render_audit_rules
 from app.config import workspace_path
-from app.consumer_agent import consumer_developer_sections, audit_developer_sections, default_task_skill_catalog
+from app.consumer_agent import (consumer_developer_sections_by_runtime, audit_developer_sections,
+    default_task_skill_catalog)
 from app.business_skills import frozen_task_skill_binding, frozen_task_skill_names, render_task_skill_discovery
 from app.prompt_composition import (PromptSection, append_runtime_context, load_prompt_configuration,
     prompt_section_facts, render_prompt_sections)
@@ -150,14 +151,23 @@ def current_prompt_preview(
             latest_id = attempts[-1].id if attempts else (snapshots[-1].get("runtime_attempt_id") if snapshots else None)
             source_snapshot = next((snapshot for snapshot in snapshots if snapshot.get("runtime_attempt_id") == latest_id), None)
     facts = source_snapshot.get("invocation_facts", {}) if source_snapshot else {}
+    audit_purpose_name = (
+        facts.get("audit_purpose")
+        if facts.get("audit_purpose") in {"general", "oa"}
+        else "oa" if task and (
+            task.oa_url or "dingtalk-oa-approval" in (facts.get("skill_names") or ())
+        ) else "general"
+    )
     configuration = load_prompt_configuration(create_missing=False, role=role)
     fingerprints = configuration.fingerprints()
     profile = configuration.work_profile
     if role == "consumer":
-        developer_sections = consumer_developer_sections(runtime_context="", work_profile=profile, prompt_configuration=configuration)
+        developer_sections = consumer_developer_sections_by_runtime(
+            runtime_context="", work_profile=profile, prompt_configuration=configuration,
+        )[route.runtime_kind.value]
     else:
         rules = render_audit_rules(AgentRole.AUDIT, create_missing=False)
-        developer_sections = audit_developer_sections(rules, runtime_context="", work_profile=profile, prompt_configuration=configuration)
+        developer_sections = audit_developer_sections(rules, runtime_context="", work_profile=profile, prompt_configuration=configuration, purpose_name=audit_purpose_name)
     developer = render_prompt_sections(developer_sections, placement="developer", omit_empty=role == "consumer")
     prompt = source_snapshot["task_prompt"] if source_snapshot else "未绑定任务和候选：仅预览当前角色公共指令与环境。"
     if task and source_snapshot is None:
@@ -188,7 +198,7 @@ def current_prompt_preview(
         command = CodexRuntimeAdapter(workspace=workspace, config=config).build_command(
             route=route, prompt=prompt, session_id=None, image_paths=None, output_schema_path=None,
             use_output_schema=False, approval_policy="on-failure", developer_instructions=developer, use_approval_bypass=False)
-        make_role_agent_command(command, role=role, task_workspace=str(cwd) if role == "consumer" else None,
+        make_role_agent_command(command, role=role, purpose_name=audit_purpose_name if role == "audit" else "general", task_workspace=str(cwd) if role == "consumer" else None,
             controlled_cli=ControlledCliConfig(command=sys.executable, args=("-m", "app.agent_cli", "--role", role), cwd=str(Path(__file__).resolve().parent.parent)))
     else:
         command = ClaudeRuntimeAdapter(config=config, workspace=workspace).build_command(

@@ -1,0 +1,24 @@
+{
+  "recorded_at": "2026-10-18T01:12:29.604187+00:00",
+  "status": "CHANGES_REQUIRED",
+  "freeze_sha256": "ba860e90de7ce1bec161a9938e78b44caa1a8c1e51da7b3877b77a8ffb9a7133",
+  "spec": {
+    "verdict": "APPROVE",
+    "focused_pass": 8,
+    "seconds": 48.9
+  },
+  "quality": {
+    "verdict": "CHANGES_REQUIRED",
+    "finding": "_projection_snapshot keeps sqlite3.Row entries in rows/types, while native source _snapshot normalizes each to tuple; populated known source forward rejects equal facts, same inverse path affected",
+    "synthetic_reproduction": "Exact frozen fresh Email and fresh Actions, one valid Message/Class pair, sqlite3.Row connection; capture succeeds, forward rejects after target DDL inside caller transaction",
+    "source_db_access": false,
+    "production_access": false,
+    "pins_stable_before_after": [
+      4,
+      12,
+      373
+    ]
+  },
+  "next": "Same component author R6 normalizes rows/types and adds full Row-factory forward/current-fact inverse regression. Caller remains paused.",
+  "accepted": false
+}

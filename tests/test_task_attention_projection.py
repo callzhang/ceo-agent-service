@@ -4,6 +4,9 @@ from dataclasses import replace
 import pytest
 
 from app.store import AutoReplyStore
+from app.business_definitions import BUSINESS_PROJECTIONS
+from app.business_storage import update_business
+from app.action_business_storage import insert_business_action
 from app.task_attention_projection import AttentionProposal, BusinessAttentionProjection
 from app.task_business_resolution import BusinessResolutionService
 from app.project_context_service import ProjectContextService
@@ -62,7 +65,8 @@ def _task_with_anchor(projection: BusinessAttentionProjection, key: str) -> tupl
 def _link_project_signal(projection, anchor_id, signal_id):
     with projection.store.business_task_transaction() as db:
         project_id = db.execute(
-            "select id from business_projects where canonical_anchor_id=?", (anchor_id,)
+            f"select id from ({BUSINESS_PROJECTIONS['project']}) "
+            "where canonical_anchor_id=?", (anchor_id,)
         ).fetchone()[0]
         ProjectContextService(projection.store).apply(
             project_id=project_id, context=None, signal_ids=(signal_id,), db=db
@@ -84,6 +88,46 @@ def _proposal(task_ids: tuple[int, ...], anchor_id: int, signal_id: int, *, cate
     )
 
 
+def test_upsert_reuses_caller_writer_for_validation_and_mutation():
+    from types import SimpleNamespace
+
+    db = object()
+    calls = []
+
+    class FakeStore:
+        def business_task_transaction(self):
+            raise AssertionError("caller-owned writer must not be opened again")
+
+        def get_business_attention_item_by_stable_key_in_transaction(self, *, stable_key, _db):
+            assert _db is db
+            return None
+
+        def create_business_attention_item_in_transaction(self, *, _db, **kwargs):
+            assert _db is db
+            calls.append("create")
+            return 9
+
+        def get_business_attention_item_in_transaction(self, *, item_id, _db):
+            assert _db is db
+            return SimpleNamespace(model_dump=lambda **kwargs: {"id": item_id})
+
+        def replace_business_attention_tasks_in_transaction(self, *, _db, **kwargs):
+            assert _db is db
+
+        def replace_business_attention_proposal_tasks_in_transaction(self, *, _db, **kwargs):
+            assert _db is db
+
+        def append_business_attention_event_in_transaction(self, *, _db, **kwargs):
+            assert _db is db
+            calls.append("event")
+
+    projection = BusinessAttentionProjection(FakeStore())
+    projection._validate_proposal = lambda proposal, *, db: calls.append(("validate", db))
+    projection._current_eligible_task_ids = lambda *, task_ids, anchor_id, db: tuple(task_ids)
+    assert projection.upsert(_proposal((), 3, 7), _db=db) == 9
+    assert calls == [("validate", db), "create", "event"]
+
+
 def _project_without_tasks(projection, key):
     resolver = BusinessResolutionService(projection.store)
     anchor_id = resolver.register_anchor(
@@ -97,10 +141,9 @@ def _project_without_tasks(projection, key):
         evidence_text="客户验收标准尚未确认，需要关注交付风险。", dedupe_key=f"risk:{key}"
     )
     with projection.store.business_task_transaction() as db:
-        db.execute(
-            "insert into business_project_evidence(project_id, signal_id) values (?, ?)",
-            (project_id, signal_id),
-        )
+        insert_business_action(db, "business_project_evidence", {
+            "project_id": project_id, "signal_id": signal_id,
+        })
     return anchor_id, project_id, signal_id
 
 
@@ -128,10 +171,9 @@ def test_zero_task_attention_resolves_only_with_its_project_evidence(projection)
         dedupe_key="resolved:zero"
     )
     with projection.store.business_task_transaction() as db:
-        db.execute(
-            "insert into business_project_evidence(project_id, signal_id) values (?, ?)",
-            (project_id, resolution_signal),
-        )
+        insert_business_action(db, "business_project_evidence", {
+            "project_id": project_id, "signal_id": resolution_signal,
+        })
     projection.resolve(item_id=item_id, resolution_signal_id=resolution_signal, reason="验收风险已消除")
     projection.resolve(item_id=item_id, resolution_signal_id=resolution_signal, reason="验收风险已消除")
     assert projection.store.get_business_attention_item(item_id).status.value == "resolved"
@@ -302,7 +344,7 @@ def test_upsert_synchronizes_membership_and_rejects_inactive_anchor(projection):
     assert '"task_ids":[%s]' % first in latest.after_json
 
     with projection.store.business_task_transaction() as db:
-        db.execute("update business_anchors set active=0 where id=?", (anchor_id,))
+        update_business(db, "anchor", anchor_id, {"active": 0})
     with pytest.raises(ValueError, match="active"):
         projection.upsert(_proposal((first,), anchor_id, signal_id))
 

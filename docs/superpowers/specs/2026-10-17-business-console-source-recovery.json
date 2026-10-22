@@ -1,0 +1,93 @@
+{
+  "observed_at_utc": "2026-10-17T17:53:00.674418+00:00",
+  "scope": "Readonly exact existing Console source-body reconstruction only, plus historical recorded-proof/current-content reconciliation; no runtime reader implementation/retirement",
+  "source_database": "/Users/derek/Library/Application Support/ceo-agent-service/auto-reply.sqlite3",
+  "source_access": "mode=ro/query_only read transaction",
+  "method": "Existing task_console_actions.decide_candidate formatter using signal author_name/context.action and referenced task-event before_json title/updated_at; verify task/action/version source_ref and complete source_document_key",
+  "code_sha256": {
+    "app/task_console_actions.py": "e7f48a2cf577a0c3a2fc593798db4be55bb0948ae32185b70c2b59a39040f47c",
+    "app/task_source_documents.py": "b5fc08f38ba596057db048460882454cf5c969e5db85e38b1739fe346063b290"
+  },
+  "console_document": {
+    "source_document_id": 8,
+    "source_identity_key": "2da25b160de5f9ee214347c4d18117b6e8cbca1932aa79e598a035fa00e9f391",
+    "signal_id": 44,
+    "task_event_id": 44,
+    "task_id": 43,
+    "source_ref": "console:task:43:ignore:2026-09-24T23:48:47+00:00",
+    "event_before_json_sha256": "f8265c8727dd4cfe9c5750e207d1cc662aff5cff4448e4114dfa678e26650a30",
+    "signal_context_json_sha256": "9d9c52d147b44cdea321285fb2babe5f9af3b53fafc2974bf33310124eebe851",
+    "utf8_body_bytes": 111,
+    "utf8_body_sha256": "61be614b3fc336b4d1afe8b347851dcb4ba9fdc54cc4b089cca8c149fdfe51f8",
+    "exact_body_match": true,
+    "source_ref_version_matches_event_snapshot": true,
+    "full_identity_key_match": true,
+    "altered_body_negative_control_rejected": true
+  },
+  "recorded_proof_bindings": {
+    "2026-10-15-database-redesign-business-native-source-recovery.json": "ed8ef6f509b4c2d08df7a4c1ce10801ed56e345a258941d30139b3492bbd70ea",
+    "2026-10-17-business-native-source-additional-recovery.json": "803f78d34564275edc1a296a076122478b2aa45069a610e6fefcc6ecb66e1d1a",
+    "2026-10-15-business-minutes-canonical-source-probe.json": "2145cb71f6496f6e4aa0c6b02a4ed58c9b60557596b45eaa9b93699058f095ff"
+  },
+  "current_reconciliation": {
+    "source_documents": 220,
+    "total_utf8_body_bytes": 7164322,
+    "historical_native_contents_still_exact": 55,
+    "historical_provider_contents_still_exact": 130,
+    "fresh_console_reconstruction_count": 1,
+    "not_covered_ids": [
+      12,
+      30,
+      31,
+      46,
+      49,
+      50,
+      51,
+      52,
+      66,
+      67,
+      68,
+      69,
+      90,
+      91,
+      93,
+      94,
+      95,
+      96,
+      97,
+      99,
+      100,
+      101,
+      114,
+      115,
+      118,
+      119,
+      120,
+      214,
+      215,
+      216,
+      217,
+      218,
+      219,
+      220
+    ],
+    "not_covered_utf8_bytes": 823485,
+    "new_since_old213_ids": [
+      214,
+      215,
+      216,
+      217,
+      218,
+      219,
+      220
+    ],
+    "new_since_old213_utf8_bytes": 147173
+  },
+  "limits": [
+    "No source body, author name, event snapshot or raw source text is persisted in this receipt.",
+    "Historical Provider availability is not refreshed; only verified-status rows are admitted, not whole_body_equal alone.",
+    "Other27 old documents and7 new documents remain unproved by the recorded union plus Console method; not a statement of permanent unavailability.",
+    "Repair document30 does not exactly equal retained context.reason or event.reason and remains unproved.",
+    "No runtime Console source reader is selected, no provider/network/migration/production write, no body retirement."
+  ]
+}

@@ -7,10 +7,9 @@ from uuid import UUID
 
 import pytest
 
-from tests.email_schema_fixtures import restore_action_plan_snapshot_column
+from app.action_storage import email_action_projection, insert_action, insert_email_action, update_email_action
 
 from app.email_store import (
-    EMAIL_SCHEMA_VERSION,
     EmailFolderBindingConflict,
     EmailPersistenceCorruption,
     EmailStore,
@@ -191,51 +190,11 @@ def test_config_cas_serializes_competing_writers(tmp_path):
     assert len(store.list_model_promotion_configs()) == 2
 
 
-def test_v33_migration_backup_and_restart(tmp_path):
-    path = tmp_path / "email.sqlite3"
-    initial_store = EmailStore(path)
-    category = initial_store.update_category_descriptions(
-        "work",
-        core_description="Existing custom description",
-        include=["customers"],
-        exclude=["personal"],
-        threshold=0.96,
-        enabled=True,
-        description_version="custom-desc",
-        config_version="custom-config",
-    )
-    with sqlite3.connect(path) as db:
-        db.execute("drop table email_model_mode_transitions")
-        db.execute("drop table email_model_promotion_configs")
-        db.execute("drop table email_category_description_revisions")
-        restore_action_plan_snapshot_column(db)
-        db.execute("delete from email_schema_migrations")
-        db.execute("insert into email_schema_migrations values (33, 'before')")
-        with sqlite3.connect(tmp_path / "before.sqlite3") as backup:
-            db.commit()
-            db.backup(backup)
-    store = EmailStore(path)
-    initial = store.current_model_promotion_config()
-    assert EmailStore(path).list_model_promotion_configs() == [initial]
-    assert store.list_category_description_revisions("work")[0]["config"] == category
-    with sqlite3.connect(path) as db:
-        assert db.execute(
-            "select version from email_schema_migrations order by version"
-        ).fetchall() == [(version,) for version in range(33, EMAIL_SCHEMA_VERSION + 1)]
-        assert db.execute("pragma foreign_key_check").fetchall() == []
-    with sqlite3.connect(tmp_path / "before.sqlite3") as db:
-        assert db.execute("pragma integrity_check").fetchone()[0] == "ok"
-        assert (
-            db.execute("select max(version) from email_schema_migrations").fetchone()[0]
-            == 33
-        )
-
-
 @pytest.mark.parametrize(
     "old,new",
     [
-        ("micro_f1_min real not null", "micro_f1_min text not null"),
-        ("check(micro_f1_min >= 0 and micro_f1_min <= 1)", ""),
+        ("promotion_micro_f1_min real generated always", "promotion_micro_f1_min text generated always"),
+        ("promotion_micro_f1_min>=0 and promotion_micro_f1_min<=1", "promotion_micro_f1_min>=0"),
         ("on delete restrict", "on delete cascade"),
     ],
 )
@@ -243,16 +202,13 @@ def test_model_control_schema_contract_is_strict(tmp_path, old, new):
     store = EmailStore(tmp_path / "email.sqlite3")
     with sqlite3.connect(store.path) as db:
         db.execute("pragma writable_schema=on")
-        rows = db.execute(
-            "select name, sql from sqlite_master where name in ('email_model_promotion_configs', 'email_model_mode_transitions')"
-        ).fetchall()
-        assert any(old in sql for _, sql in rows)
-        for name, sql in rows:
-            db.execute(
-                "update sqlite_master set sql=? where name=?",
-                (sql.replace(old, new), name),
-            )
-    with pytest.raises(EmailPersistenceCorruption):
+        sql = db.execute("select sql from sqlite_master where name='configs'").fetchone()[0]
+        assert old in sql
+        db.execute(
+            "update sqlite_master set sql=? where name='configs'",
+            (sql.replace(old, new),),
+        )
+    with pytest.raises(sqlite3.IntegrityError):
         EmailStore(store.path)
 
 
@@ -260,17 +216,14 @@ def test_model_control_primary_key_contract_is_strict(tmp_path):
     store = EmailStore(tmp_path / "email.sqlite3")
     with sqlite3.connect(store.path) as db:
         sql = db.execute(
-            "select sql from sqlite_master where name='email_model_promotion_configs'"
+            "select sql from sqlite_master where name='configs'"
         ).fetchone()[0]
-        sql = sql.replace(
-            "config_version text primary key not null", "config_version text not null"
-        )
-        sql = sql.replace(
-            "created_at text not null", "created_at text primary key not null"
-        )
-        db.execute("drop table email_model_promotion_configs")
-        db.execute(sql)
-    with pytest.raises(EmailPersistenceCorruption, match="required primary key"):
+        assert "id integer primary key autoincrement" in sql
+        db.execute("pragma writable_schema=on")
+        db.execute("update sqlite_master set sql=? where name='configs'", (
+            sql.replace("id integer primary key autoincrement", "id integer not null"),
+        ))
+    with pytest.raises(sqlite3.IntegrityError):
         EmailStore(store.path)
 
 
@@ -420,10 +373,21 @@ def test_immutable_history_rejects_replace_with_recursive_triggers_off(tmp_path,
     store.record_model_mode_transition(**_transition(store))
     with sqlite3.connect(store.path) as db:
         db.execute("pragma recursive_triggers=off")
-        before = db.execute(f"select * from {table}").fetchall()
+        before = db.execute(
+            "select * from configs where record_type=?", (table,)
+        ).fetchall()
+        assert before
         with pytest.raises(sqlite3.IntegrityError, match="immutable"):
-            db.execute(f"insert or replace into {table} select * from {table} limit 1")
-        assert db.execute(f"select * from {table}").fetchall() == before
+            db.execute(
+                "insert or replace into configs(record_type,legacy_key,payload_json,"
+                "transition_promotion_config_version,transition_promotion_ref) "
+                "select record_type,legacy_key,payload_json,"
+                "transition_promotion_config_version,transition_promotion_ref "
+                "from configs where record_type=? limit 1", (table,)
+            )
+        assert db.execute(
+            "select * from configs where record_type=?", (table,)
+        ).fetchall() == before
 
 
 @pytest.mark.parametrize(
@@ -434,45 +398,45 @@ def test_immutable_history_rejects_replace_with_recursive_triggers_off(tmp_path,
         "email_category_description_revisions",
     ],
 )
-def test_insert_immutability_trigger_is_required_at_startup(tmp_path, table):
+def test_duplicate_history_trigger_is_required_at_startup(tmp_path, table):
     store = EmailStore(tmp_path / "email.sqlite3")
     with sqlite3.connect(store.path) as db:
-        db.execute(f"drop trigger trg_{table}_immutable_insert")
-    with pytest.raises(EmailPersistenceCorruption, match="required trigger"):
+        short = {
+            "email_model_promotion_configs": "promotion",
+            "email_model_mode_transitions": "transition",
+            "email_category_description_revisions": "revision",
+        }[table]
+        db.execute(f"drop trigger trg_configs_{short}_duplicate")
+    with pytest.raises(sqlite3.IntegrityError):
         EmailStore(store.path)
 
 
 @pytest.mark.parametrize(
-    "table,primary_key",
+    "table",
     [
-        ("email_model_promotion_configs", "config_version"),
-        ("email_model_mode_transitions", "request_id"),
-        ("email_category_description_revisions", "revision_id"),
+        "email_model_promotion_configs",
+        "email_model_mode_transitions",
+        "email_category_description_revisions",
     ],
 )
 @pytest.mark.parametrize("alias", ["rowid", "_rowid_", "oid"])
-def test_immutable_history_has_no_hidden_replacement_key(
-    tmp_path, table, primary_key, alias
+def test_immutable_history_cannot_replace_through_physical_alias(
+    tmp_path, table, alias
 ):
     store = EmailStore(tmp_path / "email.sqlite3")
     store.record_model_mode_transition(**_transition(store))
     with sqlite3.connect(store.path) as db:
         db.execute("pragma recursive_triggers=off")
-        before = db.execute(f"select * from {table}").fetchall()
-        columns = [row[1] for row in db.execute(f"pragma table_info({table})")]
-        source = [
-            "'fresh-id'" if column == primary_key else column for column in columns
-        ]
-        with pytest.raises(sqlite3.OperationalError, match="no column named"):
+        before = db.execute("select * from configs where record_type=?", (table,)).fetchall()
+        with pytest.raises(sqlite3.IntegrityError, match="immutable"):
             db.execute(
-                f"insert or replace into {table} ({alias}, {', '.join(columns)}) "
-                f"select 1, {', '.join(source)} from {table} limit 1"
+                f"insert or replace into configs({alias},record_type,legacy_key,"
+                "payload_json,transition_promotion_config_version,transition_promotion_ref) "
+                "select id+100000,record_type,legacy_key,payload_json,"
+                "transition_promotion_config_version,transition_promotion_ref "
+                "from configs where record_type=? limit 1", (table,)
             )
-        assert db.execute(f"select * from {table}").fetchall() == before
-        assert (
-            next(row for row in db.execute("pragma table_list") if row[1] == table)[4]
-            == 1
-        )
+        assert db.execute("select * from configs where record_type=?", (table,)).fetchall() == before
 
 
 @pytest.mark.parametrize(
@@ -483,16 +447,11 @@ def test_immutable_history_has_no_hidden_replacement_key(
         "email_category_description_revisions",
     ],
 )
-def test_without_rowid_is_required_by_history_schema_contract(tmp_path, table):
+def test_public_identity_index_is_required_by_history_schema_contract(tmp_path, table):
     store = EmailStore(tmp_path / "email.sqlite3")
     with sqlite3.connect(store.path) as db:
-        sql = db.execute(
-            "select sql from sqlite_master where name=?", (table,)
-        ).fetchone()[0]
-        assert "without rowid" in sql.lower()
-        db.execute(f"drop table {table}")
-        db.execute(sql.replace("without rowid", ""))
-    with pytest.raises(EmailPersistenceCorruption, match="WITHOUT ROWID"):
+        db.execute("drop index idx_configs_public")
+    with pytest.raises(sqlite3.IntegrityError):
         EmailStore(store.path)
 
 
@@ -634,15 +593,15 @@ def test_restart_validates_full_category_revision_snapshot(tmp_path, changes):
     store = EmailStore(tmp_path / "email.sqlite3")
     config = store.get_category_config("work") | changes
     with sqlite3.connect(store.path) as db:
+        payload = json.loads(db.execute(
+            "select payload_json from configs where record_type='email_category_description_revisions' "
+            "and revision_category_key='work' limit 1"
+        ).fetchone()[0])
+        payload["config_json"] = json.dumps(config)
         db.execute(
-            "insert into email_category_description_revisions values (?, ?, ?, ?, ?)",
-            (
-                "bad-revision",
-                "work",
-                config["config_version"],
-                json.dumps(config),
-                "now",
-            ),
+            "insert into configs(record_type,legacy_key,payload_json) values(?,?,?)",
+            ("email_category_description_revisions", json.dumps(["bad-revision"]),
+             json.dumps(payload)),
         )
     with pytest.raises(EmailPersistenceCorruption):
         EmailStore(store.path)
@@ -652,9 +611,16 @@ def test_restart_rejects_incomplete_category_revision_snapshot(tmp_path):
     store = EmailStore(tmp_path / "email.sqlite3")
     config = {"category_key": "work", "config_version": "incomplete"}
     with sqlite3.connect(store.path) as db:
+        payload = json.loads(db.execute(
+            "select payload_json from configs where record_type='email_category_description_revisions' "
+            "and revision_category_key='work' limit 1"
+        ).fetchone()[0])
+        payload["config_version"] = "incomplete"
+        payload["config_json"] = json.dumps(config)
         db.execute(
-            "insert into email_category_description_revisions values (?, ?, ?, ?, ?)",
-            ("bad-revision", "work", "incomplete", json.dumps(config), "now"),
+            "insert into configs(record_type,legacy_key,payload_json) values(?,?,?)",
+            ("email_category_description_revisions", json.dumps(["bad-revision"]),
+             json.dumps(payload)),
         )
     with pytest.raises(EmailPersistenceCorruption):
         EmailStore(store.path)
@@ -675,18 +641,25 @@ def test_model_control_history_is_append_only(tmp_path, table, operation):
     with sqlite3.connect(store.path) as db:
         with pytest.raises(sqlite3.IntegrityError, match="immutable"):
             if operation == "delete":
-                db.execute(f"delete from {table}")
+                db.execute("delete from configs where record_type=?", (table,))
             else:
-                db.execute(f"update {table} set created_at='changed'")
+                db.execute(
+                    "update configs set payload_json=json_set(payload_json,"
+                    "'$.created_at','changed') where record_type=?", (table,)
+                )
 
 
 def test_restart_rejects_invalid_transition_shape(tmp_path):
     store = EmailStore(tmp_path / "email.sqlite3")
-    payload = _transition(store, target_model_id=None)
+    store.record_model_mode_transition(**_transition(store))
     with sqlite3.connect(store.path) as db:
         db.execute(
-            "insert into email_model_mode_transitions values (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
-            (*payload.values(), "now"),
+            "insert into configs(record_type,legacy_key,payload_json,"
+            "transition_promotion_config_version,transition_promotion_ref) "
+            "select record_type,?,json_set(payload_json,'$.target_model_id',null),"
+            "transition_promotion_config_version,transition_promotion_ref "
+            "from configs where record_type='email_model_mode_transitions' limit 1",
+            (json.dumps(["bad-request"]),),
         )
     with pytest.raises(EmailPersistenceCorruption, match="target_model_id"):
         EmailStore(store.path)
@@ -722,25 +695,30 @@ def test_attempt_count_drift_is_refused_at_the_write(tmp_path):
     with sqlite3.connect(path) as db:
         db.execute("pragma foreign_keys=off")
         db.execute("begin immediate")
-        db.execute(
-            "insert into email_actions (action_id, action_plan_id,"
-            " classification_id, account_id, action_type, parameters_json,"
-            " config_version, status, attempt_count, created_at, updated_at)"
-            " values ('a:1', 'plan-1', 1, 'account', 'move', '{}', 'c',"
-            " 'processing', 0, 'now', 'now')"
-        )
-        db.execute(
-            "insert into email_action_attempts (action_id, attempt_number, status,"
-            " provider_operation, provider_target, provider_result_id, error,"
-            " started_at, finished_at)"
-            " values ('a:1', 1, 'failed', 'move', 't', '', 'boom', 'now', 'now')"
-        )
-        db.execute(
-            "update email_actions set attempt_count=1, updated_at='later'"
-            " where action_id='a:1'"
-        )
+        insert_email_action(db, "email_actions", {
+            "action_id": "a:1", "action_plan_id": "plan-1",
+            "classification_id": 1, "account_id": "account",
+            "action_type": "move", "parameters_json": "{}",
+            "config_version": "c", "status": "processing",
+            "attempt_count": 0, "created_at": "now", "updated_at": "now",
+        })
+        insert_action(db, "email_action_attempts", {
+            "action_id": "a:1", "attempt_number": 1,
+            "status": "failed", "provider_operation": "move",
+            "provider_target": "t", "provider_result_id": "",
+            "error": "boom", "started_at": "now", "finished_at": "now",
+        })
+        action_rows = db.execute(
+            f"select rowid from ({email_action_projection('email_actions', include_rowid=True)}) "
+            "where action_id='a:1'"
+        ).fetchall()
+        for action_row in action_rows:
+            update_email_action(db, "email_actions", action_row[0], {
+                "attempt_count": 1, "updated_at": "later",
+            })
         with pytest.raises(sqlite3.IntegrityError, match="attempt_count_drift"):
-            db.execute(
-                "update email_actions set attempt_count=0 where action_id='a:1'"
-            )
+            for action_row in action_rows:
+                update_email_action(db, "email_actions", action_row[0], {
+                    "attempt_count": 0,
+                })
         db.execute("rollback")

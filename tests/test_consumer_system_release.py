@@ -11,12 +11,22 @@ from app.agent_cron.models import ScheduledTaskSkillRef
 from app.store import AutoReplyStore
 from app.consumer_system_release import prepare_consumer_system_contracts
 from app.repository_upgrade import GitRepository
-from app.repository_updater import RepositoryUpdater, UpgradeFailed, UpgradeOperation, UPGRADE_OPERATION_STATE_KEY
+from app.repository_updater import (
+    RepositoryUpdater,
+    UpgradeFailed,
+    UpgradeOperation,
+    UPGRADE_OPERATION_STATE_KEY,
+)
 
 
 SKILLS = (
-    "ceo-calendar-invite", "ceo-daily-report", "ceo-document-review",
-    "ceo-mail-review", "ceo-message-triage", "ceo-weekly-report",
+    "ceo-calendar-invite",
+    "ceo-daily-report",
+    "ceo-document-review",
+    "ceo-mail-review",
+    "ceo-message-triage",
+    "ceo-weekly-report",
+    "ceo-weekly-okr-report",
 )
 
 
@@ -40,6 +50,7 @@ def test_repository_consumer_release_manifest_tracks_oa_skill_digest():
     assert len(entry["old_sha256"]) == 64
     assert all(char in "0123456789abcdef" for char in entry["old_sha256"])
     assert entry["new_sha256"] == _digest((root / entry["source"]).read_bytes())
+    assert "old_managed_sha256" not in entry
     audit_source = "app/defaults/audit_rules.md"
     audit_entry = next(item for item in manifest["files"] if item["source"] == audit_source)
     assert audit_entry["old_sha256"] == "5dcfd33f48d23268296da5d89346eaf3a76ffec665e5d9a353c33654a5de8237"
@@ -52,11 +63,28 @@ def test_release_manifest_pins_current_finance_card_and_active_managed_skill_has
     )
     entries = {item["source"]: item for item in manifest["files"]}
     finance_source = "ci/shared-skills/stardust-oa-finance-review/references/finance-rule-cards.md"
-
-    assert entries[finance_source]["old_sha256"] == _digest(
-        Path.home().joinpath(".agents/skills/stardust-oa-finance-review/references/finance-rule-cards.md").read_bytes()
+    finance_skill_source = "ci/shared-skills/stardust-oa-finance-review/SKILL.md"
+    installed_finance_card = Path.home().joinpath(
+        ".agents/skills/stardust-oa-finance-review/references/finance-rule-cards.md"
     )
+    installed_finance_skill = Path.home().joinpath(
+        ".agents/skills/stardust-oa-finance-review/SKILL.md"
+    )
+
+    # Already-published source bytes are a valid no-op release entry: old_sha256
+    # must match today's target, and new_sha256 must match the committed source.
+    assert _digest(installed_finance_card.read_bytes()) in {
+        entries[finance_source]["old_sha256"], entries[finance_source]["new_sha256"],
+    }
     assert entries[finance_source]["new_sha256"] == _digest((root / finance_source).read_bytes())
+    installed_digest = _digest(installed_finance_skill.read_bytes())
+    assert installed_digest in {
+        entries[finance_skill_source]["old_sha256"],
+        entries[finance_skill_source]["new_sha256"],
+    }
+    assert entries[finance_skill_source]["new_sha256"] == _digest(
+        (root / finance_skill_source).read_bytes()
+    )
     assert {
         source: entries[source]["old_managed_sha256"]
         for source in (
@@ -67,7 +95,7 @@ def test_release_manifest_pins_current_finance_card_and_active_managed_skill_has
     } == {
         "ci/shared-skills/ceo-calendar-invite/SKILL.md": "8fa06610ac6f272b3d9121167dd71da211ab7659d43e0f60f4f40f374a68137f",
         "ci/shared-skills/ceo-message-triage/SKILL.md": "35070baeda959d85b5e1188bb89e003778331880252abf7143e889d476b11d36",
-        "ci/shared-skills/ceo-weekly-report/SKILL.md": "99dc5322a775a150b3712b422cbfcf3b90f35cb73432c61408141482a988bb09",
+        "ci/shared-skills/ceo-weekly-report/SKILL.md": "ececf8bf22e740573b68c0a4e1f1d6cd7db166a2fb2c6991737cce03890d22a9",
     }
 
 
@@ -143,7 +171,20 @@ def test_repository_consumer_release_manifest_includes_current_attendance_review
     entry = next(item for item in manifest["files"] if item["source"] == source)
 
     assert entry["target"] == "skills/stardust-oa-attendance-travel-review/SKILL.md"
-    assert entry["old_sha256"] == "edb3fd74d5a26512fff9c225b0cdf694412e611a5efdffdea0f392d9c37b8d2e"
+    assert entry["old_sha256"] == "6fd80713c61886e5f42d8bfea419f0db8ae00412e4805d9620068973917e5d46"
+    assert entry["new_sha256"] == _digest((root / source).read_bytes())
+
+
+@pytest.mark.parametrize("script", ("report_contract.py", "validate_run.py"))
+def test_repository_consumer_release_manifest_tracks_weekly_report_scripts(script):
+    root = Path(__file__).resolve().parents[1]
+    manifest = json.loads(
+        (root / "ci/consumer-system-contract-release.json").read_text(encoding="utf-8")
+    )
+    source = f"ci/shared-skills/ceo-weekly-report/scripts/{script}"
+    entry = next(item for item in manifest["files"] if item["source"] == source)
+
+    assert entry["target"] == f"skills/ceo-weekly-report/scripts/{script}"
     assert entry["new_sha256"] == _digest((root / source).read_bytes())
 
 
@@ -179,11 +220,15 @@ def _fixture(tmp_path: Path):
         source.parent.mkdir(parents=True, exist_ok=True)
         target.write_bytes(previous)
         source.write_bytes(replacement)
-        entries.append({
-            "source": f"ci/shared-skills/{rel}", "target": f"skills/{rel}",
-            "old_sha256": _digest(previous), "new_sha256": _digest(replacement),
-            **({"old_managed_sha256": _digest(previous)} if name in SKILLS else {}),
-        })
+        entries.append(
+            {
+                "source": f"ci/shared-skills/{rel}",
+                "target": f"skills/{rel}",
+                "old_sha256": _digest(previous),
+                "new_sha256": _digest(replacement),
+                **({"old_managed_sha256": _digest(previous)} if name in SKILLS else {}),
+            }
+        )
     rel = "ceo-weekly-report/references/dingtalk-runbook.md"
     old[rel], new[rel] = b"old reference\n", b"new reference\n"
     target = skills / rel
@@ -192,10 +237,34 @@ def _fixture(tmp_path: Path):
     source.parent.mkdir(parents=True, exist_ok=True)
     target.write_bytes(old[rel])
     source.write_bytes(new[rel])
-    entries.append({
-        "source": f"ci/shared-skills/{rel}", "target": f"skills/{rel}",
-        "old_sha256": _digest(old[rel]), "new_sha256": _digest(new[rel]),
-    })
+    entries.append(
+        {
+            "source": f"ci/shared-skills/{rel}",
+            "target": f"skills/{rel}",
+            "old_sha256": _digest(old[rel]),
+            "new_sha256": _digest(new[rel]),
+        }
+    )
+    for rel in (
+        "ceo-weekly-report/scripts/report_contract.py",
+        "ceo-weekly-report/scripts/validate_run.py",
+    ):
+        old[rel] = f"old {Path(rel).name}\n".encode()
+        new[rel] = f"new {Path(rel).name}\n".encode()
+        target = skills / rel
+        source = root / "ci/shared-skills" / rel
+        target.parent.mkdir(parents=True, exist_ok=True)
+        source.parent.mkdir(parents=True, exist_ok=True)
+        target.write_bytes(old[rel])
+        source.write_bytes(new[rel])
+        entries.append(
+            {
+                "source": f"ci/shared-skills/{rel}",
+                "target": f"skills/{rel}",
+                "old_sha256": _digest(old[rel]),
+                "new_sha256": _digest(new[rel]),
+            }
+        )
     rel = "stardust-oa-finance-review/references/finance-rule-cards.md"
     old[rel], new[rel] = b"old finance rules\n", b"new finance rules\n"
     target = skills / rel
@@ -204,21 +273,48 @@ def _fixture(tmp_path: Path):
     source.parent.mkdir(parents=True, exist_ok=True)
     target.write_bytes(old[rel])
     source.write_bytes(new[rel])
-    entries.append({
-        "source": f"ci/shared-skills/{rel}", "target": f"skills/{rel}",
-        "old_sha256": _digest(old[rel]), "new_sha256": _digest(new[rel]),
-    })
+    entries.append(
+        {
+            "source": f"ci/shared-skills/{rel}",
+            "target": f"skills/{rel}",
+            "old_sha256": _digest(old[rel]),
+            "new_sha256": _digest(new[rel]),
+        }
+    )
     old["audit_rules"], new["audit_rules"] = b"old audit rules\n", b"new audit rules\n"
     rules.parent.mkdir(parents=True)
     rules.write_bytes(old["audit_rules"])
     source = root / "app/defaults/audit_rules.md"
     source.parent.mkdir(parents=True)
     source.write_bytes(new["audit_rules"])
-    entries.append({
-        "source": "app/defaults/audit_rules.md", "target": "audit_rules",
-        "old_sha256": _digest(old["audit_rules"]),
-        "new_sha256": _digest(new["audit_rules"]),
-    })
+    entries.append(
+        {
+            "source": "app/defaults/audit_rules.md",
+            "target": "audit_rules",
+            "old_sha256": _digest(old["audit_rules"]),
+            "new_sha256": _digest(new["audit_rules"]),
+        }
+    )
+    from app.consumer_system_release import EXPECTED_SOURCES
+
+    present = {entry["source"] for entry in entries}
+    for source_name in sorted(EXPECTED_SOURCES - present):
+        rel = source_name.removeprefix("ci/shared-skills/")
+        old[rel], new[rel] = b"old script\n", b"new script\n"
+        source = root / source_name
+        target = skills / rel
+        source.parent.mkdir(parents=True, exist_ok=True)
+        target.parent.mkdir(parents=True, exist_ok=True)
+        source.write_bytes(new[rel])
+        target.write_bytes(old[rel])
+        entries.append(
+            {
+                "source": source_name,
+                "target": "skills/" + rel,
+                "old_sha256": _digest(old[rel]),
+                "new_sha256": _digest(new[rel]),
+            }
+        )
     manifest = root / "ci/consumer-system-contract-release.json"
     manifest.write_text(json.dumps({"version": 1, "files": entries}))
     return root, skills, rules, manifest, old, new
@@ -289,6 +385,11 @@ def test_publish_then_rollback_restores_exact_files_refs_and_config(tmp_path: Pa
 
     assert (skills / "ceo-daily-report/SKILL.md").read_bytes() == new["ceo-daily-report/SKILL.md"]
     assert rules.read_bytes() == new["audit_rules"]
+    for rel in (
+        "ceo-weekly-report/scripts/report_contract.py",
+        "ceo-weekly-report/scripts/validate_run.py",
+    ):
+        assert (skills / rel).read_bytes() == new[rel]
     assert untouched.read_text() == "keep me"
     updated = store.get_scheduled_task(task_id)
     assert updated.skill_refs[-1].skill_source == "operation"
@@ -306,6 +407,11 @@ def test_publish_then_rollback_restores_exact_files_refs_and_config(tmp_path: Pa
 
     assert (skills / "ceo-daily-report/SKILL.md").read_bytes() == old["ceo-daily-report/SKILL.md"]
     assert rules.read_bytes() == old["audit_rules"]
+    for rel in (
+        "ceo-weekly-report/scripts/report_contract.py",
+        "ceo-weekly-report/scripts/validate_run.py",
+    ):
+        assert (skills / rel).read_bytes() == old[rel]
     assert untouched.read_text() == "keep me"
     assert store.get_scheduled_task(task_id).skill_refs == _store_refs(store, old_config_id)
     rollback_config = store.get_pending_or_active_runtime_skill_config()
@@ -324,7 +430,7 @@ def test_loaded_readback_requires_the_new_config_and_exact_files(tmp_path: Path)
     )
     receipt.publish()
     with pytest.raises(ValueError, match="did not activate"):
-        receipt.verify_loaded()
+        receipt.verify_loaded(wait_timeout_seconds=0)
     config = store.get_pending_or_active_runtime_skill_config()
     store.record_runtime_skill_load(
         config.id, pid=os.getpid(),
@@ -767,3 +873,159 @@ def test_partial_publication_and_rollback_failure_never_start_old_service(tmp_pa
     assert (skills / "ceo-calendar-invite/SKILL.md").read_bytes() == new["ceo-calendar-invite/SKILL.md"]
     assert json.loads(state.values[UPGRADE_OPERATION_STATE_KEY])["status"] == "needs_manual"
     assert (db.parent / "release-receipts" / operation.operation_id / "receipt.json").exists()
+
+
+def test_release_publishes_new_skill_asset_and_rollback_removes_only_that_asset(
+    tmp_path,
+):
+    root, skills, rules, manifest, old, new = _fixture(tmp_path)
+    db = tmp_path / "service.sqlite3"
+    _store_with_refs(db, old)
+    rel = "ceo-daily-report/scripts/window.py"
+    (skills / rel).unlink()
+    payload = json.loads(manifest.read_text())
+    next(x for x in payload["files"] if x["source"] == "ci/shared-skills/" + rel)[
+        "old_sha256"
+    ] = None
+    manifest.write_text(json.dumps(payload))
+    publication = prepare_consumer_system_contracts(
+        root=root,
+        database_path=db,
+        operation_id="new-asset",
+        skills_root=skills,
+        audit_rules_path=rules,
+        manifest_path=manifest,
+    )
+    publication.publish()
+    assert (skills / rel).read_bytes() == new[rel]
+    publication.rollback()
+    assert not (skills / rel).exists()
+    assert (skills / "ceo-daily-report/SKILL.md").read_bytes() == old[
+        "ceo-daily-report/SKILL.md"
+    ]
+
+
+def test_release_migrates_okr_definition_before_restart_and_rolls_back_exact_config(
+    tmp_path, monkeypatch
+):
+    from app.agent_cron import seeds
+
+    root, skills, rules, manifest, old, new = _fixture(tmp_path)
+    db = tmp_path / "service.sqlite3"
+    store, old_config_id, _ = _store_with_refs(db, old)
+    task = store.create_scheduled_task(
+        migration_key=seeds.WEEKLY_OKR_MIGRATION_KEY,
+        name="Custom OKR",
+        description="custom description",
+        command="weekly-okr-report",
+        prompt="",
+        cron_expression="0 10 18 * * 0",
+        timezone_name="UTC",
+        enabled=False,
+    )
+    monkeypatch.setattr(seeds, "_agent_runtime", lambda options: "codex_oauth")
+
+    def selected(options, *, managed=(), operation=()):
+        result = []
+        for name in managed:
+            skill = store.get_managed_skill_by_name(name)
+            revision = store.list_managed_skill_revisions(skill.id)[-1]
+            result.append(
+                ScheduledTaskSkillRef(
+                    skill_source="managed",
+                    skill_name=name,
+                    managed_skill_id=skill.id,
+                    managed_revision_id=revision.id,
+                    position=len(result),
+                )
+            )
+        return tuple(result)
+
+    monkeypatch.setattr(seeds, "_consumer_skill_refs", selected)
+    publication = prepare_consumer_system_contracts(
+        root=root,
+        database_path=db,
+        operation_id="definition-migration",
+        skills_root=skills,
+        audit_rules_path=rules,
+        manifest_path=manifest,
+    )
+    publication.publish()
+    migrated = store.get_scheduled_task(task.id)
+    assert migrated.command == "" and migrated.runtime_id == "codex_oauth"
+    assert (
+        migrated.cron_expression == task.cron_expression
+        and migrated.timezone_name == task.timezone_name
+    )
+    assert (
+        migrated.name == task.name
+        and migrated.description == task.description
+        and not migrated.enabled
+    )
+    assert publication.task_definitions[task.id][1].version == migrated.version
+    default = next(
+        x
+        for x in seeds.SCHEDULED_TASK_DEFAULTS
+        if x.migration_key == task.migration_key
+    )
+    again = seeds._seed_task(default, store=store, options=None, now=None)
+    assert again.version == migrated.version
+    publication.rollback()
+    restored = store.get_scheduled_task(task.id)
+    assert restored.command == task.command and restored.runtime_id == task.runtime_id
+    assert restored.prompt == task.prompt and restored.skill_refs == task.skill_refs
+    assert (
+        restored.cron_expression == task.cron_expression
+        and restored.enabled == task.enabled
+    )
+    assert store.get_pending_or_active_runtime_skill_config().parent_id != old_config_id
+
+
+def test_release_new_binding_preserves_sparse_existing_load_orders(tmp_path):
+    root, skills, rules, manifest, old, new = _fixture(tmp_path)
+    db = tmp_path / "service.sqlite3"
+    store, config_id, task_id = _store_with_refs(db, old)
+    name = "ceo-weekly-okr-report"
+    skill = store.get_managed_skill_by_name(name)
+    bindings = [b for b in store.list_runtime_skill_bindings(config_id) if b.skill_id != skill.id]
+    sparse = store.create_runtime_skill_config([
+        {"skill_id": b.skill_id, "revision_id": b.revision_id, "enabled": b.enabled,
+         "load_order": index * 2, "purpose": b.purpose} for index, b in enumerate(bindings)
+    ], expected_parent_id=config_id)
+    task = store.get_scheduled_task(task_id)
+    refs = [ref for ref in task.skill_refs if ref.skill_name != name]
+    store.update_scheduled_task(task_id, expected_version=task.version,
+        skill_refs=tuple(replace(ref, position=i) for i, ref in enumerate(refs)))
+    path = skills / name / "SKILL.md"
+    path.unlink()
+    payload = json.loads(manifest.read_text())
+    entry = next(x for x in payload["files"] if x["source"] == f"ci/shared-skills/{name}/SKILL.md")
+    entry.update(old_sha256=None, old_managed_sha256=None)
+    manifest.write_text(json.dumps(payload))
+    publication = prepare_consumer_system_contracts(root=root, database_path=db,
+        operation_id="sparse-binding", skills_root=skills, audit_rules_path=rules, manifest_path=manifest)
+    publication.publish()
+    updated = store.list_runtime_skill_bindings(publication.new_config_id)
+    assert len({b.load_order for b in updated}) == len(updated)
+    assert next(b for b in updated if b.skill_id == skill.id).load_order == max(b.load_order for b in store.list_runtime_skill_bindings(sparse.id)) + 1
+    publication.rollback()
+    assert not path.exists()
+
+
+def test_release_drains_legacy_snapshot_even_after_current_task_reconfiguration(tmp_path):
+    from datetime import UTC, datetime
+    root, skills, rules, manifest, old, _ = _fixture(tmp_path)
+    db = tmp_path / "service.sqlite3"
+    store, _, task_id = _store_with_refs(db, old)
+    run = store.create_scheduled_task_run(
+        task_id, trigger_kind="manual", scheduled_for=datetime(2026, 10, 19, tzinfo=UTC)
+    )
+    current = store.get_scheduled_task(task_id)
+    store.update_scheduled_task(task_id, expected_version=current.version,
+                                prompt="Different ordinary task", skill_refs=())
+    with pytest.raises(ValueError, match=f"drain.*scheduled run {run.id}"):
+        prepare_consumer_system_contracts(
+            root=root, database_path=db, operation_id="snapshot-drain",
+            skills_root=skills, audit_rules_path=rules, manifest_path=manifest,
+        )
+    assert not (root / "data/consumer-system-releases/snapshot-drain").exists()

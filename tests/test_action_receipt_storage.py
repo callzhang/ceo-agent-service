@@ -1,4 +1,8 @@
-"""Nine-type target must retain independently measured source contracts."""
+"""Historical TEXT target must retain independently measured receipt contracts.
+
+The ``target_db`` fixture scopes the TEXT DML adapter to these migration-boundary
+tests; normal/final Store fixtures remain on the production writer.
+"""
 
 from contextlib import closing
 import sqlite3
@@ -14,7 +18,8 @@ from tests.test_action_storage import source_database
 
 
 @pytest.fixture
-def target_db():
+def target_db(monkeypatch):
+    """Historical TEXT Actions target for receipt/delivery boundary tests."""
     with closing(sqlite3.connect(":memory:")) as db:
         db.execute("pragma foreign_keys=on")
         create_task_schema(db)
@@ -27,6 +32,8 @@ def target_db():
                     workload_key="1", attempt_number=1, route_name="route", runtime_kind="codex_cli",
                     credential_mode="oauth", model="model", status="completed"))
         storage.create_action_schema(db, include_receipts=True)
+        from tests.historical_action_text_fixture import install as install_historical_text_dml
+        install_historical_text_dml(monkeypatch)
         yield db
 
 
@@ -50,7 +57,9 @@ def test_text_keys_and_raw_receipt_fields_are_not_cast_or_reserialized(target_db
     assert storage.action_schema_is_current(target_db, include_receipts=True)
 
 
-def test_receipt_schema_creates_native_sequence_without_persisting_an_extra_table():
+def test_receipt_schema_creates_native_sequence_without_persisting_an_extra_table(monkeypatch):
+    from tests.historical_action_text_fixture import install as install_historical_text_dml
+    install_historical_text_dml(monkeypatch)
     with closing(sqlite3.connect(":memory:")) as db:
         db.executescript("""
             create table tasks(id integer primary key,record_type text,legacy_key text);
@@ -159,10 +168,12 @@ def six_snapshot(db):
 
 @pytest.mark.parametrize("row_factory", [None, sqlite3.Row])
 @pytest.mark.parametrize("fresh", [False, True])
-def test_source15_forward_current_fact_inverse_and_re_forward(tmp_path, row_factory, fresh):
+def test_source15_forward_current_fact_inverse_and_re_forward(tmp_path, row_factory, fresh, monkeypatch):
     from app.action_receipt_storage import (
         capture_action_receipt_schema, migrate_action_receipt_schema, restore_action_receipt_schema,
     )
+    from tests.historical_action_text_fixture import install as install_historical_text_dml
+    install_historical_text_dml(monkeypatch)
     with closing(source15_database(tmp_path / "source.db", row_factory, fresh=fresh)) as db:
         old_six = six_snapshot(db)
         before = receipt_snapshot(db)

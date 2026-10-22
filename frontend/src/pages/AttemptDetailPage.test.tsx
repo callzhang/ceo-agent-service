@@ -141,6 +141,105 @@ describe("AttemptDetailPage", () => {
     expect(screen.queryByText("session-8448")).not.toBeInTheDocument();
   });
 
+  it("shows Action receipt identity and explicitly labels missing source facts", async () => {
+    getAttemptDetail.mockResolvedValueOnce({
+      item: {
+        ...detail,
+        delivery: {
+          action_id: 9201,
+          conversation_id: "conversation-source-1",
+          trigger_message_id: "trigger-source-1",
+          body: "Action owned message body",
+          receipt_id: 9202,
+          operation: null,
+          target: null,
+          sent_at: "2026-10-20T10:00:00+00:00",
+          source_available: false,
+          source_label: "来源事实未提供",
+          provider_message_id: "provider-message-1",
+          provider_receipt: { id: 9203, available: true, body: "{\"message_id\":\"provider-message-1\"}", result_digest: null },
+          recall_status: "",
+          recalled_at: null,
+        },
+      },
+      meta: { snapshot_at: "2026-10-20T10:00:00+00:00" },
+    });
+
+    renderPage();
+
+    const receipt = await screen.findByLabelText("Action 投递回执");
+    expect(receipt).toHaveTextContent("#9201");
+    expect(receipt).toHaveTextContent("#9203");
+    expect(receipt).toHaveTextContent("provider-message-1");
+    expect(receipt).toHaveTextContent("来源事实未提供");
+    expect(receipt).toHaveTextContent("操作未提供");
+    expect(receipt).toHaveTextContent("目标未提供");
+  });
+
+  it("labels the human decision in plain language", async () => {
+    getAttemptDetail.mockResolvedValueOnce({
+      item: {
+        ...detail,
+        status: { ...detail.status, raw: "needs_human", requires_decision: true },
+        human_decision: {
+          candidate_id: 31, candidate_digest: "reviewed-digest", review_id: 41,
+          reason: "现有规则没说清这类项目资料未齐时谁能决定继续推进。请选一条今后适用的授权规则；这不代表让你批准本项目。",
+          requested_input: "", basis: { verified_facts: [], rule_evidence: [], quality_explanation: "", no_external_action_evidence: [], conclusion: "" },
+          authorization_plan: null, selection: null,
+        },
+      },
+      meta: { snapshot_at: "2026-09-08T10:01:00Z" },
+    });
+    renderPage();
+
+    expect(await screen.findByRole("heading", { name: "Attempt #8448" })).toBeInTheDocument();
+    expect(screen.getByRole("heading", { name: "这次要你决定什么" })).toBeInTheDocument();
+  });
+
+  it("hides an unresolved historical decision candidate when the current Attempt no longer needs a decision", async () => {
+    getAttemptDetail.mockResolvedValueOnce({
+      item: {
+        ...detail,
+        status: { ...detail.status, raw: "running", requires_decision: false },
+        human_decision: {
+          candidate_id: 1077, candidate_digest: "old-candidate", review_id: 1067,
+          reason: "旧候选：选择谁可以决定继续推进", requested_input: "",
+          basis: { verified_facts: [], rule_evidence: [], quality_explanation: "", no_external_action_evidence: [], conclusion: "" },
+          authorization_plan: null, selection: null,
+        },
+      },
+      meta: { snapshot_at: "2026-10-20T23:50:00Z" },
+    });
+    renderPage();
+
+    expect(await screen.findByRole("heading", { name: "Attempt #8448" })).toBeInTheDocument();
+    expect(screen.queryByRole("heading", { name: "这次要你决定什么" })).not.toBeInTheDocument();
+    expect(screen.queryByText("旧候选：选择谁可以决定继续推进")).not.toBeInTheDocument();
+  });
+
+  it("keeps a selected historical decision visible after the Attempt leaves needs_human", async () => {
+    getAttemptDetail.mockResolvedValueOnce({
+      item: {
+        ...detail,
+        status: { ...detail.status, raw: "running", requires_decision: false },
+        human_decision: {
+          candidate_id: 1077, candidate_digest: "selected-candidate", review_id: 1067,
+          reason: "已选择的历史方案", requested_input: "",
+          basis: { verified_facts: [], rule_evidence: [], quality_explanation: "", no_external_action_evidence: [], conclusion: "" },
+          authorization_plan: null, selection: { option_key: "continue", status: "selected" },
+        },
+      },
+      meta: { snapshot_at: "2026-10-20T23:50:00Z" },
+    });
+    renderPage();
+
+    expect(await screen.findByRole("heading", { name: "Attempt #8448" })).toBeInTheDocument();
+    expect(screen.getByRole("heading", { name: "这次要你决定什么" })).toBeInTheDocument();
+    expect(screen.getByText("已选择的历史方案")).toBeInTheDocument();
+    expect(screen.getByRole("heading", { name: "已选择方案" })).toBeInTheDocument();
+    expect(screen.getByText(/continue · selected/)).toBeInTheDocument();
+  });
+
   it("groups runtime retries into collapsed processing batches", async () => {
     getAttemptDetail.mockResolvedValue({
       item: {
@@ -866,6 +965,34 @@ describe("AttemptDetailPage", () => {
     await user.click(await screen.findByRole("button", { name: "重新处理" }));
     expect(window.confirm).toHaveBeenCalledWith("确认重新处理这条 Attempt？");
     expect(command).toHaveBeenCalledWith("/api/console/history/8448/rerun");
+    vi.restoreAllMocks();
+  });
+
+  it("sends an exact message ID through the separate WeChat resend action", async () => {
+    const user = userEvent.setup();
+    const confirm = vi.spyOn(window, "confirm").mockReturnValue(true);
+    getAttemptDetail.mockResolvedValueOnce({
+      item: {
+        ...detail,
+        trigger: { title: "Trigger", text: "Melody: 他说 memory 不仅是 data" },
+        actions: {
+          ...detail.actions,
+          can_rerun: false,
+          can_resend_wechat: true,
+          resend_wechat_url: "/api/console/history/8448/resend-wechat",
+          resend_message_id: "wx-1",
+        },
+      },
+      meta: { snapshot_at: "2026-09-26T21:19:35Z" },
+    });
+    renderPage();
+
+    await user.click(await screen.findByRole("button", { name: "再次发送" }));
+    expect(confirm).toHaveBeenCalledWith(expect.stringContaining("原消息 ID：wx-1"));
+    expect(confirm).toHaveBeenCalledWith(expect.stringContaining("Melody: 他说 memory 不仅是 data"));
+    expect(command).toHaveBeenCalledWith(
+      "/api/console/history/8448/resend-wechat", { trigger_message_id: "wx-1" },
+    );
     vi.restoreAllMocks();
   });
 

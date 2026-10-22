@@ -4,10 +4,11 @@ import os
 import subprocess
 import json
 import sqlite3
+import threading
 
 import pytest
 
-from app.database_backup import backup_is_complete, create_database_backup
+from app.database_backup import backup_database_if_due, backup_is_complete, create_database_backup
 from app.repository_updater import (
     UpgradeFailed,
     RepositoryUpdater,
@@ -105,6 +106,56 @@ def test_clean_upgrade_fast_forwards_and_verifies(tmp_path: Path):
     assert calls == ["restart", "health"]
 
 
+def test_pinned_upgrade_merges_selected_commit_even_if_remote_moves_after_stop(tmp_path: Path):
+    local, _ = fixture_repo(tmp_path)
+    op = operation(local)
+    updater_clone = tmp_path / "updater"
+
+    def advance_remote() -> None:
+        (updater_clone / "version.txt").write_text("newer\n", encoding="utf-8")
+        git(updater_clone, "add", "version.txt")
+        git(updater_clone, "commit", "-m", "newer")
+        git(updater_clone, "push", "origin", "main")
+        git(local, "fetch", "origin")
+
+    result = RepositoryUpdater(
+        local,
+        StateStore(),
+        database_path=tmp_path / "missing.sqlite3",
+        stop=advance_remote,
+        restart=lambda: None,
+        health=lambda: True,
+        pin_target_commit=True,
+    ).execute(op)
+
+    assert result.installed_commit == op.target_commit
+    assert git(local, "rev-parse", "HEAD") == op.target_commit
+    assert git(local, "rev-parse", "origin/main") != op.target_commit
+
+
+def test_pinned_upgrade_accepts_main_ahead_before_repository_recheck(tmp_path: Path):
+    local, _ = fixture_repo(tmp_path)
+    op = operation(local)
+    updater_clone = tmp_path / "updater"
+    (updater_clone / "version.txt").write_text("newer\n", encoding="utf-8")
+    git(updater_clone, "add", "version.txt")
+    git(updater_clone, "commit", "-m", "newer")
+    git(updater_clone, "push", "origin", "main")
+
+    result = RepositoryUpdater(
+        local,
+        StateStore(),
+        database_path=tmp_path / "missing.sqlite3",
+        restart=lambda: None,
+        health=lambda: True,
+        pin_target_commit=True,
+    ).execute(op)
+
+    assert result.installed_commit == op.target_commit
+    assert git(local, "rev-parse", "HEAD") == op.target_commit
+    assert git(local, "rev-parse", "origin/main") != op.target_commit
+
+
 def test_upgrade_stops_service_after_quiet_before_backup_and_restart(tmp_path: Path):
     local, _ = fixture_repo(tmp_path)
     op = operation(local)
@@ -124,6 +175,32 @@ def test_upgrade_stops_service_after_quiet_before_backup_and_restart(tmp_path: P
 
     assert result.status == "succeeded"
     assert calls == ["quiet", "stop", "restart", "health"]
+
+
+def test_unpinned_upgrade_installs_main_pushed_while_waiting_for_quiet(tmp_path: Path):
+    local, _ = fixture_repo(tmp_path)
+    op = operation(local)
+    updater_clone = tmp_path / "updater"
+
+    def push_while_waiting() -> None:
+        (updater_clone / "version.txt").write_text("newer\n", encoding="utf-8")
+        git(updater_clone, "add", "version.txt")
+        git(updater_clone, "commit", "-m", "newer")
+        git(updater_clone, "push", "origin", "main")
+
+    result = RepositoryUpdater(
+        local,
+        StateStore(),
+        database_path=tmp_path / "missing.sqlite3",
+        wait_for_quiet=push_while_waiting,
+        restart=lambda: None,
+        health=lambda: True,
+    ).execute(op)
+
+    newest = git(updater_clone, "rev-parse", "HEAD")
+    assert newest != op.target_commit
+    assert result.installed_commit == newest
+    assert git(local, "rev-parse", "HEAD") == newest
 
 
 def test_failed_fast_forward_restarts_original_service(tmp_path: Path):
@@ -192,6 +269,40 @@ def test_failed_verification_rolls_back_installed_revision(tmp_path: Path):
     assert json.loads(store.values["repository_upgrade_operation:v1"])["status"] == "rolled_back"
 
 
+def test_pinned_upgrade_rolls_back_selected_commit_after_remote_advances(tmp_path: Path):
+    local, _ = fixture_repo(tmp_path)
+    op = operation(local)
+    store = StateStore()
+
+    def advance_remote() -> None:
+        updater_clone = tmp_path / "updater"
+        (updater_clone / "version.txt").write_text("newer\n", encoding="utf-8")
+        git(updater_clone, "add", "version.txt")
+        git(updater_clone, "commit", "-m", "newer")
+        git(updater_clone, "push", "origin", "main")
+        git(local, "fetch", "origin")
+
+    def fail_verification() -> None:
+        raise RuntimeError("verification failed")
+
+    updater = RepositoryUpdater(
+        local,
+        store,
+        database_path=tmp_path / "missing.sqlite3",
+        stop=advance_remote,
+        verification=fail_verification,
+        restart=lambda: None,
+        health=lambda: True,
+        pin_target_commit=True,
+    )
+
+    with pytest.raises(UpgradeFailed, match="verification"):
+        updater.execute(op)
+
+    assert git(local, "rev-parse", "HEAD") == op.original_commit
+    assert json.loads(store.values["repository_upgrade_operation:v1"])["status"] == "rolled_back"
+
+
 def test_dirty_upgrade_preserves_exact_branch_and_message(tmp_path: Path):
     local, _ = fixture_repo(tmp_path)
     (local / "draft.txt").write_text("draft\n", encoding="utf-8")
@@ -238,7 +349,7 @@ def test_persisted_operation_can_be_loaded_by_id():
     )
 
 
-def test_upgrade_reuses_its_recent_complete_backup(tmp_path: Path):
+def test_upgrade_takes_current_snapshot_for_each_operation(tmp_path: Path):
     local, _ = fixture_repo(tmp_path)
     db_path = tmp_path / "worker.sqlite3"
     with sqlite3.connect(db_path) as db:
@@ -247,17 +358,21 @@ def test_upgrade_reuses_its_recent_complete_backup(tmp_path: Path):
         db.commit()
     updater = RepositoryUpdater(local, StateStore(), database_path=db_path)
     first = updater._backup(operation(local))
+    with sqlite3.connect(db_path) as db:
+        db.execute("update state set value = 'current'")
     second_operation = operation(local).__class__(
         **{**operation(local).__dict__, "operation_id": "op-2"}
     )
     second = updater._backup(second_operation)
 
     snapshots = sorted((tmp_path / "backups").glob("*.sqlite3"))
-    assert first == second
-    assert snapshots == [first]
+    assert first != second
+    assert snapshots == [second]
+    with sqlite3.connect(second) as backup:
+        assert backup.execute("select value from state").fetchone() == ("current",)
 
 
-def test_upgrade_reuses_recent_verified_daily_backup(tmp_path: Path):
+def test_upgrade_replaces_recent_daily_backup_with_current_snapshot(tmp_path: Path):
     local, _ = fixture_repo(tmp_path)
     op = operation(local)
     db_path = tmp_path / "worker.sqlite3"
@@ -281,13 +396,82 @@ def test_upgrade_reuses_recent_verified_daily_backup(tmp_path: Path):
     result = updater.execute(op)
 
     assert result.status == "succeeded"
-    assert result.backup_path == str(daily)
-    assert backup_is_complete(daily)
-    with sqlite3.connect(daily) as backup:
-        assert backup.execute("select value from state").fetchone() == ("before",)
-    assert list(daily.parent.glob("*.sqlite3")) == [daily]
+    fresh = Path(result.backup_path)
+    assert fresh != daily
+    assert backup_is_complete(fresh)
+    with sqlite3.connect(fresh) as backup:
+        assert backup.execute("select value from state").fetchone() == ("after",)
+    assert list(daily.parent.glob("*.sqlite3")) == [fresh]
     assert calls == ["stop", "restart"]
     assert git(local, "rev-parse", "HEAD") == op.target_commit
+
+
+def test_daily_backup_waits_until_failed_deploy_rollback_uses_snapshot(tmp_path: Path):
+    local, _ = fixture_repo(tmp_path)
+    op = operation(local)
+    db_path = tmp_path / "worker.sqlite3"
+    with sqlite3.connect(db_path) as db:
+        db.execute("create table state (value text)")
+        db.execute("insert into state values ('before')")
+
+    daily_started = threading.Event()
+    daily_finished = threading.Event()
+    completed_during_verify: list[bool] = []
+    rollback_values: list[str] = []
+    daily_errors: list[BaseException] = []
+    worker: threading.Thread | None = None
+
+    def publication(backup_path: Path | None):
+        assert backup_path is not None
+
+        class Release:
+            def publish(self):
+                with sqlite3.connect(db_path) as db:
+                    db.execute("update state set value = 'migrated'")
+
+            def verify_loaded(self):
+                nonlocal worker
+
+                def daily_backup():
+                    daily_started.set()
+                    try:
+                        backup_database_if_due(db_path)
+                    except BaseException as exc:
+                        daily_errors.append(exc)
+                    finally:
+                        daily_finished.set()
+
+                worker = threading.Thread(target=daily_backup)
+                worker.start()
+                assert daily_started.wait(2)
+                completed_during_verify.append(daily_finished.wait(0.2))
+                raise RuntimeError("installed database verification failed")
+
+            def rollback(self):
+                with sqlite3.connect(f"file:{backup_path}?mode=ro", uri=True) as db:
+                    rollback_values.append(db.execute("select value from state").fetchone()[0])
+
+            def finalize(self):
+                pass
+
+        return Release()
+
+    store = StateStore()
+    updater = RepositoryUpdater(
+        local, store, database_path=db_path, database_publication=publication,
+        restart=lambda: None, health=lambda: True,
+    )
+
+    with pytest.raises(UpgradeFailed, match="verification"):
+        updater.execute(op)
+
+    assert worker is not None
+    worker.join(timeout=2)
+    assert not worker.is_alive()
+    assert not daily_errors
+    assert completed_during_verify == [False]
+    assert rollback_values == ["before"]
+    assert json.loads(store.values["repository_upgrade_operation:v1"])["status"] == "rolled_back"
 
 
 @pytest.mark.parametrize("existing", ["missing", "stale", "incomplete", "future"])
@@ -333,7 +517,7 @@ def test_upgrade_creates_backup_when_none_qualifies(tmp_path: Path, existing: st
     assert git(local, "rev-parse", "HEAD") == op.target_commit
 
 
-def test_backup_selects_newest_complete_snapshot_for_its_database(tmp_path: Path):
+def test_backup_replaces_existing_snapshots_for_its_database(tmp_path: Path):
     local, _ = fixture_repo(tmp_path)
     db_path = tmp_path / "worker.sqlite3"
     with sqlite3.connect(db_path) as db:
@@ -352,8 +536,10 @@ def test_backup_selects_newest_complete_snapshot_for_its_database(tmp_path: Path
         db.execute("create table state (value text)")
     updater = RepositoryUpdater(local, StateStore(), database_path=db_path)
 
-    assert updater._backup(operation(local)) == newer
-    assert backup_is_complete(newer)
+    fresh = updater._backup(operation(local))
+    assert fresh != newer
+    assert backup_is_complete(fresh)
+    assert list((tmp_path / "backups").glob("*.sqlite3")) == [fresh]
     assert not backup_is_complete(incomplete)
 
 
@@ -420,6 +606,53 @@ def test_quiet_wait_returns_once_work_drains():
     )
 
 
+def test_quiet_counts_processing_current_direct_email_action(tmp_path):
+    from app.email_classifier_contracts import EmailAction, EmailClassificationStatus
+    from app.email_store import EmailStore
+    from app.repository_updater import in_flight_work
+    from app.store import AutoReplyStore
+    from tests.test_email_store import _classification
+
+    path = tmp_path / "current-email-action-quiet.sqlite3"
+    AutoReplyStore(path)
+    email = EmailStore(path)
+    classification = _classification(
+        status=EmailClassificationStatus.PROCESSED,
+        classification_id=91,
+        message_id="quiet-current-direct-action",
+        actions=(EmailAction.ARCHIVE,),
+        action_parameters={},
+    )
+    email.persist_scan_result(classification, model_text="synthetic")
+    action_id = email.direct_action_ids_for_plan(
+        classification.action_plan.action_plan_id
+    )[0]
+
+    claimed = email.claim_direct_action(
+        action_id=action_id, claimed_at="2026-10-22T12:00:00+00:00"
+    )
+
+    assert claimed is not None
+    from app.email_publication_sources import publication_email_action_source
+
+    with sqlite3.connect(path) as db:
+        source = publication_email_action_source(db)
+        assert db.execute(
+            f"select count(*) from ({source}) where status='processing'"
+        ).fetchone() == (1,)
+    assert in_flight_work(path) == 1
+
+
+def test_quiet_store_only_database_has_no_email_action_contribution(tmp_path):
+    from app.repository_updater import in_flight_work
+    from app.store import AutoReplyStore
+
+    path = tmp_path / "store-only-quiet.sqlite3"
+    AutoReplyStore(path)
+
+    assert in_flight_work(path) == 0
+
+
 @pytest.mark.parametrize("status,locked_at,expected", [
     ("processing", "2026-01-01 00:00:00", 1),
     ("ready_to_send", "2026-01-01 00:00:00", 1),
@@ -432,19 +665,18 @@ def test_quiet_counts_meeting_preparation_and_claimed_delivery(tmp_path, status,
     from app.store import AutoReplyStore
 
     path = tmp_path / "meeting-quiet.sqlite3"
-    AutoReplyStore(path)
+    store = AutoReplyStore(path)
     with sqlite3.connect(path) as db:
-        from app.run_storage import insert_run
-        from app.task_storage import insert_task
+        from app.task8_storage import task8_insert_parts, register_task8_functions
 
-        cursor = insert_task(db, "meeting_alignment_jobs", {
+        register_task8_functions(db)
+        parts = task8_insert_parts("meeting_alignment_jobs", {
             "legacy_key": 42, "meeting_id": "meeting", "status": status,
             "locked_at": locked_at,
         })
-        if status == "processing":
-            insert_run(db, "meeting_alignment_runs", {
-                "task_id": cursor.lastrowid, "status": "running",
-            })
+        db.execute(f"insert into tasks({parts.columns}) values({parts.values})", parts.parameters)
+    if status == "processing":
+        store.claim_logical_run("meeting_alignment_runs", 42)
     assert in_flight_work(path) == expected
 
 
@@ -455,12 +687,14 @@ def test_quiet_does_not_count_unclaimed_historical_meeting_processing(tmp_path):
     path = tmp_path / "historical-meeting.sqlite3"
     AutoReplyStore(path)
     with sqlite3.connect(path) as db:
-        from app.task_storage import insert_task
+        from app.task8_storage import task8_insert_parts, register_task8_functions
 
-        insert_task(db, "meeting_alignment_jobs", {
+        register_task8_functions(db)
+        parts = task8_insert_parts("meeting_alignment_jobs", {
             "legacy_key": 42, "meeting_id": "historical", "status": "processing",
             "locked_at": "2026-01-01 00:00:00",
         })
+        db.execute(f"insert into tasks({parts.columns}) values({parts.values})", parts.parameters)
     assert in_flight_work(path) == 0
 
 
@@ -476,10 +710,23 @@ def test_quiet_counts_live_dispatcher_claim_before_runtime_exists(tmp_path, leas
     path = tmp_path / "claim-quiet.sqlite3"
     AutoReplyStore(path)
     with sqlite3.connect(path) as db:
-        db.execute(
-            "insert into dispatcher_claim_leases(adapter_name,source_id,lease_expires_at,terminal_at) "
-            "values ('meeting','42',?,?)", (lease, terminal),
-        )
+        from app.state_storage import insert_state
+        from app.task8_storage import register_task8_functions, task8_insert_parts
+        from app.task_lifecycle_storage import acquire_claim
+        register_task8_functions(db)
+        db.execute("begin")
+        parts = task8_insert_parts("meeting_alignment_jobs", {
+            "legacy_key": 42, "meeting_id": "claim-quiet", "status": "pending",
+        })
+        db.execute(f"insert into tasks({parts.columns}) values({parts.values})", parts.parameters)
+        if terminal:
+            insert_state(db, "dispatcher_claim_leases", {
+                "adapter_name": "meeting", "source_id": "42",
+                "lease_expires_at": lease, "terminal_at": terminal,
+            })
+        else:
+            acquire_claim(db, adapter_name="meeting", source_id="42", owner="",
+                owner_pid=0, lease_expires_at=lease, now="1999-01-01 00:00:00")
     assert in_flight_work(path) == expected
 
 
@@ -563,6 +810,194 @@ def test_deploy_that_loses_the_race_reports_the_winner(tmp_path: Path, monkeypat
     message = deploy_module.deploy(local, tmp_path / "db.sqlite3")
 
     assert message == f"another deploy got there first; production is at {moved_to[0][:8]}"
+
+
+def test_deploy_target_commit_rejects_commit_outside_main_before_wait_or_stop(tmp_path: Path, monkeypatch):
+    import app.deploy as deploy_module
+
+    local, _ = fixture_repo(tmp_path)
+    original = git(local, "rev-parse", "HEAD")
+    git(local, "checkout", "-b", "unrelated")
+    (local / "unrelated.txt").write_text("other branch\n", encoding="utf-8")
+    git(local, "add", "unrelated.txt")
+    git(local, "commit", "-m", "unrelated")
+    unrelated = git(local, "rev-parse", "HEAD")
+    git(local, "checkout", "main")
+    monkeypatch.setattr(deploy_module, "wait_until_quiet", lambda _db: pytest.fail("quiet wait reached"))
+    monkeypatch.setattr(deploy_module, "_default_stop", lambda: pytest.fail("service stop reached"))
+
+    with pytest.raises(SystemExit, match="target commit is not in origin/main"):
+        deploy_module.deploy(local, tmp_path / "db.sqlite3", target_commit=unrelated)
+
+    assert git(local, "rev-parse", "HEAD") == original
+
+
+def test_deploy_target_commit_can_select_older_pushed_main_commit(tmp_path: Path, monkeypatch):
+    import app.deploy as deploy_module
+    from app.repository_updater import UpgradeResult
+
+    local, _ = fixture_repo(tmp_path)
+    target = git(tmp_path / "updater", "rev-parse", "HEAD")
+    updater_clone = tmp_path / "updater"
+    (updater_clone / "version.txt").write_text("newer\n", encoding="utf-8")
+    git(updater_clone, "add", "version.txt")
+    git(updater_clone, "commit", "-m", "newer")
+    git(updater_clone, "push", "origin", "main")
+    selected: list[tuple[str, bool]] = []
+
+    class CapturingUpdater:
+        def __init__(self, *args, **kwargs):
+            self.pinned = kwargs["pin_target_commit"]
+
+        def execute_locked(self, op):
+            selected.append((op.target_commit, self.pinned))
+            return UpgradeResult(op.operation_id, "succeeded", installed_commit=op.target_commit)
+
+    monkeypatch.setattr(deploy_module, "RepositoryUpdater", CapturingUpdater)
+    deploy_module.deploy(local, tmp_path / "db.sqlite3", target_commit=target)
+
+    assert selected == [(target, True)]
+    assert git(local, "rev-parse", "origin/main") != target
+
+
+def test_deploy_target_commit_rejects_invalid_sha_before_repository_work(tmp_path: Path):
+    import app.deploy as deploy_module
+
+    with pytest.raises(SystemExit, match="full 40-character SHA"):
+        deploy_module.deploy(tmp_path / "missing", tmp_path / "db.sqlite3", target_commit="abc")
+
+
+def test_deploy_target_commit_rejects_annotated_tag_object_before_lifecycle_work(tmp_path: Path, monkeypatch):
+    import app.deploy as deploy_module
+
+    local, _ = fixture_repo(tmp_path)
+    target = git(tmp_path / "updater", "rev-parse", "HEAD")
+    git(local, "fetch", "origin")
+    git(local, "tag", "-a", "candidate", target, "-m", "candidate")
+    tag_object = git(local, "rev-parse", "refs/tags/candidate")
+    assert git(local, "cat-file", "-t", tag_object) == "tag"
+    monkeypatch.setattr(deploy_module, "wait_until_quiet", lambda _db: pytest.fail("quiet wait reached"))
+    monkeypatch.setattr(deploy_module, "_default_stop", lambda: pytest.fail("service stop reached"))
+
+    with pytest.raises(SystemExit, match="commit object"):
+        deploy_module.deploy(local, tmp_path / "db.sqlite3", target_commit=tag_object)
+
+
+def test_pinned_deploy_rechecks_quiet_after_target_fetch(tmp_path: Path, monkeypatch):
+    import app.deploy as deploy_module
+    from app.repository_upgrade import GitRepository
+    from app.repository_updater import UpgradeResult
+
+    local, _ = fixture_repo(tmp_path)
+    target = git(tmp_path / "updater", "rev-parse", "HEAD")
+    active = {"count": 0}
+    fetches = 0
+    stops: list[int] = []
+    original_fetch = GitRepository.fetch
+
+    def fetch_with_new_work(repository, remote):
+        nonlocal fetches
+        original_fetch(repository, remote)
+        fetches += 1
+        if fetches == 2:
+            active["count"] = 1
+
+    def wait_for_quiet(_db, **_kwargs):
+        if active["count"]:
+            raise deploy_module.UpgradePreconditionError("service did not become idle")
+
+    class CapturingUpdater:
+        def __init__(self, *args, **kwargs):
+            self.wait_for_quiet = kwargs["wait_for_quiet"]
+            self.stop = kwargs["stop"]
+
+        def execute_locked(self, op):
+            self.wait_for_quiet()
+            self.stop()
+            return UpgradeResult(op.operation_id, "succeeded", installed_commit=op.target_commit)
+
+    monkeypatch.setattr(GitRepository, "fetch", fetch_with_new_work)
+    monkeypatch.setattr(deploy_module, "RepositoryUpdater", CapturingUpdater)
+    monkeypatch.setattr(deploy_module, "wait_until_quiet", wait_for_quiet)
+    monkeypatch.setattr(deploy_module, "_default_stop", lambda: stops.append(active["count"]))
+    monkeypatch.setattr(deploy_module, "in_flight_work", lambda _db: active["count"], raising=False)
+
+    with pytest.raises(SystemExit, match="service did not become idle"):
+        deploy_module.deploy(local, tmp_path / "db.sqlite3", target_commit=target)
+
+    assert fetches == 2
+    assert stops == []
+
+
+def test_deploy_target_commit_accepts_main_advance_during_quiet_wait(tmp_path: Path, monkeypatch):
+    import app.deploy as deploy_module
+    from app.repository_updater import UpgradeResult
+
+    local, _ = fixture_repo(tmp_path)
+    target = git(tmp_path / "updater", "rev-parse", "HEAD")
+    original = git(local, "rev-parse", "HEAD")
+    selected: list[tuple[str, bool]] = []
+
+    def advance_during_wait(_db: Path, **_kwargs) -> None:
+        updater_clone = tmp_path / "updater"
+        (updater_clone / "version.txt").write_text("newer\n", encoding="utf-8")
+        git(updater_clone, "add", "version.txt")
+        git(updater_clone, "commit", "-m", "newer")
+        git(updater_clone, "push", "origin", "main")
+
+    monkeypatch.setattr(deploy_module, "wait_until_quiet", advance_during_wait)
+    monkeypatch.setattr(deploy_module, "in_flight_work", lambda _db: 0)
+    class CapturingUpdater:
+        def __init__(self, *args, **kwargs):
+            self.wait_for_quiet = kwargs["wait_for_quiet"]
+            self.pinned = kwargs["pin_target_commit"]
+
+        def execute_locked(self, op):
+            self.wait_for_quiet()
+            selected.append((op.target_commit, self.pinned))
+            return UpgradeResult(op.operation_id, "succeeded", installed_commit=op.target_commit)
+
+    monkeypatch.setattr(deploy_module, "RepositoryUpdater", CapturingUpdater)
+    message = deploy_module.deploy(local, tmp_path / "db.sqlite3", target_commit=target)
+
+    assert message == f"deployed {original[:8]} -> {target[:8]}"
+    assert selected == [(target, True)]
+    assert git(local, "rev-parse", "origin/main") != target
+    assert git(local, "rev-parse", "HEAD") == original
+
+
+def test_deploy_target_commit_rejects_main_rewrite_during_quiet_wait(tmp_path: Path, monkeypatch):
+    import app.deploy as deploy_module
+
+    local, _ = fixture_repo(tmp_path)
+    target = git(tmp_path / "updater", "rev-parse", "HEAD")
+    original = git(local, "rev-parse", "HEAD")
+    stopped: list[str] = []
+
+    def rewrite_during_wait(_db: Path, **_kwargs) -> None:
+        git(tmp_path / "updater", "push", "--force", "origin", f"{original}:main")
+
+    monkeypatch.setattr(deploy_module, "wait_until_quiet", rewrite_during_wait)
+    monkeypatch.setattr(deploy_module, "_default_stop", lambda: stopped.append("stop"))
+
+    with pytest.raises(SystemExit, match="target commit is not in origin/main"):
+        deploy_module.deploy(local, tmp_path / "db.sqlite3", target_commit=target)
+
+    assert stopped == []
+    assert git(local, "rev-parse", "HEAD") == original
+
+
+def test_deploy_cli_passes_optional_target_commit(monkeypatch, tmp_path: Path):
+    import sys
+    import app.deploy as deploy_module
+
+    target = "a" * 40
+    captured: list[str] = []
+    monkeypatch.setattr(deploy_module, "deploy", lambda _root, _db, **kwargs: captured.append(kwargs["target_commit"]) or "ok")
+    monkeypatch.setattr(sys, "argv", ["app.deploy", "--root", str(tmp_path), "--target-commit", target])
+
+    assert deploy_module.main() == 0
+    assert captured == [target]
 
 
 def test_deploy_names_commits_made_in_the_production_checkout(tmp_path: Path):

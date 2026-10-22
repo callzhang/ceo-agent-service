@@ -1,10 +1,16 @@
 """Persisted, evidence-backed business attention projection."""
 
 from __future__ import annotations
+from app.provenance_storage import signal_projection
+from app.business_definitions import BUSINESS_PROJECTIONS
+from app.business_candidate_definitions import candidate_projection
+from app.action_business_definitions import business_action_projection
 
 from dataclasses import dataclass
 from datetime import datetime, timezone
+from contextlib import nullcontext
 import json
+import sqlite3
 
 from app.store import AutoReplyStore
 from app.task_semantic_models import (
@@ -98,24 +104,24 @@ class BusinessAttentionProjection:
         if len(set(proposal.task_ids)) != len(proposal.task_ids):
             raise ValueError("attention Task IDs must be unique")
         signal = db.execute(
-            "select 1 from business_task_signals where id=?", (proposal.evidence_signal_id,)
+            f"select 1 from ({signal_projection()}) where id=?", (proposal.evidence_signal_id,)
         ).fetchone()
         if signal is None:
             raise ValueError("attention evidence signal does not exist")
         anchor = db.execute(
-            "select active from business_anchors where id=?", (proposal.anchor_id,)
+            f'select active from ({BUSINESS_PROJECTIONS["anchor"]}) where id=?', (proposal.anchor_id,)
         ).fetchone()
         if anchor is None:
             raise ValueError("attention anchor does not exist")
         if not bool(anchor["active"]):
             raise ValueError("attention anchor must be active")
         if db.execute(
-            "select 1 from business_projects where canonical_anchor_id=?", (proposal.anchor_id,)
+            f'select 1 from ({BUSINESS_PROJECTIONS["project"]}) where canonical_anchor_id=?', (proposal.anchor_id,)
         ).fetchone() is None:
             raise ValueError("attention requires an official Project")
         if db.execute(
-            "select 1 from business_project_evidence evidence "
-            "join business_projects project on project.id=evidence.project_id "
+            f"select 1 from ({business_action_projection('business_project_evidence')}) evidence "
+            f'join ({BUSINESS_PROJECTIONS["project"]}) project on project.id=evidence.project_id '
             "where project.canonical_anchor_id=? and evidence.signal_id=?",
             (proposal.anchor_id, proposal.evidence_signal_id),
         ).fetchone() is None:
@@ -132,8 +138,8 @@ class BusinessAttentionProjection:
                 raise ValueError("every attention Task must be relevant")
             tasks.append(task)
             confirmed_anchor = db.execute(
-                """select 1 from business_task_anchor_links
-                   where task_id=? and anchor_id=? and status=? and active=1""",
+                f"select 1 from ({business_action_projection('business_task_anchor_links')}) "
+                "where task_id=? and anchor_id=? and status=? and active=1",
                 (task_id, proposal.anchor_id, BusinessRelationStatus.CONFIRMED.value),
             ).fetchone() is not None
             if not confirmed_anchor:
@@ -151,18 +157,18 @@ class BusinessAttentionProjection:
                 and task.status in (BusinessTaskStatus.OPEN, BusinessTaskStatus.WAITING)
                 and task.business_relevance is BusinessRelevance.RELEVANT
                 and db.execute(
-                    """select 1 from business_task_anchor_links link
-                       join business_anchors anchor on anchor.id=link.anchor_id
-                       where link.task_id=? and link.anchor_id=? and link.status='confirmed'
-                         and link.active=1 and anchor.active=1""",
+                    f'select 1 from ({business_action_projection("business_task_anchor_links")}) link\n                       join ({BUSINESS_PROJECTIONS["anchor"]}) anchor on anchor.id=link.anchor_id\n                       where link.task_id=? and link.anchor_id=? and link.status=\'confirmed\'\n                         and link.active=1 and anchor.active=1',
                     (task_id, anchor_id),
                 ).fetchone() is not None
             ):
                 eligible.append(task_id)
         return tuple(eligible)
 
-    def upsert(self, proposal: AttentionProposal) -> int:
-        with self.store.business_task_transaction() as db:
+    def upsert(
+        self, proposal: AttentionProposal, *, _db: sqlite3.Connection | None = None,
+    ) -> int:
+        transaction = nullcontext(_db) if _db is not None else self.store.business_task_transaction()
+        with transaction as db:
             self._validate_proposal(proposal, db=db)
             current_task_ids = self._current_eligible_task_ids(
                 task_ids=proposal.task_ids, anchor_id=proposal.anchor_id, db=db
@@ -258,7 +264,7 @@ class BusinessAttentionProjection:
             if item is None:
                 raise ValueError("business attention item does not exist")
             if db.execute(
-                "select 1 from business_task_signals where id=?", (resolution_signal_id,)
+                f"select 1 from ({signal_projection()}) where id=?", (resolution_signal_id,)
             ).fetchone() is None:
                 raise ValueError("resolution evidence signal does not exist")
             current_task_ids = tuple(
@@ -273,8 +279,8 @@ class BusinessAttentionProjection:
                 )
             )
             if db.execute(
-                "select 1 from business_project_evidence evidence "
-                "join business_projects project on project.id=evidence.project_id "
+                f"select 1 from ({business_action_projection('business_project_evidence')}) evidence "
+                f'join ({BUSINESS_PROJECTIONS["project"]}) project on project.id=evidence.project_id '
                 "where project.canonical_anchor_id=? and evidence.signal_id=?",
                 (item.anchor_id, resolution_signal_id),
             ).fetchone() is None:
@@ -312,8 +318,8 @@ class BusinessAttentionProjection:
         item_ids: list[int] = []
         with self.store.business_task_transaction() as db:
             rows = db.execute(
-                f"""select distinct item.* from business_attention_items item
-                    join business_attention_proposal_tasks member on member.attention_item_id=item.id
+                f"""select distinct item.* from ({candidate_projection('attention_item')}) item
+                    join ({business_action_projection('business_attention_proposal_tasks')}) member on member.attention_item_id=item.id
                     where member.task_id in ({', '.join('?' for _ in requested)}) order by item.id""",
                 requested,
             ).fetchall()

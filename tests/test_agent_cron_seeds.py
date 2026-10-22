@@ -106,6 +106,7 @@ def _options(
     operation_root = tmp_path / "operation-skills"
     required_operation_skills = {
         "dingtalk-chat",
+        "dingtang-okr-review",
         "dingtalk-minutes",
         "dingtalk-wiki",
         "dingtalk-doc",
@@ -169,11 +170,11 @@ READABLE_BUILTIN_COPY = {
     ),
     "ceo-daily-report-daily-v1": (
         "发送 CEO 每日总结",
-        "每晚汇总当天的会议、Tasks 项目变化、已处理和等你处理的事项，并扫描当天群消息，写成重要进展、风险、需介入、需关注和管理建议；发布为钉钉文档，由机器人单聊把要点和链接发给 Derek。",
+        "每晚汇总当天会议、Tasks 变化、已处理和待处理事项及群消息，发布 CEO 每日总结文档，并通过已审核的本人账号单聊发送要点和链接。",
     ),
     "ceo-weekly-report-saturday-v1": (
         "准备 CEO 管理周报",
-        "按本周的听记、群消息和四条业务线来源报告整理 CEO 管理周报草稿，核对上期未结问题，产出可校验的报告数据；发布到钉钉文档需要 Derek 明确授权，本任务不自行发布。",
+        "读取本周听记、群消息和各业务线报告，将 CEO 判断、公司经营指标和新增跟踪事项直接写入目标管理层周会文档，并读回核验。",
     ),
     "ceo-minutes-access-daily-v1": (
         "申请读不到的钉钉 AI 听记",
@@ -709,8 +710,7 @@ def test_seed_replaces_only_the_exact_old_message_consumer_configuration(
         description="增量检查 DingTalk 消息，并将新消息送入统一处理队列。",
         prompt=DINGTALK_MESSAGE_LEGACY_CONSUMER_PROMPT,
         skill_refs=tuple(
-            replace(ref, scheduled_task_id=0)
-            for ref in recovery.skill_refs
+            replace(ref, scheduled_task_id=0) for ref in recovery.skill_refs
         ),
         now=NOW + timedelta(minutes=1),
     )
@@ -978,20 +978,22 @@ def test_every_fixed_discovery_check_is_a_service_command(
         ]
         assert task.enabled is False
 
-    # Every discovery check is a service command. The weekly and daily reports
-    # are the Agent tasks: which meetings matter and what the evidence
-    # supports is judgement, not a fixed rule.
+    # The three report tasks use Agent judgment; discovery uses service commands.
     weekly_report = _task_by_key(tasks, "ceo-weekly-report-saturday-v1")
     daily_report = _task_by_key(tasks, "ceo-daily-report-daily-v1")
     assert all(
         task.command
         for task in tasks
         if task.migration_key
-        not in {weekly_report.migration_key, daily_report.migration_key}
+        not in {
+            weekly_report.migration_key,
+            daily_report.migration_key,
+            "weekly-okr-report-sunday-v1",
+        }
     )
     assert daily_report.command == "" and daily_report.runtime_id
-    assert daily_report.cron_expression == "0 0 21 * * *"
-    assert daily_report.timezone_name == "Asia/Shanghai"
+    assert daily_report.cron_expression == "0 0 6 * * *"
+    assert daily_report.timezone_name == "America/Los_Angeles"
     assert daily_report.enabled is False
     assert [ref.skill_name for ref in daily_report.skill_refs] == [
         "ceo-daily-report",
@@ -1000,11 +1002,11 @@ def test_every_fixed_discovery_check_is_a_service_command(
         "dingtalk-wiki",
         "dingtalk-doc",
     ]
-    assert "-m app.cli daily-report-facts --scheduled-run" in daily_report.prompt
+    assert "read_service_activity" in daily_report.prompt
     assert weekly_report.command == "" and weekly_report.runtime_id
     assert weekly_report.cron_expression == "0 0 12 * * 6"
     assert weekly_report.timezone_name == "America/Los_Angeles"
-    assert "-m app.cli weekly-report-materials --scheduled-run" in weekly_report.prompt
+    assert "read_scheduled_context" in weekly_report.prompt
     assert [ref.skill_name for ref in weekly_report.skill_refs] == [
         "ceo-weekly-report",
         "dingtalk-minutes",
@@ -1016,8 +1018,8 @@ def test_every_fixed_discovery_check_is_a_service_command(
     assert minutes.command == "sync-minutes-once"
     assert minutes.skill_refs == ()
     okr = _task_by_key(tasks, "weekly-okr-report-sunday-v1")
-    assert okr.command == "weekly-okr-report"
-    assert okr.skill_refs == ()
+    assert okr.command == "" and okr.runtime_id
+    assert okr.skill_refs[0].skill_name == "ceo-weekly-okr-report"
 
 
 def test_seed_creates_wechat_existing_producer_every_five_minutes(
@@ -1248,9 +1250,7 @@ def test_reseed_migrates_workspace_scan_to_meeting_todos_in_place(
 
     assert migrated.id == original.id
     assert migrated.name == "将会议行动项整理到 Tasks"
-    assert migrated.description == READABLE_BUILTIN_COPY[
-        "work-source-scan-daily-v1"
-    ][1]
+    assert migrated.description == READABLE_BUILTIN_COPY["work-source-scan-daily-v1"][1]
     assert migrated.command == "scan-meeting-todos-once"
     assert migrated.cron_expression == "0 15 1 * * *"
     assert [ref.skill_name for ref in migrated.skill_refs] == [
@@ -1324,13 +1324,137 @@ def test_seed_creates_sunday_evening_weekly_okr_task(tmp_path: Path) -> None:
     assert (task.name, task.description) == READABLE_BUILTIN_COPY[
         "weekly-okr-report-sunday-v1"
     ]
-    assert task.cron_expression == "0 0 18 * * 0"
-    # The service command owns both the headless reads and Agent analysis.
-    assert task.command == "weekly-okr-report"
-    assert task.prompt == ""
-    assert task.skill_refs == ()
-    assert task.runtime_id == ""
+    assert task.cron_expression == "0 0 3 * * 0"
+    assert task.timezone_name == "America/Los_Angeles"
+    assert task.command == ""
+    assert "$ceo-weekly-okr-report" in task.prompt
+    assert [ref.skill_name for ref in task.skill_refs] == [
+        "ceo-weekly-okr-report",
+        "dingtang-okr-review",
+        "dingtalk-chat",
+        "dingtalk-wiki",
+        "dingtalk-doc",
+    ]
+    assert task.runtime_id == "codex_oauth"
     assert task.enabled is False
+
+
+@pytest.mark.parametrize(
+    ("migration_key", "old_cron", "old_timezone", "new_cron"),
+    [
+        (
+            "ceo-daily-report-daily-v1",
+            "0 0 21 * * *",
+            "Asia/Shanghai",
+            "0 0 6 * * *",
+        ),
+        (
+            "weekly-okr-report-sunday-v1",
+            "0 0 18 * * 0",
+            "Asia/Shanghai",
+            "0 0 3 * * 0",
+        ),
+    ],
+)
+def test_seed_migrates_only_exact_report_schedule_preserving_task_and_run(
+    tmp_path: Path,
+    migration_key: str,
+    old_cron: str,
+    old_timezone: str,
+    new_cron: str,
+) -> None:
+    from app.agent_cron import seeds
+
+    store = AutoReplyStore(tmp_path / f"{migration_key}.sqlite3")
+    options = _options(tmp_path, store, healthy_routes={"codex_oauth"})
+    default = next(
+        item for item in seeds.SCHEDULED_TASK_DEFAULTS if item.migration_key == migration_key
+    )
+    copy = seeds.SCHEDULED_TASK_DEFAULT_COPY[migration_key]
+    original = store.create_scheduled_task(
+        migration_key=migration_key,
+        name=copy.name,
+        description=copy.description,
+        prompt="my saved report instructions",
+        cron_expression=old_cron,
+        timezone_name=old_timezone,
+        runtime_id="codex_oauth",
+        skill_refs=seeds._consumer_skill_refs(
+            options, managed=default.managed, operation=default.operation
+        ),
+        enabled=True,
+        now=NOW,
+    )
+    run = store.create_scheduled_task_run(
+        original.id, trigger_kind="manual", scheduled_for=NOW, now=NOW
+    )
+
+    migrated = _task_by_key(
+        seed_scheduled_tasks(
+            store=store, options=options, working_directory=tmp_path, now=NOW
+        ),
+        migration_key,
+    )
+
+    assert migrated.id == original.id
+    assert migrated.version == original.version + 1
+    assert migrated.cron_expression == new_cron
+    assert migrated.timezone_name == "America/Los_Angeles"
+    assert migrated.enabled is True
+    assert migrated.prompt == original.prompt
+    assert migrated.skill_refs == original.skill_refs
+    assert store.get_scheduled_task_run(run.id) == run
+    assert _task_by_key(
+        seed_scheduled_tasks(
+            store=store, options=options, working_directory=tmp_path, now=NOW
+        ),
+        migration_key,
+    ) == migrated
+
+
+@pytest.mark.parametrize(
+    ("migration_key", "custom_cron", "timezone_name"),
+    [
+        ("ceo-daily-report-daily-v1", "0 30 21 * * *", "Asia/Shanghai"),
+        ("weekly-okr-report-sunday-v1", "0 30 18 * * 0", "Asia/Shanghai"),
+        ("ceo-daily-report-daily-v1", "0 0 21 * * *", "America/Los_Angeles"),
+        ("weekly-okr-report-sunday-v1", "0 0 18 * * 0", "UTC"),
+    ],
+)
+def test_seed_preserves_custom_report_schedule(
+    tmp_path: Path, migration_key: str, custom_cron: str, timezone_name: str
+) -> None:
+    from app.agent_cron import seeds
+
+    store = AutoReplyStore(tmp_path / f"custom-{migration_key}.sqlite3")
+    options = _options(tmp_path, store, healthy_routes={"codex_oauth"})
+    default = next(
+        item for item in seeds.SCHEDULED_TASK_DEFAULTS if item.migration_key == migration_key
+    )
+    copy = seeds.SCHEDULED_TASK_DEFAULT_COPY[migration_key]
+    original = store.create_scheduled_task(
+        migration_key=migration_key,
+        name=copy.name,
+        description=copy.description,
+        prompt="my saved report instructions",
+        cron_expression=custom_cron,
+        timezone_name=timezone_name,
+        runtime_id="codex_oauth",
+        skill_refs=seeds._consumer_skill_refs(
+            options, managed=default.managed, operation=default.operation
+        ),
+        enabled=True,
+        now=NOW,
+    )
+
+    seeded = _task_by_key(
+        seed_scheduled_tasks(
+            store=store, options=options, working_directory=tmp_path, now=NOW
+        ),
+        migration_key,
+    )
+
+    assert seeded == original
 
 
 def test_proactive_seeds_do_not_include_lark_default(tmp_path: Path) -> None:
@@ -1380,7 +1504,6 @@ def test_non_wechat_seed_commands_are_registered_one_shot_cli_entries(
         "dingtalk-meeting-check-v1": "scan-meetings-once",
         "dingtalk-oa-check-v1": "scan-oa-approvals",
         "work-source-scan-daily-v1": "scan-meeting-todos-once",
-        "weekly-okr-report-sunday-v1": "weekly-okr-report",
     }
 
     for migration_key, command_name in expected.items():
@@ -1471,7 +1594,9 @@ def test_proactive_cron_triggers_create_snapshotted_business_inputs(
         commands=ServiceCommandRegistry(
             {
                 "email-message-check-once": (
-                    lambda: produced.append("email-message-check-once") or "discovered=0"
+                    lambda: (
+                        produced.append("email-message-check-once") or "discovered=0"
+                    )
                 ),
                 "produce-once": lambda: produced.append("produce-once") or "queued=0",
                 "calendar-invites-once": (
@@ -1501,9 +1626,6 @@ def test_proactive_cron_triggers_create_snapshotted_business_inputs(
                 "sync-minutes-once": (
                     lambda: produced.append("sync-minutes-once") or "queued=0"
                 ),
-                "weekly-okr-report": (
-                    lambda: produced.append("weekly-okr-report") or "status=sent"
-                ),
             }
         ),
     )
@@ -1529,7 +1651,6 @@ def test_proactive_cron_triggers_create_snapshotted_business_inputs(
         "sync-chrome-cookies",
         "sync-minutes-once",
         "wechat-produce-once",
-        "weekly-okr-report",
     ]
     for task in tasks:
         runs = store.list_scheduled_task_runs(task.id)
@@ -1547,12 +1668,11 @@ def test_proactive_cron_triggers_create_snapshotted_business_inputs(
         assert reply.channel == "scheduled"
         assert reply.trigger_text == task.prompt
         assert task.name in reply.trigger_message_json
-    # Every discovery check is a service command running in-process on its own
-    # trigger, so a Cron tick creates one scheduled reply task per report: the
-    # Agent turns that prepare the weekly management report and the daily report.
+    # Reports use standard scheduled Agent inputs; discovery stays in process.
     reports = {
         _task_by_key(tasks, "ceo-weekly-report-saturday-v1").prompt,
         _task_by_key(tasks, "ceo-daily-report-daily-v1").prompt,
+        _task_by_key(tasks, "weekly-okr-report-sunday-v1").prompt,
     }
     scheduled = store.list_reply_tasks(channel="scheduled")
     assert sorted(task.trigger_text for task in scheduled) == sorted(reports)
@@ -1616,7 +1736,7 @@ def test_seed_migrates_legacy_daily_report_delivery_prompt(tmp_path: Path) -> No
         "ceo-daily-report-daily-v1",
     )
     assert migrated.version == legacy.version + 1
-    assert "send_approved_dingtalk_message" in migrated.prompt
+    assert "read_service_activity" in migrated.prompt
     assert "机器人单聊" not in migrated.prompt
 
 
@@ -1650,10 +1770,10 @@ def test_seed_migrates_only_exact_previous_daily_report_skill_sequence(
 
     assert migrated.version == previous.version + 1
     assert migrated.prompt == daily_report_prompt()
-    assert migrated.prompt.index("daily-report-facts") < migrated.prompt.index(
-        "read_task_skill(name=\"dingtalk-minutes\")"
+    assert migrated.prompt.index("read_service_activity") < migrated.prompt.index(
+        "dingtalk-minutes"
     )
-    assert "否则跳过该 Skill" in migrated.prompt
+    assert "仅在会议管理细节仍缺失" in migrated.prompt
 
     custom = store.update_scheduled_task(
         migrated.id,
@@ -1671,13 +1791,7 @@ def test_seed_migrates_only_exact_previous_daily_report_skill_sequence(
 
 
 def test_seeds_no_longer_depend_on_runtime_health(tmp_path: Path) -> None:
-    """No seed needs a Runtime, so an unhealthy fleet cannot disable one.
-
-    The weekly OKR report was the last seed that bound a Runtime, and it was
-    seeded disabled with a written reason whenever no route was healthy.  As a
-    service command it runs in this process, so the Cron keeps working while
-    every model route is down.
-    """
+    """An unhealthy fleet does not alter the configured seed state."""
     store = AutoReplyStore(tmp_path / "disabled.sqlite3")
     options = _options(tmp_path, store, healthy_routes=set())
 
@@ -1686,7 +1800,11 @@ def test_seeds_no_longer_depend_on_runtime_health(tmp_path: Path) -> None:
     )
 
     assert len(tasks) == 14
-    agent_tasks = {"ceo-weekly-report-saturday-v1", "ceo-daily-report-daily-v1"}
+    agent_tasks = {
+        "ceo-weekly-report-saturday-v1",
+        "ceo-daily-report-daily-v1",
+        "weekly-okr-report-sunday-v1",
+    }
     for task in tasks:
         assert task.enabled is False
         if task.migration_key in agent_tasks:
@@ -1696,7 +1814,6 @@ def test_seeds_no_longer_depend_on_runtime_health(tmp_path: Path) -> None:
             "sync-minutes-once",
             "sync-chrome-cookies",
             "request-minutes-access",
-            "weekly-okr-report",
         }:
             assert task.prompt == "" and task.skill_refs == ()
         else:
@@ -1735,7 +1852,9 @@ def test_seed_deletes_the_retired_follow_up_delivery_task(tmp_path: Path) -> Non
     )
 
     assert "follow-up-delivery-v1" not in {task.migration_key for task in tasks}
-    assert all(task.command != "process-follow-ups" for task in store.list_scheduled_tasks())
+    assert all(
+        task.command != "process-follow-ups" for task in store.list_scheduled_tasks()
+    )
     deleted = store.get_scheduled_task(retired.id, include_deleted=True)
     assert deleted is not None
     assert deleted.deleted_at is not None
@@ -1757,7 +1876,9 @@ def test_the_default_oa_prompt_names_no_document_and_no_personal_rule() -> None:
     assert "needs_human" not in OA_CONSUMER_PROMPT
 
 
-def test_oa_seed_migrates_only_the_known_stale_prompt_and_preserves_custom_edits(tmp_path: Path) -> None:
+def test_oa_seed_migrates_only_the_known_stale_prompt_and_preserves_custom_edits(
+    tmp_path: Path,
+) -> None:
     from app.agent_cron.seeds import (
         LEGACY_OA_CONSUMER_PROMPT_20261017,
         OA_CONSUMER_PROMPT,
@@ -1770,8 +1891,10 @@ def test_oa_seed_migrates_only_the_known_stale_prompt_and_preserves_custom_edits
     )
     oa = _task_by_key(seeded, "dingtalk-oa-check-v1")
     legacy = store.update_scheduled_task(
-        oa.id, expected_version=oa.version,
-        prompt=LEGACY_OA_CONSUMER_PROMPT_20261017, now=NOW + timedelta(minutes=1),
+        oa.id,
+        expected_version=oa.version,
+        prompt=LEGACY_OA_CONSUMER_PROMPT_20261017,
+        now=NOW + timedelta(minutes=1),
     )
 
     migrated = _task_by_key(
@@ -1784,7 +1907,8 @@ def test_oa_seed_migrates_only_the_known_stale_prompt_and_preserves_custom_edits
     assert migrated.version == legacy.version + 1
 
     custom = store.update_scheduled_task(
-        migrated.id, expected_version=migrated.version,
+        migrated.id,
+        expected_version=migrated.version,
         prompt="A newer administrator-authored OA instruction. "
         + " ".join(f"${ref.skill_name}" for ref in migrated.skill_refs),
         now=NOW + timedelta(minutes=2),
@@ -1796,3 +1920,189 @@ def test_oa_seed_migrates_only_the_known_stale_prompt_and_preserves_custom_edits
         "dingtalk-oa-check-v1",
     )
     assert preserved == custom
+
+
+@pytest.mark.parametrize(
+    "migration_key,skill",
+    [
+        ("ceo-weekly-report-saturday-v1", "ceo-weekly-report"),
+        ("ceo-daily-report-daily-v1", "ceo-daily-report"),
+    ],
+)
+def test_report_seeds_use_generic_context_readers(tmp_path, migration_key, skill):
+    store = AutoReplyStore(tmp_path / "generic-report.sqlite3")
+    options = _options(tmp_path, store, healthy_routes={"codex_oauth"})
+    task = _task_by_key(
+        seed_scheduled_tasks(
+            store=store,
+            options=options,
+            working_directory=tmp_path,
+            now=NOW,
+        ),
+        migration_key,
+    )
+    assert f"${skill}" in task.prompt
+    assert "read_scheduled_context" in task.prompt
+    assert "read_service_activity" in task.prompt
+    assert "-m app.cli" not in task.prompt
+
+
+@pytest.mark.parametrize(
+    "custom_prompt",
+    ["", "我的 OKR 周报补充要求，使用 $dingtalk-chat"],
+    ids=["default", "custom"],
+)
+def test_okr_seed_migrates_default_command_without_rewriting_custom_configuration(
+    tmp_path,
+    custom_prompt,
+):
+    store = AutoReplyStore(tmp_path / "okr-migration.sqlite3")
+    options = _options(tmp_path, store, healthy_routes={"codex_oauth"})
+    original = store.create_scheduled_task(
+        migration_key="weekly-okr-report-sunday-v1",
+        name="我的 OKR 周报",
+        description="自定义用途说明",
+        command="weekly-okr-report",
+        prompt=custom_prompt,
+        skill_refs=(
+            ScheduledTaskSkillRef(
+                skill_source="operation",
+                skill_name="dingtalk-chat",
+                position=0,
+            ),
+        )
+        if custom_prompt
+        else (),
+        cron_expression="0 30 17 * * 1",
+        timezone_name="America/Los_Angeles",
+        enabled=True,
+        now=NOW,
+    )
+    run = store.create_scheduled_task_run(
+        original.id,
+        trigger_kind="manual",
+        scheduled_for=NOW,
+        now=NOW,
+    )
+    seeded = _task_by_key(
+        seed_scheduled_tasks(
+            store=store,
+            options=options,
+            working_directory=tmp_path,
+            now=NOW,
+        ),
+        "weekly-okr-report-sunday-v1",
+    )
+    assert seeded.id == original.id
+    assert seeded.name == original.name
+    assert seeded.description == original.description
+    assert seeded.cron_expression == original.cron_expression
+    assert seeded.timezone_name == original.timezone_name
+    assert seeded.enabled is True
+    assert store.get_scheduled_task_run(run.id) == run
+    assert seeded.command == ""
+    assert seeded.runtime_id == "codex_oauth"
+    if custom_prompt:
+        assert seeded.prompt == original.prompt
+        assert seeded.skill_refs == original.skill_refs
+    else:
+        assert "$ceo-weekly-okr-report" in seeded.prompt
+        assert [ref.skill_name for ref in seeded.skill_refs] == [
+            "ceo-weekly-okr-report",
+            "dingtang-okr-review",
+            "dingtalk-chat",
+            "dingtalk-wiki",
+            "dingtalk-doc",
+        ]
+    repeated = _task_by_key(
+        seed_scheduled_tasks(
+            store=store,
+            options=options,
+            working_directory=tmp_path,
+            now=NOW,
+        ),
+        "weekly-okr-report-sunday-v1",
+    )
+    assert repeated == seeded
+
+
+@pytest.mark.parametrize(
+    "migration_key,old_prompt",
+    [
+        ("ceo-weekly-report-saturday-v1", "_legacy_weekly_report_prompt_20261019"),
+        ("ceo-daily-report-daily-v1", "_legacy_daily_report_prompt_20261019"),
+    ],
+)
+def test_report_seed_migrates_exact_default_prompt_and_copy_preserving_run(
+    tmp_path,
+    migration_key,
+    old_prompt,
+):
+    from app.agent_cron import seeds
+
+    store = AutoReplyStore(tmp_path / "report-prompt-migration.sqlite3")
+    options = _options(tmp_path, store, healthy_routes={"codex_oauth"})
+    copy = seeds.SCHEDULED_TASK_DEFAULT_COPY[migration_key]
+    default = next(
+        item
+        for item in seeds.SCHEDULED_TASK_DEFAULTS
+        if item.migration_key == migration_key
+    )
+    original = store.create_scheduled_task(
+        migration_key=migration_key,
+        name=copy.old_name,
+        description=copy.old_description,
+        prompt=getattr(seeds, old_prompt)(),
+        skill_refs=seeds._consumer_skill_refs(
+            options,
+            managed=default.managed,
+            operation=default.operation,
+        ),
+        runtime_id="codex_oauth",
+        cron_expression="0 30 17 * * 1",
+        timezone_name="America/Los_Angeles",
+        enabled=True,
+        now=NOW,
+    )
+    run = store.create_scheduled_task_run(
+        original.id,
+        trigger_kind="manual",
+        scheduled_for=NOW,
+        now=NOW,
+    )
+    migrated = _task_by_key(
+        seed_scheduled_tasks(
+            store=store,
+            options=options,
+            working_directory=tmp_path,
+            now=NOW,
+        ),
+        migration_key,
+    )
+    assert migrated.id == original.id
+    assert migrated.description == copy.description
+    assert "read_scheduled_context" in migrated.prompt
+    assert migrated.enabled is True
+    assert migrated.cron_expression == original.cron_expression
+    assert migrated.timezone_name == original.timezone_name
+    assert migrated.skill_refs == original.skill_refs
+    assert store.get_scheduled_task_run(run.id) == run
+    edited = store.update_scheduled_task(
+        migrated.id,
+        expected_version=migrated.version,
+        prompt="我的报告要求",
+        description="我的报告说明",
+        now=NOW,
+    )
+    assert (
+        _task_by_key(
+            seed_scheduled_tasks(
+                store=store,
+                options=options,
+                working_directory=tmp_path,
+                now=NOW,
+            ),
+            migration_key,
+        )
+        == edited
+    )

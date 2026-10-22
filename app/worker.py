@@ -57,6 +57,7 @@ from app.config import (
     single_chat_read_recovery_window,
 )
 from app.corpus import MEDIA_OR_LINK_PATTERN, count_information_units
+from app.external_retry import MAX_AUTOMATIC_ATTEMPTS
 from app.outbound_postfix import outbound_body_echo_key
 from app.dispatcher.models import ClaimGuard
 from app.dws_client import (
@@ -135,6 +136,7 @@ ORCHESTRATION_ATTEMPT_STATUS = {
     "dry_run": ("dry_run", "done"),
     "failed_retryable": ("failed", "pending"),
     "failed_terminal": ("failed", "failed"),
+    "permission_blocked": ("blocked", "needs_human"),
 }
 RESOURCE_DEADLOCK_WAIT_ERROR = "os_resource_deadlock_wait"
 logger = logging.getLogger(__name__)
@@ -193,7 +195,7 @@ DEFAULT_TEXT_EMOTION_BACKGROUND_ID = "im_bg_5"
 # feedback or provider loop in processing indefinitely either.
 STALE_PROCESSING_TASK_SECONDS = 10 * 60
 MAX_PROCESSING_TASK_SECONDS = 60 * 60
-MAX_REPLY_TASK_ATTEMPTS = 3
+MAX_REPLY_TASK_ATTEMPTS = MAX_AUTOMATIC_ATTEMPTS
 REPLY_TASK_RETRY_BASE_DELAY_SECONDS = 60
 ACTIVE_RECOVERY_RETRY_DELAY_SECONDS = 5
 REPLY_TASK_RETRY_MAX_DELAY_SECONDS = 15 * 60
@@ -572,7 +574,7 @@ class DingTalkAutoReplyWorker:
         self.style_records = style_records or []
         self.style_example_limit = style_example_limit
         self.send_attempts = send_attempts
-        self.max_task_attempts = max_task_attempts
+        self.max_task_attempts = min(max_task_attempts, MAX_AUTOMATIC_ATTEMPTS)
         self.now_provider = now_provider or (lambda: datetime.now().astimezone())
         self.permission_gate = PermissionGate(dws)
         self.channel_gates = channel_gates or default_channel_gates(
@@ -2617,6 +2619,8 @@ class DingTalkAutoReplyWorker:
         send_error = error_code
         if result.status == "needs_human":
             send_error = send_error or "needs_human"
+        elif result.status == "permission_blocked":
+            send_error = send_error or "consumer_purpose_retry_exhausted"
         elif result.status in {"failed_retryable", "failed_terminal"}:
             send_error = send_error or "agent_failed"
 
@@ -2826,11 +2830,10 @@ class DingTalkAutoReplyWorker:
         if candidate is None:
             return {}
         data = parse_persisted_consumer_result(candidate["candidate_json"])
-        current = self.store.current_reviewed_candidate(task.id, task.execution_generation)
+        selection = self.store.get_candidate_selection(candidate["id"])
         plan = data.proposal
-        if current and current["selection_id"]:
-            branch = json.loads(current["branch_json"])
-            plan = next((option.plan for option in data.decision_options if option.key == branch["key"]), None)
+        if selection is not None:
+            plan = next((option.plan for option in data.decision_options if option.key == selection["option_key"]), None)
         if plan is None:
             return {}
         receipts = {row["action_identity"]: row for row in self.store.list_verified_candidate_actions(task.id)}
@@ -3301,7 +3304,10 @@ class DingTalkAutoReplyWorker:
             or payload.get("url")
         )
         source_text = f" resource {source}" if source else ""
-        return f"{message.open_message_id}:{source_text} error {error}"
+        source_message_id = (
+            payload.get("source_message_id") or message.open_message_id
+        )
+        return f"{source_message_id}:{source_text} error {error}"
 
     def _resolve_message_image(
         self,
@@ -3322,9 +3328,12 @@ class DingTalkAutoReplyWorker:
             suffix = self._decoded_image_suffix(data)
             return self._write_message_image(task_id, message, suffix, data)
         elif kind == "media_id":
+            source_message_id = payload.get("source_message_id")
+            if not source_message_id:
+                raise DwsError("quoted media source message id unavailable")
             download = self.dws.get_resource_download_url(
                 message.open_conversation_id,
-                message.open_message_id,
+                source_message_id,
                 payload["media_id"],
                 "mediaId",
             )
@@ -5459,14 +5468,21 @@ class DingTalkAutoReplyWorker:
         message: DingTalkMessage,
     ) -> list[tuple[str, dict[str, str]]]:
         sources: list[tuple[str, dict[str, str]]] = []
-        for text in (message.content, message.quoted_content or ""):
+        for text, source_message_id in (
+            (message.content, message.open_message_id),
+            (message.quoted_content or "", message.quoted_message_id or ""),
+        ):
             for match in IMAGE_MESSAGE_MEDIA_ID_PATTERN.finditer(text):
                 media_id = match.group("media_id").strip()
                 if media_id:
                     sources.append(
                         (
-                            f"media:{message.open_message_id}:{media_id}",
-                            {"kind": "media_id", "media_id": media_id},
+                            f"media:{source_message_id}:{media_id}",
+                            {
+                                "kind": "media_id",
+                                "media_id": media_id,
+                                "source_message_id": source_message_id,
+                            },
                         )
                     )
         for download_code in self._download_codes_from_payload(message.raw_payload):

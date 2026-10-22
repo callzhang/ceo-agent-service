@@ -13,6 +13,7 @@ from app.agent_contracts import (
     ConsumerOutcome,
     ConsumerProposal,
     ProposedAction,
+    parse_persisted_consumer_result,
 )
 from app.agent_result import ResultParseError, parse_typed_agent_result
 from app.agent_wire_contracts import (
@@ -178,6 +179,25 @@ def test_non_human_outcome_rejects_human_decision_fields(model):
     )
     with pytest.raises(ValidationError, match="needs_human"):
         model.model_validate(payload)
+
+
+def test_needs_human_reason_is_limited_to_100_characters_in_both_consumer_contracts():
+    domain_payload = _explainable_needs_human_payload(ConsumerAgentResult)
+    wire_payload = _consumer_wire_payload(
+        outcome="needs_human",
+        decision_options=_decision_options(),
+        needs_human_reason="字" * 100,
+    )
+    domain_payload["needs_human_reason"] = "字" * 100
+
+    ConsumerAgentResult.model_validate(domain_payload)
+    ConsumerAgentWireResult.model_validate(wire_payload)
+
+    historical_payload = {**domain_payload, "needs_human_reason": "字" * 101}
+    assert parse_persisted_consumer_result(historical_payload).needs_human_reason == "字" * 101
+    with pytest.raises(ValidationError):
+        ConsumerAgentWireResult.model_validate({**wire_payload, "needs_human_reason": "字" * 101})
+    assert list(Draft202012Validator(ConsumerAgentResult.model_json_schema()).iter_errors(historical_payload))
 
 
 def test_proposed_action_does_not_require_deferred_structured_boundary_field():
@@ -392,6 +412,11 @@ def _consumer_wire_payload(**overrides: object) -> dict[str, object]:
             payload["error_code"] = ""
         if "error_retryable" not in overrides:
             payload["error_retryable"] = False
+    outcome = payload.pop("outcome")
+    proposal = payload.pop("proposal")
+    payload.update(action="plan" if outcome == "proposal" else outcome,
+                   reason=payload["summary"], target={},
+                   payload=proposal if outcome == "proposal" else {}, evidence_refs=[])
     return payload
 
 
@@ -780,9 +805,9 @@ def test_parse_typed_agent_result_uses_current_codex_output_shape():
 
 def test_wire_result_accepts_null_error_code_as_no_error():
     payload = {
-        "outcome": "proposal",
+        "action": "plan", "reason": "Prepare the notice.", "target": {}, "evidence_refs": [],
         "summary": "Prepare the notice.",
-        "proposal": _proposal(),
+        "payload": _proposal(),
         "decision_options": [],
         "error_code": None,
         "error_retryable": False,
@@ -961,9 +986,9 @@ def test_parse_typed_agent_result_accepts_single_stray_array_close_after_proposa
 def test_consumer_wire_result_preserves_nested_proposal_fields():
     result = ConsumerAgentWireResult.model_validate(
         {
-            "outcome": "proposal",
+            "action": "plan", "reason": "Prepare the notice.", "target": {}, "evidence_refs": [],
             "summary": "Prepare the notice.",
-            "proposal": _proposal(),
+            "payload": _proposal(),
             "decision_options": [],
             "risk": "low",
             "confidence": 1.0,
@@ -1247,6 +1272,26 @@ def test_stage_requires_predecessor_and_immediate_plan_excludes_question():
         ConsumerAgentResult.model_validate({**base, "decision_options": [] , "requested_input": "Choose"})
 
 
+def test_consumer_wire_stage_error_identifies_the_invalid_field():
+    with pytest.raises(
+        ValidationError,
+        match="stage_index=0 requires predecessor_review_id=null",
+    ):
+        ConsumerAgentWireResult.model_validate(
+            _consumer_wire_payload(stage_index=0, predecessor_review_id=1)
+        )
+    with pytest.raises(
+        ValidationError,
+        match="stage_index>0 requires predecessor_review_id",
+    ):
+        ConsumerAgentWireResult.model_validate(
+            _consumer_wire_payload(stage_index=1, predecessor_review_id=None)
+        )
+    assert ConsumerAgentWireResult.model_validate(
+        _consumer_wire_payload(stage_index=1, predecessor_review_id=7)
+    ).to_result().predecessor_review_id == 7
+
+
 def test_audit_review_only_and_system_execution_result():
     from app.agent_contracts import SystemExecutionResult
 
@@ -1294,6 +1339,34 @@ def test_review_feedback_required_on_return_and_reject(outcome):
     ).outcome.value == outcome
     with pytest.raises(ValidationError):
         AuditAgentWireResult.model_validate({**payload, "feedback": None})
+    without_feedback = {key: value for key, value in payload.items() if key != "feedback"}
+    with pytest.raises(ValidationError):
+        AuditAgentWireResult.model_validate(without_feedback)
+
+
+def test_audit_approve_omitted_feedback_means_no_feedback():
+    wire_schema = AuditAgentWireResult.model_json_schema()
+    assert "feedback" not in wire_schema["$defs"]["_AuditWire"]["required"]
+    assert "feedback" in AuditAgentResult.model_json_schema()["required"]
+    payload = {
+        "outcome": "approve", "summary": "Exact candidate reviewed",
+        "evidence_refs": ["message:1"], "risk": "low", "confidence": 1.0,
+        "rule_coverage": 1.0, "information_completeness": 1.0,
+        "error_code": "", "error_retryable": False,
+        "error_authorization_required": False,
+    }
+    result = AuditAgentWireResult.model_validate(payload).to_result(
+        proposal_revision=0, candidate_digest="a" * 64,
+    )
+    assert result.outcome.value == "approve"
+    assert result.feedback is None
+    with pytest.raises(ValidationError):
+        AuditAgentWireResult.model_validate({
+            **payload,
+            "feedback": {
+                "rule": "Any", "observation": "Wrong", "requested_revision": "Revise",
+            },
+        })
 
 
 def test_audit_wire_omits_service_owned_candidate_bindings():

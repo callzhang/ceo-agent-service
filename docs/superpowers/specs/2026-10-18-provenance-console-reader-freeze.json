@@ -1,0 +1,26 @@
+{
+  "status": "unselected_a4_awaiting_fresh_spec_then_quality",
+  "files": {
+    "app/business_source_reader.py": "86b4cb3338c6fa5c34775611ac0e46f02d968055b791c5130e442fe215460204",
+    "app/business_console_source_reader.py": "138aa5423910aa73737a768005c77fc3e94425638c97b328df30de5a69cd6856",
+    "app/task_console_actions.py": "9bbe1a5e0d87fe98b5b29f0e9b5c0d93e10970ec35b35bf6d353bae20d0c135f",
+    "tests/test_business_console_source_reader.py": "d630b60aa2da1d288beef0a222cfc6db856689ff027fbfbc3c087d69fdddbff0",
+    "docs/database-redesign-provenance-console-reader-validation-20261018.md": "43003c4997b0a235d45cebfe18b291dd3de6c1400549060fd7c967c701e02d9a"
+  },
+  "requirement_pins": {
+    "docs/superpowers/specs/2026-10-11-database-redesign-design.md": "345223707fdd39d09c6b13a8101dfc8543a0cc7f9603f6ea13c8210f8498ce80",
+    "docs/superpowers/plans/2026-10-18-provenance-reader-runtime-implementation-plan.md": "b0368db725ab87872e192afda8a373b48e62c5f46b03679cc35eeacb97bcbfe3",
+    "docs/superpowers/specs/2026-10-18-provenance-weekly-reader-acceptance.json": "3da09d431270fb6e5507517f8bffa7777093dcf97a7f0194e5764149de90a5dd",
+    "app/task_semantic_models.py": "feb1576846412936882f4afaba141483deee075c74843167523c955a839759ff",
+    "app/task_semantic_service.py": "6ad0ac48afd7f096bc7ab9b67f2cc9bb2138676e7325a21491a1a3873238d231",
+    "app/native_trajectory.py": "5b5ea4c0b880f78c08f0f020dde45c26ae1c38e21d012253b38cd50c30cadc04",
+    "app/business_minutes_source_reader.py": "fa0ee6ab83ae35d78259d1e416d451542b081c0d2e8d0786e98b91517002c082",
+    "app/business_weekly_source_reader.py": "f025d4e8a253472e1d36eb8049205cf5a330d5b1b02f0bda036daaba7a05ec61",
+    "tests/test_business_source_reader.py": "f4296fa9ece7a185d82c1023619affba573bfdfc2c2c05839e88919d0f378468",
+    "tests/test_business_minutes_source_reader.py": "a7b072c7bc370444add1a3de5aee89daaff0e5bd96fc00145fb13bb4d8a7e934",
+    "tests/test_business_weekly_source_reader.py": "1bec907a75aded621c3aceef2e3d295032360712f3f115c9f9ff594afda2287c",
+    "tests/test_native_source_documents.py": "8c1e6815e097f0130cb199fa5bce2ff1f15c18b3389a0c04dc5c3a088d90e5ea"
+  },
+  "scope": "Exact original ignore/restore Console body and reference from retained Signal plus linked STATUS_CHANGED event before snapshot via producer pure helpers; source_ref is existing coordinate, injected request lookup, common fullbody checks and locator precedence unchanged. No SQL/DDL/caller selection or body retirement.",
+  "author_evidence": "17 missing-interface RED; 136 focused reader/native tests GREEN; no actual source/provider/DB/CLI."
+}

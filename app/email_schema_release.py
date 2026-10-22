@@ -105,7 +105,7 @@ class EmailActionPlanSchemaRelease:
                 raise ValueError("Email schema49 action-plan reference readback mismatch")
 
     def rollback(self) -> None:
-        from app.email_store import EmailStore
+        from app.email_schema_history import HistoricalEmailStore
 
         with closing(sqlite3.connect(self.database_path)) as db, db:
             db.execute("begin immediate")
@@ -124,7 +124,7 @@ class EmailActionPlanSchemaRelease:
             rows = db.execute("select p.* from email_action_plans p "
                               "join email_classifications c on c.current_action_plan_id=p.action_plan_id").fetchall()
             for row in rows:
-                plan = EmailStore._stored_action_plan(row)
+                plan = HistoricalEmailStore._stored_action_plan(row)
                 exclude = ({"authorization_snapshot_format", "action_authorizations"}
                            if row["legacy_serialization_pre_v16"] == 1
                            and row["authorization_snapshot_json"] is None
@@ -137,7 +137,7 @@ class EmailActionPlanSchemaRelease:
                            "where id=? and current_action_plan_id is null", (identity,))
             db.execute("delete from email_schema_migrations where version=49")
             # Use the same original-snapshot validation as the forward migration.
-            validator = object.__new__(EmailStore)
+            validator = object.__new__(HistoricalEmailStore)
             validator._validate_durable_state(db)
             validator._validate_cached_action_plan_snapshots(db)
             db.row_factory = None

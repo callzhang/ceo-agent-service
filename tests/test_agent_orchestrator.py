@@ -3,12 +3,15 @@
 from collections import deque
 from dataclasses import replace
 import sqlite3
+import hashlib
+import json
 
 import pytest
 
 from app.agent_context import AgentTaskContext
 from app.agent_contracts import AuditAgentResult, ConsumerAgentResult
-from app.agent_orchestrator import AgentOrchestrator, _operation_id
+from app.agent_orchestrator import AgentOrchestrator, _operation_id, _scheduled_consumer_work_receipts
+from app.agent_reported_error import agent_error_payload
 from app.agent_result import AgentError
 from app.agent_turn_runner import AgentTurnRunResult
 from app.dws_client import DwsError
@@ -145,6 +148,129 @@ def test_persisted_terminal_read_needs_no_context_or_new_effect(tmp_path, outcom
     assert (len(consumer.calls), len(audit.calls), len(handler.calls)) == calls
 
 
+def test_scheduled_audit_receives_compact_service_report_receipt_only():
+    task = type("Task", (), {"id": 42, "channel": "scheduled", "execution_generation": "generation-1"})()
+    run = type("Run", (), {
+        "id": 77,
+        "reply_task_id": 42,
+        "execution_generation": "generation-1",
+        "role": AgentRole.CONSUMER,
+        "status": "completed",
+        "tool_events": [{
+            "type": "item.completed",
+            "item": {
+                "type": "mcp_tool_call", "server": "agent_cli",
+                "tool": "consumer_document_write", "id": "write-1",
+                "arguments": {"content": "report body"},
+                "result": {"structuredContent": {
+                    "operation": "updated", "node_id": "doc-7", "title": "Report",
+                    "provider_result": {"nodeId": "doc-7"},
+                    "readback": {"content": "report body"},
+                }},
+            },
+        }],
+    })()
+
+    receipts = _scheduled_consumer_work_receipts(task, run)
+
+    assert receipts == ({
+        "consumer_run_id": 77, "tool_call_id": "write-1",
+        "operation": "updated", "document_node_id": "doc-7",
+        "document_title": "Report",
+        "readback_sha256": hashlib.sha256(b'{"content":"report body"}').hexdigest(),
+        "readback_bytes": len(b'{"content":"report body"}'),
+    },)
+    assert "report body" not in str(receipts)
+
+
+@pytest.mark.parametrize("text_result", [False, True])
+def test_scheduled_audit_reads_claude_text_tool_return_without_report_body(text_result):
+    task = type("Task", (), {"id": 42, "channel": "scheduled", "execution_generation": "generation-1"})()
+    returned = {
+        "operation": "created", "node_id": "doc-8", "title": "Weekly Report",
+        "provider_result": {"nodeId": "doc-8"},
+        "readback": {"content": "private synthetic weekly report"},
+    }
+    run = type("Run", (), {
+        "id": 78, "reply_task_id": 42, "execution_generation": "generation-1",
+        "role": AgentRole.CONSUMER, "status": "completed",
+        "tool_events": [{"type": "item.completed", "item": {
+            "type": "mcp_tool_call", "server": "agent_cli",
+            "tool": "consumer_document_write", "id": "write-2",
+            "result": (
+                json.dumps(returned) if text_result else
+                {"content": [{"type": "text", "text": json.dumps(returned)}]}
+            ),
+        }}],
+    })()
+
+    [receipt] = _scheduled_consumer_work_receipts(task, run)
+    assert receipt["consumer_run_id"] == 78
+    assert receipt["operation"] == "created"
+    assert receipt["document_node_id"] == "doc-8"
+    assert "private synthetic weekly report" not in str(receipt)
+
+
+def test_scheduled_receipts_ignore_other_server_and_failed_tool_result():
+    task = type("Task", (), {"id": 42, "channel": "scheduled", "execution_generation": "generation-1"})()
+    item = {
+        "type": "mcp_tool_call", "tool": "consumer_document_write",
+        "id": "write-1", "arguments": {"content": "report body"},
+        "result": {"structuredContent": {
+            "operation": "updated", "node_id": "doc-7", "title": "Report",
+            "provider_result": {"nodeId": "doc-7"},
+            "readback": {"content": "report body"},
+        }},
+    }
+    run = type("Run", (), {
+        "id": 77, "reply_task_id": 42, "execution_generation": "generation-1",
+        "role": AgentRole.CONSUMER, "status": "completed",
+        "tool_events": [
+            {"type": "item.completed", "item": {**item, "server": "other_server"}},
+            {"type": "item.completed", "item": {**item, "server": "agent_cli", "result": {**item["result"], "isError": True}}},
+            {"type": "item.completed", "item": {**item, "server": "agent_cli", "result": {
+                "content": [{"type": "text", "text": "provider failed: no document"}],
+            }}},
+        ],
+    })()
+
+    assert _scheduled_consumer_work_receipts(task, run) == ()
+
+
+@pytest.mark.parametrize("channel,status,tool,task_id,generation,role", [
+    ("dingtalk", "completed", "consumer_document_write", 42, "generation-1", AgentRole.CONSUMER),
+    ("scheduled", "failed", "consumer_document_write", 42, "generation-1", AgentRole.CONSUMER),
+    ("scheduled", "completed", "other_tool", 42, "generation-1", AgentRole.CONSUMER),
+    ("scheduled", "completed", "consumer_document_write", 43, "generation-1", AgentRole.CONSUMER),
+    ("scheduled", "completed", "consumer_document_write", 42, "stale-generation", AgentRole.CONSUMER),
+    ("scheduled", "completed", "consumer_document_write", 42, "generation-1", AgentRole.AUDIT),
+])
+def test_scheduled_audit_receipt_projection_excludes_unbound_events(
+    channel, status, tool, task_id, generation, role,
+):
+    task = type("Task", (), {"id": 42, "channel": channel, "execution_generation": "generation-1"})()
+    run = type("Run", (), {
+        "id": 77,
+        "reply_task_id": task_id,
+        "execution_generation": generation,
+        "role": role,
+        "status": status,
+        "tool_events": [{
+            "type": "item.completed",
+            "item": {
+                "type": "mcp_tool_call", "server": "agent_cli", "tool": tool,
+                "id": "write-1", "arguments": {"content": "x"},
+                "result": {"structuredContent": {
+                    "operation": "updated", "node_id": "doc-7", "title": "Report",
+                    "readback": {"content": "x"},
+                }},
+            },
+        }],
+    })()
+
+    assert _scheduled_consumer_work_receipts(task, run) == ()
+
+
 def test_approved_candidate_executes_after_audit_and_persists_receipt(tmp_path):
     store, task, context = task_and_context(tmp_path)
     consumer = ScriptedConsumer(store, candidate())
@@ -279,6 +405,23 @@ def test_nonretryable_authorization_failure_stays_technical(tmp_path):
     assert result.status == "failed_terminal"
     assert result.error.authorization_required is True
     assert store.current_reviewed_candidate(task.id, task.execution_generation) is None
+
+
+def test_missing_declared_operation_stops_after_one_consumer_turn(tmp_path):
+    store, task, context = task_and_context(tmp_path)
+    error = AgentError.model_validate(
+        agent_error_payload("operation_unavailable", failed=True)
+    )
+    consumer = ScriptedConsumer(store, error)
+    audit = ScriptedAudit(store)
+    driver, handler = orchestrator(store, consumer, audit)
+
+    result = driver.process(task, context, refresh_context=lambda: context)
+
+    assert result.status == "failed_terminal"
+    assert result.error.code == "operation_unavailable"
+    assert len(consumer.calls) == 1
+    assert audit.calls == handler.calls == []
 
 
 def test_technical_failure_keeps_structured_provider_source_code(tmp_path):
@@ -421,19 +564,19 @@ def test_two_tasks_can_share_runner_without_crossing_parent_or_context(tmp_path)
         ("temporary_read_error", "failed_terminal"),
         ("runtime_provider_unreachable", "failed_terminal"),
         ("codex_provider_capacity_exhausted", "failed_terminal"),
-        ("dependency_read_unavailable", "failed_retryable"),
-        ("agent_context_refresh_failed", "failed_retryable"),
+        ("dependency_read_unavailable", "failed_terminal"),
+            ("agent_context_refresh_failed", "failed_terminal"),
     ],
 )
 @pytest.mark.parametrize("role", [AgentRole.CONSUMER, AgentRole.AUDIT])
-def test_six_persisted_technical_failures_prevent_another_provider_turn(
+def test_four_persisted_role_failures_prevent_another_provider_turn(
     tmp_path, code, expected_status, role
 ):
     store, task, context = task_and_context(tmp_path)
     parent = None
     if role is AgentRole.AUDIT:
         parent = ScriptedConsumer(store, candidate()).run(task, context, proposal_revision=0, parent_agent_run_id=None).run_id
-    for turn in range(6):
+    for turn in range(4):
         claim = store.claim_agent_run(task.id, task.execution_generation, role=role,
             proposal_revision=0, turn_attempt=turn, parent_agent_run_id=parent,
             operation_id=_operation_id(task, 0) if role is AgentRole.AUDIT else '', owner='test')
@@ -447,15 +590,14 @@ def test_six_persisted_technical_failures_prevent_another_provider_turn(
     if expected_status == "failed_retryable":
         assert "ROOT_CAUSE" in result.summary
     assert result.error.retryable is (expected_status == "failed_retryable")
-    assert len(store.list_agent_runs_for_task_generation(task.id, task.execution_generation)) == (7 if role is AgentRole.AUDIT else 6)
+    assert len(store.list_agent_runs_for_task_generation(task.id, task.execution_generation)) == (
+        5 if role is AgentRole.AUDIT else 4
+    )
 
 
 @pytest.mark.parametrize(
     ("error_code", "failed_turns", "expected_delay"),
     [
-        ("dependency_read_unavailable", 1, 60),
-        ("dependency_read_unavailable", 2, 120),
-        ("dependency_read_unavailable", 5, 900),
         ("agent_context_refresh_failed", 2, 120),
     ],
 )

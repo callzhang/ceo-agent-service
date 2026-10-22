@@ -1,0 +1,78 @@
+{
+  "case": "anonymous_work_tracking_source_projection_sharing",
+  "date": "2026-10-17",
+  "mode": "isolated_store_codex_oauth_mcp_disabled",
+  "production_input": {
+    "attempt_id": 371553,
+    "submitted_user_chars": 384552,
+    "document_count": 68,
+    "signal_reference_count": 106,
+    "duplicate_projection_groups": 11,
+    "duplicate_document_references": 13,
+    "source_documents_json_chars_before": 171912,
+    "source_documents_json_chars_after": 141444,
+    "source_documents_chars_saved": 30468,
+    "full_user_chars_after_projection_only": 354084,
+    "full_user_chars_saved_pct": 7.92,
+    "exact_roundtrip": true
+  },
+  "native_comparison": {
+    "model": "gpt-5.6-luna",
+    "baseline": {
+      "session_id": "01a14ba5-b184-7e43-a068-ada5f43d60f5",
+      "cold_chars": 43395,
+      "risk_resume_chars": 16936
+    },
+    "candidate": {
+      "session_id": "01a14ba6-4541-7cc0-b456-227e9eb5b9da",
+      "cold_chars": 40955,
+      "risk_resume_chars": 14964
+    },
+    "cold_outcome": "same: one Project; no Task or Attention",
+    "risk_resume_outcome": "same: one Project; one Task; one applied Attention",
+    "validation_corrections": 0,
+    "tool_calls": 0,
+    "all_runs_completed": true,
+    "evidence_limit": "Single synthetic semantic comparison; cold and same-session risk outcomes match, with 7,741 fewer cumulative input tokens across the two turns in this pair. Different cache proportions and one fixture do not establish general token or quality savings.",
+    "token_usage_accounting": {
+      "method": "Sum all native token_usage_record values by turn_id; uncached input equals input_tokens minus cached_input_tokens.",
+      "arms": {
+        "baseline": {
+          "cold": {
+            "requests": 2,
+            "input_tokens": 102553,
+            "cached_input_tokens": 32512,
+            "uncached_input_tokens": 70041
+          },
+          "risk_resume": {
+            "requests": 1,
+            "input_tokens": 44872,
+            "cached_input_tokens": 36992,
+            "uncached_input_tokens": 7880
+          }
+        },
+        "candidate": {
+          "cold": {
+            "requests": 2,
+            "input_tokens": 97754,
+            "cached_input_tokens": 66304,
+            "uncached_input_tokens": 31450
+          },
+          "risk_resume": {
+            "requests": 1,
+            "input_tokens": 41930,
+            "cached_input_tokens": 35328,
+            "uncached_input_tokens": 6602
+          }
+        }
+      },
+      "total_input_tokens_all_turns": {
+        "baseline": 147425,
+        "candidate": 139684,
+        "saved": 7741,
+        "reduction_percent": 5.25
+      },
+      "interpretation": "Both arms made two model requests on cold start and one on resume. Total input tokens were lower in the compact arm on both turns; this is one matched synthetic pair, not a general savings estimate. Cached-token proportions differed between independent sessions."
+    }
+  }
+}

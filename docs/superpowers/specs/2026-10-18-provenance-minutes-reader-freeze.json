@@ -1,0 +1,32 @@
+{
+  "status": "unselected_a2_awaiting_fresh_spec_then_quality",
+  "files": {
+    "app/business_source_reader.py": "5183b7fd28f7468b8c99d606c168c1215b0abb3974ca10e31e9adf94edde4d4e",
+    "app/business_minutes_source_reader.py": "83ee51b369fe1eca6e33eb517e846f8d6b25e701fb0d3a30b860802a08168bff",
+    "tests/test_business_minutes_source_reader.py": "9b0e4e08c42e672271924c77702a52c12a29d60574a42bfab1ee609335926e64",
+    "docs/database-redesign-provenance-minutes-reader-validation-20261018.md": "310b7d9335b8203c0220c8921d7848b57a0f0e7f3f51149022de38d9413b7f37"
+  },
+  "requirement_pins": {
+    "docs/superpowers/specs/2026-10-11-database-redesign-design.md": "345223707fdd39d09c6b13a8101dfc8543a0cc7f9603f6ea13c8210f8498ce80",
+    "docs/superpowers/plans/2026-10-18-provenance-reader-runtime-implementation-plan.md": "b0368db725ab87872e192afda8a373b48e62c5f46b03679cc35eeacb97bcbfe3",
+    "docs/superpowers/specs/2026-10-18-provenance-reader-binding-freeze.json": "9811a60165913ef2702925643edc4ed2a21b7159703ac7cd5286b3907f8dfbb4",
+    "docs/superpowers/specs/2026-10-18-provenance-reader-binding-acceptance.json": "6b669984507d44a5f400577d818f9c03ed2a7130fb8e6818d4b361006bacf263",
+    "tests/test_business_source_reader.py": "a10d36969e40d7f49bd15ad5c2c43249812cfa00e1cac65bed7376d7734d6e81",
+    "tests/test_native_source_documents.py": "8c1e6815e097f0130cb199fa5bce2ff1f15c18b3389a0c04dc5c3a088d90e5ea",
+    "app/native_trajectory.py": "5b5ea4c0b880f78c08f0f020dde45c26ae1c38e21d012253b38cd50c30cadc04",
+    "app/task_source_documents.py": "b5fc08f38ba596057db048460882454cf5c969e5db85e38b1739fe346063b290",
+    "app/task_scanners.py": "ba89132165de05d7d88ca7cc53095baca6bcb41b6588c9a6bd14472af354c610",
+    "app/minutes_todo_context.py": "3976ac3d7101dda3c531871d42c3fa37a638f5bebfcb02a0b9e84b26b5de228f",
+    "app/dws_client.py": "1d6c0b379a63138904311baaf47d7f637bf2100163c6d6d4b8f592cf2e20103e"
+  },
+  "scope": "Exact AI Minutes locator from original canonical body component presence only; exact UUID unambiguous normalized DwsClient complete pagination and required-component reads; reconstructed body passes shared A1 complete identity/hash/UTF8bytes/ref/quote check. Provider dependencies supplied as configured DwsClient, no default external call.",
+  "pagination_boundary": "Uses existing DwsClient.list_minutes_page normalized contract. Raw terminal hasMore=false nextToken is normalized to empty by existing client and cannot be separately detected. No new raw-provider pagination policy is selected.",
+  "not_selected": [
+    "weekly/Console readers",
+    "Store/API/model or transaction/bundle/backfill integration",
+    "DDL/body retirement",
+    "real provider availability",
+    "release"
+  ],
+  "evidence_boundary": "Author22syntheticPASS only. Immutable actual11attempt2 running independently with preA2 code; no actual provider read or schema/capacity acceptance."
+}

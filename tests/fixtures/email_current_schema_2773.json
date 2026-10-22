@@ -1,0 +1,2490 @@
+{
+  "source_commit": "2773d6f4",
+  "objects": [
+    {
+      "kind": "table",
+      "name": "email_schema_migrations",
+      "sql": "CREATE TABLE email_schema_migrations (\n                version integer primary key,\n                applied_at text not null\n            )",
+      "columns": [
+        [
+          0,
+          "version",
+          "INTEGER",
+          0,
+          null,
+          1,
+          0
+        ],
+        [
+          1,
+          "applied_at",
+          "TEXT",
+          1,
+          null,
+          0,
+          0
+        ]
+      ],
+      "fks": []
+    },
+    {
+      "kind": "table",
+      "name": "email_accounts",
+      "sql": "CREATE TABLE email_accounts (\n                account_id text primary key,\n                display_name text not null,\n                email_address text not null,\n                imap_host text not null,\n                imap_port integer not null check(imap_port between 1 and 65535),\n                imap_tls integer not null check(imap_tls in (0, 1)),\n                imap_username text not null,\n                imap_secret_reference text not null,\n                imap_move_mode text not null default 'move'\n                    check(imap_move_mode in ('move', 'copy_as_move')),\n                smtp_host text not null,\n                smtp_port integer not null check(smtp_port between 1 and 65535),\n                smtp_tls integer not null check(smtp_tls in (0, 1)),\n                smtp_username text not null,\n                smtp_secret_reference text not null,\n                enabled integer not null check(enabled in (0, 1)),\n                scan_folders_json text not null check(json_valid(scan_folders_json)),\n                scan_interval_seconds integer not null check(scan_interval_seconds > 0),\n                created_at text not null,\n                updated_at text not null,\n                agent_lookback_days integer not null default 30\n                    check(agent_lookback_days between 1 and 365),\n                model_lookback_days integer not null default 365\n                    check(model_lookback_days between 1 and 3650),\n                scan_read_state text not null default 'unread'\n                    check(scan_read_state in ('unread', 'all'))\n            )",
+      "columns": [
+        [
+          0,
+          "account_id",
+          "TEXT",
+          0,
+          null,
+          1,
+          0
+        ],
+        [
+          1,
+          "display_name",
+          "TEXT",
+          1,
+          null,
+          0,
+          0
+        ],
+        [
+          2,
+          "email_address",
+          "TEXT",
+          1,
+          null,
+          0,
+          0
+        ],
+        [
+          3,
+          "imap_host",
+          "TEXT",
+          1,
+          null,
+          0,
+          0
+        ],
+        [
+          4,
+          "imap_port",
+          "INTEGER",
+          1,
+          null,
+          0,
+          0
+        ],
+        [
+          5,
+          "imap_tls",
+          "INTEGER",
+          1,
+          null,
+          0,
+          0
+        ],
+        [
+          6,
+          "imap_username",
+          "TEXT",
+          1,
+          null,
+          0,
+          0
+        ],
+        [
+          7,
+          "imap_secret_reference",
+          "TEXT",
+          1,
+          null,
+          0,
+          0
+        ],
+        [
+          8,
+          "imap_move_mode",
+          "TEXT",
+          1,
+          "'move'",
+          0,
+          0
+        ],
+        [
+          9,
+          "smtp_host",
+          "TEXT",
+          1,
+          null,
+          0,
+          0
+        ],
+        [
+          10,
+          "smtp_port",
+          "INTEGER",
+          1,
+          null,
+          0,
+          0
+        ],
+        [
+          11,
+          "smtp_tls",
+          "INTEGER",
+          1,
+          null,
+          0,
+          0
+        ],
+        [
+          12,
+          "smtp_username",
+          "TEXT",
+          1,
+          null,
+          0,
+          0
+        ],
+        [
+          13,
+          "smtp_secret_reference",
+          "TEXT",
+          1,
+          null,
+          0,
+          0
+        ],
+        [
+          14,
+          "enabled",
+          "INTEGER",
+          1,
+          null,
+          0,
+          0
+        ],
+        [
+          15,
+          "scan_folders_json",
+          "TEXT",
+          1,
+          null,
+          0,
+          0
+        ],
+        [
+          16,
+          "scan_interval_seconds",
+          "INTEGER",
+          1,
+          null,
+          0,
+          0
+        ],
+        [
+          17,
+          "created_at",
+          "TEXT",
+          1,
+          null,
+          0,
+          0
+        ],
+        [
+          18,
+          "updated_at",
+          "TEXT",
+          1,
+          null,
+          0,
+          0
+        ],
+        [
+          19,
+          "agent_lookback_days",
+          "INTEGER",
+          1,
+          "30",
+          0,
+          0
+        ],
+        [
+          20,
+          "model_lookback_days",
+          "INTEGER",
+          1,
+          "365",
+          0,
+          0
+        ],
+        [
+          21,
+          "scan_read_state",
+          "TEXT",
+          1,
+          "'unread'",
+          0,
+          0
+        ]
+      ],
+      "fks": []
+    },
+    {
+      "kind": "table",
+      "name": "email_scan_cursors",
+      "sql": "CREATE TABLE email_scan_cursors (\n                account_id text not null,\n                folder text not null,\n                uidvalidity integer not null check(uidvalidity > 0),\n                last_seen_uid integer not null check(last_seen_uid >= 0),\n                last_success_at text not null default '',\n                last_error text not null default '',\n                primary key (account_id, folder)\n            )",
+      "columns": [
+        [
+          0,
+          "account_id",
+          "TEXT",
+          1,
+          null,
+          1,
+          0
+        ],
+        [
+          1,
+          "folder",
+          "TEXT",
+          1,
+          null,
+          2,
+          0
+        ],
+        [
+          2,
+          "uidvalidity",
+          "INTEGER",
+          1,
+          null,
+          0,
+          0
+        ],
+        [
+          3,
+          "last_seen_uid",
+          "INTEGER",
+          1,
+          null,
+          0,
+          0
+        ],
+        [
+          4,
+          "last_success_at",
+          "TEXT",
+          1,
+          "''",
+          0,
+          0
+        ],
+        [
+          5,
+          "last_error",
+          "TEXT",
+          1,
+          "''",
+          0,
+          0
+        ]
+      ],
+      "fks": []
+    },
+    {
+      "kind": "table",
+      "name": "email_messages",
+      "sql": "CREATE TABLE email_messages (\n                id integer primary key autoincrement,\n                account_id text not null,\n                stable_message_identity text not null unique,\n                folder text not null,\n                uidvalidity integer not null check(uidvalidity > 0),\n                uid integer not null check(uid > 0),\n                rfc_message_id text not null,\n                in_reply_to text not null default '',\n                references_json text not null default '[]'\n                    check(json_valid(references_json)),\n                thread_identity text not null,\n                sender text not null,\n                recipients_json text not null check(json_valid(recipients_json)),\n                subject text not null,\n                normalized_text text not null,\n                preview text not null,\n                attachment_metadata_json text not null\n                    check(json_valid(attachment_metadata_json)),\n                received_at text not null,\n                created_at text not null,\n                updated_at text not null\n            )",
+      "columns": [
+        [
+          0,
+          "id",
+          "INTEGER",
+          0,
+          null,
+          1,
+          0
+        ],
+        [
+          1,
+          "account_id",
+          "TEXT",
+          1,
+          null,
+          0,
+          0
+        ],
+        [
+          2,
+          "stable_message_identity",
+          "TEXT",
+          1,
+          null,
+          0,
+          0
+        ],
+        [
+          3,
+          "folder",
+          "TEXT",
+          1,
+          null,
+          0,
+          0
+        ],
+        [
+          4,
+          "uidvalidity",
+          "INTEGER",
+          1,
+          null,
+          0,
+          0
+        ],
+        [
+          5,
+          "uid",
+          "INTEGER",
+          1,
+          null,
+          0,
+          0
+        ],
+        [
+          6,
+          "rfc_message_id",
+          "TEXT",
+          1,
+          null,
+          0,
+          0
+        ],
+        [
+          7,
+          "in_reply_to",
+          "TEXT",
+          1,
+          "''",
+          0,
+          0
+        ],
+        [
+          8,
+          "references_json",
+          "TEXT",
+          1,
+          "'[]'",
+          0,
+          0
+        ],
+        [
+          9,
+          "thread_identity",
+          "TEXT",
+          1,
+          null,
+          0,
+          0
+        ],
+        [
+          10,
+          "sender",
+          "TEXT",
+          1,
+          null,
+          0,
+          0
+        ],
+        [
+          11,
+          "recipients_json",
+          "TEXT",
+          1,
+          null,
+          0,
+          0
+        ],
+        [
+          12,
+          "subject",
+          "TEXT",
+          1,
+          null,
+          0,
+          0
+        ],
+        [
+          13,
+          "normalized_text",
+          "TEXT",
+          1,
+          null,
+          0,
+          0
+        ],
+        [
+          14,
+          "preview",
+          "TEXT",
+          1,
+          null,
+          0,
+          0
+        ],
+        [
+          15,
+          "attachment_metadata_json",
+          "TEXT",
+          1,
+          null,
+          0,
+          0
+        ],
+        [
+          16,
+          "received_at",
+          "TEXT",
+          1,
+          null,
+          0,
+          0
+        ],
+        [
+          17,
+          "created_at",
+          "TEXT",
+          1,
+          null,
+          0,
+          0
+        ],
+        [
+          18,
+          "updated_at",
+          "TEXT",
+          1,
+          null,
+          0,
+          0
+        ]
+      ],
+      "fks": []
+    },
+    {
+      "kind": "table",
+      "name": "email_training_snapshots",
+      "sql": "CREATE TABLE email_training_snapshots (\n                snapshot_id text primary key check(trim(snapshot_id) != ''),\n                snapshot_version text not null check(trim(snapshot_version) != ''),\n                description_version text not null\n                    check(trim(description_version) != ''),\n                input_schema_version text not null\n                    check(trim(input_schema_version) != ''),\n                seed integer not null check(seed >= 0),\n                observed_at text not null check(trim(observed_at) != ''),\n                snapshot_digest text not null unique\n                    check(length(snapshot_digest) = 64),\n                manifest_json text not null check(json_valid(manifest_json)),\n                frozen integer not null default 1 check(frozen in (0, 1)),\n                created_at text not null check(trim(created_at) != ''),\n                folder_label_watermark integer not null default 0\n                    check(folder_label_watermark >= 0),\n                important_label_watermark integer not null default 0\n                    check(important_label_watermark >= 0)\n            )",
+      "columns": [
+        [
+          0,
+          "snapshot_id",
+          "TEXT",
+          0,
+          null,
+          1,
+          0
+        ],
+        [
+          1,
+          "snapshot_version",
+          "TEXT",
+          1,
+          null,
+          0,
+          0
+        ],
+        [
+          2,
+          "description_version",
+          "TEXT",
+          1,
+          null,
+          0,
+          0
+        ],
+        [
+          3,
+          "input_schema_version",
+          "TEXT",
+          1,
+          null,
+          0,
+          0
+        ],
+        [
+          4,
+          "seed",
+          "INTEGER",
+          1,
+          null,
+          0,
+          0
+        ],
+        [
+          5,
+          "observed_at",
+          "TEXT",
+          1,
+          null,
+          0,
+          0
+        ],
+        [
+          6,
+          "snapshot_digest",
+          "TEXT",
+          1,
+          null,
+          0,
+          0
+        ],
+        [
+          7,
+          "manifest_json",
+          "TEXT",
+          1,
+          null,
+          0,
+          0
+        ],
+        [
+          8,
+          "frozen",
+          "INTEGER",
+          1,
+          "1",
+          0,
+          0
+        ],
+        [
+          9,
+          "created_at",
+          "TEXT",
+          1,
+          null,
+          0,
+          0
+        ],
+        [
+          10,
+          "folder_label_watermark",
+          "INTEGER",
+          1,
+          "0",
+          0,
+          0
+        ],
+        [
+          11,
+          "important_label_watermark",
+          "INTEGER",
+          1,
+          "0",
+          0,
+          0
+        ]
+      ],
+      "fks": []
+    },
+    {
+      "kind": "table",
+      "name": "email_provider_observations",
+      "sql": "CREATE TABLE email_provider_observations (\n                account_id text not null check(trim(account_id) != ''),\n                stable_message_identity text not null\n                    check(trim(stable_message_identity) != ''),\n                state text not null\n                    check(state in ('available','unavailable','excluded')),\n                provider_folder_id text,\n                provider_folder_name text,\n                category_key text,\n                important integer check(important is null or important in (0, 1)),\n                important_signals_json text\n                    check(important_signals_json is null or json_valid(important_signals_json)),\n                observed_at text not null check(trim(observed_at) != ''),\n                primary key(account_id, stable_message_identity)\n            )",
+      "columns": [
+        [
+          0,
+          "account_id",
+          "TEXT",
+          1,
+          null,
+          1,
+          0
+        ],
+        [
+          1,
+          "stable_message_identity",
+          "TEXT",
+          1,
+          null,
+          2,
+          0
+        ],
+        [
+          2,
+          "state",
+          "TEXT",
+          1,
+          null,
+          0,
+          0
+        ],
+        [
+          3,
+          "provider_folder_id",
+          "TEXT",
+          0,
+          null,
+          0,
+          0
+        ],
+        [
+          4,
+          "provider_folder_name",
+          "TEXT",
+          0,
+          null,
+          0,
+          0
+        ],
+        [
+          5,
+          "category_key",
+          "TEXT",
+          0,
+          null,
+          0,
+          0
+        ],
+        [
+          6,
+          "important",
+          "INTEGER",
+          0,
+          null,
+          0,
+          0
+        ],
+        [
+          7,
+          "important_signals_json",
+          "TEXT",
+          0,
+          null,
+          0,
+          0
+        ],
+        [
+          8,
+          "observed_at",
+          "TEXT",
+          1,
+          null,
+          0,
+          0
+        ]
+      ],
+      "fks": []
+    },
+    {
+      "kind": "table",
+      "name": "email_provider_folder_observation_generations",
+      "sql": "CREATE TABLE email_provider_folder_observation_generations (\n                account_id text not null check(trim(account_id) != ''),\n                provider_folder_id text not null\n                    check(trim(provider_folder_id) != ''),\n                observed_at text not null check(trim(observed_at) != ''),\n                primary key(account_id, provider_folder_id)\n            )",
+      "columns": [
+        [
+          0,
+          "account_id",
+          "TEXT",
+          1,
+          null,
+          1,
+          0
+        ],
+        [
+          1,
+          "provider_folder_id",
+          "TEXT",
+          1,
+          null,
+          2,
+          0
+        ],
+        [
+          2,
+          "observed_at",
+          "TEXT",
+          1,
+          null,
+          0,
+          0
+        ]
+      ],
+      "fks": []
+    },
+    {
+      "kind": "table",
+      "name": "email_historical_classification_history",
+      "sql": "CREATE TABLE email_historical_classification_history (\n                event_id text primary key check(trim(event_id) != ''),\n                stable_message_identity text not null\n                    check(trim(stable_message_identity) != ''),\n                model_id text not null check(trim(model_id) != ''),\n                predicted_category text\n                    check(\n                        predicted_category is null\n                        or trim(predicted_category) != ''\n                    ),\n                threshold real\n                    check(threshold is null or (threshold >= 0.0 and threshold <= 1.0)),\n                probability real\n                    check(\n                        probability is null\n                        or (probability >= 0.0 and probability <= 1.0)\n                    ),\n                important integer check(important is null or important in (0, 1)),\n                action_outcome text not null check(trim(action_outcome) != ''),\n                created_at text not null check(trim(created_at) != '')\n            )",
+      "columns": [
+        [
+          0,
+          "event_id",
+          "TEXT",
+          0,
+          null,
+          1,
+          0
+        ],
+        [
+          1,
+          "stable_message_identity",
+          "TEXT",
+          1,
+          null,
+          0,
+          0
+        ],
+        [
+          2,
+          "model_id",
+          "TEXT",
+          1,
+          null,
+          0,
+          0
+        ],
+        [
+          3,
+          "predicted_category",
+          "TEXT",
+          0,
+          null,
+          0,
+          0
+        ],
+        [
+          4,
+          "threshold",
+          "REAL",
+          0,
+          null,
+          0,
+          0
+        ],
+        [
+          5,
+          "probability",
+          "REAL",
+          0,
+          null,
+          0,
+          0
+        ],
+        [
+          6,
+          "important",
+          "INTEGER",
+          0,
+          null,
+          0,
+          0
+        ],
+        [
+          7,
+          "action_outcome",
+          "TEXT",
+          1,
+          null,
+          0,
+          0
+        ],
+        [
+          8,
+          "created_at",
+          "TEXT",
+          1,
+          null,
+          0,
+          0
+        ]
+      ],
+      "fks": []
+    },
+    {
+      "kind": "table",
+      "name": "email_classifier_runtime_samples",
+      "sql": "CREATE TABLE email_classifier_runtime_samples (\n                id integer primary key autoincrement,\n                model_id text not null check(trim(model_id) != ''),\n                outcome text not null\n                    check(outcome in ('success', 'rejected', 'failure')),\n                fallback_code text not null default ''\n                    check(length(fallback_code) <= 64),\n                cache_hit integer not null check(cache_hit in (0, 1)),\n                runtime_warm integer not null check(runtime_warm in (0, 1)),\n                queue_ms real not null check(queue_ms >= 0),\n                http_ms real not null check(http_ms >= 0),\n                embedding_ms real not null check(embedding_ms >= 0),\n                head_ms real not null check(head_ms >= 0),\n                total_ms real not null check(total_ms >= 0),\n                recorded_at text not null check(trim(recorded_at) != '')\n            )",
+      "columns": [
+        [
+          0,
+          "id",
+          "INTEGER",
+          0,
+          null,
+          1,
+          0
+        ],
+        [
+          1,
+          "model_id",
+          "TEXT",
+          1,
+          null,
+          0,
+          0
+        ],
+        [
+          2,
+          "outcome",
+          "TEXT",
+          1,
+          null,
+          0,
+          0
+        ],
+        [
+          3,
+          "fallback_code",
+          "TEXT",
+          1,
+          "''",
+          0,
+          0
+        ],
+        [
+          4,
+          "cache_hit",
+          "INTEGER",
+          1,
+          null,
+          0,
+          0
+        ],
+        [
+          5,
+          "runtime_warm",
+          "INTEGER",
+          1,
+          null,
+          0,
+          0
+        ],
+        [
+          6,
+          "queue_ms",
+          "REAL",
+          1,
+          null,
+          0,
+          0
+        ],
+        [
+          7,
+          "http_ms",
+          "REAL",
+          1,
+          null,
+          0,
+          0
+        ],
+        [
+          8,
+          "embedding_ms",
+          "REAL",
+          1,
+          null,
+          0,
+          0
+        ],
+        [
+          9,
+          "head_ms",
+          "REAL",
+          1,
+          null,
+          0,
+          0
+        ],
+        [
+          10,
+          "total_ms",
+          "REAL",
+          1,
+          null,
+          0,
+          0
+        ],
+        [
+          11,
+          "recorded_at",
+          "TEXT",
+          1,
+          null,
+          0,
+          0
+        ]
+      ],
+      "fks": []
+    },
+    {
+      "kind": "index",
+      "name": "idx_email_messages_account_locator",
+      "sql": "CREATE INDEX idx_email_messages_account_locator\n            on email_messages(account_id, folder, uidvalidity, uid)\n            ",
+      "columns": [],
+      "fks": []
+    },
+    {
+      "kind": "index",
+      "name": "idx_email_provider_observations_folder",
+      "sql": "CREATE INDEX idx_email_provider_observations_folder\n            on email_provider_observations(account_id, provider_folder_id)\n            ",
+      "columns": [],
+      "fks": []
+    },
+    {
+      "kind": "index",
+      "name": "idx_email_classifier_runtime_model_id",
+      "sql": "CREATE INDEX idx_email_classifier_runtime_model_id\n            on email_classifier_runtime_samples(model_id, id desc)\n            ",
+      "columns": [],
+      "fks": []
+    },
+    {
+      "kind": "trigger",
+      "name": "trg_email_training_snapshots_immutable_delete",
+      "sql": "CREATE TRIGGER trg_email_training_snapshots_immutable_delete\n            before delete on email_training_snapshots\n            begin\n                select raise(abort, 'email training snapshot is immutable');\n            end",
+      "columns": [],
+      "fks": []
+    },
+    {
+      "kind": "table",
+      "name": "email_category_configs",
+      "sql": "CREATE TABLE email_category_configs (\n        category_key text primary key check(trim(category_key) != ''),\n        display_name text not null check(trim(display_name) != ''),\n        core_description text not null check(trim(core_description) != ''),\n        include_json text not null\n            check(json_valid(include_json))\n            check(json_type(include_json) = 'array')\n            check(json_array_length(include_json) > 0)\n            check(trim(json_extract(include_json, '$[0]')) != ''),\n        exclude_json text not null\n            check(json_valid(exclude_json))\n            check(json_type(exclude_json) = 'array')\n            check(json_array_length(exclude_json) > 0)\n            check(trim(json_extract(exclude_json, '$[0]')) != ''),\n        threshold real not null check(threshold >= 0.0 and threshold <= 1.0),\n        actions_json text not null check(json_valid(actions_json)),\n        action_parameters_json text not null\n            check(json_valid(action_parameters_json)),\n        enabled integer not null check(enabled in (0, 1)),\n        description_version text not null check(trim(description_version) != ''),\n        config_version text not null check(trim(config_version) != ''),\n        updated_at text not null check(trim(updated_at) != '')\n    )",
+      "columns": [
+        [
+          0,
+          "category_key",
+          "TEXT",
+          0,
+          null,
+          1,
+          0
+        ],
+        [
+          1,
+          "display_name",
+          "TEXT",
+          1,
+          null,
+          0,
+          0
+        ],
+        [
+          2,
+          "core_description",
+          "TEXT",
+          1,
+          null,
+          0,
+          0
+        ],
+        [
+          3,
+          "include_json",
+          "TEXT",
+          1,
+          null,
+          0,
+          0
+        ],
+        [
+          4,
+          "exclude_json",
+          "TEXT",
+          1,
+          null,
+          0,
+          0
+        ],
+        [
+          5,
+          "threshold",
+          "REAL",
+          1,
+          null,
+          0,
+          0
+        ],
+        [
+          6,
+          "actions_json",
+          "TEXT",
+          1,
+          null,
+          0,
+          0
+        ],
+        [
+          7,
+          "action_parameters_json",
+          "TEXT",
+          1,
+          null,
+          0,
+          0
+        ],
+        [
+          8,
+          "enabled",
+          "INTEGER",
+          1,
+          null,
+          0,
+          0
+        ],
+        [
+          9,
+          "description_version",
+          "TEXT",
+          1,
+          null,
+          0,
+          0
+        ],
+        [
+          10,
+          "config_version",
+          "TEXT",
+          1,
+          null,
+          0,
+          0
+        ],
+        [
+          11,
+          "updated_at",
+          "TEXT",
+          1,
+          null,
+          0,
+          0
+        ]
+      ],
+      "fks": []
+    },
+    {
+      "kind": "table",
+      "name": "email_category_folder_bindings",
+      "sql": "CREATE TABLE email_category_folder_bindings (\n        account_id text not null check(trim(account_id) != ''),\n        category_key text not null check(trim(category_key) != ''),\n        provider_folder_id text not null,\n        provider_folder_name text not null check(provider_folder_name != ''),\n        binding_status text not null check(binding_status in (\n            'active', 'missing', 'ambiguous', 'error'\n        )),\n        last_verified_at text not null check(trim(last_verified_at) != ''),\n        primary key(account_id, category_key),\n        check(binding_status != 'active' or provider_folder_id != ''),\n        foreign key(account_id) references email_accounts(account_id)\n            on delete cascade,\n        foreign key(category_key) references email_category_configs(category_key)\n            on delete cascade\n    )",
+      "columns": [
+        [
+          0,
+          "account_id",
+          "TEXT",
+          1,
+          null,
+          1,
+          0
+        ],
+        [
+          1,
+          "category_key",
+          "TEXT",
+          1,
+          null,
+          2,
+          0
+        ],
+        [
+          2,
+          "provider_folder_id",
+          "TEXT",
+          1,
+          null,
+          0,
+          0
+        ],
+        [
+          3,
+          "provider_folder_name",
+          "TEXT",
+          1,
+          null,
+          0,
+          0
+        ],
+        [
+          4,
+          "binding_status",
+          "TEXT",
+          1,
+          null,
+          0,
+          0
+        ],
+        [
+          5,
+          "last_verified_at",
+          "TEXT",
+          1,
+          null,
+          0,
+          0
+        ]
+      ],
+      "fks": [
+        [
+          0,
+          0,
+          "email_category_configs",
+          "category_key",
+          "category_key",
+          "NO ACTION",
+          "CASCADE",
+          "NONE"
+        ],
+        [
+          1,
+          0,
+          "email_accounts",
+          "account_id",
+          "account_id",
+          "NO ACTION",
+          "CASCADE",
+          "NONE"
+        ]
+      ]
+    },
+    {
+      "kind": "index",
+      "name": "idx_email_category_folder_bindings_active_provider",
+      "sql": "CREATE UNIQUE INDEX idx_email_category_folder_bindings_active_provider\n    on email_category_folder_bindings(account_id, provider_folder_id)\n    where binding_status = 'active'\n",
+      "columns": [],
+      "fks": []
+    },
+    {
+      "kind": "table",
+      "name": "email_classifications",
+      "sql": "CREATE TABLE \"email_classifications\" (\n                id integer primary key,\n                account_id text not null,\n                folder text not null,\n                uidvalidity integer not null,\n                uid integer not null,\n                rfc_message_id text,\n                thread_id text,\n                stable_message_identity text not null unique,\n                sender text not null default '',\n                subject text not null default '',\n                preview text not null default '',\n                model_text text not null default '',\n                received_at text not null default '',\n                category text,\n                predicted_category text,\n                confirmed_category text,\n                confidence real not null,\n                margin real not null,\n                probabilities_json text not null,\n                model_id text not null,\n                config_version text not null,\n                status text not null,\n                classification_source text not null,\n                agent_result_json text not null default 'null',\n                current_action_plan_id text,\n                included_in_model_id text,\n                legacy_processed_without_plan integer not null default 0\n                    check(legacy_processed_without_plan in (0, 1)),\n                confirmed_at text not null default '',\n                created_at text not null default current_timestamp,\n                updated_at text not null default current_timestamp\n            )",
+      "columns": [
+        [
+          0,
+          "id",
+          "INTEGER",
+          0,
+          null,
+          1,
+          0
+        ],
+        [
+          1,
+          "account_id",
+          "TEXT",
+          1,
+          null,
+          0,
+          0
+        ],
+        [
+          2,
+          "folder",
+          "TEXT",
+          1,
+          null,
+          0,
+          0
+        ],
+        [
+          3,
+          "uidvalidity",
+          "INTEGER",
+          1,
+          null,
+          0,
+          0
+        ],
+        [
+          4,
+          "uid",
+          "INTEGER",
+          1,
+          null,
+          0,
+          0
+        ],
+        [
+          5,
+          "rfc_message_id",
+          "TEXT",
+          0,
+          null,
+          0,
+          0
+        ],
+        [
+          6,
+          "thread_id",
+          "TEXT",
+          0,
+          null,
+          0,
+          0
+        ],
+        [
+          7,
+          "stable_message_identity",
+          "TEXT",
+          1,
+          null,
+          0,
+          0
+        ],
+        [
+          8,
+          "sender",
+          "TEXT",
+          1,
+          "''",
+          0,
+          0
+        ],
+        [
+          9,
+          "subject",
+          "TEXT",
+          1,
+          "''",
+          0,
+          0
+        ],
+        [
+          10,
+          "preview",
+          "TEXT",
+          1,
+          "''",
+          0,
+          0
+        ],
+        [
+          11,
+          "model_text",
+          "TEXT",
+          1,
+          "''",
+          0,
+          0
+        ],
+        [
+          12,
+          "received_at",
+          "TEXT",
+          1,
+          "''",
+          0,
+          0
+        ],
+        [
+          13,
+          "category",
+          "TEXT",
+          0,
+          null,
+          0,
+          0
+        ],
+        [
+          14,
+          "predicted_category",
+          "TEXT",
+          0,
+          null,
+          0,
+          0
+        ],
+        [
+          15,
+          "confirmed_category",
+          "TEXT",
+          0,
+          null,
+          0,
+          0
+        ],
+        [
+          16,
+          "confidence",
+          "REAL",
+          1,
+          null,
+          0,
+          0
+        ],
+        [
+          17,
+          "margin",
+          "REAL",
+          1,
+          null,
+          0,
+          0
+        ],
+        [
+          18,
+          "probabilities_json",
+          "TEXT",
+          1,
+          null,
+          0,
+          0
+        ],
+        [
+          19,
+          "model_id",
+          "TEXT",
+          1,
+          null,
+          0,
+          0
+        ],
+        [
+          20,
+          "config_version",
+          "TEXT",
+          1,
+          null,
+          0,
+          0
+        ],
+        [
+          21,
+          "status",
+          "TEXT",
+          1,
+          null,
+          0,
+          0
+        ],
+        [
+          22,
+          "classification_source",
+          "TEXT",
+          1,
+          null,
+          0,
+          0
+        ],
+        [
+          23,
+          "agent_result_json",
+          "TEXT",
+          1,
+          "'null'",
+          0,
+          0
+        ],
+        [
+          24,
+          "current_action_plan_id",
+          "TEXT",
+          0,
+          null,
+          0,
+          0
+        ],
+        [
+          25,
+          "included_in_model_id",
+          "TEXT",
+          0,
+          null,
+          0,
+          0
+        ],
+        [
+          26,
+          "legacy_processed_without_plan",
+          "INTEGER",
+          1,
+          "0",
+          0,
+          0
+        ],
+        [
+          27,
+          "confirmed_at",
+          "TEXT",
+          1,
+          "''",
+          0,
+          0
+        ],
+        [
+          28,
+          "created_at",
+          "TEXT",
+          1,
+          "current_timestamp",
+          0,
+          0
+        ],
+        [
+          29,
+          "updated_at",
+          "TEXT",
+          1,
+          "current_timestamp",
+          0,
+          0
+        ]
+      ],
+      "fks": []
+    },
+    {
+      "kind": "index",
+      "name": "idx_email_classifications_status",
+      "sql": "CREATE INDEX idx_email_classifications_status\n            on email_classifications(status, updated_at desc, id desc)\n            ",
+      "columns": [],
+      "fks": []
+    },
+    {
+      "kind": "index",
+      "name": "idx_email_classifications_account_status",
+      "sql": "CREATE INDEX idx_email_classifications_account_status\n            on email_classifications(account_id, status, updated_at desc)\n            ",
+      "columns": [],
+      "fks": []
+    },
+    {
+      "kind": "index",
+      "name": "idx_email_classifications_account_locator",
+      "sql": "CREATE INDEX idx_email_classifications_account_locator\n            on email_classifications(\n                account_id, folder, uidvalidity, status, updated_at desc, uid\n            )\n            ",
+      "columns": [],
+      "fks": []
+    },
+    {
+      "kind": "trigger",
+      "name": "trg_email_classification_status_insert",
+      "sql": "CREATE TRIGGER trg_email_classification_status_insert\n            before insert on email_classifications\n            when new.status not in ('pending_feedback', 'processed')\n            begin\n                select raise(abort, 'invalid email classification status');\n            end",
+      "columns": [],
+      "fks": []
+    },
+    {
+      "kind": "trigger",
+      "name": "trg_email_classification_status_update",
+      "sql": "CREATE TRIGGER trg_email_classification_status_update\n            before update of status on email_classifications\n            when new.status not in ('pending_feedback', 'processed')\n            begin\n                select raise(abort, 'invalid email classification status');\n            end",
+      "columns": [],
+      "fks": []
+    },
+    {
+      "kind": "trigger",
+      "name": "trg_email_classification_source_insert",
+      "sql": "CREATE TRIGGER trg_email_classification_source_insert\n            before insert on email_classifications\n            when new.classification_source not in ('model', 'user', 'agent')\n            begin\n                select raise(abort, 'invalid email classification source');\n            end",
+      "columns": [],
+      "fks": []
+    },
+    {
+      "kind": "trigger",
+      "name": "trg_email_classification_source_update",
+      "sql": "CREATE TRIGGER trg_email_classification_source_update\n            before update of classification_source on email_classifications\n            when new.classification_source not in ('model', 'user', 'agent')\n            begin\n                select raise(abort, 'invalid email classification source');\n            end",
+      "columns": [],
+      "fks": []
+    },
+    {
+      "kind": "trigger",
+      "name": "trg_email_training_inclusion_invalidate",
+      "sql": "CREATE TRIGGER trg_email_training_inclusion_invalidate\n            after update of confirmed_category, model_text, confirmed_at,\n                            classification_source, status on email_classifications\n            when old.included_in_model_id is not null and (\n                old.confirmed_category is not new.confirmed_category or\n                old.model_text is not new.model_text or\n                old.confirmed_at is not new.confirmed_at or\n                old.classification_source is not new.classification_source or\n                old.status is not new.status\n            )\n            begin\n                update email_classifications\n                set included_in_model_id=null\n                where id=new.id;\n            end",
+      "columns": [],
+      "fks": []
+    },
+    {
+      "kind": "table",
+      "name": "email_agent_classification_tasks",
+      "sql": "CREATE TABLE email_agent_classification_tasks (\n                task_id text primary key check(trim(task_id) != ''),\n                channel text not null check(channel='email'),\n                stable_message_identity text not null unique\n                    check(trim(stable_message_identity) != ''),\n                status text not null\n                    check(status in ('pending','running','done','failed')),\n                owner text not null default '',\n                generation integer not null default 0 check(generation >= 0),\n                attempt_count integer not null default 0 check(attempt_count >= 0),\n                lease_expires_at text not null default '',\n                available_at text not null default '',\n                input_json text not null check(json_valid(input_json)),\n                result_json text not null default 'null' check(json_valid(result_json)),\n                error text not null default '',\n                created_at text not null default current_timestamp,\n                updated_at text not null default current_timestamp\n            )",
+      "columns": [
+        [
+          0,
+          "task_id",
+          "TEXT",
+          0,
+          null,
+          1,
+          0
+        ],
+        [
+          1,
+          "channel",
+          "TEXT",
+          1,
+          null,
+          0,
+          0
+        ],
+        [
+          2,
+          "stable_message_identity",
+          "TEXT",
+          1,
+          null,
+          0,
+          0
+        ],
+        [
+          3,
+          "status",
+          "TEXT",
+          1,
+          null,
+          0,
+          0
+        ],
+        [
+          4,
+          "owner",
+          "TEXT",
+          1,
+          "''",
+          0,
+          0
+        ],
+        [
+          5,
+          "generation",
+          "INTEGER",
+          1,
+          "0",
+          0,
+          0
+        ],
+        [
+          6,
+          "attempt_count",
+          "INTEGER",
+          1,
+          "0",
+          0,
+          0
+        ],
+        [
+          7,
+          "lease_expires_at",
+          "TEXT",
+          1,
+          "''",
+          0,
+          0
+        ],
+        [
+          8,
+          "available_at",
+          "TEXT",
+          1,
+          "''",
+          0,
+          0
+        ],
+        [
+          9,
+          "input_json",
+          "TEXT",
+          1,
+          null,
+          0,
+          0
+        ],
+        [
+          10,
+          "result_json",
+          "TEXT",
+          1,
+          "'null'",
+          0,
+          0
+        ],
+        [
+          11,
+          "error",
+          "TEXT",
+          1,
+          "''",
+          0,
+          0
+        ],
+        [
+          12,
+          "created_at",
+          "TEXT",
+          1,
+          "current_timestamp",
+          0,
+          0
+        ],
+        [
+          13,
+          "updated_at",
+          "TEXT",
+          1,
+          "current_timestamp",
+          0,
+          0
+        ]
+      ],
+      "fks": []
+    },
+    {
+      "kind": "index",
+      "name": "idx_email_agent_classification_tasks_status",
+      "sql": "CREATE INDEX idx_email_agent_classification_tasks_status\n            on email_agent_classification_tasks(\n                status, available_at, lease_expires_at, task_id\n            )\n            ",
+      "columns": [],
+      "fks": []
+    },
+    {
+      "kind": "table",
+      "name": "email_historical_traversals",
+      "sql": "CREATE TABLE email_historical_traversals (\n                account_id text not null,\n                folder text not null,\n                model_id text not null,\n                uidvalidity integer,\n                last_seen_uid integer not null default 0,\n                updated_at text not null,\n                primary key(account_id, folder, model_id)\n            )",
+      "columns": [
+        [
+          0,
+          "account_id",
+          "TEXT",
+          1,
+          null,
+          1,
+          0
+        ],
+        [
+          1,
+          "folder",
+          "TEXT",
+          1,
+          null,
+          2,
+          0
+        ],
+        [
+          2,
+          "model_id",
+          "TEXT",
+          1,
+          null,
+          3,
+          0
+        ],
+        [
+          3,
+          "uidvalidity",
+          "INTEGER",
+          0,
+          null,
+          0,
+          0
+        ],
+        [
+          4,
+          "last_seen_uid",
+          "INTEGER",
+          1,
+          "0",
+          0,
+          0
+        ],
+        [
+          5,
+          "updated_at",
+          "TEXT",
+          1,
+          null,
+          0,
+          0
+        ]
+      ],
+      "fks": []
+    },
+    {
+      "kind": "table",
+      "name": "email_historical_operations",
+      "sql": "CREATE TABLE email_historical_operations (\n                operation_id text primary key,\n                account_id text not null,\n                stable_message_identity text not null,\n                model_id text not null,\n                classification_id integer not null,\n                action_plan_id text not null,\n                action_ids_json text not null check(json_valid(action_ids_json)),\n                predicted_category text not null,\n                threshold real not null,\n                probability real not null,\n                important integer not null check(important in (0,1)),\n                status text not null check(status in ('processing','terminal')),\n                action_outcome text not null default '',\n                created_at text not null,\n                updated_at text not null,\n                unique(model_id, stable_message_identity)\n            )",
+      "columns": [
+        [
+          0,
+          "operation_id",
+          "TEXT",
+          0,
+          null,
+          1,
+          0
+        ],
+        [
+          1,
+          "account_id",
+          "TEXT",
+          1,
+          null,
+          0,
+          0
+        ],
+        [
+          2,
+          "stable_message_identity",
+          "TEXT",
+          1,
+          null,
+          0,
+          0
+        ],
+        [
+          3,
+          "model_id",
+          "TEXT",
+          1,
+          null,
+          0,
+          0
+        ],
+        [
+          4,
+          "classification_id",
+          "INTEGER",
+          1,
+          null,
+          0,
+          0
+        ],
+        [
+          5,
+          "action_plan_id",
+          "TEXT",
+          1,
+          null,
+          0,
+          0
+        ],
+        [
+          6,
+          "action_ids_json",
+          "TEXT",
+          1,
+          null,
+          0,
+          0
+        ],
+        [
+          7,
+          "predicted_category",
+          "TEXT",
+          1,
+          null,
+          0,
+          0
+        ],
+        [
+          8,
+          "threshold",
+          "REAL",
+          1,
+          null,
+          0,
+          0
+        ],
+        [
+          9,
+          "probability",
+          "REAL",
+          1,
+          null,
+          0,
+          0
+        ],
+        [
+          10,
+          "important",
+          "INTEGER",
+          1,
+          null,
+          0,
+          0
+        ],
+        [
+          11,
+          "status",
+          "TEXT",
+          1,
+          null,
+          0,
+          0
+        ],
+        [
+          12,
+          "action_outcome",
+          "TEXT",
+          1,
+          "''",
+          0,
+          0
+        ],
+        [
+          13,
+          "created_at",
+          "TEXT",
+          1,
+          null,
+          0,
+          0
+        ],
+        [
+          14,
+          "updated_at",
+          "TEXT",
+          1,
+          null,
+          0,
+          0
+        ]
+      ],
+      "fks": []
+    },
+    {
+      "kind": "table",
+      "name": "email_historical_candidates",
+      "sql": "CREATE TABLE email_historical_candidates (\n                account_id text not null,\n                folder text not null,\n                model_id text not null,\n                stable_message_identity text not null,\n                normalized_text text not null,\n                provider_message_json text not null check(json_valid(provider_message_json)),\n                uidvalidity integer not null,\n                uid integer not null,\n                state text not null check(state in ('pending','deferred','terminal')),\n                reason text not null default '',\n                attempted_at text not null default '',\n                next_retry_at text not null default '',\n                updated_at text not null,\n                primary key(account_id, folder, model_id, stable_message_identity)\n            )",
+      "columns": [
+        [
+          0,
+          "account_id",
+          "TEXT",
+          1,
+          null,
+          1,
+          0
+        ],
+        [
+          1,
+          "folder",
+          "TEXT",
+          1,
+          null,
+          2,
+          0
+        ],
+        [
+          2,
+          "model_id",
+          "TEXT",
+          1,
+          null,
+          3,
+          0
+        ],
+        [
+          3,
+          "stable_message_identity",
+          "TEXT",
+          1,
+          null,
+          4,
+          0
+        ],
+        [
+          4,
+          "normalized_text",
+          "TEXT",
+          1,
+          null,
+          0,
+          0
+        ],
+        [
+          5,
+          "provider_message_json",
+          "TEXT",
+          1,
+          null,
+          0,
+          0
+        ],
+        [
+          6,
+          "uidvalidity",
+          "INTEGER",
+          1,
+          null,
+          0,
+          0
+        ],
+        [
+          7,
+          "uid",
+          "INTEGER",
+          1,
+          null,
+          0,
+          0
+        ],
+        [
+          8,
+          "state",
+          "TEXT",
+          1,
+          null,
+          0,
+          0
+        ],
+        [
+          9,
+          "reason",
+          "TEXT",
+          1,
+          "''",
+          0,
+          0
+        ],
+        [
+          10,
+          "attempted_at",
+          "TEXT",
+          1,
+          "''",
+          0,
+          0
+        ],
+        [
+          11,
+          "next_retry_at",
+          "TEXT",
+          1,
+          "''",
+          0,
+          0
+        ],
+        [
+          12,
+          "updated_at",
+          "TEXT",
+          1,
+          null,
+          0,
+          0
+        ]
+      ],
+      "fks": []
+    },
+    {
+      "kind": "table",
+      "name": "email_model_promotion_configs",
+      "sql": "CREATE TABLE email_model_promotion_configs (\n                config_version text primary key not null check(trim(config_version) != ''),\n                micro_f1_min real not null check(micro_f1_min >= 0 and micro_f1_min <= 1),\n                category_precision_min real not null check(category_precision_min >= 0 and category_precision_min <= 1),\n                category_validation_samples_min integer not null check(typeof(category_validation_samples_min) = 'integer' and category_validation_samples_min > 0),\n                p95_latency_max_ms real not null check(p95_latency_max_ms > 0 and (p95_latency_max_ms - p95_latency_max_ms) is 0.0),\n                created_at text not null check(trim(created_at) != '')\n            ) without rowid\n        ",
+      "columns": [
+        [
+          0,
+          "config_version",
+          "TEXT",
+          1,
+          null,
+          1,
+          0
+        ],
+        [
+          1,
+          "micro_f1_min",
+          "REAL",
+          1,
+          null,
+          0,
+          0
+        ],
+        [
+          2,
+          "category_precision_min",
+          "REAL",
+          1,
+          null,
+          0,
+          0
+        ],
+        [
+          3,
+          "category_validation_samples_min",
+          "INTEGER",
+          1,
+          null,
+          0,
+          0
+        ],
+        [
+          4,
+          "p95_latency_max_ms",
+          "REAL",
+          1,
+          null,
+          0,
+          0
+        ],
+        [
+          5,
+          "created_at",
+          "TEXT",
+          1,
+          null,
+          0,
+          0
+        ]
+      ],
+      "fks": []
+    },
+    {
+      "kind": "table",
+      "name": "email_model_mode_transitions",
+      "sql": "CREATE TABLE email_model_mode_transitions (\n                request_id text primary key not null check(trim(request_id) != ''),\n                actor text not null check(trim(actor) != ''),\n                from_mode text not null check(from_mode in ('agent_primary', 'model_primary')),\n                to_mode text not null check(to_mode in ('agent_primary', 'model_primary')),\n                from_model_id text check(from_model_id is null or trim(from_model_id) != ''),\n                target_model_id text check(target_model_id is null or trim(target_model_id) != ''),\n                promotion_config_version text not null check(trim(promotion_config_version) != ''),\n                status text not null check(status in ('applied', 'rejected', 'failed')),\n                reason text not null,\n                created_at text not null check(trim(created_at) != ''),\n                foreign key(promotion_config_version) references email_model_promotion_configs(config_version) on delete restrict\n            ) without rowid\n        ",
+      "columns": [
+        [
+          0,
+          "request_id",
+          "TEXT",
+          1,
+          null,
+          1,
+          0
+        ],
+        [
+          1,
+          "actor",
+          "TEXT",
+          1,
+          null,
+          0,
+          0
+        ],
+        [
+          2,
+          "from_mode",
+          "TEXT",
+          1,
+          null,
+          0,
+          0
+        ],
+        [
+          3,
+          "to_mode",
+          "TEXT",
+          1,
+          null,
+          0,
+          0
+        ],
+        [
+          4,
+          "from_model_id",
+          "TEXT",
+          0,
+          null,
+          0,
+          0
+        ],
+        [
+          5,
+          "target_model_id",
+          "TEXT",
+          0,
+          null,
+          0,
+          0
+        ],
+        [
+          6,
+          "promotion_config_version",
+          "TEXT",
+          1,
+          null,
+          0,
+          0
+        ],
+        [
+          7,
+          "status",
+          "TEXT",
+          1,
+          null,
+          0,
+          0
+        ],
+        [
+          8,
+          "reason",
+          "TEXT",
+          1,
+          null,
+          0,
+          0
+        ],
+        [
+          9,
+          "created_at",
+          "TEXT",
+          1,
+          null,
+          0,
+          0
+        ]
+      ],
+      "fks": [
+        [
+          0,
+          0,
+          "email_model_promotion_configs",
+          "promotion_config_version",
+          "config_version",
+          "NO ACTION",
+          "RESTRICT",
+          "NONE"
+        ]
+      ]
+    },
+    {
+      "kind": "table",
+      "name": "email_category_description_revisions",
+      "sql": "CREATE TABLE email_category_description_revisions (\n                revision_id text primary key not null check(trim(revision_id) != ''),\n                category_key text not null check(trim(category_key) != ''),\n                config_version text not null check(trim(config_version) != ''),\n                config_json text not null check(json_valid(config_json)),\n                created_at text not null check(trim(created_at) != '')\n            ) without rowid\n        ",
+      "columns": [
+        [
+          0,
+          "revision_id",
+          "TEXT",
+          1,
+          null,
+          1,
+          0
+        ],
+        [
+          1,
+          "category_key",
+          "TEXT",
+          1,
+          null,
+          0,
+          0
+        ],
+        [
+          2,
+          "config_version",
+          "TEXT",
+          1,
+          null,
+          0,
+          0
+        ],
+        [
+          3,
+          "config_json",
+          "TEXT",
+          1,
+          null,
+          0,
+          0
+        ],
+        [
+          4,
+          "created_at",
+          "TEXT",
+          1,
+          null,
+          0,
+          0
+        ]
+      ],
+      "fks": []
+    },
+    {
+      "kind": "trigger",
+      "name": "trg_email_model_promotion_configs_immutable_update",
+      "sql": "CREATE TRIGGER trg_email_model_promotion_configs_immutable_update before update on email_model_promotion_configs\n        \n        begin select raise(abort, 'immutable model control history'); end",
+      "columns": [],
+      "fks": []
+    },
+    {
+      "kind": "trigger",
+      "name": "trg_email_model_promotion_configs_immutable_delete",
+      "sql": "CREATE TRIGGER trg_email_model_promotion_configs_immutable_delete before delete on email_model_promotion_configs\n        \n        begin select raise(abort, 'immutable model control history'); end",
+      "columns": [],
+      "fks": []
+    },
+    {
+      "kind": "trigger",
+      "name": "trg_email_model_promotion_configs_immutable_insert",
+      "sql": "CREATE TRIGGER trg_email_model_promotion_configs_immutable_insert before insert on email_model_promotion_configs\n        when exists (select 1 from email_model_promotion_configs where config_version=new.config_version)\n        begin select raise(abort, 'immutable model control history'); end",
+      "columns": [],
+      "fks": []
+    },
+    {
+      "kind": "trigger",
+      "name": "trg_email_model_mode_transitions_immutable_update",
+      "sql": "CREATE TRIGGER trg_email_model_mode_transitions_immutable_update before update on email_model_mode_transitions\n        \n        begin select raise(abort, 'immutable model control history'); end",
+      "columns": [],
+      "fks": []
+    },
+    {
+      "kind": "trigger",
+      "name": "trg_email_model_mode_transitions_immutable_delete",
+      "sql": "CREATE TRIGGER trg_email_model_mode_transitions_immutable_delete before delete on email_model_mode_transitions\n        \n        begin select raise(abort, 'immutable model control history'); end",
+      "columns": [],
+      "fks": []
+    },
+    {
+      "kind": "trigger",
+      "name": "trg_email_model_mode_transitions_immutable_insert",
+      "sql": "CREATE TRIGGER trg_email_model_mode_transitions_immutable_insert before insert on email_model_mode_transitions\n        when exists (select 1 from email_model_mode_transitions where request_id=new.request_id)\n        begin select raise(abort, 'immutable model control history'); end",
+      "columns": [],
+      "fks": []
+    },
+    {
+      "kind": "trigger",
+      "name": "trg_email_category_description_revisions_immutable_update",
+      "sql": "CREATE TRIGGER trg_email_category_description_revisions_immutable_update before update on email_category_description_revisions\n        \n        begin select raise(abort, 'immutable model control history'); end",
+      "columns": [],
+      "fks": []
+    },
+    {
+      "kind": "trigger",
+      "name": "trg_email_category_description_revisions_immutable_delete",
+      "sql": "CREATE TRIGGER trg_email_category_description_revisions_immutable_delete before delete on email_category_description_revisions\n        \n        begin select raise(abort, 'immutable model control history'); end",
+      "columns": [],
+      "fks": []
+    },
+    {
+      "kind": "trigger",
+      "name": "trg_email_category_description_revisions_immutable_insert",
+      "sql": "CREATE TRIGGER trg_email_category_description_revisions_immutable_insert before insert on email_category_description_revisions\n        when exists (select 1 from email_category_description_revisions where revision_id=new.revision_id)\n        begin select raise(abort, 'immutable model control history'); end",
+      "columns": [],
+      "fks": []
+    },
+    {
+      "kind": "table",
+      "name": "email_training_snapshot_observations",
+      "sql": "CREATE TABLE email_training_snapshot_observations (\n                snapshot_id text not null check(trim(snapshot_id) != ''),\n                account_id text not null check(trim(account_id) != ''),\n                stable_message_identity text not null\n                    check(trim(stable_message_identity) != ''),\n                provider_folder_id text not null\n                    check(trim(provider_folder_id) != ''),\n                provider_folder_name text not null\n                    check(trim(provider_folder_name) != ''),\n                category_key text\n                    check(category_key is null or trim(category_key) != ''),\n                important integer not null check(important in (0, 1)),\n                normalized_model_input text not null\n                    check(trim(normalized_model_input) != ''),\n                normalized_model_input_hash text not null\n                    check(length(normalized_model_input_hash) = 64),\n                input_schema_version text not null\n                    check(trim(input_schema_version) != ''),\n                provider_thread_id text,\n                normalized_body_digest text not null\n                    check(length(normalized_body_digest) = 64),\n                sender_template_signature text\n                    check(sender_template_signature is null or length(sender_template_signature) = 64),\n                explicit_matter_group text,\n                group_key text not null check(length(group_key) = 64),\n                observed_at text not null check(trim(observed_at) != ''),\n                source text not null check(source in (\n                    'natural', 'targeted', 'agent_auto_label', 'user_feedback'\n                )),\n                split text not null check(split in ('train', 'validation', 'test')),\n                selected_for_training integer not null check(selected_for_training in (0, 1)),\n                ordered_record_digest text not null check(length(ordered_record_digest) = 64),\n                primary key(snapshot_id, account_id, stable_message_identity),\n                foreign key(snapshot_id)\n                    references email_training_snapshots(snapshot_id)\n                    on delete restrict\n            )",
+      "columns": [
+        [
+          0,
+          "snapshot_id",
+          "TEXT",
+          1,
+          null,
+          1,
+          0
+        ],
+        [
+          1,
+          "account_id",
+          "TEXT",
+          1,
+          null,
+          2,
+          0
+        ],
+        [
+          2,
+          "stable_message_identity",
+          "TEXT",
+          1,
+          null,
+          3,
+          0
+        ],
+        [
+          3,
+          "provider_folder_id",
+          "TEXT",
+          1,
+          null,
+          0,
+          0
+        ],
+        [
+          4,
+          "provider_folder_name",
+          "TEXT",
+          1,
+          null,
+          0,
+          0
+        ],
+        [
+          5,
+          "category_key",
+          "TEXT",
+          0,
+          null,
+          0,
+          0
+        ],
+        [
+          6,
+          "important",
+          "INTEGER",
+          1,
+          null,
+          0,
+          0
+        ],
+        [
+          7,
+          "normalized_model_input",
+          "TEXT",
+          1,
+          null,
+          0,
+          0
+        ],
+        [
+          8,
+          "normalized_model_input_hash",
+          "TEXT",
+          1,
+          null,
+          0,
+          0
+        ],
+        [
+          9,
+          "input_schema_version",
+          "TEXT",
+          1,
+          null,
+          0,
+          0
+        ],
+        [
+          10,
+          "provider_thread_id",
+          "TEXT",
+          0,
+          null,
+          0,
+          0
+        ],
+        [
+          11,
+          "normalized_body_digest",
+          "TEXT",
+          1,
+          null,
+          0,
+          0
+        ],
+        [
+          12,
+          "sender_template_signature",
+          "TEXT",
+          0,
+          null,
+          0,
+          0
+        ],
+        [
+          13,
+          "explicit_matter_group",
+          "TEXT",
+          0,
+          null,
+          0,
+          0
+        ],
+        [
+          14,
+          "group_key",
+          "TEXT",
+          1,
+          null,
+          0,
+          0
+        ],
+        [
+          15,
+          "observed_at",
+          "TEXT",
+          1,
+          null,
+          0,
+          0
+        ],
+        [
+          16,
+          "source",
+          "TEXT",
+          1,
+          null,
+          0,
+          0
+        ],
+        [
+          17,
+          "split",
+          "TEXT",
+          1,
+          null,
+          0,
+          0
+        ],
+        [
+          18,
+          "selected_for_training",
+          "INTEGER",
+          1,
+          null,
+          0,
+          0
+        ],
+        [
+          19,
+          "ordered_record_digest",
+          "TEXT",
+          1,
+          null,
+          0,
+          0
+        ]
+      ],
+      "fks": [
+        [
+          0,
+          0,
+          "email_training_snapshots",
+          "snapshot_id",
+          "snapshot_id",
+          "NO ACTION",
+          "RESTRICT",
+          "NONE"
+        ]
+      ]
+    },
+    {
+      "kind": "index",
+      "name": "idx_email_training_observations_split",
+      "sql": "CREATE INDEX idx_email_training_observations_split\n            on email_training_snapshot_observations(\n                snapshot_id, split, category_key, group_key\n            )\n            ",
+      "columns": [],
+      "fks": []
+    },
+    {
+      "kind": "index",
+      "name": "idx_email_training_observations_provider_truth",
+      "sql": "CREATE INDEX idx_email_training_observations_provider_truth\n            on email_training_snapshot_observations(\n                account_id, stable_message_identity, observed_at desc, snapshot_id desc\n            )\n            ",
+      "columns": [],
+      "fks": []
+    },
+    {
+      "kind": "trigger",
+      "name": "trg_email_training_observations_require_unfrozen_snapshot",
+      "sql": "CREATE TRIGGER trg_email_training_observations_require_unfrozen_snapshot\n            before insert on email_training_snapshot_observations\n            when not exists (\n                select 1 from email_training_snapshots\n                where snapshot_id=new.snapshot_id and frozen=0\n            )\n            begin\n                select raise(abort, 'email training snapshot is frozen');\n            end",
+      "columns": [],
+      "fks": []
+    },
+    {
+      "kind": "trigger",
+      "name": "trg_email_training_snapshots_immutable_update",
+      "sql": "CREATE TRIGGER trg_email_training_snapshots_immutable_update\n        before update on email_training_snapshots\n        when not (\n            old.frozen=0 and new.frozen=1\n            and old.snapshot_id is new.snapshot_id\n            and old.snapshot_version is new.snapshot_version\n            and old.description_version is new.description_version\n            and old.input_schema_version is new.input_schema_version\n            and old.seed is new.seed\n            and old.observed_at is new.observed_at\n            and old.snapshot_digest is new.snapshot_digest\n            and old.manifest_json is new.manifest_json\n            and old.created_at is new.created_at\n            and old.folder_label_watermark is new.folder_label_watermark\n            and old.important_label_watermark is new.important_label_watermark\n        )\n        begin\n            select raise(abort, 'email training snapshot is immutable');\n        end",
+      "columns": [],
+      "fks": []
+    },
+    {
+      "kind": "trigger",
+      "name": "trg_email_training_observations_immutable_update",
+      "sql": "CREATE TRIGGER trg_email_training_observations_immutable_update\n        before update on email_training_snapshot_observations\n        begin\n            select raise(abort, 'email training snapshot observation is immutable');\n        end",
+      "columns": [],
+      "fks": []
+    },
+    {
+      "kind": "trigger",
+      "name": "trg_email_training_observations_immutable_delete",
+      "sql": "CREATE TRIGGER trg_email_training_observations_immutable_delete\n        before delete on email_training_snapshot_observations\n        begin\n            select raise(abort, 'email training snapshot observation is immutable');\n        end",
+      "columns": [],
+      "fks": []
+    }
+  ]
+}

@@ -10,6 +10,10 @@ that already receives merged sources cannot itself become a merged source.
 """
 
 from __future__ import annotations
+from app.provenance_storage import signal_projection
+from app.business_definitions import BUSINESS_PROJECTIONS
+from app.action_storage import SYNC_ACTION_PROJECTIONS
+from app.action_business_definitions import business_action_projection
 
 from dataclasses import dataclass
 from datetime import datetime, timezone
@@ -22,6 +26,7 @@ from contextlib import nullcontext
 from app.store import AutoReplyStore
 from app.task_business_resolution import BusinessResolutionService
 from app.task_source_documents import source_contains_quote, source_is_observed
+from app.business_source_reader import BusinessTaskSignalFact, PreparedSources, SourceVersionBinding
 from app.task_semantic_models import (
     BusinessActorKind,
     BusinessEvidenceRole,
@@ -57,6 +62,7 @@ class SourceSignal:
     author_name: str = ""
     author_kind: BusinessActorKind = BusinessActorKind.UNKNOWN
     context_json: str = "{}"
+    source_binding: SourceVersionBinding | None = None
 
 
 @dataclass(frozen=True)
@@ -209,6 +215,7 @@ class TaskSemanticService:
             source_type=signal.source_type,
             source_ref=signal.source_ref,
             evidence_text=signal.evidence_text,
+            source_binding=signal.source_binding,
             dedupe_key=signal.dedupe_key,
             source_time=signal.source_time,
             conversation_id=signal.conversation_id,
@@ -222,13 +229,17 @@ class TaskSemanticService:
         )
 
     @staticmethod
-    def _require_same_signal(*, signal: SourceSignal, persisted: BusinessTaskSignal) -> None:
+    def _require_same_signal(*, signal: SourceSignal, persisted: BusinessTaskSignalFact) -> None:
         fields = (
             "source_type", "source_ref", "source_time", "conversation_id",
             "conversation_title", "author_user_id", "author_name", "author_kind",
-            "evidence_text", "context_json", "dedupe_key",
+            "context_json", "dedupe_key",
         )
-        if any(getattr(signal, field) != getattr(persisted, field) for field in fields):
+        binding = SourceVersionBinding.from_signal(signal)
+        if (any(getattr(signal, field) != getattr(persisted, field) for field in fields)
+                or binding.identity_key != persisted.source.identity_key
+                or binding.body_sha256 != persisted.source.body_sha256
+                or binding.body_utf8_bytes != persisted.source.body_utf8_bytes):
             raise ValueError("signal dedupe key source payload mismatch")
 
     @staticmethod
@@ -247,9 +258,9 @@ class TaskSemanticService:
         # target event. Evidence links can later be copied to another Task;
         # immutable event history preserves the original command result.
         row = db.execute(
-            """
-            select event.task_id, event.signal_id from business_task_events as event
-            join business_task_signals as signal on signal.id=event.signal_id
+            f"""
+            select event.task_id, event.signal_id from ({SYNC_ACTION_PROJECTIONS['business_task_events']}) as event
+            join ({signal_projection()}) as signal on signal.id=event.signal_id
             where signal.dedupe_key=? order by event.id desc limit 1
             """,
             (signal.dedupe_key,),
@@ -490,10 +501,21 @@ class TaskSemanticService:
         command: RecordTaskSuggestion,
         *,
         _db: sqlite3.Connection | None = None,
+        prepared_sources: PreparedSources | None = None,
     ) -> TaskMutationResult:
         """Record a display-only proposal, not a human assignment or acceptance."""
         if not source_is_observed(command.signal.source_type):
             raise ValueError("suggestion discovery requires an observed original source")
+        if prepared_sources is None:
+            if _db is not None:
+                raise ValueError("suggestion historical sources were not prepared")
+            prepared_sources = PreparedSources.load(
+                self.store,
+                (citation.signal_id for citation in (
+                    *command.suggestion.responsibility_evidence,
+                    *command.suggestion.basis_evidence,
+                ) if citation.signal_id is not None),
+            )
         now = self._now()
         with (
             nullcontext(_db)
@@ -501,8 +523,8 @@ class TaskSemanticService:
             else self.store.business_task_transaction()
         ) as db:
             project = db.execute(
-                "select project.id from business_projects project "
-                "join business_anchors anchor on anchor.id=project.canonical_anchor_id "
+                f'select project.id from ({BUSINESS_PROJECTIONS["project"]}) project '
+                f'join ({BUSINESS_PROJECTIONS["anchor"]}) anchor on anchor.id=project.canonical_anchor_id '
                 "where anchor.id=? and anchor.anchor_type='project' and anchor.active=1",
                 (command.project_anchor_id,),
             ).fetchone()
@@ -521,16 +543,15 @@ class TaskSemanticService:
             ):
                 if citation.signal_id is None:
                     raise ValueError("suggestion citation requires an actual signal ID")
-                source = self.store.get_business_task_signal_in_transaction(
-                    signal_id=citation.signal_id, _db=db
+                source, body = prepared_sources.require_body(
+                    self.store, citation.signal_id, db=db
                 )
                 if source is not None and not source_is_observed(source.source_type):
                     raise ValueError("suggestion evidence requires an observed original source")
                 if (
-                    source is None
-                    or source.source_ref != citation.source_ref
+                    source.source_ref != citation.source_ref
                     or not source_contains_quote(
-                        source.evidence_text,
+                        body,
                         citation.source_excerpt,
                     )
                 ):
@@ -579,7 +600,7 @@ class TaskSemanticService:
                 }:
                     raise ValueError("cannot update a terminal suggestion")
                 different_project = db.execute(
-                    "select 1 from business_task_anchor_links link join business_projects project "
+                    f'select 1 from ({business_action_projection("business_task_anchor_links")}) link join ({BUSINESS_PROJECTIONS["project"]}) project '
                     "on project.canonical_anchor_id=link.anchor_id "
                     "where link.task_id=? and link.status='confirmed' and link.active=1 "
                     "and link.anchor_id<>? limit 1",
@@ -896,8 +917,17 @@ class TaskSemanticService:
             return TaskMutationResult(task_id=task.id, signal_id=signal_id, created=False)
 
     def apply_acceptance(
-        self, command: ApplyAcceptance, *, _db: sqlite3.Connection | None = None
+        self, command: ApplyAcceptance, *, _db: sqlite3.Connection | None = None,
+        prepared_sources: PreparedSources | None = None,
     ) -> TaskMutationResult:
+        if prepared_sources is None:
+            if _db is not None:
+                raise ValueError("historical source map was not prepared before writer")
+            prepared_sources = PreparedSources.load(
+                self.store,
+                (command.referenced_signal_id,)
+                if command.referenced_signal_id is not None else (),
+            )
         now = self._now()
         transaction = (
             nullcontext(_db)
@@ -946,8 +976,8 @@ class TaskSemanticService:
             )
             if matching_task_ids != (task.id,):
                 raise ValueError("acceptance source must uniquely link to one formal task")
-            referenced_signal = self.store.get_business_task_signal_in_transaction(
-                signal_id=command.referenced_signal_id, _db=db
+            referenced_signal = prepared_sources.require_fact(
+                self.store, command.referenced_signal_id, db=db
             )
             source_context = json.loads(command.signal.context_json)
             if (
@@ -1158,7 +1188,7 @@ class TaskSemanticService:
             if source.status is BusinessTaskStatus.MERGED or target.status is BusinessTaskStatus.MERGED:
                 raise ValueError("merge chains and merged targets are not allowed")
             incoming_merge = db.execute(
-                "select 1 from business_tasks where merged_into_task_id=? limit 1",
+                f'select 1 from ({BUSINESS_PROJECTIONS["task"]}) where merged_into_task_id=? limit 1',
                 (source.id,),
             ).fetchone()
             if incoming_merge is not None:

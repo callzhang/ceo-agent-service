@@ -1,0 +1,19 @@
+{
+  "observed_at": "2026-10-18T03:26:41.331733+00:00",
+  "hypothesis": "A stale native path index may hide sessions moved to native archives; do not call original unavailable solely from indexed missing path",
+  "candidate_artifact": "docs/superpowers/specs/2026-10-15-database-redesign-business-native-source-recovery.json",
+  "candidate_artifact_sha256": "ed8ef6f509b4c2d08df7a4c1ce10801ed56e345a258941d30139b3492bbd70ea",
+  "candidate_missing_sessions": 24,
+  "roots": [
+    "/Users/derek/.codex/sessions",
+    "/Users/derek/.codex/archived_sessions",
+    "/Users/derek/.claude/projects"
+  ],
+  "native_jsonl_paths_inventoried": 6476,
+  "candidate_sessions_found": 0,
+  "body_files_read": 0,
+  "database_opened": false,
+  "runtime_changes": false,
+  "source_retirement": false,
+  "conclusion": "This exact24-session candidate set is still not found in these3native roots. Relocated-archive hypothesis yielded no new source. Does not prove permanent loss or classify every unproved document."
+}

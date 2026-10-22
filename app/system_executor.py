@@ -15,6 +15,7 @@ from app.agent_contracts import (
 )
 from app.external_action_identity import expected_external_action
 from app.reviewed_candidates import candidate_digest
+from app.model_action_schema import candidate_option
 
 
 @dataclass(frozen=True)
@@ -74,7 +75,8 @@ class SystemExecutor:
         actual = action.model_dump(include={"capability", "operation", "target", "payload", "effect"}, mode="json")
         if source is not None:
             prior_candidate = json.loads(source["candidate_json"])
-            branch = json.loads(source["branch_json"]) if source["branch_json"] else None
+            branch = (candidate_option(source["candidate_json"], source["option_key"])
+                      if source["selection_id"] is not None else None)
             plan = branch.get("plan") if branch else prior_candidate.get("proposal")
             actions = plan.get("actions") if isinstance(plan, dict) else None
             index = source["action_index"]
@@ -134,6 +136,82 @@ class SystemExecutor:
             ProcessingReaction(self.store, self.source_client).finish(
                 task.conversation_id, task.trigger_message_id,
             )
+
+    def execute_consumer_permission_request(
+        self, task: object, candidate_id: int, consumer_result: ConsumerAgentResult,
+        *, permission_budget: object, now: object,
+    ) -> SystemExecutionResult:
+        """Execute the narrowly typed Consumer request_access purpose action.
+
+        This is not an OA approval proposal: it only requests read access to a
+        named file. It uses the Consumer candidate and existing OA comment
+        handler, while the purpose budget stores the request's idempotency and
+        provider readback state. OA approve/reject/return still use execute().
+        """
+        output = consumer_result.purpose_output or {}
+        if output.get("purpose") != "oa" or output.get("action") != "request_access":
+            return self._failure("permission_request_contract_invalid", "Consumer did not return an OA access request")
+        target = output.get("target") or {}
+        file_id = target.get("file_id")
+        process_id = target.get("process_instance_id")
+        if not isinstance(file_id, str) or not file_id.strip() or not isinstance(process_id, str) or not process_id.strip():
+            return self._failure("permission_request_target_invalid", "Permission request needs an exact process and file")
+        row = self.store.get_review_candidate(candidate_id)
+        if (row is None or row["task_id"] != task.id
+                or row["execution_generation"] != task.execution_generation
+                or row["consumer_run_id"] is None):
+            return self._failure("permission_request_candidate_invalid", "Permission request candidate is stale")
+        candidate = parse_persisted_consumer_result(row["candidate_json"])
+        if candidate.purpose_output != consumer_result.purpose_output or candidate.proposal is None or len(candidate.proposal.actions) != 1:
+            return self._failure("permission_request_candidate_mismatch", "Permission request differs from the persisted Consumer result")
+        action = candidate.proposal.actions[0]
+        if (action.capability != "dingtalk-oa" or action.operation != "comment"
+                or action.target.get("process_instance_id") != process_id
+                or action.target.get("file_id") != file_id):
+            return self._failure("permission_request_action_invalid", "Only a file-scoped OA access comment can use this path")
+        handler = self.handlers.get(("dingtalk-oa", "comment"))
+        if handler is None:
+            return self._failure("permission_request_handler_unavailable", "OA comment handler is unavailable")
+        identity = expected_external_action(action, action_index=0,
+                                           business_object_key=(task.business_object_key
+                                               or f"reply-task:{task.id}"))
+        action_key = str(identity["external_action_key"])
+        try:
+            request, created = permission_budget.begin_access_request(
+                file_id=file_id, action_key=action_key, candidate_id=candidate_id, now=now,
+            )
+        except ValueError as exc:
+            return self._failure("permission_request_duplicate", str(exc))
+        if request["status"] == "verified":
+            return SystemExecutionResult(outcome="executed", summary="Read-only file access request was already verified",
+                completed_action_keys=(action_key,))
+        if request["status"] == "failed":
+            return self._failure("permission_request_previously_failed", "The exact permission request already failed")
+        attempt = {"status": "uncertain", "external_action_key": action_key,
+                   "created_at": request["created_at"]}
+        try:
+            if created:
+                outcome = handler.dispatch(action, action_key=action_key,
+                    candidate={**row, "action_attempt": attempt})
+            else:
+                outcome = handler.reconcile(action, action_key=action_key,
+                    candidate={**row, "action_attempt": attempt})
+                if outcome is None:
+                    outcome = ActionOutcome("uncertain", {"reason": "permission_request_readback_inconclusive"})
+        except Exception as exc:
+            outcome = ActionOutcome("uncertain", {"reason": "permission_request_provider_exception",
+                "exception_type": type(exc).__name__})
+        state = outcome.status
+        permission_budget.finish_access_request(
+            file_id=file_id, action_key=action_key,
+            status="verified" if state == "verified" else "failed" if state == "failed" else "uncertain",
+            result=outcome.provider_result, now=now,
+        )
+        if state != "verified":
+            return self._failure("permission_request_" + state,
+                "Read-only access request was not verified", retryable=state == "uncertain")
+        return SystemExecutionResult(outcome="executed", summary="Read-only file access request verified",
+            completed_action_keys=(action_key,))
 
     def _check_reviewed_sources(
         self, candidate: ConsumerAgentResult, context: object | None,
@@ -206,7 +284,7 @@ class SystemExecutor:
         if candidate.outcome.value == "needs_human":
             if row["selection_id"] is None:
                 return self._failure("decision_not_selected", "A reviewed choice is still required")
-            branch = json.loads(row["branch_json"])
+            branch = candidate_option(row["candidate_json"], row["option_key"])
             option = next((item for item in candidate.decision_options if item.key == branch.get("key")), None)
             if option is None or option.model_dump(mode="json") != branch:
                 return self._failure("selection_mismatch", "Selected branch differs from reviewed candidate")
@@ -280,7 +358,49 @@ class SystemExecutor:
                 result = self._failure("completed_action_content_conflict", "A completed action has different approved content", completed)
                 self.store.finish_candidate_execution(execution_id, self.owner, "failed", result)
                 return result
-            attempt = self.store.begin_candidate_action(execution_id, self.owner, index, action_key)
+            prior_attempt_reader = getattr(self.store, "get_prior_candidate_action_attempt", None)
+            prior_attempt = prior_attempt_reader(action_key, execution_id) if callable(prior_attempt_reader) else None
+            if prior_attempt is not None and prior_attempt.get("status") == "failed":
+                prior_result = json.loads(prior_attempt.get("result_json", "{}"))
+                if prior_result.get("reason") == "reviewed_message_preparation_mismatch":
+                    try:
+                        reconciliation = handler.reconcile(
+                            action, action_key=action_key,
+                            candidate={**row, "action_attempt": prior_attempt},
+                        )
+                    except Exception as exc:
+                        reconciliation = None
+                        reconciliation_error = type(exc).__name__
+                    else:
+                        reconciliation_error = ""
+                    if reconciliation is None or reconciliation.status not in ("verified", "confirmed_no_effect"):
+                        result = self._failure(
+                            "external_action_reconciliation_incomplete",
+                            "Provider readback did not establish the prior message outcome",
+                            completed, retryable=True,
+                            source_code=reconciliation_error,
+                        )
+                        self.store.finish_candidate_execution(execution_id, self.owner, "failed", result)
+                        return result
+                    self.store.record_prior_candidate_action_reconciliation(
+                        execution_id, self.owner, index, action_key,
+                        reconciliation.status, reconciliation.provider_result,
+                    )
+            preparation_reference = getattr(handler, "prepared_owner_reference", None)
+            preparation_owner = (
+                preparation_reference(action, row)
+                if callable(preparation_reference) else None
+            )
+            if preparation_owner is None or preparation_owner[0] is None:
+                attempt = self.store.begin_candidate_action(
+                    execution_id, self.owner, index, action_key,
+                )
+            else:
+                _, delivery_key = preparation_owner
+                attempt = self.store.begin_candidate_action(
+                    execution_id, self.owner, index, action_key,
+                    preparation_owner={"channel": "dingtalk", "delivery_key": delivery_key},
+                )
             if attempt["status"] == "verified":
                 self._project_completed_message(action, action_key, row, current_task)
                 completed.append(action.action_identity)
@@ -314,7 +434,7 @@ class SystemExecutor:
             except Exception as exc:
                 source_code = getattr(exc, "code", "")
                 source = getattr(exc, "server_key", "")
-                prior_result = json.loads(attempt.get("result_json") or "{}")
+                prior_result = json.loads(attempt.get("result_json", "{}"))
                 outcome = ActionOutcome("uncertain", {**prior_result,
                     "reason": "provider_exception", "exception_type": type(exc).__name__,
                     "source_code": str(source_code) if source_code else "",

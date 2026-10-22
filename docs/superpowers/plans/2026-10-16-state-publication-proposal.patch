@@ -1,0 +1,159 @@
+--- a/app/action_schema_release.py
++++ b/app/action_schema_release.py
+@@ -1,0 +2 @@
++from app.state_publication_sources import publication_store_version
+@@ -27,2 +28 @@
+-    marker = db.execute("select value from service_state where key=?", (VERSION_KEY,)).fetchone()
+-    version = marker[0] if marker else None
++    version = publication_store_version(db, current_version="2026-10-14.1")
+@@ -42 +42 @@
+-    if version == "2026-10-14.1" and reply_schema_is_current(db, include_email=True):
++    if version == "2026-10-14.1" and reply_schema_is_current(db, include_email=True, include_skill_config_receipts=True):
+--- a/app/action_receipt_schema_release.py
++++ b/app/action_receipt_schema_release.py
+@@ -1,0 +2 @@
++from app.state_publication_sources import publication_store_version
+@@ -30,2 +31 @@
+-    marker = db.execute("select value from service_state where key=?", (VERSION_KEY,)).fetchone()
+-    version = marker[0] if marker else None
++    version = publication_store_version(db, current_version="2026-10-14.1")
+@@ -43 +43 @@
+-    if version == "2026-10-14.1" and reply_schema_is_current(db, include_email=True):
++    if version == "2026-10-14.1" and reply_schema_is_current(db, include_email=True, include_skill_config_receipts=True):
+--- a/app/action_postfix_schema_release.py
++++ b/app/action_postfix_schema_release.py
+@@ -1,0 +2 @@
++from app.state_publication_sources import publication_store_version
+@@ -31,2 +32 @@
+-    marker = db.execute("select value from service_state where key=?", (VERSION_KEY,)).fetchone()
+-    version = marker[0] if marker else None
++    version = publication_store_version(db, current_version="2026-10-14.1")
+@@ -40,0 +41,2 @@
++        return {kind: ACTION_PROJECTIONS[kind] for kind in POSTFIX_ACTION_TYPES}
++    if version == "2026-10-14.1" and reply_schema_is_current(db, include_email=True, include_skill_config_receipts=True):
+--- a/app/action_delivery_schema_release.py
++++ b/app/action_delivery_schema_release.py
+@@ -1,0 +2 @@
++from app.state_publication_sources import publication_store_version
+@@ -31,2 +32 @@
+-    marker = db.execute("select value from service_state where key=?", (VERSION_KEY,)).fetchone()
+-    version = marker[0] if marker else None
++    version = publication_store_version(db, current_version="2026-10-14.1")
+@@ -43 +43 @@
+-    if version == "2026-10-14.1" and reply_schema_is_current(db, include_email=True):
++    if version == "2026-10-14.1" and reply_schema_is_current(db, include_email=True, include_skill_config_receipts=True):
+--- a/app/task_schema_release.py
++++ b/app/task_schema_release.py
+@@ -1,0 +2 @@
++from app.state_publication_sources import publication_store_version
+@@ -32,4 +33 @@
+-    version = db.execute(
+-        "select value from service_state where key=?", (VERSION_KEY,)
+-    ).fetchone()
+-    version = version[0] if version is not None else None
++    version = publication_store_version(db, current_version="2026-10-14.1")
+@@ -62 +60 @@
+-    if (version == "2026-10-14.1" and reply_schema_is_current(db, include_email=True)
++    if (version == "2026-10-14.1" and reply_schema_is_current(db, include_email=True, include_skill_config_receipts=True)
+@@ -71,4 +69 @@
+-    version = db.execute(
+-        "select value from service_state where key=?", (VERSION_KEY,)
+-    ).fetchone()
+-    version = version[0] if version is not None else None
++    version = publication_store_version(db, current_version="2026-10-14.1")
+@@ -97 +92 @@
+-    if (version == "2026-10-14.1" and reply_schema_is_current(db, include_email=True)
++    if (version == "2026-10-14.1" and reply_schema_is_current(db, include_email=True, include_skill_config_receipts=True)
+--- a/app/scheduled_config_storage.py
++++ b/app/scheduled_config_storage.py
+@@ -1,0 +2 @@
++from app.state_publication_sources import publication_store_version
+@@ -56,4 +57 @@
+-    row = db.execute(
+-        "select value from service_state where key='store_schema_version'"
+-    ).fetchone()
+-    version = row[0] if row is not None else None
++    version = publication_store_version(db, current_version="2026-10-14.1")
+@@ -76 +74 @@
+-    if (version == "2026-10-14.1" and reply_schema_is_current(db, include_email=True)
++    if (version == "2026-10-14.1" and reply_schema_is_current(db, include_email=True, include_skill_config_receipts=True)
+--- a/app/email_publication_sources.py
++++ b/app/email_publication_sources.py
+@@ -1,0 +2 @@
++from app.state_publication_sources import publication_store_version
+@@ -18 +19 @@
+-    store = None
++    store = publication_store_version(db, current_version=TARGET_STORE_VERSION)
+@@ -20,5 +20,0 @@
+-    if "service_state" in tables:
+-        row = db.execute(
+-            "select value from service_state where key='store_schema_version'"
+-        ).fetchone()
+-        store = row[0] if row else None
+--- a/app/repository_updater.py
++++ b/app/repository_updater.py
+@@ -1,0 +2 @@
++from app.state_publication_sources import publication_dispatcher_source
+@@ -377 +378 @@
+-            "      or exists (select 1 from dispatcher_claim_leases as claim "
++            f"      or exists (select 1 from ({publication_dispatcher_source(db, current_version='2026-10-14.1')}) as claim "
+@@ -387 +388 @@
+-            "      or exists (select 1 from dispatcher_claim_leases as claim "
++            f"      or exists (select 1 from ({publication_dispatcher_source(db, current_version='2026-10-14.1')}) as claim "
+@@ -394 +395 @@
+-            " + (select count(*) from dispatcher_claim_leases"
++            f" + (select count(*) from ({publication_dispatcher_source(db, current_version='2026-10-14.1')})"
+--- a/app/deploy_maintenance.py
++++ b/app/deploy_maintenance.py
+@@ -2,0 +3 @@
++from app.state_publication_sources import publication_dispatcher_source
+@@ -97 +98 @@
+-            "select distinct owner_pid from dispatcher_claim_leases where terminal_at='' and owner_pid>0 "
++            f"select distinct owner_pid from ({publication_dispatcher_source(db, current_version='2026-10-14.1')}) where terminal_at='' and owner_pid>0 "
+--- /dev/null
++++ b/app/state_publication_sources.py
+@@ -0,0 +1,44 @@
++"""Exact publication marker selection across native source and current State."""
++import sqlite3
++
++from app.state_definitions import state_projection
++from app.state_schema_release import state_schema_is_current
++
++
++def publication_store_version(db: sqlite3.Connection, *, current_version: str) -> str | None:
++    """Read the selected marker without repairing or falling back across schemas."""
++    current = db.execute(
++        "select 1 from main.sqlite_schema where name='state' collate nocase"
++    ).fetchone() is not None
++    if current:
++        if not state_schema_is_current(db):
++            raise ValueError("unknown or mixed State publication source schema")
++        row = db.execute(
++            f"select value from ({state_projection('service_state')}) "
++            "where key='store_schema_version'"
++        ).fetchone()
++        version = row[0] if row else None
++        if version != current_version:
++            raise ValueError("unknown or mixed State publication version")
++        return version
++    native = db.execute(
++        "select 1 from main.sqlite_schema where type='table' "
++        "and name='service_state' collate nocase"
++    ).fetchone() is not None
++    if not native:
++        return None
++    row = db.execute(
++        "select value from main.service_state where key='store_schema_version'"
++    ).fetchone()
++    version = row[0] if row else None
++    if version == current_version:
++        raise ValueError("current publication version requires State schema")
++    return version
++
++
++def publication_dispatcher_source(db: sqlite3.Connection, *, current_version: str) -> str:
++    """Select the existing dispatcher facts for the same publication role."""
++    version = publication_store_version(db, current_version=current_version)
++    if version == current_version:
++        return state_projection("dispatcher_claim_leases")
++    return "select * from main.dispatcher_claim_leases"

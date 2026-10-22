@@ -1,0 +1,50 @@
+{
+  "source_ref": "264c073cfe779b76a5a7f001480149fb784f0591",
+  "source_sha256": "57c9595a77e71fab6f89a518b68307b490eaf0a2833fc216610611cc5f10060d",
+  "source_observed_at_utc": "2026-10-15T09:15:41.822422+00:00",
+  "groups": [
+    {
+      "record_type": "meeting_alignment_jobs",
+      "status": "failed",
+      "rows": 2,
+      "source_json_bytes": 76786,
+      "okr_source_json_bytes": null
+    },
+    {
+      "record_type": "meeting_alignment_jobs",
+      "status": "no_action",
+      "rows": 85,
+      "source_json_bytes": 177922,
+      "okr_source_json_bytes": null
+    },
+    {
+      "record_type": "meeting_alignment_jobs",
+      "status": "sent",
+      "rows": 571,
+      "source_json_bytes": 10524626,
+      "okr_source_json_bytes": null
+    },
+    {
+      "record_type": "meeting_alignment_jobs",
+      "status": "skipped",
+      "rows": 72,
+      "source_json_bytes": 221755,
+      "okr_source_json_bytes": null
+    },
+    {
+      "record_type": "okr_review_requests",
+      "status": "done",
+      "rows": 19,
+      "source_json_bytes": null,
+      "okr_source_json_bytes": 2468674
+    },
+    {
+      "record_type": "okr_review_requests",
+      "status": "skipped",
+      "rows": 1,
+      "source_json_bytes": null,
+      "okr_source_json_bytes": 203197
+    }
+  ],
+  "limit": "UTF-8 stored input bytes, not page savings or proof of exact provider-version recoverability. Existing reopening/weekly-report/readers remain; no deletion eligibility inferred from terminal status."
+}

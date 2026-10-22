@@ -1,0 +1,28 @@
+{
+  "recorded_utc": "2026-10-16T20:49:22.936598+00:00",
+  "status": "canonical_current_water_source_spec_quality_pass",
+  "artifacts": {
+    "2026-10-16-task20-current-water-source-candidate.py": "79df1e03cf9f5989bd21477ba19ca0038c0c90b43c285fd3449270877b78a151",
+    "2026-10-16-task20-current-water-source-regression.py": "6fab343144543c90c59673d1903f4a37c983b7a00eb733dab436423e91412602",
+    "2026-10-16-task20-current-water-source-installed-regression-candidate.py": "422d5d06627bf121ad2099f6aa865b050adc003e20f13aa07cb1b551d8395d00",
+    "2026-10-16-task20-current-water-source-preflight.py": "90fcf8ccba1bd5543667fb026ba7d0e499cbc2a1abb8c6915197f8b04f5cc3d8"
+  },
+  "original_red": {
+    "cases": 22,
+    "seconds": 0.23,
+    "failure": "strict original allocator-presence equality after valid native writes"
+  },
+  "fresh_spec": {
+    "cases": 206,
+    "seconds": 12.64,
+    "final_focused_cases": 22,
+    "focused_seconds": 2.57
+  },
+  "fresh_quality": {
+    "cases": 206,
+    "seconds": 11.83,
+    "additional_controls": 24,
+    "findings": []
+  },
+  "boundary": "Unselected pure component; only source declaration comparison changes. Native old8 omitted-ID single-VALUES contract; current waters and metadata validation/inverse unchanged. No production/CLI/provider."
+}

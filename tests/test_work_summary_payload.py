@@ -3,8 +3,9 @@ from __future__ import annotations
 import sqlite3
 
 from app.task_models import WorkSummaryInput
-from app.store import AutoReplyStore
-from app.task_storage import WORK_SUMMARY_INPUT_SQL, insert_task
+from app.store import AutoReplyStore, WORK_SUMMARY_INPUT_SQL
+from app.task8_storage import register_task8_functions, task8_insert_parts, task8_set_parts
+from app.task_storage import task_id_expression
 from app.storage_maintenance import compact_terminal_work_summary_inputs
 from app.work_summary_payload import (
     decode_work_summary_payload,
@@ -65,15 +66,19 @@ def test_migration_is_bounded_lossless_and_idempotent(tmp_path):
     payload = '{"body":"' + ("周报正文" * 500) + '"}'
     AutoReplyStore(database)
     with sqlite3.connect(database) as db:
+        register_task8_functions(db)
         for input_id, body, status in (
             (1, payload, "pending"), (2, "{}", "pending"),
             (3, payload, "done"),
         ):
-            insert_task(db, "work_summary_inputs", {
-                "id": input_id, "legacy_key": input_id,
+            parts = task8_insert_parts("work_summary_inputs", {
                 "source_type": "local_file", "source_ref": f"file:{input_id}",
                 "payload_json": body, "status": status,
-            })
+            }, structural_sql={"legacy_key": "?"}, structural_parameters=(input_id,))
+            db.execute(
+                f"insert into tasks ({parts.columns}) values ({parts.values})",
+                parts.parameters,
+            )
 
     first = migrate_work_summary_payloads(database, batch_size=1)
     with sqlite3.connect(database) as db:
@@ -104,9 +109,12 @@ def test_terminal_compaction_reads_compressed_input_and_preserves_provenance(tmp
     )
     input_id = store.enqueue_work_summary_input("local_file", "file:done", payload)
     with sqlite3.connect(database) as db:
+        register_task8_functions(db)
+        parts = task8_set_parts("work_summary_inputs", {"status": "done"})
         db.execute(
-            "update tasks set status='done' where record_type='work_summary_inputs' "
-            "and cast(legacy_key as integer)=?", (input_id,)
+            f"update tasks set {parts.sql} where record_type='work_summary_inputs' "
+            f"and id={task_id_expression('work_summary_inputs', '?')}",
+            (*parts.parameters, input_id),
         )
 
     result = compact_terminal_work_summary_inputs(database)

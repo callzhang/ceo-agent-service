@@ -1,0 +1,40 @@
+{
+  "status": "passed",
+  "scope": "Frozen source116 through selected baseline54, pure Runs11 51/current writes/54 inverse/51 reforward. Current51 callers, constructors, paired inverse, genuine predecessor writes and publication remain unproved.",
+  "source_sha256": "970a909a9cfcb4fe604d2111d5572560d4744978df20fb317c4e433059566320",
+  "ordinary_table_sequence": [
+    116,
+    54,
+    51,
+    54,
+    51
+  ],
+  "original_source_counts": {
+    "runs": 231340,
+    "codex_session_search_index": 700,
+    "email_classifier_runtime_samples": 2048,
+    "setup_wizard_events": 22
+  },
+  "unchanged_baseline54_tables": 50,
+  "baseline_foreign_key_findings_preserved": [
+    [
+      "runs",
+      190042,
+      "tasks",
+      1
+    ]
+  ],
+  "native_public_ids": {
+    "codex_session_search_index": 701,
+    "email_classifier_runtime_samples": 5639,
+    "setup_wizard_events": 23
+  },
+  "new_old8_physical_id": 365090,
+  "candidate_hashes": {
+    "runs11_definitions.py": "4e39bd7fb03c1ffb0f476c7d8b0251e430bb1d865528edba8cd67f03de570176",
+    "runs11_storage.py": "3a6fbd0064720236d1a90ed079b2921331305114f7601fb5373097d32a944bd5",
+    "runs11_schema_release.py": "9730fae5af1e1a2b6735e2dafe1c84901ae632eabba41cb70805077dbf5e1281"
+  },
+  "checker_sha256": "17feafcbf25ce7790daacf7caf576f941b2ab9b389431ecec9b3272eac5b6c56",
+  "elapsed_seconds": 474.445
+}

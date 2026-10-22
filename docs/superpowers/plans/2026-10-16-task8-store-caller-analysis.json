@@ -1,0 +1,1998 @@
+{
+  "source_sha256": "ce66a4dd7302080126fb178b4dc8e3983acbc68b2f70c9107bd3e584c4207d5f",
+  "records": [
+    {
+      "line": 8066,
+      "method": "_reconcile_legacy_workbench_confirmations",
+      "operation": "direct_read",
+      "refs": [
+        [
+          "workbench_turns",
+          "status"
+        ]
+      ]
+    },
+    {
+      "line": 8085,
+      "method": "_reconcile_legacy_workbench_confirmations",
+      "operation": "update",
+      "kind": "workbench_turns",
+      "fields": [
+        "status",
+        "lease_owner",
+        "lease_expires_at",
+        "error_code",
+        "error_detail",
+        "completed_at",
+        "updated_at"
+      ],
+      "returning_meeting": false
+    },
+    {
+      "line": 8586,
+      "method": "_append_reply_input_snapshot",
+      "operation": "insert_helper",
+      "kind": "reply_task_inputs"
+    },
+    {
+      "line": 8841,
+      "method": "_compact_settled_reply_task_input",
+      "operation": "update",
+      "kind": "reply_task_inputs",
+      "fields": [
+        "trigger_text",
+        "trigger_message_json",
+        "input_provenance_json",
+        "input_compacted"
+      ],
+      "returning_meeting": false
+    },
+    {
+      "line": 9147,
+      "method": "_ensure_business_reply_task",
+      "operation": "update",
+      "kind": "reply_tasks",
+      "fields": [
+        "business_object_key"
+      ],
+      "returning_meeting": false
+    },
+    {
+      "line": 9151,
+      "method": "_ensure_business_reply_task",
+      "operation": "update",
+      "kind": "reply_task_inputs",
+      "fields": [
+        "business_object_key"
+      ],
+      "returning_meeting": false
+    },
+    {
+      "line": 9166,
+      "method": "_ensure_business_reply_task",
+      "operation": "insert",
+      "kind": "reply_tasks",
+      "fields": [
+        "channel",
+        "conversation_id",
+        "conversation_title",
+        "single_chat",
+        "trigger_message_id",
+        "trigger_create_time",
+        "trigger_sender",
+        "available_at",
+        "force_new_decision",
+        "oa_url",
+        "manual_rerun_attempt_id",
+        "execution_generation",
+        "error",
+        "business_object_key",
+        "input_version",
+        "claimed_input_version",
+        "status",
+        "attempts",
+        "created_at",
+        "updated_at",
+        "manual_rerun_revision_key",
+        "recovery_code"
+      ],
+      "upsert": false
+    },
+    {
+      "line": 9195,
+      "method": "_ensure_business_reply_task",
+      "operation": "insert",
+      "kind": "reply_task_inputs",
+      "fields": [
+        "parent_id",
+        "channel",
+        "conversation_id",
+        "conversation_title",
+        "single_chat",
+        "trigger_message_id",
+        "trigger_create_time",
+        "trigger_sender",
+        "trigger_text",
+        "trigger_message_json",
+        "oa_url",
+        "business_object_key",
+        "input_revision_key",
+        "created_at",
+        "input_provenance_json",
+        "input_compacted"
+      ],
+      "upsert": false
+    },
+    {
+      "line": 9221,
+      "method": "_ensure_business_reply_task",
+      "operation": "update",
+      "kind": "reply_tasks",
+      "fields": [
+        "channel",
+        "conversation_id",
+        "conversation_title",
+        "single_chat",
+        "trigger_message_id",
+        "trigger_create_time",
+        "trigger_sender",
+        "oa_url",
+        "business_object_key",
+        "input_version",
+        "status",
+        "attempts",
+        "execution_generation",
+        "locked_at",
+        "error",
+        "available_at",
+        "updated_at"
+      ],
+      "returning_meeting": false
+    },
+    {
+      "line": 9250,
+      "method": "_ensure_business_reply_task",
+      "operation": "update",
+      "kind": "reply_tasks",
+      "fields": [
+        "current_input_id"
+      ],
+      "returning_meeting": false
+    },
+    {
+      "line": 9704,
+      "method": "requeue_failed_reply_task_for_source_revision",
+      "operation": "update",
+      "kind": "reply_tasks",
+      "fields": [
+        "error"
+      ],
+      "returning_meeting": false
+    },
+    {
+      "line": 9813,
+      "method": "_enqueue_manual_rerun_reply_task_in_connection",
+      "operation": "insert",
+      "kind": "reply_tasks",
+      "fields": [
+        "channel",
+        "conversation_id",
+        "conversation_title",
+        "single_chat",
+        "trigger_message_id",
+        "trigger_create_time",
+        "trigger_sender",
+        "available_at",
+        "force_new_decision",
+        "oa_url",
+        "manual_rerun_attempt_id",
+        "manual_rerun_revision_key",
+        "execution_generation",
+        "status",
+        "locked_at",
+        "error",
+        "attempts",
+        "business_object_key",
+        "input_version",
+        "claimed_input_version",
+        "recovery_code",
+        "created_at",
+        "updated_at"
+      ],
+      "upsert": true
+    },
+    {
+      "line": 9866,
+      "method": "_enqueue_manual_rerun_reply_task_in_connection",
+      "operation": "update",
+      "kind": "reply_tasks",
+      "fields": [
+        "business_object_key"
+      ],
+      "returning_meeting": false
+    },
+    {
+      "line": 9868,
+      "method": "_enqueue_manual_rerun_reply_task_in_connection",
+      "operation": "update",
+      "kind": "reply_tasks",
+      "fields": [
+        "current_input_id"
+      ],
+      "returning_meeting": false
+    },
+    {
+      "line": 10350,
+      "method": "_runtime_operation_parent_exists",
+      "operation": "indirect_read",
+      "refs": [
+        [
+          "weekly_okr_analysis_jobs",
+          "week_end"
+        ],
+        [
+          "weekly_okr_analysis_jobs",
+          "manager_user_id"
+        ],
+        [
+          "weekly_okr_analysis_jobs",
+          "source_digest"
+        ],
+        [
+          "weekly_okr_analysis_jobs",
+          "status"
+        ]
+      ]
+    },
+    {
+      "line": 10357,
+      "method": "_runtime_operation_parent_exists",
+      "operation": "indirect_read_fragment",
+      "refs": [
+        [
+          "weekly_okr_analysis_jobs",
+          "lease_owner"
+        ]
+      ]
+    },
+    {
+      "line": 10361,
+      "method": "_runtime_operation_parent_exists",
+      "operation": "indirect_read",
+      "refs": [
+        [
+          "okr_review_requests",
+          "status"
+        ]
+      ]
+    },
+    {
+      "line": 10425,
+      "method": "_runtime_operation_parent_exists",
+      "operation": "indirect_read",
+      "refs": [
+        [
+          "workbench_turns",
+          "status"
+        ]
+      ]
+    },
+    {
+      "line": 11158,
+      "method": "recover_stale_runtime_attempts",
+      "operation": "update",
+      "kind": "weekly_okr_analysis_jobs",
+      "fields": [
+        "status",
+        "error",
+        "lease_owner",
+        "lease_expires_at",
+        "finished_at",
+        "updated_at"
+      ],
+      "returning_meeting": false
+    },
+    {
+      "line": 12489,
+      "method": "claim_reply_task",
+      "operation": "update",
+      "kind": "reply_tasks",
+      "fields": [
+        "status",
+        "attempts",
+        "claimed_input_version",
+        "claimed_input_id",
+        "locked_at",
+        "available_at",
+        "updated_at"
+      ],
+      "returning_meeting": false
+    },
+    {
+      "line": 12544,
+      "method": "claim_reply_tasks",
+      "operation": "update",
+      "kind": "reply_tasks",
+      "fields": [
+        "status",
+        "attempts",
+        "claimed_input_version",
+        "claimed_input_id",
+        "locked_at",
+        "available_at",
+        "updated_at"
+      ],
+      "returning_meeting": false
+    },
+    {
+      "line": 12665,
+      "method": "recover_stale_processing_reply_tasks",
+      "operation": "update",
+      "kind": "reply_tasks",
+      "fields": [
+        "status",
+        "locked_at",
+        "available_at",
+        "error",
+        "updated_at"
+      ],
+      "returning_meeting": false
+    },
+    {
+      "line": 12719,
+      "method": "recover_orphaned_processing_reply_tasks",
+      "operation": "update",
+      "kind": "reply_tasks",
+      "fields": [
+        "status",
+        "attempts",
+        "locked_at",
+        "available_at",
+        "error",
+        "updated_at"
+      ],
+      "returning_meeting": false
+    },
+    {
+      "line": 12828,
+      "method": "recover_interrupted_agent_runs_after_service_restart",
+      "operation": "update",
+      "kind": "reply_tasks",
+      "fields": [
+        "force_new_decision",
+        "status",
+        "locked_at",
+        "available_at",
+        "error",
+        "updated_at"
+      ],
+      "returning_meeting": false
+    },
+    {
+      "line": 12983,
+      "method": "skip_unstarted_service_tasks",
+      "operation": "update",
+      "kind": "reply_tasks",
+      "fields": [
+        "status",
+        "locked_at",
+        "available_at",
+        "error",
+        "updated_at"
+      ],
+      "returning_meeting": false
+    },
+    {
+      "line": 13046,
+      "method": "resume_completed_agent_turns_after_service_restart",
+      "operation": "update",
+      "kind": "reply_tasks",
+      "fields": [
+        "status",
+        "locked_at",
+        "available_at",
+        "error",
+        "updated_at"
+      ],
+      "returning_meeting": false
+    },
+    {
+      "line": 13084,
+      "method": "mark_wechat_read_only_decision_started",
+      "operation": "update",
+      "kind": "reply_tasks",
+      "fields": [
+        "error",
+        "updated_at"
+      ],
+      "returning_meeting": false
+    },
+    {
+      "line": 13237,
+      "method": "complete_reply_task",
+      "operation": "update",
+      "kind": "reply_tasks",
+      "fields": [
+        "status",
+        "locked_at",
+        "available_at",
+        "error",
+        "updated_at"
+      ],
+      "returning_meeting": false
+    },
+    {
+      "line": 13259,
+      "method": "complete_reply_task",
+      "operation": "update",
+      "kind": "reply_tasks",
+      "fields": [
+        "status",
+        "locked_at",
+        "available_at",
+        "error",
+        "updated_at"
+      ],
+      "returning_meeting": false
+    },
+    {
+      "line": 13279,
+      "method": "complete_reply_task",
+      "operation": "update",
+      "kind": "reply_tasks",
+      "fields": [
+        "status",
+        "execution_generation",
+        "locked_at",
+        "error",
+        "available_at",
+        "attempts",
+        "updated_at"
+      ],
+      "returning_meeting": false
+    },
+    {
+      "line": 13319,
+      "method": "fail_reply_task",
+      "operation": "update",
+      "kind": "reply_tasks",
+      "fields": [
+        "status",
+        "execution_generation",
+        "locked_at",
+        "error",
+        "available_at",
+        "attempts",
+        "updated_at"
+      ],
+      "returning_meeting": false
+    },
+    {
+      "line": 13356,
+      "method": "terminalize_legacy_email_unsubscribe_task",
+      "operation": "update",
+      "kind": "reply_tasks",
+      "fields": [
+        "status",
+        "locked_at",
+        "error",
+        "available_at",
+        "updated_at"
+      ],
+      "returning_meeting": false
+    },
+    {
+      "line": 13438,
+      "method": "skip_failed_legacy_email_unsubscribe_tasks",
+      "operation": "update",
+      "kind": "reply_tasks",
+      "fields": [
+        "status",
+        "locked_at",
+        "error",
+        "available_at",
+        "updated_at"
+      ],
+      "returning_meeting": false
+    },
+    {
+      "line": 13498,
+      "method": "retry_failed_effect_free_email_unsubscribe_tasks",
+      "operation": "update",
+      "kind": "reply_tasks",
+      "fields": [
+        "status",
+        "attempts",
+        "locked_at",
+        "available_at",
+        "error",
+        "recovery_code",
+        "force_new_decision",
+        "execution_generation",
+        "updated_at"
+      ],
+      "returning_meeting": false
+    },
+    {
+      "line": 13549,
+      "method": "terminalize_exhausted_pending_reply_tasks",
+      "operation": "update",
+      "kind": "reply_tasks",
+      "fields": [
+        "status",
+        "available_at",
+        "locked_at",
+        "error",
+        "updated_at"
+      ],
+      "returning_meeting": false
+    },
+    {
+      "line": 13626,
+      "method": "requeue_reply_task",
+      "operation": "update",
+      "kind": "reply_tasks",
+      "fields": [
+        "status",
+        "locked_at",
+        "available_at",
+        "error",
+        "force_new_decision",
+        "updated_at"
+      ],
+      "returning_meeting": false
+    },
+    {
+      "line": 13697,
+      "method": "retry_failed_reply_task",
+      "operation": "update",
+      "kind": "reply_tasks",
+      "fields": [
+        "status",
+        "attempts",
+        "locked_at",
+        "available_at",
+        "error",
+        "recovery_code",
+        "force_new_decision",
+        "execution_generation",
+        "updated_at"
+      ],
+      "returning_meeting": false
+    },
+    {
+      "line": 13811,
+      "method": "retry_failed_pre_agent_reply_task",
+      "operation": "update",
+      "kind": "reply_tasks",
+      "fields": [
+        "status",
+        "attempts",
+        "locked_at",
+        "available_at",
+        "error",
+        "updated_at"
+      ],
+      "returning_meeting": false
+    },
+    {
+      "line": 13921,
+      "method": "recover_failed_native_codex_auth_tasks",
+      "operation": "update",
+      "kind": "reply_tasks",
+      "fields": [
+        "status",
+        "attempts",
+        "locked_at",
+        "available_at",
+        "execution_generation",
+        "error",
+        "recovery_code",
+        "updated_at"
+      ],
+      "returning_meeting": false
+    },
+    {
+      "line": 13999,
+      "method": "rotate_reply_task_execution_generation",
+      "operation": "update",
+      "kind": "reply_tasks",
+      "fields": [
+        "force_new_decision",
+        "execution_generation",
+        "status",
+        "locked_at",
+        "available_at",
+        "error",
+        "updated_at"
+      ],
+      "returning_meeting": false
+    },
+    {
+      "line": 14030,
+      "method": "defer_reply_task",
+      "operation": "update",
+      "kind": "reply_tasks",
+      "fields": [
+        "status",
+        "attempts",
+        "locked_at",
+        "available_at",
+        "error",
+        "updated_at"
+      ],
+      "returning_meeting": false
+    },
+    {
+      "line": 14091,
+      "method": "skip_scheduled_reply_task",
+      "operation": "update",
+      "kind": "reply_tasks",
+      "fields": [
+        "status",
+        "locked_at",
+        "error",
+        "updated_at"
+      ],
+      "returning_meeting": false
+    },
+    {
+      "line": 14121,
+      "method": "defer_reply_task_for_authorization",
+      "operation": "update",
+      "kind": "reply_tasks",
+      "fields": [
+        "status",
+        "locked_at",
+        "available_at",
+        "error",
+        "updated_at"
+      ],
+      "returning_meeting": false
+    },
+    {
+      "line": 14598,
+      "method": "finalize_wechat_reply_task",
+      "operation": "update",
+      "kind": "reply_tasks",
+      "fields": [
+        "status",
+        "locked_at",
+        "available_at",
+        "error",
+        "recovery_code",
+        "updated_at"
+      ],
+      "returning_meeting": false
+    },
+    {
+      "line": 15849,
+      "method": "attach_meeting_alignment_segment",
+      "operation": "direct_read",
+      "refs": [
+        [
+          "meeting_alignment_jobs",
+          "source_json"
+        ]
+      ]
+    },
+    {
+      "line": 15866,
+      "method": "attach_meeting_alignment_segment",
+      "operation": "update",
+      "kind": "meeting_alignment_jobs",
+      "fields": [
+        "source_json",
+        "status",
+        "eligible_at",
+        "attempts",
+        "locked_at",
+        "available_at",
+        "error",
+        "updated_at"
+      ],
+      "returning_meeting": false
+    },
+    {
+      "line": 15893,
+      "method": "upsert_meeting_alignment_job",
+      "operation": "insert_helper",
+      "kind": "meeting_alignment_jobs"
+    },
+    {
+      "line": 15900,
+      "method": "upsert_meeting_alignment_job",
+      "operation": "update",
+      "kind": "meeting_alignment_jobs",
+      "fields": [
+        "title",
+        "source_json",
+        "participants_json",
+        "ended_at",
+        "eligible_at",
+        "status",
+        "updated_at"
+      ],
+      "returning_meeting": false
+    },
+    {
+      "line": 15908,
+      "method": "upsert_meeting_alignment_job",
+      "operation": "direct_read",
+      "refs": [
+        [
+          "meeting_alignment_jobs",
+          "meeting_id"
+        ]
+      ]
+    },
+    {
+      "line": 16041,
+      "method": "create_meeting_memory_write_event",
+      "operation": "direct_read",
+      "refs": [
+        [
+          "meeting_alignment_jobs",
+          "status"
+        ],
+        [
+          "meeting_alignment_jobs",
+          "final_message"
+        ]
+      ]
+    },
+    {
+      "line": 16218,
+      "method": "enqueue_sent_meeting_memory_write_events",
+      "operation": "direct_read",
+      "refs": [
+        [
+          "meeting_alignment_jobs",
+          "status"
+        ],
+        [
+          "meeting_alignment_jobs",
+          "final_message"
+        ]
+      ]
+    },
+    {
+      "line": 16242,
+      "method": "enqueue_sent_meeting_memory_write_events",
+      "operation": "direct_read",
+      "refs": [
+        [
+          "meeting_alignment_jobs",
+          "status"
+        ],
+        [
+          "meeting_alignment_jobs",
+          "final_message"
+        ]
+      ]
+    },
+    {
+      "line": 16601,
+      "method": "requeue_failed_meeting_memory_write_event",
+      "operation": "direct_read",
+      "refs": [
+        [
+          "meeting_alignment_jobs",
+          "status"
+        ],
+        [
+          "meeting_alignment_jobs",
+          "final_message"
+        ]
+      ]
+    },
+    {
+      "line": 16639,
+      "method": "reconcile_failed_meeting_memory_write_event",
+      "operation": "direct_read",
+      "refs": [
+        [
+          "meeting_alignment_jobs",
+          "status"
+        ],
+        [
+          "meeting_alignment_jobs",
+          "final_message"
+        ]
+      ]
+    },
+    {
+      "line": 16666,
+      "method": "claim_meeting_alignment_jobs",
+      "operation": "update",
+      "kind": "meeting_alignment_jobs",
+      "fields": [
+        "status",
+        "attempts",
+        "locked_at",
+        "updated_at"
+      ],
+      "returning_meeting": true
+    },
+    {
+      "line": 16756,
+      "method": "update_meeting_alignment_job",
+      "operation": "update",
+      "kind": "meeting_alignment_jobs",
+      "dynamic_fields": 19
+    },
+    {
+      "line": 16790,
+      "method": "claim_ready_to_send_meeting_alignment_jobs",
+      "operation": "direct_read",
+      "refs": [
+        [
+          "meeting_alignment_jobs",
+          "status"
+        ],
+        [
+          "meeting_alignment_jobs",
+          "locked_at"
+        ],
+        [
+          "meeting_alignment_jobs",
+          "available_at"
+        ],
+        [
+          "meeting_alignment_jobs",
+          "available_at"
+        ]
+      ]
+    },
+    {
+      "line": 16801,
+      "method": "claim_ready_to_send_meeting_alignment_jobs",
+      "operation": "update",
+      "kind": "meeting_alignment_jobs",
+      "fields": [
+        "locked_at",
+        "updated_at"
+      ],
+      "returning_meeting": true
+    },
+    {
+      "line": 16844,
+      "method": "claim_ready_to_send_meeting_alignment_job",
+      "operation": "update",
+      "kind": "meeting_alignment_jobs",
+      "fields": [
+        "locked_at",
+        "updated_at"
+      ],
+      "returning_meeting": true
+    },
+    {
+      "line": 16872,
+      "method": "release_ready_to_send_meeting_alignment_claims",
+      "operation": "update",
+      "kind": "meeting_alignment_jobs",
+      "fields": [
+        "locked_at"
+      ],
+      "returning_meeting": false
+    },
+    {
+      "line": 16900,
+      "method": "schedule_ready_to_send_meeting_alignment_retry",
+      "operation": "update",
+      "kind": "meeting_alignment_jobs",
+      "fields": [
+        "attempts",
+        "available_at",
+        "error",
+        "locked_at",
+        "updated_at"
+      ],
+      "returning_meeting": true
+    },
+    {
+      "line": 16925,
+      "method": "reset_ready_to_send_meeting_alignment_jobs",
+      "operation": "update",
+      "kind": "meeting_alignment_jobs",
+      "fields": [
+        "locked_at",
+        "updated_at"
+      ],
+      "returning_meeting": true
+    },
+    {
+      "line": 16943,
+      "method": "reset_processing_meeting_alignment_jobs",
+      "operation": "update",
+      "kind": "meeting_alignment_jobs",
+      "fields": [
+        "status",
+        "attempts",
+        "locked_at",
+        "updated_at"
+      ],
+      "returning_meeting": true
+    },
+    {
+      "line": 17017,
+      "method": "rerun_meeting_alignment_jobs",
+      "operation": "update",
+      "kind": "meeting_alignment_jobs",
+      "fields": [
+        "status",
+        "attempts",
+        "locked_at",
+        "available_at",
+        "error",
+        "decision_json",
+        "target_kind",
+        "target_id",
+        "target_title",
+        "mentions_json",
+        "final_message",
+        "send_result_json",
+        "updated_at"
+      ],
+      "returning_meeting": false
+    },
+    {
+      "line": 17070,
+      "method": "baseline_meeting_alignment_jobs_before",
+      "operation": "update",
+      "kind": "meeting_alignment_jobs",
+      "fields": [
+        "status",
+        "locked_at",
+        "available_at",
+        "error",
+        "decision_json",
+        "target_kind",
+        "target_id",
+        "target_title",
+        "mentions_json",
+        "final_message",
+        "send_result_json",
+        "updated_at"
+      ],
+      "returning_meeting": true
+    },
+    {
+      "line": 17114,
+      "method": "reopen_meeting_alignment_job_for_replay",
+      "operation": "update",
+      "kind": "meeting_alignment_jobs",
+      "fields": [
+        "title",
+        "source_json",
+        "participants_json",
+        "ended_at",
+        "eligible_at",
+        "status",
+        "attempts",
+        "locked_at",
+        "available_at",
+        "error",
+        "decision_json",
+        "target_kind",
+        "target_id",
+        "target_title",
+        "mentions_json",
+        "final_message",
+        "send_result_json",
+        "updated_at"
+      ],
+      "returning_meeting": true
+    },
+    {
+      "line": 17181,
+      "method": "restore_confirmed_meeting_delivery",
+      "operation": "update",
+      "kind": "meeting_alignment_jobs",
+      "fields": [
+        "status",
+        "available_at",
+        "error",
+        "send_result_json",
+        "final_message",
+        "updated_at"
+      ],
+      "returning_meeting": false
+    },
+    {
+      "line": 17195,
+      "method": "requeue_failed_meeting_delivery",
+      "operation": "update",
+      "kind": "meeting_alignment_jobs",
+      "fields": [
+        "status",
+        "locked_at",
+        "available_at",
+        "error",
+        "updated_at"
+      ],
+      "returning_meeting": true
+    },
+    {
+      "line": 17205,
+      "method": "begin_meeting_alignment_run",
+      "operation": "direct_read",
+      "refs": [
+        [
+          "meeting_alignment_jobs",
+          "status"
+        ]
+      ]
+    },
+    {
+      "line": 17466,
+      "method": "create_okr_review_request",
+      "operation": "insert",
+      "kind": "okr_review_requests",
+      "fields": [
+        "conversation_id",
+        "conversation_title",
+        "trigger_message_id",
+        "trigger_sender",
+        "trigger_sender_user_id",
+        "trigger_text",
+        "period_label",
+        "period_start",
+        "period_end",
+        "okr_source_json",
+        "status",
+        "error",
+        "codex_session_id",
+        "created_at",
+        "updated_at"
+      ],
+      "upsert": true
+    },
+    {
+      "line": 17506,
+      "method": "create_okr_review_request",
+      "operation": "direct_read",
+      "refs": [
+        [
+          "okr_review_requests",
+          "conversation_id"
+        ],
+        [
+          "okr_review_requests",
+          "trigger_message_id"
+        ]
+      ]
+    },
+    {
+      "line": 17534,
+      "method": "claim_okr_review_requests",
+      "operation": "update",
+      "kind": "okr_review_requests",
+      "fields": [
+        "status",
+        "error",
+        "updated_at"
+      ],
+      "returning_meeting": false
+    },
+    {
+      "line": 17613,
+      "method": "reset_recoverable_okr_review_requests",
+      "operation": "update",
+      "kind": "okr_review_requests",
+      "fields": [
+        "status",
+        "error",
+        "codex_session_id",
+        "updated_at"
+      ],
+      "returning_meeting": false
+    },
+    {
+      "line": 17645,
+      "method": "mark_okr_review_request_done",
+      "operation": "update",
+      "kind": "okr_review_requests",
+      "fields": [
+        "status",
+        "error",
+        "codex_session_id",
+        "updated_at"
+      ],
+      "returning_meeting": false
+    },
+    {
+      "line": 17660,
+      "method": "mark_okr_review_request_failed",
+      "operation": "update",
+      "kind": "okr_review_requests",
+      "fields": [
+        "status",
+        "error",
+        "updated_at"
+      ],
+      "returning_meeting": false
+    },
+    {
+      "line": 18283,
+      "method": "_refresh_reply_input_in_transaction",
+      "operation": "update",
+      "kind": "reply_tasks",
+      "fields": [
+        "current_input_id",
+        "input_version",
+        "updated_at"
+      ],
+      "returning_meeting": false
+    },
+    {
+      "line": 18364,
+      "method": "requeue_terminal_reply_task_for_revised_trigger",
+      "operation": "insert",
+      "kind": "reply_task_inputs",
+      "fields": [
+        "parent_id",
+        "channel",
+        "conversation_id",
+        "conversation_title",
+        "single_chat",
+        "trigger_message_id",
+        "trigger_create_time",
+        "trigger_sender",
+        "trigger_text",
+        "trigger_message_json",
+        "oa_url",
+        "business_object_key",
+        "input_revision_key",
+        "created_at",
+        "input_provenance_json",
+        "input_compacted"
+      ],
+      "upsert": false
+    },
+    {
+      "line": 18393,
+      "method": "requeue_terminal_reply_task_for_revised_trigger",
+      "operation": "update",
+      "kind": "reply_tasks",
+      "fields": [
+        "conversation_title",
+        "single_chat",
+        "trigger_create_time",
+        "trigger_sender",
+        "current_input_id",
+        "input_version",
+        "execution_generation",
+        "status",
+        "attempts",
+        "claimed_input_version",
+        "claimed_input_id",
+        "force_new_decision",
+        "manual_rerun_attempt_id",
+        "manual_rerun_revision_key",
+        "locked_at",
+        "available_at",
+        "error",
+        "recovery_code",
+        "updated_at"
+      ],
+      "returning_meeting": false
+    },
+    {
+      "line": 18477,
+      "method": "replace_pending_single_chat_reply_task_trigger",
+      "operation": "update",
+      "kind": "reply_tasks",
+      "fields": [
+        "trigger_message_id",
+        "trigger_create_time",
+        "trigger_sender",
+        "execution_generation",
+        "available_at",
+        "error",
+        "updated_at"
+      ],
+      "returning_meeting": false
+    },
+    {
+      "line": 18517,
+      "method": "replace_pending_single_chat_reply_task_trigger",
+      "operation": "update",
+      "kind": "reply_task_inputs",
+      "fields": [
+        "parent_id"
+      ],
+      "returning_meeting": false
+    },
+    {
+      "line": 18533,
+      "method": "replace_pending_single_chat_reply_task_trigger",
+      "operation": "update",
+      "kind": "reply_tasks",
+      "fields": [
+        "business_object_key"
+      ],
+      "returning_meeting": false
+    },
+    {
+      "line": 18540,
+      "method": "replace_pending_single_chat_reply_task_trigger",
+      "operation": "update",
+      "kind": "reply_tasks",
+      "fields": [
+        "current_input_id"
+      ],
+      "returning_meeting": false
+    },
+    {
+      "line": 18553,
+      "method": "replace_pending_single_chat_reply_task_trigger",
+      "operation": "delete",
+      "refs": [
+        [
+          "reply_tasks",
+          "channel"
+        ],
+        [
+          "reply_tasks",
+          "conversation_id"
+        ],
+        [
+          "reply_tasks",
+          "single_chat"
+        ],
+        [
+          "reply_tasks",
+          "status"
+        ],
+        [
+          "reply_tasks",
+          "attempts"
+        ]
+      ]
+    },
+    {
+      "line": 18565,
+      "method": "replace_pending_single_chat_reply_task_trigger",
+      "operation": "update",
+      "kind": "reply_tasks",
+      "fields": [
+        "input_version"
+      ],
+      "returning_meeting": false
+    },
+    {
+      "line": 19037,
+      "method": "resolve_reconciled_failed_reply_task",
+      "operation": "update",
+      "kind": "reply_tasks",
+      "fields": [
+        "status",
+        "error",
+        "available_at",
+        "locked_at",
+        "updated_at"
+      ],
+      "returning_meeting": false
+    },
+    {
+      "line": 19232,
+      "method": "reconcile_failed_agent_message_delivery",
+      "operation": "update",
+      "kind": "reply_tasks",
+      "fields": [
+        "status",
+        "error",
+        "available_at",
+        "locked_at",
+        "updated_at"
+      ],
+      "returning_meeting": false
+    },
+    {
+      "line": 19305,
+      "method": "reconcile_failed_audit_with_verified_delivery",
+      "operation": "update",
+      "kind": "reply_tasks",
+      "fields": [
+        "status",
+        "error",
+        "available_at",
+        "locked_at",
+        "updated_at"
+      ],
+      "returning_meeting": false
+    },
+    {
+      "line": 19332,
+      "method": "reconcile_failed_reply_tasks_with_recorded_deliveries",
+      "operation": "update",
+      "kind": "reply_tasks",
+      "fields": [
+        "status",
+        "error",
+        "available_at",
+        "locked_at",
+        "updated_at"
+      ],
+      "returning_meeting": false
+    },
+    {
+      "line": 19395,
+      "method": "reconcile_failed_email_unsubscribe_tasks_with_terminal_receipts",
+      "operation": "update",
+      "kind": "reply_tasks",
+      "fields": [
+        "status",
+        "error",
+        "available_at",
+        "locked_at",
+        "updated_at"
+      ],
+      "returning_meeting": false
+    },
+    {
+      "line": 19512,
+      "method": "resolve_completed_oa_needs_human_attempt",
+      "operation": "update",
+      "kind": "reply_tasks",
+      "fields": [
+        "status",
+        "error",
+        "available_at",
+        "locked_at",
+        "updated_at"
+      ],
+      "returning_meeting": false
+    },
+    {
+      "line": 19566,
+      "method": "close_unresolved_reply_task_already_settled",
+      "operation": "update",
+      "kind": "reply_tasks",
+      "fields": [
+        "status",
+        "error",
+        "available_at",
+        "locked_at",
+        "updated_at"
+      ],
+      "returning_meeting": false
+    },
+    {
+      "line": 19591,
+      "method": "reconcile_unresolved_reply_tasks_with_settlement_evidence",
+      "operation": "indirect_read",
+      "refs": [
+        [
+          "reply_tasks",
+          "execution_generation"
+        ],
+        [
+          "reply_tasks",
+          "status"
+        ],
+        [
+          "reply_tasks",
+          "error"
+        ],
+        [
+          "reply_tasks",
+          "conversation_id"
+        ],
+        [
+          "reply_tasks",
+          "trigger_message_id"
+        ]
+      ]
+    },
+    {
+      "line": 19614,
+      "method": "reconcile_unresolved_reply_tasks_with_settlement_evidence",
+      "operation": "indirect_read_fragment",
+      "refs": [
+        [
+          "reply_tasks",
+          "execution_generation"
+        ]
+      ]
+    },
+    {
+      "line": 19628,
+      "method": "reconcile_unresolved_reply_tasks_with_settlement_evidence",
+      "operation": "update",
+      "kind": "reply_tasks",
+      "fields": [
+        "status",
+        "error",
+        "available_at",
+        "locked_at",
+        "updated_at"
+      ],
+      "returning_meeting": false
+    },
+    {
+      "line": 23041,
+      "method": "finalize_orchestrated_reply_task",
+      "operation": "update",
+      "kind": "reply_tasks",
+      "fields": [
+        "status",
+        "attempts",
+        "locked_at",
+        "available_at",
+        "error",
+        "updated_at"
+      ],
+      "returning_meeting": false
+    },
+    {
+      "line": 23115,
+      "method": "reconcile_done_reply_tasks_with_failed_current_run",
+      "operation": "native_fragment",
+      "refs": [
+        [
+          "reply_tasks",
+          "channel"
+        ],
+        [
+          "reply_tasks",
+          "trigger_message_id"
+        ]
+      ]
+    },
+    {
+      "line": 23125,
+      "method": "reconcile_done_reply_tasks_with_failed_current_run",
+      "operation": "native_fragment",
+      "refs": [
+        [
+          "reply_tasks",
+          "business_object_key"
+        ],
+        [
+          "reply_tasks",
+          "conversation_id"
+        ],
+        [
+          "reply_tasks",
+          "trigger_message_id"
+        ]
+      ]
+    },
+    {
+      "line": 23183,
+      "method": "reconcile_done_reply_tasks_with_failed_current_run",
+      "operation": "direct_read",
+      "refs": [
+        [
+          "reply_tasks",
+          "execution_generation"
+        ],
+        [
+          "reply_tasks",
+          "status"
+        ],
+        [
+          "reply_tasks",
+          "execution_generation"
+        ],
+        [
+          "reply_tasks",
+          "execution_generation"
+        ],
+        [
+          "reply_tasks",
+          "execution_generation"
+        ]
+      ]
+    },
+    {
+      "line": 23215,
+      "method": "reconcile_done_reply_tasks_with_failed_current_run",
+      "operation": "update",
+      "kind": "reply_tasks",
+      "fields": [
+        "status",
+        "error",
+        "available_at",
+        "locked_at",
+        "updated_at"
+      ],
+      "returning_meeting": false
+    },
+    {
+      "line": 23285,
+      "method": "reconcile_failed_reply_tasks_with_confirmation_required_runs",
+      "operation": "update",
+      "kind": "reply_tasks",
+      "fields": [
+        "status",
+        "error",
+        "available_at",
+        "locked_at",
+        "updated_at"
+      ],
+      "returning_meeting": false
+    },
+    {
+      "line": 23359,
+      "method": "reconcile_valid_needs_human_projections",
+      "operation": "update",
+      "kind": "reply_tasks",
+      "fields": [
+        "status",
+        "error",
+        "available_at",
+        "locked_at",
+        "updated_at"
+      ],
+      "returning_meeting": false
+    },
+    {
+      "line": 23422,
+      "method": "skip_failed_reply_tasks_superseded_by_terminal_business_object",
+      "operation": "update",
+      "kind": "reply_tasks",
+      "fields": [
+        "status",
+        "error",
+        "available_at",
+        "locked_at",
+        "updated_at"
+      ],
+      "returning_meeting": false
+    },
+    {
+      "line": 23580,
+      "method": "reconcile_unresolved_reply_tasks_with_terminal_attempts",
+      "operation": "update",
+      "kind": "reply_tasks",
+      "fields": [
+        "status",
+        "available_at",
+        "locked_at",
+        "error",
+        "updated_at"
+      ],
+      "returning_meeting": false
+    },
+    {
+      "line": 23629,
+      "method": "skip_failed_reply_tasks_with_terminal_no_action_run",
+      "operation": "update",
+      "kind": "reply_tasks",
+      "fields": [
+        "status",
+        "error",
+        "available_at",
+        "locked_at",
+        "updated_at"
+      ],
+      "returning_meeting": false
+    },
+    {
+      "line": 23726,
+      "method": "finalize_reply_task_without_run",
+      "operation": "update",
+      "kind": "reply_tasks",
+      "fields": [
+        "status",
+        "locked_at",
+        "available_at",
+        "error",
+        "updated_at"
+      ],
+      "returning_meeting": false
+    },
+    {
+      "line": 24025,
+      "method": "close_needs_human_task_with_decision",
+      "operation": "update",
+      "kind": "reply_tasks",
+      "fields": [
+        "status",
+        "error",
+        "available_at",
+        "locked_at",
+        "updated_at"
+      ],
+      "returning_meeting": false
+    },
+    {
+      "line": 25849,
+      "method": "enqueue_work_summary_input",
+      "operation": "insert",
+      "kind": "work_summary_inputs",
+      "fields": [
+        "source_type",
+        "source_ref",
+        "payload_json",
+        "source_created_at",
+        "body_sha256",
+        "body_bytes",
+        "body_compacted",
+        "status",
+        "attempts",
+        "error",
+        "available_at",
+        "created_at",
+        "updated_at"
+      ],
+      "upsert": true
+    },
+    {
+      "line": 25903,
+      "method": "_compact_work_summary_input",
+      "operation": "update",
+      "kind": "work_summary_inputs",
+      "fields": [
+        "status",
+        "error",
+        "payload_json",
+        "source_created_at",
+        "body_sha256",
+        "body_bytes",
+        "body_compacted",
+        "updated_at"
+      ],
+      "returning_meeting": false
+    },
+    {
+      "line": 25939,
+      "method": "claim_work_summary_inputs",
+      "operation": "update",
+      "kind": "work_summary_inputs",
+      "fields": [
+        "status",
+        "attempts",
+        "error",
+        "available_at",
+        "updated_at"
+      ],
+      "returning_meeting": false
+    },
+    {
+      "line": 26048,
+      "method": "reset_stale_processing_work_summary_inputs",
+      "operation": "update",
+      "kind": "work_summary_inputs",
+      "fields": [
+        "status",
+        "attempts",
+        "error",
+        "updated_at"
+      ],
+      "returning_meeting": false
+    },
+    {
+      "line": 26076,
+      "method": "reset_processing_work_summary_inputs",
+      "operation": "update",
+      "kind": "work_summary_inputs",
+      "fields": [
+        "status",
+        "attempts",
+        "error",
+        "updated_at"
+      ],
+      "returning_meeting": false
+    },
+    {
+      "line": 26108,
+      "method": "mark_work_summary_input_failed",
+      "operation": "update",
+      "kind": "work_summary_inputs",
+      "fields": [
+        "status",
+        "error",
+        "updated_at"
+      ],
+      "returning_meeting": false
+    },
+    {
+      "line": 26121,
+      "method": "requeue_failed_work_summary_input",
+      "operation": "update",
+      "kind": "work_summary_inputs",
+      "fields": [
+        "status",
+        "error",
+        "available_at",
+        "updated_at"
+      ],
+      "returning_meeting": false
+    },
+    {
+      "line": 26138,
+      "method": "schedule_work_summary_input_retry",
+      "operation": "update",
+      "kind": "work_summary_inputs",
+      "fields": [
+        "status",
+        "error",
+        "available_at",
+        "updated_at"
+      ],
+      "returning_meeting": false
+    },
+    {
+      "line": 26157,
+      "method": "defer_work_summary_input_for_capacity",
+      "operation": "update",
+      "kind": "work_summary_inputs",
+      "fields": [
+        "status",
+        "attempts",
+        "error",
+        "available_at",
+        "updated_at"
+      ],
+      "returning_meeting": false
+    },
+    {
+      "line": 26177,
+      "method": "defer_meeting_alignment_job_for_capacity",
+      "operation": "update",
+      "kind": "meeting_alignment_jobs",
+      "fields": [
+        "status",
+        "attempts",
+        "locked_at",
+        "available_at",
+        "error",
+        "updated_at"
+      ],
+      "returning_meeting": false
+    },
+    {
+      "line": 27744,
+      "method": "begin_weekly_okr_analysis_job",
+      "operation": "insert_helper",
+      "kind": "weekly_okr_analysis_jobs"
+    },
+    {
+      "line": 27764,
+      "method": "begin_weekly_okr_analysis_job",
+      "operation": "update",
+      "kind": "weekly_okr_analysis_jobs",
+      "fields": [
+        "status",
+        "error",
+        "finished_at",
+        "lease_owner",
+        "lease_expires_at",
+        "updated_at"
+      ],
+      "returning_meeting": false
+    },
+    {
+      "line": 27786,
+      "method": "begin_weekly_okr_analysis_job",
+      "operation": "update",
+      "kind": "weekly_okr_analysis_jobs",
+      "fields": [
+        "lease_owner",
+        "lease_expires_at",
+        "error",
+        "finished_at",
+        "updated_at"
+      ],
+      "returning_meeting": false
+    },
+    {
+      "line": 27813,
+      "method": "complete_superseded_stale_weekly_okr_analysis_jobs",
+      "operation": "update",
+      "kind": "weekly_okr_analysis_jobs",
+      "fields": [
+        "status",
+        "error",
+        "lease_owner",
+        "lease_expires_at",
+        "finished_at",
+        "updated_at"
+      ],
+      "returning_meeting": false
+    },
+    {
+      "line": 27850,
+      "method": "complete_superseded_failed_weekly_okr_analysis_jobs",
+      "operation": "update",
+      "kind": "weekly_okr_analysis_jobs",
+      "fields": [
+        "status",
+        "error",
+        "lease_owner",
+        "lease_expires_at",
+        "finished_at",
+        "updated_at"
+      ],
+      "returning_meeting": false
+    },
+    {
+      "line": 27907,
+      "method": "finish_weekly_okr_analysis_job",
+      "operation": "update",
+      "kind": "weekly_okr_analysis_jobs",
+      "fields": [
+        "status",
+        "error",
+        "lease_owner",
+        "lease_expires_at",
+        "finished_at",
+        "updated_at"
+      ],
+      "returning_meeting": false
+    },
+    {
+      "line": 27961,
+      "method": "reclaim_weekly_okr_analysis_job_cache_miss",
+      "operation": "update",
+      "kind": "weekly_okr_analysis_jobs",
+      "fields": [
+        "status",
+        "error",
+        "finished_at",
+        "lease_owner",
+        "lease_expires_at",
+        "updated_at"
+      ],
+      "returning_meeting": false
+    }
+  ],
+  "mixed_parameters": [
+    {
+      "line": 18393,
+      "permutation": [
+        0,
+        1,
+        2,
+        3,
+        5,
+        6,
+        4,
+        7,
+        8
+      ]
+    }
+  ],
+  "changed_methods": [
+    "_append_reply_input_snapshot",
+    "_compact_settled_reply_task_input",
+    "_compact_work_summary_input",
+    "_enqueue_manual_rerun_reply_task_in_connection",
+    "_ensure_business_reply_task",
+    "_reconcile_legacy_workbench_confirmations",
+    "_refresh_reply_input_in_transaction",
+    "_runtime_operation_parent_exists",
+    "attach_meeting_alignment_segment",
+    "baseline_meeting_alignment_jobs_before",
+    "begin_meeting_alignment_run",
+    "begin_weekly_okr_analysis_job",
+    "claim_meeting_alignment_jobs",
+    "claim_okr_review_requests",
+    "claim_ready_to_send_meeting_alignment_job",
+    "claim_ready_to_send_meeting_alignment_jobs",
+    "claim_reply_task",
+    "claim_reply_tasks",
+    "claim_work_summary_inputs",
+    "close_needs_human_task_with_decision",
+    "close_unresolved_reply_task_already_settled",
+    "complete_reply_task",
+    "complete_superseded_failed_weekly_okr_analysis_jobs",
+    "complete_superseded_stale_weekly_okr_analysis_jobs",
+    "create_meeting_memory_write_event",
+    "create_okr_review_request",
+    "defer_meeting_alignment_job_for_capacity",
+    "defer_reply_task",
+    "defer_reply_task_for_authorization",
+    "defer_work_summary_input_for_capacity",
+    "enqueue_sent_meeting_memory_write_events",
+    "enqueue_work_summary_input",
+    "fail_reply_task",
+    "finalize_orchestrated_reply_task",
+    "finalize_reply_task_without_run",
+    "finalize_wechat_reply_task",
+    "finish_weekly_okr_analysis_job",
+    "mark_okr_review_request_done",
+    "mark_okr_review_request_failed",
+    "mark_wechat_read_only_decision_started",
+    "mark_work_summary_input_failed",
+    "reclaim_weekly_okr_analysis_job_cache_miss",
+    "reconcile_done_reply_tasks_with_failed_current_run",
+    "reconcile_failed_agent_message_delivery",
+    "reconcile_failed_audit_with_verified_delivery",
+    "reconcile_failed_email_unsubscribe_tasks_with_terminal_receipts",
+    "reconcile_failed_meeting_memory_write_event",
+    "reconcile_failed_reply_tasks_with_confirmation_required_runs",
+    "reconcile_failed_reply_tasks_with_recorded_deliveries",
+    "reconcile_unresolved_reply_tasks_with_settlement_evidence",
+    "reconcile_unresolved_reply_tasks_with_terminal_attempts",
+    "reconcile_valid_needs_human_projections",
+    "recover_failed_native_codex_auth_tasks",
+    "recover_interrupted_agent_runs_after_service_restart",
+    "recover_orphaned_processing_reply_tasks",
+    "recover_stale_processing_reply_tasks",
+    "recover_stale_runtime_attempts",
+    "release_ready_to_send_meeting_alignment_claims",
+    "reopen_meeting_alignment_job_for_replay",
+    "replace_pending_single_chat_reply_task_trigger",
+    "requeue_failed_meeting_delivery",
+    "requeue_failed_meeting_memory_write_event",
+    "requeue_failed_reply_task_for_source_revision",
+    "requeue_failed_work_summary_input",
+    "requeue_reply_task",
+    "requeue_terminal_reply_task_for_revised_trigger",
+    "rerun_meeting_alignment_jobs",
+    "reset_processing_meeting_alignment_jobs",
+    "reset_processing_work_summary_inputs",
+    "reset_ready_to_send_meeting_alignment_jobs",
+    "reset_recoverable_okr_review_requests",
+    "reset_stale_processing_work_summary_inputs",
+    "resolve_completed_oa_needs_human_attempt",
+    "resolve_reconciled_failed_reply_task",
+    "restore_confirmed_meeting_delivery",
+    "resume_completed_agent_turns_after_service_restart",
+    "retry_failed_effect_free_email_unsubscribe_tasks",
+    "retry_failed_pre_agent_reply_task",
+    "retry_failed_reply_task",
+    "rotate_reply_task_execution_generation",
+    "schedule_ready_to_send_meeting_alignment_retry",
+    "schedule_work_summary_input_retry",
+    "skip_failed_legacy_email_unsubscribe_tasks",
+    "skip_failed_reply_tasks_superseded_by_terminal_business_object",
+    "skip_failed_reply_tasks_with_terminal_no_action_run",
+    "skip_scheduled_reply_task",
+    "skip_unstarted_service_tasks",
+    "terminalize_exhausted_pending_reply_tasks",
+    "terminalize_legacy_email_unsubscribe_task",
+    "update_meeting_alignment_job",
+    "upsert_meeting_alignment_job"
+  ],
+  "status": "complete_unselected_caller_proposal_not_application_acceptance",
+  "base_commit": "d618b0646979e50e09fae8f363b1a63046b54410",
+  "base_store_blob": "d75dc10c2f9897ad89517efe54f2f4e46b0d5506",
+  "candidate_sha256": "f4b3b9ddf3341c48b9fe77b6fbfa81fbd376f3549fe4d086f45efe2a37950bec",
+  "patch_sha256": "691cc165fdbaaa4e56a04b907dc6c76cbbc717c4e0c3fc9f3c31a95857cc873c",
+  "validation": {
+    "exact_pinned_apply_check": true,
+    "exact_applied_bytes": true,
+    "ast_parse": true,
+    "python_compile": true,
+    "import_without_constructor": true,
+    "ruff": true,
+    "total_methods": 778,
+    "changed_methods": 91,
+    "unrelated_method_ast_exact": 687,
+    "all_method_signatures_decorators_return_annotations_exact": true,
+    "all_93_source_update_anchors_covered": true,
+    "update_set_parts_calls": 96,
+    "update_helper_parameters_empty": true,
+    "meeting_full_row_returning_calls": 9,
+    "static_rendered_queries": 193,
+    "residual_native_business_column_references": 0,
+    "static_scan_boundary": "Rendered literal native Tasks scopes and explicit indirect SQL leaves/fragments; source-shaped projection aliases and the outer work_summary payload_json container are intentionally excluded. This is static coverage, not executed SQL or public-method differential acceptance.",
+    "blank_context_patch_lines_normalized": true
+  },
+  "integration_obligations": [
+    {
+      "method": "_initialize",
+      "source_line": 4164,
+      "reason": "Global REPLY_TASK_CURRENT_SQL now uses target source-shaped aliases; unchanged historical/fresh initialization must be ordered after complete paired Tasks20 cutover, separately proved."
+    },
+    {
+      "method": "_migrate_removed_runtime",
+      "source_line": 8249,
+      "reason": "Historical migration consumes global REPLY_TASK_CURRENT_SQL; its native SQL remains untouched and requires explicit paired-cutover ordering/source proof."
+    },
+    {
+      "method": "Store._open_connection and EmailStore._open_connection",
+      "reason": "Register exact scalar codec at both connection constructors only with complete paired cutover; this patch does not change either connection path."
+    },
+    {
+      "method": "All8+12 schema/constructors/copy/current-fact inverse/predecessor writes/reforward",
+      "reason": "Remain root-owned whole-release work; this is one complete Store8 caller proposal, not Tasks20 activation or all116 mutations."
+    }
+  ]
+}

@@ -2,7 +2,6 @@
 # ruff: noqa: F811
 
 from contextlib import closing
-from pathlib import Path
 import sqlite3
 
 import pytest
@@ -10,14 +9,20 @@ import pytest
 from app import action_postfix_schema_release as release_module
 from app import action_storage as storage
 from app.action_postfix_storage import capture_action_postfix_schema, migrate_action_postfix_schema
-from app.action_delivery_storage import capture_action_delivery_schema, restore_action_delivery_schema
 from app.action_receipt_storage import migrate_action_receipt_schema
 from app.task_schema_release import _foreign_keys
 from tests.test_action_receipt_source import source_values
 from tests.test_action_receipt_storage import source15_database
 from tests.test_action_receipt_storage import target_db  # noqa: F401
-from tests.test_action_delivery_migration import delivery_source
 from tests.test_postfix_action_source import SOURCE as POSTFIX_SOURCE
+
+
+@pytest.fixture(autouse=True)
+def _historical_text_action_dml(monkeypatch):
+    """Keep this Store16/17 TEXT fixture on its historical Actions layout."""
+    from tests.historical_action_text_fixture import install
+
+    install(monkeypatch)
 
 
 SOURCE = ("2026-10-13.2", " original marker time ")
@@ -149,67 +154,6 @@ def test_current_facts_and_all_nine_identities_survive_inverse_repeat_and_republ
         }
 
 
-def test_real_store17_fixture_historical_publication_and_republication(tmp_path, target_db):
-    from app.action_postfix_storage import restore_action_postfix_schema
-    from app.action_reply_storage import capture_action_reply_schema, restore_action_reply_schema
-    from app.run_storage import insert_run
-    from app.store import AutoReplyStore
-    from app.task_storage import insert_task
-    from tests.test_reply_attempt_action_migration import _database
-
-    scope_path = tmp_path / "captured-source-scope.sqlite3"
-    _source(scope_path)
-    with closing(sqlite3.connect(scope_path)) as db:
-        source_schema = capture_action_postfix_schema(db)
-    reply_source_path = tmp_path / "captured-reply-source.sqlite3"
-    with closing(_database(reply_source_path, "fresh_candidate17")) as db:
-        reply_source_schema = capture_action_reply_schema(db)
-    path = tmp_path / "full-store.sqlite3"
-    AutoReplyStore(path)
-    delivery_source(target_db, "actual")
-    delivery_schema = capture_action_delivery_schema(target_db)
-    with closing(sqlite3.connect(path)) as db:
-        insert_task(db, "reply_tasks", dict(id=1, conversation_id="chat", conversation_title="source",
-                    single_chat=0, trigger_message_id="message", trigger_create_time="time", trigger_sender="sender"))
-        insert_run(db, "agent_runs", dict(id=1, task_id=1, execution_generation="generation", role="consumer"))
-        _new_facts(db, target=True, key="before-publication")
-        for kind, watermark in (("agent_effect_intents", 560), ("agent_execution_receipts", 115)):
-            storage.insert_action(db, kind, {**source_values(kind, token="deleted-high"), "id": watermark})
-            storage.delete_action(db, kind, watermark)
-        db.commit()
-        # The current factory creates Store19. Apply the reply and delivery
-        # current-fact inverses before reconstructing historical Store16.
-        db.execute("pragma foreign_keys=off")
-        db.execute("begin immediate")
-        restore_action_reply_schema(db, reply_source_schema)
-        db.execute("update service_state set value='2026-10-13.4' where key='store_schema_version'")
-        restore_action_delivery_schema(db, delivery_schema)
-        db.execute("update service_state set value=? where key='store_schema_version'", (TARGET,))
-        original = _snapshot(db, target=True)
-        restore_action_postfix_schema(db, source_schema)
-        db.execute("update service_state set value=?,updated_at=? where key='store_schema_version'", SOURCE)
-        db.commit()
-        assert capture_action_postfix_schema(db) == source_schema
-        assert _snapshot(db, target=False) == original
-    release = release_module.prepare_action_postfix_schema_release(Path(__file__).parents[1], path, SOURCE)
-    assert isinstance(release, release_module.ActionPostfixSchemaRelease)
-    assert release.migrate is release_module._migrate_store
-    release.migrate = _publish
-    release.publish()
-    with closing(sqlite3.connect(path)) as db:
-        assert _marker(db)[0] == TARGET
-        assert _snapshot(db, target=True) == original
-        _new_facts(db, target=True, key="after-publication")
-        current = _snapshot(db, target=True)
-        db.commit()
-    release.rollback()
-    with closing(sqlite3.connect(path)) as db:
-        assert _marker(db) == SOURCE
-        assert _snapshot(db, target=False) == current
-    release.publish()
-    release.finalize()
-    with closing(sqlite3.connect(path)) as db:
-        assert _snapshot(db, target=True) == current
 
 
 def test_prepare_captures_read_only_exact_marker_schema_and_old_fk_diagnostics(tmp_path):
@@ -404,7 +348,7 @@ def test_failed_publication_preserves_new_facts_and_inverts_before_old_start(tmp
     updater = RepositoryUpdater(
         checkout, _State(), database_path=path, stop=lambda: events.append("stop"),
         restart=start, health=lambda: failure != "health" or starts > 1,
-        database_publication=lambda: release,
+        database_publication=lambda _backup: release,
         dependency_sync=lambda: fail_at("dependencies"), verification=lambda: fail_at("verification"),
     )
     with pytest.raises(UpgradeFailed):

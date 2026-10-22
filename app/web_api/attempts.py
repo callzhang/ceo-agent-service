@@ -2,6 +2,7 @@
 
 import json
 from collections.abc import Callable
+from datetime import datetime, timezone
 from types import SimpleNamespace
 from typing import Any
 from urllib.parse import quote
@@ -10,8 +11,9 @@ from app.wechat.models import principal_reply_supersession
 from app.attempt_rerun_presentation import RerunPresentation, attempt_rerun_presentation
 from app.attempt_projection import terminal_oa_source_closure_is_skipped
 from app.attempt_what_happened import build_what_happened, stopped_because
+from app.history_actions import can_reopen_skipped_oa_review
 from app.web_api.common import json_safe, normalize_display_value
-from app.run_storage import AGENT_RUN_SQL
+from app.logical_run_storage import AGENT_RUN_SQL
 from app.agent_contracts import parse_persisted_consumer_result
 
 from app.action_storage import (
@@ -54,6 +56,12 @@ def _status_message(
         return "这条事项已判定无需回复，无需你操作。", False
     if status == "needs_human":
         return "这条事项等待你的决策。请阅读已核验事实后提交处理指令。", True
+    if status == "blocked" and getattr(attempt, "send_error", "") == "consumer_purpose_retry_exhausted":
+        return (
+            "权限申请后的自动重读次数已用完，审批仍待处理。权限开通后可重新读取并审核；"
+            "此状态不代表审批失败，也不会自动执行审批动作。",
+            False,
+        )
     if status == "failed":
         if rerun_block_reason:
             return rerun_block_reason, False
@@ -504,6 +512,8 @@ def _action_links(
     rerun: RerunPresentation,
     *,
     rerun_block_reason: str = "",
+    source_send_status: str = "",
+    source_is_latest: bool = False,
 ) -> dict[str, Any]:
     from app.audit_web import _sent_reply_has_recall_target
 
@@ -539,14 +549,30 @@ def _action_links(
             delivery_action_label = "重试发送"
             delivery_action_url = f"/api/console/wechat/deliveries/{delivery_id}/retry"
     terminal = terminal and not delivery_action_url
+    can_resend_wechat = (
+        source_send_status == "sent"
+        and source_is_latest
+        and str(getattr(attempt, "channel", "") or "") == "wechat"
+        and reply_task is not None
+        and not bool(getattr(reply_task, "input_compacted", False))
+        and str(getattr(reply_task, "trigger_message_id", "") or "") == str(attempt.trigger_message_id)
+        and int(getattr(reply_task, "manual_rerun_attempt_id", 0) or 0) != int(attempt.id)
+    )
     return {
-        "can_rerun": status == "failed" and not rerun_block_reason,
+        "can_rerun": (
+            (status == "failed" and not rerun_block_reason)
+            or (status == "blocked" and attempt.send_error == "consumer_purpose_retry_exhausted" and not rerun_block_reason)
+            or can_reopen_skipped_oa_review(attempt, reply_task)
+        ),
         "rerun_label": rerun.label,
         "rerun_confirmation": rerun.confirmation,
         "rerun_block_reason": rerun_block_reason,
         "can_recall": _sent_reply_has_recall_target(sent_reply),
         "can_submit_feedback": True,
         "rerun_url": f"/api/console/history/{int(attempt.id)}/rerun",
+        "can_resend_wechat": can_resend_wechat,
+        "resend_wechat_url": f"/api/console/history/{int(attempt.id)}/resend-wechat",
+        "resend_message_id": str(attempt.trigger_message_id) if can_resend_wechat else "",
         "recall_url": f"/api/console/history/{int(attempt.id)}/recall",
         "feedback_url": f"/api/console/history/{int(attempt.id)}/feedback",
         "consumer_url": _execution_url(attempt, agent_sessions, "consumer"),
@@ -656,15 +682,13 @@ def _system_execution_payload(
     """Project the bound plan and canonical verified receipts independently."""
     if reviewed is None:
         return None
+    from app.model_action_schema import candidate_option
+
     candidate = _stored_json(reviewed["candidate_json"], {})
-    branch = _stored_json(reviewed.get("branch_json"), {})
+    branch = (candidate_option(reviewed["candidate_json"], reviewed["option_key"])
+              if reviewed.get("selection_id") else None)
     if candidate.get("outcome") == "needs_human" and not reviewed.get("selection_id"):
         return None
-    if not branch and reviewed.get("selection_id"):
-        # Historical review projections retain the selected key, while the
-        # immutable candidate holds that key's exact reviewed action plan.
-        branch = next((option for option in candidate.get("decision_options", [])
-                       if option.get("key") == reviewed.get("option_key")), {})
     plan = branch.get("plan") if branch else candidate.get("proposal")
     actions = plan.get("actions", []) if isinstance(plan, dict) else []
     execution = store.get_candidate_execution(reviewed["id"])
@@ -711,6 +735,73 @@ def _system_execution_payload(
     }
 
 
+def _oa_permission_wait_projection(
+    store: Any,
+    task: Any,
+    reviewed: dict[str, Any] | None,
+    execution: dict[str, Any] | None,
+    *,
+    historical_error: str,
+    audit_note: str,
+) -> dict[str, str] | None:
+    """Separate a verified OA access-request receipt from the current wait state."""
+    from app.consumer_purpose_retry import RETRY_REQUESTED, PurposeRetryBudget
+
+    if (
+        task is None
+        or str(getattr(task, "status", "") or "") not in {"pending", "processing"}
+        or str(getattr(task, "error", "") or "") != RETRY_REQUESTED
+        or reviewed is None
+        or execution is None
+    ):
+        return None
+    candidate = _stored_json(str(reviewed.get("candidate_json") or ""), {})
+    purpose_output = candidate.get("purpose_output") or {}
+    if purpose_output.get("purpose") != "oa" or purpose_output.get("action") != "request_access":
+        return None
+    business_key = str(getattr(task, "business_object_key", "") or "").strip()
+    retry_key = business_key or f"reply-task:{int(getattr(task, 'id', 0) or 0)}"
+    retry_state = PurposeRetryBudget(store, retry_key, "oa").state()
+    if not retry_state or retry_state.get("closed"):
+        return None
+    verified = [
+        action for action in execution.get("actions", [])
+        if action.get("operation") == "comment"
+        and action.get("status") == "verified"
+        and action.get("receipt")
+        and action["receipt"].get("external_action_key") == retry_state.get("receipt")
+    ]
+    if len(verified) != 1:
+        return None
+    provider_result = verified[0]["receipt"].get("provider_result") or {}
+    operation_record = provider_result.get("operation_record") or {}
+    raw_timestamp = operation_record.get("date")
+    operation_time = "未由回执提供"
+    if isinstance(raw_timestamp, (int, float)) and raw_timestamp > 0:
+        operation_time = datetime.fromtimestamp(
+            raw_timestamp / 1000, tz=timezone.utc
+        ).isoformat(timespec="seconds").replace("+00:00", "Z")
+    note = str(audit_note or "").strip()
+    audit_text = (
+        f"此前 Audit 说明（针对执行前候选）：{note}"
+        if note else "此前 Audit 说明针对执行前候选。"
+    )
+    return {
+        "current_status": str(getattr(task, "status", "") or ""),
+        "current_error": RETRY_REQUESTED,
+        "historical_error": str(historical_error or "").strip(),
+        "operation_time": operation_time,
+        "status_message": (
+            f"权限申请评论已由系统回执核验送达（原操作时间：{operation_time}）；"
+            "当前等待权限开通后重新读取材料，尚不表示权限已开通或审批已完成。"
+        ),
+        "audit_explanation": (
+            f"{audit_text} 系统执行回执随后确认评论已送达，"
+            f"原操作时间为 {operation_time}。当前处理状态为等待权限开通后重读。"
+        ),
+    }
+
+
 def build_attempt_detail(
     store: Any, attempt_id: int, *, email_store_factory: Callable[[], Any] | None = None
 ) -> tuple[int, dict[str, Any] | None]:
@@ -726,6 +817,7 @@ def build_attempt_detail(
         _attempt_detail_reply_text,
         _attempt_info_tooltip,
         _feedback_token_for_sent_reply,
+        _sent_reply_recall_message_id,
         _attempt_reason_text,
         _needs_human_decision_options,
         _quality_warnings,
@@ -866,8 +958,35 @@ def build_attempt_detail(
     agent_sessions = _agent_sessions(attempt, agent_runs)
     feedback_token = _feedback_token_for_sent_reply(sent_reply)
     feedback_events = store.list_feedback_events_for_tokens([feedback_token]).get(feedback_token, [])
+    delivery = None
+    if sent_reply is not None:
+        source_available = sent_reply.operation is not None and sent_reply.target is not None
+        delivery = {
+            "action_id": sent_reply.id,
+            "conversation_id": sent_reply.conversation_id,
+            "trigger_message_id": sent_reply.trigger_message_id,
+            "body": sent_reply.reply_text,
+            "receipt_id": sent_reply.receipt_id,
+            "operation": sent_reply.operation,
+            "target": sent_reply.target,
+            "sent_at": sent_reply.sent_at,
+            "source_available": source_available,
+            "source_label": "来源事实已记录" if source_available else "来源事实未提供",
+            "provider_message_id": sent_reply.provider_result_id or _sent_reply_recall_message_id(sent_reply),
+            "provider_receipt": {
+                "id": sent_reply.provider_receipt_id,
+                "available": sent_reply.provider_receipt_id is not None,
+                "body": sent_reply.send_result_json,
+                "result_digest": sent_reply.result_digest,
+            },
+            "recall_status": sent_reply.recall_status,
+            "recalled_at": sent_reply.recalled_at,
+        }
     rerun = (attempt_rerun_presentation(store, reply_task, agent_runs)
              if attempt.send_status == "failed" else RerunPresentation())
+    latest_attempt = store.get_latest_reply_attempt_for_trigger(
+        historical_attempt.conversation_id, historical_attempt.trigger_message_id,
+    ) if historical_attempt.channel == "wechat" else None
     status_message, requires_decision = _status_message(attempt, attention, rerun_block_reason=rerun_block_reason)
     # A sent-reply ledger is direct evidence that a DingTalk response reached
     # the provider. Prefer it to the task projection (which can simply be
@@ -949,6 +1068,25 @@ def build_attempt_detail(
         audit_explanation = _attempt_reason_text(attempt)
     except RuntimeError:
         audit_explanation = attempt.codex_reason or attempt.send_error
+    oa_permission_wait = _oa_permission_wait_projection(
+        store,
+        reply_task,
+        history_reviewed,
+        system_execution,
+        historical_error=attempt.send_error,
+        audit_note=audit_explanation,
+    )
+    if oa_permission_wait is not None:
+        status_message = oa_permission_wait["status_message"]
+        audit_explanation = oa_permission_wait["audit_explanation"]
+        # The immutable Attempt row may still say "running" or carry the
+        # executor's earlier uncertainty. Project the current task wait state
+        # for this detail response, while retaining the original error below.
+        attempt = attempt.model_copy(update={
+            "send_status": oa_permission_wait["current_status"],
+            "send_error": oa_permission_wait["current_error"],
+            "audit_summary": oa_permission_wait["audit_explanation"],
+        })
     stop_reason = stopped_because(current_agent_runs)
     if reply_task is not None and reply_task.status in {"done", "skipped"}:
         stop_reason = {"kind": "none", "code": "", "sentence": ""}
@@ -980,12 +1118,27 @@ def build_attempt_detail(
         {"label": "sensitivity", "value": normalize_display_value(attempt.sensitivity_kind)},
         {"label": "permission", "value": normalize_display_value(_permission_display(attempt))},
         {"label": "send status", "value": normalize_display_value(attempt.send_status)},
-        {"label": "send error", "value": normalize_display_value(attempt.send_error)},
+        {
+            "label": "send error",
+            "value": normalize_display_value(
+                oa_permission_wait["current_error"]
+                if oa_permission_wait is not None else attempt.send_error
+            ),
+        },
         {"label": "retry count", "value": str(attempt.retry_count)},
         {"label": "created", "value": normalize_display_value(attempt.created_at)},
         {"label": "updated", "value": normalize_display_value(attempt.updated_at)},
         {"label": "reviewed", "value": normalize_display_value(attempt.reviewed_at)},
     ]
+    if (
+        oa_permission_wait is not None
+        and oa_permission_wait["historical_error"]
+        and oa_permission_wait["historical_error"] != oa_permission_wait["current_error"]
+    ):
+        metadata.append({
+            "label": "原始 Attempt 错误（历史）",
+            "value": normalize_display_value(oa_permission_wait["historical_error"]),
+        })
     if (
         reply_task is not None
         and int(getattr(reply_task, "manual_rerun_attempt_id", 0) or 0) > 0
@@ -1049,10 +1202,12 @@ def build_attempt_detail(
         "generated_reply": {
             "title": "生成回复",
             "text": normalize_display_value(
-                what_happened.get("proposed_text")
+                sent_reply.reply_text if sent_reply is not None and sent_reply.reply_text.strip()
+                else what_happened.get("proposed_text")
                 or _attempt_detail_reply_text(attempt, sent_reply)
             ),
         },
+        "delivery": delivery,
         "email": _email_payload(attempt, reply_task, email_store_factory),
         "references": _references_payload(attempt),
         "feedback": {
@@ -1091,7 +1246,14 @@ def build_attempt_detail(
             "result": _stored_json(attempt.calendar_response_result_json, {}),
         },
         "actions": _action_links(
-            attempt, agent_sessions, reply_task, sent_reply, wechat_delivery, rerun, rerun_block_reason=rerun_block_reason
+            attempt, agent_sessions, reply_task, sent_reply, wechat_delivery, rerun,
+            rerun_block_reason=rerun_block_reason,
+            source_send_status=historical_attempt.send_status,
+            source_is_latest=(
+                latest_attempt is not None
+                and latest_attempt.channel == "wechat"
+                and latest_attempt.id == historical_attempt.id
+            ),
         ),
         "agent_sessions": agent_sessions,
         "runtime_attempts": runtime_attempts,

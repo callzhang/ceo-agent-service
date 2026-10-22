@@ -1,14 +1,20 @@
+"""Attention selects compact current Email actions before classification payloads."""
+
+from app.action_storage import insert_action
 from app.audit_web import _queue_attention_rows
-from app.email_store import EmailStore
-from app.store import AutoReplyStore
+from tests.test_email_action_external_consumers import _two_failed_actions
 
 
 def test_attention_selects_failed_action_ids_before_loading_classifications(
     tmp_path, monkeypatch
 ):
-    path = tmp_path / "worker.sqlite3"
-    store = AutoReplyStore(path)
-    EmailStore(path)
+    store = _two_failed_actions(tmp_path / "worker.sqlite3")
+    with store._connect() as db:
+        for number in range(1200):
+            insert_action(db, "sent_replies", dict(
+                conversation_id=f"unrelated-{number}",
+                trigger_message_id=f"message-{number}", reply_text="sent",
+            ))
     statements = []
     original_open = store._open_connection
 
@@ -19,36 +25,35 @@ def test_attention_selects_failed_action_ids_before_loading_classifications(
 
     monkeypatch.setattr(store, "_open_connection", traced_connection)
     with store.read_snapshot():
-        assert _queue_attention_rows(store) == []
+        rows = [row for row in _queue_attention_rows(store)
+                if row["category"] == "Email action"]
+    assert len(rows) == 2
     query = next(sql for sql in statements if "select a.action_id as id" in sql)
     with store._connect() as db:
         plan = [row[3] for row in db.execute("explain query plan " + query)]
-    assert any("COVERING INDEX idx_email_actions_status" in step for step in plan), plan
-    assert not any(step.startswith("SCAN c") or step == "SCAN a" for step in plan), plan
-    assert any("SEARCH c USING INTEGER PRIMARY KEY" in step for step in plan), plan
+        steps = 0
+
+        def count_steps():
+            nonlocal steps
+            steps += 1000
+            return steps > 300_000
+
+        db.set_progress_handler(count_steps, 1000)
+        try:
+            assert len(db.execute(query).fetchall()) == 2
+        finally:
+            db.set_progress_handler(None, 0)
+    assert any("SEARCH a USING INDEX " in step and "(record_type=?)" in step
+               for step in plan), plan
+    assert any("SEARCH main.emails USING INDEX sqlite_autoindex_emails_1 "
+               "(classification_id=?)" in step for step in plan), plan
+    assert not any(step.startswith("SCAN main.emails") for step in plan), plan
+    assert steps < 300_000
 
 
-def test_attention_does_not_hide_a_legacy_null_action_id(tmp_path):
-    store = AutoReplyStore(tmp_path / "worker.sqlite3")
-    with store._connect() as db:
-        db.executescript("""
-            create table email_classifications (
-                id integer primary key, sender text, subject text,
-                current_action_plan_id text, status text
-            );
-            create table email_actions (
-                action_id text primary key, classification_id integer,
-                action_plan_id text, status text, account_id text,
-                provider_target text, action_type text, updated_at text,
-                error text, attempt_count integer, next_attempt_at text
-            );
-            create index idx_email_actions_status on email_actions(status, updated_at, action_id);
-            insert into email_classifications values (1,'Sender','Subject','plan','processed');
-            insert into email_actions values (
-                null,1,'plan','failed','account','','move','2026-10-08','failure',10,''
-            );
-        """)
-    rows = _queue_attention_rows(store)
-    assert len(rows) == 1
-    assert rows[0]["category"] == "Email action"
-    assert rows[0]["id"] == "None"
+def test_attention_does_not_hide_nullable_public_action_ids(tmp_path):
+    store = _two_failed_actions(tmp_path / "worker.sqlite3")
+    rows = [row for row in _queue_attention_rows(store)
+            if row["category"] == "Email action"]
+    assert len(rows) == 2
+    assert [row["id"] for row in rows] == ["None", "None"]

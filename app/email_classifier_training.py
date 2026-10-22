@@ -1,14 +1,11 @@
-"""CPU email-classifier training, validation, and immutable promotion."""
+"""CPU email-classifier training, validation, and frozen candidate staging."""
 
 from __future__ import annotations
 
 import math
 import json
-import os
-import shutil
 import tempfile
 import time
-import warnings
 from importlib.metadata import version as dependency_version
 from collections import Counter
 from collections.abc import Callable, Mapping, Sequence
@@ -1486,17 +1483,6 @@ def evaluate_category_validation(
     return result
 
 
-def assess_feedback_readiness(
-    store: EmailStore,
-    *,
-    minimum_examples: int = 5,
-    minimum_per_category: int = 2,
-) -> TrainingReadiness:
-    return assess_examples_readiness(
-        store.list_training_examples(),
-        minimum_examples=minimum_examples,
-        minimum_per_category=minimum_per_category,
-    )
 
 
 def assess_examples_readiness(
@@ -1533,271 +1519,8 @@ def assess_examples_readiness(
     return TrainingReadiness(not reasons, len(examples), counts, tuple(reasons))
 
 
-def train_and_promote(
-    store: EmailStore,
-    registry: EmailModelRegistry | str | Path,
-    previous_path: str | Path | None = None,
-    *,
-    model_version: str | None = None,
-    trained_at: datetime | None = None,
-    c: float = 0.25,
-    minimum_examples: int = 5,
-    minimum_per_category: int = 2,
-    category_requirements: Mapping[EmailCategory, EligibilityRequirement] | None = None,
-    training_examples: Sequence[Mapping[str, object]] | None = None,
-) -> TrainingResult:
-    """Train a candidate, validate its immutable artifact, and promote atomically."""
-    if not isinstance(registry, EmailModelRegistry):
-        if previous_path is None or model_version is None:
-            raise TypeError(
-                "path-based promotion requires previous_path and model_version"
-            )
-        return _train_and_promote_paths(
-            store,
-            Path(registry),
-            Path(previous_path),
-            model_version=model_version,
-            c=c,
-            minimum_examples=minimum_examples,
-            minimum_per_category=minimum_per_category,
-        )
-    started = datetime.now(timezone.utc)
-    examples = list(
-        training_examples
-        if training_examples is not None
-        else store.list_training_examples(include_inclusion=True)
-    )
-    readiness = assess_examples_readiness(
-        examples,
-        minimum_examples=minimum_examples,
-        minimum_per_category=minimum_per_category,
-    )
-    if not readiness.ready:
-        raise TrainingNotReady("; ".join(readiness.reasons))
-    enabled_category_keys = _validated_training_category_keys(examples)
-    validation_snapshots = tuple(dict(example) for example in examples)
-    inclusion_snapshots = tuple(
-        example
-        for example in validation_snapshots
-        if example["included_in_model_id"] is None
-    )
-    if not inclusion_snapshots:
-        raise TrainingNotReady("no unincluded authoritative feedback")
-
-    validation_method, expected, validation_predictions = _validation_predictions(
-        examples,
-        c=c,
-        enabled_category_keys=enabled_category_keys,
-    )
-    predicted = [prediction.label for prediction in validation_predictions]
-    labels = sorted(readiness.category_counts)
-    accuracy = float(accuracy_score(expected, predicted))
-    requirements = _default_requirements(labels)
-    requirements.update(category_requirements or {})
-    per_category_validation = evaluate_category_validation(
-        expected,
-        validation_predictions,
-        requirements,
-    )
-    assessment = assess_candidate(
-        readiness,
-        validation_score=accuracy,
-        validation_method=validation_method,
-        per_category=per_category_validation,
-        category_requirements=requirements,
-    )
-
-    classifier = CpuTfidfLogisticClassifier(c=c, model_version="candidate")
-    classifier.fit(
-        [example["model_text"] for example in examples],
-        [example["label"] for example in examples],
-        enabled_category_keys=enabled_category_keys,
-    )
-    p50, p95 = _prediction_latency(
-        classifier, [example["model_text"] for example in examples]
-    )
-    finished = trained_at or datetime.now(timezone.utc)
-    if finished.tzinfo is None or finished.utcoffset() is None:
-        raise ValueError("trained_at must be timezone-aware")
-
-    with tempfile.TemporaryDirectory(dir=registry.root) as temporary_directory:
-        candidate_path = Path(temporary_directory) / "candidate.pkl"
-        classifier.save(candidate_path)
-        digest = sha256(candidate_path.read_bytes()).hexdigest()
-        model_id = build_model_id(trained_at=finished, artifact_sha256=digest)
-        parent = registry.active_manifest()
-        metadata = EmailModelMetadata(
-            model_id=model_id,
-            parent_model_id=parent.model_id if parent else None,
-            model_family=MODEL_FAMILY,
-            tokenizer_version="jieba-default-v1",
-            feature_version=CpuTfidfLogisticClassifier.FEATURE_VERSION,
-            training_dataset_version=_dataset_version(examples),
-            trained_at=finished.astimezone(timezone.utc).isoformat(),
-            training_started_at=started.isoformat(),
-            training_finished_at=finished.astimezone(timezone.utc).isoformat(),
-            sample_count=len(examples),
-            new_sample_count=len(inclusion_snapshots),
-            category_counts=readiness.category_counts,
-            account_counts=dict(Counter(str(item["account_id"]) for item in examples)),
-            validation_method=validation_method,
-            accuracy=accuracy,
-            per_category_metrics={
-                label: {
-                    "precision": per_category_validation[
-                        EmailCategory(label)
-                    ].validated_precision,
-                    "recall": per_category_validation[
-                        EmailCategory(label)
-                    ].validated_recall,
-                    "f1": per_category_validation[EmailCategory(label)].validated_f1,
-                    "validation_sample_count": per_category_validation[
-                        EmailCategory(label)
-                    ].validation_positive_support,
-                    "validation_positive_support": per_category_validation[
-                        EmailCategory(label)
-                    ].validation_positive_support,
-                    "automatic_candidate_count": per_category_validation[
-                        EmailCategory(label)
-                    ].automatic_candidate_count,
-                    "evaluated_threshold": per_category_validation[
-                        EmailCategory(label)
-                    ].evaluated_threshold,
-                    "configured_threshold": assessment.categories[
-                        EmailCategory(label)
-                    ].configured_threshold,
-                    "minimum_precision": requirements[
-                        EmailCategory(label)
-                    ].minimum_precision,
-                    "minimum_validation_samples": requirements[
-                        EmailCategory(label)
-                    ].minimum_validation_samples,
-                    "auto_action_eligible": assessment.categories[
-                        EmailCategory(label)
-                    ].auto_action_eligible,
-                    "eligibility_reason": assessment.categories[
-                        EmailCategory(label)
-                    ].reason,
-                }
-                for label in labels
-            },
-            prediction_latency_p50_ms=p50,
-            prediction_latency_p95_ms=p95,
-            artifact_sha256=digest,
-            status="candidate",
-            promotion_reason="candidate_validation_pending",
-            failure_reason="",
-        )
-        parity_texts = tuple(example["model_text"] for example in examples)
-        parity_labels = tuple(classifier.predict(text).label for text in parity_texts)
-        registry.stage_candidate(
-            candidate_path,
-            metadata,
-            parity_texts=parity_texts,
-            expected_labels=parity_labels,
-        )
-
-    rejection = _promotion_rejection(registry, metadata)
-    if rejection is not None:
-        registry.reject(model_id, reason=rejection)
-        return _result(metadata, promoted=False, status="rejected", reason=rejection)
-    manifest_snapshot = registry.snapshot_manifests()
-    try:
-        store.commit_training_promotion(
-            validation_snapshots,
-            inclusion_snapshots=inclusion_snapshots,
-            model_id=model_id,
-            promote=lambda: registry.promote(
-                model_id, reason="candidate_validation_passed"
-            ),
-            restore=lambda: registry.restore_manifest_snapshot(
-                manifest_snapshot,
-                failed_model_id=model_id,
-                reason="promotion_inclusion_consistency_failed",
-            ),
-        )
-    except Exception as exc:
-        if registry.get_model(model_id).status == "candidate":
-            registry.mark_failed(
-                model_id,
-                reason=f"promotion_inclusion_failed:{type(exc).__name__}",
-            )
-        raise
-    return _result(
-        metadata, promoted=True, status="active", reason="candidate_validation_passed"
-    )
 
 
-def _train_and_promote_paths(
-    store: EmailStore,
-    active: Path,
-    previous: Path,
-    *,
-    model_version: str,
-    c: float,
-    minimum_examples: int,
-    minimum_per_category: int,
-) -> TrainingResult:
-    """Preserve the existing prototype API while callers migrate to the registry."""
-    warnings.warn(
-        "path-based email model promotion is deprecated; use EmailModelRegistry",
-        DeprecationWarning,
-        stacklevel=2,
-    )
-    readiness = assess_feedback_readiness(
-        store,
-        minimum_examples=minimum_examples,
-        minimum_per_category=minimum_per_category,
-    )
-    if not readiness.ready:
-        raise TrainingNotReady("; ".join(readiness.reasons))
-    examples = store.list_training_examples()
-    enabled_category_keys = _validated_training_category_keys(examples)
-    method, expected, predictions = _validation_predictions(
-        examples,
-        c=c,
-        enabled_category_keys=enabled_category_keys,
-    )
-    accuracy = float(accuracy_score(expected, [item.label for item in predictions]))
-    classifier = CpuTfidfLogisticClassifier(c=c, model_version=model_version).fit(
-        [item["model_text"] for item in examples],
-        [item["label"] for item in examples],
-        enabled_category_keys=enabled_category_keys,
-    )
-    p50, p95 = _prediction_latency(
-        classifier, [item["model_text"] for item in examples]
-    )
-    active.parent.mkdir(parents=True, exist_ok=True)
-    candidate: Path | None = None
-    try:
-        with tempfile.NamedTemporaryFile(dir=active.parent, delete=False) as handle:
-            candidate = Path(handle.name)
-        classifier.save(candidate)
-        CpuTfidfLogisticClassifier.load(candidate)
-        if active.exists():
-            previous.parent.mkdir(parents=True, exist_ok=True)
-            shutil.copy2(active, previous)
-        os.replace(candidate, active)
-        candidate = None
-    finally:
-        if candidate is not None:
-            candidate.unlink(missing_ok=True)
-    return TrainingResult(
-        promoted=True,
-        model_id=model_version,
-        example_count=len(examples),
-        new_sample_count=len(examples),
-        category_counts=readiness.category_counts,
-        account_counts=dict(
-            Counter(_account_id(item["message_id"]) for item in examples)
-        ),
-        validation_method=method,
-        accuracy=accuracy,
-        prediction_latency_p50_ms=p50,
-        prediction_latency_p95_ms=p95,
-        status="active",
-        promotion_reason="prototype_path_promotion",
-    )
 
 
 def _validation_predictions(
@@ -1869,29 +1592,6 @@ def _percentile(values: Sequence[float], fraction: float) -> float:
     return float(values[index])
 
 
-def _promotion_rejection(
-    registry: EmailModelRegistry, candidate: EmailModelMetadata
-) -> str | None:
-    if candidate.prediction_latency_p95_ms >= 100.0:
-        return "latency_p95_exceeded"
-    active = registry.active_manifest()
-    if active is None:
-        return None
-    current = registry.get_model(active.model_id).metadata
-    for label, previous in current.per_category_metrics.items():
-        incoming = candidate.per_category_metrics.get(label)
-        if incoming is None:
-            continue
-        previous_count = int(previous.get("validation_sample_count", 0))
-        incoming_count = int(incoming.get("validation_sample_count", 0))
-        minimum = int(previous.get("minimum_validation_samples", 1))
-        if previous_count < minimum or incoming_count < minimum:
-            continue
-        if float(incoming.get("precision", 0.0)) < float(
-            previous.get("precision", 0.0)
-        ):
-            return f"category_precision_regressed:{label}"
-    return None
 
 
 def _default_requirements(
@@ -1905,38 +1605,3 @@ def _default_requirements(
         )
         for label in labels
     }
-
-
-def _dataset_version(examples: Sequence[Mapping[str, str]]) -> str:
-    digest = sha256()
-    for example in examples:
-        digest.update(example["message_id"].encode("utf-8"))
-        digest.update(b"\0")
-        digest.update(example["label"].encode("utf-8"))
-        digest.update(b"\0")
-        digest.update(sha256(example["model_text"].encode("utf-8")).digest())
-    return "feedback-sha256:" + digest.hexdigest()
-
-
-def _account_id(message_id: str) -> str:
-    account_id, separator, _ = message_id.partition(":")
-    return account_id if separator and account_id else "unknown-account"
-
-
-def _result(
-    metadata: EmailModelMetadata, *, promoted: bool, status: str, reason: str
-) -> TrainingResult:
-    return TrainingResult(
-        promoted=promoted,
-        model_id=metadata.model_id,
-        example_count=metadata.sample_count,
-        new_sample_count=metadata.new_sample_count,
-        category_counts=dict(metadata.category_counts),
-        account_counts=dict(metadata.account_counts),
-        validation_method=metadata.validation_method,
-        accuracy=metadata.accuracy,
-        prediction_latency_p50_ms=metadata.prediction_latency_p50_ms,
-        prediction_latency_p95_ms=metadata.prediction_latency_p95_ms,
-        status=status,
-        promotion_reason=reason,
-    )

@@ -1,6 +1,7 @@
 from pathlib import Path
 import plistlib
 import subprocess
+import os
 
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
@@ -13,7 +14,7 @@ def test_env_example_sets_default_codex_agent_settings():
     assert "\nCEO_CODEX_MODEL_REASONING_EFFORT=medium\n" in content
 
 
-def test_local_service_script_runs_single_main_service():
+def test_local_service_script_runs_single_main_service(tmp_path: Path):
     script = REPO_ROOT / "scripts" / "run-local-service.sh"
 
     content = script.read_text(encoding="utf-8")
@@ -40,7 +41,18 @@ def test_local_service_script_runs_single_main_service():
     assert "CEO_TASK_WORK_ITEM_INTERVAL_SECONDS" not in content
     assert "CEO_TASK_DAILY_INTERVAL_SECONDS" not in content
     assert "CEO_OKR_LIVE_SOURCE_COMMAND" in content
-    assert "dingteam_okr_browser_source.py fetch --user-id " in content
+    probe = tmp_path / "print-okr-source"
+    probe.write_text('#!/bin/sh\nprintf "%s\\n" "$CEO_OKR_LIVE_SOURCE_COMMAND"\n', encoding="utf-8")
+    probe.chmod(0o755)
+    result = subprocess.run(
+        ["bash", str(script)],
+        capture_output=True,
+        text=True,
+        env={**os.environ, "HOME": str(tmp_path), "CEO_PYTHON": str(probe), "CEO_MAX_BATCHES": "1", "CEO_OKR_LIVE_SOURCE_COMMAND": ""},
+        timeout=10,
+    )
+    assert result.returncode == 0, result.stderr
+    assert f"{probe} {REPO_ROOT}/scripts/dingteam_okr_headless_source.py --user-id {{user_id}} --period-label {{period_label}}" in result.stdout
     assert "'{user_id}'" in content
     assert "'{period_label}'" in content
     assert 'if [[ -z "${CEO_OKR_LIVE_SOURCE_COMMAND:-}" ]]' in content

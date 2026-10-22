@@ -3,22 +3,37 @@ from __future__ import annotations
 from datetime import UTC, date, datetime, timedelta
 from pathlib import Path
 import sqlite3
+import importlib.util
+import sys
 from types import SimpleNamespace
 
-from app.daily_report_facts import (
-    ReportWindow,
-    collect_daily_report_facts,
-    report_window_for_run,
-)
+from app.service_activity import collect_service_activity, scheduled_context
 from app.email_store import EmailStore
-from app.action_storage import update_action
+from app.action_storage import insert_sync_action, update_action
 from app.store import AutoReplyStore
 from app.task_storage import task_physical_id
+from app.task8_storage import task8_set_parts
+
+
+_window_path = (
+    Path(__file__).resolve().parents[1]
+    / "ci/shared-skills/ceo-daily-report/scripts/window.py"
+)
+_window_spec = importlib.util.spec_from_file_location(
+    "daily_report_window_tests", _window_path
+)
+_window_module = importlib.util.module_from_spec(_window_spec)
+sys.modules[_window_spec.name] = _window_module
+_window_spec.loader.exec_module(_window_module)
+
+
+def _daily_window(store, run_id):
+    return _window_module.report_window(scheduled_context(store, run_id))
 
 
 REPORT_DATE = date(2026, 9, 24)
 # One whole Beijing day, 2026-09-24.
-DAY = ReportWindow(
+DAY = SimpleNamespace(
     report_date=REPORT_DATE,
     start=datetime(2026, 9, 23, 16, tzinfo=UTC),
     end=datetime(2026, 9, 24, 16, tzinfo=UTC),
@@ -54,19 +69,30 @@ def _task(store: AutoReplyStore, title: str, *, last_activity_at: str) -> int:
     )
 
 
-def _event(store: AutoReplyStore, task_id: int, reason: str, *, created_at: str) -> None:
+def _event(
+    store: AutoReplyStore, task_id: int, reason: str, *, created_at: str
+) -> None:
     with sqlite3.connect(store.path) as db:
-        db.execute(
-            """insert into business_task_events
-               (task_id, event_type, signal_id, before_json, after_json, reason, created_at)
-               values (?, 'details_changed', null, '{}', '{}', ?, ?)""",
-            (task_id, reason, created_at),
+        insert_sync_action(
+            db,
+            "business_task_events",
+            {
+                "task_id": task_id,
+                "event_type": "details_changed",
+                "signal_id": None,
+                "before_json": "{}",
+                "after_json": "{}",
+                "reason": reason,
+                "created_at": created_at,
+            },
         )
 
 
-def _attention(store: AutoReplyStore, key: str, *, category: str, created_at: str) -> int:
+def _attention(
+    store: AutoReplyStore, key: str, *, category: str, created_at: str
+) -> int:
     signal_id = _signal(store, f"attention:{key}")
-    with store._connect() as db:
+    with store.business_task_transaction() as db:
         anchor_id = store.create_business_anchor_in_transaction(
             anchor_type="customer", anchor_ref=key, title=f"客户 {key}", _db=db
         )
@@ -86,7 +112,12 @@ def _attention(store: AutoReplyStore, key: str, *, category: str, created_at: st
 
 
 def _attempt(
-    store: AutoReplyStore, message_id: str, *, send_status: str, created_at: str, **values
+    store: AutoReplyStore,
+    message_id: str,
+    *,
+    send_status: str,
+    created_at: str,
+    **values,
 ) -> int:
     attempt_id = store.record_reply_attempt(
         conversation_id="cid-1",
@@ -111,11 +142,16 @@ class _Runs:
         # reply task id -> (task status, latest attempt send_status)
         self._outcomes = outcomes
 
+    def get_current_user_id(self):
+        return "principal-1"
+
     def get_scheduled_task_run(self, run_id):
         return self._runs.get(run_id)
 
     def list_scheduled_task_runs(self, task_id):
-        return tuple(run for run in self._runs.values() if run.scheduled_task_id == task_id)
+        return tuple(
+            run for run in self._runs.values() if run.scheduled_task_id == task_id
+        )
 
     def get_reply_task(self, task_id):
         if task_id not in self._outcomes:
@@ -136,6 +172,9 @@ def _run(run_id: int, scheduled_for: datetime, *, reply_task_id: int | None = No
         scheduled_for=scheduled_for,
         execution_kind="reply_task" if reply_task_id else "",
         execution_id=str(reply_task_id or ""),
+        dispatch_status="dispatched" if reply_task_id else "pending",
+        result_summary="",
+        snapshot=SimpleNamespace(timezone_name="Asia/Shanghai", task_version=1),
     )
 
 
@@ -146,11 +185,16 @@ EVENING_24 = datetime(2026, 9, 24, 13, tzinfo=UTC)
 
 
 def test_first_report_looks_back_one_day() -> None:
-    window = report_window_for_run(_Runs([_run(1, EVENING_24)], {}), 1)
+    window = _daily_window(_Runs([_run(1, EVENING_24)], {}), 1)
 
-    assert window == ReportWindow(
-        report_date=REPORT_DATE, start=EVENING_24 - timedelta(hours=24), end=EVENING_24
-    )
+    assert window == {
+        "report_date": REPORT_DATE.isoformat(),
+        "time_zone": "Asia/Shanghai",
+        "window_utc": {
+            "start": (EVENING_24 - timedelta(hours=24)).isoformat(),
+            "end": EVENING_24.isoformat(),
+        },
+    }
 
 
 def test_window_starts_where_the_last_delivered_report_ended() -> None:
@@ -164,7 +208,7 @@ def test_window_starts_where_the_last_delivered_report_ended() -> None:
     )
 
     # The 23rd never went out, so the 24th covers both days.
-    assert report_window_for_run(runs, 3).start == EVENING_22
+    assert _daily_window(runs, 3)["window_utc"]["start"] == EVENING_22.isoformat()
 
 
 def test_a_done_run_that_published_nothing_is_not_a_delivered_report() -> None:
@@ -178,7 +222,7 @@ def test_a_done_run_that_published_nothing_is_not_a_delivered_report() -> None:
         {101: ("done", "completed"), 102: ("done", "skipped")},
     )
 
-    assert report_window_for_run(runs, 3).start == EVENING_22
+    assert _daily_window(runs, 3)["window_utc"]["start"] == EVENING_22.isoformat()
 
 
 def test_same_day_rerun_keeps_the_original_start() -> None:
@@ -192,34 +236,41 @@ def test_same_day_rerun_keeps_the_original_start() -> None:
         {101: ("done", "completed"), 102: ("done", "completed")},
     )
 
-    window = report_window_for_run(runs, 3)
+    window = _daily_window(runs, 3)
 
-    assert (window.report_date, window.start, window.end) == (
-        REPORT_DATE,
-        EVENING_23,
-        rerun_at,
+    assert (
+        window["report_date"],
+        window["window_utc"]["start"],
+        window["window_utc"]["end"],
+    ) == (
+        REPORT_DATE.isoformat(),
+        EVENING_23.isoformat(),
+        rerun_at.isoformat(),
     )
 
 
 def test_empty_store_still_yields_a_complete_fact_document(tmp_path: Path) -> None:
     store = AutoReplyStore(tmp_path / "empty.sqlite3")
-    facts = collect_daily_report_facts(store, EmailStore(store.path), DAY)
+    facts = collect_service_activity(store, EmailStore(store.path), DAY.start, DAY.end)
 
-    assert facts["report_date"] == "2026-09-24"
+    assert facts["window_utc"] == {
+        "start": DAY.start.isoformat(),
+        "end": DAY.end.isoformat(),
+    }
     assert facts["meetings"] == []
-    assert facts["tasks_active_today"] == []
-    assert facts["business_attention"] == []
+    assert facts["tasks"] == []
+    assert facts["attention"] == []
     assert facts["important_emails"] == []
-    assert facts["handled_today"] == []
-    assert facts["waiting_on_derek"] == []
+    assert facts["attempts"] == []
+    assert facts["waiting"] == []
     assert facts["coverage"] == {
         "important_emails": 0,
         "meetings": 0,
-        "tasks_active_today": 0,
-        "business_attention": 0,
-        "handled_today": 0,
-        "skipped_today": 0,
-        "waiting_on_derek": 0,
+        "tasks": 0,
+        "attention": 0,
+        "attempts": 0,
+        "skipped": 0,
+        "waiting": 0,
     }
 
 
@@ -231,12 +282,12 @@ def test_only_tasks_active_inside_the_beijing_day_are_reported(tmp_path: Path) -
     _event(store, today, "负责人确认周五交付", created_at=INSIDE_LATE)
     _event(store, today, "上周的旧变化", created_at=BEFORE)
 
-    facts = collect_daily_report_facts(store, EmailStore(store.path), DAY)
+    facts = collect_service_activity(store, EmailStore(store.path), DAY.start, DAY.end)
 
-    assert [task["title"] for task in facts["tasks_active_today"]] == ["美国客户报价"]
-    task = facts["tasks_active_today"][0]
+    assert [task["title"] for task in facts["tasks"]] == ["美国客户报价"]
+    task = facts["tasks"][0]
     assert task["owner"] == "王明"
-    assert [event["reason"] for event in task["events_today"]] == ["负责人确认周五交付"]
+    assert [event["reason"] for event in task["events"]] == ["负责人确认周五交付"]
 
 
 def test_every_active_business_attention_item_is_reported_and_new_ones_are_marked(
@@ -244,18 +295,22 @@ def test_every_active_business_attention_item_is_reported_and_new_ones_are_marke
 ) -> None:
     store = AutoReplyStore(tmp_path / "attention.sqlite3")
     _attention(store, "older", category="watch", created_at="2026-09-20T02:00:00+00:00")
-    _attention(store, "fresh", category="decision", created_at="2026-09-24T02:00:00+00:00")
+    _attention(
+        store, "fresh", category="decision", created_at="2026-09-24T02:00:00+00:00"
+    )
 
-    facts = collect_daily_report_facts(store, EmailStore(store.path), DAY)
+    facts = collect_service_activity(store, EmailStore(store.path), DAY.start, DAY.end)
 
     assert [
-        (item["title"], item["category"], item["new_today"])
-        for item in facts["business_attention"]
+        (item["title"], item["category"], item["new_in_window"])
+        for item in facts["attention"]
     ] == [("older 报价", "watch", False), ("fresh 报价", "decision", True)]
-    assert facts["business_attention"][1]["ceo_action"] == "决定是否降价"
+    assert facts["attention"][1]["ceo_action"] == "决定是否降价"
 
 
-def test_meetings_are_the_sent_follow_ups_of_meetings_that_ended_today(tmp_path: Path) -> None:
+def test_meetings_are_the_sent_follow_ups_of_meetings_that_ended_today(
+    tmp_path: Path,
+) -> None:
     store = AutoReplyStore(tmp_path / "meetings.sqlite3")
     for meeting_id, ended_at in (
         ("today", "2026-09-24T03:00:00+00:00"),
@@ -271,19 +326,25 @@ def test_meetings_are_the_sent_follow_ups_of_meetings_that_ended_today(tmp_path:
             status="sent",
         )
         with store._connect() as db:
+            parts = task8_set_parts(
+                "meeting_alignment_jobs", {"final_message": f"{meeting_id} 的会后跟进"}
+            )
             db.execute(
-                "update tasks set final_message=? where record_type='meeting_alignment_jobs' and id=?",
-                (f"{meeting_id} 的会后跟进", task_physical_id(db, "meeting_alignment_jobs", job_id)),
+                f"update tasks set {parts.sql} where record_type='meeting_alignment_jobs' and id=?",
+                (
+                    *parts.parameters,
+                    task_physical_id(db, "meeting_alignment_jobs", job_id),
+                ),
             )
 
-    facts = collect_daily_report_facts(store, EmailStore(store.path), DAY)
+    facts = collect_service_activity(store, EmailStore(store.path), DAY.start, DAY.end)
 
     assert [meeting["meeting_id"] for meeting in facts["meetings"]] == ["today"]
     assert facts["meetings"][0]["follow_up_message"] == "today 的会后跟进"
     assert facts["meetings"][0]["participants"] == ["Alice"]
 
 
-def test_handled_items_leave_out_no_action_runs_and_list_what_waits_on_derek(
+def test_activity_preserves_all_attempt_states_and_current_waiting_items(
     tmp_path: Path,
 ) -> None:
     store = AutoReplyStore(tmp_path / "attempts.sqlite3")
@@ -299,14 +360,15 @@ def test_handled_items_leave_out_no_action_runs_and_list_what_waits_on_derek(
     )
     _attempt(store, "m-yesterday", send_status="completed", created_at=BEFORE)
 
-    facts = collect_daily_report_facts(store, EmailStore(store.path), DAY)
+    facts = collect_service_activity(store, EmailStore(store.path), DAY.start, DAY.end)
 
-    assert sorted(item["outcome"] for item in facts["handled_today"]) == [
+    assert sorted(item["outcome"] for item in facts["attempts"]) == [
         "completed",
         "needs_human",
+        "skipped",
     ]
-    assert facts["coverage"]["skipped_today"] == 1
-    assert [item["attempt_id"] for item in facts["waiting_on_derek"]] == [waiting]
+    assert facts["coverage"]["skipped"] == 1
+    assert [item["attempt_id"] for item in facts["waiting"]] == [waiting]
 
 
 def test_important_emails_are_the_mail_flagged_important_inside_the_day(
@@ -318,23 +380,30 @@ def test_important_emails_are_the_mail_flagged_important_inside_the_day(
 
         def list_flagged_important_between(self, start, end):
             self.window = (start, end)
-            return [{
-                "sender": "cong.wang@stardust.ai",
-                "subject": "【特批申请】ALE 项目试产专家返修成本申请",
-                "category": "finance",
-                "preview": "请磊哥审批",
-                "received_at": "Thu, 24 Sep 2026 15:30:00 +0800",
-                "finished_at": "2026-09-24T07:31:00+00:00",
-            }]
+            return [
+                {
+                    "classification_id": "mail-1", "action_id": "flag-1",
+                    "sender": "cong.wang@stardust.ai",
+                    "subject": "【特批申请】ALE 项目试产专家返修成本申请",
+                    "category": "finance",
+                    "preview": "请磊哥审批",
+                    "received_at": "Thu, 24 Sep 2026 15:30:00 +0800",
+                    "finished_at": "2026-09-24T07:31:00+00:00",
+                }
+            ]
 
     mail = FlaggedMail()
-    facts = collect_daily_report_facts(AutoReplyStore(tmp_path / "mail.sqlite3"), mail, DAY)
+    facts = collect_service_activity(
+        AutoReplyStore(tmp_path / "mail.sqlite3"), mail, DAY.start, DAY.end
+    )
 
     assert mail.window == (DAY.start, DAY.end)
     assert [item["subject"] for item in facts["important_emails"]] == [
         "【特批申请】ALE 项目试产专家返修成本申请"
     ]
     assert facts["coverage"]["important_emails"] == 1
+    assert facts["important_emails"][0]["classification_id"] == "mail-1"
+    assert facts["important_emails"][0]["action_id"] == "flag-1"
 
 
 def test_handled_reports_preserve_identity_when_titles_and_prompts_match(tmp_path):
@@ -356,18 +425,22 @@ def test_handled_reports_preserve_identity_when_titles_and_prompts_match(tmp_pat
             action="agent_run",
             sensitivity_kind="general",
             send_status=status,
-            audit_summary="All approved actions verified" if status == "completed" else "",
+            audit_summary="All approved actions verified"
+            if status == "completed"
+            else "",
         )
         _set_reply_attempt(store, attempt_id, created_at=created_at)
         expected[attempt_id] = (conversation_id, trigger_id, created_at, None)
 
-    facts = collect_daily_report_facts(store, EmailStore(store.path), DAY)
+    facts = collect_service_activity(store, EmailStore(store.path), DAY.start, DAY.end)
 
     assert {
         item["attempt_id"]: (
-            item["conversation_id"], item["trigger_message_id"],
-            item["created_at"], item["agent_run_id"],
+            item["conversation_id"],
+            item["trigger_message_id"],
+            item["created_at"],
+            item["agent_run_id"],
         )
-        for item in facts["handled_today"]
+        for item in facts["attempts"]
     } == expected
-    assert facts["coverage"]["handled_today"] == 2
+    assert facts["coverage"]["attempts"] == 2

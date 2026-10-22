@@ -16,7 +16,8 @@ from app.agent_runtime_router import (
     _parse_timestamp,
 )
 from app.store import AgentRole, AutoReplyStore
-from app.task_storage import insert_task, task_id_expression
+from app.task_storage import task_id_expression
+from app.task8_storage import task8_insert_parts, task8_set_parts
 
 NOW = datetime(2026, 8, 20, 10, 0, tzinfo=UTC)
 
@@ -100,12 +101,13 @@ def session_incompatible_failure() -> RuntimeFailure:
 
 def seed_structured_operation(store: AutoReplyStore, request_id: int = 12) -> str:
     with store._connect() as db:
-        insert_task(db, "okr_review_requests", {
-            "legacy_key": request_id, "conversation_id": f"cid-{request_id}",
+        parts = task8_insert_parts("okr_review_requests", {
+            "legacy_key": str(request_id), "conversation_id": f"cid-{request_id}",
             "conversation_title": "title", "trigger_message_id": f"msg-{request_id}",
             "trigger_sender": "sender", "trigger_text": "text", "period_label": "period",
             "period_start": "start", "period_end": "end", "status": "processing",
         })
+        db.execute(f"insert into tasks({parts.columns}) values({parts.values})", parts.parameters)
     return str(request_id)
 
 
@@ -279,9 +281,10 @@ def test_operation_failover_requires_runnable_parent_and_sealed_read_only_policy
         required_capabilities=frozenset({"structured_output"}),
     )
     with store._connect() as db:
+        parts = task8_set_parts("okr_review_requests", {"status": "failed"})
         db.execute(
-            f"update tasks set status='failed' where record_type='okr_review_requests' and id={task_id_expression('okr_review_requests', '?')}",
-            (int(workload_key),),
+            f"update tasks set {parts.sql} where record_type='okr_review_requests' and id={task_id_expression('okr_review_requests', '?')}",
+            (*parts.parameters, int(workload_key)),
         )
     terminal_parent = router.next_operation_route(
         workload_kind="structured",

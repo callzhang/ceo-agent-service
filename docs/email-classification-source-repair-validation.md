@@ -1,0 +1,189 @@
+# Eight Email classification source failures
+
+## Scope and observations
+
+Derek explicitly requested deployment, root-cause repair and recovery of the
+eight failed Email classification tasks, preserving the prior bounded retry fix.
+Initial current-main deployment was serialized with another authorized deploy;
+production reached a79d8e279, the checkout was clean, PID 30806 was running, and
+healthz, Attention and History returned HTTP 200.
+
+The selected source tasks are the existing records 416045, 416046, 416064,
+416241, 416257, 416276, 416277 and 416284. Read-only native IMAP probes confirmed
+all eight saved UIDs exist in the same UIDVALIDITY generations. Seven raw
+Message-ID header strings matched directly; the eighth also passed the native
+normalized Message-ID and stable-identity check. No flags were changed: selects
+were readonly and body reads used BODY.PEEK. Mail bodies and credentials were
+not copied into this document.
+
+## Confirmed causes
+
+1. A current classification calls similar_owner_examples before the Agent. Its
+   cold index read 956 owner examples, including 152 provider-only retired model
+   inputs. A readonly baseline reached a historical DingTalk example with old
+   UID 1612 in the saved notification folder, whose current provider observation
+   was unavailable. The complete exception stack was:
+   owner_labelled_examples -> read_owner_model_inputs ->
+   EmailSourceReader.read_many/_read_locations -> fetch_messages ->
+   _decode_selected_message -> source_data, raising
+   LookupError: email source UID is unavailable. This was not the UID of any of
+   the eight current tasks. The baseline failed after 157.519 seconds.
+2. The shared connector creates its raw socket through
+   ImapDeterministicProvider.connect, inheriting 20 seconds even though the
+   readonly adapter's established default is 90 seconds. A live socket readback
+   confirmed 20.0; the repaired factory's native socket readback confirmed 90.0.
+   Historical timeout and DNS errors are retained; current connections to both
+   accounts succeeded. No persistent DNS configuration fault was reproduced.
+3. The classifier did not pass the existing shared source reader into its owner
+   example build. The default reader constructed a separate connector registry,
+   defeating the established one-connector-per-account process wiring. The
+   classifier now passes the existing HIGH-priority source factory through the
+   example index. A source-reader forwarding regression failed before wiring
+   and passed after it.
+4. Three current DingTalk messages (UIDs 33274, 33276 and 33281) have multipart
+   BODYSTRUCTURE attachment filename values returned as multiple IMAP literals.
+   The existing parser examined incomplete tuple prefixes as standalone lists,
+   raising FETCH metadata is invalid / unterminated IMAP list, or returning the
+   literal length marker as the filename in a bounded scan. RFC 9051 sections
+   4.3 and 7.5.2 describe the native literal/string and FETCH representation:
+   https://www.rfc-editor.org/rfc/rfc9051.html
+
+## Repair and proof
+
+The owner-example query omits only provider-only inputs with an explicit current
+unavailable observation; inline/native inputs and unknown observations preserve
+their previous reads. It does not delete labels or suppress failures of sources
+that are still eligible. Availability changes alter the existing example stamp
+and restore eligibility. A candidate readonly cold build completed all 907
+eligible examples in 464.096 seconds, excluding 49 explicitly unavailable
+provider-only observations. This is a correctness proof, not a latency claim;
+the Gmail history relocation reads remain expensive on a cold process.
+
+The shared read timeout is one constant used by the readonly constructor and
+shared registry. The IMAP parser consumes literal byte lengths and preserves
+literal payloads as bytes while reading protocol attributes. BODYSTRUCTURE
+strings decode those bytes as UTF-8. Single and batched UID validation share the
+complete FETCH record parser, retaining duplicate/wrong UID rejection; body text
+spelling UID cannot authenticate a response record. No attachment contents are
+fetched by this change, only the existing selected body sections and metadata.
+
+The original five current messages passed complete source reads. After the
+literal repair, the remaining three passed native complete source and stable
+identity verification, with body lengths 72376, 77290 and 215 characters and
+read times 2.504, 1.856 and 1.639 seconds. All eight have now passed accurate
+readonly original reads. The eighth raw-header comparison difference was normal
+header normalization, not another UID failure.
+
+## Tests
+
+The original source-eligibility and shared-timeout regressions failed before the
+repair. Filename-literal and post-literal UID regressions also failed before the
+parser change. Final 150 source/protocol, model-input lifecycle and similarity tests passed,
+including all nine new source-failure cases and the prior identity, generation,
+unsolicited-response, literal-UID and source-change tests. The 19 selected classification-worker and
+connector tests passed; the one expected-kwargs test was updated solely for the
+explicit 90-second argument. Before the literal extension, 29 source-failure,
+model-input lifecycle and similarity tests passed. Ruff and diff checks passed.
+
+## Publication and selected task recovery
+
+Runtime fixes are pushed to main in 901a752c0 and 28666636f (the intervening
+20537b83d merge preserves concurrent main work). Derek authorized controlled
+restart through the existing --skip-quiet-wait option. Before that command
+acquired the repository lock, the serialized normal deploy of the same target
+completed. The command returned "another deploy got there first"; no second
+restart was necessary.
+
+Production receipt: succeeded at 2026-10-21 05:57:07 UTC, from a79d8e279 to
+7fe8db7f1c83e1648334d6f75bd54ccb733bcda3. The production checkout was clean;
+new supervisor PID 81519 and service/console/email children 81522/81523/81524
+were running. healthz returned ok=true, and queues, Attention and History
+returned HTTP 200. Deploy retained its verified database backup in the normal
+backup directory. Work Summary 416319 had independently reached done at
+05:29:29 UTC with attempts 1, empty error and terminal body compaction; it was
+not reopened or replayed. The post-deploy Work queue had no failed input.
+
+The exact eight selected classification records were backed up and the backup
+read back: 8 rows, mode 0600, SHA-256
+`a0ea8109d02427b8eeb1e6d3bb4192b307d842fb5237fdde403d23bed92f228d`.
+At 05:57:58 UTC the existing EmailClassificationTaskAdapter.retry_failed_tasks
+entry point restored only the first exact identity (physical task 416045) to
+pending, attempt 0. The production worker claimed it at 05:58:08, attempt 1. Task 416045 completed
+at 06:14:47 UTC, attempt 1, with processed/work/certain. Canonical classification
+5068306659856539788 has classification_source=agent and a durable Agent result;
+native Email classification runtime 388696 completed on codex_oauth / gpt-6-luna
+(started 06:14:37 UTC, empty failure code). This verifies the source and Agent
+path, not merely queue acceptance. Total first-task time was about 999 seconds,
+most of it before the model call; shared-account waits and the cold historical
+context remain slow. At 06:15 UTC the exact remaining seven identities were
+explicitly restored through the same adapter, following the successful small
+batch. At that point their final outcomes were pending. No manual classification result or
+direct provider mutation was used to impersonate a successful Agent run.
+
+
+A second serialized deployment of reviewed main cf501b377 (PR 187, four-line
+Task retrieval bound) acquired global admission while the second Email task was
+running. That task completed at 06:21:36 UTC, attempt 1, processed/work/certain,
+canonical classification 5106363250407065488 with Agent provenance. The remaining
+six could not be claimed while this deployment waited on processing Work Summary
+416322. Its 17,678-byte input was still persisted and uncompacted; no active
+Agent runtime or processing Email provider action was present at inspection.
+
+Using Derek's existing controlled-restart authorization, the still-waiting deploy
+command was cancelled before it changed production, then the same reviewed target
+was deployed through app.deploy --skip-quiet-wait. The 36 focused Task retrieval
+tests passed in this worktree; app/ and tests/ bytes matched cf501b377 exactly.
+The deployment succeeded at 06:28:59 UTC. New supervisor PID 15144 and children
+15147/15148/15149 were running, healthz was ok, and queues/Attention/History
+returned HTTP 200. The first two classification results remained done; the third
+was claimed by the new worker at 06:28:59, attempt 1. The process restart requires
+another cold owner-context build; this remains a latency limitation, not a source
+read failure. No original task identity was changed and no source input was
+manually rewritten.
+
+
+## Final recovery readback
+
+At 2026-10-21 06:34 UTC all eight exact selected tasks were done, attempt 1,
+with empty errors. Every result was processed/certain. All eight canonical
+classifications had classification_source=agent and a durable Agent result;
+eight matching native runtime attempts completed on codex_oauth / gpt-6-luna
+with empty failure codes. No selected task was skipped or manually classified.
+The table maps the preserved physical task identity and original accumulated
+attempt count to its actual classification and native runtime receipt.
+
+| Task | Previous attempts | Category | Canonical classification | Native runtime |
+| --- | ---: | --- | --- | --- |
+| 416045 | 59 | work | 5068306659856539788 | 388696 |
+| 416046 | 54 | work | 5106363250407065488 | 388703 |
+| 416064 | 48 | work | 977754965576637427 | 388713 |
+| 416241 | 29 | finance | 2575611978828962025 | 388716 |
+| 416257 | 23 | finance | 8739988752211911919 | 388717 |
+| 416276 | 19 | junk | 8916896817743474338 | 388718 |
+| 416277 | 14 | finance | 2766812481075349635 | 388720 |
+| 416284 | 11 | junk | 5173796388236209575 | 388724 |
+
+Work Summary 416319 remained done, attempts 1, empty error. The interrupted
+416322 was recovered by normal startup to pending, attempts 0, with its complete
+input preserved and empty error at 06:29:55 UTC. Its old owner process was dead
+and lease expired; the dispatcher reported it due, waiting for the existing two
+execution slots. This is restored queue eligibility, not a claim that its
+business projection has completed. No manual Task status mutation was needed.
+
+Final scope: the source failures and all eight classification tasks are resolved.
+Historical context and shared-account waits can still make cold processing slow;
+first-task end-to-end time was about 998 seconds, including about 988 seconds
+before the native model call. After the second restart, the next cold task took
+about 155 seconds, and the following four DingTalk tasks completed sequentially
+within about 67 seconds. These observed timings are not a latency guarantee.
+
+
+Final console readback at 06:36 UTC: Email worker status ready; classifier,
+provider-action, Agent-consumer and training component health all ready with zero
+reported failures. Email classification queue: done 1391, pending 0, running 0,
+failed 0. Provider actions continue normally in their separate queue (pending 29,
+processing 1, failed 0 at this snapshot); classification completion does not assert
+that every downstream mailbox action has completed. healthz, Attention and History
+were HTTP 200. Production cf501b377 was clean. Runtime code was unchanged after
+this readback; the remaining publication consists only of validation/docs and
+claim cleanup, so it requires no additional restart.

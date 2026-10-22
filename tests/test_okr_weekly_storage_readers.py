@@ -6,7 +6,9 @@ import pytest
 
 from app.dispatcher.adapters import OkrReviewQueueAdapter
 from app.store import AutoReplyStore, WeeklyOkrAnalysisJobClaimOutcome
-from app.task_storage import OKR_REQUEST_SQL, WEEKLY_JOB_SQL, insert_task
+from app.task20_definitions import task20_projection
+from app.task12_storage import task12_projection
+from app.task8_storage import task8_insert_parts
 
 
 def request_values(**overrides):
@@ -19,6 +21,16 @@ def request_values(**overrides):
     ) | overrides
 
 
+def _insert_wrong_type_work_summary(db, public_id, *, status="pending", error=""):
+    parts = task8_insert_parts("work_summary_inputs", {
+        "legacy_key": public_id, "source_type": "test", "source_ref": "other-type",
+        "payload_json": "{}", "status": status, "error": error,
+    })
+    return db.execute(
+        f"insert into tasks ({parts.columns}) values ({parts.values})", parts.parameters,
+    ).lastrowid
+
+
 def test_request_failed_only_upsert_public_id_and_run_reference(tmp_path):
     store = AutoReplyStore(tmp_path / "okr.sqlite3")
     physical_id = store.create_okr_review_request(**request_values())
@@ -27,10 +39,7 @@ def test_request_failed_only_upsert_public_id_and_run_reference(tmp_path):
             "update tasks set legacy_key='501' where record_type='okr_review_requests' and id=?",
             (physical_id,),
         )
-        insert_task(db, "work_summary_inputs", {
-            "legacy_key": 501, "source_type": "test", "source_ref": "other-type",
-            "payload_json": "{}",
-        })
+        _insert_wrong_type_work_summary(db, 501)
     assert store.create_okr_review_request(**request_values(
         conversation_title="Changed title", okr_source_json='{"ignored": true}'
     )) == 501
@@ -48,44 +57,32 @@ def test_request_failed_only_upsert_public_id_and_run_reference(tmp_path):
     )
     assert [item.id for item in store.claim_okr_review_requests(1)] == [501]
     store.mark_okr_review_request_done(501, codex_session_id="native-session")
-    run_id = store.record_okr_review_run(
-        request_id=501, codex_session_id="native-session",
-        codex_transcript_start_line=3, codex_transcript_end_line=9,
-        envelope_json="{}", audit_tool_events_json="[]", audit_summary="",
-    )
+    run_id = store.create_logical_run('okr_review_runs', task_public_id=501, codex_session_id="native-session", codex_transcript_start_line=3, codex_transcript_end_line=9)
     with store._connect() as db:
         db.execute("update runs set legacy_key='900' "
-                   "where record_type='okr_review_runs' and id=?", (run_id,))
-    run = store.get_okr_review_run(900)
+                   "where record_type='agent_runs' and source_type='okr_review_runs' and id=?", (run_id,))
+    run = store.get_logical_run('okr_review_runs', 900)
     assert run is not None
     assert (run["id"], run["request_id"], run["codex_session_id"],
             run["codex_transcript_start_line"], run["codex_transcript_end_line"]) == (
         900, 501, "native-session", 3, 9
     )
-    assert store.get_okr_review_run(run_id) is None
+    assert store.get_logical_run('okr_review_runs', run_id) is None
     assert not run["native_available"]
-    second_run_id = store.record_okr_review_run(
-        request_id=501, codex_session_id="second-native-session",
-        codex_transcript_start_line=10, codex_transcript_end_line=19,
-        envelope_json="{}", audit_tool_events_json="[]", audit_summary="",
-    )
-    missing_parent_run_id = store.record_okr_review_run(
-        request_id=999999, codex_session_id="orphan-native-session",
-        codex_transcript_start_line=1, codex_transcript_end_line=2,
-        envelope_json="{}", audit_tool_events_json="[]", audit_summary="",
-    )
-    assert store.get_okr_review_run(second_run_id)["request_id"] == 501
-    assert store.get_okr_review_run(missing_parent_run_id)["request_id"] == 999999
+    second_run_id = store.create_logical_run('okr_review_runs', task_public_id=501, codex_session_id="second-native-session", codex_transcript_start_line=10, codex_transcript_end_line=19)
+    with pytest.raises(ValueError, match="parent does not exist"):
+        store.create_logical_run('okr_review_runs', 999999, codex_session_id="orphan-native-session")
+    assert store.get_logical_run('okr_review_runs', second_run_id)["request_id"] == 501
     item_id = store.record_okr_review_item(
         request_id=501, objective_title="Objective", objective_weight=1,
         kr_title="KR", kr_weight=1, item_json='{"adopted": true}',
     )
     with store._connect() as db:
-        assert db.execute("select request_id from runs where record_type='okr_review_runs' "
-                          "and cast(legacy_key as integer)=?", (900,)).fetchone()[0] == 501
-        assert db.execute("select status from tasks where record_type='work_summary_inputs' "
-                          "and cast(legacy_key as integer)=501").fetchone()[0] == "pending"
-        assert db.execute("select request_id from okr_review_items where id=?", (item_id,)).fetchone()[0] == 501
+        assert db.execute("select cast(p.legacy_key as integer) from runs r join tasks p on p.id=r.task_id "
+                          "where r.record_type='agent_runs' and r.source_type='okr_review_runs' and cast(r.legacy_key as integer)=?", (900,)).fetchone()[0] == 501
+        assert db.execute(f"select status from ({task20_projection('work_summary_inputs')}) "
+                          "where id=501").fetchone()[0] == "pending"
+        assert db.execute(f"select request_id from ({task12_projection('okr_review_items')}) where id=?", (item_id,)).fetchone()[0] == 501
         assert db.execute("select name from sqlite_master where name='okr_review_requests'").fetchone() is None
 
 
@@ -99,10 +96,7 @@ def test_weekly_public_job_id_lease_owner_and_runtime_parent(tmp_path):
     with store._connect() as db:
         db.execute("update tasks set legacy_key='574' "
                    "where record_type='weekly_okr_analysis_jobs' and id=?", (first.job_id,))
-        insert_task(db, "work_summary_inputs", {
-            "legacy_key": 574, "source_type": "test", "source_ref": "other-type",
-            "payload_json": "{}",
-        })
+        _insert_wrong_type_work_summary(db, 574)
         assert AutoReplyStore._runtime_operation_parent_exists(
             db, "weekly_okr", f"{values['week_end']}:manager:{values['source_digest']}:574:first"
         )
@@ -131,10 +125,10 @@ def test_weekly_public_job_id_lease_owner_and_runtime_parent(tmp_path):
     )
     assert (miss.job_id, miss.outcome) == (574, WeeklyOkrAnalysisJobClaimOutcome.CLAIMED)
     with store._connect() as db:
-        row = db.execute(f"select id,status,lease_owner from ({WEEKLY_JOB_SQL}) where id=574").fetchone()
+        row = db.execute(f"select id,status,lease_owner from ({task20_projection('weekly_okr_analysis_jobs')}) where id=574").fetchone()
         assert tuple(row) == (574, "running", "third")
-        assert db.execute("select status from tasks where record_type='work_summary_inputs' "
-                          "and cast(legacy_key as integer)=574").fetchone()[0] == "pending"
+        assert db.execute(f"select status from ({task20_projection('work_summary_inputs')}) "
+                          "where id=574").fetchone()[0] == "pending"
     later = store.begin_weekly_okr_analysis_job(
         week_end="2026-10-18", manager_user_id="manager", source_digest="b" * 64,
         owner="later", now="2026-10-11 01:30:00",
@@ -147,7 +141,7 @@ def test_weekly_public_job_id_lease_owner_and_runtime_parent(tmp_path):
     ) == 1
     with store._connect() as db:
         row = db.execute(f"select status,error,lease_owner,lease_expires_at,finished_at "
-                         f"from ({WEEKLY_JOB_SQL}) where id=574").fetchone()
+                         f"from ({task20_projection('weekly_okr_analysis_jobs')}) where id=574").fetchone()
         assert tuple(row) == (
             "completed", "superseded_by_later_completed_week", "", "", "2026-10-11 02:00:00"
         )
@@ -171,7 +165,7 @@ def test_weekly_public_job_id_lease_owner_and_runtime_parent(tmp_path):
         now="2026-10-11 02:02:00"
     ) == 1
     with store._connect() as db:
-        rows = db.execute(f"select id,status,error,finished_at from ({WEEKLY_JOB_SQL}) "
+        rows = db.execute(f"select id,status,error,finished_at from ({task20_projection('weekly_okr_analysis_jobs')}) "
                           "where id in (?, ?) order by id", (technical.job_id, business.job_id)).fetchall()
         by_id = {row["id"]: row for row in rows}
         assert tuple(by_id[technical.job_id])[1:] == (
@@ -201,7 +195,7 @@ def test_dispatcher_claim_uses_public_request_id_and_typed_status(tmp_path):
     adapter.release(successor, owner="successor", now=now + timedelta(minutes=6, seconds=1))
     assert store.get_okr_review_request(777).status == "pending"
     with store._connect() as db:
-        assert db.execute(f"select id from ({OKR_REQUEST_SQL})").fetchone()[0] == 777
+        assert db.execute(f"select id from ({task20_projection('okr_review_requests')})").fetchone()[0] == 777
 
 
 def test_quality_and_attention_read_typed_okr_without_wrong_type_rows(tmp_path):
@@ -213,10 +207,9 @@ def test_quality_and_attention_read_typed_okr_without_wrong_type_rows(tmp_path):
     with store._connect() as db:
         db.execute("update tasks set legacy_key='777' where record_type='okr_review_requests' "
                    "and id=?", (physical_id,))
-        insert_task(db, "work_summary_inputs", {
-            "legacy_key": 777, "source_type": "test", "source_ref": "wrong-type",
-            "payload_json": "{}", "status": "failed", "error": "wrong-type failure",
-        })
+        _insert_wrong_type_work_summary(
+            db, 777, status="failed", error="wrong-type failure",
+        )
     store.mark_okr_review_request_failed(777, "actual OKR failure")
     snapshots = _queue_status_snapshots(store)
     okr = next(row for row in snapshots if row["table"] == "okr_review_requests")

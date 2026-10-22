@@ -5,9 +5,17 @@ import pytest
 
 from app.agent_context import email_attachment_metadata_materials
 from app.email_context_source import EmailContextSource
+from app.email_source_reader import EmailSourceReader
 from app.email_imap_readonly import ephemeral_body_html, parse_rfc822_message
 from app.email_task_adapter import EmailAgentTaskAdapter
 from app.email_unsubscribe import UnsubscribeAuthenticationEvidence
+
+
+def _source_location(classification):
+    return {key: classification.get(key) for key in (
+        "account_id", "stable_message_identity", "folder", "uidvalidity", "uid",
+        "rfc_message_id", "updated_at", "state", "provider_folder_name", "observed_at",
+    )} | {"thread_identity": classification.get("thread_id")}
 
 
 def _payload(stable_identity: str) -> dict[str, object]:
@@ -25,7 +33,7 @@ def _payload(stable_identity: str) -> dict[str, object]:
     }
 
 
-def test_context_source_projects_complete_text_metadata_versions_and_receipts():
+def test_context_source_projects_complete_text_metadata_versions_and_receipts(monkeypatch):
     stable_identity = "account-1:message-id:<current@example.com>"
     rows = [
         {
@@ -99,15 +107,31 @@ def test_context_source_projects_complete_text_metadata_versions_and_receipts():
                 },
             ]
 
+    source_calls = []
+
+    def read_many(reader, account_id, identities):
+        source_calls.append((account_id, identities))
+        return {
+            row["stable_message_identity"]: {
+                "from": {"email": row["sender"]},
+                "subject": row["subject"],
+                "textBody": row["normalized_text"].replace("thread text", "source text").replace("message text", "source text"),
+                "attachments": row["attachment_metadata"],
+            }
+            for row in rows
+        }
+
+    monkeypatch.setattr("app.email_source_reader.EmailSourceReader.read_many", read_many)
     store = PublicStore()
-    task_input = EmailContextSource(store).load_task_input(
+    task_input = EmailContextSource(store, source_factory=lambda account: None).load_task_input(
         SimpleNamespace(trigger_message_json=json.dumps(_payload(stable_identity)))
     )
 
-    assert task_input.trigger.text == "Current message text"
+    assert task_input.trigger.text == "Current source text"
     assert [message.text for message in task_input.thread_messages] == [
-        "Earlier thread text"
+        "Earlier source text"
     ]
+    assert source_calls == [("account-1", [row["stable_message_identity"] for row in rows])]
     assert task_input.attachments[0].filename == "contract.pdf"
     attachment_materials = email_attachment_metadata_materials(
         task_input.attachments,
@@ -130,7 +154,7 @@ def test_context_source_projects_complete_text_metadata_versions_and_receipts():
     assert task_input.prior_receipts[0].operation == "sent_readback"
     assert task_input.prior_receipts[1].operation == "unsubscribe_readback"
     assert task_input.list_unsubscribe == ""
-    assert task_input.body_text == "Current message text"
+    assert task_input.body_text == "Current source text"
     assert store.calls == [
         ("classification", 17),
         ("thread", "account-1", stable_identity),
@@ -196,6 +220,12 @@ def test_context_source_reloads_ephemeral_html_and_immutable_unsubscribe_binding
     )
 
     class Store:
+        def get_email_source_locations(self, keys):
+            return {key: self.get_email_source_location(*key) for key in keys}
+
+        def get_email_source_location(self, account_id, identity):
+            return _source_location(self.get_classification(17))
+
         def get_classification(self, _classification_id):
             return {
                 "account_id": "account-1",
@@ -233,11 +263,10 @@ def test_context_source_reloads_ephemeral_html_and_immutable_unsubscribe_binding
             return {"account_id": "account-1"}
 
     class Source:
-        def fetch_uid_batch(self, *_args, **_kwargs):
-            return SimpleNamespace(
-                uidvalidity=42,
-                messages=(provider_message,),
-            )
+        def fetch_message(self, locator, *, stable_message_identity):
+            assert locator.uid == 17 and locator.uidvalidity == 42
+            assert stable_message_identity == provider_message["stableMessageIdentity"]
+            return provider_message
 
         def logout(self):
             return None
@@ -259,10 +288,16 @@ def test_context_source_reloads_ephemeral_html_and_immutable_unsubscribe_binding
     )
 
 
-def test_context_source_uses_durable_context_when_provider_read_is_unavailable():
+def test_context_source_rejects_unavailable_source_even_with_cached_body():
     stable_identity = "account-1:message-id:<current@example.com>"
 
     class Store:
+        def get_email_source_locations(self, keys):
+            return {key: self.get_email_source_location(*key) for key in keys}
+
+        def get_email_source_location(self, account_id, identity):
+            return _source_location(self.get_classification(17))
+
         def get_classification(self, _classification_id):
             return {
                 "account_id": "account-1",
@@ -302,22 +337,24 @@ def test_context_source_uses_durable_context_when_provider_read_is_unavailable()
     def unavailable_source_factory(_account):
         raise OSError("provider DNS unavailable")
 
-    task_input = EmailContextSource(
-        Store(),
-        source_factory=unavailable_source_factory,
-    ).load_task_input(
-        SimpleNamespace(trigger_message_json=json.dumps(_payload(stable_identity)))
-    )
-
-    assert task_input.subject == "Persisted subject"
-    assert task_input.body_text == "Persisted body"
-    assert task_input.body_html == ""
+    with pytest.raises(OSError, match="provider DNS unavailable"):
+        EmailContextSource(
+            Store(), source_factory=unavailable_source_factory,
+        ).load_task_input(
+            SimpleNamespace(trigger_message_json=json.dumps(_payload(stable_identity)))
+        )
 
 
-def test_context_source_uses_durable_context_when_current_provider_message_moved():
+def test_context_source_rejects_missing_original_even_with_cached_body():
     stable_identity = "account-1:message-id:<current@example.com>"
 
     class Store:
+        def get_email_source_locations(self, keys):
+            return {key: self.get_email_source_location(*key) for key in keys}
+
+        def get_email_source_location(self, account_id, identity):
+            return _source_location(self.get_classification(17))
+
         def get_classification(self, _classification_id):
             return {
                 "account_id": "account-1",
@@ -355,19 +392,122 @@ def test_context_source_uses_durable_context_when_current_provider_message_moved
             return {"account_id": "account-1"}
 
     class Source:
-        def fetch_uid_batch(self, *_args, **_kwargs):
-            return SimpleNamespace(uidvalidity=42, messages=())
+        def fetch_message(self, locator, *, stable_message_identity):
+            raise LookupError("email source message moved")
 
         def logout(self):
             return None
 
-    task_input = EmailContextSource(
-        Store(),
-        source_factory=lambda _account: Source(),
-    ).load_task_input(
-        SimpleNamespace(trigger_message_json=json.dumps(_payload(stable_identity)))
-    )
+    with pytest.raises(LookupError, match="email source message moved"):
+        EmailContextSource(
+            Store(), source_factory=lambda _account: Source(),
+        ).load_task_input(
+            SimpleNamespace(trigger_message_json=json.dumps(_payload(stable_identity)))
+        )
 
-    assert task_input.subject == "Moved message"
-    assert task_input.body_text == "Persisted moved body"
-    assert task_input.body_html == ""
+
+def test_current_provider_reader_uses_exact_full_message_without_neighbor_search():
+    from app.email_classifier_contracts import EmailProviderLocator
+    stable_identity = 'account-1:message-id:<current@example.com>'
+    body = '完整正文' * 30000
+    calls = []
+
+    class Store:
+        def get_email_source_locations(self, keys):
+            return {key: self.get_email_source_location(*key) for key in keys}
+
+        def get_email_source_location(self, account_id, identity):
+            return _source_location({'account_id':account_id, 'stable_message_identity':identity,
+                'folder':'INBOX', 'uidvalidity':42, 'uid':17, 'rfc_message_id':'<current@example.com>'})
+
+        def get_account(self, account_id):
+            assert account_id == 'account-1'
+            return {'account_id': account_id}
+
+    class Source:
+        def fetch_message(self, locator, *, stable_message_identity):
+            calls.append((locator, stable_message_identity))
+            return {'stableMessageIdentity': stable_message_identity, 'textBody': body}
+
+        def logout(self):
+            calls.append('logout')
+
+    message = EmailSourceReader(Store(), source_factory=lambda account: Source()).read(
+        'account-1', stable_identity,
+    )
+    assert message['textBody'] == body
+    assert calls == [(EmailProviderLocator(account_id='account-1', folder='INBOX', uidvalidity=42,
+        uid=17, rfc_message_id='<current@example.com>'), stable_identity), 'logout']
+
+
+@pytest.mark.parametrize("missing", [None, "prior", "current"])
+def test_thread_source_batch_needs_no_stored_body_and_never_returns_partial_context(missing):
+    current = "account-1:message-id:<current@example.com>"
+    prior = "account-1:message-id:<prior@example.com>"
+    identities = [prior, current]
+    calls = []
+    rows = [
+        {"stable_message_identity": identity, "thread_identity": "provider-thread-1",
+         "sender": "metadata@example.com", "subject": "Metadata subject",
+         "received_at": "2026-08-30T08:00:00+00:00"}
+        for identity in identities
+    ]
+    locations = {
+        identity: _source_location({
+            "account_id": "account-1", "stable_message_identity": identity,
+            "folder": "INBOX", "uidvalidity": 42, "uid": index + 1,
+            "rfc_message_id": f"<{name}@example.com>",
+        })
+        for index, (name, identity) in enumerate(zip(["prior", "current"], identities))
+    }
+
+    class Store:
+        def get_classification(self, classification_id):
+            return {"account_id": "account-1", "stable_message_identity": current,
+                    "thread_id": "provider-thread-1",
+                    "current_action_plan_id": "email-plan:17:v3",
+                    "action_plan": {name: _payload(current)[name] for name in
+                        ("action_plan_id", "action_plan_version", "model_id", "config_version")}}
+
+        def list_email_context_thread(self, **kwargs):
+            return rows
+
+        def get_email_source_locations(self, keys):
+            return {key: locations[key[1]] for key in keys}
+
+        def get_account(self, account_id):
+            return {"account_id": account_id}
+
+        def list_email_context_receipts(self, **kwargs):
+            calls.append("receipts")
+            return []
+
+    class Source:
+        def fetch_message(self, locator, *, stable_message_identity):
+            calls.append(stable_message_identity)
+            if missing and stable_message_identity == identities[["prior", "current"].index(missing)]:
+                raise LookupError("original unavailable")
+            return {"from": {"email": "source@example.com"}, "subject": "Source subject",
+                    "textBody": stable_message_identity + "完整正文" * 30000}
+
+        def logout(self):
+            calls.append("logout")
+
+    def factory(account):
+        calls.append("lease")
+        return Source()
+
+    source = EmailContextSource(Store(), source_factory=factory)
+    task = SimpleNamespace(trigger_message_json=json.dumps(_payload(current)))
+    if missing:
+        with pytest.raises(LookupError, match="original unavailable"):
+            source.load_task_input(task)
+        assert "receipts" not in calls
+        assert calls[-1] == "logout"
+    else:
+        result = source.load_task_input(task)
+        assert result.trigger.text == current + "完整正文" * 30000
+        assert [message.text for message in result.thread_messages] == [prior + "完整正文" * 30000]
+        assert result.trigger.sender == "source@example.com"
+        assert result.subject == "Source subject"
+        assert calls == ["lease", prior, current, "logout", "receipts"]

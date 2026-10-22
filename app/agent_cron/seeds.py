@@ -6,7 +6,7 @@ from pathlib import Path
 import shlex
 
 from app.agent_cron.models import ScheduledTask, ScheduledTaskSkillRef
-from app.agent_cron.options import RuntimeOption, ScheduledTaskOptionService
+from app.agent_cron.options import ScheduledTaskOptionService
 from app.runtime_environment import central_python
 from app.store import AutoReplyStore
 
@@ -57,15 +57,15 @@ SCHEDULED_TASK_DEFAULT_COPY = {
     ),
     WEEKLY_REPORT_MIGRATION_KEY: ScheduledTaskDefaultCopy(
         name="准备 CEO 管理周报",
-        description="按本周的听记、群消息和四条业务线来源报告整理 CEO 管理周报草稿，核对上期未结问题，产出可校验的报告数据；发布到钉钉文档需要 Derek 明确授权，本任务不自行发布。",
-        old_name="",
-        old_description="",
+        description="读取本周听记、群消息和各业务线报告，将 CEO 判断、公司经营指标和新增跟踪事项直接写入目标管理层周会文档，并读回核验。",
+        old_name="准备 CEO 管理周报",
+        old_description="按本周的听记、群消息和四条业务线来源报告整理 CEO 管理周报草稿，核对上期未结问题，产出可校验的报告数据；发布到钉钉文档需要 Derek 明确授权，本任务不自行发布。",
     ),
     DAILY_REPORT_MIGRATION_KEY: ScheduledTaskDefaultCopy(
         name="发送 CEO 每日总结",
-        description="每晚汇总当天的会议、Tasks 项目变化、已处理和等你处理的事项，并扫描当天群消息，写成重要进展、风险、需介入、需关注和管理建议；发布为钉钉文档，由机器人单聊把要点和链接发给 Derek。",
-        old_name="",
-        old_description="",
+        description="每晚汇总当天会议、Tasks 变化、已处理和待处理事项及群消息，发布 CEO 每日总结文档，并通过已审核的本人账号单聊发送要点和链接。",
+        old_name="发送 CEO 每日总结",
+        old_description="每晚汇总当天的会议、Tasks 项目变化、已处理和等你处理的事项，并扫描当天群消息，写成重要进展、风险、需介入、需关注和管理建议；发布为钉钉文档，由机器人单聊把要点和链接发给 Derek。",
     ),
     CHROME_COOKIES_MIGRATION_KEY: ScheduledTaskDefaultCopy(
         name="同步 Chrome 登录态",
@@ -230,7 +230,11 @@ def _consumer_skill_refs(
     operation: tuple[str, ...] = (),
 ) -> tuple[ScheduledTaskSkillRef, ...]:
     refs: list[ScheduledTaskSkillRef] = []
-    managed_options = {item.name: item for item in options.list_managed_skill_options()}
+    managed_options = (
+        {item.name: item for item in options.list_managed_skill_options()}
+        if managed
+        else {}
+    )
     for name in managed:
         skill = managed_options.get(name)
         revisions = tuple(
@@ -250,11 +254,15 @@ def _consumer_skill_refs(
                 position=len(refs),
             )
         )
-    operation_options = {
-        item.name: item
-        for item in options.list_operation_skill_options()
-        if item.available
-    }
+    operation_options = (
+        {
+            item.name: item
+            for item in options.list_operation_skill_options()
+            if item.available
+        }
+        if operation
+        else {}
+    )
     for name in operation:
         if name not in operation_options:
             raise ValueError(f"scheduled consumer operation Skill unavailable: {name}")
@@ -268,519 +276,33 @@ def _consumer_skill_refs(
     return tuple(refs)
 
 
-def seed_scheduled_tasks(
-    *,
-    store: AutoReplyStore,
-    options: ScheduledTaskOptionService,
-    working_directory: Path,
-    now: datetime | None = None,
-) -> tuple[ScheduledTask, ...]:
-    """Create repository-owned scheduled task defaults without overwriting edits."""
-    email = _seed_email_message_task(
-        store=store,
-        options=options,
-        working_directory=working_directory,
-        now=now,
-    )
-    dingtalk_message = _seed_dingtalk_message_task(
-        store=store,
-        options=options,
-        working_directory=working_directory,
-        now=now,
-    )
-    dingtalk_calendar_invite = _seed_dingtalk_calendar_invite_task(
-        store=store,
-        options=options,
-        working_directory=working_directory,
-        now=now,
-    )
-    dingtalk_message_recovery = _seed_dingtalk_message_recovery_task(
-        store=store,
-        options=options,
-        working_directory=working_directory,
-        now=now,
-    )
-    dingtalk_meeting = _seed_dingtalk_meeting_task(
-        store=store,
-        options=options,
-        working_directory=working_directory,
-        now=now,
-    )
-    wechat = _seed_wechat_task(
-        store=store,
-        options=options,
-        working_directory=working_directory,
-        now=now,
-    )
-    oa = _seed_oa_task(
-        store=store,
-        options=options,
-        working_directory=working_directory,
-        now=now,
-    )
-    meeting_todos = _seed_meeting_todo_task(
-        store=store,
-        options=options,
-        working_directory=working_directory,
-        now=now,
-    )
-    weekly_okr = _seed_weekly_okr_task(
-        store=store,
-        options=options,
-        working_directory=working_directory,
-        now=now,
-    )
-    _retire_follow_up_delivery_task(store=store, now=now)
-    weekly_report = _seed_weekly_report_task(
-        store=store, options=options, working_directory=working_directory, now=now
-    )
-    daily_report = _seed_daily_report_task(
-        store=store, options=options, working_directory=working_directory, now=now
-    )
-    chrome_cookies = _seed_chrome_cookies_task(
-        store=store, options=options, working_directory=working_directory, now=now
-    )
-    minutes_access = _seed_minutes_access_task(
-        store=store, options=options, working_directory=working_directory, now=now
-    )
-    minutes = _seed_minutes_task(
-        store=store,
-        options=options,
-        working_directory=working_directory,
-        now=now,
-    )
-    return tuple(
-        _upgrade_default_copy(store, task, now=now)
-        for task in (
-            email,
-            dingtalk_message,
-            dingtalk_calendar_invite,
-            dingtalk_message_recovery,
-            dingtalk_meeting,
-            wechat,
-            oa,
-            meeting_todos,
-            weekly_okr,
-            weekly_report,
-            daily_report,
-            chrome_cookies,
-            minutes_access,
-            minutes,
-        )
-    )
-
-
-def _seed_email_message_task(
-    *,
-    store: AutoReplyStore,
-    options: ScheduledTaskOptionService,
-    working_directory: Path,
-    now: datetime | None,
-) -> ScheduledTask:
-    """Seed deterministic new-email discovery with its exact classifier Skill."""
-    del working_directory
-    skill_refs = _consumer_skill_refs(
-        options,
-        managed=("ceo-email-classifier",),
-    )
-    adopted = store.adopt_scheduled_task_service_command(
-        migration_key=EMAIL_MESSAGE_MIGRATION_KEY,
-        command=EMAIL_MESSAGE_SERVICE_COMMAND,
-        seed_description=_default_copy(EMAIL_MESSAGE_MIGRATION_KEY).description,
-        consumer_prompt=EMAIL_MESSAGE_CONSUMER_PROMPT,
-        consumer_skill_refs=skill_refs,
-        now=now,
-    )
-    if adopted is not None:
-        return adopted
-    return store.create_scheduled_task(
-        migration_key=EMAIL_MESSAGE_MIGRATION_KEY,
-        name=_default_copy(EMAIL_MESSAGE_MIGRATION_KEY).name,
-        description=_default_copy(EMAIL_MESSAGE_MIGRATION_KEY).description,
-        prompt=EMAIL_MESSAGE_CONSUMER_PROMPT,
-        command=EMAIL_MESSAGE_SERVICE_COMMAND,
-        cron_expression="0 * * * * *",
-        timezone_name="Asia/Shanghai",
-        skill_refs=skill_refs,
-        enabled=False,
-        now=now,
-    )
-
-
-def _seed_dingtalk_message_task(
-    *,
-    store: AutoReplyStore,
-    options: ScheduledTaskOptionService,
-    working_directory: Path,
-    now: datetime | None,
-) -> ScheduledTask:
-    """Seed the DingTalk message check as a service command, not an Agent task.
-
-    The check is one deterministic producer pass. It runs in-process without a
-    task-level Runtime, then supplies a targeted prompt and exact Skills only to
-    the Consumer Agent when a real message is found.
-    """
-    del working_directory
-    skill_refs = _consumer_skill_refs(
-        options,
-        managed=("ceo-message-triage",),
-        operation=("dingtalk-chat",),
-    )
-    adopted = store.adopt_scheduled_task_service_command(
-        migration_key=DINGTALK_MESSAGE_MIGRATION_KEY,
-        command=DINGTALK_MESSAGE_SERVICE_COMMAND,
-        seed_description=_default_copy(DINGTALK_MESSAGE_MIGRATION_KEY).description,
-        consumer_prompt=DINGTALK_MESSAGE_CONSUMER_PROMPT,
-        consumer_skill_refs=skill_refs,
-        legacy_consumer_prompt=DINGTALK_MESSAGE_LEGACY_CONSUMER_PROMPT,
-        legacy_consumer_skill_refs=_consumer_skill_refs(
-            options,
-            managed=("ceo-message-triage", "ceo-calendar-invite"),
-            operation=("dingtalk-chat", "dingtalk-calendar"),
-        ),
-        now=now,
-    )
-    if adopted is not None:
-        return adopted
-    return store.create_scheduled_task(
-        migration_key=DINGTALK_MESSAGE_MIGRATION_KEY,
-        name=_default_copy(DINGTALK_MESSAGE_MIGRATION_KEY).name,
-        description=_default_copy(DINGTALK_MESSAGE_MIGRATION_KEY).description,
-        prompt=DINGTALK_MESSAGE_CONSUMER_PROMPT,
-        command=DINGTALK_MESSAGE_SERVICE_COMMAND,
-        cron_expression="0 * * * * *",
-        timezone_name="Asia/Shanghai",
-        skill_refs=skill_refs,
-        enabled=False,
-        now=now,
-    )
-
-
-def _seed_dingtalk_calendar_invite_task(
-    *,
-    store: AutoReplyStore,
-    options: ScheduledTaskOptionService,
-    working_directory: Path,
-    now: datetime | None,
-) -> ScheduledTask:
-    """Seed calendar invitation handling as a separate service Trigger."""
-    del working_directory
-    skill_refs = _consumer_skill_refs(
-        options,
-        managed=("ceo-calendar-invite",),
-        operation=("dingtalk-calendar", "dingtalk-chat"),
-    )
-    adopted = store.adopt_scheduled_task_service_command(
-        migration_key=DINGTALK_CALENDAR_INVITE_MIGRATION_KEY,
-        command=DINGTALK_CALENDAR_INVITE_SERVICE_COMMAND,
-        seed_description=_default_copy(
-            DINGTALK_CALENDAR_INVITE_MIGRATION_KEY
-        ).description,
-        consumer_prompt=CALENDAR_INVITE_CONSUMER_PROMPT,
-        consumer_skill_refs=skill_refs,
-        now=now,
-    )
-    if adopted is not None:
-        return adopted
-    return store.create_scheduled_task(
-        migration_key=DINGTALK_CALENDAR_INVITE_MIGRATION_KEY,
-        name=_default_copy(DINGTALK_CALENDAR_INVITE_MIGRATION_KEY).name,
-        description=_default_copy(
-            DINGTALK_CALENDAR_INVITE_MIGRATION_KEY
-        ).description,
-        prompt=CALENDAR_INVITE_CONSUMER_PROMPT,
-        command=DINGTALK_CALENDAR_INVITE_SERVICE_COMMAND,
-        cron_expression="10 * * * * *",
-        timezone_name="Asia/Shanghai",
-        skill_refs=skill_refs,
-        enabled=False,
-        now=now,
-    )
-
-
-def _seed_dingtalk_message_recovery_task(
-    *,
-    store: AutoReplyStore,
-    options: ScheduledTaskOptionService,
-    working_directory: Path,
-    now: datetime | None,
-) -> ScheduledTask:
-    """Seed the widened DingTalk read as its own hourly service command.
-
-    The recovery pass reads far more than the minute-by-minute check, so it
-    runs on its own Cron at :30 instead of inside the :00 checks.
-    """
-    del working_directory
-    skill_refs = _consumer_skill_refs(
-        options,
-        managed=("ceo-message-triage", "ceo-calendar-invite"),
-        operation=("dingtalk-chat", "dingtalk-calendar"),
-    )
-    adopted = store.adopt_scheduled_task_service_command(
-        migration_key=DINGTALK_MESSAGE_RECOVERY_MIGRATION_KEY,
-        command=DINGTALK_MESSAGE_RECOVERY_SERVICE_COMMAND,
-        seed_description=_default_copy(
-            DINGTALK_MESSAGE_RECOVERY_MIGRATION_KEY
-        ).description,
-        consumer_prompt=DINGTALK_MESSAGE_LEGACY_CONSUMER_PROMPT,
-        consumer_skill_refs=skill_refs,
-        now=now,
-    )
-    if adopted is not None:
-        return adopted
-    return store.create_scheduled_task(
-        migration_key=DINGTALK_MESSAGE_RECOVERY_MIGRATION_KEY,
-        name=_default_copy(DINGTALK_MESSAGE_RECOVERY_MIGRATION_KEY).name,
-        description=_default_copy(DINGTALK_MESSAGE_RECOVERY_MIGRATION_KEY).description,
-        prompt=DINGTALK_MESSAGE_LEGACY_CONSUMER_PROMPT,
-        command=DINGTALK_MESSAGE_RECOVERY_SERVICE_COMMAND,
-        cron_expression="0 30 * * * *",
-        timezone_name="Asia/Shanghai",
-        skill_refs=skill_refs,
-        enabled=False,
-        now=now,
-    )
-
-
-def _seed_dingtalk_meeting_task(
-    *,
-    store: AutoReplyStore,
-    options: ScheduledTaskOptionService,
-    working_directory: Path,
-    now: datetime | None,
-) -> ScheduledTask:
-    del working_directory
-    skill_refs = _consumer_skill_refs(
-        options,
-        managed=("ceo-meeting-work",),
-        operation=("dingtalk-minutes", "dingtalk-calendar"),
-    )
-    adopted = store.adopt_scheduled_task_service_command(
-        migration_key=DINGTALK_MEETING_MIGRATION_KEY,
-        command=DINGTALK_MEETING_SERVICE_COMMAND,
-        seed_description=_default_copy(DINGTALK_MEETING_MIGRATION_KEY).description,
-        consumer_prompt=MEETING_CONSUMER_PROMPT,
-        consumer_skill_refs=skill_refs,
-        now=now,
-    )
-    if adopted is not None:
-        return adopted
-    return store.create_scheduled_task(
-        migration_key=DINGTALK_MEETING_MIGRATION_KEY,
-        name=_default_copy(DINGTALK_MEETING_MIGRATION_KEY).name,
-        description=_default_copy(DINGTALK_MEETING_MIGRATION_KEY).description,
-        prompt=MEETING_CONSUMER_PROMPT,
-        command=DINGTALK_MEETING_SERVICE_COMMAND,
-        cron_expression="0 */10 * * * *",
-        timezone_name="Asia/Shanghai",
-        skill_refs=skill_refs,
-        enabled=False,
-        now=now,
-    )
-
-
-def _seed_wechat_task(
-    *,
-    store: AutoReplyStore,
-    options: ScheduledTaskOptionService,
-    working_directory: Path,
-    now: datetime | None,
-) -> ScheduledTask:
-    """Seed the WeChat message check as a service command, not an Agent task.
-
-    The check is one deterministic producer pass over the ready WeChat account.
-    It runs in-process without a task-level Runtime, then supplies its targeted
-    prompt and Skill only when a real message is found.
-    """
-    del working_directory
-    skill_refs = _consumer_skill_refs(options, managed=("ceo-wechat",))
-    adopted = store.adopt_scheduled_task_service_command(
-        migration_key=WECHAT_MESSAGE_MIGRATION_KEY,
-        command=WECHAT_MESSAGE_SERVICE_COMMAND,
-        seed_description=_default_copy(WECHAT_MESSAGE_MIGRATION_KEY).description,
-        consumer_prompt=WECHAT_MESSAGE_CONSUMER_PROMPT,
-        consumer_skill_refs=skill_refs,
-        now=now,
-    )
-    if adopted is not None:
-        return adopted
-    return store.create_scheduled_task(
-        migration_key=WECHAT_MESSAGE_MIGRATION_KEY,
-        name=_default_copy(WECHAT_MESSAGE_MIGRATION_KEY).name,
-        description=_default_copy(WECHAT_MESSAGE_MIGRATION_KEY).description,
-        prompt=WECHAT_MESSAGE_CONSUMER_PROMPT,
-        command=WECHAT_MESSAGE_SERVICE_COMMAND,
-        cron_expression="0 */5 * * * *",
-        timezone_name="Asia/Shanghai",
-        skill_refs=skill_refs,
-        enabled=False,
-        now=now,
-    )
-
-
-def _seed_oa_task(
-    *,
-    store: AutoReplyStore,
-    options: ScheduledTaskOptionService,
-    working_directory: Path,
-    now: datetime | None,
-) -> ScheduledTask:
-    del working_directory
-    skill_refs = _consumer_skill_refs(
-        options,
-        operation=(
-            "dingtalk-oa-approval",
-            "stardust-oa-finance-review",
-            "stardust-oa-project-review",
-            "stardust-oa-contract-review",
-            "stardust-oa-people-review",
-            "stardust-oa-attendance-travel-review",
-            "stardust-oa-cloud-resource-review",
-        ),
-    )
-    adopted = store.adopt_scheduled_task_service_command(
-        migration_key=DINGTALK_OA_MIGRATION_KEY,
-        command=DINGTALK_OA_SERVICE_COMMAND,
-        seed_description=_default_copy(DINGTALK_OA_MIGRATION_KEY).description,
-        consumer_prompt=OA_CONSUMER_PROMPT,
-        consumer_skill_refs=skill_refs,
-        legacy_consumer_prompt=LEGACY_OA_CONSUMER_PROMPT_20261017,
-        legacy_consumer_skill_refs=skill_refs,
-        now=now,
-    )
-    if adopted is not None:
-        return adopted
-    return store.create_scheduled_task(
-        migration_key=DINGTALK_OA_MIGRATION_KEY,
-        name=_default_copy(DINGTALK_OA_MIGRATION_KEY).name,
-        description=_default_copy(DINGTALK_OA_MIGRATION_KEY).description,
-        prompt=OA_CONSUMER_PROMPT,
-        command=DINGTALK_OA_SERVICE_COMMAND,
-        cron_expression="0 0 * * * *",
-        timezone_name="Asia/Shanghai",
-        skill_refs=skill_refs,
-        enabled=False,
-        now=now,
-    )
-
-
-def _seed_meeting_todo_task(
-    *,
-    store: AutoReplyStore,
-    options: ScheduledTaskOptionService,
-    working_directory: Path,
-    now: datetime | None,
-) -> ScheduledTask:
-    del working_directory
-    skill_refs = _consumer_skill_refs(
-        options,
-        managed=("ceo-meeting-work", "ceo-work-tracking"),
-        operation=("dingtalk-minutes",),
-    )
-    adopted = store.adopt_scheduled_task_service_command(
-        migration_key=MEETING_TODO_MIGRATION_KEY,
-        command=MEETING_TODO_SERVICE_COMMAND,
-        seed_description=_default_copy(MEETING_TODO_MIGRATION_KEY).description,
-        consumer_prompt=MEETING_TODO_CONSUMER_PROMPT,
-        consumer_skill_refs=skill_refs,
-        now=now,
-    )
-    if adopted is not None:
-        return adopted
-    return store.create_scheduled_task(
-        migration_key=MEETING_TODO_MIGRATION_KEY,
-        name=_default_copy(MEETING_TODO_MIGRATION_KEY).name,
-        description=_default_copy(MEETING_TODO_MIGRATION_KEY).description,
-        prompt=MEETING_TODO_CONSUMER_PROMPT,
-        command=MEETING_TODO_SERVICE_COMMAND,
-        cron_expression="0 0 0 * * *",
-        timezone_name="Asia/Shanghai",
-        skill_refs=skill_refs,
-        enabled=False,
-        now=now,
-    )
-
-
-def _seed_weekly_okr_task(
-    *,
-    store: AutoReplyStore,
-    options: ScheduledTaskOptionService,
-    working_directory: Path,
-    now: datetime | None,
-) -> ScheduledTask:
-    """Seed the weekly OKR report as a deterministic service command.
-
-    The service command owns the long-running browser reads and invokes the
-    weekly-report Agent analysis inside the tracked service run. Keeping that
-    whole workflow in process gives it one durable run record and bounded
-    source/Agent timeouts instead of an untracked child command.
-    """
-    del options, working_directory
-    adopted = store.adopt_scheduled_task_service_command(
-        migration_key=WEEKLY_OKR_MIGRATION_KEY,
-        command=WEEKLY_OKR_SERVICE_COMMAND,
-        seed_description=_default_copy(WEEKLY_OKR_MIGRATION_KEY).description,
-        now=now,
-    )
-    if adopted is not None:
-        return adopted
-    return store.create_scheduled_task(
-        migration_key=WEEKLY_OKR_MIGRATION_KEY,
-        name=_default_copy(WEEKLY_OKR_MIGRATION_KEY).name,
-        description=_default_copy(WEEKLY_OKR_MIGRATION_KEY).description,
-        command=WEEKLY_OKR_SERVICE_COMMAND,
-        cron_expression="0 0 18 * * 0",
-        timezone_name="Asia/Shanghai",
-        enabled=False,
-        now=now,
-    )
-
-
-def _retire_follow_up_delivery_task(
-    *, store: AutoReplyStore, now: datetime | None
-) -> None:
-    """Delete the retired follow-up delivery task if an earlier seed made it.
-
-    The delete is the console's own soft delete: the row and its runs stay as
-    history, the task stops being listed and never fires again.
-    """
-    for task in store.list_scheduled_tasks():
-        if task.migration_key == RETIRED_FOLLOW_UP_DELIVERY_MIGRATION_KEY:
-            store.delete_scheduled_task(
-                task.id, expected_version=task.version, now=now
-            )
-
-
-def _seed_minutes_task(
-    *,
-    store: AutoReplyStore,
-    options: ScheduledTaskOptionService,
-    working_directory: Path,
-    now: datetime | None,
-) -> ScheduledTask:
-    """Seed AI minutes synchronization as a deterministic service command."""
-    del options, working_directory
-    adopted = store.adopt_scheduled_task_service_command(
-        migration_key=MINUTES_SYNC_MIGRATION_KEY,
-        command="sync-minutes-once",
-        seed_description=_default_copy(MINUTES_SYNC_MIGRATION_KEY).description,
-        now=now,
-    )
-    if adopted is not None:
-        return adopted
-    return store.create_scheduled_task(
-        migration_key=MINUTES_SYNC_MIGRATION_KEY,
-        name=_default_copy(MINUTES_SYNC_MIGRATION_KEY).name,
-        description=_default_copy(MINUTES_SYNC_MIGRATION_KEY).description,
-        command="sync-minutes-once",
-        cron_expression="0 0 20 * * *",
-        timezone_name="Asia/Shanghai",
-        enabled=False,
-        now=now,
-    )
-
-
 def weekly_report_prompt() -> str:
+    return (
+        "使用 $ceo-weekly-report 生成并发布 CEO 管理周报。"
+        "用 read_scheduled_context 读取本次触发，用 read_service_activity 读取服务事实；"
+        "按 Skill 使用原生 DWS 读取听记、群消息、报告和周会文档，发布后读回核验。"
+    )
+
+
+def daily_report_prompt() -> str:
+    return (
+        "使用 $ceo-daily-report 生成并发送 CEO 每日总结。"
+        "用 read_scheduled_context 读取本次触发，用 read_service_activity 读取服务事实；"
+        "先查群消息；仅在会议管理细节仍缺失时，读取任务冻结的 dingtalk-minutes Skill 后再查听记摘要。"
+        "按 Skill 使用原生 DWS 读取其余材料、发布文档，并通过服务的已审核消息工具投递。"
+    )
+
+
+def _daily_report_prompt_before_conditional_minutes() -> str:
+    """Exact repository seed before making the Minutes read conditional."""
+    return (
+        "使用 $ceo-daily-report 生成并发送 CEO 每日总结。"
+        "用 read_scheduled_context 读取本次触发，用 read_service_activity 读取服务事实；"
+        "按 Skill 使用原生 DWS 读取其余材料、发布文档，并通过服务的已审核消息工具投递。"
+    )
+
+
+def _legacy_weekly_report_prompt_20261019() -> str:
     materials_command = (
         f"{shlex.quote(str(central_python()))} -m app.cli weekly-report-materials "
         "--scheduled-run <本次触发的 scheduled_task_run_id>"
@@ -794,65 +316,7 @@ def weekly_report_prompt() -> str:
     )
 
 
-def _seed_weekly_report_task(
-    *,
-    store: AutoReplyStore,
-    options: ScheduledTaskOptionService,
-    working_directory: Path,
-    now: datetime | None,
-) -> ScheduledTask:
-    """Seed the weekly CEO management report as an Agent task.
-
-    Saturday 12:00 Pacific, which is Sunday 03:00 in Beijing (Derek
-    2026-09-24). A service command resolves the upcoming meeting's document
-    and lists the week's meetings; the run writes the report into that
-    document itself.
-    """
-    del working_directory
-    existing = _existing_task(store, WEEKLY_REPORT_MIGRATION_KEY, now=now)
-    if existing is not None:
-        return existing
-    skill_refs = _consumer_skill_refs(
-        options,
-        managed=("ceo-weekly-report",),
-        operation=("dingtalk-minutes", "dingtalk-chat", "dingtalk-wiki", "dingtalk-doc"),
-    )
-    runtime_options = options.list_runtime_options()
-    if not runtime_options:
-        raise ValueError("no runtime is configured for the weekly report")
-    runtime_id = next(
-        (option.route_name for option in runtime_options if option.available),
-        runtime_options[0].route_name,
-    )
-    return store.create_scheduled_task(
-        migration_key=WEEKLY_REPORT_MIGRATION_KEY,
-        name=_default_copy(WEEKLY_REPORT_MIGRATION_KEY).name,
-        description=_default_copy(WEEKLY_REPORT_MIGRATION_KEY).description,
-        prompt=weekly_report_prompt(),
-        runtime_id=runtime_id,
-        cron_expression="0 0 12 * * 6",
-        timezone_name="America/Los_Angeles",
-        skill_refs=skill_refs,
-        enabled=False,
-        now=now,
-    )
-
-
-def daily_report_prompt() -> str:
-    minutes_sequence = (
-        "若服务事实显示某场会议的会后消息不足以提供相关管理细节，读取听记前先调用 "
-        '`agent_cli.read_task_skill(name="dingtalk-minutes")` 读取本任务冻结的 Skill，再查听记摘要；'
-        "否则跳过该 Skill。"
-    )
-    return _daily_report_prompt(minutes_sequence)
-
-
-def _daily_report_prompt_before_conditional_minutes() -> str:
-    """Exact prompt stored before the conditional Minutes Skill sequence."""
-    return _daily_report_prompt("按需用 $dingtalk-minutes 补读会议摘要；")
-
-
-def _daily_report_prompt(minutes_sequence: str) -> str:
+def _legacy_daily_report_prompt_20261019() -> str:
     facts_command = (
         f"{shlex.quote(str(central_python()))} -m app.cli daily-report-facts "
         "--scheduled-run <本次触发的 scheduled_task_run_id>"
@@ -860,7 +324,7 @@ def _daily_report_prompt(minutes_sequence: str) -> str:
     return (
         "按 $ceo-daily-report 生成 CEO 每日总结。"
         f"先运行 `{facts_command}` 取得报告窗口和服务记录的事实，再用 $dingtalk-chat 扫描窗口内全部群消息，"
-        f"{minutes_sequence}写成报告后用 $dingtalk-wiki 与 $dingtalk-doc "
+        "按需用 $dingtalk-minutes 补读会议摘要；写成报告后用 $dingtalk-wiki 与 $dingtalk-doc "
         "发布到钉钉文档并读回核对，最后提出 dingtalk-chat 单聊动作；"
         "审核轮只能调用服务提供的 send_approved_dingtalk_message 发送，不能用机器人或 dws 绕过投递台账。"
         "某个来源读不到时写进覆盖说明，照常发布，不要向 Derek 追问材料。"
@@ -880,164 +344,336 @@ def _legacy_daily_report_prompt() -> str:
     )
 
 
-def _seed_daily_report_task(
-    *,
-    store: AutoReplyStore,
-    options: ScheduledTaskOptionService,
-    working_directory: Path,
-    now: datetime | None,
-) -> ScheduledTask:
-    """Seed the nightly CEO report as an Agent task.
+@dataclass(frozen=True)
+class ScheduledTaskDefault:
+    migration_key: str
+    cron_expression: str
+    command: str = ""
+    prompt: str = ""
+    timezone_name: str = "Asia/Shanghai"
+    managed: tuple[str, ...] = ()
+    operation: tuple[str, ...] = ()
+    previous_command: str = ""
+    previous_prompt: str = ""
+    previous_managed: tuple[str, ...] = ()
+    previous_operation: tuple[str, ...] = ()
+    previous_refs_match_current: bool = False
+    previous_agent_prompts: tuple[str, ...] = ()
+    previous_cron_expression: str = ""
+    previous_timezone_name: str = ""
 
-    Unlike the weekly report, which needs source reports only people can
-    supply, every required input here is something the service already
-    recorded, so the run never has to stop and ask for material.
-    """
-    del working_directory
-    existing = _existing_task(store, DAILY_REPORT_MIGRATION_KEY, now=now)
-    if existing is not None:
-        # This is a repository-owned delivery-contract migration.  Only
-        # replace the exact legacy seed; preserve any operator-edited prompt.
-        if existing.prompt in {
-            _legacy_daily_report_prompt(),
-            _daily_report_prompt_before_conditional_minutes(),
-        }:
-            return store.update_scheduled_task(
-                existing.id,
-                expected_version=existing.version,
-                prompt=daily_report_prompt(),
-                now=now,
-            )
-        return existing
-    skill_refs = _consumer_skill_refs(
-        options,
+
+SCHEDULED_TASK_DEFAULTS = (
+    ScheduledTaskDefault(
+        migration_key=EMAIL_MESSAGE_MIGRATION_KEY,
+        cron_expression="0 * * * * *",
+        command=EMAIL_MESSAGE_SERVICE_COMMAND,
+        prompt=EMAIL_MESSAGE_CONSUMER_PROMPT,
+        managed=("ceo-email-classifier",),
+    ),
+    ScheduledTaskDefault(
+        migration_key=DINGTALK_MESSAGE_MIGRATION_KEY,
+        cron_expression="0 * * * * *",
+        command=DINGTALK_MESSAGE_SERVICE_COMMAND,
+        prompt=DINGTALK_MESSAGE_CONSUMER_PROMPT,
+        managed=("ceo-message-triage",),
+        operation=("dingtalk-chat",),
+        previous_prompt=DINGTALK_MESSAGE_LEGACY_CONSUMER_PROMPT,
+        previous_managed=("ceo-message-triage", "ceo-calendar-invite"),
+        previous_operation=("dingtalk-chat", "dingtalk-calendar"),
+    ),
+    ScheduledTaskDefault(
+        migration_key=DINGTALK_CALENDAR_INVITE_MIGRATION_KEY,
+        cron_expression="10 * * * * *",
+        command=DINGTALK_CALENDAR_INVITE_SERVICE_COMMAND,
+        prompt=CALENDAR_INVITE_CONSUMER_PROMPT,
+        managed=("ceo-calendar-invite",),
+        operation=("dingtalk-calendar", "dingtalk-chat"),
+    ),
+    ScheduledTaskDefault(
+        migration_key=DINGTALK_MESSAGE_RECOVERY_MIGRATION_KEY,
+        cron_expression="0 30 * * * *",
+        command=DINGTALK_MESSAGE_RECOVERY_SERVICE_COMMAND,
+        prompt=DINGTALK_MESSAGE_LEGACY_CONSUMER_PROMPT,
+        managed=("ceo-message-triage", "ceo-calendar-invite"),
+        operation=("dingtalk-chat", "dingtalk-calendar"),
+    ),
+    ScheduledTaskDefault(
+        migration_key=DINGTALK_MEETING_MIGRATION_KEY,
+        cron_expression="0 */10 * * * *",
+        command=DINGTALK_MEETING_SERVICE_COMMAND,
+        prompt=MEETING_CONSUMER_PROMPT,
+        managed=("ceo-meeting-work",),
+        operation=("dingtalk-minutes", "dingtalk-calendar"),
+    ),
+    ScheduledTaskDefault(
+        migration_key=WECHAT_MESSAGE_MIGRATION_KEY,
+        cron_expression="0 */5 * * * *",
+        command=WECHAT_MESSAGE_SERVICE_COMMAND,
+        prompt=WECHAT_MESSAGE_CONSUMER_PROMPT,
+        managed=("ceo-wechat",),
+    ),
+    ScheduledTaskDefault(
+        migration_key=DINGTALK_OA_MIGRATION_KEY,
+        cron_expression="0 0 * * * *",
+        command=DINGTALK_OA_SERVICE_COMMAND,
+        prompt=OA_CONSUMER_PROMPT,
+        operation=(
+            "dingtalk-oa-approval",
+            "stardust-oa-finance-review",
+            "stardust-oa-project-review",
+            "stardust-oa-contract-review",
+            "stardust-oa-people-review",
+            "stardust-oa-attendance-travel-review",
+            "stardust-oa-cloud-resource-review",
+        ),
+        previous_prompt=LEGACY_OA_CONSUMER_PROMPT_20261017,
+        previous_refs_match_current=True,
+    ),
+    ScheduledTaskDefault(
+        migration_key=MEETING_TODO_MIGRATION_KEY,
+        cron_expression="0 0 0 * * *",
+        command=MEETING_TODO_SERVICE_COMMAND,
+        prompt=MEETING_TODO_CONSUMER_PROMPT,
+        managed=("ceo-meeting-work", "ceo-work-tracking"),
+        operation=("dingtalk-minutes",),
+    ),
+    ScheduledTaskDefault(
+        migration_key=WEEKLY_OKR_MIGRATION_KEY,
+        cron_expression="0 0 3 * * 0",
+        timezone_name="America/Los_Angeles",
+        prompt="使用 $ceo-weekly-okr-report 与 $dingtang-okr-review 生成并发送每周 OKR 管理周报；按 Skill 使用原生 DWS 读取、发布和核验。",
+        managed=("ceo-weekly-okr-report",),
+        operation=(
+            "dingtang-okr-review",
+            "dingtalk-chat",
+            "dingtalk-wiki",
+            "dingtalk-doc",
+        ),
+        previous_command=WEEKLY_OKR_SERVICE_COMMAND,
+        previous_cron_expression="0 0 18 * * 0",
+        previous_timezone_name="Asia/Shanghai",
+    ),
+    ScheduledTaskDefault(
+        migration_key=WEEKLY_REPORT_MIGRATION_KEY,
+        cron_expression="0 0 12 * * 6",
+        prompt=weekly_report_prompt(),
+        timezone_name="America/Los_Angeles",
+        managed=("ceo-weekly-report",),
+        operation=(
+            "dingtalk-minutes",
+            "dingtalk-chat",
+            "dingtalk-wiki",
+            "dingtalk-doc",
+        ),
+        previous_agent_prompts=(_legacy_weekly_report_prompt_20261019(),),
+    ),
+    ScheduledTaskDefault(
+        migration_key=DAILY_REPORT_MIGRATION_KEY,
+        cron_expression="0 0 6 * * *",
+        timezone_name="America/Los_Angeles",
+        prompt=daily_report_prompt(),
         managed=("ceo-daily-report",),
-        operation=("dingtalk-chat", "dingtalk-minutes", "dingtalk-wiki", "dingtalk-doc"),
-    )
+        operation=(
+            "dingtalk-chat",
+            "dingtalk-minutes",
+            "dingtalk-wiki",
+            "dingtalk-doc",
+        ),
+        previous_agent_prompts=(
+            _legacy_daily_report_prompt(),
+            _legacy_daily_report_prompt_20261019(),
+            _daily_report_prompt_before_conditional_minutes(),
+        ),
+        previous_cron_expression="0 0 21 * * *",
+        previous_timezone_name="Asia/Shanghai",
+    ),
+    ScheduledTaskDefault(
+        migration_key=CHROME_COOKIES_MIGRATION_KEY,
+        cron_expression="0 0 6 * * *",
+        command="sync-chrome-cookies",
+    ),
+    ScheduledTaskDefault(
+        migration_key=MINUTES_ACCESS_MIGRATION_KEY,
+        cron_expression="0 30 19 * * *",
+        command="request-minutes-access",
+    ),
+    ScheduledTaskDefault(
+        migration_key=MINUTES_SYNC_MIGRATION_KEY,
+        cron_expression="0 0 20 * * *",
+        command="sync-minutes-once",
+    ),
+)
+
+
+def _agent_runtime(options: ScheduledTaskOptionService) -> str:
     runtime_options = options.list_runtime_options()
     if not runtime_options:
-        raise ValueError("no runtime is configured for the daily report")
-    runtime_id = next(
+        raise ValueError("no runtime is configured for scheduled Agent tasks")
+    return next(
         (option.route_name for option in runtime_options if option.available),
         runtime_options[0].route_name,
     )
+
+
+def _seed_task(
+    default: ScheduledTaskDefault,
+    *,
+    store: AutoReplyStore,
+    options: ScheduledTaskOptionService,
+    now: datetime | None,
+) -> ScheduledTask:
+    copy = _default_copy(default.migration_key)
+    if default.command:
+        refs = _consumer_skill_refs(
+            options,
+            managed=default.managed,
+            operation=default.operation,
+        )
+        previous_refs = (
+            refs
+            if default.previous_refs_match_current
+            else _consumer_skill_refs(
+                options,
+                managed=default.previous_managed,
+                operation=default.previous_operation,
+            )
+        )
+        adopted = store.adopt_scheduled_task_service_command(
+            migration_key=default.migration_key,
+            command=default.command,
+            seed_description=copy.description,
+            consumer_prompt=default.prompt,
+            consumer_skill_refs=refs,
+            legacy_consumer_prompt=default.previous_prompt,
+            legacy_consumer_skill_refs=previous_refs,
+            now=now,
+        )
+        if adopted is not None:
+            return adopted
+        runtime_id = ""
+    else:
+        existing = next(
+            (
+                task
+                for task in store.list_scheduled_tasks(include_deleted=True)
+                if task.migration_key == default.migration_key
+            ),
+            None,
+        )
+        if existing is not None:
+            if existing.deleted_at is not None:
+                return existing
+            if (
+                default.previous_command
+                and existing.command == default.previous_command
+            ):
+                return store.update_scheduled_task(
+                    existing.id,
+                    expected_version=existing.version,
+                    command="",
+                    prompt=existing.prompt or default.prompt,
+                    runtime_id=_agent_runtime(options),
+                    skill_refs=existing.skill_refs
+                    or _consumer_skill_refs(
+                        options,
+                        managed=default.managed,
+                        operation=default.operation,
+                    ),
+                    now=now,
+                )
+            if (
+                not existing.command
+                and existing.prompt in default.previous_agent_prompts
+            ):
+                return store.update_scheduled_task(
+                    existing.id,
+                    expected_version=existing.version,
+                    prompt=default.prompt,
+                    now=now,
+                )
+            return existing
+        refs = _consumer_skill_refs(
+            options,
+            managed=default.managed,
+            operation=default.operation,
+        )
+        runtime_id = _agent_runtime(options)
     return store.create_scheduled_task(
-        migration_key=DAILY_REPORT_MIGRATION_KEY,
-        name=_default_copy(DAILY_REPORT_MIGRATION_KEY).name,
-        description=_default_copy(DAILY_REPORT_MIGRATION_KEY).description,
-        prompt=daily_report_prompt(),
+        migration_key=default.migration_key,
+        name=copy.name,
+        description=copy.description,
+        command=default.command,
+        prompt=default.prompt,
+        cron_expression=default.cron_expression,
+        timezone_name=default.timezone_name,
         runtime_id=runtime_id,
-        cron_expression="0 0 21 * * *",
-        timezone_name="Asia/Shanghai",
-        skill_refs=skill_refs,
+        skill_refs=refs,
         enabled=False,
         now=now,
     )
 
 
-def _seed_chrome_cookies_task(
+def seed_scheduled_tasks(
     *,
     store: AutoReplyStore,
     options: ScheduledTaskOptionService,
     working_directory: Path,
-    now: datetime | None,
-) -> ScheduledTask:
-    """Seed the daily copy of the owner's Chrome cookies.
-
-    Before the tasks that need a login (unsubscribe, minutes access), so the
-    copy they open is the one made this morning.
-    """
-    del options, working_directory
-    adopted = store.adopt_scheduled_task_service_command(
-        migration_key=CHROME_COOKIES_MIGRATION_KEY,
-        command="sync-chrome-cookies",
-        seed_description=_default_copy(CHROME_COOKIES_MIGRATION_KEY).description,
-        now=now,
-    )
-    if adopted is not None:
-        return adopted
-    return store.create_scheduled_task(
-        migration_key=CHROME_COOKIES_MIGRATION_KEY,
-        name=_default_copy(CHROME_COOKIES_MIGRATION_KEY).name,
-        description=_default_copy(CHROME_COOKIES_MIGRATION_KEY).description,
-        command="sync-chrome-cookies",
-        cron_expression="0 0 6 * * *",
-        timezone_name="Asia/Shanghai",
-        enabled=False,
-        now=now,
-    )
-
-
-def _seed_minutes_access_task(
-    *,
-    store: AutoReplyStore,
-    options: ScheduledTaskOptionService,
-    working_directory: Path,
-    now: datetime | None,
-) -> ScheduledTask:
-    """Seed asking for minutes access as its own deterministic command.
-
-    Separate from the archive task on purpose: it needs a signed-in console
-    session and the organisation's admin role, which the archive needs neither
-    of. Kept as one task, a console this account cannot open would have to be
-    told apart from an archive failure inside the command; as two, each task's
-    state says which one is unhappy, and an account without the role simply
-    turns this one off.
-    """
-    del options, working_directory
-    adopted = store.adopt_scheduled_task_service_command(
-        migration_key=MINUTES_ACCESS_MIGRATION_KEY,
-        command="request-minutes-access",
-        seed_description=_default_copy(MINUTES_ACCESS_MIGRATION_KEY).description,
-        now=now,
-    )
-    if adopted is not None:
-        return adopted
-    return store.create_scheduled_task(
-        migration_key=MINUTES_ACCESS_MIGRATION_KEY,
-        name=_default_copy(MINUTES_ACCESS_MIGRATION_KEY).name,
-        description=_default_copy(MINUTES_ACCESS_MIGRATION_KEY).description,
-        command="request-minutes-access",
-        # Half an hour before the archive, so a minute granted during the day
-        # is asked for and archived on the same evening.
-        cron_expression="0 30 19 * * *",
-        timezone_name="Asia/Shanghai",
-        enabled=False,
-        now=now,
-    )
-
-
-def _existing_task(
-    store: AutoReplyStore,
-    migration_key: str,
-    *,
-    options: ScheduledTaskOptionService | None = None,
-    required_capabilities: frozenset[str] = frozenset(),
     now: datetime | None = None,
-) -> ScheduledTask | None:
-    if required_capabilities:
-        if options is None:
-            raise ValueError("Runtime options are required for capability migration")
-        return store.backfill_scheduled_task_runtime_capabilities(
-            migration_key=migration_key,
-            required_capabilities=required_capabilities,
-            eligible_runtime_ids=options.runtime_ids_supporting_capabilities(
-                required_capabilities
+) -> tuple[ScheduledTask, ...]:
+    """Create declarative repository defaults and migrate only exact old defaults."""
+    del working_directory
+    tasks = tuple(
+        _upgrade_default_copy(
+            store,
+            _upgrade_default_schedule(
+                store,
+                _seed_task(default, store=store, options=options, now=now),
+                default,
+                now=now,
             ),
             now=now,
         )
-    return next(
-        (
-            task
-            for task in store.list_scheduled_tasks(include_deleted=True)
-            if task.migration_key == migration_key
-        ),
-        None,
+        for default in SCHEDULED_TASK_DEFAULTS
+    )
+    _retire_follow_up_delivery_task(store=store, now=now)
+    return tasks
+
+
+def _upgrade_default_schedule(
+    store: AutoReplyStore,
+    task: ScheduledTask,
+    default: ScheduledTaskDefault,
+    *,
+    now: datetime | None,
+) -> ScheduledTask:
+    """Move only exact repository-default schedules to the current timezone."""
+    if (
+        task.deleted_at is not None
+        or
+        not default.previous_cron_expression
+        or not default.previous_timezone_name
+        or task.cron_expression != default.previous_cron_expression
+        or task.timezone_name != default.previous_timezone_name
+    ):
+        return task
+    return store.update_scheduled_task(
+        task.id,
+        expected_version=task.version,
+        cron_expression=default.cron_expression,
+        timezone_name=default.timezone_name,
+        now=now,
     )
 
 
-def _runtime_unavailable_summary(runtime_options: tuple[RuntimeOption, ...]) -> str:
-    return "; ".join(
-        f"{option.route_name}={option.unavailable_reason or 'unavailable'}"
-        for option in runtime_options
-    )
+def _retire_follow_up_delivery_task(
+    *, store: AutoReplyStore, now: datetime | None
+) -> None:
+    """Delete the retired follow-up delivery task if an earlier seed made it.
+
+    The delete is the console's own soft delete: the row and its runs stay as
+    history, the task stops being listed and never fires again.
+    """
+    for task in store.list_scheduled_tasks():
+        if task.migration_key == RETIRED_FOLLOW_UP_DELIVERY_MIGRATION_KEY:
+            store.delete_scheduled_task(task.id, expected_version=task.version, now=now)

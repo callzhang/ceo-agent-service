@@ -1,6 +1,11 @@
 """Exact 11.2 -> 11.3 paired task-schema publication and business-write inverse."""
+from app.state_publication_sources import publication_store_version
+from app.business_legacy_field_schema_release import (
+    TARGET_STORE_VERSION, PREVIOUS_STORE_VERSIONS, publication_action_schema_is_current, publication_tasks_are_current,
+)
 
 from app.action_storage import action_schema_is_current, reply_schema_is_current
+from app.task20_definitions import task20_projection
 
 from contextlib import closing
 from dataclasses import dataclass
@@ -29,10 +34,8 @@ VERSION_KEY = "store_schema_version"
 
 def publication_task_sources(db: sqlite3.Connection) -> tuple[str, str]:
     """Read the exact 11.2 source or 11.3 target during the deploy quiet wait."""
-    version = db.execute(
-        "select value from service_state where key=?", (VERSION_KEY,)
-    ).fetchone()
-    version = version[0] if version is not None else None
+    version = publication_store_version(db, current_version=TARGET_STORE_VERSION,
+                                        previous_versions=PREVIOUS_STORE_VERSIONS)
     tables = {
         row[0] for row in db.execute("select name from sqlite_master where type='table'")
     }
@@ -59,15 +62,18 @@ def publication_task_sources(db: sqlite3.Connection) -> tuple[str, str]:
             REPLY_TASK_SQL,
             "select status from tasks where record_type='work_summary_inputs'",
         )
+    if (publication_action_schema_is_current(db, version)
+            and publication_tasks_are_current(db, version)
+            and {"tasks", "runs"} <= tables
+            and not (old | {"scheduled_task_runs", "workbench_tasks", "workbench_turns", "workbench_events"}).intersection(tables)):
+        return task20_projection("reply_tasks"), "select status from (" + task20_projection("work_summary_inputs") + ")"
     raise ValueError("unknown or mixed task publication source schema")
 
 
 def publication_meeting_sources(db: sqlite3.Connection) -> tuple[str, str]:
     """Read Meeting from the exact old source or combined current layout."""
-    version = db.execute(
-        "select value from service_state where key=?", (VERSION_KEY,)
-    ).fetchone()
-    version = version[0] if version is not None else None
+    version = publication_store_version(db, current_version=TARGET_STORE_VERSION,
+                                        previous_versions=PREVIOUS_STORE_VERSIONS)
     tables = {
         row[0] for row in db.execute("select name from sqlite_master where type='table'")
     }
@@ -90,6 +96,17 @@ def publication_meeting_sources(db: sqlite3.Connection) -> tuple[str, str]:
         ).intersection(tables)
     ):
         return MEETING_JOB_SQL, MEETING_RUN_SQL
+    if (publication_action_schema_is_current(db, version)
+            and publication_tasks_are_current(db, version)
+            and {"tasks", "runs"} <= tables
+            and not (set(RETIRED_TASK_TABLES) | {"scheduled_task_runs", "workbench_tasks", "workbench_turns", "workbench_events"}).intersection(tables)):
+        if version in ("2026-10-19.10", TARGET_STORE_VERSION):
+            from app.logical_run_storage import logical_run_projection
+            from app.logical_run_current_schema import current_run11_schema_is_current
+            if not current_run11_schema_is_current(db):
+                raise ValueError("unknown logical Run publication declaration")
+            return task20_projection("meeting_alignment_jobs"), logical_run_projection("meeting_alignment_runs")
+        return task20_projection("meeting_alignment_jobs"), MEETING_RUN_SQL
     raise ValueError("unknown or mixed meeting publication source schema")
 
 

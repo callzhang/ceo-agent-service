@@ -1405,6 +1405,68 @@ def test_acceptance_has_dedicated_transition_and_existing_task_id():
     assert accepted.transition == "apply_acceptance"
 
 
+def test_acceptance_relationship_errors_point_to_the_invalid_fields():
+    with pytest.raises(ValidationError) as exc_info:
+        TaskAgentDecision.model_validate(
+            {
+                "project_decisions": [],
+                "project_assessments": [],
+                "task_decisions": [
+                    _decision(
+                        action="update_task",
+                        transition="update_fields",
+                        task_id=12,
+                        source_excerpt="正在处理这项工作",
+                        source_ref="minutes-1",
+                        acceptance_polarity="accepted",
+                        acceptance_target_signal_id=55,
+                    )
+                ],
+            }
+        )
+
+    assert {
+        tuple(error["loc"]) for error in exc_info.value.errors()
+    } == {
+        ("task_decisions", 0, "acceptance_polarity"),
+        ("task_decisions", 0, "acceptance_target_signal_id"),
+    }
+
+
+@pytest.mark.parametrize(
+    ("polarity", "target_signal_id", "field_name"),
+    [
+        (None, 55, "acceptance_polarity"),
+        ("accepted", None, "acceptance_target_signal_id"),
+    ],
+)
+def test_apply_acceptance_required_field_errors_are_field_located(
+    polarity, target_signal_id, field_name
+):
+    with pytest.raises(ValidationError) as exc_info:
+        TaskAgentDecision.model_validate(
+            {
+                "project_decisions": [],
+                "project_assessments": [],
+                "task_decisions": [
+                    _decision(
+                        action="update_task",
+                        transition="apply_acceptance",
+                        task_id=12,
+                        source_excerpt="我接受这项任务",
+                        source_ref="minutes-1",
+                        acceptance_polarity=polarity,
+                        acceptance_target_signal_id=target_signal_id,
+                    )
+                ],
+            }
+        )
+
+    assert ("task_decisions", 0, field_name) in {
+        tuple(error["loc"]) for error in exc_info.value.errors()
+    }
+
+
 @pytest.mark.parametrize("polarity", ["declined", "ambiguous", None])
 def test_nonaccepted_polarity_cannot_transition_commitment(polarity):
     with pytest.raises(

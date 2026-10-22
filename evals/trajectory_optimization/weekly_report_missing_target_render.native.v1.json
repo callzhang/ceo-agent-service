@@ -1,0 +1,67 @@
+{
+  "schema_version": 1,
+  "created_on": "2026-10-17",
+  "purpose": "Diagnose the Weekly Report render-retry trajectory and verify validator/runtime alignment on a new target.",
+  "data_class": "fully synthetic; no production records or Work Profile",
+  "route": "codex_oauth",
+  "model": "gpt-5.6-luna",
+  "tools": "isolated local MCP fixture; read-only synthetic materials and references; document write routed to an in-memory fake sink",
+  "scenario": {
+    "target": "absent synthetic weekly-meeting document with resolved synthetic parent",
+    "previous_issue": "COMP-ANON-1",
+    "source_facts": "none; all four business reports unsubmitted",
+    "expected": "validator reports every renderer-required omission before render; corrected report renders and fake readback matches"
+  },
+  "runs": [
+    {
+      "name": "installed_validator_diagnostic",
+      "thread_id": "01a14cc4-ee09-7fa0-98cf-c8d68cfec4b5",
+      "validator": "installed older validator",
+      "observed": {
+        "final_validation_publishable": true,
+        "render_calls": 11,
+        "render_failed": 9,
+        "render_succeeded": 2,
+        "render_errors": ["question", "current_root_cause", "status_icon", "weeks_open", "owner", "name", "name", "name", "definition_evidence"],
+        "fake_write_readback_matches": true
+      },
+      "inference": "The validator and renderer contracts were misaligned: a publishable report could still fail on fields consumed by rendering."
+    },
+    {
+      "name": "candidate_validator",
+      "thread_id": "01a14cc7-a980-7bc2-842f-d43f8c672c80",
+      "validator": "candidate scripts/validate_run.py and report_contract.py",
+      "observed": {
+        "first_validation_publishable": false,
+        "first_validation_error_count": 51,
+        "second_validation_publishable": true,
+        "render_calls": 2,
+        "render_failed": 0,
+        "render_arguments_identical": true,
+        "native_parser": "passed",
+        "fake_write_readback_matches": true
+      }
+    },
+    {
+      "name": "candidate_with_reuse_instruction_probe",
+      "thread_id": "01a14ccb-7110-7f11-9f71-519dbeec83f5",
+      "delta": "Only the synthetic test prompt added an instruction to render once and reuse the returned JSONML unless report content changes.",
+      "observed": {
+        "first_validation_publishable": false,
+        "first_validation_error_count": 43,
+        "second_validation_publishable": true,
+        "render_calls": 2,
+        "render_failed": 0,
+        "render_arguments_identical": true,
+        "native_parser": "passed",
+        "fake_write_readback_matches": true
+      },
+      "conclusion": "The extra instruction did not remove the duplicate identical render call; do not add it to the installed Skill based on this sample."
+    }
+  ],
+  "limits": [
+    "The three runs have different provider cache and token usage; token totals are not a controlled cost comparison.",
+    "The fake write/readback is local and in-memory; no real document, business MCP, production data, profile, or external action was used.",
+    "The native runs validate this synthetic new-target path, not every Weekly Report scenario or production deployment."
+  ]
+}

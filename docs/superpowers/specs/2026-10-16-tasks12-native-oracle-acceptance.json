@@ -1,0 +1,33 @@
+{
+  "status": "accepted_native_source_storage_only",
+  "implementation_commit": "03536b91267de39ed7831dc263d3fc9698ca40b4",
+  "test_sha256": "2200e7ead3b72b0f1e543884dc5340e469f7883490791c70a54b813e7c32a9ed",
+  "profiles": {
+    "actual_tables_sha256": "f4a7dca390f9a5b28865de73058e0ae66117fbea32280dfcbeeca67c64348f29",
+    "production_adf0ee88_genuine_fresh_tables_sha256": "c02ce18e532fbf36abc60ea08c51ed8969be67d005621d67b5a7e320b86c6a38"
+  },
+  "root": "434 passed in1.23s; exact bytes and Ruff clean",
+  "fresh_spec": "434 passed in1.16s; exact5path scope/canonical hash/profile semantics verified",
+  "fresh_quality": {
+    "applied_preflight": "434 passed in1.29s",
+    "independent_behavioral_subset": 24,
+    "declaration_mutants": {
+      "remove_typed_parent_update_guards": "6expected behavioral failures",
+      "remove_decision_immutable_update_trigger": "2expected behavioral failures",
+      "remove_round_before_insert_trigger": "2expected transaction-survival failures"
+    },
+    "additional_native_probes": "Both profiles: invalid round UPDATE rejected; 2.0 text accepted as integer2; explicit-id decision INSERT OR REPLACE can replace decision_json with retained valid child FK under recursive_triggers=0. Ordinary UPDATE/DELETE rejection is not a blanket REPLACE ban."
+  },
+  "native_full_scope": "feedback_processing_rounds keeps earlier caller transaction writes; other4AUTOINCREMENT families roll back caller transaction on SQLITE_FULL. Actual and genuine-fresh profiles both tested.",
+  "cleanup": "All newly owned test/probe temporary trees removed",
+  "not_proved": [
+    "target Tasks20 declaration",
+    "public DAO owner/generation CAS",
+    "feedback lifecycle",
+    "Workbench filesystem/recovery",
+    "migration and inverse",
+    "native CLI fake-outbound/UI/final11table acceptance",
+    "production deployment"
+  ],
+  "final_target": "10core tables plus email_schema_migrations ledger remains open; no runtime/source table retirement"
+}

@@ -1,0 +1,31 @@
+{
+  "recorded_at": "2026-10-18T00:25:13.828471+00:00",
+  "status": "ACCEPTED_UNSELECTED_COMPONENT_ONLY",
+  "freeze_sha256": "304de83bbe1b2b4fd288a9fff4d38f12e86c2192f276c105d80a5059ca62ff93",
+  "author": {
+    "focused_pass": 26,
+    "seconds": 53.18,
+    "ruff": "PASS"
+  },
+  "spec": {
+    "verdict": "APPROVE",
+    "focused_pass": 10,
+    "seconds": 33.88
+  },
+  "quality": {
+    "verdict": "APPROVE",
+    "focused_pass": 7,
+    "seconds": 27.82,
+    "independent_probe": "Native-affinity UID string, paired conditional raw folders/timestamps, stale predicates and rollback GREEN"
+  },
+  "pins": {
+    "files": 4,
+    "requirements": 9,
+    "runtime": 373,
+    "original_runtime_unchanged": 371
+  },
+  "selected_callers": false,
+  "actual_data_proof": false,
+  "capacity_acceptance": false,
+  "deployment": false
+}

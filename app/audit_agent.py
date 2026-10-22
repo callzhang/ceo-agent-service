@@ -15,6 +15,7 @@ from app.agent_contracts import (
     ConsumerOutcome,
     json_value_type,
 )
+from app.consumer_purpose import purpose_for_context
 from app.agent_effects import LEASE_SECONDS
 from app.agent_result import ResultParseError
 from app.agent_runtime_config import AgentRuntimeConfig
@@ -257,10 +258,12 @@ class AuditAgentRunner:
         )
 
         configuration = load_prompt_configuration(role="audit")
+        purpose_name = purpose_for_context(context.task, task)
         developer_sections = audit_developer_sections(
             rendered_rules,
             runtime_context="",
             prompt_configuration=configuration,
+            purpose_name=purpose_name,
         )
         frozen_names = frozen_task_skill_names(
             task.trigger_message_json, context.task.skill_names,
@@ -406,6 +409,7 @@ class AuditAgentRunner:
             run=run,
             invocation_facts={
                 "stage_index": context.task.stage_index,
+                "audit_purpose": purpose_name,
                 "skill_names": list(context.task.skill_names),
                 "skill_protocol": skill_protocol_fact,
                 "skill_protocol_source": skill_protocol_source,
@@ -427,6 +431,7 @@ class AuditAgentRunner:
             ),
             configure_command=lambda command: make_audit_agent_command(
                 command,
+                purpose_name=purpose_name,
                 controlled_cli=ControlledCliConfig(
                     command=sys.executable,
                     args=(

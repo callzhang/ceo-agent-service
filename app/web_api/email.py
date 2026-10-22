@@ -22,6 +22,7 @@ from uuid import uuid4
 
 from fastapi import HTTPException, Query, Request
 from fastapi.responses import JSONResponse
+from fastapi.concurrency import run_in_threadpool
 from pydantic import BaseModel, ConfigDict, Field, ValidationError, field_validator
 
 from app import config as app_config
@@ -31,6 +32,10 @@ from app.email_classifier_contracts import (
     EmailClassificationStatus,
     build_email_action_plan,
     validate_email_category_key,
+)
+from app.email_classification_reader import (
+    EmailClassificationReader,
+    EmailClassificationReadError,
 )
 from app.email_classifier_model_families import model_family_catalog
 from app.email_category_config import (
@@ -914,11 +919,24 @@ class EmailFeedbackPayload(BaseModel):
         return value
 
 
+def build_email_classification_reader(
+    store: EmailStore, *, environment_factory, source_reader=None,
+) -> EmailClassificationReader:
+    from app.email_source_reader import build_email_source_reader
+
+    source = (
+        build_email_source_reader(store, environment_factory=environment_factory)
+        if source_reader is None else source_reader
+    )
+    return EmailClassificationReader(store, message_reader=source)
+
+
 def register_email_routes(
     app: Any,
     email_store_factory: Any,
     *,
     email_learning_factory: Any | None = None,
+    email_source_reader_factory: Any | None = None,
     email_env_path: Path | None = None,
     imap_client_factory: Any | None = None,
     imap_provider_factory: Any | None = None,
@@ -945,6 +963,15 @@ def register_email_routes(
 
     def secret_environment() -> dict[str, str]:
         return app_config.effective_env_values(email_env_path)
+
+    classification_reader = (
+        build_email_classification_reader(
+            availability.store, environment_factory=secret_environment,
+            source_reader=email_source_reader_factory() if email_source_reader_factory else None,
+        )
+        if availability.store is not None
+        else None
+    )
 
     if folder_binding_coordinator is None and availability.store is not None:
         from app.email_worker import build_provider_folder_binding_coordinator
@@ -1152,6 +1179,27 @@ def register_email_routes(
             status_code=503,
         )
 
+    @app.exception_handler(EmailClassificationReadError)
+    async def email_original_unavailable(
+        _request: Request,
+        _exc: EmailClassificationReadError,
+    ) -> JSONResponse:
+        return error_response(
+            "email_original_unavailable",
+            "Original email could not be read from its source; retry after checking the mailbox",
+            502,
+        )
+
+    from app.email_training_data import TrainingSnapshotUnavailable
+
+    @app.exception_handler(TrainingSnapshotUnavailable)
+    async def email_training_source_unavailable(
+        _request: Request, _exc: TrainingSnapshotUnavailable,
+    ) -> JSONResponse:
+        return error_response(
+            "email_training_source_unavailable", "训练输入来源不可用或已变化，请检查来源后重试", 502,
+        )
+
     @app.get("/api/console/email/accounts")
     def email_accounts():
         store = require_store()
@@ -1309,12 +1357,13 @@ def register_email_routes(
         page: int = Query(default=1, ge=1),
         page_size: int = Query(default=20, ge=1, le=100),
         q: str = Query(default="", max_length=500),
+        search_scope: Literal["preview", "full"] = Query(default="preview"),
         category: str = Query(default="", max_length=512),
         action_status: str = Query(default="", max_length=20),
         source: str = Query(default="", max_length=16),
     ):
         email_store = require_store()
-        search_params = {"q": q.strip()} if q.strip() else {}
+        search_params = {"q": q.strip(), "search_scope": search_scope}
         if action_status and action_status not in {
             "failed", "failed_retriable", "failed_not_retriable",
             "pending", "done", "skipped", "none",
@@ -1351,13 +1400,13 @@ def register_email_routes(
             if value
         }
         if status == "unsubscribe":
-            rows, total = email_store.list_unsubscribe_classifications(
+            rows, total = classification_reader.list_unsubscribe_classifications(
                 **search_params,
                 limit=page_size,
                 offset=(page - 1) * page_size,
             )
         elif status == "all":
-            rows, total = email_store.list_classifications(
+            rows, total = classification_reader.list_classifications(
                 **search_params,
                 **filters,
                 status=None,
@@ -1377,7 +1426,7 @@ def register_email_routes(
                     },
                     status_code=400,
                 )
-            rows, total = email_store.list_classifications(
+            rows, total = classification_reader.list_classifications(
                 **search_params,
                 **filters,
                 status=classification_status,
@@ -1417,7 +1466,7 @@ def register_email_routes(
     @app.get("/api/console/email/classifications/{classification_id}")
     def email_classification_detail(classification_id: int):
         email_store = require_store()
-        item = email_store.get_classification(classification_id)
+        item = classification_reader.get_classification(classification_id)
         if item is None:
             return error_response("not_found", "Email classification not found", 404)
         unsubscribe_entry_available = (
@@ -1808,10 +1857,9 @@ def register_email_routes(
                         "invalid_training_selection", "所选训练范围没有可用样本", 400
                     )
                 request_selection["provenance"] = provenance
-            result = (
-                service.request_manual_training(selection=request_selection)
-                if payload is not None
-                else service.request_manual_training()
+            training_kwargs = {"selection": request_selection} if payload is not None else {}
+            result = await run_in_threadpool(
+                service.request_manual_training, **training_kwargs
             )
         except ValueError:
             return error_response(
@@ -1857,6 +1905,7 @@ def register_email_routes(
             )
         from datetime import datetime, timezone
 
+        from app.email_selected_training_reader import build_selected_training_reader
         from app.email_classifier_learning import _selection_provenance
         from app.email_training_snapshot import (
             FolderTrainingSnapshotError,
@@ -1865,11 +1914,14 @@ def register_email_routes(
         )
 
         try:
-            selection = _selection_provenance(
-                require_store(),
+            selection = await run_in_threadpool(
+                _selection_provenance, require_store(),
                 sources=payload.sources,
                 categories=payload.categories,
                 allow_empty=True,
+                selected_training_reader=build_selected_training_reader(
+                    require_store(), source_reader=classification_reader.message_reader,
+                ),
             )
         except ValueError:
             return error_response(
@@ -1937,7 +1989,7 @@ def register_email_routes(
     def training_source_catalog(email_store: EmailStore) -> list[dict[str, object]]:
         rows: dict[tuple[str, str], dict[str, object]] = {}
         snapshot = email_store.latest_training_snapshot_state()
-        list_records = getattr(email_store, "list_selected_training_records", None)
+        list_records = getattr(email_store, "list_selected_training_labels", None)
         records = list_records() if callable(list_records) else []
         for sample in records:
             source = str(sample.get("source") or "")
@@ -2308,7 +2360,7 @@ def register_email_routes(
         runtime_timing, fallback_counts = _project_runtime_observability(
             persisted_runtime
         )
-        pending_examples = len(email_store.list_unincluded_training_examples())
+        pending_examples = email_store.count_unincluded_training_examples()
         return {
             "ok": True,
             "learning": {

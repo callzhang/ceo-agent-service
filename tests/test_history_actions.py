@@ -78,7 +78,7 @@ def test_pending_retry_uses_persisted_backoff_without_human_actions():
     assert [action.key for action in state.actions] == ["details"]
 
 
-def test_exhausted_failure_requires_manager_and_offers_safe_choices():
+def test_exhausted_execution_failure_stays_failed_without_business_decision():
     attempt = _attempt(audit_summary="Current task did not complete")
     task = _task(status="failed", attempts=3, available_at="")
 
@@ -89,12 +89,10 @@ def test_exhausted_failure_requires_manager_and_offers_safe_choices():
     )
 
     assert state is not None
-    assert state.kind == "needs_manager"
+    assert state.kind == "failed"
     assert state.reason == "Current task did not complete"
     assert [action.key for action in state.actions] == [
         "retry",
-        "defer",
-        "manual",
         "details",
     ]
 
@@ -121,7 +119,7 @@ def test_external_unsubscribe_page_failure_does_not_become_manager_attention():
     assert state is None
 
 
-def test_internal_unsubscribe_reconciliation_error_still_requires_manager():
+def test_internal_unsubscribe_reconciliation_failure_is_not_a_business_decision():
     error = "unsubscribe_operation_rejected:ValueError: unsubscribe execution requires reconciliation"
     attempt = _attempt(
         action="direct_unsubscribe",
@@ -137,7 +135,8 @@ def test_internal_unsubscribe_reconciliation_error_still_requires_manager():
     )
 
     assert state is not None
-    assert state.kind == "needs_manager"
+    assert state.kind == "failed"
+    assert [action.key for action in state.actions] == ["retry", "details"]
 
 
 def test_internal_retry_code_is_rendered_as_readable_failure_reason():
@@ -317,7 +316,7 @@ def test_agent_supplied_choices_are_preserved_for_general_needs_human():
     assert state.actions[0].instruction == "Use plan A"
 
 
-def test_failed_external_effect_uses_current_result_without_replay_choice():
+def test_failed_external_effect_offers_retry_without_business_decision():
     attempt = _attempt(audit_summary="Execution did not complete")
 
     state = reply_history_attention(
@@ -328,7 +327,8 @@ def test_failed_external_effect_uses_current_result_without_replay_choice():
 
     assert state is not None
     assert state.external_effect == "外部动作是否完成由当前结果和业务系统状态决定"
-    assert [action.key for action in state.actions] == ["retry", "defer", "manual", "details"]
+    assert state.kind == "failed"
+    assert [action.key for action in state.actions] == ["retry", "details"]
 
 
 def test_confirmed_external_effect_only_keeps_agent_choices_and_read_only_actions():

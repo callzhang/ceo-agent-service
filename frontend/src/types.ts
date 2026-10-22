@@ -2,7 +2,6 @@ export type TaskState =
   | "idle"
   | "queued"
   | "running"
-  | "waiting_confirmation"
   | "completed"
   | "stopped"
   | "failed";
@@ -16,17 +15,9 @@ export type EventType =
   | "tool_completed"
   | "file_changed"
   | "artifact_created"
-  | "confirmation_required"
   | "status_changed"
   | "turn_completed"
   | "turn_failed";
-
-export type ConfirmationStatus =
-  | "pending"
-  | "confirmed"
-  | "cancelled"
-  | "executed"
-  | "failed";
 
 export interface Task {
   id: string;
@@ -81,39 +72,18 @@ export interface Artifact {
   download_url: string;
 }
 
-export interface Confirmation {
-  id: string;
-  turn_id: string;
-  action_kind: string;
-  target: string;
-  summary: string;
-  risk: string;
-  canonical_capability: string;
-  canonical_operation: string;
-  canonical_targets: string[];
-  status: ConfirmationStatus;
-  decision_requested: string;
-  decision_requested_at: string;
-  proposer_quiesced: boolean;
-  created_at: string;
-  decided_at: string;
-}
-
 export interface Timeline {
   task: Task;
   turns: Turn[];
   events: WorkbenchEvent[];
   attachments: Attachment[];
   artifacts: Artifact[];
-  confirmations: Confirmation[];
   next_cursor: string;
   has_more: boolean;
   events_has_more: boolean;
   events_next_cursor: number;
   artifacts_has_more: boolean;
   artifacts_next_cursor: string;
-  confirmations_has_more: boolean;
-  confirmations_next_cursor: string;
   attachments_has_more: boolean;
   attachments_next_cursor: string;
 }
@@ -135,7 +105,6 @@ export interface RuntimeCapabilities {
 export interface WorkbenchStats {
   tasks: { total: number; active: number; archived: number };
   turns: Record<TurnStatus, number>;
-  confirmations: Record<ConfirmationStatus, number>;
   events: Record<string, number>;
   attachments: number;
   artifacts: number;

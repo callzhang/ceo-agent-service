@@ -1,0 +1,33 @@
+{
+  "base_head": "c30532f8d",
+  "foundation": "c14cb181d",
+  "scope": [
+    "app/email_store.py",
+    "app/quality_gate.py"
+  ],
+  "artifacts_sha256": {
+    ".patch": "2f6d29d21f91997b0aeb77a77c3ebe4e71438049c30e680ac17c5da08275e68e",
+    "-tests.py": "915db2da8c464f9f6ec839df4c621c8f17e481b2639890b9ea0fb2333e2a319f"
+  },
+  "red": "4 focused original callers failed after pure Runs11 conversion; writer and rate queried retired source table, quality gate skipped logical sample coverage",
+  "green": "5 focused patched-copy tests passed in 9.30s; Ruff passed; patch apply and reverse checks passed",
+  "tests": [
+    "global 2048 retention across two models, preserved public IDs and other Runs kinds",
+    "600-second rate window and latest 200 latency fallback",
+    "observability timing/fallback fields and model_failing issue tuple",
+    "empty Runs11 sample source remains checked with no sample issue",
+    "No-statistics higher-public-ID other-kind retention plan and VM work bound"
+  ],
+  "limits": [
+    "unselected patch; current constructors and coordinator still select 54-table source shape",
+    "no actual source copy, production database, provider, native CLI, outbound or network was used",
+    "no app/tests files modified or installed"
+  ],
+  "quality_followup": {
+    "finding": "Prior retention inner selection chose general idx_runs_public_id without sqlite_stat1 at 231340 unrelated Runs rows, about 960000 VM instructions versus native 29000",
+    "repair": "Name existing idx_runs11_sample_id on the inner source-scoped selection; no new index, startup ANALYZE or retention policy",
+    "red": "Reverting only the index direction in the prior proposal fails new no-statistics scale test: 14100 VM steps vs bound 10000 on 3000 higher-public-ID other-kind rows",
+    "green": "Repaired proposal passes all 5 focused tests; high-ID other-kind rows survive and chosen plan includes idx_runs11_sample_id",
+    "boundary": "Fresh synthetic fixture only; source-scale quality review provided the 231340-row latency and VM evidence; no production benchmark"
+  }
+}

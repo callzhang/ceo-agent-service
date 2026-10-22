@@ -145,5 +145,31 @@ class CronSchedule:
             if candidate_utc > current_utc:
                 return candidate_utc
 
+    def latest_before(self, instant: datetime) -> datetime | None:
+        """Return the latest valid trigger strictly before an aware instant."""
+        if instant.tzinfo is None or instant.utcoffset() is None:
+            raise ValueError("instant must be timezone-aware")
+
+        zone = ZoneInfo(self.timezone_name)
+        current_utc = instant.astimezone(timezone.utc)
+        cursor = current_utc.astimezone(zone).replace(tzinfo=None)
+
+        while True:
+            local_candidate = croniter(
+                self.expression,
+                cursor,
+                ret_type=datetime,
+                second_at_beginning=True,
+            ).get_prev(datetime)
+            candidate = local_candidate.replace(tzinfo=zone, fold=0)
+            candidate_utc = candidate.astimezone(timezone.utc)
+            round_trip = candidate_utc.astimezone(zone)
+
+            if round_trip.replace(tzinfo=None) != local_candidate:
+                cursor = local_candidate
+                continue
+            if candidate_utc < current_utc:
+                return candidate_utc
+
     def describe(self) -> str:
         return f"{cron_human_description(self.expression)} · {self.timezone_name}"

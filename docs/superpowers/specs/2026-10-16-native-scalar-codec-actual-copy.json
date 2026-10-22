@@ -1,0 +1,108 @@
+{
+  "scope": "Frozen actual source copied-data codec acceptance, not State or final ten-table acceptance",
+  "candidate_commit": "ba01727f32edace3233102998c33719a2c892f18",
+  "old_code_commit": "7dadc492c1c62d5b0624f2f97dd0c89f4f358646",
+  "proof_script_sha256": "e2cea98dbf57aba90bf55bd82e6659429f4889d35f7d7c5c62ee79cea649d987",
+  "source_sha256_before_and_after": "970a909a9cfcb4fe604d2111d5572560d4744978df20fb317c4e433059566320",
+  "elapsed_seconds": 210.875,
+  "phase_seconds": {
+    "first_cold_publication": 51.838,
+    "whole_schema_inverse": 35.407,
+    "second_cold_publication": 67.277
+  },
+  "source_ordinary_tables": 116,
+  "target_ordinary_tables": 82,
+  "target_exact_name_set_matches_approved_intermediate_inventory": true,
+  "original_retained_table_comparisons_target": 78,
+  "original_all_table_comparisons_inverse": 116,
+  "comparison": "SQLite read-only native row-identity joins, explicit BINARY IS and typeof for every original column; exact predicted row-count deltas only for migration-owned actions/ledger and proof-owned synthetic rows",
+  "whole_schema_inverse_exact": true,
+  "email_composite_identity_contract": "Effects and direct retry use approved EMAIL_COMPOSITE_KEYS; old7dad effects ROWID reference is only historical _migrate_v34_to_v35, not current Email51; direct retry has none",
+  "provider_identity_contract": "Provider two families compared by native nonnull composite PK, not hidden ROWID, per source-contract lines67-71 and validation lines62-63; old7dad has22 provider SQL/declaration literals and zero ROWID references",
+  "target_marker_exception": "Only service_state store_schema_version is compared by target protocol instead of original value/time; inverse compares it exactly to original",
+  "cold_current": {
+    "constructors_and_public_reads": true,
+    "public_service_state_write": true
+  },
+  "cold_genuine_old": {
+    "constructors_and_public_reads": true,
+    "public_service_state_write": true
+  },
+  "cold_reforward": {
+    "constructors_and_public_reads": true,
+    "public_service_state_write": true
+  },
+  "current_test_cases": [
+    "Configs finite REAL insert/update and TEXT rendering",
+    "Provider finite REAL-to-JSON-valid TEXT insert/direct update",
+    "Published Reply new record payload bytes unchanged across inverse/reforward",
+    "Current and genuine-old Store/Email cold constructors and public reads",
+    "Current and genuine-old public service-state writes survive reforward"
+  ],
+  "quick_check": "ok",
+  "foreign_key_findings": [
+    [
+      "runs",
+      190042,
+      "tasks",
+      1
+    ]
+  ],
+  "foreign_key_findings_unchanged": true,
+  "independent_reviews": {
+    "spec": {
+      "commit": "ba01727f32edace3233102998c33719a2c892f18",
+      "result": "PASS",
+      "tests_passed": 31,
+      "seconds": 13.48,
+      "installed_reply_objects_both_variants": [
+        70,
+        73
+      ]
+    },
+    "quality": {
+      "commit": "ba01727f32edace3233102998c33719a2c892f18",
+      "result": "PASS",
+      "new_tests_passed": 17,
+      "seconds": 14.22,
+      "supplemental_finite_value_probes": 12584,
+      "supplemental_malformed_rejections": 7,
+      "declared_reply_objects_excluding_sqlite_sequence": [
+        69,
+        72
+      ]
+    }
+  },
+  "implementation_verification": {
+    "matrix_a": {
+      "passed": 425,
+      "skipped": 6,
+      "seconds": 217.56,
+      "scope": "Before Provider-only paired test refinement; app unchanged"
+    },
+    "matrix_b": {
+      "passed": 715,
+      "seconds": 57.66
+    },
+    "final_new_test_module": {
+      "passed": 17,
+      "seconds": 11.99
+    },
+    "old_encoder_negative_control": "4 intended Configs value-mismatch failures/13 deselected;0.42s",
+    "published_reply_function_source_bodies_unchanged": 6,
+    "provider_target_fingerprint": "4abf0813629cc48aea6ba8116a2f1328529c6f0823890d6d0132923b7835d4be",
+    "frozen_source_fingerprints_unchanged": true
+  },
+  "native_agent_cli_starts": 0,
+  "provider_calls": 0,
+  "real_sends": 0,
+  "production_writes": 0,
+  "limitations": [
+    "Five earlier rehearsal attempts corrected only proof expectations/data: target ledger plus-one, protocol-owned Store marker value/time, synthetic scope trigger mode to existing enum, and already-approved Provider/Email composite identity instead of unretained hidden ROWID; no app change",
+    "No latest full CI or native Agent CLI acceptance",
+    "Source-bound actual case; actual/fresh synthetic coverage is separate",
+    "Not State/caller selection, complete10+ledger or production sizing/publication"
+  ],
+  "owned_database_and_old_code_temp_removed": true,
+  "all_owned_actual_copy_and_comparer_smoke_roots_absent": true
+}

@@ -1,0 +1,50 @@
+{
+  "scope": "Complete unselected Store/schema/facade proposal only; native source factories unchanged",
+  "patch_sha256": "a52dad8ca09acf72dc37c012c2959241d289d799e0d1c4609a5083a3a63f45c4",
+  "files": {
+    "app/store.py": {
+      "before": "72b40d7917af0cf48ffcb131d347c66799432efbec98a1f61e759d2804253d86",
+      "after": "695078ab9dcddb860836b7fcd224b9a8a6d8f89cc4a11d40ad23e759e4864da2"
+    },
+    "app/workbench/store.py": {
+      "before": "b9027194eb4f9f277630935bf2d00a36792047f626e6b0242667d22a7de070db",
+      "after": "96a14d20140720556b47ea79df7e58f22fffabfd1b8b4b1f9e330072e6b06583"
+    },
+    "app/workbench/__init__.py": {
+      "before": "2f710a3a1cadf49fd7632cd4ef2c142674bac4f1f28d8db17906f4e318e8a488",
+      "after": "0eb36ab0767bd795723435711ed8f947abc02c44494bc8a53d03e80c71a9353b"
+    },
+    "app/task20_current_schema.py": {
+      "before": "db842484203c5add4b79dae41f599e86f94279c50b4bcaf4d8367e9b876cfb38",
+      "after": "9755559984b454d36e494b76e9b8fb1823f27e348ad0e8d55bfc950b1eb88667"
+    },
+    "app/task20_definitions.py": {
+      "before": "b7e23407ff77b37522639aaff0317d8fdccfac61c3f073ccd3d9774817e7785e",
+      "after": "1000c4baeaaad66444b75ceeba1264d626239647e0186c8ee839dfc089b91784"
+    }
+  },
+  "retired_workbench_methods": [
+    "_confirmation_from_row",
+    "_require_confirmation",
+    "_resolve_pending_confirmations",
+    "cancel_confirmation_execution",
+    "claim_confirmation_execution",
+    "confirmation_is_quiesced",
+    "confirmation_quiescence",
+    "consume_confirmation_authorization",
+    "create_confirmation",
+    "finish_confirmation_execution",
+    "get_confirmation",
+    "list_confirmations",
+    "mark_confirmation_proposer_quiesced",
+    "reconcile_confirmed_without_result",
+    "reconcile_confirmed_without_result_batch",
+    "reconcile_unquiesced_proposer_batch",
+    "reconcile_unquiesced_proposers",
+    "renew_confirmation_execution_lease",
+    "renew_confirmation_proposer",
+    "requested_quiesced_confirmation_ids"
+  ],
+  "compile_ruff_reverse_reapply": "pass",
+  "unproved": "Combined model/executor/API/frontend and source-bound migration/cold/public/copy proofs required before application."
+}

@@ -1,0 +1,86 @@
+{
+  "release": "B2a",
+  "actual_commit": "cbf95112f973409d5f0fd61b5531a08ef8603f94",
+  "live_proof": {
+    "store_version": "2026-10-19.6",
+    "email_version": 53,
+    "exact_declaration": true,
+    "shared_families": {
+      "review_candidates": {
+        "count": 1058,
+        "code": 63,
+        "wrong_code": 0
+      },
+      "email_action_plans": {
+        "count": 10607,
+        "code": 64,
+        "wrong_code": 0
+      },
+      "email_actions": {
+        "count": 11032,
+        "code": 65,
+        "wrong_code": 0
+      },
+      "candidate_action_attempts": {
+        "count": 328,
+        "code": 66,
+        "wrong_code": 0
+      },
+      "email_action_attempts": {
+        "count": 13096,
+        "code": 67,
+        "wrong_code": 0
+      }
+    },
+    "direct_step_field_count": 12,
+    "retired_six_mirrors_absent_from_step": true,
+    "quick_check": "ok",
+    "original_fk_findings": [
+      [
+        "runs",
+        190042,
+        "tasks",
+        1
+      ]
+    ],
+    "physical_file_bytes": 479956992,
+    "service": {
+      "label": "com.ceo-agent-service.main",
+      "state": "running",
+      "pid": "75178",
+      "detail": "running"
+    },
+    "system_health": {
+      "state": "degraded",
+      "violations": 1
+    },
+    "global_health_limitation": {
+      "unresolved_feedback_count": 1,
+      "created_at": "2026-10-20 04:08:53",
+      "before_refresh_old_commit": "296b6d82f0b9b374f1caa64e9ec223d8e6c7207b",
+      "old_commit_observed_at": "2026-10-20T04:10:58.588771Z",
+      "not_resolved_or_suppressed": true
+    },
+    "actual_commit": "cbf95112f973409d5f0fd61b5531a08ef8603f94"
+  },
+  "queues": {
+    "failed_changes": {},
+    "after_http": {
+      "health": 200,
+      "status": 200,
+      "attention": 200,
+      "history": 200
+    },
+    "actual_commit": "cbf95112f973409d5f0fd61b5531a08ef8603f94",
+    "attention_total": 4,
+    "history_total": 36439
+  },
+  "standard_deploy_result": "deployed 296b6d82 -> cbf95112",
+  "upstream_delta": {
+    "commit": "cbf95112f973409d5f0fd61b5531a08ef8603f94",
+    "app_path": "app/audit_web.py",
+    "scope": "independent compacted OA manual-rerun context recovery; shared schema/lifecycle source unchanged",
+    "focused_control": "tests/test_oa_manual_rerun_skill_refresh.py:4passed5.46s after restart, isolated B2aWT"
+  },
+  "global_health_boundary": "Not a zero-violation claim: one unresolved feedback created04:08:53 while old production296b was still observed04:10:58, retained untouched. Schema declaration/PID/five families/reference mirrors/quickcheck/FK and HTTP/queue checks pass."
+}

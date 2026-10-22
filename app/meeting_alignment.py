@@ -21,7 +21,11 @@ from app.config import codex_capacity_retry_duration, principal_display_name
 from app.decision_quality import DecisionQuality, DecisionRisk, classify_decision_quality
 from app.dws_client import DwsCalendarEvent, DwsError, DwsUserProfile
 from app.dispatcher.models import ClaimGuard
-from app.external_retry import is_external_dependency_error, retry_delay_seconds
+from app.external_retry import (
+    MAX_AUTOMATIC_ATTEMPTS,
+    is_external_dependency_error,
+    retry_delay_seconds,
+)
 from app.group_discovery import (
     DingTalkGroupDiscoveryProvider,
     DiscussionEvidence,
@@ -112,7 +116,7 @@ TERMINAL_STATUSES = frozenset(
 # minutes, and genuinely separate meetings sat at three hours and beyond.
 MEETING_SEGMENT_MAX_GAP = timedelta(hours=2)
 DEFAULT_MEETING_RETRY_DELAY = timedelta(minutes=1)
-DEFAULT_MEETING_MAX_ATTEMPTS = 3
+DEFAULT_MEETING_MAX_ATTEMPTS = MAX_AUTOMATIC_ATTEMPTS
 # The provider-outage wait code shared with the DingTalk and WeChat workers:
 # a meeting decision turn that could not enter any route, or whose last live
 # route failed on capacity/transport with every other route paused, is a wait
@@ -976,15 +980,6 @@ def _search_meeting_group_candidates(
             "member_roster_complete": evidence.members is not None,
             "reference_audience_complete": request.audience_is_complete,
             "history_read_status": "denied" if evidence.history_read_denial else "read" if provider.capabilities.message_history else "unavailable",
-            "audience_verification_required": (
-                "Before selecting effects, verify live full relevant discussion, full group roster, "
-                "and each member's actual authorization for this exact content. Layoff and workforce "
-                "reduction plans are sensitive even without names or counts. Business relevance, "
-                "matching attendees, member precision and titles never establish permission. "
-                "Candidate excerpts and prior deliveries "
-                "do not verify the audience. Denied history is unresolved access evidence, not empty "
-                "discussion, no-group evidence, or permission to send; never use a self fallback."
-            ),
         }
         if evidence.history_read_denial is not None:
             candidate.update(
@@ -1034,7 +1029,6 @@ def _index_meeting_codex_session(
     decision: MeetingAlignmentDecision,
     *,
     source_id: int,
-    embedding_client: Callable[[list[str]], list[list[float]]] | None,
 ) -> None:
     session_id = str(getattr(runner, "last_session_id", "") or "").strip()
     if not session_id:
@@ -1092,6 +1086,7 @@ def _analyze_meeting_job(
     max_attempts: int,
     embedding_client: Callable[[list[str]], list[list[float]]] | None = None,
 ) -> None:
+    max_attempts = min(max_attempts, MAX_AUTOMATIC_ATTEMPTS)
     try:
         payload = json.loads(job.source_json)
         evidence = CalendarMeetingEvidence.model_validate(
@@ -1183,7 +1178,10 @@ def _analyze_meeting_job(
     except ValueError as exc:
         _fail_job(store, job.id, "meeting_source", exc)
         return
-    run_id = store.begin_meeting_alignment_run(job.id)
+    run_id = store.claim_logical_run(
+        'meeting_alignment_runs',
+        job.id,
+    )
     try:
         decision = agent.decide(
             source,
@@ -1197,6 +1195,11 @@ def _analyze_meeting_job(
                 scheduled_consumer.materialized_skill_protocol()
                 if scheduled_consumer is not None
                 else ""
+            ),
+            skill_materials=(
+                scheduled_consumer.skill_materials
+                if scheduled_consumer is not None
+                else ()
             ),
         )
     except MeetingOrganizerIdentityError as exc:
@@ -1215,8 +1218,6 @@ def _analyze_meeting_job(
                 store,
                 runner,
                 run_id,
-                job_id=job.id,
-                decision=exc.decision,
                 status="ready_to_send",
                 error=error,
             )
@@ -1240,8 +1241,6 @@ def _analyze_meeting_job(
             store,
             runner,
             run_id,
-            job_id=job.id,
-            decision=None,
             status="failed",
             error=error,
         )
@@ -1255,8 +1254,6 @@ def _analyze_meeting_job(
             store,
             runner,
             run_id,
-            job_id=job.id,
-            decision=exc.decision,
             status="failed",
             error=error,
         )
@@ -1288,8 +1285,6 @@ def _analyze_meeting_job(
             store,
             runner,
             run_id,
-            job_id=job.id,
-            decision=None,
             status="failed",
             error=error,
         )
@@ -1309,8 +1304,6 @@ def _analyze_meeting_job(
                 store,
                 runner,
                 run_id,
-                job_id=job.id,
-                decision=None,
                 status="retry",
                 error=error,
             )
@@ -1337,8 +1330,6 @@ def _analyze_meeting_job(
                 store,
                 runner,
                 run_id,
-                job_id=job.id,
-                decision=None,
                 status="retry",
                 error=error,
             )
@@ -1371,8 +1362,6 @@ def _analyze_meeting_job(
                 store,
                 runner,
                 run_id,
-                job_id=job.id,
-                decision=None,
                 status="failed",
                 error=error,
             )
@@ -1400,8 +1389,6 @@ def _analyze_meeting_job(
                 store,
                 runner,
                 run_id,
-                job_id=job.id,
-                decision=None,
                 status="retry",
                 error=error,
             )
@@ -1424,8 +1411,6 @@ def _analyze_meeting_job(
             store,
             runner,
             run_id,
-            job_id=job.id,
-            decision=None,
             status=(
                 "retry"
                 if (
@@ -1453,8 +1438,6 @@ def _analyze_meeting_job(
             store,
             runner,
             run_id,
-            job_id=job.id,
-            decision=None,
             status="failed",
             error=error,
         )
@@ -1477,8 +1460,6 @@ def _analyze_meeting_job(
         store,
         runner,
         run_id,
-        job_id=job.id,
-        decision=decision,
         status="ready_to_send",
         error="",
     )
@@ -1489,7 +1470,6 @@ def _analyze_meeting_job(
         source,
         decision,
         source_id=run_id,
-        embedding_client=embedding_client,
     )
     store.update_meeting_alignment_job(
         job.id,
@@ -1514,6 +1494,7 @@ def _deliver_meeting_job(
     retry_delay: timedelta,
     max_attempts: int,
 ) -> None:
+    max_attempts = min(max_attempts, MAX_AUTOMATIC_ATTEMPTS)
     try:
         previous = _saved_delivery_result(job.send_result_json)
     except (ValidationError, ValueError) as exc:
@@ -1854,12 +1835,11 @@ def _record_agent_run(
     runner: Any,
     run_id: int,
     *,
-    job_id: int,
-    decision: MeetingAlignmentDecision | None,
     status: str,
     error: str,
 ) -> int:
-    store.finish_meeting_alignment_run(
+    store.finish_logical_run(
+        'meeting_alignment_runs',
         run_id,
         codex_session_id=str(getattr(runner, "last_session_id", "") or ""),
         codex_transcript_start_line=int(
@@ -1868,12 +1848,6 @@ def _record_agent_run(
         codex_transcript_end_line=int(
             getattr(runner, "last_transcript_end_line", 0) or 0
         ),
-        decision_json=decision.model_dump_json() if decision is not None else "{}",
-        audit_tool_events_json=json.dumps(
-            getattr(runner, "last_audit_tool_events", []) or [],
-            ensure_ascii=False,
-        ),
-        audit_summary=decision.audit_summary if decision is not None else str(error),
         status=status,
         error=error,
     )

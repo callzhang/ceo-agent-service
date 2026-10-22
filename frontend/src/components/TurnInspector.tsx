@@ -36,7 +36,7 @@ export function TurnInspector({ task, timeline, capabilities, stats }: TurnInspe
   const toolCount = events.filter((event) => event.event_type === "tool_started").length;
   const fileCount = events.filter((event) => event.event_type === "file_changed").length;
   const errorCount = events.filter((event) => event.event_type === "turn_failed" || (event.event_type === "tool_completed" && event.payload.status === "failed")).length;
-  const truncated = Boolean(timeline && (timeline.has_more || timeline.events_has_more || timeline.artifacts_has_more || timeline.confirmations_has_more || timeline.attachments_has_more));
+  const truncated = Boolean(timeline && (timeline.has_more || timeline.events_has_more || timeline.artifacts_has_more || timeline.attachments_has_more));
   const runtime = capabilities?.find((item) => item.kind === task.runtime_kind);
   const unavailableOptionalRuntimes = capabilities
     ? ["claude", "pi"].filter((kind) => !capabilities.some((item) => item.kind === kind))

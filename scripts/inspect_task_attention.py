@@ -9,8 +9,9 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
+from app.business_definitions import BUSINESS_PROJECTIONS
 from app.native_standalone import latest_task_ref, task_decision_value
-from app.task_storage import TASK_AGENT_RUN_SQL, WORK_SUMMARY_INPUT_SQL
+from app.store import TASK_LOGICAL_RUN_SQL, WORK_SUMMARY_INPUT_SQL
 
 
 def inspect_run(db, run, decision):
@@ -35,9 +36,9 @@ def inspect_run(db, run, decision):
         rows = db.execute(
             "select project.id as project_id, project.canonical_anchor_id as anchor_id, "
             "revision.id as revision_id, revision.context_json "
-            "from business_projects project "
-            "left join business_project_context_revisions revision on revision.id=("
-            "select id from business_project_context_revisions where project_id=project.id "
+            f'from ({BUSINESS_PROJECTIONS["project"]}) project '
+            f'left join ({BUSINESS_PROJECTIONS["project_context_revision"]}) revision on revision.id=('
+            f'select id from ({BUSINESS_PROJECTIONS["project_context_revision"]}) where project_id=project.id '
             "order by id desc limit 1) "
             "where project.id in (select value from json_each(?)) "
             "or project.canonical_anchor_id in (select value from json_each(?)) order by project.id",
@@ -71,7 +72,7 @@ def main() -> int:
             return 1
         runs = db.execute(
             "select id, status, projection_json "
-            f"from ({TASK_AGENT_RUN_SQL}) where summary_input_id=? order by id",
+            f"from ({TASK_LOGICAL_RUN_SQL}) where summary_input_id=? order by id",
             (args.input_id,),
         ).fetchall()
         refs = [latest_task_ref(db, run["id"]) for run in runs]

@@ -1,0 +1,16 @@
+# Runs11 current behavior closure: bounded QUALITY review
+
+**Verdict: QUALITY PASS for the prospective documentation closure and checker assertions reviewed here.** The closure patch SHA-256 `4a885948f2f42fbb52b37f4723dada7e559fd75607b4f1cb5a6a5bb4db050860` resolves the two stale paired-release sections in both behavior documents. I found no source-backed mismatch. This is not a claim that the five-patch selection, the root's in-flight copied-source run, or production publication has completed.
+
+## Reviewed inputs
+
+- Original behavior patch `9f18f8518a31443e2c0fb0a50b36c3d10b13225c536e254f31d00305e8791a0d`, then closure patch `4a885948f2f42fbb52b37f4723dada7e559fd75607b4f1cb5a6a5bb4db050860`. I rehashed both local patch files. The SPEC reviewer independently applied them in order and reported resulting `docs/architecture.md` SHA-256 `ad49178e0b9cef3174b0533d01d1521164142aabc8dbda5d67f9f8f165e4d22c` and `docs/runtime-mechanism.md` SHA-256 `9483f7ef1943333e2229f98f9ad8ffc7c044af26cc157cecbae5d4591fb9ec9c`; these document hashes are that reviewer's receipt, not an independent reapplication here.
+- Compared closure wording with `app/runs11_schema_release.py`, `app/task20_schema_release.py`, `app/confirmation_schema_release.py`, and the reviewed current integration patch `bcc16aab1c332b53c363b5a265cc7f2c2174d129ce51ff1d5d7d27703a2b41dc`. Audited root's coupled-copy checker at SHA-256 `1e1505e7cde9cef9f19fd9de1ca9322efce3e842fee4e5dbbffd6c41a3d22414` without executing it.
+
+## Source and checker findings
+
+1. The closure distinguishes the historical Config component predicate, which requires mapped Runs8, from the current Config/action-content predicate combined with exact Runs11. That matches the two functions in the integration patch and avoids making the pure Config forward/inverse accept the current target.
+2. The paired text now names the empty confirmation source and finite Runs11 source-profile metadata; source preparation holds declarations and Tasks20 allocator-presence bits, with no frozen row or allocator-value image. Its forward order is Email, Business, Provider, Config, State, Tasks, confirmation retirement, Runs11, then the shared markers. Its inverse is confirmation, Tasks, State, Runs11 back to mapped Runs8, Config, Business, Email, Provider, then marker/ledger restoration. This matches the coordinator patch and the Runs11 component's mapped-source requirement.
+3. The checker captures its own hash before the run and verifies it again before writing a receipt. Its added final checks read both current and predecessor service-state values, the predecessor-updated scan cursor, and the full typed WeChat fact sequence after the second forward. It had already compared full typed WeChat facts across the first inverse. These assertions substantiate the new receipt flag for state/cursor/WeChat survival. The checker still pins source and predecessor identities, compares typed Runs11 facts and source declarations/counters, and confines all writes to its temporary copy.
+
+The root owns completion of the final copied-source run, refreshed selection manifest and eventual applied review. I made no application, test, index, source database, provider, native CLI, network, production, main, push or deploy change.

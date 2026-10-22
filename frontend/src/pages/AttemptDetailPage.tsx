@@ -140,7 +140,7 @@ function HumanDecisionBasis({ detail }: { detail: AttemptDetail }) {
   const basis = decision.basis;
   const factList = (items: Array<{ assertion: string; references: string[] }>) => items.map((item) => <li key={`${item.assertion}-${item.references.join(",")}`}>{item.assertion}{item.references.length > 0 && <small>依据：{item.references.join("、")}</small>}</li>);
   return <section className="console-card attempt-decision-basis" aria-label="人工判断依据">
-    <h2>为什么需要你判断</h2>
+    <h2>这次要你决定什么</h2>
     <p>{decision.reason}</p>
     <h3>已核验事实</h3><ul>{factList(basis.verified_facts)}</ul>
     <h3>适用规则</h3><ul>{factList(basis.rule_evidence)}</ul>
@@ -496,10 +496,10 @@ export function AttemptDetailPage() {
     return () => controller.abort();
   }, [attemptId]);
 
-  const runAction = async (url: string, success: string) => {
+  const runAction = async (url: string, success: string, payload?: Record<string, unknown>) => {
     setMessage("操作进行中…");
     try {
-      const result = await command(url);
+      const result = payload ? await command(url, payload) : await command(url);
       const refreshed = await getAttemptDetail(attemptId);
       setDetail(refreshed.item);
       setSnapshot(refreshed.meta.snapshot_at);
@@ -547,6 +547,12 @@ export function AttemptDetailPage() {
           {detail.actions.audit_url && <Link className="agent-log-button" to={detail.actions.audit_url} title="查看 Agent 如何核验方案、边界和实际结果">查看审计过程</Link>}
           {detail.actions.agent_url && <Link className="agent-log-button" to={detail.actions.agent_url} title="查看关联的 Agent 会话">查看 Agent session</Link>}
           {detail.actions.can_rerun && <button type="button" className="danger-button" onClick={() => { if (window.confirm(detail.actions.rerun_confirmation)) void runAction(detail.actions.rerun_url, "重跑已提交"); }}>{detail.actions.rerun_label}</button>}
+          {detail.actions.can_resend_wechat && <button type="button" className="danger-button" onClick={() => {
+            const messageId = detail.actions.resend_message_id || "";
+            if (window.confirm(`确认再次发送微信回复？\n原消息 ID：${messageId}\n${detail.trigger.text}`)) {
+              void runAction(detail.actions.resend_wechat_url || "", "再次发送已提交", { trigger_message_id: messageId });
+            }
+          }}>再次发送</button>}
           {detail.actions.can_recall && <button type="button" className="danger-button" onClick={() => { if (window.confirm("确认撤回已发送消息？")) void runAction(detail.actions.recall_url, "撤回已提交"); }}>撤回发送</button>}
           {!detail.agent_execution_record && <span className="muted">未记录 Agent 过程</span>}
           {detail.actions.terminal && <span className="disabled-action">无需操作</span>}
@@ -557,6 +563,7 @@ export function AttemptDetailPage() {
       <div className="attempt-detail-layout attempt-review-grid">
         <div className="attempt-detail-main">
           <section className="console-card attempt-review-main"><div className="reply-meta" aria-label="处理状态">{detail.action_pills.map((pill) => <StatusBadge key={`${pill.label}-${pill.status}`} value={pill.status} />)}</div><ReviewBlock title={detail.trigger.title} value={detail.trigger.text} /><AuditExplanation detail={detail} /><ReviewBlock title={detail.generated_reply.title} value={detail.generated_reply.text} className="attempt-generated-reply" /></section>
+          {detail.delivery && <section className="console-card" aria-label="Action 投递回执"><h2>投递回执</h2><dl className="attempt-email-grid"><div><dt>Action</dt><dd>#{detail.delivery.action_id}</dd></div><div><dt>外部消息</dt><dd>{detail.delivery.provider_message_id || "未提供"}</dd></div><div><dt>发送时间</dt><dd>{detail.delivery.sent_at || "未提供"}</dd></div><div><dt>来源事实</dt><dd>{detail.delivery.source_label}</dd></div><div><dt>操作</dt><dd>{detail.delivery.operation || "未提供"}</dd></div><div><dt>目标</dt><dd>{detail.delivery.target || "未提供"}</dd></div><div><dt>回执</dt><dd>{detail.delivery.provider_receipt.available ? `#${detail.delivery.provider_receipt.id}` : "未记录"}</dd></div><div><dt>撤回状态</dt><dd>{detail.delivery.recall_status || "未撤回"}{detail.delivery.recalled_at ? ` · ${detail.delivery.recalled_at}` : ""}</dd></div></dl>{detail.delivery.provider_receipt.available && <details><summary>Provider 回执正文</summary><pre>{detail.delivery.provider_receipt.body}</pre></details>}</section>}
           <EmailContext email={detail.email} />
           <References references={detail.references} />
           {detail.failure_reason && <DetailSection title="失败原因" value={detail.failure_reason} />}
@@ -568,7 +575,7 @@ export function AttemptDetailPage() {
           <ProcessingPanel detail={detail} />
         </div>
         <aside className="attempt-review-side" aria-label="反馈与人工处理">
-          {detail.human_decision && <HumanDecisionBasis detail={detail} />}
+          {(detail.status.requires_decision || detail.human_decision?.selection) && detail.human_decision && <HumanDecisionBasis detail={detail} />}
           {detail.human_decision?.selection && <section className="console-card attempt-decision-card"><h2>已选择方案</h2><p>{detail.human_decision.selection.option_key} · {detail.human_decision.selection.status}；执行结果以回执为准。</p></section>}
           {detail.status.requires_decision && detail.human_decision && <section className="console-card attempt-decision-card">
             <h2>本次处理方式</h2>

@@ -1,0 +1,367 @@
+{
+  "date": "2026-10-20",
+  "source_head": "8ff29625154988e4ff32f6a076ffc7595a1af120",
+  "implementation_freeze_sha256": "a1f176780031030ca36503529643e37e6407b49fea2b3584003b258103f9785d",
+  "patch_sha256": "0cfbdc6076f9e579839762e23916c363dad755d8149b3ecdf20bf1da550d8e63",
+  "app_files": 449,
+  "app_digest": "0d501cb635090be9031c12a2b28a70eecf1ddb32391d55259b9c6fee63a1587b",
+  "spec_review": "PASS v2",
+  "quality_review": "APPROVE v2",
+  "copy_19_10": {
+    "source_version": "19-10",
+    "source_sha256": "5dbf70f2c42c21fde66babf97f9a18879050ac1d52abb36ea990b5fd931adaef",
+    "target": [
+      "2026-10-19.11",
+      53
+    ],
+    "forward_retained_facts_exact": true,
+    "new_current_fact": {
+      "task_id": 736,
+      "outbox_id": 1,
+      "synthetic_fixture": true,
+      "task_business_status": "open",
+      "provider_effect_status": "completed",
+      "receipt_sha256": "73a9a119729f4c3b53e2647784b4238d4feb0b98d89157f23eaa09947f462375",
+      "substitute_calls": [
+        "create",
+        "readback"
+      ],
+      "real_external_sends": 0,
+      "native_or_independent_audit_executed": false
+    },
+    "inverse_retained_current_facts_exact": true,
+    "copy_write_existing_terminal_lease_retention": {
+      "remaining_original_state": {
+        "columns": [
+          "id",
+          "record_type",
+          "legacy_key",
+          "payload_json"
+        ],
+        "rowid_ceiling": 25274,
+        "digest": {
+          "count": 23769,
+          "sha256": "c042baf15831eda69e88baf7c9aa55b7394812c1b08eb0b87ba1e9c38c51449d"
+        }
+      },
+      "existing_retention_limit": 10000,
+      "terminal_before": 10000,
+      "new_terminal_claims": 1,
+      "terminal_after": 10000,
+      "expected_pruned_original_rowids": [
+        7231
+      ]
+    },
+    "inverse_actual_sql_declarations_and_marker_clock_exact": true,
+    "nine_retired_controls_restored_neutral_only": true,
+    "actual_predecessor_cold": {
+      "actual_source": "8ff29625154988e4ff32f6a076ffc7595a1af120",
+      "constructors": [
+        "AutoReplyStore",
+        "EmailStore"
+      ],
+      "pair": [
+        "2026-10-19.10",
+        53
+      ],
+      "all_legacy_dtos_read": {
+        "projects": 975,
+        "todos": 3327,
+        "updates": 5468
+      },
+      "retired_controls_neutral": true,
+      "new_current_fact_readback": {
+        "task_id": 736,
+        "outbox_id": 1,
+        "receipt_exact": true
+      },
+      "outbound_sends": 0
+    },
+    "reforward_retained_current_facts_and_target_sql_exact": true,
+    "source_immutable": true,
+    "original_fk_multiset_preserved": true,
+    "real_external_sends": 0,
+    "production_modified": false,
+    "native_agent_or_independent_audit_executed": false,
+    "release_ready": false,
+    "elapsed_seconds": 455.454
+  },
+  "browser": {
+    "historical_project_id": 54,
+    "api_todos": 8,
+    "api_updates": 20,
+    "retired_keys_absent": true,
+    "browser": {
+      "historical_project_visible": true,
+      "history_only_label_visible": true,
+      "historical_facts_expand_collapse": true,
+      "formal_task_search_results": 1,
+      "synthetic_task_id": 736,
+      "task_status": "open",
+      "date_evidence_expanded": 1,
+      "provider_records_expanded": 1,
+      "full_receipt_content_visibly_read": false
+    },
+    "receipt_exact_hash_check": "root-19-10-r2-result.json",
+    "normal_application_lifespan": false,
+    "worker_started": false,
+    "real_external_sends": 0
+  },
+  "capacity_before19_10": {
+    "main_file_bytes": 485871616,
+    "page_size": 4096,
+    "page_count": 118621,
+    "freelist_count": 401,
+    "tables": {
+      "email_schema_migrations": {
+        "table_bytes": 4096,
+        "index_bytes": 0,
+        "payload_bytes": 1128,
+        "unused_bytes": 2788
+      },
+      "provider_state": {
+        "table_bytes": 14389248,
+        "index_bytes": 11587584,
+        "payload_bytes": 24167520,
+        "unused_bytes": 700530
+      },
+      "schedules": {
+        "table_bytes": 16384,
+        "index_bytes": 8192,
+        "payload_bytes": 9060,
+        "unused_bytes": 15213
+      },
+      "sqlite_sequence": {
+        "table_bytes": 4096,
+        "index_bytes": 0,
+        "payload_bytes": 1491,
+        "unused_bytes": 2381
+      },
+      "configs": {
+        "table_bytes": 7974912,
+        "index_bytes": 1519616,
+        "payload_bytes": 8619141,
+        "unused_bytes": 671298
+      },
+      "state": {
+        "table_bytes": 6688768,
+        "index_bytes": 2523136,
+        "payload_bytes": 8304632,
+        "unused_bytes": 494611
+      },
+      "business": {
+        "table_bytes": 10530816,
+        "index_bytes": 1220608,
+        "payload_bytes": 10004939,
+        "unused_bytes": 1427529
+      },
+      "provenance": {
+        "table_bytes": 98304,
+        "index_bytes": 49152,
+        "payload_bytes": 118386,
+        "unused_bytes": 26352
+      },
+      "emails": {
+        "table_bytes": 52375552,
+        "index_bytes": 4411392,
+        "payload_bytes": 46446058,
+        "unused_bytes": 9610383
+      },
+      "tasks": {
+        "table_bytes": 45432832,
+        "index_bytes": 11857920,
+        "payload_bytes": 50771438,
+        "unused_bytes": 4763715
+      },
+      "actions": {
+        "table_bytes": 138088448,
+        "index_bytes": 34766848,
+        "payload_bytes": 146351048,
+        "unused_bytes": 21475734
+      },
+      "runs": {
+        "table_bytes": 88682496,
+        "index_bytes": 49872896,
+        "payload_bytes": 127878157,
+        "unused_bytes": 3901253
+      }
+    }
+  },
+  "capacity_after19_10": {
+    "main_file_bytes": 485871616,
+    "page_size": 4096,
+    "page_count": 118621,
+    "freelist_count": 1076,
+    "tables": {
+      "email_schema_migrations": {
+        "table_bytes": 4096,
+        "index_bytes": 0,
+        "payload_bytes": 1128,
+        "unused_bytes": 2788
+      },
+      "provider_state": {
+        "table_bytes": 14389248,
+        "index_bytes": 11587584,
+        "payload_bytes": 24167520,
+        "unused_bytes": 700530
+      },
+      "schedules": {
+        "table_bytes": 16384,
+        "index_bytes": 8192,
+        "payload_bytes": 9060,
+        "unused_bytes": 15213
+      },
+      "sqlite_sequence": {
+        "table_bytes": 4096,
+        "index_bytes": 0,
+        "payload_bytes": 1491,
+        "unused_bytes": 2381
+      },
+      "configs": {
+        "table_bytes": 7974912,
+        "index_bytes": 1519616,
+        "payload_bytes": 8619141,
+        "unused_bytes": 671298
+      },
+      "state": {
+        "table_bytes": 6688768,
+        "index_bytes": 2523136,
+        "payload_bytes": 8304632,
+        "unused_bytes": 494611
+      },
+      "provenance": {
+        "table_bytes": 98304,
+        "index_bytes": 49152,
+        "payload_bytes": 118386,
+        "unused_bytes": 26352
+      },
+      "emails": {
+        "table_bytes": 52375552,
+        "index_bytes": 4411392,
+        "payload_bytes": 46446058,
+        "unused_bytes": 9610383
+      },
+      "tasks": {
+        "table_bytes": 45432832,
+        "index_bytes": 11857920,
+        "payload_bytes": 50771438,
+        "unused_bytes": 4763715
+      },
+      "runs": {
+        "table_bytes": 88682496,
+        "index_bytes": 49872896,
+        "payload_bytes": 127878157,
+        "unused_bytes": 3901253
+      },
+      "business": {
+        "table_bytes": 10145792,
+        "index_bytes": 1048576,
+        "payload_bytes": 9533496,
+        "unused_bytes": 1358082
+      },
+      "actions": {
+        "table_bytes": 135901184,
+        "index_bytes": 34766848,
+        "payload_bytes": 144938155,
+        "unused_bytes": 20716111
+      }
+    }
+  },
+  "native_acceptance": {
+    "previous_cases": 2,
+    "status": "FAIL",
+    "confirmed_layer": "Consumer changed the final source character; independent Audit approved it despite reading the intact artifact. Storage preserved the adopted candidate.",
+    "new_native_retries": 0,
+    "new_audit_policy": false
+  },
+  "production_modified": false,
+  "release_ready": false,
+  "copy_19_8": {
+    "source_version": "19-8",
+    "source_sha256": "60ee5d5b88395235768868deda215b5b371facf931522932463a29d474f539a2",
+    "target": [
+      "2026-10-19.11",
+      53
+    ],
+    "forward_retained_facts_exact": true,
+    "new_current_fact": {
+      "task_id": 736,
+      "outbox_id": 1,
+      "synthetic_fixture": true,
+      "task_business_status": "open",
+      "provider_effect_status": "completed",
+      "receipt_sha256": "e0783d5f63666a09c4f0b53e7cecbd945a93a43e026f48f123fa10a0e7f7ad79",
+      "substitute_calls": [
+        "create",
+        "readback"
+      ],
+      "real_external_sends": 0,
+      "native_or_independent_audit_executed": false
+    },
+    "inverse_retained_current_facts_exact": true,
+    "copy_write_existing_terminal_lease_retention": {
+      "remaining_original_state": {
+        "columns": [
+          "id",
+          "record_type",
+          "legacy_key",
+          "payload_json"
+        ],
+        "rowid_ceiling": 25274,
+        "digest": {
+          "count": 23769,
+          "sha256": "c042baf15831eda69e88baf7c9aa55b7394812c1b08eb0b87ba1e9c38c51449d"
+        }
+      },
+      "existing_retention_limit": 10000,
+      "terminal_before": 10000,
+      "new_terminal_claims": 1,
+      "terminal_after": 10000,
+      "expected_pruned_original_rowids": [
+        7231
+      ]
+    },
+    "inverse_actual_sql_declarations_and_marker_clock_exact": true,
+    "nine_retired_controls_restored_neutral_only": true,
+    "actual_predecessor_cold": {
+      "actual_source": "763caecd3ccb550aa3c2608eac6746d8ff3296d4",
+      "constructors": [
+        "AutoReplyStore",
+        "EmailStore"
+      ],
+      "pair": [
+        "2026-10-19.8",
+        53
+      ],
+      "all_legacy_dtos_read": {
+        "projects": 975,
+        "todos": 3327,
+        "updates": 5468
+      },
+      "retired_controls_neutral": true,
+      "new_current_fact_readback": {
+        "task_id": 736,
+        "outbox_id": 1,
+        "receipt_exact": true
+      },
+      "outbound_sends": 0
+    },
+    "reforward_retained_current_facts_and_target_sql_exact": true,
+    "source_immutable": true,
+    "original_fk_multiset_preserved": true,
+    "real_external_sends": 0,
+    "production_modified": false,
+    "native_agent_or_independent_audit_executed": false,
+    "release_ready": false,
+    "elapsed_seconds": 332.906,
+    "elapsed_seconds_scope": "Resume from previously verified current-data inverse; excludes original forward/inverse phases."
+  },
+  "raw_result_hashes": {
+    "root-19-8-result.json": "115816ede4379de557269fc97b9acce063be18e03c0388fed3432a2f0ecf3325",
+    "root-19-10-r2-result.json": "d297de3dd2fa66a474df9d35d10ca1f1100a94fa1fd12902351f9b93de56f798",
+    "browser-copy-proof.json": "f7e131b968de673d8cd48814f753e92af25b0a1710abb26ade1e5b8d7903d729",
+    "root-19-8-driver.log": "2a95d4c0955b3ce8d29364c513a5f4a5ff361a17d9cef9673e093827597764b2",
+    "root-19-8-resume.log": "1f0b104e8cf61c1f88157a241af3b4d13286d8ad10d5605f333e937623c0babb",
+    "root-19-10-r2-driver.log": "c1fc90ba10ddacde1e37adcaee6ad683e36c62372895489b76a9fe9789c8d1d8"
+  }
+}

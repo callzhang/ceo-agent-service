@@ -57,6 +57,59 @@ def source_fingerprint(path):
         }
 
 
+def test_publication_run_source_keeps_current_consumer_audit_boundary(tmp_path):
+    from app.run_schema_release import publication_run_sources
+    from app.store import AutoReplyStore
+
+    store = AutoReplyStore(tmp_path / 'current-publication.sqlite3')
+    reply = store.enqueue_reply_task(
+        conversation_id='c', conversation_title='C', single_chat=True,
+        trigger_message_id='m', trigger_create_time='', trigger_sender='s', trigger_text='body',
+    )
+    summary = store.enqueue_work_summary_input('local_file', 'publication', '{}')
+    meeting = store.upsert_meeting_alignment_job(
+        meeting_id='publication', title='Meeting', source_json='{}',
+        participants_json='[]', ended_at='', eligible_at='', status='pending',
+    )
+    request = store.create_okr_review_request(
+        conversation_id='okr', conversation_title='OKR', trigger_message_id='okr',
+        trigger_sender='s', trigger_sender_user_id='u', trigger_text='review',
+        period_label='period', period_start='', period_end='', okr_source_json='{}',
+    )
+    with store._connect() as db:
+        parent = db.execute(
+            "select id from tasks where record_type='reply_tasks' and cast(legacy_key as integer)=?",
+            (reply,),
+        ).fetchone()[0]
+        roles = [insert_run(db, 'agent_runs', dict(task_id=parent, execution_generation='g',
+                 role=role, operation_id=role)).lastrowid for role in ('consumer', 'audit')]
+    for source, parent in (('task_agent_runs', summary), ('meeting_alignment_runs', meeting),
+                           ('okr_review_runs', request)):
+        run_id = store.create_logical_run(
+            source, parent, status=None if source == 'okr_review_runs' else 'completed',
+        )
+        with store._connect() as db:
+            db.execute('update runs set legacy_key=? where id=?', (str(roles[0]), run_id))
+    with store._connect() as db:
+        agent_source, runtime_source = publication_run_sources(db)
+        assert [row[0] for row in db.execute(f'select id from ({agent_source}) order by id')] == roles
+        assert db.execute(f'select count(*) from ({runtime_source})').fetchone()[0] == 0
+
+
+@pytest.mark.parametrize('unified', [False, True])
+def test_publication_run_source_preserves_early_declarations_without_source_type(tmp_path, unified):
+    from app.run_schema_release import publication_run_sources
+    root, path = legacy_database(tmp_path)
+    if unified:
+        migrate(root, path)
+    with closing(sqlite3.connect(path)) as db:
+        table = 'runs' if unified else 'agent_runs'
+        assert 'source_type' not in {row[1] for row in db.execute(f'pragma table_info({table})')}
+        agent_source, runtime_source = publication_run_sources(db)
+        assert db.execute(f'select id,role from ({agent_source})').fetchall() == [(1, 'consumer')]
+        assert db.execute(f'select id,agent_run_id from ({runtime_source})').fetchall() == [(1, 1)]
+
+
 def test_core_release_inverse_restores_exact_source_and_keeps_new_receipt(tmp_path):
     root,path=legacy_database(tmp_path)
     before=source_fingerprint(path)
@@ -152,7 +205,7 @@ def test_core_publication_failure_inverses_before_old_start_and_keeps_new_runs(t
     updater = RepositoryUpdater(checkout, state, database_path=path,
         stop=lambda: events.append('stop'), restart=start,
         health=lambda: failure != 'health' or starts > 1,
-        database_publication=lambda: publication,
+        database_publication=lambda _backup: publication,
         dependency_sync=lambda: fail_at('dependencies'),
         verification=lambda: fail_at('verification'))
     with pytest.raises(UpgradeFailed):

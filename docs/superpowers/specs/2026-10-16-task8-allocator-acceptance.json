@@ -1,0 +1,117 @@
+{
+  "recorded_utc": "2026-10-16T18:26:59.351384+00:00",
+  "status": "accepted_unselected_published_eight_allocator_foundation",
+  "application_commit": "c4977a52ca73b8ba6032440e3a51a8ba1ab795e0",
+  "regression_followup_commit": "af7d533dd6f8dfff80770a86120ce3a49e521ef7",
+  "sha256": {
+    "app/task20_definitions.py": "cf58403bcc9dc7bf4c3ef5b9a777ff941c7a6de210e04b29e4cb7abb1e0df4d0",
+    "tests/test_task8_allocator.py": "c27823e6d9de6028e962cce1adfa7f9520a6b61797702fb658ab5d17cbe72752"
+  },
+  "scope": {
+    "new_ordinary_tables": 0,
+    "new_business_fields": 0,
+    "internal_sqlite_sequence_rows": 1,
+    "new_triggers": 1,
+    "target_total_triggers": 31,
+    "current_caller_constructor_migration_selected": false,
+    "runtime_contract": "single VALUES automatic physical id, plain INSERT / IGNORE / UPSERT",
+    "source_absence_versus_zero": "future inverse metadata obligation; counter does not replace original declaration metadata"
+  },
+  "verification": {
+    "root_full_candidate": {
+      "passed": 961,
+      "seconds": 64.98
+    },
+    "applied_full": {
+      "passed": 961,
+      "seconds": 68.82
+    },
+    "spec_full": {
+      "passed": 961,
+      "seconds": 65.1,
+      "supplementary_all_eight_actual_fresh_full_cases": 48,
+      "supplementary_sequence_controls": 80,
+      "supplementary_mixed_histories": 2
+    },
+    "quality_initial_allocator": {
+      "passed": 121,
+      "seconds": 9.1
+    },
+    "root_final_allocator": {
+      "passed": 125,
+      "seconds": 9.64
+    },
+    "quality_final_allocator": {
+      "passed": 125,
+      "seconds": 9.51
+    },
+    "quality_early_commit_permanent_regression": {
+      "before": {
+        "passed": 4,
+        "seconds": 0.18
+      },
+      "mutant": {
+        "failed": 4,
+        "seconds": 0.19
+      },
+      "after": {
+        "passed": 4,
+        "seconds": 0.17
+      }
+    },
+    "quality_mutants_killed": [
+      {
+        "mutation": "missing tracking",
+        "failed": 16
+      },
+      {
+        "mutation": "track all twenty kinds",
+        "failed": 2
+      },
+      {
+        "mutation": "AFTER instead BEFORE, losing ignored/UPSERT attempted allocation",
+        "failed": 48
+      },
+      {
+        "mutation": "ignore captured source-water reset",
+        "failed": 6
+      },
+      {
+        "mutation": "commit at initializer end",
+        "failed": 3
+      },
+      {
+        "mutation": "commit before initializer DML",
+        "failed": 4
+      },
+      {
+        "mutation": "replace native MAX FULL with explicit ABORT",
+        "failed": 6
+      }
+    ],
+    "mutant_survivor": {
+      "mutation": "remove MAX arithmetic guard",
+      "passed_full_controls": 6,
+      "reason": "native FULL statement rollback erased attempted overflow water; externally observed semantics equivalent in these cases, no kill claimed"
+    },
+    "table_indexes_prior_thirty_triggers_unchanged": true,
+    "source_capture_bytes_unchanged": true,
+    "ruff": "pass",
+    "diff_check": "pass",
+    "new_owned_temp_removed": true
+  },
+  "remaining": [
+    "Explicit initialize/reset in complete paired migration and fresh constructor after bulk transfer.",
+    "Inverse restores source water from tasks:published with original absence metadata; complete current-fact copied inverse still unproved.",
+    "All twenty caller/constructor/retained feedback endpoints; Email native UPSERT and implicit/full statement writer interfaces.",
+    "Copied current writes/genuine predecessor/reforward/native CLI fake outbound/UI/business result/receipt/final eleven tables/CI/approved publication."
+  ],
+  "boundaries": {
+    "latest_integrated_actual_copy_ordinary_tables": 67,
+    "final_eleven_tables": false,
+    "production_write": false,
+    "main_merge": false,
+    "push": false,
+    "deploy": false
+  }
+}

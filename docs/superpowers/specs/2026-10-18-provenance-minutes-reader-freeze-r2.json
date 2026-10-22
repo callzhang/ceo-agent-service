@@ -1,0 +1,35 @@
+{
+  "status": "unselected_a2_r2_awaiting_same_spec_then_same_quality",
+  "files": {
+    "app/business_source_reader.py": "eb41834d6cefcdc24974cfd1b833aead6681e593a405bab8859fce965ce4e67d",
+    "app/business_minutes_source_reader.py": "fa0ee6ab83ae35d78259d1e416d451542b081c0d2e8d0786e98b91517002c082",
+    "tests/test_business_minutes_source_reader.py": "a7b072c7bc370444add1a3de5aee89daaff0e5bd96fc00145fb13bb4d8a7e934",
+    "docs/database-redesign-provenance-minutes-reader-validation-20261018.md": "ad5a618dc527ff569c27700f8180d733632297adc622211487772104d8c3301e",
+    "tests/test_business_source_reader.py": "f4296fa9ece7a185d82c1023619affba573bfdfc2c2c05839e88919d0f378468"
+  },
+  "requirement_pins": {
+    "docs/superpowers/specs/2026-10-11-database-redesign-design.md": "345223707fdd39d09c6b13a8101dfc8543a0cc7f9603f6ea13c8210f8498ce80",
+    "docs/superpowers/plans/2026-10-18-provenance-reader-runtime-implementation-plan.md": "b0368db725ab87872e192afda8a373b48e62c5f46b03679cc35eeacb97bcbfe3",
+    "docs/superpowers/specs/2026-10-18-provenance-reader-binding-freeze.json": "9811a60165913ef2702925643edc4ed2a21b7159703ac7cd5286b3907f8dfbb4",
+    "docs/superpowers/specs/2026-10-18-provenance-reader-binding-acceptance.json": "6b669984507d44a5f400577d818f9c03ed2a7130fb8e6818d4b361006bacf263",
+    "tests/test_native_source_documents.py": "8c1e6815e097f0130cb199fa5bce2ff1f15c18b3389a0c04dc5c3a088d90e5ea",
+    "app/native_trajectory.py": "5b5ea4c0b880f78c08f0f020dde45c26ae1c38e21d012253b38cd50c30cadc04",
+    "app/task_source_documents.py": "b5fc08f38ba596057db048460882454cf5c969e5db85e38b1739fe346063b290",
+    "app/task_scanners.py": "ba89132165de05d7d88ca7cc53095baca6bcb41b6588c9a6bd14472af354c610",
+    "app/minutes_todo_context.py": "3976ac3d7101dda3c531871d42c3fa37a638f5bebfcb02a0b9e84b26b5de228f",
+    "app/dws_client.py": "1d6c0b379a63138904311baaf47d7f637bf2100163c6d6d4b8f592cf2e20103e",
+    "docs/superpowers/specs/2026-10-18-provenance-minutes-reader-freeze.json": "3bb96ed8a8d255a73a8d47f72f2986ebc1855f5717c1cd391958984ae7219bfd",
+    "docs/superpowers/specs/2026-10-18-provenance-minutes-reader-quality-review.json": "1332f32f3fa9c1531da0f0f9dcf69bd3bb3fc268257b079f16ccd80b88c27f67"
+  },
+  "scope": "Exact AI Minutes locator from original canonical body component presence only; exact UUID unambiguous normalized DwsClient complete pagination and required-component reads; reconstructed body passes shared A1 complete identity/hash/UTF8bytes/ref/quote check. Provider dependencies supplied as configured DwsClient, no default external call.",
+  "pagination_boundary": "Uses existing DwsClient.list_minutes_page normalized contract. Raw terminal hasMore=false nextToken is normalized to empty by existing client and cannot be separately detected. No new raw-provider pagination policy is selected.",
+  "not_selected": [
+    "weekly/Console readers",
+    "Store/API/model or transaction/bundle/backfill integration",
+    "DDL/body retirement",
+    "real provider availability",
+    "release"
+  ],
+  "evidence_boundary": "Author22syntheticPASS only. Immutable actual11attempt2 running independently with preA2 code; no actual provider read or schema/capacity acceptance.",
+  "repair_scope": "Explicit stored serialized locator string guard (native/provider) before JSON decode, no broad TypeError catch. Expected numeric OverflowError classification only around transcript-excerpt formatter, preserving cause, no DwsClient or shared minutes helper change."
+}

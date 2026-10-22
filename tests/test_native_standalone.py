@@ -3,12 +3,22 @@ import sqlite3
 
 import pytest
 
-from app.run_storage import MEETING_RUN_SQL, OKR_RUN_SQL, TASK_AGENT_RUN_SQL, insert_run
+from app.run_storage import insert_run
+from app.task12_storage import task12_projection
+from app.store import MEETING_LOGICAL_RUN_SQL,OKR_LOGICAL_RUN_SQL,TASK_LOGICAL_RUN_SQL
 from app import native_trajectory
 from app.agent_envelope import AgentEnvelope
 from app.store import AutoReplyStore
 from app.task_agent import TaskAgentDecision
 from tests.test_meeting_alignment import summary_decision
+
+
+def _okr_parent(store):
+    return store.create_okr_review_request(
+        conversation_id="c", conversation_title="OKR", trigger_message_id="m",
+        trigger_sender="sender", trigger_sender_user_id="owner", trigger_text="review",
+        period_label="period", period_start="", period_end="", okr_source_json="{}",
+    )
 
 
 def _message(text):
@@ -60,26 +70,21 @@ def test_meeting_run_hydrates_only_exact_native_range_and_reports_unavailable(tm
         participants_json="[]", ended_at="2026-10-09", eligible_at="2026-10-09",
         status="no_action",
     )
-    run = store.record_meeting_alignment_run(
-        job_id=job, codex_session_id="native-meeting",
-        decision_json=old.model_dump_json(), audit_summary="private audit",
-        status="sent", error="", codex_transcript_start_line=1,
-        codex_transcript_end_line=3, audit_tool_events_json='[{"private":"event"}]',
-    )
+    run = store.create_logical_run('meeting_alignment_runs', task_public_id=job, codex_session_id="native-meeting", status="sent", error="", codex_transcript_start_line=1, codex_transcript_end_line=3)
     with store._connect() as db:
         _attempt(db, run, str(run), "native-meeting", 1, 3, 1, kind="meeting")
         row = db.execute(
-            f"select decision_json, audit_summary, audit_tool_events_json from ({MEETING_RUN_SQL}) where id=?", (run,)
+            f"select * from ({MEETING_LOGICAL_RUN_SQL}) where id=?", (run,)
         ).fetchone()
-    assert tuple(row) == ("{}", "", "[]")
-    loaded = store.get_meeting_alignment_run(run)
+    assert not {"decision_json", "audit_summary", "audit_tool_events_json"} & set(row.keys())
+    loaded = store.get_logical_run('meeting_alignment_runs', run)
     assert loaded.native_available
     assert json.loads(loaded.decision_json)["final_message"] == "current turn"
     assert loaded.audit_summary == current.audit_summary
     assert json.loads(loaded.audit_tool_events_json)[0]["command"] == "native evidence"
 
     native.write_text(_message(old.model_dump_json()) + "\n")
-    missing = store.get_meeting_alignment_run(run)
+    missing = store.get_logical_run('meeting_alignment_runs', run)
     assert not missing.native_available
     assert missing.native_reason == "native_source_unavailable"
     assert missing.decision_json == "{}"
@@ -111,12 +116,8 @@ def test_meeting_legacy_complete_range_is_read_without_attempt(tmp_path, monkeyp
         participants_json="[]", ended_at="2026-10-09", eligible_at="2026-10-09",
         status="no_action",
     )
-    run = store.record_meeting_alignment_run(
-        job_id=job, codex_session_id="native-meeting",
-        decision_json="{}", audit_summary="", status="no_action", error="",
-        codex_transcript_start_line=0, codex_transcript_end_line=1,
-    )
-    assert store.get_meeting_alignment_run(run).native_available
+    run = store.create_logical_run('meeting_alignment_runs', task_public_id=job, codex_session_id="native-meeting", status="no_action", error="", codex_transcript_start_line=0, codex_transcript_end_line=1)
+    assert store.get_logical_run('meeting_alignment_runs', run).native_available
     store.upsert_codex_session_search_index(
         session_id="native-meeting", source_type="meeting_alignment",
         source_id=str(run), title="Legacy Planning",
@@ -126,7 +127,7 @@ def test_meeting_legacy_complete_range_is_read_without_attempt(tmp_path, monkeyp
                  kind="meeting", status="failed")
         _attempt(db, run, str(run), "native-meeting", 0, 1, 2,
                  kind="meeting", status="running")
-    unavailable = store.get_meeting_alignment_run(run)
+    unavailable = store.get_logical_run('meeting_alignment_runs', run)
     assert not unavailable.native_available
     assert unavailable.native_reason == "native_reference_unavailable"
     [search] = store.search_codex_sessions(fts_query="Planning")
@@ -163,11 +164,7 @@ def test_friday_original_artifact_read_uses_existing_adapter_and_reports_unavail
         participants_json="[]", ended_at="2026-10-09", eligible_at="2026-10-09",
         status="no_action",
     )
-    run = store.record_meeting_alignment_run(
-        job_id=job, codex_session_id="friday_thread:native-thread",
-        decision_json="{}", audit_summary="", status="no_action", error="",
-        codex_transcript_start_line=0, codex_transcript_end_line=0,
-    )
+    run = store.create_logical_run('meeting_alignment_runs', task_public_id=job, codex_session_id="friday_thread:native-thread", status="no_action", error="", codex_transcript_start_line=0, codex_transcript_end_line=0)
     with store._connect() as db:
         insert_run(
             db, 'agent_runtime_attempts', {
@@ -182,7 +179,7 @@ def test_friday_original_artifact_read_uses_existing_adapter_and_reports_unavail
                 'status': 'completed',
             },
         )
-    loaded = store.get_meeting_alignment_run(run)
+    loaded = store.get_logical_run('meeting_alignment_runs', run)
     assert loaded.native_available
     assert loaded.tool_events_available is False
     assert loaded.tool_events_reason == "native_tool_stream_unavailable"
@@ -253,24 +250,21 @@ def test_task_run_uses_latest_completed_exact_attempt_without_old_fallback(tmp_p
         _message(current.model_dump_json()),
     )) + "\n")
     monkeypatch.setattr(native_trajectory, "find_codex_session_path", lambda *args, **kwargs: native)
-    run = store.record_task_agent_run(
-        summary_input_id=1, codex_session_id="native-task",
-        decision_json=first.model_dump_json(), audit_summary="private audit",
-        memory_recall_used=True,
-    )
+    parent = store.enqueue_work_summary_input('local_file', 'native-task', '{}')
+    run = store.create_logical_run('task_agent_runs', task_public_id=parent, codex_session_id="native-task")
     with store._connect() as db:
         _attempt(db, run, str(run), "native-task", 0, 1, 1)
         _attempt(db, run, f"{run}:decision_repair.1", "native-task", 1, 2, 1)
         stored = db.execute(
-            f"select decision_json, audit_summary, memory_recall_used from ({TASK_AGENT_RUN_SQL}) where id=?", (run,)
+            f"select * from ({TASK_LOGICAL_RUN_SQL}) where id=?", (run,)
         ).fetchone()
-    assert tuple(stored) == ("{}", "", 0)
-    loaded = store.get_task_agent_run(run)
+    assert not {"decision_json", "audit_summary", "memory_recall_used"} & set(stored.keys())
+    loaded = store.get_logical_run('task_agent_runs', run)
     assert loaded["native_available"] is True
     assert json.loads(loaded["decision_json"])["update_summary"] == "new decision"
 
     native.write_text(_message(first.model_dump_json()) + "\n")
-    missing = store.get_task_agent_run(run)
+    missing = store.get_logical_run('task_agent_runs', run)
     assert missing["native_available"] is False
     assert missing["decision_json"] == "{}"
 
@@ -288,10 +282,10 @@ def test_task_evaluation_reads_original_native_decision_without_sql_copy(tmp_pat
     native = tmp_path / "evaluation-native.jsonl"
     native.write_text(_message(json.dumps(decision)) + "\n")
     monkeypatch.setattr(native_trajectory, "find_codex_session_path", lambda *a, **k: native)
-    run = store.record_task_agent_run(summary_input_id=input_id, decision_json=json.dumps(decision))
+    run = store.create_logical_run('task_agent_runs', task_public_id=input_id)
     with store._connect() as db:
         _attempt(db, run, str(run), "native-evaluation", 0, 1, 1)
-        assert db.execute(f"select decision_json from ({TASK_AGENT_RUN_SQL}) where id=?", (run,)).fetchone()[0] == "{}"
+        assert "decision_json" not in db.execute(f"select * from ({TASK_LOGICAL_RUN_SQL}) where id=?", (run,)).fetchone().keys()
     result = tool.readback(store, input_id=input_id, before=tool.read_domain(store))
     assert result["project_decisions"] == []
     assert result["project_assessments"] == []
@@ -344,23 +338,19 @@ def test_okr_run_keeps_business_items_and_reads_native_envelope(tmp_path, monkey
     native = tmp_path / "okr.jsonl"
     native.write_text(_message(envelope.model_dump_json()) + "\n")
     monkeypatch.setattr(native_trajectory, "find_codex_session_path", lambda *args, **kwargs: native)
-    run = store.record_okr_review_run(
-        request_id=1, codex_session_id="native-okr",
-        codex_transcript_start_line=0, codex_transcript_end_line=1,
-        envelope_json='{"private":"copy"}', audit_tool_events_json='[{"private":"tool"}]',
-        audit_summary="private audit",
-    )
+    assert _okr_parent(store) == 1
+    run = store.create_logical_run('okr_review_runs', task_public_id=1, codex_session_id="native-okr", codex_transcript_start_line=0, codex_transcript_end_line=1)
     store.record_okr_review_item(
         request_id=1, objective_title="O", objective_weight=1.0,
         kr_title="KR", kr_weight=1.0, item_json='{"adopted":"business"}',
     )
     with sqlite3.connect(store.path) as db:
         _attempt(db, run, "1", "native-okr", 0, 1, 1, kind="structured")
-        assert db.execute(
-            f"select envelope_json, audit_summary, audit_tool_events_json from ({OKR_RUN_SQL}) where id=?", (run,)
-        ).fetchone() == ("{}", "", "[]")
-        assert db.execute("select item_json from okr_review_items").fetchone()[0] == '{"adopted":"business"}'
-    loaded = store.get_okr_review_run(run)
+        assert not {"envelope_json", "audit_summary", "audit_tool_events_json"} & {
+            column[0] for column in db.execute(f"select * from ({OKR_LOGICAL_RUN_SQL}) where id=?", (run,)).description
+        }
+        assert db.execute(f"select item_json from ({task12_projection('okr_review_items')})").fetchone()[0] == '{"adopted":"business"}'
+    loaded = store.get_logical_run('okr_review_runs', run)
     assert loaded["native_available"] is True
     assert loaded["tool_events_available"] is True
     assert json.loads(loaded["envelope_json"])["kind"] == "okr_review"
@@ -369,7 +359,7 @@ def test_okr_run_keeps_business_items_and_reads_native_envelope(tmp_path, monkey
         db.execute(
             "update runs set status='failed' where record_type='agent_runtime_attempts' and workload_kind='structured' and workload_key='1'"
         )
-    unavailable = store.get_okr_review_run(run)
+    unavailable = store.get_logical_run('okr_review_runs', run)
     assert unavailable["native_available"] is False
     assert unavailable["native_reason"] == "native_reference_unavailable"
     assert unavailable["tool_events_available"] is False
@@ -395,28 +385,21 @@ def test_okr_runs_for_same_request_read_only_their_own_completed_attempt(tmp_pat
         native_trajectory, "find_codex_session_path",
         lambda session, **kwargs: paths[session],
     )
-    first = store.record_okr_review_run(
-        request_id=1, codex_session_id="first-session",
-        codex_transcript_start_line=0, codex_transcript_end_line=1,
-        envelope_json="{}", audit_tool_events_json="[]", audit_summary="",
-    )
-    second = store.record_okr_review_run(
-        request_id=1, codex_session_id="second-session",
-        codex_transcript_start_line=0, codex_transcript_end_line=1,
-        envelope_json="{}", audit_tool_events_json="[]", audit_summary="",
-    )
+    assert _okr_parent(store) == 1
+    first = store.create_logical_run('okr_review_runs', task_public_id=1, codex_session_id="first-session", codex_transcript_start_line=0, codex_transcript_end_line=1)
+    second = store.create_logical_run('okr_review_runs', task_public_id=1, codex_session_id="second-session", codex_transcript_start_line=0, codex_transcript_end_line=1)
     with store._connect() as db:
         _attempt(db, first, "1", "first-session", 0, 1, 1, kind="structured")
         _attempt(db, second, "1", "second-session", 0, 1, 2, kind="structured")
-    assert store.get_okr_review_run(first)["audit_summary"] == "first review"
-    assert store.get_okr_review_run(second)["audit_summary"] == "second review"
+    assert store.get_logical_run('okr_review_runs', first)["audit_summary"] == "first review"
+    assert store.get_logical_run('okr_review_runs', second)["audit_summary"] == "second review"
 
     paths["first-session"] = None
-    missing = store.get_okr_review_run(first)
+    missing = store.get_logical_run('okr_review_runs', first)
     assert missing["native_available"] is False
     assert missing["native_reason"] == "native_source_unavailable"
     assert missing["envelope_json"] == "{}"
-    assert store.get_okr_review_run(second)["audit_summary"] == "second review"
+    assert store.get_logical_run('okr_review_runs', second)["audit_summary"] == "second review"
 
 
 def test_okr_run_uses_completed_friday_provider_reference(tmp_path, monkeypatch):
@@ -439,11 +422,8 @@ def test_okr_run_uses_completed_friday_provider_reference(tmp_path, monkeypatch)
 
     monkeypatch.setattr(friday_runtime_adapter, "FridayRuntimeAdapter", FakeAdapter)
     store = AutoReplyStore(tmp_path / "store.sqlite3")
-    run = store.record_okr_review_run(
-        request_id=1, codex_session_id="friday_thread:okr-thread",
-        codex_transcript_start_line=0, codex_transcript_end_line=0,
-        envelope_json="{}", audit_tool_events_json="[]", audit_summary="",
-    )
+    assert _okr_parent(store) == 1
+    run = store.create_logical_run('okr_review_runs', task_public_id=1, codex_session_id="friday_thread:okr-thread", codex_transcript_start_line=0, codex_transcript_end_line=0)
     with store._connect() as db:
         insert_run(
             db, 'agent_runtime_attempts', {
@@ -458,7 +438,7 @@ def test_okr_run_uses_completed_friday_provider_reference(tmp_path, monkeypatch)
                 'status': 'completed',
             },
         )
-    loaded = store.get_okr_review_run(run)
+    loaded = store.get_logical_run('okr_review_runs', run)
     assert loaded["native_available"] is True
     assert loaded["audit_summary"] == "Friday review"
     assert loaded["audit_tool_events_json"] == "[]"

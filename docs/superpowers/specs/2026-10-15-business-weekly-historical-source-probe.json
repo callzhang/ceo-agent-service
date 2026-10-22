@@ -1,0 +1,136 @@
+{
+  "probe": "native-readonly-weekly-historical-version-recovery",
+  "source_sha256_before": "970a909a9cfcb4fe604d2111d5572560d4744978df20fb317c4e433059566320",
+  "source_sha256_after": "970a909a9cfcb4fe604d2111d5572560d4744978df20fb317c4e433059566320",
+  "source_rows": [
+    66,
+    68,
+    90,
+    95,
+    99,
+    114,
+    118,
+    119,
+    94,
+    100,
+    115,
+    120,
+    96,
+    101,
+    97
+  ],
+  "source_rows_count": 15,
+  "source_utf8_bytes": 373943,
+  "attached_signals": 177,
+  "metadata_listed_versions": 103,
+  "metadata_pagination_complete": true,
+  "historical_body_fetch_limit": 100,
+  "actual_historical_body_fetches": 101,
+  "limit_exceeded": true,
+  "limit_excess": 1,
+  "accounting_error": "An initial exploratory version152 fetch was omitted from the running counter. All provider calls stopped on correction.",
+  "unique_exact_bound_versions": 97,
+  "exact_bound_expected_markdown_matches": 0,
+  "verified_source_rows": 0,
+  "unproved_source_rows": 15,
+  "nodes": [
+    {
+      "anchor_source_id": 66,
+      "source_ids": [
+        66,
+        68
+      ],
+      "listed_versions": 51,
+      "metadata_pages": 3,
+      "body_requests": 48,
+      "unique_exact_bound_versions": 46,
+      "missing_history_version": [
+        117,
+        114
+      ],
+      "unattempted_versions": [
+        16,
+        9,
+        0
+      ]
+    },
+    {
+      "anchor_source_id": 90,
+      "source_ids": [
+        90,
+        95,
+        99,
+        114,
+        118,
+        119
+      ],
+      "listed_versions": 13,
+      "metadata_pages": 1,
+      "body_requests": 14,
+      "unique_exact_bound_versions": 13,
+      "repeated_request": {
+        "version": 39,
+        "initial_history_version_missing": true,
+        "repeat_exact_bound": true,
+        "expected_hash_match": false
+      }
+    },
+    {
+      "anchor_source_id": 94,
+      "source_ids": [
+        94,
+        100,
+        115,
+        120
+      ],
+      "listed_versions": 22,
+      "metadata_pages": 2,
+      "body_requests": 22,
+      "unique_exact_bound_versions": 21,
+      "missing_history_version": [
+        1065
+      ]
+    },
+    {
+      "anchor_source_id": 96,
+      "source_ids": [
+        96,
+        101
+      ],
+      "listed_versions": 3,
+      "metadata_pages": 1,
+      "body_requests": 3,
+      "unique_exact_bound_versions": 3
+    },
+    {
+      "anchor_source_id": 97,
+      "source_ids": [
+        97
+      ],
+      "listed_versions": 14,
+      "metadata_pages": 1,
+      "body_requests": 14,
+      "unique_exact_bound_versions": 14
+    }
+  ],
+  "executed_module_sha256_after": {
+    "app/dws_client.py": "1d6c0b379a63138904311baaf47d7f637bf2100163c6d6d4b8f592cf2e20103e",
+    "app/task_report_scanner.py": "470f4014322d5acbc6110042effd1ed0e40f2350f4fd2f5a909f799362864026",
+    "app/task_source_documents.py": "b5fc08f38ba596057db048460882454cf5c969e5db85e38b1739fe346063b290",
+    "app/task_models.py": "0bbf87282bb4d73c6a281fa11b5c11b640f503b1391421d73651df5f7a792ad5"
+  },
+  "exact_binding_gate": [
+    "complete",
+    "success",
+    "canonical_node",
+    "content_node_id",
+    "requested_listed_version_equals_returned_historyVersion",
+    "expected_markdown_sha256",
+    "rebuilt_full_body_hash_bytes_identity"
+  ],
+  "source_and_provider_mutations": 0,
+  "outbound_sends": 0,
+  "body_retirement": false,
+  "raw_provider_bodies_persisted": false,
+  "limits": "Negative bounded search only; three listed versions not attempted and three otherwise successful responses missing historical binding. No permanent unavailability conclusion. Root current-source four matches are separate evidence, not included in this historical remaining-fifteen cohort."
+}

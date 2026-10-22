@@ -27,6 +27,7 @@ from app.agent_effects import (
     _is_signed_url,
 )
 from app.agent_result import ResultParseError
+from app.agent_wire_contracts import claude_consumer_output_schema
 from app.reviewed_sources import ReviewedSourceReadError
 from app.agent_runtime_config import AgentRuntimeConfig, load_runtime_config
 from app.agent_runtime_contracts import (
@@ -68,6 +69,7 @@ from app.codex_history import (
 )
 from app.codex_runner import _codex_home
 from app.native_trajectory import count_claude_session_lines, read_native_result_stream
+from app.native_agent_output import native_output_schema_path, parse_native_result
 from app.codex_runtime_adapter import CodexRuntimeAdapter
 from app.service_codex_config import service_mcp_tool_approval_modes_for_agent_role
 from app.friday_runtime_adapter import FridayRuntimeAdapter, FridayRuntimeError
@@ -109,6 +111,37 @@ _RUNTIME_DOMAIN_RESULT_CODEC_MAX_BYTES = 64 * 1024
 _RUNTIME_RESULT_SUMMARY_MAX_CHARS = 8192
 
 
+def _runtime_result_schema_id(
+    execution_contract_digest: str,
+    runtime_kind: RuntimeKind | str,
+    role: AgentRole,
+    *,
+    purpose: str = "general",
+) -> str:
+    legacy = hashlib.sha256(
+        ("agent_turn_claude_result_v1\0" + execution_contract_digest).encode("utf-8")
+    ).hexdigest()
+    if RuntimeKind(runtime_kind) is not RuntimeKind.CODEX_CLI or role is not AgentRole.CONSUMER:
+        return legacy
+    schema_bytes = native_output_schema_path(purpose=purpose).read_bytes()
+    return hashlib.sha256(
+        b"agent_turn_codex_consumer_native_result_v1\0"
+        + execution_contract_digest.encode("utf-8")
+        + b"\0" + schema_bytes
+    ).hexdigest()
+
+
+def _native_output_schema_for_route(
+    runtime_kind: RuntimeKind | str,
+    role: AgentRole,
+    *,
+    purpose: str = "general",
+) -> Path | None:
+    if RuntimeKind(runtime_kind) is not RuntimeKind.CODEX_CLI or role is not AgentRole.CONSUMER:
+        return None
+    return native_output_schema_path(purpose=purpose)
+
+
 def _fallback_requested_session_id(
     *,
     previous_route_name: str,
@@ -120,6 +153,33 @@ def _fallback_requested_session_id(
     if not fresh_session and previous_route_name == next_route_name:
         return failed_session_id or initial_session_id
     return initial_session_id
+
+
+def _prompt_for_runtime_route(
+    route: RuntimeRoute,
+    route_session_id: str | None,
+    full_prompt: str,
+    full_invocation_facts: dict[str, object],
+    session_scoped_prompt: Mapping[str, object] | None,
+) -> tuple[str, dict[str, object]]:
+    """Use a compact task input only on its exact existing Codex session."""
+    if (
+        route.runtime_kind is not RuntimeKind.CODEX_CLI
+        or not isinstance(session_scoped_prompt, Mapping)
+        or route.name != session_scoped_prompt.get("route_name")
+        or not route_session_id
+        or route_session_id != session_scoped_prompt.get("session_id")
+    ):
+        return full_prompt, full_invocation_facts
+    compact_prompt = session_scoped_prompt.get("prompt")
+    compact_facts = session_scoped_prompt.get("invocation_facts")
+    if (
+        not isinstance(compact_prompt, str)
+        or not compact_prompt.strip()
+        or not isinstance(compact_facts, dict)
+    ):
+        return full_prompt, full_invocation_facts
+    return compact_prompt, compact_facts
 
 
 def _normalized_key(key: str) -> str:
@@ -753,6 +813,8 @@ class AgentTurnProcess(Generic[ResultT]):
         prompt: str,
         session_id: str | None,
         developer_instructions: str,
+        developer_instructions_by_runtime: Mapping[str, str] | None = None,
+        prompt_sections_by_runtime: Mapping[str, list[dict[str, str]]] | None = None,
         configure_command: Callable[[list[str]], None],
         parse_result: Callable[[str], ResultT],
         persist_conversation_session: bool,
@@ -765,6 +827,7 @@ class AgentTurnProcess(Generic[ResultT]):
         conversation_contract_hash: str = "",
         force_new_session: bool = False,
         invocation_facts: dict[str, object] | None = None,
+        session_scoped_prompt: Mapping[str, object] | None = None,
     ) -> AgentTurnRunResult[ResultT]:
         required_capabilities = required_capabilities | {ROLE_BOUND_AGENT_TOOLS}
         sensitive_result = result_contains_sensitive_value or (
@@ -928,6 +991,18 @@ class AgentTurnProcess(Generic[ResultT]):
                 )
             )
 
+        consumer_purpose = (
+            str((invocation_facts or {}).get("consumer_purpose", "general"))
+            if run.role is AgentRole.CONSUMER else "general"
+        )
+
+        def parse_result_for_route(raw: str, route: RuntimeRoute) -> ResultT:
+            if route.runtime_kind is RuntimeKind.CODEX_CLI and run.role is AgentRole.CONSUMER:
+                return parse_native_result(
+                    raw, "consumer", purpose=consumer_purpose, parser=parse_result,
+                )
+            return parse_result(raw)
+
         required_capabilities = _required_runtime_capabilities(
             run=run,
             expected_actions=expected_actions,
@@ -939,9 +1014,6 @@ class AgentTurnProcess(Generic[ResultT]):
             "operation_id": run.operation_id,
             "conversation_contract_hash": conversation_contract_hash,
             "prompt_sha256": hashlib.sha256(prompt.encode("utf-8")).hexdigest(),
-            "developer_instructions_sha256": hashlib.sha256(
-                developer_instructions.encode("utf-8")
-            ).hexdigest(),
             "required_capabilities": sorted(required_capabilities),
             "expected_actions_sha256": hashlib.sha256(
                 json.dumps(
@@ -951,16 +1023,26 @@ class AgentTurnProcess(Generic[ResultT]):
                 ).encode("utf-8")
             ).hexdigest(),
         }
-        execution_contract_digest = hashlib.sha256(
-            json.dumps(
-                execution_contract, sort_keys=True, separators=(",", ":")
-            ).encode("utf-8")
-        ).hexdigest()
-        runtime_result_schema_id = hashlib.sha256(
-            ("agent_turn_claude_result_v1\0" + execution_contract_digest).encode(
-                "utf-8"
+        def developer_instructions_for(runtime_kind: RuntimeKind | str) -> str:
+            kind = runtime_kind.value if isinstance(runtime_kind, RuntimeKind) else runtime_kind
+            return (developer_instructions_by_runtime or {}).get(kind, developer_instructions)
+
+        def execution_contract_digest_for(runtime_kind: RuntimeKind | str) -> str:
+            contract = {
+                **execution_contract,
+                "developer_instructions_sha256": hashlib.sha256(
+                    developer_instructions_for(runtime_kind).encode("utf-8")
+                ).hexdigest(),
+            }
+            return hashlib.sha256(
+                json.dumps(contract, sort_keys=True, separators=(",", ":")).encode("utf-8")
+            ).hexdigest()
+
+        def result_schema_id_for(runtime_kind: RuntimeKind | str) -> str:
+            return _runtime_result_schema_id(
+                execution_contract_digest_for(runtime_kind), runtime_kind, run.role,
+                purpose=consumer_purpose,
             )
-        ).hexdigest()
 
         try:
             persisted_run = self.store.get_agent_run(run.id)
@@ -980,7 +1062,9 @@ class AgentTurnProcess(Generic[ResultT]):
                     attempt
                     for attempt in reversed(runtime_attempts)
                     if attempt.status == "completed"
-                    and attempt.result_schema_id == runtime_result_schema_id
+                    and attempt.result_schema_id == result_schema_id_for(
+                        attempt.runtime_kind
+                    )
                 ),
                 None,
             )
@@ -998,9 +1082,10 @@ class AgentTurnProcess(Generic[ResultT]):
                     raise RuntimeError("completed runtime result route mismatch")
                 try:
                     result = cast(ResultT, recover_completed_runtime_domain_result(
-                        completed_attempt, run, schema_id=runtime_result_schema_id,
+                        completed_attempt, run,
+                        schema_id=result_schema_id_for(completed_attempt.runtime_kind),
                         friday_adapter=self.friday_adapter,
-                        parse_result=parse_result,
+                        parse_result=lambda raw: parse_result_for_route(raw, route),
                     ))
                 except ValueError as exc:
                     raise CompletedRuntimeResultBlockedError(
@@ -1093,7 +1178,7 @@ class AgentTurnProcess(Generic[ResultT]):
                 executor_prompt = (
                     _claude_input_contract(
                         prompt=prompt,
-                        developer_instructions=developer_instructions,
+                        developer_instructions=developer_instructions_for(route.runtime_kind),
                     )
                     if route.runtime_kind is RuntimeKind.CLAUDE_CLI
                     else prompt
@@ -1122,6 +1207,10 @@ class AgentTurnProcess(Generic[ResultT]):
                         session_id=route_session_id,
                         max_turns=CLAUDE_MAX_TURNS_PER_INVOCATION,
                         reasoning_effort=self.reasoning_effort or None,
+                        json_schema=(
+                            claude_consumer_output_schema((invocation_facts or {}).get("consumer_purpose", "general"))
+                            if run.role is AgentRole.CONSUMER else None
+                        ),
                         policy=(
                             ClaudeCommandPolicy.consumer(
                                 task_id=self.task.id,
@@ -1150,15 +1239,18 @@ class AgentTurnProcess(Generic[ResultT]):
                 else:
                     claude_adapter = None
                     claude_normalizer = None
+                    native_schema_path = _native_output_schema_for_route(
+                        route.runtime_kind, run.role, purpose=consumer_purpose,
+                    )
                     command = self.codex_adapter.build_command(
                         route=route,
                         prompt=prompt,
                         session_id=route_session_id,
                         image_paths=image_paths,
-                        output_schema_path=None,
-                        use_output_schema=False,
+                        output_schema_path=native_schema_path,
+                        use_output_schema=native_schema_path is not None,
                         approval_policy="on-failure",
-                        developer_instructions=developer_instructions,
+                        developer_instructions=developer_instructions_for(route.runtime_kind),
                         use_approval_bypass=True,
                         reasoning_effort=self.reasoning_effort or None,
                         tool_approval_modes_by_server=(
@@ -1180,12 +1272,41 @@ class AgentTurnProcess(Generic[ResultT]):
                 from app.prompt_composition import append_runtime_context
 
                 rendered_at = datetime.now().astimezone().isoformat()
-                context_facts = {**(invocation_facts or {}), "proposal_revision": run.proposal_revision}
+                # A failed native attempt can grow or compact its session. The
+                # original context proof only permits the first submission;
+                # any retry carries the complete current task input.
+                scoped_prompt_for_attempt = session_scoped_prompt
+                session_scoped_prompt = None
+                turn_prompt, turn_invocation_facts = _prompt_for_runtime_route(
+                    route,
+                    route_session_id,
+                    prompt,
+                    invocation_facts or {},
+                    scoped_prompt_for_attempt,
+                )
+                route_prompt_sections = (prompt_sections_by_runtime or {}).get(
+                    route.runtime_kind.value
+                )
+                if scoped_prompt_for_attempt is not None:
+                    route_prompt_sections = (
+                        (scoped_prompt_for_attempt.get("prompt_sections_by_runtime") or {}).get(
+                            route.runtime_kind.value
+                        )
+                        or route_prompt_sections
+                    )
+                context_facts = {
+                    **turn_invocation_facts,
+                    "proposal_revision": run.proposal_revision,
+                }
+                if route_prompt_sections is not None:
+                    context_facts["prompt_sections"] = route_prompt_sections
                 runtime_context = render_runtime_context(
                     role=run.role.value, route=route, command=command, task=self.task,
                     current_time=rendered_at, invocation_facts=context_facts,
                 )
-                submitted_developer_instructions = append_runtime_context(developer_instructions, runtime_context)
+                submitted_developer_instructions = append_runtime_context(
+                    developer_instructions_for(route.runtime_kind), runtime_context
+                )
                 if route.runtime_kind is RuntimeKind.CODEX_CLI:
                     command = [
                         "developer_instructions=" + json.dumps(submitted_developer_instructions)
@@ -1193,13 +1314,13 @@ class AgentTurnProcess(Generic[ResultT]):
                         for value in command
                     ]
                 executor_prompt = (
-                    _claude_input_contract(prompt=prompt, developer_instructions=submitted_developer_instructions)
-                    if route.runtime_kind is RuntimeKind.CLAUDE_CLI else prompt
+                    _claude_input_contract(prompt=turn_prompt, developer_instructions=submitted_developer_instructions)
+                    if route.runtime_kind is RuntimeKind.CLAUDE_CLI else turn_prompt
                 )
                 snapshot = runtime_prompt_snapshot(
                     role=run.role.value, route=route, runtime_attempt_id=active_attempt.id,
                     task=self.task, developer_instructions=submitted_developer_instructions,
-                    task_prompt=prompt, runtime_context=runtime_context, current_time=rendered_at,
+                    task_prompt=turn_prompt, runtime_context=runtime_context, current_time=rendered_at,
                     invocation_facts=context_facts,
                 )
                 snapshot["proposal_revision"] = run.proposal_revision
@@ -1207,7 +1328,7 @@ class AgentTurnProcess(Generic[ResultT]):
                 try:
                     if route.runtime_kind is RuntimeKind.FRIDAY_RUNTIME:
                         friday_result = self.friday_adapter.execute(
-                            prompt,
+                            turn_prompt,
                             project_id=self.runtime_config.friday_runtime_project_id,
                             conversation_id=self.task.conversation_id,
                             model=route.model,
@@ -1281,7 +1402,7 @@ class AgentTurnProcess(Generic[ResultT]):
                         pending_claude_session_id = trusted_session_id
                     else:
                         try:
-                            result = parse_result(process.stdout)
+                            result = parse_result_for_route(process.stdout, route)
                         except ResultParseError:
                             session_id_for_result = (
                                 observed_session_id or route_session_id
@@ -1300,7 +1421,7 @@ class AgentTurnProcess(Generic[ResultT]):
                             )
                             if not session_result:
                                 raise
-                            result = parse_result(session_result)
+                            result = parse_result_for_route(session_result, route)
                     break
                 if friday_failure is not None:
                     failure = friday_failure
@@ -1585,6 +1706,7 @@ class AgentTurnProcess(Generic[ResultT]):
                 native_end = count_claude_session_lines(native_session) if is_claude else session_transcript_end
                 native_reference = f"claude_session:{native_session}" if is_claude else attempt_transcript_reference
                 durable_consumer_result = run.role is AgentRole.CONSUMER
+                runtime_result_schema_id = result_schema_id_for(route.runtime_kind)
                 self.store.complete_agent_runtime_attempt(
                     active_attempt.id, native_session, native_reference,
                     attempt_transcript_start, native_end,

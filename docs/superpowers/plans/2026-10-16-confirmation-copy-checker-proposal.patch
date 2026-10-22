@@ -1,0 +1,12 @@
+--- a/scripts/validate_task20_runtime_copy.py
++++ b/scripts/validate_task20_runtime_copy.py
+@@ -178,7 +178,8 @@
+         original_ledger = release.versions
+         release.publish()  # Real JSON-pipe subprocess plus both real constructors.
+         target = inventory(copy)
+-        assert len(before["ordinary_tables"]) - len(target["ordinary_tables"]) == 61
++        assert "workbench_confirmations" not in target["ordinary_tables"]
++        assert len(before["ordinary_tables"]) - len(target["ordinary_tables"]) == 62
+         with closing(sqlite3.connect(copy)) as db:
+             assert state_schema_is_current(db)
+         assert target["foreign_keys"] == before["foreign_keys"]

@@ -13,6 +13,14 @@ from tests.test_action_receipt_storage import source15_database
 from tests.test_action_receipt_source import source_values
 
 
+@pytest.fixture(autouse=True)
+def _historical_text_action_dml(monkeypatch):
+    """Run rollback-era writes against the source Store15 TEXT Actions layout."""
+    from tests.historical_action_text_fixture import install
+
+    install(monkeypatch)
+
+
 SOURCE = ('2026-10-13.1', 'original marker time')
 
 
@@ -112,7 +120,7 @@ def test_failed_publication_inverts_before_old_start(tmp_path, failure):
     updater = RepositoryUpdater(
         checkout, _State(), database_path=path, stop=lambda: events.append('stop'),
         restart=start, health=lambda: failure != 'health' or starts > 1,
-        database_publication=lambda: release,
+        database_publication=lambda _backup: release,
         dependency_sync=lambda: fail_at('dependencies'), verification=lambda: fail_at('verification'),
     )
     with pytest.raises(UpgradeFailed):

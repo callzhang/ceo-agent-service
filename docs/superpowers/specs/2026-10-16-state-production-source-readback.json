@@ -1,0 +1,31 @@
+{
+  "measured_at_utc": "2026-10-16T12:44:27.350620+00:00",
+  "operation": "read_only",
+  "production_checkout_head": "454bb72a5fcb42761046571280722fb9d2ba16f1",
+  "observed_origin_main": "454bb72a5fcb42761046571280722fb9d2ba16f1",
+  "database": {
+    "store_marker": "2026-10-13.5",
+    "email_schema_version": 51,
+    "state_target_present": false,
+    "captured_native_state_variant": "actual",
+    "captured_native_state_family_count": 16
+  },
+  "frozen_validation_source": {
+    "sha256": "970a909a9cfcb4fe604d2111d5572560d4744978df20fb317c4e433059566320",
+    "unchanged": true,
+    "historical_predecessor": "7dadc492c1c62d5b0624f2f97dd0c89f4f358646"
+  },
+  "consequences": [
+    "Prior genuine 7dad old-code proofs remain historical evidence, not evidence for the currently deployed predecessor.",
+    "Preserve published main changes by a normal merge into the isolated feature branch before final copy/native acceptance.",
+    "Rebase proposal artifacts onto the reconciled source and record new base and candidate hashes; prior reviewed hashes remain historical.",
+    "Final old-code rollback rehearsal must include genuine current production code and a freshly verified source boundary."
+  ],
+  "not_proven": [
+    "State current-caller or constructor activation",
+    "67-table combined State candidate",
+    "final ten core tables plus Email migration ledger",
+    "full native CLI workflow",
+    "production schema change"
+  ]
+}

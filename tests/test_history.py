@@ -1,7 +1,8 @@
+from tests.support.legacy_todo_facts import seed_legacy_work_project, seed_legacy_work_todo, seed_legacy_work_update
 import sqlite3
 
 from app.run_storage import insert_run
-from app.action_storage import REPLY_ATTEMPT_COMMON_SQL, update_action
+from app.action_storage import REPLY_ATTEMPT_COMMON_SQL, update_action, update_sync_action
 from app.task_storage import REPLY_TASK_SQL
 from app.history import HistoryItem, safe_observability_error
 from app.store import AutoReplyStore
@@ -57,14 +58,7 @@ def _seed_meeting_run(store: AutoReplyStore, *, status: str = "sent") -> int:
         target_title="项目群",
         final_message="各方对上线范围仍有分歧。@Avery 请确认风险预算。",
     )
-    return store.record_meeting_alignment_run(
-        job_id=job_id,
-        codex_session_id="meeting-session-1",
-        decision_json='{"action":"send"}',
-        audit_summary="会后对齐：上线范围仍未一致。",
-        status=status,
-        error="",
-    )
+    return store.create_logical_run('meeting_alignment_runs', task_public_id=job_id, codex_session_id="meeting-session-1", status=status, error="")
 
 
 def test_history_merges_reply_and_meeting_runs_by_time(tmp_path):
@@ -84,7 +78,7 @@ def test_history_merges_reply_and_meeting_runs_by_time(tmp_path):
     with sqlite3.connect(store.path) as db:
         update_action(db, "reply_attempts", reply_id, {"created_at": "2026-07-14 10:00:00"})
         db.execute(
-            "update runs set created_at='2026-07-14 10:01:00' where record_type='meeting_alignment_runs' and cast(legacy_key as integer)=?",
+            "update runs set created_at='2026-07-14 10:01:00' where record_type='agent_runs' and source_type='meeting_alignment_runs' and cast(legacy_key as integer)=?",
             (meeting_run_id,),
         )
 
@@ -173,30 +167,25 @@ def test_history_uses_current_run_while_failed_attempt_is_recovering(tmp_path):
 
 def test_history_includes_task_updates_and_follow_ups(tmp_path):
     store = AutoReplyStore(tmp_path / "worker.sqlite3")
-    project_id = store.create_work_project(
+    project_id = seed_legacy_work_project(store,
         title="AI 待办推进",
         category="product",
-        priority="P1",
-        risk_level="medium",
         owner_name="Avery",
         current_state="等待 Avery 反馈",
         next_step="补充 TODO 描述",
     )
-    todo_id = store.create_work_todo(
+    todo_id = seed_legacy_work_todo(store,
         project_id=project_id,
         title="向 Avery 解释待办更新",
         description="说明重要事项判断口径，并同步更新后的 TODO。",
         owner_name="Avery",
-        priority="P1",
     )
-    update_id = store.create_work_update(
+    update_id = seed_legacy_work_update(store,
         project_id=project_id,
         source_type="reply_attempt",
         source_ref="42",
         summary="更新 TODO：补充 Avery 反馈事项描述",
         changes_json='{"action":"update_project"}',
-        merge_reason="同一任务项目",
-        confidence=0.9,
     )
     follow_up_id = store.create_follow_up_draft(
         project_id=project_id,
@@ -208,20 +197,15 @@ def test_history_includes_task_updates_and_follow_ups(tmp_path):
         scheduled_at="2026-07-15 10:00:00",
         status="sent",
     )
-    with sqlite3.connect(store.path) as db:
-        db.execute(
-            "update work_updates set created_at='2026-07-15 10:00:00' where id=?",
-            (update_id,),
-        )
-        db.execute(
-            """
-            update follow_up_drafts
-            set sent_at='2026-07-15 10:01:00',
-                updated_at='2026-07-15 10:01:00'
-            where id=?
-            """,
-            (follow_up_id,),
-        )
+    with store._connect() as db:
+        db.execute("begin immediate")
+        update_sync_action(db, "work_updates", update_id, {
+            "created_at": "2026-07-15 10:00:00",
+        })
+        update_sync_action(db, "follow_up_drafts", follow_up_id, {
+            "sent_at": "2026-07-15 10:01:00",
+            "updated_at": "2026-07-15 10:01:00",
+        })
 
     items = store.list_history_items(limit=20, query_text="Avery")
 
@@ -249,22 +233,8 @@ def test_history_preserves_immutable_retry_run_after_job_succeeds(tmp_path):
         eligible_at="2026-07-14T10:00:00+08:00",
         status="pending",
     )
-    retry_run = store.record_meeting_alignment_run(
-        job_id=job_id,
-        codex_session_id="session-retry",
-        decision_json="{}",
-        audit_summary="首次调用失败",
-        status="retry",
-        error="temporary",
-    )
-    sent_run = store.record_meeting_alignment_run(
-        job_id=job_id,
-        codex_session_id="session-sent",
-        decision_json='{"action":"send"}',
-        audit_summary="第二次调用成功",
-        status="ready_to_send",
-        error="",
-    )
+    retry_run = store.create_logical_run('meeting_alignment_runs', task_public_id=job_id, codex_session_id="session-retry", status="retry", error="temporary")
+    sent_run = store.create_logical_run('meeting_alignment_runs', task_public_id=job_id, codex_session_id="session-sent", status="ready_to_send", error="")
     store.update_meeting_alignment_job(job_id, status="sent")
 
     items = store.list_history_items(limit=20)
@@ -288,22 +258,8 @@ def test_history_keeps_earlier_ready_run_sent_after_later_send_succeeds(tmp_path
         eligible_at="2026-07-14T10:00:00+08:00",
         status="pending",
     )
-    first_run = store.record_meeting_alignment_run(
-        job_id=job_id,
-        codex_session_id="session-first-ready",
-        decision_json='{"action":"send"}',
-        audit_summary="首次分析完成但发送失败",
-        status="ready_to_send",
-        error="",
-    )
-    second_run = store.record_meeting_alignment_run(
-        job_id=job_id,
-        codex_session_id="session-second-ready",
-        decision_json='{"action":"send"}',
-        audit_summary="重新分析并发送成功",
-        status="ready_to_send",
-        error="",
-    )
+    first_run = store.create_logical_run('meeting_alignment_runs', task_public_id=job_id, codex_session_id="session-first-ready", status="ready_to_send", error="")
+    second_run = store.create_logical_run('meeting_alignment_runs', task_public_id=job_id, codex_session_id="session-second-ready", status="ready_to_send", error="")
     store.update_meeting_alignment_job(job_id, status="sent")
 
     statuses = {
@@ -360,7 +316,7 @@ def test_history_tie_order_is_stable_across_kinds(tmp_path):
     with sqlite3.connect(store.path) as db:
         for (attempt_id,) in db.execute(f"select id from ({REPLY_ATTEMPT_COMMON_SQL})"):
             update_action(db, "reply_attempts", attempt_id, {"created_at": "2026-07-14 10:00:00"})
-        db.execute("update runs set created_at='2026-07-14 10:00:00' where record_type='meeting_alignment_runs'")
+        db.execute("update runs set created_at='2026-07-14 10:00:00' where record_type='agent_runs' and source_type='meeting_alignment_runs'")
 
     first_page = store.list_history_items(limit=1, offset=0)
     second_page = store.list_history_items(limit=1, offset=1)

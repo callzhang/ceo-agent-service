@@ -1,0 +1,35 @@
+{
+  "model": "gpt-6-luna",
+  "skill_sha256": "5ba8cb23d0f888f9d5cfad949d584331217091e6c82e52d0416848d42f554ea6",
+  "fixture": "evals/trajectory_optimization/email_classifier_category_table_pair.v1.json",
+  "case_count": 1,
+  "accepted": true,
+  "results": [
+    {
+      "exit_code": 0,
+      "prompt_sha256": "2ed610c3d4c4c9d866637aa209e3572e8a7cc9f23ac0c7597b6d1f36c1502664",
+      "skill_budget_warnings": 0,
+      "tool_calls": 0,
+      "category": "work",
+      "important": true,
+      "certainty": "certain",
+      "candidate_index": null,
+      "bound_candidate": true,
+      "case": "work",
+      "arm": "baseline"
+    },
+    {
+      "exit_code": 0,
+      "prompt_sha256": "2ed610c3d4c4c9d866637aa209e3572e8a7cc9f23ac0c7597b6d1f36c1502664",
+      "skill_budget_warnings": 0,
+      "tool_calls": 0,
+      "category": "work",
+      "important": true,
+      "certainty": "certain",
+      "candidate_index": null,
+      "bound_candidate": true,
+      "case": "work",
+      "arm": "candidate"
+    }
+  ]
+}

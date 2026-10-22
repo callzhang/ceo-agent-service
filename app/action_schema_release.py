@@ -1,4 +1,5 @@
 """Paired actions publication; inverse reconstructs current business facts."""
+from app.state_publication_sources import publication_store_version
 
 from contextlib import closing
 from dataclasses import dataclass
@@ -6,6 +7,9 @@ from pathlib import Path
 import sqlite3
 from typing import Callable
 
+from app.business_legacy_field_schema_release import (
+    TARGET_STORE_VERSION, PREVIOUS_STORE_VERSIONS, publication_action_schema_is_current,
+)
 from app.action_storage import (
     REVIEW_CANDIDATE_SQL,
     action_schema_is_current,
@@ -24,8 +28,8 @@ VERSION_KEY = "store_schema_version"
 
 def publication_candidate_source(db: sqlite3.Connection) -> str:
     """Read the declared previous or target layout during the deploy window."""
-    marker = db.execute("select value from service_state where key=?", (VERSION_KEY,)).fetchone()
-    version = marker[0] if marker else None
+    version = publication_store_version(db, current_version=TARGET_STORE_VERSION,
+                                        previous_versions=PREVIOUS_STORE_VERSIONS)
     if version == SOURCE_ACTION_VERSION:
         capture_action_schema(db)
         return "select * from review_candidates"
@@ -38,6 +42,8 @@ def publication_candidate_source(db: sqlite3.Connection) -> str:
     if version == "2026-10-13.4" and action_schema_is_current(db, include_delivery=True):
         return REVIEW_CANDIDATE_SQL
     if version == "2026-10-13.5" and reply_schema_is_current(db):
+        return REVIEW_CANDIDATE_SQL
+    if publication_action_schema_is_current(db, version):
         return REVIEW_CANDIDATE_SQL
     raise ValueError("unknown or mixed action publication source schema")
 

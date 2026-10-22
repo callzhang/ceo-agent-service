@@ -1,0 +1,191 @@
+--- a/app/attempt_rerun_presentation.py
++++ b/app/attempt_rerun_presentation.py
+@@ -1,10 +1,12 @@
+ """Read-only wording for manual reevaluation, without changing retry eligibility."""
+
+-from app.task_storage import REPLY_TASK_SQL
++from app.task20_definitions import task20_projection
+ import json
+ from dataclasses import dataclass
+ from typing import Any, Iterable
+ from app.run_storage import AGENT_RUN_SQL
++
++REPLY_TASK_SQL = task20_projection('reply_tasks')
+
+
+ @dataclass(frozen=True)
+--- a/app/minutes_owner_backfill.py
++++ b/app/minutes_owner_backfill.py
+@@ -16,7 +16,7 @@
+ """
+ from __future__ import annotations
+ from app.business_definitions import BUSINESS_PROJECTIONS
+-from app.task_storage import WORK_SUMMARY_INPUT_SQL
++from app.task20_definitions import task20_projection
+
+ import json
+ from dataclasses import dataclass, field
+@@ -31,6 +31,8 @@
+     _minutes_todo_actions,
+     minutes_work_item,
+ )
++
++WORK_SUMMARY_INPUT_SQL = task20_projection('work_summary_inputs')
+
+
+ # Bump when what the Agent is asked to do with the excerpts changes (their format, the prompt's
+--- a/app/task_project_repair.py
++++ b/app/task_project_repair.py
+@@ -1,7 +1,7 @@
+ """Auditable, idempotent repair planning for task project metadata."""
+
+ from __future__ import annotations
+-from app.task_storage import WORK_SUMMARY_INPUT_SQL
++from app.task20_definitions import task20_projection
+ from app.run_storage import TASK_AGENT_RUN_SQL
+
+ import hashlib
+@@ -13,6 +13,8 @@
+ from typing import Any
+
+ from app.work_summary_payload import decode_work_summary_payload
++
++WORK_SUMMARY_INPUT_SQL = task20_projection('work_summary_inputs')
+
+
+ RESTORABLE_FIELDS = (
+--- a/app/cli.py
++++ b/app/cli.py
+@@ -1,4 +1,4 @@
+-from app.task_storage import REPLY_TASK_SQL
++from app.task20_definitions import task20_projection
+ from app.action_storage import REPLY_ATTEMPT_COMMON_SQL
+ from app.action_storage import SENT_REPLY_SQL
+ import argparse
+@@ -145,6 +145,8 @@
+     weekly_okr_report_command,
+ )
+
++REPLY_TASK_SQL = task20_projection('reply_tasks')
++
+
+ def run_consumer_dispatcher_loop(
+     dispatcher: ConsumerDispatcher,
+--- a/app/agent_cli.py
++++ b/app/agent_cli.py
+@@ -1,5 +1,5 @@
+ from __future__ import annotations
+-from app.task_storage import REPLY_TASK_INPUT_SQL, REPLY_TASK_SQL
++from app.task20_definitions import task20_projection
+
+ import asyncio
+ import atexit
+@@ -54,6 +54,9 @@
+     prepare_material_output_root,
+ )
+ from app.task_artifacts import migrate_legacy_task_artifacts, task_artifact_directory
++
++REPLY_TASK_INPUT_SQL = task20_projection('reply_task_inputs')
++REPLY_TASK_SQL = task20_projection('reply_tasks')
+
+ # Codex truncates one MCP text block at 1 MiB. Keep command output below that
+ # boundary even after JSON escaping so the controlled receipt remains valid.
+--- a/app/task_semantic_import.py
++++ b/app/task_semantic_import.py
+@@ -8,7 +8,7 @@
+
+ from __future__ import annotations
+ from app.business_definitions import BUSINESS_PROJECTIONS
+-from app.task_storage import WORK_SUMMARY_INPUT_SQL
++from app.task20_definitions import task20_projection
+
+ import hashlib
+ import json
+@@ -27,6 +27,8 @@
+     SourceSignal,
+     TaskSemanticService,
+ )
++
++WORK_SUMMARY_INPUT_SQL = task20_projection('work_summary_inputs')
+
+
+ MANIFEST_VERSION = 2
+--- a/app/email_store.py
++++ b/app/email_store.py
+@@ -5,7 +5,7 @@
+ """
+
+ from __future__ import annotations
+-from app.task_storage import REPLY_TASK_SQL
++from app.task20_definitions import task20_projection
+
+ from app.store import REPLY_TASK_CURRENT_SQL, AutoReplyStore, STORE_SCHEMA_VERSION
+
+@@ -101,6 +101,8 @@
+
+ from app.task12_storage import task12_insert_parts, task12_projection, task12_set_parts
+ from app.task20_definitions import TASK20_FIELDS, task20_column
++
++REPLY_TASK_SQL = task20_projection('reply_tasks')
+
+ _EMAIL_CLASSIFICATION_SQL = task12_projection('email_agent_classification_tasks')
+ _EMAIL_HISTORICAL_KIND = 'email_historical_candidates'
+--- a/app/workbench/native_events.py
++++ b/app/workbench/native_events.py
+@@ -27,7 +27,10 @@
+ from app.workbench.codex_runtime import _native_tool_failed
+ from app.workbench.models import WorkbenchEvent, WorkbenchTurn
+ from app.run_storage import RUNTIME_ATTEMPT_SQL
+-from app.task_storage import WORKBENCH_TURN_SQL, task_id_expression
++from app.task_storage import task_id_expression
++from app.task20_definitions import task20_projection
++
++WORKBENCH_TURN_SQL = task20_projection('workbench_turns')
+
+ AGENT_EVENTS = {"text_delta", "thinking_summary", "tool_started", "tool_completed", "file_changed"}
+ UNAVAILABLE = "原生 Agent 记录不可用。"
+--- a/app/store.py
++++ b/app/store.py
+@@ -10244,7 +10244,7 @@
+             args = (int(row_id),)
+         elif workload_kind == "email_classification":
+             query = (
+-                "select 1 from email_agent_classification_tasks "
++                f"select 1 from ({task12_projection('email_agent_classification_tasks')}) "
+                 "where task_id=? and status='running'"
+             )
+             args = (workload_key,)
+--- a/app/storage_maintenance.py
++++ b/app/storage_maintenance.py
+@@ -4,6 +4,7 @@
+ from app.task_storage import task_id_expression
+ from app.task20_definitions import task20_column, task20_projection
+ from app.task8_storage import register_task8_functions, task8_set_parts
++from app.task12_storage import task12_projection, task12_set_parts
+
+ import argparse
+ import json
+@@ -30,9 +31,10 @@
+     counts = {"tasks_compacted": 0, "logical_bytes_removed": 0}
+     with closing(sqlite3.connect(database, timeout=60)) as db:
+         db.row_factory = sqlite3.Row
++        register_task8_functions(db)
+         db.execute("begin immediate")
+         rows = db.execute(
+-            "select task_id, input_json from email_agent_classification_tasks "
++            f"select task_id, input_json from ({task12_projection('email_agent_classification_tasks')}) "
+             "where status='done' and json_extract(input_json, '$.input_compacted') is not 1 "
+             "order by task_id"
+         ).fetchall()
+@@ -41,8 +43,9 @@
+                 row["input_json"]
+             )
+             updated = db.execute(
+-                "update email_agent_classification_tasks set input_json=? "
+-                "where task_id=? and status='done'",
++                f"update tasks set {task12_set_parts('email_agent_classification_tasks', {}, update_sql={'input_json': '?'}).sql} "
++                f"where record_type='email_agent_classification_tasks' and {task20_column('email_agent_classification_tasks', 'task_id')}=? "
++                f"and {task20_column('email_agent_classification_tasks', 'status')}='done'",
+                 (compact, row["task_id"]),
+             ).rowcount
+             counts["tasks_compacted"] += updated

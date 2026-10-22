@@ -1,0 +1,3483 @@
+{
+  "contract_version": 1,
+  "scope": "partial caller retirement: covered reviewed/prepared/direct email/sent effect writers now use common Action; specialized unsubscribe and remaining shared history/UI readers stay out of scope",
+  "source_snapshot": {
+    "path": "/tmp/ceo-action-entity-d0ce4814/source.sqlite3",
+    "mode": "read-only",
+    "observed_schema": "current unified actions table; standalone legacy tables are absent",
+    "use": "Read-only source provenance for local inspection only; test suite uses only synthetic databases."
+  },
+  "sources": [
+    {
+      "table": "email_actions",
+      "declaration": "app/action_email_definitions.py:EMAIL_FIELDS",
+      "fields": [
+        {
+          "name": "action_id",
+          "owner": "Action",
+          "disposition": "reference",
+          "evidence": "app/action_email_definitions.py:EMAIL_FIELDS.email_actions.action_id",
+          "target": "action_id",
+          "rule": "namespaced direct-action identity; migrate only through explicit mapping",
+          "inverse_rule": "Reconstruct email_actions.action_id from actions.id via {\"arguments\":[\"Action.action_plan_id\",\"Action.operation\"],\"function\":\"app/email_store.py:_direct_action_id\"}; preserve source nullness and exact stored representation.",
+          "consumers": [
+            "app/email_store.py:EmailStore._next_direct_action_row",
+            "app/email_store.py:EmailStore._claimed_direct_action",
+            "app/email_store.py:EmailStore.complete_direct_action_attempt"
+          ],
+          "storage": "stored",
+          "inverse_mapping": {
+            "owner": "Action",
+            "owner_table": "actions",
+            "owner_field": "id",
+            "via": {
+              "function": "app/email_store.py:_direct_action_id",
+              "arguments": [
+                "Action.action_plan_id",
+                "Action.operation"
+              ]
+            }
+          },
+          "consumer_assertions": [
+            {
+              "location": "app/email_store.py:EmailStore._next_direct_action_row",
+              "source_field": "email_actions.action_id",
+              "target_owner": "Action",
+              "target_field": "id"
+            },
+            {
+              "location": "app/email_store.py:EmailStore._claimed_direct_action",
+              "source_field": "email_actions.action_id",
+              "target_owner": "Action",
+              "target_field": "id"
+            },
+            {
+              "location": "app/email_store.py:EmailStore.complete_direct_action_attempt",
+              "source_field": "email_actions.action_id",
+              "target_owner": "Action",
+              "target_field": "id"
+            }
+          ]
+        },
+        {
+          "name": "action_plan_id",
+          "owner": "Action",
+          "disposition": "retain",
+          "evidence": "app/action_email_definitions.py:EMAIL_FIELDS.email_actions.action_plan_id",
+          "target": "action_plan_id",
+          "rule": "email_actions.action_plan_id",
+          "inverse_rule": "Reconstruct email_actions.action_plan_id from actions.action_plan_id via direct; preserve source nullness and exact stored representation.",
+          "consumers": [
+            "app/email_store.py:EmailStore._next_direct_action_row",
+            "app/email_store.py:EmailStore._claimed_direct_action",
+            "app/email_store.py:EmailStore.complete_direct_action_attempt"
+          ],
+          "storage": "stored",
+          "inverse_mapping": {
+            "owner": "Action",
+            "owner_table": "actions",
+            "owner_field": "action_plan_id",
+            "via": null
+          },
+          "consumer_assertions": [
+            {
+              "location": "app/email_store.py:EmailStore._next_direct_action_row",
+              "source_field": "email_actions.action_plan_id",
+              "target_owner": "Action",
+              "target_field": "action_plan_id"
+            },
+            {
+              "location": "app/email_store.py:EmailStore._claimed_direct_action",
+              "source_field": "email_actions.action_plan_id",
+              "target_owner": "Action",
+              "target_field": "action_plan_id"
+            },
+            {
+              "location": "app/email_store.py:EmailStore.complete_direct_action_attempt",
+              "source_field": "email_actions.action_plan_id",
+              "target_owner": "Action",
+              "target_field": "action_plan_id"
+            }
+          ]
+        },
+        {
+          "name": "classification_id",
+          "owner": "Action",
+          "disposition": "retain",
+          "evidence": "app/action_email_definitions.py:EMAIL_FIELDS.email_actions.classification_id",
+          "target": "classification_id",
+          "rule": "email_actions.classification_id",
+          "inverse_rule": "Reconstruct email_actions.classification_id from actions.classification_id via direct; preserve source nullness and exact stored representation.",
+          "consumers": [
+            "app/email_store.py:EmailStore._next_direct_action_row",
+            "app/email_store.py:EmailStore._claimed_direct_action",
+            "app/email_store.py:EmailStore.complete_direct_action_attempt"
+          ],
+          "storage": "stored",
+          "inverse_mapping": {
+            "owner": "Action",
+            "owner_table": "actions",
+            "owner_field": "classification_id",
+            "via": null
+          },
+          "consumer_assertions": [
+            {
+              "location": "app/email_store.py:EmailStore._next_direct_action_row",
+              "source_field": "email_actions.classification_id",
+              "target_owner": "Action",
+              "target_field": "classification_id"
+            },
+            {
+              "location": "app/email_store.py:EmailStore._claimed_direct_action",
+              "source_field": "email_actions.classification_id",
+              "target_owner": "Action",
+              "target_field": "classification_id"
+            },
+            {
+              "location": "app/email_store.py:EmailStore.complete_direct_action_attempt",
+              "source_field": "email_actions.classification_id",
+              "target_owner": "Action",
+              "target_field": "classification_id"
+            }
+          ]
+        },
+        {
+          "name": "account_id",
+          "owner": "Action",
+          "disposition": "retain",
+          "evidence": "app/action_email_definitions.py:EMAIL_FIELDS.email_actions.account_id",
+          "target": "account_id",
+          "rule": "email_actions.account_id",
+          "inverse_rule": "Reconstruct email_actions.account_id from actions.account_id via direct; preserve source nullness and exact stored representation.",
+          "consumers": [
+            "app/email_store.py:EmailStore._next_direct_action_row",
+            "app/email_store.py:EmailStore._claimed_direct_action",
+            "app/email_store.py:EmailStore.complete_direct_action_attempt"
+          ],
+          "storage": "stored",
+          "inverse_mapping": {
+            "owner": "Action",
+            "owner_table": "actions",
+            "owner_field": "account_id",
+            "via": null
+          },
+          "consumer_assertions": [
+            {
+              "location": "app/email_store.py:EmailStore._next_direct_action_row",
+              "source_field": "email_actions.account_id",
+              "target_owner": "Action",
+              "target_field": "account_id"
+            },
+            {
+              "location": "app/email_store.py:EmailStore._claimed_direct_action",
+              "source_field": "email_actions.account_id",
+              "target_owner": "Action",
+              "target_field": "account_id"
+            },
+            {
+              "location": "app/email_store.py:EmailStore.complete_direct_action_attempt",
+              "source_field": "email_actions.account_id",
+              "target_owner": "Action",
+              "target_field": "account_id"
+            }
+          ]
+        },
+        {
+          "name": "action_type",
+          "owner": "Action",
+          "disposition": "retain",
+          "evidence": "app/action_email_definitions.py:EMAIL_FIELDS.email_actions.action_type",
+          "target": "operation",
+          "rule": "email_actions.action_type",
+          "inverse_rule": "Reconstruct email_actions.action_type from actions.operation via direct; preserve source nullness and exact stored representation.",
+          "consumers": [
+            "app/email_store.py:EmailStore._next_direct_action_row",
+            "app/email_store.py:EmailStore._claimed_direct_action",
+            "app/email_store.py:EmailStore.complete_direct_action_attempt"
+          ],
+          "storage": "stored",
+          "inverse_mapping": {
+            "owner": "Action",
+            "owner_table": "actions",
+            "owner_field": "operation",
+            "via": null
+          },
+          "consumer_assertions": [
+            {
+              "location": "app/email_store.py:EmailStore._next_direct_action_row",
+              "source_field": "email_actions.action_type",
+              "target_owner": "Action",
+              "target_field": "operation"
+            },
+            {
+              "location": "app/email_store.py:EmailStore._claimed_direct_action",
+              "source_field": "email_actions.action_type",
+              "target_owner": "Action",
+              "target_field": "operation"
+            },
+            {
+              "location": "app/email_store.py:EmailStore.complete_direct_action_attempt",
+              "source_field": "email_actions.action_type",
+              "target_owner": "Action",
+              "target_field": "operation"
+            }
+          ]
+        },
+        {
+          "name": "parameters_json",
+          "owner": "Action",
+          "disposition": "retain",
+          "evidence": "app/action_email_definitions.py:EMAIL_FIELDS.email_actions.parameters_json",
+          "target": "parameters_json",
+          "rule": "email_actions.parameters_json",
+          "inverse_rule": "Reconstruct email_actions.parameters_json from actions.parameters_json via direct; preserve source nullness and exact stored representation.",
+          "consumers": [
+            "app/email_store.py:EmailStore._next_direct_action_row",
+            "app/email_store.py:EmailStore._claimed_direct_action",
+            "app/email_store.py:EmailStore.complete_direct_action_attempt"
+          ],
+          "storage": "stored",
+          "inverse_mapping": {
+            "owner": "Action",
+            "owner_table": "actions",
+            "owner_field": "parameters_json",
+            "via": null
+          },
+          "consumer_assertions": [
+            {
+              "location": "app/email_store.py:EmailStore._next_direct_action_row",
+              "source_field": "email_actions.parameters_json",
+              "target_owner": "Action",
+              "target_field": "parameters_json"
+            },
+            {
+              "location": "app/email_store.py:EmailStore._claimed_direct_action",
+              "source_field": "email_actions.parameters_json",
+              "target_owner": "Action",
+              "target_field": "parameters_json"
+            },
+            {
+              "location": "app/email_store.py:EmailStore.complete_direct_action_attempt",
+              "source_field": "email_actions.parameters_json",
+              "target_owner": "Action",
+              "target_field": "parameters_json"
+            }
+          ]
+        },
+        {
+          "name": "config_version",
+          "owner": "Action Plan",
+          "disposition": "reference",
+          "evidence": "app/action_email_definitions.py:EMAIL_FIELDS.email_actions.config_version",
+          "target": "action_plan_id",
+          "rule": "email_actions.action_plan_id -> immutable plan config_version",
+          "inverse_rule": "Reconstruct email_actions.config_version from actions[record_type=email_action_plans].config_version via {\"from\":\"Action.action_plan_id\",\"immutable\":true,\"to\":\"email_action_plans.action_plan_id\"}; preserve source nullness and exact stored representation.",
+          "consumers": [
+            "app/email_store.py:EmailStore._next_direct_action_row",
+            "app/email_store.py:EmailStore._claimed_direct_action",
+            "app/email_store.py:EmailStore.complete_direct_action_attempt"
+          ],
+          "storage": "stored",
+          "inverse_mapping": {
+            "owner": "Action Plan",
+            "owner_table": "actions",
+            "owner_record_type": "email_action_plans",
+            "owner_field": "config_version",
+            "via": {
+              "from": "Action.action_plan_id",
+              "to": "email_action_plans.action_plan_id",
+              "immutable": true
+            }
+          },
+          "consumer_assertions": [
+            {
+              "location": "app/email_store.py:EmailStore._next_direct_action_row",
+              "source_field": "email_actions.config_version",
+              "target_owner": "Action Plan",
+              "target_field": "config_version"
+            },
+            {
+              "location": "app/email_store.py:EmailStore._claimed_direct_action",
+              "source_field": "email_actions.config_version",
+              "target_owner": "Action Plan",
+              "target_field": "config_version"
+            },
+            {
+              "location": "app/email_store.py:EmailStore.complete_direct_action_attempt",
+              "source_field": "email_actions.config_version",
+              "target_owner": "Action Plan",
+              "target_field": "config_version"
+            }
+          ]
+        },
+        {
+          "name": "status",
+          "owner": "Action",
+          "disposition": "retain",
+          "evidence": "app/action_email_definitions.py:EMAIL_FIELDS.email_actions.status",
+          "target": "status",
+          "rule": "email_actions.status",
+          "inverse_rule": "Reconstruct email_actions.status from actions.status via direct; preserve source nullness and exact stored representation.",
+          "consumers": [
+            "app/email_store.py:EmailStore._next_direct_action_row",
+            "app/email_store.py:EmailStore._claimed_direct_action",
+            "app/email_store.py:EmailStore.complete_direct_action_attempt"
+          ],
+          "storage": "stored",
+          "inverse_mapping": {
+            "owner": "Action",
+            "owner_table": "actions",
+            "owner_field": "status",
+            "via": null
+          },
+          "consumer_assertions": [
+            {
+              "location": "app/email_store.py:EmailStore._next_direct_action_row",
+              "source_field": "email_actions.status",
+              "target_owner": "Action",
+              "target_field": "status"
+            },
+            {
+              "location": "app/email_store.py:EmailStore._claimed_direct_action",
+              "source_field": "email_actions.status",
+              "target_owner": "Action",
+              "target_field": "status"
+            },
+            {
+              "location": "app/email_store.py:EmailStore.complete_direct_action_attempt",
+              "source_field": "email_actions.status",
+              "target_owner": "Action",
+              "target_field": "status"
+            }
+          ]
+        },
+        {
+          "name": "attempt_count",
+          "owner": "Action Receipt",
+          "disposition": "retire",
+          "evidence": "app/action_email_definitions.py:EMAIL_FIELDS.email_actions.attempt_count",
+          "target": "attempt_number",
+          "rule": "Count child attempts as in `shared_action_definitions.py:email_projection`; no separate parent value is stored.",
+          "inverse_rule": "Reconstruct email_actions.attempt_count from action_receipts.attempt_number via {\"aggregate\":\"count\",\"by\":\"Action Receipt.attempt_number\"}; preserve source nullness and exact stored representation.",
+          "consumers": [
+            "app/shared_action_definitions.py:email_projection",
+            "app/email_store.py:EmailStore._claimed_direct_action",
+            "app/email_store.py:EmailStore.complete_direct_action_attempt"
+          ],
+          "storage": "derived_projection",
+          "inverse_mapping": {
+            "owner": "Action Receipt",
+            "owner_table": "action_receipts",
+            "owner_field": "attempt_number",
+            "via": {
+              "aggregate": "count",
+              "by": "Action Receipt.attempt_number"
+            }
+          },
+          "consumer_assertions": [
+            {
+              "location": "app/shared_action_definitions.py:email_projection",
+              "source_field": "email_actions.attempt_count",
+              "target_owner": "Action Receipt",
+              "target_field": "attempt_number"
+            },
+            {
+              "location": "app/email_store.py:EmailStore._claimed_direct_action",
+              "source_field": "email_actions.attempt_count",
+              "target_owner": "Action Receipt",
+              "target_field": "attempt_number"
+            },
+            {
+              "location": "app/email_store.py:EmailStore.complete_direct_action_attempt",
+              "source_field": "email_actions.attempt_count",
+              "target_owner": "Action Receipt",
+              "target_field": "attempt_number"
+            }
+          ]
+        },
+        {
+          "name": "started_at",
+          "owner": "Action",
+          "disposition": "retain",
+          "evidence": "app/action_email_definitions.py:EMAIL_FIELDS.email_actions.started_at",
+          "target": "started_at",
+          "rule": "email_actions.started_at",
+          "inverse_rule": "Reconstruct email_actions.started_at from actions.started_at via direct; preserve source nullness and exact stored representation.",
+          "consumers": [
+            "app/email_store.py:EmailStore._next_direct_action_row",
+            "app/email_store.py:EmailStore._claimed_direct_action",
+            "app/email_store.py:EmailStore.complete_direct_action_attempt"
+          ],
+          "storage": "stored",
+          "inverse_mapping": {
+            "owner": "Action",
+            "owner_table": "actions",
+            "owner_field": "started_at",
+            "via": null
+          },
+          "consumer_assertions": [
+            {
+              "location": "app/email_store.py:EmailStore._next_direct_action_row",
+              "source_field": "email_actions.started_at",
+              "target_owner": "Action",
+              "target_field": "started_at"
+            },
+            {
+              "location": "app/email_store.py:EmailStore._claimed_direct_action",
+              "source_field": "email_actions.started_at",
+              "target_owner": "Action",
+              "target_field": "started_at"
+            },
+            {
+              "location": "app/email_store.py:EmailStore.complete_direct_action_attempt",
+              "source_field": "email_actions.started_at",
+              "target_owner": "Action",
+              "target_field": "started_at"
+            }
+          ]
+        },
+        {
+          "name": "finished_at",
+          "owner": "Action Receipt",
+          "disposition": "reference",
+          "evidence": "app/action_email_definitions.py:EMAIL_FIELDS.email_actions.finished_at",
+          "target": "finished_at",
+          "rule": "Current projection returns empty for pending/processing, otherwise the latest attempt's finished_at or empty.",
+          "inverse_rule": "Reconstruct email_actions.finished_at from action_receipts.finished_at via {\"blank_when_status\":[\"pending\",\"processing\"],\"order_by\":\"attempt_number DESC\",\"projection\":\"app/shared_action_definitions.py:email_projection\",\"source_owner\":\"latest email_action_attempts receipt\"}; preserve source nullness and exact stored representation.",
+          "consumers": [
+            "app/shared_action_definitions.py:email_projection",
+            "app/email_store.py:EmailStore._claimed_direct_action",
+            "app/email_store.py:EmailStore.complete_direct_action_attempt"
+          ],
+          "storage": "derived_projection",
+          "inverse_mapping": {
+            "owner": "Action Receipt",
+            "owner_table": "action_receipts",
+            "owner_field": "finished_at",
+            "via": {
+              "projection": "app/shared_action_definitions.py:email_projection",
+              "source_owner": "latest email_action_attempts receipt",
+              "order_by": "attempt_number DESC",
+              "blank_when_status": [
+                "pending",
+                "processing"
+              ]
+            }
+          },
+          "consumer_assertions": [
+            {
+              "location": "app/shared_action_definitions.py:email_projection",
+              "source_field": "email_actions.finished_at",
+              "target_owner": "Action Receipt",
+              "target_field": "finished_at"
+            },
+            {
+              "location": "app/email_store.py:EmailStore._claimed_direct_action",
+              "source_field": "email_actions.finished_at",
+              "target_owner": "Action Receipt",
+              "target_field": "finished_at"
+            },
+            {
+              "location": "app/email_store.py:EmailStore.complete_direct_action_attempt",
+              "source_field": "email_actions.finished_at",
+              "target_owner": "Action Receipt",
+              "target_field": "finished_at"
+            }
+          ]
+        },
+        {
+          "name": "next_attempt_at",
+          "owner": "Action",
+          "disposition": "retain",
+          "evidence": "app/action_email_definitions.py:EMAIL_FIELDS.email_actions.next_attempt_at",
+          "target": "next_attempt_at",
+          "rule": "email_actions.next_attempt_at",
+          "inverse_rule": "Reconstruct email_actions.next_attempt_at from actions.next_attempt_at via direct; preserve source nullness and exact stored representation.",
+          "consumers": [
+            "app/email_store.py:EmailStore._next_direct_action_row",
+            "app/email_store.py:EmailStore._claimed_direct_action",
+            "app/email_store.py:EmailStore.complete_direct_action_attempt"
+          ],
+          "storage": "stored",
+          "inverse_mapping": {
+            "owner": "Action",
+            "owner_table": "actions",
+            "owner_field": "next_attempt_at",
+            "via": null
+          },
+          "consumer_assertions": [
+            {
+              "location": "app/email_store.py:EmailStore._next_direct_action_row",
+              "source_field": "email_actions.next_attempt_at",
+              "target_owner": "Action",
+              "target_field": "next_attempt_at"
+            },
+            {
+              "location": "app/email_store.py:EmailStore._claimed_direct_action",
+              "source_field": "email_actions.next_attempt_at",
+              "target_owner": "Action",
+              "target_field": "next_attempt_at"
+            },
+            {
+              "location": "app/email_store.py:EmailStore.complete_direct_action_attempt",
+              "source_field": "email_actions.next_attempt_at",
+              "target_owner": "Action",
+              "target_field": "next_attempt_at"
+            }
+          ]
+        },
+        {
+          "name": "provider_operation",
+          "owner": "Action Receipt",
+          "disposition": "reference",
+          "evidence": "app/action_email_definitions.py:EMAIL_FIELDS.email_actions.provider_operation",
+          "target": "operation",
+          "rule": "Current projection returns empty for pending/processing, otherwise the latest attempt's provider_operation or empty.",
+          "inverse_rule": "Reconstruct email_actions.provider_operation from action_receipts.operation via {\"blank_when_status\":[\"pending\",\"processing\"],\"order_by\":\"attempt_number DESC\",\"projection\":\"app/shared_action_definitions.py:email_projection\",\"source_owner\":\"latest email_action_attempts receipt\"}; preserve source nullness and exact stored representation.",
+          "consumers": [
+            "app/shared_action_definitions.py:email_projection",
+            "app/email_store.py:EmailStore._claimed_direct_action",
+            "app/email_store.py:EmailStore.complete_direct_action_attempt"
+          ],
+          "storage": "derived_projection",
+          "inverse_mapping": {
+            "owner": "Action Receipt",
+            "owner_table": "action_receipts",
+            "owner_field": "operation",
+            "via": {
+              "projection": "app/shared_action_definitions.py:email_projection",
+              "source_owner": "latest email_action_attempts receipt",
+              "order_by": "attempt_number DESC",
+              "blank_when_status": [
+                "pending",
+                "processing"
+              ]
+            }
+          },
+          "consumer_assertions": [
+            {
+              "location": "app/shared_action_definitions.py:email_projection",
+              "source_field": "email_actions.provider_operation",
+              "target_owner": "Action Receipt",
+              "target_field": "operation"
+            },
+            {
+              "location": "app/email_store.py:EmailStore._claimed_direct_action",
+              "source_field": "email_actions.provider_operation",
+              "target_owner": "Action Receipt",
+              "target_field": "operation"
+            },
+            {
+              "location": "app/email_store.py:EmailStore.complete_direct_action_attempt",
+              "source_field": "email_actions.provider_operation",
+              "target_owner": "Action Receipt",
+              "target_field": "operation"
+            }
+          ]
+        },
+        {
+          "name": "provider_target",
+          "owner": "Action Receipt",
+          "disposition": "reference",
+          "evidence": "app/action_email_definitions.py:EMAIL_FIELDS.email_actions.provider_target",
+          "target": "target",
+          "rule": "Current projection returns empty for pending/processing, otherwise the latest attempt's provider_target or empty.",
+          "inverse_rule": "Reconstruct email_actions.provider_target from action_receipts.target via {\"blank_when_status\":[\"pending\",\"processing\"],\"order_by\":\"attempt_number DESC\",\"projection\":\"app/shared_action_definitions.py:email_projection\",\"source_owner\":\"latest email_action_attempts receipt\"}; preserve source nullness and exact stored representation.",
+          "consumers": [
+            "app/shared_action_definitions.py:email_projection",
+            "app/email_store.py:EmailStore._claimed_direct_action",
+            "app/email_store.py:EmailStore.complete_direct_action_attempt"
+          ],
+          "storage": "derived_projection",
+          "inverse_mapping": {
+            "owner": "Action Receipt",
+            "owner_table": "action_receipts",
+            "owner_field": "target",
+            "via": {
+              "projection": "app/shared_action_definitions.py:email_projection",
+              "source_owner": "latest email_action_attempts receipt",
+              "order_by": "attempt_number DESC",
+              "blank_when_status": [
+                "pending",
+                "processing"
+              ]
+            }
+          },
+          "consumer_assertions": [
+            {
+              "location": "app/shared_action_definitions.py:email_projection",
+              "source_field": "email_actions.provider_target",
+              "target_owner": "Action Receipt",
+              "target_field": "target"
+            },
+            {
+              "location": "app/email_store.py:EmailStore._claimed_direct_action",
+              "source_field": "email_actions.provider_target",
+              "target_owner": "Action Receipt",
+              "target_field": "target"
+            },
+            {
+              "location": "app/email_store.py:EmailStore.complete_direct_action_attempt",
+              "source_field": "email_actions.provider_target",
+              "target_owner": "Action Receipt",
+              "target_field": "target"
+            }
+          ]
+        },
+        {
+          "name": "provider_result_id",
+          "owner": "Action Receipt",
+          "disposition": "reference",
+          "evidence": "app/action_email_definitions.py:EMAIL_FIELDS.email_actions.provider_result_id",
+          "target": "provider_result_id",
+          "rule": "Current projection returns empty for pending/processing, otherwise the latest attempt's provider_result_id or empty.",
+          "inverse_rule": "Reconstruct email_actions.provider_result_id from action_receipts.provider_result_id via {\"blank_when_status\":[\"pending\",\"processing\"],\"order_by\":\"attempt_number DESC\",\"projection\":\"app/shared_action_definitions.py:email_projection\",\"source_owner\":\"latest email_action_attempts receipt\"}; preserve source nullness and exact stored representation.",
+          "consumers": [
+            "app/shared_action_definitions.py:email_projection",
+            "app/email_store.py:EmailStore._claimed_direct_action",
+            "app/email_store.py:EmailStore.complete_direct_action_attempt"
+          ],
+          "storage": "derived_projection",
+          "inverse_mapping": {
+            "owner": "Action Receipt",
+            "owner_table": "action_receipts",
+            "owner_field": "provider_result_id",
+            "via": {
+              "projection": "app/shared_action_definitions.py:email_projection",
+              "source_owner": "latest email_action_attempts receipt",
+              "order_by": "attempt_number DESC",
+              "blank_when_status": [
+                "pending",
+                "processing"
+              ]
+            }
+          },
+          "consumer_assertions": [
+            {
+              "location": "app/shared_action_definitions.py:email_projection",
+              "source_field": "email_actions.provider_result_id",
+              "target_owner": "Action Receipt",
+              "target_field": "provider_result_id"
+            },
+            {
+              "location": "app/email_store.py:EmailStore._claimed_direct_action",
+              "source_field": "email_actions.provider_result_id",
+              "target_owner": "Action Receipt",
+              "target_field": "provider_result_id"
+            },
+            {
+              "location": "app/email_store.py:EmailStore.complete_direct_action_attempt",
+              "source_field": "email_actions.provider_result_id",
+              "target_owner": "Action Receipt",
+              "target_field": "provider_result_id"
+            }
+          ]
+        },
+        {
+          "name": "error",
+          "owner": "Action Receipt",
+          "disposition": "reference",
+          "evidence": "app/action_email_definitions.py:EMAIL_FIELDS.email_actions.error",
+          "target": "error_text",
+          "rule": "Current projection returns empty for pending/processing, otherwise the latest attempt's error or empty.",
+          "inverse_rule": "Reconstruct email_actions.error from action_receipts.error_text via {\"blank_when_status\":[\"pending\",\"processing\"],\"order_by\":\"attempt_number DESC\",\"projection\":\"app/shared_action_definitions.py:email_projection\",\"source_owner\":\"latest email_action_attempts receipt\"}; preserve source nullness and exact stored representation.",
+          "consumers": [
+            "app/shared_action_definitions.py:email_projection",
+            "app/email_store.py:EmailStore._claimed_direct_action",
+            "app/email_store.py:EmailStore.complete_direct_action_attempt"
+          ],
+          "storage": "derived_projection",
+          "inverse_mapping": {
+            "owner": "Action Receipt",
+            "owner_table": "action_receipts",
+            "owner_field": "error_text",
+            "via": {
+              "projection": "app/shared_action_definitions.py:email_projection",
+              "source_owner": "latest email_action_attempts receipt",
+              "order_by": "attempt_number DESC",
+              "blank_when_status": [
+                "pending",
+                "processing"
+              ]
+            }
+          },
+          "consumer_assertions": [
+            {
+              "location": "app/shared_action_definitions.py:email_projection",
+              "source_field": "email_actions.error",
+              "target_owner": "Action Receipt",
+              "target_field": "error_text"
+            },
+            {
+              "location": "app/email_store.py:EmailStore._claimed_direct_action",
+              "source_field": "email_actions.error",
+              "target_owner": "Action Receipt",
+              "target_field": "error_text"
+            },
+            {
+              "location": "app/email_store.py:EmailStore.complete_direct_action_attempt",
+              "source_field": "email_actions.error",
+              "target_owner": "Action Receipt",
+              "target_field": "error_text"
+            }
+          ]
+        },
+        {
+          "name": "created_at",
+          "owner": "Action",
+          "disposition": "retain",
+          "evidence": "app/action_email_definitions.py:EMAIL_FIELDS.email_actions.created_at",
+          "target": "created_at",
+          "rule": "email_actions.created_at",
+          "inverse_rule": "Reconstruct email_actions.created_at from actions.created_at via direct; preserve source nullness and exact stored representation.",
+          "consumers": [
+            "app/email_store.py:EmailStore._next_direct_action_row",
+            "app/email_store.py:EmailStore._claimed_direct_action",
+            "app/email_store.py:EmailStore.complete_direct_action_attempt"
+          ],
+          "storage": "stored",
+          "inverse_mapping": {
+            "owner": "Action",
+            "owner_table": "actions",
+            "owner_field": "created_at",
+            "via": null
+          },
+          "consumer_assertions": [
+            {
+              "location": "app/email_store.py:EmailStore._next_direct_action_row",
+              "source_field": "email_actions.created_at",
+              "target_owner": "Action",
+              "target_field": "created_at"
+            },
+            {
+              "location": "app/email_store.py:EmailStore._claimed_direct_action",
+              "source_field": "email_actions.created_at",
+              "target_owner": "Action",
+              "target_field": "created_at"
+            },
+            {
+              "location": "app/email_store.py:EmailStore.complete_direct_action_attempt",
+              "source_field": "email_actions.created_at",
+              "target_owner": "Action",
+              "target_field": "created_at"
+            }
+          ]
+        },
+        {
+          "name": "updated_at",
+          "owner": "Action",
+          "disposition": "retain",
+          "evidence": "app/action_email_definitions.py:EMAIL_FIELDS.email_actions.updated_at",
+          "target": "updated_at",
+          "rule": "email_actions.updated_at",
+          "inverse_rule": "Reconstruct email_actions.updated_at from actions.updated_at via direct; preserve source nullness and exact stored representation.",
+          "consumers": [
+            "app/email_store.py:EmailStore._next_direct_action_row",
+            "app/email_store.py:EmailStore._claimed_direct_action",
+            "app/email_store.py:EmailStore.complete_direct_action_attempt"
+          ],
+          "storage": "stored",
+          "inverse_mapping": {
+            "owner": "Action",
+            "owner_table": "actions",
+            "owner_field": "updated_at",
+            "via": null
+          },
+          "consumer_assertions": [
+            {
+              "location": "app/email_store.py:EmailStore._next_direct_action_row",
+              "source_field": "email_actions.updated_at",
+              "target_owner": "Action",
+              "target_field": "updated_at"
+            },
+            {
+              "location": "app/email_store.py:EmailStore._claimed_direct_action",
+              "source_field": "email_actions.updated_at",
+              "target_owner": "Action",
+              "target_field": "updated_at"
+            },
+            {
+              "location": "app/email_store.py:EmailStore.complete_direct_action_attempt",
+              "source_field": "email_actions.updated_at",
+              "target_owner": "Action",
+              "target_field": "updated_at"
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "table": "email_action_attempts",
+      "declaration": "app/action_email_definitions.py:EMAIL_FIELDS",
+      "fields": [
+        {
+          "name": "id",
+          "owner": "Action Receipt",
+          "disposition": "retain",
+          "evidence": "app/action_email_definitions.py:EMAIL_FIELDS.email_action_attempts.id",
+          "target": "receipt identity scoped to Action",
+          "rule": "email_action_attempts.id; repeated values remain separate receipts",
+          "inverse_rule": "Reconstruct email_action_attempts.id from action_receipts.id via direct; preserve source nullness and exact stored representation.",
+          "consumers": [
+            "app/email_store.py:EmailStore.append_action_attempt",
+            "app/email_store.py:EmailStore.list_action_attempts"
+          ],
+          "inverse_mapping": {
+            "owner": "Action Receipt",
+            "owner_table": "action_receipts",
+            "owner_field": "id",
+            "via": null
+          },
+          "consumer_assertions": [
+            {
+              "location": "app/email_store.py:EmailStore.append_action_attempt",
+              "source_field": "email_action_attempts.id",
+              "target_owner": "Action Receipt",
+              "target_field": "id"
+            },
+            {
+              "location": "app/email_store.py:EmailStore.list_action_attempts",
+              "source_field": "email_action_attempts.id",
+              "target_owner": "Action Receipt",
+              "target_field": "id"
+            }
+          ]
+        },
+        {
+          "name": "action_id",
+          "owner": "Action",
+          "disposition": "reference",
+          "evidence": "app/action_email_definitions.py:EMAIL_FIELDS.email_action_attempts.action_id",
+          "target": "action_id",
+          "rule": "email_action_attempts.action_id foreign key",
+          "inverse_rule": "Reconstruct email_action_attempts.action_id from actions.id via {\"arguments\":[\"Action.action_plan_id\",\"Action.operation\"],\"function\":\"app/email_store.py:_direct_action_id\"}; preserve source nullness and exact stored representation.",
+          "consumers": [
+            "app/email_store.py:EmailStore.append_action_attempt",
+            "app/email_store.py:EmailStore.list_action_attempts"
+          ],
+          "inverse_mapping": {
+            "owner": "Action",
+            "owner_table": "actions",
+            "owner_field": "id",
+            "via": {
+              "function": "app/email_store.py:_direct_action_id",
+              "arguments": [
+                "Action.action_plan_id",
+                "Action.operation"
+              ]
+            }
+          },
+          "consumer_assertions": [
+            {
+              "location": "app/email_store.py:EmailStore.append_action_attempt",
+              "source_field": "email_action_attempts.action_id",
+              "target_owner": "Action",
+              "target_field": "id"
+            },
+            {
+              "location": "app/email_store.py:EmailStore.list_action_attempts",
+              "source_field": "email_action_attempts.action_id",
+              "target_owner": "Action",
+              "target_field": "id"
+            }
+          ]
+        },
+        {
+          "name": "attempt_number",
+          "owner": "Action Receipt",
+          "disposition": "retain",
+          "evidence": "app/action_email_definitions.py:EMAIL_FIELDS.email_action_attempts.attempt_number",
+          "target": "attempt_number",
+          "rule": "email_action_attempts.attempt_number; repeated values remain separate receipts",
+          "inverse_rule": "Reconstruct email_action_attempts.attempt_number from action_receipts.attempt_number via direct; preserve source nullness and exact stored representation.",
+          "consumers": [
+            "app/email_store.py:EmailStore.append_action_attempt",
+            "app/email_store.py:EmailStore.list_action_attempts"
+          ],
+          "inverse_mapping": {
+            "owner": "Action Receipt",
+            "owner_table": "action_receipts",
+            "owner_field": "attempt_number",
+            "via": null
+          },
+          "consumer_assertions": [
+            {
+              "location": "app/email_store.py:EmailStore.append_action_attempt",
+              "source_field": "email_action_attempts.attempt_number",
+              "target_owner": "Action Receipt",
+              "target_field": "attempt_number"
+            },
+            {
+              "location": "app/email_store.py:EmailStore.list_action_attempts",
+              "source_field": "email_action_attempts.attempt_number",
+              "target_owner": "Action Receipt",
+              "target_field": "attempt_number"
+            }
+          ]
+        },
+        {
+          "name": "status",
+          "owner": "Action Receipt",
+          "disposition": "retain",
+          "evidence": "app/action_email_definitions.py:EMAIL_FIELDS.email_action_attempts.status",
+          "target": "status",
+          "rule": "email_action_attempts.status; repeated values remain separate receipts",
+          "inverse_rule": "Reconstruct email_action_attempts.status from action_receipts.status via direct; preserve source nullness and exact stored representation.",
+          "consumers": [
+            "app/email_store.py:EmailStore.append_action_attempt",
+            "app/email_store.py:EmailStore.list_action_attempts"
+          ],
+          "inverse_mapping": {
+            "owner": "Action Receipt",
+            "owner_table": "action_receipts",
+            "owner_field": "status",
+            "via": null
+          },
+          "consumer_assertions": [
+            {
+              "location": "app/email_store.py:EmailStore.append_action_attempt",
+              "source_field": "email_action_attempts.status",
+              "target_owner": "Action Receipt",
+              "target_field": "status"
+            },
+            {
+              "location": "app/email_store.py:EmailStore.list_action_attempts",
+              "source_field": "email_action_attempts.status",
+              "target_owner": "Action Receipt",
+              "target_field": "status"
+            }
+          ]
+        },
+        {
+          "name": "provider_operation",
+          "owner": "Action Receipt",
+          "disposition": "retain",
+          "evidence": "app/action_email_definitions.py:EMAIL_FIELDS.email_action_attempts.provider_operation",
+          "target": "operation",
+          "rule": "email_action_attempts.provider_operation; repeated values remain separate receipts",
+          "inverse_rule": "Reconstruct email_action_attempts.provider_operation from action_receipts.operation via direct; preserve source nullness and exact stored representation.",
+          "consumers": [
+            "app/email_store.py:EmailStore.append_action_attempt",
+            "app/email_store.py:EmailStore.list_action_attempts"
+          ],
+          "inverse_mapping": {
+            "owner": "Action Receipt",
+            "owner_table": "action_receipts",
+            "owner_field": "operation",
+            "via": null
+          },
+          "consumer_assertions": [
+            {
+              "location": "app/email_store.py:EmailStore.append_action_attempt",
+              "source_field": "email_action_attempts.provider_operation",
+              "target_owner": "Action Receipt",
+              "target_field": "operation"
+            },
+            {
+              "location": "app/email_store.py:EmailStore.list_action_attempts",
+              "source_field": "email_action_attempts.provider_operation",
+              "target_owner": "Action Receipt",
+              "target_field": "operation"
+            }
+          ]
+        },
+        {
+          "name": "provider_target",
+          "owner": "Action Receipt",
+          "disposition": "retain",
+          "evidence": "app/action_email_definitions.py:EMAIL_FIELDS.email_action_attempts.provider_target",
+          "target": "target",
+          "rule": "email_action_attempts.provider_target; repeated values remain separate receipts",
+          "inverse_rule": "Reconstruct email_action_attempts.provider_target from action_receipts.target via direct; preserve source nullness and exact stored representation.",
+          "consumers": [
+            "app/email_store.py:EmailStore.append_action_attempt",
+            "app/email_store.py:EmailStore.list_action_attempts"
+          ],
+          "inverse_mapping": {
+            "owner": "Action Receipt",
+            "owner_table": "action_receipts",
+            "owner_field": "target",
+            "via": null
+          },
+          "consumer_assertions": [
+            {
+              "location": "app/email_store.py:EmailStore.append_action_attempt",
+              "source_field": "email_action_attempts.provider_target",
+              "target_owner": "Action Receipt",
+              "target_field": "target"
+            },
+            {
+              "location": "app/email_store.py:EmailStore.list_action_attempts",
+              "source_field": "email_action_attempts.provider_target",
+              "target_owner": "Action Receipt",
+              "target_field": "target"
+            }
+          ]
+        },
+        {
+          "name": "provider_result_id",
+          "owner": "Action Receipt",
+          "disposition": "retain",
+          "evidence": "app/action_email_definitions.py:EMAIL_FIELDS.email_action_attempts.provider_result_id",
+          "target": "provider_result_id",
+          "rule": "email_action_attempts.provider_result_id; repeated values remain separate receipts",
+          "inverse_rule": "Reconstruct email_action_attempts.provider_result_id from action_receipts.provider_result_id via direct; preserve source nullness and exact stored representation.",
+          "consumers": [
+            "app/email_store.py:EmailStore.append_action_attempt",
+            "app/email_store.py:EmailStore.list_action_attempts"
+          ],
+          "inverse_mapping": {
+            "owner": "Action Receipt",
+            "owner_table": "action_receipts",
+            "owner_field": "provider_result_id",
+            "via": null
+          },
+          "consumer_assertions": [
+            {
+              "location": "app/email_store.py:EmailStore.append_action_attempt",
+              "source_field": "email_action_attempts.provider_result_id",
+              "target_owner": "Action Receipt",
+              "target_field": "provider_result_id"
+            },
+            {
+              "location": "app/email_store.py:EmailStore.list_action_attempts",
+              "source_field": "email_action_attempts.provider_result_id",
+              "target_owner": "Action Receipt",
+              "target_field": "provider_result_id"
+            }
+          ]
+        },
+        {
+          "name": "error",
+          "owner": "Action Receipt",
+          "disposition": "retain",
+          "evidence": "app/action_email_definitions.py:EMAIL_FIELDS.email_action_attempts.error",
+          "target": "error_text",
+          "rule": "email_action_attempts.error; repeated values remain separate receipts",
+          "inverse_rule": "Reconstruct email_action_attempts.error from action_receipts.error_text via direct; preserve source nullness and exact stored representation.",
+          "consumers": [
+            "app/email_store.py:EmailStore.append_action_attempt",
+            "app/email_store.py:EmailStore.list_action_attempts"
+          ],
+          "inverse_mapping": {
+            "owner": "Action Receipt",
+            "owner_table": "action_receipts",
+            "owner_field": "error_text",
+            "via": null
+          },
+          "consumer_assertions": [
+            {
+              "location": "app/email_store.py:EmailStore.append_action_attempt",
+              "source_field": "email_action_attempts.error",
+              "target_owner": "Action Receipt",
+              "target_field": "error_text"
+            },
+            {
+              "location": "app/email_store.py:EmailStore.list_action_attempts",
+              "source_field": "email_action_attempts.error",
+              "target_owner": "Action Receipt",
+              "target_field": "error_text"
+            }
+          ]
+        },
+        {
+          "name": "started_at",
+          "owner": "Action Receipt",
+          "disposition": "retain",
+          "evidence": "app/action_email_definitions.py:EMAIL_FIELDS.email_action_attempts.started_at",
+          "target": "started_at",
+          "rule": "email_action_attempts.started_at; repeated values remain separate receipts",
+          "inverse_rule": "Reconstruct email_action_attempts.started_at from action_receipts.started_at via direct; preserve source nullness and exact stored representation.",
+          "consumers": [
+            "app/email_store.py:EmailStore.append_action_attempt",
+            "app/email_store.py:EmailStore.list_action_attempts"
+          ],
+          "inverse_mapping": {
+            "owner": "Action Receipt",
+            "owner_table": "action_receipts",
+            "owner_field": "started_at",
+            "via": null
+          },
+          "consumer_assertions": [
+            {
+              "location": "app/email_store.py:EmailStore.append_action_attempt",
+              "source_field": "email_action_attempts.started_at",
+              "target_owner": "Action Receipt",
+              "target_field": "started_at"
+            },
+            {
+              "location": "app/email_store.py:EmailStore.list_action_attempts",
+              "source_field": "email_action_attempts.started_at",
+              "target_owner": "Action Receipt",
+              "target_field": "started_at"
+            }
+          ]
+        },
+        {
+          "name": "finished_at",
+          "owner": "Action Receipt",
+          "disposition": "retain",
+          "evidence": "app/action_email_definitions.py:EMAIL_FIELDS.email_action_attempts.finished_at",
+          "target": "finished_at",
+          "rule": "email_action_attempts.finished_at; repeated values remain separate receipts",
+          "inverse_rule": "Reconstruct email_action_attempts.finished_at from action_receipts.finished_at via direct; preserve source nullness and exact stored representation.",
+          "consumers": [
+            "app/email_store.py:EmailStore.append_action_attempt",
+            "app/email_store.py:EmailStore.list_action_attempts"
+          ],
+          "inverse_mapping": {
+            "owner": "Action Receipt",
+            "owner_table": "action_receipts",
+            "owner_field": "finished_at",
+            "via": null
+          },
+          "consumer_assertions": [
+            {
+              "location": "app/email_store.py:EmailStore.append_action_attempt",
+              "source_field": "email_action_attempts.finished_at",
+              "target_owner": "Action Receipt",
+              "target_field": "finished_at"
+            },
+            {
+              "location": "app/email_store.py:EmailStore.list_action_attempts",
+              "source_field": "email_action_attempts.finished_at",
+              "target_owner": "Action Receipt",
+              "target_field": "finished_at"
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "table": "candidate_action_attempts",
+      "declaration": "app/action_storage.py:SOURCE_COLUMNS",
+      "fields": [
+        {
+          "name": "id",
+          "owner": "Action",
+          "disposition": "reference",
+          "evidence": "app/action_storage.py:SOURCE_COLUMNS.candidate_action_attempts.id",
+          "target": "id",
+          "rule": "candidate_action_attempts.id maps only through explicit migration map",
+          "inverse_rule": "Reconstruct candidate_action_attempts.id from actions.id via {\"identity\":\"source physical actions.id preserved as Action Receipt.id\"}; preserve source nullness and exact stored representation.",
+          "consumers": [
+            "app/reviewed_candidate_store.py:ReviewedCandidateStoreMixin.list_candidate_action_attempts",
+            "app/reviewed_candidate_store.py:ReviewedCandidateStoreMixin.record_candidate_action_outcome",
+            "app/shared_action_lifecycle.py:transition"
+          ],
+          "inverse_mapping": {
+            "owner": "Action",
+            "owner_table": "actions",
+            "owner_field": "id",
+            "via": {
+              "identity": "source physical actions.id preserved as Action Receipt.id"
+            }
+          },
+          "consumer_assertions": [
+            {
+              "location": "app/reviewed_candidate_store.py:ReviewedCandidateStoreMixin.list_candidate_action_attempts",
+              "source_field": "candidate_action_attempts.id",
+              "target_owner": "Action",
+              "target_field": "id"
+            },
+            {
+              "location": "app/reviewed_candidate_store.py:ReviewedCandidateStoreMixin.record_candidate_action_outcome",
+              "source_field": "candidate_action_attempts.id",
+              "target_owner": "Action",
+              "target_field": "id"
+            },
+            {
+              "location": "app/shared_action_lifecycle.py:transition",
+              "source_field": "candidate_action_attempts.id",
+              "target_owner": "Action",
+              "target_field": "id"
+            }
+          ]
+        },
+        {
+          "name": "execution_id",
+          "owner": "Action Receipt",
+          "disposition": "retain",
+          "evidence": "app/action_storage.py:SOURCE_COLUMNS.candidate_action_attempts.execution_id",
+          "target": "execution_id",
+          "rule": "candidate_action_attempts.execution_id retained on its exact execution observation; stable external identity may associate multiple observations with one Action.",
+          "inverse_rule": "Reconstruct candidate_action_attempts.execution_id from action_receipts.execution_id via direct; preserve source nullness and exact stored representation.",
+          "consumers": [
+            "app/reviewed_candidate_store.py:ReviewedCandidateStoreMixin.list_candidate_action_attempts",
+            "app/reviewed_candidate_store.py:ReviewedCandidateStoreMixin.record_candidate_action_outcome",
+            "app/shared_action_lifecycle.py:transition"
+          ],
+          "inverse_mapping": {
+            "owner": "Action Receipt",
+            "owner_table": "action_receipts",
+            "owner_field": "execution_id",
+            "via": null
+          },
+          "consumer_assertions": [
+            {
+              "location": "app/reviewed_candidate_store.py:ReviewedCandidateStoreMixin.list_candidate_action_attempts",
+              "source_field": "candidate_action_attempts.execution_id",
+              "target_owner": "Action Receipt",
+              "target_field": "execution_id"
+            },
+            {
+              "location": "app/reviewed_candidate_store.py:ReviewedCandidateStoreMixin.record_candidate_action_outcome",
+              "source_field": "candidate_action_attempts.execution_id",
+              "target_owner": "Action Receipt",
+              "target_field": "execution_id"
+            },
+            {
+              "location": "app/shared_action_lifecycle.py:transition",
+              "source_field": "candidate_action_attempts.execution_id",
+              "target_owner": "Action Receipt",
+              "target_field": "execution_id"
+            }
+          ]
+        },
+        {
+          "name": "action_index",
+          "owner": "Action Receipt",
+          "disposition": "retain",
+          "evidence": "app/action_storage.py:SOURCE_COLUMNS.candidate_action_attempts.action_index",
+          "target": "action_index",
+          "rule": "candidate_action_attempts.action_index retained on its exact execution observation; stable external identity may associate multiple observations with one Action.",
+          "inverse_rule": "Reconstruct candidate_action_attempts.action_index from action_receipts.action_index via direct; preserve source nullness and exact stored representation.",
+          "consumers": [
+            "app/reviewed_candidate_store.py:ReviewedCandidateStoreMixin.list_candidate_action_attempts",
+            "app/reviewed_candidate_store.py:ReviewedCandidateStoreMixin.record_candidate_action_outcome",
+            "app/shared_action_lifecycle.py:transition"
+          ],
+          "inverse_mapping": {
+            "owner": "Action Receipt",
+            "owner_table": "action_receipts",
+            "owner_field": "action_index",
+            "via": null
+          },
+          "consumer_assertions": [
+            {
+              "location": "app/reviewed_candidate_store.py:ReviewedCandidateStoreMixin.list_candidate_action_attempts",
+              "source_field": "candidate_action_attempts.action_index",
+              "target_owner": "Action Receipt",
+              "target_field": "action_index"
+            },
+            {
+              "location": "app/reviewed_candidate_store.py:ReviewedCandidateStoreMixin.record_candidate_action_outcome",
+              "source_field": "candidate_action_attempts.action_index",
+              "target_owner": "Action Receipt",
+              "target_field": "action_index"
+            },
+            {
+              "location": "app/shared_action_lifecycle.py:transition",
+              "source_field": "candidate_action_attempts.action_index",
+              "target_owner": "Action Receipt",
+              "target_field": "action_index"
+            }
+          ]
+        },
+        {
+          "name": "external_action_key",
+          "owner": "Action",
+          "disposition": "retain",
+          "evidence": "app/action_storage.py:SOURCE_COLUMNS.candidate_action_attempts.external_action_key",
+          "target": "external_action_key",
+          "rule": "candidate_action_attempts.external_action_key is an exact stable identity retained on its common Action even without an external_action_results owner; repeated observations share that owner only when business_object_key, action_identity, operation, and target match, and this key alone does not create a canonical result",
+          "inverse_rule": "Reconstruct candidate_action_attempts.external_action_key from actions.external_action_key via direct; preserve source nullness and exact stored representation.",
+          "consumers": [
+            "app/reviewed_candidate_store.py:ReviewedCandidateStoreMixin.list_candidate_action_attempts",
+            "app/reviewed_candidate_store.py:ReviewedCandidateStoreMixin.record_candidate_action_outcome",
+            "app/shared_action_lifecycle.py:transition"
+          ],
+          "inverse_mapping": {
+            "owner": "Action",
+            "owner_table": "actions",
+            "owner_field": "external_action_key",
+            "via": null
+          },
+          "consumer_assertions": [
+            {
+              "location": "app/reviewed_candidate_store.py:ReviewedCandidateStoreMixin.list_candidate_action_attempts",
+              "source_field": "candidate_action_attempts.external_action_key",
+              "target_owner": "Action",
+              "target_field": "external_action_key"
+            },
+            {
+              "location": "app/reviewed_candidate_store.py:ReviewedCandidateStoreMixin.record_candidate_action_outcome",
+              "source_field": "candidate_action_attempts.external_action_key",
+              "target_owner": "Action",
+              "target_field": "external_action_key"
+            },
+            {
+              "location": "app/shared_action_lifecycle.py:transition",
+              "source_field": "candidate_action_attempts.external_action_key",
+              "target_owner": "Action",
+              "target_field": "external_action_key"
+            }
+          ]
+        },
+        {
+          "name": "status",
+          "owner": "Action Receipt",
+          "disposition": "retain",
+          "evidence": "app/action_storage.py:SOURCE_COLUMNS.candidate_action_attempts.status",
+          "target": "status",
+          "rule": "candidate_action_attempts.status retained on its exact execution observation; stable external identity may associate multiple observations with one Action.",
+          "inverse_rule": "Reconstruct candidate_action_attempts.status from action_receipts.status via direct; preserve source nullness and exact stored representation.",
+          "consumers": [
+            "app/reviewed_candidate_store.py:ReviewedCandidateStoreMixin.list_candidate_action_attempts",
+            "app/reviewed_candidate_store.py:ReviewedCandidateStoreMixin.record_candidate_action_outcome",
+            "app/shared_action_lifecycle.py:transition"
+          ],
+          "inverse_mapping": {
+            "owner": "Action Receipt",
+            "owner_table": "action_receipts",
+            "owner_field": "status",
+            "via": null
+          },
+          "consumer_assertions": [
+            {
+              "location": "app/reviewed_candidate_store.py:ReviewedCandidateStoreMixin.list_candidate_action_attempts",
+              "source_field": "candidate_action_attempts.status",
+              "target_owner": "Action Receipt",
+              "target_field": "status"
+            },
+            {
+              "location": "app/reviewed_candidate_store.py:ReviewedCandidateStoreMixin.record_candidate_action_outcome",
+              "source_field": "candidate_action_attempts.status",
+              "target_owner": "Action Receipt",
+              "target_field": "status"
+            },
+            {
+              "location": "app/shared_action_lifecycle.py:transition",
+              "source_field": "candidate_action_attempts.status",
+              "target_owner": "Action Receipt",
+              "target_field": "status"
+            }
+          ]
+        },
+        {
+          "name": "result_json",
+          "owner": "Action Receipt",
+          "disposition": "retain",
+          "evidence": "app/action_storage.py:SOURCE_COLUMNS.candidate_action_attempts.result_json",
+          "target": "outcome_json",
+          "rule": "candidate_action_attempts.result_json retained on its exact execution observation; stable external identity may associate multiple observations with one Action.",
+          "inverse_rule": "Reconstruct candidate_action_attempts.result_json from action_receipts.outcome_json via direct; preserve source nullness and exact stored representation.",
+          "consumers": [
+            "app/reviewed_candidate_store.py:ReviewedCandidateStoreMixin.list_candidate_action_attempts",
+            "app/reviewed_candidate_store.py:ReviewedCandidateStoreMixin.record_candidate_action_outcome",
+            "app/shared_action_lifecycle.py:transition"
+          ],
+          "inverse_mapping": {
+            "owner": "Action Receipt",
+            "owner_table": "action_receipts",
+            "owner_field": "outcome_json",
+            "via": null
+          },
+          "consumer_assertions": [
+            {
+              "location": "app/reviewed_candidate_store.py:ReviewedCandidateStoreMixin.list_candidate_action_attempts",
+              "source_field": "candidate_action_attempts.result_json",
+              "target_owner": "Action Receipt",
+              "target_field": "outcome_json"
+            },
+            {
+              "location": "app/reviewed_candidate_store.py:ReviewedCandidateStoreMixin.record_candidate_action_outcome",
+              "source_field": "candidate_action_attempts.result_json",
+              "target_owner": "Action Receipt",
+              "target_field": "outcome_json"
+            },
+            {
+              "location": "app/shared_action_lifecycle.py:transition",
+              "source_field": "candidate_action_attempts.result_json",
+              "target_owner": "Action Receipt",
+              "target_field": "outcome_json"
+            }
+          ]
+        },
+        {
+          "name": "created_at",
+          "owner": "Action Receipt",
+          "disposition": "retain",
+          "evidence": "app/action_storage.py:SOURCE_COLUMNS.candidate_action_attempts.created_at",
+          "target": "created_at",
+          "rule": "candidate_action_attempts.created_at retained on its exact execution observation; stable external identity may associate multiple observations with one Action.",
+          "inverse_rule": "Reconstruct candidate_action_attempts.created_at from action_receipts.created_at via direct; preserve source nullness and exact stored representation.",
+          "consumers": [
+            "app/reviewed_candidate_store.py:ReviewedCandidateStoreMixin.list_candidate_action_attempts",
+            "app/reviewed_candidate_store.py:ReviewedCandidateStoreMixin.record_candidate_action_outcome",
+            "app/shared_action_lifecycle.py:transition"
+          ],
+          "inverse_mapping": {
+            "owner": "Action Receipt",
+            "owner_table": "action_receipts",
+            "owner_field": "created_at",
+            "via": null
+          },
+          "consumer_assertions": [
+            {
+              "location": "app/reviewed_candidate_store.py:ReviewedCandidateStoreMixin.list_candidate_action_attempts",
+              "source_field": "candidate_action_attempts.created_at",
+              "target_owner": "Action Receipt",
+              "target_field": "created_at"
+            },
+            {
+              "location": "app/reviewed_candidate_store.py:ReviewedCandidateStoreMixin.record_candidate_action_outcome",
+              "source_field": "candidate_action_attempts.created_at",
+              "target_owner": "Action Receipt",
+              "target_field": "created_at"
+            },
+            {
+              "location": "app/shared_action_lifecycle.py:transition",
+              "source_field": "candidate_action_attempts.created_at",
+              "target_owner": "Action Receipt",
+              "target_field": "created_at"
+            }
+          ]
+        },
+        {
+          "name": "updated_at",
+          "owner": "Action Receipt",
+          "disposition": "retain",
+          "evidence": "app/action_storage.py:SOURCE_COLUMNS.candidate_action_attempts.updated_at",
+          "target": "updated_at",
+          "rule": "candidate_action_attempts.updated_at retained on its exact execution observation; stable external identity may associate multiple observations with one Action.",
+          "inverse_rule": "Reconstruct candidate_action_attempts.updated_at from action_receipts.updated_at via direct; preserve source nullness and exact stored representation.",
+          "consumers": [
+            "app/reviewed_candidate_store.py:ReviewedCandidateStoreMixin.list_candidate_action_attempts",
+            "app/reviewed_candidate_store.py:ReviewedCandidateStoreMixin.record_candidate_action_outcome",
+            "app/shared_action_lifecycle.py:transition"
+          ],
+          "inverse_mapping": {
+            "owner": "Action Receipt",
+            "owner_table": "action_receipts",
+            "owner_field": "updated_at",
+            "via": null
+          },
+          "consumer_assertions": [
+            {
+              "location": "app/reviewed_candidate_store.py:ReviewedCandidateStoreMixin.list_candidate_action_attempts",
+              "source_field": "candidate_action_attempts.updated_at",
+              "target_owner": "Action Receipt",
+              "target_field": "updated_at"
+            },
+            {
+              "location": "app/reviewed_candidate_store.py:ReviewedCandidateStoreMixin.record_candidate_action_outcome",
+              "source_field": "candidate_action_attempts.updated_at",
+              "target_owner": "Action Receipt",
+              "target_field": "updated_at"
+            },
+            {
+              "location": "app/shared_action_lifecycle.py:transition",
+              "source_field": "candidate_action_attempts.updated_at",
+              "target_owner": "Action Receipt",
+              "target_field": "updated_at"
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "table": "external_action_results",
+      "declaration": "app/action_storage.py:SOURCE_COLUMNS",
+      "fields": [
+        {
+          "name": "external_action_key",
+          "owner": "Action",
+          "disposition": "reference",
+          "evidence": "app/action_storage.py:SOURCE_COLUMNS.external_action_results.external_action_key",
+          "target": "external_action_key",
+          "rule": "external_action_results.external_action_key exact stable identity",
+          "inverse_rule": "Reconstruct external_action_results.external_action_key from actions.external_action_key via direct; preserve source nullness and exact stored representation.",
+          "consumers": [
+            "app/reviewed_candidate_store.py:ReviewedCandidateStoreMixin.record_candidate_external_action",
+            "app/reviewed_candidate_store.py:ReviewedCandidateStoreMixin.get_verified_action_source",
+            "app/action_storage.py:_projection"
+          ],
+          "inverse_mapping": {
+            "owner": "Action",
+            "owner_table": "actions",
+            "owner_field": "external_action_key",
+            "via": null
+          },
+          "consumer_assertions": [
+            {
+              "location": "app/reviewed_candidate_store.py:ReviewedCandidateStoreMixin.record_candidate_external_action",
+              "source_field": "external_action_results.external_action_key",
+              "target_owner": "Action",
+              "target_field": "external_action_key"
+            },
+            {
+              "location": "app/reviewed_candidate_store.py:ReviewedCandidateStoreMixin.get_verified_action_source",
+              "source_field": "external_action_results.external_action_key",
+              "target_owner": "Action",
+              "target_field": "external_action_key"
+            },
+            {
+              "location": "app/action_storage.py:_projection",
+              "source_field": "external_action_results.external_action_key",
+              "target_owner": "Action",
+              "target_field": "external_action_key"
+            }
+          ]
+        },
+        {
+          "name": "business_object_key",
+          "owner": "Action",
+          "disposition": "retain",
+          "evidence": "app/action_storage.py:SOURCE_COLUMNS.external_action_results.business_object_key",
+          "target": "business_object_key",
+          "rule": "external_action_results.business_object_key",
+          "inverse_rule": "Reconstruct external_action_results.business_object_key from actions.business_object_key via direct; preserve source nullness and exact stored representation.",
+          "consumers": [
+            "app/reviewed_candidate_store.py:ReviewedCandidateStoreMixin.record_candidate_external_action",
+            "app/reviewed_candidate_store.py:ReviewedCandidateStoreMixin.get_verified_action_source",
+            "app/action_storage.py:_projection"
+          ],
+          "inverse_mapping": {
+            "owner": "Action",
+            "owner_table": "actions",
+            "owner_field": "business_object_key",
+            "via": null
+          },
+          "consumer_assertions": [
+            {
+              "location": "app/reviewed_candidate_store.py:ReviewedCandidateStoreMixin.record_candidate_external_action",
+              "source_field": "external_action_results.business_object_key",
+              "target_owner": "Action",
+              "target_field": "business_object_key"
+            },
+            {
+              "location": "app/reviewed_candidate_store.py:ReviewedCandidateStoreMixin.get_verified_action_source",
+              "source_field": "external_action_results.business_object_key",
+              "target_owner": "Action",
+              "target_field": "business_object_key"
+            },
+            {
+              "location": "app/action_storage.py:_projection",
+              "source_field": "external_action_results.business_object_key",
+              "target_owner": "Action",
+              "target_field": "business_object_key"
+            }
+          ]
+        },
+        {
+          "name": "action_identity",
+          "owner": "Action",
+          "disposition": "retain",
+          "evidence": "app/action_storage.py:SOURCE_COLUMNS.external_action_results.action_identity",
+          "target": "action_identity",
+          "rule": "external_action_results.action_identity",
+          "inverse_rule": "Reconstruct external_action_results.action_identity from actions.action_identity via direct; preserve source nullness and exact stored representation.",
+          "consumers": [
+            "app/reviewed_candidate_store.py:ReviewedCandidateStoreMixin.record_candidate_external_action",
+            "app/reviewed_candidate_store.py:ReviewedCandidateStoreMixin.get_verified_action_source",
+            "app/action_storage.py:_projection"
+          ],
+          "inverse_mapping": {
+            "owner": "Action",
+            "owner_table": "actions",
+            "owner_field": "action_identity",
+            "via": null
+          },
+          "consumer_assertions": [
+            {
+              "location": "app/reviewed_candidate_store.py:ReviewedCandidateStoreMixin.record_candidate_external_action",
+              "source_field": "external_action_results.action_identity",
+              "target_owner": "Action",
+              "target_field": "action_identity"
+            },
+            {
+              "location": "app/reviewed_candidate_store.py:ReviewedCandidateStoreMixin.get_verified_action_source",
+              "source_field": "external_action_results.action_identity",
+              "target_owner": "Action",
+              "target_field": "action_identity"
+            },
+            {
+              "location": "app/action_storage.py:_projection",
+              "source_field": "external_action_results.action_identity",
+              "target_owner": "Action",
+              "target_field": "action_identity"
+            }
+          ]
+        },
+        {
+          "name": "operation",
+          "owner": "Action Receipt",
+          "disposition": "retain",
+          "evidence": "app/action_storage.py:SOURCE_COLUMNS.external_action_results.operation",
+          "target": "operation",
+          "rule": "external_action_results.operation provider result fact",
+          "inverse_rule": "Reconstruct external_action_results.operation from action_receipts.operation via direct; preserve source nullness and exact stored representation.",
+          "consumers": [
+            "app/reviewed_candidate_store.py:ReviewedCandidateStoreMixin.record_candidate_external_action",
+            "app/reviewed_candidate_store.py:ReviewedCandidateStoreMixin.get_verified_action_source",
+            "app/action_storage.py:_projection"
+          ],
+          "inverse_mapping": {
+            "owner": "Action Receipt",
+            "owner_table": "action_receipts",
+            "owner_field": "operation",
+            "via": null
+          },
+          "consumer_assertions": [
+            {
+              "location": "app/reviewed_candidate_store.py:ReviewedCandidateStoreMixin.record_candidate_external_action",
+              "source_field": "external_action_results.operation",
+              "target_owner": "Action Receipt",
+              "target_field": "operation"
+            },
+            {
+              "location": "app/reviewed_candidate_store.py:ReviewedCandidateStoreMixin.get_verified_action_source",
+              "source_field": "external_action_results.operation",
+              "target_owner": "Action Receipt",
+              "target_field": "operation"
+            },
+            {
+              "location": "app/action_storage.py:_projection",
+              "source_field": "external_action_results.operation",
+              "target_owner": "Action Receipt",
+              "target_field": "operation"
+            }
+          ]
+        },
+        {
+          "name": "target_identifiers_json",
+          "owner": "Action Receipt",
+          "disposition": "retain",
+          "evidence": "app/action_storage.py:SOURCE_COLUMNS.external_action_results.target_identifiers_json",
+          "target": "target",
+          "rule": "external_action_results.target_identifiers_json",
+          "inverse_rule": "Reconstruct external_action_results.target_identifiers_json from action_receipts.target via direct; preserve source nullness and exact stored representation.",
+          "consumers": [
+            "app/reviewed_candidate_store.py:ReviewedCandidateStoreMixin.record_candidate_external_action",
+            "app/reviewed_candidate_store.py:ReviewedCandidateStoreMixin.get_verified_action_source",
+            "app/action_storage.py:_projection"
+          ],
+          "inverse_mapping": {
+            "owner": "Action Receipt",
+            "owner_table": "action_receipts",
+            "owner_field": "target",
+            "via": null
+          },
+          "consumer_assertions": [
+            {
+              "location": "app/reviewed_candidate_store.py:ReviewedCandidateStoreMixin.record_candidate_external_action",
+              "source_field": "external_action_results.target_identifiers_json",
+              "target_owner": "Action Receipt",
+              "target_field": "target"
+            },
+            {
+              "location": "app/reviewed_candidate_store.py:ReviewedCandidateStoreMixin.get_verified_action_source",
+              "source_field": "external_action_results.target_identifiers_json",
+              "target_owner": "Action Receipt",
+              "target_field": "target"
+            },
+            {
+              "location": "app/action_storage.py:_projection",
+              "source_field": "external_action_results.target_identifiers_json",
+              "target_owner": "Action Receipt",
+              "target_field": "target"
+            }
+          ]
+        },
+        {
+          "name": "provider_result_json",
+          "owner": "Action Receipt",
+          "disposition": "retain",
+          "evidence": "app/action_storage.py:SOURCE_COLUMNS.external_action_results.provider_result_json",
+          "target": "provider_result_json",
+          "rule": "external_action_results.provider_result_json exact text including null-like JSON text",
+          "inverse_rule": "Reconstruct external_action_results.provider_result_json from action_receipts.provider_result_json via direct; preserve source nullness and exact stored representation.",
+          "consumers": [
+            "app/reviewed_candidate_store.py:ReviewedCandidateStoreMixin.record_candidate_external_action",
+            "app/reviewed_candidate_store.py:ReviewedCandidateStoreMixin.get_verified_action_source",
+            "app/action_storage.py:_projection"
+          ],
+          "inverse_mapping": {
+            "owner": "Action Receipt",
+            "owner_table": "action_receipts",
+            "owner_field": "provider_result_json",
+            "via": null
+          },
+          "consumer_assertions": [
+            {
+              "location": "app/reviewed_candidate_store.py:ReviewedCandidateStoreMixin.record_candidate_external_action",
+              "source_field": "external_action_results.provider_result_json",
+              "target_owner": "Action Receipt",
+              "target_field": "provider_result_json"
+            },
+            {
+              "location": "app/reviewed_candidate_store.py:ReviewedCandidateStoreMixin.get_verified_action_source",
+              "source_field": "external_action_results.provider_result_json",
+              "target_owner": "Action Receipt",
+              "target_field": "provider_result_json"
+            },
+            {
+              "location": "app/action_storage.py:_projection",
+              "source_field": "external_action_results.provider_result_json",
+              "target_owner": "Action Receipt",
+              "target_field": "provider_result_json"
+            }
+          ]
+        },
+        {
+          "name": "result_digest",
+          "owner": "Action Receipt",
+          "disposition": "retain",
+          "evidence": "app/action_storage.py:SOURCE_COLUMNS.external_action_results.result_digest",
+          "target": "result_digest",
+          "rule": "external_action_results.result_digest",
+          "inverse_rule": "Reconstruct external_action_results.result_digest from action_receipts.result_digest via direct; preserve source nullness and exact stored representation.",
+          "consumers": [
+            "app/reviewed_candidate_store.py:ReviewedCandidateStoreMixin.record_candidate_external_action",
+            "app/reviewed_candidate_store.py:ReviewedCandidateStoreMixin.get_verified_action_source",
+            "app/action_storage.py:_projection"
+          ],
+          "inverse_mapping": {
+            "owner": "Action Receipt",
+            "owner_table": "action_receipts",
+            "owner_field": "result_digest",
+            "via": null
+          },
+          "consumer_assertions": [
+            {
+              "location": "app/reviewed_candidate_store.py:ReviewedCandidateStoreMixin.record_candidate_external_action",
+              "source_field": "external_action_results.result_digest",
+              "target_owner": "Action Receipt",
+              "target_field": "result_digest"
+            },
+            {
+              "location": "app/reviewed_candidate_store.py:ReviewedCandidateStoreMixin.get_verified_action_source",
+              "source_field": "external_action_results.result_digest",
+              "target_owner": "Action Receipt",
+              "target_field": "result_digest"
+            },
+            {
+              "location": "app/action_storage.py:_projection",
+              "source_field": "external_action_results.result_digest",
+              "target_owner": "Action Receipt",
+              "target_field": "result_digest"
+            }
+          ]
+        },
+        {
+          "name": "first_agent_run_id",
+          "owner": "Action Receipt",
+          "disposition": "retain",
+          "evidence": "app/action_storage.py:SOURCE_COLUMNS.external_action_results.first_agent_run_id",
+          "target": "agent_run_id",
+          "rule": "external_action_results.first_agent_run_id",
+          "inverse_rule": "Reconstruct external_action_results.first_agent_run_id from action_receipts.agent_run_id via direct; preserve source nullness and exact stored representation.",
+          "consumers": [
+            "app/reviewed_candidate_store.py:ReviewedCandidateStoreMixin.record_candidate_external_action",
+            "app/reviewed_candidate_store.py:ReviewedCandidateStoreMixin.get_verified_action_source",
+            "app/action_storage.py:_projection"
+          ],
+          "inverse_mapping": {
+            "owner": "Action Receipt",
+            "owner_table": "action_receipts",
+            "owner_field": "agent_run_id",
+            "via": null
+          },
+          "consumer_assertions": [
+            {
+              "location": "app/reviewed_candidate_store.py:ReviewedCandidateStoreMixin.record_candidate_external_action",
+              "source_field": "external_action_results.first_agent_run_id",
+              "target_owner": "Action Receipt",
+              "target_field": "agent_run_id"
+            },
+            {
+              "location": "app/reviewed_candidate_store.py:ReviewedCandidateStoreMixin.get_verified_action_source",
+              "source_field": "external_action_results.first_agent_run_id",
+              "target_owner": "Action Receipt",
+              "target_field": "agent_run_id"
+            },
+            {
+              "location": "app/action_storage.py:_projection",
+              "source_field": "external_action_results.first_agent_run_id",
+              "target_owner": "Action Receipt",
+              "target_field": "agent_run_id"
+            }
+          ]
+        },
+        {
+          "name": "created_at",
+          "owner": "Action Receipt",
+          "disposition": "retain",
+          "evidence": "app/action_storage.py:SOURCE_COLUMNS.external_action_results.created_at",
+          "target": "observed_at",
+          "rule": "external_action_results.created_at",
+          "inverse_rule": "Reconstruct external_action_results.created_at from action_receipts.observed_at via direct; preserve source nullness and exact stored representation.",
+          "consumers": [
+            "app/reviewed_candidate_store.py:ReviewedCandidateStoreMixin.record_candidate_external_action",
+            "app/reviewed_candidate_store.py:ReviewedCandidateStoreMixin.get_verified_action_source",
+            "app/action_storage.py:_projection"
+          ],
+          "inverse_mapping": {
+            "owner": "Action Receipt",
+            "owner_table": "action_receipts",
+            "owner_field": "observed_at",
+            "via": null
+          },
+          "consumer_assertions": [
+            {
+              "location": "app/reviewed_candidate_store.py:ReviewedCandidateStoreMixin.record_candidate_external_action",
+              "source_field": "external_action_results.created_at",
+              "target_owner": "Action Receipt",
+              "target_field": "observed_at"
+            },
+            {
+              "location": "app/reviewed_candidate_store.py:ReviewedCandidateStoreMixin.get_verified_action_source",
+              "source_field": "external_action_results.created_at",
+              "target_owner": "Action Receipt",
+              "target_field": "observed_at"
+            },
+            {
+              "location": "app/action_storage.py:_projection",
+              "source_field": "external_action_results.created_at",
+              "target_owner": "Action Receipt",
+              "target_field": "observed_at"
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "table": "outbound_postfixes",
+      "declaration": "app/action_storage.py:SOURCE_COLUMNS",
+      "fields": [
+        {
+          "name": "channel",
+          "owner": "Action",
+          "disposition": "retain",
+          "evidence": "app/action_storage.py:SOURCE_COLUMNS.outbound_postfixes.channel",
+          "target": "delivery_channel",
+          "rule": "outbound_postfixes.channel",
+          "inverse_rule": "Reconstruct outbound_postfixes.channel from actions.delivery_channel via direct; preserve source nullness and exact stored representation.",
+          "consumers": [
+            "app/store.py:Store.prepare_outbound_postfix",
+            "app/store.py:Store.get_outbound_postfix",
+            "app/store.py:Store.record_outbound_postfix_receipt"
+          ],
+          "inverse_mapping": {
+            "owner": "Action",
+            "owner_table": "actions",
+            "owner_field": "delivery_channel",
+            "via": null
+          },
+          "consumer_assertions": [
+            {
+              "location": "app/store.py:Store.prepare_outbound_postfix",
+              "source_field": "outbound_postfixes.channel",
+              "target_owner": "Action",
+              "target_field": "delivery_channel"
+            },
+            {
+              "location": "app/store.py:Store.get_outbound_postfix",
+              "source_field": "outbound_postfixes.channel",
+              "target_owner": "Action",
+              "target_field": "delivery_channel"
+            },
+            {
+              "location": "app/store.py:Store.record_outbound_postfix_receipt",
+              "source_field": "outbound_postfixes.channel",
+              "target_owner": "Action",
+              "target_field": "delivery_channel"
+            }
+          ]
+        },
+        {
+          "name": "delivery_key",
+          "owner": "Action",
+          "disposition": "retain",
+          "evidence": "app/action_storage.py:SOURCE_COLUMNS.outbound_postfixes.delivery_key",
+          "target": "delivery_key",
+          "rule": "outbound_postfixes.delivery_key",
+          "inverse_rule": "Reconstruct outbound_postfixes.delivery_key from actions.delivery_key via direct; preserve source nullness and exact stored representation.",
+          "consumers": [
+            "app/store.py:Store.prepare_outbound_postfix",
+            "app/store.py:Store.get_outbound_postfix",
+            "app/store.py:Store.record_outbound_postfix_receipt"
+          ],
+          "inverse_mapping": {
+            "owner": "Action",
+            "owner_table": "actions",
+            "owner_field": "delivery_key",
+            "via": null
+          },
+          "consumer_assertions": [
+            {
+              "location": "app/store.py:Store.prepare_outbound_postfix",
+              "source_field": "outbound_postfixes.delivery_key",
+              "target_owner": "Action",
+              "target_field": "delivery_key"
+            },
+            {
+              "location": "app/store.py:Store.get_outbound_postfix",
+              "source_field": "outbound_postfixes.delivery_key",
+              "target_owner": "Action",
+              "target_field": "delivery_key"
+            },
+            {
+              "location": "app/store.py:Store.record_outbound_postfix_receipt",
+              "source_field": "outbound_postfixes.delivery_key",
+              "target_owner": "Action",
+              "target_field": "delivery_key"
+            }
+          ]
+        },
+        {
+          "name": "final_body",
+          "owner": "Action",
+          "disposition": "retain",
+          "evidence": "app/action_storage.py:SOURCE_COLUMNS.outbound_postfixes.final_body",
+          "target": "prepared_body",
+          "rule": "outbound_postfixes.final_body; retain until independent exact readback proves retirement",
+          "inverse_rule": "Reconstruct outbound_postfixes.final_body from actions.prepared_body via direct; preserve source nullness and exact stored representation.",
+          "consumers": [
+            "app/store.py:Store.prepare_outbound_postfix",
+            "app/store.py:Store.get_outbound_postfix",
+            "app/store.py:Store.record_outbound_postfix_receipt"
+          ],
+          "inverse_mapping": {
+            "owner": "Action",
+            "owner_table": "actions",
+            "owner_field": "prepared_body",
+            "via": null
+          },
+          "consumer_assertions": [
+            {
+              "location": "app/store.py:Store.prepare_outbound_postfix",
+              "source_field": "outbound_postfixes.final_body",
+              "target_owner": "Action",
+              "target_field": "prepared_body"
+            },
+            {
+              "location": "app/store.py:Store.get_outbound_postfix",
+              "source_field": "outbound_postfixes.final_body",
+              "target_owner": "Action",
+              "target_field": "prepared_body"
+            },
+            {
+              "location": "app/store.py:Store.record_outbound_postfix_receipt",
+              "source_field": "outbound_postfixes.final_body",
+              "target_owner": "Action",
+              "target_field": "prepared_body"
+            }
+          ]
+        },
+        {
+          "name": "feedback_token",
+          "owner": "Action",
+          "disposition": "retain",
+          "evidence": "app/action_storage.py:SOURCE_COLUMNS.outbound_postfixes.feedback_token",
+          "target": "feedback_token",
+          "rule": "outbound_postfixes.feedback_token",
+          "inverse_rule": "Reconstruct outbound_postfixes.feedback_token from actions.feedback_token via direct; preserve source nullness and exact stored representation.",
+          "consumers": [
+            "app/store.py:Store.prepare_outbound_postfix",
+            "app/store.py:Store.get_outbound_postfix",
+            "app/store.py:Store.record_outbound_postfix_receipt"
+          ],
+          "inverse_mapping": {
+            "owner": "Action",
+            "owner_table": "actions",
+            "owner_field": "feedback_token",
+            "via": null
+          },
+          "consumer_assertions": [
+            {
+              "location": "app/store.py:Store.prepare_outbound_postfix",
+              "source_field": "outbound_postfixes.feedback_token",
+              "target_owner": "Action",
+              "target_field": "feedback_token"
+            },
+            {
+              "location": "app/store.py:Store.get_outbound_postfix",
+              "source_field": "outbound_postfixes.feedback_token",
+              "target_owner": "Action",
+              "target_field": "feedback_token"
+            },
+            {
+              "location": "app/store.py:Store.record_outbound_postfix_receipt",
+              "source_field": "outbound_postfixes.feedback_token",
+              "target_owner": "Action",
+              "target_field": "feedback_token"
+            }
+          ]
+        },
+        {
+          "name": "postfix_version",
+          "owner": "Action",
+          "disposition": "retain",
+          "evidence": "app/action_storage.py:SOURCE_COLUMNS.outbound_postfixes.postfix_version",
+          "target": "postfix_version",
+          "rule": "outbound_postfixes.postfix_version",
+          "inverse_rule": "Reconstruct outbound_postfixes.postfix_version from actions.postfix_version via direct; preserve source nullness and exact stored representation.",
+          "consumers": [
+            "app/store.py:Store.prepare_outbound_postfix",
+            "app/store.py:Store.get_outbound_postfix",
+            "app/store.py:Store.record_outbound_postfix_receipt"
+          ],
+          "inverse_mapping": {
+            "owner": "Action",
+            "owner_table": "actions",
+            "owner_field": "postfix_version",
+            "via": null
+          },
+          "consumer_assertions": [
+            {
+              "location": "app/store.py:Store.prepare_outbound_postfix",
+              "source_field": "outbound_postfixes.postfix_version",
+              "target_owner": "Action",
+              "target_field": "postfix_version"
+            },
+            {
+              "location": "app/store.py:Store.get_outbound_postfix",
+              "source_field": "outbound_postfixes.postfix_version",
+              "target_owner": "Action",
+              "target_field": "postfix_version"
+            },
+            {
+              "location": "app/store.py:Store.record_outbound_postfix_receipt",
+              "source_field": "outbound_postfixes.postfix_version",
+              "target_owner": "Action",
+              "target_field": "postfix_version"
+            }
+          ]
+        },
+        {
+          "name": "created_at",
+          "owner": "Action",
+          "disposition": "retain",
+          "evidence": "app/action_storage.py:SOURCE_COLUMNS.outbound_postfixes.created_at",
+          "target": "prepared_at",
+          "rule": "outbound_postfixes.created_at records preparation time, not dispatch or receipt time",
+          "inverse_rule": "Reconstruct outbound_postfixes.created_at from actions.prepared_at via direct; preserve source nullness and exact stored representation.",
+          "consumers": [
+            "app/store.py:Store.prepare_outbound_postfix",
+            "app/store.py:Store.get_outbound_postfix",
+            "app/store.py:Store.record_outbound_postfix_receipt"
+          ],
+          "inverse_mapping": {
+            "owner": "Action",
+            "owner_table": "actions",
+            "owner_field": "prepared_at",
+            "via": null
+          },
+          "consumer_assertions": [
+            {
+              "location": "app/store.py:Store.prepare_outbound_postfix",
+              "source_field": "outbound_postfixes.created_at",
+              "target_owner": "Action",
+              "target_field": "prepared_at"
+            },
+            {
+              "location": "app/store.py:Store.get_outbound_postfix",
+              "source_field": "outbound_postfixes.created_at",
+              "target_owner": "Action",
+              "target_field": "prepared_at"
+            },
+            {
+              "location": "app/store.py:Store.record_outbound_postfix_receipt",
+              "source_field": "outbound_postfixes.created_at",
+              "target_owner": "Action",
+              "target_field": "prepared_at"
+            }
+          ]
+        },
+        {
+          "name": "postfix_receipt_provider_result_json",
+          "owner": "Action Receipt",
+          "disposition": "retain",
+          "evidence": "app/prepared_action_definitions.py:SLOTS",
+          "target": "provider_result_json",
+          "rule": "prepared_action_definitions.SLOTS.outbound_postfix_receipts.provider_result_json; preserve exact value",
+          "inverse_rule": "Reconstruct outbound_postfixes.postfix_receipt_provider_result_json from action_receipts.provider_result_json via direct; preserve source nullness and exact stored representation.",
+          "consumers": [
+            "app/store.py:Store.prepare_outbound_postfix",
+            "app/store.py:Store.get_outbound_postfix",
+            "app/store.py:Store.record_outbound_postfix_receipt"
+          ],
+          "inverse_mapping": {
+            "owner": "Action Receipt",
+            "owner_table": "action_receipts",
+            "owner_field": "provider_result_json",
+            "via": null
+          },
+          "consumer_assertions": [
+            {
+              "location": "app/store.py:Store.prepare_outbound_postfix",
+              "source_field": "outbound_postfixes.postfix_receipt_provider_result_json",
+              "target_owner": "Action Receipt",
+              "target_field": "provider_result_json"
+            },
+            {
+              "location": "app/store.py:Store.get_outbound_postfix",
+              "source_field": "outbound_postfixes.postfix_receipt_provider_result_json",
+              "target_owner": "Action Receipt",
+              "target_field": "provider_result_json"
+            },
+            {
+              "location": "app/store.py:Store.record_outbound_postfix_receipt",
+              "source_field": "outbound_postfixes.postfix_receipt_provider_result_json",
+              "target_owner": "Action Receipt",
+              "target_field": "provider_result_json"
+            }
+          ]
+        },
+        {
+          "name": "postfix_receipt_created_at",
+          "owner": "Action Receipt",
+          "disposition": "retain",
+          "evidence": "app/prepared_action_definitions.py:SLOTS",
+          "target": "observed_at",
+          "rule": "prepared_action_definitions.SLOTS.outbound_postfix_receipts.created_at; provider receipt clock",
+          "inverse_rule": "Reconstruct outbound_postfixes.postfix_receipt_created_at from action_receipts.observed_at via direct; preserve source nullness and exact stored representation.",
+          "consumers": [
+            "app/store.py:Store.prepare_outbound_postfix",
+            "app/store.py:Store.get_outbound_postfix",
+            "app/store.py:Store.record_outbound_postfix_receipt"
+          ],
+          "inverse_mapping": {
+            "owner": "Action Receipt",
+            "owner_table": "action_receipts",
+            "owner_field": "observed_at",
+            "via": null
+          },
+          "consumer_assertions": [
+            {
+              "location": "app/store.py:Store.prepare_outbound_postfix",
+              "source_field": "outbound_postfixes.postfix_receipt_created_at",
+              "target_owner": "Action Receipt",
+              "target_field": "observed_at"
+            },
+            {
+              "location": "app/store.py:Store.get_outbound_postfix",
+              "source_field": "outbound_postfixes.postfix_receipt_created_at",
+              "target_owner": "Action Receipt",
+              "target_field": "observed_at"
+            },
+            {
+              "location": "app/store.py:Store.record_outbound_postfix_receipt",
+              "source_field": "outbound_postfixes.postfix_receipt_created_at",
+              "target_owner": "Action Receipt",
+              "target_field": "observed_at"
+            }
+          ]
+        },
+        {
+          "name": "postfix_dispatch_created_at",
+          "owner": "Action Receipt",
+          "disposition": "retain",
+          "evidence": "app/prepared_action_definitions.py:SLOTS",
+          "target": "dispatched_at",
+          "rule": "prepared_action_definitions.SLOTS.native_reply_dispatches.created_at; dispatch clock",
+          "inverse_rule": "Reconstruct outbound_postfixes.postfix_dispatch_created_at from action_receipts.dispatched_at via direct; preserve source nullness and exact stored representation.",
+          "consumers": [
+            "app/store.py:Store.prepare_outbound_postfix",
+            "app/store.py:Store.get_outbound_postfix",
+            "app/store.py:Store.record_outbound_postfix_receipt"
+          ],
+          "inverse_mapping": {
+            "owner": "Action Receipt",
+            "owner_table": "action_receipts",
+            "owner_field": "dispatched_at",
+            "via": null
+          },
+          "consumer_assertions": [
+            {
+              "location": "app/store.py:Store.prepare_outbound_postfix",
+              "source_field": "outbound_postfixes.postfix_dispatch_created_at",
+              "target_owner": "Action Receipt",
+              "target_field": "dispatched_at"
+            },
+            {
+              "location": "app/store.py:Store.get_outbound_postfix",
+              "source_field": "outbound_postfixes.postfix_dispatch_created_at",
+              "target_owner": "Action Receipt",
+              "target_field": "dispatched_at"
+            },
+            {
+              "location": "app/store.py:Store.record_outbound_postfix_receipt",
+              "source_field": "outbound_postfixes.postfix_dispatch_created_at",
+              "target_owner": "Action Receipt",
+              "target_field": "dispatched_at"
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "table": "sent_replies",
+      "declaration": "app/action_storage.py:SOURCE_COLUMNS",
+      "fields": [
+        {
+          "name": "id",
+          "owner": "Action",
+          "disposition": "reference",
+          "evidence": "app/action_storage.py:SOURCE_COLUMNS.sent_replies.id",
+          "target": "id",
+          "rule": "sent_replies.id maps only through explicit migration map",
+          "inverse_rule": "Reconstruct sent_replies.id from actions.id via direct; preserve source nullness and exact stored representation.",
+          "consumers": [
+            "app/store.py:Store.record_completed_agent_message_delivery",
+            "app/store.py:Store.get_sent_reply",
+            "app/store.py:Store.list_sent_replies_after"
+          ],
+          "inverse_mapping": {
+            "owner": "Action",
+            "owner_table": "actions",
+            "owner_field": "id",
+            "via": null
+          },
+          "consumer_assertions": [
+            {
+              "location": "app/store.py:Store.record_completed_agent_message_delivery",
+              "source_field": "sent_replies.id",
+              "target_owner": "Action",
+              "target_field": "id"
+            },
+            {
+              "location": "app/store.py:Store.get_sent_reply",
+              "source_field": "sent_replies.id",
+              "target_owner": "Action",
+              "target_field": "id"
+            },
+            {
+              "location": "app/store.py:Store.list_sent_replies_after",
+              "source_field": "sent_replies.id",
+              "target_owner": "Action",
+              "target_field": "id"
+            }
+          ]
+        },
+        {
+          "name": "conversation_id",
+          "owner": "Action",
+          "disposition": "retain",
+          "evidence": "app/action_storage.py:SOURCE_COLUMNS.sent_replies.conversation_id",
+          "target": "conversation_id",
+          "rule": "sent_replies.conversation_id",
+          "inverse_rule": "Reconstruct sent_replies.conversation_id from actions.conversation_id via direct; preserve source nullness and exact stored representation.",
+          "consumers": [
+            "app/store.py:Store.record_completed_agent_message_delivery",
+            "app/store.py:Store.get_sent_reply",
+            "app/store.py:Store.list_sent_replies_after"
+          ],
+          "inverse_mapping": {
+            "owner": "Action",
+            "owner_table": "actions",
+            "owner_field": "conversation_id",
+            "via": null
+          },
+          "consumer_assertions": [
+            {
+              "location": "app/store.py:Store.record_completed_agent_message_delivery",
+              "source_field": "sent_replies.conversation_id",
+              "target_owner": "Action",
+              "target_field": "conversation_id"
+            },
+            {
+              "location": "app/store.py:Store.get_sent_reply",
+              "source_field": "sent_replies.conversation_id",
+              "target_owner": "Action",
+              "target_field": "conversation_id"
+            },
+            {
+              "location": "app/store.py:Store.list_sent_replies_after",
+              "source_field": "sent_replies.conversation_id",
+              "target_owner": "Action",
+              "target_field": "conversation_id"
+            }
+          ]
+        },
+        {
+          "name": "trigger_message_id",
+          "owner": "Action",
+          "disposition": "retain",
+          "evidence": "app/action_storage.py:SOURCE_COLUMNS.sent_replies.trigger_message_id",
+          "target": "trigger_message_id",
+          "rule": "sent_replies.trigger_message_id",
+          "inverse_rule": "Reconstruct sent_replies.trigger_message_id from actions.trigger_message_id via direct; preserve source nullness and exact stored representation.",
+          "consumers": [
+            "app/store.py:Store.record_completed_agent_message_delivery",
+            "app/store.py:Store.get_sent_reply",
+            "app/store.py:Store.list_sent_replies_after"
+          ],
+          "inverse_mapping": {
+            "owner": "Action",
+            "owner_table": "actions",
+            "owner_field": "trigger_message_id",
+            "via": null
+          },
+          "consumer_assertions": [
+            {
+              "location": "app/store.py:Store.record_completed_agent_message_delivery",
+              "source_field": "sent_replies.trigger_message_id",
+              "target_owner": "Action",
+              "target_field": "trigger_message_id"
+            },
+            {
+              "location": "app/store.py:Store.get_sent_reply",
+              "source_field": "sent_replies.trigger_message_id",
+              "target_owner": "Action",
+              "target_field": "trigger_message_id"
+            },
+            {
+              "location": "app/store.py:Store.list_sent_replies_after",
+              "source_field": "sent_replies.trigger_message_id",
+              "target_owner": "Action",
+              "target_field": "trigger_message_id"
+            }
+          ]
+        },
+        {
+          "name": "reply_text",
+          "owner": "Action",
+          "disposition": "retain",
+          "evidence": "app/action_storage.py:SOURCE_COLUMNS.sent_replies.reply_text",
+          "target": "parameters_json",
+          "rule": "sent_replies.reply_text exact body",
+          "inverse_rule": "Reconstruct sent_replies.reply_text from actions.parameters_json via direct; preserve source nullness and exact stored representation.",
+          "consumers": [
+            "app/store.py:Store.record_completed_agent_message_delivery",
+            "app/store.py:Store.get_sent_reply",
+            "app/store.py:Store.list_sent_replies_after"
+          ],
+          "inverse_mapping": {
+            "owner": "Action",
+            "owner_table": "actions",
+            "owner_field": "parameters_json",
+            "via": null
+          },
+          "consumer_assertions": [
+            {
+              "location": "app/store.py:Store.record_completed_agent_message_delivery",
+              "source_field": "sent_replies.reply_text",
+              "target_owner": "Action",
+              "target_field": "parameters_json"
+            },
+            {
+              "location": "app/store.py:Store.get_sent_reply",
+              "source_field": "sent_replies.reply_text",
+              "target_owner": "Action",
+              "target_field": "parameters_json"
+            },
+            {
+              "location": "app/store.py:Store.list_sent_replies_after",
+              "source_field": "sent_replies.reply_text",
+              "target_owner": "Action",
+              "target_field": "parameters_json"
+            }
+          ]
+        },
+        {
+          "name": "sent_at",
+          "owner": "Action Receipt",
+          "disposition": "retain",
+          "evidence": "app/action_storage.py:SOURCE_COLUMNS.sent_replies.sent_at",
+          "target": "observed_at",
+          "rule": "sent_replies.sent_at; distinct from prepared/created timestamp",
+          "inverse_rule": "Reconstruct sent_replies.sent_at from action_receipts.observed_at via direct; preserve source nullness and exact stored representation.",
+          "consumers": [
+            "app/store.py:Store.record_completed_agent_message_delivery",
+            "app/store.py:Store.get_sent_reply",
+            "app/store.py:Store.list_sent_replies_after"
+          ],
+          "inverse_mapping": {
+            "owner": "Action Receipt",
+            "owner_table": "action_receipts",
+            "owner_field": "observed_at",
+            "via": null
+          },
+          "consumer_assertions": [
+            {
+              "location": "app/store.py:Store.record_completed_agent_message_delivery",
+              "source_field": "sent_replies.sent_at",
+              "target_owner": "Action Receipt",
+              "target_field": "observed_at"
+            },
+            {
+              "location": "app/store.py:Store.get_sent_reply",
+              "source_field": "sent_replies.sent_at",
+              "target_owner": "Action Receipt",
+              "target_field": "observed_at"
+            },
+            {
+              "location": "app/store.py:Store.list_sent_replies_after",
+              "source_field": "sent_replies.sent_at",
+              "target_owner": "Action Receipt",
+              "target_field": "observed_at"
+            }
+          ]
+        },
+        {
+          "name": "send_result_json",
+          "owner": "Action Receipt",
+          "disposition": "retain",
+          "evidence": "app/action_storage.py:SOURCE_COLUMNS.sent_replies.send_result_json",
+          "target": "provider_result_json",
+          "rule": "sent_replies.send_result_json exact source value",
+          "inverse_rule": "Reconstruct sent_replies.send_result_json from action_receipts.provider_result_json via direct; preserve source nullness and exact stored representation.",
+          "consumers": [
+            "app/store.py:Store.record_completed_agent_message_delivery",
+            "app/store.py:Store.get_sent_reply",
+            "app/store.py:Store.list_sent_replies_after"
+          ],
+          "inverse_mapping": {
+            "owner": "Action Receipt",
+            "owner_table": "action_receipts",
+            "owner_field": "provider_result_json",
+            "via": null
+          },
+          "consumer_assertions": [
+            {
+              "location": "app/store.py:Store.record_completed_agent_message_delivery",
+              "source_field": "sent_replies.send_result_json",
+              "target_owner": "Action Receipt",
+              "target_field": "provider_result_json"
+            },
+            {
+              "location": "app/store.py:Store.get_sent_reply",
+              "source_field": "sent_replies.send_result_json",
+              "target_owner": "Action Receipt",
+              "target_field": "provider_result_json"
+            },
+            {
+              "location": "app/store.py:Store.list_sent_replies_after",
+              "source_field": "sent_replies.send_result_json",
+              "target_owner": "Action Receipt",
+              "target_field": "provider_result_json"
+            }
+          ]
+        },
+        {
+          "name": "recall_key",
+          "owner": "Action",
+          "disposition": "retain",
+          "evidence": "app/action_storage.py:SOURCE_COLUMNS.sent_replies.recall_key",
+          "target": "recall_key",
+          "rule": "sent_replies.recall_key",
+          "inverse_rule": "Reconstruct sent_replies.recall_key from actions.recall_key via direct; preserve source nullness and exact stored representation.",
+          "consumers": [
+            "app/store.py:Store.record_completed_agent_message_delivery",
+            "app/store.py:Store.get_sent_reply",
+            "app/store.py:Store.list_sent_replies_after"
+          ],
+          "inverse_mapping": {
+            "owner": "Action",
+            "owner_table": "actions",
+            "owner_field": "recall_key",
+            "via": null
+          },
+          "consumer_assertions": [
+            {
+              "location": "app/store.py:Store.record_completed_agent_message_delivery",
+              "source_field": "sent_replies.recall_key",
+              "target_owner": "Action",
+              "target_field": "recall_key"
+            },
+            {
+              "location": "app/store.py:Store.get_sent_reply",
+              "source_field": "sent_replies.recall_key",
+              "target_owner": "Action",
+              "target_field": "recall_key"
+            },
+            {
+              "location": "app/store.py:Store.list_sent_replies_after",
+              "source_field": "sent_replies.recall_key",
+              "target_owner": "Action",
+              "target_field": "recall_key"
+            }
+          ]
+        },
+        {
+          "name": "recall_status",
+          "owner": "Action",
+          "disposition": "retain",
+          "evidence": "app/action_storage.py:SOURCE_COLUMNS.sent_replies.recall_status",
+          "target": "recall_status",
+          "rule": "sent_replies.recall_status",
+          "inverse_rule": "Reconstruct sent_replies.recall_status from actions.recall_status via direct; preserve source nullness and exact stored representation.",
+          "consumers": [
+            "app/store.py:Store.record_completed_agent_message_delivery",
+            "app/store.py:Store.get_sent_reply",
+            "app/store.py:Store.list_sent_replies_after"
+          ],
+          "inverse_mapping": {
+            "owner": "Action",
+            "owner_table": "actions",
+            "owner_field": "recall_status",
+            "via": null
+          },
+          "consumer_assertions": [
+            {
+              "location": "app/store.py:Store.record_completed_agent_message_delivery",
+              "source_field": "sent_replies.recall_status",
+              "target_owner": "Action",
+              "target_field": "recall_status"
+            },
+            {
+              "location": "app/store.py:Store.get_sent_reply",
+              "source_field": "sent_replies.recall_status",
+              "target_owner": "Action",
+              "target_field": "recall_status"
+            },
+            {
+              "location": "app/store.py:Store.list_sent_replies_after",
+              "source_field": "sent_replies.recall_status",
+              "target_owner": "Action",
+              "target_field": "recall_status"
+            }
+          ]
+        },
+        {
+          "name": "recall_error",
+          "owner": "Action",
+          "disposition": "retain",
+          "evidence": "app/action_storage.py:SOURCE_COLUMNS.sent_replies.recall_error",
+          "target": "recall_error",
+          "rule": "sent_replies.recall_error",
+          "inverse_rule": "Reconstruct sent_replies.recall_error from actions.recall_error via direct; preserve source nullness and exact stored representation.",
+          "consumers": [
+            "app/store.py:Store.record_completed_agent_message_delivery",
+            "app/store.py:Store.get_sent_reply",
+            "app/store.py:Store.list_sent_replies_after"
+          ],
+          "inverse_mapping": {
+            "owner": "Action",
+            "owner_table": "actions",
+            "owner_field": "recall_error",
+            "via": null
+          },
+          "consumer_assertions": [
+            {
+              "location": "app/store.py:Store.record_completed_agent_message_delivery",
+              "source_field": "sent_replies.recall_error",
+              "target_owner": "Action",
+              "target_field": "recall_error"
+            },
+            {
+              "location": "app/store.py:Store.get_sent_reply",
+              "source_field": "sent_replies.recall_error",
+              "target_owner": "Action",
+              "target_field": "recall_error"
+            },
+            {
+              "location": "app/store.py:Store.list_sent_replies_after",
+              "source_field": "sent_replies.recall_error",
+              "target_owner": "Action",
+              "target_field": "recall_error"
+            }
+          ]
+        },
+        {
+          "name": "recalled_at",
+          "owner": "Action",
+          "disposition": "retain",
+          "evidence": "app/action_storage.py:SOURCE_COLUMNS.sent_replies.recalled_at",
+          "target": "recalled_at",
+          "rule": "sent_replies.recalled_at",
+          "inverse_rule": "Reconstruct sent_replies.recalled_at from actions.recalled_at via direct; preserve source nullness and exact stored representation.",
+          "consumers": [
+            "app/store.py:Store.record_completed_agent_message_delivery",
+            "app/store.py:Store.get_sent_reply",
+            "app/store.py:Store.list_sent_replies_after"
+          ],
+          "inverse_mapping": {
+            "owner": "Action",
+            "owner_table": "actions",
+            "owner_field": "recalled_at",
+            "via": null
+          },
+          "consumer_assertions": [
+            {
+              "location": "app/store.py:Store.record_completed_agent_message_delivery",
+              "source_field": "sent_replies.recalled_at",
+              "target_owner": "Action",
+              "target_field": "recalled_at"
+            },
+            {
+              "location": "app/store.py:Store.get_sent_reply",
+              "source_field": "sent_replies.recalled_at",
+              "target_owner": "Action",
+              "target_field": "recalled_at"
+            },
+            {
+              "location": "app/store.py:Store.list_sent_replies_after",
+              "source_field": "sent_replies.recalled_at",
+              "target_owner": "Action",
+              "target_field": "recalled_at"
+            }
+          ]
+        },
+        {
+          "name": "feedback_token",
+          "owner": "Action",
+          "disposition": "retain",
+          "evidence": "app/action_storage.py:SOURCE_COLUMNS.sent_replies.feedback_token",
+          "target": "feedback_token",
+          "rule": "sent_replies.feedback_token",
+          "inverse_rule": "Reconstruct sent_replies.feedback_token from actions.feedback_token via direct; preserve source nullness and exact stored representation.",
+          "consumers": [
+            "app/store.py:Store.record_completed_agent_message_delivery",
+            "app/store.py:Store.get_sent_reply",
+            "app/store.py:Store.list_sent_replies_after"
+          ],
+          "inverse_mapping": {
+            "owner": "Action",
+            "owner_table": "actions",
+            "owner_field": "feedback_token",
+            "via": null
+          },
+          "consumer_assertions": [
+            {
+              "location": "app/store.py:Store.record_completed_agent_message_delivery",
+              "source_field": "sent_replies.feedback_token",
+              "target_owner": "Action",
+              "target_field": "feedback_token"
+            },
+            {
+              "location": "app/store.py:Store.get_sent_reply",
+              "source_field": "sent_replies.feedback_token",
+              "target_owner": "Action",
+              "target_field": "feedback_token"
+            },
+            {
+              "location": "app/store.py:Store.list_sent_replies_after",
+              "source_field": "sent_replies.feedback_token",
+              "target_owner": "Action",
+              "target_field": "feedback_token"
+            }
+          ]
+        },
+        {
+          "name": "channel",
+          "owner": "Action",
+          "disposition": "retain",
+          "evidence": "app/action_storage.py:SOURCE_COLUMNS.sent_replies.channel",
+          "target": "delivery_channel",
+          "rule": "sent_replies.channel",
+          "inverse_rule": "Reconstruct sent_replies.channel from actions.delivery_channel via direct; preserve source nullness and exact stored representation.",
+          "consumers": [
+            "app/store.py:Store.record_completed_agent_message_delivery",
+            "app/store.py:Store.get_sent_reply",
+            "app/store.py:Store.list_sent_replies_after"
+          ],
+          "inverse_mapping": {
+            "owner": "Action",
+            "owner_table": "actions",
+            "owner_field": "delivery_channel",
+            "via": null
+          },
+          "consumer_assertions": [
+            {
+              "location": "app/store.py:Store.record_completed_agent_message_delivery",
+              "source_field": "sent_replies.channel",
+              "target_owner": "Action",
+              "target_field": "delivery_channel"
+            },
+            {
+              "location": "app/store.py:Store.get_sent_reply",
+              "source_field": "sent_replies.channel",
+              "target_owner": "Action",
+              "target_field": "delivery_channel"
+            },
+            {
+              "location": "app/store.py:Store.list_sent_replies_after",
+              "source_field": "sent_replies.channel",
+              "target_owner": "Action",
+              "target_field": "delivery_channel"
+            }
+          ]
+        },
+        {
+          "name": "agent_run_id",
+          "owner": "Action",
+          "disposition": "retain",
+          "evidence": "app/action_storage.py:SOURCE_COLUMNS.sent_replies.agent_run_id",
+          "target": "agent_run_id",
+          "rule": "sent_replies.agent_run_id",
+          "inverse_rule": "Reconstruct sent_replies.agent_run_id from actions.agent_run_id via direct; preserve source nullness and exact stored representation.",
+          "consumers": [
+            "app/store.py:Store.record_completed_agent_message_delivery",
+            "app/store.py:Store.get_sent_reply",
+            "app/store.py:Store.list_sent_replies_after"
+          ],
+          "inverse_mapping": {
+            "owner": "Action",
+            "owner_table": "actions",
+            "owner_field": "agent_run_id",
+            "via": null
+          },
+          "consumer_assertions": [
+            {
+              "location": "app/store.py:Store.record_completed_agent_message_delivery",
+              "source_field": "sent_replies.agent_run_id",
+              "target_owner": "Action",
+              "target_field": "agent_run_id"
+            },
+            {
+              "location": "app/store.py:Store.get_sent_reply",
+              "source_field": "sent_replies.agent_run_id",
+              "target_owner": "Action",
+              "target_field": "agent_run_id"
+            },
+            {
+              "location": "app/store.py:Store.list_sent_replies_after",
+              "source_field": "sent_replies.agent_run_id",
+              "target_owner": "Action",
+              "target_field": "agent_run_id"
+            }
+          ]
+        },
+        {
+          "name": "external_action_key",
+          "owner": "Action",
+          "disposition": "retain",
+          "evidence": "app/action_storage.py:SOURCE_COLUMNS.sent_replies.external_action_key",
+          "target": "external_action_key",
+          "rule": "sent_replies.external_action_key exact existing key",
+          "inverse_rule": "Reconstruct sent_replies.external_action_key from actions.external_action_key via direct; preserve source nullness and exact stored representation.",
+          "consumers": [
+            "app/store.py:Store.record_completed_agent_message_delivery",
+            "app/store.py:Store.get_sent_reply",
+            "app/store.py:Store.list_sent_replies_after"
+          ],
+          "inverse_mapping": {
+            "owner": "Action",
+            "owner_table": "actions",
+            "owner_field": "external_action_key",
+            "via": null
+          },
+          "consumer_assertions": [
+            {
+              "location": "app/store.py:Store.record_completed_agent_message_delivery",
+              "source_field": "sent_replies.external_action_key",
+              "target_owner": "Action",
+              "target_field": "external_action_key"
+            },
+            {
+              "location": "app/store.py:Store.get_sent_reply",
+              "source_field": "sent_replies.external_action_key",
+              "target_owner": "Action",
+              "target_field": "external_action_key"
+            },
+            {
+              "location": "app/store.py:Store.list_sent_replies_after",
+              "source_field": "sent_replies.external_action_key",
+              "target_owner": "Action",
+              "target_field": "external_action_key"
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "table": "sent_reply_observers",
+      "declaration": "app/action_storage.py:SOURCE_COLUMNS",
+      "fields": [
+        {
+          "name": "sent_reply_id",
+          "owner": "Action Observer",
+          "disposition": "reference",
+          "evidence": "app/action_storage.py:SOURCE_COLUMNS.sent_reply_observers.sent_reply_id",
+          "target": "action_id",
+          "rule": "sent_reply_observers.sent_reply_id foreign key",
+          "inverse_rule": "Reconstruct sent_reply_observers.sent_reply_id from action_observers.action_id via {\"reference\":\"sent_replies.id\",\"to\":\"Action.id\"}; preserve source nullness and exact stored representation.",
+          "consumers": [
+            "app/store.py:Store.record_completed_agent_message_delivery",
+            "app/store.py:Store.list_sent_replies_for_attempts"
+          ],
+          "inverse_mapping": {
+            "owner": "Action Observer",
+            "owner_table": "action_observers",
+            "owner_field": "action_id",
+            "via": {
+              "reference": "sent_replies.id",
+              "to": "Action.id"
+            }
+          },
+          "consumer_assertions": [
+            {
+              "location": "app/store.py:Store.record_completed_agent_message_delivery",
+              "source_field": "sent_reply_observers.sent_reply_id",
+              "target_owner": "Action Observer",
+              "target_field": "action_id"
+            },
+            {
+              "location": "app/store.py:Store.list_sent_replies_for_attempts",
+              "source_field": "sent_reply_observers.sent_reply_id",
+              "target_owner": "Action Observer",
+              "target_field": "action_id"
+            }
+          ]
+        },
+        {
+          "name": "agent_run_id",
+          "owner": "Action Observer",
+          "disposition": "retain",
+          "evidence": "app/action_storage.py:SOURCE_COLUMNS.sent_reply_observers.agent_run_id",
+          "target": "agent_run_id",
+          "rule": "sent_reply_observers.agent_run_id; observer, not effect",
+          "inverse_rule": "Reconstruct sent_reply_observers.agent_run_id from action_observers.agent_run_id via direct; preserve source nullness and exact stored representation.",
+          "consumers": [
+            "app/store.py:Store.record_completed_agent_message_delivery",
+            "app/store.py:Store.list_sent_replies_for_attempts"
+          ],
+          "inverse_mapping": {
+            "owner": "Action Observer",
+            "owner_table": "action_observers",
+            "owner_field": "agent_run_id",
+            "via": null
+          },
+          "consumer_assertions": [
+            {
+              "location": "app/store.py:Store.record_completed_agent_message_delivery",
+              "source_field": "sent_reply_observers.agent_run_id",
+              "target_owner": "Action Observer",
+              "target_field": "agent_run_id"
+            },
+            {
+              "location": "app/store.py:Store.list_sent_replies_for_attempts",
+              "source_field": "sent_reply_observers.agent_run_id",
+              "target_owner": "Action Observer",
+              "target_field": "agent_run_id"
+            }
+          ]
+        },
+        {
+          "name": "reply_task_id",
+          "owner": "Action Observer",
+          "disposition": "retain",
+          "evidence": "app/action_storage.py:SOURCE_COLUMNS.sent_reply_observers.reply_task_id",
+          "target": "task_id",
+          "rule": "sent_reply_observers.reply_task_id",
+          "inverse_rule": "Reconstruct sent_reply_observers.reply_task_id from action_observers.task_id via direct; preserve source nullness and exact stored representation.",
+          "consumers": [
+            "app/store.py:Store.record_completed_agent_message_delivery",
+            "app/store.py:Store.list_sent_replies_for_attempts"
+          ],
+          "inverse_mapping": {
+            "owner": "Action Observer",
+            "owner_table": "action_observers",
+            "owner_field": "task_id",
+            "via": null
+          },
+          "consumer_assertions": [
+            {
+              "location": "app/store.py:Store.record_completed_agent_message_delivery",
+              "source_field": "sent_reply_observers.reply_task_id",
+              "target_owner": "Action Observer",
+              "target_field": "task_id"
+            },
+            {
+              "location": "app/store.py:Store.list_sent_replies_for_attempts",
+              "source_field": "sent_reply_observers.reply_task_id",
+              "target_owner": "Action Observer",
+              "target_field": "task_id"
+            }
+          ]
+        },
+        {
+          "name": "created_at",
+          "owner": "Action Observer",
+          "disposition": "retain",
+          "evidence": "app/action_storage.py:SOURCE_COLUMNS.sent_reply_observers.created_at",
+          "target": "created_at",
+          "rule": "sent_reply_observers.created_at",
+          "inverse_rule": "Reconstruct sent_reply_observers.created_at from action_observers.created_at via direct; preserve source nullness and exact stored representation.",
+          "consumers": [
+            "app/store.py:Store.record_completed_agent_message_delivery",
+            "app/store.py:Store.list_sent_replies_for_attempts"
+          ],
+          "inverse_mapping": {
+            "owner": "Action Observer",
+            "owner_table": "action_observers",
+            "owner_field": "created_at",
+            "via": null
+          },
+          "consumer_assertions": [
+            {
+              "location": "app/store.py:Store.record_completed_agent_message_delivery",
+              "source_field": "sent_reply_observers.created_at",
+              "target_owner": "Action Observer",
+              "target_field": "created_at"
+            },
+            {
+              "location": "app/store.py:Store.list_sent_replies_for_attempts",
+              "source_field": "sent_reply_observers.created_at",
+              "target_owner": "Action Observer",
+              "target_field": "created_at"
+            }
+          ]
+        }
+      ]
+    }
+  ],
+  "identity": {
+    "unified_identity": "actions.id",
+    "public_id_is_identity": false,
+    "same_external_identity": [
+      "external_action_key",
+      "operation",
+      "target_identifiers_json"
+    ],
+    "external_action_key_uniqueness": "one Action for a key only when canonical operation/target/result owner match; otherwise preserve distinct Actions and raise conflict for resolution",
+    "mapping": "explicit migration mapping keyed by source table and source public identity",
+    "physical_id": "new unified actions.id allocated independently of source keys",
+    "source_identities": {
+      "email_actions.action_id": "keep exact source identity in migration/inverse map only",
+      "candidate_action_attempts.id": "retain exact attempt identity in migration/inverse map and bind each observation receipt to its owning common Action",
+      "sent_replies.id": "keep exact source identity in migration/inverse map only"
+    },
+    "migration_identity": "typed (source_table, source_id) mapping; physical Action id is allocated independently"
+  },
+  "relationships": {
+    "observers": {
+      "cardinality": "many-to-one",
+      "identity": [
+        "sent_reply_id",
+        "agent_run_id"
+      ],
+      "effect_owner": "sent_replies"
+    },
+    "orphan_policy": "retain independent fact",
+    "receipt_reuse": "same external_action_key may be observed by multiple Runs",
+    "direct_retry_parent": {
+      "source_edge": "email_direct_retry_requests.action_id -> email_actions.action_id",
+      "forward": "Map the typed email_actions public key through action_entity_identity_map; change only element 0 of the retry row composite legacy_key and its generated parent projection to the common Action physical id.",
+      "target_fk": "email_direct_retry_requests.email_action_id -> actions.id with generated email_operation_parent_type = action and parent type-protection triggers.",
+      "scope": "Only covered-parent references declared by this existing source FK; current populated source contains 2 rows.",
+      "inverse": "Task 5C resolves the common Action id through the typed email_actions identity map and restores the source public action_id in the composite retry key.",
+      "preservation": "All other retry payload, row id, attempt number, status and clocks remain exact; no updated_at rewrite."
+    }
+  },
+  "receipts": {
+    "collection": "action_receipts",
+    "deduplication": "exact existing external_action_key only",
+    "preserve_distinct_values": true,
+    "missing_and_empty_are_distinct": true,
+    "null_vs_json_text": "retain SQL NULL separately from text such as null or {}",
+    "attempt_cardinality": "one Action to zero or more actual provider receipts and execution observations; preserve each execution outcome/status/time independently; never store old attempt row or provider body wholesale",
+    "normalization_reason": "Multiple candidate execution observations can share one verified canonical external result. Keep local outcomes and clocks on execution observation receipts; keep the provider result once on its canonical result receipt.",
+    "version_lineage": {
+      "version_owner": "Action Receipt.provider_result_json",
+      "current_version": "The canonical reference-only metadata receipt points directly to the current immutable provider-result body. Each candidate observation and Sent fact keeps its exact provider_receipt_id, so passive correction preserves the source-observable prior body.",
+      "canonical_binding": "The canonical metadata receipt preserves the first source operation, target, agent_run_id, created_at and observed_at. Its provider_receipt_id may advance to the corrected body; current result_digest is projected from that referenced body.",
+      "source_correction": "record_candidate_external_action accepts only the source ambiguous-to-sent transition with unchanged nested provider_result. The current observation advances to the corrected body. Other exact observation/Sent references stay on their original immutable body; only an unreferenced replaced verification wrapper may be retired.",
+      "prior_mismatch": "If a prior reconciliation supplies a result different from the existing canonical body, preserve the canonical metadata and body and keep the supplied result local to that exact attempt.",
+      "independent_facts": "A distinct provider send receipt and any body still referenced by an independent observation or Sent fact remain intact. No receipt is attached solely because it shares an Action."
+    }
+  },
+  "target": {
+    "action_storage_type": "action",
+    "layout_selector": null,
+    "business_columns": [
+      {
+        "name": "operation",
+        "sources": [
+          "email_actions.action_type"
+        ],
+        "nullable": true
+      },
+      {
+        "name": "parameters_json",
+        "sources": [
+          "email_actions.parameters_json"
+        ]
+      },
+      {
+        "name": "status",
+        "sources": [
+          "email_actions.status"
+        ],
+        "nullable": true
+      },
+      {
+        "name": "action_plan_id",
+        "sources": [
+          "email_actions.action_plan_id"
+        ],
+        "sqlite_type": "TEXT (source identity is text)"
+      },
+      {
+        "name": "classification_id",
+        "sources": [
+          "email_actions.classification_id"
+        ]
+      },
+      {
+        "name": "account_id",
+        "sources": [
+          "email_actions.account_id"
+        ]
+      },
+      {
+        "name": "external_action_key",
+        "sources": [
+          "external_action_results.external_action_key",
+          "sent_replies.external_action_key"
+        ]
+      },
+      {
+        "name": "next_attempt_at",
+        "sources": [
+          "email_actions.next_attempt_at"
+        ]
+      },
+      {
+        "name": "started_at",
+        "sources": [
+          "email_actions.started_at"
+        ]
+      },
+      {
+        "name": "created_at",
+        "sources": [
+          "email_actions.created_at"
+        ]
+      },
+      {
+        "name": "updated_at",
+        "sources": [
+          "email_actions.updated_at"
+        ]
+      },
+      {
+        "name": "prepared_body",
+        "sources": [
+          "outbound_postfixes.final_body",
+          "sent_replies.reply_text"
+        ]
+      },
+      {
+        "name": "delivery_channel",
+        "sources": [
+          "outbound_postfixes.channel",
+          "sent_replies.channel"
+        ]
+      },
+      {
+        "name": "delivery_key",
+        "sources": [
+          "outbound_postfixes.delivery_key"
+        ]
+      },
+      {
+        "name": "feedback_token",
+        "sources": [
+          "outbound_postfixes.feedback_token",
+          "sent_replies.feedback_token"
+        ]
+      },
+      {
+        "name": "postfix_version",
+        "sources": [
+          "outbound_postfixes.postfix_version"
+        ]
+      },
+      {
+        "name": "delivery_receipt_id",
+        "sources": [
+          "sent_replies.id",
+          "sent_replies.send_result_json",
+          "sent_replies.sent_at"
+        ],
+        "nullable": true,
+        "sqlite_type": "INTEGER",
+        "rule": "Sent fact receipt reference on the Action; keeps the original Sent observation clock and exact provider-body reference separate from canonical correction metadata."
+      },
+      {
+        "name": "prepared_receipt_id",
+        "sources": [
+          "outbound_postfixes.delivery_key"
+        ],
+        "nullable": true,
+        "sqlite_type": "INTEGER",
+        "rule": "Technical owner reference to the exact normalized provider receipt reached through the source prepared-delivery (channel,delivery_key) reference; never infer from receipt insertion order or body equality.",
+        "inverse_rule": "Reconstruct the old outbound_postfix_receipts FK through the mapped prepared-delivery source identity; preserve its original provider body and observation clock in the referenced Action Receipt."
+      },
+      {
+        "name": "conversation_id",
+        "sources": [
+          "sent_replies.conversation_id"
+        ]
+      },
+      {
+        "name": "trigger_message_id",
+        "sources": [
+          "sent_replies.trigger_message_id"
+        ]
+      },
+      {
+        "name": "recall_key",
+        "sources": [
+          "sent_replies.recall_key"
+        ]
+      },
+      {
+        "name": "recall_status",
+        "sources": [
+          "sent_replies.recall_status"
+        ]
+      },
+      {
+        "name": "recall_error",
+        "sources": [
+          "sent_replies.recall_error"
+        ]
+      },
+      {
+        "name": "recalled_at",
+        "sources": [
+          "sent_replies.recalled_at"
+        ]
+      },
+      {
+        "name": "agent_run_id",
+        "sources": [
+          "sent_replies.agent_run_id"
+        ]
+      },
+      {
+        "name": "business_object_key",
+        "sources": [
+          "external_action_results.business_object_key"
+        ]
+      },
+      {
+        "name": "action_identity",
+        "sources": [
+          "external_action_results.action_identity"
+        ]
+      },
+      {
+        "name": "prepared_at",
+        "sources": [
+          "outbound_postfixes.created_at"
+        ]
+      }
+    ],
+    "receipt_columns": [
+      {
+        "name": "action_id",
+        "sources": [
+          "email_action_attempts.action_id",
+          "candidate_action_attempts.id",
+          "external_action_results.external_action_key",
+          "sent_replies.id"
+        ]
+      },
+      {
+        "name": "attempt_number",
+        "sources": [
+          "email_action_attempts.attempt_number"
+        ],
+        "nullable": true
+      },
+      {
+        "name": "status",
+        "sources": [
+          "email_action_attempts.status"
+        ],
+        "nullable": true
+      },
+      {
+        "name": "operation",
+        "sources": [
+          "email_action_attempts.provider_operation",
+          "external_action_results.operation"
+        ],
+        "nullable": true
+      },
+      {
+        "name": "target",
+        "sources": [
+          "email_action_attempts.provider_target",
+          "external_action_results.target_identifiers_json"
+        ],
+        "nullable": true
+      },
+      {
+        "name": "provider_result_id",
+        "sources": [
+          "email_action_attempts.provider_result_id"
+        ],
+        "nullable": true
+      },
+      {
+        "name": "provider_result_json",
+        "sources": [
+          "external_action_results.provider_result_json",
+          "sent_replies.send_result_json",
+          "outbound_postfixes.postfix_receipt_provider_result_json"
+        ],
+        "nullable": true
+      },
+      {
+        "name": "result_digest",
+        "sources": [
+          "external_action_results.result_digest"
+        ],
+        "nullable": true
+      },
+      {
+        "name": "agent_run_id",
+        "sources": [
+          "external_action_results.first_agent_run_id"
+        ],
+        "nullable": true
+      },
+      {
+        "name": "observed_at",
+        "sources": [
+          "external_action_results.created_at",
+          "sent_replies.sent_at",
+          "outbound_postfixes.postfix_receipt_created_at"
+        ],
+        "nullable": true
+      },
+      {
+        "name": "error_text",
+        "sources": [
+          "email_action_attempts.error"
+        ],
+        "nullable": true
+      },
+      {
+        "name": "dispatched_at",
+        "sources": [
+          "outbound_postfixes.postfix_dispatch_created_at"
+        ],
+        "nullable": true
+      },
+      {
+        "name": "started_at",
+        "sources": [
+          "email_action_attempts.started_at"
+        ],
+        "nullable": true
+      },
+      {
+        "name": "finished_at",
+        "sources": [
+          "email_action_attempts.finished_at"
+        ],
+        "nullable": true
+      },
+      {
+        "name": "execution_id",
+        "sources": [
+          "candidate_action_attempts.execution_id"
+        ],
+        "nullable": true
+      },
+      {
+        "name": "action_index",
+        "sources": [
+          "candidate_action_attempts.action_index"
+        ],
+        "nullable": true
+      },
+      {
+        "name": "outcome_json",
+        "sources": [
+          "candidate_action_attempts.result_json"
+        ],
+        "nullable": true
+      },
+      {
+        "name": "created_at",
+        "sources": [
+          "candidate_action_attempts.created_at"
+        ],
+        "nullable": true
+      },
+      {
+        "name": "updated_at",
+        "sources": [
+          "candidate_action_attempts.updated_at"
+        ],
+        "nullable": true
+      },
+      {
+        "name": "provider_receipt_id",
+        "sources": [
+          "candidate_action_attempts.external_action_key",
+          "candidate_action_attempts.result_json",
+          "external_action_results.external_action_key",
+          "sent_replies.external_action_key",
+          "sent_replies.send_result_json"
+        ],
+        "nullable": true,
+        "meaning": "Technical reference from an exact local observation or reference-only canonical metadata receipt to an immutable provider-result body. Observation/Sent references retain their exact source body; only the canonical metadata reference advances during an accepted source correction."
+      }
+    ],
+    "table": "actions",
+    "receipt_table": "action_receipts",
+    "observer_table": "action_observers",
+    "coexistence": {
+      "legacy_container": "actions",
+      "plan": "Rebuild existing actions table declaration retaining all non-Action kinds, columns, indexes and triggers. Add exactly one common _kind=70 / record_type='action' layout. New Actions use action_data JSONB and generated virtual fields; no source/origin selector. Keep all existing kinds' facts and checks equivalent. legacy_key may be NULL only for Action; retain its existing namespace check for every other kind. Exclude Action from legacy namespace/public-key allocator and public-key index. Physical id and true external_action_key identify unified Actions.",
+      "partial_release": "Only the seven enumerated effect source families are converted in this first release. Other existing Actions kinds and specialized unsubscribe writers remain in the same physical table and are explicitly not retired.",
+      "migration_inverse": "Use explicit source-kind + original typed identity mapping only during conversion/inverse; never persist a legacy alias on Action rows."
+    },
+    "inverse_metadata": {
+      "table": "action_entity_identity_map",
+      "ddl": "source_type TEXT NOT NULL, source_identity TEXT NOT NULL, action_id INTEGER NOT NULL REFERENCES actions(id), receipt_id INTEGER NULL, PRIMARY KEY(source_type, source_identity)",
+      "source_identity": "Canonical typed encoding of the original physical/public identity, retaining source family and SQLite storage class; composite identities use a typed two-element encoding.",
+      "purpose": "During explicit forward/inverse only, resolve every covered old identity and receipt identity to the current Action/receipt. Distinct source namespaces can share equal numeric or text values; direct Email public IDs are reconstructed from immutable plan ID plus operation, while email_historical_operations.action_ids_json stores physical Action IDs in current data.",
+      "runtime_access": "No runtime caller reads or writes this table; Action queries use only current Action, receipt, and observer relations.",
+      "content_boundary": "Identity and owner references only. No business payload, provider body, old schema SQL, or old database snapshot is stored here.",
+      "capacity": "Expected row count is bounded by the seven covered source families and their receipt identities; storage cost is not yet measured on the authentic source copy."
+    },
+    "action_kind_value": 70,
+    "common_payload": "action_data SQLite JSONB object; every Action uses this same payload and typed generated virtual columns; only the discriminator selects Action versus unchanged existing record kinds.",
+    "payload_layout": "one common JSONB object for common Action business facts; generated virtual columns provide SQL query/index access and avoid adding ~35 payload columns to each untouched row.",
+    "status_columns": {
+      "action_status": "One common nullable Action.status covers declared email lifecycle and reviewed candidate observation states; ordered raw observations remain in Action Receipt facts.",
+      "receipt_status": "Action Receipt.status retains each exact email attempt or candidate execution observation state, including NULL where source lacks status."
+    },
+    "technical_references": [
+      {
+        "name": "prepared_receipt_id",
+        "source_evidence": "The old Store.prepare_outbound_postfix receipt writer references provider receipts by the prepared outbound key; Task 3 current writer and get_outbound_postfix_receipt require that same owner-local fact.",
+        "purpose": "Disambiguate the actual prepared-delivery provider receipt from canonical Action and Sent receipts after source entities converge on one Action.",
+        "constraints": "Nullable owner-local FK to action_receipts.id; the pointed receipt must be owned by this Action and contain a provider result. Runtime reads use this explicit Action pointer, never identity-map old namespaces.",
+        "capacity": "One nullable integer generated Action field and two owner triggers; no provider body or business data is duplicated."
+      }
+    ],
+    "current_release_ddl": "docs/action-entity-current-target.sql",
+    "current_release_ddl_scope": "Exact 507-object current Store/Email target manifest; generated directly from current_objects(email_ledger=True). The original action-entity-target.sql remains the initial field-contract fixture used by its validator.",
+    "current_release_ddl_sha256": "b5711b67f0597da0530b25bdcb238f29a0b279622f4751b07a384df744db83e9"
+  },
+  "indexes": [
+    {
+      "name": "current actions indexes",
+      "decision": "retain",
+      "reason": "canonical rebuilt declaration preserves all existing indexes and their predicates for their existing record kinds"
+    },
+    {
+      "name": "idx_actions_public_id",
+      "decision": "modify predicate",
+      "reason": "existing public-id access remains for unchanged kinds and explicitly excludes the new Action kind"
+    },
+    {
+      "name": "idx_actions_action_external_key",
+      "decision": "add unique partial",
+      "reason": "true external identity maps one concrete Action; canonical conflict must be resolved before merge"
+    },
+    {
+      "name": "idx_actions_action_direct_email_plan_operation",
+      "decision": "add unique partial",
+      "reason": "preserve source email_actions UNIQUE(action_plan_id,action_type) while direct Actions use their physical Action ID and do not persist the inverse-mapped legacy hash."
+    },
+    {
+      "name": "idx_actions_action_delivery_key",
+      "decision": "add unique partial",
+      "reason": "delivery key is stable prepared-message identity; bounded source copy has unique nonblank keys"
+    },
+    {
+      "name": "idx_action_receipts_action",
+      "decision": "add",
+      "reason": "lookup actual owned receipt and execution-observation facts by Action"
+    },
+    {
+      "name": "idx_action_receipts_execution_order",
+      "decision": "replace with unique partial",
+      "reason": "preserve source candidate_action_attempts UNIQUE(execution_id,action_index) cardinality for one current observation per execution/action slot; ordinary provider receipt versions have NULL execution_id and remain distinct."
+    },
+    {
+      "name": "email_direct_retry_requests.email_action_id -> actions.id",
+      "decision": "retarget existing source FK",
+      "reason": "The source FK covers a surviving control row whose parent email_actions owner retires. Preserve the existing generated parent discriminator and enforce record_type=action through the two type-protection triggers; no alias public key or extra business column/index is introduced."
+    }
+  ],
+  "retirement": {
+    "records": "All populated source rows in the seven covered families translate to common Action, Action Receipt, Action Observer and typed identity-map facts; exact covered generated kinds, projections, indexes and family-only DDL are retired.",
+    "full_type_retirement": false,
+    "remaining": "Email unsubscribe/control, feedback, historical operations and direct retry request rows remain outside the owner conversion; direct retry parent references to migrated email_actions are retargeted through the typed map.",
+    "covered_source_families": [
+      "external_action_results",
+      "candidate_action_attempts",
+      "outbound_postfixes",
+      "sent_replies",
+      "sent_reply_observers",
+      "email_actions",
+      "email_action_attempts"
+    ]
+  },
+  "evidence_locations": [
+    "app/action_email_definitions.py:EMAIL_FIELDS",
+    "app/action_storage.py:SOURCE_COLUMNS",
+    "app/reviewed_candidate_store.py:record_candidate_action_outcome,record_candidate_external_action",
+    "app/email_store.py:direct action attempt writers",
+    "app/store.py:sent_reply_observers writers",
+    "app/prepared_action_definitions.py:COLUMNS,SLOTS"
+  ],
+  "state_mappings": {
+    "action_status": {
+      "sources": [
+        "email_actions.status",
+        "candidate_action_attempts.status"
+      ],
+      "declared_values": [
+        "pending",
+        "processing",
+        "done",
+        "skipped",
+        "failed",
+        "dispatched",
+        "verified",
+        "confirmed_no_effect",
+        "uncertain"
+      ],
+      "target": "Action.status",
+      "mapping": {
+        "pending": "pending",
+        "processing": "processing",
+        "done": "done",
+        "skipped": "skipped",
+        "failed": "failed",
+        "dispatched": "dispatched",
+        "verified": "verified",
+        "confirmed_no_effect": "confirmed_no_effect",
+        "uncertain": "uncertain"
+      },
+      "current_observation_order": [
+        "updated_at",
+        "execution_id",
+        "action_index",
+        "id"
+      ],
+      "semantic_rule": "Use the last explicit source lifecycle observation in the frozen order; candidate verified means the source writer accepted an explicit verification receipt. No provider JSON/timestamp inference. Preserve every source observation unchanged."
+    },
+    "receipt_status": {
+      "sources": [
+        "email_action_attempts.status",
+        "candidate_action_attempts.status"
+      ],
+      "declared_values": [
+        "done",
+        "skipped",
+        "failed",
+        "dispatched",
+        "verified",
+        "confirmed_no_effect",
+        "uncertain"
+      ],
+      "target": "Action Receipt.status (exact per-observation source status)",
+      "mapping": "identity; retain exact state on its owning attempt or execution observation",
+      "semantic_rule": "Keep each observation state exactly on its execution/attempt fact. Candidate verified is written only by the existing source writer after explicit verification receipt semantics; JSON/timestamps alone never establish verified/done. Historical prepared rows without a status remain NULL.",
+      "current_action_rule": "The Action.status is the value of the last explicit candidate observation by updated_at, execution_id, action_index, id; an explicit later verified observation supersedes an earlier failed observation while both raw receipts and local outcomes remain. Historical result JSON may differ on reforward; each source observation remains independently reconstructible."
+    },
+    "evidence": [
+      "app/action_email_definitions.py:EMAIL_CHECKS.email_actions",
+      "app/action_email_definitions.py:EMAIL_CHECKS.email_action_attempts",
+      "app/action_storage.py:ENUMS.candidate_action_attempts",
+      "app/action_storage.py:source caller uses verified status only for explicit verification"
+    ]
+  }
+}

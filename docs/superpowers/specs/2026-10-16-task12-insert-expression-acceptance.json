@@ -1,0 +1,101 @@
+{
+  "recorded_utc": "2026-10-16T19:25:36.541817+00:00",
+  "status": "accepted_unselected_task12_insert_expressions",
+  "application_commit": "6efc08c1ad59ba30d88a8e30113f0958a92ecbf2",
+  "original_transfer": "ef26ceadf2fe64275de9ef3da011f4abab939d66",
+  "replace_default_correction": "72a8b8154aaf8aba2aedfefb1fd13995c0e6f9f1",
+  "canonical_final_before_application_commit": "cc3afa29a",
+  "sha256": {
+    "app/task12_storage.py": "127311aa2ed303066fc3dd325a5642c0e61725a2d8db3b5bedfc218e804e013f",
+    "tests/test_task12_insert_expression.py": "0835a92ed79aa51e581e3f31753018f21cd9b258569ae86966d5d8a33b13dbd4",
+    "docs/superpowers/plans/2026-10-16-task12-insert-expression-preflight.py": "8e95153781d57846ca61a6f7c9c4fbe913c491d71c3f3732683215460e40989d"
+  },
+  "source_authority": "Frozen exact three real Store INSERTs/owners and actual/fresh source declarations; 2026-10-16-feedback-insert-expression-source.json",
+  "contract": [
+    "Final INSERT scalar SQL with ordered expression parameters only for existing non-AUTOINCREMENT source kinds",
+    "Five existing source AUTO kinds retain bound inputs; nonempty expression inputs reject before SQL",
+    "Source identity and parent preparation dependencies remain bound",
+    "Native required/defaulted REPLACE NULL substitution via lazy once-only coalesce; other modes/no-default fields unchanged",
+    "No expression preselect; exact existing native scalar codec; callers own original INSERT/UPSERT and transaction"
+  ],
+  "scope": {
+    "changed_existing_functions": [
+      "_payload",
+      "task12_insert_parts"
+    ],
+    "unchanged_other_functions_classes": 17,
+    "import_added": "TASK20_PARENTS",
+    "new_business_fields": 0,
+    "new_ordinary_tables": 0,
+    "allocator_changed": false,
+    "helper_begin_commit_added": false,
+    "current_callers_constructors_migrations_selected": false
+  },
+  "verification": {
+    "root_final_candidate_full": {
+      "passed": 1075,
+      "seconds": 71.5
+    },
+    "mechanical_final_applied": {
+      "passed": 64,
+      "seconds": 5.85
+    },
+    "independent_spec_final_applied": {
+      "passed": 64,
+      "seconds": 5.87
+    },
+    "independent_quality_final_control": {
+      "passed": 64,
+      "seconds": 5.39
+    },
+    "independent_quality_restored_control": {
+      "passed": 64,
+      "seconds": 4.95
+    },
+    "owned_temp_removed": true,
+    "ruff_diff_hash_scope_checks": "pass"
+  },
+  "resolved_findings": [
+    {
+      "finding": "Native REPLACE accepts NULL SQL expression for required/defaulted field, initial target rejected",
+      "resolution": "metadata-derived coalesce only for required/defaulted fields under REPLACE",
+      "original_semantic_red": {
+        "failed": 4,
+        "passed": 4,
+        "deselected": 42,
+        "seconds": 1.17
+      }
+    },
+    {
+      "finding": "Admitted AUTO round expression at exhausted source stream used missing bound value and gave wrong native error",
+      "original_independent_actual_fresh_probe": {
+        "failed": 2,
+        "passed": 6,
+        "seconds": 0.64
+      },
+      "resolution": "Explicit supported-contract narrowing: all five existing AUTO source kinds bound-only; actual three expression callers unaffected",
+      "final_boundary_red": {
+        "failed": 14,
+        "deselected": 50,
+        "seconds": 0.9,
+        "meaning": "Unsupported API admission rejection evidence, not fourteen native equivalence failures"
+      }
+    }
+  ],
+  "final_quality_mutants": {
+    "remove_auto_expression_boundary": 14,
+    "json_quote_loses_real_precision": 2,
+    "duplicate_expression_evaluation": 6,
+    "eager_expression_select": 10,
+    "coherent_expression_omission": 10,
+    "omit_replace_default_substitution": 4
+  },
+  "public_proof_boundary": "Feedback public parent rerun75/75 uses frozen ef26ceadf helper7174 in explicitly prepared empty target; this receipt does not turn it into complete final-helper/constructor/migration acceptance. See task12-feedback-caller-readiness.json.",
+  "unproved": [
+    "Complete all20 caller/codec/schema-map/constructor/manifest selection",
+    "Nonempty Tasks20 forward/current-write/inverse/genuine predecessor write/reforward",
+    "Remaining consolidation to ten core tables plus Email ledger",
+    "Final current-structure CLI fake-outbound/UI/business-results/receipts/performance/size",
+    "Main/push/production migration/restart/deploy"
+  ]
+}

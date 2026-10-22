@@ -1,6 +1,10 @@
 """Transactional persistence for source-backed official Project context."""
 
 from __future__ import annotations
+from app.provenance_storage import signal_projection
+from app.business_definitions import BUSINESS_PROJECTIONS
+from app.business_storage import insert_business
+from app.action_business_storage import insert_business_action
 
 import json
 import sqlite3
@@ -8,6 +12,7 @@ import sqlite3
 from app.store import AutoReplyStore
 from app.task_semantic_models import ProjectContext, SourceCitation
 from app.task_source_documents import source_contains_quote, source_is_observed
+from app.business_source_reader import PreparedSources
 
 
 def context_changed(previous_json: str | None, current_json: str) -> bool:
@@ -33,15 +38,14 @@ class ProjectContextService:
 
     @staticmethod
     def _require_project(project_id: int, db: sqlite3.Connection) -> None:
-        if db.execute("select 1 from business_projects where id=?", (project_id,)).fetchone() is None:
+        if db.execute(f'select 1 from ({BUSINESS_PROJECTIONS["project"]}) where id=?', (project_id,)).fetchone() is None:
             raise ValueError(f"official project {project_id} does not exist")
 
     @staticmethod
     def _require_signal(signal_id: int, db: sqlite3.Connection) -> sqlite3.Row:
         row = db.execute(
-            "select signal.source_ref, signal.source_type, document.body as evidence_text "
-            "from business_task_signals signal "
-            "join business_source_documents document on document.id=signal.source_document_id "
+            "select signal.source_ref, signal.source_type "
+            f"from ({signal_projection()}) signal "
             "where signal.id=?", (signal_id,)
         ).fetchone()
         if row is None:
@@ -53,6 +57,7 @@ class ProjectContextService:
     def apply(
         self, *, project_id: int, context: ProjectContext | None,
         signal_ids: tuple[int, ...] | list[int], db: sqlite3.Connection,
+        prepared_sources: PreparedSources | None = None,
     ) -> int | None:
         """Use the caller's transaction; never commits or creates external work."""
         self._require_project(project_id, db)
@@ -67,29 +72,34 @@ class ProjectContextService:
                 row = self._require_signal(citation.signal_id, db)
                 if citation.signal_id not in signal_rows:
                     raise ValueError("project citation signal must be included in project evidence")
+                if prepared_sources is None:
+                    raise ValueError("project citation original was not prepared")
+                _, body = prepared_sources.require_body(
+                    self.store, citation.signal_id, db=db
+                )
                 if (
                     citation.source_ref != row["source_ref"]
-                    or not source_contains_quote(row["evidence_text"], citation.source_excerpt)
+                    or not source_contains_quote(body, citation.source_excerpt)
                 ):
                     raise ValueError("project citation must faithfully match its source")
         for signal_id in ids:
-            db.execute(
-                "insert into business_project_evidence (project_id, signal_id) values (?, ?) "
-                "on conflict(project_id, signal_id) do nothing", (project_id, signal_id),
-            )
+            insert_business_action(db, "business_project_evidence", {
+                "project_id": project_id, "signal_id": signal_id,
+            }, on_conflict_key_do_nothing=True)
         if context is None:
             return None
         current_json = json.dumps(
             context.model_dump(mode="json"), ensure_ascii=False, sort_keys=True, separators=(",", ":")
         )
         previous = db.execute(
-            "select context_json from business_project_context_revisions "
+            f'select context_json from ({BUSINESS_PROJECTIONS["project_context_revision"]}) '
             "where project_id=? order by id desc limit 1", (project_id,)
         ).fetchone()
         if not context_changed(str(previous["context_json"]) if previous else None, current_json):
             return None
         evidence_json = json.dumps(sorted(ids), separators=(",", ":"))
-        return int(db.execute(
-            "insert into business_project_context_revisions (project_id, context_json, evidence_json) "
-            "values (?, ?, ?)", (project_id, current_json, evidence_json),
-        ).lastrowid)
+        return int(insert_business(db, "project_context_revision", {
+            "project_id": project_id,
+            "context_json": current_json,
+            "evidence_json": evidence_json,
+        }).lastrowid)

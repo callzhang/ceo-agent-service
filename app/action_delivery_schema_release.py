@@ -1,4 +1,5 @@
 """Paired Store17 -> Store18 publication of sent delivery actions."""
+from app.state_publication_sources import publication_store_version
 
 from contextlib import closing
 from dataclasses import dataclass
@@ -9,6 +10,9 @@ from typing import Callable
 from app.action_delivery_storage import (
     capture_action_delivery_schema,
     restore_action_delivery_schema,
+)
+from app.business_legacy_field_schema_release import (
+    TARGET_STORE_VERSION, PREVIOUS_STORE_VERSIONS, publication_action_schema_is_current,
 )
 from app.action_storage import (
     ACTION_PROJECTIONS,
@@ -28,8 +32,8 @@ VERSION_KEY = "store_schema_version"
 
 def publication_delivery_sources(db):
     """Exact source/target delivery reads during the paired deploy window."""
-    marker = db.execute("select value from service_state where key=?", (VERSION_KEY,)).fetchone()
-    version = marker[0] if marker else None
+    version = publication_store_version(db, current_version=TARGET_STORE_VERSION,
+                                        previous_versions=PREVIOUS_STORE_VERSIONS)
     if version == SOURCE_ACTION_DELIVERY_VERSION:
         capture_action_delivery_schema(db)
         return {
@@ -39,6 +43,8 @@ def publication_delivery_sources(db):
     if version == ACTION_DELIVERY_VERSION and action_schema_is_current(db, include_delivery=True):
         return {kind: ACTION_PROJECTIONS[kind] for kind in DELIVERY_ACTION_TYPES}
     if version == "2026-10-13.5" and reply_schema_is_current(db):
+        return {kind: ACTION_PROJECTIONS[kind] for kind in DELIVERY_ACTION_TYPES}
+    if publication_action_schema_is_current(db, version):
         return {kind: ACTION_PROJECTIONS[kind] for kind in DELIVERY_ACTION_TYPES}
     raise ValueError("unknown or mixed sent delivery publication source schema")
 

@@ -1,0 +1,156 @@
+--- a/app/store.py
++++ b/app/store.py
+@@ -68,6 +68,8 @@
+     SCHEDULED_RUN_SQL, AGENT_RUN_SQL, RUNTIME_ATTEMPT_SQL, RETIRED_RUN_TABLES, TASK_AGENT_RUN_SQL, MEETING_RUN_SQL, OKR_RUN_SQL,
+     create_run_schema, install_run_child_guards, insert_run,
+ )
++from app.runs11_definitions import run11_projection
++from app.runs11_storage import insert_run11_fact
+ 
+ from app.task_storage import (
+     task_id_expression, RETIRED_TASK_TABLES,
+@@ -24313,28 +24315,27 @@
+         source_type: str,
+         source_id: str,
+         title: str,
+-        summary_text: str = "",
+-        fts_text: str = "",
+-        embedding: list[float] | None = None,
+-        embedding_model: str = "",
+     ) -> None:
+         if not session_id.strip():
+             return
+-        with self._connect() as db:
+-            row = db.execute("select id,title from codex_session_search_index where session_id=?", (session_id,)).fetchone()
++        projection = "(" + run11_projection("codex_session_search_index") + ")"
++        with self._connect() as db:
++            row = db.execute(
++                f"select id from {projection} where session_id=?", (session_id,)
++            ).fetchone()
+             if row is None:
+-                row_id = db.execute(
+-                    "insert into codex_session_search_index(session_id,source_type,source_id,title) values (?,?,?,?)",
+-                    (session_id,source_type,source_id,title),
+-                ).lastrowid
++                insert_run11_fact(
++                    db, "codex_session_search_index",
++                    {"session_id": session_id, "source_type": source_type,
++                     "source_id": source_id, "title": title},
++                )
+             else:
+-                row_id = row["id"]
+-                db.execute("insert into codex_session_search_fts(codex_session_search_fts,rowid,title) values('delete',?,?)", (row_id,row["title"]))
+                 db.execute(
+-                    "update codex_session_search_index set source_type=?,source_id=?,title=?,updated_at=current_timestamp where id=?",
+-                    (source_type,source_id,title,row_id),
++                    "update runs set source_type=?,source_id=?,title=?,updated_at=current_timestamp "
++                    "where record_type='codex_session_search_index' "
++                    "and cast(legacy_key as integer)=?",
++                    (source_type, source_id, title, int(row["id"])),
+                 )
+-            db.execute("insert into codex_session_search_fts(rowid,title) values(?,?)", (row_id,title))
+             # Native-derived corpus is assembled only for an in-memory search.
+ 
+     def search_codex_sessions(
+@@ -24347,12 +24348,13 @@
+     ) -> list[CodexSessionSearchResult]:
+         from app.native_standalone import latest_standalone_ref
+ 
++        projection = "(" + run11_projection("codex_session_search_index") + ")"
+         with self._connect() as db:
+             rows = db.execute(
+-                """
++                f"""
+                 select *
+-                from codex_session_search_index
+-                order by updated_at desc
++                from {projection}
++                order by updated_at desc,id asc
+                 """
+             ).fetchall()
+             source_ids = [str(row["source_id"]) for row in rows
+@@ -29580,32 +29582,23 @@
+         stderr_excerpt: str = "",
+     ) -> int:
+         with self._connect() as db:
+-            cursor = db.execute(
+-                """
+-                insert into setup_wizard_events (
+-                    step_id,
+-                    action_id,
+-                    status,
+-                    summary,
+-                    evidence_json,
+-                    stdout_excerpt,
+-                    stderr_excerpt,
+-                    finished_at
+-                )
+-                values (?, ?, ?, ?, ?, ?, ?, case when ? = 'running' then '' else current_timestamp end)
+-                """,
+-                (
+-                    step_id,
+-                    action_id,
+-                    status,
+-                    summary,
+-                    evidence_json,
+-                    stdout_excerpt,
+-                    stderr_excerpt,
+-                    status,
+-                ),
+-            )
+-            return int(cursor.lastrowid)
++            result = insert_run11_fact(
++                db, "setup_wizard_events",
++                {
++                    "step_id": step_id,
++                    "action_id": action_id,
++                    "status": status,
++                    "summary": summary,
++                    "evidence_json": evidence_json,
++                    "stdout_excerpt": stdout_excerpt,
++                    "stderr_excerpt": stderr_excerpt,
++                },
++                insert_sql={
++                    "finished_at": "case when ? = 'running' then '' else current_timestamp end"
++                },
++                insert_parameters=(status,),
++            )
++            return int(result.lastrowid)
+ 
+     def list_setup_wizard_events(
+         self,
+@@ -29614,6 +29607,7 @@
+         action_id: str | None = None,
+         limit: int = 20,
+     ) -> list[dict[str, str | int]]:
++        projection = "(" + run11_projection("setup_wizard_events") + ")"
+         with self._connect() as db:
+             args: list[str | int] = []
+             conditions: list[str] = []
+@@ -29629,7 +29623,7 @@
+                 f"""
+                 select id, step_id, action_id, status, summary, evidence_json,
+                        stdout_excerpt, stderr_excerpt, started_at, finished_at
+-                from setup_wizard_events
++                from {projection}
+                 {where}
+                 order by id desc
+                 limit ?
+--- a/app/meeting_alignment.py
++++ b/app/meeting_alignment.py
+@@ -1019,7 +1019,6 @@
+     decision: MeetingAlignmentDecision,
+     *,
+     source_id: int,
+-    embedding_client: Callable[[list[str]], list[list[float]]] | None,
+ ) -> None:
+     session_id = str(getattr(runner, "last_session_id", "") or "").strip()
+     if not session_id:
+@@ -1471,7 +1470,6 @@
+         source,
+         decision,
+         source_id=run_id,
+-        embedding_client=embedding_client,
+     )
+     store.update_meeting_alignment_job(
+         job.id,

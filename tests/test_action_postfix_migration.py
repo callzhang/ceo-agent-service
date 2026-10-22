@@ -1,4 +1,7 @@
-"""Current-fact postfix closure forward/inverse with unchanged nine-type facts."""
+"""Historical TEXT postfix closure with unchanged nine-type facts.
+
+The imported ``target_db`` scopes its TEXT DML adapter to this boundary.
+"""
 import sqlite3
 
 import pytest

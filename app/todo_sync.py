@@ -4,19 +4,10 @@ from typing import Any
 
 from app.dws_client import DwsError
 from app.store import AutoReplyStore
-from app.task_models import ProjectPriority, TodoStatus
-from app.todo_completion import (
-    close_todo_with_completion_evidence,
-    complete_business_task_from_external_todo,
-)
+from app.task_models import ProjectPriority
+from app.todo_completion import complete_business_task_from_external_todo
 
 DINGTALK_TODO_TITLE_LIMIT = 80
-DINGTALK_TODO_CONTEXT_LIMIT = 42
-MAX_DINGTALK_TODO_CREATE_RETRIES = 1
-DINGTALK_TODO_CREATE_RETRYABLE_ERROR_CODES = frozenset({
-    "TOKEN_VERIFIED_FAILED",
-    "SECURITY_CHECK_INVOKE_FAILED",
-})
 
 
 def _parse_datetime(value: str) -> datetime | None:
@@ -44,18 +35,6 @@ def _deadline_to_iso(value: str) -> str:
     if deadline.tzinfo is None:
         return f"{deadline.isoformat()}+08:00"
     return deadline.isoformat()
-
-
-def _deadline_has_passed(value: str, now: str) -> bool:
-    deadline = _parse_datetime(value)
-    current = _parse_datetime(now)
-    if deadline is None or current is None:
-        return False
-    if deadline.tzinfo is None and current.tzinfo is not None:
-        deadline = deadline.replace(tzinfo=current.tzinfo)
-    elif deadline.tzinfo is not None and current.tzinfo is None:
-        current = current.replace(tzinfo=deadline.tzinfo)
-    return deadline < current
 
 
 def _committed_deadline(store: AutoReplyStore, business_task_id: int) -> str:
@@ -120,19 +99,6 @@ def _payload_done(payload: dict[str, Any]) -> bool:
     return False
 
 
-def _has_completion_evidence(value: str) -> bool:
-    text = (value or "").strip()
-    if not text:
-        return False
-    try:
-        evidence = json.loads(text)
-    except json.JSONDecodeError:
-        return True
-    if isinstance(evidence, (dict, list)):
-        return bool(evidence)
-    return bool(evidence)
-
-
 def _normalize_inline_text(value: str) -> str:
     return " ".join((value or "").split())
 
@@ -142,23 +108,6 @@ def _trim_inline_text(value: str, limit: int) -> str:
     if len(text) <= limit:
         return text
     return f"{text[: max(0, limit - 1)]}…"
-
-
-def _first_context_sentence(value: str) -> str:
-    text = _normalize_inline_text(value)
-    if not text:
-        return ""
-    for separator in ("。", "；", ";", "！", "!", "？", "?"):
-        index = text.find(separator)
-        if index > 0:
-            text = text[:index]
-            break
-    return _trim_inline_text(text, DINGTALK_TODO_CONTEXT_LIMIT)
-
-
-def _project_context(project: Any) -> str:
-    title = _normalize_inline_text(str(getattr(project, "title", "") or ""))
-    return f"项目：{title}" if title else ""
 
 
 def _json_list(value: str) -> list:
@@ -203,22 +152,6 @@ def _dingtalk_todo_description(todo: Any, project: Any = None) -> str:
     return "\n".join(dict.fromkeys(parts))
 
 
-def _dingtalk_todo_tags(todo: Any, project: Any = None) -> list[str]:
-    tags: list[str] = []
-    if project is not None:
-        tags.extend(str(item).strip() for item in _json_list(project.tags_json))
-        category = str(getattr(project, "category", "") or "").strip()
-        risk_level = str(getattr(project, "risk_level", "") or "").strip()
-        if category:
-            tags.append(category)
-        if risk_level:
-            tags.append(f"risk:{risk_level}")
-    priority = str(getattr(todo, "priority", "") or "").strip()
-    if priority:
-        tags.append(priority)
-    return [tag for tag in dict.fromkeys(tags) if tag]
-
-
 def _dingtalk_todo_participants(todo: Any, project: Any = None) -> list[dict[str, str]]:
     participants: list[dict[str, str]] = []
     owner_user_id = str(getattr(todo, "owner_user_id", "") or "").strip()
@@ -244,333 +177,80 @@ def _dingtalk_todo_participants(todo: Any, project: Any = None) -> list[dict[str
     return list(unique.values())
 
 
-def _dingtalk_todo_title(todo: Any, project: Any = None) -> str:
-    title = _trim_inline_text(todo.title, DINGTALK_TODO_TITLE_LIMIT)
-    if not title:
-        return ""
-    for field in ("description", "follow_up_question", "blocker"):
-        detail = _first_context_sentence(str(getattr(todo, field, "") or ""))
-        if not detail:
-            continue
-        project_context = _project_context(project)
-        if (
-            project_context
-            and project_context not in title
-            and project_context not in detail
-            and "来源" not in detail
-            and "基于" not in detail
-        ):
-            detail = f"{project_context}；{detail}"
-        if detail in title or title in detail:
-            continue
-        return _trim_inline_text(
-            f"{title}：{detail}",
-            DINGTALK_TODO_TITLE_LIMIT,
-        )
-    project_context = _project_context(project)
-    if project_context and project_context not in title:
-        return _trim_inline_text(
-            f"{title}：{project_context}",
-            DINGTALK_TODO_TITLE_LIMIT,
-        )
-    return title
-
-
-def _todo_is_eligible(store: AutoReplyStore, todo: Any) -> bool:
-    if todo.status not in {TodoStatus.OPEN, TodoStatus.WAITING_OWNER}:
-        return False
-    if not todo.owner_user_id.strip():
-        return False
-    if not _deadline_to_iso(todo.deadline_at):
-        return False
-    if not todo.title.strip():
-        return False
-    if _has_completion_evidence(todo.completion_evidence_json):
-        return False
-    return store.get_active_work_todo_dingtalk_link(todo.id) is None
-
-
-def _find_existing_link_with_task_id(store: AutoReplyStore, work_todo_id: int) -> Any:
-    links = store.list_work_todo_dingtalk_links(
-        statuses=("failed",),
-        limit=1,
-        work_todo_id=work_todo_id,
-        with_dingtalk_task_id=True,
-    )
-    for link in links:
-        return link
-    return None
-
-
-def _is_retryable_dingtalk_todo_error(error: str) -> bool:
-    normalized = error.casefold()
-    return any(
-        code.casefold() in normalized
-        for code in DINGTALK_TODO_CREATE_RETRYABLE_ERROR_CODES
-    )
-
-
-def _find_retryable_failed_create_link(
-    store: AutoReplyStore,
-    work_todo_id: int,
-) -> Any:
-    links = store.list_work_todo_dingtalk_links(
-        statuses=("failed",),
-        limit=10,
-        work_todo_id=work_todo_id,
-    )
-    for link in links:
-        if link.dingtalk_task_id.strip():
-            continue
-        if _is_retryable_dingtalk_todo_error(link.last_error):
-            return link
-    return None
-
-
-def _refresh_existing_dingtalk_link(
-    store: AutoReplyStore,
-    dws: Any,
-    link: Any,
-    *,
-    now: str,
-):
-    task_id = link.dingtalk_task_id.strip()
-    try:
-        payload = dws.get_todo_task(task_id)
-    except (DwsError, RuntimeError) as exc:
-        store.update_work_todo_dingtalk_link(
-            link.id,
-            status="failed",
-            last_pull_at=now,
-            last_error=str(exc),
-        )
-        return store.get_work_todo_dingtalk_link(link.id)
-
-    done = _payload_done(payload)
-    store.update_work_todo_dingtalk_link(
-        link.id,
-        status="done" if done else "active",
-        last_dingtalk_done=done,
-        last_dingtalk_payload_json=json.dumps(payload, ensure_ascii=False),
-        last_pull_at=now,
-        last_error="",
-    )
-    if done:
-        _close_internal_todo_from_dingtalk(store, link, task_id, now)
-    return store.get_work_todo_dingtalk_link(link.id)
-
-
-def _create_dingtalk_todo_for_link(
-    store: AutoReplyStore,
-    dws: Any,
-    *,
-    todo: Any,
-    link_id: int,
-    now: str,
-):
-    project = store.get_work_project(todo.project_id)
-    dingtalk_title = _dingtalk_todo_title(todo, project)
-    dingtalk_description = _dingtalk_todo_description(todo, project)
-    dingtalk_tags = _dingtalk_todo_tags(todo, project)
-    dingtalk_participants = _dingtalk_todo_participants(todo, project)
-    store.update_work_todo_dingtalk_link(
-        link_id,
-        executor_user_id=todo.owner_user_id,
-        executor_name=todo.owner_name,
-        title_snapshot=dingtalk_title,
-        deadline_at_snapshot=todo.deadline_at,
-        priority_snapshot=todo.priority.value,
-        status="creating",
-        last_error="",
-    )
-    try:
-        create_payload = dws.create_todo_task(
-            title=dingtalk_title,
-            executor_user_id=todo.owner_user_id,
-            due=_deadline_to_iso(todo.deadline_at),
-            priority=_priority_to_dingtalk(str(todo.priority)),
-            description=dingtalk_description,
-            tags=dingtalk_tags,
-            participants=dingtalk_participants,
-            files=[],
-        )
-    except (DwsError, RuntimeError) as exc:
-        store.update_work_todo_dingtalk_link(
-            link_id,
-            status="failed",
-            last_error=str(exc),
-        )
-        return store.get_work_todo_dingtalk_link(link_id)
-
-    task_id = _payload_task_id(create_payload)
-    if not task_id:
-        store.update_work_todo_dingtalk_link(
-            link_id,
-            status="failed",
-            last_error="DingTalk todo create response did not include task id",
-        )
-        return store.get_work_todo_dingtalk_link(link_id)
-
-    store.update_work_todo_dingtalk_link(
-        link_id,
-        dingtalk_task_id=task_id,
-        last_push_at=now,
-        last_error="",
-    )
-    try:
-        get_payload = dws.get_todo_task(task_id)
-    except (DwsError, RuntimeError) as exc:
-        store.update_work_todo_dingtalk_link(
-            link_id,
-            status="failed",
-            last_error=str(exc),
-        )
-        return store.get_work_todo_dingtalk_link(link_id)
-
-    done = _payload_done(get_payload)
-    store.update_work_todo_dingtalk_link(
-        link_id,
-        status="active",
-        last_dingtalk_done=done,
-        last_dingtalk_payload_json=json.dumps(get_payload, ensure_ascii=False),
-        last_pull_at=now,
-        last_error="",
-    )
-    return store.get_work_todo_dingtalk_link(link_id)
-
-
 def maybe_create_dingtalk_todo(
     store: AutoReplyStore,
     dws: Any,
     *,
-    business_task_id: int | None = None,
-    work_todo_id: int | None = None,
+    business_task_id: int,
     now: str,
 ):
-    if business_task_id is not None:
-        task = store.get_business_task(business_task_id)
-        if task is None or task.status.value == "merged":
-            return None
-        if (
-            task.stage.value != "formal"
-            or task.status.value not in {"open", "waiting"}
-            or task.commitment_status.value != "accepted"
-            or not task.owner_user_id.strip()
-            or not task.title.strip()
-            or not _committed_deadline(store, business_task_id)
-        ):
-            return None
-        link = store.get_active_business_task_dingtalk_link(business_task_id)
-        if link is not None:
-            if link["status"] == "active" or not link["dingtalk_task_id"]:
-                return link
-            try:
-                readback = dws.get_todo_task(link["dingtalk_task_id"])
-                store.update_business_task_dingtalk_link(
-                    link["id"], status="active",
-                    last_dingtalk_done=_payload_done(readback),
-                    last_dingtalk_payload_json=json.dumps(readback, ensure_ascii=False),
-                    last_pull_at=now, last_error="",
-                )
-            except (DwsError, RuntimeError) as exc:
-                store.update_business_task_dingtalk_link(link["id"], last_error=str(exc))
-            return store.get_business_task_dingtalk_link(link["id"])
-        link_id, created = store.claim_business_task_dingtalk_link(
-            business_task_id=business_task_id,
-            executor_user_id=task.owner_user_id,
-            executor_name=task.owner_name,
-            title_snapshot=_trim_inline_text(task.title, DINGTALK_TODO_TITLE_LIMIT),
-            deadline_at_snapshot=_committed_deadline(store, business_task_id),
-            priority_snapshot="P2",
-            status="creating",
-        )
-        if not created:
-            return store.get_business_task_dingtalk_link(link_id)
+    task = store.get_business_task(business_task_id)
+    if task is None or task.status.value == "merged":
+        return None
+    if (
+        task.stage.value != "formal"
+        or task.status.value not in {"open", "waiting"}
+        or task.commitment_status.value != "accepted"
+        or not task.owner_user_id.strip()
+        or not task.title.strip()
+        or not _committed_deadline(store, business_task_id)
+    ):
+        return None
+    link = store.get_active_business_task_dingtalk_link(business_task_id)
+    if link is not None:
+        if link["status"] == "active" or not link["dingtalk_task_id"]:
+            return link
         try:
-            payload = dws.create_todo_task(
-                title=_trim_inline_text(task.title, DINGTALK_TODO_TITLE_LIMIT),
-                executor_user_id=task.owner_user_id,
-                due=_deadline_to_iso(_committed_deadline(store, business_task_id)),
-                priority=_priority_to_dingtalk("P2"),
-                description=_dingtalk_todo_description(task),
-                tags=[],
-                participants=_dingtalk_todo_participants(task),
-                files=[],
-            )
-            dingtalk_task_id = _payload_task_id(payload)
-            if not dingtalk_task_id:
-                raise RuntimeError("DingTalk todo create response did not include task id")
+            readback = dws.get_todo_task(link["dingtalk_task_id"])
             store.update_business_task_dingtalk_link(
-                link_id, dingtalk_task_id=dingtalk_task_id, last_push_at=now
-            )
-            readback = dws.get_todo_task(dingtalk_task_id)
-            store.update_business_task_dingtalk_link(
-                link_id, dingtalk_task_id=dingtalk_task_id, status="active",
+                link["id"], status="active",
                 last_dingtalk_done=_payload_done(readback),
                 last_dingtalk_payload_json=json.dumps(readback, ensure_ascii=False),
-                last_push_at=now, last_pull_at=now, last_error="",
+                last_pull_at=now, last_error="",
             )
         except (DwsError, RuntimeError) as exc:
-            persisted = store.get_business_task_dingtalk_link(link_id)
-            status = "creating" if persisted["dingtalk_task_id"] else "failed"
-            store.update_business_task_dingtalk_link(link_id, status=status, last_error=str(exc))
-        return store.get_business_task_dingtalk_link(link_id)
-    if work_todo_id is None:
-        raise TypeError("business_task_id is required")
-    todo = store.get_work_todo(work_todo_id)
-    if todo is None:
-        return None
-
-    active_link = store.get_active_work_todo_dingtalk_link(work_todo_id)
-    if active_link is not None:
-        return active_link
-
-    existing_link = _find_existing_link_with_task_id(store, work_todo_id)
-    if existing_link is not None:
-        return _refresh_existing_dingtalk_link(store, dws, existing_link, now=now)
-
-    retryable_create_link = _find_retryable_failed_create_link(store, work_todo_id)
-    if retryable_create_link is not None and _todo_is_eligible(store, todo):
-        if retryable_create_link.retry_count >= MAX_DINGTALK_TODO_CREATE_RETRIES:
-            return retryable_create_link
-        store.update_work_todo_dingtalk_link(
-            retryable_create_link.id,
-            retry_count=retryable_create_link.retry_count + 1,
-        )
-        return _create_dingtalk_todo_for_link(
-            store,
-            dws,
-            todo=todo,
-            link_id=retryable_create_link.id,
-            now=now,
-        )
-
-    if not _todo_is_eligible(store, todo):
-        return None
-
-    project = store.get_work_project(todo.project_id)
-    dingtalk_title = _dingtalk_todo_title(todo, project)
-    link_id = store.create_work_todo_dingtalk_link(
-        work_todo_id=todo.id,
-        executor_user_id=todo.owner_user_id,
-        executor_name=todo.owner_name,
-        title_snapshot=dingtalk_title,
-        deadline_at_snapshot=todo.deadline_at,
-        priority_snapshot=todo.priority.value,
+            store.update_business_task_dingtalk_link(link["id"], last_error=str(exc))
+        return store.get_business_task_dingtalk_link(link["id"])
+    link_id, created = store.claim_business_task_dingtalk_link(
+        business_task_id=business_task_id,
+        executor_user_id=task.owner_user_id,
+        executor_name=task.owner_name,
+        title_snapshot=_trim_inline_text(task.title, DINGTALK_TODO_TITLE_LIMIT),
+        deadline_at_snapshot=_committed_deadline(store, business_task_id),
+        priority_snapshot="P2",
         status="creating",
     )
-    link = store.get_work_todo_dingtalk_link(link_id)
-    if link is None:
-        raise RuntimeError(f"created DingTalk todo link {link_id} was not found")
-    if link.status != "creating" or link.dingtalk_task_id.strip():
-        return link
-    return _create_dingtalk_todo_for_link(
-        store,
-        dws,
-        todo=todo,
-        link_id=link_id,
-        now=now,
-    )
+    if not created:
+        return store.get_business_task_dingtalk_link(link_id)
+    try:
+        payload = dws.create_todo_task(
+            title=_trim_inline_text(task.title, DINGTALK_TODO_TITLE_LIMIT),
+            executor_user_id=task.owner_user_id,
+            due=_deadline_to_iso(_committed_deadline(store, business_task_id)),
+            priority=_priority_to_dingtalk("P2"),
+            description=_dingtalk_todo_description(task),
+            tags=[],
+            participants=_dingtalk_todo_participants(task),
+            files=[],
+        )
+        dingtalk_task_id = _payload_task_id(payload)
+        if not dingtalk_task_id:
+            raise RuntimeError("DingTalk todo create response did not include task id")
+        store.update_business_task_dingtalk_link(
+            link_id, dingtalk_task_id=dingtalk_task_id, last_push_at=now
+        )
+        readback = dws.get_todo_task(dingtalk_task_id)
+        store.update_business_task_dingtalk_link(
+            link_id, dingtalk_task_id=dingtalk_task_id, status="active",
+            last_dingtalk_done=_payload_done(readback),
+            last_dingtalk_payload_json=json.dumps(readback, ensure_ascii=False),
+            last_push_at=now, last_pull_at=now, last_error="",
+        )
+    except (DwsError, RuntimeError) as exc:
+        persisted = store.get_business_task_dingtalk_link(link_id)
+        status = "creating" if persisted["dingtalk_task_id"] else "failed"
+        store.update_business_task_dingtalk_link(link_id, status=status, last_error=str(exc))
+    return store.get_business_task_dingtalk_link(link_id)
 
 
 #: How far back the completion scan looks each run, in list pages of 20.
@@ -681,137 +361,6 @@ def _completed_todo_items(payload: Any) -> list[dict[str, Any]]:
     return []
 
 
-def retry_failed_dingtalk_todo_links(
-    store: AutoReplyStore,
-    dws: Any,
-    *,
-    now: str,
-    limit: int = 20,
-) -> int:
-    recovered = 0
-    links = store.list_work_todo_dingtalk_links(statuses=("failed",), limit=limit)
-    for link in links:
-        if link.dingtalk_task_id.strip():
-            updated = _refresh_existing_dingtalk_link(store, dws, link, now=now)
-        else:
-            todo = store.get_work_todo(link.work_todo_id)
-            if todo is None:
-                continue
-            if _deadline_has_passed(todo.deadline_at, now):
-                store.update_work_todo_dingtalk_link(
-                    link.id,
-                    status="cancelled",
-                    last_error="dingtalk_todo_create_expired_before_external_delivery",
-                )
-                continue
-            if _has_completion_evidence(todo.completion_evidence_json):
-                # The internal work is already evidenced as complete. Retrying a
-                # historical create would produce an overdue duplicate task.
-                store.update_work_todo_dingtalk_link(
-                    link.id,
-                    status="cancelled",
-                    last_error="internal_todo_completed_before_dingtalk_delivery",
-                )
-                continue
-            if (
-                not _is_retryable_dingtalk_todo_error(link.last_error)
-                or not _todo_is_eligible(store, todo)
-            ):
-                continue
-            if link.retry_count >= MAX_DINGTALK_TODO_CREATE_RETRIES:
-                # A failed create has no external task id to reconcile.  Keep the
-                # internal todo open, but make the exhausted delivery terminal so
-                # it cannot remain an eternal failed queue item.
-                store.update_work_todo_dingtalk_link(
-                    link.id,
-                    status="cancelled",
-                    last_error="dingtalk_todo_create_retry_exhausted_no_external_task",
-                )
-                continue
-            store.update_work_todo_dingtalk_link(
-                link.id,
-                retry_count=link.retry_count + 1,
-            )
-            updated = _create_dingtalk_todo_for_link(
-                store,
-                dws,
-                todo=todo,
-                link_id=link.id,
-                now=now,
-            )
-        if updated is not None and updated.status != "failed":
-            recovered += 1
-    return recovered
-
-
-def sync_completed_todo_to_dingtalk(
-    store: AutoReplyStore,
-    dws: Any,
-    *,
-    work_todo_id: int,
-    evidence: dict[str, Any],
-    now: str,
-) -> str:
-    """Mark the mirrored DingTalk Todo done and report the outbox terminal status.
-
-    Returns ``completed`` once DingTalk accepted the change, ``skipped`` when the
-    Todo was never mirrored and there is nothing to mark done, and ``failed``
-    when a mirrored Todo could not be updated.
-    """
-    del evidence
-    link = store.get_active_work_todo_dingtalk_link(work_todo_id)
-    if link is None:
-        return "skipped"
-    if not link.dingtalk_task_id.strip():
-        store.update_work_todo_dingtalk_link(
-            link.id,
-            last_error="active DingTalk todo link has no task id",
-        )
-        return "failed"
-    try:
-        payload = dws.mark_todo_task_done(link.dingtalk_task_id, done=True)
-        store.update_work_todo_dingtalk_link(
-            link.id,
-            status="done",
-            last_dingtalk_done=True,
-            last_dingtalk_payload_json=json.dumps(payload, ensure_ascii=False),
-            last_push_at=now,
-            last_error="",
-        )
-        return "completed"
-    except (DwsError, RuntimeError) as exc:
-        store.update_work_todo_dingtalk_link(link.id, last_error=str(exc))
-        return "failed"
-
-
-def dispatch_task_todo_sync_outbox(
-    store: AutoReplyStore,
-    dws: Any,
-    *,
-    owner: str,
-    now: str,
-    limit: int = 100,
-) -> int:
-    """Deliver committed task Todo intents without holding the domain transaction."""
-    delivered = 0
-    for _ in range(limit):
-        item = store.claim_task_todo_sync_outbox(owner=owner, now=now)
-        if item is None:
-            break
-        item = store.get_task_todo_sync_outbox(int(item["id"]))
-        assert item is not None
-        status = dispatch_claimed_task_todo_sync_outbox(
-            store,
-            dws,
-            item=item,
-            owner=owner,
-            now=now,
-        )
-        if status == "completed":
-            delivered += 1
-    return delivered
-
-
 def sync_completed_task_to_dingtalk(
     store: AutoReplyStore,
     dws: Any,
@@ -916,138 +465,3 @@ def dispatch_claimed_business_task_todo_sync_outbox(
         # uncertain outcome. Never replay a possibly delivered effect.
         persist("unknown", error=str(exc))
         return "unknown"
-
-
-def dispatch_claimed_task_todo_sync_outbox(
-    store: AutoReplyStore,
-    dws: Any,
-    *,
-    item: Any,
-    owner: str,
-    now: str,
-    claim_guard: Any | None = None,
-) -> str:
-    """Deliver one already-claimed Todo intent without scanning its queue."""
-    if str(item["status"]) != "running" or str(item["lease_owner"]) != owner:
-        raise ValueError("task todo sync dispatch source is not claimed by owner")
-    if claim_guard is not None:
-        claim_guard.assert_current(
-            datetime.strptime(now, "%Y-%m-%d %H:%M:%S").replace(tzinfo=timezone.utc)
-        )
-
-    def persist_terminal(
-        status: str,
-        *,
-        receipt_json: str = "{}",
-        error: str = "",
-    ) -> None:
-        if claim_guard is not None and hasattr(
-            claim_guard.adapter, "finish_delivery"
-        ):
-            claim_guard.adapter.finish_delivery(
-                claim_guard.envelope,
-                owner=owner,
-                now=datetime.strptime(now, "%Y-%m-%d %H:%M:%S").replace(
-                    tzinfo=timezone.utc
-                ),
-                status=status,
-                receipt_json=receipt_json,
-                error=error,
-            )
-            claim_guard.accept_atomic_source_completion()
-            return
-        if status == "failed":
-            store.retry_task_todo_sync_outbox(
-                outbox_id=item["id"],
-                owner=owner,
-                error=error,
-                now=now,
-            )
-            return
-        store.finish_task_todo_sync_outbox(
-            outbox_id=item["id"],
-            owner=owner,
-            status=status,
-            receipt_json=receipt_json,
-            error=error,
-        )
-
-    try:
-        if item["operation"] == "create":
-            link = maybe_create_dingtalk_todo(
-                store, dws, work_todo_id=item["work_todo_id"], now=now
-            )
-            if link is None:
-                # The Todo does not qualify for a DingTalk mirror, so no provider
-                # call was made and there is no effect to retry.
-                persist_terminal(
-                    "skipped",
-                    error="dingtalk_todo_not_eligible_for_mirror",
-                )
-                return "skipped"
-            receipt = {
-                "link_id": link.id,
-                "dingtalk_task_id": link.dingtalk_task_id,
-            }
-            outcome = "failed" if link.status == "failed" else "completed"
-        else:
-            outcome = sync_completed_todo_to_dingtalk(
-                store,
-                dws,
-                work_todo_id=item["work_todo_id"],
-                evidence=json.loads(item["evidence_json"]),
-                now=now,
-            )
-            if outcome == "skipped":
-                persist_terminal(
-                    "skipped",
-                    error="dingtalk_todo_not_mirrored",
-                )
-                return "skipped"
-            receipt = {"delivered": outcome == "completed"}
-        if outcome == "failed":
-            persist_terminal(
-                "failed",
-                error="dingtalk_todo_effect_not_delivered",
-            )
-            return "failed"
-        persist_terminal(
-            "completed",
-            receipt_json=json.dumps(receipt, ensure_ascii=False),
-        )
-        return "completed"
-    except Exception as exc:
-        # The external outcome may already be visible but not durably receipted.
-        # Do not queue an automatic duplicate; reconciliation owns unknown effects.
-        try:
-            persist_terminal("unknown", error=str(exc))
-        except Exception:
-            pass
-        raise
-
-
-def _close_internal_todo_from_dingtalk(
-    store: AutoReplyStore,
-    link: Any,
-    task_id: str,
-    now: str,
-) -> bool:
-    todo = store.get_work_todo(link.work_todo_id)
-    if todo is None or todo.status == TodoStatus.DONE:
-        return False
-    evidence = {
-        "source": f"dingtalk_todo:{task_id}",
-        "reason": "DingTalk Todo marked done by owner",
-        "completed_at": now,
-        "checked_at": now,
-    }
-    return close_todo_with_completion_evidence(
-        store,
-        todo_id=todo.id,
-        evidence=evidence,
-        now=now,
-        source_type="dingtalk_todo",
-        source_ref=task_id,
-        merge_reason="dingtalk_todo_status_pull",
-        confidence=1.0,
-    )

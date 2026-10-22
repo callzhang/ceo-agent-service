@@ -1,3 +1,4 @@
+from tests.support.legacy_todo_facts import seed_legacy_work_project, seed_legacy_work_todo, seed_legacy_work_update
 import json
 import sqlite3
 from datetime import datetime, timedelta
@@ -5,25 +6,26 @@ from datetime import datetime, timedelta
 from app.run_storage import insert_run
 from app import native_trajectory
 from app.store import AutoReplyStore
-from app.task_storage import insert_task
-from app.task_project_repair import apply_manifest, build_repair_manifest
+from app.task_project_repair import build_repair_manifest
 
 
 def _set_project_times(db_path, project_id, *, created_at):
     with sqlite3.connect(db_path) as db:
-        db.execute(
-            "update work_projects set created_at=?, updated_at=?, last_activity_at=? where id=?",
-            (created_at, created_at, created_at, project_id),
-        )
+        from app.business_storage import update_business
+        db.execute("begin immediate")
+        update_business(db, "work_project", project_id, {
+            "created_at": created_at,
+            "updated_at": created_at,
+            "last_activity_at": created_at,
+        })
 
 
 def _record_agent_value(db_path, project_id, *, title, created_at):
+    store = AutoReplyStore(db_path)
+    parent = store.enqueue_work_summary_input("local_file", f"repair:{project_id}:{created_at}", "{}")
+    run_id = store.create_logical_run("task_agent_runs", parent)
     with sqlite3.connect(db_path) as db:
-        run_id = insert_run(db, "task_agent_runs", {
-            "summary_input_id": project_id,
-            "status": "completed",
-            "created_at": created_at,
-        }).lastrowid
+        db.execute("update runs set created_at=? where id=?", (created_at, run_id))
         insert_run(
             db, 'agent_runtime_attempts', {
                 'workload_kind': 'task',
@@ -41,7 +43,7 @@ def _record_agent_value(db_path, project_id, *, title, created_at):
         )
 
 
-def test_manifest_restores_latest_traceable_value_then_is_idempotent(tmp_path, monkeypatch):
+def test_manifest_plans_latest_traceable_value(tmp_path, monkeypatch):
     native = tmp_path / "native-task.jsonl"
     native.write_text("\n".join(json.dumps({"type": "response_item", "payload": {
         "type": "message", "role": "assistant", "content": [{"type": "output_text", "text": text}]
@@ -54,8 +56,8 @@ def test_manifest_restores_latest_traceable_value_then_is_idempotent(tmp_path, m
     historical_path = tmp_path / "historical.sqlite3"
     current = AutoReplyStore(current_path)
     historical = AutoReplyStore(historical_path)
-    project_id = current.create_work_project(title="", goal="")
-    historical_id = historical.create_work_project(
+    project_id = seed_legacy_work_project(current, title="", goal="")
+    historical_id = seed_legacy_work_project(historical,
         title="历史快照标题",
         goal="历史快照目标",
     )
@@ -75,24 +77,15 @@ def test_manifest_restores_latest_traceable_value_then_is_idempotent(tmp_path, m
     assert restorations[(project_id, "goal")].replacement == "历史快照目标"
     assert restorations[(project_id, "goal")].evidence_kind == "historical_snapshot"
 
-    first = apply_manifest(current_path, manifest)
-    second = apply_manifest(current_path, manifest)
-
-    restored = current.get_work_project(project_id)
-    assert restored is not None
-    assert restored.title == "最近 Agent 标题"
-    assert restored.goal == "历史快照目标"
-    assert first.changed_fields == 2
-    assert first.audit_updates == 1
-    assert second.changed_fields == 0
-    assert second.audit_updates == 0
+    assert current.get_work_project(project_id).title == ""
+    assert current.get_work_project(project_id).goal == ""
 
 
 def test_manifest_archives_only_old_local_file_only_project(tmp_path):
     db_path = tmp_path / "current.sqlite3"
     store = AutoReplyStore(db_path)
-    eligible_id = store.create_work_project(title="历史材料项目")
-    excluded_id = store.create_work_project(title="仍有 TODO 的历史材料项目")
+    eligible_id = seed_legacy_work_project(store, title="历史材料项目")
+    excluded_id = seed_legacy_work_project(store, title="仍有 TODO 的历史材料项目")
     old_source_time = datetime(2026, 1, 1, 9, 0, 0)
     project_time = old_source_time + timedelta(days=60)
     for project_id in (eligible_id, excluded_id):
@@ -102,45 +95,41 @@ def test_manifest_archives_only_old_local_file_only_project(tmp_path):
             created_at=project_time.strftime("%Y-%m-%d %H:%M:%S"),
         )
         source_ref = f"/tmp/history-{project_id}.md#sha256=test"
-        store.create_work_update(
+        seed_legacy_work_update(store,
             project_id=project_id,
             source_type="local_file",
             source_ref=source_ref,
             summary="历史材料",
         )
-        with sqlite3.connect(db_path) as db:
-            insert_task(db, "work_summary_inputs", {
-                "source_type": "local_file",
-                "source_ref": source_ref,
-                "payload_json": json.dumps({
-                    "source": {
-                        "type": "local_file",
-                        "ref": source_ref,
-                        "created_at": old_source_time.isoformat(),
-                    },
-                }),
-                "status": "done",
-            })
-    store.create_work_todo(project_id=excluded_id, title="真实 TODO")
+        store.enqueue_work_summary_input(
+            "local_file",
+            source_ref,
+            json.dumps({
+                "source": {
+                    "type": "local_file",
+                    "ref": source_ref,
+                    "created_at": old_source_time.isoformat(),
+                },
+            }),
+        )
+    seed_legacy_work_todo(store, project_id=excluded_id, title="真实 TODO")
 
     manifest = build_repair_manifest(db_path)
 
     assert [item.project_id for item in manifest.archives] == [eligible_id]
     assert manifest.archives[0].reason == "historical_local_file_only"
 
-    result = apply_manifest(db_path, manifest)
-    assert result.archived_projects == 1
-    assert store.get_work_project(eligible_id).status.value == "archived"
+    assert store.get_work_project(eligible_id).status.value == "active"
     assert store.get_work_project(excluded_id).status.value == "active"
 
 
 def test_repair_uses_source_created_at_after_input_compaction(tmp_path):
     db_path = tmp_path / "repair.sqlite3"
     store = AutoReplyStore(db_path)
-    project_id = store.create_work_project(title="历史材料项目")
+    project_id = seed_legacy_work_project(store, title="历史材料项目")
     _set_project_times(db_path, project_id, created_at="2026-03-01 09:00:00")
     source_ref = "/tmp/historical.md#sha256=v1"
-    store.create_work_update(project_id=project_id, source_type="local_file",
+    seed_legacy_work_update(store, project_id=project_id, source_type="local_file",
                              source_ref=source_ref, summary="历史材料")
     input_id = store.enqueue_work_summary_input("local_file", source_ref, json.dumps({
         "source": {"type": "local_file", "ref": source_ref,

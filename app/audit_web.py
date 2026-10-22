@@ -1,6 +1,11 @@
+from app.current_action_schema import current_reply_action_projection
+from app.state_definitions import state_projection
 from app.run_storage import SCHEDULED_RUN_SQL
 
-from app.task_storage import MEETING_JOB_SQL, OKR_REQUEST_SQL, REPLY_TASK_SQL, WORK_SUMMARY_INPUT_SQL
+from app.task20_definitions import TASK20_FIELDS, task20_column, task20_projection
+from app.business_legacy_fields import CURRENT_SYNC_PROJECTIONS as SYNC_ACTION_PROJECTIONS
+from app.task12_storage import task12_projection
+
 from app.store import REPLY_TASK_CURRENT_SQL
 from app.work_summary_payload import decode_work_summary_payload
 import json
@@ -97,6 +102,7 @@ from app.embedding import EmbeddingClient
 from app.history import safe_observability_error
 from app.history_actions import (
     HistoryAttention,
+    can_reopen_skipped_oa_review,
     follow_up_history_attention,
     meeting_history_attention,
     reply_history_attention,
@@ -123,6 +129,7 @@ from app.developer_prompt import (
 
 from app.prompt import work_profile_instruction, write_work_profile
 from app.dingtalk_models import DingTalkMessage
+from app.business_identity import oa_identifiers_from_url
 from app.wechat.models import WechatMessage
 from app.dws_client import DingTalkConversation, DwsClient
 from app.feedback_spike import (
@@ -136,6 +143,9 @@ from app.feedback_events import (
 )
 from app.feedback_processing import project_feedback_status
 from app.email_store import DIRECT_ACTION_MAX_ATTEMPTS, EmailStore
+from app.email_canonical_storage import email_classification_projection
+from app.current_publication_sources import current_email_actions_available
+from app.repository_updater import ExistingSchemaUpgradeStateStore
 from app.repository_upgrade import GitRepository, RepositoryUpgradeService
 from app.repository_upgrade_web import (
     launch_repository_updater,
@@ -158,6 +168,7 @@ from app.store import (
     ReplyTask,
     SentReply,
 )
+from app.action_error_definitions import error_projection
 from app.setup_wizard import (
     build_wizard_status,
     check_setup_step,
@@ -166,7 +177,6 @@ from app.setup_wizard import (
     run_setup_action,
 )
 from app.setup_wizard_models import SetupStepStatus, SetupWizardEvent
-from app.task_models import ProjectPriority, RiskLevel
 from app.task_progress import (
     task_progress_summary,
     task_state as resolved_task_state,
@@ -180,17 +190,27 @@ from app.task_retrieval import (
     retrieve_project_task_details,
 )
 from app.user_prompt_blocks import USER_PROMPT_BLOCKS, UserPromptBlock
-from app.run_storage import AGENT_RUN_SQL
+from app.logical_run_storage import AGENT_RUN_SQL
 
 from app.action_storage import (
     REVIEW_CANDIDATE_SQL,
     CANDIDATE_REVIEW_SQL,
     CANDIDATE_SELECTION_SQL,
+    CANDIDATE_EXECUTION_SQL,
+    CANDIDATE_ACTION_ATTEMPT_SQL,
+    EXTERNAL_ACTION_RESULT_SQL,
     SENT_REPLY_SQL,
     REPLY_ATTEMPT_COMMON_SQL,
-    reply_action_projection,
-    validated_reply_variant,
+    task_delivery_projection,
 )
+
+MEETING_JOB_SQL = task20_projection('meeting_alignment_jobs')
+OKR_REQUEST_SQL = task20_projection('okr_review_requests')
+REPLY_TASK_SQL = task20_projection('reply_tasks')
+WORK_SUMMARY_INPUT_SQL = task20_projection('work_summary_inputs')
+WECHAT_DELIVERY_SQL = task_delivery_projection('wechat_deliveries')
+MEETING_MEMORY_WRITE_SQL = task_delivery_projection('meeting_memory_write_events')
+TASK_MEMORY_WRITE_SQL = task_delivery_projection('task_memory_write_events')
 
 DISPLAY_TIME_FORMAT = "%Y-%m-%d %H:%M:%S"
 LOCAL_DISPLAY_TIME_ZONE = ZoneInfo("Asia/Shanghai")
@@ -788,6 +808,7 @@ TABULATOR_CSS_URL = "https://cdn.jsdelivr.net/npm/tabulator-tables@6.4.0/dist/cs
 TABULATOR_JS_URL = "https://cdn.jsdelivr.net/npm/tabulator-tables@6.4.0/dist/js/tabulator.min.js"
 DEFAULT_ERROR_LIST_LIMIT = 20
 ERROR_LOG_ACTIVE_WINDOW = timedelta(hours=4)
+ATTENTION_STALLED_PENDING_SECONDS = 60 * 60
 RECOVERED_REPLY_ATTEMPT_STATUSES = frozenset(
     {"calendar", "commented", "completed", "document", "reacted", "sent", "skipped"}
 )
@@ -2592,14 +2613,13 @@ def _queue_status_snapshots(store: AutoReplyStore) -> list[dict[str, object]]:
             "updated_at",
             "error",
         ),
-        ("DingTalk Todos", "work_todo_dingtalk_links", "status", "updated_at", "last_error"),
         ("WeChat deliveries", "wechat_deliveries", "status", "updated_at", "error"),
     ]
     snapshots: list[dict[str, object]] = []
     with store._connect() as db:
         for name, table, status_column, updated_column, error_column in specs:
             physical_table = ("tasks" if table in ("reply_tasks", "work_summary_inputs", "meeting_alignment_jobs", "okr_review_requests")
-                              else "actions" if table in ("reply_attempts", "memory_write_events") else table)
+                              else "actions" if table in ("reply_attempts", "memory_write_events", "follow_up_drafts", "meeting_memory_write_events", "wechat_deliveries") else table)
             if not _sqlite_table_exists(db, physical_table):
                 continue
             if table == "reply_tasks":
@@ -2624,7 +2644,7 @@ def _queue_status_snapshots(store: AutoReplyStore) -> list[dict[str, object]]:
                 snapshots.append(_read_status_queue(_wechat_delivery_queue_snapshot, db))
                 continue
             counts = _queue_status_counts(db, table, status_column)
-            retryable = _queue_retryable_count(db, table, status_column, error_column)
+            retryable = 0
             raw_failed = _queue_count_for(counts, {"failed", "error"})
             snapshots.append(
                 {
@@ -2639,9 +2659,7 @@ def _queue_status_snapshots(store: AutoReplyStore) -> list[dict[str, object]]:
                     "latest_error": _queue_latest_error(db, table, status_column, error_column),
                 }
             )
-        if _sqlite_table_exists(db, "email_actions") and _sqlite_table_exists(
-            db, "email_classifications"
-        ):
+        if current_email_actions_available(db):
             snapshots.append(_read_status_queue(_email_action_queue_snapshot, db))
         if _sqlite_table_exists(db, "tasks"):
             snapshots.append(_read_status_queue(_email_unsubscribe_task_queue_snapshot, db))
@@ -2651,15 +2669,10 @@ def _queue_status_snapshots(store: AutoReplyStore) -> list[dict[str, object]]:
 
 def _work_summary_input_queue_snapshot(db: sqlite3.Connection) -> dict[str, object]:
     """Count only typed work-summary rows without reading their payloads."""
-    rows = db.execute("select lower(coalesce(status,'')) as status, count(*) as count "
-        "from tasks where record_type='work_summary_inputs' "
-        "group by lower(coalesce(status,''))").fetchall()
+    rows = db.execute(f"""select lower(coalesce({task20_column('work_summary_inputs', 'status')},'')) as status, count(*) as count from tasks where record_type='work_summary_inputs' group by lower(coalesce({task20_column('work_summary_inputs', 'status')},''))""").fetchall()
     counts = {str(row["status"] or "-"): int(row["count"] or 0) for row in rows}
-    latest = db.execute("select updated_at from tasks where record_type='work_summary_inputs' "
-        "order by updated_at desc limit 1").fetchone()
-    failed = db.execute("select error from tasks where record_type='work_summary_inputs' "
-        "and lower(status)='failed' and trim(coalesce(error,''))<>'' "
-        "order by updated_at desc, cast(legacy_key as integer) desc limit 1").fetchone()
+    latest = db.execute(f"""select {task20_column('work_summary_inputs', 'updated_at')} as updated_at from tasks where record_type='work_summary_inputs' order by {task20_column('work_summary_inputs', 'updated_at')} desc limit 1""").fetchone()
+    failed = db.execute(f"""select {task20_column('work_summary_inputs', 'error')} as error from tasks where record_type='work_summary_inputs' and lower({task20_column('work_summary_inputs', 'status')})='failed' and trim(coalesce({task20_column('work_summary_inputs', 'error')},''))<>'' order by {task20_column('work_summary_inputs', 'updated_at')} desc, cast(legacy_key as integer) desc limit 1""").fetchone()
     return {
         "name": "Work items",
         "table": "work_summary_inputs",
@@ -2674,15 +2687,10 @@ def _work_summary_input_queue_snapshot(db: sqlite3.Connection) -> dict[str, obje
 
 
 def _meeting_job_queue_snapshot(db: sqlite3.Connection) -> dict[str, object]:
-    rows = db.execute("select lower(coalesce(status,'')) as status, count(*) as count "
-        "from tasks where record_type='meeting_alignment_jobs' "
-        "group by lower(coalesce(status,''))").fetchall()
+    rows = db.execute(f"""select lower(coalesce({task20_column('meeting_alignment_jobs', 'status')},'')) as status, count(*) as count from tasks where record_type='meeting_alignment_jobs' group by lower(coalesce({task20_column('meeting_alignment_jobs', 'status')},''))""").fetchall()
     counts = {str(row["status"] or "-"): int(row["count"] or 0) for row in rows}
-    latest = db.execute("select updated_at from tasks where record_type='meeting_alignment_jobs' "
-        "order by updated_at desc limit 1").fetchone()
-    failed = db.execute("select error from tasks where record_type='meeting_alignment_jobs' "
-        "and lower(status)='failed' and trim(coalesce(error,''))<>'' "
-        "order by updated_at desc, cast(legacy_key as integer) desc limit 1").fetchone()
+    latest = db.execute(f"""select {task20_column('meeting_alignment_jobs', 'updated_at')} as updated_at from tasks where record_type='meeting_alignment_jobs' order by {task20_column('meeting_alignment_jobs', 'updated_at')} desc limit 1""").fetchone()
+    failed = db.execute(f"""select {task20_column('meeting_alignment_jobs', 'error')} as error from tasks where record_type='meeting_alignment_jobs' and lower({task20_column('meeting_alignment_jobs', 'status')})='failed' and trim(coalesce({task20_column('meeting_alignment_jobs', 'error')},''))<>'' order by {task20_column('meeting_alignment_jobs', 'updated_at')} desc, cast(legacy_key as integer) desc limit 1""").fetchone()
     return {
         "name": "Meeting jobs", "table": "meeting_alignment_jobs", "counts": counts,
         "pending": _queue_count_for(counts, {"pending", "draft", "approved", "waiting", "ready", "creating"}),
@@ -2694,15 +2702,10 @@ def _meeting_job_queue_snapshot(db: sqlite3.Connection) -> dict[str, object]:
 
 
 def _okr_review_queue_snapshot(db: sqlite3.Connection) -> dict[str, object]:
-    rows = db.execute("select lower(coalesce(status,'')) as status, count(*) as count "
-        "from tasks where record_type='okr_review_requests' "
-        "group by lower(coalesce(status,''))").fetchall()
+    rows = db.execute(f"""select lower(coalesce({task20_column('okr_review_requests', 'status')},'')) as status, count(*) as count from tasks where record_type='okr_review_requests' group by lower(coalesce({task20_column('okr_review_requests', 'status')},''))""").fetchall()
     counts = {str(row["status"] or "-"): int(row["count"] or 0) for row in rows}
-    latest = db.execute("select updated_at from tasks where record_type='okr_review_requests' "
-        "order by updated_at desc limit 1").fetchone()
-    failed = db.execute("select error from tasks where record_type='okr_review_requests' "
-        "and lower(status)='failed' and trim(coalesce(error,''))<>'' "
-        "order by updated_at desc, cast(legacy_key as integer) desc limit 1").fetchone()
+    latest = db.execute(f"""select {task20_column('okr_review_requests', 'updated_at')} as updated_at from tasks where record_type='okr_review_requests' order by {task20_column('okr_review_requests', 'updated_at')} desc limit 1""").fetchone()
+    failed = db.execute(f"""select {task20_column('okr_review_requests', 'error')} as error from tasks where record_type='okr_review_requests' and lower({task20_column('okr_review_requests', 'status')})='failed' and trim(coalesce({task20_column('okr_review_requests', 'error')},''))<>'' order by {task20_column('okr_review_requests', 'updated_at')} desc, cast(legacy_key as integer) desc limit 1""").fetchone()
     return {
         "name": "OKR reviews", "table": "okr_review_requests", "counts": counts,
         "pending": _queue_count_for(counts, {"pending", "draft", "approved", "waiting", "ready", "creating"}),
@@ -2723,7 +2726,6 @@ def _dispatcher_queue_snapshots(store: AutoReplyStore) -> list[dict[str, object]
         ScheduledExecutionQueueAdapter,
         ScheduledTaskQueueAdapter,
         TaskMemoryWriteQueueAdapter,
-        TaskTodoSyncOutboxQueueAdapter,
         WorkSummaryQueueAdapter,
     )
 
@@ -2735,7 +2737,6 @@ def _dispatcher_queue_snapshots(store: AutoReplyStore) -> list[dict[str, object]
         MeetingQueueAdapter(store),
         WorkSummaryQueueAdapter(store),
         OkrReviewQueueAdapter(store),
-        TaskTodoSyncOutboxQueueAdapter(store),
         BusinessTaskTodoSyncOutboxQueueAdapter(store),
         TaskMemoryWriteQueueAdapter(store),
     )
@@ -2759,12 +2760,12 @@ def _dispatcher_queue_snapshots(store: AutoReplyStore) -> list[dict[str, object]
 def _reply_task_queue_snapshot(db: sqlite3.Connection) -> dict[str, object]:
     """Summarize only the current task projection for each business object."""
 
-    current_projection = """
+    current_projection = f"""
         from tasks as tasks
-        left join business_object_tasks as current_business_object
-          on current_business_object.business_object_key=tasks.business_object_key
+        left join ({task12_projection('business_object_tasks')}) as current_business_object
+          on current_business_object.business_object_key=tasks.{task20_column('reply_tasks', 'business_object_key')}
         where tasks.record_type='reply_tasks' and (
-            trim(tasks.business_object_key)=''
+            trim(tasks.{task20_column('reply_tasks', 'business_object_key')})=''
             or current_business_object.reply_task_id is null
             or current_business_object.reply_task_id=tasks.id
         )
@@ -2772,8 +2773,8 @@ def _reply_task_queue_snapshot(db: sqlite3.Connection) -> dict[str, object]:
     rows = db.execute(
         f"""
         with current as materialized (
-            select tasks.id, lower(coalesce(tasks.status, '')) as status,
-                   tasks.updated_at, tasks.error
+            select tasks.id, lower(coalesce(tasks.{task20_column('reply_tasks', 'status')}, '')) as status,
+                   tasks.{task20_column('reply_tasks', 'updated_at')} as updated_at, tasks.{task20_column('reply_tasks', 'error')} as error
             {current_projection}
         ), counts as (
             select status, count(*) as count from current group by status
@@ -2812,9 +2813,11 @@ def _reply_task_queue_snapshot(db: sqlite3.Connection) -> dict[str, object]:
 def _email_action_queue_snapshot(db: sqlite3.Connection) -> dict[str, object]:
     """Project only actions the worker can still execute for the current plan."""
 
-    current_plan = """
-        from email_actions as a
-        cross join email_classifications as c on c.id=a.classification_id
+    from app.email_store import DIRECT_EMAIL_ACTION_SQL
+
+    current_plan = f"""
+        from ({DIRECT_EMAIL_ACTION_SQL}) as a
+         cross join ({email_classification_projection()}) as c on c.id=a.classification_id
         where a.action_plan_id=c.current_action_plan_id
           and c.status='processed'
     """
@@ -2919,7 +2922,7 @@ def _email_unsubscribe_task_queue_snapshot(
 def _email_worker_health_snapshot(store: AutoReplyStore) -> dict[str, object]:
     rows = []
     with store._connect() as db:
-        if not _sqlite_table_exists(db, "service_state"):
+        if not _sqlite_table_exists(db, "state"):
             return {
                 "status": "unavailable",
                 "updated_at": "",
@@ -2929,12 +2932,7 @@ def _email_worker_health_snapshot(store: AutoReplyStore) -> dict[str, object]:
                 "checks": [],
             }
         rows = db.execute(
-            """
-            select key, value, updated_at
-            from service_state
-            where key like 'email_worker_health:%'
-            order by key
-            """
+            '\n            select key, value, updated_at\n            from (' + state_projection('service_state') + ")\n            where key like 'email_worker_health:%'\n            order by key\n            "
         ).fetchall()
     parsed_rows: list[tuple[str, dict[str, object], str]] = []
     safe_integer_fields = {
@@ -3099,14 +3097,14 @@ def _reply_attempt_queue_snapshot(db: sqlite3.Connection) -> dict[str, object]:
                      and trim(coalesce(a.resolved_at, ''))<>'' then 'skipped'
                     when a.channel='wechat' and lower(a.send_status)='failed'
                      and exists (
-                        select 1 from wechat_deliveries d
+                        select 1 from ({WECHAT_DELIVERY_SQL}) d
                         join ({REPLY_TASK_SQL}) t on t.id=d.reply_task_id
                         where t.channel=a.channel and t.conversation_id=a.conversation_id
                           and d.conversation_id=a.conversation_id
                           and t.trigger_message_id=a.trigger_message_id
                           and d.execution_generation=t.execution_generation
                           and d.status in ('failed', 'send_unknown')
-                          and d.id=(select max(current_delivery.id) from wechat_deliveries current_delivery
+                          and d.id=(select max(current_delivery.id) from ({WECHAT_DELIVERY_SQL}) current_delivery
                                     where current_delivery.reply_task_id=t.id
                                       and current_delivery.execution_generation=t.execution_generation)
                      ) then 'failed'
@@ -3144,7 +3142,7 @@ def _reply_attempt_queue_snapshot(db: sqlite3.Connection) -> dict[str, object]:
                         )
                         or exists (
                             select 1
-                            from business_object_tasks current_business_object
+                            from ({task12_projection('business_object_tasks')}) current_business_object
                             join ({REPLY_TASK_SQL}) current_task
                               on current_task.id=current_business_object.reply_task_id
                             where current_business_object.business_object_key=(
@@ -3181,7 +3179,7 @@ def _reply_attempt_queue_snapshot(db: sqlite3.Connection) -> dict[str, object]:
               and not exists (
                   select 1
                   from ({REPLY_TASK_SQL}) as historical_task
-                  join business_object_tasks as current_business_object
+                  join ({task12_projection('business_object_tasks')}) as current_business_object
                     on current_business_object.business_object_key=
                        historical_task.business_object_key
                   where historical_task.channel=a.channel
@@ -3242,7 +3240,7 @@ def _reply_attempt_queue_snapshot(db: sqlite3.Connection) -> dict[str, object]:
 
 
 def _memory_write_queue_snapshot(db: sqlite3.Connection, name: str) -> dict[str, object]:
-    source = reply_action_projection("memory_write_events", validated_reply_variant(db))
+    source = current_reply_action_projection("memory_write_events")
     rows = db.execute(
         f"select lower(coalesce(status,'')) as status,count(*) as count "
         f"from ({source}) group by lower(coalesce(status,'')) order by status"
@@ -3289,7 +3287,7 @@ def _wechat_delivery_queue_snapshot(db: sqlite3.Connection) -> dict[str, object]
                          || wechat_deliveries.error
                 else ''
             end) as latest_error
-        from wechat_deliveries
+        from ({WECHAT_DELIVERY_SQL}) as wechat_deliveries
         join ({REPLY_TASK_SQL}) as reply_tasks on reply_tasks.id=wechat_deliveries.reply_task_id
         where wechat_deliveries.execution_generation=
               reply_tasks.execution_generation
@@ -3309,7 +3307,7 @@ def _wechat_delivery_queue_snapshot(db: sqlite3.Connection) -> dict[str, object]
     _, _, latest_error = latest_error.partition(chr(31))
     latest_row = db.execute(
         f"""select max(wechat_deliveries.updated_at) as value
-           from wechat_deliveries
+           from ({WECHAT_DELIVERY_SQL}) as wechat_deliveries
            join ({REPLY_TASK_SQL}) as reply_tasks on reply_tasks.id=wechat_deliveries.reply_task_id
            where wechat_deliveries.execution_generation=
                  reply_tasks.execution_generation"""
@@ -3373,7 +3371,63 @@ def _reply_task_attention_diagnostics(raw: str, task_error: str) -> dict[str, st
     return {"error_code": diagnostic, "error": description}
 
 
-def _queue_attention_rows(store: AutoReplyStore, *, limit: int | None = None) -> list[dict[str, str]]:
+def _verified_oa_return_after_attempt(
+    db: sqlite3.Connection, *, process_instance_id: str, attempt_updated_at: str
+) -> bool:
+    """Whether a later, current approved execution verified this OA process return."""
+    if not process_instance_id.strip() or not attempt_updated_at.strip():
+        return False
+    row = db.execute(
+        f"""
+        select 1
+        from ({REPLY_ATTEMPT_COMMON_SQL}) attempts
+        join ({AGENT_RUN_SQL}) run on run.id=attempts.agent_run_id
+        join ({REPLY_TASK_CURRENT_SQL}) task on task.id=run.reply_task_id
+         and task.execution_generation=run.execution_generation
+        join ({REVIEW_CANDIDATE_SQL}) candidate
+          on candidate.task_id=task.id
+         and candidate.execution_generation=task.execution_generation
+         and candidate.invalidated_at=''
+        join ({CANDIDATE_REVIEW_SQL}) review
+          on review.candidate_id=candidate.id
+         and review.audit_run_id=run.id
+         and review.decision='approve'
+         and review.candidate_digest=candidate.candidate_digest
+        join ({CANDIDATE_EXECUTION_SQL}) execution
+          on execution.candidate_id=candidate.id
+         and execution.review_id=review.id
+         and execution.status='done'
+        join ({CANDIDATE_ACTION_ATTEMPT_SQL}) action_attempt
+          on action_attempt.execution_id=execution.id
+         and action_attempt.status='verified'
+        join ({EXTERNAL_ACTION_RESULT_SQL}) receipt
+          on receipt.external_action_key=action_attempt.external_action_key
+         and receipt.operation='revert_task'
+        where attempts.oa_process_instance_id=?
+          and datetime(attempts.updated_at)>datetime(?)
+          and candidate.id=(
+              select max(latest.id)
+              from ({REVIEW_CANDIDATE_SQL}) latest
+              where latest.task_id=candidate.task_id
+                and latest.execution_generation=candidate.execution_generation
+          )
+          and receipt.business_object_key=task.business_object_key
+          and json_valid(receipt.provider_result_json)
+          and json_extract(receipt.provider_result_json,'$.process_instance_id')=?
+          and json_extract(receipt.provider_result_json,'$.task_id')<>''
+          and json_extract(receipt.provider_result_json,'$.return_record.type')='REDIRECT_PROCESS'
+          and json_extract(receipt.provider_result_json,'$.return_record.user_id')<>''
+          and json_extract(receipt.provider_result_json,'$.provider_response.dingOpenErrcode')=0
+          and json_extract(receipt.provider_result_json,'$.provider_response.result')=1
+          and json_extract(receipt.provider_result_json,'$.provider_response.success')=1
+        limit 1
+        """,
+        (process_instance_id, attempt_updated_at, process_instance_id),
+    ).fetchone()
+    return row is not None
+
+
+def _queue_attention_rows(store: AutoReplyStore, *, limit: int | None = None) -> list[dict[str, object]]:
     specs = [
         (
             "Work item",
@@ -3439,8 +3493,8 @@ def _queue_attention_rows(store: AutoReplyStore, *, limit: int | None = None) ->
     pending_oa_rows: list[dict[str, str]] = []
     with store._connect() as db:
         state = db.execute(
-            "select cursor_json,last_success_at,last_error from daily_scan_state where scanner_name='oa_pending'"
-        ).fetchone() if _sqlite_table_exists(db, "daily_scan_state") else None
+            'select cursor_json,last_success_at,last_error from (' + state_projection('daily_scan_state') + ") where scanner_name='oa_pending'"
+        ).fetchone() if _sqlite_table_exists(db, "state") else None
         pending_keys = json.loads(state["cursor_json"]).get(
             "pending_business_object_keys", []
         ) if state is not None else []
@@ -3450,23 +3504,23 @@ def _queue_attention_rows(store: AutoReplyStore, *, limit: int | None = None) ->
                 f"from ({REPLY_TASK_CURRENT_SQL}) where business_object_key=? "
                 "order by id desc limit 1", (key,),
             ).fetchone()
-            if task is not None:
-                pending_oa_rows.append({
-                    "category": "OA approval", "id": str(task["id"]),
-                    "status": "pending", "context": str(task["conversation_title"]),
-                    "summary": str(task["trigger_text"]),
-                    "updated_at": str(task["updated_at"]),
-                    "error": str(task["error"] or
-                        "DingTalk still reports this OA process as pending; the latest scan has not observed a terminal state."),
-                })
-            else:
-                pending_oa_rows.append({
-                    "category": "OA approval", "id": key, "status": "pending",
-                    "context": "OA approval", "summary": key,
-                    "updated_at": str(state["last_success_at"]),
-                    "error": str(state["last_error"] or
-                        "DingTalk still reports this OA process as pending; the latest scan has not observed a terminal state."),
-                })
+            if task is None:
+                continue
+            stalled = db.execute(
+                "select julianday(?) <= julianday('now') - (? / 86400.0)",
+                (task["updated_at"], ATTENTION_STALLED_PENDING_SECONDS),
+            ).fetchone()[0]
+            if not stalled:
+                continue
+            pending_oa_rows.append({
+                "category": "OA approval", "id": str(task["id"]),
+                "status": "pending", "context": str(task["conversation_title"]),
+                "summary": str(task["trigger_text"]),
+                "updated_at": str(task["updated_at"]),
+                "error": str(task["error"] or
+                    "DingTalk still reports this OA process as pending; "
+                    "the tracked task has had no update for over one hour."),
+            })
         db.create_function(
             "decode_work_summary_payload",
             1,
@@ -3486,8 +3540,8 @@ def _queue_attention_rows(store: AutoReplyStore, *, limit: int | None = None) ->
                            reply_tasks.trigger_message_id
                     from ({REPLY_TASK_CURRENT_SQL}) as reply_tasks
                     where reply_tasks.id in (
-                        select cast(legacy_key as integer) from tasks indexed by idx_reply_tasks_status
-                        where record_type='reply_tasks' and lower(status)='failed'
+                        select cast(legacy_key as integer) from tasks indexed by idx_task20_published_1
+                        where record_type='reply_tasks' and lower({task20_column('reply_tasks', 'status')})='failed'
                     )
                       and reply_tasks.channel='email'
                       and json_valid(reply_tasks.trigger_message_json)
@@ -3524,12 +3578,12 @@ def _queue_attention_rows(store: AutoReplyStore, *, limit: int | None = None) ->
                           and current_run.execution_generation=reply_tasks.execution_generation
                         order by current_run.id desc limit 1) as current_run_error
                 from ({REPLY_TASK_CURRENT_SQL}) as reply_tasks
-                left join business_object_tasks current_business_object
+                left join ({task12_projection('business_object_tasks')}) current_business_object
                   on current_business_object.business_object_key=reply_tasks.business_object_key
                 -- Select IDs through the compact status index before reading
                 -- message payloads; lower(status) alone scans the whole table.
                 where reply_tasks.id in (
-                    select cast(legacy_key as integer) from tasks indexed by idx_reply_tasks_status where record_type='reply_tasks' and lower(status) = 'failed'
+                    select cast(legacy_key as integer) from tasks indexed by idx_task20_published_1 where record_type='reply_tasks' and lower({task20_column('reply_tasks', 'status')}) = 'failed'
                 )
                   and (
                     current_business_object.reply_task_id is null
@@ -3596,11 +3650,20 @@ def _queue_attention_rows(store: AutoReplyStore, *, limit: int | None = None) ->
                     }
                 )
         for category, table, status_column, context_column, summary_column, updated_column, error_column, statuses in specs:
-            if not _sqlite_table_exists(db, "tasks" if table in ("work_summary_inputs", "meeting_alignment_jobs", "okr_review_requests") else table):
+            physical_table = (
+                "tasks" if table in ("work_summary_inputs", "meeting_alignment_jobs", "okr_review_requests")
+                else "actions" if table in ("follow_up_drafts", "wechat_deliveries")
+                else table
+            )
+            if not _sqlite_table_exists(db, physical_table):
                 continue
             source_table = (f"({WORK_SUMMARY_INPUT_SQL})" if table == "work_summary_inputs"
                             else f"({MEETING_JOB_SQL})" if table == "meeting_alignment_jobs"
-                            else f"({OKR_REQUEST_SQL})" if table == "okr_review_requests" else table)
+                            else f"({OKR_REQUEST_SQL})" if table == "okr_review_requests"
+                            else f"({SYNC_ACTION_PROJECTIONS[table]})" if table in SYNC_ACTION_PROJECTIONS
+                            else f"({WECHAT_DELIVERY_SQL})" if table == "wechat_deliveries"
+                            else table)
+            source_alias = " as wechat_deliveries" if table == "wechat_deliveries" else ""
             status_placeholders = ",".join("?" for _ in statuses)
             current_generation_filter = (
                 f"and exists (select 1 from ({REPLY_TASK_SQL}) as reply_tasks "
@@ -3618,7 +3681,7 @@ def _queue_attention_rows(store: AutoReplyStore, *, limit: int | None = None) ->
             candidate_sql = (
                 f"select cast(legacy_key as integer) from tasks "
                 f"where record_type='work_summary_inputs' "
-                f"and lower({status_column}) in ({status_placeholders})"
+                f"and lower({task20_column('work_summary_inputs', status_column)}) in ({status_placeholders})"
                 if table == "work_summary_inputs"
                 else f"select id from {source_table} "
                      f"where lower({status_column}) in ({status_placeholders})"
@@ -3627,7 +3690,7 @@ def _queue_attention_rows(store: AutoReplyStore, *, limit: int | None = None) ->
                 select id, {status_column} as status, {context_column} as context,
                        {summary_column} as summary, {updated_column} as updated_at,
                        {error_column} as error
-                from {source_table}
+                from {source_table}{source_alias}
                 where id in (
                     {candidate_sql}
                 )
@@ -3661,7 +3724,7 @@ def _queue_attention_rows(store: AutoReplyStore, *, limit: int | None = None) ->
                     }
                 )
         if _sqlite_table_exists(db, "email_agent_classification_tasks"):
-            email_task_sql = """
+            email_task_sql = f"""
                 select task_id as id, status,
                        coalesce(
                            nullif(json_extract(input_json, '$.message.sender.email'), ''),
@@ -3673,10 +3736,11 @@ def _queue_attention_rows(store: AutoReplyStore, *, limit: int | None = None) ->
                            stable_message_identity
                        ) as summary,
                        updated_at, error
-                from email_agent_classification_tasks
+                from ({task12_projection('email_agent_classification_tasks', include_rowid=True)})
                 where rowid in (
-                    select rowid from email_agent_classification_tasks
-                    where lower(status)='failed'
+                    select cast(legacy_key as integer) from tasks
+                    where record_type='email_agent_classification_tasks'
+                      and {task20_column('email_agent_classification_tasks', 'status')}='failed'
                 )
                 order by updated_at desc, task_id desc
             """
@@ -3697,14 +3761,15 @@ def _queue_attention_rows(store: AutoReplyStore, *, limit: int | None = None) ->
                     }
                 )
         if (
-            _sqlite_table_exists(db, "email_actions")
-            and _sqlite_table_exists(db, "email_classifications")
+            current_email_actions_available(db)
         ):
             # Mirror the status page: a failed action is attention-worthy only
             # once it is outside its retry window, so both surfaces agree.
             # Drive compact failed-row selection before large classification
-            # payloads. rowid preserves legacy nullable action IDs unchanged.
-            email_action_sql = """
+            # payloads. Source rowid preserves nullable public action IDs.
+            from app.email_store import DIRECT_EMAIL_ACTION_SQL
+
+            email_action_sql = f"""
                 select a.action_id as id, a.status,
                        coalesce(nullif(c.sender, ''), a.account_id) as context,
                        coalesce(
@@ -3713,13 +3778,13 @@ def _queue_attention_rows(store: AutoReplyStore, *, limit: int | None = None) ->
                            a.action_type
                        ) as summary,
                        a.updated_at, a.error
-                from email_actions as a
-                cross join email_classifications as c on c.id=a.classification_id
+                from ({DIRECT_EMAIL_ACTION_SQL}) as a
+                cross join ({email_classification_projection()}) as c on c.id=a.classification_id
                 where a.action_plan_id=c.current_action_plan_id
                   and c.status='processed'
-                  and a.rowid in (
-                      select rowid from email_actions
-                      where lower(status)='failed'
+                  and a.action_id in (
+                      select failed.action_id from ({DIRECT_EMAIL_ACTION_SQL}) as failed
+                      where lower(failed.status)='failed'
                   )
                   and not (
                         a.attempt_count < ?
@@ -3745,15 +3810,15 @@ def _queue_attention_rows(store: AutoReplyStore, *, limit: int | None = None) ->
                     }
                 )
         if (
-            _sqlite_table_exists(db, "meeting_memory_write_events")
+            _sqlite_table_exists(db, "actions")
             and _sqlite_table_exists(db, "tasks")
         ):
-            meeting_memory_sql = """
+            meeting_memory_sql = f"""
                 select events.id, events.status,
-                       coalesce(nullif(jobs.title, ''), jobs.meeting_id) as context,
-                       coalesce(nullif(jobs.title, ''), jobs.meeting_id) as summary,
+                       coalesce(nullif(jobs.{task20_column('meeting_alignment_jobs', 'title')}, ''), jobs.{task20_column('meeting_alignment_jobs', 'meeting_id')}) as context,
+                       coalesce(nullif(jobs.{task20_column('meeting_alignment_jobs', 'title')}, ''), jobs.{task20_column('meeting_alignment_jobs', 'meeting_id')}) as summary,
                        events.updated_at, events.error
-                from meeting_memory_write_events as events
+                from ({MEETING_MEMORY_WRITE_SQL}) as events
                 join tasks as jobs on jobs.id=events.meeting_job_id
                     and jobs.record_type='meeting_alignment_jobs'
                 where lower(events.status)='failed'
@@ -3780,14 +3845,14 @@ def _queue_attention_rows(store: AutoReplyStore, *, limit: int | None = None) ->
                     }
                 )
         if (
-            _sqlite_table_exists(db, "task_memory_write_events")
+            _sqlite_table_exists(db, "actions")
             and _sqlite_table_exists(db, "tasks")
         ):
             task_memory_sql = f"""
                 select events.id, events.status, events.reply_task_id,
                        tasks.channel, tasks.conversation_title,
                        events.updated_at, events.error
-                from task_memory_write_events as events
+                from ({TASK_MEMORY_WRITE_SQL}) as events
                 join ({REPLY_TASK_SQL}) as tasks on tasks.id=events.reply_task_id
                 where lower(events.status)='failed'
                 order by events.updated_at desc, events.id desc
@@ -3814,7 +3879,7 @@ def _queue_attention_rows(store: AutoReplyStore, *, limit: int | None = None) ->
                         "error": str(row["error"] or ""),
                     }
                 )
-        if _sqlite_table_exists(db, "errors"):
+        if _sqlite_table_exists(db, "actions"):
             recovered_statuses = tuple(RECOVERED_REPLY_ATTEMPT_STATUSES)
             recovered_placeholders = ",".join("?" for _ in recovered_statuses)
             for row in db.execute(
@@ -3822,12 +3887,12 @@ def _queue_attention_rows(store: AutoReplyStore, *, limit: int | None = None) ->
                 select error_event.id, error_event.conversation_id,
                        error_event.message_id, error_event.kind,
                        error_event.detail, error_event.created_at
-                from errors error_event
+                from ({error_projection(unresolved=True)}) error_event
                 where coalesce(error_event.resolved_at, '') = ''
                   and error_event.kind <> 'codex_capacity_pause'
                   and not exists (
                     select 1
-                    from errors newer_error
+                    from ({error_projection(unresolved=True)}) newer_error
                     where newer_error.conversation_id=error_event.conversation_id
                       and coalesce(newer_error.message_id, '')=
                           coalesce(error_event.message_id, '')
@@ -3904,7 +3969,23 @@ def _queue_attention_rows(store: AutoReplyStore, *, limit: int | None = None) ->
                     }
                 )
 
-    for attempt in store.list_current_unresolved_problem_attempt_summaries(limit=limit):
+    unresolved_attempts = store.list_current_unresolved_problem_attempt_summaries(limit=limit)
+    attempt_oa_identity: dict[str, str] = {}
+    if unresolved_attempts:
+        attempt_ids = [int(item["id"]) for item in unresolved_attempts if str(item["id"]).isdigit()]
+        if attempt_ids:
+            placeholders = ",".join("?" for _ in attempt_ids)
+            with store._connect() as db:
+                attempt_oa_identity = {
+                    str(row["id"]): str(row["oa_process_instance_id"] or "")
+                    for row in db.execute(
+                        f"select id,oa_process_instance_id from ({REPLY_ATTEMPT_COMMON_SQL}) "
+                        f"where id in ({placeholders})",
+                        tuple(attempt_ids),
+                    ).fetchall()
+                }
+
+    for attempt in unresolved_attempts:
         send_status = str(attempt["send_status"] or "").casefold()
         # Attention is the service-error surface. A genuine business decision
         # stays available from its attempt/detail page, but must not inflate
@@ -3928,6 +4009,14 @@ def _queue_attention_rows(store: AutoReplyStore, *, limit: int | None = None) ->
             continue
         if send_status == "failed" and trigger_key in active_reply_task_triggers:
             continue
+        if send_status == "failed" and attempt_oa_identity.get(attempt["id"]):
+            with store._connect() as db:
+                if _verified_oa_return_after_attempt(
+                    db,
+                    process_instance_id=attempt_oa_identity[attempt["id"]],
+                    attempt_updated_at=attempt["updated_at"],
+                ):
+                    continue
         rows.append(
             {
                 "category": "Reply",
@@ -3943,6 +4032,12 @@ def _queue_attention_rows(store: AutoReplyStore, *, limit: int | None = None) ->
     rows = [row for row in rows
             if not (row["category"] == "Reply task" and row["id"] in pending_oa_ids)]
     rows.extend(pending_oa_rows)
+    from app.web_api.attention import attention_record_detail_url
+
+    with store._connect() as db:
+        for row in rows:
+            if not row.get("detail_url"):
+                row["detail_url"] = attention_record_detail_url(db, row["category"], str(row["id"]))
     rows.sort(key=lambda row: row["updated_at"], reverse=True)
     return rows if limit is None else rows[:limit]
 
@@ -3962,7 +4057,7 @@ def _human_decision_attention_rows(
         join ({REPLY_TASK_SQL}) task on task.id=c.task_id
           and task.execution_generation=c.execution_generation
           and task.status='needs_human'
-        join business_object_tasks current_object
+        join ({task12_projection('business_object_tasks')}) current_object
           on current_object.business_object_key=task.business_object_key
           and current_object.reply_task_id=task.id
         left join ({CANDIDATE_SELECTION_SQL}) choice on choice.candidate_id=c.id
@@ -4002,6 +4097,8 @@ def _human_decision_attention_rows(
 
 
 def _sqlite_table_exists(db: sqlite3.Connection, table: str) -> bool:
+    if table == "email_agent_classification_tasks":
+        table = "tasks"
     row = db.execute(
         "select 1 from sqlite_master where type='table' and name=?",
         (table,),
@@ -4014,6 +4111,7 @@ def _queue_status_counts(
     table: str,
     status_column: str,
 ) -> dict[str, int]:
+    table = _queue_relation(table)
     rows = db.execute(
         f"""
         select lower(coalesce({status_column}, '')) as status, count(*) as count
@@ -4029,33 +4127,8 @@ def _queue_count_for(counts: Mapping[str, int], statuses: set[str]) -> int:
     return sum(int(counts.get(status, 0)) for status in statuses)
 
 
-def _queue_retryable_count(
-    db: sqlite3.Connection,
-    table: str,
-    status_column: str,
-    error_column: str,
-) -> int:
-    if table == "work_todo_dingtalk_links":
-        retryable_codes = tuple(DwsClient.TOKEN_VERIFIED_RETRYABLE_ERROR_CODES)
-        if not retryable_codes:
-            return 0
-        code_predicate = " or ".join(
-            f"{error_column} like ?" for _ in retryable_codes
-        )
-        row = db.execute(
-            f"""
-            select count(*) as count
-            from {table}
-            where lower({status_column})='failed'
-              and ({code_predicate})
-            """,
-            [f"%{code}%" for code in retryable_codes],
-        ).fetchone()
-        return int(row["count"] or 0)
-    return 0
-
-
 def _queue_latest_value(db: sqlite3.Connection, table: str, column: str) -> str:
+    table = _queue_relation(table)
     row = db.execute(
         f"select {column} as value from {table} order by {column} desc limit 1"
     ).fetchone()
@@ -4068,17 +4141,16 @@ def _queue_latest_error(
     status_column: str,
     error_column: str,
 ) -> str:
-    columns = _sqlite_table_columns(db, table)
+    tie_column = "task_id" if table == "email_agent_classification_tasks" else "id"
+    table = _queue_relation(table)
     order_sql = "updated_at desc"
-    if "id" in columns:
-        order_sql += ", id desc"
+    order_sql += f", {tie_column} desc"
     row = db.execute(
         f"""
         select {error_column} as value
         from {table}
-        where rowid in (
-            select rowid from {table} where lower({status_column})='failed'
-        ) and trim(coalesce({error_column}, ''))<>''
+        where lower({status_column})='failed'
+          and trim(coalesce({error_column}, ''))<>''
         order by {order_sql}
         limit 1
         """
@@ -4086,7 +4158,19 @@ def _queue_latest_error(
     return "" if row is None else str(row["value"] or "")
 
 
+def _queue_relation(table: str) -> str:
+    if table == "email_agent_classification_tasks":
+        return f"({task12_projection(table, include_rowid=True)})"
+    if table in SYNC_ACTION_PROJECTIONS:
+        return f"({SYNC_ACTION_PROJECTIONS[table]})"
+    if table in ("meeting_memory_write_events", "task_memory_write_events", "wechat_deliveries"):
+        return f"({task_delivery_projection(table)})"
+    return table
+
+
 def _sqlite_table_columns(db: sqlite3.Connection, table: str) -> set[str]:
+    if table == "email_agent_classification_tasks":
+        return set(TASK20_FIELDS[table]) if _sqlite_table_exists(db, table) else set()
     return {str(row["name"]) for row in db.execute(f"pragma table_info({table})")}
 
 
@@ -6847,7 +6931,11 @@ def _wechat_send_actions(delivery_id: int | None) -> str:
 def _meeting_history_card(item, store: AutoReplyStore) -> str:
     status = item.status.strip().lower() or "processing"
     detail_url = f"/meeting-attempts/{item.source_id}"
-    run = store.get_meeting_alignment_run_metadata(item.source_id)
+    run = store.get_logical_run(
+        'meeting_alignment_runs',
+        item.source_id,
+        load_native=False,
+    )
     attention = None
     if run is not None:
         job = store.get_meeting_alignment_job(run.job_id)
@@ -7223,10 +7311,6 @@ def _task_row_payload(project, todos, detail=None) -> dict:
         "status": state,
         "statusRank": _task_state_sort_rank().get(state, 99),
         "category": str(project.category),
-        "priority": str(project.priority),
-        "priorityRank": _task_priority_sort_rank().get(str(project.priority), 99),
-        "riskLevel": str(project.risk_level),
-        "riskRank": _task_risk_sort_rank().get(str(project.risk_level), 99),
         "owner": resolve_task_owner_display(project, todos),
         "currentState": _excerpt(project.current_state, 120),
         "nextStep": _excerpt(project.next_step, 140),
@@ -7240,24 +7324,6 @@ def _task_row_payload(project, todos, detail=None) -> dict:
         "todoCount": progress["total"],
         "todos": todo_payloads,
         "search": "\n".join(_task_project_search_values(project, todos)).casefold(),
-    }
-
-
-def _task_priority_sort_rank() -> dict[str, int]:
-    return {
-        ProjectPriority.P0.value: 0,
-        ProjectPriority.P1.value: 1,
-        ProjectPriority.P2.value: 2,
-        ProjectPriority.NONE.value: 3,
-    }
-
-
-def _task_risk_sort_rank() -> dict[str, int]:
-    return {
-        RiskLevel.HIGH.value: 0,
-        RiskLevel.MEDIUM.value: 1,
-        RiskLevel.LOW.value: 2,
-        RiskLevel.NONE.value: 3,
     }
 
 
@@ -7289,10 +7355,6 @@ def _task_sort_options() -> dict[str, tuple[str, str]]:
         "": ("", ""),
         "project_desc": ("title", "desc"),
         "project_asc": ("title", "asc"),
-        "priority_desc": ("priorityRank", "asc"),
-        "priority_asc": ("priorityRank", "desc"),
-        "risk_desc": ("riskRank", "asc"),
-        "risk_asc": ("riskRank", "desc"),
         "owner_desc": ("owner", "desc"),
         "owner_asc": ("owner", "asc"),
         "state_desc": ("currentState", "desc"),
@@ -7492,8 +7554,6 @@ def _task_tabulator_script() -> str:
       {{title: "Project", field: "title", minWidth: 180, widthGrow: 1.1, sorter: "string", variableHeight: true, formatter: projectCell}},
       {{title: "Status", field: "status", width: 126, sorter: "string", headerFilter: "select", headerFilterParams: {{values: filterValues(states, "All status")}}, headerFilterValue: initial.taskState || "", formatter: (cell) => badge(cell.getValue())}},
       {{title: "Category", field: "category", width: 136, sorter: "string", headerFilter: "select", headerFilterParams: {{values: filterValues(categories, "All categories")}}, headerFilterValue: initial.category || "", formatter: (cell) => pill(cell.getValue())}},
-      {{title: "Priority", field: "priorityRank", width: 96, sorter: "number", formatter: (cell) => pill(cell.getRow().getData().priority)}},
-      {{title: "Risk", field: "riskRank", width: 88, sorter: "number", formatter: (cell) => pill(cell.getRow().getData().riskLevel)}},
       {{title: "Owner", field: "owner", width: 124, sorter: "string", variableHeight: true, formatter: (cell) => escapeHtml(cell.getValue())}},
       {{title: "State", field: "currentState", minWidth: 140, widthGrow: .8, sorter: "string", variableHeight: true, formatter: (cell) => textCell(cell.getValue())}},
       {{title: "Next", field: "nextStep", minWidth: 150, widthGrow: .9, sorter: "string", variableHeight: true, formatter: (cell) => textCell(cell.getValue())}},
@@ -7714,8 +7774,6 @@ def _task_project_search_values(project, todos) -> list[str]:
         str(project.category),
         project.tags_json,
         str(project.status),
-        str(project.priority),
-        str(project.risk_level),
         project.owner_user_id,
         project.owner_name,
         project.related_people_json,
@@ -7726,7 +7784,6 @@ def _task_project_search_values(project, todos) -> list[str]:
         project.blocker,
         project.next_step,
         project.source_conversations_json,
-        project.memory_context_json,
     ]
     for todo in todos:
         values.extend(
@@ -7735,10 +7792,8 @@ def _task_project_search_values(project, todos) -> list[str]:
                 todo.owner_user_id,
                 todo.owner_name,
                 str(todo.status),
-                str(todo.priority),
                 todo.description,
                 todo.deadline_at,
-                todo.next_follow_up_at,
                 todo.follow_up_question,
                 todo.blocker,
                 todo.completion_evidence_json,
@@ -7797,17 +7852,13 @@ def render_task_project_detail(store: AutoReplyStore, project_id: int) -> tuple[
         "<div class=\"reply-meta\">"
         f"<span class=\"pill\">{escape(project.status)}</span>"
         f"<span class=\"pill\">{escape(project.category)}</span>"
-        f"<span class=\"pill\">{escape(project.priority)}</span>"
-        f"<span class=\"pill\">risk {escape(project.risk_level)}</span>"
         "</div>"
         "</div>"
         "<a class=\"compact-button\" href=\"/tasks\">Back</a>"
         "</div>"
         "<div class=\"attempt-detail-grid\">"
         f"{_task_detail_cell('Owner', resolve_task_owner_display(project, todos) or '-')}"
-        f"{_task_detail_cell('Next follow-up', _format_local_time(project.next_follow_up_at) or '-')}"
         f"{_task_detail_cell('Updated', _format_local_time(project.updated_at))}"
-        f"{_task_detail_cell('Derek attention', 'yes' if project.needs_derek_attention else 'no')}"
         "</div>"
         "</section>"
         "<section class=\"card\"><h2>Project details</h2>"
@@ -7820,7 +7871,7 @@ def render_task_project_detail(store: AutoReplyStore, project_id: int) -> tuple[
         f"{_simple_table(('Description', 'Source', 'Created', 'Updated'), facts, column_widths={'Source': '118px', 'Created': '132px', 'Updated': '132px'}) if facts else '<p class=\"muted\">No facts recorded.</p>'}"
         "</section>"
         "<section class=\"card\"><h2>Updates</h2>"
-        f"{_simple_table(('Time', 'Source', 'Summary', 'Changes', 'Reason', 'Confidence'), update_rows, column_widths={'Time': '148px', 'Source': '118px', 'Summary': '240px', 'Changes': '220px', 'Reason': '180px', 'Confidence': '96px'}) if update_rows else '<p class=\"muted\">No updates recorded.</p>'}"
+        f"{_simple_table(('Time', 'Source', 'Summary', 'Changes'), update_rows, column_widths={'Time': '148px', 'Source': '118px', 'Summary': '240px', 'Changes': '220px'}) if update_rows else '<p class=\"muted\">No updates recorded.</p>'}"
         "</section>"
         + (
             "<section class=\"card\"><h2>Unlinked follow-ups</h2>"
@@ -7829,7 +7880,6 @@ def render_task_project_detail(store: AutoReplyStore, project_id: int) -> tuple[
             if draft_rows
             else ""
         )
-        + f"{_collapsible_json_card('Memory context', project.memory_context_json)}"
     )
     return (
         200,
@@ -7907,7 +7957,6 @@ def _task_project_detail_rows(project) -> list[tuple[str, str, bool]]:
         ("Current state", project.current_state, False),
         ("Blocker", project.blocker, False),
         ("Next step", project.next_step, False),
-        ("Follow-up mode", str(project.follow_up_mode), False),
         ("Tags", tags, True),
         ("Related people", related_people, True),
         ("Source conversations", source_conversations, True),
@@ -8054,11 +8103,7 @@ def _task_todo_detail_item(
 ) -> str:
     owner = todo.owner_name or todo.owner_user_id or "-"
     status = str(todo.status)
-    priority = str(todo.priority)
     deadline = _format_local_time(todo.deadline_at) or todo.deadline_at or "-"
-    next_follow_up = (
-        _format_local_time(todo.next_follow_up_at) or todo.next_follow_up_at or "-"
-    )
     evidence = _task_json_compact(todo.completion_evidence_json, "{}") or "-"
     check_class = "todo-detail-check done" if _task_todo_done(todo) else "todo-detail-check"
     status_class = _task_status_class(status)
@@ -8080,9 +8125,7 @@ def _task_todo_detail_item(
         '<div class="todo-detail-meta">'
         f"<span>#{todo.id}</span>"
         f"<span>{escape(owner)}</span>"
-        f"<span>{escape(priority)}</span>"
         f"<span>DDL {escape(deadline)}</span>"
-        f"<span>Next {escape(next_follow_up)}</span>"
         "</div>"
         '<div class="todo-detail-fields">'
         f"{_task_todo_detail_field('Description', todo.description or '-')}"
@@ -8227,7 +8270,7 @@ def _task_follow_up_target(
     )
 
 
-def _task_update_rows(updates) -> list[tuple[str, str, str, str, str, str]]:
+def _task_update_rows(updates) -> list[tuple[str, str, str, str]]:
     rows = []
     for update in updates:
         source = f"{update.source_type}:{update.source_ref}".strip(":")
@@ -8237,8 +8280,6 @@ def _task_update_rows(updates) -> list[tuple[str, str, str, str, str, str]]:
                 source,
                 update.summary,
                 _task_json_compact(update.changes_json, "{}"),
-                update.merge_reason,
-                f"{update.confidence:.2f}",
             )
         )
     return rows
@@ -8662,7 +8703,10 @@ def render_meeting_attempt_detail(
     store: AutoReplyStore,
     run_id: int,
 ) -> tuple[int, str]:
-    run = store.get_meeting_alignment_run(run_id)
+    run = store.get_logical_run(
+        'meeting_alignment_runs',
+        run_id,
+    )
     if run is None:
         return 404, render_page(
             "Meeting attempt not found",
@@ -9842,6 +9886,7 @@ def handle_rerun_attempt_post(
     return_to: str = "",
     worker_factory: Callable[[object], object] | None = None,
     skill_options_factory: Callable[[], object] | None = None,
+    explicit_resend_message_id: str = "",
 ) -> tuple[int, dict[str, str], str]:
     del worker_factory
     attempt = store.get_reply_attempt(attempt_id)
@@ -9851,8 +9896,41 @@ def handle_rerun_attempt_post(
         store.get_agent_run(attempt.agent_run_id, load_events=False)
         if attempt.agent_run_id else None
     )
+    channel = attempt.channel or "dingtalk"
+    if explicit_resend_message_id and channel != "wechat":
+        return 409, {}, render_page(
+            "Resend unavailable", "<p>再次发送入口只支持已发送的微信回复。</p>",
+        )
+    if channel == "wechat":
+        already_sent = attempt.send_status.strip().lower() == "sent"
+        if already_sent and explicit_resend_message_id != attempt.trigger_message_id:
+            return 409, {}, render_page(
+                "Rerun unavailable",
+                "<p>已发送的微信回复不能通过普通重跑再次投递；请核对原消息后选择再次发送。</p>",
+            )
+        if explicit_resend_message_id and not already_sent:
+            return 409, {}, render_page(
+                "Resend unavailable", "<p>只有已发送的微信回复可以再次发送。</p>",
+            )
+    existing_task = store.get_reply_task_for_message(
+        attempt.conversation_id,
+        attempt.trigger_message_id,
+        channel=channel,
+    )
+    if (
+        channel == "wechat" and explicit_resend_message_id
+        and existing_task is not None
+        and existing_task.manual_rerun_attempt_id == attempt.id
+        and existing_task.status not in {"pending", "processing"}
+    ):
+        return 409, {}, render_page(
+            "Resend unavailable", "<p>这条已发送回复已再次处理；请从最新 Attempt 发起。</p>",
+        )
+    allow_skipped_oa_review = can_reopen_skipped_oa_review(attempt, existing_task)
     rerun_block_reason = _attempt_rerun_block_reason(
-        attempt, [terminal_run] if terminal_run is not None else []
+        attempt,
+        [terminal_run] if terminal_run is not None else [],
+        allow_skipped_oa_review=allow_skipped_oa_review,
     )
     if rerun_block_reason:
         return (
@@ -9860,12 +9938,6 @@ def handle_rerun_attempt_post(
             {},
             render_page("Rerun unavailable", f"<p>{escape(rerun_block_reason)}</p>"),
         )
-    channel = attempt.channel or "dingtalk"
-    existing_task = store.get_reply_task_for_message(
-        attempt.conversation_id,
-        attempt.trigger_message_id,
-        channel=channel,
-    )
     conversation_record = store.get_conversation(attempt.conversation_id)
     if conversation_record is None and existing_task is None:
         return (
@@ -9876,7 +9948,28 @@ def handle_rerun_attempt_post(
                 f"<p>Conversation not found: {escape(attempt.conversation_id)}</p>",
             ),
         )
-    if existing_task is not None and not existing_task.input_compacted and _is_valid_rerun_trigger_json(
+    if (
+        existing_task is not None
+        and existing_task.input_compacted
+        and channel == "dingtalk"
+        and existing_task.conversation_id.startswith("oa_pending_scan:")
+    ):
+        try:
+            trigger_message_json = _restore_compacted_oa_pending_trigger(
+                existing_task, attempt, store=store,
+                skill_options=(skill_options_factory() if skill_options_factory else None),
+            )
+            trigger = DingTalkMessage.model_validate_json(trigger_message_json)
+        except (TypeError, ValueError, json.JSONDecodeError):
+            return 409, {}, render_page(
+                "Rerun unavailable",
+                "<p>Compacted OA review source could not be restored; rerun was not queued.</p>",
+            )
+        trigger_text = trigger.content
+        trigger_create_time = trigger.create_time
+        conversation_title = existing_task.conversation_title
+        single_chat = existing_task.single_chat
+    elif existing_task is not None and not existing_task.input_compacted and _is_valid_rerun_trigger_json(
         existing_task.trigger_message_json,
         channel=channel,
     ):
@@ -9952,10 +10045,91 @@ def handle_rerun_attempt_post(
             channel=channel,
             force_rotation=force_rotation,
             expected_execution_generation=existing_task.execution_generation,
+            allow_skipped_oa_review=allow_skipped_oa_review,
+            explicit_resend_message_id=explicit_resend_message_id,
         )
     except ManualRerunConflict as exc:
         return 409, {}, render_page("Rerun unavailable", f"<p>{escape(str(exc))}</p>")
     return 303, {"Location": _safe_action_return_to(return_to, attempt_id)}, ""
+
+
+def _restore_compacted_oa_pending_trigger(
+    task: ReplyTask,
+    attempt: ReplyAttempt,
+    *,
+    store: AutoReplyStore,
+    skill_options: object | None,
+) -> str:
+    """Rebuild a scanner-created OA trigger from its typed scheduled run.
+
+    OA scan IDs are internal event identities, not DingTalk message IDs. Their
+    compacted payload retains the scheduled run reference and the OA identity
+    is bound to the task's persisted business key and detail URL.
+    """
+    try:
+        payload = json.loads(task.trigger_message_json)
+    except (TypeError, json.JSONDecodeError) as exc:
+        raise ValueError("compacted OA trigger is invalid") from exc
+    raw_payload = payload.get("raw_payload") if isinstance(payload, dict) else None
+    if (
+        not isinstance(payload, dict)
+        or payload.get("input_compacted") is not True
+        or not isinstance(raw_payload, dict)
+        or raw_payload.get("source") != "oa_pending_scan"
+        or skill_options is None
+    ):
+        raise ValueError("compacted OA scan provenance is unavailable")
+
+    process_id, task_id = oa_identifiers_from_url(task.oa_url)
+    if (
+        not process_id
+        or not task_id
+        or process_id != attempt.oa_process_instance_id
+        or f"oa:{process_id}:{task_id}" != task.business_object_key
+    ):
+        raise ValueError("compacted OA identity does not match its task")
+
+    context = payload.get("context")
+    trigger_raw = (
+        context.get("trigger_raw_payload") if isinstance(context, dict) else None
+    )
+    run_id = (
+        trigger_raw.get("scheduled_task_run_id")
+        if isinstance(trigger_raw, dict) else None
+    )
+    if type(run_id) is not int or run_id <= 0:
+        raise ValueError("compacted OA scheduled run is unavailable")
+    run = store.get_scheduled_task_run(run_id)
+    if run is None:
+        raise ValueError("compacted OA scheduled run is unavailable")
+
+    from app.agent_cron.context import ScheduledAgentContextBuilder
+
+    builder = ScheduledAgentContextBuilder(skill_options)
+    prior = builder.build_consumer_context(run)
+    scheduled_task = store.get_scheduled_task(run.snapshot.task_id)
+    if prior is None or scheduled_task is None:
+        raise ValueError("compacted OA scheduled task is unavailable")
+    refreshed = builder.refresh_oa_review_context(prior, scheduled_task)
+    trigger = DingTalkMessage(
+        open_conversation_id=task.conversation_id,
+        open_message_id=task.trigger_message_id,
+        conversation_title=task.conversation_title,
+        single_chat=task.single_chat,
+        sender_name=task.trigger_sender,
+        create_time=task.trigger_create_time,
+        content=(
+            "请基于当前 OA 流程重新审阅已保存的审批对象："
+            f"{process_id}，当前任务：{task_id}。"
+        ),
+        raw_payload={
+            "source": "oa_pending_scan",
+            "processInstanceId": process_id,
+            "taskId": task_id,
+            "scheduled_consumer": refreshed.to_payload(),
+        },
+    )
+    return trigger.model_dump_json()
 
 
 def refresh_oa_rerun_skill_snapshot(
@@ -10004,6 +10178,7 @@ def handle_needs_human_decision_post(
     body: bytes,
     *,
     return_to: str = "",
+    skill_options_factory: Callable[[], object] | None = None,
 ) -> tuple[int, dict[str, str], str]:
     source = store.get_reply_attempt(attempt_id)
     if source is None:
@@ -10059,6 +10234,7 @@ def handle_needs_human_decision_post(
                 ), actionable_source_attempt_id=source.id,
                 review_candidate_id=candidate_id,
                 supplement_instruction=instruction,
+                skill_options_factory=skill_options_factory,
             )
     except ValueError as exc:
         return 409, {}, render_page("Decision unavailable", f"<p>{escape(str(exc))}</p>")
@@ -10128,6 +10304,7 @@ def handle_reviewed_message_reply(
     actionable_source_attempt_id: int = 0,
     review_candidate_id: int = 0,
     supplement_instruction: str = "",
+    skill_options_factory: Callable[[], object] | None = None,
 ) -> dict[str, object]:
     source = store.get_reply_attempt(attempt_id)
     if source is None:
@@ -10149,6 +10326,17 @@ def handle_reviewed_message_reply(
         single_chat = task.single_chat
     else:
         raise ValueError("original reply task input is unavailable")
+    if source.oa_process_instance_id:
+        if skill_options_factory is None:
+            raise ValueError("OA rerun Skill snapshot could not be refreshed")
+        try:
+            trigger_message_json = refresh_oa_rerun_skill_snapshot(
+                trigger_message_json,
+                store=store,
+                skill_options=skill_options_factory(),
+            )
+        except (TypeError, ValueError, json.JSONDecodeError) as exc:
+            raise ValueError("OA rerun Skill snapshot could not be refreshed") from exc
     if actionable_source_attempt_id > 0:
         reviewed_attempt_id, _task = store.record_actionable_attempt_decision(
             actionable_source_attempt_id,
@@ -10424,6 +10612,21 @@ def create_audit_app(
                 audit_email_store = EmailStore(db_path, validate_rows=False)
             return audit_email_store
 
+    audit_email_source_reader = None
+
+    def get_audit_email_source_reader():
+        nonlocal audit_email_source_reader
+        from app.email_source_reader import build_email_source_reader
+        from app.config import effective_env_values
+
+        store = get_audit_email_store()
+        with audit_email_store_lock:
+            if audit_email_source_reader is None:
+                audit_email_source_reader = build_email_source_reader(
+                    store, environment_factory=effective_env_values,
+                )
+            return audit_email_source_reader
+
     from app.workbench.api import register_workbench_routes
     from app.workbench.executor import WorkbenchExecutor
     from app.workbench.runtime import RuntimeRegistry
@@ -10673,6 +10876,7 @@ def create_audit_app(
 
     if email_learning_factory is None:
         from app.email_classifier_learning import EmailClassifierLearningService
+        from app.email_selected_training_reader import EmailSelectedTrainingReader
         from app.email_model_registry import EmailModelRegistry
 
         email_model_root = db_path.parent / "email-models"
@@ -10685,8 +10889,14 @@ def create_audit_app(
                     get_audit_email_store(),
                     registry=EmailModelRegistry(email_model_root),
                     retrain_state_path=email_model_root / "retrain-state.json",
+                    selected_training_reader=EmailSelectedTrainingReader(
+                        get_audit_email_store(), source_reader=get_audit_email_source_reader(),
+                    ),
                 )
             return email_learning_service
+
+    from app.web_api.dashboard import register_dashboard_routes
+    register_dashboard_routes(app, store_factory=lambda: audit_store)
 
     register_console_routes(
         app,
@@ -10707,6 +10917,7 @@ def create_audit_app(
         history_chart_factory=render_history_chart,
         email_store_factory=get_audit_email_store,
         email_learning_factory=email_learning_factory,
+        email_source_reader_factory=get_audit_email_source_reader,
         dws_factory=lambda: DwsClient(
             ding_robot_code=ding_robot_code,
             ding_robot_name=ding_robot_name,
@@ -10720,7 +10931,7 @@ def create_audit_app(
         app,
         service_factory=lambda: RepositoryUpgradeService(
             repository=GitRepository(_repo_root()),
-            store=AutoReplyStore(db_path),
+            store=ExistingSchemaUpgradeStateStore(db_path),
             remote=os.getenv("CEO_REPOSITORY_UPGRADE_REMOTE", "origin") or "origin",
             branch=os.getenv("CEO_REPOSITORY_UPGRADE_BRANCH", "main") or "main",
         ),
@@ -11471,6 +11682,7 @@ def create_audit_app(
             attempt_id,
             await request.body(),
             return_to=request.query_params.get("return_to", ""),
+            skill_options_factory=scheduled_task_option_service,
         )
         return _fastapi_post_response(status, headers, html)
 
@@ -11486,6 +11698,7 @@ def create_audit_app(
                 reviewer_feedback=str(
                     payload.get("reviewer_feedback") or payload.get("feedback") or ""
                 ),
+                skill_options_factory=scheduled_task_option_service,
             )
         except (KeyError, TypeError, ValueError) as exc:
             raise HTTPException(status_code=409, detail=str(exc)) from exc
@@ -11890,10 +12103,19 @@ def _agent_failure_reason_card(
 def _attempt_rerun_block_reason(
     attempt: ReplyAttempt,
     agent_runs: list[AgentRun],
+    *,
+    allow_skipped_oa_review: bool = False,
 ) -> str:
     if attempt.resolved_at and attempt.send_status.strip().lower() in {"needs_human", "skipped"}:
-        return attempt.resolution or "这条旧问题已退役，无需重新处理。"
-    if attempt.send_status.strip().lower() != "failed":
+        if not (allow_skipped_oa_review and attempt.send_status.strip().lower() == "skipped"):
+            return attempt.resolution or "这条旧问题已退役，无需重新处理。"
+    status = attempt.send_status.strip().lower()
+    if status == "blocked":
+        return (
+            "" if attempt.send_error == "consumer_purpose_retry_exhausted"
+            else "此受阻事项不支持通过重试重新处理。"
+        )
+    if status != "failed":
         return ""
     terminal_run = next(
         (
@@ -12427,11 +12649,12 @@ def _history_attention_html(
 ) -> str:
     if attention is None:
         return ""
-    heading = (
-        "需要你处理"
-        if attention.kind == "needs_manager"
-        else "系统失败，正在自动恢复"
-    )
+    heading = {
+        "needs_manager": "需要你处理",
+        "automatic_recovery": "系统失败，正在自动恢复",
+        "failed": "处理失败，尚未完成",
+        "permission_wait": "等待文件权限",
+    }.get(attention.kind, "处理状态待确认")
     retry_html = ""
     if attention.retry_at:
         retry_html = (
@@ -12442,11 +12665,12 @@ def _history_attention_html(
         )
     next_step_html = ""
     if actions_html:
-        next_step = (
-            "请选择一种处理方式。"
-            if attention.kind == "needs_manager"
-            else "系统会按计划自动重试，你当前无需操作。"
-        )
+        next_step = {
+            "needs_manager": "请选择一种处理方式。",
+            "automatic_recovery": "系统会按计划自动重试，你当前无需操作。",
+            "failed": "这是执行或技术失败，不需要你判断业务规则；可查看技术详情，必要时重新处理。",
+            "permission_wait": "权限开通后再点“权限开通后重新读取”；这不会重复申请权限或直接执行审批动作。",
+        }.get(attention.kind, "请查看当前状态和技术详情。")
         next_step_html = (
             '<div class="history-attention-next"><strong>你需要做什么：</strong>'
             f"{escape(next_step)}</div>"
@@ -12838,14 +13062,29 @@ def _attempt_row_actions(
     )
     confirmation = (rerun.confirmation if rerun.explanation else
         "确认重新处理这条失败 attempt？可能会实际发送新回复或执行日历/OA动作。")
+    permission_wait_rerun = (
+        attempt.send_status.strip().lower() == "blocked"
+        and attempt.send_error == "consumer_purpose_retry_exhausted"
+    )
+    if permission_wait_rerun:
+        confirmation = (
+            "确认文件权限已开通？系统将重新读取并审核当前审批；若仍无权访问，"
+            "会继续等待，不会重复申请权限或直接执行审批动作。"
+        )
     return (
         "<div class=\"attempt-row-actions\">"
         + (
             f"<form method=\"post\" action=\"/attempts/{attempt.id}/rerun?return_to={return_to_query}\" "
             f"onsubmit=\"return confirm('{escape(confirmation)}')\">"
-            f"<button class=\"rerun\" type=\"submit\">{escape(rerun.label)}</button>"
+            f"<button class=\"rerun\" type=\"submit\">{escape('权限开通后重新读取' if permission_wait_rerun else rerun.label)}</button>"
             "</form>"
-            if attempt.send_status.strip().lower() == "failed" and not rerun_block_reason
+            if (
+                attempt.send_status.strip().lower() == "failed"
+                or (
+                    attempt.send_status.strip().lower() == "blocked"
+                    and attempt.send_error == "consumer_purpose_retry_exhausted"
+                )
+            ) and not rerun_block_reason
             else ""
         )
         + (
@@ -13773,7 +14012,13 @@ def _attempt_recovery_display_state(
     attempt: ReplyAttempt,
     task_cache: dict[tuple[str, str, str], ReplyTask | None],
 ) -> str:
-    if attempt.send_status.strip().lower() != "failed":
+    status = attempt.send_status.strip().lower()
+    if status == "blocked":
+        return (
+            "" if attempt.send_error == "consumer_purpose_retry_exhausted"
+            else "此受阻事项不支持通过重试重新处理。"
+        )
+    if status != "failed":
         return ""
     task = _reply_task_for_attempt(store, attempt, task_cache)
     if task is None:

@@ -1,0 +1,868 @@
+{
+  "observed_at": "2026-10-20T05:03:52.882730+00:00",
+  "deployment": {
+    "operation_id": "deploy-2e035667-34c8-4e23-8b8c-e346ff7f2ec3",
+    "status": "succeeded",
+    "original_commit": "89a4a130de52273318f45e0a24f595f4800aedcf",
+    "target_commit": "65560d34d8de63471d1d05d144cbc344ceab5815",
+    "installed_commit": "65560d34d8de63471d1d05d144cbc344ceab5815",
+    "updated_at": "2026-10-20T04:57:29.783177+00:00"
+  },
+  "deployment_command": "python -m app.deploy --publish-consumer-system-contracts",
+  "before": {
+    "observed_at": "2026-10-20T04:40:33.057864+00:00",
+    "pid": 75178,
+    "production_commit": "cbf95112f973409d5f0fd61b5531a08ef8603f94",
+    "summary": {
+      "queue_count": 13,
+      "pending": 11,
+      "processing": 0,
+      "failed": 9,
+      "retryable": 0,
+      "attention": 4
+    },
+    "failed_history_ids": [
+      "15640",
+      "15596",
+      "15593",
+      "15592",
+      "15547",
+      "15546",
+      "15545",
+      "15544"
+    ]
+  },
+  "after": {
+    "pid": 93354,
+    "production_commit": "65560d34d8de63471d1d05d144cbc344ceab5815",
+    "healthz": {
+      "ok": true,
+      "status": "ok"
+    },
+    "summary": {
+      "queue_count": 13,
+      "pending": 9,
+      "processing": 4,
+      "failed": 9,
+      "retryable": 0,
+      "attention": 3
+    },
+    "queues": [
+      {
+        "name": "Reply tasks",
+        "pending": 0,
+        "processing": 1,
+        "failed": 4,
+        "retryable": 0
+      },
+      {
+        "name": "Reply attempts",
+        "pending": 0,
+        "processing": 0,
+        "failed": 5,
+        "retryable": 0
+      },
+      {
+        "name": "Work items",
+        "pending": 0,
+        "processing": 0,
+        "failed": 0,
+        "retryable": 0
+      },
+      {
+        "name": "Email classifications",
+        "pending": 2,
+        "processing": 2,
+        "failed": 0,
+        "retryable": 0
+      },
+      {
+        "name": "Follow-ups",
+        "pending": 0,
+        "processing": 0,
+        "failed": 0,
+        "retryable": 0
+      },
+      {
+        "name": "Meeting jobs",
+        "pending": 0,
+        "processing": 1,
+        "failed": 0,
+        "retryable": 0
+      },
+      {
+        "name": "OKR reviews",
+        "pending": 0,
+        "processing": 0,
+        "failed": 0,
+        "retryable": 0
+      },
+      {
+        "name": "Memory writes",
+        "pending": 0,
+        "processing": 0,
+        "failed": 0,
+        "retryable": 0
+      },
+      {
+        "name": "Meeting Memory writes",
+        "pending": 0,
+        "processing": 0,
+        "failed": 0,
+        "retryable": 0
+      },
+      {
+        "name": "DingTalk Todos",
+        "pending": 0,
+        "processing": 0,
+        "failed": 0,
+        "retryable": 0
+      },
+      {
+        "name": "WeChat deliveries",
+        "pending": 0,
+        "processing": 0,
+        "failed": 0,
+        "retryable": 0
+      },
+      {
+        "name": "Email provider actions",
+        "pending": 7,
+        "processing": 0,
+        "failed": 0,
+        "retryable": 0
+      },
+      {
+        "name": "Email unsubscribe tasks",
+        "pending": 0,
+        "processing": 0,
+        "failed": 4,
+        "retryable": 0
+      }
+    ],
+    "attention": [
+      {
+        "category": "OA approval",
+        "error_code": "",
+        "count": 3,
+        "record_ids": [
+          {
+            "id": "405607"
+          },
+          {
+            "id": "405605"
+          },
+          {
+            "id": "416071"
+          }
+        ]
+      }
+    ],
+    "failed_history_ids": [
+      "15640",
+      "15596",
+      "15593",
+      "15592",
+      "15547",
+      "15546",
+      "15545",
+      "15544"
+    ]
+  },
+  "task_count": 14,
+  "preserved_configuration_fields": [
+    "migration_key",
+    "enabled",
+    "cron_expression",
+    "timezone_name",
+    "command",
+    "prompt_sha256"
+  ],
+  "all_14_configurations_preserved": true,
+  "historical_snapshots_preserved": 144,
+  "historical_snapshot_count_after": 146,
+  "task_configuration_changes": [
+    {
+      "id": 1,
+      "old_version": 37,
+      "new_version": 38,
+      "old_skill_refs": [
+        {
+          "skill_source": "managed",
+          "skill_name": "ceo-message-triage",
+          "managed_skill_id": 1,
+          "managed_revision_id": 173,
+          "position": 0
+        },
+        {
+          "skill_source": "operation",
+          "skill_name": "dingtalk-chat",
+          "managed_skill_id": null,
+          "managed_revision_id": null,
+          "position": 1
+        }
+      ],
+      "new_skill_refs": [
+        {
+          "skill_source": "managed",
+          "skill_name": "ceo-message-triage",
+          "managed_skill_id": 1,
+          "managed_revision_id": 173,
+          "position": 0
+        },
+        {
+          "skill_source": "operation",
+          "skill_name": "dingtalk-chat",
+          "managed_skill_id": null,
+          "managed_revision_id": null,
+          "position": 1
+        }
+      ]
+    },
+    {
+      "id": 6,
+      "old_version": 7,
+      "new_version": 8,
+      "old_skill_refs": [
+        {
+          "skill_source": "managed",
+          "skill_name": "ceo-weekly-okr-report",
+          "managed_skill_id": 22,
+          "managed_revision_id": 204,
+          "position": 0
+        },
+        {
+          "skill_source": "operation",
+          "skill_name": "dingtang-okr-review",
+          "managed_skill_id": null,
+          "managed_revision_id": null,
+          "position": 1
+        },
+        {
+          "skill_source": "operation",
+          "skill_name": "dingtalk-chat",
+          "managed_skill_id": null,
+          "managed_revision_id": null,
+          "position": 2
+        },
+        {
+          "skill_source": "operation",
+          "skill_name": "dingtalk-wiki",
+          "managed_skill_id": null,
+          "managed_revision_id": null,
+          "position": 3
+        },
+        {
+          "skill_source": "operation",
+          "skill_name": "dingtalk-doc",
+          "managed_skill_id": null,
+          "managed_revision_id": null,
+          "position": 4
+        }
+      ],
+      "new_skill_refs": [
+        {
+          "skill_source": "managed",
+          "skill_name": "ceo-weekly-okr-report",
+          "managed_skill_id": 22,
+          "managed_revision_id": 209,
+          "position": 0
+        },
+        {
+          "skill_source": "operation",
+          "skill_name": "dingtang-okr-review",
+          "managed_skill_id": null,
+          "managed_revision_id": null,
+          "position": 1
+        },
+        {
+          "skill_source": "operation",
+          "skill_name": "dingtalk-chat",
+          "managed_skill_id": null,
+          "managed_revision_id": null,
+          "position": 2
+        },
+        {
+          "skill_source": "operation",
+          "skill_name": "dingtalk-wiki",
+          "managed_skill_id": null,
+          "managed_revision_id": null,
+          "position": 3
+        },
+        {
+          "skill_source": "operation",
+          "skill_name": "dingtalk-doc",
+          "managed_skill_id": null,
+          "managed_revision_id": null,
+          "position": 4
+        }
+      ]
+    },
+    {
+      "id": 8,
+      "old_version": 35,
+      "new_version": 36,
+      "old_skill_refs": [
+        {
+          "skill_source": "managed",
+          "skill_name": "ceo-message-triage",
+          "managed_skill_id": 1,
+          "managed_revision_id": 173,
+          "position": 0
+        },
+        {
+          "skill_source": "managed",
+          "skill_name": "ceo-calendar-invite",
+          "managed_skill_id": 2,
+          "managed_revision_id": 174,
+          "position": 1
+        },
+        {
+          "skill_source": "operation",
+          "skill_name": "dingtalk-chat",
+          "managed_skill_id": null,
+          "managed_revision_id": null,
+          "position": 2
+        },
+        {
+          "skill_source": "operation",
+          "skill_name": "dingtalk-calendar",
+          "managed_skill_id": null,
+          "managed_revision_id": null,
+          "position": 3
+        }
+      ],
+      "new_skill_refs": [
+        {
+          "skill_source": "managed",
+          "skill_name": "ceo-message-triage",
+          "managed_skill_id": 1,
+          "managed_revision_id": 173,
+          "position": 0
+        },
+        {
+          "skill_source": "managed",
+          "skill_name": "ceo-calendar-invite",
+          "managed_skill_id": 2,
+          "managed_revision_id": 174,
+          "position": 1
+        },
+        {
+          "skill_source": "operation",
+          "skill_name": "dingtalk-chat",
+          "managed_skill_id": null,
+          "managed_revision_id": null,
+          "position": 2
+        },
+        {
+          "skill_source": "operation",
+          "skill_name": "dingtalk-calendar",
+          "managed_skill_id": null,
+          "managed_revision_id": null,
+          "position": 3
+        }
+      ]
+    },
+    {
+      "id": 9,
+      "old_version": 28,
+      "new_version": 29,
+      "old_skill_refs": [
+        {
+          "skill_source": "managed",
+          "skill_name": "ceo-calendar-invite",
+          "managed_skill_id": 2,
+          "managed_revision_id": 174,
+          "position": 0
+        },
+        {
+          "skill_source": "operation",
+          "skill_name": "dingtalk-calendar",
+          "managed_skill_id": null,
+          "managed_revision_id": null,
+          "position": 1
+        },
+        {
+          "skill_source": "operation",
+          "skill_name": "dingtalk-chat",
+          "managed_skill_id": null,
+          "managed_revision_id": null,
+          "position": 2
+        }
+      ],
+      "new_skill_refs": [
+        {
+          "skill_source": "managed",
+          "skill_name": "ceo-calendar-invite",
+          "managed_skill_id": 2,
+          "managed_revision_id": 174,
+          "position": 0
+        },
+        {
+          "skill_source": "operation",
+          "skill_name": "dingtalk-calendar",
+          "managed_skill_id": null,
+          "managed_revision_id": null,
+          "position": 1
+        },
+        {
+          "skill_source": "operation",
+          "skill_name": "dingtalk-chat",
+          "managed_skill_id": null,
+          "managed_revision_id": null,
+          "position": 2
+        }
+      ]
+    },
+    {
+      "id": 13,
+      "old_version": 30,
+      "new_version": 31,
+      "old_skill_refs": [
+        {
+          "skill_source": "managed",
+          "skill_name": "ceo-weekly-report",
+          "managed_skill_id": 14,
+          "managed_revision_id": 202,
+          "position": 0
+        },
+        {
+          "skill_source": "operation",
+          "skill_name": "dingtalk-minutes",
+          "managed_skill_id": null,
+          "managed_revision_id": null,
+          "position": 1
+        },
+        {
+          "skill_source": "operation",
+          "skill_name": "dingtalk-chat",
+          "managed_skill_id": null,
+          "managed_revision_id": null,
+          "position": 2
+        },
+        {
+          "skill_source": "operation",
+          "skill_name": "dingtalk-wiki",
+          "managed_skill_id": null,
+          "managed_revision_id": null,
+          "position": 3
+        },
+        {
+          "skill_source": "operation",
+          "skill_name": "dingtalk-doc",
+          "managed_skill_id": null,
+          "managed_revision_id": null,
+          "position": 4
+        }
+      ],
+      "new_skill_refs": [
+        {
+          "skill_source": "managed",
+          "skill_name": "ceo-weekly-report",
+          "managed_skill_id": 14,
+          "managed_revision_id": 202,
+          "position": 0
+        },
+        {
+          "skill_source": "operation",
+          "skill_name": "dingtalk-minutes",
+          "managed_skill_id": null,
+          "managed_revision_id": null,
+          "position": 1
+        },
+        {
+          "skill_source": "operation",
+          "skill_name": "dingtalk-chat",
+          "managed_skill_id": null,
+          "managed_revision_id": null,
+          "position": 2
+        },
+        {
+          "skill_source": "operation",
+          "skill_name": "dingtalk-wiki",
+          "managed_skill_id": null,
+          "managed_revision_id": null,
+          "position": 3
+        },
+        {
+          "skill_source": "operation",
+          "skill_name": "dingtalk-doc",
+          "managed_skill_id": null,
+          "managed_revision_id": null,
+          "position": 4
+        }
+      ]
+    },
+    {
+      "id": 14,
+      "old_version": 35,
+      "new_version": 36,
+      "old_skill_refs": [
+        {
+          "skill_source": "managed",
+          "skill_name": "ceo-daily-report",
+          "managed_skill_id": 21,
+          "managed_revision_id": 203,
+          "position": 0
+        },
+        {
+          "skill_source": "operation",
+          "skill_name": "dingtalk-chat",
+          "managed_skill_id": null,
+          "managed_revision_id": null,
+          "position": 1
+        },
+        {
+          "skill_source": "operation",
+          "skill_name": "dingtalk-minutes",
+          "managed_skill_id": null,
+          "managed_revision_id": null,
+          "position": 2
+        },
+        {
+          "skill_source": "operation",
+          "skill_name": "dingtalk-wiki",
+          "managed_skill_id": null,
+          "managed_revision_id": null,
+          "position": 3
+        },
+        {
+          "skill_source": "operation",
+          "skill_name": "dingtalk-doc",
+          "managed_skill_id": null,
+          "managed_revision_id": null,
+          "position": 4
+        }
+      ],
+      "new_skill_refs": [
+        {
+          "skill_source": "managed",
+          "skill_name": "ceo-daily-report",
+          "managed_skill_id": 21,
+          "managed_revision_id": 203,
+          "position": 0
+        },
+        {
+          "skill_source": "operation",
+          "skill_name": "dingtalk-chat",
+          "managed_skill_id": null,
+          "managed_revision_id": null,
+          "position": 1
+        },
+        {
+          "skill_source": "operation",
+          "skill_name": "dingtalk-minutes",
+          "managed_skill_id": null,
+          "managed_revision_id": null,
+          "position": 2
+        },
+        {
+          "skill_source": "operation",
+          "skill_name": "dingtalk-wiki",
+          "managed_skill_id": null,
+          "managed_revision_id": null,
+          "position": 3
+        },
+        {
+          "skill_source": "operation",
+          "skill_name": "dingtalk-doc",
+          "managed_skill_id": null,
+          "managed_revision_id": null,
+          "position": 4
+        }
+      ]
+    }
+  ],
+  "installed_source_hashes": {
+    "SKILL.md": "31556e311ef63d718a0ff444d166179befb9e7a27ba0af721727a1d16b5a35d3",
+    "scripts/report.py": "abfd4143323e5d4c86f37e34b29f63cf384818ae127b33fa550c0f63827ead1b",
+    "scripts/analysis.schema.json": "2893dd0b0c0f20da0a097194ad97a6ff7605f68b061194c45a7b9660474aa52b",
+    "scripts/destination.py": "9d2fad8841dfdab69d6da94b34eb04acb3cfcdbfab8e793f640b8395d2cc5a0a"
+  },
+  "okr_managed_revision": {
+    "id": 209,
+    "revision_number": 2,
+    "parent_revision_id": 204,
+    "sha256": "31556e311ef63d718a0ff444d166179befb9e7a27ba0af721727a1d16b5a35d3"
+  },
+  "report_next_runs": [
+    {
+      "id": 6,
+      "version": 8,
+      "skill_refs": [
+        {
+          "skill_source": "managed",
+          "skill_name": "ceo-weekly-okr-report",
+          "managed_skill_id": 22,
+          "managed_revision_id": 209,
+          "position": 0
+        },
+        {
+          "skill_source": "operation",
+          "skill_name": "dingtang-okr-review",
+          "managed_skill_id": null,
+          "managed_revision_id": null,
+          "position": 1
+        },
+        {
+          "skill_source": "operation",
+          "skill_name": "dingtalk-chat",
+          "managed_skill_id": null,
+          "managed_revision_id": null,
+          "position": 2
+        },
+        {
+          "skill_source": "operation",
+          "skill_name": "dingtalk-wiki",
+          "managed_skill_id": null,
+          "managed_revision_id": null,
+          "position": 3
+        },
+        {
+          "skill_source": "operation",
+          "skill_name": "dingtalk-doc",
+          "managed_skill_id": null,
+          "managed_revision_id": null,
+          "position": 4
+        }
+      ],
+      "next_run_at": "2026-10-25T10:00:00Z"
+    },
+    {
+      "id": 13,
+      "version": 31,
+      "skill_refs": [
+        {
+          "skill_source": "managed",
+          "skill_name": "ceo-weekly-report",
+          "managed_skill_id": 14,
+          "managed_revision_id": 202,
+          "position": 0
+        },
+        {
+          "skill_source": "operation",
+          "skill_name": "dingtalk-minutes",
+          "managed_skill_id": null,
+          "managed_revision_id": null,
+          "position": 1
+        },
+        {
+          "skill_source": "operation",
+          "skill_name": "dingtalk-chat",
+          "managed_skill_id": null,
+          "managed_revision_id": null,
+          "position": 2
+        },
+        {
+          "skill_source": "operation",
+          "skill_name": "dingtalk-wiki",
+          "managed_skill_id": null,
+          "managed_revision_id": null,
+          "position": 3
+        },
+        {
+          "skill_source": "operation",
+          "skill_name": "dingtalk-doc",
+          "managed_skill_id": null,
+          "managed_revision_id": null,
+          "position": 4
+        }
+      ],
+      "next_run_at": "2026-10-24T19:00:00Z"
+    },
+    {
+      "id": 14,
+      "version": 36,
+      "skill_refs": [
+        {
+          "skill_source": "managed",
+          "skill_name": "ceo-daily-report",
+          "managed_skill_id": 21,
+          "managed_revision_id": 203,
+          "position": 0
+        },
+        {
+          "skill_source": "operation",
+          "skill_name": "dingtalk-chat",
+          "managed_skill_id": null,
+          "managed_revision_id": null,
+          "position": 1
+        },
+        {
+          "skill_source": "operation",
+          "skill_name": "dingtalk-minutes",
+          "managed_skill_id": null,
+          "managed_revision_id": null,
+          "position": 2
+        },
+        {
+          "skill_source": "operation",
+          "skill_name": "dingtalk-wiki",
+          "managed_skill_id": null,
+          "managed_revision_id": null,
+          "position": 3
+        },
+        {
+          "skill_source": "operation",
+          "skill_name": "dingtalk-doc",
+          "managed_skill_id": null,
+          "managed_revision_id": null,
+          "position": 4
+        }
+      ],
+      "next_run_at": "2026-10-20T13:00:00Z"
+    }
+  ],
+  "post_release_natural_command_completion_facts": [
+    {
+      "id": 387082,
+      "scheduled_task_id": 9,
+      "scheduled_for": "2026-10-20T05:01:10+00:00",
+      "dispatch_status": "dispatched",
+      "result_summary": "calendar-invites-once queued=0"
+    }
+  ],
+  "new_failed_history_ids": [],
+  "new_report_natural_publication_verified": false,
+  "historical_reports_replayed": false,
+  "startup_intermediate_observation": {
+    "observed_at": "2026-10-20T04:58:52.304397+00:00",
+    "summary": {
+      "queue_count": 13,
+      "pending": 10,
+      "processing": 2,
+      "failed": 18,
+      "retryable": 0,
+      "attention": 13
+    },
+    "failed_history_ids": [
+      "15640",
+      "4051",
+      "4050",
+      "4049",
+      "15596",
+      "15593",
+      "15592",
+      "15547",
+      "15546",
+      "15545",
+      "15544",
+      "9608",
+      "4057"
+    ],
+    "interpretation": "Intermediate ordered startup recovery pass reprojected old July-September failed runs; subsequent normal recovery converged. No historical run replay."
+  },
+  "startup_existing_failed_runs": [
+    {
+      "task_id": 40679,
+      "execution_generation": "facf5b56527242c68801eb2359d58d95",
+      "run_id": 6,
+      "status": "failed",
+      "created_at": "2026-07-30 13:25:45",
+      "completed_at": "2026-07-30 13:29:10",
+      "error_code": "codex_process_failed"
+    },
+    {
+      "task_id": 41045,
+      "execution_generation": "initial",
+      "run_id": 13,
+      "status": "failed",
+      "created_at": "2026-07-30 13:55:06",
+      "completed_at": "2026-07-30 13:59:24",
+      "error_code": "codex_process_failed"
+    },
+    {
+      "task_id": 341173,
+      "execution_generation": "87ca2ba7dbcd4ae2b333147294df5b60",
+      "run_id": 20076,
+      "status": "failed",
+      "created_at": "2026-09-18 00:05:48",
+      "completed_at": "2026-09-18 00:06:21",
+      "error_code": "agent_reported_failure"
+    },
+    {
+      "task_id": 384446,
+      "execution_generation": "initial",
+      "run_id": 20204,
+      "status": "failed",
+      "created_at": "2026-09-19 11:38:38",
+      "completed_at": "2026-09-19 11:39:05",
+      "error_code": "agent_reported_failure"
+    },
+    {
+      "task_id": 384447,
+      "execution_generation": "initial",
+      "run_id": 20211,
+      "status": "failed",
+      "created_at": "2026-09-19 14:26:10",
+      "completed_at": "2026-09-19 14:26:20",
+      "error_code": "agent_reported_failure"
+    },
+    {
+      "task_id": 384453,
+      "execution_generation": "initial",
+      "run_id": 20231,
+      "status": "failed",
+      "created_at": "2026-09-20 02:12:27",
+      "completed_at": "2026-09-20 02:12:42",
+      "error_code": "agent_reported_failure"
+    },
+    {
+      "task_id": 384454,
+      "execution_generation": "initial",
+      "run_id": 20238,
+      "status": "failed",
+      "created_at": "2026-09-20 02:24:05",
+      "completed_at": "2026-09-20 02:24:25",
+      "error_code": "agent_reported_failure"
+    },
+    {
+      "task_id": 384467,
+      "execution_generation": "initial",
+      "run_id": 20276,
+      "status": "failed",
+      "created_at": "2026-09-20 03:52:00",
+      "completed_at": "2026-09-20 03:52:21",
+      "error_code": "agent_reported_failure"
+    }
+  ],
+  "component_health": [
+    {
+      "key": "service_health:agent-cron-dispatcher",
+      "state": "healthy",
+      "status": "running",
+      "latest_tick_at": "2026-10-20T05:03:54.658318+00:00",
+      "updated_at": "2026-10-20 05:03:55"
+    },
+    {
+      "key": "service_health:agent-cron-scheduler",
+      "state": "healthy",
+      "status": "running",
+      "latest_tick_at": "2026-10-20T05:03:21.315257+00:00",
+      "updated_at": "2026-10-20 05:03:28"
+    },
+    {
+      "key": "service_health:service-heartbeat",
+      "state": "healthy",
+      "status": "running",
+      "latest_tick_at": "2026-10-20T05:03:21.315257+00:00",
+      "updated_at": "2026-10-20 05:03:32"
+    }
+  ],
+  "publication_attempts": [
+    {
+      "result": "superseded_by_concurrent_deploy",
+      "installed_commit": "89a4a130de52273318f45e0a24f595f4800aedcf",
+      "skill_publication_proven": false
+    },
+    {
+      "operation_id": "deploy-9676e0a2-4f96-4571-a29d-9b36afd26a14",
+      "result": "rolled_back",
+      "error": "Strict installed finance Skill old digest mismatch; two stale file preconditions refreshed from verified current installation, unchanged new sources and loader"
+    },
+    {
+      "operation_id": "deploy-2e035667-34c8-4e23-8b8c-e346ff7f2ec3",
+      "result": "succeeded"
+    }
+  ]
+}

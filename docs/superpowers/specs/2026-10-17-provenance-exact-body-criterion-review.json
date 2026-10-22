@@ -1,0 +1,61 @@
+{
+  "recorded_at": "2026-10-18T03:07:35.264226+00:00",
+  "scope": "Narrow current original-body availability criterion; preserve queue lineage unknown",
+  "source_receipt": "docs/superpowers/specs/2026-10-17-provenance-three-uuid-current-read.json",
+  "source_receipt_sha256": "a823f66b3dc7698d694788cd47856c77bd34cea7080f91008117d3af9185a71a",
+  "source_observed_at": "2026-10-18T01:17:49.585512+00:00",
+  "source_only_reviewer": "/root/provenance_exact_body_identity_review",
+  "review_result": "APPROVE narrow criterion; source/artifact review not fresh provider read",
+  "criterion": "Exact original provider UUID, independently rebuilt full canonical bytes/hash and retained full Signal identity prove original-body availability at observed time. Todos queue digest is not provider version selector or complete body digest; retain full suffix and unknown producer lineage.",
+  "documents": [
+    {
+      "source_document_id": 49,
+      "status": "exact_current_body_available_lineage_unexplained",
+      "bytes": 25363,
+      "body_sha256": "06e3b12d8d429381bcb7b72a27bdc95fd535767c722106bb911bf234e9492a10",
+      "full_signal_identity_matches": true,
+      "historical_suffix_lineage_verified": false
+    },
+    {
+      "source_document_id": 50,
+      "status": "exact_current_body_available_lineage_unexplained",
+      "bytes": 19742,
+      "body_sha256": "eb6ec41e93585390856847faec192ce5efe17f8ae3546ade888d3926fb42f238",
+      "full_signal_identity_matches": true,
+      "historical_suffix_lineage_verified": false
+    },
+    {
+      "source_document_id": 52,
+      "status": "exact_current_body_available_lineage_unexplained",
+      "bytes": 48658,
+      "body_sha256": "dc0bf458552033321865986fb170db5b94790f9d792761f843ae714c765dc8f1",
+      "full_signal_identity_matches": true,
+      "historical_suffix_lineage_verified": false
+    }
+  ],
+  "reconciled_snapshot_only": {
+    "source_documents": 220,
+    "previous_strict_unproved": 23,
+    "newly_body_available": 3,
+    "newly_body_available_bytes": 93763,
+    "remaining_unproved": 20,
+    "remaining_unproved_bytes": 489023,
+    "fresh_full_database_measurement": false,
+    "historical_provider_proofs_require_reader_refresh": 130
+  },
+  "source_pins": {
+    "app/task_scanners.py": "ba89132165de05d7d88ca7cc53095baca6bcb41b6588c9a6bd14472af354c610",
+    "app/minutes_owner_backfill.py": "4ebc1cb296c699a157a17373a6b49c777f60072842456af8934c931ac9e45c20",
+    "app/task_source_documents.py": "b5fc08f38ba596057db048460882454cf5c969e5db85e38b1739fe346063b290",
+    "app/task_agent.py": "bd3361c97aaddde985c30b3df5f5b02a945ebbf128e533a3acbda10aa4602e13",
+    "app/task_retrieval.py": "ff514e24434897fb35dafe7172a2114b1e17bec7400c0e71b243c7b11fde0721",
+    "docs/superpowers/specs/2026-10-11-database-redesign-design.md": "345223707fdd39d09c6b13a8101dfc8543a0cc7f9603f6ea13c8210f8498ce80"
+  },
+  "body_retirement": false,
+  "runtime_reader_implemented": false,
+  "historical_provider_version_or_authorship_verified": false,
+  "database_write": false,
+  "provider_read_this_adjudication": false,
+  "future_availability_guaranteed": false,
+  "full_migration_accepted": false
+}

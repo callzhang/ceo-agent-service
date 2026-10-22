@@ -1,0 +1,124 @@
+{
+  "kind": "unselected-state-foundation-independent-acceptance",
+  "date": "2026-10-16",
+  "reviewed_commit": "b14198dff02c917540bf805a4174e0afc8821eb3",
+  "baseline": "ed9b1ca7",
+  "implementation": "2e374a7aa7681e0dfe9c48e4c427adf7f71fb308",
+  "scope": {
+    "source_families": 16,
+    "source_actual_fields": 91,
+    "source_fresh_fields": 87,
+    "retained_kinds": 15,
+    "retained_original_fields": 85,
+    "shared_virtual_aliases": 62,
+    "stored_structural_fields": 4,
+    "indexes": 20,
+    "notnull_with_default_fields": 41,
+    "selected_by_runtime": false
+  },
+  "source_metadata_sha256": "604496766a335d63fe334a263bde8028cd53c6bc5311acb97a5ef48876ae2aff",
+  "files_sha256": {
+    "app/state_definitions.py": "107d9a972ddb1e099deae89d82c8359ee1cbe96465663578a400156d8b39beb4",
+    "app/state_storage.py": "28e03a29437d7adf75facd419f92d8de327b6e4c7a18fa0c75dd2c526f9da5fc",
+    "tests/test_state_storage.py": "dae5c4162cbfdc7ce1638fd53778868b75b4ff48a0920197a65b7eb544ca70ec"
+  },
+  "reviewed_plan_sha256": "e131932360fa76aeb2116d4facef39755dda61141358311d8211c06949896231",
+  "synthetic_target_declaration_sha256": "ae25aecef5d8e9a0615ca3c180bb018eb6412a36bb25e850692d7f050eb8e5ab",
+  "interpreter": {
+    "python": "3.13.12",
+    "sqlite": "3.50.4"
+  },
+  "validation": {
+    "root_preflight": {
+      "foundation_passed": 135,
+      "seconds": 2.08,
+      "scope": "original proposal before independent REPLACE correction",
+      "ruff": "PASS",
+      "owned_temp_removed": true
+    },
+    "implementation_final": {
+      "passed": 336,
+      "seconds": 16.15,
+      "foundation": 147,
+      "source_oracle": 172,
+      "native_codec": 17,
+      "ruff": "PASS",
+      "compile": "PASS",
+      "canonical_block_equality": "PASS",
+      "owned_temp_removed": true
+    },
+    "spec_initial": {
+      "verdict": "BLOCKER",
+      "issue": "Original NOT NULL/default REPLACE substitution for explicit SQL NULL/NaN became CHECK abort; INSERT and UPDATE in actual/fresh variants."
+    },
+    "spec_rereview": {
+      "verdict": "PASS",
+      "passed": 336,
+      "seconds": 15.65,
+      "original_clock_counterexample_combinations": 8,
+      "source_metadata_unchanged": true,
+      "declaration_constraints_not_relaxed": true,
+      "canonical_block_equality": true,
+      "owned_temp_removed": true
+    },
+    "quality": {
+      "verdict": "PASS",
+      "passed": 336,
+      "seconds": 15.65,
+      "source_family_comparisons": 30,
+      "identity_edge_cases": 48,
+      "scalar_edge_cases": 42,
+      "two_connection_writer_lock_and_cas": "PASS",
+      "canonical_block_equality": true,
+      "ruff": "PASS",
+      "owned_temps_removed": true
+    }
+  },
+  "frozen_readonly_preflight": {
+    "source_hashes": {
+      "actual": "b7e149e432369018ba105f9e1ac12b052f38bfe245ee7e6d7b7b7b8b3ab9caa6",
+      "fresh": "48e1608e66d2a35fdb467708e24fd6bef1f2f4ecd58e8a6e45c4af9fb6449a70"
+    },
+    "source_readonly_verified": {
+      "tables": 16,
+      "actual_fields": 91,
+      "fresh_fields": 87,
+      "inbound_fks": 0,
+      "corpus_rows": 0,
+      "conversations": 523,
+      "in_handoff_integer_zero": 523,
+      "other3null": 523
+    },
+    "design": "Unselected state_schema_transfer (declaration-only metadata, row copy/current-fact inverse) then pure state_schema_release (caller-owned FK-off transaction, copy verification before drop, exact DDL inverse). No ledger rows of original bodies. Actual/fresh source fingerprints frozen from native fixtures and query-only original970a verified. Source eligibility refuses any corpus row or nondefault/type-shifted actual-only4 conversation fields before mutation. All15 source ROWIDs retained by kind independently, original ordinal fields restored using captured source SQL. Inverse re-creates original16tables and original explicit indices in reverse-captured creation order, restores current retained facts and source-defined retired constants, validates values+typeof+ROWID and source DDL. No current constructor/caller/version activation in this unit; final atomic caller/publication closure remains necessary. No production.",
+    "field_map_followup": {
+      "file": "docs/superpowers/specs/2026-10-11-database-redesign-field-map.csv",
+      "lines": [
+        395,
+        396,
+        397,
+        398,
+        400,
+        401
+      ],
+      "requirement": "Six existing CSV rows still map four unused conversation fields and two empty corpus fields intoState. Foundation omits them but does not retire data. Before release selection, explicitly update six dispositions with no-consumer/default-or-empty evidence and guarded retirement/exact-original-DDL-inverse contract; preserve current source metadata and do not silently redefine source fields."
+    }
+  },
+  "boundary": {
+    "ordinary_tables_last_accepted_copy": 82,
+    "foundation_changes_runtime_table_count": false,
+    "expected_state_only_intermediate_after_future_selection": 67,
+    "final_goal": "ten core tables plus one migration ledger",
+    "migration": false,
+    "current_fact_inverse": false,
+    "caller_conversion": false,
+    "retirement": false,
+    "current_schema_selection": false,
+    "actual_copy": false,
+    "native_cli": false,
+    "provider_or_real_sends": false,
+    "push_or_main_merge": false,
+    "production": false,
+    "goal_complete": false
+  },
+  "next": "Implement source-bound State migration/current-fact inverse with guarded empty/default retirements and exact original declarations; then atomic current caller/constructor/publication closure, copied-database/genuine predecessor proof, final reusable harness/native fake-outbound and CI. Six CSV rows require explicit disposition updates before source retirement."
+}

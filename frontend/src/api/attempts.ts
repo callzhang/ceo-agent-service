@@ -155,6 +155,27 @@ export interface AttemptDetail {
   trigger: { title: string; text: string };
   audit_explanation: { title: string; text: string };
   generated_reply: { title: string; text: string };
+  delivery: {
+    action_id: number;
+    conversation_id: string;
+    trigger_message_id: string;
+    body: string;
+    receipt_id: number;
+    operation: string | null;
+    target: string | null;
+    sent_at: string;
+    source_available: boolean;
+    source_label: string;
+    provider_message_id: string;
+    provider_receipt: {
+      id: number | null;
+      available: boolean;
+      body: string;
+      result_digest: string | null;
+    };
+    recall_status: string;
+    recalled_at: string | null;
+  } | null;
   references: Array<{ title: string; source: string; relevance: string }>;
   feedback: { reviewer_feedback: string; corrected_reply: string; feedback_url: string; events: AttemptFeedbackEvent[] };
   decision_options: Array<{
@@ -178,6 +199,9 @@ export interface AttemptDetail {
   calendar: { event_id: string; response_status: string; result: unknown };
   actions: {
     can_rerun: boolean;
+    can_resend_wechat?: boolean;
+    resend_wechat_url?: string;
+    resend_message_id?: string;
     rerun_block_reason: string;
     can_recall: boolean;
     can_submit_feedback: boolean;

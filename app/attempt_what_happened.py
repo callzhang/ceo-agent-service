@@ -172,6 +172,8 @@ def reused_external_actions(
 
 def _verified_system_receipts(runs: Sequence[Any], *, store: Any) -> list[dict[str, Any]]:
     """Only durable, generation-matched System Executor action receipts."""
+    from app.action_storage import CandidateResultReferenceError
+
     list_receipts = getattr(store, "list_verified_candidate_actions", None)
     if not callable(list_receipts):
         return []
@@ -185,6 +187,8 @@ def _verified_system_receipts(runs: Sequence[Any], *, store: Any) -> list[dict[s
     for task_id, allowed_generations in generations.items():
         try:
             rows = list_receipts(task_id)
+        except CandidateResultReferenceError:
+            raise
         except Exception:  # noqa: BLE001 - historical page remains readable
             continue
         for row in rows:

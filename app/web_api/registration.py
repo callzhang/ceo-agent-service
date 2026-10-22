@@ -36,6 +36,7 @@ from app.web_api.tasks import (
     ConsoleSentTodoListEnvelope,
     business_attention_detail,
     business_attention_list_response,
+    business_signal_views,
     business_project_detail,
     business_project_evidence_response,
     business_project_list_response,
@@ -97,6 +98,7 @@ def register_console_routes(
     history_chart_factory: Callable[[int], Any] | None = None,
     email_store_factory: Callable[[], Any] | None = None,
     email_learning_factory: Callable[[], Any] | None = None,
+    email_source_reader_factory: Callable[[], Any] | None = None,
     feature_registry_factory: Callable[[], FeatureRegistry] | None = None,
     skill_file_service_factory: Callable[[], SkillFileService] | None = None,
     dws_factory: Callable[[], Any] | None = None,
@@ -108,6 +110,9 @@ def register_console_routes(
 ) -> None:
     feature_registry_factory = feature_registry_factory or FeatureRegistry
     skill_file_service_factory = skill_file_service_factory or SkillFileService
+
+    def source_reader(store):
+        return store.business_source_reader(provider_reader=dws_factory() if dws_factory else None)
 
     def list_meta(*, page: int, page_size: int, total: int, snapshot: str):
         return ApiListMeta(
@@ -150,7 +155,7 @@ def register_console_routes(
             conversation_id = str(getattr(log, "conversation_id", "") or "")
             task_id = conversation_id.removeprefix("scheduled-task:")
             return f"/scheduled-tasks?id={task_id}" if task_id.isdigit() else "/scheduled-tasks"
-        if source_table == "email_actions":
+        if str(getattr(log, "history_type", "") or "") == history_types.EMAIL_ACTION:
             classification_id = str(getattr(log, "conversation_id", "") or "")
             if classification_id.isdigit():
                 return f"/email?tab=all&selected={classification_id}"
@@ -191,7 +196,7 @@ def register_console_routes(
             kind = "task"
         elif source_table == "scheduled_task_runs":
             kind = "scheduled_run"
-        elif source_table == "email_actions":
+        elif history_type == history_types.EMAIL_ACTION:
             kind = "email_action"
         else:
             kind = "reply"
@@ -213,12 +218,17 @@ def register_console_routes(
         elif source_table == "work_todo_dingtalk_links":
             input_text = summary
             output_text = detail
-        elif source_table in {"scheduled_task_runs", "email_actions"}:
+        elif source_table == "scheduled_task_runs":
             # No question and answer here: one result line (the command's
-            # summary or error, the email action and its error).
+            # summary or error).
             input_text = ""
             output_text = ""
-            if source_table == "email_actions" and detail:
+        elif history_type == history_types.EMAIL_ACTION:
+            # Direct email effects use Action identity and receipt projections;
+            # this label is presentation metadata, not a source DTO selector.
+            input_text = ""
+            output_text = ""
+            if detail:
                 summary = f"{summary}：{detail}"
         else:
             input_text = summary
@@ -327,6 +337,7 @@ def register_console_routes(
             app,
             email_store_factory,
             email_learning_factory=email_learning_factory,
+            email_source_reader_factory=email_source_reader_factory,
         )
 
     if scheduled_task_option_service_factory is not None:
@@ -427,7 +438,7 @@ def register_console_routes(
     def console_business_attention_detail(attention_id: int):
         store = store_factory()
         with store.read_snapshot():
-            item = business_attention_detail(store, attention_id)
+            item = business_attention_detail(store, attention_id, source_reader=source_reader(store))
         if item is None:
             raise HTTPException(status_code=404, detail="Attention item not found")
         return ConsoleBusinessAttentionDetailEnvelope(item=item, meta=ApiMeta(snapshot_at=snapshot_at()))
@@ -436,7 +447,7 @@ def register_console_routes(
     def console_business_task_detail(task_id: int):
         store = store_factory()
         with store.read_snapshot():
-            item = business_task_detail(store, task_id)
+            item = business_task_detail(store, task_id, source_reader=source_reader(store))
         if item is None:
             raise HTTPException(status_code=404, detail="Business task not found")
         return ConsoleBusinessTaskDetailEnvelope(item=item, meta=ApiMeta(snapshot_at=snapshot_at()))
@@ -532,7 +543,7 @@ def register_console_routes(
     def console_business_project_detail(project_id: int):
         store = store_factory()
         with store.read_snapshot():
-            item = business_project_detail(store, project_id)
+            item = business_project_detail(store, project_id, source_reader=source_reader(store))
         if item is None:
             raise HTTPException(status_code=404, detail="Business project not found")
         return ConsoleBusinessProjectDetailEnvelope(item=item, meta=ApiMeta(snapshot_at=snapshot_at()))
@@ -569,7 +580,7 @@ def register_console_routes(
         if item is None:
             raise HTTPException(status_code=404, detail="Business task signal not found")
         return ConsoleBusinessTaskSignalDetailEnvelope(
-            item=item,
+            item=business_signal_views(store, [item], source_reader=source_reader(store))[0],
             meta=ApiMeta(snapshot_at=snapshot_at()),
         )
 
@@ -602,7 +613,7 @@ def register_console_routes(
             }
             for item in lookup.candidates
         ]
-        with store._connect() as db:
+        with store.business_task_transaction() as db:
             store.update_business_project_crm_customer_lookup_in_transaction(
                 project_id=project_id,
                 label=label,
@@ -611,7 +622,7 @@ def register_console_routes(
                 candidates=candidates,
                 _db=db,
             )
-        detail = business_project_detail(store, project_id)
+        detail = business_project_detail(store, project_id, source_reader=source_reader(store))
         assert detail is not None
         return command_result(
             item=detail.summary.model_dump(mode="json"),
@@ -904,6 +915,21 @@ def register_console_routes(
             return JSONResponse({"ok": False, "code": "rerun_failed", "message": "无法重跑该 Attempt", "details": {"technical": normalize_display_value(body)}}, status_code=status)
         return command_result(message="重跑已提交")
 
+    @app.post("/api/console/history/{attempt_id}/resend-wechat")
+    async def console_history_resend_wechat(attempt_id: int, request: Request):
+        from app.audit_web import handle_rerun_attempt_post
+
+        payload = await json_object(request)
+        status, _headers, body = handle_rerun_attempt_post(
+            store_factory(),
+            attempt_id,
+            return_to="/history",
+            explicit_resend_message_id=str(payload.get("trigger_message_id") or ""),
+        )
+        if status >= 400:
+            return JSONResponse({"ok": False, "code": "resend_failed", "message": "无法再次发送该微信回复", "details": {"technical": normalize_display_value(body)}}, status_code=status)
+        return command_result(message="再次发送已提交")
+
     @app.post("/api/console/history/{attempt_id}/recall")
     async def console_history_recall(attempt_id: int, request: Request):
         del request
@@ -961,7 +987,8 @@ def register_console_routes(
         from app.audit_web import handle_needs_human_decision_post
         form = urlencode({key: str(value) for key, value in payload.items()}).encode("utf-8")
         status, _headers, body = handle_needs_human_decision_post(
-            store_factory(), attempt_id, form, return_to="/history"
+            store_factory(), attempt_id, form, return_to="/history",
+            skill_options_factory=scheduled_task_option_service_factory,
         )
         if status >= 400:
             return JSONResponse({"ok": False, "code": "decision_failed", "message": "无法提交人工决策", "details": {"technical": normalize_display_value(body)}}, status_code=status)
@@ -970,7 +997,10 @@ def register_console_routes(
     @app.get("/api/console/meeting-attempts/{run_id}")
     def console_meeting_detail(run_id: int):
         store = store_factory()
-        run = store.get_meeting_alignment_run(run_id)
+        run = store.get_logical_run(
+            'meeting_alignment_runs',
+            run_id,
+        )
         if run is None:
             return JSONResponse({"ok": False, "code": "not_found", "message": "Meeting attempt not found", "details": {}}, status_code=404)
         job = store.get_meeting_alignment_job(run.job_id)
@@ -1101,16 +1131,26 @@ def register_console_routes(
 
     @app.get("/api/console/oa-approvals/{process_instance_id:path}")
     def console_oa_detail(process_instance_id: str):
-        histories = store_factory().list_oa_attempt_histories([process_instance_id])
+        store = store_factory()
+        histories = store.list_oa_attempt_histories([process_instance_id])
         attempts = histories.get(process_instance_id, [])
         if not attempts:
             return JSONResponse({"ok": False, "code": "not_found", "message": "OA approval not found", "details": {}}, status_code=404)
+        latest = attempts[0]
+        _, latest_detail = build_attempt_detail(store, latest.id)
+        current_status = (
+            latest_detail["status"]["raw"]
+            if latest_detail is not None else latest.send_status
+        )
         return item_envelope({"process_instance_id": process_instance_id,
-                              "status": attempts[-1].send_status,
-                              "title": attempts[-1].conversation_title,
-                              "attempts": [{"id": a.id, "status": a.send_status,
+                              "status": current_status,
+                              "title": latest.conversation_title,
+                              "attempts": [{"id": a.id,
+                                            "status": current_status if index == 0 else a.send_status,
+                                            "recorded_status": a.send_status,
                                             "action": a.oa_action, "remark": a.oa_remark,
-                                            "created_at": a.created_at} for a in attempts]})
+                                            "created_at": a.created_at}
+                                           for index, a in enumerate(attempts)]})
 
     @app.get("/api/console/feedback")
     def console_feedback(page: int = Query(default=1, ge=1), page_size: int = Query(default=20, ge=1, le=100), q: str = "", status: str = ""):

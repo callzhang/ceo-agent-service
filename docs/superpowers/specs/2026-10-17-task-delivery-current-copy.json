@@ -1,0 +1,145 @@
+{
+  "observed_at": "2026-10-17T12:08:24.427909+00:00",
+  "source_database": "/Users/derek/Library/Application Support/ceo-agent-service/auto-reply.sqlite3",
+  "source_access": "URI mode=ro/query_only read snapshot online backup only",
+  "production_predecessor_head": "8a3262b921d370d8d9cd90fab33f026ddafc3345",
+  "runtime_sha256": {
+    "app/action_storage.py": "685f17ddb38d1f2f46649c9c07be25d3bd99b93209c3bb76f0d468cf881c1fae",
+    "app/action_followup_sync_storage.py": "a576e218dd9e058b99083c362ad238b346d47656e651ce6a1b67f77c24c73c95",
+    "app/action_followup_sync_definitions.py": "10b53bc7c9b6c9152d35e3c912979e00ca41f9579f975e199430155c950ca0a9",
+    "app/action_task_delivery_definitions.py": "600b3d1c58915b2b8d935eadef7fb4cdb08cb351d11ba00938cd5aa8eac73307",
+    "app/action_task_delivery_storage.py": "e5891f9485ae209c2e58f1cdbea043f18d4da16377f72b18868add3743ad3f62",
+    "app/store.py": "33afb4475510dcc5f95587e658ab94e236a93b3d2bebcc4527ff3e62800b3bc4",
+    "app/action_email_schema_release.py": "6e2071471a927287695b65bdb4982098f004ca137bb5534bfefba6da8b16ceef",
+    "app/configs_schema_release.py": "d8fe11062b0f67c07a6912058dd121735cad4eb254a10697769938777be60e53",
+    "app/runs11_current_schema.py": "3b76f4cefc6b483dc08a84cd4893717f516e1f01fdc9d1609c609217936a5510",
+    "app/email_store.py": "a7bb6b04f774c53c9e040509ac166816cf1f5db4808683a411552c182d8912d9",
+    "app/dispatcher/adapters.py": "d1d6f96d0b1f2c6009a9af7d8099ada72e986c330f8fbb5c4eeb40c5fdc55393",
+    "app/audit_web.py": "cc60ef0a90caa350128760eb544f6e69d4db03e40b4190987a028d114180f540",
+    "app/quality_gate.py": "b044a629c5554cf043cd6cc348d13d51e09a91c297221d8c07d2312c4cfa44b7"
+  },
+  "scope": "full paired current32/current four-family storage writes/whole inverse/genuine current predecessor cold reads and internal enqueue/reforward; no native role/provider/send",
+  "temporary_root": "/tmp/task-delivery-current-copy.8devjw47",
+  "source_store_marker": "2026-10-13.5",
+  "source_email_marker": 51,
+  "source_ordinary_tables": 116,
+  "source_families": {
+    "meeting_alignment_delivery_claims": {
+      "rows": 0,
+      "sha256": "248e9d8a6b6cc8bcfba17250251daec3542eaeeaee35fee9dbf212a2b193edb9"
+    },
+    "meeting_memory_write_events": {
+      "rows": 595,
+      "sha256": "09c95bae026dd54da3a4c32a5ef3c0991dad891b07b5a3e524eb92594ff0a544"
+    },
+    "task_memory_write_events": {
+      "rows": 612,
+      "sha256": "5c8ad3118a86cc058ca396712d2381dc4d9ea472f670710c585f19e4c49bfe55"
+    },
+    "wechat_deliveries": {
+      "rows": 133,
+      "sha256": "e1a5a4c99617591b1c62bea75f78780588046fffc012eb74a69327d8975a6fdd"
+    }
+  },
+  "source_allocator_waters": {
+    "meeting_memory_write_events": 295561,
+    "task_memory_write_events": 612,
+    "wechat_deliveries": 137
+  },
+  "source_fk_findings": [
+    [
+      "runs",
+      190042,
+      "tasks",
+      1
+    ]
+  ],
+  "current_write_allocator_waters": {
+    "meeting_memory_write_events": 295562,
+    "task_memory_write_events": 613,
+    "wechat_deliveries": 138
+  },
+  "predecessor_write": {
+    "task_memory_id": 614,
+    "task_memory_status": "skipped"
+  },
+  "predecessor_allocator_waters": {
+    "meeting_memory_write_events": 295562,
+    "task_memory_write_events": 614,
+    "wechat_deliveries": 138
+  },
+  "target_ordinary_table_names": [
+    "actions",
+    "business",
+    "business_attention_events",
+    "business_attention_items",
+    "business_attention_proposal_tasks",
+    "business_attention_tasks",
+    "business_legacy_links",
+    "business_project_candidates",
+    "business_project_evidence",
+    "business_source_documents",
+    "business_task_anchor_links",
+    "business_task_date_evidence",
+    "business_task_evidence",
+    "business_task_relations",
+    "business_task_signals",
+    "business_work_cluster_tasks",
+    "configs",
+    "email_classifications",
+    "email_historical_classification_history",
+    "email_historical_operations",
+    "email_messages",
+    "email_schema_migrations",
+    "errors",
+    "feedback_events",
+    "feedback_iteration_decision_items",
+    "feedback_processing_transitions",
+    "provider_state",
+    "runs",
+    "schedules",
+    "state",
+    "tasks",
+    "wechat_memory_candidates"
+  ],
+  "final_families": {
+    "meeting_alignment_delivery_claims": {
+      "rows": 1,
+      "sha256": "0a175c348816a7461cfd56d4f9593740f4e1931d86d4c2ff7dc21421a46d31c4"
+    },
+    "meeting_memory_write_events": {
+      "rows": 596,
+      "sha256": "dabbf98f9c138f031c1820e20d7a63dc2e89ef0abd9b825468d007d66b0f53fb"
+    },
+    "task_memory_write_events": {
+      "rows": 614,
+      "sha256": "49cca3f566689122fb9e1f23778bad726154d8373743f71a07ef57190d8d77af"
+    },
+    "wechat_deliveries": {
+      "rows": 134,
+      "sha256": "c5b7a42cab76d9844daea4ca4d247b4c025e8c601bea924ed5740adf7e7b2e37"
+    }
+  },
+  "target_virtual_or_shadow_objects": [],
+  "current_write_ids": {
+    "meeting_alignment_delivery_claims": 403343,
+    "meeting_memory_write_events": 295562,
+    "task_memory_write_events": 613,
+    "wechat_deliveries": 138
+  },
+  "stages": [
+    116,
+    32,
+    116,
+    32
+  ],
+  "whole_source_schema_restored": true,
+  "current_four_family_facts_preserved": true,
+  "elapsed_seconds": 566.413,
+  "managed_temporary_root_removed": true,
+  "status": "passed",
+  "original_opened_for_write": false,
+  "provider_or_native_role_invocations": 0,
+  "original_four_family_values_and_types_compared": true,
+  "scope_limit": "Not all116 original family rowsets compared; only complete source schema and all four TaskDelivery facts/types, existing FK findings, target absence and cold predecessor path. Other components retain separate earlier receipts; final11 remains open."
+}

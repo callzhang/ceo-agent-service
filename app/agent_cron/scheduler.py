@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from collections.abc import Callable, Mapping, Sequence
 from dataclasses import dataclass
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 import logging
 import sqlite3
 from threading import Event, RLock
@@ -101,7 +101,7 @@ class _PlannedInstant:
 
 
 class AgentCronScheduler:
-    """Create future trigger rows without replaying missed wall-clock instants."""
+    """Create the latest missed trigger after downtime, then future triggers."""
 
     def __init__(
         self,
@@ -142,9 +142,12 @@ class AgentCronScheduler:
                 replacement[task.id] = current_plan
                 continue
             schedule = CronSchedule.parse(task.cron_expression, task.timezone_name)
+            missed = schedule.latest_before(current)
+            if missed is not None and missed <= _utc(task.created_at):
+                missed = None
             replacement[task.id] = _PlannedInstant(
                 task_version=task.version,
-                scheduled_for=schedule.next_after(current),
+                scheduled_for=(missed or schedule.next_after(current)),
             )
         with self._lock:
             self._planned = replacement
@@ -156,6 +159,31 @@ class AgentCronScheduler:
 
     def tick(self, now: datetime) -> int:
         current = _utc(now)
+        # A suspended process can resume after several schedule points. Keep
+        # one trigger for the latest missed instant instead of creating a
+        # burst of historical report runs.
+        with self._lock:
+            overdue = tuple(
+                (task_id, planned)
+                for task_id, planned in self._planned.items()
+                if planned.scheduled_for < current
+            )
+        for task_id, planned in overdue:
+            task = self._store.get_scheduled_task(task_id)
+            if task is None or not task.enabled or task.version != planned.task_version:
+                continue
+            schedule = CronSchedule.parse(task.cron_expression, task.timezone_name)
+            latest_missed = schedule.latest_before(current + timedelta(microseconds=1))
+            if (
+                latest_missed is not None
+                and latest_missed > _utc(task.created_at)
+                and latest_missed > planned.scheduled_for
+            ):
+                with self._lock:
+                    self._planned[task_id] = _PlannedInstant(
+                        task_version=planned.task_version,
+                        scheduled_for=latest_missed,
+                    )
         with self._lock:
             due = tuple(
                 sorted(
@@ -179,8 +207,33 @@ class AgentCronScheduler:
                 self._set_next(task, current)
                 continue
 
+            reason, _, _ = self._skip_reason(task)
+            if (
+                reason == PREVIOUS_EXECUTION_ACTIVE
+                and planned.scheduled_for < current
+            ):
+                # A catch-up trigger stays planned until the prior execution
+                # settles; do not turn a missed run into a permanent skip.
+                continue
+
+            deferred_for_route_recovery = False
             while True:
                 reason, detail, overlap_run_id = self._skip_reason(task)
+                if reason == RUNTIME_UNAVAILABLE and self._runtime_route_is_paused(
+                    task
+                ):
+                    # Provider outages are temporary. Keep the planned instant
+                    # so a later tick can dispatch it after the route recovers.
+                    logger.warning(
+                        "agent_cron_scheduler_runtime_unavailable",
+                        extra={
+                            "scheduled_task_id": task.id,
+                            "scheduled_task_runtime_id": task.runtime_id,
+                            "scheduled_task_skip_detail": detail,
+                        },
+                    )
+                    deferred_for_route_recovery = True
+                    break
                 result = self._store.create_scheduled_task_run_if_current(
                     task.id,
                     expected_version=planned.task_version,
@@ -191,6 +244,8 @@ class AgentCronScheduler:
                 )
                 if result.state is not ScheduledTaskRunCreateState.RETRY:
                     break
+            if deferred_for_route_recovery:
+                continue
             if result.state is ScheduledTaskRunCreateState.STALE_TASK:
                 self.reload(current)
                 continue
@@ -243,7 +298,10 @@ class AgentCronScheduler:
             instants = tuple(item.scheduled_for for item in self._planned.values())
         if not instants:
             return maximum
-        return max(0.0, min(maximum, (min(instants) - current).total_seconds()))
+        remaining = (min(instants) - current).total_seconds()
+        if remaining <= 0:
+            return maximum
+        return min(maximum, remaining)
 
     def run_forever(
         self,

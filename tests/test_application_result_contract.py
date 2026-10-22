@@ -45,3 +45,17 @@ def test_workbench_begin_immediate_retries_transient_lock() -> None:
     db = LockedOnce()
     _begin_immediate_with_retry(db, attempts=2, delay_seconds=0)
     assert db.calls == 2
+
+
+def test_workbench_begin_immediate_caps_custom_retries_at_three() -> None:
+    class AlwaysLocked:
+        calls = 0
+
+        def execute(self, statement: str) -> None:
+            self.calls += 1
+            raise __import__("sqlite3").OperationalError("database is locked")
+
+    db = AlwaysLocked()
+    with pytest.raises(__import__("sqlite3").OperationalError):
+        _begin_immediate_with_retry(db, attempts=20, delay_seconds=0)
+    assert db.calls == 4

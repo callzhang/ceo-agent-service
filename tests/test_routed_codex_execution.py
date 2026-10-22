@@ -13,6 +13,7 @@ from app.agent_runtime_contracts import (
     RuntimeCapabilitySnapshot,
     RuntimeFailure,
     RuntimeFailureClass,
+    RuntimeKind,
 )
 from app.agent_runtime_router import (
     CAPACITY_WAITS_BEFORE_FAILOVER,
@@ -31,7 +32,8 @@ from app.claude_runtime_adapter import CLAUDE_MAX_TURNS_PER_INVOCATION
 from app.friday_runtime_adapter import FridayExecutionResult, FridayRuntimeError
 from app.process_runner import ProcessRunResult
 from app.store import MAX_RUNTIME_RESULT_ENVELOPE_BYTES, AgentRole, AutoReplyStore
-from app.task_storage import insert_task, task_id_expression
+from app.task8_storage import task8_insert_parts, task8_set_parts
+from app.task_storage import task_id_expression
 from tests.runtime_route_env import claude_api_env, codex_api_env, set_env
 from tests.support.native_protocol import install_protocol_native_trajectories
 
@@ -152,29 +154,36 @@ class FakeAdapter:
 
 def seed_structured_parent(store: AutoReplyStore, request_id: int = 12) -> str:
     with store._connect() as db:
-        insert_task(db, "okr_review_requests", {
-            "legacy_key": request_id, "conversation_id": f"cid-{request_id}",
+        values = {
+            "legacy_key": str(request_id), "conversation_id": f"cid-{request_id}",
             "conversation_title": "title", "trigger_message_id": f"msg-{request_id}",
             "trigger_sender": "sender", "trigger_text": "text", "period_label": "period",
             "period_start": "start", "period_end": "end", "status": "processing",
-        })
+        }
+        parts = task8_insert_parts("okr_review_requests", values)
+        db.execute(f"insert into tasks ({parts.columns}) values ({parts.values})", parts.parameters)
     return str(request_id)
 
 
 def seed_agent_run_parent(store: AutoReplyStore, task_id: int = 901) -> int:
     generation = f"generation-{task_id}"
     with store._connect() as db:
-        parent_id = insert_task(db, "reply_tasks", {
-            "id": task_id, "legacy_key": task_id,
+        parent_values = {
             "conversation_id": f"wechat-{task_id}",
             "conversation_title": "WeChat", "single_chat": 1,
             "trigger_message_id": f"message-{task_id}",
             "trigger_create_time": "2026-08-20 10:00:00", "trigger_sender": "sender",
             "execution_generation": generation, "input_version": 1,
             "claimed_input_version": 1, "status": "processing",
-        }).lastrowid
+        }
+        parent_parts = task8_insert_parts("reply_tasks", parent_values)
+        parent_cursor = db.execute(
+            f"insert into tasks (id,{parent_parts.columns}) values (?,{parent_parts.values})",
+            (task_id, *parent_parts.parameters),
+        )
+        parent_id = int(parent_cursor.lastrowid)
         provenance = store._reply_input_provenance("hello", "{}")
-        cursor = insert_task(db, "reply_task_inputs", {
+        input_values = {
             "parent_id": parent_id, "channel": "dingtalk",
             "conversation_id": f"wechat-{task_id}", "conversation_title": "WeChat",
             "single_chat": 1, "trigger_message_id": f"message-{task_id}",
@@ -183,11 +192,21 @@ def seed_agent_run_parent(store: AutoReplyStore, task_id: int = 901) -> int:
             "business_object_key": "",
             "input_revision_key": f"fixture-{task_id}",
             "input_provenance_json": provenance, "input_compacted": 0,
-        })
+        }
+        input_parts = task8_insert_parts("reply_task_inputs", input_values)
+        cursor = db.execute(
+            f"insert into tasks ({input_parts.columns}) values ({input_parts.values})",
+            input_parts.parameters,
+        )
         input_id = int(cursor.lastrowid)
+        pointer_set = task8_set_parts(
+            "reply_tasks", {}, structural_sql={
+                "current_input_id": "?", "claimed_input_id": "?",
+            }, structural_parameters=(input_id, input_id),
+        )
         db.execute(
-            "update tasks set current_input_id=?, claimed_input_id=? where record_type='reply_tasks' and id=?",
-            (input_id, input_id, parent_id),
+            f"update tasks set {pointer_set.sql} where record_type='reply_tasks' and id=?",
+            (*pointer_set.parameters, parent_id),
         )
     claim = store.claim_agent_run(
         task_id,
@@ -337,6 +356,42 @@ def test_runtime_falls_back_to_friday_in_same_agent_run(tmp_path, monkeypatch):
     ]
     assert len(friday.calls) == 1
     assert store.get_agent_run(run_id).status == "running"
+
+
+def test_route_prompt_override_uses_compact_codex_input_and_full_friday_fallback(
+    tmp_path, monkeypatch
+):
+    store = AutoReplyStore(tmp_path / "meeting-route-prompt.sqlite3")
+    run_id = seed_agent_run_parent(store, task_id=998)
+    config = _friday_config(monkeypatch, "codex_oauth,friday_runtime")
+    friday = FakeFridayAdapter(result=FridayExecutionResult(
+        text="7", thread_id="thread-1", turn_id="turn-1",
+        operation_id="operation-1", artifact={"final_message": "7"},
+    ))
+    codex_prompts = []
+
+    def executor(command, **kwargs):
+        codex_prompts.append(kwargs["prompt"])
+        return ProcessRunResult(1, "", "provider unavailable")
+
+    routed = RoutedCodexExecution(
+        store=store, config=config,
+        router=AgentRuntimeRouter(
+            routes=config.routes, store=store, snapshots=_friday_snapshots(config), now=lambda: NOW
+        ),
+        adapter=FakeAdapter(), friday_adapter=friday, executor=executor, now=lambda: NOW,
+    )
+    result = routed.execute(
+        workload_kind="agent_run", workload_key=str(run_id), prompt="FULL SOURCE",
+        route_prompt_overrides={RuntimeKind.CODEX_CLI: "COMPACT SOURCE"},
+        command_factory=CodexCommandFactory.standard(developer_instructions="test"),
+        parser=_friday_int, result_codec=INT_CODEC,
+    )
+
+    assert result.value == 7
+    assert codex_prompts == ["COMPACT SOURCE"]
+    assert "FULL SOURCE" in friday.calls[0][0]
+    assert "COMPACT SOURCE" not in friday.calls[0][0]
 
 
 def test_friday_unreachable_continues_to_next_configured_route(tmp_path, monkeypatch):
@@ -665,8 +720,9 @@ def test_pause_opened_after_selection_prevents_attempt_and_child(store, config):
 
 
 
+@pytest.mark.parametrize("route_override", [False, True])
 def test_result_validation_retry_repeats_same_route_once_with_corrected_prompt(
-    store, config
+    store, config, route_override
 ):
     key = seed_structured_parent(store, 71)
     adapter = FakeAdapter()
@@ -709,6 +765,9 @@ def test_result_validation_retry_repeats_same_route_once_with_corrected_prompt(
         workload_kind="structured",
         workload_key=key,
         prompt="analyze all KRs",
+        route_prompt_overrides=(
+            {RuntimeKind.CODEX_CLI: "compact KR facts"} if route_override else None
+        ),
         command_factory=CodexCommandFactory.standard(
             developer_instructions="reviewed reads only"
         ),
@@ -725,7 +784,10 @@ def test_result_validation_retry_repeats_same_route_once_with_corrected_prompt(
             ("codex_oauth", None, "on-failure", False),
             ("codex_oauth", "session-1", "on-failure", False),
     ]
-    assert prompts[0] == "analyze all KRs"
+    assert prompts[0] == ("compact KR facts" if route_override else "analyze all KRs")
+    if route_override:
+        assert "compact KR facts" in prompts[1]
+        assert "analyze all KRs" not in prompts[1]
     assert "Return every KR" in prompts[1]
     assert "expected complete KR coverage" in prompts[1]
     attempts = store.list_runtime_operation_attempts("structured", key)
@@ -1882,9 +1944,10 @@ def test_no_eligible_route_or_terminal_parent_never_starts_process(store, config
         )
 
     with store._connect() as db:
+        failed_set = task8_set_parts("okr_review_requests", {"status": "failed"})
         db.execute(
-            f"update tasks set status='failed' where record_type='okr_review_requests' and id={task_id_expression('okr_review_requests', '?')}",
-            (12,),
+            f"update tasks set {failed_set.sql} where record_type='okr_review_requests' and id={task_id_expression('okr_review_requests', '?')}",
+            (*failed_set.parameters, 12),
         )
     with pytest.raises(ValueError, match="parent"):
         RoutedCodexExecution(
@@ -2373,11 +2436,15 @@ def test_a_typed_workload_parser_reads_friday_s_final_message(tmp_path, monkeypa
     assert Answer.model_validate_json(result.value).ok is True
 
 
-def _provider_full_executor(calls: list[str], full_calls: int):
+def _provider_full_executor(
+    calls: list[str], full_calls: int, prompts: list[str] | None = None
+):
     """Fail the first ``full_calls`` calls as provider-full, then answer 42."""
 
     def executor(command, **kwargs):
         calls.append(kwargs["env"]["ROUTE"])
+        if prompts is not None:
+            prompts.append(kwargs["prompt"])
         if len(calls) <= full_calls:
             return ProcessRunResult(1, "", "server_overloaded")
         return ProcessRunResult(0, json.dumps({"type": "result", "value": 42}), "")
@@ -2403,13 +2470,14 @@ def test_a_full_provider_is_retried_on_the_same_route_before_switching(store, co
     """Derek, 2026-09-17: on 429 retry three times, then switch runtime."""
     key = seed_structured_parent(store)
     calls: list[str] = []
+    prompts: list[str] = []
     sleeps: list[float] = []
     routed = RoutedCodexExecution(
         store=store,
         config=config,
         router=make_router(store, config),
         adapter=CorrectionTurnFailureAdapter(CORRECTION_TURN_PROVIDER_FAILURES[0]),
-        executor=_provider_full_executor(calls, full_calls=2),
+        executor=_provider_full_executor(calls, full_calls=2, prompts=prompts),
         sleep=sleeps.append,
     )
 
@@ -2418,9 +2486,46 @@ def test_a_full_provider_is_retried_on_the_same_route_before_switching(store, co
     assert result.value == 42
     assert result.route_name == "codex_oauth"
     assert calls == ["codex_oauth"] * 3
+    assert prompts == ["analyze"] * 3
     assert sleeps == [10.0, 20.0]
     # Retries that succeed never take the route away from other work.
     assert store.active_runtime_route_pause("codex_oauth", now=NOW) is None
+
+
+def test_a_cold_capacity_retry_resumes_observed_session_with_continue(store, config):
+    key = seed_structured_parent(store)
+    adapter = CorrectionTurnFailureAdapter(CORRECTION_TURN_PROVIDER_FAILURES[0])
+    prompts: list[str] = []
+    sleeps: list[float] = []
+
+    def executor(command, **kwargs):
+        prompts.append(kwargs["prompt"])
+        if len(prompts) == 1:
+            return ProcessRunResult(
+                1,
+                json.dumps({"type": "thread.started", "thread_id": "cold-429-session"}),
+                "provider returned HTTP 429",
+            )
+        return ProcessRunResult(
+            0, json.dumps({"type": "result", "value": 42}), ""
+        )
+
+    routed = RoutedCodexExecution(
+        store=store,
+        config=config,
+        router=make_router(store, config),
+        adapter=adapter,
+        executor=executor,
+        sleep=sleeps.append,
+        session_id_parser=lambda raw: json.loads(raw).get("thread_id"),
+    )
+
+    result = _run_structured(routed, key)
+
+    assert result.value == 42
+    assert [command[1] for command in adapter.commands] == [None, "cold-429-session"]
+    assert prompts == ["analyze", "continue"]
+    assert sleeps == [10.0]
 
 
 def test_a_provider_still_full_after_three_retries_switches_runtime(store, config):

@@ -21,6 +21,7 @@ from uuid import uuid4
 from app.email_category_config import VerifiedEmailFolderBinding
 from app.email_provider_folders import FolderRole, ProviderFolder
 from app.email_unsubscribe import TRANSIENT_BROWSER_UNSUBSCRIBE_RETRIES
+from app.external_retry import MAX_AUTOMATIC_ATTEMPTS
 
 
 SCAN_INTERVAL_SECONDS = 60
@@ -35,10 +36,10 @@ EMAIL_TASK_CLAIM_BATCH = 5
 STALE_EMAIL_TASK_SECONDS = 10 * 60
 MAX_EMAIL_TASK_PROCESSING_SECONDS = 60 * 60
 # Transient mailbox/network failures while loading a task are retried this often.
-EMAIL_TASK_TRANSIENT_RETRY_ATTEMPTS = 5
+EMAIL_TASK_TRANSIENT_RETRY_ATTEMPTS = MAX_AUTOMATIC_ATTEMPTS
 # An authorized unsubscribe entry missing from the message is looked for again
 # in this many fresh reads before it is believed to be gone for good.
-UNRESOLVED_UNSUBSCRIBE_RECHECKS = 5
+UNRESOLVED_UNSUBSCRIBE_RECHECKS = MAX_AUTOMATIC_ATTEMPTS
 UNRESOLVED_UNSUBSCRIBE_SELECTION_ERROR = "email_unsubscribe_candidate_unresolved"
 # A route that declines to place the audited unsubscribe call is retried this
 # many times before the refusal is treated as a capability the service lacks.
@@ -562,6 +563,7 @@ def execute_historical_model_actions(
     unsubscribe_entries: Sequence[object],
     read_after: Callable[[], object],
     threshold: float | None = None,
+    retire_original: Callable[[int], object] | None = None,
 ) -> object:
     """Persist and synchronously read back a bounded historical action plan."""
 
@@ -620,17 +622,20 @@ def execute_historical_model_actions(
         probability=float(prediction.category_probability),
         important=bool(prediction.important),
     )
+    reused_receipts_only = True
     for action_id in action_ids:
         statuses = email_store.direct_action_statuses_for_plan(
             action_plan["action_plan_id"]
         )
         if statuses.get(action_id) == "done":
             continue
+        reused_receipts_only = False
         result = _run_next_direct_action(
             email_store,
             direct_action_executor_factory,
             available_account_ids=lambda: (str(message["accountId"]),),
             action_id=action_id,
+            retire_original=retire_original,
         )
         if result is None:
             return HistoricalActionResult(
@@ -665,6 +670,8 @@ def execute_historical_model_actions(
     outcome = _historical_action_outcome_from_receipts(
         actions, receipts, is_read=is_read
     )
+    if reused_receipts_only and retire_original is not None:
+        retire_original(int(persisted.persisted["id"]))
     return HistoricalActionResult(outcome, is_read=is_read)
 
 
@@ -716,6 +723,8 @@ def run_email_classification_task_once(
         [object, Mapping[str, object]], Mapping[str, object] | None
     ],
     action_task_producer: object,
+    retire_original: Callable[[int], object] | None = None,
+    owner_example_source_reader=None,
 ) -> Mapping[str, object] | None:
     """Run one dedicated classifier task and persist its non-action decision."""
 
@@ -732,6 +741,7 @@ def run_email_classification_task_once(
     task = adapter.claim_next(owner=owner)
     if task is None:
         return None
+    completed_classification_id = None
     try:
         payload = json.loads(task.input_json)
         canonical = email_store.get_classification_by_stable_identity(
@@ -777,6 +787,8 @@ def run_email_classification_task_once(
                         )
                     action_task_producer.produce(plan, current_message)
             adapter.complete(task, outcome)
+            if outcome["decision_status"] == "processed":
+                completed_classification_id = outcome["classification_id"]
             return outcome
         current_message = provider_readback(task, payload)
         locator_payload = payload.get("provider_locator")
@@ -861,6 +873,7 @@ def run_email_classification_task_once(
             subject=prompt_message["subject"],
             text=body_text,
             allowed_category_keys=payload["allowed_category_keys"],
+            source_reader=owner_example_source_reader,
         )
         result = agent.classify(
             task,
@@ -963,6 +976,8 @@ def run_email_classification_task_once(
             action_task_producer.produce(plan, current_message)
         outcome = {**outcome, "classification_id": classification_id}
         adapter.complete(task, outcome)
+        if outcome["decision_status"] == "processed":
+            completed_classification_id = classification_id
         return outcome
     except Exception as exc:
         from pydantic import ValidationError
@@ -986,6 +1001,9 @@ def run_email_classification_task_once(
             retryable=not permanent,
         )
         raise
+    finally:
+        if completed_classification_id is not None and retire_original is not None:
+            retire_original(completed_classification_id)
 
 
 class EmailWorkerStartupError(RuntimeError):
@@ -1853,10 +1871,20 @@ def _is_direct_email_unsubscribe_task(task: object) -> bool:
     )
 
 
+def _retire_email_task_original(task, retire_original):
+    if retire_original is None:
+        return
+    classification_id = json.loads(task.trigger_message_json).get("classification_id")
+    if classification_id is not None:
+        retire_original(classification_id)
+
+
 def _finalize_direct_email_unsubscribe_task(
     store: object,
     task: object,
     result: Mapping[str, object],
+    *,
+    retire_original: Callable[[int], object] | None = None,
 ) -> None:
     """Project a direct unsubscribe receipt onto its task without an Agent run."""
 
@@ -1901,6 +1929,7 @@ def _finalize_direct_email_unsubscribe_task(
         store.complete_reply_task(
             task.id, expected_execution_generation=task.execution_generation
         )
+        _retire_email_task_original(task, retire_original)
     elif retryable:
         # Direct tasks also return their attempt budget on deferral. Carry the
         # bounded browser retry count in the task error or a transient browser
@@ -2170,15 +2199,7 @@ def reconcile_missing_model_action_tasks(
             )
             message = load_message(classification)
             if not isinstance(message, Mapping):
-                if not _reconcile_missing_model_action_from_durable_context(
-                    email_store,
-                    action_task_producer,
-                    plan,
-                    classification,
-                ):
-                    raise ValueError("model action repair message is unavailable")
-                repaired += 1
-                continue
+                raise ValueError("model action repair message is unavailable")
             action_task_producer.produce(plan, message)
             remaining = email_store.list_missing_unsubscribe_action_tasks(
                 classification_id=int(classification["id"])
@@ -2220,113 +2241,6 @@ def reconcile_missing_model_action_tasks(
         "repaired": repaired,
         "conflicts": conflicts,
     }
-
-
-def _reconcile_missing_model_action_from_durable_context(
-    email_store: object,
-    action_task_producer: object,
-    action_plan: object,
-    classification: Mapping[str, object],
-) -> bool:
-    """Repair or terminalize an unsubscribe plan when the source message moved."""
-
-    try:
-        task_input = _durable_email_agent_task_input(email_store, classification)
-    except Exception:  # noqa: BLE001 - caller reports one isolated conflict
-        return False
-    produce_task_input = getattr(action_task_producer, "produce_task_input", None)
-    if callable(produce_task_input):
-        try:
-            produce_task_input(action_plan, task_input)
-            return True
-        except Exception as exc:  # noqa: BLE001 - fall through to skipped receipt
-            if not _missing_unsubscribe_entry_error(exc):
-                raise
-    _persist_missing_unsubscribe_entry_skip(email_store, action_plan, classification)
-    return True
-
-
-def _durable_email_agent_task_input(
-    email_store: object,
-    classification: Mapping[str, object],
-):
-    from app.agent_context import PriorReceipt
-    from app.email_classifier_contracts import EmailAttachmentMetadata
-    from app.email_task_adapter import EmailAgentTaskInput, EmailThreadMessage
-
-    account_id = str(classification["account_id"])
-    stable_identity = str(classification["stable_message_identity"])
-    rows = email_store.list_email_context_thread(
-        account_id=account_id,
-        stable_message_identity=stable_identity,
-    )
-    trigger_row = next(
-        (
-            row
-            for row in rows
-            if isinstance(row, Mapping)
-            and row.get("stable_message_identity") == stable_identity
-        ),
-        None,
-    )
-    if not isinstance(trigger_row, Mapping):
-        raise ValueError("email task source message is unavailable")
-
-    def thread_message(row: Mapping[str, object]) -> EmailThreadMessage:
-        return EmailThreadMessage(
-            message_id=str(row.get("stable_message_identity") or ""),
-            sender=str(row.get("sender") or "unknown"),
-            text=str(row.get("normalized_text") or ""),
-            create_time=str(row.get("received_at") or ""),
-        )
-
-    attachment_values = trigger_row.get("attachment_metadata") or ()
-    if not isinstance(attachment_values, Sequence) or isinstance(
-        attachment_values, str | bytes
-    ):
-        raise ValueError("email attachment metadata is invalid")
-    receipt_values = email_store.list_email_context_receipts(
-        account_id=account_id,
-        stable_message_identity=stable_identity,
-    )
-    return EmailAgentTaskInput(
-        stable_message_identity=stable_identity,
-        thread_identity=str(
-            trigger_row.get("thread_identity") or classification.get("thread_id") or ""
-        ),
-        subject=str(trigger_row.get("subject") or classification.get("subject") or ""),
-        trigger=thread_message(trigger_row),
-        thread_messages=tuple(
-            thread_message(row)
-            for row in rows
-            if isinstance(row, Mapping)
-            and row.get("stable_message_identity") != stable_identity
-        ),
-        attachments=tuple(
-            EmailAttachmentMetadata.model_validate(item) for item in attachment_values
-        ),
-        prior_receipts=tuple(
-            PriorReceipt(
-                receipt_id=str(receipt.get("receipt_id") or ""),
-                operation=str(receipt.get("operation") or ""),
-                summary=str(receipt.get("summary") or ""),
-                completed=bool(receipt.get("completed")),
-            )
-            for receipt in receipt_values
-            if isinstance(receipt, Mapping)
-        ),
-        body_text=str(trigger_row.get("normalized_text") or ""),
-    )
-
-
-def _missing_unsubscribe_entry_error(exc: BaseException) -> bool:
-    name = type(exc).__name__
-    message = str(exc)
-    return (
-        name in {"UnsubscribeSelectionUnresolvable", "EmailAgentTaskMetadataError"}
-        or "unsubscribe candidate" in message
-        or "email unsubscribe has no HTTPS browser candidate" in message
-    )
 
 
 def _persist_missing_unsubscribe_entry_skip(
@@ -2467,6 +2381,7 @@ def reconcile_historical_operations(
     direct_action_executor_factory: Callable[[str], object],
     *,
     read_after: Callable[[Mapping[str, object]], object],
+    retire_original: Callable[[int], object] | None = None,
 ) -> dict[str, int]:
     """Resume exact durable historical plans without source-folder enumeration."""
 
@@ -2491,14 +2406,17 @@ def reconcile_historical_operations(
             operation["action_plan_id"]
         )
         complete = True
+        reused_receipts_only = True
         for action_id in operation["action_ids"]:
             if statuses.get(action_id) == "done":
                 continue
+            reused_receipts_only = False
             result = _run_next_direct_action(
                 email_store,
                 direct_action_executor_factory,
                 available_account_ids=(operation["account_id"],),
                 action_id=action_id,
+                retire_original=retire_original,
             )
             if result is None or getattr(result, "status", "") != "done":
                 complete = False
@@ -2556,6 +2474,8 @@ def reconcile_historical_operations(
         )
         email_store.record_historical_classification_outcome(outcome)
         email_store.complete_historical_operation(outcome)
+        if reused_receipts_only and retire_original is not None:
+            retire_original(int(operation["classification_id"]))
         repaired += 1
     return {"repaired": repaired, "deferred": deferred}
 
@@ -2791,6 +2711,7 @@ def _run_next_direct_action(
     *,
     available_account_ids: Callable[[], Sequence[str]] | Sequence[str] | None = None,
     action_id: str | None = None,
+    retire_original: Callable[[int], object] | None = None,
 ) -> object | None:
     """Run one claimed action, or leave it pending when no provider exists."""
 
@@ -2847,6 +2768,8 @@ def _run_next_direct_action(
         retryable=bool(getattr(result, "retryable", True)),
         updated_locator=getattr(result, "updated_locator", None),
     )
+    if result.status == "done" and retire_original is not None:
+        retire_original(action.classification_id)
     return result
 
 
@@ -3191,7 +3114,8 @@ def _decision_options_json(result: object) -> str:
     return "[]"
 
 
-def _finalize_email_task(store: object, task: object, result: object) -> None:
+def _finalize_email_task(store: object, task: object, result: object, *,
+                         retire_original: Callable[[int], object] | None = None) -> None:
     """Project reviewed execution; independent unsubscribe owns its own recovery."""
     status_map = {
         "executed": ("done", "completed"),
@@ -3225,6 +3149,9 @@ def _finalize_email_task(store: object, task: object, result: object) -> None:
             REPLY_TASK_RETRY_BASE_DELAY_SECONDS * (2 ** max(task.attempts - 1, 0)),
             REPLY_TASK_RETRY_MAX_DELAY_SECONDS,
         )
+        from app.consumer_purpose_retry import RETRY_REQUESTED
+        if error == RETRY_REQUESTED:
+            delay_seconds = max(delay_seconds, result.retry_after_seconds)
         available_at = (
             datetime.now(timezone.utc) + timedelta(seconds=delay_seconds)
         ).strftime("%Y-%m-%d %H:%M:%S")
@@ -3233,6 +3160,7 @@ def _finalize_email_task(store: object, task: object, result: object) -> None:
             error or "email_orchestration_deferred",
             expected_execution_generation=task.execution_generation,
             available_at=available_at,
+            refund_attempt=error == RETRY_REQUESTED,
         )
         return
     run = store.get_agent_run(result.final_run_id) if result.final_run_id else None
@@ -3264,6 +3192,8 @@ def _finalize_email_task(store: object, task: object, result: object) -> None:
     from app.task_artifacts import cleanup_terminal_task_artifacts
 
     cleanup_terminal_task_artifacts(store, task.id)
+    if task_status in ("done", "skipped"):
+        _retire_email_task_original(task, retire_original)
 
 
 def _email_worker_health_recorder(
@@ -3343,6 +3273,10 @@ def build_email_worker_dependencies(
     low_priority_source_factory = _build_registry_source_factory(
         email_connector_registry, _ConnectorPriority.LOW
     )
+    from app.email_source_reader import EmailSourceReader
+
+    original_reader = EmailSourceReader(email_store, source_factory=low_priority_source_factory)
+    retire_original = partial(email_store.compact_email_inputs, source_reader=original_reader)
     model_root = Path(settings.db_path).parent / "email-models"
     registry = EmailModelRegistry(model_root)
     description_optimizer = DescriptionOptimizationOrchestrator(
@@ -3357,11 +3291,16 @@ def build_email_worker_dependencies(
             )
         )(payload),
     )
+    from app.email_source_reader import EmailSourceReader
+    from app.email_selected_training_reader import EmailSelectedTrainingReader
     learning = EmailClassifierLearningService(
         email_store,
         registry=registry,
         retrain_state_path=model_root / "retrain-state.json",
         description_optimizer=description_optimizer,
+        selected_training_reader=EmailSelectedTrainingReader(
+            email_store, source_reader=EmailSourceReader(email_store, source_factory=source_factory),
+        ),
     )
     if direct_action_executor_factory is None:
         direct_action_executor_factory = _build_imap_direct_action_executor_factory(
@@ -3772,6 +3711,7 @@ def build_email_worker_dependencies(
                                 context=context,
                                 model_id=model_id,
                                 model_text=candidate.normalized_text,
+                                retire_original=retire_original,
                                 unsubscribe_entries=entries,
                                 read_after=lambda: _read_persisted_historical_state(
                                     email_store,
@@ -3944,32 +3884,14 @@ def build_email_worker_dependencies(
         def load_model_action_repair_message(
             classification: Mapping[str, object],
         ) -> Mapping[str, object] | None:
-            account = email_store.get_account(str(classification["account_id"]))
-            if not isinstance(account, Mapping):
-                return None
-            source = low_priority_source_factory(account)
-            try:
-                uid = int(classification["uid"])
-                uidvalidity = int(classification["uidvalidity"])
-                batch = source.fetch_uid_batch(
-                    str(classification["folder"]),
-                    cursor_uidvalidity=uidvalidity,
-                    last_seen_uid=max(0, uid - 1),
-                    limit=2,
-                )
-                if int(batch.uidvalidity) != uidvalidity:
-                    return None
-                return next(
-                    (
-                        message
-                        for message in batch.messages
-                        if _message_identity(message)
-                        == str(classification["stable_message_identity"])
-                    ),
-                    None,
-                )
-            finally:
-                _close_email_source(source)
+            from app.email_source_reader import EmailSourceReader
+
+            return EmailSourceReader(
+                email_store, source_factory=low_priority_source_factory,
+            ).read(
+                str(classification["account_id"]),
+                str(classification["stable_message_identity"]),
+            )
 
         def reconcile_action_tasks_once():
             return reconcile_missing_model_action_tasks(
@@ -3997,6 +3919,7 @@ def build_email_worker_dependencies(
                 email_store,
                 direct_action_executor_factory,
                 read_after=read_after,
+                retire_original=retire_original,
             )
 
         def training_tick():
@@ -4016,6 +3939,7 @@ def build_email_worker_dependencies(
                 _run_next_direct_action,
                 email_store,
                 direct_action_executor_factory,
+                retire_original=retire_original,
                 available_account_ids=lambda: tuple(
                     str(account["account_id"])
                     for account in load_enabled_accounts()
@@ -4037,12 +3961,14 @@ def build_email_worker_dependencies(
             finalize_task=partial(
                 _finalize_email_task,
                 task_store,
+                retire_original=retire_original,
             ),
             direct_unsubscribe_runner=partial(
                 run_email_unsubscribe, Path(settings.db_path)
             ),
             finalize_direct_unsubscribe_task=partial(
-                _finalize_direct_email_unsubscribe_task, task_store
+                _finalize_direct_email_unsubscribe_task, task_store,
+                retire_original=retire_original,
             ),
             training_tick=training_tick,
             record_health=record_health,
@@ -4054,7 +3980,11 @@ def build_email_worker_dependencies(
                 email_store,
                 owner=f"email-classifier:{os.getpid()}",
                 provider_readback=read_current_classification_message,
+                owner_example_source_reader=EmailSourceReader(
+                    email_store, source_factory=source_factory,
+                ),
                 action_task_producer=action_task_producer,
+                retire_original=retire_original,
             ),
             publish_provider_observation_change=(publish_provider_observation_change),
             training_observation_tick=training_observation_tick,
@@ -4165,7 +4095,11 @@ def _build_training_observation_source_factory(registry: object):
     return _build_registry_source_factory(registry, ConnectorPriority.LOW)
 
 
-def _build_email_connector_registry(email_store: object):
+def _build_email_connector_registry(
+    email_store: object,
+    *,
+    environment_factory: Callable[[], Mapping[str, str]] = lambda: os.environ,
+):
     """The one `EmailConnectorRegistry` for every in-process IMAP call site.
 
     See `app/email_account_connector.py` for why: on 2026-09-28 two worker
@@ -4179,6 +4113,7 @@ def _build_email_connector_registry(email_store: object):
 
     from app.email_account_connector import EmailConnectorRegistry
     from app.email_connector_config import resolve_secret
+    from app.email_imap_readonly import IMAP_READ_TIMEOUT_SECONDS
     from app.email_provider_actions import ImapDeterministicProvider
 
     def connect_fn_factory(account_id: str):
@@ -4191,7 +4126,7 @@ def _build_email_connector_registry(email_store: object):
             if not bool(account.get("imap_tls")):
                 raise ConnectionError("email IMAP TLS is required")
             secret = resolve_secret(
-                str(account.get("imap_secret_reference") or ""), os.environ
+                str(account.get("imap_secret_reference") or ""), environment_factory()
             )
             if not secret:
                 raise ConnectionError("email IMAP credential is unavailable")
@@ -4200,6 +4135,7 @@ def _build_email_connector_registry(email_store: object):
                 str(account["imap_username"]),
                 secret,
                 port=int(account["imap_port"]),
+                timeout=IMAP_READ_TIMEOUT_SECONDS,
                 account_id=account_id,
                 move_mode=str(account.get("imap_move_mode") or "move"),
             )

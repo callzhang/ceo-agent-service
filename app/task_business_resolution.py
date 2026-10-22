@@ -1,6 +1,10 @@
 """Evidence-backed grouping, anchor, Project, and relevance commands."""
 
 from __future__ import annotations
+from app.provenance_storage import signal_projection
+from app.business_definitions import BUSINESS_PROJECTIONS
+from app.business_candidate_definitions import candidate_projection
+from app.action_business_definitions import business_action_projection
 
 from datetime import datetime, timezone
 from contextlib import nullcontext
@@ -64,7 +68,7 @@ class BusinessResolutionService:
 
     def _require_evidence_signal(self, *, signal_id: int, db) -> None:
         row = db.execute(
-            "select 1 from business_task_signals where id=?", (signal_id,)
+            f"select 1 from ({signal_projection()}) where id=?", (signal_id,)
         ).fetchone()
         if row is None:
             raise ValueError(f"evidence signal {signal_id} does not exist")
@@ -161,7 +165,7 @@ class BusinessResolutionService:
             if not anchor.active:
                 raise ValueError("official Project requires an active project anchor")
             existing_row = db.execute(
-                "select * from business_projects where canonical_anchor_id=?", (anchor_id,)
+                f'select * from ({BUSINESS_PROJECTIONS["project"]}) where canonical_anchor_id=?', (anchor_id,)
             ).fetchone()
             if existing_row is not None:
                 existing = BusinessProject.model_validate(dict(existing_row))
@@ -183,9 +187,7 @@ class BusinessResolutionService:
         self._require_nonblank(registry_source, field="canonical registry source")
         with self._transaction(_db) as db:
             matches = db.execute(
-                """select p.* from business_projects p
-                   join business_anchors a on a.id=p.canonical_anchor_id
-                   where p.title=? and a.anchor_type='project' and a.active=1 limit 2""",
+                f'select p.* from ({BUSINESS_PROJECTIONS["project"]}) p\n                   join ({BUSINESS_PROJECTIONS["anchor"]}) a on a.id=p.canonical_anchor_id\n                   where p.title=? and a.anchor_type=\'project\' and a.active=1 limit 2',
                 (title,),
             ).fetchall()
             if len(matches) > 1:
@@ -311,14 +313,14 @@ class BusinessResolutionService:
         _db: sqlite3.Connection | None = None,
     ) -> int:
         with self._transaction(_db) as db:
-            cluster_row = db.execute(
-                "select title from business_work_clusters where id=?", (cluster_id,)
-            ).fetchone()
-            if cluster_row is None:
+            cluster = self.store.get_business_work_cluster_in_transaction(
+                cluster_id=cluster_id, _db=db
+            )
+            if cluster is None:
                 raise ValueError(f"business work cluster {cluster_id} does not exist")
             return self.store.create_business_project_candidate_in_transaction(
                 cluster_id=cluster_id,
-                title=cluster_row["title"] if title is None else title,
+                title=cluster.title if title is None else title,
                 reason=reason,
                 _db=db,
             )
@@ -363,7 +365,7 @@ class BusinessResolutionService:
                         "explicit Project confirmation requires an active project anchor"
                     )
                 existing_row = db.execute(
-                    "select id from business_projects where canonical_anchor_id=?",
+                    f'select id from ({BUSINESS_PROJECTIONS["project"]}) where canonical_anchor_id=?',
                     (anchor_id,),
                 ).fetchone()
                 resolved_project_id = (
@@ -377,22 +379,18 @@ class BusinessResolutionService:
                     )
                 )
             project_row = db.execute(
-                "select canonical_anchor_id from business_projects where id=?",
+                f'select canonical_anchor_id from ({BUSINESS_PROJECTIONS["project"]}) where id=?',
                 (resolved_project_id,),
             ).fetchone()
             assert project_row is not None
             cluster_row = db.execute(
-                "select cluster_id from business_project_candidates where id=?",
+                f"select cluster_id from ({candidate_projection('project_candidate')}) where id=?",
                 (candidate_id,),
             ).fetchone()
             assert cluster_row is not None
             task_rows = db.execute(
-                """
-                select task_id
-                from business_work_cluster_tasks
-                where cluster_id=?
-                order by task_id
-                """,
+                f"select task_id from ({business_action_projection('business_work_cluster_tasks')}) "
+                "where cluster_id=? order by task_id",
                 (int(cluster_row["cluster_id"]),),
             ).fetchall()
             for task_row in task_rows:

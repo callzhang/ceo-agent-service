@@ -157,13 +157,78 @@ def _okr_review(store: AutoReplyStore, *, index: int = 1) -> int:
     )
 
 
-def _todo_outbox(store: AutoReplyStore, *, index: int = 1) -> int:
-    store.enqueue_task_todo_sync_outbox(
-        operation_key=f"task-agent:{index}:todo:{index}:create",
-        work_todo_id=index,
-        operation="create",
+def _update_task_facts(db, kind: str, public_id: int, values: dict[str, object]) -> None:
+    from app.task8_storage import task8_set_parts
+    from app.task_storage import task_id_expression
+
+    parts = task8_set_parts(kind, values, payload_source="tasks.payload_json")
+    db.execute(
+        f"update tasks set {parts.sql} where id={task_id_expression(kind, '?')}",
+        (*parts.parameters, public_id),
     )
-    return int(store.list_task_todo_sync_outbox()[-1]["id"])
+
+
+def _insert_claim_lease(
+    db, values: dict[str, object], *, source_rowid: int | None = None
+) -> None:
+    from app.state_storage import insert_state, update_state_rows
+    from app.task_lifecycle_definitions import DISPATCH_KINDS, eligible_adapter
+    from app.task_lifecycle_storage import acquire_claim
+
+    adapter = values["adapter_name"]
+    source_id = str(values["source_id"])
+    exists = adapter in DISPATCH_KINDS and db.execute(
+        "select 1 from tasks where record_type=? and legacy_key=? and "
+        + eligible_adapter() + "=?", (DISPATCH_KINDS[adapter], source_id, adapter),
+    ).fetchone()
+    if exists:
+        if source_rowid is not None:
+            insert_state(db, "dispatcher_claim_leases", values, source_rowid=source_rowid)
+        generation = acquire_claim(db, adapter_name=adapter, source_id=source_id,
+            owner=values["owner"], owner_pid=values["owner_pid"],
+            lease_expires_at=values["lease_expires_at"], now=values["updated_at"])
+        assert generation == values["generation"]
+        update_state_rows(db, "dispatcher_claim_leases", values,
+            where_sql="adapter_name=? and source_id=?", parameters=(adapter, source_id))
+        if source_rowid is not None:
+            assert db.execute("select legacy_key from state where record_type='dispatcher_claim_leases' "
+                "and adapter_name=? and source_id=?", (adapter, source_id)).fetchone()[0] == str(source_rowid)
+    elif source_rowid is None:
+        insert_state(db, "dispatcher_claim_leases", values)
+    else:
+        insert_state(db, "dispatcher_claim_leases", values, source_rowid=source_rowid)
+
+
+def _update_claim_lease(
+    db, adapter_name: str, source_id: str, values: dict[str, object]
+) -> int:
+    from app.state_definitions import state_projection
+    from app.state_storage import update_state
+
+    row = db.execute(
+        f"select rowid from ({state_projection('dispatcher_claim_leases', include_rowid=True)}) "
+        "where adapter_name=? and source_id=?",
+        (adapter_name, source_id),
+    ).fetchone()
+    if row is None:
+        return 0
+    from app.task_lifecycle_definitions import DISPATCH_KINDS
+    from app.task_lifecycle_storage import recover_claims
+    if adapter_name in DISPATCH_KINDS:
+        owners = {("lease_owner" if key == "owner" else key): value
+                  for key, value in values.items()
+                  if key in ("owner", "owner_pid", "generation", "lease_expires_at")}
+        if owners:
+            recover_claims(db, adapter=adapter_name, source_ids=(source_id,),
+                values=owners, history=values)
+    return update_state(
+        db,
+        "dispatcher_claim_leases",
+        row["rowid"],
+        values,
+        where_sql="adapter_name=? and source_id=?",
+        parameters=(adapter_name, source_id),
+    )
 
 
 def _business_task_todo_outbox(store: AutoReplyStore, *, index: int = 1) -> int:
@@ -231,61 +296,11 @@ def test_business_task_todo_failed_delivery_waits_before_bounded_retry(tmp_path:
     third = adapter.claim(NOW + timedelta(minutes=3), owner="dispatcher-c", owner_pid=303, lease=timedelta(minutes=5))
     assert third is not None and third.attempt == 3
     adapter.finish_delivery(third, owner="dispatcher-c", now=NOW + timedelta(minutes=3), status="failed", error="temporary outage")
-    assert adapter.claim(NOW + timedelta(hours=1), owner="dispatcher-d", owner_pid=404, lease=timedelta(minutes=5)) is None
+    fourth = adapter.claim(NOW + timedelta(hours=1), owner="dispatcher-d", owner_pid=404, lease=timedelta(minutes=5))
+    assert fourth is not None and fourth.attempt == 4
+    adapter.finish_delivery(fourth, owner="dispatcher-d", now=NOW + timedelta(hours=1, minutes=1), status="failed", error="temporary outage")
+    assert adapter.claim(NOW + timedelta(hours=2), owner="dispatcher-e", owner_pid=505, lease=timedelta(minutes=5)) is None
     assert "retry_exhausted" in store.get_business_task_todo_sync_outbox(source_id)["error"]
-
-
-def test_task_todo_outbox_adapter_claims_due_failed_work_without_new_input(
-    tmp_path: Path,
-) -> None:
-    store = _store(tmp_path)
-    source_id = _todo_outbox(store)
-    with store._connect() as db:
-        db.execute(
-            "update task_todo_sync_outbox set status='failed', attempt_count=1, "
-            "next_attempt_at=? where id=?",
-            ((NOW - timedelta(seconds=1)).strftime("%Y-%m-%d %H:%M:%S"), source_id),
-        )
-    adapter = dispatcher_adapters.TaskTodoSyncOutboxQueueAdapter(store)
-
-    envelope = adapter.claim(
-        NOW,
-        owner="dispatcher-a",
-        owner_pid=101,
-        lease=timedelta(minutes=5),
-    )
-
-    assert envelope is not None
-    assert envelope.source_id == str(source_id)
-    assert envelope.attempt == 2
-    assert adapter.metrics(NOW).running == 1
-
-
-def test_task_todo_outbox_adapter_fences_owner_and_generation(tmp_path: Path) -> None:
-    store = _store(tmp_path)
-    _todo_outbox(store)
-    adapter = dispatcher_adapters.TaskTodoSyncOutboxQueueAdapter(
-        store, owner_alive=lambda _pid: False
-    )
-    first = adapter.claim(
-        NOW,
-        owner="dispatcher-a",
-        owner_pid=101,
-        lease=timedelta(minutes=5),
-    )
-    assert first is not None
-
-    assert (
-        adapter.claim(
-            NOW,
-            owner="dispatcher-b",
-            owner_pid=202,
-            lease=timedelta(minutes=5),
-        )
-        is None
-    )
-    with pytest.raises(ValueError, match="no longer owned"):
-        adapter.release(first, owner="dispatcher-b", now=NOW)
 
 
 def test_reply_handler_error_requeues_business_task_instead_of_spinning(
@@ -323,98 +338,6 @@ def test_reply_handler_error_requeues_business_task_instead_of_spinning(
     executor.shutdown()
 
 
-def test_task_todo_outbox_dispatcher_processes_due_retry_once(
-    tmp_path: Path,
-) -> None:
-    store = _store(tmp_path)
-    source_id = _todo_outbox(store)
-    with store._connect() as db:
-        db.execute(
-            "update task_todo_sync_outbox set status='failed', attempt_count=1, "
-            "next_attempt_at=? where id=?",
-            ((NOW - timedelta(seconds=1)).strftime("%Y-%m-%d %H:%M:%S"), source_id),
-        )
-    wake = Event()
-    adapter = dispatcher_adapters.TaskTodoSyncOutboxQueueAdapter(store)
-    processed: list[str] = []
-    executor = ThreadPoolExecutor(max_workers=1)
-    def consume(envelope, guard):
-        processed.append(envelope.source_id)
-        store.finish_task_todo_sync_outbox(
-            outbox_id=int(envelope.source_id),
-            owner=guard.token.owner,
-            status="completed",
-        )
-        guard.finish_source(NOW, status="completed")
-
-    dispatcher = ConsumerDispatcher(
-        adapters=(adapter,),
-        consumers={"task_todo_sync_outbox": consume},
-        executors={"task_todo_sync_outbox": executor},
-        max_in_flight={"task_todo_sync_outbox": 1},
-        owner="dispatcher-a",
-        owner_pid=101,
-        lease=timedelta(minutes=5),
-        wake_event=wake,
-    )
-
-    assert dispatcher.dispatch_available(NOW, limit=2) == 1
-    for _ in range(100):
-        if store.get_task_todo_sync_outbox(source_id)["status"] == "completed":
-            break
-        Event().wait(0.01)
-    assert processed == [str(source_id)]
-    assert store.get_task_todo_sync_outbox(source_id)["status"] == "completed"
-    assert dispatcher.dispatch_available(NOW, limit=2) == 0
-    executor.shutdown()
-
-
-def test_task_todo_outbox_enqueue_wake_is_not_lost_after_empty_scan(
-    tmp_path: Path,
-) -> None:
-    store = _store(tmp_path)
-    wake = Event()
-    stop = Event()
-    processed = Event()
-    adapter = dispatcher_adapters.TaskTodoSyncOutboxQueueAdapter(store)
-    executor = ThreadPoolExecutor(max_workers=1)
-
-    def consume(envelope, guard):
-        item = store.get_task_todo_sync_outbox(int(envelope.source_id))
-        assert item is not None
-        store.finish_task_todo_sync_outbox(
-            outbox_id=int(envelope.source_id),
-            owner=guard.token.owner,
-            status="completed",
-        )
-        guard.finish_source(datetime.now(UTC), status="completed")
-        processed.set()
-
-    dispatcher = ConsumerDispatcher(
-        adapters=(adapter,),
-        consumers={"task_todo_sync_outbox": consume},
-        executors={"task_todo_sync_outbox": executor},
-        max_in_flight={"task_todo_sync_outbox": 1},
-        owner="dispatcher-a",
-        lease=timedelta(minutes=5),
-        wake_event=wake,
-        fallback_wait_seconds=30,
-    )
-    thread = Thread(target=dispatcher.run, kwargs={"stop_event": stop})
-    thread.start()
-
-    source_id = _todo_outbox(store)
-    wake.set()
-
-    assert processed.wait(timeout=2)
-    stop.set()
-    wake.set()
-    thread.join(timeout=2)
-    assert store.get_task_todo_sync_outbox(source_id)["status"] == "completed"
-    assert not thread.is_alive()
-    executor.shutdown()
-
-
 def _two_due_sources(store: AutoReplyStore, adapter_name: str):
     return _many_due_sources(store, adapter_name, count=2)
 
@@ -448,8 +371,10 @@ def _many_due_sources(
                 execution_generation=f"generation-{index}",
             )
             with store._connect() as db:
+                from app.task20_definitions import task20_projection
+
                 reply_id = db.execute(
-                    "select id from tasks where record_type='reply_tasks' and trigger_message_id=?",
+                    f"select id from ({task20_projection('reply_tasks')}) where trigger_message_id=?",
                     (f"msg-{index}",),
                 ).fetchone()[0]
             ids.append(str(reply_id))
@@ -472,10 +397,6 @@ def _many_due_sources(
         return OkrReviewQueueAdapter, tuple(
             str(_okr_review(store, index=index)) for index in range(count)
         )
-    if adapter_name == "task_todo_sync_outbox":
-        return dispatcher_adapters.TaskTodoSyncOutboxQueueAdapter, tuple(
-            str(_todo_outbox(store, index=index + 1)) for index in range(count)
-        )
     ids = tuple(
         str(store.enqueue_work_summary_input("reply_attempt", f"task-{index}", "{}"))
         for index in range(count)
@@ -485,12 +406,13 @@ def _many_due_sources(
 
 def test_dispatcher_lease_ledger_stores_only_claim_ownership(tmp_path: Path):
     store = _store(tmp_path)
+    from app.state_definitions import state_projection
 
     with store._connect() as db:
-        columns = {
-            row["name"]
-            for row in db.execute("pragma table_info(dispatcher_claim_leases)")
-        }
+        cursor = db.execute(
+            f"select * from ({state_projection('dispatcher_claim_leases')}) limit 0"
+        )
+        columns = {description[0] for description in cursor.description}
 
     assert columns == {
         "adapter_name",
@@ -677,12 +599,14 @@ def test_scheduled_claim_ceil_preserves_full_lease_for_source_and_ledger(
 
     assert envelope is not None
     with store._connect() as db:
+        from app.state_definitions import state_projection
+
         source_expiry = db.execute(
             f"select lease_expires_at from ({SCHEDULED_RUN_SQL}) as scheduled_task_runs where id=?",
             (run.id,),
         ).fetchone()[0]
         ledger_expiry = db.execute(
-            "select lease_expires_at from dispatcher_claim_leases "
+            f"select lease_expires_at from ({state_projection('dispatcher_claim_leases')}) "
             "where adapter_name='scheduled' and source_id=?",
             (str(run.id),),
         ).fetchone()[0]
@@ -723,12 +647,14 @@ def test_scheduled_renew_ceil_updates_source_and_ledger_together(tmp_path: Path)
     )
 
     with store._connect() as db:
+        from app.state_definitions import state_projection
+
         source_expiry = db.execute(
             f"select lease_expires_at from ({SCHEDULED_RUN_SQL}) as scheduled_task_runs where id=?",
             (run.id,),
         ).fetchone()[0]
         ledger_expiry = db.execute(
-            "select lease_expires_at from dispatcher_claim_leases "
+            f"select lease_expires_at from ({state_projection('dispatcher_claim_leases')}) "
             "where adapter_name='scheduled' and source_id=?",
             (str(run.id),),
         ).fetchone()[0]
@@ -811,7 +737,6 @@ def test_legacy_source_leases_recover_with_fencing_and_monotonic_generation(
         "meeting",
         "work_summary",
         "okr_review",
-        "task_todo_sync_outbox",
     ),
 )
 def test_claim_skips_expired_head_owned_by_live_process(
@@ -839,11 +764,6 @@ def test_claim_skips_expired_head_owned_by_live_process(
 
     assert second is not None
     assert second.source_id == source_ids[1]
-    if adapter_name == "task_todo_sync_outbox":
-        first_source = store.get_task_todo_sync_outbox(int(source_ids[0]))
-        assert first_source is not None
-        assert first_source["status"] == "running"
-        assert first_source["lease_owner"] == "owner-a"
 
 
 @pytest.mark.parametrize(
@@ -854,7 +774,6 @@ def test_claim_skips_expired_head_owned_by_live_process(
         "meeting",
         "work_summary",
         "okr_review",
-        "task_todo_sync_outbox",
     ),
 )
 def test_claim_scans_past_full_page_of_live_protected_sources(
@@ -951,34 +870,15 @@ def test_okr_review_source_cannot_be_claimed_twice_concurrently(tmp_path: Path):
     assert store.get_okr_review_request(request_id).status == "processing"
 
 
-def test_task_todo_outbox_source_cannot_be_claimed_twice_concurrently(
-    tmp_path: Path,
-) -> None:
-    store = _store(tmp_path)
-    source_id = _todo_outbox(store)
-    adapter = dispatcher_adapters.TaskTodoSyncOutboxQueueAdapter(store)
-    start = Event()
-
-    def claim(owner: str):
-        assert start.wait(timeout=2)
-        return adapter.claim(NOW, owner=owner, lease=timedelta(minutes=5))
-
-    with ThreadPoolExecutor(max_workers=2) as pool:
-        futures = [pool.submit(claim, owner) for owner in ("one", "two")]
-        start.set()
-        claims = [future.result(timeout=2) for future in futures]
-
-    assert sum(item is not None for item in claims) == 1
-    assert store.get_task_todo_sync_outbox(source_id)["status"] == "running"
-
-
 def test_work_summary_claim_uses_dispatcher_time_for_due_boundary(tmp_path: Path):
     store = _store(tmp_path)
     source_id = _work_summary(store)
     with store._connect() as db:
-        db.execute(
-            "update tasks set available_at=? where record_type='work_summary_inputs' and cast(legacy_key as integer)=?",
-            ((NOW + timedelta(hours=1)).strftime("%Y-%m-%d %H:%M:%S"), source_id),
+        _update_task_facts(
+            db,
+            "work_summary_inputs",
+            source_id,
+            {"available_at": (NOW + timedelta(hours=1)).strftime("%Y-%m-%d %H:%M:%S")},
         )
     adapter = WorkSummaryQueueAdapter(store)
 
@@ -1164,7 +1064,7 @@ class _RecordingExecutor:
 
 def test_adapter_worker_pools_do_not_let_one_blocked_adapter_starve_another():
     first = _FakeAdapter("first", 1)
-    second = _FakeAdapter("task_todo_sync_outbox", 1)
+    second = _FakeAdapter("business_task_todo_sync_outbox", 1)
     first_started = Event()
     second_started = Event()
     release_first = Event()
@@ -1182,7 +1082,7 @@ def test_adapter_worker_pools_do_not_let_one_blocked_adapter_starve_another():
     )
     dispatcher = ConsumerDispatcher(
         adapters=(first, second),
-        consumers={"first": consume_first, "task_todo_sync_outbox": consume_second},
+        consumers={"first": consume_first, "business_task_todo_sync_outbox": consume_second},
         executors=pools.executors,
         max_in_flight=pools.max_in_flight,
         owner="dispatcher-a",
@@ -1276,7 +1176,7 @@ def test_shared_agent_capacity_claims_only_two_agents_but_still_runs_todo():
     first = _FakeAdapter("scheduled_execution", 1)
     second = _FakeAdapter("reply", 1)
     third = _FakeAdapter("work_summary", 1)
-    todo = _FakeAdapter("task_todo_sync_outbox", 1)
+    todo = _FakeAdapter("business_task_todo_sync_outbox", 1)
     first_started = Event()
     second_started = Event()
     todo_started = Event()
@@ -1562,8 +1462,10 @@ def test_bounded_drain_renews_real_reply_claim_until_terminal_completion(
     assert second is not None and second.status == "pending"
     assert second.attempts == 0
     with store._connect() as db:
+        from app.state_definitions import state_projection
+
         lease = db.execute(
-            "select owner, terminal_at from dispatcher_claim_leases "
+            f"select owner, terminal_at from ({state_projection('dispatcher_claim_leases')}) "
             "where adapter_name='reply' and source_id=?",
             (str(first.id),),
         ).fetchone()
@@ -1722,15 +1624,23 @@ def test_renew_failure_keeps_dispatching_other_adapter_and_reports_error(
 
     assert dispatcher.dispatch_available(NOW, limit=1) == 1
     reply_envelope = executor.submissions[0][1]
-    with store._connect() as db:
-        db.execute(
-            "update dispatcher_claim_leases set owner='owner-b', owner_pid=202, "
-            "generation=generation+1, lease_expires_at=? "
+    with store._immediate_write_transaction() as db:
+        from app.state_definitions import state_projection
+
+        row = db.execute(
+            f"select rowid,generation from ({state_projection('dispatcher_claim_leases', include_rowid=True)}) "
             "where adapter_name='reply' and source_id=?",
-            (
-                (NOW + timedelta(seconds=10)).strftime("%Y-%m-%d %H:%M:%S"),
-                reply_envelope.source_id,
-            ),
+            (reply_envelope.source_id,),
+        ).fetchone()
+        assert row is not None
+        _update_claim_lease(
+            db, "reply", reply_envelope.source_id,
+            {
+                "owner": "owner-b",
+                "owner_pid": 202,
+                "generation": row["generation"] + 1,
+                "lease_expires_at": (NOW + timedelta(seconds=10)).strftime("%Y-%m-%d %H:%M:%S"),
+            },
         )
 
     assert dispatcher.dispatch_available(NOW + timedelta(seconds=1), limit=1) == 1
@@ -1755,37 +1665,51 @@ def test_completion_prunes_terminal_ledger_without_removing_active_generation(
     )
     assert envelope is not None
     now_text = NOW.strftime("%Y-%m-%d %H:%M:%S")
-    with store._connect() as db:
-        db.executemany(
-            "insert into dispatcher_claim_leases "
-            "(adapter_name, source_id, owner, owner_pid, generation, "
-            "lease_expires_at, terminal_at, last_error, created_at, updated_at) "
-            "values ('meeting', ?, '', 0, ?, '', ?, '', ?, ?)",
-            (
-                (f"terminal-{index}", index + 1, now_text, now_text, now_text)
-                for index in range(10005)
-            ),
-        )
-        db.execute(
-            "insert into dispatcher_claim_leases "
-            "(adapter_name, source_id, owner, owner_pid, generation, "
-            "lease_expires_at, terminal_at, last_error, created_at, updated_at) "
-            "values ('work_summary', 'active', 'owner-b', 202, 77, ?, '', '', ?, ?)",
-            (
-                (NOW + timedelta(minutes=5)).strftime("%Y-%m-%d %H:%M:%S"),
-                now_text,
-                now_text,
-            ),
+    with store._immediate_write_transaction() as db:
+        for index in range(10005):
+            _insert_claim_lease(
+                db,
+                {
+                    "adapter_name": "meeting",
+                    "source_id": f"terminal-{index}",
+                    "owner": "",
+                    "owner_pid": 0,
+                    "generation": index + 1,
+                    "lease_expires_at": "",
+                    "terminal_at": now_text,
+                    "last_error": "",
+                    "created_at": now_text,
+                    "updated_at": now_text,
+                },
+                source_rowid=index + 10001,
+            )
+        _insert_claim_lease(
+            db,
+            {
+                "adapter_name": "work_summary",
+                "source_id": "active",
+                "owner": "owner-b",
+                "owner_pid": 202,
+                "generation": 77,
+                "lease_expires_at": (NOW + timedelta(minutes=5)).strftime("%Y-%m-%d %H:%M:%S"),
+                "terminal_at": "",
+                "last_error": "",
+                "created_at": now_text,
+                "updated_at": now_text,
+            },
+            source_rowid=20006,
         )
 
     ClaimGuard(adapter=adapter, envelope=envelope, owner="owner-a").complete(NOW)
 
     with store._connect() as db:
+        from app.state_definitions import state_projection
+
         terminal_count = db.execute(
-            "select count(*) from dispatcher_claim_leases where terminal_at<>''"
+            f"select count(*) from ({state_projection('dispatcher_claim_leases')}) where terminal_at<>''"
         ).fetchone()[0]
         active = db.execute(
-            "select owner, generation, terminal_at from dispatcher_claim_leases "
+            f"select owner, generation, terminal_at from ({state_projection('dispatcher_claim_leases')}) "
             "where adapter_name='work_summary' and source_id='active'"
         ).fetchone()
     assert terminal_count == 10000
@@ -1965,32 +1889,29 @@ def test_actionable_error_ignores_newer_blank_rows_for_or_based_adapters(
     older = NOW.strftime("%Y-%m-%d %H:%M:%S")
     newer = (NOW + timedelta(seconds=1)).strftime("%Y-%m-%d %H:%M:%S")
     with store._connect() as db:
-        db.execute(
-            "update tasks set error='retryable meeting failure', "
-            "updated_at=? where record_type='meeting_alignment_jobs' and cast(legacy_key as integer)=?",
-            (older, meeting_id),
+        _update_task_facts(
+            db, "meeting_alignment_jobs", meeting_id,
+            {"error": "retryable meeting failure", "updated_at": older},
         )
-        db.execute(
-            "update tasks set error='', updated_at=? where record_type='meeting_alignment_jobs' and cast(legacy_key as integer)=?",
-            (newer, blank_meeting_id),
+        _update_task_facts(
+            db, "meeting_alignment_jobs", blank_meeting_id,
+            {"error": "", "updated_at": newer},
         )
-        db.execute(
-            "update tasks set error='retryable work-summary failure', "
-            "updated_at=? where record_type='work_summary_inputs' and cast(legacy_key as integer)=?",
-            (older, work_summary_id),
+        _update_task_facts(
+            db, "work_summary_inputs", work_summary_id,
+            {"error": "retryable work-summary failure", "updated_at": older},
         )
-        db.execute(
-            "update tasks set error='', updated_at=? where record_type='work_summary_inputs' and cast(legacy_key as integer)=?",
-            (newer, blank_work_summary_id),
+        _update_task_facts(
+            db, "work_summary_inputs", blank_work_summary_id,
+            {"error": "", "updated_at": newer},
         )
-        db.execute(
-            "update tasks set error='retryable OKR failure', updated_at=? "
-            "where record_type='okr_review_requests' and cast(legacy_key as integer)=?",
-            (older, okr_id),
+        _update_task_facts(
+            db, "okr_review_requests", okr_id,
+            {"error": "retryable OKR failure", "updated_at": older},
         )
-        db.execute(
-            "update tasks set error='', updated_at=? where record_type='okr_review_requests' and cast(legacy_key as integer)=?",
-            (newer, blank_okr_id),
+        _update_task_facts(
+            db, "okr_review_requests", blank_okr_id,
+            {"error": "", "updated_at": newer},
         )
 
     assert MeetingQueueAdapter(store).metrics(NOW).latest_error == "retryable meeting failure"
@@ -2020,59 +1941,58 @@ def test_expired_live_owner_hides_dispatcher_error_until_owner_is_dead(
     meeting_id = _meeting(store)
     work_summary_id = _work_summary(store)
     okr_id = _okr_review(store)
-    todo_id = _todo_outbox(store)
     now_text = NOW.strftime("%Y-%m-%d %H:%M:%S")
     expired = (NOW - timedelta(seconds=1)).strftime("%Y-%m-%d %H:%M:%S")
-    with store._connect() as db:
+    with store._immediate_write_transaction() as db:
+        from app.task20_definitions import task20_projection
+
         reply_id = db.execute(
-            "select id from tasks where record_type='reply_tasks' and channel='dingtalk'"
+            f"select id from ({task20_projection('reply_tasks')}) where channel='dingtalk'"
         ).fetchone()[0]
         scheduled_execution_id = db.execute(
-            "select id from tasks where record_type='reply_tasks' and channel='scheduled'"
+            f"select id from ({task20_projection('reply_tasks')}) where channel='scheduled'"
         ).fetchone()[0]
         db.execute(
             "update runs set skip_or_error_reason='scheduled error' where record_type='scheduled_task_runs' and cast(legacy_key as integer)=?",
             (scheduled_id,),
         )
-        db.execute(
-            "update tasks set error='reply error' where record_type='reply_tasks' and id=?", (reply_id,)
+        _update_task_facts(db, "reply_tasks", reply_id, {"error": "reply error"})
+        _update_task_facts(
+            db,
+            "reply_tasks",
+            scheduled_execution_id,
+            {"error": "scheduled execution error"},
         )
-        db.execute(
-            "update tasks set error='scheduled execution error' where record_type='reply_tasks' and id=?",
-            (scheduled_execution_id,),
+        _update_task_facts(
+            db, "meeting_alignment_jobs", meeting_id, {"error": "meeting error"}
         )
-        db.execute(
-            "update tasks set error='meeting error' where record_type='meeting_alignment_jobs' and cast(legacy_key as integer)=?",
-            (meeting_id,),
+        _update_task_facts(
+            db, "work_summary_inputs", work_summary_id, {"error": "work-summary error"}
         )
-        db.execute(
-            "update tasks set error='work-summary error' where record_type='work_summary_inputs' and cast(legacy_key as integer)=?",
-            (work_summary_id,),
-        )
-        db.execute(
-            "update tasks set error='OKR error' where record_type='okr_review_requests' and cast(legacy_key as integer)=?", (okr_id,)
-        )
-        db.execute(
-            "update task_todo_sync_outbox set error='todo error' where id=?", (todo_id,)
-        )
-        db.executemany(
-            "insert into dispatcher_claim_leases "
-            "(adapter_name, source_id, owner, owner_pid, generation, "
-            "lease_expires_at, terminal_at, last_error, created_at, updated_at) "
-            "values (?, ?, 'live-owner', 123, 1, ?, '', '', ?, ?)",
-            (
-                (adapter_name, str(source_id), expired, now_text, now_text)
-                for adapter_name, source_id in (
-                    ("scheduled", scheduled_id),
-                    ("reply", reply_id),
-                    ("scheduled_execution", scheduled_execution_id),
-                    ("meeting", meeting_id),
-                    ("work_summary", work_summary_id),
-                    ("okr_review", okr_id),
-                    ("task_todo_sync_outbox", todo_id),
-                )
-            ),
-        )
+        _update_task_facts(db, "okr_review_requests", okr_id, {"error": "OKR error"})
+        for adapter_name, source_id in (
+            ("scheduled", scheduled_id),
+            ("reply", reply_id),
+            ("scheduled_execution", scheduled_execution_id),
+            ("meeting", meeting_id),
+            ("work_summary", work_summary_id),
+            ("okr_review", okr_id),
+        ):
+            _insert_claim_lease(
+                db,
+                {
+                    "adapter_name": adapter_name,
+                    "source_id": str(source_id),
+                    "owner": "live-owner",
+                    "owner_pid": 123,
+                    "generation": 1,
+                    "lease_expires_at": expired,
+                    "terminal_at": "",
+                    "last_error": "",
+                    "created_at": now_text,
+                    "updated_at": now_text,
+                },
+            )
 
     adapter_types = (
         ScheduledTaskQueueAdapter,
@@ -2081,7 +2001,6 @@ def test_expired_live_owner_hides_dispatcher_error_until_owner_is_dead(
         MeetingQueueAdapter,
         WorkSummaryQueueAdapter,
         OkrReviewQueueAdapter,
-        dispatcher_adapters.TaskTodoSyncOutboxQueueAdapter,
     )
     live_adapters = tuple(
         adapter_type(store, owner_alive=lambda _pid: True)
@@ -2130,15 +2049,32 @@ def test_error_metrics_skip_owner_checks_and_payload_projection_for_no_error_bac
         )
     expired = (NOW - timedelta(seconds=1)).strftime("%Y-%m-%d %H:%M:%S")
     now_text = NOW.strftime("%Y-%m-%d %H:%M:%S")
-    with store._connect() as db:
-        ids = [row[0] for row in db.execute("select id from tasks where record_type='reply_tasks'").fetchall()]
-        db.executemany(
-            "insert into dispatcher_claim_leases "
-            "(adapter_name, source_id, owner, owner_pid, generation, "
-            "lease_expires_at, terminal_at, last_error, created_at, updated_at) "
-            "values ('reply', ?, 'live-owner', 123, 1, ?, '', '', ?, ?)",
-            ((str(source_id), expired, now_text, now_text) for source_id in ids),
-        )
+    with store._immediate_write_transaction() as db:
+        from app.task20_definitions import task20_projection
+
+        ids = [
+            row[0]
+            for row in db.execute(
+                f"select id from ({task20_projection('reply_tasks')})"
+            ).fetchall()
+        ]
+        for source_id in ids:
+            _insert_claim_lease(
+                db,
+                {
+                    "adapter_name": "reply",
+                    "source_id": str(source_id),
+                    "owner": "live-owner",
+                    "owner_pid": 123,
+                    "generation": 1,
+                    "lease_expires_at": expired,
+                    "terminal_at": "",
+                    "last_error": "",
+                    "created_at": now_text,
+                    "updated_at": now_text,
+                },
+                source_rowid=source_id,
+            )
 
     owner_checks: list[int] = []
     statements: list[str] = []
@@ -2183,47 +2119,59 @@ def test_dispatcher_metrics_only_report_errors_from_actionable_sources(
     meeting_id = _meeting(store)
     work_summary_id = _work_summary(store)
     okr_id = _okr_review(store)
-    todo_id = _todo_outbox(store)
     with store._connect() as db:
         now_text = NOW.strftime("%Y-%m-%d %H:%M:%S")
         db.execute(
             "update runs set dispatch_status='failed', skip_or_error_reason='terminal scheduled failure' where record_type='scheduled_task_runs' and cast(legacy_key as integer)=?",
             (scheduled.id,),
         )
-        db.execute(
-            "update tasks set status='failed', error='terminal reply failure' "
-            "where record_type='reply_tasks' and channel='dingtalk'"
+        from app.task20_definitions import task20_projection
+
+        reply_ids = {
+            str(row["id"]): str(row["channel"])
+            for row in db.execute(task20_projection("reply_tasks"))
+        }
+        for public_id, channel in reply_ids.items():
+            _update_task_facts(
+                db,
+                "reply_tasks",
+                int(public_id),
+                {
+                    "status": "failed",
+                    "error": (
+                        "terminal reply failure"
+                        if channel == "dingtalk"
+                        else "terminal scheduled execution failure"
+                    ),
+                },
+            )
+        _update_task_facts(
+            db, "meeting_alignment_jobs", meeting_id,
+            {"status": "failed", "error": "terminal meeting failure"},
         )
-        db.execute(
-            "update tasks set status='failed', error='terminal scheduled execution failure' "
-            "where record_type='reply_tasks' and channel='scheduled'"
+        _update_task_facts(
+            db, "work_summary_inputs", work_summary_id,
+            {"status": "failed", "error": "terminal work-summary failure"},
         )
-        db.execute(
-            "update tasks set status='failed', error='terminal meeting failure' "
-            "where record_type='meeting_alignment_jobs' and cast(legacy_key as integer)=?",
-            (meeting_id,),
+        _update_task_facts(
+            db, "okr_review_requests", okr_id,
+            {"status": "failed", "error": "terminal OKR failure"},
         )
-        db.execute(
-            "update tasks set status='failed', error='terminal work-summary failure' "
-            "where record_type='work_summary_inputs' and cast(legacy_key as integer)=?",
-            (work_summary_id,),
-        )
-        db.execute(
-            "update tasks set status='failed', error='terminal OKR failure' "
-            "where record_type='okr_review_requests' and cast(legacy_key as integer)=?",
-            (okr_id,),
-        )
-        db.execute(
-            "update task_todo_sync_outbox set status='failed', attempt_count=3, "
-            "error='terminal todo failure' where id=?",
-            (todo_id,),
-        )
-        db.execute(
-            "insert into dispatcher_claim_leases "
-            "(adapter_name, source_id, owner, owner_pid, generation, "
-            "lease_expires_at, terminal_at, last_error, created_at, updated_at) "
-            "values ('reply', '1', '', 0, 1, '', ?, 'terminal lease failure', ?, ?)",
-            (now_text, now_text, now_text),
+        _insert_claim_lease(
+            db,
+            {
+                "adapter_name": "reply",
+                "source_id": "1",
+                "owner": "",
+                "owner_pid": 0,
+                "generation": 1,
+                "lease_expires_at": "",
+                "terminal_at": now_text,
+                "last_error": "terminal lease failure",
+                "created_at": now_text,
+                "updated_at": now_text,
+            },
+            source_rowid=1,
         )
 
     adapters = (
@@ -2233,7 +2181,6 @@ def test_dispatcher_metrics_only_report_errors_from_actionable_sources(
         MeetingQueueAdapter(store),
         WorkSummaryQueueAdapter(store),
         OkrReviewQueueAdapter(store),
-        dispatcher_adapters.TaskTodoSyncOutboxQueueAdapter(store),
     )
 
     for adapter in adapters:
@@ -2241,20 +2188,30 @@ def test_dispatcher_metrics_only_report_errors_from_actionable_sources(
         assert metrics.pending == metrics.due == metrics.running == 0
         assert metrics.latest_error == ""
 
-    with store._connect() as db:
-        db.execute(
-            "update tasks set status='pending', error='retryable reply failure' "
-            "where record_type='reply_tasks' and channel='dingtalk'"
-        )
-        db.execute(
-            "update tasks set status='pending', error='retryable scheduled execution failure' "
-            "where record_type='reply_tasks' and channel='scheduled'"
-        )
-        db.execute(
-            "update dispatcher_claim_leases set terminal_at='', "
-            "last_error='retryable lease failure', updated_at=? "
-            "where adapter_name='reply' and source_id='1'",
-            (NOW.strftime("%Y-%m-%d %H:%M:%S"),),
+    with store._immediate_write_transaction() as db:
+        for public_id, channel in reply_ids.items():
+            _update_task_facts(
+                db,
+                "reply_tasks",
+                int(public_id),
+                {
+                    "status": "pending",
+                    "error": (
+                        "retryable reply failure"
+                        if channel == "dingtalk"
+                        else "retryable scheduled execution failure"
+                    ),
+                },
+            )
+        _update_claim_lease(
+            db,
+            "reply",
+            "1",
+            {
+                "terminal_at": "",
+                "last_error": "retryable lease failure",
+                "updated_at": NOW.strftime("%Y-%m-%d %H:%M:%S"),
+            },
         )
 
     assert ReplyQueueAdapter(store).metrics(NOW).latest_error == "retryable lease failure"
@@ -2430,9 +2387,9 @@ def test_a_finished_claim_that_lets_go_is_claimable_while_its_owner_lives(
     )
     assert envelope is not None
     with store._immediate_write_transaction() as db:
-        db.execute(
-            "update tasks set status='pending', locked_at=null where record_type='reply_tasks' and id=?",
-            (int(envelope.source_id),),
+        _update_task_facts(
+            db, "reply_tasks", int(envelope.source_id),
+            {"status": "pending", "locked_at": None},
         )
     later = NOW + timedelta(minutes=30)
 
@@ -2450,16 +2407,16 @@ def test_a_finished_claim_that_lets_go_is_claimable_while_its_owner_lives(
 
 
 @pytest.mark.parametrize("scheduled", [False, True])
-def test_reply_handler_errors_stop_after_three_claims_with_backoff(tmp_path, scheduled):
+def test_reply_handler_errors_stop_after_four_claims_with_backoff(tmp_path, scheduled):
     from app.dispatcher.adapters import ScheduledExecutionQueueAdapter
     store = _store(tmp_path)
     _reply(store)
     if scheduled:
         with store._connect() as db:
-            db.execute("update tasks set channel='scheduled' where record_type='reply_tasks' and id=1")
+            _update_task_facts(db, "reply_tasks", 1, {"channel": "scheduled"})
     adapter = (ScheduledExecutionQueueAdapter if scheduled else ReplyQueueAdapter)(store, owner_alive=lambda _pid: False)
     when = NOW
-    for attempt in range(1, 4):
+    for attempt in range(1, 5):
         envelope = adapter.claim(when, owner='test', owner_pid=101, lease=timedelta(minutes=5))
         assert envelope is not None and envelope.attempt == attempt
         adapter.handle_handler_error(envelope, owner='test', now=when, error='root failure')
@@ -2467,7 +2424,7 @@ def test_reply_handler_errors_stop_after_three_claims_with_backoff(tmp_path, sch
         assert task.attempts == attempt
         assert task.execution_generation == 'generation-7'
         assert task.error == 'root failure'
-        if attempt < 3:
+        if attempt < 4:
             assert task.status == 'pending'
             assert adapter.claim(when, owner='test', owner_pid=101, lease=timedelta(minutes=5)) is None
             when += timedelta(seconds=60 * 2 ** (attempt - 1))
@@ -2496,12 +2453,11 @@ def test_reply_lease_completion_compacts_deferred_settled_input(tmp_path, schedu
                              lease=timedelta(minutes=5))
     assert envelope is not None
     if expired:
-        with store._connect() as db:
-            db.execute(
-                "update dispatcher_claim_leases set lease_expires_at=? "
-                "where adapter_name=? and source_id=?",
-                ("2000-01-01 00:00:00", adapter.name, str(task.id)),
-            )
+        with store._immediate_write_transaction() as db:
+            assert _update_claim_lease(
+                db, adapter.name, str(task.id),
+                {"lease_expires_at": "2000-01-01 00:00:00"},
+            ) == 1
     claimed = store.get_reply_task(task.id)
     assert claimed is not None
     store.complete_reply_task(task.id,

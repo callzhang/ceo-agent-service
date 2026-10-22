@@ -1,4 +1,4 @@
-import json
+from tests.test_email_legacy_schema import published_source as published_source
 import hashlib
 import sqlite3
 import threading
@@ -8,20 +8,18 @@ from pathlib import Path
 import pytest
 
 import app.store as store_module
-import app.workbench.store as workbench_store_module
-from app.workbench.models import ConfirmationStatus, TurnStatus
-from app.task_storage import task_physical_id, task_id_expression, insert_task, WORKBENCH_TURN_SQL
-from tests.workbench_caller_fixtures import empty_source13, advance_source16_to_store17, advance_source17_to_store19
+from app.workbench.models import TurnStatus
+from app.task_storage import task_physical_id, task_id_expression
+from tests.workbench_caller_fixtures import empty_source13, advance_source16_to_store17, advance_source17_to_current_store
 from app.workbench.store import WorkbenchConflictError, WorkbenchStore
+from app.task8_storage import task8_insert_parts, task8_set_parts
+from app.task20_definitions import task20_column, task20_projection
+from app.state_definitions import state_projection
+from app.task12_storage import insert_task12
 
 
 def _store(tmp_path: Path) -> WorkbenchStore:
     return WorkbenchStore(tmp_path / "workbench.sqlite3")
-
-
-def _repair_historical_workbench_columns(store: WorkbenchStore) -> None:
-    """Run the Store's noncore DDL repair on a valid current core fixture."""
-    store._initialize()
 
 
 def _running_turn(tmp_path: Path) -> tuple[WorkbenchStore, str, str]:
@@ -39,39 +37,14 @@ def _running_turn(tmp_path: Path) -> tuple[WorkbenchStore, str, str]:
     return store, task.id, turn.id
 
 
-def _waiting_confirmation(store: WorkbenchStore):
-    task = store.create_task(title="Analyse sales", runtime_kind="codex")
-    turn = store.create_turn(
-        task.id,
-        user_text="Compare regions",
-        client_request_id=f"request-{task.id}",
-    )
-    assert store.claim_next_turn(owner="seed") is not None
-    confirmation = store.create_confirmation(
-        turn.id,
-        action_kind="reviewed_cli",
-        target="Executive group",
-        summary="Send update",
-        risk="External message",
-        arguments_json={"argv": ["dws", "chat", "message", "send", "--yes"]},
-        owner="seed",
-    )
-    store.mark_confirmation_proposer_quiesced(
-        turn.id,
-        owner="seed",
-        proposer_run_id=store.execution_run_id_for_executor(turn.id, owner="seed"),
-    )
-    return task, turn.id, confirmation
-
-
-def test_source13_migration_preserves_user_text_and_private_resume_context(tmp_path: Path):
+def test_source13_migration_preserves_user_text_and_private_resume_context(tmp_path: Path, published_source):
     db_path = tmp_path / "workbench.sqlite3"
-    with empty_source13(db_path) as db:
+    with empty_source13(db_path, published_source) as db:
         db.execute("insert into workbench_tasks(id,title,runtime_kind) values('parent','Analyse sales','codex')")
         db.execute("""insert into workbench_turns(id,task_id,client_request_id,task_sequence,user_text,status,resume_context)
             values('turn','parent','request-1',1,'Compare regions','completed','private receipt')""")
     advance_source16_to_store17(db_path)
-    advance_source17_to_store19(db_path)
+    advance_source17_to_current_store(db_path, published_source)
     migrated = WorkbenchStore(db_path)
     assert migrated.get_turn("turn").user_text == "Compare regions"
     assert "resume_context" not in migrated.get_turn("turn").model_dump()
@@ -93,66 +66,32 @@ def test_store_schema_check_rejects_missing_required_reply_attempt_column(
     assert store._schema_is_current() is False
 
 
-def test_store_upgrades_point_seven_schema_with_current_indexes(tmp_path: Path):
-    db_path = tmp_path / "workbench.sqlite3"
-    store = WorkbenchStore(db_path)
-    task = store.create_task(title="Upgrade", runtime_kind="codex")
-    with store._connect() as db:
-        for index in (
-            "idx_workbench_events_turn_id_id",
-            "idx_workbench_artifacts_turn_created_id",
-            "idx_workbench_turns_task_created_id",
-            "idx_workbench_tasks_updated_id",
-            "idx_workbench_events_id_turn_id",
-            "idx_workbench_artifacts_created_id_turn",
-            "idx_workbench_confirmations_created_id_turn",
-            "idx_workbench_confirmations_turn_created_id",
-            "idx_workbench_attachments_task_created_id",
-            "idx_workbench_events_event_type",
-        ):
-            db.execute(f"drop index if exists {index}")
-    store_module._INITIALIZED_STORE_PATHS.discard(db_path.resolve())
-
-    upgraded = WorkbenchStore(db_path)
-    with upgraded._connect() as db:
-        indexes = {
-            row["name"]
-            for row in db.execute(
-                "select name from sqlite_master where type='index'"
-            )
-        }
-        schema_version = db.execute(
-            "select value from service_state where key=?",
-            (store_module.STORE_SCHEMA_VERSION_KEY,),
-        ).fetchone()["value"]
-
-    assert schema_version == store_module.STORE_SCHEMA_VERSION
-    assert "idx_workbench_events_event_type" in indexes
-    assert "idx_workbench_events_turn_id_id" in indexes
-    assert "idx_workbench_turns_task_sequence" in indexes
-    assert "idx_workbench_confirmations_turn_created_id" in indexes
-    snapshot = upgraded.timeline_snapshot(task.id)
-    assert snapshot[0].id == task.id
+def test_store_rejects_incomplete_point_seven_schema_with_current_indexes(tmp_path):
+    path = tmp_path / "damaged.sqlite3"
+    WorkbenchStore(path)
+    with sqlite3.connect(path) as db:
+        db.execute("drop index idx_task20_native_18")
+        db.execute("drop index idx_task20_published_14")
+        before = tuple(db.iterdump())
+    with pytest.raises(sqlite3.IntegrityError, match="malformed"):
+        WorkbenchStore(path)
+    with sqlite3.connect(path) as db:
+        assert tuple(db.iterdump()) == before
 
 
-def test_store_repairs_missing_required_point_nine_index(tmp_path: Path):
-    db_path = tmp_path / "workbench.sqlite3"
-    store = WorkbenchStore(db_path)
-    with store._connect() as db:
+def test_store_rejects_missing_required_point_nine_index(tmp_path):
+    path = tmp_path / "damaged.sqlite3"
+    WorkbenchStore(path)
+    with sqlite3.connect(path) as db:
         db.execute("drop index idx_workbench_events_event_type")
-    store_module._INITIALIZED_STORE_PATHS.discard(db_path.resolve())
-
-    repaired = WorkbenchStore(db_path)
-
-    with repaired._connect() as db:
-        index = db.execute(
-            """select name from sqlite_master
-               where type='index' and name='idx_workbench_events_event_type'"""
-        ).fetchone()
-    assert index is not None
+        before = tuple(db.iterdump())
+    with pytest.raises(sqlite3.IntegrityError, match="malformed"):
+        WorkbenchStore(path)
+    with sqlite3.connect(path) as db:
+        assert tuple(db.iterdump()) == before
 
 
-def test_source13_migration_preserves_attachment_request_hash_and_file_bytes(tmp_path: Path):
+def test_source13_migration_preserves_attachment_request_hash_and_file_bytes(tmp_path: Path, published_source):
     db_path = tmp_path / "workbench.sqlite3"
     task_id = "00000000-0000-4000-8000-000000000011"
     attachment_id = "00000000-0000-4000-8000-000000000012"
@@ -160,14 +99,14 @@ def test_source13_migration_preserves_attachment_request_hash_and_file_bytes(tmp
     directory.mkdir(parents=True)
     attachment_path = directory / attachment_id
     attachment_path.write_bytes(b"legacy")
-    with empty_source13(db_path) as db:
+    with empty_source13(db_path, published_source) as db:
         db.execute("insert into workbench_tasks(id,title,runtime_kind) values(?,'Attachment upgrade','codex')", (task_id,))
         db.execute("""insert into workbench_attachments(id,task_id,client_request_id,filename,media_type,size_bytes,content_sha256,storage_path)
             values(?,?,'original-request','legacy.png','image/png',6,?,?)""",
             (attachment_id, task_id, hashlib.sha256(b"legacy").hexdigest(), str(attachment_path)))
         before = db.execute("select id,client_request_id,content_sha256,filename,media_type,size_bytes,storage_path,created_at from workbench_attachments").fetchone()
     advance_source16_to_store17(db_path)
-    advance_source17_to_store19(db_path)
+    advance_source17_to_current_store(db_path, published_source)
     migrated = WorkbenchStore(db_path)
     with migrated._connect() as db:
         after = tuple(db.execute("select id,client_request_id,content_sha256,filename,media_type,size_bytes,storage_path,created_at from workbench_attachments").fetchone())
@@ -183,13 +122,13 @@ def test_source13_migration_preserves_attachment_request_hash_and_file_bytes(tmp
 
 
 def test_source13_migration_preserves_stable_per_task_sequence(
-    tmp_path: Path,
+    tmp_path: Path, published_source,
 ):
     db_path = tmp_path / "workbench.sqlite3"
     first_id = "ffffffff-ffff-4fff-8fff-ffffffffffff"
     second_id = "00000000-0000-4000-8000-000000000001"
     task_id = "source-parent"
-    with empty_source13(db_path) as db:
+    with empty_source13(db_path, published_source) as db:
         db.execute("insert into workbench_tasks(id,title,runtime_kind) values(?,'Legacy order','codex')", (task_id,))
         db.execute("""insert into workbench_turns
             (id,task_id,client_request_id,user_text,status,task_sequence,created_at)
@@ -199,7 +138,7 @@ def test_source13_migration_preserves_stable_per_task_sequence(
             values(?,?,?,?,?,?,?)""", (second_id,task_id,'legacy-second','second','failed',2,'2026-08-13 00:00:00'))
 
     advance_source16_to_store17(db_path)
-    advance_source17_to_store19(db_path)
+    advance_source17_to_current_store(db_path, published_source)
     upgraded = WorkbenchStore(db_path)
     turns = upgraded.list_turns(task_id)
     with upgraded._connect() as db:
@@ -275,7 +214,7 @@ def test_timeline_snapshot_does_not_mix_a_concurrent_terminal_transition(
         allow_snapshot.set()
         snapshot = snapshot_future.result(timeout=2)
 
-    _, turns, events, _, _, _, page = snapshot
+    _, turns, events, _, _, page = snapshot
     assert stopped.status is TurnStatus.STOPPED
     assert [(item.status, item.task_sequence) for item in turns] == [
         (TurnStatus.QUEUED, 1)
@@ -284,141 +223,31 @@ def test_timeline_snapshot_does_not_mix_a_concurrent_terminal_transition(
     assert page["task_state"] == TurnStatus.QUEUED.value
 
 
-def test_source13_confirmation_controls_survive_migration_and_existing_recovery(
-    tmp_path: Path,
-):
-    db_path = tmp_path / "workbench.sqlite3"
-    confirmation_id = "source-confirmation"
-    with empty_source13(db_path) as db:
-        db.execute("insert into workbench_tasks(id,title,runtime_kind) values('parent','Analyse sales','codex')")
-        db.execute("""insert into workbench_turns(id,task_id,client_request_id,task_sequence,user_text,status)
-            values('turn','parent','request',1,'Compare regions','waiting_confirmation')""")
-        db.execute("""insert into workbench_confirmations(id,turn_id,action_kind,target,summary,risk,arguments_json,status)
-            values(?,'turn','reviewed_cli','Executive group','Send update','External message','{}','pending')""", (confirmation_id,))
-
-    advance_source16_to_store17(db_path)
-    advance_source17_to_store19(db_path)
-    migrated = WorkbenchStore(db_path)
-    assert migrated.get_confirmation(confirmation_id).status is ConfirmationStatus.PENDING
-    assert migrated.reconcile_unquiesced_proposers() == 1
-
-    assert migrated.get_confirmation(confirmation_id).status is ConfirmationStatus.FAILED
-    with migrated._connect() as db:
-        row = db.execute(
-            "select * from workbench_confirmations where id=?", (confirmation_id,)
-        ).fetchone()
-    assert row["execution_owner"] == ""
-    assert row["execution_lease_expires_at"] == ""
-    assert row["execution_started_at"] == ""
-    assert row["canonical_targets_json"] == "[]"
-    assert row["authorization_consumed_at"] == ""
-    assert row["proposer_run_id"] == ""
-    assert row["decision_requested"] == ""
-    with migrated._connect() as db:
-        turn_columns = {
-            item["name"]
-            for item in db.execute("pragma table_info(tasks)").fetchall()
-        }
-    assert {"execution_run_id", "runtime_quiesced_run_id"} <= turn_columns
-
-
-def test_source13_blank_proposer_recovery_is_once_across_turn_states(
-    tmp_path: Path,
-):
-    db_path = tmp_path / "workbench.sqlite3"
-    turns = {}
-    confirmations = []
-    with empty_source13(db_path) as db:
-        for label, status in (("waiting", "waiting_confirmation"), ("queued", "queued"), ("running", "running"), ("completed", "completed")):
-            task_id, turn_id, confirmation_id = f"task-{label}", f"turn-{label}", f"confirmation-{label}"
-            db.execute("insert into workbench_tasks(id,title,runtime_kind) values(?,?,'codex')", (task_id,label))
-            db.execute("""insert into workbench_turns(id,task_id,client_request_id,task_sequence,user_text,status)
-                values(?,?,?,1,?,?)""", (turn_id,task_id,f"request-{label}",label,status))
-            db.execute("""insert into workbench_confirmations(id,turn_id,action_kind,target,summary,risk,arguments_json,status)
-                values(?,?,'reviewed_cli','group=executive','send','external','{}','pending')""", (confirmation_id,turn_id))
-            turns[label] = turn_id
-            confirmations.append(confirmation_id)
-        duplicate_id = "00000000-0000-4000-8000-000000000099"
-        db.execute("""insert into workbench_confirmations(id,turn_id,action_kind,target,summary,risk,arguments_json,status)
-            values(?,?,'reviewed_cli','group=executive','send','external','{}','pending')""", (duplicate_id,turns["waiting"]))
-        confirmations.append(duplicate_id)
-
-    advance_source16_to_store17(db_path)
-    advance_source17_to_store19(db_path)
-    migrated = WorkbenchStore(db_path)
-    assert all(migrated.get_confirmation(item).status is ConfirmationStatus.PENDING for item in confirmations)
-    assert migrated.reconcile_unquiesced_proposers() == 5
-
-    expected_result = {
-        "code": "legacy_proposer_state_unknown",
-        "retryable": False,
-        "status": "failed",
-    }
-    for confirmation_id in confirmations:
-        result = migrated.get_confirmation(confirmation_id)
-        assert result.status is ConfirmationStatus.FAILED
-        assert json.loads(result.result_json) == expected_result
-        assert result.decision_requested == ""
-        assert result.decided_at
-        assert migrated.claim_confirmation_execution(
-            confirmation_id, owner="executor"
-        ) is None
-        with pytest.raises(ValueError, match="already been decided"):
-            migrated.cancel_confirmation_execution(
-                confirmation_id, resume_context="cancelled"
-            )
-    with migrated._connect() as db:
-        internal_rows = db.execute(
-            "select * from workbench_confirmations order by id"
-        ).fetchall()
-    for row in internal_rows:
-        assert row["execution_owner"] == ""
-        assert row["execution_lease_expires_at"] == ""
-        assert row["execution_started_at"] == ""
-        assert row["authorization_consumed_at"] == ""
-        assert row["proposer_owner"] == ""
-        assert row["proposer_lease_expires_at"] == ""
-        assert row["proposer_quiesced_at"] == ""
-    assert migrated.get_turn(turns["waiting"]).status is TurnStatus.FAILED
-    assert migrated.get_turn(turns["queued"]).status is TurnStatus.FAILED
-    assert migrated.get_turn(turns["running"]).status is TurnStatus.FAILED
-    assert migrated.get_turn(turns["completed"]).status is TurnStatus.COMPLETED
-    before = {
-        turn_id: [
-            (event.sequence, event.event_type, event.payload)
-            for event in migrated.events_after(turn_id)
-        ]
-        for turn_id in turns.values()
-    }
-    assert sum(event[1] == "turn_failed" for event in before[turns["waiting"]]) == 1
-    assert sum(event[1] == "turn_failed" for event in before[turns["queued"]]) == 1
-    assert sum(event[1] == "turn_failed" for event in before[turns["running"]]) == 1
-    assert sum(event[1] == "turn_failed" for event in before[turns["completed"]]) == 0
-
-    _repair_historical_workbench_columns(migrated)
-    store_module._INITIALIZED_STORE_PATHS.discard(db_path.resolve())
-    repeated = WorkbenchStore(db_path)
-    assert {
-        turn_id: [
-            (event.sequence, event.event_type, event.payload)
-            for event in repeated.events_after(turn_id)
-        ]
-        for turn_id in turns.values()
-    } == before
-
-
 def test_store_has_no_public_confirmation_decision_bypass(tmp_path: Path):
     store = _store(tmp_path)
     assert not hasattr(store, "decide_confirmation")
     assert not hasattr(store, "get_confirmation_for_executor")
+    for name in (
+        "create_confirmation", "get_confirmation", "list_confirmations",
+        "claim_confirmation_execution", "finish_confirmation_execution",
+        "cancel_confirmation_execution", "mark_confirmation_proposer_quiesced",
+        "confirmation_is_quiesced", "confirmation_quiescence",
+        "reconcile_unquiesced_proposers",
+    ):
+        assert not hasattr(store, name)
+    with store._connect() as db:
+        assert db.execute(
+            "select name from sqlite_schema where name like '%workbench_confirmations%'"
+        ).fetchall() == []
 
 
 def test_public_turn_excludes_private_resume_context(tmp_path: Path):
     store, _, turn_id = _running_turn(tmp_path)
     with store._connect() as db:
+        parts = task8_set_parts("workbench_turns", {"resume_context": "private receipt"})
         db.execute(
-            "update tasks set resume_context='private receipt' where record_type='workbench_turns' and legacy_key=?",
-            (turn_id,),
+            f"update tasks set {parts.sql} where record_type='workbench_turns' and legacy_key=?",
+            (*parts.parameters, turn_id),
         )
     public = store.get_turn(turn_id)
     assert "resume_context" not in public.model_dump()
@@ -551,14 +380,6 @@ def test_archive_and_create_turn_race_has_one_valid_outcome(tmp_path: Path):
     assert (bool(persisted_task.archived_at), len(turns)) in {(True, 0), (False, 1)}
 
 
-def test_confirmation_quiescence_exposes_only_truthful_public_boolean(tmp_path: Path):
-    store = _store(tmp_path)
-    _, _, confirmation = _waiting_confirmation(store)
-
-    assert store.confirmation_is_quiesced(confirmation.id) is True
-    assert store.confirmation_is_quiesced("00000000-0000-4000-8000-000000000099") is None
-
-
 def test_workbench_query_indexes_exist(tmp_path: Path):
     store = _store(tmp_path)
     with store._connect() as db:
@@ -569,40 +390,18 @@ def test_workbench_query_indexes_exist(tmp_path: Path):
             ).fetchall()
         }
     assert {
-        "idx_workbench_turns_queue",
-        "idx_workbench_turns_recovery",
-        "idx_workbench_confirmations_recovery",
-        "idx_workbench_confirmations_turn_status",
-        "idx_workbench_confirmations_ready_intents",
-        "idx_workbench_confirmations_proposer_recovery",
-        "idx_workbench_confirmations_legacy_proposer_recovery",
-        "idx_workbench_confirmations_legacy_execution_owner_recovery",
-        "idx_workbench_confirmations_legacy_execution_lease_recovery",
+        "idx_task20_published_16",
+        "idx_task20_published_17",
         "idx_workbench_events_turn_id_id",
-        "idx_workbench_artifacts_turn_created_id",
-        "idx_workbench_turns_task_created_id",
-        "idx_workbench_turns_task_sequence",
-        "idx_workbench_tasks_updated_id",
+        "idx_task20_native_18",
+        "idx_task20_published_18",
+        "idx_task20_published_19",
+        "idx_task20_published_14",
         "idx_workbench_events_id_turn_id",
-        "idx_workbench_artifacts_created_id_turn",
-        "idx_workbench_confirmations_created_id_turn",
-        "idx_workbench_confirmations_turn_created_id",
-        "idx_workbench_attachments_task_created_id",
+        "idx_task20_native_19",
+        "idx_task20_native_22",
         "idx_workbench_events_event_type",
     } <= indexes
-    with store._connect() as db:
-        plan = " ".join(
-            row["detail"]
-            for row in db.execute(
-                """
-                explain query plan select id from workbench_confirmations
-                where turn_id=? and status=? and result_json=''
-                order by created_at, id
-                """,
-                ("turn-id", "confirmed"),
-            ).fetchall()
-        )
-    assert "idx_workbench_confirmations_turn_status" in plan
     with store._connect() as db:
         timeline_plans = {
             "events": db.execute(
@@ -610,12 +409,7 @@ def test_workbench_query_indexes_exist(tmp_path: Path):
                 ("turn-1", "turn-2", 1001),
             ).fetchall(),
             "artifacts": db.execute(
-                """explain query plan select * from workbench_artifacts
-                   where turn_id in (?,?) order by created_at,id limit 101""",
-                ("turn-1", "turn-2"),
-            ).fetchall(),
-            "confirmations": db.execute(
-                """explain query plan select * from workbench_confirmations
+                f"""explain query plan select * from ({task20_projection('workbench_artifacts')}) as workbench_artifacts
                    where turn_id in (?,?) order by created_at,id limit 101""",
                 ("turn-1", "turn-2"),
             ).fetchall(),
@@ -625,71 +419,11 @@ def test_workbench_query_indexes_exist(tmp_path: Path):
         ).fetchall()
     for table, rows in timeline_plans.items():
         rendered = " ".join(row["detail"] for row in rows)
-        assert f"SEARCH workbench_{table}" in rendered
-        assert ("task_id=?" if table == "events" else "turn_id=?") in rendered
+        assert ("SEARCH workbench_events" if table == "events" else "SEARCH tasks") in rendered
+        assert ("task_id=?" if table == "events" else "workbench_artifacts__turn_id=?") in rendered
     rendered_stats_plan = " ".join(row["detail"] for row in stats_plan)
     assert "COVERING INDEX idx_workbench_events_event_type" in rendered_stats_plan
     assert "TEMP B-TREE" not in rendered_stats_plan
-    with store._connect() as db:
-        ready_plan = " ".join(
-            row["detail"]
-            for row in db.execute(
-                """
-                explain query plan select id, decision_requested
-                from workbench_confirmations
-                where status='pending' and decision_requested<>''
-                  and proposer_run_id<>'' and proposer_quiesced_at<>''
-                order by decision_requested_at, id limit 2
-                """
-            ).fetchall()
-        )
-        recovery_queries = (
-            (
-                workbench_store_module.LEGACY_PENDING_PROPOSER_RECOVERY_SQL,
-                ("", 10),
-                "idx_workbench_confirmations_legacy_proposer_recovery",
-            ),
-            (
-                workbench_store_module.EXPIRED_PENDING_PROPOSER_RECOVERY_SQL,
-                ("2099-01-01 00:00:00", 10),
-                "idx_workbench_confirmations_proposer_recovery",
-            ),
-            (
-                workbench_store_module.LEGACY_CONFIRMED_OWNER_RECOVERY_SQL,
-                ("", 10),
-                "idx_workbench_confirmations_legacy_execution_owner_recovery",
-            ),
-            (
-                workbench_store_module.LEGACY_CONFIRMED_LEASE_RECOVERY_SQL,
-                ("", 10),
-                "idx_workbench_confirmations_legacy_execution_lease_recovery",
-            ),
-            (
-                workbench_store_module.EXPIRED_CONFIRMED_EXECUTION_RECOVERY_SQL,
-                ("2099-01-01 00:00:00", 10),
-                "idx_workbench_confirmations_recovery",
-            ),
-        )
-        recovery_plans = [
-            (
-                " ".join(
-                    row["detail"]
-                    for row in db.execute(
-                        f"explain query plan {sql}", parameters
-                    ).fetchall()
-                ),
-                index_name,
-            )
-            for sql, parameters, index_name in recovery_queries
-        ]
-        assert all(" or " not in sql.lower() for sql, _, _ in recovery_queries)
-    assert "idx_workbench_confirmations_ready_intents" in ready_plan
-    assert "USE TEMP B-TREE" not in ready_plan
-    for recovery_plan, index_name in recovery_plans:
-        assert index_name in recovery_plan
-        assert "SCAN confirmations" not in recovery_plan
-        assert "SCAN workbench_confirmations" not in recovery_plan
-        assert "USE TEMP B-TREE" not in recovery_plan
 
 
 def test_timeline_snapshot_work_is_bounded_by_selected_turns_not_global_events(
@@ -706,7 +440,7 @@ def test_timeline_snapshot_work_is_bounded_by_selected_turns_not_global_events(
     unrelated_task = store.create_task(title="Unrelated", runtime_kind="codex")
     unrelated_turn_id = "00000000-0000-4000-8000-000000000050"
     with store._connect() as db:
-        insert_task(db, 'workbench_turns', {
+        parts = task8_insert_parts('workbench_turns', {
                 "legacy_key": unrelated_turn_id,
                 "parent_id": task_physical_id(db, "workbench_tasks", unrelated_task.id),
                 "client_request_id": "unrelated-request",
@@ -714,6 +448,10 @@ def test_timeline_snapshot_work_is_bounded_by_selected_turns_not_global_events(
                 "user_text": "unrelated",
                 "status": "completed",
             })
+        db.execute(
+            f"insert into tasks ({parts.columns}) values ({parts.values})",
+            parts.parameters,
+        )
         unrelated_physical_id = task_physical_id(db, "workbench_turns", unrelated_turn_id)
         db.executemany(
             """insert into runs(record_type,task_id,sequence,event_type,payload_json,created_at)
@@ -751,7 +489,7 @@ def test_get_task_summary_uses_latest_turn_index_and_limit_one(tmp_path: Path):
     with store._connect() as db:
         for index in range(1_000):
             created_at = f"2026-08-{1 + index // 24:02d} {index % 24:02d}:00:00"
-            insert_task(db, 'workbench_turns', {
+            parts = task8_insert_parts('workbench_turns', {
                 "legacy_key": f"00000000-0000-4000-8000-{index:012d}",
                 "parent_id": task_physical_id(db, "workbench_tasks", task.id),
                 "client_request_id": f"summary-{index}",
@@ -761,10 +499,14 @@ def test_get_task_summary_uses_latest_turn_index_and_limit_one(tmp_path: Path):
                 "created_at": created_at,
                 "updated_at": created_at,
             })
+            db.execute(
+                f"insert into tasks ({parts.columns}) values ({parts.values})",
+                parts.parameters,
+            )
         plan = " ".join(
             row["detail"]
             for row in db.execute(
-                f"explain query plan select status from tasks where record_type='workbench_turns' and parent_id={task_id_expression('workbench_tasks', '?')} order by task_sequence desc limit 1",
+                f"explain query plan select {task20_column('workbench_turns', 'status')} from tasks where record_type='workbench_turns' and {task20_column('workbench_turns', 'task_id')}={task_id_expression('workbench_tasks', '?')} order by {task20_column('workbench_turns', 'task_sequence')} desc limit 1",
                 (task.id,),
             ).fetchall()
         )
@@ -773,37 +515,8 @@ def test_get_task_summary_uses_latest_turn_index_and_limit_one(tmp_path: Path):
 
     assert summary is not None
     assert summary[1] == "failed"
-    assert "idx_workbench_turns_task_sequence" in plan
+    assert "idx_task20_published_19" in plan
     assert "TEMP B-TREE" not in plan
-
-
-def test_stale_prior_run_quiescence_cannot_unlock_confirmation(tmp_path: Path):
-    store = _store(tmp_path)
-    _, turn_id, confirmation = _waiting_confirmation(store)
-    old_run = store.execution_run_id_for_executor(turn_id, owner="seed")
-    with store._connect() as db:
-        db.execute(
-            """
-            update workbench_confirmations
-            set proposer_quiesced_at='', decision_requested='confirm'
-            where id=?
-            """,
-            (confirmation.id,),
-        )
-        db.execute(
-            "\n            update tasks\n            set execution_run_id='new-run', runtime_quiesced_run_id=''\n            where record_type='workbench_turns' and legacy_key=?\n            ",
-            (turn_id,),
-        )
-
-    with pytest.raises(ValueError, match="proposer run is stale"):
-        store.mark_confirmation_proposer_quiesced(
-            turn_id,
-            owner="seed",
-            proposer_run_id=old_run,
-        )
-    assert store.claim_confirmation_execution(
-        confirmation.id, owner="executor", lease_seconds=10
-    ) is None
 
 
 def test_create_task_and_idempotent_turn_request(tmp_path: Path):
@@ -1075,60 +788,6 @@ def test_recover_expired_running_turn_as_queued(tmp_path: Path):
     assert store.get_turn(turn.id).status is TurnStatus.QUEUED
 
 
-def test_recovery_leaves_waiting_confirmation_turn_unchanged(tmp_path: Path):
-    store = _store(tmp_path)
-    task = store.create_task(title="Analyse sales", runtime_kind="codex")
-    turn = store.create_turn(
-        task.id,
-        user_text="Compare regions",
-        client_request_id="request-1",
-    )
-    store.claim_next_turn(
-        owner="worker-1", lease_seconds=1, now="2026-08-13T00:00:00Z"
-    )
-    store.create_confirmation(
-        turn.id,
-        action_kind="send_message",
-        target="sales@example.com",
-        summary="Send the regional comparison",
-        risk="external communication",
-        arguments_json={"channel": "email"},
-        owner="worker-1",
-        now="2026-08-13T00:00:00Z",
-    )
-
-    assert store.recover_expired_turns(now="2026-08-13T00:00:02Z") == 0
-    assert store.get_turn(turn.id).status is TurnStatus.WAITING_CONFIRMATION
-
-
-def test_transition_to_waiting_confirmation_releases_worker_lease(tmp_path: Path):
-    store = _store(tmp_path)
-    task = store.create_task(title="Analyse sales", runtime_kind="codex")
-    turn = store.create_turn(
-        task.id,
-        user_text="Compare regions",
-        client_request_id="request-1",
-    )
-    store.claim_next_turn(owner="worker-1", now="2026-08-13T00:00:00Z")
-
-    store.create_confirmation(
-        turn.id,
-        action_kind="send_message",
-        target="sales@example.com",
-        summary="Send the regional comparison",
-        risk="external communication",
-        arguments_json={"channel": "email"},
-        owner="worker-1",
-        now="2026-08-13T00:00:01Z",
-    )
-
-    assert store.get_turn(turn.id).status is TurnStatus.WAITING_CONFIRMATION
-    with sqlite3.connect(store.path) as db:
-        assert db.execute(
-            f'select lease_owner from ({WORKBENCH_TURN_SQL}) as workbench_turns where id=?', (turn.id,)
-        ).fetchone()[0] == ""
-
-
 def test_running_transition_requires_claiming_a_lease(tmp_path: Path):
     store = _store(tmp_path)
     task = store.create_task(title="Analyse sales", runtime_kind="codex")
@@ -1153,17 +812,6 @@ def test_running_turn_executor_mutations_require_an_owner(tmp_path: Path):
             payload={"text": "North"},
         )
 
-    store, _, turn_id = _running_turn(tmp_path / "confirmation")
-    with pytest.raises(ValueError, match="owner must be non-empty"):
-        store.create_confirmation(
-            turn_id,
-            action_kind="send_message",
-            target="sales@example.com",
-            summary="Send the regional comparison",
-            risk="external communication",
-            arguments_json={"channel": "email"},
-        )
-
     store, _, turn_id = _running_turn(tmp_path / "complete")
     with pytest.raises(ValueError, match="owner must be non-empty"):
         store.complete_turn(turn_id, status=TurnStatus.COMPLETED)
@@ -1184,173 +832,12 @@ def test_running_turn_executor_mutations_reject_mismatched_and_expired_owners(
             now="2026-08-13T00:00:01Z",
         )
     with pytest.raises(ValueError, match="turn lease is stale"):
-        store.create_confirmation(
-            turn_id,
-            action_kind="send_message",
-            target="sales@example.com",
-            summary="Send the regional comparison",
-            risk="external communication",
-            arguments_json={"channel": "email"},
-            owner="worker-1",
-            now="2026-08-13T00:00:11Z",
-        )
-    with pytest.raises(ValueError, match="turn lease is stale"):
         store.complete_turn(
             turn_id,
             status=TurnStatus.COMPLETED,
             owner="worker-1",
             now="2026-08-13T00:00:11Z",
         )
-
-
-def test_confirmation_list_redacts_arguments_and_execution_claim_exposes_them_once(
-    tmp_path: Path,
-):
-    store, task_id, turn_id = _running_turn(tmp_path)
-    confirmation = store.create_confirmation(
-        turn_id,
-        action_kind="send_message",
-        target="sales@example.com",
-        summary="Send the regional comparison",
-        risk="external communication",
-        arguments_json={"channel": "email"},
-        owner="worker-1",
-        now="2026-08-13T00:00:01Z",
-    )
-    store.mark_confirmation_proposer_quiesced(
-        turn_id,
-        owner="worker-1",
-        proposer_run_id=store.execution_run_id_for_executor(turn_id, owner="worker-1"),
-        now="2026-08-13T00:00:01Z",
-    )
-
-    assert store.list_confirmations(task_id)[0].arguments_json == ""
-    with pytest.raises(TypeError):
-        store.list_confirmations(task_id, include_arguments=True)
-    assert (
-        store.claim_confirmation_execution(
-            confirmation.id,
-            owner="executor-1",
-            lease_seconds=10,
-            now="2026-08-13T00:00:02Z",
-        ).arguments_json
-        == '{"channel":"email"}'
-    )
-    assert (
-        store.claim_confirmation_execution(
-            confirmation.id,
-            owner="executor-2",
-            lease_seconds=10,
-            now="2026-08-13T00:00:03Z",
-        )
-        is None
-    )
-    public = store.get_confirmation(confirmation.id)
-    assert public.arguments_json == ""
-    assert not hasattr(public, "execution_owner")
-    with store._connect() as db:
-        row = db.execute(
-            "select * from workbench_confirmations where id=?", (confirmation.id,)
-        ).fetchone()
-    assert row["execution_owner"] == "executor-1"
-    assert row["execution_started_at"] == "2026-08-13 00:00:02"
-    assert row["execution_lease_expires_at"] == "2026-08-13 00:00:12"
-
-
-def test_claim_owner_can_finish_receipt_after_turn_is_stopped(tmp_path: Path):
-    store, _, turn_id = _running_turn(tmp_path)
-    confirmation = store.create_confirmation(
-        turn_id,
-        action_kind="reviewed_cli",
-        target="Executive group",
-        summary="Send update",
-        risk="External message",
-        arguments_json={"argv": ["dws", "chat", "message", "send", "--yes"]},
-        owner="worker-1",
-        now="2026-08-13T00:00:01Z",
-    )
-    store.mark_confirmation_proposer_quiesced(
-        turn_id,
-        owner="worker-1",
-        proposer_run_id=store.execution_run_id_for_executor(turn_id, owner="worker-1"),
-        now="2026-08-13T00:00:01Z",
-    )
-    assert store.claim_confirmation_execution(
-        confirmation.id,
-        owner="executor-1",
-        lease_seconds=10,
-        now="2026-08-13T00:00:02Z",
-    )
-    with store._connect() as db:
-        db.execute(
-            "update workbench_confirmations set authorization_consumed_at=? where id=?",
-            ("2026-08-13 00:00:02", confirmation.id),
-        )
-
-    assert store.request_stop(
-        turn_id, now="2026-08-13T00:00:03Z"
-    ).status is TurnStatus.STOPPED
-    result = store.finish_confirmation_execution(
-        confirmation.id,
-        owner="executor-1",
-        status=ConfirmationStatus.EXECUTED,
-        result_json={"status": "executed", "receipt_digest": "a" * 64},
-        resume_context='{"status":"executed"}',
-        now="2026-08-13T00:00:04Z",
-    )
-
-    assert result.status is ConfirmationStatus.EXECUTED
-    assert store.get_turn(turn_id).status is TurnStatus.STOPPED
-    with store._connect() as db:
-        row = db.execute(
-            "select * from workbench_confirmations where id=?", (confirmation.id,)
-        ).fetchone()
-    assert row["execution_owner"] == ""
-    assert row["execution_lease_expires_at"] == ""
-
-
-def test_reconcile_confirmation_claims_only_when_abandoned(tmp_path: Path):
-    store = _store(tmp_path)
-    _, live_turn, live = _waiting_confirmation(store)
-    assert store.claim_confirmation_execution(
-        live.id,
-        owner="live-executor",
-        lease_seconds=10,
-        now="2026-08-13T00:00:00Z",
-    )
-
-    assert store.reconcile_confirmed_without_result(now="2026-08-13T00:00:05Z") == 0
-    assert store.get_confirmation(live.id).status is ConfirmationStatus.CONFIRMED
-    assert store.get_turn(live_turn).status is TurnStatus.WAITING_CONFIRMATION
-    assert store.reconcile_confirmed_without_result(now="2026-08-13T00:00:11Z") == 1
-    assert store.get_confirmation(live.id).status is ConfirmationStatus.FAILED
-    assert store.get_turn(live_turn).status is TurnStatus.FAILED
-
-
-def test_confirmation_receipt_rejects_non_owner_and_expired_claim(tmp_path: Path):
-    store = _store(tmp_path)
-    _, _, confirmation = _waiting_confirmation(store)
-    assert store.claim_confirmation_execution(
-        confirmation.id,
-        owner="executor-1",
-        lease_seconds=10,
-        now="2026-08-13T00:00:00Z",
-    )
-
-    for owner, now in (
-        ("executor-2", "2026-08-13T00:00:01Z"),
-        ("executor-1", "2026-08-13T00:00:11Z"),
-    ):
-        with pytest.raises(ValueError, match="execution lease is stale"):
-            store.finish_confirmation_execution(
-                confirmation.id,
-                owner=owner,
-                status=ConfirmationStatus.EXECUTED,
-                result_json={"status": "executed"},
-                resume_context='{"status":"executed"}',
-                now=now,
-            )
-    assert store.get_confirmation(confirmation.id).status is ConfirmationStatus.CONFIRMED
 
 
 def test_recovered_stale_worker_cannot_append_events(tmp_path: Path):
@@ -1419,22 +906,6 @@ def test_event_payload_rejects_nonfinite_json(tmp_path: Path, payload):
         )
 
 
-def test_confirmation_arguments_reject_nonfinite_json(tmp_path: Path):
-    store, _, turn_id = _running_turn(tmp_path)
-
-    with pytest.raises(ValueError, match="arguments_json must be a JSON object"):
-        store.create_confirmation(
-            turn_id,
-            action_kind="send_message",
-            target="sales@example.com",
-            summary="Send the regional comparison",
-            risk="external communication",
-            arguments_json='{"value":Infinity}',
-            owner="worker-1",
-            now="2026-08-13T00:00:01Z",
-        )
-
-
 def test_stop_is_idempotent(tmp_path: Path):
     store = _store(tmp_path)
     task = store.create_task(title="Analyse sales", runtime_kind="codex")
@@ -1471,7 +942,8 @@ def test_attachment_db_failure_leaves_no_orphan_file(tmp_path: Path):
         db.execute(
             """
             create trigger reject_workbench_attachment
-            before insert on workbench_attachments
+            before insert on tasks
+            when new.record_type='workbench_attachments'
             begin
                 select raise(abort, 'injected attachment failure');
             end
@@ -1528,7 +1000,7 @@ def test_attachment_replace_or_commit_failure_leaves_no_metadata_or_file(
             content=b"private",
         )
     with sqlite3.connect(store.path) as db:
-        assert db.execute("select count(*) from workbench_attachments").fetchone()[0] == 0
+        assert db.execute("select count(*) from tasks where record_type='workbench_attachments'").fetchone()[0] == 0
     assert list(directory.iterdir()) == []
 
     monkeypatch.delattr(store, "_commit_attachment_metadata", raising=False)
@@ -1545,7 +1017,7 @@ def test_attachment_replace_or_commit_failure_leaves_no_metadata_or_file(
             content=b"private",
         )
     with sqlite3.connect(store.path) as db:
-        assert db.execute("select count(*) from workbench_attachments").fetchone()[0] == 0
+        assert db.execute("select count(*) from tasks where record_type='workbench_attachments'").fetchone()[0] == 0
     assert list(directory.iterdir()) == []
 
 
@@ -1560,63 +1032,20 @@ def test_attachment_reconciliation_removes_generated_orphans(tmp_path: Path):
     orphan_file = directory / orphan_id
     orphan_file.write_bytes(b"orphan")
     missing_id = "5ff5ff8c-9ef3-4190-8d32-f6a4a6cf1a11"
-    with sqlite3.connect(store.path) as db:
-        db.execute(
-            """
-            insert into workbench_attachments (
-                id, task_id, client_request_id, filename, media_type,
-                size_bytes, storage_path, content_sha256
-            ) values (?, ?, ?, ?, ?, ?, ?, ?)
-            """,
-            (
-                missing_id,
-                task_physical_id(db, "workbench_tasks", task.id),
-                missing_id,
-                "missing.txt",
-                "text/plain",
-                0,
-                str(directory / missing_id),
-                "0" * 64,
-            ),
-        )
+    with store._connect() as db:
+        insert_task12(db, "workbench_attachments", {
+            "id": missing_id,
+            "task_id": task_physical_id(db, "workbench_tasks", task.id),
+            "client_request_id": missing_id,
+            "filename": "missing.txt", "media_type": "text/plain", "size_bytes": 0,
+            "storage_path": str(directory / missing_id), "content_sha256": "0" * 64,
+        })
 
     WorkbenchStore(store.path)
 
     with sqlite3.connect(store.path) as db:
-        assert db.execute("select count(*) from workbench_attachments").fetchone()[0] == 0
+        assert db.execute("select count(*) from tasks where record_type='workbench_attachments'").fetchone()[0] == 0
     assert list(directory.iterdir()) == []
-
-
-def test_confirmation_creation_and_control_events_are_atomic(tmp_path: Path):
-    store, _, turn_id = _running_turn(tmp_path)
-    confirmation = store.create_confirmation(
-        turn_id,
-        action_kind="send_message",
-        target="sales@example.com",
-        summary="Send the regional comparison",
-        risk="external communication",
-        arguments_json={"channel": "email"},
-        owner="worker-1",
-        now="2026-08-13T00:00:01Z",
-    )
-
-    assert store.get_turn(turn_id).status is TurnStatus.WAITING_CONFIRMATION
-    events = [
-        (event.sequence, event.event_type, event.payload)
-        for event in store.events_after(turn_id)
-    ]
-    assert events == [
-        (1, "status_changed", {"status": "queued"}),
-        (
-            2,
-            "confirmation_required",
-            {
-                "action_kind": "send_message",
-                "confirmation_id": confirmation.id,
-                "target": "sales@example.com",
-            },
-        )
-    ]
 
 
 def test_stop_and_terminal_completion_append_atomic_control_events(tmp_path: Path):
@@ -1817,88 +1246,6 @@ def test_running_stop_is_immediately_terminal_on_both_recovery_paths(
     ]
 
 
-def test_waiting_confirmation_terminalization_resolves_pending_confirmations(
-    tmp_path: Path,
-):
-    store, task_id, turn_id = _running_turn(tmp_path)
-    confirmation = store.create_confirmation(
-        turn_id,
-        action_kind="send_message",
-        target="sales@example.com",
-        summary="Send the regional comparison",
-        risk="external communication",
-        arguments_json={"channel": "email"},
-        owner="worker-1",
-        now="2026-08-13T00:00:01Z",
-    )
-    stopped = store.request_stop(turn_id, now="2026-08-13T00:00:02Z")
-
-    assert stopped.status is TurnStatus.STOPPED
-    listed = store.list_confirmations(task_id)
-    assert listed[0].id == confirmation.id
-    assert listed[0].status is ConfirmationStatus.CANCELLED
-    assert listed[0].arguments_json == ""
-
-    next_turn = store.create_turn(
-        task_id,
-        user_text="Compare products",
-        client_request_id="request-2",
-    )
-    store.claim_next_turn(owner="worker-1", now="2026-08-13T00:00:03Z")
-    failed_confirmation = store.create_confirmation(
-        next_turn.id,
-        action_kind="send_message",
-        target="sales@example.com",
-        summary="Send the product comparison",
-        risk="external communication",
-        arguments_json={"channel": "email"},
-        owner="worker-1",
-        now="2026-08-13T00:00:03Z",
-    )
-    failed = store.complete_turn(
-        next_turn.id,
-        status=TurnStatus.FAILED,
-        error_code="provider_error",
-        now="2026-08-13T00:00:04Z",
-    )
-
-    assert failed.status is TurnStatus.FAILED
-    statuses = {item.id: item.status for item in store.list_confirmations(task_id)}
-    assert statuses[failed_confirmation.id] is ConfirmationStatus.FAILED
-    assert ConfirmationStatus.PENDING not in statuses.values()
-
-
-def test_generic_completion_rejects_reserved_confirmation_transitions(tmp_path: Path):
-    store, task_id, turn_id = _running_turn(tmp_path)
-
-    with pytest.raises(ValueError, match="reserved"):
-        store.complete_turn(
-            turn_id,
-            status=TurnStatus.WAITING_CONFIRMATION,
-            owner="worker-1",
-            now="2026-08-13T00:00:01Z",
-        )
-
-    store.create_confirmation(
-        turn_id,
-        action_kind="send_message",
-        target="sales@example.com",
-        summary="Send the regional comparison",
-        risk="external communication",
-        arguments_json={"channel": "email"},
-        owner="worker-1",
-        now="2026-08-13T00:00:01Z",
-    )
-    with pytest.raises(ValueError, match="reserved"):
-        store.complete_turn(
-            turn_id,
-            status=TurnStatus.QUEUED,
-            now="2026-08-13T00:00:02Z",
-        )
-    assert store.get_turn(turn_id).status is TurnStatus.WAITING_CONFIRMATION
-    assert store.list_confirmations(task_id)[0].status is ConfirmationStatus.PENDING
-
-
 def test_attachment_symlink_components_are_rejected(tmp_path: Path):
     store = _store(tmp_path)
     task = store.create_task(title="Analyse sales", runtime_kind="codex")
@@ -2003,7 +1350,7 @@ def test_attachment_filename_cannot_escape_generated_task_directory(tmp_path: Pa
     with sqlite3.connect(store.path) as db:
         storage_path = Path(
             db.execute(
-                "select storage_path from workbench_attachments where id=?",
+                f"select storage_path from ({task20_projection('workbench_attachments')}) where id=?",
                 (attachment.id,),
             ).fetchone()[0]
         )

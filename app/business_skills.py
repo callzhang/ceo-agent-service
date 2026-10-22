@@ -451,7 +451,9 @@ def installed_skill_catalog(
     return tuple(matches[path] for path in sorted(matches))
 
 
-def render_skill_catalog_metadata(catalog: tuple[BusinessSkillCatalogEntry, ...]) -> str:
+def render_skill_catalog_metadata(
+    catalog: tuple[BusinessSkillCatalogEntry, ...], *, include_descriptions: bool = True
+) -> str:
     candidates = dict.fromkeys(item.skill_path.parent.parent for item in catalog)
     roots = tuple(root for root in candidates if not any(parent in candidates for parent in root.parents))
     aliases = {root: f"r{index}" for index, root in enumerate(roots, start=1)}
@@ -460,15 +462,12 @@ def render_skill_catalog_metadata(catalog: tuple[BusinessSkillCatalogEntry, ...]
     writer.writerow(("Root", "Path"))
     writer.writerows((alias, str(root)) for root, alias in aliases.items())
     output.write("\n")
-    writer.writerow(("Name", "Root", "Relative path", "Description"))
+    header = ("Name", "Root", "Relative path")
+    writer.writerow((*header, "Description") if include_descriptions else header)
     for item in catalog:
         root = next(root for root in roots if item.skill_path.is_relative_to(root))
-        writer.writerow((
-            item.name,
-            aliases[root],
-            str(item.skill_path.relative_to(root)),
-            item.description,
-        ))
+        row = (item.name, aliases[root], str(item.skill_path.relative_to(root)))
+        writer.writerow((*row, item.description) if include_descriptions else row)
     return (
         "Absolute read path = the Root directory joined with Relative path.\n"
         "Tables are tab-separated; quoted cells preserve full text.\n"
@@ -528,14 +527,17 @@ def render_task_skill_discovery(
                 "Task-frozen reads: `agent_cli.read_task_skill(name)`."
             )
         instructions.append(
-            "Other Skill reads: `agent_cli.read_skill(name=...)`."
+            "Other Skill reads: `agent_cli.read_skill(name=...)`. "
+            "Find another Skill by topic: `agent_cli.read_skill(query=...)`."
         )
         read_instruction = " ".join(instructions)
     else:
         entries = tuple((entry.name, entry) for entry in dict.fromkeys(catalog))
         heading = "## Skill Discovery"
         read_instruction = (
-            "No task Skill was selected. Discover with `agent_cli.read_skill()`."
+            "No task Skill was selected. Search by topic with "
+            "`agent_cli.read_skill(query=...)`; use `agent_cli.read_skill()` "
+            "when the topic is unknown."
         )
     lines = [heading]
     for name, entry in entries:

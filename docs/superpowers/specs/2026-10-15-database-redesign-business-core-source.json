@@ -1,0 +1,1795 @@
+{
+  "code_ref": "b670aea428ec63e993e6837a18e585985c951ee6",
+  "source_observation_ref": "264c073cfe779b76a5a7f001480149fb784f0591",
+  "families": {
+    "business_projects": {
+      "count": 32,
+      "fields": 12,
+      "columns": [
+        {
+          "cid": 0,
+          "name": "id",
+          "type": "INTEGER",
+          "notnull": 0,
+          "default": null,
+          "pk": 1
+        },
+        {
+          "cid": 1,
+          "name": "canonical_anchor_id",
+          "type": "INTEGER",
+          "notnull": 1,
+          "default": null,
+          "pk": 0
+        },
+        {
+          "cid": 2,
+          "name": "anchor_type",
+          "type": "TEXT",
+          "notnull": 1,
+          "default": "'project'",
+          "pk": 0
+        },
+        {
+          "cid": 3,
+          "name": "title",
+          "type": "TEXT",
+          "notnull": 1,
+          "default": null,
+          "pk": 0
+        },
+        {
+          "cid": 4,
+          "name": "registry_source",
+          "type": "TEXT",
+          "notnull": 1,
+          "default": null,
+          "pk": 0
+        },
+        {
+          "cid": 5,
+          "name": "created_at",
+          "type": "TEXT",
+          "notnull": 1,
+          "default": "current_timestamp",
+          "pk": 0
+        },
+        {
+          "cid": 6,
+          "name": "crm_customer_id",
+          "type": "TEXT",
+          "notnull": 1,
+          "default": "''",
+          "pk": 0
+        },
+        {
+          "cid": 7,
+          "name": "crm_customer_name",
+          "type": "TEXT",
+          "notnull": 1,
+          "default": "''",
+          "pk": 0
+        },
+        {
+          "cid": 8,
+          "name": "crm_customer_lookup_status",
+          "type": "TEXT",
+          "notnull": 1,
+          "default": "'not_requested'",
+          "pk": 0
+        },
+        {
+          "cid": 9,
+          "name": "crm_customer_candidates_json",
+          "type": "TEXT",
+          "notnull": 1,
+          "default": "'[]'",
+          "pk": 0
+        },
+        {
+          "cid": 10,
+          "name": "crm_customer_label",
+          "type": "TEXT",
+          "notnull": 1,
+          "default": "''",
+          "pk": 0
+        },
+        {
+          "cid": 11,
+          "name": "crm_customer_evidence_json",
+          "type": "TEXT",
+          "notnull": 1,
+          "default": "'{}'",
+          "pk": 0
+        }
+      ],
+      "fks": [
+        {
+          "id": 0,
+          "seq": 0,
+          "table": "business_anchors",
+          "from": "canonical_anchor_id",
+          "to": "id",
+          "on_update": "NO ACTION",
+          "on_delete": "NO ACTION",
+          "match": "NONE"
+        },
+        {
+          "id": 0,
+          "seq": 1,
+          "table": "business_anchors",
+          "from": "anchor_type",
+          "to": "anchor_type",
+          "on_update": "NO ACTION",
+          "on_delete": "NO ACTION",
+          "match": "NONE"
+        }
+      ],
+      "indexes": [
+        {
+          "name": "sqlite_autoindex_business_projects_1",
+          "unique": 1,
+          "origin": "u",
+          "partial": 0,
+          "columns": [
+            "canonical_anchor_id"
+          ]
+        }
+      ],
+      "schema": "CREATE TABLE business_projects (\n                    id integer primary key autoincrement,\n                    canonical_anchor_id integer not null unique,\n                    anchor_type text not null default 'project' check(anchor_type = 'project'),\n                    title text not null check(trim(title, char(9,10,11,12,13,28,29,30,31,32,133,160,5760,8192,8193,8194,8195,8196,8197,8198,8199,8200,8201,8202,8232,8233,8239,8287,12288)) <> ''),\n                    registry_source text not null\n                        check(trim(registry_source, char(9,10,11,12,13,28,29,30,31,32,133,160,5760,8192,8193,8194,8195,8196,8197,8198,8199,8200,8201,8202,8232,8233,8239,8287,12288)) <> ''),\n                    created_at text not null default current_timestamp, crm_customer_id text not null default '', crm_customer_name text not null default '', crm_customer_lookup_status text not null default 'not_requested' check(crm_customer_lookup_status in ('not_requested', 'matched', 'ambiguous', 'needs_confirmation', 'no_match', 'unavailable', 'conflict')), crm_customer_candidates_json text not null default '[]' check(json_valid(crm_customer_candidates_json) and json_type(crm_customer_candidates_json) = 'array'), crm_customer_label text not null default '', crm_customer_evidence_json text not null default '{}' check(json_valid(crm_customer_evidence_json) and json_type(crm_customer_evidence_json) = 'object'),\n                    foreign key(canonical_anchor_id, anchor_type)\n                        references business_anchors(id, anchor_type)\n                )",
+      "triggers": []
+    },
+    "business_tasks": {
+      "count": 594,
+      "fields": 19,
+      "columns": [
+        {
+          "cid": 0,
+          "name": "id",
+          "type": "INTEGER",
+          "notnull": 0,
+          "default": null,
+          "pk": 1
+        },
+        {
+          "cid": 1,
+          "name": "title",
+          "type": "TEXT",
+          "notnull": 1,
+          "default": null,
+          "pk": 0
+        },
+        {
+          "cid": 2,
+          "name": "description",
+          "type": "TEXT",
+          "notnull": 1,
+          "default": "''",
+          "pk": 0
+        },
+        {
+          "cid": 3,
+          "name": "stage",
+          "type": "TEXT",
+          "notnull": 1,
+          "default": null,
+          "pk": 0
+        },
+        {
+          "cid": 4,
+          "name": "status",
+          "type": "TEXT",
+          "notnull": 1,
+          "default": "'open'",
+          "pk": 0
+        },
+        {
+          "cid": 5,
+          "name": "commitment_status",
+          "type": "TEXT",
+          "notnull": 1,
+          "default": "'none'",
+          "pk": 0
+        },
+        {
+          "cid": 6,
+          "name": "formal_basis",
+          "type": "TEXT",
+          "notnull": 0,
+          "default": null,
+          "pk": 0
+        },
+        {
+          "cid": 7,
+          "name": "business_relevance",
+          "type": "TEXT",
+          "notnull": 1,
+          "default": "'unknown'",
+          "pk": 0
+        },
+        {
+          "cid": 8,
+          "name": "merged_into_task_id",
+          "type": "INTEGER",
+          "notnull": 0,
+          "default": null,
+          "pk": 0
+        },
+        {
+          "cid": 9,
+          "name": "owner_user_id",
+          "type": "TEXT",
+          "notnull": 1,
+          "default": "''",
+          "pk": 0
+        },
+        {
+          "cid": 10,
+          "name": "owner_name",
+          "type": "TEXT",
+          "notnull": 1,
+          "default": "''",
+          "pk": 0
+        },
+        {
+          "cid": 11,
+          "name": "owner_evidence_json",
+          "type": "TEXT",
+          "notnull": 1,
+          "default": "'{}'",
+          "pk": 0
+        },
+        {
+          "cid": 12,
+          "name": "deadline_at",
+          "type": "TEXT",
+          "notnull": 1,
+          "default": "''",
+          "pk": 0
+        },
+        {
+          "cid": 13,
+          "name": "missing_evidence_json",
+          "type": "TEXT",
+          "notnull": 1,
+          "default": "'[]'",
+          "pk": 0
+        },
+        {
+          "cid": 14,
+          "name": "last_activity_at",
+          "type": "TEXT",
+          "notnull": 1,
+          "default": "current_timestamp",
+          "pk": 0
+        },
+        {
+          "cid": 15,
+          "name": "created_at",
+          "type": "TEXT",
+          "notnull": 1,
+          "default": "current_timestamp",
+          "pk": 0
+        },
+        {
+          "cid": 16,
+          "name": "updated_at",
+          "type": "TEXT",
+          "notnull": 1,
+          "default": "current_timestamp",
+          "pk": 0
+        },
+        {
+          "cid": 17,
+          "name": "origin",
+          "type": "TEXT",
+          "notnull": 1,
+          "default": "'source'",
+          "pk": 0
+        },
+        {
+          "cid": 18,
+          "name": "suggestion_json",
+          "type": "TEXT",
+          "notnull": 1,
+          "default": "'{}'",
+          "pk": 0
+        }
+      ],
+      "fks": [
+        {
+          "id": 0,
+          "seq": 0,
+          "table": "business_tasks",
+          "from": "merged_into_task_id",
+          "to": "id",
+          "on_update": "NO ACTION",
+          "on_delete": "NO ACTION",
+          "match": "NONE"
+        }
+      ],
+      "indexes": [
+        {
+          "name": "idx_business_tasks_relevance",
+          "unique": 0,
+          "origin": "c",
+          "partial": 0,
+          "columns": [
+            "business_relevance",
+            "updated_at",
+            "id"
+          ]
+        },
+        {
+          "name": "idx_business_tasks_list",
+          "unique": 0,
+          "origin": "c",
+          "partial": 0,
+          "columns": [
+            "stage",
+            "status",
+            "updated_at",
+            "id"
+          ]
+        },
+        {
+          "name": "idx_business_tasks_updated_id",
+          "unique": 0,
+          "origin": "c",
+          "partial": 0,
+          "columns": [
+            "updated_at",
+            "id"
+          ]
+        }
+      ],
+      "schema": "CREATE TABLE business_tasks (\n                    id integer primary key autoincrement,\n                    title text not null check(trim(title, char(9,10,11,12,13,28,29,30,31,32,133,160,5760,8192,8193,8194,8195,8196,8197,8198,8199,8200,8201,8202,8232,8233,8239,8287,12288)) <> ''),\n                    description text not null default '',\n                    stage text not null check(stage in ('candidate', 'formal')),\n                    status text not null default 'open' check(status in (\n                        'open', 'waiting', 'done', 'cancelled', 'merged'\n                    )),\n                    commitment_status text not null default 'none' check(commitment_status in (\n                        'none', 'assigned_unaccepted', 'accepted', 'disputed', 'completed', 'cancelled'\n                    )),\n                    formal_basis text check(formal_basis in (\n                        'explicit_assignment', 'explicit_commitment', 'external_todo', 'meeting_action_item'\n                    )),\n                    business_relevance text not null default 'unknown' check(business_relevance in (\n                        'unknown', 'not_relevant', 'relevant'\n                    )),\n                    merged_into_task_id integer,\n                    owner_user_id text not null default '',\n                    owner_name text not null default '',\n                    owner_evidence_json text not null default '{}'\n                        check(json_valid(owner_evidence_json) and json_type(owner_evidence_json) = 'object'),\n                    deadline_at text not null default '',\n                    missing_evidence_json text not null default '[]'\n                        check(json_valid(missing_evidence_json) and json_type(missing_evidence_json) = 'array'),\n                    last_activity_at text not null default current_timestamp,\n                    created_at text not null default current_timestamp,\n                    updated_at text not null default current_timestamp, origin text not null default 'source' check(origin in ('source','agent_suggestion')), suggestion_json text not null default '{}' check(json_valid(suggestion_json) and json_type(suggestion_json)='object'),\n                    check(\n                        (stage = 'formal' and formal_basis is not null)\n                        or (stage = 'candidate' and formal_basis is null)\n                    ),\n                    check(\n                        (status = 'merged' and merged_into_task_id is not null)\n                        or (status <> 'merged' and merged_into_task_id is null)\n                    ),\n                    check(merged_into_task_id is null or merged_into_task_id <> id),\n                    foreign key(merged_into_task_id) references business_tasks(id)\n                )",
+      "triggers": []
+    },
+    "business_task_signals": {
+      "count": 833,
+      "fields": 13,
+      "columns": [
+        {
+          "cid": 0,
+          "name": "id",
+          "type": "INTEGER",
+          "notnull": 0,
+          "default": null,
+          "pk": 1
+        },
+        {
+          "cid": 1,
+          "name": "source_type",
+          "type": "TEXT",
+          "notnull": 1,
+          "default": null,
+          "pk": 0
+        },
+        {
+          "cid": 2,
+          "name": "source_ref",
+          "type": "TEXT",
+          "notnull": 1,
+          "default": null,
+          "pk": 0
+        },
+        {
+          "cid": 3,
+          "name": "source_time",
+          "type": "TEXT",
+          "notnull": 1,
+          "default": "''",
+          "pk": 0
+        },
+        {
+          "cid": 4,
+          "name": "conversation_id",
+          "type": "TEXT",
+          "notnull": 1,
+          "default": "''",
+          "pk": 0
+        },
+        {
+          "cid": 5,
+          "name": "conversation_title",
+          "type": "TEXT",
+          "notnull": 1,
+          "default": "''",
+          "pk": 0
+        },
+        {
+          "cid": 6,
+          "name": "author_user_id",
+          "type": "TEXT",
+          "notnull": 1,
+          "default": "''",
+          "pk": 0
+        },
+        {
+          "cid": 7,
+          "name": "author_name",
+          "type": "TEXT",
+          "notnull": 1,
+          "default": "''",
+          "pk": 0
+        },
+        {
+          "cid": 8,
+          "name": "source_document_id",
+          "type": "INTEGER",
+          "notnull": 1,
+          "default": null,
+          "pk": 0
+        },
+        {
+          "cid": 9,
+          "name": "context_json",
+          "type": "TEXT",
+          "notnull": 1,
+          "default": "'{}'",
+          "pk": 0
+        },
+        {
+          "cid": 10,
+          "name": "dedupe_key",
+          "type": "TEXT",
+          "notnull": 1,
+          "default": null,
+          "pk": 0
+        },
+        {
+          "cid": 11,
+          "name": "created_at",
+          "type": "TEXT",
+          "notnull": 1,
+          "default": "current_timestamp",
+          "pk": 0
+        },
+        {
+          "cid": 12,
+          "name": "author_kind",
+          "type": "TEXT",
+          "notnull": 1,
+          "default": "'unknown'",
+          "pk": 0
+        }
+      ],
+      "fks": [
+        {
+          "id": 0,
+          "seq": 0,
+          "table": "business_source_documents",
+          "from": "source_document_id",
+          "to": "id",
+          "on_update": "NO ACTION",
+          "on_delete": "NO ACTION",
+          "match": "NONE"
+        }
+      ],
+      "indexes": [
+        {
+          "name": "idx_business_signal_document",
+          "unique": 0,
+          "origin": "c",
+          "partial": 0,
+          "columns": [
+            "source_document_id"
+          ]
+        },
+        {
+          "name": "idx_business_task_signals_source",
+          "unique": 0,
+          "origin": "c",
+          "partial": 0,
+          "columns": [
+            "source_type",
+            "source_ref",
+            "source_time",
+            "id"
+          ]
+        },
+        {
+          "name": "sqlite_autoindex_business_task_signals_1",
+          "unique": 1,
+          "origin": "u",
+          "partial": 0,
+          "columns": [
+            "dedupe_key"
+          ]
+        }
+      ],
+      "schema": "CREATE TABLE \"business_task_signals\" (\n        id integer primary key autoincrement,\n        source_type text not null check(trim(source_type, char(9,10,11,12,13,28,29,30,31,32,133,160,5760,8192,8193,8194,8195,8196,8197,8198,8199,8200,8201,8202,8232,8233,8239,8287,12288)) <> ''),\n        source_ref text not null check(trim(source_ref, char(9,10,11,12,13,28,29,30,31,32,133,160,5760,8192,8193,8194,8195,8196,8197,8198,8199,8200,8201,8202,8232,8233,8239,8287,12288)) <> ''),\n        source_time text not null default '',\n        conversation_id text not null default '',\n        conversation_title text not null default '',\n        author_user_id text not null default '',\n        author_name text not null default '',\n        source_document_id integer not null,\n        context_json text not null default '{}'\n            check(json_valid(context_json) and json_type(context_json) = 'object'),\n        dedupe_key text not null unique check(trim(dedupe_key, char(9,10,11,12,13,28,29,30,31,32,133,160,5760,8192,8193,8194,8195,8196,8197,8198,8199,8200,8201,8202,8232,8233,8239,8287,12288)) <> ''),\n        created_at text not null default current_timestamp,\n        author_kind text not null default 'unknown'\n            check(author_kind in ('human', 'system', 'agent', 'unknown')),\n        foreign key(source_document_id) references business_source_documents(id)\n    )",
+      "triggers": [
+        {
+          "name": "trg_business_task_signals_immutable_update",
+          "sql": "CREATE TRIGGER trg_business_task_signals_immutable_update\n    before update on business_task_signals begin\n        select raise(abort, 'business task signals are immutable');\n    end"
+        },
+        {
+          "name": "trg_business_task_signals_immutable_delete",
+          "sql": "CREATE TRIGGER trg_business_task_signals_immutable_delete\n    before delete on business_task_signals begin\n        select raise(abort, 'business task signals are immutable');\n    end"
+        },
+        {
+          "name": "trg_business_task_signals_immutable_replace",
+          "sql": "CREATE TRIGGER trg_business_task_signals_immutable_replace\n    before insert on business_task_signals\n    when exists (\n        select 1 from business_task_signals where id=new.id or dedupe_key=new.dedupe_key\n    ) begin\n        select raise(abort, 'business task signals are immutable: UNIQUE id or dedupe_key');\n    end"
+        }
+      ]
+    },
+    "business_source_documents": {
+      "count": 188,
+      "fields": 4,
+      "columns": [
+        {
+          "cid": 0,
+          "name": "id",
+          "type": "INTEGER",
+          "notnull": 0,
+          "default": null,
+          "pk": 1
+        },
+        {
+          "cid": 1,
+          "name": "identity_key",
+          "type": "TEXT",
+          "notnull": 1,
+          "default": null,
+          "pk": 0
+        },
+        {
+          "cid": 2,
+          "name": "body",
+          "type": "TEXT",
+          "notnull": 1,
+          "default": null,
+          "pk": 0
+        },
+        {
+          "cid": 3,
+          "name": "created_at",
+          "type": "TEXT",
+          "notnull": 1,
+          "default": "current_timestamp",
+          "pk": 0
+        }
+      ],
+      "fks": [],
+      "indexes": [
+        {
+          "name": "sqlite_autoindex_business_source_documents_1",
+          "unique": 1,
+          "origin": "u",
+          "partial": 0,
+          "columns": [
+            "identity_key"
+          ]
+        }
+      ],
+      "schema": "CREATE TABLE business_source_documents (\n        id integer primary key autoincrement,\n        identity_key text not null unique,\n        body text not null check(trim(body, char(9,10,11,12,13,28,29,30,31,32,133,160,5760,8192,8193,8194,8195,8196,8197,8198,8199,8200,8201,8202,8232,8233,8239,8287,12288)) <> ''),\n        created_at text not null default current_timestamp\n    )",
+      "triggers": [
+        {
+          "name": "trg_business_source_documents_immutable_update",
+          "sql": "CREATE TRIGGER trg_business_source_documents_immutable_update\n    before update on business_source_documents begin\n        select raise(abort, 'business source documents are immutable');\n    end"
+        },
+        {
+          "name": "trg_business_source_documents_immutable_delete",
+          "sql": "CREATE TRIGGER trg_business_source_documents_immutable_delete\n    before delete on business_source_documents begin\n        select raise(abort, 'business source documents are immutable');\n    end"
+        },
+        {
+          "name": "trg_business_source_documents_immutable_replace",
+          "sql": "CREATE TRIGGER trg_business_source_documents_immutable_replace\n    before insert on business_source_documents\n    when exists (\n        select 1 from business_source_documents\n        where id=new.id or identity_key=new.identity_key\n    ) begin\n        select raise(abort, 'business source documents are immutable: UNIQUE id or identity_key');\n    end"
+        }
+      ]
+    },
+    "business_task_evidence": {
+      "count": 897,
+      "fields": 4,
+      "columns": [
+        {
+          "cid": 0,
+          "name": "task_id",
+          "type": "INTEGER",
+          "notnull": 1,
+          "default": null,
+          "pk": 1
+        },
+        {
+          "cid": 1,
+          "name": "signal_id",
+          "type": "INTEGER",
+          "notnull": 1,
+          "default": null,
+          "pk": 2
+        },
+        {
+          "cid": 2,
+          "name": "evidence_role",
+          "type": "TEXT",
+          "notnull": 1,
+          "default": null,
+          "pk": 3
+        },
+        {
+          "cid": 3,
+          "name": "created_at",
+          "type": "TEXT",
+          "notnull": 1,
+          "default": "current_timestamp",
+          "pk": 0
+        }
+      ],
+      "fks": [
+        {
+          "id": 0,
+          "seq": 0,
+          "table": "business_task_signals",
+          "from": "signal_id",
+          "to": "id",
+          "on_update": "NO ACTION",
+          "on_delete": "NO ACTION",
+          "match": "NONE"
+        },
+        {
+          "id": 1,
+          "seq": 0,
+          "table": "business_tasks",
+          "from": "task_id",
+          "to": "id",
+          "on_update": "NO ACTION",
+          "on_delete": "NO ACTION",
+          "match": "NONE"
+        }
+      ],
+      "indexes": [
+        {
+          "name": "idx_business_task_evidence_task",
+          "unique": 0,
+          "origin": "c",
+          "partial": 0,
+          "columns": [
+            "task_id",
+            "created_at",
+            "signal_id"
+          ]
+        },
+        {
+          "name": "sqlite_autoindex_business_task_evidence_1",
+          "unique": 1,
+          "origin": "pk",
+          "partial": 0,
+          "columns": [
+            "task_id",
+            "signal_id",
+            "evidence_role"
+          ]
+        }
+      ],
+      "schema": "CREATE TABLE business_task_evidence (\n                    task_id integer not null,\n                    signal_id integer not null,\n                    evidence_role text not null check(evidence_role in (\n                        'discovery', 'commitment', 'assignment', 'acceptance', 'completion',\n                        'correction', 'merge_identity', 'relevance', 'resolution'\n                    )),\n                    created_at text not null default current_timestamp,\n                    primary key(task_id, signal_id, evidence_role),\n                    foreign key(task_id) references business_tasks(id),\n                    foreign key(signal_id) references business_task_signals(id)\n                )",
+      "triggers": []
+    },
+    "business_project_evidence": {
+      "count": 33,
+      "fields": 3,
+      "columns": [
+        {
+          "cid": 0,
+          "name": "project_id",
+          "type": "INTEGER",
+          "notnull": 1,
+          "default": null,
+          "pk": 1
+        },
+        {
+          "cid": 1,
+          "name": "signal_id",
+          "type": "INTEGER",
+          "notnull": 1,
+          "default": null,
+          "pk": 2
+        },
+        {
+          "cid": 2,
+          "name": "created_at",
+          "type": "TEXT",
+          "notnull": 1,
+          "default": "current_timestamp",
+          "pk": 0
+        }
+      ],
+      "fks": [
+        {
+          "id": 0,
+          "seq": 0,
+          "table": "business_task_signals",
+          "from": "signal_id",
+          "to": "id",
+          "on_update": "NO ACTION",
+          "on_delete": "NO ACTION",
+          "match": "NONE"
+        },
+        {
+          "id": 1,
+          "seq": 0,
+          "table": "business_projects",
+          "from": "project_id",
+          "to": "id",
+          "on_update": "NO ACTION",
+          "on_delete": "NO ACTION",
+          "match": "NONE"
+        }
+      ],
+      "indexes": [
+        {
+          "name": "sqlite_autoindex_business_project_evidence_1",
+          "unique": 1,
+          "origin": "pk",
+          "partial": 0,
+          "columns": [
+            "project_id",
+            "signal_id"
+          ]
+        }
+      ],
+      "schema": "CREATE TABLE business_project_evidence (\n                    project_id integer not null,\n                    signal_id integer not null,\n                    created_at text not null default current_timestamp,\n                    primary key(project_id, signal_id),\n                    foreign key(project_id) references business_projects(id),\n                    foreign key(signal_id) references business_task_signals(id)\n                )",
+      "triggers": []
+    },
+    "business_task_date_evidence": {
+      "count": 0,
+      "fields": 10,
+      "columns": [
+        {
+          "cid": 0,
+          "name": "id",
+          "type": "INTEGER",
+          "notnull": 0,
+          "default": null,
+          "pk": 1
+        },
+        {
+          "cid": 1,
+          "name": "task_id",
+          "type": "INTEGER",
+          "notnull": 1,
+          "default": null,
+          "pk": 0
+        },
+        {
+          "cid": 2,
+          "name": "date_type",
+          "type": "TEXT",
+          "notnull": 1,
+          "default": null,
+          "pk": 0
+        },
+        {
+          "cid": 3,
+          "name": "value_at",
+          "type": "TEXT",
+          "notnull": 1,
+          "default": "''",
+          "pk": 0
+        },
+        {
+          "cid": 4,
+          "name": "raw_phrase",
+          "type": "TEXT",
+          "notnull": 1,
+          "default": null,
+          "pk": 0
+        },
+        {
+          "cid": 5,
+          "name": "source_signal_id",
+          "type": "INTEGER",
+          "notnull": 1,
+          "default": null,
+          "pk": 0
+        },
+        {
+          "cid": 6,
+          "name": "actor_kind",
+          "type": "TEXT",
+          "notnull": 1,
+          "default": null,
+          "pk": 0
+        },
+        {
+          "cid": 7,
+          "name": "actor_user_id",
+          "type": "TEXT",
+          "notnull": 1,
+          "default": "''",
+          "pk": 0
+        },
+        {
+          "cid": 8,
+          "name": "actor_name",
+          "type": "TEXT",
+          "notnull": 1,
+          "default": "''",
+          "pk": 0
+        },
+        {
+          "cid": 9,
+          "name": "created_at",
+          "type": "TEXT",
+          "notnull": 1,
+          "default": "current_timestamp",
+          "pk": 0
+        }
+      ],
+      "fks": [
+        {
+          "id": 0,
+          "seq": 0,
+          "table": "business_task_signals",
+          "from": "source_signal_id",
+          "to": "id",
+          "on_update": "NO ACTION",
+          "on_delete": "NO ACTION",
+          "match": "NONE"
+        },
+        {
+          "id": 1,
+          "seq": 0,
+          "table": "business_tasks",
+          "from": "task_id",
+          "to": "id",
+          "on_update": "NO ACTION",
+          "on_delete": "NO ACTION",
+          "match": "NONE"
+        }
+      ],
+      "indexes": [
+        {
+          "name": "idx_business_task_date_evidence_task",
+          "unique": 0,
+          "origin": "c",
+          "partial": 0,
+          "columns": [
+            "task_id",
+            "id"
+          ]
+        }
+      ],
+      "schema": "CREATE TABLE business_task_date_evidence (\n                    id integer primary key autoincrement,\n                    task_id integer not null,\n                    date_type text not null check(date_type in (\n                        'assigned_at', 'requested_deadline_at', 'external_deadline_at',\n                        'committed_deadline_at', 'estimated_deadline_at', 'next_check_at'\n                    )),\n                    value_at text not null default '',\n                    raw_phrase text not null check(trim(raw_phrase, char(9,10,11,12,13,28,29,30,31,32,133,160,5760,8192,8193,8194,8195,8196,8197,8198,8199,8200,8201,8202,8232,8233,8239,8287,12288)) <> ''),\n                    source_signal_id integer not null,\n                    actor_kind text not null check(actor_kind in ('human', 'system', 'agent', 'unknown')),\n                    actor_user_id text not null default '',\n                    actor_name text not null default '',\n                    created_at text not null default current_timestamp,\n                    foreign key(task_id) references business_tasks(id),\n                    foreign key(source_signal_id) references business_task_signals(id)\n                )",
+      "triggers": [
+        {
+          "name": "trg_business_task_date_evidence_immutable_update",
+          "sql": "CREATE TRIGGER trg_business_task_date_evidence_immutable_update\n                before update on business_task_date_evidence\n                begin select raise(abort, 'business task date evidence is immutable'); end"
+        },
+        {
+          "name": "trg_business_task_date_evidence_immutable_delete",
+          "sql": "CREATE TRIGGER trg_business_task_date_evidence_immutable_delete\n                before delete on business_task_date_evidence\n                begin select raise(abort, 'business task date evidence is immutable'); end"
+        },
+        {
+          "name": "trg_business_task_date_evidence_immutable_replace",
+          "sql": "CREATE TRIGGER trg_business_task_date_evidence_immutable_replace\n                before insert on business_task_date_evidence\n                when exists (select 1 from business_task_date_evidence where id=new.id)\n                begin select raise(abort, 'business task date evidence is immutable'); end"
+        }
+      ]
+    }
+  },
+  "incoming": {
+    "business_tasks": [
+      {
+        "child_table": "business_tasks",
+        "id": 0,
+        "seq": 0,
+        "table": "business_tasks",
+        "from": "merged_into_task_id",
+        "to": "id",
+        "on_update": "NO ACTION",
+        "on_delete": "NO ACTION",
+        "match": "NONE"
+      },
+      {
+        "child_table": "business_task_dingtalk_links",
+        "id": 0,
+        "seq": 0,
+        "table": "business_tasks",
+        "from": "business_task_id",
+        "to": "id",
+        "on_update": "NO ACTION",
+        "on_delete": "NO ACTION",
+        "match": "NONE"
+      },
+      {
+        "child_table": "business_task_follow_ups",
+        "id": 1,
+        "seq": 0,
+        "table": "business_tasks",
+        "from": "business_task_id",
+        "to": "id",
+        "on_update": "NO ACTION",
+        "on_delete": "NO ACTION",
+        "match": "NONE"
+      },
+      {
+        "child_table": "business_task_todo_sync_outbox",
+        "id": 0,
+        "seq": 0,
+        "table": "business_tasks",
+        "from": "business_task_id",
+        "to": "id",
+        "on_update": "NO ACTION",
+        "on_delete": "NO ACTION",
+        "match": "NONE"
+      },
+      {
+        "child_table": "business_task_evidence",
+        "id": 1,
+        "seq": 0,
+        "table": "business_tasks",
+        "from": "task_id",
+        "to": "id",
+        "on_update": "NO ACTION",
+        "on_delete": "NO ACTION",
+        "match": "NONE"
+      },
+      {
+        "child_table": "business_task_date_evidence",
+        "id": 1,
+        "seq": 0,
+        "table": "business_tasks",
+        "from": "task_id",
+        "to": "id",
+        "on_update": "NO ACTION",
+        "on_delete": "NO ACTION",
+        "match": "NONE"
+      },
+      {
+        "child_table": "business_task_events",
+        "id": 1,
+        "seq": 0,
+        "table": "business_tasks",
+        "from": "task_id",
+        "to": "id",
+        "on_update": "NO ACTION",
+        "on_delete": "NO ACTION",
+        "match": "NONE"
+      },
+      {
+        "child_table": "business_task_relations",
+        "id": 1,
+        "seq": 0,
+        "table": "business_tasks",
+        "from": "to_task_id",
+        "to": "id",
+        "on_update": "NO ACTION",
+        "on_delete": "NO ACTION",
+        "match": "NONE"
+      },
+      {
+        "child_table": "business_task_relations",
+        "id": 2,
+        "seq": 0,
+        "table": "business_tasks",
+        "from": "from_task_id",
+        "to": "id",
+        "on_update": "NO ACTION",
+        "on_delete": "NO ACTION",
+        "match": "NONE"
+      },
+      {
+        "child_table": "business_work_cluster_tasks",
+        "id": 0,
+        "seq": 0,
+        "table": "business_tasks",
+        "from": "task_id",
+        "to": "id",
+        "on_update": "NO ACTION",
+        "on_delete": "NO ACTION",
+        "match": "NONE"
+      },
+      {
+        "child_table": "business_task_anchor_links",
+        "id": 2,
+        "seq": 0,
+        "table": "business_tasks",
+        "from": "task_id",
+        "to": "id",
+        "on_update": "NO ACTION",
+        "on_delete": "NO ACTION",
+        "match": "NONE"
+      },
+      {
+        "child_table": "business_attention_tasks",
+        "id": 0,
+        "seq": 0,
+        "table": "business_tasks",
+        "from": "task_id",
+        "to": "id",
+        "on_update": "NO ACTION",
+        "on_delete": "NO ACTION",
+        "match": "NONE"
+      },
+      {
+        "child_table": "business_attention_proposal_tasks",
+        "id": 0,
+        "seq": 0,
+        "table": "business_tasks",
+        "from": "task_id",
+        "to": "id",
+        "on_update": "NO ACTION",
+        "on_delete": "NO ACTION",
+        "match": "NONE"
+      },
+      {
+        "child_table": "business_legacy_links",
+        "id": 8,
+        "seq": 0,
+        "table": "business_tasks",
+        "from": "task_id",
+        "to": "id",
+        "on_update": "NO ACTION",
+        "on_delete": "NO ACTION",
+        "match": "NONE"
+      }
+    ],
+    "business_source_documents": [
+      {
+        "child_table": "business_task_signals",
+        "id": 0,
+        "seq": 0,
+        "table": "business_source_documents",
+        "from": "source_document_id",
+        "to": "id",
+        "on_update": "NO ACTION",
+        "on_delete": "NO ACTION",
+        "match": "NONE"
+      }
+    ],
+    "business_project_evidence": [],
+    "business_task_evidence": [],
+    "business_task_signals": [
+      {
+        "child_table": "business_task_follow_ups",
+        "id": 0,
+        "seq": 0,
+        "table": "business_task_signals",
+        "from": "source_signal_id",
+        "to": "id",
+        "on_update": "NO ACTION",
+        "on_delete": "NO ACTION",
+        "match": "NONE"
+      },
+      {
+        "child_table": "business_task_evidence",
+        "id": 0,
+        "seq": 0,
+        "table": "business_task_signals",
+        "from": "signal_id",
+        "to": "id",
+        "on_update": "NO ACTION",
+        "on_delete": "NO ACTION",
+        "match": "NONE"
+      },
+      {
+        "child_table": "business_task_date_evidence",
+        "id": 0,
+        "seq": 0,
+        "table": "business_task_signals",
+        "from": "source_signal_id",
+        "to": "id",
+        "on_update": "NO ACTION",
+        "on_delete": "NO ACTION",
+        "match": "NONE"
+      },
+      {
+        "child_table": "business_task_events",
+        "id": 0,
+        "seq": 0,
+        "table": "business_task_signals",
+        "from": "signal_id",
+        "to": "id",
+        "on_update": "NO ACTION",
+        "on_delete": "NO ACTION",
+        "match": "NONE"
+      },
+      {
+        "child_table": "business_task_relations",
+        "id": 0,
+        "seq": 0,
+        "table": "business_task_signals",
+        "from": "supporting_signal_id",
+        "to": "id",
+        "on_update": "NO ACTION",
+        "on_delete": "NO ACTION",
+        "match": "NONE"
+      },
+      {
+        "child_table": "business_task_anchor_links",
+        "id": 0,
+        "seq": 0,
+        "table": "business_task_signals",
+        "from": "evidence_signal_id",
+        "to": "id",
+        "on_update": "NO ACTION",
+        "on_delete": "NO ACTION",
+        "match": "NONE"
+      },
+      {
+        "child_table": "business_project_candidates",
+        "id": 0,
+        "seq": 0,
+        "table": "business_task_signals",
+        "from": "confirmation_signal_id",
+        "to": "id",
+        "on_update": "NO ACTION",
+        "on_delete": "NO ACTION",
+        "match": "NONE"
+      },
+      {
+        "child_table": "business_attention_items",
+        "id": 0,
+        "seq": 0,
+        "table": "business_task_signals",
+        "from": "resolution_signal_id",
+        "to": "id",
+        "on_update": "NO ACTION",
+        "on_delete": "NO ACTION",
+        "match": "NONE"
+      },
+      {
+        "child_table": "business_attention_items",
+        "id": 1,
+        "seq": 0,
+        "table": "business_task_signals",
+        "from": "evidence_signal_id",
+        "to": "id",
+        "on_update": "NO ACTION",
+        "on_delete": "NO ACTION",
+        "match": "NONE"
+      },
+      {
+        "child_table": "business_attention_events",
+        "id": 0,
+        "seq": 0,
+        "table": "business_task_signals",
+        "from": "signal_id",
+        "to": "id",
+        "on_update": "NO ACTION",
+        "on_delete": "NO ACTION",
+        "match": "NONE"
+      },
+      {
+        "child_table": "business_legacy_links",
+        "id": 9,
+        "seq": 0,
+        "table": "business_task_signals",
+        "from": "signal_id",
+        "to": "id",
+        "on_update": "NO ACTION",
+        "on_delete": "NO ACTION",
+        "match": "NONE"
+      },
+      {
+        "child_table": "business_project_evidence",
+        "id": 0,
+        "seq": 0,
+        "table": "business_task_signals",
+        "from": "signal_id",
+        "to": "id",
+        "on_update": "NO ACTION",
+        "on_delete": "NO ACTION",
+        "match": "NONE"
+      }
+    ],
+    "business_projects": [
+      {
+        "child_table": "business_project_candidates",
+        "id": 1,
+        "seq": 0,
+        "table": "business_projects",
+        "from": "confirmed_project_id",
+        "to": "id",
+        "on_update": "NO ACTION",
+        "on_delete": "NO ACTION",
+        "match": "NONE"
+      },
+      {
+        "child_table": "business_legacy_links",
+        "id": 5,
+        "seq": 0,
+        "table": "business_projects",
+        "from": "project_id",
+        "to": "id",
+        "on_update": "NO ACTION",
+        "on_delete": "NO ACTION",
+        "match": "NONE"
+      },
+      {
+        "child_table": "business_project_context_revisions",
+        "id": 0,
+        "seq": 0,
+        "table": "business_projects",
+        "from": "project_id",
+        "to": "id",
+        "on_update": "NO ACTION",
+        "on_delete": "NO ACTION",
+        "match": "NONE"
+      },
+      {
+        "child_table": "business_project_evidence",
+        "id": 1,
+        "seq": 0,
+        "table": "business_projects",
+        "from": "project_id",
+        "to": "id",
+        "on_update": "NO ACTION",
+        "on_delete": "NO ACTION",
+        "match": "NONE"
+      }
+    ],
+    "business_task_date_evidence": []
+  },
+  "direct_external_closure": {
+    "business_anchors": {
+      "count": 50,
+      "fields": 6,
+      "fks": []
+    },
+    "business_attention_events": {
+      "count": 14,
+      "fields": 8,
+      "fks": [
+        {
+          "id": 0,
+          "seq": 0,
+          "table": "business_task_signals",
+          "from": "signal_id",
+          "to": "id",
+          "on_update": "NO ACTION",
+          "on_delete": "NO ACTION",
+          "match": "NONE"
+        },
+        {
+          "id": 1,
+          "seq": 0,
+          "table": "business_attention_items",
+          "from": "attention_item_id",
+          "to": "id",
+          "on_update": "NO ACTION",
+          "on_delete": "NO ACTION",
+          "match": "NONE"
+        }
+      ]
+    },
+    "business_attention_items": {
+      "count": 8,
+      "fields": 16,
+      "fks": [
+        {
+          "id": 0,
+          "seq": 0,
+          "table": "business_task_signals",
+          "from": "resolution_signal_id",
+          "to": "id",
+          "on_update": "NO ACTION",
+          "on_delete": "NO ACTION",
+          "match": "NONE"
+        },
+        {
+          "id": 1,
+          "seq": 0,
+          "table": "business_task_signals",
+          "from": "evidence_signal_id",
+          "to": "id",
+          "on_update": "NO ACTION",
+          "on_delete": "NO ACTION",
+          "match": "NONE"
+        },
+        {
+          "id": 2,
+          "seq": 0,
+          "table": "business_anchors",
+          "from": "anchor_id",
+          "to": "id",
+          "on_update": "NO ACTION",
+          "on_delete": "NO ACTION",
+          "match": "NONE"
+        }
+      ]
+    },
+    "business_attention_proposal_tasks": {
+      "count": 18,
+      "fields": 3,
+      "fks": [
+        {
+          "id": 0,
+          "seq": 0,
+          "table": "business_tasks",
+          "from": "task_id",
+          "to": "id",
+          "on_update": "NO ACTION",
+          "on_delete": "NO ACTION",
+          "match": "NONE"
+        },
+        {
+          "id": 1,
+          "seq": 0,
+          "table": "business_attention_items",
+          "from": "attention_item_id",
+          "to": "id",
+          "on_update": "NO ACTION",
+          "on_delete": "NO ACTION",
+          "match": "NONE"
+        }
+      ]
+    },
+    "business_attention_tasks": {
+      "count": 18,
+      "fields": 3,
+      "fks": [
+        {
+          "id": 0,
+          "seq": 0,
+          "table": "business_tasks",
+          "from": "task_id",
+          "to": "id",
+          "on_update": "NO ACTION",
+          "on_delete": "NO ACTION",
+          "match": "NONE"
+        },
+        {
+          "id": 1,
+          "seq": 0,
+          "table": "business_attention_items",
+          "from": "attention_item_id",
+          "to": "id",
+          "on_update": "NO ACTION",
+          "on_delete": "NO ACTION",
+          "match": "NONE"
+        }
+      ]
+    },
+    "business_legacy_links": {
+      "count": 0,
+      "fields": 12,
+      "fks": [
+        {
+          "id": 0,
+          "seq": 0,
+          "table": "work_updates",
+          "from": "work_update_id",
+          "to": "id",
+          "on_update": "NO ACTION",
+          "on_delete": "NO ACTION",
+          "match": "NONE"
+        },
+        {
+          "id": 1,
+          "seq": 0,
+          "table": "work_todos",
+          "from": "work_todo_id",
+          "to": "id",
+          "on_update": "NO ACTION",
+          "on_delete": "NO ACTION",
+          "match": "NONE"
+        },
+        {
+          "id": 2,
+          "seq": 0,
+          "table": "work_projects",
+          "from": "work_project_id",
+          "to": "id",
+          "on_update": "NO ACTION",
+          "on_delete": "NO ACTION",
+          "match": "NONE"
+        },
+        {
+          "id": 3,
+          "seq": 0,
+          "table": "business_attention_items",
+          "from": "attention_item_id",
+          "to": "id",
+          "on_update": "NO ACTION",
+          "on_delete": "NO ACTION",
+          "match": "NONE"
+        },
+        {
+          "id": 4,
+          "seq": 0,
+          "table": "business_project_candidates",
+          "from": "project_candidate_id",
+          "to": "id",
+          "on_update": "NO ACTION",
+          "on_delete": "NO ACTION",
+          "match": "NONE"
+        },
+        {
+          "id": 5,
+          "seq": 0,
+          "table": "business_projects",
+          "from": "project_id",
+          "to": "id",
+          "on_update": "NO ACTION",
+          "on_delete": "NO ACTION",
+          "match": "NONE"
+        },
+        {
+          "id": 6,
+          "seq": 0,
+          "table": "business_anchors",
+          "from": "anchor_id",
+          "to": "id",
+          "on_update": "NO ACTION",
+          "on_delete": "NO ACTION",
+          "match": "NONE"
+        },
+        {
+          "id": 7,
+          "seq": 0,
+          "table": "business_work_clusters",
+          "from": "cluster_id",
+          "to": "id",
+          "on_update": "NO ACTION",
+          "on_delete": "NO ACTION",
+          "match": "NONE"
+        },
+        {
+          "id": 8,
+          "seq": 0,
+          "table": "business_tasks",
+          "from": "task_id",
+          "to": "id",
+          "on_update": "NO ACTION",
+          "on_delete": "NO ACTION",
+          "match": "NONE"
+        },
+        {
+          "id": 9,
+          "seq": 0,
+          "table": "business_task_signals",
+          "from": "signal_id",
+          "to": "id",
+          "on_update": "NO ACTION",
+          "on_delete": "NO ACTION",
+          "match": "NONE"
+        }
+      ]
+    },
+    "business_project_candidates": {
+      "count": 10,
+      "fields": 8,
+      "fks": [
+        {
+          "id": 0,
+          "seq": 0,
+          "table": "business_task_signals",
+          "from": "confirmation_signal_id",
+          "to": "id",
+          "on_update": "NO ACTION",
+          "on_delete": "NO ACTION",
+          "match": "NONE"
+        },
+        {
+          "id": 1,
+          "seq": 0,
+          "table": "business_projects",
+          "from": "confirmed_project_id",
+          "to": "id",
+          "on_update": "NO ACTION",
+          "on_delete": "NO ACTION",
+          "match": "NONE"
+        },
+        {
+          "id": 2,
+          "seq": 0,
+          "table": "business_work_clusters",
+          "from": "cluster_id",
+          "to": "id",
+          "on_update": "NO ACTION",
+          "on_delete": "NO ACTION",
+          "match": "NONE"
+        }
+      ]
+    },
+    "business_project_context_revisions": {
+      "count": 6,
+      "fields": 5,
+      "fks": [
+        {
+          "id": 0,
+          "seq": 0,
+          "table": "business_projects",
+          "from": "project_id",
+          "to": "id",
+          "on_update": "NO ACTION",
+          "on_delete": "NO ACTION",
+          "match": "NONE"
+        }
+      ]
+    },
+    "business_task_anchor_links": {
+      "count": 97,
+      "fields": 8,
+      "fks": [
+        {
+          "id": 0,
+          "seq": 0,
+          "table": "business_task_signals",
+          "from": "evidence_signal_id",
+          "to": "id",
+          "on_update": "NO ACTION",
+          "on_delete": "NO ACTION",
+          "match": "NONE"
+        },
+        {
+          "id": 1,
+          "seq": 0,
+          "table": "business_anchors",
+          "from": "anchor_id",
+          "to": "id",
+          "on_update": "NO ACTION",
+          "on_delete": "NO ACTION",
+          "match": "NONE"
+        },
+        {
+          "id": 2,
+          "seq": 0,
+          "table": "business_tasks",
+          "from": "task_id",
+          "to": "id",
+          "on_update": "NO ACTION",
+          "on_delete": "NO ACTION",
+          "match": "NONE"
+        }
+      ]
+    },
+    "business_task_dingtalk_links": {
+      "count": 0,
+      "fields": 17,
+      "fks": [
+        {
+          "id": 0,
+          "seq": 0,
+          "table": "business_tasks",
+          "from": "business_task_id",
+          "to": "id",
+          "on_update": "NO ACTION",
+          "on_delete": "NO ACTION",
+          "match": "NONE"
+        }
+      ]
+    },
+    "business_task_events": {
+      "count": 893,
+      "fields": 8,
+      "fks": [
+        {
+          "id": 0,
+          "seq": 0,
+          "table": "business_task_signals",
+          "from": "signal_id",
+          "to": "id",
+          "on_update": "NO ACTION",
+          "on_delete": "NO ACTION",
+          "match": "NONE"
+        },
+        {
+          "id": 1,
+          "seq": 0,
+          "table": "business_tasks",
+          "from": "task_id",
+          "to": "id",
+          "on_update": "NO ACTION",
+          "on_delete": "NO ACTION",
+          "match": "NONE"
+        }
+      ]
+    },
+    "business_task_follow_ups": {
+      "count": 0,
+      "fields": 18,
+      "fks": [
+        {
+          "id": 0,
+          "seq": 0,
+          "table": "business_task_signals",
+          "from": "source_signal_id",
+          "to": "id",
+          "on_update": "NO ACTION",
+          "on_delete": "NO ACTION",
+          "match": "NONE"
+        },
+        {
+          "id": 1,
+          "seq": 0,
+          "table": "business_tasks",
+          "from": "business_task_id",
+          "to": "id",
+          "on_update": "NO ACTION",
+          "on_delete": "NO ACTION",
+          "match": "NONE"
+        }
+      ]
+    },
+    "business_task_relations": {
+      "count": 0,
+      "fields": 7,
+      "fks": [
+        {
+          "id": 0,
+          "seq": 0,
+          "table": "business_task_signals",
+          "from": "supporting_signal_id",
+          "to": "id",
+          "on_update": "NO ACTION",
+          "on_delete": "NO ACTION",
+          "match": "NONE"
+        },
+        {
+          "id": 1,
+          "seq": 0,
+          "table": "business_tasks",
+          "from": "to_task_id",
+          "to": "id",
+          "on_update": "NO ACTION",
+          "on_delete": "NO ACTION",
+          "match": "NONE"
+        },
+        {
+          "id": 2,
+          "seq": 0,
+          "table": "business_tasks",
+          "from": "from_task_id",
+          "to": "id",
+          "on_update": "NO ACTION",
+          "on_delete": "NO ACTION",
+          "match": "NONE"
+        }
+      ]
+    },
+    "business_task_todo_sync_outbox": {
+      "count": 0,
+      "fields": 15,
+      "fks": [
+        {
+          "id": 0,
+          "seq": 0,
+          "table": "business_tasks",
+          "from": "business_task_id",
+          "to": "id",
+          "on_update": "NO ACTION",
+          "on_delete": "NO ACTION",
+          "match": "NONE"
+        }
+      ]
+    },
+    "business_work_cluster_tasks": {
+      "count": 16,
+      "fields": 3,
+      "fks": [
+        {
+          "id": 0,
+          "seq": 0,
+          "table": "business_tasks",
+          "from": "task_id",
+          "to": "id",
+          "on_update": "NO ACTION",
+          "on_delete": "NO ACTION",
+          "match": "NONE"
+        },
+        {
+          "id": 1,
+          "seq": 0,
+          "table": "business_work_clusters",
+          "from": "cluster_id",
+          "to": "id",
+          "on_update": "NO ACTION",
+          "on_delete": "NO ACTION",
+          "match": "NONE"
+        }
+      ]
+    }
+  },
+  "field_map_comparison": {
+    "business_projects": {
+      "mapping_rows": 12,
+      "unmapped": [],
+      "stale": [],
+      "type_null_pk_mismatch": []
+    },
+    "business_tasks": {
+      "mapping_rows": 19,
+      "unmapped": [],
+      "stale": [],
+      "type_null_pk_mismatch": []
+    },
+    "business_task_signals": {
+      "mapping_rows": 13,
+      "unmapped": [],
+      "stale": [],
+      "type_null_pk_mismatch": []
+    },
+    "business_source_documents": {
+      "mapping_rows": 4,
+      "unmapped": [],
+      "stale": [],
+      "type_null_pk_mismatch": []
+    },
+    "business_task_evidence": {
+      "mapping_rows": 4,
+      "unmapped": [],
+      "stale": [],
+      "type_null_pk_mismatch": []
+    },
+    "business_project_evidence": {
+      "mapping_rows": 3,
+      "unmapped": [],
+      "stale": [],
+      "type_null_pk_mismatch": []
+    },
+    "business_task_date_evidence": {
+      "mapping_rows": 10,
+      "unmapped": [],
+      "stale": [],
+      "type_null_pk_mismatch": []
+    }
+  },
+  "boundaries": {
+    "read_only": true,
+    "db_handles_closed": true,
+    "candidate_or_other_db_opened": false,
+    "raw_records_or_body_values_exported": false,
+    "source_observation_only": "264c073cfe779b76a5a7f001480149fb784f0591; not a later published Email/Followup predecessor",
+    "source_parity": "core counts equal committed 264 aggregate; future predecessor parity not established",
+    "source_retrievability": "not verified; no provider/native calls authorized"
+  },
+  "bounded_summary": {
+    "core_families": 7,
+    "core_fields": 65,
+    "core_rows": 2577,
+    "direct_external_families": 15,
+    "direct_external_fields": 137,
+    "mapping_missing_stale_type_null_pk_mismatches": 0
+  },
+  "code_evidence": [
+    {
+      "path": "app/store.py",
+      "lines": "5696-5794",
+      "fact": "signal writer resolves exact source document identity, stores body once, inserts immutable signal; readers rejoin body as evidence_text"
+    },
+    {
+      "path": "app/task_source_documents.py",
+      "lines": "42-65",
+      "fact": "source_document_key includes source type/ref/time, conversation, author identity/kind and evidence body; not body hash alone"
+    },
+    {
+      "path": "app/task_semantic_service.py",
+      "lines": "240-261,445-485",
+      "fact": "Task creation atomic signal/task/evidence/date facts/event; replay result from events joined to dedupe signal"
+    },
+    {
+      "path": "app/project_context_service.py",
+      "lines": "35-96",
+      "fact": "Project context requires existing project, observed signal/source/body quote, writes evidence association and adopted context revision"
+    },
+    {
+      "path": "app/task_agent.py",
+      "lines": "1014-1077,1328-1362",
+      "fact": "current bodies from WorkItem summary; memory/session provenance stores cited excerpt; context also carries non-body locator/identity/authorization facts"
+    },
+    {
+      "path": "app/task_semantic_import.py",
+      "lines": "402-420",
+      "fact": "legacy signal may store legacy row in context JSON; cannot blanket-retire context"
+    },
+    {
+      "path": "app/task_retrieval.py",
+      "lines": "109-124,179-393",
+      "fact": "retrieval validates owner quote with signal body and identity context, consumes tasks/projects/evidence; bundles original bodies by source document identity"
+    },
+    {
+      "path": "app/web_api/tasks.py",
+      "lines": "1232-1301",
+      "fact": "Task and Project details expose signals/evidence/dates/events/association results"
+    },
+    {
+      "path": "app/todo_sync.py",
+      "lines": "61-67",
+      "fact": "date evidence remains runtime-used even with zero current rows"
+    }
+  ],
+  "next_step": "Freeze the 65-column exact source oracle plus direct inbound FK remap list at the actually selected future predecessor. Before body retirement, verify exact resolvable original for each existing document identity using its signal source locator/version and compare bytes/hash without exporting bodies; classify adopted context metadata and date facts separately. Retain source gaps as blockers. No target DDL selected."
+}

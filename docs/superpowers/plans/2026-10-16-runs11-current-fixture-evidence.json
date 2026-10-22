@@ -1,0 +1,30 @@
+{
+  "scope": "Selected current fixture maintenance in tests/test_quality_gate.py and tests/test_email_current_schema.py only",
+  "baseline": {
+    "command": "/Users/derek/Projects/ceo-agent-service/.worktrees/task-first-tasks/.venv/bin/python -m pytest -q tests/test_quality_gate.py tests/test_email_current_schema.py",
+    "result": "37 passed, 32 failed in 18.24s",
+    "failure_families": [
+      "source-shaped task values written as physical Tasks20 columns",
+      "retired standalone email classification and business-object task tables",
+      "retired standalone classifier runtime sample table",
+      "retired standalone service_state table"
+    ]
+  },
+  "change": {
+    "quality_gate": "Fixture-only Tasks8 insert/set parts, two Tasks12 inserts, one Runs11 classifier sample writer, and current reply-task projection; no quality gate implementation or business assertions changed",
+    "email_current_schema": "Default-constructor assertion reads current State service_state projection and compares the imported Store schema constant; Email52 and action-retirement assertions remain",
+    "historical_source_oracle": "The archived Email metadata test and standalone source-schema factories remain unchanged"
+  },
+  "assertion_ast": {
+    "quality_gate": {"tests_before": 65, "tests_after": 65, "assertions_before": 126, "assertions_after": 126, "changed_test_assertion_asts": []},
+    "email_current_schema": {"tests_before": 4, "tests_after": 4, "assertions_before": 16, "assertions_after": 16, "changed_test_assertion_asts": ["test_default_constructors_select_current_email_actions"]}
+  },
+  "verification": {
+    "focused": "69 passed in 19.18s",
+    "ruff": "All checks passed",
+    "git_diff_check": "passed",
+    "app_files_changed_by_this_task": 0,
+    "index_or_commit_by_this_task": false
+  },
+  "boundary": "Disposable pytest tmp_path databases only; no source or production database, provider, native CLI, network, main, push, or deploy action. Root owns independent SPEC and QUALITY reviews and broader acceptance."
+}

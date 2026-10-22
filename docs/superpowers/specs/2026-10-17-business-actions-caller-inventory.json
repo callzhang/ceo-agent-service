@@ -1,0 +1,1815 @@
+{
+  "scope": "Static literal inventory only; includes source declarations and current live callers, not an exhaustive dynamic SQL graph or next implementation",
+  "source_tables": [
+    "business_attention_events",
+    "business_attention_proposal_tasks",
+    "business_attention_tasks",
+    "business_project_evidence",
+    "business_task_anchor_links",
+    "business_task_date_evidence",
+    "business_task_evidence",
+    "business_task_relations",
+    "business_task_signals",
+    "business_work_cluster_tasks"
+  ],
+  "application_file_sha256": {
+    "app/action_followup_sync_definitions.py": "10b53bc7c9b6c9152d35e3c912979e00ca41f9579f975e199430155c950ca0a9",
+    "app/action_followup_sync_storage.py": "718f152fb59f1be841c58ea9f370e6375badcc433037d7eea9f43e763f40473a",
+    "app/business_candidate_definitions.py": "c42307731dff78fe3e1623484612e63d50de63d8b8a5f9bc09bf72212183ee05",
+    "app/business_candidate_storage.py": "c1dceba521848556be3b41249ade26e7a4feac6aae9da5da069bab5e271ae759",
+    "app/business_schema_release.py": "cfe9704e5816474bbbe0130d21beef34169f42b9533a2acada06b7d2e2b48558",
+    "app/minutes_owner_backfill.py": "f7cea67d2d13c56f553262d2f189bdafc6dbed20d52ae9b5b32a5047e5566060",
+    "app/project_context_service.py": "0390af16db7da0b3a4d0f39833d8c6bdd1ce35e4dd56e43c7c8b1ec54c262a1d",
+    "app/store.py": "1977c02c90060d80a4d1026a22c10d2fe690630a1c6da118f5ccb919a1b8893e",
+    "app/task_agent.py": "fe6ab72fe00319cac2b82b8e74f814624e94d4f8964e74724a4b5bfe98407679",
+    "app/task_attention_projection.py": "f9f9d01f107f452e6ee2faac24732ff6e0ae7cd04ffcfc69c0569191c11eff93",
+    "app/task_business_resolution.py": "fb017fe2cb913b025b8e5b419589d6e733a993bd2d0c924ed7e3664f8b2ca3ae",
+    "app/task_project_candidate_actions.py": "9a497f845f604cd805a391e1d22640a904cecfa880d3acec10e2b019be4ec566",
+    "app/task_retrieval.py": "ff514e24434897fb35dafe7172a2114b1e17bec7400c0e71b243c7b11fde0721",
+    "app/task_semantic_import.py": "42d94fa3462a05c9fa729a5e83f7a90705c699eed2a257605fb2bd00e01b03bc",
+    "app/task_semantic_service.py": "cf1c4392875b8c3e0858491bef5e6a0785c15284d5c1e92582125a5691902245",
+    "app/todo_completion.py": "b97d03ccca41805b1ccea2ff30c245b07e53a35b43e593f314e1b0df82be4d6c",
+    "app/todo_sync.py": "6a3d7a438e27d73acea33f543ce2baac5a4151a558e36f0a78559fb5b816570b",
+    "app/web_api/registration.py": "947cde14a28dd1d3ae768400160d7d0e0f1c991191ea97c4d7fe9708624cfd4e",
+    "app/web_api/tasks.py": "149a1cf943262d24c7719c33d4b15e5a0ed15b45286922ae55d7c0b7c3a66842"
+  },
+  "literal_occurrences": [
+    {
+      "file": "app/action_followup_sync_definitions.py",
+      "scope": "<module>",
+      "line": 445,
+      "end_line": 445,
+      "tables": [
+        "business_task_signals"
+      ]
+    },
+    {
+      "file": "app/action_followup_sync_definitions.py",
+      "scope": "<module>",
+      "line": 677,
+      "end_line": 677,
+      "tables": [
+        "business_task_signals"
+      ]
+    },
+    {
+      "file": "app/action_followup_sync_definitions.py",
+      "scope": "<module>",
+      "line": 708,
+      "end_line": 708,
+      "tables": [
+        "business_task_signals"
+      ]
+    },
+    {
+      "file": "app/action_followup_sync_definitions.py",
+      "scope": "<module>",
+      "line": 713,
+      "end_line": 713,
+      "tables": [
+        "business_task_signals"
+      ]
+    },
+    {
+      "file": "app/action_followup_sync_storage.py",
+      "scope": "capture_followup_sync_source",
+      "line": 284,
+      "end_line": 284,
+      "tables": [
+        "business_task_signals"
+      ]
+    },
+    {
+      "file": "app/action_followup_sync_storage.py",
+      "scope": "capture_followup_sync_source",
+      "line": 285,
+      "end_line": 285,
+      "tables": [
+        "business_task_signals"
+      ]
+    },
+    {
+      "file": "app/business_candidate_definitions.py",
+      "scope": "<module>",
+      "line": 140,
+      "end_line": 140,
+      "tables": [
+        "business_attention_events"
+      ]
+    },
+    {
+      "file": "app/business_candidate_definitions.py",
+      "scope": "<module>",
+      "line": 172,
+      "end_line": 172,
+      "tables": [
+        "business_attention_proposal_tasks"
+      ]
+    },
+    {
+      "file": "app/business_candidate_definitions.py",
+      "scope": "<module>",
+      "line": 192,
+      "end_line": 192,
+      "tables": [
+        "business_attention_tasks"
+      ]
+    },
+    {
+      "file": "app/business_candidate_definitions.py",
+      "scope": "<module>",
+      "line": 5,
+      "end_line": 56,
+      "tables": [
+        "business_task_signals"
+      ]
+    },
+    {
+      "file": "app/business_candidate_definitions.py",
+      "scope": "<module>",
+      "line": 63,
+      "end_line": 93,
+      "tables": [
+        "business_task_signals"
+      ]
+    },
+    {
+      "file": "app/business_candidate_definitions.py",
+      "scope": "<module>",
+      "line": 140,
+      "end_line": 165,
+      "tables": [
+        "business_attention_events",
+        "business_task_signals"
+      ]
+    },
+    {
+      "file": "app/business_candidate_definitions.py",
+      "scope": "<module>",
+      "line": 166,
+      "end_line": 169,
+      "tables": [
+        "business_attention_events"
+      ]
+    },
+    {
+      "file": "app/business_candidate_definitions.py",
+      "scope": "<module>",
+      "line": 172,
+      "end_line": 184,
+      "tables": [
+        "business_attention_proposal_tasks"
+      ]
+    },
+    {
+      "file": "app/business_candidate_definitions.py",
+      "scope": "<module>",
+      "line": 185,
+      "end_line": 189,
+      "tables": [
+        "business_attention_proposal_tasks"
+      ]
+    },
+    {
+      "file": "app/business_candidate_definitions.py",
+      "scope": "<module>",
+      "line": 192,
+      "end_line": 203,
+      "tables": [
+        "business_attention_tasks"
+      ]
+    },
+    {
+      "file": "app/business_candidate_definitions.py",
+      "scope": "<module>",
+      "line": 204,
+      "end_line": 206,
+      "tables": [
+        "business_attention_tasks"
+      ]
+    },
+    {
+      "file": "app/business_candidate_definitions.py",
+      "scope": "<module>",
+      "line": 209,
+      "end_line": 256,
+      "tables": [
+        "business_task_signals"
+      ]
+    },
+    {
+      "file": "app/business_candidate_definitions.py",
+      "scope": "<module>",
+      "line": 405,
+      "end_line": 405,
+      "tables": [
+        "business_attention_events"
+      ]
+    },
+    {
+      "file": "app/business_candidate_definitions.py",
+      "scope": "<module>",
+      "line": 436,
+      "end_line": 436,
+      "tables": [
+        "business_attention_proposal_tasks"
+      ]
+    },
+    {
+      "file": "app/business_candidate_definitions.py",
+      "scope": "<module>",
+      "line": 456,
+      "end_line": 456,
+      "tables": [
+        "business_attention_tasks"
+      ]
+    },
+    {
+      "file": "app/business_candidate_definitions.py",
+      "scope": "<module>",
+      "line": 273,
+      "end_line": 324,
+      "tables": [
+        "business_task_signals"
+      ]
+    },
+    {
+      "file": "app/business_candidate_definitions.py",
+      "scope": "<module>",
+      "line": 330,
+      "end_line": 359,
+      "tables": [
+        "business_task_signals"
+      ]
+    },
+    {
+      "file": "app/business_candidate_definitions.py",
+      "scope": "<module>",
+      "line": 405,
+      "end_line": 429,
+      "tables": [
+        "business_attention_events",
+        "business_task_signals"
+      ]
+    },
+    {
+      "file": "app/business_candidate_definitions.py",
+      "scope": "<module>",
+      "line": 430,
+      "end_line": 433,
+      "tables": [
+        "business_attention_events"
+      ]
+    },
+    {
+      "file": "app/business_candidate_definitions.py",
+      "scope": "<module>",
+      "line": 436,
+      "end_line": 448,
+      "tables": [
+        "business_attention_proposal_tasks"
+      ]
+    },
+    {
+      "file": "app/business_candidate_definitions.py",
+      "scope": "<module>",
+      "line": 449,
+      "end_line": 453,
+      "tables": [
+        "business_attention_proposal_tasks"
+      ]
+    },
+    {
+      "file": "app/business_candidate_definitions.py",
+      "scope": "<module>",
+      "line": 456,
+      "end_line": 467,
+      "tables": [
+        "business_attention_tasks"
+      ]
+    },
+    {
+      "file": "app/business_candidate_definitions.py",
+      "scope": "<module>",
+      "line": 468,
+      "end_line": 470,
+      "tables": [
+        "business_attention_tasks"
+      ]
+    },
+    {
+      "file": "app/business_candidate_definitions.py",
+      "scope": "<module>",
+      "line": 473,
+      "end_line": 520,
+      "tables": [
+        "business_task_signals"
+      ]
+    },
+    {
+      "file": "app/business_candidate_definitions.py",
+      "scope": "<module>",
+      "line": 746,
+      "end_line": 746,
+      "tables": [
+        "business_task_signals"
+      ]
+    },
+    {
+      "file": "app/business_candidate_definitions.py",
+      "scope": "<module>",
+      "line": 747,
+      "end_line": 747,
+      "tables": [
+        "business_task_signals"
+      ]
+    },
+    {
+      "file": "app/business_candidate_definitions.py",
+      "scope": "<module>",
+      "line": 750,
+      "end_line": 750,
+      "tables": [
+        "business_task_signals"
+      ]
+    },
+    {
+      "file": "app/business_candidate_storage.py",
+      "scope": "<module>",
+      "line": 117,
+      "end_line": 117,
+      "tables": [
+        "business_attention_events"
+      ]
+    },
+    {
+      "file": "app/business_candidate_storage.py",
+      "scope": "<module>",
+      "line": 118,
+      "end_line": 118,
+      "tables": [
+        "business_attention_tasks"
+      ]
+    },
+    {
+      "file": "app/business_candidate_storage.py",
+      "scope": "<module>",
+      "line": 119,
+      "end_line": 119,
+      "tables": [
+        "business_attention_proposal_tasks"
+      ]
+    },
+    {
+      "file": "app/business_candidate_storage.py",
+      "scope": "<module>",
+      "line": 123,
+      "end_line": 123,
+      "tables": [
+        "business_attention_tasks"
+      ]
+    },
+    {
+      "file": "app/business_candidate_storage.py",
+      "scope": "<module>",
+      "line": 123,
+      "end_line": 123,
+      "tables": [
+        "business_attention_proposal_tasks"
+      ]
+    },
+    {
+      "file": "app/business_schema_release.py",
+      "scope": "<module>",
+      "line": 43,
+      "end_line": 43,
+      "tables": [
+        "business_task_evidence"
+      ]
+    },
+    {
+      "file": "app/business_schema_release.py",
+      "scope": "<module>",
+      "line": 44,
+      "end_line": 44,
+      "tables": [
+        "business_task_date_evidence"
+      ]
+    },
+    {
+      "file": "app/business_schema_release.py",
+      "scope": "<module>",
+      "line": 46,
+      "end_line": 46,
+      "tables": [
+        "business_project_evidence"
+      ]
+    },
+    {
+      "file": "app/business_schema_release.py",
+      "scope": "<module>",
+      "line": 50,
+      "end_line": 50,
+      "tables": [
+        "business_task_relations"
+      ]
+    },
+    {
+      "file": "app/business_schema_release.py",
+      "scope": "<module>",
+      "line": 51,
+      "end_line": 51,
+      "tables": [
+        "business_work_cluster_tasks"
+      ]
+    },
+    {
+      "file": "app/business_schema_release.py",
+      "scope": "<module>",
+      "line": 52,
+      "end_line": 52,
+      "tables": [
+        "business_task_anchor_links"
+      ]
+    },
+    {
+      "file": "app/business_schema_release.py",
+      "scope": "<module>",
+      "line": 55,
+      "end_line": 55,
+      "tables": [
+        "business_attention_tasks"
+      ]
+    },
+    {
+      "file": "app/business_schema_release.py",
+      "scope": "<module>",
+      "line": 56,
+      "end_line": 56,
+      "tables": [
+        "business_attention_proposal_tasks"
+      ]
+    },
+    {
+      "file": "app/business_schema_release.py",
+      "scope": "<module>",
+      "line": 68,
+      "end_line": 68,
+      "tables": [
+        "business_task_evidence"
+      ]
+    },
+    {
+      "file": "app/business_schema_release.py",
+      "scope": "<module>",
+      "line": 68,
+      "end_line": 68,
+      "tables": [
+        "business_project_evidence"
+      ]
+    },
+    {
+      "file": "app/business_schema_release.py",
+      "scope": "<module>",
+      "line": 69,
+      "end_line": 69,
+      "tables": [
+        "business_task_relations"
+      ]
+    },
+    {
+      "file": "app/business_schema_release.py",
+      "scope": "<module>",
+      "line": 69,
+      "end_line": 69,
+      "tables": [
+        "business_work_cluster_tasks"
+      ]
+    },
+    {
+      "file": "app/business_schema_release.py",
+      "scope": "<module>",
+      "line": 70,
+      "end_line": 70,
+      "tables": [
+        "business_attention_tasks"
+      ]
+    },
+    {
+      "file": "app/business_schema_release.py",
+      "scope": "<module>",
+      "line": 70,
+      "end_line": 70,
+      "tables": [
+        "business_attention_proposal_tasks"
+      ]
+    },
+    {
+      "file": "app/business_schema_release.py",
+      "scope": "_candidate_children_as_prior_target",
+      "line": 438,
+      "end_line": 438,
+      "tables": [
+        "business_attention_events"
+      ]
+    },
+    {
+      "file": "app/business_schema_release.py",
+      "scope": "_candidate_event_is_current",
+      "line": 446,
+      "end_line": 446,
+      "tables": [
+        "business_attention_events"
+      ]
+    },
+    {
+      "file": "app/business_schema_release.py",
+      "scope": "_candidate_event_is_current",
+      "line": 448,
+      "end_line": 448,
+      "tables": [
+        "business_attention_events"
+      ]
+    },
+    {
+      "file": "app/business_schema_release.py",
+      "scope": "_candidate_event_is_current",
+      "line": 456,
+      "end_line": 456,
+      "tables": [
+        "business_attention_events"
+      ]
+    },
+    {
+      "file": "app/minutes_owner_backfill.py",
+      "scope": "ownerless_candidate_meetings",
+      "line": 60,
+      "end_line": 60,
+      "tables": [
+        "business_task_evidence",
+        "business_task_signals"
+      ]
+    },
+    {
+      "file": "app/project_context_service.py",
+      "scope": "ProjectContextService._require_signal",
+      "line": 44,
+      "end_line": 47,
+      "tables": [
+        "business_task_signals"
+      ]
+    },
+    {
+      "file": "app/project_context_service.py",
+      "scope": "ProjectContextService.apply",
+      "line": 79,
+      "end_line": 80,
+      "tables": [
+        "business_project_evidence"
+      ]
+    },
+    {
+      "file": "app/store.py",
+      "scope": "<module>",
+      "line": 522,
+      "end_line": 522,
+      "tables": [
+        "business_task_signals"
+      ]
+    },
+    {
+      "file": "app/store.py",
+      "scope": "<module>",
+      "line": 523,
+      "end_line": 523,
+      "tables": [
+        "business_task_evidence"
+      ]
+    },
+    {
+      "file": "app/store.py",
+      "scope": "<module>",
+      "line": 524,
+      "end_line": 524,
+      "tables": [
+        "business_task_date_evidence"
+      ]
+    },
+    {
+      "file": "app/store.py",
+      "scope": "<module>",
+      "line": 525,
+      "end_line": 525,
+      "tables": [
+        "business_task_relations"
+      ]
+    },
+    {
+      "file": "app/store.py",
+      "scope": "<module>",
+      "line": 526,
+      "end_line": 526,
+      "tables": [
+        "business_work_cluster_tasks"
+      ]
+    },
+    {
+      "file": "app/store.py",
+      "scope": "<module>",
+      "line": 527,
+      "end_line": 527,
+      "tables": [
+        "business_task_anchor_links"
+      ]
+    },
+    {
+      "file": "app/store.py",
+      "scope": "<module>",
+      "line": 528,
+      "end_line": 528,
+      "tables": [
+        "business_project_evidence"
+      ]
+    },
+    {
+      "file": "app/store.py",
+      "scope": "<module>",
+      "line": 529,
+      "end_line": 529,
+      "tables": [
+        "business_attention_tasks"
+      ]
+    },
+    {
+      "file": "app/store.py",
+      "scope": "<module>",
+      "line": 530,
+      "end_line": 530,
+      "tables": [
+        "business_attention_proposal_tasks"
+      ]
+    },
+    {
+      "file": "app/store.py",
+      "scope": "<module>",
+      "line": 531,
+      "end_line": 531,
+      "tables": [
+        "business_attention_events"
+      ]
+    },
+    {
+      "file": "app/store.py",
+      "scope": "<module>",
+      "line": 572,
+      "end_line": 572,
+      "tables": [
+        "business_task_signals"
+      ]
+    },
+    {
+      "file": "app/store.py",
+      "scope": "<module>",
+      "line": 574,
+      "end_line": 574,
+      "tables": [
+        "business_task_evidence"
+      ]
+    },
+    {
+      "file": "app/store.py",
+      "scope": "<module>",
+      "line": 575,
+      "end_line": 575,
+      "tables": [
+        "business_task_date_evidence"
+      ]
+    },
+    {
+      "file": "app/store.py",
+      "scope": "<module>",
+      "line": 576,
+      "end_line": 576,
+      "tables": [
+        "business_task_relations"
+      ]
+    },
+    {
+      "file": "app/store.py",
+      "scope": "<module>",
+      "line": 577,
+      "end_line": 577,
+      "tables": [
+        "business_task_relations"
+      ]
+    },
+    {
+      "file": "app/store.py",
+      "scope": "<module>",
+      "line": 578,
+      "end_line": 578,
+      "tables": [
+        "business_work_cluster_tasks"
+      ]
+    },
+    {
+      "file": "app/store.py",
+      "scope": "<module>",
+      "line": 579,
+      "end_line": 579,
+      "tables": [
+        "business_task_anchor_links"
+      ]
+    },
+    {
+      "file": "app/store.py",
+      "scope": "<module>",
+      "line": 584,
+      "end_line": 584,
+      "tables": [
+        "business_attention_tasks"
+      ]
+    },
+    {
+      "file": "app/store.py",
+      "scope": "<module>",
+      "line": 585,
+      "end_line": 585,
+      "tables": [
+        "business_attention_proposal_tasks"
+      ]
+    },
+    {
+      "file": "app/store.py",
+      "scope": "<module>",
+      "line": 586,
+      "end_line": 586,
+      "tables": [
+        "business_attention_events"
+      ]
+    },
+    {
+      "file": "app/store.py",
+      "scope": "<module>",
+      "line": 626,
+      "end_line": 626,
+      "tables": [
+        "business_task_signals"
+      ]
+    },
+    {
+      "file": "app/store.py",
+      "scope": "<module>",
+      "line": 643,
+      "end_line": 643,
+      "tables": [
+        "business_task_signals"
+      ]
+    },
+    {
+      "file": "app/store.py",
+      "scope": "<module>",
+      "line": 648,
+      "end_line": 648,
+      "tables": [
+        "business_task_evidence"
+      ]
+    },
+    {
+      "file": "app/store.py",
+      "scope": "<module>",
+      "line": 651,
+      "end_line": 651,
+      "tables": [
+        "business_task_date_evidence"
+      ]
+    },
+    {
+      "file": "app/store.py",
+      "scope": "<module>",
+      "line": 655,
+      "end_line": 655,
+      "tables": [
+        "business_task_relations"
+      ]
+    },
+    {
+      "file": "app/store.py",
+      "scope": "<module>",
+      "line": 659,
+      "end_line": 659,
+      "tables": [
+        "business_work_cluster_tasks"
+      ]
+    },
+    {
+      "file": "app/store.py",
+      "scope": "<module>",
+      "line": 660,
+      "end_line": 660,
+      "tables": [
+        "business_task_anchor_links"
+      ]
+    },
+    {
+      "file": "app/store.py",
+      "scope": "<module>",
+      "line": 664,
+      "end_line": 664,
+      "tables": [
+        "business_project_evidence"
+      ]
+    },
+    {
+      "file": "app/store.py",
+      "scope": "<module>",
+      "line": 665,
+      "end_line": 665,
+      "tables": [
+        "business_attention_tasks"
+      ]
+    },
+    {
+      "file": "app/store.py",
+      "scope": "<module>",
+      "line": 666,
+      "end_line": 666,
+      "tables": [
+        "business_attention_proposal_tasks"
+      ]
+    },
+    {
+      "file": "app/store.py",
+      "scope": "<module>",
+      "line": 667,
+      "end_line": 667,
+      "tables": [
+        "business_attention_events"
+      ]
+    },
+    {
+      "file": "app/store.py",
+      "scope": "<module>",
+      "line": 693,
+      "end_line": 693,
+      "tables": [
+        "business_task_signals"
+      ]
+    },
+    {
+      "file": "app/store.py",
+      "scope": "<module>",
+      "line": 694,
+      "end_line": 694,
+      "tables": [
+        "business_task_signals"
+      ]
+    },
+    {
+      "file": "app/store.py",
+      "scope": "<module>",
+      "line": 695,
+      "end_line": 695,
+      "tables": [
+        "business_task_signals"
+      ]
+    },
+    {
+      "file": "app/store.py",
+      "scope": "<module>",
+      "line": 696,
+      "end_line": 696,
+      "tables": [
+        "business_task_date_evidence"
+      ]
+    },
+    {
+      "file": "app/store.py",
+      "scope": "<module>",
+      "line": 697,
+      "end_line": 697,
+      "tables": [
+        "business_task_date_evidence"
+      ]
+    },
+    {
+      "file": "app/store.py",
+      "scope": "<module>",
+      "line": 698,
+      "end_line": 698,
+      "tables": [
+        "business_task_date_evidence"
+      ]
+    },
+    {
+      "file": "app/store.py",
+      "scope": "<module>",
+      "line": 943,
+      "end_line": 944,
+      "tables": [
+        "business_task_signals"
+      ]
+    },
+    {
+      "file": "app/store.py",
+      "scope": "<module>",
+      "line": 945,
+      "end_line": 946,
+      "tables": [
+        "business_task_signals"
+      ]
+    },
+    {
+      "file": "app/store.py",
+      "scope": "<module>",
+      "line": 947,
+      "end_line": 950,
+      "tables": [
+        "business_task_signals"
+      ]
+    },
+    {
+      "file": "app/store.py",
+      "scope": "<module>",
+      "line": 951,
+      "end_line": 954,
+      "tables": [
+        "business_task_signals"
+      ]
+    },
+    {
+      "file": "app/store.py",
+      "scope": "<module>",
+      "line": 955,
+      "end_line": 961,
+      "tables": [
+        "business_task_signals"
+      ]
+    },
+    {
+      "file": "app/store.py",
+      "scope": "AutoReplyStore._initialize",
+      "line": 2456,
+      "end_line": 2456,
+      "tables": [
+        "business_task_signals"
+      ]
+    },
+    {
+      "file": "app/store.py",
+      "scope": "AutoReplyStore._initialize",
+      "line": 2457,
+      "end_line": 2560,
+      "tables": [
+        "business_task_date_evidence",
+        "business_task_evidence",
+        "business_task_signals"
+      ]
+    },
+    {
+      "file": "app/store.py",
+      "scope": "AutoReplyStore._initialize",
+      "line": 2560,
+      "end_line": 2594,
+      "tables": [
+        "business_task_date_evidence",
+        "business_task_signals"
+      ]
+    },
+    {
+      "file": "app/store.py",
+      "scope": "AutoReplyStore._initialize",
+      "line": 2594,
+      "end_line": 2666,
+      "tables": [
+        "business_attention_tasks",
+        "business_project_evidence",
+        "business_task_anchor_links",
+        "business_task_relations",
+        "business_task_signals",
+        "business_work_cluster_tasks"
+      ]
+    },
+    {
+      "file": "app/store.py",
+      "scope": "AutoReplyStore._initialize",
+      "line": 2666,
+      "end_line": 2676,
+      "tables": [
+        "business_attention_proposal_tasks",
+        "business_attention_tasks"
+      ]
+    },
+    {
+      "file": "app/store.py",
+      "scope": "AutoReplyStore._initialize",
+      "line": 2676,
+      "end_line": 2692,
+      "tables": [
+        "business_attention_events",
+        "business_attention_proposal_tasks"
+      ]
+    },
+    {
+      "file": "app/store.py",
+      "scope": "AutoReplyStore._initialize",
+      "line": 2694,
+      "end_line": 2726,
+      "tables": [
+        "business_attention_events",
+        "business_task_signals"
+      ]
+    },
+    {
+      "file": "app/store.py",
+      "scope": "AutoReplyStore._initialize",
+      "line": 2868,
+      "end_line": 2868,
+      "tables": [
+        "business_task_signals"
+      ]
+    },
+    {
+      "file": "app/store.py",
+      "scope": "AutoReplyStore._initialize",
+      "line": 2872,
+      "end_line": 2873,
+      "tables": [
+        "business_task_signals"
+      ]
+    },
+    {
+      "file": "app/store.py",
+      "scope": "AutoReplyStore._migrate_project_attention_evidence",
+      "line": 3164,
+      "end_line": 3168,
+      "tables": [
+        "business_task_anchor_links",
+        "business_task_evidence",
+        "business_task_signals"
+      ]
+    },
+    {
+      "file": "app/store.py",
+      "scope": "AutoReplyStore._migrate_project_attention_evidence",
+      "line": 3173,
+      "end_line": 3174,
+      "tables": [
+        "business_project_evidence"
+      ]
+    },
+    {
+      "file": "app/store.py",
+      "scope": "AutoReplyStore.get_business_task_signal_by_dedupe_key",
+      "line": 4039,
+      "end_line": 4041,
+      "tables": [
+        "business_task_signals"
+      ]
+    },
+    {
+      "file": "app/store.py",
+      "scope": "AutoReplyStore.create_business_task_signal_in_transaction",
+      "line": 4102,
+      "end_line": 4108,
+      "tables": [
+        "business_task_signals"
+      ]
+    },
+    {
+      "file": "app/store.py",
+      "scope": "AutoReplyStore.link_business_task_evidence_in_transaction",
+      "line": 4207,
+      "end_line": 4211,
+      "tables": [
+        "business_task_evidence"
+      ]
+    },
+    {
+      "file": "app/store.py",
+      "scope": "AutoReplyStore.list_business_task_evidence_in_transaction",
+      "line": 4219,
+      "end_line": 4220,
+      "tables": [
+        "business_task_evidence"
+      ]
+    },
+    {
+      "file": "app/store.py",
+      "scope": "AutoReplyStore.get_business_task_signal_for_task_source_ref_in_transaction",
+      "line": 4232,
+      "end_line": 4235,
+      "tables": [
+        "business_task_evidence",
+        "business_task_signals"
+      ]
+    },
+    {
+      "file": "app/store.py",
+      "scope": "AutoReplyStore.create_business_task_date_evidence_in_transaction",
+      "line": 4265,
+      "end_line": 4268,
+      "tables": [
+        "business_task_date_evidence"
+      ]
+    },
+    {
+      "file": "app/store.py",
+      "scope": "AutoReplyStore.copy_business_task_date_evidence_in_transaction",
+      "line": 4281,
+      "end_line": 4300,
+      "tables": [
+        "business_task_date_evidence"
+      ]
+    },
+    {
+      "file": "app/store.py",
+      "scope": "AutoReplyStore.list_business_task_date_evidence",
+      "line": 4308,
+      "end_line": 4308,
+      "tables": [
+        "business_task_date_evidence"
+      ]
+    },
+    {
+      "file": "app/store.py",
+      "scope": "AutoReplyStore.list_unmerged_formal_business_task_ids_for_signal_in_transaction",
+      "line": 4317,
+      "end_line": 4317,
+      "tables": [
+        "business_task_evidence"
+      ]
+    },
+    {
+      "file": "app/store.py",
+      "scope": "AutoReplyStore.list_unmerged_formal_business_task_ids_for_source_in_transaction",
+      "line": 4327,
+      "end_line": 4327,
+      "tables": [
+        "business_task_evidence",
+        "business_task_signals"
+      ]
+    },
+    {
+      "file": "app/store.py",
+      "scope": "AutoReplyStore.list_business_task_signals",
+      "line": 4397,
+      "end_line": 4399,
+      "tables": [
+        "business_task_signals"
+      ]
+    },
+    {
+      "file": "app/store.py",
+      "scope": "AutoReplyStore.get_business_task_signal_in_transaction",
+      "line": 4411,
+      "end_line": 4413,
+      "tables": [
+        "business_task_signals"
+      ]
+    },
+    {
+      "file": "app/store.py",
+      "scope": "AutoReplyStore.link_business_task_evidence",
+      "line": 4496,
+      "end_line": 4500,
+      "tables": [
+        "business_task_evidence"
+      ]
+    },
+    {
+      "file": "app/store.py",
+      "scope": "AutoReplyStore.link_business_task_evidence",
+      "line": 4504,
+      "end_line": 4504,
+      "tables": [
+        "business_task_evidence"
+      ]
+    },
+    {
+      "file": "app/store.py",
+      "scope": "AutoReplyStore.list_business_task_evidence",
+      "line": 4515,
+      "end_line": 4516,
+      "tables": [
+        "business_task_evidence"
+      ]
+    },
+    {
+      "file": "app/store.py",
+      "scope": "AutoReplyStore.list_business_task_ids_for_conversation",
+      "line": 4530,
+      "end_line": 4532,
+      "tables": [
+        "business_task_evidence",
+        "business_task_signals"
+      ]
+    },
+    {
+      "file": "app/store.py",
+      "scope": "AutoReplyStore.list_business_task_ids_for_source",
+      "line": 4547,
+      "end_line": 4550,
+      "tables": [
+        "business_task_evidence",
+        "business_task_signals"
+      ]
+    },
+    {
+      "file": "app/store.py",
+      "scope": "AutoReplyStore.list_business_project_ids_for_source",
+      "line": 4575,
+      "end_line": 4578,
+      "tables": [
+        "business_project_evidence",
+        "business_task_signals"
+      ]
+    },
+    {
+      "file": "app/store.py",
+      "scope": "AutoReplyStore.list_business_task_ids_for_project",
+      "line": 4590,
+      "end_line": 4591,
+      "tables": [
+        "business_task_anchor_links"
+      ]
+    },
+    {
+      "file": "app/store.py",
+      "scope": "AutoReplyStore.list_business_task_project_links",
+      "line": 4601,
+      "end_line": 4601,
+      "tables": [
+        "business_task_anchor_links"
+      ]
+    },
+    {
+      "file": "app/store.py",
+      "scope": "AutoReplyStore.add_business_work_cluster_task_in_transaction",
+      "line": 4619,
+      "end_line": 4619,
+      "tables": [
+        "business_work_cluster_tasks"
+      ]
+    },
+    {
+      "file": "app/store.py",
+      "scope": "AutoReplyStore.get_business_task_anchor_link_in_transaction",
+      "line": 4649,
+      "end_line": 4649,
+      "tables": [
+        "business_task_anchor_links"
+      ]
+    },
+    {
+      "file": "app/store.py",
+      "scope": "AutoReplyStore.list_business_project_evidence_in_transaction",
+      "line": 4703,
+      "end_line": 4706,
+      "tables": [
+        "business_project_evidence"
+      ]
+    },
+    {
+      "file": "app/store.py",
+      "scope": "AutoReplyStore.derive_business_task_relevance_in_transaction",
+      "line": 4715,
+      "end_line": 4715,
+      "tables": [
+        "business_task_anchor_links"
+      ]
+    },
+    {
+      "file": "app/store.py",
+      "scope": "AutoReplyStore.create_business_task_relation_in_transaction",
+      "line": 4744,
+      "end_line": 4745,
+      "tables": [
+        "business_task_relations"
+      ]
+    },
+    {
+      "file": "app/store.py",
+      "scope": "AutoReplyStore.create_business_task_relation_in_transaction",
+      "line": 4750,
+      "end_line": 4752,
+      "tables": [
+        "business_task_relations"
+      ]
+    },
+    {
+      "file": "app/store.py",
+      "scope": "AutoReplyStore.create_business_task_relation_in_transaction",
+      "line": 4769,
+      "end_line": 4771,
+      "tables": [
+        "business_task_relations"
+      ]
+    },
+    {
+      "file": "app/store.py",
+      "scope": "AutoReplyStore.create_business_task_anchor_link_in_transaction",
+      "line": 4805,
+      "end_line": 4810,
+      "tables": [
+        "business_task_anchor_links"
+      ]
+    },
+    {
+      "file": "app/store.py",
+      "scope": "AutoReplyStore.create_business_task_anchor_link_in_transaction",
+      "line": 4815,
+      "end_line": 4815,
+      "tables": [
+        "business_task_anchor_links"
+      ]
+    },
+    {
+      "file": "app/store.py",
+      "scope": "AutoReplyStore.list_business_task_project_customer_names",
+      "line": 4951,
+      "end_line": 4951,
+      "tables": [
+        "business_task_anchor_links"
+      ]
+    },
+    {
+      "file": "app/store.py",
+      "scope": "AutoReplyStore.list_business_work_cluster_tasks",
+      "line": 5065,
+      "end_line": 5065,
+      "tables": [
+        "business_work_cluster_tasks"
+      ]
+    },
+    {
+      "file": "app/store.py",
+      "scope": "AutoReplyStore.list_business_task_relations",
+      "line": 5090,
+      "end_line": 5091,
+      "tables": [
+        "business_task_relations"
+      ]
+    },
+    {
+      "file": "app/store.py",
+      "scope": "AutoReplyStore.list_business_task_anchor_links",
+      "line": 5103,
+      "end_line": 5104,
+      "tables": [
+        "business_task_anchor_links"
+      ]
+    },
+    {
+      "file": "app/store.py",
+      "scope": "AutoReplyStore.link_business_attention_task_in_transaction",
+      "line": 5191,
+      "end_line": 5192,
+      "tables": [
+        "business_attention_tasks"
+      ]
+    },
+    {
+      "file": "app/store.py",
+      "scope": "AutoReplyStore.replace_business_attention_tasks_in_transaction",
+      "line": 5202,
+      "end_line": 5202,
+      "tables": [
+        "business_attention_tasks"
+      ]
+    },
+    {
+      "file": "app/store.py",
+      "scope": "AutoReplyStore.replace_business_attention_tasks_in_transaction",
+      "line": 5210,
+      "end_line": 5210,
+      "tables": [
+        "business_attention_tasks"
+      ]
+    },
+    {
+      "file": "app/store.py",
+      "scope": "AutoReplyStore.replace_business_attention_tasks_in_transaction",
+      "line": 5215,
+      "end_line": 5215,
+      "tables": [
+        "business_attention_tasks"
+      ]
+    },
+    {
+      "file": "app/store.py",
+      "scope": "AutoReplyStore.replace_business_attention_proposal_tasks_in_transaction",
+      "line": 5230,
+      "end_line": 5230,
+      "tables": [
+        "business_attention_proposal_tasks"
+      ]
+    },
+    {
+      "file": "app/store.py",
+      "scope": "AutoReplyStore.replace_business_attention_proposal_tasks_in_transaction",
+      "line": 5238,
+      "end_line": 5238,
+      "tables": [
+        "business_attention_proposal_tasks"
+      ]
+    },
+    {
+      "file": "app/store.py",
+      "scope": "AutoReplyStore.replace_business_attention_proposal_tasks_in_transaction",
+      "line": 5243,
+      "end_line": 5243,
+      "tables": [
+        "business_attention_proposal_tasks"
+      ]
+    },
+    {
+      "file": "app/store.py",
+      "scope": "AutoReplyStore.replace_business_attention_proposal_tasks_in_transaction",
+      "line": 5248,
+      "end_line": 5249,
+      "tables": [
+        "business_attention_proposal_tasks"
+      ]
+    },
+    {
+      "file": "app/store.py",
+      "scope": "AutoReplyStore.append_business_attention_event_in_transaction",
+      "line": 5271,
+      "end_line": 5273,
+      "tables": [
+        "business_attention_events"
+      ]
+    },
+    {
+      "file": "app/store.py",
+      "scope": "AutoReplyStore.list_business_attention_tasks_in_transaction",
+      "line": 5299,
+      "end_line": 5299,
+      "tables": [
+        "business_attention_tasks"
+      ]
+    },
+    {
+      "file": "app/store.py",
+      "scope": "AutoReplyStore.list_business_attention_proposal_tasks_in_transaction",
+      "line": 5308,
+      "end_line": 5308,
+      "tables": [
+        "business_attention_proposal_tasks"
+      ]
+    },
+    {
+      "file": "app/store.py",
+      "scope": "AutoReplyStore.list_business_attention_events_in_transaction",
+      "line": 5323,
+      "end_line": 5323,
+      "tables": [
+        "business_attention_events"
+      ]
+    },
+    {
+      "file": "app/store.py",
+      "scope": "AutoReplyStore._migrate_business_task_source_documents",
+      "line": 7047,
+      "end_line": 7047,
+      "tables": [
+        "business_task_signals"
+      ]
+    },
+    {
+      "file": "app/store.py",
+      "scope": "AutoReplyStore._migrate_business_task_source_documents",
+      "line": 7061,
+      "end_line": 7061,
+      "tables": [
+        "business_task_signals"
+      ]
+    },
+    {
+      "file": "app/store.py",
+      "scope": "AutoReplyStore._migrate_business_task_source_documents",
+      "line": 7062,
+      "end_line": 7062,
+      "tables": [
+        "business_task_signals"
+      ]
+    },
+    {
+      "file": "app/store.py",
+      "scope": "AutoReplyStore._migrate_business_task_source_documents",
+      "line": 7064,
+      "end_line": 7064,
+      "tables": [
+        "business_task_signals"
+      ]
+    },
+    {
+      "file": "app/store.py",
+      "scope": "AutoReplyStore._migrate_business_task_source_documents",
+      "line": 7066,
+      "end_line": 7066,
+      "tables": [
+        "business_task_signals"
+      ]
+    },
+    {
+      "file": "app/store.py",
+      "scope": "AutoReplyStore._migrate_business_task_source_documents",
+      "line": 7075,
+      "end_line": 7075,
+      "tables": [
+        "business_task_signals"
+      ]
+    },
+    {
+      "file": "app/store.py",
+      "scope": "AutoReplyStore._migrate_business_task_source_documents",
+      "line": 7079,
+      "end_line": 7082,
+      "tables": [
+        "business_task_signals"
+      ]
+    },
+    {
+      "file": "app/store.py",
+      "scope": "AutoReplyStore._migrate_business_task_source_documents",
+      "line": 7087,
+      "end_line": 7087,
+      "tables": [
+        "business_task_signals"
+      ]
+    },
+    {
+      "file": "app/store.py",
+      "scope": "AutoReplyStore._migrate_business_task_source_documents",
+      "line": 7091,
+      "end_line": 7091,
+      "tables": [
+        "business_task_signals"
+      ]
+    },
+    {
+      "file": "app/store.py",
+      "scope": "AutoReplyStore._migrate_business_task_source_documents",
+      "line": 7092,
+      "end_line": 7092,
+      "tables": [
+        "business_task_signals"
+      ]
+    },
+    {
+      "file": "app/store.py",
+      "scope": "AutoReplyStore._migrate_business_task_source_documents",
+      "line": 7095,
+      "end_line": 7097,
+      "tables": [
+        "business_task_signals"
+      ]
+    },
+    {
+      "file": "app/store.py",
+      "scope": "AutoReplyStore._migrate_business_task_source_documents",
+      "line": 7101,
+      "end_line": 7101,
+      "tables": [
+        "business_task_signals"
+      ]
+    },
+    {
+      "file": "app/store.py",
+      "scope": "AutoReplyStore.create_business_task_follow_up",
+      "line": 24937,
+      "end_line": 24939,
+      "tables": [
+        "business_task_evidence",
+        "business_task_signals"
+      ]
+    },
+    {
+      "file": "app/task_agent.py",
+      "scope": "_confirmed_official_project_anchors",
+      "line": 1333,
+      "end_line": 1333,
+      "tables": [
+        "business_task_anchor_links"
+      ]
+    },
+    {
+      "file": "app/task_agent.py",
+      "scope": "apply_task_agent_decision.apply",
+      "line": 2224,
+      "end_line": 2226,
+      "tables": [
+        "business_task_date_evidence"
+      ]
+    },
+    {
+      "file": "app/task_agent.py",
+      "scope": "apply_task_agent_decision.apply",
+      "line": 2336,
+      "end_line": 2337,
+      "tables": [
+        "business_task_date_evidence"
+      ]
+    },
+    {
+      "file": "app/task_agent.py",
+      "scope": "apply_task_agent_decision.apply",
+      "line": 2381,
+      "end_line": 2381,
+      "tables": [
+        "business_work_cluster_tasks"
+      ]
+    },
+    {
+      "file": "app/task_agent.py",
+      "scope": "apply_task_agent_decision.apply",
+      "line": 2411,
+      "end_line": 2414,
+      "tables": [
+        "business_task_anchor_links",
+        "business_work_cluster_tasks"
+      ]
+    },
+    {
+      "file": "app/task_agent.py",
+      "scope": "apply_task_agent_decision.apply",
+      "line": 2428,
+      "end_line": 2431,
+      "tables": [
+        "business_task_anchor_links",
+        "business_work_cluster_tasks"
+      ]
+    },
+    {
+      "file": "app/task_attention_projection.py",
+      "scope": "BusinessAttentionProjection._validate_proposal",
+      "line": 103,
+      "end_line": 103,
+      "tables": [
+        "business_task_signals"
+      ]
+    },
+    {
+      "file": "app/task_attention_projection.py",
+      "scope": "BusinessAttentionProjection._validate_proposal",
+      "line": 119,
+      "end_line": 120,
+      "tables": [
+        "business_project_evidence"
+      ]
+    },
+    {
+      "file": "app/task_attention_projection.py",
+      "scope": "BusinessAttentionProjection._validate_proposal",
+      "line": 137,
+      "end_line": 138,
+      "tables": [
+        "business_task_anchor_links"
+      ]
+    },
+    {
+      "file": "app/task_attention_projection.py",
+      "scope": "BusinessAttentionProjection._current_eligible_task_ids",
+      "line": 156,
+      "end_line": 156,
+      "tables": [
+        "business_task_anchor_links"
+      ]
+    },
+    {
+      "file": "app/task_attention_projection.py",
+      "scope": "BusinessAttentionProjection.resolve",
+      "line": 260,
+      "end_line": 260,
+      "tables": [
+        "business_task_signals"
+      ]
+    },
+    {
+      "file": "app/task_attention_projection.py",
+      "scope": "BusinessAttentionProjection.resolve",
+      "line": 275,
+      "end_line": 276,
+      "tables": [
+        "business_project_evidence"
+      ]
+    },
+    {
+      "file": "app/task_attention_projection.py",
+      "scope": "BusinessAttentionProjection.recompute_for_tasks",
+      "line": 314,
+      "end_line": 316,
+      "tables": [
+        "business_attention_proposal_tasks"
+      ]
+    },
+    {
+      "file": "app/task_business_resolution.py",
+      "scope": "BusinessResolutionService._require_evidence_signal",
+      "line": 69,
+      "end_line": 69,
+      "tables": [
+        "business_task_signals"
+      ]
+    },
+    {
+      "file": "app/task_business_resolution.py",
+      "scope": "BusinessResolutionService.confirm_project_candidate",
+      "line": 390,
+      "end_line": 395,
+      "tables": [
+        "business_work_cluster_tasks"
+      ]
+    },
+    {
+      "file": "app/task_project_candidate_actions.py",
+      "scope": "confirm_project_candidate",
+      "line": 41,
+      "end_line": 49,
+      "tables": [
+        "business_task_evidence",
+        "business_work_cluster_tasks"
+      ]
+    },
+    {
+      "file": "app/task_semantic_import.py",
+      "scope": "_existing_link_matches",
+      "line": 487,
+      "end_line": 489,
+      "tables": [
+        "business_task_evidence",
+        "business_task_signals"
+      ]
+    },
+    {
+      "file": "app/task_semantic_service.py",
+      "scope": "TaskSemanticService._replay_result",
+      "line": 253,
+      "end_line": 256,
+      "tables": [
+        "business_task_signals"
+      ]
+    },
+    {
+      "file": "app/task_semantic_service.py",
+      "scope": "TaskSemanticService.record_suggestion",
+      "line": 584,
+      "end_line": 584,
+      "tables": [
+        "business_task_anchor_links"
+      ]
+    },
+    {
+      "file": "app/web_api/tasks.py",
+      "scope": "_confirmed_project_ids_by_task",
+      "line": 985,
+      "end_line": 985,
+      "tables": [
+        "business_task_anchor_links"
+      ]
+    },
+    {
+      "file": "app/web_api/tasks.py",
+      "scope": "_project_summary_context_and_activity",
+      "line": 1013,
+      "end_line": 1018,
+      "tables": [
+        "business_project_evidence"
+      ]
+    },
+    {
+      "file": "app/web_api/tasks.py",
+      "scope": "_project_summary_payload",
+      "line": 1070,
+      "end_line": 1070,
+      "tables": [
+        "business_project_evidence"
+      ]
+    },
+    {
+      "file": "app/web_api/tasks.py",
+      "scope": "business_project_detail",
+      "line": 1257,
+      "end_line": 1257,
+      "tables": [
+        "business_project_evidence"
+      ]
+    },
+    {
+      "file": "app/web_api/tasks.py",
+      "scope": "business_project_evidence_response",
+      "line": 1290,
+      "end_line": 1290,
+      "tables": [
+        "business_project_evidence"
+      ]
+    }
+  ],
+  "file_count": 19,
+  "occurrence_count": 194,
+  "distinct_scopes": 68,
+  "raw_sql_or_bodies_persisted": false,
+  "runtime_changed": false
+}

@@ -1,9 +1,8 @@
 """One native Task Agent turn on a database copy, or one fixed semantic case.
 
-Run baseline and candidate in separate processes with explicit --code-root and
-CEO_SKILLS_ROOT. Expected labels are evaluated only after persisted readback.
+Run each revision's matching script in a separate process with explicit
+--code-root and CEO_SKILLS_ROOT. Expected labels are evaluated only after persisted readback.
 """
-
 import argparse
 import hashlib
 import json
@@ -11,8 +10,26 @@ import os
 from pathlib import Path
 import subprocess
 import sys
-from app.run_storage import RUNTIME_ATTEMPT_SQL
-from app.task_storage import TASK_AGENT_RUN_SQL, WORK_SUMMARY_INPUT_SQL, task_id_expression
+
+if __name__ == "__main__":
+    # Select the requested package before Python caches any app modules.
+    _bootstrap_parser = argparse.ArgumentParser(add_help=False)
+    _bootstrap_parser.add_argument(
+        "--code-root", type=Path, default=Path(__file__).resolve().parents[1],
+    )
+    _bootstrap_args, _ = _bootstrap_parser.parse_known_args()
+    sys.path.insert(0, str(_bootstrap_args.code_root.resolve()))
+
+from app.business_definitions import BUSINESS_PROJECTIONS
+from app.store import (
+    BUSINESS_ACTION_SQL, RUNTIME_ATTEMPT_SQL, TASK_LOGICAL_RUN_SQL, WORK_SUMMARY_INPUT_SQL,
+)
+from app.action_followup_sync_definitions import SYNC_ACTION_PROJECTIONS
+from app.business_candidate_definitions import candidate_projection
+from app.business_source_reader import AvailableSource, PreparedSources, SourceVersionBinding
+from app.provenance_storage import signals_for_source
+from app.task8_storage import task8_set_parts
+from app.task20_definitions import task20_column
 
 EVALUATION_SCOPE = "task-agent:attention-eval:v1"
 EVALUATION_INSTRUCTION = """Evaluation instruction (prompt guidance only):
@@ -71,7 +88,16 @@ def scoped_runner(runner_type, codex):
     return AttentionEvaluationRunner(codex)
 
 
-def seed_case(store, case):
+def _signal_body(prepared_sources, signal):
+    if signal is None:
+        return None
+    if signal.id not in prepared_sources.facts:
+        prepared_sources.add(signal)
+    reading = prepared_sources.reading_for(signal)
+    return reading.body if isinstance(reading, AvailableSource) else None
+
+
+def seed_case(store, case, *, prepared_sources=None):
     """Seed stored facts with domain commands; no expected response enters state."""
     from app.task_models import WorkItem
     from app.task_semantic_service import (
@@ -91,11 +117,14 @@ def seed_case(store, case):
     anchors = {}
     projects = {}
     project_signals = []
+    prepared_sources = prepared_sources or PreparedSources(store.business_source_reader())
 
     def source_signal_id(source_ref, excerpt):
         from app.task_source_documents import source_contains_quote
         matches = [signal.id for signal in project_signals
-                   if signal.source_ref == source_ref and source_contains_quote(signal.evidence_text, excerpt)]
+                   if signal.source_ref == source_ref
+                   and isinstance(reading := prepared_sources.reading_for(signal), AvailableSource)
+                   and source_contains_quote(reading.body, excerpt)]
         if len(matches) != 1:
             raise ValueError("seed citation must identify exactly one original source version")
         return matches[0]
@@ -126,10 +155,13 @@ def seed_case(store, case):
             for source in project.get("evidence", []):
                 signal_id = store.create_business_task_signal(**asdict(SourceSignal(**source)))
                 ids.append(signal_id)
-                project_signals.append(store.get_business_task_signal(signal_id))
+                fact = store.get_business_task_signal(signal_id)
+                prepared_sources.add_current(fact, source["evidence_text"])
+                project_signals.append(fact)
             stored_context = ProjectContext.model_validate(resolve_context_citations(project["context"])) if project.get("context") is not None else None
             with store.business_task_transaction() as db:
-                ProjectContextService(store).apply(project_id=project_id, context=stored_context, signal_ids=tuple(ids), db=db)
+                ProjectContextService(store).apply(project_id=project_id, context=stored_context,
+                    signal_ids=tuple(ids), db=db, prepared_sources=prepared_sources)
     tasks = {}
     signals = {}
     for task in context.get("tasks", []):
@@ -142,6 +174,8 @@ def seed_case(store, case):
         )
         tasks[task["title"]] = result.task_id
         signals[task["title"]] = result.signal_id
+        fact = store.get_business_task_signal(result.signal_id)
+        prepared_sources.add_current(fact, task["signal"]["evidence_text"])
         if task.get("project_title"):
             resolution.confirm_anchor_match(
                 task_id=result.task_id,
@@ -203,21 +237,38 @@ def seed_case(store, case):
 def domain_snapshot(store) -> dict[str, tuple[str, ...]]:
     """Read exact persisted domain state; exclude Agent run/attempt bookkeeping."""
     with store._connect() as db:
-        tables = [row[0] for row in db.execute(
-            "select name from sqlite_master where type='table' and name glob 'business_*' order by name"
-        )]
-        return {
+        result = {
             table: tuple(sorted(json.dumps(dict(row), ensure_ascii=False, sort_keys=True)
                                 for row in db.execute(f"select * from {table}")))
-            for table in tables
+            for table in ("business", "provenance")
         }
+        relations = BUSINESS_ACTION_SQL | {
+            kind: projection for kind, projection in SYNC_ACTION_PROJECTIONS.items()
+            if kind.startswith("business_")
+        }
+        for table, projection in relations.items():
+            result[table] = tuple(sorted(
+                json.dumps(dict(row), ensure_ascii=False, sort_keys=True)
+                for row in db.execute(f"select * from ({projection})")
+            ))
+        for table, kind in (
+            ("business_tasks", "task"),
+            ("business_projects", "project"),
+            ("business_anchors", "anchor"),
+            ("business_project_context_revisions", "project_context_revision"),
+        ):
+            result[table] = tuple(sorted(
+                json.dumps(dict(row), ensure_ascii=False, sort_keys=True)
+                for row in db.execute(f"select * from ({BUSINESS_PROJECTIONS[kind]})")
+            ))
+        return result
 
 
 def comparison_capabilities(store):
     """Inspect actual schema without upgrading the runtime under comparison."""
     with store._connect() as db:
         tables = {row[0] for row in db.execute("select name from sqlite_master where type='table'")}
-    required = {"business_project_context_revisions", "business_project_evidence", "business_source_documents"}
+    required = {"business", "actions", "provenance"}
     return {"missing_tables": sorted(required - tables)}
 
 
@@ -232,19 +283,19 @@ def read_project_centered_expectations(store, before, expected):
         return ("project_centered_storage_missing",)
     failures: list[str] = []
     with store._connect() as db:
-        projects = [dict(row) for row in db.execute("select * from business_projects")]
-        tasks = [dict(row) for row in db.execute("select * from business_tasks")]
+        projects = [dict(row) for row in db.execute(f'select * from ({BUSINESS_PROJECTIONS["project"]})')]
+        tasks = [dict(row) for row in db.execute(f'select * from ({BUSINESS_PROJECTIONS["task"]})')]
         cards = [dict(row) for row in db.execute(
-            "select * from business_attention_items where status='active'"
+            f"select * from ({candidate_projection('attention_item')}) where status='active'"
         )]
         memberships = {
             (int(row["attention_item_id"]), int(row["task_id"]))
-            for row in db.execute("select attention_item_id,task_id from business_attention_tasks")
+            for row in db.execute(f"select attention_item_id,task_id from ({BUSINESS_ACTION_SQL['business_attention_tasks']})")
         }
         project_by_anchor = {int(row["canonical_anchor_id"]): row["title"] for row in projects}
         links: dict[int, set[str]] = {}
         for row in db.execute(
-            "select task_id,anchor_id from business_task_anchor_links "
+            f"select task_id,anchor_id from ({BUSINESS_ACTION_SQL['business_task_anchor_links']}) "
             "where status='confirmed' and active=1"
         ):
             title = project_by_anchor.get(int(row["anchor_id"]))
@@ -252,13 +303,13 @@ def read_project_centered_expectations(store, before, expected):
                 links.setdefault(int(row["task_id"]), set()).add(title)
         evidence_refs = {
             row["source_ref"] for row in db.execute(
-                "select distinct signal.source_ref from business_project_evidence proof "
-                "join business_task_signals signal on signal.id=proof.signal_id"
+                f"select distinct signal.source_ref from ({BUSINESS_ACTION_SQL['business_project_evidence']}) proof "
+                f"join ({BUSINESS_ACTION_SQL['business_task_signals']}) signal on signal.id=proof.signal_id"
             )
         }
         contexts = {
             row["id"]: db.execute(
-                "select context_json from business_project_context_revisions "
+                f'select context_json from ({BUSINESS_PROJECTIONS["project_context_revision"]}) '
                 "where project_id=? order by id desc limit 1", (row["id"],)
             ).fetchone()
             for row in projects
@@ -350,7 +401,7 @@ def read_project_centered_expectations(store, before, expected):
         failures.append("project_evidence_mismatch")
     with store._connect() as db:
         for source_ref, count in expected.get("minimum_signal_versions_for_ref", {}).items():
-            actual = db.execute("select count(distinct source_document_id) from business_task_signals where source_ref=?", (source_ref,)).fetchone()[0]
+            actual = db.execute(f"select count(distinct identity_key) from ({BUSINESS_ACTION_SQL['business_task_signals']}) where source_ref=?", (source_ref,)).fetchone()[0]
             if actual < count:
                 failures.append("signal_version_count_mismatch")
 
@@ -372,18 +423,19 @@ def read_project_centered_expectations(store, before, expected):
 
 def read_domain(store):
     with store._connect() as db:
-        return {
-            name: [
-                dict(row) for row in db.execute(f"select * from {table} order by id")
-            ]
-            for name, table in (
-                ("tasks", "business_tasks"),
-                ("projects", "business_projects"),
-                ("attention", "business_attention_items"),
-                ("attention_events", "business_attention_events"),
-                ("task_events", "business_task_events"),
+        result = {
+            name: [dict(row) for row in db.execute(f"select * from ({projection}) order by id")]
+            for name, projection in (
+                ("attention", candidate_projection("attention_item")),
+                ("attention_events", BUSINESS_ACTION_SQL["business_attention_events"]),
+                ("task_events", SYNC_ACTION_PROJECTIONS["business_task_events"]),
             )
         }
+        for name, kind in (("tasks", "task"), ("projects", "project")):
+            result[name] = [dict(row) for row in db.execute(
+                f"select * from ({BUSINESS_PROJECTIONS[kind]}) order by id"
+            )]
+        return result
 
 
 def evidence_contains(text, quote):
@@ -421,7 +473,7 @@ def _assessment_evidence_matches(actual, *, required, alternatives):
     )
 
 
-def readback(store, *, input_id, before, expected=None, project_before=None, source_payload=None):
+def readback(store, *, input_id, before, expected=None, project_before=None, source_payload=None, prepared_sources=None):
     from app.native_standalone import latest_task_ref, task_decision_value
 
     if source_payload is not None:
@@ -430,7 +482,7 @@ def readback(store, *, input_id, before, expected=None, project_before=None, sou
     after = read_domain(store)
     with store._connect() as db:
         run = db.execute(
-            f"select * from ({TASK_AGENT_RUN_SQL}) where summary_input_id=? order by id desc limit 1",
+            f"select * from ({TASK_LOGICAL_RUN_SQL}) where summary_input_id=? order by id desc limit 1",
             (input_id,),
         ).fetchone()
         native_ref = latest_task_ref(db, run["id"]) if run is not None else None
@@ -442,17 +494,17 @@ def readback(store, *, input_id, before, expected=None, project_before=None, sou
             )
         ]
         links = [
-            dict(row) for row in db.execute("select * from business_task_anchor_links")
+            dict(row) for row in db.execute(f"select * from ({BUSINESS_ACTION_SQL['business_task_anchor_links']})")
         ]
         project_evidence = {
             (row["canonical_anchor_id"], row["signal_id"])
             for row in db.execute(
-                "select p.canonical_anchor_id,e.signal_id from business_projects p "
-                "join business_project_evidence e on e.project_id=p.id"
+                f'select p.canonical_anchor_id,e.signal_id from ({BUSINESS_PROJECTIONS["project"]}) p '
+                f"join ({BUSINESS_ACTION_SQL['business_project_evidence']}) e on e.project_id=p.id"
             )
         } if not capabilities["missing_tables"] else set()
         active_anchors = {
-            row["id"] for row in db.execute("select id from business_anchors where active=1")
+            row["id"] for row in db.execute(f'select id from ({BUSINESS_PROJECTIONS["anchor"]}) where active=1')
         }
     project_by_anchor = {p["canonical_anchor_id"]: p for p in after["projects"]}
     task_by_id = {task["id"]: task for task in after["tasks"]}
@@ -462,8 +514,9 @@ def readback(store, *, input_id, before, expected=None, project_before=None, sou
         for card in active
         for quote in json.loads(card.get("assessment_json", "{}")).get("evidence", [])
     }
+    prepared_sources = prepared_sources or PreparedSources(store.business_source_reader())
     signals = {
-        signal_id: signal.model_dump(mode="json")
+        signal_id: signal
         for signal_id in cited_ids
         if (signal := store.get_business_task_signal(signal_id)) is not None
     }
@@ -486,13 +539,13 @@ def readback(store, *, input_id, before, expected=None, project_before=None, sou
             valid = (
                 valid
                 and bool(signal)
-                and source_is_observed(signal["source_type"])
-                and signal["source_ref"] == quote["source_ref"]
-                and evidence_contains(signal["evidence_text"], quote["source_excerpt"])
+                and source_is_observed(signal.source_type)
+                and signal.source_ref == quote["source_ref"]
+                and evidence_contains(_signal_body(prepared_sources, signal), quote["source_excerpt"])
             )
-            valid = valid and quote.get("source_time") == signal["source_time"]
+            valid = valid and quote.get("source_time") == signal.source_time
             valid = valid and quote.get("source_link") == json.loads(
-                signal["context_json"]
+                signal.context_json
             ).get("source_link", "")
             valid = valid and (card["anchor_id"], quote["signal_id"]) in project_evidence
         for task_id in members:
@@ -725,7 +778,7 @@ def readback(store, *, input_id, before, expected=None, project_before=None, sou
                             and source_is_observed(signal.source_type)
                             and signal.source_ref == evidence.get("source_ref")
                             and evidence_contains(
-                                signal.evidence_text, evidence.get("source_excerpt", "")
+                                _signal_body(prepared_sources, signal), evidence.get("source_excerpt", "")
                             )
                         )
                 receipt = receipt_by_index.get(index)
@@ -794,7 +847,7 @@ def readback(store, *, input_id, before, expected=None, project_before=None, sou
                                 and source_is_observed(signal.source_type)
                                 and signal.source_ref == evidence.get("source_ref")
                                 and evidence_contains(
-                                    signal.evidence_text,
+                                    _signal_body(prepared_sources, signal),
                                     evidence.get("source_excerpt", ""),
                                 )
                                 and signal.source_time
@@ -941,8 +994,24 @@ def _verified_replay_payload(item, source_payload):
     return payload
 
 
-def replay_input(store, runner, input_id, *, source_ref, expected=None, source_payload=None):
+def _prepare_replay_sources(store, prepared_sources, work_item):
+    """Reuse only this request's verified original for the matching source version."""
+    from app.task_agent import _project_source_signal
+
+    signal = _project_source_signal(work_item)
+    binding = SourceVersionBinding.from_signal(signal)
+    with store._connect() as db:
+        signal_ids = signals_for_source(db, source_type=binding.source_type,
+            source_ref=binding.source_ref, source_time=binding.source_time)
+    for signal_id in signal_ids:
+        fact = store.get_business_task_signal(signal_id)
+        if fact is not None and fact.source.identity_key == binding.identity_key:
+            prepared_sources.add_current(fact, signal.evidence_text)
+
+
+def replay_input(store, runner, input_id, *, source_ref, expected=None, source_payload=None, prepared_sources=None):
     from app.task_agent import process_work_item
+    from app.task_models import WorkItem
     from app.task_agent_session import TaskAgentSessionLease
     from app.work_summary_payload import (
         decode_work_summary_payload,
@@ -956,6 +1025,8 @@ def replay_input(store, runner, input_id, *, source_ref, expected=None, source_p
     if item.status not in ("pending", "done", "skipped", "failed"):
         raise ValueError("input is already processing")
     payload = _verified_replay_payload(item, source_payload)
+    original_work_item = WorkItem.model_validate_json(payload)
+    prepared_sources = prepared_sources or PreparedSources(store.business_source_reader())
     lease = TaskAgentSessionLease.try_acquire(store)
     if lease is None:
         raise RuntimeError("database-copy Task Agent session lease is occupied")
@@ -976,18 +1047,24 @@ def replay_input(store, runner, input_id, *, source_ref, expected=None, source_p
             ):
                 raise ValueError("input changed before exact replay")
             raw_payload = stored[0]
+            kind = "work_summary_inputs"
+            parts = task8_set_parts(kind, {
+                "status": "processing", "error": "", "available_at": "",
+                "payload_json": encode_work_summary_payload(payload), "body_compacted": 0,
+            }, update_sql={"updated_at": "current_timestamp"})
+            predicates = " and ".join(
+                task20_column(kind, field) + "=?" for field in (
+                    "source_type", "source_ref", "status", "body_compacted",
+                    "body_sha256", "body_bytes", "payload_json",
+                )
+            )
             updated = db.execute(
-                "update tasks set status='processing', error='', available_at='', "
-                "payload_json=?, body_compacted=0, updated_at=current_timestamp "
-                f"where record_type='work_summary_inputs' and id={task_id_expression('work_summary_inputs', '?')} "
-                "and source_type=? and source_ref=? and status=? "
-                "and body_compacted=? and body_sha256=? and body_bytes=? and payload_json=?",
-                (
-                    encode_work_summary_payload(payload), input_id,
-                    item.source_type.value, item.source_ref, item.status.value,
-                    item.body_compacted, item.body_sha256, item.body_bytes,
-                    raw_payload,
-                ),
+                f"update tasks set {parts.sql} "
+                "where record_type='work_summary_inputs' and cast(legacy_key as integer)=? and "
+                + predicates,
+                (*parts.parameters, input_id,
+                 item.source_type.value, item.source_ref, item.status.value,
+                 item.body_compacted, item.body_sha256, item.body_bytes, raw_payload),
             ).rowcount
             if updated != 1:
                 raise ValueError("input changed before exact replay")
@@ -1001,9 +1078,11 @@ def replay_input(store, runner, input_id, *, source_ref, expected=None, source_p
         except Exception as exc:
             # Failed model/schema turns are comparison evidence, never normalized.
             error = f"{type(exc).__name__}: {exc}"
+    _prepare_replay_sources(store, prepared_sources, original_work_item)
     result = readback(
         store, input_id=input_id, before=before, expected=expected,
         project_before=project_before, source_payload=payload,
+        prepared_sources=prepared_sources,
     )
     result["context_deliveries"] = getattr(runner, "context_deliveries", [])[delivery_start:]
     if error is not None:
@@ -1020,6 +1099,7 @@ def replay_case(store, runner, case):
     inputs = case["source_inputs"] if "source_inputs" in case else [case["work_item"]]
     if not inputs or inputs[-1] != case["work_item"]:
         raise ValueError("source_inputs must end with the fixed work_item")
+    prepared_sources = PreparedSources(store.business_source_reader())
     initial = read_domain(store)
     initial_project = domain_snapshot(store)
     steps = []
@@ -1035,25 +1115,31 @@ def replay_case(store, runner, case):
             prior_id, prior_payload = prior
             encoded = key.encode("utf-8")
             with store._connect() as db:
+                kind = "work_summary_inputs"
+                parts = task8_set_parts(kind, {
+                    "status": "pending", "payload_json": key, "body_compacted": 0,
+                    "body_sha256": hashlib.sha256(encoded).hexdigest(),
+                    "body_bytes": len(encoded), "source_created_at": str(item.source.created_at),
+                    "error": "", "available_at": "",
+                })
                 changed = db.execute(
-                    "update tasks set status='pending', payload_json=?, "
-                    "body_compacted=0, body_sha256=?, body_bytes=?, source_created_at=?, "
-                    "error='', available_at='' "
-                    f"where record_type='work_summary_inputs' and id={task_id_expression('work_summary_inputs', '?')} "
-                    "and status in ('done','skipped') "
-                    "and source_type=? and source_ref=? and body_sha256=?",
-                    (key, hashlib.sha256(encoded).hexdigest(), len(encoded),
-                     str(item.source.created_at), prior_id, *source_key,
+                    f"update tasks set {parts.sql} "
+                    "where record_type='work_summary_inputs' and cast(legacy_key as integer)=? "
+                    f"and {task20_column(kind, 'status')} in ('done','skipped') "
+                    f"and {task20_column(kind, 'source_type')}=? "
+                    f"and {task20_column(kind, 'source_ref')}=? "
+                    f"and {task20_column(kind, 'body_sha256')}=?",
+                    (*parts.parameters, prior_id, *source_key,
                      hashlib.sha256(prior_payload.encode("utf-8")).hexdigest()),
                 ).rowcount
                 if changed != 1:
                     raise ValueError("fixed source version changed before next replay turn")
-        input_id = seed_case(store, {**case, "work_item": raw}) if index == 0 else store.enqueue_work_summary_input(
+        input_id = seed_case(store, {**case, "work_item": raw}, prepared_sources=prepared_sources) if index == 0 else store.enqueue_work_summary_input(
             item.source.type.value, item.source.ref, item.model_dump_json()
         )
         step = replay_input(
             store, runner, input_id, source_ref=item.source.ref,
-            source_payload=item.model_dump_json(),
+            source_payload=item.model_dump_json(), prepared_sources=prepared_sources,
         )
         step.update(source_ref=item.source.ref, source_time=item.source.created_at)
         if key in seen and case["expected"].get("repeat_domain_unchanged") and domain_snapshot(store) != before_repeat:
@@ -1068,6 +1154,7 @@ def replay_case(store, runner, case):
     result = readback(
         store, input_id=input_id, before=initial, expected=expected,
         project_before=initial_project, source_payload=item.model_dump_json(),
+        prepared_sources=prepared_sources,
     )
     result["source_steps"] = steps
     if len(steps) != len(inputs) or any(not step["passed"] for step in steps):
@@ -1096,7 +1183,6 @@ def main():
     parser.add_argument("--source-payload", type=Path,
                         help="exact original UTF-8 WorkItem payload for a compacted input")
     args = parser.parse_args()
-    sys.path.insert(0, str(args.code_root.resolve()))
     from app.config import load_env_file, workspace_path
 
     load_env_file()

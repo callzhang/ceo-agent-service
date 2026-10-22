@@ -1,0 +1,602 @@
+{
+  "$defs": {
+    "AgentAudit": {
+      "additionalProperties": false,
+      "properties": {
+        "summary": {
+          "minLength": 1,
+          "title": "Summary",
+          "type": "string"
+        },
+        "documents": {
+          "items": {
+            "$ref": "#/$defs/AgentAuditDocument"
+          },
+          "title": "Documents",
+          "type": "array"
+        },
+        "confidence": {
+          "maximum": 1,
+          "minimum": 0,
+          "title": "Confidence",
+          "type": "number"
+        }
+      },
+      "required": [
+        "summary",
+        "documents",
+        "confidence"
+      ],
+      "title": "AgentAudit",
+      "type": "object"
+    },
+    "AgentAuditDocument": {
+      "additionalProperties": false,
+      "properties": {
+        "title": {
+          "title": "Title",
+          "type": "string"
+        },
+        "url": {
+          "title": "Url",
+          "type": "string"
+        },
+        "relevance": {
+          "title": "Relevance",
+          "type": "string"
+        }
+      },
+      "required": [
+        "title",
+        "url",
+        "relevance"
+      ],
+      "title": "AgentAuditDocument",
+      "type": "object"
+    },
+    "AgentKind": {
+      "enum": [
+        "reply",
+        "oa_approval",
+        "okr_review",
+        "no_action",
+        "error"
+      ],
+      "title": "AgentKind",
+      "type": "string"
+    },
+    "AgentSensitivityKind": {
+      "enum": [
+        "general",
+        "internal_personnel",
+        "external_candidate"
+      ],
+      "title": "AgentSensitivityKind",
+      "type": "string"
+    },
+    "DwsMailReplyAction": {
+      "additionalProperties": false,
+      "properties": {
+        "type": {
+          "const": "dws_mail_reply",
+          "title": "Type",
+          "type": "string"
+        },
+        "mailbox": {
+          "minLength": 1,
+          "title": "Mailbox",
+          "type": "string"
+        },
+        "message_id": {
+          "minLength": 1,
+          "title": "Message Id",
+          "type": "string"
+        },
+        "subject": {
+          "minLength": 1,
+          "title": "Subject",
+          "type": "string"
+        },
+        "content": {
+          "minLength": 1,
+          "title": "Content",
+          "type": "string"
+        }
+      },
+      "required": [
+        "type",
+        "mailbox",
+        "message_id",
+        "subject",
+        "content"
+      ],
+      "title": "DwsMailReplyAction",
+      "type": "object"
+    },
+    "DwsMarkdownDocumentReplyAction": {
+      "additionalProperties": false,
+      "properties": {
+        "type": {
+          "const": "dws_markdown_document_reply",
+          "title": "Type",
+          "type": "string"
+        },
+        "reply_text_ref": {
+          "const": "user_response.text",
+          "title": "Reply Text Ref",
+          "type": "string"
+        },
+        "title": {
+          "default": "",
+          "title": "Title",
+          "type": "string"
+        }
+      },
+      "required": [
+        "type",
+        "reply_text_ref",
+        "title"
+      ],
+      "title": "DwsMarkdownDocumentReplyAction",
+      "type": "object"
+    },
+    "DwsMessageReactionAction": {
+      "additionalProperties": false,
+      "properties": {
+        "type": {
+          "const": "dws_message_reaction",
+          "title": "Type",
+          "type": "string"
+        },
+        "reaction_type": {
+          "default": "emoji",
+          "enum": [
+            "emoji",
+            "text_emotion"
+          ],
+          "title": "Reaction Type",
+          "type": "string"
+        },
+        "emoji": {
+          "default": "",
+          "title": "Emoji",
+          "type": "string"
+        },
+        "text": {
+          "default": "",
+          "title": "Text",
+          "type": "string"
+        },
+        "emotion_id": {
+          "default": "",
+          "title": "Emotion Id",
+          "type": "string"
+        },
+        "emotion_name": {
+          "default": "",
+          "title": "Emotion Name",
+          "type": "string"
+        },
+        "background_id": {
+          "default": "",
+          "title": "Background Id",
+          "type": "string"
+        }
+      },
+      "required": [
+        "type",
+        "reaction_type",
+        "emoji",
+        "text",
+        "emotion_id",
+        "emotion_name",
+        "background_id"
+      ],
+      "title": "DwsMessageReactionAction",
+      "type": "object"
+    },
+    "DwsOaApprovalAction": {
+      "additionalProperties": false,
+      "properties": {
+        "type": {
+          "const": "dws_oa_approval_action",
+          "title": "Type",
+          "type": "string"
+        },
+        "process_instance_id": {
+          "title": "Process Instance Id",
+          "type": "string"
+        },
+        "task_id": {
+          "title": "Task Id",
+          "type": "string"
+        },
+        "action": {
+          "enum": [
+            "通过",
+            "拒绝"
+          ],
+          "title": "Action",
+          "type": "string"
+        },
+        "remark": {
+          "minLength": 1,
+          "title": "Remark",
+          "type": "string"
+        }
+      },
+      "required": [
+        "type",
+        "process_instance_id",
+        "task_id",
+        "action",
+        "remark"
+      ],
+      "title": "DwsOaApprovalAction",
+      "type": "object"
+    },
+    "DwsOaApprovalCommentAction": {
+      "additionalProperties": false,
+      "properties": {
+        "type": {
+          "const": "dws_oa_approval_comment",
+          "title": "Type",
+          "type": "string"
+        },
+        "process_instance_id": {
+          "title": "Process Instance Id",
+          "type": "string"
+        },
+        "text": {
+          "minLength": 1,
+          "title": "Text",
+          "type": "string"
+        }
+      },
+      "required": [
+        "type",
+        "process_instance_id",
+        "text"
+      ],
+      "title": "DwsOaApprovalCommentAction",
+      "type": "object"
+    },
+    "PersistOkrReviewAction": {
+      "additionalProperties": false,
+      "properties": {
+        "type": {
+          "const": "persist_okr_review",
+          "title": "Type",
+          "type": "string"
+        },
+        "request_id": {
+          "title": "Request Id",
+          "type": "integer"
+        }
+      },
+      "required": [
+        "type",
+        "request_id"
+      ],
+      "title": "PersistOkrReviewAction",
+      "type": "object"
+    },
+    "QueueOkrReviewAction": {
+      "additionalProperties": false,
+      "properties": {
+        "type": {
+          "const": "queue_okr_review",
+          "title": "Type",
+          "type": "string"
+        }
+      },
+      "required": [
+        "type"
+      ],
+      "title": "QueueOkrReviewAction",
+      "type": "object"
+    },
+    "SendDingTalkReplyAction": {
+      "additionalProperties": false,
+      "properties": {
+        "type": {
+          "const": "send_dingtalk_reply",
+          "title": "Type",
+          "type": "string"
+        },
+        "reply_text_ref": {
+          "const": "user_response.text",
+          "title": "Reply Text Ref",
+          "type": "string"
+        }
+      },
+      "required": [
+        "type",
+        "reply_text_ref"
+      ],
+      "title": "SendDingTalkReplyAction",
+      "type": "object"
+    },
+    "UserResponse": {
+      "additionalProperties": false,
+      "properties": {
+        "mode": {
+          "$ref": "#/$defs/UserResponseMode"
+        },
+        "text": {
+          "title": "Text",
+          "type": "string"
+        },
+        "sensitivity_kind": {
+          "$ref": "#/$defs/AgentSensitivityKind"
+        }
+      },
+      "required": [
+        "mode",
+        "text",
+        "sensitivity_kind"
+      ],
+      "title": "UserResponse",
+      "type": "object"
+    },
+    "UserResponseMode": {
+      "enum": [
+        "send_reply",
+        "ask_clarifying_question",
+        "handoff_to_human",
+        "no_reply"
+      ],
+      "title": "UserResponseMode",
+      "type": "string"
+    },
+    "OkrEvidence": {
+      "properties": {
+        "source": {
+          "minLength": 1,
+          "title": "Source",
+          "type": "string"
+        },
+        "summary": {
+          "minLength": 1,
+          "title": "Summary",
+          "type": "string"
+        }
+      },
+      "required": [
+        "source",
+        "summary"
+      ],
+      "title": "OkrEvidence",
+      "type": "object",
+      "additionalProperties": false
+    },
+    "OkrReviewItem": {
+      "properties": {
+        "objective_title": {
+          "title": "Objective Title",
+          "type": "string"
+        },
+        "objective_weight": {
+          "maximum": 1,
+          "minimum": 0,
+          "title": "Objective Weight",
+          "type": "number"
+        },
+        "kr_title": {
+          "title": "Kr Title",
+          "type": "string"
+        },
+        "kr_weight": {
+          "maximum": 1,
+          "minimum": 0,
+          "title": "Kr Weight",
+          "type": "number"
+        },
+        "self_progress": {
+          "title": "Self Progress",
+          "type": "string"
+        },
+        "kr_progress_update": {
+          "title": "Kr Progress Update",
+          "type": "string"
+        },
+        "claim_text": {
+          "title": "Claim Text",
+          "type": "string"
+        },
+        "claim_completion_time": {
+          "title": "Claim Completion Time",
+          "type": "string"
+        },
+        "deadline": {
+          "title": "Deadline",
+          "type": "string"
+        },
+        "claim_base_score": {
+          "maximum": 100,
+          "minimum": 0,
+          "title": "Claim Base Score",
+          "type": "number"
+        },
+        "claim_discount_factor": {
+          "maximum": 1.0,
+          "minimum": 0.3,
+          "title": "Claim Discount Factor",
+          "type": "number"
+        },
+        "claim_discount_reason": {
+          "minLength": 1,
+          "title": "Claim Discount Reason",
+          "type": "string"
+        },
+        "claim_score": {
+          "maximum": 100,
+          "minimum": 0,
+          "title": "Claim Score",
+          "type": "number"
+        },
+        "verified_completion_time": {
+          "title": "Verified Completion Time",
+          "type": "string"
+        },
+        "verified_base_score": {
+          "maximum": 100,
+          "minimum": 0,
+          "title": "Verified Base Score",
+          "type": "number"
+        },
+        "verified_discount_factor": {
+          "maximum": 1.0,
+          "minimum": 0.3,
+          "title": "Verified Discount Factor",
+          "type": "number"
+        },
+        "verified_discount_reason": {
+          "minLength": 1,
+          "title": "Verified Discount Reason",
+          "type": "string"
+        },
+        "verified_score": {
+          "maximum": 100,
+          "minimum": 0,
+          "title": "Verified Score",
+          "type": "number"
+        },
+        "evidence_used": {
+          "items": {
+            "$ref": "#/$defs/OkrEvidence"
+          },
+          "title": "Evidence Used",
+          "type": "array"
+        },
+        "evidence_gap": {
+          "title": "Evidence Gap",
+          "type": "string"
+        },
+        "review_comment": {
+          "title": "Review Comment",
+          "type": "string"
+        },
+        "suggested_follow_up": {
+          "title": "Suggested Follow Up",
+          "type": "string"
+        }
+      },
+      "required": [
+        "objective_title",
+        "objective_weight",
+        "kr_title",
+        "kr_weight",
+        "self_progress",
+        "kr_progress_update",
+        "claim_text",
+        "claim_completion_time",
+        "deadline",
+        "claim_base_score",
+        "claim_discount_factor",
+        "claim_discount_reason",
+        "claim_score",
+        "verified_completion_time",
+        "verified_base_score",
+        "verified_discount_factor",
+        "verified_discount_reason",
+        "verified_score",
+        "evidence_used",
+        "evidence_gap",
+        "review_comment",
+        "suggested_follow_up"
+      ],
+      "title": "OkrReviewItem",
+      "type": "object",
+      "additionalProperties": false
+    }
+  },
+  "additionalProperties": false,
+  "properties": {
+    "kind": {
+      "$ref": "#/$defs/AgentKind"
+    },
+    "user_response": {
+      "$ref": "#/$defs/UserResponse"
+    },
+    "system_actions": {
+      "items": {
+        "anyOf": [
+          {
+            "$ref": "#/$defs/SendDingTalkReplyAction"
+          },
+          {
+            "$ref": "#/$defs/DwsMarkdownDocumentReplyAction"
+          },
+          {
+            "$ref": "#/$defs/DwsOaApprovalAction"
+          },
+          {
+            "$ref": "#/$defs/DwsOaApprovalCommentAction"
+          },
+          {
+            "$ref": "#/$defs/DwsMailReplyAction"
+          },
+          {
+            "$ref": "#/$defs/PersistOkrReviewAction"
+          },
+          {
+            "$ref": "#/$defs/QueueOkrReviewAction"
+          },
+          {
+            "$ref": "#/$defs/DwsMessageReactionAction"
+          }
+        ]
+      },
+      "title": "System Actions",
+      "type": "array"
+    },
+    "domain_payload": {
+      "properties": {
+        "person_name": {
+          "title": "Person Name",
+          "type": "string"
+        },
+        "period_label": {
+          "title": "Period Label",
+          "type": "string"
+        },
+        "summary": {
+          "minLength": 1,
+          "title": "Summary",
+          "type": "string"
+        },
+        "items": {
+          "items": {
+            "$ref": "#/$defs/OkrReviewItem"
+          },
+          "minItems": 1,
+          "title": "Items",
+          "type": "array"
+        }
+      },
+      "required": [
+        "person_name",
+        "period_label",
+        "summary",
+        "items"
+      ],
+      "title": "OkrReviewPayload",
+      "type": "object",
+      "additionalProperties": false
+    },
+    "audit": {
+      "$ref": "#/$defs/AgentAudit"
+    }
+  },
+  "required": [
+    "kind",
+    "user_response",
+    "system_actions",
+    "domain_payload",
+    "audit"
+  ],
+  "title": "CEO Agent Unified Envelope",
+  "type": "object",
+  "$schema": "https://json-schema.org/draft/2020-12/schema"
+}

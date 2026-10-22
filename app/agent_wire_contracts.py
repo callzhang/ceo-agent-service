@@ -1,3 +1,4 @@
+from copy import deepcopy
 from typing import Literal
 
 from pydantic import (
@@ -16,13 +17,13 @@ from app.agent_contracts import (
     CandidateFieldAssertion,
     ConsumerAgentResult,
     DINGTALK_MESSAGE_IDENTIFIER_FIELDS,
-    ConsumerProposal,
     DecisionBasis,
     DecisionOption,
     DurableMemory,
     RiskLevel,
     _consumer_result_json_schema,
 )
+from app.consumer_purpose import ConsumerPurposeOutput, _purpose_schema
 from app.agent_reported_error import agent_error_payload
 from app.agent_result import ResultParseError, parse_typed_agent_result
 
@@ -55,6 +56,9 @@ class _WireBase(BaseModel):
 
 
 class _ConsumerWireBase(_WireBase):
+    error_code: str | None = None
+    error_retryable: bool = False
+    error_authorization_required: bool = False
     # Required so every turn has to consider it; an empty list is an answer.
     # The array itself carries no prompt otherwise -- only its item schema
     # (DurableMemory) describes what a well-formed entry looks like, which
@@ -79,16 +83,28 @@ class _ConsumerWireBase(_WireBase):
     )
 
 
-class _ConsumerWire(_ConsumerWireBase):
-    model_config = ConfigDict(
-        extra="forbid", strict=True,
-        json_schema_extra=_consumer_result_json_schema,
-    )
-    outcome: Literal["proposal", "needs_human", "no_action", "failed"]
-    proposal: ConsumerProposal | None
+class _ConsumerWire(_ConsumerWireBase, ConsumerPurposeOutput):
+    @model_validator(mode="after")
+    def validate_retry_error_fields(self):
+        if self.action == "retry" and (
+            self.error_code not in (None, "") or self.error_retryable or self.error_authorization_required
+        ):
+            raise ValueError("purpose retry is a waiting action; technical error fields must be empty")
+        return self
+
+    @property
+    def outcome(self):
+        if self.action in {"retry", "needs_human", "no_action", "failed"}:
+            return self.action
+        return "proposal"
+
+    @property
+    def proposal(self):
+        return self.to_proposal()
+
     decision_options: list[DecisionOption] = Field(default_factory=list, max_length=4)
     requested_input: str | None = None
-    needs_human_reason: str | None = None
+    needs_human_reason: str | None = Field(default=None, max_length=100)
     decision_basis: DecisionBasis | None = None
     stage_index: int = Field(default=0, ge=0)
     predecessor_review_id: int | None = Field(default=None, ge=1)
@@ -102,6 +118,34 @@ class ConsumerAgentWireResult(RootModel[_ConsumerWire]):
     def validate_result_conversion(self) -> "ConsumerAgentWireResult":
         self.to_result()
         return self
+
+    @classmethod
+    def model_json_schema(cls, **kwargs):
+        schema = super().model_json_schema(**kwargs)
+        wire = schema["$defs"][cls.model_fields["root"].annotation.__name__]
+        _purpose_schema(wire, cls.model_fields["root"].annotation)
+        constraints = {}
+        _consumer_result_json_schema(constraints)
+        branches = constraints["oneOf"]
+        for branch in branches:
+            properties = branch["properties"]
+            outcome = properties.pop("outcome")
+            properties.pop("proposal", None)
+            if outcome.get("const") == "proposal":
+                outcome = {"enum": [name for name in wire["properties"]["action"]["enum"]
+                    if name not in {"retry", "no_action", "failed", "needs_human"}]}
+            properties["action"] = outcome
+        wire["allOf"].append({"oneOf": branches})
+        wire["allOf"].append({
+            "if": {"properties": {"action": {"const": "retry"}}, "required": ["action"]},
+            "then": {"properties": {
+                "error_code": {"enum": [None, ""]},
+                "error_retryable": {"const": False},
+                "error_authorization_required": {"const": False},
+            }},
+        })
+        schema["$defs"].update(wire.pop("$defs", {}))
+        return schema
 
     def to_result(self) -> ConsumerAgentResult:
         payload = self.root
@@ -122,6 +166,8 @@ class ConsumerAgentWireResult(RootModel[_ConsumerWire]):
             "information_completeness": payload.information_completeness,
             "error": payload.error_payload(),
             "durable_memories": tuple(payload.durable_memories),
+            "purpose_output": {key: getattr(payload, key) for key in
+                ("action", "reason", "target", "payload", "evidence_refs") } | {"purpose": payload.purpose},
         })
         plans = (result.proposal, *(option.plan for option in result.decision_options))
         for plan in plans:
@@ -137,6 +183,41 @@ class ConsumerAgentWireResult(RootModel[_ConsumerWire]):
         return result
 
 
+class _OAConsumerWire(_ConsumerWire):
+    purpose = "oa"
+
+
+class OAConsumerAgentWireResult(ConsumerAgentWireResult):
+    root: _OAConsumerWire
+
+
+def consumer_wire_model(purpose="general"):
+    if purpose == "oa":
+        return OAConsumerAgentWireResult
+    if purpose == "general":
+        return ConsumerAgentWireResult
+    raise ValueError(f"unknown Consumer purpose: {purpose}")
+
+
+def claude_consumer_output_schema(purpose="general") -> dict[str, object]:
+    """Native Claude subset; the same purpose parser enforces every branch."""
+    schema = deepcopy(consumer_wire_model(purpose).model_json_schema())
+    definitions = schema.pop("$defs")
+    wire = definitions[schema.pop("$ref").rsplit("/", 1)[1]]
+    native = {**wire, "$defs": definitions}
+    def project(value):
+        if isinstance(value, dict):
+            for key in ("oneOf", "allOf", "if", "then", "else"):
+                value.pop(key, None)
+            for child in value.values():
+                project(child)
+        elif isinstance(value, list):
+            for child in value:
+                project(child)
+    project(native)
+    return native
+
+
 class _AuditFeedbackWire(AuditFeedback):
     observation_basis: Literal["business", "candidate_fields"] = Field(
         description=AuditFeedback.model_fields["observation_basis"].description)
@@ -147,7 +228,7 @@ class _AuditFeedbackWire(AuditFeedback):
 class _AuditWire(_WireBase):
     outcome: Literal["approve", "return", "reject", "failed"]
     evidence_refs: list[str] = Field(default_factory=list)
-    feedback: _AuditFeedbackWire | None
+    feedback: _AuditFeedbackWire | None = None
 
 
 class AuditAgentWireResult(RootModel[_AuditWire]):
@@ -175,9 +256,9 @@ class AuditAgentWireResult(RootModel[_AuditWire]):
         })
 
 
-def parse_consumer_agent_wire_result(raw: str) -> ConsumerAgentResult:
+def parse_consumer_agent_wire_result(raw: str, *, purpose="general") -> ConsumerAgentResult:
     try:
-        return parse_typed_agent_result(raw, ConsumerAgentWireResult).to_result()
+        return parse_typed_agent_result(raw, consumer_wire_model(purpose)).to_result()
     except ResultParseError:
         raise
     except (ValidationError, ValueError) as exc:

@@ -1,0 +1,141 @@
+{
+  "live": {
+    "schema_current": true,
+    "store_version": "2026-10-19.12",
+    "email_version": 53,
+    "tables": [
+      "actions",
+      "business",
+      "configs",
+      "email_schema_migrations",
+      "emails",
+      "provenance",
+      "provider_state",
+      "runs",
+      "schedules",
+      "state",
+      "tasks"
+    ],
+    "foreign_key_findings": [
+      [
+        "runs",
+        190042,
+        "tasks",
+        1
+      ]
+    ],
+    "bytes": 487784448,
+    "tasks": {
+      "reply_tasks": {
+        "counts": {
+          "failed": 7,
+          "needs_human": 0,
+          "processing": 1,
+          "running": 0
+        },
+        "new_failed": []
+      },
+      "work_summary_inputs": {
+        "counts": {
+          "failed": 0,
+          "needs_human": 0,
+          "processing": 0,
+          "running": 0
+        },
+        "new_failed": []
+      },
+      "meeting_alignment_jobs": {
+        "counts": {
+          "failed": 2,
+          "needs_human": 0,
+          "processing": 0,
+          "running": 0
+        },
+        "new_failed": []
+      },
+      "okr_review_requests": {
+        "counts": {
+          "failed": 0,
+          "needs_human": 0,
+          "processing": 0,
+          "running": 0
+        },
+        "new_failed": []
+      },
+      "email_agent_classification_tasks": {
+        "counts": {
+          "failed": 0,
+          "needs_human": 0,
+          "processing": 0,
+          "running": 0
+        },
+        "new_failed": []
+      },
+      "workbench_turns": {
+        "counts": {
+          "failed": 5,
+          "needs_human": 0,
+          "processing": 0,
+          "running": 0
+        },
+        "new_failed": []
+      }
+    },
+    "deploy": {
+      "operation_id": "deploy-e848b330-a0a2-43fb-82a5-e0313260f3c0",
+      "status": "succeeded",
+      "target_commit": "18d7d5f38ba3b17dc938cbcada27d8b54d38ca64",
+      "original_commit": "366dd8241d295c6d5c1188e94910abcf3db0d206",
+      "backup_path": "/Users/derek/Library/Application Support/ceo-agent-service/backups/auto-reply-before-upgrade-deploy-e848b330-a0a2-43fb-82a5-e0313260f3c0.sqlite3",
+      "error": "",
+      "updated_at": "2026-10-21T10:09:42.890655+00:00"
+    },
+    "pid": [
+      "pid = 82482"
+    ],
+    "installed_commit": "18d7d5f38ba3b17dc938cbcada27d8b54d38ca64",
+    "api": {
+      "/healthz": {
+        "http": 200,
+        "items": 0,
+        "counts": null,
+        "value": {
+          "ok": true,
+          "status": "ok"
+        }
+      },
+      "/api/console/dashboard/queues": {
+        "http": 200,
+        "items": 4,
+        "counts": {
+          "active": 4,
+          "queued": 19
+        }
+      },
+      "/api/console/attention": {
+        "http": 200,
+        "items": 5,
+        "counts": null
+      },
+      "/api/console/history?page_size=5&include_chart=false": {
+        "http": 200,
+        "items": 5,
+        "counts": null
+      }
+    }
+  },
+  "latest_backup": {
+    "backups": [
+      {
+        "path": "/Users/derek/Library/Application Support/ceo-agent-service/backups/auto-reply-2026-10-21.sqlite3",
+        "bytes": 487784448,
+        "complete": true,
+        "integrity": "ok",
+        "store_version": "2026-10-19.12",
+        "email_version": 53,
+        "sha256": "3c73db6782511ffab4463e29959ba1b3091dc26dbb7d399a039b8b7c84c5ad78"
+      }
+    ],
+    "stages": []
+  }
+}

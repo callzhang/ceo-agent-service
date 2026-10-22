@@ -1,9 +1,12 @@
 """Read runtime-owned transcripts; live stream payloads never enter SQLite."""
 
+import hashlib
 import json
 import threading
 import time
 from collections import OrderedDict
+from collections.abc import Mapping
+from itertools import islice
 from pathlib import Path
 
 from app.codex_history import (
@@ -11,7 +14,8 @@ from app.codex_history import (
     _mcp_tool_result_from_event_msg, _content_text,
 )
 from app.codex_runner import _codex_home
-from app.run_storage import AGENT_RUN_SQL, RUNTIME_ATTEMPT_SQL
+from app.logical_run_storage import AGENT_RUN_SQL
+from app.run_storage import RUNTIME_ATTEMPT_SQL
 
 
 # Stream payloads exist only for active invocations; terminal reads use native
@@ -227,6 +231,157 @@ def claude_session_path(session_id: str, *, refresh: bool = False) -> Path | Non
     return path if path is not None and path.is_file() else None
 
 
+class NativeSourceMissing(LookupError):
+    """The recorded native file or line is no longer available."""
+
+
+class NativeSourceVersionChanged(LookupError):
+    """The recorded native line or decoded body no longer matches its check."""
+
+
+def locate_native_source_body(
+    body: str, *, runtime_kind: str, session_uuid: str,
+    start_line: int, end_line: int,
+    literal_encoding_mode: str = "json_string_literal_utf8",
+) -> dict[str, object]:
+    """Locate the existing prompt's full source literal within one native turn.
+
+    The caller supplies actual runtime/session/turn bounds, never an archive
+    destination. source_bundle uses JSON-string serialization; directly injected
+    prompt text requires explicit plain_utf8 selection. Missing content is
+    explicit; no transcript or source copy is made.
+    """
+    if not isinstance(body, str):
+        raise ValueError("native source body must be text")
+    if literal_encoding_mode not in ("json_string_literal_utf8", "plain_utf8"):
+        raise ValueError("unsupported native source literal encoding")
+    if runtime_kind not in ("codex_cli", "claude_cli"):
+        raise ValueError("unsupported native source runtime")
+    if not isinstance(session_uuid, str) or not session_uuid:
+        raise ValueError("native source session UUID is required")
+    if type(start_line) is not int or type(end_line) is not int or start_line < 0 or end_line <= start_line:
+        raise ValueError("invalid native source turn bounds")
+    path = (find_codex_session_path(session_uuid) if runtime_kind == "codex_cli"
+            else claude_session_path(session_uuid))
+    if path is None:
+        raise NativeSourceMissing("native source file unavailable")
+    literal = (json.dumps(body, ensure_ascii=False)
+               if literal_encoding_mode == "json_string_literal_utf8" else body)
+    encoded = body.encode("utf-8")
+
+    def leaves(value, prefix):
+        if isinstance(value, str):
+            yield prefix, value
+        elif isinstance(value, dict):
+            for key, item in value.items():
+                yield from leaves(item, [*prefix, key])
+        elif isinstance(value, list):
+            for index, item in enumerate(value):
+                yield from leaves(item, [*prefix, index])
+
+    with path.open("rb") as stream:
+        for index, raw in enumerate(islice(stream, start_line, end_line), start_line):
+            record = json.loads(raw)
+            for leaf_path, leaf in leaves(record, []):
+                start = leaf.find(literal)
+                if start < 0 or not leaf_path:
+                    continue
+                return {
+                    "runtime_kind": runtime_kind, "session_uuid": session_uuid,
+                    "path": str(path), "line_index_zero_based": index,
+                    "line_number_one_based": index + 1,
+                    "raw_line_sha256": hashlib.sha256(raw).hexdigest(),
+                    "raw_line_bytes": len(raw), "leaf_path": leaf_path,
+                    "substring_start_character_zero_based": start,
+                    "substring_end_character_exclusive": start + len(literal),
+                    "literal_encoding_mode": literal_encoding_mode,
+                    "decoded_utf8_sha256": hashlib.sha256(encoded).hexdigest(),
+                    "decoded_utf8_bytes": len(encoded),
+                }
+    raise NativeSourceMissing("full source literal unavailable in native turn")
+
+
+def read_native_source_body(
+    native_provenance: Mapping[str, object], *,
+    literal_encoding_mode: str = "json_string_literal_utf8",
+) -> str:
+    """Read one exact source body from its recorded CLI-owned JSONL version."""
+    if not isinstance(native_provenance, Mapping):
+        raise ValueError("native source provenance must be a mapping")
+    runtime = native_provenance.get("runtime_kind")
+    session_id = native_provenance.get("session_uuid")
+    if runtime not in ("codex_cli", "claude_cli"):
+        raise ValueError("unsupported native source runtime")
+    if not isinstance(session_id, str) or not session_id:
+        raise ValueError("native source session UUID is required")
+    if (literal_encoding_mode not in ("json_string_literal_utf8", "plain_utf8")
+            or native_provenance.get("literal_encoding_mode") != literal_encoding_mode):
+        raise ValueError("unsupported native source literal encoding")
+    for field in (
+        "line_index_zero_based",
+        "substring_start_character_zero_based",
+        "substring_end_character_exclusive",
+        "decoded_utf8_bytes",
+    ):
+        value = native_provenance.get(field)
+        if type(value) is not int or value < 0:
+            raise ValueError(f"invalid native source {field}")
+    for field in ("raw_line_sha256", "decoded_utf8_sha256"):
+        value = native_provenance.get(field)
+        if not isinstance(value, str) or len(value) != 64:
+            raise ValueError(f"invalid native source {field}")
+    leaf_path = native_provenance.get("leaf_path")
+    if not isinstance(leaf_path, list) or not leaf_path:
+        raise ValueError("native source leaf path must be a nonempty list")
+    start = native_provenance["substring_start_character_zero_based"]
+    end = native_provenance["substring_end_character_exclusive"]
+    if end < start:
+        raise ValueError("invalid native source character range")
+    if runtime == "codex_cli":
+        path = find_codex_session_path(session_id)
+    else:
+        path = claude_session_path(session_id)
+    if path is None:
+        raise NativeSourceMissing("native source file unavailable")
+    line_index = native_provenance["line_index_zero_based"]
+    try:
+        with path.open("rb") as stream:
+            raw_line = next(islice(stream, line_index, line_index + 1), b"")
+    except FileNotFoundError as exc:
+        raise NativeSourceMissing("native source file unavailable") from exc
+    if not raw_line:
+        raise NativeSourceMissing("native source line unavailable")
+    if hashlib.sha256(raw_line).hexdigest() != native_provenance["raw_line_sha256"]:
+        raise NativeSourceVersionChanged("native source line version changed")
+    leaf = json.loads(raw_line)
+    for component in leaf_path:
+        if isinstance(leaf, dict) and isinstance(component, str) and component in leaf:
+            leaf = leaf[component]
+        elif (
+            isinstance(leaf, list)
+            and type(component) is int
+            and 0 <= component < len(leaf)
+        ):
+            leaf = leaf[component]
+        else:
+            raise ValueError("invalid native source leaf path")
+    if not isinstance(leaf, str):
+        raise ValueError("native source leaf must be a string")
+    if end > len(leaf) or start > len(leaf):
+        raise ValueError("invalid native source character range")
+    body = (json.loads(leaf[start:end])
+            if literal_encoding_mode == "json_string_literal_utf8" else leaf[start:end])
+    if not isinstance(body, str):
+        raise ValueError("native source literal must decode to a string")
+    encoded = body.encode("utf-8")
+    if (
+        len(encoded) != native_provenance["decoded_utf8_bytes"]
+        or hashlib.sha256(encoded).hexdigest() != native_provenance["decoded_utf8_sha256"]
+    ):
+        raise NativeSourceVersionChanged("native source body version changed")
+    return body
+
+
 def count_claude_session_lines(session_id: str) -> int:
     path = claude_session_path(session_id, refresh=True)
     if path is None:
@@ -276,6 +431,92 @@ def read_claude_events(session_id: str, *, start_line: int, end_line: int) -> li
                         item["result"] = {"content": content} if isinstance(content, list) else content
                 events.append(event)
     return events
+
+
+def codex_session_has_final_user_marker_without_compaction(
+    session_id: str,
+    marker: str,
+    *,
+    codex_home: Path | None = None,
+    context_start_line: int,
+    attempt_start_line: int,
+    attempt_end_line: int,
+    session_end_line: int,
+) -> bool:
+    """Verify one exact completed User input remains in an uncompacted session."""
+    if (
+        not session_id
+        or not marker
+        or context_start_line < 0
+        or attempt_start_line < context_start_line
+        or attempt_end_line <= attempt_start_line
+        or session_end_line < attempt_end_line
+    ):
+        return False
+    try:
+        path = find_codex_session_path(
+            session_id, codex_home=codex_home or _codex_home()
+        )
+        if path is None:
+            return False
+        context_records = _native_records(path, context_start_line, session_end_line)
+        attempt_records = _native_records(path, attempt_start_line, attempt_end_line)
+    except (OSError, UnicodeError):
+        return False
+    if (
+        not context_records
+        or not attempt_records
+        or any(record.get("type") == "compacted" for record in context_records)
+    ):
+        return False
+    saw_user = saw_answer = completed_answer = False
+    for record in attempt_records:
+        body = record.get("payload")
+        if not isinstance(body, dict):
+            continue
+        if record.get("type") == "response_item" and body.get("type") == "message":
+            metadata = body.get("internal_chat_message_metadata_passthrough")
+            kinds = metadata.get("content_item_kinds", []) if isinstance(metadata, dict) else []
+            if body.get("role") == "user" and "user.text" in kinds:
+                saw_user, saw_answer = True, False
+            elif saw_user and body.get("role") == "assistant":
+                content = body.get("content")
+                saw_answer = isinstance(content, list) and any(
+                    isinstance(block, dict)
+                    and block.get("type") == "output_text"
+                    and isinstance(block.get("text"), str)
+                    and block["text"].strip()
+                    for block in content
+                )
+        elif (
+            record.get("type") == "event_msg"
+            and body.get("type") == "task_complete"
+            and saw_answer
+        ):
+            completed_answer = True
+    if not completed_answer:
+        return False
+
+    from types import SimpleNamespace
+
+    from app.native_prompt_input import read_attempt_input
+
+    try:
+        submitted = read_attempt_input(
+            SimpleNamespace(
+                runtime_kind="codex_cli",
+                session_id=session_id,
+                transcript_start=attempt_start_line,
+                transcript_end=attempt_end_line,
+            ),
+            codex_home=codex_home or _codex_home(),
+        )
+    except (OSError, UnicodeError):
+        return False
+    if not submitted:
+        return False
+    task_prompt = submitted["task_prompt"].rstrip()
+    return task_prompt.endswith(marker) or task_prompt.endswith(f"<!-- {marker} -->")
 
 
 def read_run_events(db, row) -> list[dict]:
@@ -354,6 +595,8 @@ def read_run_event_evidence(db, row) -> tuple[list[dict], bool]:
                             item['type'] = 'agent_message'
                         elif item.get('type') == 'Reasoning':
                             item['type'] = 'reasoning'
+                        elif item.get('type') == 'McpToolCall':
+                            item['type'] = 'mcp_tool_call'
                         events.append({'type': str(body.get('type') or '').replace('_', '.'), 'item': item})
                     elif body.get('type') in ('item_started', 'item_completed'):
                         available = False

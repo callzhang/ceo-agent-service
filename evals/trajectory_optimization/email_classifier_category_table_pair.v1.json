@@ -1,0 +1,495 @@
+{
+  "version": 1,
+  "date": "2026-10-18",
+  "status": "no_go",
+  "purpose": "Anonymous fixed-case comparison of the current managed Email Classifier category table with a shorter category-selection section.",
+  "model": "gpt-5.6-luna",
+  "invocation": "codex exec --ephemeral --json --ignore-user-config --ignore-rules --skip-git-repo-check -s read-only -m gpt-5.6-luna -C /tmp",
+  "baseline_skill": "ci/shared-skills/ceo-email-classifier/SKILL.md",
+  "candidate_replacement_section": "## Category Selection\n\nUse this invocation's `allowed_category_keys` and `category_descriptions` (`core`, `include`, `exclude`) as the current category authority. Choose one supplied key or explicit uncertainty. Importance is separate from category. Never invent a category key.\n\n",
+  "replacement_bounds": [
+    "## Category Reference and Precedence",
+    "## Evidence Boundary"
+  ],
+  "skill_chars": {
+    "baseline": 4353,
+    "candidate": 2704
+  },
+  "fixture": {
+    "category_descriptions": {
+      "work": {
+        "core": "Human customer and project collaboration.",
+        "include": [
+          "customer delivery discussion"
+        ],
+        "exclude": [
+          "automated service notice",
+          "company settlement"
+        ]
+      },
+      "human_resources": {
+        "core": "Employment and people matters.",
+        "include": [
+          "candidate offer and onboarding"
+        ],
+        "exclude": [
+          "unrelated promotion",
+          "legal dispute"
+        ]
+      },
+      "legal": {
+        "core": "Non-financing rights and disputes.",
+        "include": [
+          "contract dispute"
+        ],
+        "exclude": [
+          "fundraising documents"
+        ]
+      },
+      "financing": {
+        "core": "Investors and fundraising transactions.",
+        "include": [
+          "due diligence request"
+        ],
+        "exclude": [
+          "ordinary legal dispute",
+          "unsolicited promotion"
+        ]
+      },
+      "finance": {
+        "core": "Company money, settlement, collection, and payment approval.",
+        "include": [
+          "client collection reconciliation"
+        ],
+        "exclude": [
+          "vendor subscription bill",
+          "personal expense invoice"
+        ]
+      },
+      "invoice": {
+        "core": "Personal reimbursement invoice or voucher.",
+        "include": [
+          "taxi fare invoice for reimbursement"
+        ],
+        "exclude": [
+          "vendor bill to the company"
+        ]
+      },
+      "personal": {
+        "core": "Booked travel and personal life.",
+        "include": [
+          "booked flight itinerary"
+        ],
+        "exclude": [
+          "travel promotion",
+          "company operations"
+        ]
+      },
+      "notification": {
+        "core": "Automated service and system status needing no reply.",
+        "include": [
+          "CI build status alert"
+        ],
+        "exclude": [
+          "human project discussion",
+          "vendor bill"
+        ]
+      },
+      "external_billing": {
+        "core": "Outside party charges the company.",
+        "include": [
+          "cloud subscription receipt"
+        ],
+        "exclude": [
+          "internal settlement",
+          "personal bank alert"
+        ]
+      },
+      "shopping": {
+        "core": "Consumer goods orders and fulfillment.",
+        "include": [
+          "book order delivery"
+        ],
+        "exclude": [
+          "booked travel",
+          "vendor professional invoice"
+        ]
+      },
+      "junk": {
+        "core": "Unwanted promotion without retention value.",
+        "include": [
+          "unsolicited software promotion"
+        ],
+        "exclude": [
+          "legitimate project discussion",
+          "unsubscribe link alone"
+        ]
+      }
+    },
+    "cases": [
+      {
+        "expected_category": "work",
+        "subject": "Project manager asks for a delivery review",
+        "text": "Could we review the customer milestone and owner actions tomorrow?",
+        "sender": "human@customer.example"
+      },
+      {
+        "expected_category": "human_resources",
+        "subject": "Offer letter for candidate",
+        "text": "Please review the candidate offer and onboarding date.",
+        "sender": "person@company.example"
+      },
+      {
+        "expected_category": "legal",
+        "subject": "Contract dispute notice",
+        "text": "Counsel asks us to review a non-financing contract dispute.",
+        "sender": "counsel@firm.example"
+      },
+      {
+        "expected_category": "financing",
+        "subject": "Investor due diligence request",
+        "text": "Our investor asks for a cap table and financing due diligence documents.",
+        "sender": "partner@fund.example"
+      },
+      {
+        "expected_category": "finance",
+        "subject": "Client collection reconciliation",
+        "text": "Finance team reconciled the overdue company receivable from Client A.",
+        "sender": "finance@company.example"
+      },
+      {
+        "expected_category": "invoice",
+        "subject": "Taxi fare reimbursement voucher",
+        "text": "Attached is the taxi fare invoice for my personal expense reimbursement.",
+        "sender": "driver@taxi.example"
+      },
+      {
+        "expected_category": "personal",
+        "subject": "Your booked flight itinerary",
+        "text": "This is the itinerary for the flight you booked next Tuesday.",
+        "sender": "travel@airline.example"
+      },
+      {
+        "expected_category": "notification",
+        "subject": "CI build status",
+        "text": "Automated notice: your repository build completed successfully.",
+        "sender": "robot@ci.example"
+      },
+      {
+        "expected_category": "external_billing",
+        "subject": "Cloud subscription receipt",
+        "text": "Your company cloud subscription was charged $20 for this month.",
+        "sender": "billing@cloud.example"
+      },
+      {
+        "expected_category": "shopping",
+        "subject": "Book order delivered",
+        "text": "The book you ordered has been delivered to your home.",
+        "sender": "store@shop.example"
+      },
+      {
+        "expected_category": "junk",
+        "subject": "Unsolicited software promotion",
+        "text": "Buy our unrelated software. Unsubscribe with the supplied candidate.",
+        "sender": "sales@vendor.example"
+      }
+    ],
+    "provider_unread": true,
+    "unsubscribe_candidates_for_junk": [
+      {
+        "index": 0,
+        "url": "https://example.test/unsubscribe",
+        "source": "header_https"
+      }
+    ],
+    "evaluation_suffix": "Evaluation fixture: return the JSON result without calling tools. The fixture has no real mailbox or provider action."
+  },
+  "results": [
+    {
+      "case": "work",
+      "arm": "baseline",
+      "returncode": 0,
+      "prompt_chars": 6920,
+      "category": "work",
+      "certain": "certain",
+      "important": true,
+      "candidate_index": null,
+      "valid": true,
+      "tool_calls": 0,
+      "prompt_sha256": "472bac26cc01b9c057b1982f6750852ac48ab245c6c8227d29de6beca3e135bd"
+    },
+    {
+      "case": "work",
+      "arm": "candidate",
+      "returncode": 0,
+      "prompt_chars": 5271,
+      "category": "work",
+      "certain": "certain",
+      "important": true,
+      "candidate_index": null,
+      "valid": true,
+      "tool_calls": 0,
+      "prompt_sha256": "faf7e35a85bcac82b97906212044d9be4594d27fee1158a62a00cdb4dbb1ceec"
+    },
+    {
+      "case": "human_resources",
+      "arm": "baseline",
+      "returncode": 0,
+      "prompt_chars": 6892,
+      "category": "human_resources",
+      "certain": "certain",
+      "important": true,
+      "candidate_index": null,
+      "valid": true,
+      "tool_calls": 0,
+      "prompt_sha256": "12ae08e9a8067fff42742f0c2321e0f2e171da5b31a77cee6ef42505a7e4cea5"
+    },
+    {
+      "case": "human_resources",
+      "arm": "candidate",
+      "returncode": 0,
+      "prompt_chars": 5243,
+      "category": "human_resources",
+      "certain": "certain",
+      "important": true,
+      "candidate_index": null,
+      "valid": true,
+      "tool_calls": 0,
+      "prompt_sha256": "0b3f0a78589445d9d72a061bcb407d22328c674b726ac5191166aaf1e4d959b3"
+    },
+    {
+      "case": "legal",
+      "arm": "baseline",
+      "returncode": 0,
+      "prompt_chars": 6892,
+      "category": "legal",
+      "certain": "certain",
+      "important": true,
+      "candidate_index": null,
+      "valid": true,
+      "tool_calls": 0,
+      "prompt_sha256": "f8fcc5b3c3aa8ff3d2ffe8ac8244b86a957ebea54a659fc9f702edda05663eb2"
+    },
+    {
+      "case": "legal",
+      "arm": "candidate",
+      "returncode": 0,
+      "prompt_chars": 5243,
+      "category": "legal",
+      "certain": "certain",
+      "important": true,
+      "candidate_index": null,
+      "valid": true,
+      "tool_calls": 0,
+      "prompt_sha256": "96239024edc9ae16c66fae1d1a1c27d7ea5aed138a13637f4f5a786af04871b1"
+    },
+    {
+      "case": "financing",
+      "arm": "baseline",
+      "returncode": 0,
+      "prompt_chars": 6912,
+      "category": "financing",
+      "certain": "certain",
+      "important": true,
+      "candidate_index": null,
+      "valid": true,
+      "tool_calls": 0,
+      "prompt_sha256": "bca513eccdf12b3012aae95a0c4070399f4fa9e4abd37b986f2fc03bd4704a78"
+    },
+    {
+      "case": "financing",
+      "arm": "candidate",
+      "returncode": 0,
+      "prompt_chars": 5263,
+      "category": "financing",
+      "certain": "certain",
+      "important": true,
+      "candidate_index": null,
+      "valid": true,
+      "tool_calls": 0,
+      "prompt_sha256": "bbc77bf958ac97d8f00048ddc5c331ad88a30a1bae3c512f78e1525e66ef5639"
+    },
+    {
+      "case": "finance",
+      "arm": "baseline",
+      "returncode": 0,
+      "prompt_chars": 6914,
+      "category": "finance",
+      "certain": "certain",
+      "important": true,
+      "candidate_index": null,
+      "valid": true,
+      "tool_calls": 0,
+      "prompt_sha256": "5fd8b98a3a60e3d5870ef16d3e79d0d9b80a4d80e5d436cc9060bfcf06d0bed0"
+    },
+    {
+      "case": "finance",
+      "arm": "candidate",
+      "returncode": 0,
+      "prompt_chars": 5265,
+      "category": "finance",
+      "certain": "certain",
+      "important": true,
+      "candidate_index": null,
+      "valid": true,
+      "tool_calls": 0,
+      "prompt_sha256": "98f86d163995f8fadd09469cd6f365c20e05ffeeed7226cd90efe7cefbeb913d"
+    },
+    {
+      "case": "invoice",
+      "arm": "baseline",
+      "returncode": 0,
+      "prompt_chars": 6912,
+      "category": "invoice",
+      "certain": "certain",
+      "important": false,
+      "candidate_index": null,
+      "valid": true,
+      "tool_calls": 0,
+      "prompt_sha256": "fcce4103ddad5a9fae994eedf1c391fd2fdd2979bc7c506fd1def5036393f48d"
+    },
+    {
+      "case": "invoice",
+      "arm": "candidate",
+      "returncode": 0,
+      "prompt_chars": 5263,
+      "category": "invoice",
+      "certain": "certain",
+      "important": false,
+      "candidate_index": null,
+      "valid": true,
+      "tool_calls": 0,
+      "prompt_sha256": "fbfcb4bfbe155ca87476823a6d81f8029977bc94fb92708e5bb164271f6c26d3"
+    },
+    {
+      "case": "personal",
+      "arm": "baseline",
+      "returncode": 0,
+      "prompt_chars": 6901,
+      "category": "personal",
+      "certain": "certain",
+      "important": true,
+      "candidate_index": null,
+      "valid": true,
+      "tool_calls": 0,
+      "prompt_sha256": "15e843dc11cc47f268e3c5997a7a14480691cf6fedede562049b50a36b797b8c"
+    },
+    {
+      "case": "personal",
+      "arm": "candidate",
+      "returncode": 0,
+      "prompt_chars": 5252,
+      "category": "personal",
+      "certain": "certain",
+      "important": true,
+      "candidate_index": null,
+      "valid": true,
+      "tool_calls": 0,
+      "prompt_sha256": "f4139e0d857619245708632b3ef548be4ea70f3aa692ac8c361612c3d09ea0cc"
+    },
+    {
+      "case": "notification",
+      "arm": "baseline",
+      "returncode": 0,
+      "prompt_chars": 6884,
+      "category": "notification",
+      "certain": "certain",
+      "important": false,
+      "candidate_index": null,
+      "valid": true,
+      "tool_calls": 0,
+      "prompt_sha256": "4acd603358924b64f3f10e69f9200646275fdb38b3783099c04e479f14d5085f"
+    },
+    {
+      "case": "notification",
+      "arm": "candidate",
+      "returncode": 0,
+      "prompt_chars": 5235,
+      "category": "notification",
+      "certain": "certain",
+      "important": false,
+      "candidate_index": null,
+      "valid": true,
+      "tool_calls": 0,
+      "prompt_sha256": "441fbb8d823a523cfe40a0fc1b47f5d943d49f93b7586783c5de361169910972"
+    },
+    {
+      "case": "external_billing",
+      "arm": "baseline",
+      "returncode": 0,
+      "prompt_chars": 6900,
+      "category": "external_billing",
+      "certain": "certain",
+      "important": false,
+      "candidate_index": null,
+      "valid": true,
+      "tool_calls": 0,
+      "prompt_sha256": "9f013a4c95e44c809f6fc870a736d53a6341a36cf644f1b6e0d3faead0bd1ee1"
+    },
+    {
+      "case": "external_billing",
+      "arm": "candidate",
+      "returncode": 0,
+      "prompt_chars": 5251,
+      "category": "external_billing",
+      "certain": "certain",
+      "important": true,
+      "candidate_index": null,
+      "valid": true,
+      "tool_calls": 0,
+      "prompt_sha256": "0e2980ebeb7599a47676c6a620126c4b29a893604bbbdd9fe62bd49881f22ba9"
+    },
+    {
+      "case": "shopping",
+      "arm": "baseline",
+      "returncode": 0,
+      "prompt_chars": 6881,
+      "category": "shopping",
+      "certain": "certain",
+      "important": false,
+      "candidate_index": null,
+      "valid": true,
+      "tool_calls": 0,
+      "prompt_sha256": "7be5d68f30bdf3588cbe92d72431f032e7ae9a86c34ff3bc9678c9de7de182fd"
+    },
+    {
+      "case": "shopping",
+      "arm": "candidate",
+      "returncode": 0,
+      "prompt_chars": 5232,
+      "category": "shopping",
+      "certain": "certain",
+      "important": false,
+      "candidate_index": null,
+      "valid": true,
+      "tool_calls": 0,
+      "prompt_sha256": "4f80cf37dde7e3984a525f2e5d57498286dd5c3b2af5bee4d2b8ac5d21f7e073"
+    },
+    {
+      "case": "junk",
+      "arm": "baseline",
+      "returncode": 0,
+      "prompt_chars": 6984,
+      "category": "junk",
+      "certain": "certain",
+      "important": false,
+      "candidate_index": 0,
+      "valid": true,
+      "tool_calls": 0,
+      "prompt_sha256": "f06a15059cf257043cc77cf54eccce98707aae3f4fbf924db4f0e8adbe9a0d92"
+    },
+    {
+      "case": "junk",
+      "arm": "candidate",
+      "returncode": 0,
+      "prompt_chars": 5335,
+      "category": "junk",
+      "certain": "certain",
+      "important": false,
+      "candidate_index": 0,
+      "valid": true,
+      "tool_calls": 0,
+      "prompt_sha256": "850d4f118d9b977c0063dde6eb9bf6fff51b6cc52f32fa994f383cb03e7d3224"
+    }
+  ]
+}

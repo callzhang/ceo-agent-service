@@ -27,7 +27,6 @@ import { NeedsDecisionPanel } from "./components/NeedsDecisionPanel";
 import { TurnInspector } from "./components/TurnInspector";
 import { applyWorkbenchEvent, createEventState, EventStreamConnection } from "./events";
 import type {
-  ConfirmationStatus,
   RuntimeCapabilities,
   Task,
   TaskPage,
@@ -115,15 +114,13 @@ function mergeTimeline(current: Timeline, incoming: Timeline, mode: "recent" | "
     events,
     attachments: mergeById(current.attachments, incoming.attachments),
     artifacts: mergeById(current.artifacts, incoming.artifacts),
-    confirmations: mergeById(current.confirmations, incoming.confirmations),
     events_has_more: current.events_has_more || incoming.events_has_more,
     artifacts_has_more: current.artifacts_has_more || incoming.artifacts_has_more,
-    confirmations_has_more: current.confirmations_has_more || incoming.confirmations_has_more,
     attachments_has_more: current.attachments_has_more || incoming.attachments_has_more,
   };
 }
 
-type ResourcePageKind = "events" | "artifacts" | "confirmations" | "attachments";
+type ResourcePageKind = "events" | "artifacts" | "attachments";
 type TimelineRequestChannel = "turns" | "refresh" | ResourcePageKind;
 interface ResourcePageCursor {
   before: string;
@@ -132,20 +129,18 @@ interface ResourcePageCursor {
 type ResourcePageQueues = Record<ResourcePageKind, ResourcePageCursor[]>;
 
 function emptyResourcePageQueues(): ResourcePageQueues {
-  return { events: [], artifacts: [], confirmations: [], attachments: [] };
+  return { events: [], artifacts: [], attachments: [] };
 }
 
 function resourceCursor(timeline: Timeline, kind: ResourcePageKind): string | number {
   if (kind === "events") return timeline.events_next_cursor;
   if (kind === "artifacts") return timeline.artifacts_next_cursor;
-  if (kind === "confirmations") return timeline.confirmations_next_cursor;
   return timeline.attachments_next_cursor;
 }
 
 function resourceHasMore(timeline: Timeline, kind: ResourcePageKind): boolean {
   if (kind === "events") return timeline.events_has_more;
   if (kind === "artifacts") return timeline.artifacts_has_more;
-  if (kind === "confirmations") return timeline.confirmations_has_more;
   return timeline.attachments_has_more;
 }
 
@@ -153,7 +148,6 @@ function applyResourceQueue(timeline: Timeline, kind: ResourcePageKind, queue: R
   const next = queue[0]?.cursor;
   if (kind === "events") return { ...timeline, events_has_more: queue.length > 0, events_next_cursor: typeof next === "number" ? next : 0 };
   if (kind === "artifacts") return { ...timeline, artifacts_has_more: queue.length > 0, artifacts_next_cursor: typeof next === "string" ? next : "" };
-  if (kind === "confirmations") return { ...timeline, confirmations_has_more: queue.length > 0, confirmations_next_cursor: typeof next === "string" ? next : "" };
   return { ...timeline, attachments_has_more: queue.length > 0, attachments_next_cursor: typeof next === "string" ? next : "" };
 }
 
@@ -173,12 +167,6 @@ function mergeResourcePage(current: Timeline, incoming: Timeline, kind: Resource
     artifacts_has_more: incoming.artifacts_has_more,
     artifacts_next_cursor: incoming.artifacts_next_cursor,
   };
-  if (kind === "confirmations") return {
-    ...current,
-    confirmations: mergeById(current.confirmations, incoming.confirmations),
-    confirmations_has_more: incoming.confirmations_has_more,
-    confirmations_next_cursor: incoming.confirmations_next_cursor,
-  };
   return {
     ...current,
     attachments: mergeById(current.attachments, incoming.attachments),
@@ -187,9 +175,8 @@ function mergeResourcePage(current: Timeline, incoming: Timeline, kind: Resource
   };
 }
 
-const turnStatuses: readonly TurnStatus[] = ["queued", "running", "waiting_confirmation", "completed", "stopped", "failed"];
-const activeTurnStatuses: readonly TurnStatus[] = ["queued", "running", "waiting_confirmation"];
-const confirmationStatuses: readonly ConfirmationStatus[] = ["pending", "confirmed", "cancelled", "executed", "failed"];
+const turnStatuses: readonly TurnStatus[] = ["queued", "running", "completed", "stopped", "failed"];
+const activeTurnStatuses: readonly TurnStatus[] = ["queued", "running"];
 
 function statusFromEvent(event: WorkbenchEvent): TurnStatus | null {
   if (event.event_type === "turn_completed") return "completed";
@@ -197,17 +184,6 @@ function statusFromEvent(event: WorkbenchEvent): TurnStatus | null {
   if (event.event_type !== "status_changed") return null;
   const value = event.payload.status;
   return typeof value === "string" && turnStatuses.includes(value as TurnStatus) ? value as TurnStatus : null;
-}
-
-function confirmationProgressFromEvent(event: WorkbenchEvent): { id: string; status: ConfirmationStatus | null } | null {
-  if (event.event_type !== "status_changed") return null;
-  const rawId = event.payload.confirmation_id;
-  const id = typeof rawId === "string" && /^[A-Za-z0-9][A-Za-z0-9._:-]{0,199}$/.test(rawId) ? rawId : "";
-  const rawStatus = event.payload.confirmation_status;
-  const status = typeof rawStatus === "string" && confirmationStatuses.includes(rawStatus as ConfirmationStatus)
-    ? rawStatus as ConfirmationStatus
-    : null;
-  return id || status ? { id, status } : null;
 }
 
 export interface AppProps {
@@ -312,7 +288,7 @@ export function App({ showGlobalNav = true }: AppProps = {}) {
       const next = replace
         ? emptyResourcePageQueues()
         : Object.fromEntries(Object.entries(current).map(([kind, pages]) => [kind, [...pages]])) as ResourcePageQueues;
-      for (const kind of ["events", "artifacts", "confirmations", "attachments"] as const) {
+      for (const kind of ["events", "artifacts", "attachments"] as const) {
         if (!resourceHasMore(loaded, kind)) continue;
         // Attachments belong to the task, not an individual turn window. The API
         // therefore ignores `before` for this cursor; keep one global queue entry.
@@ -764,9 +740,7 @@ export function App({ showGlobalNav = true }: AppProps = {}) {
       ? { eventBefore: page.cursor as number }
       : kind === "artifacts"
         ? { artifactAfter: page.cursor as string }
-        : kind === "confirmations"
-          ? { confirmationAfter: page.cursor as string }
-          : { attachmentAfter: page.cursor as string };
+        : { attachmentAfter: page.cursor as string };
     const controller = new AbortController();
     const requestId = startTimelineRequest(kind, controller);
     setLoadingResources((current) => new Set(current).add(kind));
@@ -1171,7 +1145,6 @@ export function App({ showGlobalNav = true }: AppProps = {}) {
       onEvent: (event) => {
         if (selectedTaskIdRef.current !== taskId || event.turn_id !== turnId) return;
         const nextStatus = statusFromEvent(event);
-        const confirmationProgress = confirmationProgressFromEvent(event);
         const terminal = nextStatus !== null && ["completed", "stopped", "failed"].includes(nextStatus);
         writeTimeline((current) => {
           if (!current || current.task.id !== taskId) return current;
@@ -1181,23 +1154,17 @@ export function App({ showGlobalNav = true }: AppProps = {}) {
           const turns = nextStatus
             ? current.turns.map((turn) => turn.id === turnId ? { ...turn, status: nextStatus } : turn)
             : current.turns;
-          const confirmations = confirmationProgress?.id && confirmationProgress.status
-            ? current.confirmations.map((confirmation) => confirmation.id === confirmationProgress.id
-              ? { ...confirmation, status: confirmationProgress.status as ConfirmationStatus }
-              : confirmation)
-            : current.confirmations;
           return {
             ...current,
             events: eventState.events,
             turns,
-            confirmations,
             task: nextStatus ? { ...current.task, state: nextStatus } : current.task,
           };
         });
         if (nextStatus) {
           writeTasks((current) => current.map((task) => task.id === taskId ? { ...task, state: nextStatus } : task));
         }
-        if (event.event_type === "confirmation_required" || event.event_type === "artifact_created" || confirmationProgress || terminal) {
+        if (event.event_type === "artifact_created" || terminal) {
           scheduleSelectedTimelineRefresh(taskId);
         }
         if (event.event_type === "artifact_created" || terminal) scheduleStatsRefresh();
@@ -1470,7 +1437,6 @@ export function App({ showGlobalNav = true }: AppProps = {}) {
                   <div className="resource-pagination" aria-label="对话资源分页">
                     {resourceQueues.events.length > 0 && <button type="button" className="secondary-button" disabled={loadingResources.has("events")} onClick={() => void loadTimelineResource(selectedTask.id, "events")}>加载更多事件</button>}
                     {resourceQueues.artifacts.length > 0 && <button type="button" className="secondary-button" disabled={loadingResources.has("artifacts")} onClick={() => void loadTimelineResource(selectedTask.id, "artifacts")}>加载更多产物</button>}
-                    {resourceQueues.confirmations.length > 0 && <button type="button" className="secondary-button" disabled={loadingResources.has("confirmations")} onClick={() => void loadTimelineResource(selectedTask.id, "confirmations")}>加载更多确认</button>}
                     {resourceQueues.attachments.length > 0 && <button type="button" className="secondary-button" disabled={loadingResources.has("attachments")} onClick={() => void loadTimelineResource(selectedTask.id, "attachments")}>加载更多附件</button>}
                   </div>
                   {timeline.has_more && (

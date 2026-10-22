@@ -3,6 +3,7 @@ from __future__ import annotations
 import json
 import sys
 from collections.abc import Callable, Mapping
+from datetime import datetime
 from hashlib import sha256
 from pathlib import Path
 from uuid import uuid4
@@ -19,6 +20,7 @@ from app.agent_contracts import (
     dingtalk_chat_delivery,
 )
 from app.prompt_schema import _compact_prompt_schema
+from app.consumer_purpose import purpose_for_context
 from app.agent_result import ResultParseError
 from app.agent_effects import LEASE_SECONDS
 from app.agent_runtime_config import AgentRuntimeConfig
@@ -35,6 +37,7 @@ from app.agent_turn_runner import (
 from app.agent_wire_contracts import (
     AuditAgentWireResult,
     ConsumerAgentWireResult,
+    consumer_wire_model,
     parse_consumer_agent_wire_result,
 )
 from app.audit_rules import validate_audit_rules_text
@@ -49,11 +52,14 @@ from app.business_skills import (
 from app.managed_skills import RuntimeSkillSnapshot
 from app.claude_runtime_adapter import ClaudeRuntimeAdapter
 from app.codex_history import find_codex_session_path
+from app.native_prompt_input import codex_session_wire_schema as read_codex_session_wire_schema
+from app.codex_runner import _codex_home
 from app.codex_runtime_adapter import CodexRuntimeAdapter
 from app.friday_runtime_adapter import FridayRuntimeAdapter
 from app.config import principal_display_name
 from app.prompt import runtime_context_instruction
 from app.prompt_composition import (
+    CONSUMER_OUTBOUND_INSTRUCTION,
     PromptConfiguration,
     PromptSection,
     compose_consumer_task_assembly,
@@ -62,21 +68,176 @@ from app.prompt_composition import (
     render_prompt_sections,
 )
 from app.runtime_prompt_context import explicit_participant_timezones
+from app.native_trajectory import codex_session_has_final_user_marker_without_compaction
+from app.codex_history import count_codex_session_lines
 from app.service_message_sender import ServiceMessageSender, agent_message_delivery_key
 from app.store import AgentRole, AutoReplyStore, ReplyTask
 from app.wechat.codex_safety import ControlledCliConfig, make_consumer_agent_command
 
 SERVICE_ROOT = Path(__file__).resolve().parent.parent
 # The Consumer's output schema is generated from ConsumerAgentResult at prompt
-# time (_schema_json), so the running model is always what the agent is asked
-# for and what the parser accepts.  app/schemas/consumer_agent_result.schema.json
-# is the reviewable snapshot of that shape; tests/test_schema_snapshots.py and
-# tests/test_agent_contracts.py keep it equal to the model at commit time.  It
-# is deliberately not read here: a file is live the moment it is saved and code
-# is live only after a restart, so comparing them at run time can only turn an
+# time (_schema_json), with output-only constraints such as the bounded human
+# reason. New output is parsed through the strict wire contract, while
+# parse_persisted_consumer_result remains permissive for historical records.
+# The reviewable snapshot is kept equal to the generated model schema by tests.
+# It is deliberately not read here: a file is live the moment it is saved and
+# code is live only after a restart, so comparing them at runtime could turn an
 # editor's intermediate state into an outage.
 DYNAMIC_SKILL_MARKER = "[dynamic-skill]"
 CONSUMER_UNREVIEWED_EFFECT = "consumer_unreviewed_provider_effect"
+_CONSUMER_FINGERPRINT_TIME = "2000-01-01T00:00:00+00:00"
+
+
+def _consumer_source_context_fingerprint(
+    *,
+    task_id: int,
+    execution_generation: str,
+    contract_hash: str,
+    developer_instructions: str,
+    stable_task_prompt: str,
+    image_sources: tuple[str, ...],
+) -> str:
+    encoded = json.dumps(
+        {
+            "task_id": task_id,
+            "execution_generation": execution_generation,
+            "contract_hash": contract_hash,
+            "developer_instructions": developer_instructions,
+            "stable_task_prompt": stable_task_prompt,
+            "image_sources": image_sources,
+        },
+        ensure_ascii=False,
+        sort_keys=True,
+        separators=(",", ":"),
+    )
+    return sha256(encoded.encode("utf-8")).hexdigest()
+
+
+def _consumer_revision_prompt(
+    feedback: AuditFeedback,
+    *,
+    proposal_revision: int,
+    continuation: str,
+    context_marker: str,
+    current_time: str,
+) -> str:
+    feedback_json = json.dumps(
+        feedback.model_dump(mode="json"),
+        ensure_ascii=False,
+        sort_keys=True,
+        separators=(",", ":"),
+    )
+    sections = [
+        "Use the original task, source context, and immediately preceding proposal "
+        "already present in this same Consumer session. Apply all Audit feedback "
+        f"for proposal revision {proposal_revision}, then return a complete "
+        "replacement Consumer candidate. Preserve supported facts, uncertainty, "
+        "and valid source references.",
+        "## Current turn execution time\n" + current_time.strip(),
+        "## Audit Feedback\n" + feedback_json,
+    ]
+    if continuation.strip():
+        sections.append("## Current Runtime Correction\n" + continuation.strip())
+    sections.append("<!-- " + context_marker + " -->")
+    return "\n\n".join(sections)
+
+
+def _consumer_revision_context_reusable(
+    store: AutoReplyStore,
+    task: ReplyTask,
+    *,
+    proposal_revision: int,
+    session_id: str | None,
+    fingerprint: str,
+    parent_agent_run_id: int | None,
+    feedback: AuditFeedback,
+) -> bool:
+    if proposal_revision <= 0 or not session_id or not fingerprint or not parent_agent_run_id:
+        return False
+    audit_run = store.get_agent_run(parent_agent_run_id, load_events=False)
+    if (
+        audit_run is None
+        or audit_run.role is not AgentRole.AUDIT
+        or audit_run.status != "completed"
+        or audit_run.reply_task_id != task.id
+        or audit_run.execution_generation != task.execution_generation
+        or audit_run.proposal_revision != proposal_revision - 1
+        or audit_run.parent_agent_run_id is None
+    ):
+        return False
+    prior_run = store.get_agent_run(audit_run.parent_agent_run_id, load_events=False)
+    if (
+        prior_run is None
+        or prior_run.role is not AgentRole.CONSUMER
+        or prior_run.status != "completed"
+        or prior_run.reply_task_id != task.id
+        or prior_run.execution_generation != task.execution_generation
+        or prior_run.proposal_revision != proposal_revision - 1
+        or prior_run.codex_session_id != session_id
+    ):
+        return False
+    try:
+        adopted_audit = AuditAgentResult.model_validate_json(
+            audit_run.adopted_result_json
+        )
+    except (TypeError, ValueError):
+        return False
+    if adopted_audit.outcome not in {"return", "reject"} or adopted_audit.feedback != feedback:
+        return False
+
+    def completed_codex_attempt(run_id: int):
+        return next(
+            (
+                attempt
+                for attempt in reversed(store.list_agent_runtime_attempts(run_id))
+                if attempt.status == "completed"
+                and attempt.runtime_kind == RuntimeKind.CODEX_CLI.value
+                and attempt.session_id == session_id
+                and attempt.transcript_end > attempt.transcript_start
+            ),
+            None,
+        )
+
+    prior_attempt = completed_codex_attempt(prior_run.id)
+    if prior_attempt is None:
+        return False
+    codex_home = _codex_home()
+    try:
+        if count_codex_session_lines(
+            session_id, codex_home=codex_home
+        ) != prior_attempt.transcript_end:
+            return False
+    except (OSError, UnicodeError):
+        return False
+
+    initial_run = next(
+        (
+            run
+            for run in store.list_agent_runs_for_task_generation(
+                task.id, task.execution_generation, load_events=False
+            )
+            if run.role is AgentRole.CONSUMER
+            and run.status == "completed"
+            and run.proposal_revision == 0
+            and run.codex_session_id == session_id
+        ),
+        None,
+    )
+    if initial_run is None:
+        return False
+    initial_attempt = completed_codex_attempt(initial_run.id)
+    if initial_attempt is None:
+        return False
+    marker = "consumer-source-context-sha256:" + fingerprint
+    return codex_session_has_final_user_marker_without_compaction(
+        session_id,
+        marker,
+        codex_home=codex_home,
+        context_start_line=initial_attempt.transcript_start,
+        attempt_start_line=prior_attempt.transcript_start,
+        attempt_end_line=prior_attempt.transcript_end,
+        session_end_line=prior_attempt.transcript_end,
+    )
 
 CONSUMER_DYNAMIC_SKILL_SENTENCE = (
     "Consumer Agent A independently selects and applies every applicable business and operation Skill before forming the candidate. Provider command names, MCP tools, receipts, and readback procedures belong to the Agent/runtime capability and are not application review conditions."
@@ -91,7 +252,10 @@ CORE_DYNAMIC_SKILL_BODY = f"{CONSUMER_DYNAMIC_SKILL_BODY} {AUDIT_DYNAMIC_SKILL_S
 DECISION_QUALITY_GATE_INSTRUCTIONS = """
 ## Decision Evidence
 Include risk, confidence, rule_coverage and information_completeness as truthful
-facts about the current decision, and apply this outcome gate in order:
+facts about the current decision. A purpose retry waits on an already verified
+access request: keep the business coverage scores honest and review the request
+and waiting decision; do not repeat the same factual request to satisfy the
+question branch. For business decisions apply this outcome gate in order:
 information_completeness < 0.5 means ask one focused factual question in a
 normal proposal; it is never a needs_human result. Otherwise, needs_human is
 allowed only when (risk is high and confidence < 0.5) or rule_coverage < 0.5,
@@ -102,7 +266,10 @@ complete the supported work under the applicable rules. Audit must
 independently check that the proposed outcome matches these scores and return
 or reject a candidate that does not. Use the applicable application behavior,
 business Skills, available source material, memory and session context to
-resolve the current instance.
+resolve the current instance. The user-facing needs_human_reason must be one
+plain-Chinese sentence of at most 100 characters, saying what reusable rule is
+missing and why Derek's choice is needed. Avoid jargon; keep evidence in
+decision_basis.
 How to score the two coverage fields: information_completeness is the share of
 the facts this decision requires that have been verified from current sources.
 A prior comment, notification, or other action does NOT raise this score when
@@ -176,48 +343,63 @@ authoritative original plus concise conclusions or evidence. Do not copy
 per-run artifacts or intermediate files into memory merely because they may
 look useful later.
 """.strip()
-AGENT_CAPABILITY_INSTRUCTIONS = """
-Use the role's actual declared tools to read the sources needed for this task.
-Consumer may use its ordinary work tools for documents, artifacts, research,
-analysis and computation. Ordinary work does not require a controlled-action
-proposal merely because a tool writes. Use actual tool results and readback as
-evidence of that work. A summary is not a receipt of a controlled action.
+_CAPABILITY_COMMON_HEAD = """
 Use consumer_artifact_write for ordinary local drafts and files, with
 read_task_artifact/list_task_artifacts for this task generation's artifacts.
-consumer_document_write remains the bound scheduled-report document workflow.
+consumer_document_write writes a scheduled task artifact to its explicit document target.
+consumer_run_skill_script executes a selected Skill script for deterministic local work.
 Codex Consumer can run local code using native command and patch tools in its
 current task workspace. The native workspace sandbox keeps writes in that
 workspace and native temporary directories, and disables command network
-access. Claude has declared read and artifact tools only. Use the actual current runtime catalog; do not invent a
-successful execution result.
-Only the registered reviewed system actions in the supplied action contracts
-are dispatched by system code after whole-candidate approval. Do not invoke
-those actions directly or claim them completed without the System receipt.
-Audit has read tools only. Do not try nested CLI inventory, nested Agents,
+access. Claude has declared read and artifact tools only.
+Do not try nested CLI inventory, nested Agents,
 commands or a different channel to reach an unavailable operation.
-Call direct read MCP tools where available. Use memory_recall for relevant
+Use memory_recall for relevant
 stable context; memory never proves current external state or recipient scope.
 Use only stable provider identities established by the current source for the
 exact operation; a similarly named business object is not identity evidence.
+""".strip()
+_DIRECT_SOURCE_READ_INSTRUCTIONS = """
 For DingTalk reads in service Consumer/Audit turns, call the declared
 `mcp__agent_cli` read tools directly. Never run local `dws` commands through
 shell; command examples in product Skills describe interactive sessions and
 are not service-role execution instructions. If the matching read tool is not
 declared, report that exact capability as unavailable.
-Preserve concrete provider error codes and source context when a read fails.
+When a declared read returns source bytes or page references requiring OCR,
+call the native `ai_services.ocr_document` MCP directly with those exact source
+bytes, MIME type, page numbers and source digest. Do not infer that this tool
+is absent from a nested `ALL_TOOLS` catalog, shell inventory or another Agent's
+tool list; those do not describe this native Consumer/Audit session. If the
+direct call itself fails, preserve its concrete tool/provider error as the
+technical read failure.
+""".strip()
+_OA_OCR_HANDOFF_INSTRUCTIONS = """
+In Codex OA turns, use `functions.exec` to call the declared `mcp__agent_cli`
+tools. When a read returns `ocr_input_base64`, pass that value to
+`mcp__ai_services__ocr_document` as `data_base64` in the same JS cell, with a
+filename and its MIME type. For a rendered single-page image, do not pass its
+original PDF page number as OCR `page_numbers`; keep that number for the result.
+Print only OCR text, page mapping, confidence, warnings and the source SHA-256
+(`ocr_source_sha256` or `sha256`), never the image bytes.
+Do not print or recopy base64 through a later prompt. Never run local `dws`
+commands through shell; Skill CLI examples are for interactive sessions.
+In other runtimes, use their declared read tools. If the read or OCR call fails,
+preserve its concrete tool/provider error.
+""".strip()
+_CAPABILITY_COMMON_TAIL = """
+If no declared tool or callable selected Skill script can perform a required
+operation, return failed with error_code `operation_unavailable`. A declared
+tool that fails is a different error; preserve its actual failure code.
 When a required DWS, MCP, or other external-source read actually fails because
 the dependency is unavailable, return failed with error_code
 `dependency_read_unavailable` and preserve the exact underlying error in the
 summary. Do not use this code when a successful read returns no match, evidence
 is incomplete or ambiguous, or a governing rule is missing; those are evidence
 or business-rule outcomes, not infrastructure outages.
-Technical/provider authentication or schema errors are failed, not fabricated
-business questions. An unresolved provider-risk refusal for the current
-intended action remains failed with its original error code and no retry;
-not retrying a refused action does not make the task completed or no_action.
-Audit must return a candidate that incorrectly reports such a refusal as
-no_action. Historical refusal evidence never authorizes a new effect, a new
-action identity, or another channel to evade the refusal.
+An unresolved provider-risk refusal for the current intended action remains
+failed with its original error code and no retry; it cannot
+become completed or no_action. Historical refusal evidence never authorizes a
+new effect, identity or channel to evade the refusal.
 A genuine human-only fact or action needs its exact context
 and must be formulated by Consumer and reviewed before it is requested.
 A low-consequence operating choice is autonomous when the applicable rules and
@@ -230,7 +412,15 @@ bound plans or an explicit stop reason. They never edit Skills or reusable
 policies.
 Wire results use error_code, error_retryable, error_authorization_required;
 do not return a nested error object. Match the supplied wire schema exactly.
-""".strip() + "\n\n" + TASK_STORAGE_INSTRUCTIONS
+""".strip()
+AGENT_CAPABILITY_INSTRUCTIONS = "\n".join((
+    _CAPABILITY_COMMON_HEAD, _DIRECT_SOURCE_READ_INSTRUCTIONS,
+    _CAPABILITY_COMMON_TAIL,
+)) + "\n\n" + TASK_STORAGE_INSTRUCTIONS
+OA_AGENT_CAPABILITY_INSTRUCTIONS = "\n".join((
+    _CAPABILITY_COMMON_HEAD, _OA_OCR_HANDOFF_INSTRUCTIONS,
+    _CAPABILITY_COMMON_TAIL,
+)) + "\n\n" + TASK_STORAGE_INSTRUCTIONS
 
 
 def system_action_contracts_text() -> str:
@@ -312,25 +502,31 @@ def consumer_selected_skill_session_contract_hash(
     encoded = json.dumps(fingerprints, sort_keys=True, separators=(",", ":"))
     return "selected-skills:" + sha256(encoded.encode("utf-8")).hexdigest()
 
-CONSUMER_ROLE_BOUNDARY = """
+
+def consumer_task_session_contract_hash(selected_skills_hash: str, *, purpose_name: str) -> str:
+    if purpose_name != "oa":
+        return selected_skills_hash
+    payload = selected_skills_hash + "\n" + OA_AGENT_CAPABILITY_INSTRUCTIONS
+    return "selected-skills:oa-ocr-handoff:" + sha256(payload.encode("utf-8")).hexdigest()
+
+CONSUMER_ROLE_BOUNDARY = f"""
 You are Consumer Agent A. Complete the business preparation using the task's
 applicable Skills and permitted tools, including report and document work.
 Controlled structured actions are proposals: do not dispatch them yourself.
+{CONSUMER_OUTBOUND_INSTRUCTION}
 Audit reads and reviews the complete candidate; system code executes its exact
-persisted approved plan. Return one valid ConsumerAgentResult.
+persisted approved plan. Return one valid purpose output using its supplied action/reason/target/payload/evidence_refs schema and assessment metadata. Multi-operation work uses action=plan with the complete proposal in payload.
 Every action has a stable action_identity for the same intended external
 outcome. Change it only when the intended outcome, target or purpose changes.
 Supply canonical typed capability/operation, exact target and payload; no shell
 argv. Preserve all accepted service-prepared message text in later stages.
-Explain a needs_human reason in ordinary Chinese: identify the reusable task
-class rule that is missing and why it matters. Supply source context, facts and
-rule evidence, and two to four mutually exclusive policy choices, each marked
-applies_to=task_class. Every executable option includes a complete plan for
+Supply source context, facts and rule evidence, and two to four mutually
+exclusive policy choices, each marked applies_to=task_class. Every executable option includes a complete plan for
 continuing this item under that selected rule; a stop choice has
 terminal_outcome skipped and reason. Ask for missing current-instance facts in
 a normal proposal, never with requested_input as a zero-option needs_human.
 Feedback may separately select one-time application and Skill update.
-For proposal, no_action, and failed, decision_options must be empty and
+For direct business actions, plan, retry, no_action, and failed, decision_options must be empty and
 requested_input, needs_human_reason, and decision_basis must be null. Use
 those fields only for a needs_human result.
 An action plan and a human question are separate candidates. When source work
@@ -378,6 +574,7 @@ class ConsumerAgentRunner:
         owner: str | None = None,
         refresh_runtime_capabilities: Callable[[], object] | None = None,
         codex_session_exists: Callable[[str], bool] | None = None,
+        codex_session_wire_schema: Callable[[str], dict[str, object] | None] | None = None,
         runtime_skill_snapshot: RuntimeSkillSnapshot | None = None,
         forced_runtime_route=None,
         reasoning_effort: str = "",
@@ -401,6 +598,11 @@ class ConsumerAgentRunner:
         self.codex_session_exists = codex_session_exists or (
             lambda session_id: find_codex_session_path(session_id) is not None
         )
+        self.codex_session_wire_schema = (
+            codex_session_wire_schema
+            if codex_session_wire_schema is not None
+            else read_codex_session_wire_schema if codex_session_exists is None else None
+        )
         self.runtime_skill_snapshot = runtime_skill_snapshot
         self.forced_runtime_route = forced_runtime_route
         self.reasoning_effort = reasoning_effort
@@ -414,7 +616,10 @@ class ConsumerAgentRunner:
         )
         return tuple(route.name for route in config.routes) if config else ("codex_oauth",)
 
-    def _route_session_exists(self, route_name: str, session_id: str) -> bool:
+    def _route_session_exists(
+        self, route_name: str, session_id: str,
+        *, expected_wire_schema: dict[str, object] | None = None,
+    ) -> bool:
         config = self.runtime_config or (
             self.codex_adapter.config if self.codex_adapter is not None else None
         )
@@ -436,7 +641,15 @@ class ConsumerAgentRunner:
             # Claude owns its remote conversation ledger. The adapter validates
             # the persisted ID before --resume and handles incompatibility safely.
             return True
-        return self.codex_session_exists(session_id)
+        if not self.codex_session_exists(session_id):
+            return False
+        if (
+            route_kind is RuntimeKind.CODEX_CLI
+            and expected_wire_schema is not None
+            and self.codex_session_wire_schema is not None
+        ):
+            return self.codex_session_wire_schema(session_id) == expected_wire_schema
+        return True
 
     def _consumer_route_sessions(
         self, conversation_id: str, session_contract_hash: str = ""
@@ -444,7 +657,7 @@ class ConsumerAgentRunner:
         """Return live route sessions for one continuous business conversation.
 
         Selected Skill turns reuse only the exact Skill-compatible session. Other
-        Consumer contract edits retain the existing continuous-conversation behavior.
+        prompt edits retain continuity unless the saved Codex wire schema differs.
         """
         sessions: dict[str, str] = {}
         for route_name in self._configured_route_names():
@@ -549,11 +762,14 @@ class ConsumerAgentRunner:
             ),
             prompt_configuration=configuration,
         )
-        skill_session_contract_hash = (
+        purpose_name = purpose_for_context(context, task)
+        skill_session_contract_hash = consumer_task_session_contract_hash(
             consumer_selected_skill_session_contract_hash(
                 selected_skill_source_fingerprints
-            )
+            ),
+            purpose_name=purpose_name,
         )
+        expected_wire_schema = json.loads(_schema_json(consumer_wire_model(purpose_name)))
         route_sessions = self._consumer_route_sessions(
             task.conversation_id, skill_session_contract_hash
         )
@@ -564,7 +780,9 @@ class ConsumerAgentRunner:
         # id here only supplies a fast-path hint and never clears other routes.
         conversation_session_id = next(iter(route_sessions.values()), None)
         for route_name, route_session_id in tuple(route_sessions.items()):
-            if not self._route_session_exists(route_name, route_session_id):
+            if not self._route_session_exists(
+                route_name, route_session_id, expected_wire_schema=expected_wire_schema
+            ):
                 self._clear_route_session(
                     task.conversation_id, route_name, route_session_id
                 )
@@ -646,7 +864,7 @@ class ConsumerAgentRunner:
                 self.store.path, task.id, task.execution_generation, create=True,
             )
             make_consumer_agent_command(
-                command, task_workspace=str(task_workspace),
+                command, task_workspace=str(task_workspace), purpose_name=purpose_name,
                 controlled_cli=ControlledCliConfig(
                     command=sys.executable,
                     args=("-m", "app.agent_cli", "--role", "consumer", "--task-id",
@@ -656,10 +874,20 @@ class ConsumerAgentRunner:
                 ),
             )
 
+        developer_sections_by_runtime = consumer_developer_sections_by_runtime(
+            runtime_context="",
+            prompt_configuration=configuration,
+            purpose_name=purpose_name,
+        )
         developer_sections = consumer_developer_sections(
             runtime_context="",
             prompt_configuration=configuration,
+            purpose_name=purpose_name,
         )
+        developer_instructions_by_runtime = {
+            runtime_kind: render_prompt_sections(sections, placement="developer")
+            for runtime_kind, sections in developer_sections_by_runtime.items()
+        }
         frozen_skill_names_for_task = frozen_task_skill_names(
             task.trigger_message_json, context.skill_names,
         )
@@ -690,44 +918,154 @@ class ConsumerAgentRunner:
                 if skill_protocol_is_custom and context_skill_protocol is not None
                 else "runtime_catalog"
             )
+        current_context_time = datetime.now().astimezone().strftime(
+            "%Y-%m-%d %H:%M:%S %z"
+        )
+        developer_instructions = render_prompt_sections(
+            developer_sections,
+            placement="developer",
+        )
+        assembly_options = {
+            "scheduled_prompt": context.consumer_prompt,
+            "skill_names": context.skill_names,
+            "frozen_skill_names": frozen_skill_names_for_task,
+            "frozen_skill_materials": frozen_skill_materials,
+            "skill_protocol": context_skill_protocol or "",
+            "skill_protocol_is_custom": skill_protocol_is_custom,
+            "skill_catalog": default_task_skill_catalog(context.skill_names),
+        }
         task_assembly = compose_consumer_task_assembly(
             configuration,
             task_context=context.render(
                 proposal_revision=proposal_revision,
                 feedback=feedback,
+                current_time=current_context_time,
             ),
-            scheduled_prompt=context.consumer_prompt,
             continuation=continuation_prompt,
-            skill_names=context.skill_names,
-            frozen_skill_names=frozen_skill_names_for_task,
-            frozen_skill_materials=frozen_skill_materials,
-            skill_protocol=context_skill_protocol or "",
-            skill_protocol_is_custom=skill_protocol_is_custom,
-            skill_catalog=default_task_skill_catalog(context.skill_names),
+            **assembly_options,
         )
+        stable_task_assembly = compose_consumer_task_assembly(
+            configuration,
+            task_context=context.render(
+                proposal_revision=0,
+                feedback=None,
+                current_time=_CONSUMER_FINGERPRINT_TIME,
+            ),
+            continuation=continuation_prompt,
+            **assembly_options,
+        )
+        image_sources = tuple(
+            f"{index}:{path}:{context.image_sha256s[index] if index < len(context.image_sha256s) else ''}"
+            for index, path in enumerate(context.image_paths)
+        )
+        source_context_fingerprint = _consumer_source_context_fingerprint(
+            task_id=task.id,
+            execution_generation=task.execution_generation,
+            contract_hash=contract_hash,
+            developer_instructions=developer_instructions,
+            stable_task_prompt=stable_task_assembly.text,
+            image_sources=image_sources,
+        )
+        context_marker = (
+            "consumer-source-context-sha256:" + source_context_fingerprint
+        )
+        context_marker_section = PromptSection(
+            "Consumer source context fingerprint",
+            "service-generated binding to the complete original task input",
+            "task",
+            "<!-- " + context_marker + " -->",
+        )
+        full_task_prompt = task_assembly.text + "\n\n" + context_marker_section.text
+        full_task_sections = task_assembly.sections + (context_marker_section,)
+        full_invocation_facts = {
+            "consumer_purpose": purpose_name,
+            "stage_index": context.stage_index,
+            "skill_names": list(context.skill_names),
+            "skill_protocol": skill_protocol_fact,
+            "skill_protocol_source": skill_protocol_source,
+            "participant_timezones": explicit_participant_timezones(
+                context.trigger_raw_payload
+            ),
+            "prompt_configuration": configuration.fingerprints(),
+            "prompt_sections": prompt_section_facts(
+                developer_sections, full_task_sections
+            ),
+        }
+        prompt_sections_by_runtime = {
+            runtime_kind: prompt_section_facts(sections, full_task_sections)
+            for runtime_kind, sections in developer_sections_by_runtime.items()
+        }
+        session_scoped_prompt = None
+        matching_routes = [
+            name for name, persisted_id in route_sessions.items()
+            if persisted_id == session_id
+        ]
+        runtime_config = self.runtime_config or (
+            self.codex_adapter.config if self.codex_adapter is not None else None
+        )
+        matching_codex_routes = [
+            route.name
+            for route in (runtime_config.routes if runtime_config else ())
+            if route.name in matching_routes
+            and route.runtime_kind is RuntimeKind.CODEX_CLI
+        ]
+        if (
+            feedback is not None
+            and not force_new_session
+            and len(matching_routes) == 1
+            and len(matching_codex_routes) == 1
+            and _consumer_revision_context_reusable(
+                self.store,
+                task,
+                proposal_revision=proposal_revision,
+                session_id=session_id,
+                fingerprint=source_context_fingerprint,
+                parent_agent_run_id=parent_agent_run_id,
+                feedback=feedback,
+            )
+        ):
+            compact_prompt = _consumer_revision_prompt(
+                feedback,
+                proposal_revision=proposal_revision,
+                continuation=continuation_prompt,
+                context_marker=context_marker,
+                current_time=current_context_time,
+            )
+            compact_sections = (
+                PromptSection(
+                    "Consumer Audit-feedback revision",
+                    "complete feedback with unchanged source context bound to this exact session",
+                    "task",
+                    compact_prompt,
+                ),
+            )
+            compact_invocation_facts = {
+                **full_invocation_facts,
+                "prompt_sections": prompt_section_facts(
+                    developer_sections, compact_sections
+                ),
+            }
+            compact_prompt_sections_by_runtime = {
+                runtime_kind: prompt_section_facts(sections, compact_sections)
+                for runtime_kind, sections in developer_sections_by_runtime.items()
+            }
+            session_scoped_prompt = {
+                "route_name": matching_codex_routes[0],
+                "session_id": session_id,
+                "prompt": compact_prompt,
+                "invocation_facts": compact_invocation_facts,
+                "prompt_sections_by_runtime": compact_prompt_sections_by_runtime,
+            }
         result = process.execute(
                 run=claim.run,
-                invocation_facts={
-                    "stage_index": context.stage_index,
-                    "skill_names": list(context.skill_names),
-                    "skill_protocol": skill_protocol_fact,
-                    "skill_protocol_source": skill_protocol_source,
-                    "participant_timezones": explicit_participant_timezones(
-                        context.trigger_raw_payload
-                    ),
-                    "prompt_configuration": configuration.fingerprints(),
-                    "prompt_sections": prompt_section_facts(
-                        developer_sections, task_assembly.sections
-                    ),
-                },
-                prompt=task_assembly.text,
+                invocation_facts=full_invocation_facts,
+                prompt=full_task_prompt,
                 session_id=session_id,
-                developer_instructions=render_prompt_sections(
-                    developer_sections,
-                    placement="developer",
-                ),
+                developer_instructions=developer_instructions,
+                developer_instructions_by_runtime=developer_instructions_by_runtime,
+                prompt_sections_by_runtime=prompt_sections_by_runtime,
                 configure_command=configure_consumer_command,
-                parse_result=_parse_consumer_result,
+                parse_result=lambda raw: _parse_consumer_result(raw, purpose=purpose_name),
                 prepare_result=lambda parsed: _prepare_reviewable_candidate(
                     parsed,
                     store=self.store,
@@ -742,12 +1080,28 @@ class ConsumerAgentRunner:
                 required_capabilities=self._required_capabilities(context),
                 conversation_contract_hash=skill_session_contract_hash or contract_hash,
                 force_new_session=force_new_session,
+                session_scoped_prompt=session_scoped_prompt,
         )
         return result
 
 
 def _prepare_reviewable_candidate(parsed, *, store, task, context, proposal_revision, source_client):
     from app.reviewed_sources import capture_candidate_sources
+    if (parsed.purpose_output or {}).get("action") == "request_access":
+        from app.consumer_purpose_retry import verified_access_request_for_file
+        file_id = (parsed.purpose_output or {}).get("target", {}).get("file_id")
+        try:
+            prior_request = verified_access_request_for_file(store, task, file_id)
+        except ValueError as exc:
+            raise ResultParseError(str(exc)) from exc
+        if prior_request:
+            raise ResultParseError("This file already has a verified access request. Reuse its receipt for retry.")
+    if parsed.outcome is ConsumerOutcome.RETRY:
+        from app.consumer_purpose_retry import verified_access_request
+        try:
+            verified_access_request(store, task, parsed.purpose_output["evidence_refs"])
+        except ValueError as exc:
+            raise ResultParseError(str(exc)) from exc
     try:
         require_needs_human_context_eligible(
             outcome=parsed.outcome.value,
@@ -881,7 +1235,14 @@ def structured_dingtalk_outgoing_text_key(action: ProposedAction) -> str | None:
         return text_key if conversation_id and message_id else None
     if delivery == "group":
         return text_key if conversation_id else None
-    return text_key if recipient else None
+    if recipient:
+        return text_key
+    # Generic send operations are dispatched to a conversation when one is
+    # supplied. Explicit direct sends deliberately clear that target in the
+    # handler, so they still require a stable recipient ID.
+    if action.operation != "send_direct_message" and conversation_id:
+        return text_key
+    return None
 
 
 def consumer_developer_instructions(
@@ -911,6 +1272,8 @@ def consumer_developer_sections(
     runtime_context: str | None = None,
     work_profile: str | None = None,
     prompt_configuration: PromptConfiguration | None = None,
+    purpose_name: str = "general",
+    include_wire_contract: bool = True,
 ) -> tuple[PromptSection, ...]:
     # Retain the legacy argument for caller compatibility, but never expose
     # Audit's independent review policy to the Consumer.
@@ -920,11 +1283,13 @@ def consumer_developer_sections(
         audit_rules=None,
         skill_instruction=CONSUMER_DYNAMIC_SKILL_BODY,
         common_principles=configuration.developer_instructions,
-        wire_model=ConsumerAgentWireResult,
+        wire_model=consumer_wire_model(purpose_name),
+        include_wire_contract=include_wire_contract,
     )
     sections = _role_developer_sections(
         core,
-        capability_instructions=AGENT_CAPABILITY_INSTRUCTIONS,
+        capability_instructions=(OA_AGENT_CAPABILITY_INSTRUCTIONS
+                                 if purpose_name == "oa" else AGENT_CAPABILITY_INSTRUCTIONS),
         role_boundary=CONSUMER_ROLE_BOUNDARY.replace("Derek", principal_display_name()),
     )
     return sections + (
@@ -945,6 +1310,31 @@ def consumer_developer_sections(
     )
 
 
+def consumer_developer_sections_by_runtime(
+    audit_rules: str | None = None,
+    *,
+    skill_protocol: str = "",
+    runtime_context: str | None = None,
+    work_profile: str | None = None,
+    prompt_configuration: PromptConfiguration | None = None,
+    purpose_name: str = "general",
+) -> dict[str, tuple[PromptSection, ...]]:
+    """Return the matching Developer sections for each Consumer runtime."""
+    native_schema_runtimes = {RuntimeKind.CODEX_CLI, RuntimeKind.CLAUDE_CLI}
+    return {
+        runtime.value: consumer_developer_sections(
+            audit_rules,
+            skill_protocol=skill_protocol,
+            runtime_context=runtime_context,
+            work_profile=work_profile,
+            prompt_configuration=prompt_configuration,
+            purpose_name=purpose_name,
+            include_wire_contract=runtime not in native_schema_runtimes,
+        )
+        for runtime in RuntimeKind
+    }
+
+
 def default_consumer_skill_protocol() -> str:
     return render_business_skill_protocol(
         installed_runtime_skills(names=BUNDLED_BUSINESS_SKILL_NAMES) + default_skill_catalog(), compact=True,
@@ -961,7 +1351,7 @@ def default_task_skill_catalog(
     return tuple(dict((entry.name, entry) for entry in catalog).values())
 
 
-def _parse_consumer_result(raw: str):
+def _parse_consumer_result(raw: str, *, purpose="general"):
     """Reject a Consumer failure that reports a page it never opened.
 
     The Consumer turn is read-only and has no browser: it cannot have
@@ -979,7 +1369,7 @@ def _parse_consumer_result(raw: str):
 
     from app.email_unsubscribe import BROWSER_EXECUTION_ERROR_CODES
 
-    result = parse_consumer_agent_wire_result(raw)
+    result = parse_consumer_agent_wire_result(raw, purpose=purpose)
     if result.outcome is not ConsumerOutcome.FAILED:
         return result
     code = str(getattr(result.error, "code", "") or "")
@@ -1008,6 +1398,7 @@ def audit_developer_instructions(
     audit_rules: str,
     *, runtime_context: str | None = None, work_profile: str | None = None,
     prompt_configuration: PromptConfiguration | None = None,
+    purpose_name: str = "general",
 ) -> str:
     """Render the Audit contract; provider policy belongs to the runtime."""
     return render_prompt_sections(
@@ -1016,6 +1407,7 @@ def audit_developer_instructions(
             runtime_context=runtime_context,
             work_profile=work_profile,
             prompt_configuration=prompt_configuration,
+            purpose_name=purpose_name,
         ),
         placement="developer",
         omit_empty=False,
@@ -1028,6 +1420,7 @@ def audit_developer_sections(
     runtime_context: str | None = None,
     work_profile: str | None = None,
     prompt_configuration: PromptConfiguration | None = None,
+    purpose_name: str = "general",
 ) -> tuple[PromptSection, ...]:
     configuration = prompt_configuration or load_prompt_configuration(role="audit")
     core = _developer_instruction_sections(
@@ -1038,12 +1431,11 @@ def audit_developer_sections(
     sections = _role_developer_sections(
         core,
         capability_instructions=(
-            "Use the capabilities available to the calling Agent. Apply the applicable "
-            "For DingTalk reads in service Consumer/Audit turns, call declared "
-            "mcp__agent_cli read tools directly; never run local dws commands through "
-            "shell. Product Skill CLI examples are for interactive sessions only. "
-            "If the read tool is not declared, report that capability as unavailable. "
-            "business and operation Skills to the typed candidate. The application does "
+            "Use the capabilities available to the calling Agent.\n"
+            + (_OA_OCR_HANDOFF_INSTRUCTIONS if purpose_name == "oa"
+               else _DIRECT_SOURCE_READ_INSTRUCTIONS)
+            + "\nApply the applicable business and operation Skills to the typed candidate. "
+            "The application does "
             "not inspect command names, MCP tools, receipt formats, or readback procedures; "
             "those are runtime capabilities. When acceptance depends on dynamic external state "
             "and the candidate supplies a stable target identifier, use the available read "
@@ -1085,6 +1477,7 @@ def _developer_instruction_sections(
     skill_instruction: str,
     common_principles: str,
     wire_model: type[ConsumerAgentWireResult] | type[AuditAgentWireResult],
+    include_wire_contract: bool = True,
 ) -> tuple[PromptSection, ...]:
     sections: list[PromptSection] = []
     if audit_rules is not None:
@@ -1116,14 +1509,15 @@ def _developer_instruction_sections(
                 "developer",
                 "## System Action Contracts\n" + system_action_contracts_text(),
             ),
-            PromptSection(
-                "输出契约",
-                "Pydantic 业务模型",
-                "developer",
-                f"## Pydantic Wire Contract\n{_schema_json(wire_model)}",
-            ),
         )
     )
+    if include_wire_contract:
+        sections.append(PromptSection(
+            "输出契约",
+            "Pydantic 业务模型",
+            "developer",
+            f"## Pydantic Wire Contract\n{_schema_json(wire_model)}",
+        ))
     return tuple(sections)
 
 

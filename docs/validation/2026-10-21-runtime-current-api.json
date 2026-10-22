@@ -1,0 +1,137 @@
+{
+  "checks": [
+    {
+      "url": "/api/console/history?page=1&page_size=20&include_chart=false",
+      "http": 200,
+      "items": 20
+    },
+    {
+      "url": "/api/console/history?page=2&page_size=20&include_chart=false",
+      "http": 200,
+      "items": 20
+    },
+    {
+      "url": "/api/console/history?object_type=meeting&page_size=10&include_chart=false",
+      "http": 200,
+      "items": 10
+    },
+    {
+      "url": "/api/console/attention",
+      "http": 200,
+      "items": 5
+    },
+    {
+      "url": "/api/console/dashboard/queues",
+      "http": 200,
+      "items": 0
+    },
+    {
+      "url": "/api/console/tasks/all?page_size=5",
+      "http": 200,
+      "items": 5
+    },
+    {
+      "url": "/api/console/tasks/projects?page_size=5",
+      "http": 200,
+      "items": 5
+    },
+    {
+      "url": "/api/console/tasks/legacy-projects/54",
+      "http": 200,
+      "items": 0
+    },
+    {
+      "url": "/api/console/tasks/legacy-projects/9007199254740991",
+      "http": 404,
+      "items": 0
+    },
+    {
+      "url": "/api/console/tasks/sent-todos?page_size=10",
+      "http": 200,
+      "items": 10
+    },
+    {
+      "url": "/api/console/tasks/items/744",
+      "http": 200,
+      "items": 0
+    },
+    {
+      "url": "/api/console/meeting-attempts/2539",
+      "http": 200,
+      "items": 0
+    },
+    {
+      "url": "/api/console/history/15827",
+      "http": 200,
+      "items": 0
+    },
+    {
+      "url": "/api/console/email/classifications?status=all&page_size=10",
+      "http": 200,
+      "items": 10
+    },
+    {
+      "url": "/api/console/email/classifications/4676265221479091466",
+      "http": 502,
+      "items": 0
+    }
+  ],
+  "tables": {
+    "actions": {
+      "rows": 101583,
+      "sha256": "e621f7a79878642a136e6d9706ba37ffb52661f42dff0ce5a7351e14d98a7c65"
+    },
+    "business": {
+      "rows": 5180,
+      "sha256": "c579382bb560564f9b7ff1932f04bfc27a89cf4e536682cb7e2bc0b1d573a855"
+    },
+    "configs": {
+      "rows": 6275,
+      "sha256": "07872a02a46a8786a86e5ca7848b5db7f854acf4b7032782ae107e885ac70eb5"
+    },
+    "email_schema_migrations": {
+      "rows": 40,
+      "sha256": "9540042351edce86618472033486007b3a96cf8338726860418b41ff5500654c"
+    },
+    "emails": {
+      "rows": 9690,
+      "sha256": "a511c31180585cfd55582f57b6ffccb798d172dbb517326f831f1be7bfe541f5"
+    },
+    "provenance": {
+      "rows": 152,
+      "sha256": "c2b8a8bb463d40eaa58fa2c3db8b15576ec9953c81af7d91e283e86c3714aed2"
+    },
+    "provider_state": {
+      "rows": 72470,
+      "sha256": "4e23827145a5f2eccf691dd39c90cbf670f7d16c0d748fcf03721813b6be21e0"
+    },
+    "runs": {
+      "rows": 257947,
+      "sha256": "c306aa69cb71a5ddcbec5b52c2f5ecf095fa9854119ca02e72bc8cd0744b5753"
+    },
+    "schedules": {
+      "rows": 15,
+      "sha256": "b9530e0201b66c56bd21f8f8a48cac9d97952b0cf33e28f71621979ec07c0a50"
+    },
+    "sqlite_sequence": {
+      "rows": 51,
+      "sha256": "8b4cf1bae67091157a4836717301378e4bb49b2c4f84a0cadb5211a0e3c356e9"
+    },
+    "state": {
+      "rows": 23836,
+      "sha256": "f067ff7a4dddd51970ef30c952ee4dd779c13c9c658f51b5b88a2937f7d0c466"
+    },
+    "tasks": {
+      "rows": 37023,
+      "sha256": "17362da66a48f6945f954ccb2312ff943aa9c4bf43c0ff4251a834626881eed7"
+    }
+  },
+  "persisted_values_unchanged": true,
+  "provider_substitute_reads": 1,
+  "real_sends": 0,
+  "lifespan_started": false,
+  "legacy_todos": 8,
+  "legacy_updates": 20,
+  "meeting_public_id": 2539,
+  "meeting_physical_id": 190283
+}

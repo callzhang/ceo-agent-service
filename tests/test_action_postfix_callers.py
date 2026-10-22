@@ -2,15 +2,17 @@
 import sqlite3
 
 from app.action_storage import action_schema_is_current
-from app.store import AutoReplyStore
+from app.current_database_schema import FINAL_ACTION_OPTIONS
+from app.state_definitions import state_projection
+from app.store import AutoReplyStore, STORE_SCHEMA_VERSION
 
 
 def test_fresh_store_keeps_postfix_types_and_no_retired_postfix_tables(tmp_path):
     path = tmp_path / 'store.sqlite3'
     AutoReplyStore(path)
     with sqlite3.connect(path) as db:
-        assert db.execute("select value from service_state where key='store_schema_version'").fetchone() == ('2026-10-13.5',)
-        assert action_schema_is_current(db, include_reply=True, reply_variant="fresh_memory_fk")
+        assert db.execute(f"select value from ({state_projection('service_state')}) where key='store_schema_version'").fetchone() == (STORE_SCHEMA_VERSION,)
+        assert action_schema_is_current(db, reply_variant="fresh_memory_fk", **FINAL_ACTION_OPTIONS)
         assert not db.execute("select name from sqlite_schema where name in ('outbound_postfixes','outbound_postfix_receipts','native_reply_dispatches')").fetchall()
 
 
@@ -29,7 +31,7 @@ def test_existing_prepare_claim_receipt_and_echo_api_keep_first_values(tmp_path)
     assert len(store.recorded_outbound_body_keys('dingtalk', '')) == 1
     with sqlite3.connect(path) as db:
         assert db.execute("select record_type,count(*) from actions where record_type in ('outbound_postfixes','outbound_postfix_receipts','native_reply_dispatches') group by record_type order by record_type").fetchall() == [
-            ('native_reply_dispatches', 1), ('outbound_postfix_receipts', 1), ('outbound_postfixes', 1),
+            ('outbound_postfixes', 1),
         ]
     # Real second constructor, not a cached Store instance or a fake marker.
     reopened = AutoReplyStore(path)

@@ -1,5 +1,25 @@
 # Console query performance
 
+## Failed History projection correction, 2026-10-16
+
+The failed-only Reply Attempt key query now filters the existing canonical
+History status projection, and its page hydration calls that projection with
+only the selected Attempt IDs. This removes the duplicate failed-candidate
+status predicate and the hardcoded failed display status. The total, filters
+and displayed page now agree for OA legacy labels, current pending tasks and
+unresolved uncertainty. Other source branches keep their existing queries.
+Synthetic regression coverage and the adjacent History/Attempt/Task Agent
+matrix passed 342 tests; page-hydration instrumentation confirms that both
+the private helper and canonical display projection receive only the two
+selected IDs, then one ID on a smaller page.
+
+A separate read-only diagnostic on a frozen source with 14,953 Reply Attempts
+selected six canonical failed keys in 0.9182s, about 5,938,000 SQLite VM steps
+at 2026-10-16T13:05:41Z. Key selection projected only `source_id` and
+`occurred_at`; it did not select display bodies. This metadata diagnostic is
+neither a cold or full API measurement nor evidence of a speed improvement
+against the former candidate query. It does not establish production latency.
+
 ## Follow-up acceptance on 2026-10-15
 
 The earlier production acceptance below is a historical measurement, not proof

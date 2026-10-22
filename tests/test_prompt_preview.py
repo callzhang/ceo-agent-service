@@ -48,14 +48,17 @@ def test_current_preview_renders_full_role_without_creating_profile_or_rule_file
     config = load_runtime_config({"CEO_AGENT_RUNTIME_ROUTES": "codex_oauth,claude_oauth"})
     store = AutoReplyStore(tmp_path / "preview.sqlite3")
     consumer = current_prompt_preview(store, role="consumer", config=config, route_name="codex_oauth", current_time="2026-10-05T18:00:00-07:00")
+    claude_consumer = current_prompt_preview(store, role="consumer", config=config, route_name="claude_oauth", current_time="2026-10-05T18:00:00-07:00")
     audit = current_prompt_preview(store, role="audit", config=config, route_name="claude_oauth", current_time="2026-10-05T18:00:00-07:00")
-    assert "## Pydantic Wire Contract" in consumer["developer_instructions"]
+    assert "## Pydantic Wire Contract" not in consumer["developer_instructions"]
+    assert "## Pydantic Wire Contract" not in claude_consumer["developer_instructions"]
+    assert "## Pydantic Wire Contract" in audit["developer_instructions"]
     assert consumer["runtime_context"] in consumer["developer_instructions"]
     assert "所选 runtime 的配置预览" in consumer["runtime_context"]
     assert "实际 runtime：" not in consumer["runtime_context"]
     assert "日历任务与参与者时区" not in consumer["developer_instructions"]
     assert "不用机器时区、公司所在地、姓名或消息时间戳代替对方时区" not in consumer["developer_instructions"]
-    assert "agent_cli.consumer_artifact_write" in consumer["runtime_context"]
+    assert "mcp__agent_cli__consumer_artifact_write" in consumer["runtime_context"]
     assert "agent_cli.consumer_artifact_write" not in audit["runtime_context"]
     assert "只读审核" in audit["runtime_context"]
     assert "<developer-instructions>" in audit["submitted_input"]
@@ -63,6 +66,32 @@ def test_current_preview_renders_full_role_without_creating_profile_or_rule_file
     assert not (tmp_path / "missing-profile.md").exists()
     assert not (tmp_path / "missing-rules.md").exists()
     assert not (tmp_path / "materials").exists()
+
+
+def test_current_oa_audit_preview_uses_saved_task_purpose(tmp_path, monkeypatch):
+    monkeypatch.setenv("CEO_WORKSPACE", str(tmp_path / "materials"))
+    store = AutoReplyStore(tmp_path / "preview.sqlite3")
+    task, parent = task_and_run(store)
+    audit = store.claim_agent_run(
+        task.id, task.execution_generation, role=AgentRole.AUDIT,
+        proposal_revision=0, turn_attempt=0, parent_agent_run_id=parent.id,
+        operation_id="audit-preview", owner="test",
+    ).run
+    store.append_agent_run_event(audit.id, {
+        "type": "runtime.prompt", "role": "audit", "rendered_at": "2026-10-05T10:00:00+00:00",
+        "task_prompt": "Saved OA task", "invocation_facts": {
+            "audit_purpose": "oa", "skill_names": ["dingtalk-oa-approval"],
+        },
+    }, owner="test")
+
+    result = current_prompt_preview(
+        store, role="audit", config=load_runtime_config({}), task_id=task.id,
+    )
+
+    assert result["status"] != "unavailable"
+    assert "same JS cell" in result["developer_instructions"]
+    assert "mcp__ai_services__ocr_document" in result["developer_instructions"]
+    assert "Saved OA task" in result["task_prompt"]
 
 
 def task_and_run(store, *, trigger_message_json="{}"):
@@ -143,7 +172,7 @@ def test_settings_full_preview_endpoint_is_read_only_and_role_specific(tmp_path,
         response = client.get("/api/console/settings/prompt-preview?role=consumer&route_name=codex_oauth")
         assert response.status_code == 200
         item = response.json()["item"]
-        assert "## Pydantic Wire Contract" in item["developer_instructions"]
+        assert "## Pydantic Wire Contract" not in item["developer_instructions"]
         assert "运行环境与能力说明" in item["runtime_context"]
         assert item["mode"] == "current" and item["task_id"] is None
         assert client.get("/api/console/settings/prompt-preview?role=invalid").status_code == 422

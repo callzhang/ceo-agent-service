@@ -1,6 +1,6 @@
 # CEO Agent 数据库重构方案（已确认结构设计）
 
-结构设计已获 Derek 的 OK 确认：business 命名、来源优先内联、归属直接 FK、仅共享来源使用 provenance、实际多对多事实进入 actions、可溯源原文不长期保存。实施状态按 `../plans/2026-10-11-database-redesign-program.md` 的最新记录：前段精简和 tasks/runs 已发布，actions 及其后合并仍在实施，完整十表目标尚未完成。普通成功轮询明细保留 30 天未确认，排除于当前实施范围。
+结构设计已获 Derek 的 OK 确认：business 命名、来源优先内联、归属直接 FK、仅共享来源使用 provenance、实际多对多事实进入 actions、可溯源原文不长期保存。当前实施状态以 `../../database-redesign-final-acceptance.md` 为唯一主验收入口：最终十核心表＋已有迁移账本已在隔离 worktree 和生产副本实现，业务／恢复验证已有证据，来源补验和最终发布仍未完成，生产尚未切换。`../plans/2026-10-11-database-redesign-program.md` 保留历史过程。普通成功轮询明细保留 30 天未确认，排除于当前实施范围。
 
 证据基线：生产提交 `d171fb722380f551f1e71e6933a222dfce1a8aa7`；数据库 `~/Library/Application Support/ceo-agent-service/auto-reply.sqlite3`。本轮观测 149 张表（含 FTS 虚拟表及影子表）、284 个索引、68 个触发器；逻辑数据库大小 413.60 MB。业务持续运行，行数会变化。没有写生产数据库、改运行代码、重启服务或运行生产测试。
 
@@ -35,6 +35,8 @@
 ### 通用物理表示
 
 带多种记录类型的表有 `id INTEGER PRIMARY KEY`、`record_type TEXT`，以及确实适用的公用状态/时间/归属外键列。类型专用字段采用**显式、版本管理的 typed payload schema**；字段来自下面的旧列清单，不允许任意添加键。供 claim、排序、唯一约束和外键使用的值必须是实际列或受约束的生成列，不能隐藏在不可查询 JSON 中。
+
+2026-10-18 最终物理表示修订：相同生产输入、两端同样VACUUM后，中间候选从487,759,872字节增至540,725,248字节，容量未通过。Actions/Tasks决定采用按真实record_type固定字段顺序的JSONB值向量，并把它们的类型物理存储由TEXT改为稳定INTEGER类型码 `_kind`，原有 `record_type` 是只读SQL生成列，提供原来的类型名称；逻辑类型名、每次尝试独立一行、业务字段、标量编码、公开身份和关系语义保持不变。这是对上述TEXT物理约定的明确修正，原因是同数据行打包实验减少54,681,600表页字节；不能据此宣称完整容量通过。字段顺序与类型码属于显式schema版本，来自现有字段声明；不得新增任意业务键、长期对象JSON兼容层或运行时新旧格式回退。类型只有 `_kind` 一份可写存储，生成名称不占行正文空间；这不是新增业务字段、第二份可写类型或新旧数据格式回退。保留SQL类型名称使已有查询和外键语义不必改写为魔法数字。其余表不为形式统一而更换表示。完整索引/约束、SQL读写、迁移后新增数据恢复以及同输入容量仍需一起验证。唯一主验收与详细数值见`../../database-redesign-final-acceptance.md`。
 
 明确新增的结构字段：`record_type`、需要层级时的 `parent_id`、承载旧专用字段的 `payload_json`、保存旧主键以供历史定位的 `legacy_key`。各表需要引用的 `provenance_id/email_id/business_id/config_id/schedule_id` 是既有关系的新统一 FK，不是新增业务事实。只有实际发生的关系才写入。
 
@@ -130,6 +132,7 @@ actions 的关联类型是已有业务事实的一行，字段和唯一约束各
 * 已完成邮件可读正文：撤回 30 天正文缓存建议；完成且无恢复/人工/未完成动作依赖后不再长期保存可准确溯源的原文，通过原 account/稳定身份读取。界面明确展示来源不可用。model_text 不属于 provenance；当前运行/训练的真实依赖单独核实，能准确重取则直接用来源，不为历史输入长期留副本。只保留当前/最新模型产物，不把历史训练全集重新塞进 DB。
 * provider_state：保留 provider 当前完整库存；不可按“未分类/老日期”批量删除。已经明确不可用且无引用的记录可以退休，水位必须来自有效完整刷新。
 * 已完成任务输入：立即退休可验证找回的正文，保留来源/hash/bytes/版本；不建原文归档兜底；来源不能准确重取时明确记录缺口，保留已有业务结果和实际定位信息，不能伪造可用出处。来源核对不通过的行在演练中单独列出，不直接删生产数据。
+* Derek 于 2026-10-18 的最新明确答复批准一个限定例外：`2026-10-18-provenance-original-retirement-decision.json` 引用的 20 个历史来源版本（489,023 UTF-8 字节）允许在最终迁移中永久移除原文，保留来源定位、identity/hash/字节数、已采用业务事实及回执，并明确显示“原文不可用”。按准确 identity_key 与清单字节数核对范围，不以旧数字 ID 扩展到其他版本；这不是原文已找回的证明。仍须完成副本迁移和恢复演练，且不将原文转存到其他运行表或归档。
 * 未发现当前写入点的旧 receipt/effect 不自动删除：214 effect intents 和 115 execution receipts 仍被 deferral 读取；迁入 actions。空但仍被现有路径使用的 selection/supplement/reply receipt 表迁移为类型，不把功能当作死代码删除。
 * CRM 关联和正式任务来源约束保留。当前空字段不能证明没有未来/当前读取价值。本设计不取消它们。
 
@@ -195,3 +198,14 @@ actions 的关联类型是已有业务事实的一行，字段和唯一约束各
 * 2026-10-11-database-redesign-schema-baseline.json：当前实际 DDL/PK/FK/索引/触发器，不包含业务行正文。
 
 下一步按分期计划落实精确 DDL、生成列/索引/触发器与迁移测试；CSV 是方向清单，不可直接执行。30 天轮询保留政策继续排除。执行基线更新为 36e42c17（Email schema 47），本文件中的测量值仍来自 d171fb72 的历史只读审计，执行前重新测量。
+
+
+### Email 单次原文版本引用的实际字段补齐
+
+当前 canonical emails 已有 provider 身份／定位与 message_normalized_text，但缺少原文字节版本的校验元信息。按本 spec 单次来源在拥有记录内联的规则，emails 增加一个可空 message_source_reference_json：仅含完整 SHA-256、UTF8 字节数、原生精确坐标或已核实的 provider 定位及既有正文序列化形式，不含正文。完整准确来源证明后才能将原 message_normalized_text 置空；未证明、pending feedback 或未完成任务／动作依赖仍保留。class_model_text、现有搜索和相似案例语义单独处理，不以此字段替代它们。当前数据逆迁在写事务外取得准确原文字节，按当前引用重新校验；旧 backup 只作为原文字节来源，不能覆盖新增业务行、当前状态或回执。不新建共享 provenance 行或长期兼容容器来承载一个所有者的来源。
+
+### 2026-10-19 confirmed bounded Email preview
+
+Derek approved a maximum1000 Unicode-character plain-text preview as the explicit exception to provenance-only storage. Keep exactly one populated preview in each existing `emails` row: `class_preview` for classified rows, `message_preview` for message-only rows; clear the other preview on classified rows. Reuse these actual fields, no new table or body cache. Preview derives from the same displayed original text, never a model summary; full-body hashes/locators, nonterminal inputs and model feature inputs remain distinct and exact.
+
+Default Console classification/unsubscribe listing searches sender, subject and preview locally, without fetching originals; it returns preview as preview, never as full message_text. Explicit `search_scope=full` uses existing exact source-backed substring search, and detail still reads the full original. UI clearly labels the1000-character search range and exposes an explicit full-search action, rather than triggering full reads on ordinary typing. Full search retains exact total/order/page and errors on incomplete source reads.

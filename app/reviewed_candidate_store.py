@@ -1,23 +1,29 @@
 """Durable, generation-bound Consumer candidates and system execution progress."""
 
-from app.task_storage import REPLY_TASK_SQL
+from app.task20_definitions import task20_column, task20_projection
+from app.task8_storage import task8_set_parts
 import hashlib
 import json
 import sqlite3
 from datetime import datetime, timedelta, timezone
 from typing import Any
-from app.run_storage import AGENT_RUN_SQL
+from app.logical_run_storage import AGENT_RUN_SQL
+from app.model_action_schema import candidate_option, selected_branch
+from app import shared_action_lifecycle
+from app.execution_owner_storage import create_plan_execution, update_plan_execution
 from app.action_storage import (
     REVIEW_CANDIDATE_SQL,
     CANDIDATE_REVIEW_SQL,
     CANDIDATE_SELECTION_SQL,
     CANDIDATE_SUPPLEMENT_SQL,
     CANDIDATE_EXECUTION_SQL,
-    CANDIDATE_ACTION_ATTEMPT_SQL,
+    CANDIDATE_ACTION_ATTEMPT_SQL, candidate_action_attempt_row,
     EXTERNAL_ACTION_RESULT_SQL,
     insert_action,
-    update_action,
 )
+
+
+REPLY_TASK_SQL = task20_projection('reply_tasks')
 
 
 
@@ -36,6 +42,15 @@ def _json(value: Any) -> str:
 
 def _row(row: sqlite3.Row | None) -> dict[str, Any] | None:
     return dict(row) if row is not None else None
+
+
+def _derived_selection(db, row, *, selection_key="selection_id"):
+    """Preserve the response key; derive its value from the exact candidate FK."""
+    result = _row(row)
+    if result is not None:
+        result["branch_json"] = (_json(selected_branch(db, result[selection_key]))
+                                 if result[selection_key] is not None else None)
+    return result
 
 
 def _utc() -> datetime:
@@ -98,7 +113,7 @@ class ReviewedCandidateStoreMixin:
                 raise ValueError("completed WeChat decision mismatch")
             # The independent WeChat delivery pipeline does not adopt Audit plans.
             return
-        if data.get("outcome") not in ("proposal", "needs_human", "no_action"):
+        if data.get("outcome") not in ("proposal", "needs_human", "no_action", "retry"):
             raise ValueError("result is not a reviewable candidate")
         if (task_row is None or run is None or task_row[0] != run["execution_generation"]
             or run["role"] != "consumer" or run["status"] != "completed"):
@@ -127,7 +142,7 @@ class ReviewedCandidateStoreMixin:
                 or prior["stage_index"] != stage - 1 or prior["decision"] != "approve"
                 or prior["execution_status"] not in ("done", "skipped")):
                 raise ValueError("candidate predecessor mismatch")
-        insert_action(db, "review_candidates", {
+        shared_action_lifecycle.persist_plan(db, "reviewed", {
             "task_id": run["reply_task_id"], "execution_generation": run["execution_generation"],
             "consumer_run_id": run["id"], "stage_index": stage,
             "proposal_revision": run["proposal_revision"], "predecessor_review_id": predecessor,
@@ -216,7 +231,7 @@ class ReviewedCandidateStoreMixin:
     def current_reviewed_candidate(self, task_id: int, generation: str) -> dict[str, Any] | None:
         with self._connect() as db:
             row = db.execute(f"""select c.*, r.id as review_id, r.audit_run_id, r.decision, s.id as selection_id,
-                s.option_key, s.branch_json, s.status as selection_status
+                s.option_key, s.status as selection_status
                 from ({REVIEW_CANDIDATE_SQL}) c join ({REPLY_TASK_SQL}) t on t.id=c.task_id
                 join ({CANDIDATE_REVIEW_SQL}) r on r.candidate_id=c.id
                 left join ({CANDIDATE_SELECTION_SQL}) s on s.candidate_id=c.id
@@ -224,27 +239,33 @@ class ReviewedCandidateStoreMixin:
                 and c.invalidated_at='' and r.decision='approve'
                 and c.id=(select max(id) from ({REVIEW_CANDIDATE_SQL}) where task_id=? and execution_generation=?)
                 order by r.id desc limit 1""", (task_id, generation, generation, task_id, generation)).fetchone()
-            return _row(row)
+            return _derived_selection(db, row)
+
+    def get_candidate_selection(self, candidate_id: int) -> dict[str, Any] | None:
+        """Read the selection of this immutable candidate, including old stages."""
+        with self._connect() as db:
+            row = db.execute(f"select * from ({CANDIDATE_SELECTION_SQL}) where candidate_id=?",
+                             (candidate_id,)).fetchone()
+            return _derived_selection(db, row, selection_key="id")
 
     def select_candidate_option(self, candidate_id: int, review_id: int, option_key: str) -> dict[str, Any]:
         with self._immediate_write_transaction() as db:
             candidate, _ = self._review_context(db, candidate_id, review_id)
             if db.execute(f"select max(id) from ({REVIEW_CANDIDATE_SQL}) where task_id=? and execution_generation=?", (candidate["task_id"], candidate["execution_generation"])).fetchone()[0] != candidate_id:
                 raise ValueError("stale candidate")
-            options = json.loads(candidate["candidate_json"]).get("decision_options", [])
-            branch = next((option for option in options if option.get("key") == option_key), None)
-            if branch is None or (branch.get("plan") is None and branch.get("terminal_outcome") != "skipped"):
+            branch = candidate_option(candidate["candidate_json"], option_key)
+            if branch.get("plan") is None and branch.get("terminal_outcome") != "skipped":
                 raise ValueError("unbound option")
             prior = db.execute(f"select * from ({CANDIDATE_SELECTION_SQL}) where candidate_id=?", (candidate_id,)).fetchone()
             if prior is not None:
                 if prior["review_id"] != review_id or prior["option_key"] != option_key:
                     raise ValueError("selection_conflict")
-                return dict(prior)
+                return _derived_selection(db, prior, selection_key="id")
             insert_action(db, "candidate_selections", {
                 "candidate_id": candidate_id, "review_id": review_id,
-                "option_key": option_key, "branch_json": _json(branch),
-            })
-            return dict(db.execute(f"select * from ({CANDIDATE_SELECTION_SQL}) where candidate_id=?", (candidate_id,)).fetchone())
+                "option_key": option_key,
+            }, selection_references=True)
+            return _derived_selection(db, db.execute(f"select * from ({CANDIDATE_SELECTION_SQL}) where candidate_id=?", (candidate_id,)).fetchone(), selection_key="id")
 
     def record_candidate_supplement(self, candidate_id: int, instruction: str) -> dict[str, Any]:
         if not instruction.strip():
@@ -254,7 +275,7 @@ class ReviewedCandidateStoreMixin:
             inserted = insert_action(db, "candidate_supplements", {
                 "candidate_id": candidate_id, "instruction": instruction,
             })
-            update_action(db, "review_candidates", candidate_id, {
+            shared_action_lifecycle.update_plan(db, "reviewed", candidate_id, {
                 "invalidated_at": _db_timestamp(db), "invalidation_reason": "supplement",
             }, where_sql="invalidated_at=''")
             return dict(db.execute(f"select * from ({CANDIDATE_SUPPLEMENT_SQL}) where id=?", (inserted.lastrowid,)).fetchone())
@@ -264,7 +285,7 @@ class ReviewedCandidateStoreMixin:
             raise ValueError("invalidation reason is empty")
         with self._immediate_write_transaction() as db:
             self._candidate_context(db, candidate_id)
-            update_action(db, "review_candidates", candidate_id, {
+            shared_action_lifecycle.update_plan(db, "reviewed", candidate_id, {
                 "invalidated_at": _db_timestamp(db), "invalidation_reason": reason,
             }, where_sql="invalidated_at=''")
             return dict(db.execute(f"select * from ({REVIEW_CANDIDATE_SQL}) where id=?", (candidate_id,)).fetchone())
@@ -287,8 +308,7 @@ class ReviewedCandidateStoreMixin:
                 raise ValueError("stale candidate")
             task = db.execute(f"select * from ({REPLY_TASK_SQL}) where id=?", (candidate["task_id"],)).fetchone()
             if task["status"] == "needs_human":
-                db.execute("""update tasks set status='pending',available_at='',locked_at=null,
-                    updated_at=current_timestamp where record_type='reply_tasks' and id=? and execution_generation=? and status='needs_human'""",
+                db.execute(f"""update tasks set {task8_set_parts('reply_tasks', {}, update_sql={'status': "'pending'", 'available_at': "''", 'locked_at': 'null', 'updated_at': 'current_timestamp'}).sql} where record_type='reply_tasks' and id=? and {task20_column('reply_tasks', 'execution_generation')}=? and {task20_column('reply_tasks', 'status')}='needs_human'""",
                     (candidate["task_id"],candidate["execution_generation"]))
             elif task["status"] not in ("pending", "processing", "done", "skipped"):
                 raise ValueError("selected candidate task is unavailable")
@@ -307,10 +327,10 @@ class ReviewedCandidateStoreMixin:
             selection = db.execute(f"select * from ({CANDIDATE_SELECTION_SQL}) where candidate_id=?", (candidate_id,)).fetchone()
             if data.get("outcome") == "needs_human" and selection is None:
                 return None
-            selected_branch = json.loads(selection["branch_json"]) if selection else None
+            branch = selected_branch(db, selection["id"]) if selection else None
             is_stop = data.get("outcome") == "no_action" or (
-                isinstance(selected_branch, dict)
-                and selected_branch.get("terminal_outcome") == "skipped"
+                isinstance(branch, dict)
+                and branch.get("terminal_outcome") == "skipped"
             )
             if not is_stop:
                 self._check_historical_runtime_refusal(db, candidate["business_object_key"])
@@ -323,16 +343,14 @@ class ReviewedCandidateStoreMixin:
                     raise ValueError("execution plan mismatch")
                 if old["status"] in ("done","skipped","failed") or (old["status"] == "running" and old["lease_expires_at"] > now_text and old["lease_owner"] != owner):
                     return None
-                update_action(db, "candidate_executions", old["id"], {
+                update_plan_execution(db, old["id"], {
                     "status": "running", "lease_owner": owner, "lease_expires_at": expiry,
                     "updated_at": _db_timestamp(db),
                 })
             else:
-                insert_action(db, "candidate_executions", {
-                    "candidate_id": candidate_id, "review_id": review_id,
-                    "selection_id": selection["id"] if selection else None,
-                    "status": "running", "lease_owner": owner, "lease_expires_at": expiry,
-                })
+                create_plan_execution(db, candidate_id=candidate_id, review_id=review_id,
+                    selection_id=selection["id"] if selection else None,
+                    status="running", lease_owner=owner, lease_expires_at=expiry)
             return dict(db.execute(f"select * from ({CANDIDATE_EXECUTION_SQL}) where candidate_id=?", (candidate_id,)).fetchone())
 
     def renew_candidate_execution_claim(self, execution_id: int, owner: str, lease_seconds: int) -> dict[str, Any]:
@@ -340,7 +358,7 @@ class ReviewedCandidateStoreMixin:
             raise ValueError("invalid lease")
         with self._immediate_write_transaction() as db:
             self._leased_execution(db, execution_id, owner)
-            update_action(db, "candidate_executions", execution_id, {
+            update_plan_execution(db, execution_id, {
                 "lease_expires_at": _clock(_utc()+timedelta(seconds=lease_seconds)),
                 "updated_at": _db_timestamp(db),
             })
@@ -380,136 +398,204 @@ class ReviewedCandidateStoreMixin:
             candidate = db.execute(f"select * from ({REVIEW_CANDIDATE_SQL}) where id=?", (execution["candidate_id"],)).fetchone()
             data = json.loads(candidate["candidate_json"])
             selection = db.execute(f"select * from ({CANDIDATE_SELECTION_SQL}) where id=?", (execution["selection_id"],)).fetchone() if execution["selection_id"] else None
-            branch = json.loads(selection["branch_json"]) if selection else None
-            plan = branch.get("plan") if branch else data.get("proposal")
+            branch = selected_branch(db, selection["id"]) if selection else None
             if status == "skipped" and not (
                 (branch is not None and branch.get("terminal_outcome") == "skipped")
                 or (branch is None and data.get("outcome") == "no_action")
             ):
                 raise ValueError("skipped requires selected stop branch")
             if status == "done":
-                actions = plan.get("actions", []) if isinstance(plan, dict) else []
+                actions = shared_action_lifecycle.reviewed_action_steps(db, candidate, selection=selection)
                 attempts = db.execute(f"select action_index,status from ({CANDIDATE_ACTION_ATTEMPT_SQL}) where execution_id=? order by action_index", (execution_id,)).fetchall()
                 if not actions or len(attempts) != len(actions) or any(row["action_index"] != index or row["status"] != "verified" for index,row in enumerate(attempts)):
                     raise ValueError("execution actions are not verified")
-            update_action(db, "candidate_executions", execution_id, {
+            update_plan_execution(db, execution_id, {
                 "status": status, "result_json": body, "lease_owner": "", "lease_expires_at": "",
                 "updated_at": _db_timestamp(db),
             })
             if invalidate_reason:
-                update_action(db, "review_candidates", execution["candidate_id"], {
+                shared_action_lifecycle.update_plan(db, "reviewed", execution["candidate_id"], {
                     "invalidated_at": _db_timestamp(db), "invalidation_reason": invalidate_reason,
                 }, where_sql="invalidated_at=''")
             return dict(db.execute(f"select * from ({CANDIDATE_EXECUTION_SQL}) where id=?", (execution_id,)).fetchone())
 
-    def begin_candidate_action(self, execution_id: int, owner: str, action_index: int, external_action_key: str) -> dict[str, Any]:
+    def begin_candidate_action(
+        self, execution_id: int, owner: str, action_index: int,
+        external_action_key: str, *, preparation_owner: dict[str, str] | None = None,
+    ) -> dict[str, Any]:
         if action_index < 0 or not external_action_key.strip():
             raise ValueError("invalid action identity")
         with self._immediate_write_transaction() as db:
             execution = self._owned_execution(db, execution_id, owner)
             candidate = self._candidate_context(db, execution["candidate_id"])
-            data = json.loads(candidate["candidate_json"])
             selection = db.execute(f"select * from ({CANDIDATE_SELECTION_SQL}) where id=?", (execution["selection_id"],)).fetchone() if execution["selection_id"] else None
-            plan = json.loads(selection["branch_json"]).get("plan") if selection else data.get("proposal")
-            actions = plan.get("actions", []) if isinstance(plan, dict) else []
+            actions = shared_action_lifecycle.reviewed_action_steps(db, candidate, selection=selection)
             if action_index >= len(actions):
                 raise ValueError("action index outside approved plan")
             prior_actions = db.execute(f"select action_index,status from ({CANDIDATE_ACTION_ATTEMPT_SQL}) where execution_id=? and action_index<?", (execution_id,action_index)).fetchall()
             if len(prior_actions) != action_index or any(row["status"] != "verified" for row in prior_actions):
                 raise ValueError("preceding action is not verified")
-            existing_success = db.execute(f"select * from ({EXTERNAL_ACTION_RESULT_SQL}) where external_action_key=?", (external_action_key,)).fetchone()
-            receipt_status = "verified"
-            if existing_success is not None:
-                verification = json.loads(existing_success["provider_result_json"]).get("verification", {})
-                if verification.get("state") in ("ambiguous", "failed"):
-                    # A corrected historical receipt still records an accepted
-                    # effect. Reconcile it; neither completion nor resend follows.
-                    receipt_status = "uncertain"
-            if existing_success is None:
-                prior_key = db.execute(f"select execution_id,status from ({CANDIDATE_ACTION_ATTEMPT_SQL}) where external_action_key=? and execution_id<>? order by id desc limit 1", (external_action_key,execution_id)).fetchone()
-                if prior_key is not None and prior_key["status"] != "confirmed_no_effect":
-                    raise ValueError("action_key_requires_reconciliation")
-            if existing_success is not None:
-                approved_action = actions[action_index]
-                if (existing_success["business_object_key"] != candidate["business_object_key"]
-                    or existing_success["action_identity"] != approved_action["action_identity"]
-                    or existing_success["operation"] != approved_action["operation"]
-                    or json.loads(existing_success["target_identifiers_json"]) != approved_action.get("target")):
-                    raise ValueError("external action key belongs to another action")
-            old = db.execute(f"select * from ({CANDIDATE_ACTION_ATTEMPT_SQL}) where execution_id=? and action_index=?", (execution_id,action_index)).fetchone()
-            if old is not None:
-                if old["external_action_key"] != external_action_key:
-                    raise ValueError("action key conflict")
-                if existing_success is not None and old["status"] != receipt_status:
-                    update_action(db, "candidate_action_attempts", old["id"], {
-                        "status": receipt_status, "updated_at": _db_timestamp(db),
-                    })
-                elif old["status"] == "dispatched":
-                    update_action(db, "candidate_action_attempts", old["id"], {
-                        "status": "uncertain", "updated_at": _db_timestamp(db),
-                    })
-                elif old["status"] == "confirmed_no_effect":
-                    update_action(db, "candidate_action_attempts", old["id"], {
-                        "status": "dispatched", "updated_at": _db_timestamp(db),
-                    })
-                return dict(db.execute(f"select * from ({CANDIDATE_ACTION_ATTEMPT_SQL}) where id=?", (old["id"],)).fetchone())
-            inserted = insert_action(db, "candidate_action_attempts", {
-                "execution_id": execution_id, "action_index": action_index,
-                "external_action_key": external_action_key,
-                "status": receipt_status if existing_success else "dispatched",
-                "created_at": db.execute("select strftime('%Y-%m-%dT%H:%M:%fZ','now')").fetchone()[0],
-            })
-            return dict(db.execute(f"select * from ({CANDIDATE_ACTION_ATTEMPT_SQL}) where id=?", (inserted.lastrowid,)).fetchone())
+            created_at = db.execute("select strftime('%Y-%m-%dT%H:%M:%fZ','now')").fetchone()[0]
+            return shared_action_lifecycle.begin_reviewed_action(
+                db, execution_id=execution_id, action_index=action_index,
+                external_action_key=external_action_key, action=actions[action_index],
+                candidate=candidate, preparation_owner=preparation_owner,
+                created_at=created_at,
+                updated_at=_db_timestamp(db),
+            )
+
+    def get_prior_candidate_action_attempt(
+        self, external_action_key: str, execution_id: int,
+    ) -> dict[str, Any] | None:
+        with self._connect() as db:
+            row = db.execute(
+                f"select * from ({CANDIDATE_ACTION_ATTEMPT_SQL}) "
+                "where external_action_key=? and execution_id<>? order by id desc limit 1",
+                (external_action_key, execution_id),
+            ).fetchone()
+            return candidate_action_attempt_row(row)
+
+    def record_prior_candidate_action_reconciliation(
+        self, execution_id: int, owner: str, action_index: int,
+        external_action_key: str, status: str, result: Any,
+    ) -> dict[str, Any]:
+        if status not in ("verified", "confirmed_no_effect"):
+            raise ValueError("invalid prior action reconciliation")
+        result_json = _json(result)
+        with self._immediate_write_transaction() as db:
+            execution = self._leased_execution(db, execution_id, owner)
+            candidate = self._candidate_context(db, execution["candidate_id"])
+            prior = candidate_action_attempt_row(db.execute(
+                f"select * from ({CANDIDATE_ACTION_ATTEMPT_SQL}) "
+                "where external_action_key=? and execution_id<>? order by id desc limit 1",
+                (external_action_key, execution_id),
+            ).fetchone())
+            if prior is None or prior["status"] not in ("failed", "uncertain", "dispatched"):
+                raise ValueError("prior action is not reconcilable")
+            prior_result = json.loads(prior["result_json"])
+            if prior_result.get("reason") != "reviewed_message_preparation_mismatch":
+                raise ValueError("prior action failure is outside this reconciliation")
+            prior_execution = db.execute(
+                f"select * from ({CANDIDATE_EXECUTION_SQL}) where id=?",
+                (prior["execution_id"],),
+            ).fetchone()
+            prior_candidate = self._candidate_context(db, prior_execution["candidate_id"])
+            if prior_candidate["business_object_key"] != candidate["business_object_key"]:
+                raise ValueError("prior action belongs to another business object")
+            prior_selection = db.execute(
+                f"select * from ({CANDIDATE_SELECTION_SQL}) where id=?",
+                (prior_execution["selection_id"],),
+            ).fetchone() if prior_execution["selection_id"] else None
+            prior_actions = shared_action_lifecycle.reviewed_action_steps(db, prior_candidate, selection=prior_selection)
+            if prior["action_index"] >= len(prior_actions):
+                raise ValueError("prior action is outside its approved plan")
+            prior_action = prior_actions[prior["action_index"]]
+            selection = db.execute(
+                f"select * from ({CANDIDATE_SELECTION_SQL}) where id=?",
+                (execution["selection_id"],),
+            ).fetchone() if execution["selection_id"] else None
+            actions = shared_action_lifecycle.reviewed_action_steps(db, candidate, selection=selection)
+            if action_index >= len(actions):
+                raise ValueError("action index outside approved plan")
+            action = actions[action_index]
+            if (prior_action.get("action_identity") != action.get("action_identity")
+                    or prior_action.get("operation") != action.get("operation")
+                    or prior_action.get("target") != action.get("target")):
+                raise ValueError("prior action identity differs from the current approved action")
+            if status == "verified":
+                target_json = _json(action.get("target", {}))
+                provider_json = result_json
+                result_digest = hashlib.sha256(provider_json.encode()).hexdigest()
+                saved = db.execute(
+                    f"select * from ({EXTERNAL_ACTION_RESULT_SQL}) where external_action_key=?",
+                    (external_action_key,),
+                ).fetchone()
+                if saved is not None and (saved["business_object_key"] != candidate["business_object_key"]
+                        or saved["action_identity"] != action["action_identity"]
+                        or saved["operation"] != action["operation"]
+                        or saved["target_identifiers_json"] != target_json):
+                    raise ValueError("conflicting external action result")
+                if saved is not None and saved["provider_result_json"] == provider_json:
+                    provider_receipt_id = saved["provider_receipt_id"]
+                    result_json = None
+                elif saved is not None:
+                    # The predecessor keeps an independently observed result
+                    # when another execution already owns the canonical body.
+                    provider_receipt_id = saved["provider_receipt_id"]
+                else:
+                    provider_receipt_id = shared_action_lifecycle.record_reviewed_provider_receipt(
+                        db, external_action_key=external_action_key,
+                        operation=action["operation"], target_json=target_json,
+                        provider_json=provider_json, result_digest=result_digest,
+                        agent_run_id=candidate["consumer_run_id"],
+                        observed_at=_db_timestamp(db),
+                    )
+                    result_json = None
+            else:
+                provider_receipt_id = None
+            shared_action_lifecycle.record_reviewed_action_outcome(
+                db, attempt=prior, status=status, result_json=result_json,
+                provider_receipt_id=provider_receipt_id,
+                agent_run_id=prior_candidate["consumer_run_id"],
+                updated_at=_db_timestamp(db),
+            )
+            return candidate_action_attempt_row(db.execute(
+                f"select * from ({CANDIDATE_ACTION_ATTEMPT_SQL}) where id=?",
+                (prior["id"],),
+            ).fetchone())
 
     def record_candidate_action_outcome(self, execution_id: int, owner: str, action_index: int, status: str, result: Any) -> dict[str, Any]:
         if status not in ("verified","confirmed_no_effect","uncertain","failed"):
             raise ValueError("invalid action outcome")
         body = _json(result)
         with self._immediate_write_transaction() as db:
-            self._leased_execution(db, execution_id, owner)
-            attempt = db.execute(f"select * from ({CANDIDATE_ACTION_ATTEMPT_SQL}) where execution_id=? and action_index=?", (execution_id,action_index)).fetchone()
+            execution = self._leased_execution(db, execution_id, owner)
+            candidate = self._candidate_context(db, execution["candidate_id"])
+            attempt = candidate_action_attempt_row(db.execute(f"select * from ({CANDIDATE_ACTION_ATTEMPT_SQL}) where execution_id=? and action_index=?", (execution_id,action_index)).fetchone())
             if attempt is None:
                 raise ValueError("action was not dispatched")
-            if status == "verified" and db.execute(f"select 1 from ({EXTERNAL_ACTION_RESULT_SQL}) where external_action_key=?", (attempt["external_action_key"],)).fetchone() is None:
-                raise ValueError("verified action lacks successful ledger receipt")
-            update_action(db, "candidate_action_attempts", attempt["id"], {
-                "status": status, "result_json": body, "updated_at": _db_timestamp(db),
-            })
-            return dict(db.execute(f"select * from ({CANDIDATE_ACTION_ATTEMPT_SQL}) where id=?", (attempt["id"],)).fetchone())
+            if status == "verified":
+                receipt = db.execute(f"select provider_result_json,provider_receipt_id from ({EXTERNAL_ACTION_RESULT_SQL}) where external_action_key=?", (attempt["external_action_key"],)).fetchone()
+                if receipt is None:
+                    raise ValueError("verified action lacks successful ledger receipt")
+                if body == receipt["provider_result_json"]:
+                    body = None
+                provider_receipt_id = receipt["provider_receipt_id"]
+            else:
+                provider_receipt_id = None
+            shared_action_lifecycle.record_reviewed_action_outcome(
+                db, attempt=attempt, status=status, result_json=body,
+                provider_receipt_id=provider_receipt_id,
+                agent_run_id=candidate["consumer_run_id"],
+                updated_at=_db_timestamp(db),
+            )
+            return candidate_action_attempt_row(db.execute(f"select * from ({CANDIDATE_ACTION_ATTEMPT_SQL}) where id=?", (attempt["id"],)).fetchone())
 
     def list_candidate_action_attempts(self, execution_id: int) -> list[dict[str, Any]]:
         with self._connect() as db:
-            return [dict(row) for row in db.execute(f"select * from ({CANDIDATE_ACTION_ATTEMPT_SQL}) where execution_id=? order by action_index", (execution_id,))]
+            return [candidate_action_attempt_row(row) for row in db.execute(f"select * from ({CANDIDATE_ACTION_ATTEMPT_SQL}) where execution_id=? order by action_index", (execution_id,))]
 
     def record_candidate_external_action(self, execution_id: int, owner: str, action_index: int, external_action_key: str, operation: str, target_identifiers: dict[str, Any], provider_result: dict[str, Any]) -> dict[str, Any]:
         target_json = _json(target_identifiers)
         provider_json = _json(provider_result)
-        result_digest = hashlib.sha256(provider_json.encode()).hexdigest()
         with self._immediate_write_transaction() as db:
             execution = self._leased_execution(db, execution_id, owner)
             candidate = db.execute(f"""select c.*, t.business_object_key from ({REVIEW_CANDIDATE_SQL}) c
                 join ({REPLY_TASK_SQL}) t on t.id=c.task_id where c.id=?""", (execution["candidate_id"],)).fetchone()
-            attempt = db.execute(f"select * from ({CANDIDATE_ACTION_ATTEMPT_SQL}) where execution_id=? and action_index=? and external_action_key=?", (execution_id,action_index,external_action_key)).fetchone()
+            attempt = candidate_action_attempt_row(db.execute(f"select * from ({CANDIDATE_ACTION_ATTEMPT_SQL}) where execution_id=? and action_index=? and external_action_key=?", (execution_id,action_index,external_action_key)).fetchone())
             if attempt is None:
                 raise ValueError("action dispatch identity mismatch")
-            data = json.loads(candidate["candidate_json"])
             selection = db.execute(f"select * from ({CANDIDATE_SELECTION_SQL}) where id=?", (execution["selection_id"],)).fetchone() if execution["selection_id"] else None
-            plan = json.loads(selection["branch_json"]).get("plan") if selection else data.get("proposal")
-            action = plan["actions"][action_index]
+            action = shared_action_lifecycle.reviewed_action_steps(db, candidate, selection=selection)[action_index]
             if action.get("operation") != operation or action.get("target") != target_identifiers:
                 raise ValueError("approved action mismatch")
-            insert_action(db, "external_action_results", {
-                "external_action_key": external_action_key,
-                "business_object_key": candidate["business_object_key"],
-                "action_identity": action["action_identity"], "operation": operation,
-                "target_identifiers_json": target_json, "provider_result_json": provider_json,
-                "result_digest": result_digest, "first_agent_run_id": candidate["consumer_run_id"],
-            }, ignore=True)
             saved = db.execute(f"select * from ({EXTERNAL_ACTION_RESULT_SQL}) where external_action_key=?", (external_action_key,)).fetchone()
-            if (saved["business_object_key"] != candidate["business_object_key"] or saved["action_identity"] != action["action_identity"]
+            if saved is not None and (saved["business_object_key"] != candidate["business_object_key"] or saved["action_identity"] != action["action_identity"]
                 or saved["operation"] != operation or saved["target_identifiers_json"] != target_json):
                 raise ValueError("conflicting external action result")
-            if saved["provider_result_json"] != provider_json:
+            provider_receipt_id = saved["provider_receipt_id"] if saved is not None else None
+            replaced_provider_json = None
+            if saved is not None and saved["provider_result_json"] != provider_json:
                 previous = json.loads(saved["provider_result_json"])
                 if (previous.get("verification", {}).get("state") != "ambiguous"
                     or provider_result.get("verification", {}).get("state") != "sent"
@@ -517,14 +603,31 @@ class ReviewedCandidateStoreMixin:
                     raise ValueError("conflicting external action result")
                 updated = {**previous, **provider_result}
                 provider_json = _json(updated)
-                update_action(db, "external_action_results", external_action_key, {
-                    "provider_result_json": provider_json,
-                    "result_digest": hashlib.sha256(provider_json.encode()).hexdigest(),
-                })
-                saved = db.execute(f"select * from ({EXTERNAL_ACTION_RESULT_SQL}) where external_action_key=?", (external_action_key,)).fetchone()
-            update_action(db, "candidate_action_attempts", attempt["id"], {
-                "status": "verified", "result_json": provider_json, "updated_at": _db_timestamp(db),
-            })
+                replaced_provider_json = saved["provider_result_json"]
+                provider_receipt_id = None
+            if provider_receipt_id is None or provider_json != saved["provider_result_json"]:
+                provider_receipt_id = shared_action_lifecycle.record_reviewed_provider_receipt(
+                    db, external_action_key=external_action_key, operation=operation,
+                    target_json=target_json, provider_json=provider_json,
+                    result_digest=hashlib.sha256(provider_json.encode()).hexdigest(),
+                    agent_run_id=candidate["consumer_run_id"], observed_at=_db_timestamp(db),
+                )
+                shared_action_lifecycle.advance_canonical_provider_reference(
+                    db, action_id=attempt['action_owner_id'],
+                    provider_receipt_id=provider_receipt_id,
+                )
+            shared_action_lifecycle.record_reviewed_action_outcome(
+                db, attempt=attempt, status="verified", result_json=None,
+                provider_receipt_id=provider_receipt_id,
+                agent_run_id=candidate["consumer_run_id"], updated_at=_db_timestamp(db),
+            )
+            if replaced_provider_json is not None:
+                shared_action_lifecycle.retire_unreferenced_provider_receipt(
+                    db, action_id=attempt['action_owner_id'],
+                    receipt_id=saved['provider_receipt_id'],
+                    expected_provider_json=replaced_provider_json,
+                )
+            saved = db.execute(f"select * from ({EXTERNAL_ACTION_RESULT_SQL}) where external_action_key=?", (external_action_key,)).fetchone()
             return dict(saved)
 
     def get_candidate_external_action(self, external_action_key: str) -> dict[str, Any] | None:
@@ -534,8 +637,8 @@ class ReviewedCandidateStoreMixin:
     def get_verified_action_source(self, external_action_key: str) -> dict[str, Any] | None:
         """Resolve a successful ledger key to the branch actually dispatched."""
         with self._connect() as db:
-            return _row(db.execute(f"""select c.id as candidate_id, c.candidate_json,
-                    a.action_index, s.branch_json, e.selection_id
+            return _derived_selection(db, db.execute(f"""select c.id as candidate_id, c.candidate_json,
+                    a.action_index, s.option_key, e.selection_id
                 from ({EXTERNAL_ACTION_RESULT_SQL}) r
                 join ({REVIEW_CANDIDATE_SQL}) c on c.consumer_run_id=r.first_agent_run_id
                 join ({CANDIDATE_EXECUTION_SQL}) e on e.candidate_id=c.id
@@ -549,7 +652,7 @@ class ReviewedCandidateStoreMixin:
             return _row(db.execute(f"select * from ({CANDIDATE_REVIEW_SQL}) where audit_run_id=?", (audit_run_id,)).fetchone())
 
     def list_verified_candidate_actions(self, task_id: int) -> list[dict[str, Any]]:
-        """Return immutable receipts for the business object's verified stages."""
+        """Return owned receipt results for the business object's verified stages."""
         with self._connect() as db:
             rows = db.execute(f"""select a.*, c.task_id, c.stage_index, c.id as candidate_id,
                 c.execution_generation, r.operation, r.action_identity,
@@ -558,10 +661,11 @@ class ReviewedCandidateStoreMixin:
                 from ({CANDIDATE_ACTION_ATTEMPT_SQL}) a
                 join ({CANDIDATE_EXECUTION_SQL}) e on e.id=a.execution_id
                 join ({REVIEW_CANDIDATE_SQL}) c on c.id=e.candidate_id
-                join ({EXTERNAL_ACTION_RESULT_SQL}) r on r.external_action_key=a.external_action_key
+                left join ({EXTERNAL_ACTION_RESULT_SQL}) r on r.external_action_key=a.external_action_key
                 where c.task_id=? and a.status='verified'
+                  and (r.external_action_key is not null or a.result_json is null)
                 order by c.id, a.action_index""", (task_id,)).fetchall()
-            return [dict(row) for row in rows]
+            return [candidate_action_attempt_row(row) for row in rows]
 
     def list_human_decision_evidence(self, task_id: int) -> list[dict[str, Any]]:
         """Read immutable answers/new facts for this business object across generations.
@@ -575,7 +679,7 @@ class ReviewedCandidateStoreMixin:
                 raise ValueError("task does not exist")
             rows = db.execute(f"""select * from (
                 select 'selection' as kind, s.id as source_record_id,
-                s.created_at, s.option_key, s.branch_json, '' as instruction,
+                s.created_at, s.option_key, '' as instruction,
                 c.id as candidate_id, c.execution_generation, c.stage_index,
                 c.candidate_digest, c.candidate_json, c.invalidated_at,
                 c.invalidation_reason, r.id as review_id, r.audit_run_id
@@ -587,7 +691,7 @@ class ReviewedCandidateStoreMixin:
                 where t.business_object_key=?
                 union all
                 select 'supplement' as kind, supplement.id as source_record_id,
-                supplement.created_at, '' as option_key, '' as branch_json,
+                supplement.created_at, '' as option_key,
                 supplement.instruction,
                 c.id as candidate_id, c.execution_generation, c.stage_index,
                 c.candidate_digest, c.candidate_json, c.invalidated_at,
@@ -619,7 +723,7 @@ class ReviewedCandidateStoreMixin:
                 "needs_human_reason": question.get("needs_human_reason", ""),
                 "decision_basis": question.get("decision_basis"),
                 "option_key": row["option_key"] or None,
-                "selected_branch": json.loads(row["branch_json"]) if row["branch_json"] else None,
+                "selected_branch": candidate_option(row["candidate_json"], row["option_key"]) if row["kind"] == "selection" else None,
                 "instruction": row["instruction"] or None,
                 "invalidated_at": row["invalidated_at"],
                 "invalidation_reason": row["invalidation_reason"],

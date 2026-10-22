@@ -1,7 +1,13 @@
+import io
 import json
 import inspect
 import sqlite3
+import subprocess
+import sys
+import tarfile
 import time
+from functools import wraps
+from tempfile import TemporaryDirectory
 from pathlib import Path
 from threading import Event, Thread
 
@@ -25,6 +31,138 @@ from app.feedback_processing import (
 )
 import app.store as store_module
 from app.store import AutoReplyStore, UserFeedbackItem
+from app.action_feedback_definitions import feedback_projection
+from app.action_feedback_storage import insert_feedback_action, set_feedback_action
+from app.task12_storage import delete_task12, insert_task12, update_task12
+from tests.feedback_processing_fixtures import resolve_feedback_fixture
+
+
+_NATIVE_FEEDBACK_PREDECESSOR = "1ab1ded2e548fb459afe15ebdf801ec5dc381995"
+
+
+@pytest.fixture(scope="module")
+def native_feedback_predecessor_tree():
+    """Pin physical native-schema regressions to the last production predecessor."""
+    with TemporaryDirectory(prefix="feedback-native-predecessor-") as root:
+        tree = Path(root)
+        archived = subprocess.check_output(
+            ["git", "archive", _NATIVE_FEEDBACK_PREDECESSOR],
+            cwd=Path(__file__).parents[1],
+        )
+        with tarfile.open(fileobj=io.BytesIO(archived)) as tar:
+            tar.extractall(tree, filter="data")
+        yield tree
+
+
+def _assert_native_feedback_predecessor_case(tree: Path, nodeid: str) -> None:
+    result = subprocess.run(
+        [sys.executable, "-m", "pytest", "-q", "--tb=short", nodeid],
+        cwd=tree,
+        capture_output=True,
+        text=True,
+        timeout=180,
+        check=False,
+    )
+    assert result.returncode == 0, result.stdout + result.stderr
+
+
+def _native_predecessor_case(test):
+    """Execute an unchanged physical-native regression in the pinned source tree."""
+    @wraps(test)
+    def run(*args, request, native_feedback_predecessor_tree, **kwargs):
+        _assert_native_feedback_predecessor_case(
+            native_feedback_predecessor_tree, request.node.nodeid,
+        )
+
+    original = inspect.signature(test)
+    run.__signature__ = original.replace(parameters=[
+        *original.parameters.values(),
+        inspect.Parameter("request", inspect.Parameter.KEYWORD_ONLY),
+        inspect.Parameter(
+            "native_feedback_predecessor_tree", inspect.Parameter.KEYWORD_ONLY,
+        ),
+    ])
+    return run
+
+
+def test_native_feedback_receipts_survive_full_paired_selection(
+    tmp_path: Path, native_feedback_predecessor_tree: Path,
+):
+    """Genuine native public receipts remain readable after paired selection."""
+    db_path = tmp_path / "native-paired.sqlite3"
+    result = subprocess.run(
+        [
+            sys.executable, "-c",
+            "from app.store import AutoReplyStore\n"
+            "from app.email_store import EmailStore\n"
+            "import sys\n"
+            "from pathlib import Path\n"
+            "store=AutoReplyStore(Path(sys.argv[1]))\n"
+            "EmailStore(Path(sys.argv[1]))\n"
+            "store.upsert_feedback_event(key='feedback-native', "
+            "feedback_token='token-native', comment='source comment', "
+            "original_text='source original')\n"
+            "store.create_feedback_processing_batch(['feedback-native'], "
+            "batch_id='batch-native')\n"
+            "store.claim_feedback_processing_items('batch-native', "
+            "['feedback-native'])\n",
+            str(db_path),
+        ],
+        cwd=native_feedback_predecessor_tree,
+        capture_output=True,
+        text=True,
+        timeout=180,
+        check=False,
+    )
+    assert result.returncode == 0, result.stdout + result.stderr
+    with sqlite3.connect(db_path) as db:
+        native_events = db.execute(
+            "select key,comment,original_text,resolved_at from feedback_events order by key"
+        ).fetchall()
+        native_rounds = db.execute(
+            "select feedback_key,round_number,batch_id,status,"
+            "workbench_task_id,workbench_turn_id,attempt_id,agent_run_id,"
+            "commit_sha,test_evidence_json,restart_evidence_json,"
+            "health_evidence_json,note,started_at,resolved_at,created_at,updated_at "
+            "from feedback_processing_rounds order by feedback_key"
+        ).fetchall()
+        native_pointers = db.execute(
+            "select feedback_key,current_round_id from feedback_processing_items "
+            "order by feedback_key"
+        ).fetchall()
+        assert len(native_events) == 1
+        assert len(native_rounds) == 1
+    from app.store_schema_release import prepare_database_schema_release
+
+    release = prepare_database_schema_release(Path(__file__).parents[1], db_path)
+    assert release is not None
+    release.migrate(release)
+    selected = AutoReplyStore(db_path)
+    with selected._connect() as db:
+        tables = {row[0] for row in db.execute(
+            "select name from sqlite_master where type='table'"
+        )}
+        assert "feedback_events" not in tables
+        assert "feedback_processing_transitions" not in tables
+        assert "feedback_iteration_decision_items" not in tables
+        assert len(tables - {"sqlite_sequence"}) == 28
+        assert [tuple(row) for row in db.execute(
+            "select key,comment,original_text,resolved_at from ("
+            + feedback_projection("feedback_events") + ") order by key"
+        )] == native_events
+        assert [tuple(row) for row in db.execute(
+            "select feedback_key,round_number,batch_id,status,"
+            "workbench_task_id,workbench_turn_id,attempt_id,agent_run_id,"
+            "commit_sha,test_evidence_json,restart_evidence_json,"
+            "health_evidence_json,note,started_at,resolved_at,created_at,updated_at "
+            "from (" + store_module.task12_projection("feedback_processing_rounds")
+            + ") order by feedback_key"
+        )] == native_rounds
+        assert [tuple(row) for row in db.execute(
+            "select feedback_key,current_round_id from ("
+            + store_module.task12_projection("feedback_processing_items")
+            + ") order by feedback_key"
+        )] == native_pointers
 
 
 def test_feedback_event_seeds_processing_item_without_changing_event(tmp_path: Path):
@@ -106,11 +244,10 @@ def test_feedback_processing_schema_is_additive_and_reopen_is_idempotent(
         return tables, indexes
 
     tables_before, indexes_before = schema_snapshot()
-    assert "feedback_events" in tables_before
-    assert "feedback_processing_batches" in tables_before
-    assert "feedback_processing_items" in tables_before
-    assert "idx_feedback_processing_items_status" in indexes_before
-    assert "idx_feedback_processing_items_batch" in indexes_before
+    assert {"actions", "tasks"} <= tables_before
+    assert not {"feedback_events", "feedback_processing_batches",
+                "feedback_processing_items"} & tables_before
+    assert {"idx_actions_fb_event_key", "idx_actions_fb_event_token"} <= indexes_before
 
     AutoReplyStore(db_path)
     tables_after, indexes_after = schema_snapshot()
@@ -136,32 +273,21 @@ def test_feedback_round_schema_is_additive_and_idempotent(tmp_path: Path):
                 "select name from sqlite_master where type='index'"
             )
         }
-        columns = {
-            row[1]
-            for row in db.execute("pragma table_info(feedback_processing_items)")
-        }
+        columns = {row[1] for row in db.execute("pragma table_xinfo(tasks)")}
+        assert {"actions", "tasks"} <= tables
+        assert not {"feedback_processing_rounds", "feedback_processing_transitions"} & tables
+        assert "feedback_processing_items__current_round_id" in columns
         assert {
-            "feedback_processing_rounds",
-            "feedback_processing_transitions",
-        } <= tables
-        assert "current_round_id" in columns
-        assert {
-            "idx_feedback_processing_rounds_feedback",
-            "idx_feedback_processing_rounds_batch",
-            "idx_feedback_processing_transitions_feedback",
-            "idx_feedback_processing_transitions_batch_round",
-            "idx_feedback_processing_transitions_round",
+            "idx_actions_fb_transition_feedback",
+            "idx_actions_fb_transition_batch_round",
+            "idx_actions_fb_transition_round",
         } <= indexes
 
     store_module._INITIALIZED_STORE_PATHS.discard(db_path.resolve())
     AutoReplyStore(db_path)
     with sqlite3.connect(db_path) as db:
-        assert db.execute(
-            "select count(*) from feedback_processing_rounds"
-        ).fetchone()[0] == 0
-        assert db.execute(
-            "select count(*) from feedback_processing_transitions"
-        ).fetchone()[0] == 0
+        assert db.execute("select count(*) from tasks where record_type='feedback_processing_rounds'").fetchone()[0] == 0
+        assert db.execute("select count(*) from actions where record_type='feedback_processing_transitions'").fetchone()[0] == 0
 
 
 def test_feedback_transition_indexes_are_additive_manifested_and_idempotent(
@@ -170,14 +296,13 @@ def test_feedback_transition_indexes_are_additive_manifested_and_idempotent(
     db_path = tmp_path / "transition-indexes.sqlite3"
     store = AutoReplyStore(db_path)
     expected = {
-        "idx_feedback_processing_transitions_batch_round": (
-            "batch_id",
-            "round_id",
-            "id",
+        "idx_actions_fb_transition_batch_round": (
+            "fb_transition_batch_id",
+            "fb_transition_round_id",
+            None,
         ),
-        "idx_feedback_processing_transitions_round": ("round_id", "id"),
+        "idx_actions_fb_transition_round": ("fb_transition_round_id", None),
     }
-    assert set(expected) <= set(store_module.STORE_SCHEMA_REQUIRED_INDEXES)
 
     with store._connect() as db:
         for index_name, columns in expected.items():
@@ -221,15 +346,14 @@ def test_feedback_transition_batch_queries_use_expected_indexes(tmp_path: Path):
         round_ids = [
             int(row["id"])
             for row in db.execute(
-                "select id from feedback_processing_rounds "
+                f"select id from ({store_module.task12_projection('feedback_processing_rounds')}) "
                 "where batch_id='batch-1' order by id"
             )
         ]
         batch_plan = " ".join(
             str(row["detail"])
             for row in db.execute(
-                "explain query plan select * "
-                "from feedback_processing_transitions "
+                f"explain query plan select * from ({feedback_projection('feedback_processing_transitions')}) "
                 "where batch_id=? order by round_id, id",
                 ("batch-1",),
             )
@@ -237,15 +361,14 @@ def test_feedback_transition_batch_queries_use_expected_indexes(tmp_path: Path):
         round_plan = " ".join(
             str(row["detail"])
             for row in db.execute(
-                "explain query plan select * "
-                "from feedback_processing_transitions "
+                f"explain query plan select * from ({feedback_projection('feedback_processing_transitions')}) "
                 "where round_id in (?, ?) order by round_id, id",
                 round_ids,
             )
         )
 
-    assert "idx_feedback_processing_transitions_batch_round" in batch_plan
-    assert "idx_feedback_processing_transitions_round" in round_plan
+    assert "idx_actions_fb_transition_batch_round" in batch_plan
+    assert "idx_actions_fb_transition_round" in round_plan
 
 
 def test_feedback_round_models_are_strict():
@@ -339,48 +462,28 @@ def test_feedback_round_schema_requires_positive_round_number(
     store = AutoReplyStore(tmp_path / f"positive-round-{round_number}.sqlite3")
     stable_error = "feedback_processing_round_number_must_be_positive"
     with store._connect() as db:
-        db.execute(
-            """
-            insert into feedback_processing_rounds (
-                feedback_key, round_number, batch_id, status
-            ) values ('feedback-valid-schema', 1, 'batch-valid-schema',
-                      'processing')
-            """
-        )
+        valid_round_id = insert_task12(db, "feedback_processing_rounds", {
+            "feedback_key": "feedback-valid-schema", "round_number": 1,
+            "batch_id": "batch-valid-schema", "status": "processing",
+        }).lastrowid
+        assert valid_round_id is not None
         with pytest.raises(sqlite3.IntegrityError, match=stable_error):
-            db.execute(
-                """
-                insert into feedback_processing_rounds (
-                    feedback_key, round_number, batch_id, status
-                ) values (?, ?, ?, 'processing')
-                """,
-                (
-                    f"feedback-invalid-schema-{round_number}",
-                    round_number,
-                    f"batch-invalid-schema-{round_number}",
-                ),
-            )
+            insert_task12(db, "feedback_processing_rounds", {
+                "feedback_key": f"feedback-invalid-schema-{round_number}",
+                "round_number": round_number,
+                "batch_id": f"batch-invalid-schema-{round_number}",
+                "status": "processing",
+            })
         with pytest.raises(sqlite3.IntegrityError, match=stable_error):
-            db.execute(
-                """
-                update feedback_processing_rounds set round_number=?
-                 where feedback_key='feedback-valid-schema'
-                """,
-                (round_number,),
-            )
-        db.execute(
-            """
-            update feedback_processing_rounds set round_number=2
-             where feedback_key='feedback-valid-schema'
-            """
-        )
+            update_task12(db, "feedback_processing_rounds", valid_round_id,
+                          {"round_number": round_number})
+        update_task12(db, "feedback_processing_rounds", valid_round_id,
+                      {"round_number": 2})
         assert tuple(
             db.execute(
-                """
-                select round_number, typeof(round_number)
-                  from feedback_processing_rounds
-                 where feedback_key='feedback-valid-schema'
-                """
+                f"select round_number, typeof(round_number) "
+                f"from ({store_module.task12_projection('feedback_processing_rounds')}) "
+                "where feedback_key='feedback-valid-schema'"
             ).fetchone()
         ) == (2, "integer")
 
@@ -389,14 +492,11 @@ def test_feedback_round_schema_rejects_unknown_receipt_version(tmp_path: Path):
     store = AutoReplyStore(tmp_path / "receipt-version-schema.sqlite3")
     with store._connect() as db:
         with pytest.raises(sqlite3.IntegrityError):
-            db.execute(
-                """
-                insert into feedback_processing_rounds (
-                    feedback_key, round_number, batch_id, status, receipt_version
-                ) values ('feedback-invalid-receipt', 1, 'batch-invalid-receipt',
-                          'processing', 3)
-                """
-            )
+            insert_task12(db, "feedback_processing_rounds", {
+                "feedback_key": "feedback-invalid-receipt",
+                "round_number": 1, "batch_id": "batch-invalid-receipt",
+                "status": "processing", "receipt_version": 3,
+            })
 
 
 @pytest.mark.parametrize(
@@ -406,6 +506,7 @@ def test_feedback_round_schema_rejects_unknown_receipt_version(tmp_path: Path):
         ("trg_feedback_processing_round_integer_v2", False),
     ),
 )
+@_native_predecessor_case
 def test_feedback_round_positive_invariant_upgrades_semantic_decoy_without_rebuild(
     tmp_path: Path,
     trigger_name_stem: str,
@@ -578,6 +679,7 @@ def test_feedback_round_positive_invariant_upgrades_semantic_decoy_without_rebui
         ),
     ),
 )
+@_native_predecessor_case
 def test_cached_round_manifest_replaces_literal_case_decoys(
     tmp_path: Path,
     canonical_literal: str,
@@ -692,6 +794,7 @@ def test_cached_round_manifest_replaces_literal_case_decoys(
     ("round_number", "storage_type"),
     [(1.5, "real"), ("abc", "text"), (0, "integer"), (-1, "integer")],
 )
+@_native_predecessor_case
 def test_feedback_round_upgrade_rejects_existing_invalid_storage_without_mutation(
     tmp_path: Path,
     round_number: object,
@@ -874,6 +977,7 @@ def _rebuild_feedback_round_table_without_integer_check(
     )
 
 
+@_native_predecessor_case
 def test_cached_store_revalidates_invalid_round_storage_before_fast_return(
     tmp_path: Path,
 ):
@@ -911,6 +1015,75 @@ def test_cached_store_revalidates_invalid_round_storage_before_fast_return(
         ).fetchone() == (1.5, "real", "preserve cached invalid row")
 
 
+def test_current_cached_store_revalidates_invalid_round_payload_before_fast_return(
+    tmp_path: Path,
+):
+    db_path = tmp_path / "cached-current-invalid-round.sqlite3"
+    path_key = db_path.resolve()
+    store_module._INITIALIZED_STORE_PATHS.discard(path_key)
+    store = AutoReplyStore(db_path)
+    with store._connect() as db:
+        round_id = insert_task12(db, "feedback_processing_rounds", {
+            "feedback_key": "feedback-cached-invalid", "round_number": 1,
+            "batch_id": "batch-cached-invalid", "status": "processing",
+            "note": "preserve cached invalid row",
+        }).lastrowid
+        assert round_id is not None
+    assert path_key in store_module._INITIALIZED_STORE_PATHS
+
+    with sqlite3.connect(db_path) as db:
+        round_update_sql = db.execute(
+            "select sql from sqlite_master where name='trg_task20_round_update'"
+        ).fetchone()[0]
+        db.execute("drop trigger trg_task20_round_update")
+        db.execute("pragma ignore_check_constraints=on")
+        db.execute(
+            "update tasks set payload_json=json_set(payload_json, '$.round_number', 1.5) "
+            "where record_type='feedback_processing_rounds' and legacy_key=?",
+            (str(round_id),),
+        )
+        db.execute(round_update_sql)
+
+    stable_error = "schema_migration_invalid_feedback_processing_round_number"
+    with pytest.raises(
+        store_module.FeedbackProcessingRoundMigrationIntegrityError,
+        match=stable_error,
+    ):
+        AutoReplyStore(db_path)
+    assert path_key not in store_module._INITIALIZED_STORE_PATHS
+    with sqlite3.connect(db_path) as db:
+        assert db.execute(
+            "select json_extract(payload_json, '$.round_number'), "
+            "typeof(json_extract(payload_json, '$.round_number')), "
+            "json_extract(payload_json, '$.note') from tasks "
+            "where record_type='feedback_processing_rounds' and legacy_key=?",
+            (str(round_id),),
+        ).fetchone() == (1.5, "real", "preserve cached invalid row")
+
+
+def test_current_cached_store_rejects_wrong_round_guard_manifest(tmp_path: Path):
+    db_path = tmp_path / "cached-current-round-manifest.sqlite3"
+    path_key = db_path.resolve()
+    store_module._INITIALIZED_STORE_PATHS.discard(path_key)
+    store = AutoReplyStore(db_path)
+    assert path_key in store_module._INITIALIZED_STORE_PATHS
+    with store._connect() as db:
+        db.execute("drop trigger trg_task20_round_update")
+        db.execute(
+            "create trigger trg_task20_round_update before update of payload_json "
+            "on tasks begin select 1; end"
+        )
+    with store._connect() as db:
+        assert not store_module.task20_schema_is_current(db, allow_missing_objects=True)
+    with pytest.raises(sqlite3.IntegrityError, match="unsupported or malformed Store source schema"):
+        AutoReplyStore(db_path)
+    assert path_key not in store_module._INITIALIZED_STORE_PATHS
+    with sqlite3.connect(db_path) as db:
+        assert "select 1" in db.execute(
+            "select sql from sqlite_master where name='trg_task20_round_update'"
+        ).fetchone()[0]
+
+
 def test_store_rejects_post_migration_manifest_before_marker_or_cache(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
@@ -919,11 +1092,8 @@ def test_store_rejects_post_migration_manifest_before_marker_or_cache(
     path_key = db_path.resolve()
     store_module._INITIALIZED_STORE_PATHS.discard(path_key)
     stable_error = "schema_migration_invalid_feedback_processing_schema"
-    monkeypatch.setitem(
-        store_module.STORE_SCHEMA_REQUIRED_TRIGGER_DEFINITIONS,
-        "trg_feedback_processing_round_integer_v2_insert",
-        "canonical definition deliberately unavailable",
-    )
+    monkeypatch.setattr(AutoReplyStore, "_schema_manifest_is_current_in_connection",
+                        lambda self, db, **options: False)
     schema_error_type = store_module.FeedbackProcessingSchemaIntegrityError
 
     with pytest.raises(schema_error_type, match=stable_error) as error:
@@ -933,13 +1103,11 @@ def test_store_rejects_post_migration_manifest_before_marker_or_cache(
 
     assert path_key not in store_module._INITIALIZED_STORE_PATHS
     with sqlite3.connect(db_path) as db:
-        marker = db.execute(
-            "select value from service_state where key=?",
-            (store_module.STORE_SCHEMA_VERSION_KEY,),
-        ).fetchone()
-    assert marker is None
+        assert not db.execute("select 1 from sqlite_schema where name='state'").fetchone()
 
 
+
+@_native_predecessor_case
 def test_feedback_round_guard_installation_blocks_concurrent_invalid_writer(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
@@ -1062,6 +1230,7 @@ def test_feedback_round_guard_installation_blocks_concurrent_invalid_writer(
         ).fetchone()[0] == 0
 
 
+@_native_predecessor_case
 def test_feedback_round_backfill_preserves_legacy_receipts_and_source(
     tmp_path: Path,
 ):
@@ -1261,487 +1430,48 @@ def test_feedback_round_backfill_preserves_legacy_receipts_and_source(
         ] == source_before
 
 
-def test_feedback_round_backfill_self_heals_current_schema_and_interruption(
-    tmp_path: Path,
-):
-    db_path = tmp_path / "self-heal-rounds.sqlite3"
-    store_module._INITIALIZED_STORE_PATHS.discard(db_path.resolve())
+def test_feedback_cold_reopen_preserves_current_batch_rounds_and_sources(tmp_path: Path):
+    db_path = tmp_path / "current-rounds.sqlite3"
     store = AutoReplyStore(db_path)
+    store.upsert_feedback_event(key="pending", feedback_token="token-pending")
+    _prepare_processing_round(store, "processing", "batch-processing")
     store.upsert_feedback_event(
-        key="feedback-claimed",
-        feedback_token="token-claimed",
-        comment="claimed source",
-        original_text="claimed original",
+        key="resolved", feedback_token="token-resolved", comment="original source"
     )
-    store.upsert_feedback_event(
-        key="feedback-pending",
-        feedback_token="token-pending",
-        comment="pending source",
-        original_text="pending original",
-    )
-    claimed = store.claim_feedback_processing_items(
-        "batch-self-heal", ["feedback-claimed"]
-    )
-    assert len(claimed) == 1
-    store.associate_feedback_processing_turn(
-        "feedback-claimed",
-        workbench_task_id="task-self-heal",
-        workbench_turn_id="turn-self-heal",
-        attempt_id=31,
-        agent_run_id=41,
-    )
-    store.patch_feedback_processing_item_evidence(
-        "feedback-claimed",
-        commit_sha="c" * 40,
-        test_evidence={"pytest": {"exit_code": 0}},
-        restart_evidence={"before_pid": 301, "after_pid": 302},
-        health_evidence={"ok": True, "status_code": 200},
-        note="self-heal note",
-    )
-    # Simulate a Task 1-era interrupted migration after the projection was
-    # written but before its round and transition became durable.
-    with store._connect() as db:
-        db.execute(
-            "delete from feedback_processing_transitions where feedback_key=?",
-            ("feedback-claimed",),
-        )
-        db.execute(
-            "delete from feedback_processing_rounds where feedback_key=?",
-            ("feedback-claimed",),
-        )
-        db.execute(
-            """
-            update feedback_processing_items set current_round_id=0
-             where feedback_key=?
-            """,
-            ("feedback-claimed",),
-        )
+    resolve_feedback_fixture(store, "resolved", batch_id="batch-resolved")
 
-    expected_item = store.get_feedback_processing_item("feedback-claimed")
-    expected_pending = store.get_feedback_processing_item("feedback-pending")
-    expected_source = store.get_feedback_event("feedback-claimed")
-    assert expected_item is not None
-    assert expected_item.current_round_id == 0
-    assert expected_pending is not None
-    assert expected_pending.current_round_id == 0
-    assert expected_source is not None
-    with store._connect() as db:
-        assert db.execute(
-            "select count(*) from feedback_processing_rounds"
-        ).fetchone()[0] == 0
-
-    # A new process sees a structurally current schema. It must still repair
-    # eligible legacy projections without forcing a schema-version downgrade.
-    store_module._INITIALIZED_STORE_PATHS.discard(db_path.resolve())
-    repaired = AutoReplyStore(db_path)
-    repaired_item = repaired.get_feedback_processing_item("feedback-claimed")
-    repaired_pending = repaired.get_feedback_processing_item("feedback-pending")
-    repaired_source = repaired.get_feedback_event("feedback-claimed")
-    assert repaired_item is not None
-    assert repaired_pending is not None
-    assert repaired_source is not None
-    with repaired._connect() as db:
-        rows = db.execute(
-            "select * from feedback_processing_rounds order by id"
-        ).fetchall()
-        assert len(rows) == 1
-        round_row = dict(rows[0])
-        assert repaired_item.current_round_id == round_row["id"]
-        assert round_row["feedback_key"] == expected_item.feedback_key
-        assert round_row["round_number"] == 1
-        assert round_row["batch_id"] == expected_item.batch_id
-        assert round_row["status"] == expected_item.status
-        assert round_row["workbench_task_id"] == expected_item.workbench_task_id
-        assert round_row["workbench_turn_id"] == expected_item.workbench_turn_id
-        assert round_row["attempt_id"] == expected_item.attempt_id
-        assert round_row["agent_run_id"] == expected_item.agent_run_id
-        assert round_row["commit_sha"] == expected_item.commit_sha
-        assert json.loads(round_row["test_evidence_json"]) == (
-            expected_item.test_evidence
-        )
-        assert json.loads(round_row["restart_evidence_json"]) == (
-            expected_item.restart_evidence
-        )
-        assert json.loads(round_row["health_evidence_json"]) == (
-            expected_item.health_evidence
-        )
-        assert round_row["note"] == expected_item.note
-        assert round_row["started_at"] == expected_item.created_at
-        assert round_row["resolved_at"] == expected_item.resolved_at
-        assert round_row["created_at"] == expected_item.created_at
-        assert round_row["updated_at"] == expected_item.updated_at
-        assert repaired_pending == expected_pending
-        assert repaired_pending.current_round_id == 0
-        assert db.execute(
-            """
-            select count(*) from feedback_processing_rounds
-             where feedback_key='feedback-pending'
-            """
-        ).fetchone()[0] == 0
-        assert db.execute(
-            "select count(*) from feedback_processing_transitions"
-        ).fetchone()[0] == 0
-
-        # Simulate an interrupted migration after the additive tables and
-        # pointer column exist but before the eligible round is durable.
-        db.execute(
-            "delete from feedback_processing_rounds where feedback_key=?",
-            ("feedback-claimed",),
-        )
-        db.execute(
-            """
-            update feedback_processing_items set current_round_id=0
-             where feedback_key=?
-            """,
-            ("feedback-claimed",),
-        )
-
-    store_module._INITIALIZED_STORE_PATHS.discard(db_path.resolve())
-    repaired_again = AutoReplyStore(db_path)
-    repaired_again_item = repaired_again.get_feedback_processing_item(
-        "feedback-claimed"
-    )
-    assert repaired_again_item is not None
-    with repaired_again._connect() as db:
-        rows = db.execute(
-            """
-            select * from feedback_processing_rounds
-             where feedback_key='feedback-claimed'
-            """
-        ).fetchall()
-        assert len(rows) == 1
-        assert rows[0]["round_number"] == 1
-        assert repaired_again_item.current_round_id == rows[0]["id"]
-        repaired_round_id = rows[0]["id"]
-        assert repaired_again_item.model_copy(
-            update={"current_round_id": expected_item.current_round_id}
-        ) == expected_item
-        assert repaired_again.get_feedback_event("feedback-claimed") == expected_source
-        assert db.execute(
-            "select count(*) from feedback_processing_transitions"
-        ).fetchone()[0] == 0
-
-    store_module._INITIALIZED_STORE_PATHS.discard(db_path.resolve())
-    idempotent = AutoReplyStore(db_path)
-    with idempotent._connect() as db:
-        rows = db.execute(
-            """
-            select id, round_number from feedback_processing_rounds
-             where feedback_key='feedback-claimed'
-            """
-        ).fetchall()
-        assert [(row["id"], row["round_number"]) for row in rows] == [
-            (repaired_round_id, 1)
-        ]
-        assert db.execute(
-            "select count(*) from feedback_processing_transitions"
-        ).fetchone()[0] == 0
-
-
-def test_feedback_round_reconciliation_requires_pointer_ownership_and_batch(
-    tmp_path: Path,
-):
-    db_path = tmp_path / "pointer-integrity.sqlite3"
-    store_module._INITIALIZED_STORE_PATHS.discard(db_path.resolve())
-    store = AutoReplyStore(db_path)
-
-    def claim_with_evidence(feedback_key: str, batch_id: str, marker: str) -> None:
-        store.upsert_feedback_event(
-            key=feedback_key,
-            feedback_token=f"token-{feedback_key}",
-            comment=f"source-{marker}",
-        )
-        assert store.claim_feedback_processing_items(batch_id, [feedback_key])
-        store.associate_feedback_processing_turn(
-            feedback_key,
-            workbench_task_id=f"task-{marker}",
-            workbench_turn_id=f"turn-{marker}",
-            attempt_id=51,
-            agent_run_id=61,
-        )
-        store.patch_feedback_processing_item_evidence(
-            feedback_key,
-            commit_sha="d" * 40,
-            test_evidence={"marker": marker, "exit_code": 0},
-            restart_evidence={"marker": marker},
-            health_evidence={"marker": marker},
-            note=f"projection-{marker}",
-        )
-
-    claim_with_evidence("feedback-cross-a", "batch-cross-a", "cross-a")
-    claim_with_evidence("feedback-cross-b", "batch-cross-b", "cross-b")
-    claim_with_evidence("feedback-history", "batch-current", "history-current")
-    claim_with_evidence(
-        "feedback-unrepairable", "batch-unrepairable-current", "unrepairable"
-    )
-    items_before = {
-        key: store.get_feedback_processing_item(key)
-        for key in (
-            "feedback-cross-a",
-            "feedback-cross-b",
-            "feedback-history",
-            "feedback-unrepairable",
-        )
-    }
-    assert all(item is not None for item in items_before.values())
-
-    with store._connect() as db:
-        db.execute("delete from feedback_processing_transitions")
-        db.execute("delete from feedback_processing_rounds")
-        db.execute("update feedback_processing_items set current_round_id=0")
-
-        def insert_round(
-            feedback_key: str,
-            round_number: int,
-            batch_id: str,
-            marker: str,
-        ) -> int:
-            cursor = db.execute(
-                """
-                insert into feedback_processing_rounds (
-                    feedback_key, round_number, batch_id, status,
-                    test_evidence_json, note
-                ) values (?, ?, ?, 'processing', ?, ?)
-                """,
-                (
-                    feedback_key,
-                    round_number,
-                    batch_id,
-                    json.dumps({"round_marker": marker}, sort_keys=True),
-                    f"round-{marker}",
-                ),
+    def snapshot(current):
+        return {
+            key: (
+                current.get_feedback_event(key),
+                current.get_feedback_processing_item(key),
+                current.list_feedback_processing_rounds(key),
+                current.list_feedback_processing_transitions(key),
             )
-            return int(cursor.lastrowid)
-
-        cross_a_round_id = insert_round(
-            "feedback-cross-a", 1, "batch-cross-a", "cross-a"
-        )
-        cross_b_round_id = insert_round(
-            "feedback-cross-b", 1, "batch-cross-b", "cross-b"
-        )
-        history_old_round_id = insert_round(
-            "feedback-history", 1, "batch-old", "history-old"
-        )
-        history_current_round_id = insert_round(
-            "feedback-history", 2, "batch-current", "history-current"
-        )
-        unrepairable_old_round_id = insert_round(
-            "feedback-unrepairable", 1, "batch-unrepairable-old", "unrepairable-old"
-        )
-        db.execute(
-            """
-            update feedback_processing_items set current_round_id=?
-             where feedback_key='feedback-cross-a'
-            """,
-            (cross_b_round_id,),
-        )
-        db.execute(
-            """
-            update feedback_processing_items set current_round_id=?
-             where feedback_key='feedback-cross-b'
-            """,
-            (cross_b_round_id,),
-        )
-        db.execute(
-            """
-            update feedback_processing_items set current_round_id=?
-             where feedback_key='feedback-history'
-            """,
-            (history_old_round_id,),
-        )
-        db.execute(
-            """
-            update feedback_processing_items set current_round_id=?
-             where feedback_key='feedback-unrepairable'
-            """,
-            (unrepairable_old_round_id,),
-        )
-        rounds_before = [
-            tuple(row)
-            for row in db.execute(
-                """
-                select id, feedback_key, round_number, batch_id,
-                       status, test_evidence_json, note
-                  from feedback_processing_rounds order by id
-                """
-            )
+            for key in ("pending", "processing", "resolved")
+        }, [
+            current.get_feedback_processing_batch(batch_id)
+            for batch_id in ("batch-processing", "batch-resolved")
         ]
 
-    store_module._INITIALIZED_STORE_PATHS.discard(db_path.resolve())
-    repaired = AutoReplyStore(db_path)
-    repaired_items = {
-        key: repaired.get_feedback_processing_item(key)
-        for key in items_before
-    }
-    assert repaired_items["feedback-cross-a"].current_round_id == cross_a_round_id
-    assert repaired_items["feedback-cross-b"].current_round_id == cross_b_round_id
-    assert (
-        repaired_items["feedback-history"].current_round_id
-        == history_current_round_id
-    )
-    assert repaired_items["feedback-unrepairable"].current_round_id == 0
-    for key, repaired_item in repaired_items.items():
-        assert repaired_item is not None
-        assert repaired_item.model_copy(update={"current_round_id": 0}) == (
-            items_before[key].model_copy(update={"current_round_id": 0})
-        )
-
-    with repaired._connect() as db:
-        rounds_after = [
-            tuple(row)
-            for row in db.execute(
-                """
-                select id, feedback_key, round_number, batch_id,
-                       status, test_evidence_json, note
-                  from feedback_processing_rounds order by id
-                """
-            )
-        ]
-        assert rounds_after == rounds_before
-        assert len(rounds_after) == 5
-        assert db.execute(
-            "select count(*) from feedback_processing_transitions"
-        ).fetchone()[0] == 0
-
-    store_module._INITIALIZED_STORE_PATHS.discard(db_path.resolve())
-    reopened = AutoReplyStore(db_path)
-    assert {
-        key: reopened.get_feedback_processing_item(key).current_round_id
-        for key in repaired_items
-    } == {
-        "feedback-cross-a": cross_a_round_id,
-        "feedback-cross-b": cross_b_round_id,
-        "feedback-history": history_current_round_id,
-        "feedback-unrepairable": 0,
-    }
-    with reopened._connect() as db:
-        assert [
-            tuple(row)
-            for row in db.execute(
-                """
-                select id, feedback_key, round_number, batch_id,
-                       status, test_evidence_json, note
-                  from feedback_processing_rounds order by id
-                """
-            )
-        ] == rounds_before
+    before = snapshot(store)
+    assert before[0]["pending"][1].current_round_id == 0
+    assert before[0]["pending"][2] == []
+    assert before[0]["processing"][1].status == "processing"
+    assert before[0]["resolved"][1].status == "resolved"
+    for key in ("processing", "resolved"):
+        item = before[0][key][1]
+        rounds = before[0][key][2]
+        assert len(rounds) == 1
+        assert item.current_round_id == rounds[0].id
+        assert rounds[0].receipt_version == 2
+    for _ in range(2):
+        store_module._INITIALIZED_STORE_PATHS.discard(db_path.resolve())
+        assert snapshot(AutoReplyStore(db_path)) == before
 
 
-def test_feedback_round_reconciliation_clears_ambiguous_matching_history(
-    tmp_path: Path,
-):
-    db_path = tmp_path / "ambiguous-pointer.sqlite3"
-    store_module._INITIALIZED_STORE_PATHS.discard(db_path.resolve())
-    store = AutoReplyStore(db_path)
-    store.upsert_feedback_event(
-        key="feedback-ambiguous",
-        feedback_token="token-ambiguous",
-        comment="ambiguous source",
-    )
-    assert store.claim_feedback_processing_items(
-        "batch-ambiguous", ["feedback-ambiguous"]
-    )
-    store.patch_feedback_processing_item_evidence(
-        "feedback-ambiguous",
-        test_evidence={"exit_code": 0},
-        note="ambiguous projection",
-    )
 
-    with store._connect() as db:
-        db.execute("drop table feedback_processing_rounds")
-        db.execute(
-            """
-            create table feedback_processing_rounds (
-                id integer primary key autoincrement,
-                feedback_key text not null,
-                round_number integer not null check (round_number > 0),
-                batch_id text not null default '',
-                status text not null
-                    check (status in ('processing', 'resolved')),
-                workbench_task_id text not null default '',
-                workbench_turn_id text not null default '',
-                attempt_id integer not null default 0,
-                agent_run_id integer not null default 0,
-                commit_sha text not null default '',
-                test_evidence_json text not null default '{}',
-                restart_evidence_json text not null default '{}',
-                health_evidence_json text not null default '{}',
-                note text not null default '',
-                started_at text not null default '',
-                resolved_at text not null default '',
-                reopened_at text not null default '',
-                reopen_reason text not null default '',
-                created_at text not null default current_timestamp,
-                updated_at text not null default current_timestamp
-            )
-            """
-        )
-        db.execute(
-            """
-            create index idx_feedback_processing_rounds_feedback
-                on feedback_processing_rounds(feedback_key, round_number desc)
-            """
-        )
-        db.execute(
-            """
-            create index idx_feedback_processing_rounds_batch
-                on feedback_processing_rounds(batch_id)
-            """
-        )
-        db.execute(
-            """
-            insert into feedback_processing_rounds (
-                feedback_key, round_number, batch_id, status,
-                test_evidence_json, note
-            ) values
-                ('feedback-ambiguous', 1, 'batch-ambiguous', 'processing',
-                 '{"round":"one"}', 'ambiguous-one'),
-                ('feedback-ambiguous', 2, 'batch-ambiguous', 'processing',
-                 '{"round":"two"}', 'ambiguous-two')
-            """
-        )
-        db.execute(
-            """
-            update feedback_processing_items set current_round_id=999999
-             where feedback_key='feedback-ambiguous'
-            """
-        )
-        rounds_before = [
-            tuple(row)
-            for row in db.execute(
-                """
-                select id, round_number, test_evidence_json, note
-                  from feedback_processing_rounds order by id
-                """
-            )
-        ]
 
-    store_module._INITIALIZED_STORE_PATHS.discard(db_path.resolve())
-    repaired = AutoReplyStore(db_path)
-    repaired_item = repaired.get_feedback_processing_item("feedback-ambiguous")
-    assert repaired_item is not None
-    assert repaired_item.current_round_id == 0
-    assert repaired_item.test_evidence == {"exit_code": 0}
-    assert repaired_item.note == "ambiguous projection"
-    with repaired._connect() as db:
-        assert [
-            tuple(row)
-            for row in db.execute(
-                """
-                select id, round_number, test_evidence_json, note
-                  from feedback_processing_rounds order by id
-                """
-            )
-        ] == rounds_before
-        assert db.execute(
-            "select count(*) from feedback_processing_transitions"
-        ).fetchone()[0] == 1
-
-    store_module._INITIALIZED_STORE_PATHS.discard(db_path.resolve())
-    reopened = AutoReplyStore(db_path)
-    assert reopened.get_feedback_processing_item(
-        "feedback-ambiguous"
-    ).current_round_id == 0
 
 
 def test_claim_associate_patch_and_resolve_feedback_batch(tmp_path: Path):
@@ -1799,7 +1529,7 @@ def test_claim_rejects_unknown_or_resolved_keys_atomically(tmp_path: Path):
     store.upsert_feedback_event(
         key="feedback-resolved", feedback_token="token-2", comment="done"
     )
-    assert store.resolve_feedback_event("feedback-resolved") is True
+    resolve_feedback_fixture(store, "feedback-resolved")
 
     with pytest.raises(FeedbackProcessingClaimError):
         store.claim_feedback_processing_items(
@@ -1876,7 +1606,7 @@ def test_reopen_existing_batch_is_idempotent_after_source_resolution(tmp_path: P
     store = AutoReplyStore(tmp_path / "batch-resolved-reopen.sqlite3")
     store.upsert_feedback_event(key="feedback-1", feedback_token="token-1")
     original = store.create_feedback_processing_batch(["feedback-1"], batch_id="batch-1")
-    assert store.resolve_feedback_event("feedback-1") is True
+    resolve_feedback_fixture(store, "feedback-1", batch_id="batch-1")
     reopened = store.create_feedback_processing_batch(["feedback-1"], batch_id="batch-1")
     assert reopened.batch_id == original.batch_id
     assert reopened.requested_count == original.requested_count
@@ -1887,33 +1617,34 @@ def test_legacy_text_processing_ids_are_read_as_integers(tmp_path: Path):
     store.upsert_feedback_event(key="feedback-1", feedback_token="token-1")
     assert store.claim_feedback_processing_items("batch-1", ["feedback-1"])
     with store._connect() as db:
-        db.execute(
-            "update feedback_processing_items set attempt_id='12', agent_run_id='34' where feedback_key=?",
-            ("feedback-1",),
-        )
+        update_task12(db, "feedback_processing_items",
+                      _feedback_item_source_rowid(db, "feedback-1"),
+                      {"attempt_id": "12", "agent_run_id": "34"})
     item = store.get_feedback_processing_item("feedback-1")
     assert item is not None
     assert item.attempt_id == 12
     assert item.agent_run_id == 34
 
 
-def test_resolved_event_projection_and_status_transition_are_consistent(tmp_path: Path):
+def test_batch_resolved_event_projection_and_status_transition_are_consistent(tmp_path: Path):
     store = AutoReplyStore(tmp_path / "resolved.sqlite3")
     store.upsert_feedback_event(key="feedback-1", feedback_token="token-1")
-    assert store.resolve_feedback_event("feedback-1") is True
+    resolve_feedback_fixture(store, "feedback-1", batch_id="batch-1")
     item = store.get_feedback_processing_item("feedback-1")
+    event = store.get_feedback_event("feedback-1")
+    batch = store.get_feedback_processing_batch("batch-1")
+    rounds = store.list_feedback_processing_rounds("feedback-1")
     assert item is not None
-    assert item.status == "resolved"
+    assert event is not None
+    assert batch is not None
+    assert item.status == batch.status == rounds[0].status == "resolved"
+    assert item.current_round_id == rounds[0].id
+    assert item.resolved_at == event.resolved_at == batch.resolved_at == rounds[0].resolved_at
     assert item.resolved_at
 
     with pytest.raises(ValueError):
         store.patch_feedback_processing_item_evidence("feedback-1", status="pending")
 
-    with store._connect() as db:
-        db.execute(
-            "delete from feedback_processing_items where feedback_key=?",
-            ("feedback-1",),
-        )
     with pytest.raises(FeedbackProcessingBatchError):
         store.create_feedback_processing_batch(["feedback-1"], batch_id="batch-new")
     assert store.get_feedback_processing_batch("batch-new") is None
@@ -1931,8 +1662,12 @@ def test_claim_retry_is_idempotent_without_duplicate_items(tmp_path: Path):
     second = store.claim_feedback_processing_items("batch-1", ["feedback-1"])
     assert [item.feedback_key for item in second] == ["feedback-1"]
     with store._connect() as db:
-        assert db.execute("select count(*) from feedback_processing_items").fetchone()[0] == 1
-        assert db.execute("select count(*) from feedback_processing_batches").fetchone()[0] == 1
+        assert db.execute(
+            "select count(*) from tasks where record_type='feedback_processing_items'"
+        ).fetchone()[0] == 1
+        assert db.execute(
+            "select count(*) from tasks where record_type='feedback_processing_batches'"
+        ).fetchone()[0] == 1
     assert second[0].updated_at == first[0].updated_at
 
 
@@ -2040,119 +1775,72 @@ def _seed_resolved_feedback_round(
         raw_json='{"source":"preserved"}',
     )
     with store._connect() as db:
-        db.execute(
-            """
-            insert into feedback_processing_batches (
-                batch_id, status, requested_count, resolved_at
-            ) values (?, 'resolved', 1, '2026-08-30 01:02:03')
-            """,
-            (batch_id,),
-        )
-        cursor = db.execute(
-            """
-            insert into feedback_processing_rounds (
-                feedback_key, round_number, batch_id, status,
-                workbench_task_id, workbench_turn_id, attempt_id,
-                agent_run_id, commit_sha, test_evidence_json,
-                restart_evidence_json, health_evidence_json,
-                backlog_evidence_json, receipt_version, note,
-                started_at, resolved_at, created_at, updated_at
-            ) values (
-                ?, ?, ?, 'resolved', 'task-old', 'turn-old', 12, 34, ?,
-                ?, ?, ?, ?, ?, 'old note', '2026-08-30 00:00:00',
-                '2026-08-30 01:02:03', '2026-08-30 00:00:00',
-                '2026-08-30 01:02:03'
-            )
-            """,
-            (
-                feedback_key,
-                round_number,
-                batch_id,
-                "a" * 40,
-                json.dumps({"pytest": {"exit_code": 0}}),
-                json.dumps(
-                    {
-                        "launchd_label": "com.ceo-agent-service.main",
-                        "before_pid": 1,
-                        "after_pid": 2,
-                    }
-                ),
-                json.dumps(
-                    {
-                        "url": "http://127.0.0.1:8765/healthz",
-                        "status_code": 200,
-                        "ok": True,
-                    }
-                ),
-                json.dumps({"processing": 0, "failed": 0, "retryable": 0}),
-                receipt_version,
-            ),
-        )
-        round_id = int(cursor.lastrowid)
+        insert_task12(db, "feedback_processing_batches", {
+            "batch_id": batch_id, "status": "resolved", "requested_count": 1,
+            "resolved_at": "2026-08-30 01:02:03",
+        })
+        evidence = {
+            "commit_sha": "a" * 40,
+            "test_evidence_json": json.dumps({"pytest": {"exit_code": 0}}),
+            "restart_evidence_json": json.dumps({
+                "launchd_label": "com.ceo-agent-service.main",
+                "before_pid": 1, "after_pid": 2,
+            }),
+            "health_evidence_json": json.dumps({
+                "url": "http://127.0.0.1:8765/healthz",
+                "status_code": 200, "ok": True,
+            }),
+        }
+        round_id = insert_task12(db, "feedback_processing_rounds", {
+            "feedback_key": feedback_key, "round_number": round_number,
+            "batch_id": batch_id, "status": "resolved",
+            "workbench_task_id": "task-old", "workbench_turn_id": "turn-old",
+            "attempt_id": 12, "agent_run_id": 34, **evidence,
+            "backlog_evidence_json": json.dumps({
+                "processing": 0, "failed": 0, "retryable": 0,
+            }),
+            "receipt_version": receipt_version, "note": "old note",
+            "started_at": "2026-08-30 00:00:00",
+            "resolved_at": "2026-08-30 01:02:03",
+            "created_at": "2026-08-30 00:00:00",
+            "updated_at": "2026-08-30 01:02:03",
+        }).lastrowid
+        assert round_id is not None
         if receipt_version == 2:
-            db.execute(
-                """
-                insert into feedback_processing_transitions (
-                    feedback_key, round_id, batch_id, from_status, to_status,
-                    created_at
-                ) values (?, ?, ?, 'pending', 'processing',
-                          '2026-08-30 00:00:00')
-                """,
-                (feedback_key, round_id, batch_id),
-            )
-            db.execute(
-                """
-                insert into feedback_processing_transitions (
-                    feedback_key, round_id, batch_id, from_status, to_status,
-                    workbench_task_id, workbench_turn_id, created_at
-                ) values (?, ?, ?, 'processing', 'resolved',
-                          'task-old', 'turn-old', '2026-08-30 01:02:03')
-                """,
-                (feedback_key, round_id, batch_id),
-            )
-        db.execute(
-            """
-            update feedback_processing_items
-               set current_round_id=?, batch_id=?, status='resolved',
-                   workbench_task_id='task-old', workbench_turn_id='turn-old',
-                   attempt_id=12, agent_run_id=34, commit_sha=?,
-                   test_evidence_json=?, restart_evidence_json=?,
-                   health_evidence_json=?, note='old note',
-                   resolved_at='2026-08-30 01:02:03',
-                   updated_at='2026-08-30 01:02:03'
-             where feedback_key=?
-            """,
-            (
-                round_id,
-                batch_id,
-                "a" * 40,
-                json.dumps({"pytest": {"exit_code": 0}}),
-                json.dumps(
-                    {
-                        "launchd_label": "com.ceo-agent-service.main",
-                        "before_pid": 1,
-                        "after_pid": 2,
-                    }
-                ),
-                json.dumps(
-                    {
-                        "url": "http://127.0.0.1:8765/healthz",
-                        "status_code": 200,
-                        "ok": True,
-                    }
-                ),
-                feedback_key,
-            ),
-        )
-        db.execute(
-            """
-            update feedback_events
-               set resolved_at='2026-08-30 01:02:03',
-                   updated_at='2026-08-30 01:02:03'
-             where key=?
-            """,
-            (feedback_key,),
-        )
+            insert_feedback_action(db, "feedback_processing_transitions", {
+                "feedback_key": feedback_key, "round_id": round_id,
+                "batch_id": batch_id, "from_status": "pending",
+                "to_status": "processing", "created_at": "2026-08-30 00:00:00",
+            })
+            insert_feedback_action(db, "feedback_processing_transitions", {
+                "feedback_key": feedback_key, "round_id": round_id,
+                "batch_id": batch_id, "from_status": "processing",
+                "to_status": "resolved", "workbench_task_id": "task-old",
+                "workbench_turn_id": "turn-old",
+                "created_at": "2026-08-30 01:02:03",
+            })
+        item_row = db.execute(
+            f"select rowid from ({store_module.task12_projection('feedback_processing_items', include_rowid=True)}) "
+            "where feedback_key=?", (feedback_key,),
+        ).fetchone()
+        assert item_row is not None
+        update_task12(db, "feedback_processing_items", item_row[0], {
+            "current_round_id": round_id, "batch_id": batch_id,
+            "status": "resolved", "workbench_task_id": "task-old",
+            "workbench_turn_id": "turn-old", "attempt_id": 12,
+            "agent_run_id": 34, **evidence, "note": "old note",
+            "resolved_at": "2026-08-30 01:02:03",
+            "updated_at": "2026-08-30 01:02:03",
+        })
+        event_row = db.execute(
+            f"select _source_rowid from ({feedback_projection('feedback_events', with_rowid=True)}) "
+            "where key=?", (feedback_key,),
+        ).fetchone()
+        assert event_row is not None
+        set_feedback_action(db, "feedback_events", event_row[0], {
+            "resolved_at": "2026-08-30 01:02:03",
+            "updated_at": "2026-08-30 01:02:03",
+        })
     return round_id
 
 
@@ -2198,12 +1886,13 @@ def test_reopen_resolved_item_preserves_history_and_clears_projection_atomically
     with store._connect() as db:
         round_before = dict(
             db.execute(
-                "select * from feedback_processing_rounds where id=?", (round_id,)
+                f"select * from ({store_module.task12_projection('feedback_processing_rounds')}) where id=?",
+                (round_id,),
             ).fetchone()
         )
         event_before = dict(
             db.execute(
-                "select * from feedback_events where key='feedback-1'"
+                f"select * from ({feedback_projection('feedback_events')}) where key='feedback-1'"
             ).fetchone()
         )
 
@@ -2232,12 +1921,13 @@ def test_reopen_resolved_item_preserves_history_and_clears_projection_atomically
     with store._connect() as db:
         round_after = dict(
             db.execute(
-                "select * from feedback_processing_rounds where id=?", (round_id,)
+                f"select * from ({store_module.task12_projection('feedback_processing_rounds')}) where id=?",
+                (round_id,),
             ).fetchone()
         )
         event_after = dict(
             db.execute(
-                "select * from feedback_events where key='feedback-1'"
+                f"select * from ({feedback_projection('feedback_events')}) where key='feedback-1'"
             ).fetchone()
         )
     for field, value in round_before.items():
@@ -2277,8 +1967,12 @@ def test_reopen_processing_raises_typed_error_without_mutation(tmp_path: Path):
     store.upsert_feedback_event(key="feedback-1", feedback_token="token-1")
     claimed = store.claim_feedback_processing_items("batch-1", ["feedback-1"])[0]
     with store._connect() as db:
-        rounds_before = [dict(row) for row in db.execute("select * from feedback_processing_rounds")]
-        transitions_before = [dict(row) for row in db.execute("select * from feedback_processing_transitions")]
+        rounds_before = [dict(row) for row in db.execute(
+            f"select * from ({store_module.task12_projection('feedback_processing_rounds')})"
+        )]
+        transitions_before = [dict(row) for row in db.execute(
+            f"select * from ({feedback_projection('feedback_processing_transitions')})"
+        )]
 
     with pytest.raises(feedback_processing_module.FeedbackProcessingReopenError) as error:
         store.reopen_feedback_processing_item("feedback-1", reason="active claim")
@@ -2286,8 +1980,12 @@ def test_reopen_processing_raises_typed_error_without_mutation(tmp_path: Path):
     assert error.value.error_code == "feedback_reopen_processing"
     assert store.get_feedback_processing_item("feedback-1") == claimed
     with store._connect() as db:
-        assert [dict(row) for row in db.execute("select * from feedback_processing_rounds")] == rounds_before
-        assert [dict(row) for row in db.execute("select * from feedback_processing_transitions")] == transitions_before
+        assert [dict(row) for row in db.execute(
+            f"select * from ({store_module.task12_projection('feedback_processing_rounds')})"
+        )] == rounds_before
+        assert [dict(row) for row in db.execute(
+            f"select * from ({feedback_projection('feedback_processing_transitions')})"
+        )] == transitions_before
 
 
 @pytest.mark.parametrize("damage", ["missing", "wrong-status", "wrong-owner", "wrong-pointer"])
@@ -2296,30 +1994,30 @@ def test_reopen_incomplete_history_rolls_back_atomically(tmp_path: Path, damage:
     round_id = _seed_resolved_feedback_round(store, "feedback-1")
     with store._connect() as db:
         if damage == "missing":
-            db.execute("delete from feedback_processing_rounds where id=?", (round_id,))
+            delete_task12(db, "feedback_processing_rounds", round_id)
         elif damage == "wrong-status":
-            db.execute(
-                "update feedback_processing_rounds set status='processing' where id=?",
-                (round_id,),
-            )
+            update_task12(db, "feedback_processing_rounds", round_id,
+                          {"status": "processing"})
         elif damage == "wrong-owner":
-            db.execute(
-                "update feedback_processing_rounds set feedback_key='other' where id=?",
-                (round_id,),
-            )
+            update_task12(db, "feedback_processing_rounds", round_id,
+                          {"feedback_key": "other"})
         else:
-            db.execute(
-                "update feedback_processing_items set current_round_id=? where feedback_key='feedback-1'",
-                (round_id + 100,),
-            )
+            item_row = db.execute(
+                f"select rowid from ({store_module.task12_projection('feedback_processing_items', include_rowid=True)}) "
+                "where feedback_key='feedback-1'"
+            ).fetchone()
+            assert item_row is not None
+            update_task12(db, "feedback_processing_items", item_row[0],
+                          {"current_round_id": round_id + 100})
         item_before = dict(
             db.execute(
-                "select * from feedback_processing_items where feedback_key='feedback-1'"
+                f"select * from ({store_module.task12_projection('feedback_processing_items')}) "
+                "where feedback_key='feedback-1'"
             ).fetchone()
         )
         event_before = dict(
             db.execute(
-                "select * from feedback_events where key='feedback-1'"
+                f"select * from ({feedback_projection('feedback_events')}) where key='feedback-1'"
             ).fetchone()
         )
 
@@ -2328,9 +2026,16 @@ def test_reopen_incomplete_history_rolls_back_atomically(tmp_path: Path, damage:
 
     assert error.value.error_code == "feedback_reopen_history_incomplete"
     with store._connect() as db:
-        assert dict(db.execute("select * from feedback_processing_items where feedback_key='feedback-1'").fetchone()) == item_before
-        assert dict(db.execute("select * from feedback_events where key='feedback-1'").fetchone()) == event_before
-        assert db.execute("select count(*) from feedback_processing_transitions").fetchone()[0] == 0
+        assert dict(db.execute(
+            f"select * from ({store_module.task12_projection('feedback_processing_items')}) "
+            "where feedback_key='feedback-1'"
+        ).fetchone()) == item_before
+        assert dict(db.execute(
+            f"select * from ({feedback_projection('feedback_events')}) where key='feedback-1'"
+        ).fetchone()) == event_before
+        assert db.execute(
+            "select count(*) from actions where record_type='feedback_processing_transitions'"
+        ).fetchone()[0] == 0
 
 
 def test_reopened_claim_creates_empty_next_round_and_transitions_newest_first(
@@ -2366,8 +2071,14 @@ def test_reopened_claim_creates_empty_next_round_and_transitions_newest_first(
         ("resolved", "pending"),
     ]
     with store._connect() as db:
-        assert db.execute("select count(*) from feedback_processing_rounds where feedback_key='feedback-1'").fetchone()[0] == 2
-        assert db.execute("select count(*) from feedback_processing_transitions where feedback_key='feedback-1'").fetchone()[0] == 2
+        assert db.execute(
+            f"select count(*) from ({store_module.task12_projection('feedback_processing_rounds')}) "
+            "where feedback_key='feedback-1'"
+        ).fetchone()[0] == 2
+        assert db.execute(
+            f"select count(*) from ({feedback_projection('feedback_processing_transitions')}) "
+            "where feedback_key='feedback-1'"
+        ).fetchone()[0] == 2
 
 
 def test_batch_claim_rolls_back_when_one_pending_item_has_inconsistent_history(
@@ -2377,13 +2088,11 @@ def test_batch_claim_rolls_back_when_one_pending_item_has_inconsistent_history(
     for key in ("good", "bad"):
         store.upsert_feedback_event(key=key, feedback_token=f"token-{key}")
     with store._connect() as db:
-        db.execute(
-            """
-            insert into feedback_processing_rounds (
-                feedback_key, round_number, batch_id, status, started_at
-            ) values ('bad', 1, 'old-batch', 'processing', current_timestamp)
-            """
-        )
+        insert_task12(db, "feedback_processing_rounds", {
+            "feedback_key": "bad", "round_number": 1,
+            "batch_id": "old-batch", "status": "processing",
+            "started_at": db.execute("select current_timestamp").fetchone()[0],
+        })
 
     with pytest.raises(FeedbackProcessingClaimError):
         store.claim_feedback_processing_items("new-batch", ["good", "bad"])
@@ -2391,8 +2100,13 @@ def test_batch_claim_rolls_back_when_one_pending_item_has_inconsistent_history(
     assert store.get_feedback_processing_batch("new-batch") is None
     assert {store.get_feedback_processing_item(key).status for key in ("good", "bad")} == {"pending"}
     with store._connect() as db:
-        assert db.execute("select count(*) from feedback_processing_rounds where batch_id='new-batch'").fetchone()[0] == 0
-        assert db.execute("select count(*) from feedback_processing_transitions").fetchone()[0] == 0
+        assert db.execute(
+            f"select count(*) from ({store_module.task12_projection('feedback_processing_rounds')}) "
+            "where batch_id='new-batch'"
+        ).fetchone()[0] == 0
+        assert db.execute(
+            "select count(*) from actions where record_type='feedback_processing_transitions'"
+        ).fetchone()[0] == 0
 
 
 def test_association_and_evidence_patch_update_only_exact_current_round(tmp_path: Path):
@@ -2477,12 +2191,16 @@ def test_stale_or_ambiguous_current_round_cannot_be_mutated(
     store.reopen_feedback_processing_item("feedback-1", reason="premature")
     store.claim_feedback_processing_items("batch-2", ["feedback-1"])
     with store._connect() as db:
-        round_rows_before = [dict(row) for row in db.execute("select * from feedback_processing_rounds order by id")]
-        item_before = dict(db.execute("select * from feedback_processing_items where feedback_key='feedback-1'").fetchone())
-        db.execute(
-            "update feedback_processing_items set current_round_id=? where feedback_key='feedback-1'",
-            (old_round_id,),
-        )
+        round_rows_before = [dict(row) for row in db.execute(
+            f"select * from ({store_module.task12_projection('feedback_processing_rounds')}) order by id"
+        )]
+        item_before = dict(db.execute(
+            f"select * from ({store_module.task12_projection('feedback_processing_items')}) "
+            "where feedback_key='feedback-1'"
+        ).fetchone())
+        update_task12(db, "feedback_processing_items",
+                      _feedback_item_source_rowid(db, "feedback-1"),
+                      {"current_round_id": old_round_id})
 
     with pytest.raises(ValueError):
         if operation == "associate":
@@ -2499,8 +2217,13 @@ def test_stale_or_ambiguous_current_round_cannot_be_mutated(
             )
 
     with store._connect() as db:
-        assert [dict(row) for row in db.execute("select * from feedback_processing_rounds order by id")] == round_rows_before
-        after = dict(db.execute("select * from feedback_processing_items where feedback_key='feedback-1'").fetchone())
+        assert [dict(row) for row in db.execute(
+            f"select * from ({store_module.task12_projection('feedback_processing_rounds')}) order by id"
+        )] == round_rows_before
+        after = dict(db.execute(
+            f"select * from ({store_module.task12_projection('feedback_processing_items')}) "
+            "where feedback_key='feedback-1'"
+        ).fetchone())
     assert {key: value for key, value in after.items() if key != "current_round_id"} == {
         key: value for key, value in item_before.items() if key != "current_round_id"
     }
@@ -2623,10 +2346,8 @@ def test_resolve_rolls_back_entire_batch_on_one_invalid_current_round(tmp_path: 
             health_evidence=receipt.health_evidence,
         )
     with store._connect() as db:
-        db.execute(
-            "update feedback_processing_rounds set health_evidence_json='{}' where id=?",
-            (claimed[1].current_round_id,),
-        )
+        update_task12(db, "feedback_processing_rounds", claimed[1].current_round_id,
+                      {"health_evidence_json": "{}"})
 
     with pytest.raises(ValueError):
         store.resolve_feedback_processing_batch(
@@ -2645,9 +2366,13 @@ def test_unresolved_batch_cannot_bypass_current_round_receipt(tmp_path: Path):
     store.upsert_feedback_event(key="feedback-1", feedback_token="token-1")
     item = store.claim_feedback_processing_items("batch-1", ["feedback-1"])[0]
     with store._connect() as db:
-        db.execute(
-            "update feedback_processing_items set status='resolved' where feedback_key='feedback-1'"
-        )
+        item_row = db.execute(
+            f"select rowid from ({store_module.task12_projection('feedback_processing_items', include_rowid=True)}) "
+            "where feedback_key='feedback-1'"
+        ).fetchone()
+        assert item_row is not None
+        update_task12(db, "feedback_processing_items", item_row[0],
+                      {"status": "resolved"})
 
     assert store.resolve_feedback_processing_batch(
         "batch-1", commit_is_ancestor=True
@@ -2669,22 +2394,46 @@ def test_round_and_transition_models_are_strict_read_contracts():
 
 
 def _feedback_processing_snapshot(store: AutoReplyStore) -> dict[str, list[tuple[object, ...]]]:
-    with store._connect() as db:
-        return {
-            table: [
-                tuple(row)
-                for row in db.execute(
-                    f"select * from {table} order by rowid"
-                ).fetchall()
-            ]
-            for table in (
-                "feedback_events",
-                "feedback_processing_items",
-                "feedback_processing_rounds",
-                "feedback_processing_transitions",
+    queries = {
+        "feedback_events": (
+            f"select * from ({feedback_projection('feedback_events', with_rowid=True)}) "
+            "order by _source_rowid"
+        ),
+        "feedback_processing_transitions": (
+            f"select * from ({feedback_projection('feedback_processing_transitions', with_rowid=True)}) "
+            "order by _source_rowid"
+        ),
+        **{
+            kind: f"select * from ({store_module.task12_projection(kind, include_rowid=True)}) order by rowid"
+            for kind in (
+                "feedback_processing_items", "feedback_processing_rounds",
                 "feedback_processing_batches",
             )
+        },
+    }
+    with store._connect() as db:
+        return {
+            kind: [tuple(row) for row in db.execute(query)]
+            for kind, query in queries.items()
         }
+
+
+def _feedback_item_source_rowid(db: sqlite3.Connection, feedback_key: str) -> int:
+    row = db.execute(
+        f"select rowid from ({store_module.task12_projection('feedback_processing_items', include_rowid=True)}) "
+        "where feedback_key=?", (feedback_key,),
+    ).fetchone()
+    assert row is not None
+    return int(row[0])
+
+
+def _feedback_batch_source_rowid(db: sqlite3.Connection, batch_id: str) -> int:
+    row = db.execute(
+        f"select rowid from ({store_module.task12_projection('feedback_processing_batches', include_rowid=True)}) "
+        "where batch_id=?", (batch_id,),
+    ).fetchone()
+    assert row is not None
+    return int(row[0])
 
 
 def _prepare_processing_round(
@@ -2716,22 +2465,22 @@ def _prepare_processing_round(
 
 
 @pytest.mark.parametrize(
-    "corruption_sql",
+    "corruption",
     (
-        "update feedback_processing_rounds set resolved_at='' where id=?",
-        "update feedback_processing_rounds set workbench_task_id='' where id=?",
-        "update feedback_processing_rounds set workbench_turn_id='' where id=?",
-        "update feedback_processing_rounds set attempt_id=0 where id=?",
-        "update feedback_processing_rounds set agent_run_id=0 where id=?",
-        "update feedback_processing_rounds set commit_sha='' where id=?",
-        "update feedback_processing_rounds set test_evidence_json='{}' where id=?",
-        "update feedback_processing_rounds set restart_evidence_json='{}' where id=?",
-        "update feedback_processing_rounds set health_evidence_json='{}' where id=?",
-        "update feedback_processing_rounds set backlog_evidence_json='{}' where id=?",
+        ("resolved_at", ""),
+        ("workbench_task_id", ""),
+        ("workbench_turn_id", ""),
+        ("attempt_id", 0),
+        ("agent_run_id", 0),
+        ("commit_sha", ""),
+        ("test_evidence_json", "{}"),
+        ("restart_evidence_json", "{}"),
+        ("health_evidence_json", "{}"),
+        ("backlog_evidence_json", "{}"),
     ),
 )
 def test_reopen_rejects_incomplete_resolved_round_receipt_without_mutation(
-    tmp_path: Path, corruption_sql: str
+    tmp_path: Path, corruption: tuple[str, object]
 ):
     store = AutoReplyStore(tmp_path / "reopen-complete-history.sqlite3")
     round_id = _seed_resolved_feedback_round(
@@ -2740,23 +2489,8 @@ def test_reopen_rejects_incomplete_resolved_round_receipt_without_mutation(
         receipt_version=2,
     )
     with store._connect() as db:
-        columns = {
-            str(row["name"])
-            for row in db.execute("pragma table_info(feedback_processing_rounds)")
-        }
-        if "backlog_evidence_json" not in columns:
-            db.execute(
-                "alter table feedback_processing_rounds add column "
-                "backlog_evidence_json text not null default '{}'"
-            )
-        db.execute(
-            "update feedback_processing_rounds set backlog_evidence_json=? where id=?",
-            (
-                json.dumps({"processing": 0, "failed": 0, "retryable": 0}),
-                round_id,
-            ),
-        )
-        db.execute(corruption_sql, (round_id,))
+        update_task12(db, "feedback_processing_rounds", round_id,
+                      {corruption[0]: corruption[1]})
     before = _feedback_processing_snapshot(store)
 
     with pytest.raises(feedback_processing_module.FeedbackProcessingReopenError) as error:
@@ -2773,9 +2507,13 @@ def test_claim_rejects_existing_batch_requested_count_mismatch_without_mutation(
     store.upsert_feedback_event(key="feedback-1", feedback_token="token-1")
     store.create_feedback_processing_batch(["feedback-1"], batch_id="batch-1")
     with store._connect() as db:
-        db.execute(
-            "update feedback_processing_batches set requested_count=2 where batch_id='batch-1'"
-        )
+        batch = db.execute(
+            f"select rowid from ({store_module.task12_projection('feedback_processing_batches', include_rowid=True)}) "
+            "where batch_id='batch-1'"
+        ).fetchone()
+        assert batch is not None
+        update_task12(db, "feedback_processing_batches", batch[0],
+                      {"requested_count": 2})
     before = _feedback_processing_snapshot(store)
 
     with pytest.raises((FeedbackProcessingBatchError, FeedbackProcessingClaimError)):
@@ -2788,7 +2526,10 @@ def test_resolve_rejects_missing_source_feedback_before_any_mutation(tmp_path: P
     store = AutoReplyStore(tmp_path / "resolve-source-missing.sqlite3")
     _, receipt = _prepare_processing_round(store)
     with store._connect() as db:
-        db.execute("delete from feedback_events where key='feedback-1'")
+        db.execute(
+            "delete from actions where record_type='feedback_events' "
+            "and fb_event_key='feedback-1'"
+        )
     before = _feedback_processing_snapshot(store)
 
     with pytest.raises(ValueError):
@@ -2855,8 +2596,10 @@ def test_resolve_shares_one_timestamp_across_delayed_multi_item_batch(
         db.execute(
             """
             create trigger delay_feedback_round_resolution
-            after update of status on feedback_processing_rounds
-            when old.status='processing' and new.status='resolved'
+            after update of payload_json on tasks
+            when old.record_type='feedback_processing_rounds'
+             and old."feedback_processing_rounds__status"='processing'
+             and new."feedback_processing_rounds__status"='resolved'
             begin
                 select feedback_resolution_delay();
             end
@@ -2867,40 +2610,21 @@ def test_resolve_shares_one_timestamp_across_delayed_multi_item_batch(
         "batch-1", receipt, commit_is_ancestor=True
     )
     with store._connect() as db:
+        queries = (
+            f"select resolved_at as timestamp from ({store_module.task12_projection('feedback_processing_rounds')}) where batch_id='batch-1'",
+            f"select updated_at as timestamp from ({store_module.task12_projection('feedback_processing_rounds')}) where batch_id='batch-1'",
+            f"select resolved_at as timestamp from ({store_module.task12_projection('feedback_processing_items')}) where batch_id='batch-1'",
+            f"select updated_at as timestamp from ({store_module.task12_projection('feedback_processing_items')}) where batch_id='batch-1'",
+            f"select resolved_at as timestamp from ({feedback_projection('feedback_events')}) where key in ('feedback-1', 'feedback-2')",
+            f"select updated_at as timestamp from ({feedback_projection('feedback_events')}) where key in ('feedback-1', 'feedback-2')",
+            f"select resolved_at as timestamp from ({store_module.task12_projection('feedback_processing_batches')}) where batch_id='batch-1'",
+            f"select updated_at as timestamp from ({store_module.task12_projection('feedback_processing_batches')}) where batch_id='batch-1'",
+            f"select created_at as timestamp from ({feedback_projection('feedback_processing_transitions')}) where batch_id='batch-1' and from_status='processing' and to_status='resolved'",
+        )
         timestamps = {
             str(row["timestamp"])
-            for row in db.execute(
-                """
-                select resolved_at as timestamp
-                  from feedback_processing_rounds where batch_id='batch-1'
-                union all
-                select updated_at
-                  from feedback_processing_rounds where batch_id='batch-1'
-                union all
-                select resolved_at
-                  from feedback_processing_items where batch_id='batch-1'
-                union all
-                select updated_at
-                  from feedback_processing_items where batch_id='batch-1'
-                union all
-                select resolved_at
-                  from feedback_events where key in ('feedback-1', 'feedback-2')
-                union all
-                select updated_at
-                  from feedback_events where key in ('feedback-1', 'feedback-2')
-                union all
-                select resolved_at
-                  from feedback_processing_batches where batch_id='batch-1'
-                union all
-                select updated_at
-                  from feedback_processing_batches where batch_id='batch-1'
-                union all
-                select created_at
-                  from feedback_processing_transitions
-                 where batch_id='batch-1' and from_status='processing'
-                   and to_status='resolved'
-                """
-            )
+            for query in queries
+            for row in db.execute(query)
         }
     assert len(timestamps) == 1
     assert store.reopen_feedback_processing_item(
@@ -2912,13 +2636,11 @@ def test_resolve_rejects_orphan_round_in_batch_before_any_mutation(tmp_path: Pat
     store = AutoReplyStore(tmp_path / "resolve-orphan-round.sqlite3")
     _, receipt = _prepare_processing_round(store)
     with store._connect() as db:
-        db.execute(
-            """
-            insert into feedback_processing_rounds (
-                feedback_key, round_number, batch_id, status, started_at
-            ) values ('orphan-feedback', 1, 'batch-1', 'processing', current_timestamp)
-            """
-        )
+        insert_task12(db, "feedback_processing_rounds", {
+            "feedback_key": "orphan-feedback", "round_number": 1,
+            "batch_id": "batch-1", "status": "processing",
+            "started_at": db.execute("select current_timestamp").fetchone()[0],
+        })
     before = _feedback_processing_snapshot(store)
 
     with pytest.raises(ValueError):
@@ -2935,9 +2657,8 @@ def test_resolve_rejects_missing_item_for_batch_round_before_any_mutation(
     store = AutoReplyStore(tmp_path / "resolve-item-missing.sqlite3")
     _, receipt = _prepare_processing_round(store)
     with store._connect() as db:
-        db.execute(
-            "delete from feedback_processing_items where feedback_key='feedback-1'"
-        )
+        delete_task12(db, "feedback_processing_items",
+                      _feedback_item_source_rowid(db, "feedback-1"))
     before = _feedback_processing_snapshot(store)
 
     with pytest.raises(ValueError):
@@ -2955,10 +2676,13 @@ def test_reopen_malformed_round_pointer_is_typed_and_atomic(
     store = AutoReplyStore(tmp_path / "reopen-malformed-pointer.sqlite3")
     _seed_resolved_feedback_round(store, "feedback-1")
     with store._connect() as db:
-        db.execute(
-            "update feedback_processing_items set current_round_id=? where feedback_key='feedback-1'",
-            (malformed_pointer,),
-        )
+        item = db.execute(
+            f"select rowid from ({store_module.task12_projection('feedback_processing_items', include_rowid=True)}) "
+            "where feedback_key='feedback-1'"
+        ).fetchone()
+        assert item is not None
+        update_task12(db, "feedback_processing_items", item[0],
+                      {"current_round_id": malformed_pointer})
     before = _feedback_processing_snapshot(store)
 
     with pytest.raises(feedback_processing_module.FeedbackProcessingReopenError) as error:
@@ -2975,10 +2699,13 @@ def test_feedback_item_reader_rejects_malformed_round_pointer(
     store = AutoReplyStore(tmp_path / "read-malformed-pointer.sqlite3")
     store.upsert_feedback_event(key="feedback-1", feedback_token="token-1")
     with store._connect() as db:
-        db.execute(
-            "update feedback_processing_items set current_round_id=? where feedback_key='feedback-1'",
-            (malformed_pointer,),
-        )
+        item = db.execute(
+            f"select rowid from ({store_module.task12_projection('feedback_processing_items', include_rowid=True)}) "
+            "where feedback_key='feedback-1'"
+        ).fetchone()
+        assert item is not None
+        update_task12(db, "feedback_processing_items", item[0],
+                      {"current_round_id": malformed_pointer})
 
     with pytest.raises(ValueError, match="feedback_processing_current_round_id_invalid"):
         store.get_feedback_processing_item("feedback-1")
@@ -2992,20 +2719,26 @@ def test_task2_writes_reject_malformed_round_pointer_with_domain_error(
     if operation == "claim":
         store.upsert_feedback_event(key="feedback-1", feedback_token="token-1")
         with store._connect() as db:
-            db.execute(
-                "update feedback_processing_items set current_round_id='not-an-int' "
+            item = db.execute(
+                f"select rowid from ({store_module.task12_projection('feedback_processing_items', include_rowid=True)}) "
                 "where feedback_key='feedback-1'"
-            )
+            ).fetchone()
+            assert item is not None
+            update_task12(db, "feedback_processing_items", item[0],
+                          {"current_round_id": "not-an-int"})
         before = _feedback_processing_snapshot(store)
         with pytest.raises(FeedbackProcessingClaimError):
             store.claim_feedback_processing_items("batch-1", ["feedback-1"])
     else:
         _, receipt = _prepare_processing_round(store)
         with store._connect() as db:
-            db.execute(
-                "update feedback_processing_items set current_round_id=1.5 "
+            item = db.execute(
+                f"select rowid from ({store_module.task12_projection('feedback_processing_items', include_rowid=True)}) "
                 "where feedback_key='feedback-1'"
-            )
+            ).fetchone()
+            assert item is not None
+            update_task12(db, "feedback_processing_items", item[0],
+                          {"current_round_id": 1.5})
         before = _feedback_processing_snapshot(store)
         if operation == "patch":
             with pytest.raises(
@@ -3026,15 +2759,11 @@ def test_task2_writes_reject_malformed_round_pointer_with_domain_error(
 
 def _ensure_receipt_version_column(store: AutoReplyStore) -> None:
     with store._connect() as db:
-        columns = {
-            str(row["name"])
-            for row in db.execute("pragma table_info(feedback_processing_rounds)")
+        assert "receipt_version" in {
+            column[0] for column in db.execute(
+                f"select * from ({store_module.task12_projection('feedback_processing_rounds')}) where 0"
+            ).description
         }
-        if "receipt_version" not in columns:
-            db.execute(
-                "alter table feedback_processing_rounds add column "
-                "receipt_version integer not null default 1"
-            )
 
 
 def test_resolution_requires_explicit_strict_commit_ancestry_signatures():
@@ -3075,14 +2804,8 @@ def test_legacy_v1_complete_receipt_reopens_without_synthetic_backlog(tmp_path: 
     round_id = _seed_resolved_feedback_round(store, "feedback-1")
     _ensure_receipt_version_column(store)
     with store._connect() as db:
-        db.execute(
-            """
-            update feedback_processing_rounds
-               set receipt_version=1, backlog_evidence_json='{}'
-             where id=?
-            """,
-            (round_id,),
-        )
+        update_task12(db, "feedback_processing_rounds", round_id,
+                      {"receipt_version": 1, "backlog_evidence_json": "{}"})
 
     reopened = store.reopen_feedback_processing_item(
         "feedback-1", reason="legacy receipt predates backlog evidence"
@@ -3092,12 +2815,13 @@ def test_legacy_v1_complete_receipt_reopens_without_synthetic_backlog(tmp_path: 
     with store._connect() as db:
         round_row = db.execute(
             "select receipt_version, backlog_evidence_json "
-            "from feedback_processing_rounds where id=?",
+            f"from ({store_module.task12_projection('feedback_processing_rounds')}) where id=?",
             (round_id,),
         ).fetchone()
     assert tuple(round_row) == (1, "{}")
 
 
+@_native_predecessor_case
 def test_pre_scope_receipt_schema_migrates_legacy_replay_and_reopen(tmp_path: Path):
     db_path = tmp_path / "pre-scope-receipt.sqlite3"
     store = AutoReplyStore(db_path)
@@ -3123,6 +2847,7 @@ def test_pre_scope_receipt_schema_migrates_legacy_replay_and_reopen(tmp_path: Pa
     ).status == "pending"
 
 
+@_native_predecessor_case
 def test_receipt_version_migration_marks_only_valid_existing_backlog_v2(
     tmp_path: Path,
 ):
@@ -3189,14 +2914,13 @@ def _make_stale_resolved_round_pointer(store: AutoReplyStore) -> tuple[int, int]
         round_number=2,
     )
     with store._connect() as db:
-        db.execute(
-            """
-            update feedback_processing_items
-               set current_round_id=?, batch_id='batch-old'
-             where feedback_key='feedback-1'
-            """,
-            (old_round_id,),
-        )
+        item = db.execute(
+            f"select rowid from ({store_module.task12_projection('feedback_processing_items', include_rowid=True)}) "
+            "where feedback_key='feedback-1'"
+        ).fetchone()
+        assert item is not None
+        update_task12(db, "feedback_processing_items", item[0],
+                      {"current_round_id": old_round_id, "batch_id": "batch-old"})
     return old_round_id, new_round_id
 
 
@@ -3215,36 +2939,17 @@ def test_reopen_rejects_stale_non_latest_round_pointer_without_mutation(tmp_path
     ] == [new_round_id, old_round_id]
 
 
-def test_round_reconciliation_clears_stale_non_latest_matching_pointer(
-    tmp_path: Path,
-):
-    db_path = tmp_path / "reconcile-stale-latest.sqlite3"
-    store = AutoReplyStore(db_path)
-    old_round_id, new_round_id = _make_stale_resolved_round_pointer(store)
-    rounds_before = store.list_feedback_processing_rounds("feedback-1")
-
-    store_module._INITIALIZED_STORE_PATHS.discard(db_path.resolve())
-    reconciled = AutoReplyStore(db_path)
-
-    assert reconciled.get_feedback_processing_item("feedback-1").current_round_id == 0
-    assert [
-        round_item.id
-        for round_item in reconciled.list_feedback_processing_rounds("feedback-1")
-    ] == [new_round_id, old_round_id]
-    assert reconciled.list_feedback_processing_rounds("feedback-1") == rounds_before
 
 
 def test_resolved_batch_shortcut_rejects_corrupt_batch_only_state(tmp_path: Path):
     store = AutoReplyStore(tmp_path / "resolved-batch-corrupt.sqlite3")
     store.upsert_feedback_event(key="feedback-1", feedback_token="token-1")
     with store._connect() as db:
-        db.execute(
-            """
-            insert into feedback_processing_batches (
-                batch_id, status, requested_count, resolved_at
-            ) values ('batch-1', 'resolved', 1, current_timestamp)
-            """
-        )
+        insert_task12(db, "feedback_processing_batches", {
+            "batch_id": "batch-1", "status": "resolved",
+            "requested_count": 1,
+            "resolved_at": db.execute("select current_timestamp").fetchone()[0],
+        })
     before = _feedback_processing_snapshot(store)
 
     with pytest.raises(ValueError):
@@ -3406,23 +3111,23 @@ def _prepare_resolved_v2_batch(
 
 
 @pytest.mark.parametrize(
-    "damage_sql",
+    "damage",
     (
-        "update feedback_processing_batches set resolved_at='' "
-        "where batch_id='batch-1'",
-        "update feedback_processing_batches set updated_at='1999-01-01 00:00:00' "
-        "where batch_id='batch-1'",
+        ("resolved_at", ""),
+        ("updated_at", "1999-01-01 00:00:00"),
     ),
     ids=("missing-resolved-at", "updated-at-mismatch"),
 )
 def test_resolved_batch_idempotency_requires_shared_batch_completion_timestamp(
     tmp_path: Path,
-    damage_sql: str,
+    damage: tuple[str, str],
 ):
     store = AutoReplyStore(tmp_path / "resolved-batch-timestamp.sqlite3")
     receipt = _prepare_resolved_v2_batch(store)
     with store._connect() as db:
-        db.execute(damage_sql)
+        update_task12(db, "feedback_processing_batches",
+                      _feedback_batch_source_rowid(db, "batch-1"),
+                      {damage[0]: damage[1]})
     before = _feedback_processing_snapshot(store)
 
     with pytest.raises(ValueError):
@@ -3444,44 +3149,33 @@ def test_resolved_v2_batch_idempotency_requires_exact_completion_transition(
     store = AutoReplyStore(tmp_path / f"resolved-transition-{damage}.sqlite3")
     receipt = _prepare_resolved_v2_batch(store)
     with store._connect() as db:
+        transition = db.execute(
+            f"select * from ({feedback_projection('feedback_processing_transitions', with_rowid=True)}) "
+            "where batch_id='batch-1' and from_status='processing' "
+            "and to_status='resolved'"
+        ).fetchone()
+        assert transition is not None
+        transition_rowid = int(transition["_source_rowid"])
         if damage == "missing":
             db.execute(
-                "delete from feedback_processing_transitions "
-                "where batch_id='batch-1' and from_status='processing' "
-                "and to_status='resolved'"
+                "delete from actions where record_type='feedback_processing_transitions' "
+                "and legacy_key=?", (str(transition_rowid),),
             )
         elif damage == "duplicate":
-            db.execute(
-                """
-                insert into feedback_processing_transitions (
-                    feedback_key, round_id, batch_id, from_status, to_status,
-                    reason, workbench_task_id, workbench_turn_id, created_at
+            insert_feedback_action(db, "feedback_processing_transitions", {
+                field: transition[field] for field in (
+                    "feedback_key", "round_id", "batch_id", "from_status",
+                    "to_status", "reason", "workbench_task_id",
+                    "workbench_turn_id", "created_at",
                 )
-                select feedback_key, round_id, batch_id, from_status, to_status,
-                       reason, workbench_task_id, workbench_turn_id, created_at
-                  from feedback_processing_transitions
-                 where batch_id='batch-1' and from_status='processing'
-                   and to_status='resolved'
-                """
-            )
+            })
         elif damage == "mismatched":
-            db.execute(
-                """
-                update feedback_processing_transitions
-                   set workbench_task_id='wrong-task'
-                 where batch_id='batch-1' and from_status='processing'
-                   and to_status='resolved'
-                """
-            )
+            set_feedback_action(db, "feedback_processing_transitions",
+                                transition_rowid, {"workbench_task_id": "wrong-task"})
         else:
-            db.execute(
-                """
-                update feedback_processing_transitions
-                   set created_at='1999-01-01 00:00:00'
-                 where batch_id='batch-1' and from_status='processing'
-                   and to_status='resolved'
-                """
-            )
+            set_feedback_action(db, "feedback_processing_transitions",
+                                transition_rowid,
+                                {"created_at": "1999-01-01 00:00:00"})
     before = _feedback_processing_snapshot(store)
 
     with pytest.raises(ValueError):
@@ -3501,15 +3195,17 @@ def test_current_resolved_batch_idempotency_requires_exact_terminal_projection(
     receipt = _prepare_resolved_v2_batch(store)
     with store._connect() as db:
         if damage == "source-timestamp":
-            db.execute(
-                "update feedback_events set resolved_at='1999-01-01 00:00:00' "
+            event = db.execute(
+                f"select _source_rowid from ({feedback_projection('feedback_events', with_rowid=True)}) "
                 "where key='feedback-1'"
-            )
+            ).fetchone()
+            assert event is not None
+            set_feedback_action(db, "feedback_events", event[0],
+                                {"resolved_at": "1999-01-01 00:00:00"})
         else:
-            db.execute(
-                "update feedback_processing_items set note='wrong-note' "
-                "where feedback_key='feedback-1'"
-            )
+            update_task12(db, "feedback_processing_items",
+                          _feedback_item_source_rowid(db, "feedback-1"),
+                          {"note": "wrong-note"})
     before = _feedback_processing_snapshot(store)
 
     with pytest.raises(ValueError):
@@ -3548,11 +3244,9 @@ def test_reopened_resolved_batch_idempotency_requires_cleared_pending_projection
     )
     assert reopened is not None and reopened.current_round_id == 0
     with store._connect() as db:
-        db.execute(
-            f"update feedback_processing_items set {field}=? "
-            "where feedback_key='feedback-1'",
-            (value,),
-        )
+        update_task12(db, "feedback_processing_items",
+                      _feedback_item_source_rowid(db, "feedback-1"),
+                      {field: value})
     before = _feedback_processing_snapshot(store)
 
     with pytest.raises(ValueError):
@@ -3571,10 +3265,9 @@ def test_old_resolved_batch_idempotency_validates_newer_processing_lineage(
     store.reopen_feedback_processing_item("feedback-1", reason="needs another round")
     store.claim_feedback_processing_items("batch-2", ["feedback-1"])
     with store._connect() as db:
-        db.execute(
-            "update feedback_processing_items set note='projection-only-corruption' "
-            "where feedback_key='feedback-1'"
-        )
+        update_task12(db, "feedback_processing_items",
+                      _feedback_item_source_rowid(db, "feedback-1"),
+                      {"note": "projection-only-corruption"})
     before = _feedback_processing_snapshot(store)
 
     with pytest.raises(ValueError):
@@ -3662,20 +3355,15 @@ def test_old_resolved_batch_idempotency_requires_newer_batch_definition(
         newer_status=newer_status,
     )
     with store._connect() as db:
+        batch_rowid = _feedback_batch_source_rowid(db, "batch-2")
         if damage == "missing-batch":
-            db.execute(
-                "delete from feedback_processing_batches where batch_id='batch-2'"
-            )
+            delete_task12(db, "feedback_processing_batches", batch_rowid)
         elif damage == "wrong-status":
-            db.execute(
-                "update feedback_processing_batches set status='pending' "
-                "where batch_id='batch-2'"
-            )
+            update_task12(db, "feedback_processing_batches", batch_rowid,
+                          {"status": "pending"})
         else:
-            db.execute(
-                "update feedback_processing_batches set requested_count=2 "
-                "where batch_id='batch-2'"
-            )
+            update_task12(db, "feedback_processing_batches", batch_rowid,
+                          {"requested_count": 2})
     before = _feedback_processing_snapshot(store)
 
     with pytest.raises(ValueError, match="resolved batch newer lineage is incomplete"):
@@ -3699,32 +3387,23 @@ def test_old_resolved_batch_idempotency_requires_complete_newer_membership(
     )
     with store._connect() as db:
         if damage == "orphan-round":
-            db.execute(
-                """
-                insert into feedback_processing_rounds (
-                    feedback_key, round_number, batch_id, status,
-                    receipt_version, started_at
-                ) values ('feedback-orphan', 1, 'batch-2', 'processing', 2,
-                          current_timestamp)
-                """
-            )
+            insert_task12(db, "feedback_processing_rounds", {
+                "feedback_key": "feedback-orphan", "round_number": 1,
+                "batch_id": "batch-2", "status": "processing",
+                "receipt_version": 2,
+                "started_at": db.execute("select current_timestamp").fetchone()[0],
+            })
         elif damage == "missing-item":
-            db.execute(
-                "delete from feedback_processing_items "
-                "where feedback_key='feedback-2'"
-            )
+            delete_task12(db, "feedback_processing_items",
+                          _feedback_item_source_rowid(db, "feedback-2"))
         else:
             store.upsert_feedback_event(
                 key="feedback-extra",
                 feedback_token="token-feedback-extra",
             )
-            db.execute(
-                """
-                update feedback_processing_items
-                   set batch_id='batch-2', status='processing'
-                 where feedback_key='feedback-extra'
-                """
-            )
+            update_task12(db, "feedback_processing_items",
+                          _feedback_item_source_rowid(db, "feedback-extra"),
+                          {"batch_id": "batch-2", "status": "processing"})
     before = _feedback_processing_snapshot(store)
 
     with pytest.raises(ValueError, match="resolved batch newer lineage is incomplete"):
@@ -3778,17 +3457,17 @@ def test_resolved_newer_batch_requires_one_common_member_receipt(
         include_second_member=True,
     )
     with store._connect() as db:
-        db.execute(
-            f"update feedback_processing_rounds set {field}=? "
-            "where feedback_key='feedback-2' and batch_id='batch-2'",
-            (round_value,),
-        )
+        round_row = db.execute(
+            f"select id from ({store_module.task12_projection('feedback_processing_rounds')}) "
+            "where feedback_key='feedback-2' and batch_id='batch-2'"
+        ).fetchone()
+        assert round_row is not None
+        update_task12(db, "feedback_processing_rounds", round_row[0],
+                      {field: round_value})
         if item_value is not None:
-            db.execute(
-                f"update feedback_processing_items set {field}=? "
-                "where feedback_key='feedback-2' and batch_id='batch-2'",
-                (item_value,),
-            )
+            update_task12(db, "feedback_processing_items",
+                          _feedback_item_source_rowid(db, "feedback-2"),
+                          {field: item_value})
     before = _feedback_processing_snapshot(store)
 
     with pytest.raises(ValueError, match="resolved batch newer lineage is incomplete"):
@@ -3811,20 +3490,18 @@ def test_processing_newer_batch_requires_v2_round_with_empty_backlog(
         include_second_member=True,
     )
     with store._connect() as db:
+        round_row = db.execute(
+            f"select id from ({store_module.task12_projection('feedback_processing_rounds')}) "
+            "where feedback_key='feedback-2' and batch_id='batch-2'"
+        ).fetchone()
+        assert round_row is not None
         if damage == "legacy-version":
-            db.execute(
-                "update feedback_processing_rounds set receipt_version=1 "
-                "where feedback_key='feedback-2' and batch_id='batch-2'"
-            )
+            update_task12(db, "feedback_processing_rounds", round_row[0],
+                          {"receipt_version": 1})
         else:
-            db.execute(
-                """
-                update feedback_processing_rounds
-                   set backlog_evidence_json=
-                       '{"processing":0,"failed":0,"retryable":0}'
-                 where feedback_key='feedback-2' and batch_id='batch-2'
-                """
-            )
+            update_task12(db, "feedback_processing_rounds", round_row[0],
+                          {"backlog_evidence_json":
+                           '{"processing":0,"failed":0,"retryable":0}'})
     before = _feedback_processing_snapshot(store)
 
     with pytest.raises(ValueError, match="resolved batch newer lineage is incomplete"):
@@ -3847,16 +3524,12 @@ def test_newer_batch_member_pointer_must_target_global_latest_round(
         include_second_member=True,
     )
     with store._connect() as db:
-        db.execute(
-            """
-            insert into feedback_processing_rounds (
-                feedback_key, round_number, batch_id, status,
-                receipt_version, started_at
-            ) values ('feedback-2', 2, 'batch-shadow', ?, 2,
-                      current_timestamp)
-            """,
-            (newer_status,),
-        )
+        insert_task12(db, "feedback_processing_rounds", {
+            "feedback_key": "feedback-2", "round_number": 2,
+            "batch_id": "batch-shadow", "status": newer_status,
+            "receipt_version": 2,
+            "started_at": db.execute("select current_timestamp").fetchone()[0],
+        })
     before = _feedback_processing_snapshot(store)
 
     with pytest.raises(ValueError, match="resolved batch newer lineage is incomplete"):
@@ -3883,44 +3556,33 @@ def test_v2_newer_round_requires_exact_claim_transition(
         include_second_member=True,
     )
     with store._connect() as db:
+        transition = db.execute(
+            f"select * from ({feedback_projection('feedback_processing_transitions', with_rowid=True)}) "
+            "where feedback_key='feedback-2' and batch_id='batch-2' "
+            "and from_status='pending' and to_status='processing'"
+        ).fetchone()
+        assert transition is not None
+        transition_rowid = int(transition["_source_rowid"])
         if damage == "missing":
             db.execute(
-                "delete from feedback_processing_transitions "
-                "where feedback_key='feedback-2' and batch_id='batch-2' "
-                "and from_status='pending' and to_status='processing'"
+                "delete from actions where record_type='feedback_processing_transitions' "
+                "and legacy_key=?", (str(transition_rowid),),
             )
         elif damage == "duplicate":
-            db.execute(
-                """
-                insert into feedback_processing_transitions (
-                    feedback_key, round_id, batch_id, from_status, to_status,
-                    reason, workbench_task_id, workbench_turn_id, created_at
+            insert_feedback_action(db, "feedback_processing_transitions", {
+                field: transition[field] for field in (
+                    "feedback_key", "round_id", "batch_id", "from_status",
+                    "to_status", "reason", "workbench_task_id",
+                    "workbench_turn_id", "created_at",
                 )
-                select feedback_key, round_id, batch_id, from_status, to_status,
-                       reason, workbench_task_id, workbench_turn_id, created_at
-                  from feedback_processing_transitions
-                 where feedback_key='feedback-2' and batch_id='batch-2'
-                   and from_status='pending' and to_status='processing'
-                """
-            )
+            })
         elif damage == "wrong-fields":
-            db.execute(
-                """
-                update feedback_processing_transitions
-                   set workbench_turn_id='wrong-turn'
-                 where feedback_key='feedback-2' and batch_id='batch-2'
-                   and from_status='pending' and to_status='processing'
-                """
-            )
+            set_feedback_action(db, "feedback_processing_transitions",
+                                transition_rowid, {"workbench_turn_id": "wrong-turn"})
         else:
-            db.execute(
-                """
-                update feedback_processing_transitions
-                   set created_at='1999-01-01 00:00:00'
-                 where feedback_key='feedback-2' and batch_id='batch-2'
-                   and from_status='pending' and to_status='processing'
-                """
-            )
+            set_feedback_action(db, "feedback_processing_transitions",
+                                transition_rowid,
+                                {"created_at": "1999-01-01 00:00:00"})
     before = _feedback_processing_snapshot(store)
 
     with pytest.raises(ValueError, match="resolved batch newer lineage is incomplete"):
@@ -3955,7 +3617,8 @@ def test_claim_uses_one_timestamp_for_rounds_and_claim_transitions(tmp_path: Pat
         db.execute(
             """
             create trigger delay_feedback_round_claim
-            after insert on feedback_processing_rounds
+            after insert on tasks
+            when new.record_type='feedback_processing_rounds'
             begin
                 select feedback_claim_delay();
             end
@@ -3969,17 +3632,11 @@ def test_claim_uses_one_timestamp_for_rounds_and_claim_transitions(tmp_path: Pat
     with store._connect() as db:
         timestamps = {
             str(row["timestamp"])
-            for row in db.execute(
-                """
-                select started_at as timestamp
-                  from feedback_processing_rounds where batch_id='batch-1'
-                union all
-                select created_at
-                  from feedback_processing_transitions
-                 where batch_id='batch-1' and from_status='pending'
-                   and to_status='processing'
-                """
+            for query in (
+                f"select started_at as timestamp from ({store_module.task12_projection('feedback_processing_rounds')}) where batch_id='batch-1'",
+                f"select created_at as timestamp from ({feedback_projection('feedback_processing_transitions')}) where batch_id='batch-1' and from_status='pending' and to_status='processing'",
             )
+            for row in db.execute(query)
         }
     assert len(timestamps) == 1
 
@@ -3988,17 +3645,21 @@ def test_resolved_v2_batch_rejects_empty_claim_timestamp_pair(tmp_path: Path):
     store = AutoReplyStore(tmp_path / "resolved-empty-claim-time.sqlite3")
     receipt = _prepare_resolved_v2_batch(store)
     with store._connect() as db:
-        db.execute(
-            "update feedback_processing_rounds set started_at='' "
+        round_rows = db.execute(
+            f"select id from ({store_module.task12_projection('feedback_processing_rounds')}) "
             "where batch_id='batch-1'"
-        )
-        db.execute(
-            """
-            update feedback_processing_transitions set created_at=''
-             where batch_id='batch-1' and from_status='pending'
-               and to_status='processing'
-            """
-        )
+        ).fetchall()
+        for row in round_rows:
+            update_task12(db, "feedback_processing_rounds", row[0],
+                          {"started_at": ""})
+        claims = db.execute(
+            f"select _source_rowid from ({feedback_projection('feedback_processing_transitions', with_rowid=True)}) "
+            "where batch_id='batch-1' and from_status='pending' "
+            "and to_status='processing'"
+        ).fetchall()
+        for row in claims:
+            set_feedback_action(db, "feedback_processing_transitions", row[0],
+                                {"created_at": ""})
     before = _feedback_processing_snapshot(store)
 
     with pytest.raises(ValueError):
@@ -4021,19 +3682,21 @@ def test_v2_newer_batch_requires_one_shared_claim_timestamp(
         include_second_member=True,
     )
     with store._connect() as db:
-        db.execute(
-            "update feedback_processing_rounds "
-            "set started_at='1999-01-01 00:00:00' "
+        round_row = db.execute(
+            f"select id from ({store_module.task12_projection('feedback_processing_rounds')}) "
             "where feedback_key='feedback-2' and batch_id='batch-2'"
-        )
-        db.execute(
-            """
-            update feedback_processing_transitions
-               set created_at='1999-01-01 00:00:00'
-             where feedback_key='feedback-2' and batch_id='batch-2'
-               and from_status='pending' and to_status='processing'
-            """
-        )
+        ).fetchone()
+        assert round_row is not None
+        update_task12(db, "feedback_processing_rounds", round_row[0],
+                      {"started_at": "1999-01-01 00:00:00"})
+        claim = db.execute(
+            f"select _source_rowid from ({feedback_projection('feedback_processing_transitions', with_rowid=True)}) "
+            "where feedback_key='feedback-2' and batch_id='batch-2' "
+            "and from_status='pending' and to_status='processing'"
+        ).fetchone()
+        assert claim is not None
+        set_feedback_action(db, "feedback_processing_transitions", claim[0],
+                            {"created_at": "1999-01-01 00:00:00"})
     before = _feedback_processing_snapshot(store)
 
     with pytest.raises(ValueError, match="resolved batch newer lineage is incomplete"):
@@ -4070,7 +3733,8 @@ def test_delayed_newer_batch_claim_remains_valid_for_old_batch_idempotency(
         db.execute(
             """
             create trigger delay_feedback_newer_round_claim
-            after insert on feedback_processing_rounds
+            after insert on tasks
+            when new.record_type='feedback_processing_rounds'
             begin
                 select feedback_claim_lineage_delay();
             end
@@ -4126,62 +3790,48 @@ def _insert_orphan_feedback_batch_transition(
 ) -> None:
     with store._connect() as db:
         member_round = db.execute(
-            "select id from feedback_processing_rounds "
+            f"select id from ({store_module.task12_projection('feedback_processing_rounds')}) "
             "where batch_id=? and feedback_key=?",
             (batch_id, member_feedback_key),
         ).fetchone()
         assert member_round is not None
         if damage == "nonexistent-round":
-            db.execute(
-                """
-                insert into feedback_processing_transitions (
-                    feedback_key, round_id, batch_id,
-                    from_status, to_status
-                ) values ('feedback-1', 999999999, ?, 'pending', 'processing')
-                """,
-                (batch_id,),
-            )
+            insert_feedback_action(db, "feedback_processing_transitions", {
+                "feedback_key": "feedback-1", "round_id": 999999999,
+                "batch_id": batch_id, "from_status": "pending",
+                "to_status": "processing",
+            })
             return
         if damage == "wrong-feedback-key":
-            db.execute(
-                """
-                insert into feedback_processing_transitions (
-                    feedback_key, round_id, batch_id,
-                    from_status, to_status
-                ) values ('feedback-orphan', ?, ?, 'pending', 'processing')
-                """,
-                (int(member_round["id"]), batch_id),
-            )
+            insert_feedback_action(db, "feedback_processing_transitions", {
+                "feedback_key": "feedback-orphan",
+                "round_id": int(member_round["id"]), "batch_id": batch_id,
+                "from_status": "pending", "to_status": "processing",
+            })
             return
         assert damage == "outside-batch-round"
-        outside_round = db.execute(
-            """
-            insert into feedback_processing_rounds (
-                feedback_key, round_number, batch_id, status,
-                receipt_version, started_at
-            ) values ('feedback-shadow', 1, 'batch-shadow', 'processing', 2,
-                      current_timestamp)
-            """
-        )
-        db.execute(
-            """
-            insert into feedback_processing_transitions (
-                feedback_key, round_id, batch_id, from_status, to_status,
-                reason, workbench_task_id, workbench_turn_id, created_at
-            )
-            select 'feedback-shadow', ?, ?, from_status, to_status,
-                   reason, workbench_task_id, workbench_turn_id, created_at
-              from feedback_processing_transitions
-             where round_id=? and batch_id=?
-               and from_status='pending' and to_status='processing'
-            """,
-            (
-                int(outside_round.lastrowid),
-                batch_id,
-                int(member_round["id"]),
-                batch_id,
-            ),
-        )
+        outside_round = insert_task12(db, "feedback_processing_rounds", {
+            "feedback_key": "feedback-shadow", "round_number": 1,
+            "batch_id": "batch-shadow", "status": "processing",
+            "receipt_version": 2,
+            "started_at": db.execute("select current_timestamp").fetchone()[0],
+        }).lastrowid
+        assert outside_round is not None
+        claim = db.execute(
+            f"select * from ({feedback_projection('feedback_processing_transitions')}) "
+            "where round_id=? and batch_id=? and from_status='pending' "
+            "and to_status='processing'",
+            (int(member_round["id"]), batch_id),
+        ).fetchone()
+        assert claim is not None
+        insert_feedback_action(db, "feedback_processing_transitions", {
+            "feedback_key": "feedback-shadow", "round_id": outside_round,
+            "batch_id": batch_id, "from_status": claim["from_status"],
+            "to_status": claim["to_status"], "reason": claim["reason"],
+            "workbench_task_id": claim["workbench_task_id"],
+            "workbench_turn_id": claim["workbench_turn_id"],
+            "created_at": claim["created_at"],
+        })
 
 
 def _prepare_resolved_two_member_batch(
@@ -4278,47 +3928,45 @@ def _corrupt_resolved_batch_sibling(
 ) -> None:
     with store._connect() as db:
         sibling_round = db.execute(
-            "select id from feedback_processing_rounds "
+            f"select id from ({store_module.task12_projection('feedback_processing_rounds')}) "
             "where batch_id='batch-1' and feedback_key='feedback-2'"
         ).fetchone()
         assert sibling_round is not None
+        completion = db.execute(
+            f"select _source_rowid from ({feedback_projection('feedback_processing_transitions', with_rowid=True)}) "
+            "where round_id=? and from_status='processing' and to_status='resolved'",
+            (int(sibling_round["id"]),),
+        ).fetchone()
+        assert completion is not None
         if damage == "missing-completion":
             db.execute(
-                "delete from feedback_processing_transitions "
-                "where round_id=? and from_status='processing' "
-                "and to_status='resolved'",
-                (int(sibling_round["id"]),),
+                "delete from actions where record_type='feedback_processing_transitions' "
+                "and legacy_key=?", (str(completion[0]),),
             )
         elif damage == "wrong-completion":
-            db.execute(
-                "update feedback_processing_transitions set reason='wrong' "
-                "where round_id=? and from_status='processing' "
-                "and to_status='resolved'",
-                (int(sibling_round["id"]),),
-            )
+            set_feedback_action(db, "feedback_processing_transitions",
+                                completion[0], {"reason": "wrong"})
         elif damage == "source-timestamp":
-            db.execute(
-                "update feedback_events set resolved_at='1999-01-01 00:00:00' "
+            event = db.execute(
+                f"select _source_rowid from ({feedback_projection('feedback_events', with_rowid=True)}) "
                 "where key='feedback-2'"
-            )
+            ).fetchone()
+            assert event is not None
+            set_feedback_action(db, "feedback_events", event[0],
+                                {"resolved_at": "1999-01-01 00:00:00"})
         elif damage == "requested-count":
-            db.execute(
-                "update feedback_processing_batches set requested_count=3 "
-                "where batch_id='batch-1'"
-            )
+            update_task12(db, "feedback_processing_batches",
+                          _feedback_batch_source_rowid(db, "batch-1"),
+                          {"requested_count": 3})
         else:
             assert damage == "receipt-mismatch"
             different_commit = "d" * 40
-            db.execute(
-                "update feedback_processing_rounds set commit_sha=? "
-                "where id=?",
-                (different_commit, int(sibling_round["id"])),
-            )
-            db.execute(
-                "update feedback_processing_items set commit_sha=? "
-                "where feedback_key='feedback-2'",
-                (different_commit,),
-            )
+            update_task12(db, "feedback_processing_rounds",
+                          int(sibling_round["id"]),
+                          {"commit_sha": different_commit})
+            update_task12(db, "feedback_processing_items",
+                          _feedback_item_source_rowid(db, "feedback-2"),
+                          {"commit_sha": different_commit})
 
 
 @pytest.mark.parametrize(
@@ -4392,17 +4040,17 @@ def test_resolved_batch_no_evidence_retry_requires_common_persisted_receipt(
             }
             different_value = json.dumps(different_receipts[receipt_field])
             column = f"{receipt_field}_evidence_json"
-        db.execute(
-            f"update feedback_processing_rounds set {column}=? "
-            "where feedback_key='feedback-2'",
-            (different_value,),
-        )
+        round_row = db.execute(
+            f"select id from ({store_module.task12_projection('feedback_processing_rounds')}) "
+            "where feedback_key='feedback-2'"
+        ).fetchone()
+        assert round_row is not None
+        update_task12(db, "feedback_processing_rounds", round_row[0],
+                      {column: different_value})
         if receipt_field != "backlog":
-            db.execute(
-                f"update feedback_processing_items set {column}=? "
-                "where feedback_key='feedback-2'",
-                (different_value,),
-            )
+            update_task12(db, "feedback_processing_items",
+                          _feedback_item_source_rowid(db, "feedback-2"),
+                          {column: different_value})
     before = _feedback_processing_snapshot(store)
 
     with pytest.raises(ValueError):
@@ -4423,8 +4071,8 @@ def test_resolved_batch_transition_validation_uses_two_bounded_queries(
 
     with store._connect() as db:
         batch = db.execute(
-            "select requested_count, resolved_at, updated_at "
-            "from feedback_processing_batches where batch_id='batch-1'"
+            f"select requested_count, resolved_at, updated_at "
+            f"from ({store_module.task12_projection('feedback_processing_batches')}) where batch_id='batch-1'"
         ).fetchone()
         assert batch is not None
         db.set_trace_callback(statements.append)
@@ -4443,7 +4091,7 @@ def test_resolved_batch_transition_validation_uses_two_bounded_queries(
     transition_queries = [
         statement.lower()
         for statement in statements
-        if "from feedback_processing_transitions" in statement.lower()
+        if "a.record_type='feedback_processing_transitions'" in statement.lower()
     ]
     assert len(transition_queries) == 2
     assert any("where batch_id=" in statement for statement in transition_queries)
@@ -4466,8 +4114,8 @@ def test_reopened_resolved_batch_reuses_two_grouped_transition_queries(
 
     with store._connect() as db:
         batch = db.execute(
-            "select requested_count, resolved_at, updated_at "
-            "from feedback_processing_batches where batch_id='batch-1'"
+            f"select requested_count, resolved_at, updated_at "
+            f"from ({store_module.task12_projection('feedback_processing_batches')}) where batch_id='batch-1'"
         ).fetchone()
         assert batch is not None
         db.set_trace_callback(statements.append)
@@ -4486,7 +4134,7 @@ def test_reopened_resolved_batch_reuses_two_grouped_transition_queries(
     transition_queries = [
         statement.lower()
         for statement in statements
-        if "from feedback_processing_transitions" in statement.lower()
+        if "a.record_type='feedback_processing_transitions'" in statement.lower()
     ]
     assert len(transition_queries) == 2
     assert any("where batch_id=" in statement for statement in transition_queries)
@@ -4516,29 +4164,25 @@ def test_grouped_reopen_transition_validation_remains_exact(
     )
     with store._connect() as db:
         transition = db.execute(
-            "select * from feedback_processing_transitions "
+            f"select * from ({feedback_projection('feedback_processing_transitions', with_rowid=True)}) "
             "where feedback_key='feedback-1' and batch_id='batch-1' "
             "and from_status='resolved' and to_status='pending'"
         ).fetchone()
         assert transition is not None
+        transition_rowid = int(transition["_source_rowid"])
         if damage == "missing":
             db.execute(
-                "delete from feedback_processing_transitions where id=?",
-                (int(transition["id"]),),
+                "delete from actions where record_type='feedback_processing_transitions' "
+                "and legacy_key=?", (str(transition_rowid),),
             )
         elif damage == "duplicate":
-            db.execute(
-                """
-                insert into feedback_processing_transitions (
-                    feedback_key, round_id, batch_id, from_status, to_status,
-                    reason, workbench_task_id, workbench_turn_id, created_at
+            insert_feedback_action(db, "feedback_processing_transitions", {
+                field: transition[field] for field in (
+                    "feedback_key", "round_id", "batch_id", "from_status",
+                    "to_status", "reason", "workbench_task_id",
+                    "workbench_turn_id", "created_at",
                 )
-                select feedback_key, round_id, batch_id, from_status, to_status,
-                       reason, workbench_task_id, workbench_turn_id, created_at
-                  from feedback_processing_transitions where id=?
-                """,
-                (int(transition["id"]),),
-            )
+            })
         else:
             column, value = {
                 "reason": ("reason", "different reason"),
@@ -4546,10 +4190,8 @@ def test_grouped_reopen_transition_validation_remains_exact(
                 "workbench-turn": ("workbench_turn_id", "different-turn"),
                 "timestamp": ("created_at", "1999-01-01 00:00:00"),
             }[damage]
-            db.execute(
-                f"update feedback_processing_transitions set {column}=? where id=?",
-                (value, int(transition["id"])),
-            )
+            set_feedback_action(db, "feedback_processing_transitions",
+                                transition_rowid, {column: value})
     before = _feedback_processing_snapshot(store)
 
     with pytest.raises(ValueError):
@@ -4641,8 +4283,8 @@ def test_old_batch_reuses_grouped_newer_resolved_transition_validation(
 
     with store._connect() as db:
         batch = db.execute(
-            "select requested_count, resolved_at, updated_at "
-            "from feedback_processing_batches where batch_id='batch-1'"
+            f"select requested_count, resolved_at, updated_at "
+            f"from ({store_module.task12_projection('feedback_processing_batches')}) where batch_id='batch-1'"
         ).fetchone()
         assert batch is not None
         db.set_trace_callback(statements.append)
@@ -4661,7 +4303,7 @@ def test_old_batch_reuses_grouped_newer_resolved_transition_validation(
     transition_queries = [
         statement.lower()
         for statement in statements
-        if "from feedback_processing_transitions" in statement.lower()
+        if "a.record_type='feedback_processing_transitions'" in statement.lower()
     ]
     assert len(transition_queries) == 4
     assert sum("where batch_id=" in query for query in transition_queries) == 2
@@ -4753,82 +4395,59 @@ def test_processing_batch_entrypoints_require_centralized_lineage(
     store = AutoReplyStore(tmp_path / f"entry-{operation}-{damage}.sqlite3")
     receipt = _prepare_two_member_processing_batch(store)
     with store._connect() as db:
+        claim = db.execute(
+            f"select * from ({feedback_projection('feedback_processing_transitions', with_rowid=True)}) "
+            "where feedback_key='feedback-2' and batch_id='batch-1' "
+            "and from_status='pending' and to_status='processing'"
+        ).fetchone()
+        assert claim is not None
+        claim_rowid = int(claim["_source_rowid"])
         if damage == "missing-claim":
             db.execute(
-                "delete from feedback_processing_transitions "
-                "where feedback_key='feedback-2' and batch_id='batch-1' "
-                "and from_status='pending' and to_status='processing'"
+                "delete from actions where record_type='feedback_processing_transitions' "
+                "and legacy_key=?", (str(claim_rowid),),
             )
         elif damage == "duplicate-claim":
-            db.execute(
-                """
-                insert into feedback_processing_transitions (
-                    feedback_key, round_id, batch_id, from_status, to_status,
-                    reason, workbench_task_id, workbench_turn_id, created_at
+            insert_feedback_action(db, "feedback_processing_transitions", {
+                field: claim[field] for field in (
+                    "feedback_key", "round_id", "batch_id", "from_status",
+                    "to_status", "reason", "workbench_task_id",
+                    "workbench_turn_id", "created_at",
                 )
-                select feedback_key, round_id, batch_id, from_status, to_status,
-                       reason, workbench_task_id, workbench_turn_id, created_at
-                  from feedback_processing_transitions
-                 where feedback_key='feedback-2' and batch_id='batch-1'
-                   and from_status='pending' and to_status='processing'
-                """
-            )
+            })
         elif damage == "wrong-claim":
-            db.execute(
-                "update feedback_processing_transitions set reason='wrong' "
-                "where feedback_key='feedback-2' and batch_id='batch-1' "
-                "and from_status='pending' and to_status='processing'"
-            )
+            set_feedback_action(db, "feedback_processing_transitions",
+                                claim_rowid, {"reason": "wrong"})
         elif damage == "illegal-transition":
-            round_id = db.execute(
-                "select id from feedback_processing_rounds "
-                "where feedback_key='feedback-2' and batch_id='batch-1'"
-            ).fetchone()[0]
-            db.execute(
-                """
-                insert into feedback_processing_transitions (
-                    feedback_key, round_id, batch_id, from_status, to_status
-                ) values ('feedback-2', ?, 'batch-1', 'processing', 'pending')
-                """,
-                (round_id,),
-            )
+            insert_feedback_action(db, "feedback_processing_transitions", {
+                "feedback_key": "feedback-2", "round_id": claim["round_id"],
+                "batch_id": "batch-1", "from_status": "processing",
+                "to_status": "pending",
+            })
         elif damage == "nonempty-backlog":
-            db.execute(
-                "update feedback_processing_rounds "
-                "set backlog_evidence_json=? "
-                "where feedback_key='feedback-2' and batch_id='batch-1'",
-                (json.dumps({"processing": 0}),),
-            )
+            update_task12(db, "feedback_processing_rounds", claim["round_id"],
+                          {"backlog_evidence_json": json.dumps({"processing": 0})})
         elif damage == "stale-latest":
-            db.execute(
-                """
-                insert into feedback_processing_rounds (
-                    feedback_key, round_number, batch_id, status,
-                    receipt_version, started_at
-                ) values ('feedback-2', 2, 'batch-shadow', 'processing', 2,
-                          current_timestamp)
-                """
-            )
+            insert_task12(db, "feedback_processing_rounds", {
+                "feedback_key": "feedback-2", "round_number": 2,
+                "batch_id": "batch-shadow", "status": "processing",
+                "receipt_version": 2,
+                "started_at": db.execute("select current_timestamp").fetchone()[0],
+            })
         elif damage in {"split-claim-time", "empty-claim-time"}:
             timestamp = "" if damage == "empty-claim-time" else "1999-01-01 00:00:00"
-            db.execute(
-                "update feedback_processing_rounds set started_at=? "
-                "where feedback_key='feedback-2' and batch_id='batch-1'",
-                (timestamp,),
-            )
-            db.execute(
-                "update feedback_processing_transitions set created_at=? "
-                "where feedback_key='feedback-2' and batch_id='batch-1' "
-                "and from_status='pending' and to_status='processing'",
-                (timestamp,),
-            )
+            update_task12(db, "feedback_processing_rounds", claim["round_id"],
+                          {"started_at": timestamp})
+            set_feedback_action(db, "feedback_processing_transitions",
+                                claim_rowid, {"created_at": timestamp})
         elif damage == "missing-item":
-            db.execute(
-                "delete from feedback_processing_items "
-                "where feedback_key='feedback-2'"
-            )
+            delete_task12(db, "feedback_processing_items",
+                          _feedback_item_source_rowid(db, "feedback-2"))
         else:
-            db.execute("delete from feedback_events where key='feedback-2'")
+            db.execute(
+                "delete from actions where record_type='feedback_events' "
+                "and fb_event_key='feedback-2'"
+            )
     before = _feedback_processing_snapshot(store)
 
     with pytest.raises(ValueError):
@@ -4844,6 +4463,7 @@ def test_processing_batch_entrypoints_require_centralized_lineage(
     assert _feedback_processing_snapshot(store) == before
 
 
+@_native_predecessor_case
 def test_migrated_v1_processing_round_resolves_idempotently_and_reopens(
     tmp_path: Path,
 ):
@@ -4925,23 +4545,18 @@ def test_resolved_transition_multiset_rejects_alternate_reopen_reason(
     store.reopen_feedback_processing_item("feedback-1", reason="real reason")
     with store._connect() as db:
         round_row = db.execute(
-            "select * from feedback_processing_rounds where batch_id='batch-1'"
+            f"select * from ({store_module.task12_projection('feedback_processing_rounds')}) "
+            "where batch_id='batch-1'"
         ).fetchone()
-        db.execute(
-            """
-            insert into feedback_processing_transitions (
-                feedback_key, round_id, batch_id, from_status, to_status,
-                reason, workbench_task_id, workbench_turn_id, created_at
-            ) values ('feedback-1', ?, 'batch-1', 'resolved', 'pending',
-                      'alternate reason', ?, ?, ?)
-            """,
-            (
-                int(round_row["id"]),
-                str(round_row["workbench_task_id"]),
-                str(round_row["workbench_turn_id"]),
-                str(round_row["reopened_at"]),
-            ),
-        )
+        assert round_row is not None
+        insert_feedback_action(db, "feedback_processing_transitions", {
+            "feedback_key": "feedback-1", "round_id": int(round_row["id"]),
+            "batch_id": "batch-1", "from_status": "resolved",
+            "to_status": "pending", "reason": "alternate reason",
+            "workbench_task_id": str(round_row["workbench_task_id"]),
+            "workbench_turn_id": str(round_row["workbench_turn_id"]),
+            "created_at": str(round_row["reopened_at"]),
+        })
     before = _feedback_processing_snapshot(store)
 
     with pytest.raises(ValueError):

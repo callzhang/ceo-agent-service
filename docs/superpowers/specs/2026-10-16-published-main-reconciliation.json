@@ -1,0 +1,115 @@
+{
+  "date": "2026-10-16",
+  "scope": "published main preservation and inherited failed-History correctness",
+  "feature_parent": "443fa0d4",
+  "published_parent": "454bb72a5fcb42761046571280722fb9d2ba16f1",
+  "spec": {
+    "verdict": "PASS_merge_preservation",
+    "main_added_store_lines_preserved": 230,
+    "main_changed_store_methods": 2,
+    "claim_conflict_corrected": true
+  },
+  "quality": {
+    "verdict": "P1_inherited_main_defect",
+    "merge_terminal_alias_defect": false,
+    "defect": "Specialized failed candidate selection and literal hydration disagree with authoritative OA projected statuses.",
+    "independent_current_task_matrix": {
+      "canonical_failed": 7,
+      "specialized_failed": 2,
+      "missing": 6,
+      "extra_pending": 1
+    },
+    "exact_published_main_reproduces": true,
+    "resolved_by": "Exact canonical two-method fix independently accepted; original inherited-main P1 evidence retained above."
+  },
+  "root_pre_fix_tests": {
+    "passed": 332,
+    "seconds": 51.14,
+    "files": [
+      "tests/test_store_history_pagination.py",
+      "tests/test_attempt_projection.py",
+      "tests/test_console_attempt_detail_api.py",
+      "tests/test_task_agent.py"
+    ],
+    "changed_python_compiled": 48,
+    "selected_ruff": true
+  },
+  "planned_fix_preflight": {
+    "initial_fixture_error": "Missing original required title/sender/text fields; corrected only synthetic fixtures.",
+    "red_failed": 9,
+    "red_passed": 1,
+    "green_passed": 10,
+    "green_seconds": 2.81,
+    "patch": "docs/superpowers/plans/2026-10-16-failed-history-canonical-projection.patch",
+    "regression": "docs/superpowers/plans/2026-10-16-failed-history-regression.py",
+    "candidate_store_sha256": "7e7dd5beb8a1193cb5512bcf43fa1e377d37bb9c3f474e8a04d2928f91d6ca73"
+  },
+  "root_representative_cost": {
+    "measured_at_utc": "2026-10-16T13:05:41.473129+00:00",
+    "frozen_source_sha256": "970a909a9cfcb4fe604d2111d5572560d4744978df20fb317c4e433059566320",
+    "source_read_only": true,
+    "constructors_called": false,
+    "reply_attempt_rows": 14953,
+    "canonical_failed_keys": 6,
+    "canonical_selection_seconds": 0.9182,
+    "sqlite_vm_steps_approx": 5938000,
+    "selected_columns": [
+      "source_id",
+      "occurred_at"
+    ],
+    "limits": [
+      "Not a target cold-constructor, complete API or native CLI proof.",
+      "No old-fast-path speedup claim; old query is semantically incorrect."
+    ]
+  },
+  "implementation_and_fresh_reviews": {
+    "candidate_store_sha256": "7e7dd5beb8a1193cb5512bcf43fa1e377d37bb9c3f474e8a04d2928f91d6ca73",
+    "implementation": {
+      "red_failed": 9,
+      "red_passed": 1,
+      "green": 342,
+      "seconds": 51.9,
+      "ruff": true,
+      "diff_check": true
+    },
+    "spec": {
+      "verdict": "PASS",
+      "focused_tests": 11,
+      "seconds": 5.5,
+      "exact_patch_reverse_base_sha256": "96805c510ee131b284ccb05f2d8ecc048dd2f1d985c5ec7ac044d817cebe01a6",
+      "changed_methods": 2,
+      "regression_proposal_bytes_equal": true
+    },
+    "quality": {
+      "verdict": "PASS",
+      "focused_tests": 15,
+      "seconds": 10.21,
+      "additional_synthetic_attempt_rows": 240,
+      "canonical_failed_keys": 80,
+      "key_stage_display_udf_calls": 0,
+      "page_ids": 3,
+      "page_display_udf_calls": 6,
+      "limit_zero_and_empty_page_display_calls": 0,
+      "single_group_materialization": true,
+      "snapshot_writer_interleave": {
+        "same_request_total": 80,
+        "same_request_original_body": true,
+        "next_read_total": 79
+      },
+      "owned_temp_removed": true
+    }
+  },
+  "production_mutation": false,
+  "final_ten_plus_ledger_complete": false,
+  "root_frozen_store_query": {
+    "measured_at_utc": "2026-10-16T13:08:39.400657+00:00",
+    "read_only": true,
+    "constructor_called": false,
+    "reply_only_scope": true,
+    "canonical_failed_count": 6,
+    "seconds": 0.5709,
+    "full_dtos_and_order_equal": true,
+    "small_and_empty_page_counts_equal": true,
+    "http_api_or_current_target_migration_proof": false
+  }
+}

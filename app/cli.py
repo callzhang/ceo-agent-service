@@ -1,4 +1,4 @@
-from app.task_storage import REPLY_TASK_SQL
+from app.task20_definitions import task20_projection
 from app.action_storage import REPLY_ATTEMPT_COMMON_SQL
 from app.action_storage import SENT_REPLY_SQL
 import argparse
@@ -66,7 +66,11 @@ from app.feedback_spike import (
     build_events_url,
     send_feedback_spike_links,
 )
-from app.external_retry import is_external_dependency_error
+from app.external_retry import (
+    MAX_AUTOMATIC_ATTEMPTS,
+    MAX_AUTOMATIC_RETRIES,
+    is_external_dependency_error,
+)
 from app.message_split import split_dingtalk_text
 from app.service_heartbeat import run_service_heartbeat_loop
 from app.service_message_sender import ServiceMessageSender
@@ -101,22 +105,8 @@ from app.task_agent import (
     TaskDecisionRepairExhausted,
     process_work_item,
 )
-from app.task_memory_backfill import (
-    ProjectMemoryContextCodexRunner,
-    validate_project_memory_context,
-)
-from app.task_models import ProjectMemoryContext
-from app.task_noise_backfill import (
-    RoutineProcessBackfillResult,
-    backfill_routine_process_todos,
-)
-from app.task_owner_backfill import (
-    TodoOwnerBackfillResult,
-    backfill_todo_owner_ids_from_follow_ups,
-)
 from app.todo_sync import (
     dispatch_claimed_business_task_todo_sync_outbox,
-    dispatch_claimed_task_todo_sync_outbox,
     reconcile_unknown_business_task_todo_creates,
     scan_completed_dingtalk_todos,
 )
@@ -143,8 +133,9 @@ from app.codex_capacity import (
 )
 from app.weekly_okr_report import (
     refresh_company_okr_archive_command,
-    weekly_okr_report_command,
 )
+
+REPLY_TASK_SQL = task20_projection("reply_tasks")
 
 
 def run_consumer_dispatcher_loop(
@@ -160,7 +151,8 @@ def run_consumer_dispatcher_loop(
 
     dispatcher.run(stop_event=stop_event)
 
-WORK_SUMMARY_TRANSIENT_RETRY_ATTEMPTS = 3
+
+WORK_SUMMARY_TRANSIENT_RETRY_ATTEMPTS = MAX_AUTOMATIC_ATTEMPTS
 # The router raises this when another worker already holds the workload's
 # runtime attempt. It says nothing about the work item.
 RUNTIME_ATTEMPT_ACTIVE_CODE = "runtime_attempt_active"
@@ -243,7 +235,7 @@ class WorkerSettings(BaseModel):
     ding_robot_code: str | None = None
     ding_robot_name: str | None = DEFAULT_DING_ROBOT_NAME
     ding_receiver_user_id: str | None = None
-    dws_transient_retry_attempts: PositiveInt = 3
+    dws_transient_retry_attempts: PositiveInt = MAX_AUTOMATIC_RETRIES
     dws_transient_retry_delay_seconds: float = 1.0
     codex_timeout_seconds: PositiveInt = 1200
     codex_idle_timeout_seconds: PositiveInt = 900
@@ -256,6 +248,13 @@ class WorkerSettings(BaseModel):
     repository_upgrade_enabled: bool = repository_upgrade_enabled()
     repository_upgrade_remote: str = repository_upgrade_remote()
     repository_upgrade_branch: str = repository_upgrade_branch()
+
+    @field_validator("dws_transient_retry_attempts", mode="before")
+    @classmethod
+    def cap_dws_transient_retries(cls, value: object) -> object:
+        if value is None:
+            return value
+        return min(int(value), MAX_AUTOMATIC_RETRIES)
     repository_upgrade_check_interval_seconds: PositiveInt = repository_upgrade_check_interval_seconds()
 
     @field_validator("meeting_memory_workers")
@@ -366,13 +365,8 @@ def build_parser() -> argparse.ArgumentParser:
         "retry-source-verified-email-action",
         "reconcile-failed-agent-message",
         "skip-stale-wechat-delivery",
-        "backfill-task-memory-context",
-        "backfill-routine-process-todos",
-        "backfill-todo-owner-ids",
-        "backfill-todo-deadlines",
         "backfill-minutes-owners",
         "process-okr-reviews",
-        "weekly-okr-report",
         "refresh-okr-archive",
         "scan-task-sources",
         "scan-meeting-todos-once",
@@ -384,8 +378,10 @@ def build_parser() -> argparse.ArgumentParser:
         "scan-oa-approvals",
         "read-oa-approval-detail",
         "read-dingteam-okr",
-        "daily-report-facts",
-        "weekly-report-materials",
+        "scheduled-context",
+        "service-activity",
+        "weekly-okr-roster",
+        "weekly-okr-member",
         "quality-check",
         "channel-doctor",
         "doctor-mcp",
@@ -405,14 +401,20 @@ def build_parser() -> argparse.ArgumentParser:
         "replay-recent-meetings",
         "repository-updater",
         "repair-task-projects-plan",
-        "repair-task-projects-apply",
         "task-semantic-import-plan",
         "task-semantic-import-apply",
     ):
         subparser = subparsers.add_parser(command)
-        subparser.add_argument("--db", default=os.getenv("CEO_WORKER_DB", str(defaults.db_path)))
-        subparser.add_argument("--workspace", default=os.getenv("CEO_WORKSPACE", str(defaults.workspace)))
-        subparser.add_argument("--corpus-dir", default=os.getenv("CEO_CORPUS_DIR", str(defaults.corpus_dir)))
+        subparser.add_argument(
+            "--db", default=os.getenv("CEO_WORKER_DB", str(defaults.db_path))
+        )
+        subparser.add_argument(
+            "--workspace", default=os.getenv("CEO_WORKSPACE", str(defaults.workspace))
+        )
+        subparser.add_argument(
+            "--corpus-dir",
+            default=os.getenv("CEO_CORPUS_DIR", str(defaults.corpus_dir)),
+        )
         subparser.add_argument(
             "--not-send-message",
             "--dry-run",
@@ -427,12 +429,18 @@ def build_parser() -> argparse.ArgumentParser:
         subparser.add_argument(
             "--poll-interval-seconds",
             type=_positive_int,
-            default=_positive_int(os.getenv("CEO_POLL_INTERVAL_SECONDS", str(defaults.poll_interval_seconds))),
+            default=_positive_int(
+                os.getenv(
+                    "CEO_POLL_INTERVAL_SECONDS", str(defaults.poll_interval_seconds)
+                )
+            ),
         )
         subparser.add_argument(
             "--batch-seconds",
             type=_positive_int,
-            default=_positive_int(os.getenv("CEO_BATCH_SECONDS", str(defaults.batch_seconds))),
+            default=_positive_int(
+                os.getenv("CEO_BATCH_SECONDS", str(defaults.batch_seconds))
+            ),
         )
         subparser.add_argument(
             "--max-batches",
@@ -477,7 +485,9 @@ def build_parser() -> argparse.ArgumentParser:
             "--codex-timeout-seconds",
             type=_positive_int,
             default=_positive_int(
-                os.getenv("CEO_CODEX_TIMEOUT_SECONDS", str(defaults.codex_timeout_seconds))
+                os.getenv(
+                    "CEO_CODEX_TIMEOUT_SECONDS", str(defaults.codex_timeout_seconds)
+                )
             ),
             help="maximum seconds to wait for one Codex decision",
         )
@@ -532,21 +542,25 @@ def build_parser() -> argparse.ArgumentParser:
         if command == "read-dingteam-okr":
             subparser.add_argument("--user-id", required=True)
             subparser.add_argument("--period-label", required=True)
-        if command in {"daily-report-facts", "weekly-report-materials"}:
-            subparser.add_argument(
-                "--scheduled-run",
-                required=True,
-                type=_positive_int,
-                help="scheduled task run id of this report's trigger",
-            )
+        if command == "scheduled-context":
+            subparser.add_argument("--scheduled-run", required=True, type=_positive_int)
+        if command == "service-activity":
+            subparser.add_argument("--start", required=True)
+            subparser.add_argument("--end", required=True)
+            subparser.add_argument("--source", action="append")
+        if command == "weekly-okr-roster":
+            subparser.add_argument("--group-name", required=True)
+        if command == "weekly-okr-member":
+            subparser.add_argument("--user-id", required=True)
+            subparser.add_argument("--name", required=True)
+            subparser.add_argument("--title", default="")
+            subparser.add_argument("--open-dingtalk-id", default="")
+            subparser.add_argument("--period-label", required=True)
         if command == "repository-updater":
             subparser.add_argument("--operation-id", required=True)
         if command == "repair-task-projects-plan":
             subparser.add_argument("--historical-db")
             subparser.add_argument("--manifest", required=True)
-        if command == "repair-task-projects-apply":
-            subparser.add_argument("--manifest", required=True)
-            subparser.add_argument("--archive-limit", type=_non_negative_int)
         if command == "task-semantic-import-plan":
             subparser.add_argument("--output", required=True)
             subparser.add_argument("--limit", type=_positive_int)
@@ -568,7 +582,9 @@ def build_parser() -> argparse.ArgumentParser:
         if command == "cancel-failed-email-unsubscribe":
             subparser.add_argument("--task-id", type=_positive_int, required=True)
             subparser.add_argument("--action-identity", type=_non_blank, required=True)
-            subparser.add_argument("--execution-generation", type=_non_blank, required=True)
+            subparser.add_argument(
+                "--execution-generation", type=_non_blank, required=True
+            )
             subparser.add_argument("--input-version", type=_positive_int, required=True)
             subparser.add_argument("--reason", type=_non_blank, required=True)
             subparser.add_argument("--apply", action="store_true")
@@ -588,8 +604,12 @@ def build_parser() -> argparse.ArgumentParser:
                 ),
             )
             subparser.add_argument("--limit", type=_positive_int, default=100)
-            subparser.add_argument("--after", default="", help="resume after this action id")
-            subparser.add_argument("--pause-seconds", type=_non_negative_float, default=0.5)
+            subparser.add_argument(
+                "--after", default="", help="resume after this action id"
+            )
+            subparser.add_argument(
+                "--pause-seconds", type=_non_negative_float, default=0.5
+            )
             subparser.add_argument(
                 "--message-timeout-seconds",
                 type=_non_negative_float,
@@ -602,9 +622,15 @@ def build_parser() -> argparse.ArgumentParser:
             subparser.add_argument("--apply", action="store_true")
         if command == "reconcile-failed-agent-message":
             subparser.add_argument("--send-run-id", type=_positive_int, required=True)
-            subparser.add_argument("--readback-run-id", type=_positive_int, required=True)
-            subparser.add_argument("--external-action-key", type=_non_blank, required=True)
-            subparser.add_argument("--readback-message-id", type=_non_blank, required=True)
+            subparser.add_argument(
+                "--readback-run-id", type=_positive_int, required=True
+            )
+            subparser.add_argument(
+                "--external-action-key", type=_non_blank, required=True
+            )
+            subparser.add_argument(
+                "--readback-message-id", type=_non_blank, required=True
+            )
         if command == "skip-stale-wechat-delivery":
             subparser.add_argument("--delivery-id", type=_positive_int, required=True)
             subparser.add_argument(
@@ -616,27 +642,7 @@ def build_parser() -> argparse.ArgumentParser:
             subparser.add_argument("--max-retries", type=_positive_int, default=2)
         if command == "replay-recent-meetings":
             subparser.add_argument("--limit", type=_positive_int, required=True)
-            subparser.add_argument(
-                "--offset", type=_non_negative_int, default=0
-            )
-        if command == "backfill-routine-process-todos":
-            subparser.add_argument(
-                "--todo-id",
-                action="append",
-                type=int,
-                required=True,
-                help="Work TODO id to cancel. Repeat for multiple reviewed IDs.",
-            )
-            subparser.add_argument(
-                "--reason",
-                required=True,
-                help="Audit reason explaining why these TODOs are routine process noise.",
-            )
-            subparser.add_argument(
-                "--apply",
-                action="store_true",
-                help="Apply changes. Omit for dry-run.",
-            )
+            subparser.add_argument("--offset", type=_non_negative_int, default=0)
         if command == "backfill-minutes-owners":
             subparser.add_argument(
                 "--limit",
@@ -648,30 +654,6 @@ def build_parser() -> argparse.ArgumentParser:
                 "--apply",
                 action="store_true",
                 help="Queue the meetings. Omit for dry-run.",
-            )
-        if command == "backfill-todo-deadlines":
-            subparser.add_argument(
-                "--limit",
-                type=_positive_int,
-                default=None,
-                help="maximum open TODOs without a deadline to inspect. Omit for all.",
-            )
-            subparser.add_argument(
-                "--apply",
-                action="store_true",
-                help="Write deadlines and queue DingTalk mirrors. Omit for dry-run.",
-            )
-        if command == "backfill-todo-owner-ids":
-            subparser.add_argument(
-                "--limit",
-                type=_positive_int,
-                default=None,
-                help="maximum ownerless TODOs to inspect. Omit for all.",
-            )
-            subparser.add_argument(
-                "--apply",
-                action="store_true",
-                help="Apply changes. Omit for dry-run.",
             )
         if command == "setup-memory-connector":
             subparser.add_argument(
@@ -779,10 +761,14 @@ def build_parser() -> argparse.ArgumentParser:
             subparser.add_argument(
                 "--reload-interval-seconds",
                 type=_positive_int,
-                default=_positive_int(os.getenv("CEO_AUDIT_WEB_RELOAD_INTERVAL_SECONDS", "1")),
+                default=_positive_int(
+                    os.getenv("CEO_AUDIT_WEB_RELOAD_INTERVAL_SECONDS", "1")
+                ),
             )
         if command == "service":
-            subparser.add_argument("--host", default=os.getenv("CEO_AUDIT_WEB_HOST", "127.0.0.1"))
+            subparser.add_argument(
+                "--host", default=os.getenv("CEO_AUDIT_WEB_HOST", "127.0.0.1")
+            )
             subparser.add_argument(
                 "--port",
                 type=_positive_int,
@@ -838,17 +824,6 @@ def build_parser() -> argparse.ArgumentParser:
                 "--instruction",
                 default="",
                 help="persist an explicit reviewed instruction for the new execution generation",
-            )
-        if command == "weekly-okr-report":
-            subparser.add_argument(
-                "--force",
-                action="store_true",
-                help="run immediately even when today is not the scheduled Sunday",
-            )
-            subparser.add_argument(
-                "--period-label",
-                default="",
-                help="override the current-quarter OKR period label",
             )
         if command == "refresh-okr-archive":
             subparser.add_argument(
@@ -1116,14 +1091,7 @@ def _service_command_registry(
                 f"sync-chrome-cookies {sync_chrome_cookies_command(settings)}"
             ),
             "sync-minutes-once": lambda: (
-                "sync-minutes-once "
-                f"{sync_minutes_once_command(settings)}"
-            ),
-            # Cron owns the timing, so the command runs on the trigger rather
-            # than re-deciding whether today is its scheduled Sunday.
-            "weekly-okr-report": lambda: (
-                "weekly-okr-report "
-                f"status={weekly_okr_report_command(settings, force=True).status}"
+                f"sync-minutes-once {sync_minutes_once_command(settings)}"
             ),
         }
     )
@@ -1215,7 +1183,6 @@ def run_agent_cron_dispatcher_loop(
         ReplyQueueAdapter,
         ScheduledExecutionQueueAdapter,
         ScheduledTaskQueueAdapter,
-        TaskTodoSyncOutboxQueueAdapter,
         WorkSummaryQueueAdapter,
     )
     from app.agent_runtime_production import build_production_routed_codex_execution
@@ -1364,25 +1331,6 @@ def run_agent_cron_dispatcher_loop(
 
     todo_dws = None if settings.dry_run else meeting_dws
 
-    def consume_task_todo_sync_outbox(envelope, guard) -> None:
-        if todo_dws is None:
-            guard.release(datetime.now(timezone.utc))
-            return
-        item = store.get_task_todo_sync_outbox(int(envelope.source_id))
-        if item is None:
-            raise ValueError("task Todo outbox dispatch source does not exist")
-        now = datetime.now(timezone.utc)
-        status = dispatch_claimed_task_todo_sync_outbox(
-            store,
-            todo_dws,
-            item=item,
-            owner=guard.token.owner,
-            now=now.strftime("%Y-%m-%d %H:%M:%S"),
-            claim_guard=guard,
-        )
-        if not guard.resolved:
-            guard.finish_source(now, status=status)
-
     def consume_business_task_todo_sync_outbox(envelope, guard) -> None:
         if todo_dws is None:
             guard.release(datetime.now(timezone.utc))
@@ -1415,7 +1363,6 @@ def run_agent_cron_dispatcher_loop(
         WorkSummaryQueueAdapter(store),
         OkrReviewQueueAdapter(store),
     ) + (() if settings.dry_run else (
-        TaskTodoSyncOutboxQueueAdapter(store),
         BusinessTaskTodoSyncOutboxQueueAdapter(store),
         TaskMemoryWriteQueueAdapter(store),
     ))
@@ -1428,7 +1375,6 @@ def run_agent_cron_dispatcher_loop(
         "okr_review": consume_okr_review,
     }
     if not settings.dry_run:
-        consumers["task_todo_sync_outbox"] = consume_task_todo_sync_outbox
         consumers["business_task_todo_sync_outbox"] = consume_business_task_todo_sync_outbox
         consumers["task_memory_write"] = consume_task_memory_write
     agent_adapters = frozenset(
@@ -1479,6 +1425,7 @@ def run_agent_cron_dispatcher_loop(
         # Controlled stop drains already-admitted work. Agent and network
         # consumers enforce their own bounded operation timeouts.
         worker_pools.shutdown(wait=True, cancel_futures=False)
+
 
 def _okr_source_kind() -> str:
     value = os.getenv(OKR_SOURCE_KIND_ENV, "dingteam_web").strip().casefold()
@@ -1768,7 +1715,7 @@ def _process_claimed_work_summary_input(
         )
     lease = TaskAgentSessionLease.try_acquire(store)
     if lease is None:
-        store.schedule_work_summary_input_retry(
+        store.defer_work_summary_input_for_capacity(
             work_input.id, "Task Agent shared session is owned by another worker",
             available_at=_work_summary_retry_available_at(work_input.attempts),
         )
@@ -1962,7 +1909,7 @@ def skip_stale_wechat_delivery_command(
     delivery_id: int,
     inactive_before: str,
     reason: str,
-    max_retries: int = 2,
+    max_retries: int = MAX_AUTOMATIC_RETRIES,
 ) -> None:
     store = AutoReplyStore(settings.db_path)
     delivery = store.get_wechat_delivery_by_id(delivery_id)
@@ -2088,125 +2035,6 @@ def _work_summary_retry_available_at(
     )
 
 
-def backfill_task_memory_context_command(settings: WorkerSettings) -> int:
-    store = AutoReplyStore(settings.db_path)
-    limit = 20 if settings.max_batches is None else settings.max_batches
-    runner = ProjectMemoryContextCodexRunner(
-        workspace=settings.workspace,
-        timeout_seconds=settings.codex_timeout_seconds,
-        idle_timeout_seconds=settings.codex_idle_timeout_seconds,
-        store=store,
-    )
-    updated = 0
-    failed = 0
-    for project in store.list_work_projects_missing_memory_context(limit=limit):
-        try:
-            context = ProjectMemoryContext.model_validate(
-                runner.build(
-                    project=project,
-                    todos=store.list_work_todos(project_id=project.id),
-                    updates=store.list_work_updates(project.id),
-                )
-            )
-            validate_project_memory_context(
-                context,
-                getattr(runner, "last_audit_tool_events", None),
-            )
-            store.update_work_project_memory_context(
-                project.id,
-                json.dumps(
-                    context.model_dump(mode="json"),
-                    ensure_ascii=False,
-                    separators=(",", ":"),
-                ),
-            )
-            updated += 1
-        except Exception as exc:
-            failed += 1
-            store.record_error(
-                None,
-                None,
-                "task_memory_backfill",
-                f"project_id={project.id}: {exc}",
-            )
-    print(
-        f"backfill-task-memory-context updated={updated} failed={failed}",
-        flush=True,
-    )
-    return updated
-
-
-def _print_routine_process_backfill_result(
-    result: RoutineProcessBackfillResult,
-) -> None:
-    print(
-        "backfill-routine-process-todos "
-        f"dry_run={result.dry_run} planned={result.planned} changed={result.changed}"
-    )
-    for item in result.items:
-        status = "skip" if item.skipped_reason else "plan"
-        print(
-            f"- {status} todo_id={item.todo_id} project_id={item.project_id} "
-            f"before={item.before_status} after={item.after_status} "
-            f"follow_ups={item.suppressed_follow_up_ids} "
-            f"dingtalk_links={item.dingtalk_link_ids} "
-            f"reason={item.skipped_reason or item.reason} title={item.title}"
-        )
-
-
-def backfill_routine_process_todos_command(
-    settings: WorkerSettings,
-    *,
-    todo_ids: list[int],
-    reason: str,
-    apply: bool = False,
-    now: str = "",
-) -> RoutineProcessBackfillResult:
-    store = AutoReplyStore(settings.db_path)
-    result = backfill_routine_process_todos(
-        store,
-        todo_ids=todo_ids,
-        reason=reason,
-        dry_run=not apply,
-        now=now,
-    )
-    _print_routine_process_backfill_result(result)
-    return result
-
-
-def _print_todo_owner_backfill_result(result: TodoOwnerBackfillResult) -> None:
-    print(
-        "backfill-todo-owner-ids "
-        f"dry_run={result.dry_run} planned={result.planned} changed={result.changed}"
-    )
-    for item in result.items:
-        status = "skip" if item.skipped_reason else "plan"
-        print(
-            f"- {status} todo_id={item.todo_id} project_id={item.project_id} "
-            f"owner_user_id={item.owner_user_id} owner={item.owner_name} "
-            f"follow_ups={item.follow_up_ids} "
-            f"reason={item.skipped_reason or item.reason} title={item.title}"
-        )
-
-
-def backfill_todo_owner_ids_command(
-    settings: WorkerSettings,
-    *,
-    limit: int | None = None,
-    apply: bool = False,
-    now: str = "",
-) -> TodoOwnerBackfillResult:
-    store = AutoReplyStore(settings.db_path)
-    result = backfill_todo_owner_ids_from_follow_ups(
-        store,
-        dry_run=not apply,
-        limit=limit,
-        now=now,
-    )
-    _print_todo_owner_backfill_result(result)
-    return result
-
-
 def backfill_minutes_owners_command(
     settings: WorkerSettings,
     *,
@@ -2224,41 +2052,6 @@ def backfill_minutes_owners_command(
     print(
         "backfill-minutes-owners "
         f"dry_run={result.dry_run} inspected={result.inspected} queued={result.queued}",
-        flush=True,
-    )
-    return result
-
-
-def backfill_todo_deadlines_command(
-    settings: WorkerSettings,
-    *,
-    limit: int | None = None,
-    apply: bool = False,
-    now: str = "",
-):
-    from app.task_deadline_backfill import (
-        TodoDeadlineCodexRunner,
-        backfill_todo_deadlines,
-    )
-
-    store = AutoReplyStore(settings.db_path)
-    runner = TodoDeadlineCodexRunner(
-        store=store,
-        workspace=settings.workspace,
-        timeout_seconds=settings.task_codex_timeout_seconds,
-        idle_timeout_seconds=settings.task_codex_idle_timeout_seconds,
-    )
-    result = backfill_todo_deadlines(
-        store, runner, dry_run=not apply, limit=limit, now=now
-    )
-    for decision in result.decisions:
-        print(json.dumps(decision, ensure_ascii=False), flush=True)
-    print(
-        "backfill-todo-deadlines "
-        f"dry_run={result.dry_run} inspected={result.inspected} "
-        f"deadlines_set={result.deadlines_set} "
-        f"mirrors_queued={result.mirrors_queued} failed={result.failed} "
-        f"deferred={result.deferred}",
         flush=True,
     )
     return result
@@ -2325,6 +2118,7 @@ def _build_okr_review_runner(settings: WorkerSettings, store: AutoReplyStore):
     spec = AgentSpec(
         name="okr_review",
         schema_path=_repo_root() / "app" / "schemas" / "agent_envelope.schema.json",
+        output_schema_path=_repo_root() / "app" / "schemas" / "okr_review.schema.json",
         primary_skill_paths=[
             Path.home() / ".agents" / "skills" / "dingtang-okr-review" / "SKILL.md"
         ],
@@ -2773,41 +2567,30 @@ def read_oa_approval_detail_command(
     return payload
 
 
-def daily_report_facts_command(
+def scheduled_context_command(
     settings: WorkerSettings, *, scheduled_run_id: int
-) -> dict[str, object]:
-    """Print the service-recorded facts since the last delivered daily report."""
-    from app.daily_report_facts import collect_daily_report_facts, report_window_for_run
-    from app.email_store import EmailStore
+) -> dict:
+    from app.service_activity import scheduled_context
 
-    store = AutoReplyStore(settings.db_path)
-    payload = collect_daily_report_facts(
-        store,
-        EmailStore(settings.db_path, validate_rows=False),
-        report_window_for_run(store, scheduled_run_id),
-    )
-    print(json.dumps(payload, ensure_ascii=False, sort_keys=True, default=str), flush=True)
+    payload = scheduled_context(AutoReplyStore(settings.db_path), scheduled_run_id)
+    print(json.dumps(payload, ensure_ascii=False, default=str), flush=True)
     return payload
 
 
-def weekly_report_materials_command(
-    settings: WorkerSettings, *, scheduled_run_id: int
-) -> dict[str, object]:
-    """Print the meeting documents and the week's meetings for one weekly report."""
-    from app.minutes_sync import MINUTES_ARCHIVE_DIRECTORY
-    from app.weekly_report_materials import collect_weekly_report_materials
+def service_activity_command(
+    settings: WorkerSettings, *, start: str, end: str, sources: list[str] | None = None
+) -> dict:
+    from app.service_activity import collect_service_activity
+    from app.email_store import EmailStore
 
-    store = AutoReplyStore(settings.db_path)
-    run = store.get_scheduled_task_run(scheduled_run_id)
-    if run is None:
-        raise ValueError(f"scheduled task run {scheduled_run_id} does not exist")
-    payload = collect_weekly_report_materials(
-        store,
-        DwsClient(),
-        settings.workspace / MINUTES_ARCHIVE_DIRECTORY,
-        run.scheduled_for,
+    payload = collect_service_activity(
+        AutoReplyStore(settings.db_path),
+        EmailStore(settings.db_path, validate_rows=False),
+        datetime.fromisoformat(start),
+        datetime.fromisoformat(end),
+        sources,
     )
-    print(json.dumps(payload, ensure_ascii=False, sort_keys=True, default=str), flush=True)
+    print(json.dumps(payload, ensure_ascii=False, default=str), flush=True)
     return payload
 
 
@@ -3756,9 +3539,8 @@ def import_meeting_asr_transcript_command(
         with sqlite3.connect(f"file:{settings.db_path.resolve()}?mode=ro", uri=True) as db:
             db.row_factory = sqlite3.Row
             row = db.execute(
-                """select meeting_id, status, locked_at, send_result_json
-                   from tasks where record_type='meeting_alignment_jobs'
-                     and cast(legacy_key as integer)=?""",
+                f"""select meeting_id, status, locked_at, send_result_json
+                   from ({task20_projection('meeting_alignment_jobs')}) where id=?""",
                 (job_id,),
             ).fetchone()
         if row is None:
@@ -4153,7 +3935,9 @@ def _run_wechat_sender_loop(settings: WorkerSettings) -> None:
     from app import config as _cfg
     from app.wechat import service as _wx
     from app.wechat.accessibility import WechatSender
+    from app.wechat.audit import WechatDeliveryAuditor
     from app.wechat.reader_ipc import ReaderIpcError
+    from app.agent_runtime_production import build_production_routed_codex_execution
 
     store = AutoReplyStore(settings.db_path)
     state = None
@@ -4168,6 +3952,16 @@ def _run_wechat_sender_loop(settings: WorkerSettings) -> None:
     account = _wx.account_from_state(state)
     reader = _wx.build_reader()
     wsender = WechatSender(store, _wx.build_sender())
+    auditor = WechatDeliveryAuditor(
+        store,
+        build_production_routed_codex_execution(
+            store=store, workspace=settings.workspace,
+            total_timeout_seconds=settings.codex_timeout_seconds,
+            idle_timeout_seconds=settings.codex_idle_timeout_seconds,
+        ),
+        reader,
+        account,
+    )
     interval = 15
     consecutive_sqlite_lock_failures = 0
     consecutive_reader_failures = 0
@@ -4181,6 +3975,7 @@ def _run_wechat_sender_loop(settings: WorkerSettings) -> None:
                 sender_enabled=_cfg.wechat_sender_enabled(),
                 reader=reader,
                 account=account,
+                auditor=auditor,
             )
             store.resolve_unresolved_errors_by_kind(
                 "wechat_sender_loop_error",
@@ -5054,23 +4849,32 @@ def main() -> None:
         )
     elif args.command == "reconcile-confirmed-meeting-delivery":
         from app.meeting_alignment import reconcile_confirmed_meeting_delivery
+
         if args.apply and settings.dry_run:
             raise SystemExit("--apply refused: dry-run is on")
         if args.apply:
             report = reconcile_confirmed_meeting_delivery(
-                AutoReplyStore(settings.db_path), DwsClient(), args.job_id, apply=True,
+                AutoReplyStore(settings.db_path),
+                DwsClient(),
+                args.job_id,
+                apply=True,
             )
         else:
             import sqlite3
             from contextvars import ContextVar
+
             # Preview must not initialize or migrate the production schema.
             db = sqlite3.connect(f"file:{settings.db_path.resolve()}?mode=ro", uri=True)
             db.row_factory = sqlite3.Row
             try:
                 inspected_store = AutoReplyStore.__new__(AutoReplyStore)
                 inspected_store.path = settings.db_path
-                inspected_store._read_snapshot_connection = ContextVar("meeting_recovery_preview", default=db)
-                report = reconcile_confirmed_meeting_delivery(inspected_store, DwsClient(), args.job_id)
+                inspected_store._read_snapshot_connection = ContextVar(
+                    "meeting_recovery_preview", default=db
+                )
+                report = reconcile_confirmed_meeting_delivery(
+                    inspected_store, DwsClient(), args.job_id
+                )
             finally:
                 db.close()
         print(json.dumps(report, ensure_ascii=False), flush=True)
@@ -5080,6 +4884,7 @@ def main() -> None:
             collect_native_chat_readback,
             native_reply_text_matches,
         )
+
         if args.apply and settings.dry_run:
             raise SystemExit("--apply refused: dry-run is on")
         if args.apply:
@@ -5087,7 +4892,10 @@ def main() -> None:
         else:
             from contextvars import ContextVar
             import sqlite3 as sqlite3_module
-            db = sqlite3_module.connect(f"file:{settings.db_path.resolve()}?mode=ro", uri=True)
+
+            db = sqlite3_module.connect(
+                f"file:{settings.db_path.resolve()}?mode=ro", uri=True
+            )
             db.row_factory = sqlite3_module.Row
             inspected_store = AutoReplyStore.__new__(AutoReplyStore)
             inspected_store.path = settings.db_path
@@ -5095,8 +4903,14 @@ def main() -> None:
                 "native_chat_readback_preview", default=db
             )
         try:
-            proof = collect_native_chat_readback(inspected_store, DwsClient(), args.task_id)
-            rows = proof["payload"].get("messages", []) if isinstance(proof["payload"], dict) else []
+            proof = collect_native_chat_readback(
+                inspected_store, DwsClient(), args.task_id
+            )
+            rows = (
+                proof["payload"].get("messages", [])
+                if isinstance(proof["payload"], dict)
+                else []
+            )
             exact_matches = 0
             with inspected_store._connect() as db:
                 task = db.execute(
@@ -5106,37 +4920,63 @@ def main() -> None:
                     sent = db.execute(
                         f"select reply_text from ({SENT_REPLY_SQL}) where channel=? and conversation_id=? "
                         "and trigger_message_id=?",
-                        (task["channel"], task["conversation_id"], task["trigger_message_id"]),
+                        (
+                            task["channel"],
+                            task["conversation_id"],
+                            task["trigger_message_id"],
+                        ),
                     ).fetchone()
                     if sent is not None and isinstance(rows, list):
                         exact_matches = sum(
-                            1 for row in rows if isinstance(row, dict)
+                            1
+                            for row in rows
+                            if isinstance(row, dict)
                             and row.get("conversationId") == task["conversation_id"]
-                            and (row.get("quotedMessage") or {}).get("messageId") == task["trigger_message_id"]
+                            and (row.get("quotedMessage") or {}).get("messageId")
+                            == task["trigger_message_id"]
                             and native_reply_text_matches(
-                                row.get("text"), sent["reply_text"], task["trigger_sender"]
+                                row.get("text"),
+                                sent["reply_text"],
+                                task["trigger_sender"],
                             )
-                            and (row.get("senderUserId") == proof["principal_user_id"]
-                                 or row.get("senderOpenDingTalkId", row.get("senderId"))
-                                 == proof["principal_open_dingtalk_id"])
-                            and (not row.get("senderUserId")
-                                 or row.get("senderUserId") == proof["principal_user_id"])
-                            and (not row.get("senderOpenDingTalkId", row.get("senderId"))
-                                 or row.get("senderOpenDingTalkId", row.get("senderId"))
-                                 == proof["principal_open_dingtalk_id"])
+                            and (
+                                row.get("senderUserId") == proof["principal_user_id"]
+                                or row.get("senderOpenDingTalkId", row.get("senderId"))
+                                == proof["principal_open_dingtalk_id"]
+                            )
+                            and (
+                                not row.get("senderUserId")
+                                or row.get("senderUserId") == proof["principal_user_id"]
+                            )
+                            and (
+                                not row.get("senderOpenDingTalkId", row.get("senderId"))
+                                or row.get("senderOpenDingTalkId", row.get("senderId"))
+                                == proof["principal_open_dingtalk_id"]
+                            )
                         )
             if args.apply:
                 applied = apply_native_chat_readback(inspected_store, proof)
             else:
                 applied = False
-            print(json.dumps({
-                "task_id": args.task_id, "complete": proof["payload"].get("complete") is True,
-                "partial": proof["payload"].get("partial"),
-                "has_more": proof["payload"].get("hasMore"),
-                "failures": (len(proof["payload"]["failures"])
-                             if isinstance(proof["payload"].get("failures"), list) else None),
-                "exact_matches": exact_matches, "applied": applied,
-            }, ensure_ascii=False), flush=True)
+            print(
+                json.dumps(
+                    {
+                        "task_id": args.task_id,
+                        "complete": proof["payload"].get("complete") is True,
+                        "partial": proof["payload"].get("partial"),
+                        "has_more": proof["payload"].get("hasMore"),
+                        "failures": (
+                            len(proof["payload"]["failures"])
+                            if isinstance(proof["payload"].get("failures"), list)
+                            else None
+                        ),
+                        "exact_matches": exact_matches,
+                        "applied": applied,
+                    },
+                    ensure_ascii=False,
+                ),
+                flush=True,
+            )
         finally:
             if not args.apply:
                 db.close()
@@ -5154,13 +4994,24 @@ def main() -> None:
         if args.apply and settings.dry_run:
             raise SystemExit("--apply refused: dry-run is on")
         decision = cancel_failed_email_unsubscribe(
-            settings, task_id=args.task_id, action_identity=args.action_identity,
-            execution_generation=args.execution_generation, input_version=args.input_version,
-            reason=args.reason, apply=args.apply,
+            settings,
+            task_id=args.task_id,
+            action_identity=args.action_identity,
+            execution_generation=args.execution_generation,
+            input_version=args.input_version,
+            reason=args.reason,
+            apply=args.apply,
         )
-        print(json.dumps({
-            "task_id": decision["task_id"], "decision": decision["decision"], "applied": args.apply,
-        }), flush=True)
+        print(
+            json.dumps(
+                {
+                    "task_id": decision["task_id"],
+                    "decision": decision["decision"],
+                    "applied": args.apply,
+                }
+            ),
+            flush=True,
+        )
     elif args.command == "retry-source-verified-email-action":
         if args.apply and settings.dry_run:
             raise SystemExit("--apply refused: dry-run is on")
@@ -5172,12 +5023,17 @@ def main() -> None:
         from app.email_store import EmailStore
 
         store = (
-            EmailStore(settings.db_path) if args.apply
+            EmailStore(settings.db_path)
+            if args.apply
             else ExistingReadOnlyEmailStore(settings.db_path)
         )
         result = release_source_verified_retry(
-            store, account_id=args.account, action_id=args.action_id,
-            provider_factory=build_gmail_read_only_provider_factory(store, args.account, os.environ),
+            store,
+            account_id=args.account,
+            action_id=args.action_id,
+            provider_factory=build_gmail_read_only_provider_factory(
+                store, args.account, os.environ
+            ),
             apply=args.apply,
         )
         print(json.dumps(result, ensure_ascii=False))
@@ -5212,43 +5068,12 @@ def main() -> None:
             reason=args.reason,
             max_retries=args.max_retries,
         )
-    elif args.command == "backfill-task-memory-context":
-        initialize_agent_runtime_routes(settings)
-        backfill_task_memory_context_command(settings)
-    elif args.command == "backfill-routine-process-todos":
-        backfill_routine_process_todos_command(
-            settings,
-            todo_ids=args.todo_id,
-            reason=args.reason,
-            apply=args.apply,
-        )
     elif args.command == "backfill-minutes-owners":
         backfill_minutes_owners_command(settings, limit=args.limit, apply=args.apply)
-    elif args.command == "backfill-todo-deadlines":
-        initialize_agent_runtime_routes(settings)
-        backfill_todo_deadlines_command(
-            settings,
-            limit=args.limit,
-            apply=args.apply,
-        )
-    elif args.command == "backfill-todo-owner-ids":
-        backfill_todo_owner_ids_command(
-            settings,
-            limit=args.limit,
-            apply=args.apply,
-        )
     elif args.command == "process-okr-reviews":
         ensure_live_send_allowed(settings)
         initialize_agent_runtime_routes(settings)
         process_okr_reviews_command(settings)
-    elif args.command == "weekly-okr-report":
-        ensure_live_send_allowed(settings)
-        initialize_agent_runtime_routes(settings)
-        weekly_okr_report_command(
-            settings,
-            force=args.force,
-            period_label=args.period_label,
-        )
     elif args.command == "refresh-okr-archive":
         refresh_company_okr_archive_command(
             settings,
@@ -5279,10 +5104,40 @@ def main() -> None:
             user_id=args.user_id,
             period_label=args.period_label,
         )
-    elif args.command == "daily-report-facts":
-        daily_report_facts_command(settings, scheduled_run_id=args.scheduled_run)
-    elif args.command == "weekly-report-materials":
-        weekly_report_materials_command(settings, scheduled_run_id=args.scheduled_run)
+    elif args.command == "scheduled-context":
+        scheduled_context_command(settings, scheduled_run_id=args.scheduled_run)
+    elif args.command == "service-activity":
+        service_activity_command(
+            settings, start=args.start, end=args.end, sources=args.source
+        )
+    elif args.command == "weekly-okr-roster":
+        from app.weekly_okr_report import weekly_okr_roster
+
+        print(
+            json.dumps(
+                weekly_okr_roster(settings, group_name=args.group_name),
+                ensure_ascii=False,
+            ),
+            flush=True,
+        )
+    elif args.command == "weekly-okr-member":
+        from app.weekly_okr_report import weekly_okr_member
+
+        print(
+            json.dumps(
+                weekly_okr_member(
+                    settings,
+                    user_id=args.user_id,
+                    name=args.name,
+                    title=args.title,
+                    open_dingtalk_id=args.open_dingtalk_id,
+                    period_label=args.period_label,
+                ),
+                ensure_ascii=False,
+            ),
+            flush=True,
+        )
+
     elif args.command == "quality-check":
         raise SystemExit(
             quality_check_command(
@@ -5294,9 +5149,14 @@ def main() -> None:
     elif args.command == "repository-updater":
         from app.store_schema_release import prepare_database_schema_release
         from app.repository_updater import (
-            ExistingSchemaUpgradeStateStore, RepositoryUpdater,
-            _default_start, _default_stop, load_persisted_operation,
-            verify_imports, wait_for_health, wait_until_quiet,
+            ExistingSchemaUpgradeStateStore,
+            RepositoryUpdater,
+            _default_start,
+            _default_stop,
+            load_persisted_operation,
+            verify_imports,
+            wait_for_health,
+            wait_until_quiet,
         )
 
         store = ExistingSchemaUpgradeStateStore(settings.db_path)
@@ -5312,7 +5172,9 @@ def main() -> None:
             restart=_default_start,
             verification=lambda: verify_imports(_repo_root()),
             health=wait_for_health,
-            database_publication=lambda: prepare_database_schema_release(_repo_root(), settings.db_path),
+            database_publication=lambda backup: prepare_database_schema_release(
+                _repo_root(), settings.db_path, recovery_source_path=backup
+            ),
         ).execute(operation)
         print(json.dumps(result.__dict__, ensure_ascii=False, sort_keys=True))
     elif args.command == "repair-task-projects-plan":
@@ -5335,28 +5197,31 @@ def main() -> None:
                 sort_keys=True,
             )
         )
-    elif args.command == "repair-task-projects-apply":
-        from app.task_project_repair import apply_manifest, read_manifest
-
-        result = apply_manifest(
-            settings.db_path,
-            read_manifest(_expand_path_arg(args.manifest)),
-            archive_limit=args.archive_limit,
-        )
-        print(json.dumps(result.__dict__, ensure_ascii=False, sort_keys=True))
     elif args.command == "task-semantic-import-plan":
         from app.task_semantic_import import (
             build_task_semantic_import_manifest,
             write_task_semantic_import_manifest,
         )
 
-        manifest = build_task_semantic_import_manifest(settings.db_path, limit=args.limit)
+        manifest = build_task_semantic_import_manifest(
+            settings.db_path, limit=args.limit
+        )
         write_task_semantic_import_manifest(manifest, _expand_path_arg(args.output))
-        counts = {name: sum(item.disposition == name for item in manifest.items) for name in (
-            "formal_task", "official_project_match", "history_only"
-        )}
-        print(json.dumps({"manifest_id": manifest.manifest_id, "items": len(manifest.items),
-                          **counts}, ensure_ascii=False, sort_keys=True))
+        counts = {
+            name: sum(item.disposition == name for item in manifest.items)
+            for name in ("formal_task", "history_only")
+        }
+        print(
+            json.dumps(
+                {
+                    "manifest_id": manifest.manifest_id,
+                    "items": len(manifest.items),
+                    **counts,
+                },
+                ensure_ascii=False,
+                sort_keys=True,
+            )
+        )
     elif args.command == "task-semantic-import-apply":
         from app.task_semantic_import import (
             apply_task_semantic_import_manifest,

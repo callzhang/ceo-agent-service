@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+from app.action_error_definitions import error_projection
+
 from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
@@ -70,10 +72,18 @@ class UnavailableRuntimeRoute(AvailableOptions):
         self._unavailable_reason = unavailable_reason
 
     def list_runtime_options(self, **_kwargs: object) -> tuple[_RuntimeOption, ...]:
-        return (_RuntimeOption("codex_oauth", False, self._unavailable_reason),)
+        return (
+            _RuntimeOption(
+                "codex_oauth",
+                self._unavailable_reason is None,
+                self._unavailable_reason,
+            ),
+        )
 
     def resolve_runtime_route(self, route_name: str, **_kwargs: object) -> object:
-        raise ValueError(f"runtime route {route_name}: {self._unavailable_reason}")
+        if self._unavailable_reason is not None:
+            raise ValueError(f"runtime route {route_name}: {self._unavailable_reason}")
+        return object()
 
 
 class MissingOperationSkill(AvailableOptions):
@@ -220,7 +230,7 @@ def test_tick_observer_failure_never_stops_scheduler_work(tmp_path: Path, caplog
     )
 
 
-def test_start_tracks_only_the_first_future_instant_and_never_backfills(
+def test_start_tracks_the_latest_missed_instant_and_coalesces_older_misses(
     tmp_path: Path,
 ) -> None:
     store = AutoReplyStore(tmp_path / "worker.sqlite3")
@@ -235,11 +245,11 @@ def test_start_tracks_only_the_first_future_instant_and_never_backfills(
     scheduler.tick(NOW + timedelta(minutes=5, seconds=30))
 
     runs = store.list_scheduled_task_runs(task.id)
-    assert tuple(run.scheduled_for for run in runs) == (NOW + timedelta(minutes=1),)
+    assert tuple(run.scheduled_for for run in runs) == (NOW + timedelta(minutes=5),)
     assert scheduler.next_run_at(task.id) == NOW + timedelta(minutes=6)
 
 
-def test_service_restart_after_missed_instants_does_not_create_catch_up_runs(
+def test_service_restart_after_missed_instants_creates_one_latest_catch_up_run(
     tmp_path: Path,
 ) -> None:
     store = AutoReplyStore(tmp_path / "worker.sqlite3")
@@ -248,10 +258,86 @@ def test_service_restart_after_missed_instants_does_not_create_catch_up_runs(
     first_process.start(NOW)
 
     restarted = _scheduler(store)
-    restarted.start(NOW + timedelta(hours=3, seconds=10))
+    resumed_at = NOW + timedelta(hours=3, seconds=10)
+    restarted.start(resumed_at)
 
     assert store.list_scheduled_task_runs(task.id) == ()
+    assert restarted.next_run_at(task.id) == NOW + timedelta(hours=3)
+
+    restarted.tick(resumed_at)
+
+    runs = store.list_scheduled_task_runs(task.id)
+    assert tuple(run.scheduled_for for run in runs) == (NOW + timedelta(hours=3),)
     assert restarted.next_run_at(task.id) == NOW + timedelta(hours=3, minutes=1)
+
+
+def test_same_process_resume_coalesces_sleep_period_to_latest_missed_instant(
+    tmp_path: Path,
+) -> None:
+    store = AutoReplyStore(tmp_path / "worker.sqlite3")
+    task = _task(store)
+    scheduler = _scheduler(store)
+    scheduler.start(NOW)
+
+    resumed_at = NOW + timedelta(hours=3, seconds=10)
+    scheduler.tick(resumed_at)
+
+    runs = store.list_scheduled_task_runs(task.id)
+    assert tuple(run.scheduled_for for run in runs) == (NOW + timedelta(hours=3),)
+    assert scheduler.next_run_at(task.id) == NOW + timedelta(hours=3, minutes=1)
+
+
+def test_missed_trigger_waits_for_prior_execution_to_settle_before_catch_up(
+    tmp_path: Path,
+) -> None:
+    store = AutoReplyStore(tmp_path / "worker.sqlite3")
+    task = _task(store)
+    prior_at = NOW + timedelta(hours=2)
+    prior = store.create_scheduled_task_run(
+        task.id,
+        trigger_kind="manual",
+        scheduled_for=prior_at,
+        now=prior_at,
+    )
+    claimed = store.claim_scheduled_task_run(
+        prior.id,
+        owner="dispatcher",
+        lease_seconds=60,
+        now=prior_at,
+    )
+    assert claimed is not None
+    store.link_scheduled_task_run_execution(
+        prior.id,
+        owner="dispatcher",
+        execution_kind="scheduled_agent",
+        execution_id="execution-active",
+        now=prior_at,
+    )
+    store.finish_scheduled_task_dispatch(
+        prior.id,
+        owner="dispatcher",
+        status="dispatched",
+        now=prior_at,
+    )
+    terminal_executions: set[str] = set()
+    resolver = ExecutionTerminalResolverRegistry(
+        {"scheduled_agent": lambda execution_id: execution_id in terminal_executions}
+    )
+    scheduler = _scheduler(store, resolver=resolver)
+    resumed_at = NOW + timedelta(hours=3, seconds=10)
+    scheduler.start(resumed_at)
+
+    scheduler.tick(resumed_at)
+
+    assert len(store.list_scheduled_task_runs(task.id)) == 1
+    assert scheduler.next_run_at(task.id) == NOW + timedelta(hours=3)
+    assert scheduler.seconds_until_next(resumed_at) == 60.0
+
+    terminal_executions.add("execution-active")
+    scheduler.tick(resumed_at)
+
+    runs = store.list_scheduled_task_runs(task.id)
+    assert tuple(run.scheduled_for for run in runs[1:]) == (NOW + timedelta(hours=3),)
 
 
 def test_two_schedulers_atomically_deduplicate_the_same_planned_instant(
@@ -295,7 +381,7 @@ def test_different_due_instants_atomically_serialize_overlap_decisions(
     second.start(NOW + timedelta(minutes=1))
 
     threads = [
-        threading.Thread(target=first.tick, args=(NOW + timedelta(minutes=2),)),
+        threading.Thread(target=first.tick, args=(NOW + timedelta(minutes=1),)),
         threading.Thread(target=second.tick, args=(NOW + timedelta(minutes=2),)),
     ]
     for thread in threads:
@@ -461,21 +547,23 @@ def test_unavailable_runtime_is_skipped_and_recorded_in_existing_attention(
     "unavailable_reason",
     ["paused:codex_provider_overloaded", "snapshot_missing"],
 )
-def test_paused_or_unprobed_runtime_route_is_skipped_without_attention_error(
+def test_transient_runtime_unavailability_preserves_missed_trigger_until_recovery(
     tmp_path: Path,
     caplog,
     unavailable_reason: str,
 ) -> None:
     store = AutoReplyStore(tmp_path / "worker.sqlite3")
     task = _task(store)
-    scheduler = _scheduler(store, options=UnavailableRuntimeRoute(unavailable_reason))
+    options = UnavailableRuntimeRoute(unavailable_reason)
+    scheduler = _scheduler(store, options=options)
     scheduler.start(NOW)
+    planned = scheduler.next_run_at(task.id)
+    assert planned is not None
 
-    scheduler.tick(NOW + timedelta(minutes=1))
+    scheduler.tick(planned)
 
-    (run,) = store.list_scheduled_task_runs(task.id)
-    assert run.dispatch_status == "skipped"
-    assert run.skip_or_error_reason == RUNTIME_UNAVAILABLE
+    assert store.list_scheduled_task_runs(task.id) == ()
+    assert scheduler.next_run_at(task.id) == planned
     assert store.list_errors() == []
     [record] = [
         record
@@ -484,8 +572,16 @@ def test_paused_or_unprobed_runtime_route_is_skipped_without_attention_error(
     ]
     assert record.levelname == "WARNING"
     assert record.scheduled_task_id == task.id
-    assert record.scheduled_task_event_id == run.event_id
     assert unavailable_reason in record.scheduled_task_skip_detail
+
+    options._unavailable_reason = None
+    scheduler.tick(planned + timedelta(seconds=1))
+
+    (run,) = store.list_scheduled_task_runs(task.id)
+    assert run.dispatch_status == "pending"
+    assert run.scheduled_for == planned
+    assert run.skip_or_error_reason == ""
+    assert scheduler.next_run_at(task.id) == planned + timedelta(minutes=1)
 
 
 @pytest.mark.parametrize(
@@ -767,7 +863,7 @@ def test_command_task_with_unregistered_command_is_skipped_into_attention(
     assert run.skip_or_error_reason == SERVICE_COMMAND_UNAVAILABLE
     assert wakes == []
     with store._connect() as db:
-        rows = db.execute("select kind, detail from errors").fetchall()
+        rows = db.execute(f"select kind, detail from ({error_projection()})").fetchall()
     assert [row["kind"] for row in rows] == [SERVICE_COMMAND_UNAVAILABLE]
     assert "service_command_not_registered" in rows[0]["detail"]
 

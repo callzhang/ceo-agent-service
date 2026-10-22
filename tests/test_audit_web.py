@@ -1,3 +1,4 @@
+from tests.support.legacy_todo_facts import seed_legacy_todo_link, seed_legacy_work_project, seed_legacy_work_todo, seed_legacy_work_update
 import json
 import os
 import re
@@ -17,9 +18,17 @@ from fastapi.testclient import TestClient
 
 import app.audit_web as audit_web_module
 from tests.run_reader_fixtures import insert_native_run_fixture
+from tests.feedback_processing_fixtures import resolve_feedback_fixture
 from app.run_storage import insert_run
-from app.action_storage import REPLY_ATTEMPT_COMMON_SQL, update_action
-from app.task_storage import WORK_SUMMARY_INPUT_SQL, insert_task, task_id_expression, task_physical_id
+from app.action_storage import (
+    REPLY_ATTEMPT_COMMON_SQL, update_action, insert_task_delivery_action,
+    task_delivery_projection, insert_error_action,
+)
+from app.action_error_definitions import error_projection
+from app.task_storage import task_physical_id
+from app.task12_storage import insert_task12
+from app.task20_definitions import task20_projection
+from app.task8_storage import task8_set_parts
 from app.email_store import EmailStore
 from app.audit_web import (
     create_audit_app,
@@ -68,6 +77,17 @@ from app.store import (
 )
 from app.wechat.models import WechatMessage
 from tests.support.candidate_review import complete_synthetic_approval
+
+WORK_SUMMARY_INPUT_SQL = task20_projection("work_summary_inputs")
+
+
+def _set_task_fields(db, kind: str, task_id: int, values: dict[str, object]) -> None:
+    parts = task8_set_parts(kind, values)
+    db.execute(
+        f"update tasks set {parts.sql} "
+        "where record_type=? and cast(legacy_key as integer)=?",
+        (*parts.parameters, kind, task_id),
+    )
 
 
 def test_attempt_detail_reply_text_falls_back_to_persisted_sent_reply():
@@ -950,34 +970,7 @@ def seed_meeting_attempt(store: AutoReplyStore) -> int:
         final_message="会后对齐：@Avery 请确认风险预算。",
         send_result_json='{"status":"sent"}',
     )
-    return store.record_meeting_alignment_run(
-        job_id=job_id,
-        codex_session_id="meeting-session-history-1",
-        decision_json='{"action":"send","target":{"title":"项目群"}}',
-        audit_summary="会后对齐：上线范围仍未一致。",
-        status="sent",
-        error="",
-        audit_tool_events_json=json.dumps(
-            [
-                {
-                    "event_type": "response_item",
-                    "tool": "exec_command",
-                    "call_id": "meeting-call-1",
-                    "title": "Read meeting memory",
-                    "relevance": "确认会议相关历史判断",
-                    "input": '{"cmd":"rg 上线范围 /Users/principal/Documents/memory"}',
-                    "command": "rg 上线范围 /Users/principal/Documents/memory",
-                },
-                {
-                    "event_type": "response_item",
-                    "tool": "tool_output",
-                    "call_id": "meeting-call-1",
-                    "output": "memory.md:1:上线范围需要先确认风险预算",
-                },
-            ],
-            ensure_ascii=False,
-        ),
-    )
+    return store.create_logical_run('meeting_alignment_runs', task_public_id=job_id, codex_session_id="meeting-session-history-1", status="sent", error="")
 
 
 def _seed_native_meeting_search(
@@ -1829,6 +1822,26 @@ def test_service_bugfix_candidates_page_is_removed(tmp_path: Path):
         conversation_title="技术部",
         trigger_text="上一条回复失败了",
     )
+    candidate = store.list_service_bugfix_candidates(status="pending")
+    assert len(candidate) == 1
+    assert candidate[0].feedback_event_key == "event-1"
+    assert candidate[0].attempt_id == 42
+    assert store.count_service_bugfix_candidates() == 1
+    assert store.count_service_bugfix_candidates(status="pending") == 1
+    assert store.create_service_bugfix_candidate(
+        feedback_event_key="event-1",
+        title="duplicate",
+        reason="duplicate",
+        feedback_comment="duplicate",
+    ) is None
+    with store._connect() as db:
+        assert db.execute(
+            "select count(*) from business where record_type='service_bugfix_candidate'"
+        ).fetchone()[0] == 1
+        assert db.execute(
+            "select 1 from sqlite_schema where type='table' "
+            "and name='service_bugfix_candidates'"
+        ).fetchone() is None
 
     history_html = render_attempt_list(store)
     assert "待处理服务修复" not in history_html
@@ -1960,14 +1973,12 @@ def test_history_wechat_actions_use_batched_delivery_lookup(tmp_path: Path, monk
 
 def test_render_attempt_list_links_task_history_to_task_detail(tmp_path: Path):
     store = AutoReplyStore(tmp_path / "worker.sqlite3")
-    project_id = store.create_work_project(
+    project_id = seed_legacy_work_project(store,
         title="AI 待办推进",
         category="product",
-        priority="P1",
-        risk_level="medium",
         owner_name="Avery",
     )
-    todo_id = store.create_work_todo(
+    todo_id = seed_legacy_work_todo(store,
         project_id=project_id,
         title="向 Avery 解释待办更新",
         description="说明重要事项判断口径，并同步更新后的 TODO。",
@@ -2007,11 +2018,9 @@ def test_render_attempt_list_links_task_history_to_task_detail(tmp_path: Path):
 
 def test_render_attempt_list_shows_draft_follow_up_as_scheduled(tmp_path: Path):
     store = AutoReplyStore(tmp_path / "worker.sqlite3")
-    project_id = store.create_work_project(
+    project_id = seed_legacy_work_project(store,
         title="宝马项目周末攻坚与客户Demo推进",
         category="sales",
-        priority="P0",
-        risk_level="high",
         owner_name="Casey Huang",
     )
     follow_up_id = store.create_follow_up_draft(
@@ -2114,22 +2123,8 @@ def test_meeting_attempt_detail_keeps_ready_run_sent_after_later_run(tmp_path: P
         eligible_at="2026-07-22T10:22:44+00:00",
         status="pending",
     )
-    first_run = store.record_meeting_alignment_run(
-        job_id=job_id,
-        codex_session_id="meeting-session-first",
-        decision_json='{"action":"send","target":{"title":"HR"}}',
-        audit_summary="首次生成完成",
-        status="ready_to_send",
-        error="",
-    )
-    store.record_meeting_alignment_run(
-        job_id=job_id,
-        codex_session_id="meeting-session-second",
-        decision_json='{"action":"send","target":{"title":"HR"}}',
-        audit_summary="再次生成完成",
-        status="ready_to_send",
-        error="",
-    )
+    first_run = store.create_logical_run('meeting_alignment_runs', task_public_id=job_id, codex_session_id="meeting-session-first", status="ready_to_send", error="")
+    store.create_logical_run('meeting_alignment_runs', task_public_id=job_id, codex_session_id="meeting-session-second", status="ready_to_send", error="")
     store.update_meeting_alignment_job(
         job_id,
         status="sent",
@@ -2159,9 +2154,6 @@ def test_history_search_shows_similar_codex_sessions(tmp_path: Path, monkeypatch
         source_type="meeting_alignment",
         source_id=str(run_id),
         title="历史上线范围对齐",
-        summary_text="历史相似会议：上线范围、风险预算、故障面。",
-        fts_text="历史 相似 会议 上线 范围 风险 预算 故障 面",
-        embedding=[1.0, 0.0],
     )
     native_search = store.search_codex_sessions
 
@@ -2244,9 +2236,6 @@ def test_history_object_dropdown_controls_results(tmp_path: Path, monkeypatch):
         source_type="meeting_alignment",
         source_id=str(run_id),
         title="历史上线范围对齐",
-        summary_text="历史相似会议：上线范围、风险预算、故障面。",
-        fts_text="历史 相似 会议 上线 范围 风险 预算 故障 面",
-        embedding=[1.0, 0.0],
     )
 
     default_html = render_attempt_list(
@@ -2564,11 +2553,9 @@ def test_history_chart_uses_only_lifecycle_statuses(tmp_path: Path):
 def test_history_chart_waits_for_future_follow_up_schedule(tmp_path: Path):
     store = AutoReplyStore(tmp_path / "worker.sqlite3")
     now = datetime.now(timezone.utc).replace(minute=0, second=0, microsecond=0)
-    project_id = store.create_work_project(
+    project_id = seed_legacy_work_project(store,
         title="Future follow-up",
         category="product",
-        priority="P1",
-        risk_level="low",
         owner_name="Derek",
     )
     store.create_follow_up_draft(
@@ -2824,22 +2811,8 @@ def test_history_chart_marks_recovered_meeting_retries_without_failed_red_series
         eligible_at="2026-08-08T01:10:00+00:00",
         status="pending",
     )
-    store.record_meeting_alignment_run(
-        job_id=job_id,
-        codex_session_id="meeting-chart-retry",
-        decision_json="{}",
-        audit_summary="Temporary provider failure.",
-        status="retry",
-        error="codex_provider_unavailable",
-    )
-    store.record_meeting_alignment_run(
-        job_id=job_id,
-        codex_session_id="meeting-chart-sent",
-        decision_json='{"action":"send"}',
-        audit_summary="Recovery completed.",
-        status="ready_to_send",
-        error="",
-    )
+    store.create_logical_run('meeting_alignment_runs', task_public_id=job_id, codex_session_id="meeting-chart-retry", status="retry", error="codex_provider_unavailable")
+    store.create_logical_run('meeting_alignment_runs', task_public_id=job_id, codex_session_id="meeting-chart-sent", status="ready_to_send", error="")
     store.update_meeting_alignment_job(job_id, status="sent")
 
     payload = audit_web_module._history_chart_payload(store)
@@ -3446,7 +3419,7 @@ def test_user_feedback_nav_badge_shows_pending_count(tmp_path: Path):
     )
 
     pending_html = render_attempt_list(store)
-    store.resolve_feedback_event("event-1")
+    resolve_feedback_fixture(store, "event-1")
     resolved_html = render_attempt_list(store)
 
     assert '<span class="nav-badge">1</span>' in pending_html
@@ -4177,28 +4150,24 @@ def test_tutorial_confirm_route_rejects_non_confirmable_step(tmp_path: Path):
 
 def test_tasks_page_renders_projects_and_todos_without_global_followups(tmp_path: Path):
     store = AutoReplyStore(tmp_path / "task.sqlite3")
-    project_id = store.create_work_project(
+    project_id = seed_legacy_work_project(store,
         title="售前知识库建设",
         category="sales",
         status="active",
-        priority="P1",
-        risk_level="medium",
         background="销售支持项目。",
         current_state="整理中",
         next_step="补齐来源链接",
     )
-    todo_id = store.create_work_todo(
+    todo_id = seed_legacy_work_todo(store,
         project_id=project_id,
         title="补齐来源链接",
         status="open",
-        priority="P1",
         deadline_at="2099-06-20 18:00:00",
     )
-    store.create_work_todo(
+    seed_legacy_work_todo(store,
         project_id=project_id,
         title="整理销售材料",
         status="done",
-        priority="P2",
         deadline_at="2026-06-11 18:00:00",
     )
     store.create_follow_up_draft(
@@ -4243,8 +4212,8 @@ def test_tasks_page_renders_projects_and_todos_without_global_followups(tmp_path
     assert row["title"] == "售前知识库建设"
     assert row["status"] == "in progress"
     assert row["category"] == "sales"
-    assert row["priority"] == "P1"
-    assert row["riskLevel"] == "medium"
+    assert "priority" not in row
+    assert "riskLevel" not in row
     assert row["progressSummary"] == "1/2 (50%)"
     assert row["detailUrl"] == f"/tasks/{project_id}"
     assert row["todos"][0]["title"] == "补齐来源链接"
@@ -4263,19 +4232,16 @@ def test_tasks_page_renders_projects_and_todos_without_global_followups(tmp_path
 
 def test_tasks_page_todo_cell_limits_visible_items(tmp_path: Path):
     store = AutoReplyStore(tmp_path / "task.sqlite3")
-    project_id = store.create_work_project(
+    project_id = seed_legacy_work_project(store,
         title="多待办项目",
         category="projects",
         status="active",
-        priority="P1",
-        risk_level="medium",
     )
     for index in range(5):
-        store.create_work_todo(
+        seed_legacy_work_todo(store,
             project_id=project_id,
             title=f"待办 {index + 1}",
             status="open",
-            priority="P1",
         )
 
     html = render_tasks_page(store)
@@ -4289,24 +4255,21 @@ def test_tasks_page_todo_cell_limits_visible_items(tmp_path: Path):
 
 def test_tasks_page_renders_sent_todos_with_owner_project_filters(tmp_path: Path):
     store = AutoReplyStore(tmp_path / "task.sqlite3")
-    project_id = store.create_work_project(
+    project_id = seed_legacy_work_project(store,
         title="客户交付",
         category="projects",
         status="active",
-        priority="P1",
-        risk_level="medium",
     )
-    todo_id = store.create_work_todo(
+    todo_id = seed_legacy_work_todo(store,
         project_id=project_id,
         title="给客户同步验收 ETA",
         description="确认交付验收时间和阻塞。",
         owner_user_id="owner-1",
         owner_name="Alex",
         status="open",
-        priority="P1",
         deadline_at="2026-07-01 18:00:00",
     )
-    store.create_work_todo_dingtalk_link(
+    seed_legacy_todo_link(store,
         work_todo_id=todo_id,
         dingtalk_task_id="dt-task-1",
         executor_user_id="owner-1",
@@ -4355,12 +4318,10 @@ def test_tasks_page_renders_sent_todos_with_owner_project_filters(tmp_path: Path
 
 def test_tasks_page_filters_projects_by_full_text_query(tmp_path: Path):
     store = AutoReplyStore(tmp_path / "task.sqlite3")
-    matching_project_id = store.create_work_project(
+    matching_project_id = seed_legacy_work_project(store,
         title="售前知识库建设",
         category="sales",
         status="active",
-        priority="P1",
-        risk_level="medium",
         owner_name="Alex",
         background="销售支持项目。",
         facts_json=json.dumps(
@@ -4375,19 +4336,16 @@ def test_tasks_page_filters_projects_by_full_text_query(tmp_path: Path):
             ensure_ascii=False,
         ),
     )
-    store.create_work_todo(
+    seed_legacy_work_todo(store,
         project_id=matching_project_id,
         title="补齐来源链接",
         owner_name="Alex",
         status="open",
-        priority="P1",
     )
-    store.create_work_project(
+    seed_legacy_work_project(store,
         title="招聘专员圆桌",
         category="recruiting",
         status="active",
-        priority="P2",
-        risk_level="low",
         owner_name="Bea",
         background="候选人流程讨论。",
     )
@@ -4409,19 +4367,16 @@ def test_tasks_page_filters_projects_by_full_text_query(tmp_path: Path):
 def test_tasks_page_paginates_and_preserves_search_params(tmp_path: Path):
     store = AutoReplyStore(tmp_path / "task.sqlite3")
     for index in range(25):
-        project_id = store.create_work_project(
+        project_id = seed_legacy_work_project(store,
             title=f"候选人项目 {index + 1:02d}",
             category="recruiting",
             status="active",
-            priority="P1",
-            risk_level="medium",
             background="候选人流程。",
         )
-        store.create_work_todo(
+        seed_legacy_work_todo(store,
             project_id=project_id,
             title=f"补齐候选人材料 {index + 1:02d}",
             status="open",
-            priority="P1",
         )
 
     html = render_tasks_page(store, query="候选人", page=2, page_size=20)
@@ -4446,12 +4401,10 @@ def test_tasks_page_paginates_and_preserves_search_params(tmp_path: Path):
 def test_tasks_page_respects_page_size(tmp_path: Path):
     store = AutoReplyStore(tmp_path / "task.sqlite3")
     for index in range(25):
-        store.create_work_project(
+        seed_legacy_work_project(store,
             title=f"项目 {index + 1:02d}",
             category="projects",
             status="active",
-            priority="P2",
-            risk_level="low",
         )
 
     html = render_tasks_page(store, page_size=50)
@@ -4465,19 +4418,15 @@ def test_tasks_page_respects_page_size(tmp_path: Path):
 
 def test_tasks_page_filters_by_category(tmp_path: Path):
     store = AutoReplyStore(tmp_path / "task.sqlite3")
-    store.create_work_project(
+    seed_legacy_work_project(store,
         title="招聘项目",
         category="recruiting",
         status="active",
-        priority="P2",
-        risk_level="low",
     )
-    store.create_work_project(
+    seed_legacy_work_project(store,
         title="销售项目",
         category="sales",
         status="active",
-        priority="P1",
-        risk_level="medium",
     )
 
     html = render_tasks_page(store, category="recruiting")
@@ -4490,89 +4439,50 @@ def test_tasks_page_filters_by_category(tmp_path: Path):
     assert 'headerFilterValue: initial.category || ""' in html
 
 
-def test_tasks_page_sorts_by_priority_and_risk(tmp_path: Path):
+def test_tasks_page_removes_retired_priority_and_risk_columns_and_sorts(tmp_path: Path):
     store = AutoReplyStore(tmp_path / "task.sqlite3")
-    store.create_work_project(
-        title="低优先级高风险",
-        category="projects",
-        status="active",
-        priority="P2",
-        risk_level="high",
-    )
-    store.create_work_project(
-        title="高优先级低风险",
-        category="projects",
-        status="active",
-        priority="P0",
-        risk_level="low",
-    )
-    store.create_work_project(
-        title="中优先级中风险",
-        category="projects",
-        status="active",
-        priority="P1",
-        risk_level="medium",
-    )
-
-    priority_html = render_tasks_page(store, sort="priority_desc")
-    risk_html = render_tasks_page(store, sort="risk_desc")
-
-    priority_initial = task_script_json(priority_html, "tasks-initial-state")
-    risk_initial = task_script_json(risk_html, "tasks-initial-state")
-    priority_rows = {row["title"]: row for row in task_script_json(priority_html, "tasks-data")}
-    risk_rows = {row["title"]: row for row in task_script_json(risk_html, "tasks-data")}
-
-    assert priority_initial["sort"] == "priority_desc"
-    assert risk_initial["sort"] == "risk_desc"
-    assert '"priority_desc": ["priorityRank", "asc"]' in priority_html
-    assert '"risk_desc": ["riskRank", "asc"]' in risk_html
-    assert priority_rows["高优先级低风险"]["priorityRank"] == 0
-    assert priority_rows["中优先级中风险"]["priorityRank"] == 1
-    assert priority_rows["低优先级高风险"]["priorityRank"] == 2
-    assert risk_rows["低优先级高风险"]["riskRank"] == 0
-    assert risk_rows["中优先级中风险"]["riskRank"] == 1
-    assert risk_rows["高优先级低风险"]["riskRank"] == 2
+    project_id = seed_legacy_work_project(store, title="Historical project", category="projects", status="active")
+    for retired_sort in ("priority_desc", "risk_desc"):
+        html = render_tasks_page(store, sort=retired_sort)
+        rows = task_script_json(html, "tasks-data")
+        assert [row["id"] for row in rows] == [project_id]
+        assert task_script_json(html, "tasks-initial-state")["sort"] == ""
+        assert not {"priority", "riskLevel", "priorityRank", "riskRank"}.intersection(rows[0])
+        assert 'title: "Priority"' not in html and 'title: "Risk"' not in html
 
 
 def test_tasks_page_filters_by_status_and_sorts_by_other_columns(tmp_path: Path):
     store = AutoReplyStore(tmp_path / "task.sqlite3")
-    project_a = store.create_work_project(
+    project_a = seed_legacy_work_project(store,
         title="Alpha",
         category="projects",
         status="active",
-        priority="P1",
-        risk_level="medium",
         owner_name="Zoe",
         current_state="beta",
         next_step="call owner",
     )
-    project_b = store.create_work_project(
+    project_b = seed_legacy_work_project(store,
         title="Bravo",
         category="projects",
         status="active",
-        priority="P1",
-        risk_level="medium",
         owner_name="Ada",
         current_state="alpha",
         next_step="brief team",
     )
-    store.create_work_todo(
+    seed_legacy_work_todo(store,
         project_id=project_a,
         title="Alpha todo",
         status="open",
-        priority="P1",
     )
-    store.create_work_todo(
+    seed_legacy_work_todo(store,
         project_id=project_b,
         title="Bravo done",
         status="done",
-        priority="P1",
     )
-    store.create_work_todo(
+    seed_legacy_work_todo(store,
         project_id=project_b,
         title="Bravo cancelled",
         status="cancelled",
-        priority="P1",
     )
 
     filtered_html = render_tasks_page(store, task_state="completed")
@@ -4595,20 +4505,17 @@ def test_tasks_page_filters_by_status_and_sorts_by_other_columns(tmp_path: Path)
 
 def test_tasks_page_uses_todo_owner_as_fallback_when_project_owner_is_missing(tmp_path: Path):
     store = AutoReplyStore(tmp_path / "task.sqlite3")
-    project_id = store.create_work_project(
+    project_id = seed_legacy_work_project(store,
         title="Owner fallback project",
         category="projects",
         status="active",
-        priority="P1",
-        risk_level="medium",
     )
-    store.create_work_todo(
+    seed_legacy_work_todo(store,
         project_id=project_id,
         title="Confirm owner fallback",
         owner_user_id="owner-1",
         owner_name="Avery",
         status="open",
-        priority="P1",
     )
 
     html = render_tasks_page(store)
@@ -4621,52 +4528,41 @@ def test_tasks_page_uses_todo_owner_as_fallback_when_project_owner_is_missing(tm
 
 def test_tasks_page_computes_table_statuses(tmp_path: Path):
     store = AutoReplyStore(tmp_path / "task.sqlite3")
-    completed_id = store.create_work_project(
+    completed_id = seed_legacy_work_project(store,
         title="完成项目",
         category="projects",
         status="active",
-        priority="P2",
-        risk_level="low",
     )
-    overdue_id = store.create_work_project(
+    overdue_id = seed_legacy_work_project(store,
         title="逾期项目",
         category="projects",
         status="active",
-        priority="P1",
-        risk_level="medium",
     )
-    in_progress_id = store.create_work_project(
+    in_progress_id = seed_legacy_work_project(store,
         title="推进项目",
         category="projects",
         status="active",
-        priority="P1",
-        risk_level="medium",
     )
-    store.create_work_project(
+    seed_legacy_work_project(store,
         title="未开始项目",
         category="projects",
         status="active",
-        priority="P2",
-        risk_level="low",
     )
-    store.create_work_todo(
+    seed_legacy_work_todo(store,
         project_id=completed_id,
         title="已经完成",
         status="done",
-        priority="P2",
     )
-    store.create_work_todo(
+    seed_legacy_work_todo(store,
         project_id=overdue_id,
         title="已经逾期",
         status="open",
-        priority="P1",
         deadline_at="2020-01-01 00:00:00",
     )
-    store.create_work_todo(
+    seed_legacy_work_todo(store,
         project_id=in_progress_id,
         title="正在推进",
         status="open",
-        priority="P1",
         deadline_at="2099-01-01 00:00:00",
     )
 
@@ -4688,12 +4584,10 @@ def test_tasks_page_computes_table_statuses(tmp_path: Path):
 
 def test_task_project_detail_renders_project_todos_and_sources(tmp_path: Path):
     store = AutoReplyStore(tmp_path / "task.sqlite3")
-    project_id = store.create_work_project(
+    project_id = seed_legacy_work_project(store,
         title="售前知识库建设",
         category="sales",
         status="active",
-        priority="P1",
-        risk_level="medium",
         owner_name="Alex",
         tags_json=json.dumps(["售前", "知识库"], ensure_ascii=False),
         related_people_json=json.dumps(
@@ -4719,24 +4613,20 @@ def test_task_project_detail_renders_project_todos_and_sources(tmp_path: Path):
         current_state="整理中",
         next_step="补齐来源链接",
     )
-    todo_id = store.create_work_todo(
+    todo_id = seed_legacy_work_todo(store,
         project_id=project_id,
         title="补齐来源链接",
         owner_name="Alex",
         status="open",
-        priority="P1",
         deadline_at="2099-06-10 18:00:00",
-        next_follow_up_at="2099-06-09 10:00:00",
         follow_up_question="来源链接补齐到哪一步了？",
     )
-    store.create_work_update(
+    seed_legacy_work_update(store,
         project_id=project_id,
         source_type="reply_attempt",
         source_ref="7",
         summary="新增待办",
         changes_json='{"todo":"created"}',
-        merge_reason="same project",
-        confidence=0.91,
     )
     store.create_follow_up_draft(
         project_id=project_id,
@@ -4789,19 +4679,16 @@ def test_task_project_detail_renders_project_todos_and_sources(tmp_path: Path):
 def test_task_project_detail_keeps_unlinked_followups_separate(tmp_path: Path):
     db_path = tmp_path / "worker.sqlite3"
     store = AutoReplyStore(db_path)
-    project_id = store.create_work_project(
+    project_id = seed_legacy_work_project(store,
         title="售前知识库建设",
         category="sales",
         status="active",
-        priority="P1",
-        risk_level="medium",
     )
-    store.create_work_todo(
+    seed_legacy_work_todo(store,
         project_id=project_id,
         title="补齐来源链接",
         owner_name="Alex",
         status="open",
-        priority="P1",
     )
     store.create_follow_up_draft(
         project_id=project_id,
@@ -4824,21 +4711,18 @@ def test_task_project_detail_keeps_unlinked_followups_separate(tmp_path: Path):
 
 def test_task_project_detail_renders_dingtalk_todo_link(tmp_path: Path):
     store = AutoReplyStore(tmp_path / "task.sqlite3")
-    project_id = store.create_work_project(
+    project_id = seed_legacy_work_project(store,
         title="客户交付",
         category="projects",
         status="active",
-        priority="P1",
-        risk_level="medium",
     )
-    todo_id = store.create_work_todo(
+    todo_id = seed_legacy_work_todo(store,
         project_id=project_id,
         title="给客户同步验收 ETA",
         owner_name="Alex",
         status="open",
-        priority="P1",
     )
-    store.create_work_todo_dingtalk_link(
+    seed_legacy_todo_link(store,
         work_todo_id=todo_id,
         dingtalk_task_id="dt-task-1",
         executor_user_id="owner-1",
@@ -4864,12 +4748,10 @@ def test_task_project_detail_renders_dingtalk_todo_link(tmp_path: Path):
 def test_tasks_route_renders_page(tmp_path: Path):
     db_path = tmp_path / "worker.sqlite3"
     store = AutoReplyStore(db_path)
-    store.create_work_project(
+    seed_legacy_work_project(store,
         title="售前知识库建设",
         category="sales",
         status="active",
-        priority="P1",
-        risk_level="medium",
     )
     client = TestClient(create_audit_app(db_path))
 
@@ -4883,20 +4765,16 @@ def test_tasks_route_renders_page(tmp_path: Path):
 def test_tasks_route_applies_search_query(tmp_path: Path):
     db_path = tmp_path / "worker.sqlite3"
     store = AutoReplyStore(db_path)
-    store.create_work_project(
+    seed_legacy_work_project(store,
         title="售前知识库建设",
         category="sales",
         status="active",
-        priority="P1",
-        risk_level="medium",
         background="销售支持项目。",
     )
-    store.create_work_project(
+    seed_legacy_work_project(store,
         title="招聘专员圆桌",
         category="recruiting",
         status="active",
-        priority="P2",
-        risk_level="low",
     )
     client = TestClient(create_audit_app(db_path))
 
@@ -4912,12 +4790,10 @@ def test_tasks_route_applies_pagination_params(tmp_path: Path):
     db_path = tmp_path / "worker.sqlite3"
     store = AutoReplyStore(db_path)
     for index in range(25):
-        store.create_work_project(
+        seed_legacy_work_project(store,
             title=f"候选人项目 {index + 1:02d}",
             category="recruiting",
             status="active",
-            priority="P1",
-            risk_level="medium",
             background="候选人流程。",
         )
     client = TestClient(create_audit_app(db_path))
@@ -4937,49 +4813,42 @@ def test_tasks_route_applies_pagination_params(tmp_path: Path):
 def test_tasks_route_applies_category_and_sort_params(tmp_path: Path):
     db_path = tmp_path / "worker.sqlite3"
     store = AutoReplyStore(db_path)
-    store.create_work_project(
+    seed_legacy_work_project(store,
         title="招聘项目",
         category="recruiting",
         status="active",
-        priority="P2",
-        risk_level="high",
     )
-    store.create_work_project(
+    seed_legacy_work_project(store,
         title="销售项目",
         category="sales",
         status="active",
-        priority="P0",
-        risk_level="low",
     )
     client = TestClient(create_audit_app(db_path))
 
-    response = client.get("/tasks?category=recruiting&sort=risk_desc")
+    response = client.get("/tasks?category=recruiting&sort=owner_asc")
 
     assert response.status_code == 200
     assert "招聘项目" in response.text
     assert "销售项目" in response.text
     initial = task_script_json(response.text, "tasks-initial-state")
     assert initial["category"] == "recruiting"
-    assert initial["sort"] == "risk_desc"
-    assert '"risk_desc": ["riskRank", "asc"]' in response.text
+    assert initial["sort"] == "owner_asc"
+    assert '"owner_asc": ["owner", "asc"]' in response.text
 
 
 def test_task_project_detail_route_renders_project(tmp_path: Path):
     db_path = tmp_path / "worker.sqlite3"
     store = AutoReplyStore(db_path)
-    project_id = store.create_work_project(
+    project_id = seed_legacy_work_project(store,
         title="售前知识库建设",
         category="sales",
         status="active",
-        priority="P1",
-        risk_level="medium",
     )
-    store.create_work_todo(
+    seed_legacy_work_todo(store,
         project_id=project_id,
         title="补齐来源链接",
         owner_name="Alex",
         status="open",
-        priority="P1",
     )
     client = TestClient(create_audit_app(db_path))
 
@@ -5002,12 +4871,10 @@ def test_task_project_detail_route_returns_404_for_missing_project(tmp_path: Pat
 def test_task_management_search_api_returns_task_context(tmp_path: Path):
     db_path = tmp_path / "worker.sqlite3"
     store = AutoReplyStore(db_path)
-    project_id = store.create_work_project(
+    project_id = seed_legacy_work_project(store,
         title="技术部招聘",
         category="recruiting",
         status="active",
-        priority="P1",
-        risk_level="medium",
         owner_user_id="owner-1",
         owner_name="Avery",
         current_state="候选人评估中",
@@ -5017,15 +4884,13 @@ def test_task_management_search_api_returns_task_context(tmp_path: Path):
             ensure_ascii=False,
         ),
     )
-    todo_id = store.create_work_todo(
+    todo_id = seed_legacy_work_todo(store,
         project_id=project_id,
         title="评估 Colin 售前解决方案候选人",
         description="确认候选人的技术面、售前方案能力和下一轮安排。",
         owner_user_id="owner-1",
         owner_name="Avery",
-        priority="P1",
         deadline_at="2026-07-25 18:00:00",
-        next_follow_up_at="2026-07-24 15:00:00",
     )
     follow_up_id = store.create_follow_up_draft(
         project_id=project_id,
@@ -5069,19 +4934,16 @@ def test_task_management_search_api_returns_task_context(tmp_path: Path):
 def test_task_management_project_api_returns_detail_and_404(tmp_path: Path):
     db_path = tmp_path / "worker.sqlite3"
     store = AutoReplyStore(db_path)
-    project_id = store.create_work_project(
+    project_id = seed_legacy_work_project(store,
         title="售前知识库建设",
         category="sales",
         status="active",
-        priority="P1",
-        risk_level="medium",
     )
-    store.create_work_todo(
+    seed_legacy_work_todo(store,
         project_id=project_id,
         title="补齐来源链接",
         owner_name="Alex",
         status="open",
-        priority="P1",
     )
     client = TestClient(create_audit_app(db_path))
 
@@ -5745,8 +5607,11 @@ def test_attention_api_excludes_needs_human_after_queue_task_closes(
     )
     task = store.get_reply_task_for_message("cid-decision", "msg-decision")
     assert task is not None
-    with store._connect() as db:
-        db.execute("update tasks set status='done' where record_type='reply_tasks' and id=?", (task.id,))
+    [claimed] = store.claim_reply_tasks(limit=1)
+    store.complete_reply_task(
+        task.id,
+        expected_execution_generation=claimed.execution_generation,
+    )
     store.record_reply_attempt(
         conversation_id=task.conversation_id,
         conversation_title=task.conversation_title,
@@ -7263,6 +7128,38 @@ def test_oa_attempt_detail_keeps_original_status_despite_later_action(
     assert "💬 Blocked" in html
 
 
+def test_permission_retry_exhaustion_is_waiting_not_failed_and_can_be_reread(
+    tmp_path: Path,
+):
+    store = AutoReplyStore(tmp_path / "worker.sqlite3")
+    attempt_id = store.record_reply_attempt(
+        conversation_id="oa_pending_scan:proc-permission",
+        conversation_title="OA审批",
+        trigger_message_id="scan:proc-permission:task-1",
+        trigger_sender="OA扫描",
+        trigger_text="待处理审批",
+        action="agent_run",
+        sensitivity_kind="internal_personnel",
+        oa_process_instance_id="proc-permission",
+        oa_task_id="task-1",
+        oa_action="review",
+        send_status="blocked",
+    )
+    store.update_reply_attempt(
+        attempt_id,
+        send_error="consumer_purpose_retry_exhausted",
+        audit_summary="权限申请后的 3 次自动重读已用完；审批仍待处理。",
+    )
+
+    status, html = render_attempt_detail(store, attempt_id)
+
+    assert status == 200
+    assert "等待文件权限" in html
+    assert "审批仍待处理" in html
+    assert "权限开通后重新读取" in html
+    assert "这是执行或技术失败" not in html
+
+
 def test_attempt_history_and_detail_render_calendar_response_metadata(
     tmp_path: Path,
 ):
@@ -7382,7 +7279,7 @@ def test_render_attempt_list_uses_failed_action_pill_color(tmp_path: Path):
     assert 'class="pill status-action action-state-failed">💬 Failed</span>' in html
 
 
-def test_history_failed_item_shows_reason_effect_and_actions_inline(tmp_path: Path):
+def test_history_failed_item_is_not_presented_as_a_business_decision(tmp_path: Path):
     store = AutoReplyStore(tmp_path / "worker.sqlite3")
     attempt_id = store.record_reply_attempt(
         conversation_id="cid-actionable",
@@ -7398,15 +7295,14 @@ def test_history_failed_item_shows_reason_effect_and_actions_inline(tmp_path: Pa
 
     html = render_attempt_list(store, include_chart=False)
 
-    assert "状态：</strong>需要你处理" in html
+    assert "状态：</strong>处理失败，尚未完成" in html
     assert "原因：</strong>Current task did not complete" in html
     assert "外部副作用：</strong>外部动作是否完成由当前结果和业务系统状态决定" in html
     assert f'action="/attempts/{attempt_id}/rerun?return_to=/history"' in html
     assert ">重试当前任务</button>" in html
-    assert f'<a href="/attempts/{attempt_id}">暂不处理</a>' in html
-    assert ">人工处理</a>" in html
     assert ">技术详情</a>" in html
-    assert "你需要做什么：</strong>请选择一种处理方式" in html
+    assert "不需要你判断业务规则" in html
+    assert "请选择一种处理方式" not in html
     assert "重试会沿用同一任务，不会创建新的业务事项" in html
     assert '<span class="attempt-label">答</span>' not in html
     assert '<span class="attempt-label">结果</span>' not in html
@@ -7744,10 +7640,7 @@ def test_rule_decision_attention_excludes_superseded_unreviewed_attempt(
     # the reply task's original trigger. The linked run remains authoritative.
     with store._connect() as db:
         update_action(db, "reply_attempts", attempt_id, {"trigger_message_id": "derived-oa-trigger"})
-        db.execute(
-            "update tasks set execution_generation=? where record_type='reply_tasks' and id=?",
-            ("newer-task-generation", task.id),
-        )
+        _set_task_fields(db, "reply_tasks", task.id, {"execution_generation": "newer-task-generation"})
 
     decisions = audit_web_module._human_decision_attention_rows(store)
 
@@ -7803,14 +7696,7 @@ def test_retrying_meeting_shows_persisted_plan_without_manager_actions(
         "Meeting provider unavailable",
         available_at=retry_at,
     )
-    run_id = store.record_meeting_alignment_run(
-        job_id=job_id,
-        codex_session_id="meeting-retry-session",
-        decision_json="{}",
-        audit_summary="Meeting provider unavailable",
-        status="retry",
-        error="Meeting provider unavailable",
-    )
+    run_id = store.create_logical_run('meeting_alignment_runs', task_public_id=job_id, codex_session_id="meeting-retry-session", status="retry", error="Meeting provider unavailable")
 
     html = render_attempt_list(store, include_chart=False)
 
@@ -7840,19 +7726,10 @@ def test_failed_meeting_and_follow_up_expose_reason_and_safe_choices(
         status="failed",
         error="Meeting delivery failed",
     )
-    meeting_run_id = store.record_meeting_alignment_run(
-        job_id=job_id,
-        codex_session_id="meeting-failed-session",
-        decision_json="{}",
-        audit_summary="Meeting delivery failed",
-        status="failed",
-        error="Meeting delivery failed",
-    )
-    project_id = store.create_work_project(
+    meeting_run_id = store.create_logical_run('meeting_alignment_runs', task_public_id=job_id, codex_session_id="meeting-failed-session", status="failed", error="Meeting delivery failed")
+    project_id = seed_legacy_work_project(store,
         title="Hiring",
         category="people",
-        priority="P1",
-        risk_level="medium",
         owner_name="Avery",
     )
     follow_up_id = store.create_follow_up_draft(
@@ -7880,19 +7757,16 @@ def test_confirmed_not_sent_legacy_follow_up_offers_no_repair_or_cancel(
     tmp_path: Path,
 ):
     store = AutoReplyStore(tmp_path / "worker.sqlite3")
-    project_id = store.create_work_project(
+    project_id = seed_legacy_work_project(store,
         title="Hiring",
         category="recruiting",
-        priority="P1",
-        risk_level="high",
     )
-    todo_id = store.create_work_todo(
+    todo_id = seed_legacy_work_todo(store,
         project_id=project_id,
         title="Confirm candidate decision",
         owner_user_id="inactive-owner",
         owner_name="Former owner",
         status="open",
-        priority="P1",
     )
     follow_up_id = store.create_follow_up_draft(
         project_id=project_id,
@@ -8086,10 +7960,7 @@ def test_oa_failed_attempt_uses_current_needs_human_task_projection(
         send_error="codex_result_invalid",
     )
     with store._connect() as db:
-        db.execute(
-            "update tasks set status='needs_human' where record_type='reply_tasks' and id=?",
-            (task.id,),
-        )
+        _set_task_fields(db, "reply_tasks", task.id, {"status": "needs_human"})
 
     payload = build_worker_status_payload(store)
     reply_attempt_queue = next(
@@ -8137,11 +8008,11 @@ def test_reply_attempt_queue_excludes_prior_generation_after_trigger_revision(
     )
     with store._connect() as db:
         update_action(db, "reply_attempts", old_attempt_id, {"agent_run_id": old_run})
-        db.execute(
-            "update tasks set trigger_message_id=?, execution_generation=?, "
-            "status='done' where record_type='reply_tasks' and id=?",
-            ("oa-pending:process-1:revision-2", "next-generation", task.id),
-        )
+        _set_task_fields(db, "reply_tasks", task.id, {
+            "trigger_message_id": "oa-pending:process-1:revision-2",
+            "execution_generation": "next-generation",
+            "status": "done",
+        })
 
     payload = build_worker_status_payload(store)
     queue = next(
@@ -8185,7 +8056,7 @@ def test_reply_attempt_queue_hides_failed_history_when_its_task_has_a_terminal_s
         send_error="terminal_source_already_settled",
     )
     with store._connect() as db:
-        db.execute("update tasks set status=? where record_type='reply_tasks' and id=?", (successor_status, task.id))
+        _set_task_fields(db, "reply_tasks", task.id, {"status": successor_status})
 
     payload = build_worker_status_payload(store)
     reply_attempt_queue = next(
@@ -8222,32 +8093,39 @@ def test_status_reports_lease_backed_meeting_memory_health_and_degrades_for_back
         lambda _path: SimpleNamespace(violations=(), checked_at="2026-09-15T12:00:00+00:00"),
     )
     store = AutoReplyStore(tmp_path / "meeting-memory-status.sqlite3")
+    meeting_ids = []
+    for meeting_id in ("overdue-memory", "ghost-memory"):
+        job_id = store.upsert_meeting_alignment_job(
+            meeting_id=meeting_id,
+            title=meeting_id,
+            source_json="{}",
+            participants_json="[]",
+            ended_at="2026-09-15T12:00:00+00:00",
+            eligible_at="2026-09-15T12:00:00+00:00",
+            status="waiting",
+        )
+        store.update_meeting_alignment_job(job_id, status="sent", final_message="summary")
+        meeting_ids.append(job_id)
     with store._connect() as db:
-        for job_id, meeting_id in ((1, 'overdue-memory'), (2, 'ghost-memory')):
-            insert_task(db, 'meeting_alignment_jobs', {
-                'id': job_id, 'legacy_key': job_id, 'meeting_id': meeting_id,
-                'status': 'sent', 'final_message': 'summary',
-            })
-        db.execute(
-            """
-            insert into meeting_memory_write_events (
-                id, meeting_job_id, execution_generation, payload_json, status,
-                available_at, created_at, updated_at
-            ) values (1, 1, 'due', '{}', 'pending',
-                      '2020-01-01T00:00:00+00:00',
-                      '2020-01-01T00:00:00+00:00', '2020-01-01T00:00:00+00:00')
-            """
-        )
-        db.execute(
-            """
-            insert into meeting_memory_write_events (
-                id, meeting_job_id, execution_generation, payload_json, status,
-                lease_owner, lease_expires_at, created_at, updated_at
-            ) values (2, 2, 'ghost', '{}', 'processing', 'event-owner',
-                      '2020-01-01T00:00:00+00:00',
-                      '2020-01-01T00:00:00+00:00', '2020-01-01T00:00:00+00:00')
-            """
-        )
+        physical_meeting_ids = [
+            task_physical_id(db, "meeting_alignment_jobs", job_id)
+            for job_id in meeting_ids
+        ]
+        insert_task_delivery_action(db, "meeting_memory_write_events", {
+            "id": 1, "meeting_job_id": physical_meeting_ids[0],
+            "execution_generation": "due", "payload_json": "{}",
+            "status": "pending", "available_at": "2020-01-01T00:00:00+00:00",
+            "created_at": "2020-01-01T00:00:00+00:00",
+            "updated_at": "2020-01-01T00:00:00+00:00",
+        })
+        insert_task_delivery_action(db, "meeting_memory_write_events", {
+            "id": 2, "meeting_job_id": physical_meeting_ids[1],
+            "execution_generation": "ghost", "payload_json": "{}",
+            "status": "processing", "lease_owner": "event-owner",
+            "lease_expires_at": "2020-01-01T00:00:00+00:00",
+            "created_at": "2020-01-01T00:00:00+00:00",
+            "updated_at": "2020-01-01T00:00:00+00:00",
+        })
         insert_run(
             db, 'agent_runtime_attempts', {
                 'workload_kind': 'memory',
@@ -8317,15 +8195,11 @@ def test_attention_hides_historical_failed_task_when_business_object_is_done(
         business_object_key="oa:proc-1:task-1",
     )
     with store._connect() as db:
-        db.execute(
-            "update tasks set status='failed', error='old failure', "
-            "business_object_key='oa:proc-1:task-1' where record_type='reply_tasks' and id=?",
-            (historical.id,),
-        )
-        db.execute(
-            "update tasks set status='done' where record_type='reply_tasks' and id=?",
-            (current.id,),
-        )
+        _set_task_fields(db, "reply_tasks", historical.id, {
+            "status": "failed", "error": "old failure",
+            "business_object_key": "oa:proc-1:task-1",
+        })
+        _set_task_fields(db, "reply_tasks", current.id, {"status": "done"})
     attempt_id = store.record_reply_attempt(
         conversation_id=historical.conversation_id,
         conversation_title=historical.conversation_title,
@@ -8396,14 +8270,12 @@ def test_attention_does_not_repeat_old_generation_attempt_for_current_oa_task(
         update_action(db, "reply_attempts", attempt_id, {
             "agent_run_id": run.lastrowid, "send_error": "old failure",
         })
-        db.execute(
-            """update tasks
-               set trigger_message_id='oa-pending:process-1:new',
-                   execution_generation='current-gen', status='failed',
-                   error='current failure'
-               where record_type='reply_tasks' and id=?""",
-            (task.id,),
-        )
+        _set_task_fields(db, "reply_tasks", task.id, {
+            "trigger_message_id": "oa-pending:process-1:new",
+            "execution_generation": "current-gen",
+            "status": "failed",
+            "error": "current failure",
+        })
 
     rows = audit_web_module._queue_attention_rows(store)
 
@@ -8448,11 +8320,10 @@ def test_worker_attempt_counts_hide_historical_needs_human_business_object(
         business_object_key="oa:proc-1:task-1",
     )
     with store._connect() as db:
-        db.execute(
-            "update tasks set status='done', business_object_key=? where record_type='reply_tasks' and id=?",
-            (current.business_object_key, historical.id),
-        )
-        db.execute("update tasks set status='done' where record_type='reply_tasks' and id=?", (current.id,))
+        _set_task_fields(db, "reply_tasks", historical.id, {
+            "status": "done", "business_object_key": current.business_object_key,
+        })
+        _set_task_fields(db, "reply_tasks", current.id, {"status": "done"})
     attempt_id = store.record_reply_attempt(
         conversation_id=historical.conversation_id,
         conversation_title=historical.conversation_title,
@@ -8496,7 +8367,7 @@ def test_attention_hides_failed_attempt_recovered_by_coalesced_business_object(
         ),
     )
     with store._connect() as db:
-        db.execute("update tasks set status='done' where record_type='reply_tasks' and id=?", (current.id,))
+        _set_task_fields(db, "reply_tasks", current.id, {"status": "done"})
     attempt_id = store.record_reply_attempt(
         conversation_id="salary-conversation",
         conversation_title="Payroll approval",
@@ -8743,12 +8614,10 @@ def test_worker_attention_uses_lightweight_unresolved_attempt_projection(
 
 def test_worker_attention_excludes_healthy_follow_up_drafts(tmp_path: Path):
     store = AutoReplyStore(tmp_path / "worker.sqlite3")
-    project_id = store.create_work_project(
+    project_id = seed_legacy_work_project(store,
         title="Client delivery",
         category="projects",
         status="active",
-        priority="P1",
-        risk_level="medium",
     )
     store.create_follow_up_draft(
         project_id=project_id,
@@ -8773,11 +8642,7 @@ def test_worker_attention_uses_work_input_summary_instead_of_internal_reference(
         '{"summary":"Review the current meeting follow-up."}',
     )
     with store._connect() as db:
-        db.execute(
-            "update tasks set status='failed', error='processing failed' "
-            f"where record_type='work_summary_inputs' and id={task_id_expression('work_summary_inputs', '?')}",
-            (work_input_id,),
-        )
+        _set_task_fields(db, "work_summary_inputs", work_input_id, {"status": "failed", "error": "processing failed"})
 
     payload = build_worker_status_payload(store)
     row = next(
@@ -8798,11 +8663,7 @@ def test_worker_attention_uses_work_input_title_before_raw_reference(tmp_path: P
         '{"title":"Hiring debrief"}',
     )
     with store._connect() as db:
-        db.execute(
-            "update tasks set status='failed', error='processing failed' "
-            f"where record_type='work_summary_inputs' and id={task_id_expression('work_summary_inputs', '?')}",
-            (work_input_id,),
-        )
+        _set_task_fields(db, "work_summary_inputs", work_input_id, {"status": "failed", "error": "processing failed"})
 
     payload = build_worker_status_payload(store)
     row = next(
@@ -8825,11 +8686,7 @@ def test_worker_attention_excludes_pending_and_processing_work_items(
         "local_file", "processing-source", '{"title":"Active material"}'
     )
     with store._connect() as db:
-        db.execute(
-            "update tasks set status='processing' "
-            f"where record_type='work_summary_inputs' and id={task_id_expression('work_summary_inputs', '?')}",
-            (processing_id,),
-        )
+        _set_task_fields(db, "work_summary_inputs", processing_id, {"status": "processing"})
 
     rows = audit_web_module._queue_attention_rows(store)
 
@@ -8866,15 +8723,92 @@ def test_worker_attention_excludes_pending_and_processing_reply_and_meeting_rows
         status="pending",
     )
     with store._connect() as db:
-        db.execute(
-            "update tasks set status='processing' where record_type='meeting_alignment_jobs' and cast(legacy_key as integer)=?",
-            (meeting_id,),
-        )
+        _set_task_fields(db, "meeting_alignment_jobs", meeting_id, {"status": "processing"})
 
     rows = audit_web_module._queue_attention_rows(store)
 
     assert all(row["id"] != str(reply_id) for row in rows)
     assert all(row["id"] != str(meeting_id) for row in rows)
+
+
+def test_worker_attention_excludes_recent_oa_pending_node(tmp_path: Path):
+    store = AutoReplyStore(tmp_path / "recent-oa-pending.sqlite3")
+    task = store.ensure_reply_task(
+        conversation_id="oa_pending_scan:recent-process",
+        conversation_title="Recent approval",
+        single_chat=True,
+        trigger_message_id="oa-pending:recent-process:revision-1",
+        trigger_create_time="2026-10-19 01:55:00",
+        trigger_sender="Applicant",
+        trigger_text="Review this approval.",
+        channel="dingtalk",
+        business_object_key="oa:recent-process:task-1",
+    )
+    store.set_daily_scan_state(
+        "oa_pending",
+        "2026-10-19T02:00:00+00:00",
+        json.dumps({"pending_business_object_keys": [task.business_object_key]}),
+    )
+
+    rows = audit_web_module._queue_attention_rows(store)
+
+    assert not any(
+        row["category"] == "OA approval" and row["id"] == str(task.id)
+        for row in rows
+    )
+
+
+def test_worker_attention_includes_oa_pending_node_stalled_over_one_hour(
+    tmp_path: Path,
+):
+    store = AutoReplyStore(tmp_path / "stale-oa-pending.sqlite3")
+    task = store.ensure_reply_task(
+        conversation_id="oa_pending_scan:stale-process",
+        conversation_title="Stale approval",
+        single_chat=True,
+        trigger_message_id="oa-pending:stale-process:revision-1",
+        trigger_create_time="2026-10-18 01:00:00",
+        trigger_sender="Applicant",
+        trigger_text="Review this approval.",
+        channel="dingtalk",
+        business_object_key="oa:stale-process:task-1",
+    )
+    with store._connect() as db:
+        parts = task8_set_parts('reply_tasks', {'updated_at': '2000-01-01 00:00:00'})
+        db.execute(
+            f"update tasks set {parts.sql} where record_type='reply_tasks' and id=?",
+            (*parts.parameters, task.id),
+        )
+    assert store.get_reply_task(task.id).updated_at == '2000-01-01 00:00:00'
+    store.set_daily_scan_state(
+        "oa_pending",
+        "2026-10-19T02:00:00+00:00",
+        json.dumps({"pending_business_object_keys": [task.business_object_key]}),
+    )
+
+    rows = audit_web_module._queue_attention_rows(store)
+
+    assert any(
+        row["category"] == "OA approval" and row["id"] == str(task.id)
+        for row in rows
+    )
+
+
+def test_worker_attention_excludes_oa_pending_key_without_task_timestamp(
+    tmp_path: Path,
+):
+    store = AutoReplyStore(tmp_path / "unmatched-oa-pending.sqlite3")
+    store.set_daily_scan_state(
+        "oa_pending",
+        "2000-01-01T00:00:00+00:00",
+        json.dumps({
+            "pending_business_object_keys": ["oa:unmatched-process:task-1"]
+        }),
+    )
+
+    rows = audit_web_module._queue_attention_rows(store)
+
+    assert not any(row["category"] == "OA approval" for row in rows)
 
 
 def test_attention_includes_current_failed_attempt_waiting_for_retry(tmp_path: Path, monkeypatch):
@@ -8912,7 +8846,7 @@ def test_attention_includes_current_failed_attempt_waiting_for_retry(tmp_path: P
                     result='{}', tmp_path=tmp_path, monkeypatch=monkeypatch,
         )
         update_action(db, "reply_attempts", attempt_id, {"agent_run_id": run.lastrowid})
-        db.execute("update tasks set status='pending' where record_type='reply_tasks' and id=?", (task.id,))
+        _set_task_fields(db, "reply_tasks", task.id, {"status": "pending"})
 
     rows = audit_web_module._queue_attention_rows(store)
 
@@ -8941,7 +8875,8 @@ def test_worker_attention_includes_failed_meeting_memory_writes(tmp_path: Path):
     with store._connect() as db:
         event_id = int(
             db.execute(
-                "select id from meeting_memory_write_events where meeting_job_id=?",
+                f"select id from ({task_delivery_projection('meeting_memory_write_events')}) "
+                "where meeting_job_id=?",
                 (meeting_id,),
             ).fetchone()["id"]
         )
@@ -9037,11 +8972,7 @@ def test_worker_attention_uses_local_file_title_as_work_item_context(
         ),
     )
     with store._connect() as db:
-        db.execute(
-            "update tasks set status='failed', error='processing failed' "
-            f"where record_type='work_summary_inputs' and id={task_id_expression('work_summary_inputs', '?')}",
-            (work_input_id,),
-        )
+        _set_task_fields(db, "work_summary_inputs", work_input_id, {"status": "failed", "error": "processing failed"})
 
     payload = build_worker_status_payload(store)
     row = next(
@@ -9074,11 +9005,7 @@ def test_worker_attention_cleans_local_file_summary_metadata(tmp_path: Path):
         ),
     )
     with store._connect() as db:
-        db.execute(
-            "update tasks set status='failed', error='processing failed' "
-            f"where record_type='work_summary_inputs' and id={task_id_expression('work_summary_inputs', '?')}",
-            (work_input_id,),
-        )
+        _set_task_fields(db, "work_summary_inputs", work_input_id, {"status": "failed", "error": "processing failed"})
 
     payload = build_worker_status_payload(store)
     row = next(
@@ -9106,10 +9033,7 @@ def test_worker_attention_meeting_summary_falls_back_to_meeting_title(
         status="pending",
     )
     with store._connect() as db:
-        db.execute(
-            "update tasks set status='failed', error='processing failed' where record_type='meeting_alignment_jobs' and cast(legacy_key as integer)=?",
-            (job_id,),
-        )
+        _set_task_fields(db, "meeting_alignment_jobs", job_id, {"status": "failed", "error": "processing failed"})
 
     payload = build_worker_status_payload(store)
     row = next(
@@ -9202,10 +9126,7 @@ def test_worker_status_ignores_wechat_delivery_from_old_execution_generation(
     delivery = store.get_wechat_delivery_by_id(delivery_id)
     assert delivery is not None
     with store._connect() as db:
-        db.execute(
-            "update tasks set execution_generation='new-generation' where record_type='reply_tasks' and id=?",
-            (delivery.task_id,),
-        )
+        _set_task_fields(db, "reply_tasks", delivery.task_id, {"execution_generation": "new-generation"})
 
     payload = build_worker_status_payload(store)
     queue = next(
@@ -10880,6 +10801,53 @@ def test_handle_rerun_attempt_post_preserves_wechat_channel_without_conversation
     assert WechatMessage.model_validate_json(task.trigger_message_json) == trigger
 
 
+def test_sent_wechat_attempt_needs_explicit_resend_with_exact_message_id(tmp_path: Path):
+    store = AutoReplyStore(tmp_path / "worker.sqlite3")
+    trigger = WechatMessage(
+        account_id="acct-1", conversation_id="melody115", message_id="wx-sent-1",
+        sender_id="melody115", sender_display_name="Morgan",
+        conversation_type="direct", direction="inbound",
+        sent_at="2026-07-28T14:00:00+08:00", kind="text",
+        text="他说 memory 不仅是 data", source_version="4.1.10",
+    )
+    store.enqueue_reply_task(
+        channel="wechat", conversation_id=trigger.conversation_id,
+        conversation_title="Morgan", single_chat=True,
+        trigger_message_id=trigger.message_id, trigger_create_time=trigger.sent_at,
+        trigger_sender=trigger.sender_display_name, trigger_text=trigger.text,
+        trigger_message_json=trigger.model_dump_json(),
+    )
+    attempt_id = store.record_reply_attempt(
+        channel="wechat", conversation_id=trigger.conversation_id,
+        conversation_title="Morgan", trigger_message_id=trigger.message_id,
+        trigger_sender=trigger.sender_display_name, trigger_text=trigger.text,
+        action="send_reply", sensitivity_kind="normal", send_status="sent",
+    )
+    task = store.get_reply_task_for_message(
+        trigger.conversation_id, trigger.message_id, channel="wechat",
+    )
+    assert task is not None
+    original_generation = task.execution_generation
+
+    status, _, _ = handle_rerun_attempt_post(store, attempt_id)
+    assert status == 409
+    assert store.get_reply_task(task.id).execution_generation == original_generation
+
+    status, _, _ = handle_rerun_attempt_post(
+        store, attempt_id, explicit_resend_message_id="another-message",
+    )
+    assert status == 409
+    assert store.get_reply_task(task.id).execution_generation == original_generation
+
+    status, _, _ = handle_rerun_attempt_post(
+        store, attempt_id, explicit_resend_message_id=trigger.message_id,
+    )
+    assert status == 303
+    rerun = store.get_reply_task(task.id)
+    assert rerun.execution_generation != original_generation
+    assert rerun.manual_rerun_attempt_id == attempt_id
+
+
 def test_scheduled_rerun_payload_is_valid_execution_context():
     from app.audit_web import _is_valid_rerun_trigger_json
 
@@ -11496,15 +11464,13 @@ def test_render_log_list_shows_recent_operations(tmp_path: Path):
         sensitivity_kind="general",
         draft_reply_text="先按这个口径回复。",
     )
-    project_id = store.create_work_project(
+    project_id = seed_legacy_work_project(store,
         title="售前知识库建设",
         category="sales",
         status="active",
-        priority="P1",
-        risk_level="medium",
     )
     store.enqueue_work_summary_input("reply_attempt", "7", '{"summary":"新增任务"}')
-    store.create_work_update(
+    seed_legacy_work_update(store,
         project_id=project_id,
         source_type="reply_attempt",
         source_ref="7",
@@ -11562,12 +11528,10 @@ def test_render_workers_page_shows_service_and_queue_status(
     )
     store = AutoReplyStore(tmp_path / "worker.sqlite3")
     EmailStore(store.path)
-    project_id = store.create_work_project(
+    project_id = seed_legacy_work_project(store,
         title="客户交付",
         category="projects",
         status="active",
-        priority="P1",
-        risk_level="medium",
     )
     store.enqueue_work_summary_input("reply_attempt", "1", '{"summary":"新增任务"}')
     store.create_follow_up_draft(
@@ -11592,31 +11556,53 @@ def test_render_workers_page_shows_service_and_queue_status(
         send_status="failed",
         send_error="send failed",
     )
-    todo_id = store.create_work_todo(
+    todo_id = seed_legacy_work_todo(store,
         project_id=project_id,
         title="确认客户验收 ETA",
         owner_user_id="owner-1",
         status="open",
-        priority="P1",
         deadline_at="2026-07-01 18:00:00",
     )
-    store.create_work_todo_dingtalk_link(
+    legacy_link_id = seed_legacy_todo_link(store,
         work_todo_id=todo_id,
         dingtalk_task_id="",
         status="failed",
         last_error="code=TOKEN_VERIFIED_FAILED",
     )
+    store.enqueue_reply_task(
+        conversation_id="cid-retryable",
+        conversation_title="Needs reply retry",
+        single_chat=False,
+        trigger_message_id="msg-retryable",
+        trigger_create_time="2026-07-01 16:00:00",
+        trigger_sender="Avery",
+        trigger_text="Please retry this reply.",
+    )
+    retryable_attempt_id = store.record_reply_attempt(
+        conversation_id="cid-retryable",
+        conversation_title="Needs reply retry",
+        trigger_message_id="msg-retryable",
+        trigger_sender="Avery",
+        trigger_text="Please retry this reply.",
+        action="send_reply",
+        sensitivity_kind="general",
+    )
+    store.update_reply_attempt(
+        retryable_attempt_id,
+        send_status="failed",
+        send_error="retryable reply failure",
+    )
     with store._connect() as db:
-        db.execute(
-            """insert into email_agent_classification_tasks (
-                   task_id, channel, stable_message_identity, status, input_json,
-                   error, updated_at
-               ) values (
-                   'email-classification:failed', 'email', 'account:inbox:1',
-                   'failed', '{"message":{"subject":"Quarterly renewal"}}',
-                   'invalid classification input', '2026-07-01 17:00:00'
-               )"""
-        )
+        db.execute("begin immediate")
+        insert_task12(db, "email_agent_classification_tasks", {
+            "task_id": "email-classification:failed",
+            "channel": "email",
+            "stable_message_identity": "account:inbox:1",
+            "status": "failed",
+            "input_json": '{"message":{"subject":"Quarterly renewal"}}',
+            "error": "invalid classification input",
+            "updated_at": "2026-07-01 17:00:00",
+        })
 
     payload = build_worker_status_payload(store)
     html = render_workers_page(store)
@@ -11625,6 +11611,9 @@ def test_render_workers_page_shows_service_and_queue_status(
     assert payload["summary"]["pending"] >= 2
     assert payload["summary"]["failed"] >= 1
     assert payload["summary"]["retryable"] >= 1
+    assert next(queue for queue in payload["queues"] if queue["name"] == "Reply attempts")["retryable"] == 1
+    assert all(queue["name"] != "DingTalk Todos" for queue in payload["queues"])
+    assert store.get_work_todo_dingtalk_link(legacy_link_id).status == "failed"
     assert any(queue["name"] == "Work items" for queue in payload["queues"])
     classifier_queue = next(
         queue
@@ -11813,11 +11802,11 @@ def test_render_log_list_marks_persisted_error_resolution_resolved(tmp_path: Pat
 def test_render_log_list_marks_old_unresolved_error_historical(tmp_path: Path):
     store = AutoReplyStore(tmp_path / "worker.sqlite3")
     with store._connect() as db:
-        db.execute(
-            """insert into errors (conversation_id, message_id, kind, detail, created_at)
-               values ('cid-1', 'msg-1', 'reply_task', 'old temporary failure',
-               '2026-01-01 00:00:00')"""
-        )
+        insert_error_action(db, {
+            "conversation_id": "cid-1", "message_id": "msg-1",
+            "kind": "reply_task", "detail": "old temporary failure",
+            "created_at": "2026-01-01 00:00:00",
+        })
 
     html = render_log_list(store)
 
@@ -11998,43 +11987,57 @@ def _failed_email_action(
     attempt_count: int,
     next_attempt_at: str,
 ) -> str:
-    """Insert one processed classification and its failed provider action."""
-    EmailStore(store.path)
-    action_id = f"email-action:{attempt_count}:{next_attempt_at or 'exhausted'}"
-    plan_id = f"email-action-plan:{attempt_count}"
-    with store._connect() as db:
-        db.execute(
-            "insert into email_classifications ("
-            "id, account_id, folder, uidvalidity, uid, rfc_message_id, "
-            "stable_message_identity, sender, subject, category, confidence, "
-            "margin, probabilities_json, model_id, config_version, status, "
-            "classification_source, received_at, current_action_plan_id) "
-            "values (?, 'acct', 'INBOX', 2, 27727, '<mid@example.com>', "
-            "'acct:mid', 'daniela@example.com', 'MorningStar Technical Deepdive', "
-            "'work', 0.9, 0.5, '{}', 'model-1', 'v1', 'processed', "
-            "'model', 'Mon, 08 Sep 2025 12:08:13 +0000', ?)",
-            (9000 + attempt_count, plan_id),
+    """Persist one current processed classification and exhausted/queued failure."""
+    from app.email_classifier_contracts import (
+        EmailAction, EmailCategory, EmailClassification,
+        EmailClassificationStatus, EmailProviderLocator, build_email_action_plan,
+    )
+
+    email_store = EmailStore(store.path)
+    classification_id = 9000 + attempt_count
+    stable_identity = f"acct:attention-{attempt_count}"
+    locator = EmailProviderLocator(
+        account_id="acct", folder="INBOX", uidvalidity=2,
+        uid=27727 + attempt_count,
+    )
+    plan = build_email_action_plan(
+        classification_id=classification_id, account_id="acct",
+        category=EmailCategory.WORK, classification_source="model",
+        confidence=0.9, model_id="model-1", config_version="v1",
+        actions=(EmailAction.MOVE,),
+        action_parameters={EmailAction.MOVE: {"target_folder": "工作"}},
+        created_at=datetime.fromisoformat("2026-09-16T07:27:13+00:00"),
+    )
+    plan_id = plan.action_plan_id
+    classification = EmailClassification(
+        classification_id=classification_id,
+        stable_message_identity=stable_identity, provider_locator=locator,
+        category=EmailCategory.WORK, confidence=0.9, margin=0.5,
+        probabilities={EmailCategory.WORK: 0.9}, model_id="model-1",
+        config_version="v1", status=EmailClassificationStatus.PROCESSED,
+        classification_source="model", action_plan=plan,
+    )
+    email_store.persist_scan_result(
+        classification, sender="daniela@example.com",
+        subject="MorningStar Technical Deepdive",
+        normalized_text="MorningStar Technical Deepdive body",
+        preview="MorningStar Technical Deepdive", model_text="body",
+        received_at="Mon, 08 Sep 2025 12:08:13 +0000",
+    )
+    action_id = email_store.direct_action_ids_for_plan(plan_id)[0]
+    for number in range(1, attempt_count + 1):
+        email_store.append_action_attempt(
+            action_id=action_id, attempt_number=number, status="failed",
+            provider_operation="READ", provider_target="acct:mid",
+            provider_result_id="", error="provider_read_failed:ImapMessageUnavailable",
+            started_at="2026-09-16T07:27:13+00:00",
+            finished_at="2026-09-16T07:28:28+00:00",
         )
-        db.execute(
-            "insert into email_action_plans ("
-            "action_plan_id, action_plan_version, classification_id, account_id, "
-            "category, classification_source, confidence, model_id, config_version, "
-            "actions_json, action_parameters_json, created_at) "
-            "values (?, 1, ?, 'acct', 'work', 'model', 0.9, 'model-1', 'v1', "
-            "'[\"move\"]', '{}', '2026-09-16T07:27:13+00:00')",
-            (plan_id, 9000 + attempt_count),
-        )
-        db.execute(
-            "insert into email_actions ("
-            "action_id, action_plan_id, classification_id, account_id, action_type, "
-            "parameters_json, config_version, status, attempt_count, next_attempt_at, "
-            "provider_operation, provider_target, error, created_at, updated_at) "
-            "values (?, ?, ?, 'acct', 'move', '{\"target_folder\":\"工作\"}', 'v1', "
-            "'failed', ?, ?, 'READ', 'acct:mid', "
-            "'provider_read_failed:ImapMessageUnavailable', "
-            "'2026-09-16T07:27:13+00:00', '2026-09-16T07:28:28+00:00')",
-            (action_id, plan_id, 9000 + attempt_count, attempt_count, next_attempt_at),
-        )
+    if next_attempt_at:
+        with store._connect() as db:
+            email_store._update_direct_action(
+                db, action_id, {"next_attempt_at": next_attempt_at}
+            )
     return action_id
 
 
@@ -12072,13 +12075,33 @@ def test_status_lists_the_outbox_and_memory_write_queues(tmp_path: Path):
 
     names = [row["name"] for row in audit_web_module._dispatcher_queue_snapshots(store)]
 
+    assert "task_todo_sync_outbox" not in names
     assert "business_task_todo_sync_outbox" in names
     assert "task_memory_write" in names
 
 
+def test_status_keeps_historical_todo_link_out_of_queue_summary(tmp_path: Path):
+    store = AutoReplyStore(tmp_path / "worker.sqlite3")
+    seed_legacy_todo_link(store, work_todo_id=1, status="failed", last_error="historical failure")
+
+    payload = audit_web_module.build_worker_status_payload(store, include_system_health=False)
+
+    assert all(row["name"] != "DingTalk Todos" for row in payload["queues"])
+    assert all(row["table"] != "work_todo_dingtalk_links" for row in payload["queues"])
+    assert payload["summary"]["queue_count"] == len(payload["queues"])
+    assert payload["summary"]["failed"] == sum(
+        row["failed"] for row in payload["queues"]
+        if not row.get("_summary_projection", False)
+    )
+    assert "business_task_todo_sync_outbox" in {
+        row["name"] for row in payload["dispatcher_queues"]
+    }
+    assert store.list_work_todo_dingtalk_links(work_todo_id=1)[0].last_error == "historical failure"
+
+
 def test_attention_skips_all_typed_unsubscribe_failures(tmp_path: Path):
-    # All typed unsubscribe failures stay failed (History keeps them), but are
-    # not manager Attention items regardless of whether the error is external.
+    # Preserve deployed upstream 53c72dc2e: failed unsubscribe operations remain
+    # in History and their own recovery surface, outside manager Attention.
     store = AutoReplyStore(tmp_path / "worker.sqlite3")
     errors = {
         "external-form": "email_unsubscribe_browser_failed: category=form_response_rejected",
@@ -12103,10 +12126,7 @@ def test_attention_skips_all_typed_unsubscribe_failures(tmp_path: Path):
             channel="email",
         )
         with store._connect() as db:
-            db.execute(
-                "update tasks set status='failed', error=? where record_type='reply_tasks' and id=?",
-                (error, task.id),
-            )
+            _set_task_fields(db, "reply_tasks", task.id, {"status": "failed", "error": error})
         ids[name] = str(task.id)
         # The direct unsubscribe path also records a failed Attempt for the run.
         store.record_reply_attempt(
@@ -12127,13 +12147,13 @@ def test_attention_skips_all_typed_unsubscribe_failures(tmp_path: Path):
     attempt_titles = [row for row in rows if row["category"] == "Reply"]
 
     assert listed == set()
-    # The task records and failed Attempts remain intact; the Attention
-    # projection excludes every typed unsubscribe task.
+    # Task records and Attempts remain intact; all typed unsubscribe failures
+    # stay outside manager Attention, including service/runtime failures.
     assert attempt_titles == []
     assert store.count_current_unresolved_problem_attempts() == 2
     with store._connect() as db:
         assert db.execute(
-            "select count(*) from tasks where record_type='reply_tasks' and status='failed'"
+            f"select count(*) from ({task20_projection('reply_tasks')}) where status='failed'"
         ).fetchone()[0] == 7
 
 
@@ -12150,19 +12170,17 @@ def test_attention_skips_an_expired_dingteam_okr_login(tmp_path: Path):
         trigger_text="帮我审核 OKR",
     )
     with store._connect() as db:
-        db.execute(
-            "update tasks set status='failed', "
-            "error='okr_headless_session_expired: dedicated Dingteam session requires login' "
-            "where record_type='reply_tasks' and id=?",
-            (task.id,),
-        )
+        _set_task_fields(db, "reply_tasks", task.id, {
+            "status": "failed",
+            "error": "okr_headless_session_expired: dedicated Dingteam session requires login",
+        })
 
     rows = audit_web_module._queue_attention_rows(store)
 
     assert not any(row["category"] in {"Reply task", "Reply"} for row in rows)
     with store._connect() as db:
         assert db.execute(
-            "select count(*) from tasks where record_type='reply_tasks' and status='failed'"
+            f"select count(*) from ({task20_projection('reply_tasks')}) where status='failed'"
         ).fetchone()[0] == 1
 
 
@@ -12190,22 +12208,23 @@ def test_attention_keeps_old_scheduled_failure_in_history_after_later_success(
         trigger_text="Run daily report",
         channel="scheduled",
     )
+    scheduled_task = store.create_scheduled_task(
+        name="Daily report",
+        prompt="p",
+        cron_expression="0 * * * *",
+        timezone_name="UTC",
+        runtime_id="codex_cli",
+        enabled=True,
+    )
     with store._connect() as db:
         from app.scheduled_config_storage import intern_scheduled_config
 
+        db.execute("begin immediate")
         snapshot_id = intern_scheduled_config(db, '{}')
-        db.execute(
-            "insert into scheduled_tasks (id, name, prompt, cron_expression, "
-            "timezone, runtime_id, enabled) values "
-            "(14, 'Daily report', 'p', '0 * * * *', 'UTC', '', 1)"
-        )
-        from app.scheduled_config_storage import intern_scheduled_config
-
-        snapshot_id = intern_scheduled_config(db, "{}")
         for run_id, event_id, task_id in ((100, "event-old", old.id), (101, "event-new", new.id)):
             insert_run(db, 'scheduled_task_runs', {
                 'event_id': event_id,
-                'scheduled_task_id': 14,
+                'scheduled_task_id': scheduled_task.id,
                 'trigger_kind': 'manual',
                 'scheduled_for': f"2026-09-28T{run_id-87:02d}:00:00Z",
                 'first_scheduled_for': f"2026-09-28T{run_id-87:02d}:00:00Z",
@@ -12215,22 +12234,22 @@ def test_attention_keeps_old_scheduled_failure_in_history_after_later_success(
                 'execution_kind': 'reply_task',
                 'execution_id': str(task_id),
             })
-        db.execute("update tasks set status='failed', error='codex_result_missing' where record_type='reply_tasks' and id=?", (task_physical_id(db, 'reply_tasks', old.id),))
-        db.execute("update tasks set status='done' where record_type='reply_tasks' and id=?", (task_physical_id(db, 'reply_tasks', new.id),))
-        db.execute(
-            "insert into errors (conversation_id, message_id, kind, detail) "
-            "values ('scheduled-task-run:100', null, 'read_recent_messages_rerun', 'invalid conversation')"
-        )
-        db.execute(
-            "insert into errors (conversation_id, message_id, kind, detail) "
-            "values ('scheduled-task-run:100', 'event-old', 'list_messages_by_ids_rerun', 'invalid message')"
-        )
+        _set_task_fields(db, "reply_tasks", old.id, {"status": "failed", "error": "codex_result_missing"})
+        _set_task_fields(db, "reply_tasks", new.id, {"status": "done"})
+        insert_error_action(db, {"conversation_id": "scheduled-task-run:100",
+                                 "message_id": None, "kind": "read_recent_messages_rerun",
+                                 "detail": "invalid conversation"})
+        insert_error_action(db, {"conversation_id": "scheduled-task-run:100",
+                                 "message_id": "event-old", "kind": "list_messages_by_ids_rerun",
+                                 "detail": "invalid message"})
     rows = audit_web_module._queue_attention_rows(store)
     assert not any(row["category"] == "Reply task" and row["id"] == str(old.id) for row in rows)
     assert not any(row["category"] == "Service error" for row in rows)
     with store._connect() as db:
-        assert db.execute("select status from tasks where record_type='reply_tasks' and id=?", (task_physical_id(db, 'reply_tasks', old.id),)).fetchone()[0] == "failed"
-        assert db.execute("select count(*) from errors where resolved_at='' ").fetchone()[0] == 2
+        assert db.execute(
+            f"select status from ({task20_projection('reply_tasks')}) where id=?", (old.id,)
+        ).fetchone()[0] == "failed"
+        assert db.execute(f"select count(*) from ({error_projection(unresolved=True)})").fetchone()[0] == 2
 
 
 def test_attention_projects_only_latest_live_task_agent_error(tmp_path: Path):
@@ -12239,26 +12258,21 @@ def test_attention_projects_only_latest_live_task_agent_error(tmp_path: Path):
         source_type="ai_minutes", source_ref="minutes:1", payload_json='{"summary":"work"}'
     )
     with store._connect() as db:
-        db.execute(
-            "insert into errors (conversation_id, message_id, kind, detail) "
-            "values ('work_summary_input', ?, 'task_agent', 'old')",
-            (str(input_id),),
-        )
-        db.execute(
-            "insert into errors (conversation_id, message_id, kind, detail) "
-            "values ('work_summary_input', ?, 'task_agent', 'latest')",
-            (str(input_id),),
-        )
+        insert_error_action(db, {"conversation_id": "work_summary_input",
+                                 "message_id": str(input_id), "kind": "task_agent",
+                                 "detail": "old"})
+        insert_error_action(db, {"conversation_id": "work_summary_input",
+                                 "message_id": str(input_id), "kind": "task_agent",
+                                 "detail": "latest"})
     rows = audit_web_module._queue_attention_rows(store)
     task_errors = [row for row in rows if row.get("root_cause") == "task_agent"]
     assert len(task_errors) == 1
     assert task_errors[0]["error"] == "latest"
     with store._connect() as db:
-        db.execute(
-            "update tasks set status='done', updated_at=current_timestamp "
-            f"where record_type='work_summary_inputs' and id={task_id_expression('work_summary_inputs', '?')}",
-            (input_id,),
-        )
+        _set_task_fields(db, "work_summary_inputs", input_id, {
+            "status": "done",
+            "updated_at": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
+        })
     assert not any(row.get("root_cause") == "task_agent" for row in audit_web_module._queue_attention_rows(store))
 
 
@@ -12339,16 +12353,19 @@ def test_work_item_attention_codec_preserves_failed_filter_order_limit_and_store
         assert isinstance(encoded, bytes)
         input_id = store.enqueue_work_summary_input("local_file", ref, payload)
         ids.append(input_id)
-        with store._connect() as db:
+        parts = task8_set_parts(
+            "work_summary_inputs",
+            {
+                "payload_json": encoded if stored_as_blob else payload,
+                "status": status,
+                "updated_at": f"2026-10-11 03:0{index}:00",
+            },
+        )
+        with store._immediate_write_transaction() as db:
             db.execute(
-                "update tasks set payload_json=?,status=?,updated_at=? "
-                f"where record_type='work_summary_inputs' and id={task_id_expression('work_summary_inputs', '?')}",
-                (
-                    encoded if stored_as_blob else payload,
-                    status,
-                    f"2026-10-11 03:0{index}:00",
-                    input_id,
-                ),
+                f"update tasks set {parts.sql} "
+                "where record_type='work_summary_inputs' and legacy_key=?",
+                (*parts.parameters, str(input_id)),
             )
     with store._connect() as db:
         before = [
@@ -12367,3 +12384,26 @@ def test_work_item_attention_codec_preserves_failed_filter_order_limit_and_store
             tuple(row)
             for row in db.execute(f"select * from ({WORK_SUMMARY_INPUT_SQL}) order by id")
         ] == before
+
+
+def test_attention_typed_unsubscribe_without_attempt_preserves_failed_record(tmp_path):
+    store = AutoReplyStore(tmp_path / "worker.sqlite3")
+    tasks = []
+    for action in ("unsubscribe", "reply"):
+        task = store.ensure_reply_task(
+            conversation_id=f"email-thread:{action}", conversation_title="Email action",
+            single_chat=False, trigger_message_id=f"email-action:{action}",
+            trigger_create_time="2026-10-18T00:00:00Z", trigger_sender="sender",
+            trigger_text="Action", channel="email",
+            trigger_message_json=json.dumps({"schema":"email_agent_action.v1", "action_type":action}),
+        )
+        with store._connect() as db:
+            _set_task_fields(db, "reply_tasks", task.id,
+                             {"status":"failed", "error":"unsubscribe_operation_rejected:ValueError"})
+        tasks.append(task)
+    rows = audit_web_module._queue_attention_rows(store)
+    assert {row["id"] for row in rows if row["category"] == "Reply task"} == {str(tasks[1].id)}
+    for task in tasks:
+        retained = store.get_reply_task(task.id)
+        assert retained.status == "failed"
+        assert retained.error == "unsubscribe_operation_rejected:ValueError"

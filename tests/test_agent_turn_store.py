@@ -141,6 +141,73 @@ def test_claude_consumer_session_is_route_scoped_and_survives_contract_revision(
     ) == "claude-session"
 
 
+def test_failed_compact_attempt_retries_same_session_with_full_input(tmp_path):
+    store = AutoReplyStore(tmp_path / "turns.sqlite3")
+    task = _task(store)
+    store.upsert_conversation_runtime_session(
+        task.conversation_id, "codex_oauth", "session-a", "contract-v1"
+    )
+    config = load_runtime_config({"CEO_AGENT_RUNTIME_ROUTES": "codex_oauth"})
+    route = config.routes[0]
+
+    class Router:
+        def first_route_decision(self, **_kwargs):
+            return RuntimeRouteDecision(route, False, "eligible_route")
+
+        def next_route(self, **_kwargs):
+            raise AssertionError("the first provider-full failure retries the same route")
+
+    wire_result = {
+        "outcome": "no_action", "summary": "Nothing to do.", "proposal": None,
+        "decision_options": [], "risk": "low", "confidence": 1.0,
+        "rule_coverage": 1.0, "information_completeness": 1.0,
+        "error_code": "", "error_retryable": False,
+        "error_authorization_required": False, "durable_memories": [],
+    }
+    success = "\n".join((
+        json.dumps({"type": "thread.started", "thread_id": "session-a"}),
+        json.dumps({"type": "item.completed", "item": {
+            "type": "agent_message", "text": json.dumps(wire_result),
+        }}),
+    ))
+    submitted_prompts = []
+    waits = []
+
+    def executor(_command, *, prompt, on_stdout_line, **_kwargs):
+        submitted_prompts.append(prompt)
+        if len(submitted_prompts) == 1:
+            return ProcessRunResult(1, "", "Selected model is at capacity.")
+        for line in success.splitlines():
+            on_stdout_line(line)
+        return ProcessRunResult(0, success, "")
+
+    run = _claim_consumer(store, task).run
+    result = AgentTurnProcess(
+        store=store, task=task, workspace=tmp_path, owner="consumer",
+        executor=executor, runtime_config=config, runtime_router=Router(),
+        codex_adapter=CodexRuntimeAdapter(tmp_path, config, codex_bin="codex-test"),
+        sleep=waits.append,
+    ).execute(
+        run=run, prompt="full source facts", session_id="session-a",
+        developer_instructions="Return the exact schema.",
+        configure_command=lambda _command: None,
+        parse_result=parse_consumer_agent_wire_result,
+        persist_conversation_session=False,
+        session_scoped_prompt={
+            "route_name": "codex_oauth", "session_id": "session-a",
+            "prompt": "feedback only",
+            "invocation_facts": {},
+        },
+    )
+
+    assert result.result.outcome.value == "no_action"
+    assert submitted_prompts == ["feedback only", "full source facts"]
+    assert waits == [10.0]
+    assert [attempt.source_session_id for attempt in store.list_agent_runtime_attempts(run.id)] == [
+        "session-a", "session-a",
+    ]
+
+
 def test_resumed_attempt_can_fail_before_transcript_end_is_recorded(tmp_path):
     store = AutoReplyStore(tmp_path / "turns.sqlite3")
     task = _task(store)
@@ -255,13 +322,9 @@ def test_legacy_claude_session_resumes_but_malformed_session_is_rejected(tmp_pat
         requested_session_id=None,
         conversation_contract_hash="current-contract",
     ) == "legacy-claude-session"
-    with store._connect() as db:
-        db.execute(
-            "update conversation_runtime_sessions set session_id='--malformed', "
-            "contract_hash='current-contract' where conversation_id=? "
-            "and route_name='claude_api'",
-            (task.conversation_id,),
-        )
+    store.upsert_conversation_runtime_session(
+        task.conversation_id, "claude_api", "--malformed", "current-contract"
+    )
 
     with pytest.raises(ValueError, match="Claude session_id"):
         process._session_for_route(
@@ -1256,6 +1319,7 @@ def test_consumer_terminal_result_slot_failure_rolls_back_and_store_retry_is_ato
                 "label": "Approve",
                 "instruction": "Approve the reviewed option.",
                 "consequence": "The reviewed plan may continue.",
+                "applies_to": "task_class",
                 "plan": {
                     "objective": "Notify the applicant about this instance",
                     "actions": [{
@@ -1273,6 +1337,7 @@ def test_consumer_terminal_result_slot_failure_rolls_back_and_store_retry_is_ato
                 "label": "Hold",
                 "instruction": "Hold the reviewed option.",
                 "consequence": "No further action is taken.",
+                "applies_to": "task_class",
                 "terminal_outcome": "skipped",
                 "reason": "This current instance is already resolved",
             },

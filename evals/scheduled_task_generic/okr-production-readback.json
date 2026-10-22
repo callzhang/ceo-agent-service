@@ -1,0 +1,412 @@
+{
+  "observed_at": "2026-10-20T02:34:03.250601+00:00",
+  "scope": "Historical real publication readback; not new Agent natural-run acceptance",
+  "natural_command_completion_facts": [
+    {
+      "id": 386728,
+      "scheduled_task_id": 1,
+      "scheduled_for": "2026-10-20T02:30:00+00:00",
+      "dispatch_status": "dispatched",
+      "result_summary": "produce-once queued=0"
+    },
+    {
+      "id": 386729,
+      "scheduled_task_id": 2,
+      "scheduled_for": "2026-10-20T02:30:00+00:00",
+      "dispatch_status": "dispatched",
+      "result_summary": "scan-meetings-once queued=0"
+    },
+    {
+      "id": 386730,
+      "scheduled_task_id": 3,
+      "scheduled_for": "2026-10-20T02:30:00+00:00",
+      "dispatch_status": "dispatched",
+      "result_summary": "wechat produce-once queued=0"
+    },
+    {
+      "id": 386413,
+      "scheduled_task_id": 4,
+      "scheduled_for": "2026-10-20T01:00:00+00:00",
+      "dispatch_status": "dispatched",
+      "result_summary": "scan-oa-approvals queued=4"
+    },
+    {
+      "id": 386355,
+      "scheduled_task_id": 8,
+      "scheduled_for": "2026-10-20T00:30:00+00:00",
+      "dispatch_status": "dispatched",
+      "result_summary": "recover-recent-messages queued=0 dingtalk_todos_closed=0"
+    },
+    {
+      "id": 386727,
+      "scheduled_task_id": 9,
+      "scheduled_for": "2026-10-20T02:29:10+00:00",
+      "dispatch_status": "dispatched",
+      "result_summary": "calendar-invites-once queued=0"
+    },
+    {
+      "id": 386732,
+      "scheduled_task_id": 10,
+      "scheduled_for": "2026-10-20T02:30:00+00:00",
+      "dispatch_status": "dispatched",
+      "result_summary": "email-message-check-once accounts=2 discovered=0 failures=0"
+    }
+  ],
+  "okr_readbacks": [
+    {
+      "node_sha256": "69c669b7e283d07b65cb12f19e93ada0b203387abe37c0fcf13ff0b3651bac25",
+      "read_ok": true,
+      "chars": 17578,
+      "sha256": "616cf1d33e64e183ba2fa1e5d11d3e9c9ffdddfaf158eeeaf8cf3988d85e9751"
+    },
+    {
+      "node_sha256": "512ed593f411ab27c4958d57c7778cd03343bf40374728b7881d0c8ac9f48371",
+      "read_ok": true,
+      "chars": 10020,
+      "sha256": "615154eec8c10386fd3c6903992d6dbbd2491a6eb0b8c0fcd65633470f843756"
+    },
+    {
+      "node_sha256": "cf1708d565cb8c927db724c3b5e09f3da9fcb06cb47bd9747f44bcd480ea0acb",
+      "read_ok": true,
+      "chars": 9453,
+      "sha256": "040caff59dea0fb1ccfbdc238234044ffc8a3931920020e2cf1372a63da22592"
+    },
+    {
+      "node_sha256": "4badcdff15a4e02a314c5216668e18eba3dd6b35292c1855666e41548974287d",
+      "read_ok": true,
+      "chars": 8891,
+      "sha256": "ec7428d33cacd4c27062f96733f287ca7ccc551dfcc2db38373dfd80ae719fee"
+    },
+    {
+      "node_sha256": "15a4222074c3f25cb9e96f14ca9075c10d0f211c105565c47ebb4d431395bf9f",
+      "read_ok": true,
+      "chars": 289,
+      "sha256": "305b9976be17d19cfe4a130c7ace722c2edaade1ec57716f088714d6dc6d9f0e"
+    },
+    {
+      "node_sha256": "a36cac8ab75abfc1e659277dd31f2f8baf71fa0690a8ca5c281bac49b18af42e",
+      "read_ok": true,
+      "chars": 12686,
+      "sha256": "9bb71648059e027d40ed21fd90a46bc1efe01dddbc121f1346b9de0e57b7623e"
+    },
+    {
+      "node_sha256": "55ad89757982522c324d05934c044ac1b1d17196bc74011b7e5d5f5586adda77",
+      "read_ok": true,
+      "chars": 13113,
+      "sha256": "85c5192a72bd9fcf562ccf363a4c6d20616e470ee4c636dd9c1bdbe76438a83b"
+    },
+    {
+      "node_sha256": "35b3d4d9fa63f04b718697709383c232e43a4627d010ca1d3f83d7c2a2886a75",
+      "read_ok": true,
+      "chars": 278,
+      "sha256": "6c656fe4f4704e5ecba915473da554aa308b98b1408e464e4e1ac13fd72abc02"
+    },
+    {
+      "node_sha256": "a8d29b9667e66cf223113922c60d5bc7dfb018b17f877be9684005a12f3196f4",
+      "read_ok": true,
+      "chars": 6050,
+      "sha256": "a4351c6ecacfe1e5186388a39e17c43968ebfe6776f32ccce37ba4d54d63dd97"
+    },
+    {
+      "node_sha256": "3a2913e8e63b7615d2565079b00d13b3ed5c0c71f3f3a56126664fbf87c1cbd5",
+      "read_ok": true,
+      "chars": 10106,
+      "sha256": "23c72a92522b0e7b8069ac6a81d9579198f5cfd990b2f4907e87a3b25f18a965"
+    },
+    {
+      "node_sha256": "29e7e3c03d32141e6fd8af9b551b9501c4304af7ac32b8ec3fa23c2b2754c95b",
+      "read_ok": true,
+      "chars": 5238,
+      "sha256": "b3738a8db1c257c5a079db78e1f4166ec4662f15c697e4547d2ed56678a5da2f"
+    },
+    {
+      "node_sha256": "c09b198dcd7b29d0a2bcb3ef9e16f36494618d58caa2d1e1ce03965ae0f38a39",
+      "read_ok": true,
+      "chars": 8926,
+      "sha256": "740eb27c9830ab7bcfa951c5dadad64b6ab476d8642ce4b0e54d7cb0738e38fe"
+    },
+    {
+      "node_sha256": "7806539d4383dd217ad8b5132232ef9f7b3391234bb44632c83f741482305851",
+      "read_ok": true,
+      "chars": 272,
+      "sha256": "d79b87590bcd2a4c86aad1620d2d928e33c278a1ae3bd16de330960bf4fad9b6"
+    },
+    {
+      "node_sha256": "df2915aa0bde788f5d5d884944659b0f5aab8f87b1530d85a9002dcabbe5592d",
+      "read_ok": true,
+      "chars": 10265,
+      "sha256": "bb0c911281a50fb8d27fa96b57e49e90e05e94be1b9dac00f07d9c439e80c257"
+    },
+    {
+      "node_sha256": "be8844ac294023d7fe85dc07b9302dbeaade244d85982dcb95ca39a04732d1fa",
+      "read_ok": true,
+      "chars": 300,
+      "sha256": "13875f2b96b013a05a0045655b005e822eb865a1410f84657693146e7c4052c4"
+    },
+    {
+      "node_sha256": "c1d854f1d515b7dd4e83c109c9da5601d730788383531c3f7c83bc353aeffc13",
+      "read_ok": true,
+      "chars": 15167,
+      "sha256": "615bea4b3ed2327d2c239937848c180d2cc63d5e07621c36d1ae50a55805e3ce"
+    },
+    {
+      "node_sha256": "072a6f84572875314f77c51d0620271ca55cb7b336be8eddba50e61f7b6fd7e3",
+      "read_ok": true,
+      "chars": 305,
+      "sha256": "367792464be082304ed99b27c7e1d75bfc3f13b8ff317fb85b24c074193a7cff"
+    },
+    {
+      "node_sha256": "a71af2c1995ceb8e56e64c501d899537d556f564a7a3141efb51d1d7f9c46bb7",
+      "read_ok": true,
+      "chars": 13640,
+      "sha256": "c8062cdc6358a74fe60e5a9959ba628d2880086da08ae2d0f6627d826d0558cc"
+    },
+    {
+      "node_sha256": "86126cd8a39f3a7c661842371e2ed1b50f4c1c8001375c5a58303c593334ad61",
+      "read_ok": true,
+      "chars": 10714,
+      "sha256": "813af988f7ad397146a8cefb29518f346b03ccae1b3250a5000ddc7cd6cf477d"
+    }
+  ],
+  "okr_sent_status": "SUCCESS",
+  "weekly_exact_jsonml_readback": true,
+  "weekly_jsonml_sha256": "bbae89dd1a84dfdbccf03af696fc732c215ca88f6207cb6b3a66ac9aa63bae11",
+  "weekly_revision": "1",
+  "daily": {
+    "scheduled_run_id": 381115,
+    "attempt_id": 15703,
+    "task_version": 29,
+    "skill_revision": 132,
+    "node_id": "amweZ92PV6xpLPY5sRDzBlBL8xEKBD6p",
+    "revision": "1",
+    "complete_readback": true,
+    "submitted_visible_characters": 4402,
+    "readback_visible_characters": 4402,
+    "visible_text_equal_ignoring_whitespace": true,
+    "jsonml_sha256": "22d5fea77b2a9550a47d57508d9afb91b30390eb1f31215e3bcb281868deee52",
+    "markdown_byte_equality": false,
+    "original_tool_error_preserved": "doc_write_verification_failed",
+    "system_execution_id": 324,
+    "sent_status": "SUCCESS"
+  },
+  "new_natural_runs": [
+    {
+      "observed_at": "2026-10-21T14:04:34Z",
+      "scope": "Post-deploy natural CEO daily report; no manual replay",
+      "production_commit": "effc38f936b418f3e4957542123590f00ef0e1ef",
+      "production_pid": 63212,
+      "healthz_ok": true,
+      "scheduled_task_id": 14,
+      "scheduled_task_run_id": 389818,
+      "attempt_id": 15859,
+      "reply_task_id": 416660,
+      "trigger_kind": "scheduled",
+      "scheduled_for": "2026-10-21T13:00:00Z",
+      "dispatch_status": "dispatched",
+      "terminal_status": "done",
+      "task_config_version": 40,
+      "task_cron_expression": "0 0 21 * * *",
+      "task_timezone_name": "Asia/Shanghai",
+      "managed_skill": "ceo-daily-report",
+      "managed_skill_revision_id": 203,
+      "consumer_run_id": 389822,
+      "consumer_status": "completed",
+      "audit_run_id": 389848,
+      "audit_status": "completed_approve",
+      "revision_count": 0,
+      "document": {
+        "provider_node_id": "AR4GpnMqJzEZb75aibjmGQyBVKe0xjE3",
+        "title": "CEO 每日总结 2026-10-21",
+        "final_revision": 1,
+        "final_report_chars": 3310,
+        "final_report_sha256": "a6f83ad0fd28b33f2263dfd6a0e79e105a3fd9177a927580b9120a53e6933406",
+        "post_write_provider_readback": "complete_markdown",
+        "provider_readback_chars": 3311,
+        "provider_readback_sha256": "b4d785ed79742bf0ccb0dc0828204d4ecc11e62b2c5683b3aa013c0366e97998",
+        "only_difference": "provider terminal newline",
+        "equal_after_terminal_newline_normalization": true,
+        "complete_jsonml_readback_before_final_update": true
+      },
+      "notification": {
+        "system_execution_id": 410,
+        "action_count": 1,
+        "verified_action_count": 1,
+        "persistent_receipt_state": "sent",
+        "provider_status_query": "SUCCESS",
+        "provider_message_identity_returned": true
+      },
+      "trajectory": {
+        "consumer_native_session_id": "01a15e8d-5c40-7783-aefa-69d770d91aa8",
+        "audit_native_session_id": "01a15e93-11e1-7021-9982-e783c1b97634",
+        "consumer_event_count": 267,
+        "audit_event_count": 77,
+        "full_consumer_and_audit_trajectories_read": true,
+        "transient_unknown_activity_source_error_retried_with_supported_sources": true
+      },
+      "catchup_branch_exercised": false,
+      "report_body_or_message_receipt_token_included": false
+    }
+  ],
+  "okr_real_children": {
+    "parent_node_id": "m9bN7RYPWdbednwAiRewoykjJZd1wyK0",
+    "count": 18,
+    "all_pages_complete": true,
+    "has_more": false,
+    "exact_linked_appendix_set": true,
+    "node_set_sha256": "7dd1d817f87f4d2caae013b98ed3f691b6a45d090dd5b0d5f64b6af02848da64"
+  },
+  "timezone_schedule_readback": {
+    "observed_at": "2026-10-21T21:05:24Z",
+    "production_commit": "17da0fe46520d738c724b09bfd3d0a72c8c88e74",
+    "service_pid": 64005,
+    "healthz_ok": true,
+    "scheduled_task_count": 14,
+    "tasks": [
+      {
+        "id": 14,
+        "migration_key": "ceo-daily-report-daily-v1",
+        "version": 41,
+        "enabled": true,
+        "cron_expression": "0 0 6 * * *",
+        "timezone_name": "America/Los_Angeles",
+        "next_run_at": "2026-10-22T13:00:00Z",
+        "latest_run_id": 389818,
+        "latest_run_snapshot_version": 40
+      },
+      {
+        "id": 13,
+        "migration_key": "ceo-weekly-report-saturday-v1",
+        "version": 35,
+        "enabled": true,
+        "cron_expression": "0 0 12 * * 6",
+        "timezone_name": "America/Los_Angeles",
+        "next_run_at": "2026-10-24T19:00:00Z",
+        "latest_run_id": 379485,
+        "latest_run_snapshot_version": 25
+      },
+      {
+        "id": 6,
+        "migration_key": "weekly-okr-report-sunday-v1",
+        "version": 13,
+        "enabled": true,
+        "cron_expression": "0 0 3 * * 0",
+        "timezone_name": "America/Los_Angeles",
+        "next_run_at": "2026-10-25T10:00:00Z",
+        "latest_run_id": 379123,
+        "latest_run_snapshot_version": 5
+      }
+    ],
+    "reseed_preserved_ids_and_enabled_state": true,
+    "historical_latest_run_snapshots_unchanged": true,
+    "no_report_replayed_or_created_by_timezone_change": true,
+    "console_readback": {
+      "pending_or_processing_queue_items": 1,
+      "attention_groups": 12,
+      "attention_records_total": 13,
+      "history_endpoint_page_size": 100,
+      "history_endpoint_reported_total": 1334
+    },
+    "body_or_message_receipt_token_included": false,
+    "supervisor_pid": 64002
+  },
+  "manual_authorized_run_391405_progress": {
+    "observed_at": "2026-10-21T23:56:02Z",
+    "scope": "User-authorized manual OKR report run; not natural scheduled-run acceptance",
+    "scheduled_task_run_id": 391405,
+    "reply_task_id": 416701,
+    "task_status": "failed",
+    "task_error_code": "execution_failed",
+    "task_snapshot": {
+      "task_version": 14,
+      "managed_skill_revision_id": 209
+    },
+    "consumer_runs": [
+      {
+        "id": 391423,
+        "revision": 0,
+        "turn_attempt": 0,
+        "status": "failed",
+        "error_code": "analysis_incomplete"
+      },
+      {
+        "id": 391492,
+        "revision": 0,
+        "turn_attempt": 1,
+        "status": "completed",
+        "analysis_failure_members": 14,
+        "goals_missing_members": 4
+      },
+      {
+        "id": 391505,
+        "revision": 1,
+        "turn_attempt": 0,
+        "status": "failed",
+        "error_code": "analysis_incomplete"
+      },
+      {
+        "id": 391507,
+        "revision": 1,
+        "turn_attempt": 1,
+        "status": "failed",
+        "error_code": "analysis_incomplete"
+      },
+      {
+        "id": 391512,
+        "revision": 1,
+        "turn_attempt": 2,
+        "status": "failed",
+        "error_code": "analysis_incomplete"
+      },
+      {
+        "id": 391528,
+        "revision": 1,
+        "turn_attempt": 3,
+        "status": "failed",
+        "error_code": "execution_failed",
+        "started_at": "2026-10-21T23:44:02Z",
+        "completed_at": "2026-10-21T23:54:27Z",
+        "analysis_files_updated": 0,
+        "report_write": false,
+        "group_message_sent": false
+      }
+    ],
+    "audit_runs": [
+      {
+        "id": 391503,
+        "revision": 0,
+        "status": "completed",
+        "outcome": "return"
+      }
+    ],
+    "confirmed_root_causes": [
+      "Actual Consumer behavior failure: revisions repeated the 18-member source collection and limited broad independent searches, then ended before completing per-KR analysis for the 14 members with goals. The Audit return was valid; no evaluator defect found.",
+      "The Skill prepare script marked any same-source-digest analysis file reusable, including analysis_failure placeholders, so a retry could skip incomplete members."
+    ],
+    "external_effects": {
+      "draft_report_documents_written_by_run_391492": true,
+      "audit_approved_final_candidate": false,
+      "run_391528_wrote_documents": false,
+      "group_message_sent": false,
+      "notification_receipt_exists": false
+    },
+    "fix_candidate": {
+      "managed_skill_version": 5,
+      "changes": [
+        "resume from same-run artifacts and Audit checklist",
+        "preserve completed manager analyses",
+        "target each KR with independent source searches and explain evidence gaps under existing rubric",
+        "retry incomplete work through existing bounded lifecycle",
+        "exclude analysis_failure placeholder from analysis reuse"
+      ]
+    },
+    "verification": {
+      "focused_evaluation": "35 passed, 1 unrelated release-precondition test deselected",
+      "ruff": "passed",
+      "git_diff_check": "passed",
+      "skill_and_script_release_hashes": "passed"
+    },
+    "fix_publication": "not yet published or deployed",
+    "natural_scheduled_acceptance": false,
+    "report_body_or_message_receipt_token_included": false
+  }
+}

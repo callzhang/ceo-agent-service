@@ -1,12 +1,11 @@
 """Native records for Task domain fixtures, never production provider receipts."""
 import json
-import inspect
 from uuid import uuid4
 
 import pytest
 
 from app.run_storage import insert_run
-from app.task_storage import TASK_AGENT_RUN_SQL
+from app.store import TASK_LOGICAL_RUN_SQL
 from app.native_standalone import latest_task_ref
 from app import native_trajectory
 from app.store import AutoReplyStore
@@ -44,63 +43,56 @@ def _message(decision):
     }})
 
 
+def record_task_fixture_run(store, summary_input_id, *, decision_json, codex_session_id=""):
+    run_id = store.create_logical_run("task_agent_runs", summary_input_id,
+                                       codex_session_id=codex_session_id)
+    store._write_test_native_decision(run_id, decision_json)
+    return run_id
+
+
+def apply_task_fixture_decision(store, **kwargs):
+    """Seed a real typed input for direct domain-unit fixtures, then its native output."""
+    from app.task_agent import apply_task_agent_decision
+    from app.task8_storage import task8_insert_parts
+    summary_id = kwargs["summary_input_id"]
+    item = kwargs["work_item"]
+    if kwargs.get("record_run", True) and kwargs.get("_db") is None:
+        if store.get_work_summary_input(summary_id) is None:
+            with store._connect() as db:
+                parts = task8_insert_parts("work_summary_inputs", {
+                    "legacy_key": summary_id, "source_type": item.source.type.value,
+                    "source_ref": item.source.ref + ":fixture:" + str(summary_id),
+                    "payload_json": item.model_dump_json(),
+                })
+                db.execute(f"insert into tasks ({parts.columns}) values ({parts.values})", parts.parameters)
+    result = apply_task_agent_decision(store, **kwargs)
+    if kwargs.get("record_run", True) and kwargs.get("_db") is None:
+        with store._connect() as db:
+            run = db.execute(f"select max(id) from ({TASK_LOGICAL_RUN_SQL}) where summary_input_id=?", (summary_id,)).fetchone()[0]
+        store._write_test_native_decision(run, kwargs["decision"].model_dump_json())
+    return result
+
+
 @pytest.fixture(autouse=True)
 def task_native_records(tmp_path, monkeypatch):
     root = tmp_path / "task-native"
     root.mkdir()
-    monkeypatch.setenv("CODEX_HOME", str(root))
     paths = {}
+    monkeypatch.setattr(native_trajectory, "find_codex_session_path", lambda session_id, **_kwargs: paths.get(session_id))
 
-    def native_path(session_id, **_kwargs):
-        return paths.get(session_id)
-
-    monkeypatch.setattr(native_trajectory, "find_codex_session_path", native_path)
-    original = AutoReplyStore.record_task_agent_run
-    original_finish = AutoReplyStore.finish_task_agent_run
-
-    def capture(store, run_id, body, borrowed_db=None):
-        # Historical domain fixtures are already terminal; seed their native
-        # reference rather than reopening the parent through a runtime claim.
-        with store._optional_connection(borrowed_db) as db:
-            if latest_task_ref(db, run_id) is not None:
-                return
-            assert db.execute(
-                f"select decision_json from ({TASK_AGENT_RUN_SQL}) where id=?", (run_id,),
-            ).fetchone()[0] == "{}"
+    def capture(store, run_id, body):
+        # Explicit fixture output only: a missing fixture result is not replaced
+        # with an empty candidate or an invented completed invocation.
+        with store._connect() as db:
             session = str(uuid4())
             path = root / f"{session}.jsonl"
             path.write_text(_message(json.loads(body)) + "\n")
             paths[session] = path
-            insert_run(
-                db, 'agent_runtime_attempts', {
-                    'workload_kind': 'task',
-                    'workload_key': str(run_id),
-                    'attempt_number': 1,
-                    'route_name': 'fixture',
-                    'runtime_kind': 'codex_cli',
-                    'credential_mode': 'local_oauth',
-                    'model': 'fixture',
-                    'session_id': session,
-                    'status': 'completed',
-                    'transcript_start': 0,
-                    'transcript_end': 1,
-                },
-            )
-
-    def record(store, *args, **kwargs):
-        bound = inspect.signature(original).bind(store, *args, **kwargs)
-        bound.apply_defaults()
-        run_id = original(store, *args, **kwargs)
-        capture(store, run_id, bound.arguments["decision_json"])
-        return run_id
-
-    def finish(store, *args, **kwargs):
-        bound = inspect.signature(original_finish).bind(store, *args, **kwargs)
-        bound.apply_defaults()
-        result = original_finish(store, *args, **kwargs)
-        if bound.arguments["status"] == "completed":
-            capture(store, bound.arguments["run_id"], bound.arguments["decision_json"], bound.arguments["_db"])
-        return result
-
-    monkeypatch.setattr(AutoReplyStore, "record_task_agent_run", record)
-    monkeypatch.setattr(AutoReplyStore, "finish_task_agent_run", finish)
+            insert_run(db, "agent_runtime_attempts", {
+                "workload_kind": "task", "workload_key": str(run_id),
+                "attempt_number": 1, "route_name": "fixture", "runtime_kind": "codex_cli",
+                "credential_mode": "local_oauth", "model": "fixture", "session_id": session,
+                "status": "completed", "transcript_start": 0, "transcript_end": 1,
+            })
+    monkeypatch.setattr(AutoReplyStore, "_write_test_native_decision", capture, raising=False)
+    return capture

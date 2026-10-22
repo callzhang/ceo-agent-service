@@ -1,5 +1,8 @@
 """Project service input from immutable native invocation records."""
 
+import json
+from itertools import islice
+
 from app import native_trajectory as native
 
 
@@ -19,8 +22,40 @@ def _codex_text(record, *, role, kind):
     return "\n".join(blocks) if blocks and all(isinstance(text, str) for text in blocks) else None
 
 
-def _codex_input(attempt):
-    path = native.find_codex_session_path(attempt.session_id)
+def codex_session_wire_schema(session_id: str) -> dict[str, object] | None:
+    """Read the service wire schema actually supplied when a Codex session began."""
+    path = native.find_codex_session_path(session_id)
+    if path is None:
+        return None
+    marker = "## Pydantic Wire Contract\n"
+    try:
+        with path.open(encoding="utf-8") as stream:
+            for line in islice(stream, 32):
+                record = json.loads(line)
+                if not isinstance(record, dict):
+                    return None
+                developer = _codex_text(
+                    record, role="developer", kind="generic.developer_instructions"
+                )
+                if developer is None:
+                    continue
+                if marker not in developer:
+                    continue
+                source = developer.split(marker, 1)[1]
+                schema, end = json.JSONDecoder().raw_decode(source)
+                if not isinstance(schema, dict):
+                    return None
+                tail = source[end:]
+                return schema if not tail or tail.startswith("\n\n## ") else None
+    except (OSError, ValueError, TypeError):
+        return None
+    return None
+
+
+def _codex_input(attempt, *, codex_home=None):
+    path = native.find_codex_session_path(
+        attempt.session_id, codex_home=codex_home
+    )
     records = native._codex_turn_records(path, attempt.transcript_start, attempt.transcript_end)
     tasks = [text for record in records
              if (text := _codex_text(record, role="user", kind="user.text")) is not None]
@@ -64,11 +99,11 @@ def _claude_input(attempt):
             "submitted_input": text, "developer_source": "本轮原生 Claude 合并输入"}
 
 
-def read_attempt_input(attempt):
+def read_attempt_input(attempt, *, codex_home=None):
     if not attempt.session_id or attempt.transcript_end <= attempt.transcript_start:
         return None
     if attempt.runtime_kind == "codex_cli":
-        return _codex_input(attempt)
+        return _codex_input(attempt, codex_home=codex_home)
     if attempt.runtime_kind == "claude_cli":
         return _claude_input(attempt)
     return None

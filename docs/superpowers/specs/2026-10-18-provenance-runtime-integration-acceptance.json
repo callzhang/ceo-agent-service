@@ -1,0 +1,12 @@
+{
+  "status": "accepted_local_B_C_D_runtime_integration",
+  "freeze": "docs/superpowers/specs/2026-10-18-provenance-runtime-integration-freeze-r2.json",
+  "freeze_sha256": "b46beb4a14b046952988a9a6cbc0ebe4b0878a4569c3057a83e03f6586d7de9e",
+  "spec_review": "docs/superpowers/specs/2026-10-18-provenance-runtime-integration-spec-review-r2.json",
+  "spec_review_sha256": "3444871c70cc18329bb2a9fc96589b6bc60ab6044f7ebe86e0e913f6b82b5911",
+  "quality_review": "docs/superpowers/specs/2026-10-18-provenance-runtime-integration-quality-review.json",
+  "quality_review_sha256": "06262d7b825dcea311eb574464b5f29faabdbf2b701446d8faa86eea6318ca50",
+  "root_rechecked_all_current_pins": true,
+  "contract": "Fact-only Store returns, exact request-source checks, prepared metadata/link comparisons and same-writer Attention mutation; honest API/frontend availability; sourcebundle exactidentity and currentMinutes backfill.",
+  "limits": "Selected intermediate still retains one authoritative SourceDoc body. No physical E, actual-copy composition for this runtime, refreshed real source availability, fair capacity, native CLI workflow or production deployment acceptance. Exact20 historical original retirement authorized but notexecuted. Full database-redesign goal incomplete."
+}

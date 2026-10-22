@@ -6,6 +6,7 @@ import json
 import sqlite3
 
 import pytest
+from mcp.shared.memory import create_connected_server_and_client_session
 
 from app.agent_cli import build_role_server
 from app.task_storage import create_task_schema, insert_task
@@ -132,6 +133,37 @@ def test_read_task_skill_returns_only_the_frozen_task_material(role, tmp_path):
     }["read_task_skill"]
     assert descriptor.annotations.readOnlyHint is True
     assert descriptor.annotations.destructiveHint is False
+
+
+@pytest.mark.parametrize("role", ["consumer", "audit"])
+def test_read_task_skill_native_response_keeps_one_complete_copy(role, tmp_path, monkeypatch):
+    content = "FROZEN SKILL BODY\n" * 3000
+    expected = {
+        "name": "frozen-skill",
+        "content": content,
+        "sha256": hashlib.sha256(content.encode("utf-8")).hexdigest(),
+    }
+    monkeypatch.setattr("app.agent_cli._current_task_generation", lambda *_: "first")
+    monkeypatch.setattr("app.agent_cli._read_bound_task_skill", lambda *_: expected)
+    server = build_role_server(
+        role,
+        task_id=7,
+        db_path=tmp_path / "unused.sqlite3",
+        execution_generation="first",
+    )
+
+    descriptor = {tool.name: tool for tool in asyncio.run(server.list_tools())}["read_task_skill"]
+    async def call_over_mcp():
+        async with create_connected_server_and_client_session(server) as session:
+            return await session.call_tool("read_task_skill", {"name": "frozen-skill"})
+
+    response = asyncio.run(call_over_mcp())
+
+    assert descriptor.outputSchema is None
+    assert response.structuredContent is None
+    assert len(response.content) == 1
+    assert response.content[0].type == "text"
+    assert json.loads(response.content[0].text) == expected
 
 
 def test_read_task_skill_fails_for_missing_unknown_ambiguous_or_stale_material(

@@ -10,9 +10,13 @@ def decode_catalog(payload):
     rows = list(csv.reader(io.StringIO(text), delimiter='\t'))
     separator = rows.index([])
     roots = dict(rows[:separator])
-    assert rows[separator + 1] == ['Name', 'Root', 'Relative path', 'Description']
+    header = rows[separator + 1]
+    assert header in (['Name', 'Root', 'Relative path'],
+                      ['Name', 'Root', 'Relative path', 'Description'])
     result = []
-    for name, alias, relative, description in rows[separator + 2:]:
+    for row in rows[separator + 2:]:
+        name, alias, relative = row[:3]
+        description = row[3] if len(row) == 4 else ''
         result.append({'name': name, 'path': str(Path(roots[alias]) / relative), 'description': description})
     return result
 
@@ -34,7 +38,10 @@ def test_discovery_transport_preserves_every_metadata_field_without_repeated_pat
     tool = agent_cli.build_role_server('audit')._tool_manager.get_tool('read_skill').fn
     result = tool()
     assert 'catalog' in result
-    assert decode_catalog(result) == sorted(expected, key=lambda row: row['path'])
+    compact_expected = [{**row, 'description': ''} for row in expected]
+    assert decode_catalog(result) == sorted(compact_expected, key=lambda row: row['path'])
+    assert decode_catalog(tool(query='review facts')) == sorted(expected, key=lambda row: row['path'])
+    assert len(result['catalog']) < len(tool(query='review facts')['catalog']) / 2
     assert 'NOT A DIRECTORY BODY' not in result['catalog']
     assert result['catalog'].count(str(roots[0])) == 1
     assert result['catalog'].count(str(roots[1])) == 1

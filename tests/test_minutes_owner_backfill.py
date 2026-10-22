@@ -2,9 +2,8 @@ import json
 
 import pytest
 
-from app.minutes_owner_backfill import backfill_minutes_owners, ownerless_candidate_meetings
+from app.minutes_owner_backfill import WORK_SUMMARY_INPUT_SQL, backfill_minutes_owners, ownerless_candidate_meetings
 from app.store import AutoReplyStore
-from app.task_storage import WORK_SUMMARY_INPUT_SQL
 from app.task_semantic_service import RecordCandidate, SourceSignal, TaskSemanticService, UpdateBusinessTask
 from app.task_semantic_models import BusinessTaskStatus
 
@@ -19,8 +18,12 @@ PARAGRAPHS = [
 
 
 class FakeDws:
-    def __init__(self, *, todos=TODOS, paragraphs=PARAGRAPHS, summary=""):
-        self.todos, self.paragraphs, self.summary, self.reads = todos, paragraphs, summary, []
+    def __init__(self, *, todos=TODOS, paragraphs=PARAGRAPHS, summary="", meeting=MEETING):
+        self.todos, self.paragraphs, self.summary, self.meeting, self.reads = todos, paragraphs, summary, meeting, []
+
+    def get_minutes_info(self, minutes_id):
+        self.reads.append(("info", minutes_id))
+        return {"result": self.meeting}
 
     def get_minutes_todos(self, minutes_id):
         self.reads.append(minutes_id)
@@ -80,7 +83,7 @@ def test_only_open_ownerless_candidates_from_minutes_count(tmp_path):
     ))
     open_id = _candidate(store, minutes_id="open", title="待处理")
 
-    assert [(minutes_id, ids) for minutes_id, _record, ids in ownerless_candidate_meetings(store)] == [("open", [open_id])]
+    assert ownerless_candidate_meetings(store) == [("open", [open_id])]
 
 
 @pytest.mark.parametrize(
@@ -97,6 +100,20 @@ def test_a_meeting_that_cannot_be_read_further_is_reported_and_left_alone(tmp_pa
     result = backfill_minutes_owners(store, dws, dry_run=False)
 
     assert (result.queued, result.decisions[0]["outcome"]) == (0, outcome)
+    assert _queued(store) == []
+
+
+@pytest.mark.parametrize("meeting", [None, {**MEETING, "taskUuid": "other-minutes"}])
+def test_missing_or_wrong_current_meeting_record_is_skipped_before_new_work_item(tmp_path, meeting):
+    store = AutoReplyStore(tmp_path / "wrong-info.sqlite3")
+    _candidate(store)
+    dws = FakeDws(meeting=meeting)
+
+    result = backfill_minutes_owners(store, dws, dry_run=False)
+
+    assert result.queued == 0
+    assert result.decisions[0]["outcome"] == "skipped: the current meeting record does not match its ID"
+    assert dws.reads == [("info", "minutes-1")]
     assert _queued(store) == []
 
 
@@ -126,11 +143,14 @@ def test_limit_takes_the_newest_meetings_first(tmp_path):
     assert [decision["minutes_id"] for decision in result.decisions] == ["new"]
 
 
-def test_two_ownerless_tasks_read_the_same_original_meeting_body(tmp_path):
+def test_two_ownerless_tasks_retain_the_same_source_version(tmp_path):
     store = AutoReplyStore(tmp_path / "w.sqlite3")
     first = _candidate(store, title="整理访谈问题清单")
     second = _candidate(store, title="确定访谈时间")
-    assert ownerless_candidate_meetings(store) == [("minutes-1", MEETING, [first, second])]
+    assert ownerless_candidate_meetings(store) == [("minutes-1", [first, second])]
     signals = store.list_business_task_signals()
     assert len(signals) == 2
-    assert signals[0].source_document_id == signals[1].source_document_id
+    assert signals[0].source == signals[1].source
+    assert signals[0].source.body_utf8_bytes > 0
+    with store._connect() as db:
+        assert not db.execute("select 1 from sqlite_schema where name='business_source_documents'").fetchone()

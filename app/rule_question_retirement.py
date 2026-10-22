@@ -1,6 +1,10 @@
 """Explicitly retire one obsolete task-class question; never decide its business."""
+from app.state_definitions import state_projection
+from app.state_storage import insert_state
 
-from app.task_storage import REPLY_TASK_SQL
+from app.task20_definitions import task20_projection
+from app.task12_storage import task12_projection
+
 import argparse
 import hashlib
 import json
@@ -16,13 +20,15 @@ from app.agent_result import AgentError
 from app.config import worker_db_path
 from app.database_backup import backup_is_complete
 from app.store import AutoReplyStore
-from app.run_storage import AGENT_RUN_SQL
+from app.logical_run_storage import AGENT_RUN_SQL
 
 from app.action_storage import (
     REVIEW_CANDIDATE_SQL,
     REPLY_ATTEMPT_COMMON_SQL,
     update_action,
 )
+
+REPLY_TASK_SQL = task20_projection('reply_tasks')
 
 
 class _RuleOption(BaseModel):
@@ -63,7 +69,7 @@ def _retire_in_connection(db: sqlite3.Connection, attempt_id: int, *, authority:
                t.status as task_status, t.execution_generation as task_generation
         from ({REPLY_ATTEMPT_COMMON_SQL}) a join ({AGENT_RUN_SQL}) r on r.id=a.agent_run_id
         join ({REPLY_TASK_SQL}) t on t.id=r.reply_task_id
-        join business_object_tasks current_object
+        join ({task12_projection('business_object_tasks')}) current_object
           on current_object.business_object_key=t.business_object_key
          and current_object.reply_task_id=t.id
         where a.id=? and a.channel=t.channel
@@ -91,7 +97,7 @@ def _retire_in_connection(db: sqlite3.Connection, attempt_id: int, *, authority:
         raise ValueError("technical failures cannot be retired as rule questions")
     digest = hashlib.sha256(native_result.encode()).hexdigest()
     key = f"rule_question_retirement:{attempt_id}"
-    saved = db.execute("select value from service_state where key=?", (key,)).fetchone()
+    saved = db.execute('select value from (' + state_projection('service_state') + ') where key=?', (key,)).fetchone()
     if row["resolved_at"]:
         if saved is None:
             raise ValueError("attempt already resolved without this retirement receipt")
@@ -113,8 +119,8 @@ def _retire_in_connection(db: sqlite3.Connection, attempt_id: int, *, authority:
         )
         update_action(db, "reply_attempts", attempt_id,
                       {"resolved_at": receipt["resolved_at"], "resolution": resolution})
-        db.execute("insert into service_state(key,value) values (?,?)",
-                   (key, json.dumps(receipt, ensure_ascii=False, sort_keys=True)))
+        insert_state(db, "service_state",
+                     {"key": key, "value": json.dumps(receipt, ensure_ascii=False, sort_keys=True)})
     return receipt
 
 

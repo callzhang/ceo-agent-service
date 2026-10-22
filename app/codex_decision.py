@@ -839,7 +839,7 @@ class CodexDecisionRunner:
                 command_factory=self._routed_command_factory(image_paths),
                 parser=parse,
                 result_codec=RoutedResultCodec.text(schema_id="codex_decision.v1"),
-                required_capabilities=DECISION_RUNTIME_CAPABILITIES,
+                required_capabilities=self._required_capabilities(),
                 result_validation_retry=RoutedResultValidationRetry.same_session_exactly_once(
                     correction_prompt=_decision_envelope_repair_prompt
                 ),
@@ -874,6 +874,9 @@ class CodexDecisionRunner:
             ),
             image_paths=image_paths,
         )
+
+    def _required_capabilities(self) -> frozenset[str]:
+        return DECISION_RUNTIME_CAPABILITIES
 
     def _finalize_decision(
         self,

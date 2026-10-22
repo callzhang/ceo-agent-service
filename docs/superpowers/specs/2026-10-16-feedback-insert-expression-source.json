@@ -1,0 +1,26 @@
+{
+  "recorded_utc": "2026-10-16T18:56:16.995120+00:00",
+  "source_file": "app/store.py",
+  "source_sha256": "ce66a4dd7302080126fb178b4dc8e3983acbc68b2f70c9107bd3e584c4207d5f",
+  "statements": {
+    "upsert_feedback_event": {
+      "line": 19933,
+      "sql": "\n                insert into feedback_processing_items (feedback_key, status, resolved_at)\n                values (?, case when trim((select resolved_at from feedback_events where key=?)) <> ''\n                              then 'resolved' else 'pending' end,\n                        coalesce((select resolved_at from feedback_events where key=?), ''))\n                on conflict(feedback_key) do update set\n                    status=case when trim((select resolved_at from feedback_events where key=excluded.feedback_key)) <> ''\n                                then 'resolved' else feedback_processing_items.status end,\n                    resolved_at=case when trim((select resolved_at from feedback_events where key=excluded.feedback_key)) <> ''\n                                     then (select resolved_at from feedback_events where key=excluded.feedback_key)\n                                     else feedback_processing_items.resolved_at end,\n                    updated_at=current_timestamp\n                ",
+      "parameters_expression": "(key, key, key)",
+      "owner_sha256": "ef3da57d03f2458554f153b29a00903e3fdfa5b85d63e17853c91f63c80a4449"
+    },
+    "create_feedback_processing_batch": {
+      "line": 20321,
+      "sql": "\n                    insert into feedback_processing_items (\n                        feedback_key, batch_id, status, resolved_at\n                    )\n                    values (\n                        ?, ?,\n                        case when trim(coalesce((select resolved_at from feedback_events where key=?), '')) <> ''\n                             then 'resolved' else 'pending' end,\n                        coalesce((select resolved_at from feedback_events where key=?), '')\n                    )\n                    on conflict(feedback_key) do update set\n                        batch_id=case\n                            when feedback_processing_items.status='resolved'\n                            then feedback_processing_items.batch_id\n                            else excluded.batch_id\n                        end,\n                        status=case when trim(coalesce((select resolved_at from feedback_events where key=excluded.feedback_key), '')) <> ''\n                                    then 'resolved' else feedback_processing_items.status end,\n                        resolved_at=case when trim(coalesce((select resolved_at from feedback_events where key=excluded.feedback_key), '')) <> ''\n                                         then (select resolved_at from feedback_events where key=excluded.feedback_key)\n                                         else feedback_processing_items.resolved_at end,\n                        updated_at=current_timestamp\n                    ",
+      "parameters_expression": "(key, cleaned_batch_id, key, key)",
+      "owner_sha256": "b5358e4e66388afc38028f80848ed5d8575450ed12c640d1b3bfaae5260d72ec"
+    },
+    "resolve_feedback_event": {
+      "line": 22538,
+      "sql": "\n                    insert into feedback_processing_items (\n                        feedback_key, status, resolved_at\n                    ) values (?, 'resolved', current_timestamp)\n                    on conflict(feedback_key) do update set\n                        status='resolved',\n                        resolved_at=current_timestamp,\n                        updated_at=current_timestamp\n                    ",
+      "parameters_expression": "(cleaned_key,)",
+      "owner_sha256": "d27177254ecb5583d836cf03bbf9b50be4f5c5064ef572b35268c65ab82be8c5"
+    }
+  },
+  "boundary": "source SQL/metadata only, no row/body capture or runtime mutation"
+}

@@ -2,8 +2,42 @@ import pytest
 from app.action_storage import insert_action
 
 from app.run_storage import AGENT_RUN_SQL, RUNTIME_ATTEMPT_SQL, insert_run
-from app.task_storage import REPLY_TASK_SQL, task_id_expression
+from app.task_storage import task_id_expression
+from app.task20_definitions import task20_projection
+from app.task8_storage import register_task8_functions, task8_set_parts
+from app.state_definitions import state_projection
+
 from app.deploy import deploy
+
+
+REPLY_TASK_SQL = task20_projection("reply_tasks")
+
+
+@pytest.mark.parametrize('lease,expected_owners', [
+    ('2999-01-01T00:00:00+00:00', (9999001,)),
+    ('2000-01-01T00:00:00+00:00', ()),
+])
+def test_maintenance_reads_current_dispatcher_owners(tmp_path, monkeypatch, lease, expected_owners):
+    import sqlite3
+    from types import SimpleNamespace
+    from app import deploy_maintenance
+    from app.email_store import EmailStore
+    from app.task_lifecycle_storage import acquire_claim
+    from tests.test_reply_task_deferral import native_events, ready
+
+    path, task_id, _ = ready(tmp_path)
+    EmailStore(path)
+    native_events(path, task_id, monkeypatch, {'type': 'AgentMessage', 'text': 'preparing'})
+    with sqlite3.connect(path) as db:
+        register_task8_functions(db)
+        acquire_claim(db, adapter_name='reply', source_id=str(task_id), owner='maintenance',
+                      owner_pid=9999001, lease_expires_at=lease, now='1999-01-01 00:00:00')
+    monkeypatch.setattr(deploy_maintenance.subprocess, 'run', lambda *args, **kwargs:
+                        SimpleNamespace(stdout='9999001 1\n9999002 9999001\n'))
+    snapshot = deploy_maintenance.check_maintenance(path, (task_id,))
+    assert snapshot.owners == expected_owners
+    assert snapshot.processes == ((9999001, 9999002) if expected_owners else ())
+    assert [binding[0] for binding in snapshot.task_bindings] == [task_id]
 
 
 @pytest.mark.parametrize('missing', [False, True])
@@ -88,7 +122,9 @@ def test_real_interrupted_recovery_preserves_identity_and_verified_backup(tmp_pa
     EmailStore(path)
     native_end = native_events(path, task_id, monkeypatch, {'type': 'AgentMessage', 'text': 'preparing'})
     with sqlite3.connect(path) as db:
-        db.execute("update tasks set status='processing' where record_type='reply_tasks' and cast(legacy_key as integer)=?", (task_id,))
+        register_task8_functions(db)
+        parts = task8_set_parts("reply_tasks", {"status": "processing"})
+        db.execute("update tasks set " + parts.sql + " where record_type='reply_tasks' and cast(legacy_key as integer)=?", (*parts.parameters, task_id))
         db.execute(f"update runs set status='running',completed_at='' where record_type='agent_runs' and task_id={task_id_expression('reply_tasks', '?')}", (task_id,))
         run_id = db.execute(f'select id from ({AGENT_RUN_SQL}) where reply_task_id=?', (task_id,)).fetchone()[0]
         insert_run(
@@ -113,7 +149,7 @@ def test_real_interrupted_recovery_preserves_identity_and_verified_backup(tmp_pa
         assert db.execute(f'select status from ({REPLY_TASK_SQL}) where id=?', (task_id,)).fetchone()[0] == 'pending'
         assert db.execute(f'select status from ({AGENT_RUN_SQL}) where id=?', (run_id,)).fetchone()[0] == 'failed'
         assert db.execute(f'select failure_code from ({RUNTIME_ATTEMPT_SQL}) where agent_run_id=?', (run_id,)).fetchone()[0] == 'service_restart_interrupted'
-        receipt = json.loads(db.execute("select value from service_state where key='deployment_maintenance_receipt'").fetchone()[0])
+        receipt = json.loads(db.execute(f"select value from ({state_projection('service_state')}) where key='deployment_maintenance_receipt'").fetchone()[0])
     from pathlib import Path
     backup = Path(receipt['verified_backup'])
     assert backup_is_complete(backup)
@@ -138,7 +174,9 @@ def test_post_stop_race_rejected_before_recovery_or_backup(tmp_path, monkeypatch
         elif effect == 'unknown_tool':
             native_events(path, task_id, monkeypatch, {'type': 'CommandExecution'})
         else:
-            db.execute("update tasks set status='processing' where record_type='reply_tasks' and cast(legacy_key as integer)=?", (task_id,))
+            register_task8_functions(db)
+            parts = task8_set_parts("reply_tasks", {"status": "processing"})
+            db.execute("update tasks set " + parts.sql + " where record_type='reply_tasks' and cast(legacy_key as integer)=?", (*parts.parameters, task_id))
     allowed = () if effect == 'other_task' else (task_id,)
     with pytest.raises(UpgradePreconditionError):
         prepare_maintenance(path, allowed, 'rejected', snapshot)

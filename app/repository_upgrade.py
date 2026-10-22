@@ -521,8 +521,8 @@ class RepositoryUpgradeService:
         )
 
     def load_state(self) -> RepositoryUpgradeState:
-        with self.repository.mutex():
-            return self._load_state_unlocked()
+        # One atomic state value; status reads must remain available during deploy.
+        return self._load_state_unlocked()
 
     def save_state(self, state: RepositoryUpgradeState) -> None:
         with self.repository.mutex():
@@ -573,3 +573,9 @@ class RepositoryUpgradeService:
     def _save_snapshot_unlocked(self, snapshot: RepositorySnapshot) -> None:
         state = self._load_state_unlocked()
         self._save_state_unlocked(state.model_copy(update={"snapshot": snapshot}))
+
+    def release_operation(self, operation_id: str) -> None:
+        with self.repository.mutex():
+            state = self._load_state_unlocked()
+            if state.operation is not None and state.operation.operation_id == operation_id:
+                self._save_state_unlocked(state.model_copy(update={"operation": None}))

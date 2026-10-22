@@ -1,0 +1,37 @@
+{
+  "recorded_at": "2026-10-18T00:47:12.145628+00:00",
+  "status": "ACCEPTED_COMPONENT_R4_ONLY",
+  "freeze_sha256": "376348b9bfe45bddd647908027a9d107dee89944c8934d1081b84606ec77894a",
+  "prior_acceptance_preserved": "docs/superpowers/specs/2026-10-17-email-canonical-component-acceptance.json",
+  "author": {
+    "focused_pass": 28,
+    "seconds": 56.26,
+    "ruff": "PASS"
+  },
+  "spec": {
+    "verdict": "APPROVE",
+    "focused_pass": 9,
+    "seconds": 37.35
+  },
+  "quality": {
+    "verdict": "APPROVE",
+    "focused_pass": 8,
+    "seconds": 58.99
+  },
+  "repair_scope": [
+    "Four finite independent exact known Email/Actions declaration combinations",
+    "Explicit historical current13 test fixture"
+  ],
+  "pins": {
+    "files": 4,
+    "requirements": 12,
+    "runtime": 373,
+    "source_runtime_unchanged": 362,
+    "paused_integration_paths": 9
+  },
+  "paused_integration_sha256": "214efae476e3bdafc7523042aaf394cef70d95887157401a2fd42257d4f22693",
+  "caller_integration_approval": false,
+  "actual_data_proof": false,
+  "capacity_acceptance": false,
+  "deployment": false
+}

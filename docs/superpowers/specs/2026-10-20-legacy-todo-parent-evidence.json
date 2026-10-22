@@ -1,0 +1,373 @@
+{
+  "source_commit": "f6df7cf340366583856d506f684cdba84afbf7ae",
+  "source_freeze_manifest": "/tmp/ceo-d1b-todo.iC2uXm/v2/manifest.json",
+  "source_freeze_manifest_sha256": "2e8052432e1e0c39286cee5bbb1f77bcdb3e9a66c3c4a33b8a2f999560191f40",
+  "source_patch_sha256": "ee7f3cc9f8c6eb33bdd07296a1810468af6f5c439ae807b2f25f1ff982dae2ec",
+  "artifacts": {
+    "prepare-result.json": {
+      "path": "/tmp/ceo-d1b-copy.JbC2V9/prepare-result.json",
+      "sha256": "cee695d09ee2002726859549c6f76a6de1a0094591182df40a484ab67cc35d27"
+    },
+    "before-all-facts.json": {
+      "path": "/tmp/ceo-d1b-copy.JbC2V9/before-all-facts.json",
+      "sha256": "6678884a5da61f33f1142b881027468f8a12881e6b720c06e348b009e06cc90f"
+    },
+    "copy-exercise-result.json": {
+      "path": "/tmp/ceo-d1b-copy.JbC2V9/copy-exercise-result.json",
+      "sha256": "e899616dbae40a9f8270c9d8c62cd6bfa6312a8db18479f7d9aafdb56841644f"
+    },
+    "after-current-facts.json": {
+      "path": "/tmp/ceo-d1b-copy.JbC2V9/after-current-facts.json",
+      "sha256": "11afec383196418b6d1ccb950050e88b985ff03c4e9ef50f93040979b7771522"
+    },
+    "code-rollback-result.json": {
+      "path": "/tmp/ceo-d1b-copy.JbC2V9/code-rollback-result.json",
+      "sha256": "2dbbf32f988b192fdca6c19332ba0326313eedf01c8a2bead4327ecc07c6d1f3"
+    },
+    "combined-schema-roundtrip-result.json": {
+      "path": "/tmp/ceo-d1b-copy.JbC2V9/combined-schema-roundtrip-result.json",
+      "sha256": "9d80340b878d03ec397fac0ea8b64ebcd0555c5b133b374d8e5d0a88fb94d812"
+    },
+    "after-combined-current-facts.json": {
+      "path": "/tmp/ceo-d1b-copy.JbC2V9/after-combined-current-facts.json",
+      "sha256": "f65a936938e78f98adf89aa89bd20bb8a9d2e17f0ec8ee16a9e86fe1b32a5ce7"
+    },
+    "exercise-harness-failure.json": {
+      "path": "/tmp/ceo-d1b-copy.JbC2V9/exercise-harness-failure.json",
+      "sha256": "9c5f13f8007d5e98620b5e335fd97960e2bc14cae7d7e117f43f46c818db3dc8"
+    },
+    "exercise-harness-failure.log": {
+      "path": "/tmp/ceo-d1b-copy.JbC2V9/exercise-harness-failure.log",
+      "sha256": "22830793771397073c079da00a801411db021b9dff46e75bc6f44c51ce4c3508"
+    },
+    "baseline-email-fixture.log": {
+      "path": "/tmp/ceo-d1b-copy.JbC2V9/baseline-email-fixture.log",
+      "sha256": "c3af303437bc198e3c888337e38918dc3aaae28215e79f6d23bdef48b2083429"
+    },
+    "actual-predecessor-files.json": {
+      "path": "/tmp/ceo-d1b-copy.JbC2V9/actual-predecessor-files.json",
+      "sha256": "470119bdebeb829a4983894c50f889a29d5445a04906ef2461fd058d7a7545c0"
+    },
+    "actual-production-predecessor-files.json": {
+      "path": "/tmp/ceo-d1b-copy.JbC2V9/actual-production-predecessor-files.json",
+      "sha256": "65c5b700b063597f2d0a42a01a3366cc163809a70a3f7656d684f27af95cc4bd"
+    },
+    "prepare_copy.py": {
+      "path": "/tmp/ceo-d1b-copy.JbC2V9/prepare_copy.py",
+      "sha256": "66ecfaba7a7d15fecb4953a1dc974af822792299a04d86047830e24d987aa636"
+    },
+    "exercise_copy.py": {
+      "path": "/tmp/ceo-d1b-copy.JbC2V9/exercise_copy.py",
+      "sha256": "b898cf11a76e589ff0eca3922c10bf680c837a1efcc61a9c1d5142234681f661"
+    },
+    "exercise_copy_v1.py": {
+      "path": "/tmp/ceo-d1b-copy.JbC2V9/exercise_copy_v1.py",
+      "sha256": "0e33782d3477e5976887afda6111d5e6d0782eca19b9fcd4c509574fbea2449e"
+    },
+    "code_rollback.py": {
+      "path": "/tmp/ceo-d1b-copy.JbC2V9/code_rollback.py",
+      "sha256": "5eb6ace2622f8b959a0f12f7ee9de7457cb7d6d6a9406888013c51b4fc2ee328"
+    },
+    "predecessor_cold.py": {
+      "path": "/tmp/ceo-d1b-copy.JbC2V9/predecessor_cold.py",
+      "sha256": "892f8dcbb0aee639498d4b976a9a7bf19622f396fe9f8603c50bf62c974c8ae3"
+    },
+    "combined_schema_roundtrip.py": {
+      "path": "/tmp/ceo-d1b-copy.JbC2V9/combined_schema_roundtrip.py",
+      "sha256": "e2e975f3adc3a00b18ba1a3c5e8b0d61920f84c8608103b8569660f3fe6cc3e9"
+    },
+    "prepare.log": {
+      "path": "/tmp/ceo-d1b-copy.JbC2V9/prepare.log",
+      "sha256": "493bbe6dc5cb63f3a72ba88f976d8cf5dd03023eba2bcd1122bf9ad96fd93ca0"
+    },
+    "exercise.log": {
+      "path": "/tmp/ceo-d1b-copy.JbC2V9/exercise.log",
+      "sha256": "008bfb4f02d546cdb97080c1d073665293da418452ecd8e4d794a2672dea95ff"
+    },
+    "code-rollback.log": {
+      "path": "/tmp/ceo-d1b-copy.JbC2V9/code-rollback.log",
+      "sha256": "1ef4a9c0904a7ff297485dc415cb60e313f6bad2156bac30ea5446e409cdfa5d"
+    },
+    "combined-schema-roundtrip.log": {
+      "path": "/tmp/ceo-d1b-copy.JbC2V9/combined-schema-roundtrip.log",
+      "sha256": "e9a8a09ca6c0d39c66f993ea11df3667bfc5c5b1c0f441cb699556938b4fec38"
+    },
+    "combined-prepared-inverse.log": {
+      "path": "/tmp/ceo-d1b-copy.JbC2V9/combined-prepared-inverse.log",
+      "sha256": "7cf440a1388bee94379f330ab2d10961e34c8c503cf282088d68af093e297afb"
+    },
+    "combined-actual-b6-cold.log": {
+      "path": "/tmp/ceo-d1b-copy.JbC2V9/combined-actual-b6-cold.log",
+      "sha256": "1c10e0f2fd82936047c75fc8e9fa7fc1d48820b0ac3b26c3124da5acaf9d34fa"
+    },
+    "combined-prepared-forward.log": {
+      "path": "/tmp/ceo-d1b-copy.JbC2V9/combined-prepared-forward.log",
+      "sha256": "7376f85b3f251c87cdd3975c5370bc2e801df583705b4fb35f88710a58ad59d0"
+    }
+  },
+  "copy_preparation": {
+    "source_origin": "Existing verified production19.8 -> A5 prepared19.9 -> C2 Run19.10 chain with three explicit mechanical Task/Run fixtures; NOT a current production19.10 snapshot",
+    "source_path": "/tmp/ceo-run-owner-fullcopy.5WMdJ0/target19-10.sqlite3",
+    "source_sha256": "c94b49833f9cc8eb47e2f14043ec2412e35206bee92b64d7cb227841084f09f9",
+    "copy_path": "/tmp/ceo-d1b-copy.JbC2V9/legacy-retirement19-10.sqlite3",
+    "copy_initial_sha256": "52de08f513e351acfb12417ab55a60019e6fc839997b21c347fba7f24e0791bf",
+    "source_bytes": 483659776,
+    "all_12_table_typed_facts_and_schema_exact_at_copy": true,
+    "current_production_read_only": {
+      "commit": "b6f87c14a03b2dadb4b37ee637f15baa3e922294",
+      "pair": [
+        "2026-10-19.8",
+        53
+      ],
+      "legacy_common_stored_columns_all_cells_types_rowids_exact": {
+        "work_project": {
+          "count": 975,
+          "sha256": "9e2f8995e0767b711f5ac9c9566d679bedbff9523ef43a5af3a98fba3f007ced"
+        },
+        "work_todo": {
+          "count": 3327,
+          "sha256": "86d276cfd79f8e40ea609a8e16f3d9f9d609dbc51c9c2c07b7c2a5ec708aa158"
+        },
+        "todo_evidence_candidate": {
+          "count": 3,
+          "sha256": "fc2e27c4afba3fcd89fc5715eb33739090e1bebe6604cc5d77a99710783a7690"
+        },
+        "work_updates": {
+          "count": 5468,
+          "sha256": "695467a035a686191dbe4b025594e0f6ab47ff684800dfeab7fc29d031eb46d7"
+        },
+        "work_todo_dingtalk_links": {
+          "count": 875,
+          "sha256": "463e1244eefdfb7943add7a37f17ecdf8d42d9b53ffe7f3839f7f139cf2244d1"
+        },
+        "task_todo_sync_outbox": {
+          "count": 242,
+          "sha256": "58540c07e247595c5a3360b6c9dde9aca99090148acc35d70cd438205918cae3"
+        },
+        "follow_up_drafts": {
+          "count": 2477,
+          "sha256": "b101d5c807f4372e3911bb5539795d9939898f5d2ae6827df417492d917de1b5"
+        },
+        "follow_up_send_attempts": {
+          "count": 65,
+          "sha256": "812a9ce32b1affc00f126205833106e36de978c87aaed3b459b87fb31e57b559"
+        }
+      },
+      "old_outbox_statuses": [
+        [
+          "completed",
+          202
+        ],
+        [
+          "skipped",
+          40
+        ]
+      ],
+      "legacy_link_statuses": [
+        [
+          "active",
+          540
+        ],
+        [
+          "cancelled",
+          5
+        ],
+        [
+          "done",
+          330
+        ]
+      ],
+      "no_provider_readback": true
+    },
+    "integrity": "ok",
+    "original_fk": [
+      [
+        "runs",
+        190042,
+        "tasks",
+        1
+      ]
+    ],
+    "production_modified": false,
+    "real_external_sends": 0,
+    "no_DDL_performed": true,
+    "release_ready": false
+  },
+  "synthetic_workflow": {
+    "synthetic_fixture": true,
+    "case_key": "synthetic-copy-only:d1b:0e8c67ea4bcd46bab31d042419058271",
+    "source_code": "/Users/derek/.codex/worktrees/business-model-legacy-todo-retirement/ceo-agent-service",
+    "new_business_task_ids": [
+      736,
+      737
+    ],
+    "actual_old_new_public_id_collisions": [
+      736,
+      737
+    ],
+    "new_business_outbox_rows": [
+      {
+        "id": 1,
+        "operation": "create",
+        "business_task_id": 736,
+        "receipt_sha256": "d99f1b4bd9c6c59f3e2dce94716c84a3380008438253549345d374ca0c5d98b6"
+      },
+      {
+        "id": 2,
+        "operation": "create",
+        "business_task_id": 737,
+        "receipt_sha256": "55209eb4451e431da29cb57dee9ac95701b760bb28165b861f1e74247b12ff4b"
+      },
+      {
+        "id": 3,
+        "operation": "complete",
+        "business_task_id": 737,
+        "receipt_sha256": "b265e1098093bfb92946c6dc4711a36db000b0500b0c41dfbb9bc68224afb692"
+      }
+    ],
+    "current_creation_readback_and_dedupe": true,
+    "current_completion_scan_only_closes_listed_current_task": true,
+    "current_outbox_complete_only_calls_substitute": true,
+    "old_8_kind_raw_typed_facts_exact": {
+      "work_project": {
+        "count": 975,
+        "sha256": "9e2f8995e0767b711f5ac9c9566d679bedbff9523ef43a5af3a98fba3f007ced"
+      },
+      "work_todo": {
+        "count": 3327,
+        "sha256": "86d276cfd79f8e40ea609a8e16f3d9f9d609dbc51c9c2c07b7c2a5ec708aa158"
+      },
+      "todo_evidence_candidate": {
+        "count": 3,
+        "sha256": "fc2e27c4afba3fcd89fc5715eb33739090e1bebe6604cc5d77a99710783a7690"
+      },
+      "work_updates": {
+        "count": 5468,
+        "sha256": "9ef164897234a483376ac85de26a39a4c166d99622ed7b0caa17e0be5919f9da"
+      },
+      "work_todo_dingtalk_links": {
+        "count": 875,
+        "sha256": "ad5e05b25aeee2933600e6deff16f65467c8b0bb3e67b2caf3096cdc4a7cb9d0"
+      },
+      "task_todo_sync_outbox": {
+        "count": 242,
+        "sha256": "7f25ca784b648c0bb5637467b3f3093b54a11e7ce63e62c075b5d81a8afddb0e"
+      },
+      "follow_up_drafts": {
+        "count": 2477,
+        "sha256": "2e95ea4aae3ef2f9504876668d0d74a8595d4792518298630c9cf8182d7056a1"
+      },
+      "follow_up_send_attempts": {
+        "count": 65,
+        "sha256": "14f85e1a495ce04cec4092b702c1c7e3e59a5a429d3e320320d4a0be9d15cbc9"
+      }
+    },
+    "old_read_only_link_sample_id": 3,
+    "old_read_only_work_todo_sample_id": 2498,
+    "old_link_raw_status_preserved": "active",
+    "old_outbox_receipts_readable": 242,
+    "registered_queue_names": [
+      "scheduled",
+      "scheduled_execution",
+      "reply",
+      "meeting",
+      "work_summary",
+      "okr_review",
+      "business_task_todo_sync_outbox",
+      "task_memory_write"
+    ],
+    "synthetic_provider_calls": {
+      "creates": 2,
+      "readbacks": 2,
+      "completion_lists": 2,
+      "mark_done": 1
+    },
+    "legacy_individual_provider_calls": 0,
+    "schema_unchanged": true,
+    "all_original_run_rows_unchanged": true,
+    "original_fk_preserved": true,
+    "full_integrity": "ok",
+    "source_immutable": true,
+    "real_external_sends": 0,
+    "native_or_independent_Audit_agent_executed": false,
+    "production_modified": false,
+    "D1c_operational_quality_sources_not_retired_yet": true,
+    "release_ready": false
+  },
+  "code_rollback": {
+    "code_only_rollback_and_current_reopen_all_12_table_current_typed_facts_exact": true,
+    "actual_predecessor": "4ebf69c6d460f97345f3e7321526b39e681b0b15",
+    "cold_read": {
+      "actual_predecessor": "4ebf69c6d460f97345f3e7321526b39e681b0b15",
+      "Store": true,
+      "strictEmail": true,
+      "Workbench": true,
+      "new_current_Task_states_and_all_3_receipts_read": true,
+      "archived_project_todo_link_and_242_outbox_rows_read": true,
+      "legacy_worker_or_provider_executed": false,
+      "real_external_sends": 0
+    },
+    "current_reopen": {
+      "actual_predecessor": "current frozen D1b source",
+      "Store": true,
+      "strictEmail": true,
+      "Workbench": true,
+      "new_current_Task_states_and_all_3_receipts_read": true,
+      "archived_project_todo_link_and_242_outbox_rows_read": true,
+      "legacy_worker_or_provider_executed": false,
+      "real_external_sends": 0
+    },
+    "schema_unchanged": true,
+    "original_fk_preserved": true,
+    "source_immutable": true,
+    "new_DDL_or_schema_inverse_performed": false,
+    "scope": "D1b has no DDL; existing pending two-stage schema recovery remains separately tested",
+    "legacy_worker_model_or_provider_executed": false,
+    "real_external_sends": 0,
+    "production_modified": false,
+    "release_ready": false
+  },
+  "combined_schema_roundtrip": {
+    "official_current_data_two_stage_inverse_actual_production_cold_and_reforward": true,
+    "steps": [
+      "19.10 -> 19.9",
+      "19.9 -> 19.8",
+      "actual b6 cold constructors and current receipt readback",
+      "19.8 -> 19.9",
+      "19.9 -> 19.10"
+    ],
+    "canonical_12_tables_sql_types_rowids_sequences_and_prepared_public_facts_exact": true,
+    "oracle_exclusions": "Only Store publication marker row and retired prepared-private child physical identities; public prepared values/receipt/claim keys checked independently. Final marker version 19.10; official forward updates publication clock.",
+    "actual_production_predecessor": "b6f87c14a03b2dadb4b37ee637f15baa3e922294",
+    "cold": {
+      "actual_predecessor": "b6f87c14a03b2dadb4b37ee637f15baa3e922294",
+      "Store": true,
+      "strictEmail": true,
+      "Workbench": true,
+      "new_current_Task_states_and_all_3_receipts_read": true,
+      "archived_project_todo_link_and_242_outbox_rows_read": true,
+      "legacy_worker_or_provider_executed": false,
+      "real_external_sends": 0
+    },
+    "schema_final_sha256": "318378cbe71eb34e799ae91b3080fde7b598d234074e6c76c778842e62b41f9a",
+    "original_fk_preserved": true,
+    "immutable_inputs": {
+      "/tmp/ceo-run-owner-fullcopy.5WMdJ0/target19-10.sqlite3": "c94b49833f9cc8eb47e2f14043ec2412e35206bee92b64d7cb227841084f09f9",
+      "/tmp/ceo-run-owner-fullcopy.5WMdJ0/source19-9.sqlite3": "bb0fe05f61c6b913b4ef4e8acbdbcf0568b372082c951ccd6cbe84b1794f53b1",
+      "/tmp/ceo-prepared-owner-resume.SaT1by/source19-8.sqlite3": "cc3f3fc0257e2374d7039d58e9ea4b1ad1fe83dd485999f982ac1c5703727f8d"
+    },
+    "full_integrity": "ok",
+    "worker_model_or_provider_reexecuted": false,
+    "real_external_sends": 0,
+    "production_modified": false,
+    "D1b_has_no_new_DDL": true,
+    "existing_two_schema_release_steps_exercised": true,
+    "release_ready": false
+  },
+  "independent_final_copy_quality": "PASS",
+  "A5_original_native_failures_retained": 2,
+  "release_ready": false,
+  "production_modified": false,
+  "real_external_sends": 0,
+  "independent_quality_scope": "D1b source + final copy only; no native model/independent Audit/live release"
+}

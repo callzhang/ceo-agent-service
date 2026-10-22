@@ -1,0 +1,87 @@
+{
+  "recorded_at": "2026-10-18T02:22:53.697112+00:00",
+  "scope": "In-memory exact native Email action component, all13families populated; no source DB or full migration rerun.",
+  "initial_probe_errors": [
+    "Pre-migration UPDATE rowid on directretry refused by existing immutable trigger; use native explicit-rowid INSERT.",
+    "locator_modes is capture metadata, not inverse state return; corrected probe to read capture result before migration. No runtime fix."
+  ],
+  "results": [
+    {
+      "source_variant": "actual",
+      "declared_values_types_keys_equal": true,
+      "hidden_rowids_before": {
+        "email_unsubscribe_effects": [
+          [
+            731
+          ]
+        ],
+        "email_direct_retry_requests": [
+          [
+            -92
+          ]
+        ]
+      },
+      "hidden_rowids_after": {
+        "email_unsubscribe_effects": [
+          [
+            1
+          ]
+        ],
+        "email_direct_retry_requests": [
+          [
+            1
+          ]
+        ]
+      },
+      "source_locator_modes": {
+        "email_unsubscribe_effects": "composite",
+        "email_direct_retry_requests": "composite"
+      },
+      "declared_fact_hashes": {
+        "email_unsubscribe_effects": "ef8c2c2c1c985a2633fa955e434f4bef107286200e54df501a537b45583695b9",
+        "email_direct_retry_requests": "d67762ebc09bb2c91a4eec1606e4d27f2d7d4e5a401967e3d0d61f94343c1e82"
+      }
+    },
+    {
+      "source_variant": "fresh_candidate",
+      "declared_values_types_keys_equal": true,
+      "hidden_rowids_before": {
+        "email_unsubscribe_effects": [
+          [
+            731
+          ]
+        ],
+        "email_direct_retry_requests": [
+          [
+            -92
+          ]
+        ]
+      },
+      "hidden_rowids_after": {
+        "email_unsubscribe_effects": [
+          [
+            1
+          ]
+        ],
+        "email_direct_retry_requests": [
+          [
+            1
+          ]
+        ]
+      },
+      "source_locator_modes": {
+        "email_unsubscribe_effects": "composite",
+        "email_direct_retry_requests": "composite"
+      },
+      "declared_fact_hashes": {
+        "email_unsubscribe_effects": "ef8c2c2c1c985a2633fa955e434f4bef107286200e54df501a537b45583695b9",
+        "email_direct_retry_requests": "d67762ebc09bb2c91a4eec1606e4d27f2d7d4e5a401967e3d0d61f94343c1e82"
+      }
+    }
+  ],
+  "finding": "Existing component preserves full declared composite key+values+types, not synthetic hidden ROWID, for effects/direct retry. Blanket whole116 ROWID comparison can falsely reject exact declared facts.",
+  "actual_failed_copy_declared_data_loss_disproved": false,
+  "review_required": "Check source/runtime rowid consumers and identity contract before checker change; eventual new full copy must still compare every declared original field/type/identity.",
+  "runtime_or_test_or_checker_edits": false,
+  "source_db_or_provider_or_send": false
+}
