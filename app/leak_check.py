@@ -1,3 +1,5 @@
+import base64
+import binascii
 import json
 import re
 from collections import Counter
@@ -41,7 +43,6 @@ _CREDENTIAL_PATTERNS = (
     re.compile(r"\bAIza[A-Za-z0-9_-]{30,}\b"),
     re.compile(r"\b(?:AKIA|ASIA)[A-Z0-9]{16}\b"),
     re.compile(r"\bBearer\s+[A-Za-z0-9._~+/=-]{6,}\b", re.IGNORECASE),
-    re.compile(r"\bBasic\s+[A-Za-z0-9+/]{8,}={0,2}\b", re.IGNORECASE),
     re.compile(r"\beyJ[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+\b"),
     re.compile(r"\b[a-z][a-z0-9+.-]*://[^\s/@:]+:[^\s/@]+@", re.IGNORECASE),
     re.compile(
@@ -54,6 +55,10 @@ _CREDENTIAL_PATTERNS = (
 
 _OPAQUE_CREDENTIAL_CANDIDATE = re.compile(
     r"(?<![A-Za-z0-9_+/=])[A-Za-z0-9_+/=]{40,}(?![A-Za-z0-9_+/=])"
+)
+_BASIC_AUTH_CANDIDATE = re.compile(
+    r"(?:\bAuthorization\s*:\s*)?\bBasic\s+([A-Za-z0-9+/]{8,}={0,2})(?![A-Za-z0-9+/=])",
+    re.IGNORECASE,
 )
 _CREDENTIAL_BOUNDARY_ERROR = "credential-bearing data is not allowed"
 _SENSITIVE_CREDENTIAL_EXACT_NAMES = frozenset(
@@ -141,12 +146,22 @@ def contains_credential(text: str, *, credential_context: bool = False) -> bool:
     """
     if any(pattern.search(text) for pattern in _CREDENTIAL_PATTERNS):
         return True
+    if any(_is_basic_auth_credential(match) for match in _BASIC_AUTH_CANDIDATE.finditer(text)):
+        return True
     if not credential_context:
         return False
     return any(
         _is_high_confidence_opaque_credential(match.group(0))
         for match in _OPAQUE_CREDENTIAL_CANDIDATE.finditer(text)
     )
+
+
+def _is_basic_auth_credential(match: re.Match[str]) -> bool:
+    try:
+        decoded = base64.b64decode(match.group(1), validate=True)
+    except (binascii.Error, ValueError):
+        return False
+    return b":" in decoded
 
 
 def _is_high_confidence_opaque_credential(candidate: str) -> bool:
@@ -269,6 +284,10 @@ def redact_credentials(
     redacted = text
     for pattern in _CREDENTIAL_PATTERNS:
         redacted = pattern.sub(replacement, redacted)
+    redacted = _BASIC_AUTH_CANDIDATE.sub(
+        lambda match: replacement if _is_basic_auth_credential(match) else match.group(0),
+        redacted,
+    )
     if not credential_context:
         return redacted
     return _OPAQUE_CREDENTIAL_CANDIDATE.sub(

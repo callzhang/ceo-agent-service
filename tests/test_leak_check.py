@@ -46,6 +46,20 @@ def test_contains_credential_keeps_common_benign_text_readable(benign: str):
     assert not contains_credential(benign)
 
 
+def test_basic_information_in_task_reason_is_not_basic_auth():
+    reason = "Read current meeting basic information, summary and latest TODO list."
+
+    assert not contains_credential(reason)
+    assert_no_credentials({"decision": {"search_trace": [{"reason": reason}]}})
+    assert redact_credentials(reason) == reason
+    assert redact_credentials("Authorization: Basic dXNlcjpwYXNzd29yZA==") == (
+        "[REDACTED]"
+    )
+    assert contains_credential("Basic dXNlcjpwYXNzd29yZA==")
+    assert redact_credentials("Basic dXNlcjpwYXNzd29yZA==") == "[REDACTED]"
+    assert not contains_credential("Authorization: Basic information")
+
+
 def test_contains_credential_allows_repeated_key_value_diagnostic_phrase():
     diagnostic = "access token: load access token: acquiring file lock"
 

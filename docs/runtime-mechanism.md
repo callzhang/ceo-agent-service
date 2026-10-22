@@ -3111,15 +3111,19 @@ The post-process sensitive-result guard raises the same result-parse exception
 as other invalid typed output. Rejection is recorded as `codex_result_invalid`
 at the result stage, allowing the existing Audit result-correction prompt and
 bounded attempt handling to operate. It is not a CLI execution outage. The
-credential predicate and rejection itself remain unchanged; no unsafe result
-is accepted and no content-feedback cycle is consumed by a parse failure.
+credential rejection itself remains unchanged; no unsafe result is accepted and
+no content-feedback cycle is consumed by a parse failure.
 
 Generic credential key/value text requires the value to end at the string boundary
 or an explicit comma/semicolon delimiter. This avoids treating ordinary diagnostic
 prose such as `access token: load access token: acquiring file lock` as a secret,
 while retaining detection for delimited values such as `api_key=...;`. Known
 credential formats, sensitive-field context, entropy checks and outbound
-credential validation are unchanged.
+credential validation are unchanged, except that Basic-auth text is recognized
+only when the following base64 value decodes to the required `username:password`
+form. This detects credentials in `Authorization: Basic <base64>` headers and
+bare Basic-auth fragments while ordinary prose such as `Basic information`
+does not trigger result rejection or redaction.
 
 Process diagnostic redaction preserves each original line boundary before joining
 separate error fields, while retaining the same field-level whitespace-spanning
