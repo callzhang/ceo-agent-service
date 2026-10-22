@@ -471,4 +471,6 @@ v38–v48 的每轮失败结果均保留在对应 `okr_results.vNN.json` 中，�
 
 v49 从头运行四场 native Consumer/Audit，**4/4 passed**；每场的终态均为 Audit approve 且评分、来源、分析恢复、文档完整读回、通知提案和机械检查通过。来源变化场验证 eval-a 字节保持不变、eval-b 重做；日期变化场按新日期刷新；共享认证失败场没有报告写入或群消息提案。结果在 `evals/scheduled_task_generic/okr_results.v49.json`，冻结输入为 `okr_cases.v5.json`。这些仍是隔离模拟 provider 的原生合成结果，`external_executor_available=false`，不代表生产发布或真实通知。
 
-v49 配套定向测试 **125 passed**，Ruff 与 `git diff --check` 通过。新的 Skill/script 尚未部署；下一步是把本次更改与最新 `origin/main` 安全集成，重新跑受影响测试，按正常流程发布并读取部署版本与任务配置，然后使用用户授权的正式 task6 手动入口创建一份新运行。运行 391405 和任何带既有外部回执的运行都不重放。生产手动运行仍须通过完整 Consumer/Audit 轨迹、主文档及全部附录的 provider 完整读回、真实通知持久回执和 provider 查询，才记为完成。
+v49 配套定向测试 **125 passed**，Ruff 与 `git diff --check` 通过。集成最新主线后发现发布基线测试仍引用旧安装哈希：OA Skill 测试写死 revision 150 的哈希，但生产数据库显示当前 attendance Skill 为 revision 220、哈希 `6fd80713…`；dingtalk-oa-approval 当前 revision 221、哈希 `fc9a16dc…`。OKR Skill 和脚本的候选源摘要也需随本次文件变化更新。以上是发布摘要与测试基线过期，不是报告业务验收失败。已将前置快照、发布清单和 attendance 摘要断言更新为生产实际哈希，并更新 OKR Skill/script 的候选哈希；相关三文件回归现为 **152 passed**。
+
+当前生产读取为主线提交 `5eec88650`、PID `71765`、healthz 正常；task6 仍是配置 v19、不可变快照 198、managed Skill revision 209，旧失败运行 391405 未重放。本次 v49 Skill/script 候选仍未部署，尚未创建新的手动运行。提交并部署后，先核对 PID、healthz、队列、Attention、History、task6 新快照及 managed Skill revision/hash；确认执行绑定新版本后，才从正式 task6 手动入口创建一条新运行。新运行须以完整 Consumer/Audit 轨迹、终态、主文档和所有附录的 provider 完整读回、真实通知持久回执及 provider 查询为验收证据。绝不重放 391405 或任何已有外部回执的运行。

@@ -72,8 +72,8 @@
     },
     {
       "source": "ci/shared-skills/dingtalk-oa-approval/SKILL.md",
-      "installed_sha256": "bd6ea670a2051ba349372e95870d043d96b6c565228a201d37453511ada400f2",
-      "approved_new_sha256": "bd6ea670a2051ba349372e95870d043d96b6c565228a201d37453511ada400f2"
+      "installed_sha256": "fc9a16dce789e1f2640c2896758b6cb5adfadeb1e343efec5b1d56efe2698f52",
+      "approved_new_sha256": "fc9a16dce789e1f2640c2896758b6cb5adfadeb1e343efec5b1d56efe2698f52"
     },
     {
       "source": "ci/shared-skills/stardust-oa-finance-review/SKILL.md",
@@ -92,8 +92,8 @@
     },
     {
       "source": "ci/shared-skills/stardust-oa-attendance-travel-review/SKILL.md",
-      "installed_sha256": "edb3fd74d5a26512fff9c225b0cdf694412e611a5efdffdea0f392d9c37b8d2e",
-      "approved_new_sha256": "edb3fd74d5a26512fff9c225b0cdf694412e611a5efdffdea0f392d9c37b8d2e"
+      "installed_sha256": "6fd80713c61886e5f42d8bfea419f0db8ae00412e4805d9620068973917e5d46",
+      "approved_new_sha256": "6fd80713c61886e5f42d8bfea419f0db8ae00412e4805d9620068973917e5d46"
     },
     {
       "source": "ci/shared-skills/ceo-daily-report/scripts/destination.py",
@@ -108,7 +108,7 @@
     {
       "source": "ci/shared-skills/ceo-weekly-okr-report/SKILL.md",
       "installed_sha256": "31556e311ef63d718a0ff444d166179befb9e7a27ba0af721727a1d16b5a35d3",
-      "approved_new_sha256": "0ce8c20fd88135e072679a71082a474be1baeb0b022690c33619adc6836c769c",
+      "approved_new_sha256": "f2781a3505e57bd7e6815f35f0d94b3fb4535b31b07900e1a28b5377ec140701",
       "managed_revision_id": 209,
       "managed_sha256": "31556e311ef63d718a0ff444d166179befb9e7a27ba0af721727a1d16b5a35d3"
     },
@@ -120,7 +120,7 @@
     {
       "source": "ci/shared-skills/ceo-weekly-okr-report/scripts/report.py",
       "installed_sha256": "abfd4143323e5d4c86f37e34b29f63cf384818ae127b33fa550c0f63827ead1b",
-      "approved_new_sha256": "0036421b33fc641c6e52329ebaccf97ae6e5fc91f342f90d6619fe49861436f3"
+      "approved_new_sha256": "ab61de2c7e1f715069592f5a44292737ff4be5863dbb2f2203622322c250a653"
     },
     {
       "source": "ci/shared-skills/ceo-weekly-report/scripts/jsonml_check.py",
