@@ -54,13 +54,23 @@ def member_payload(member, facts):
     if facts.get("shared_failure") or uid == "eval-failed":
         failure = facts.get("shared_failure") or {
             "scope": "member",
-            "diagnostic": "Synthetic member-bound source unavailable",
+            "diagnostic": (
+                "Current-quarter member endpoint returned 404 for userId "
+                "eval-failed (request_id=fixture-okr-member-404); roster and "
+                "eval-a/eval-b reads succeeded in this collection run, with no "
+                "shared authorization or runtime error"
+            ),
         }
         outcome.update(
             kind="source_failed",
             scope=failure["scope"],
             diagnostic=failure["diagnostic"],
-            evidence="Current source read failed; no score established",
+            evidence=(
+                "Verified isolated current-quarter member endpoint 404; the "
+                "same-run roster and other member reads succeeded"
+                if failure["scope"] == "member"
+                else "Shared source read failed; no score established"
+            ),
         )
         return {"manager": identity, "sourceOutcome": outcome}
     if uid == "eval-missing":
@@ -101,7 +111,12 @@ def member_payload(member, facts):
         "manager": identity,
         "sourceOutcome": outcome,
         "liveOkr": live,
-        "independentEvidence": [facts["evidence"][uid], facts["evidence"]["behavior"]],
+        "independentEvidence": [
+            facts["evidence"][uid],
+            facts["evidence"].get("behavior_by_manager", {}).get(
+                uid, facts["evidence"]["behavior"]
+            ),
+        ],
     }
 
 

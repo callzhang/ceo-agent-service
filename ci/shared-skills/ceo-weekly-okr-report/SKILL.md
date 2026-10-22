@@ -3,7 +3,7 @@ name: ceo-weekly-okr-report
 description: Use for scheduled Sunday or explicitly requested CEO-2 manager OKR progress reports, current-quarter evidence scoring, per-person scorecards, and delivery of the management report and group summary.
 metadata:
   managed_by: ceo-agent-service
-  version: 4
+  version: 13
 ---
 
 # CEO-2 Manager OKR Progress Report
@@ -23,6 +23,45 @@ minutes, messages, logs, todos and calendars. Unreadable evidence remains a gap.
 
 ## Collect and prepare
 
+### Resume after an audit return or an interrupted Consumer turn
+
+Before calling a source reader, read the latest Audit feedback and list the
+current run's artifacts. On each resumed Consumer turn, refresh the roster and
+read each current member once: `read_okr_member` is the only freshness check,
+and there is no separate digest-only source endpoint. Save these receipts,
+then run `prepare`. Reuse each complete prior analysis when its user ID,
+period, outcome and source digest still match the refreshed input; reanalyze
+only members whose source digest changed or whose analysis is incomplete.
+Never repeat a successful member read again within the same Consumer turn.
+After refresh and `prepare`, continue analysis immediately; do not spend the
+turn recollecting data already refreshed in that turn.
+
+Run `prepare` against the current run's saved member files before analyzing.
+Preserve every complete analysis whose `analysis_reusable` is true, and resume
+at the first missing, changed or Audit-identified analysis. A file containing
+`analysis_failure` is not a complete analysis and must be rewritten. Write each
+completed manager analysis artifact immediately before moving to the next
+manager. Never replace unfinished analyses with `analysis_failure`
+placeholders at the start of a turn. If a turn ends before the report is
+complete, retain all valid source and analysis artifacts and return a retryable
+`analysis_incomplete` result. Do not mark a still-incomplete report as a
+non-retryable terminal failure merely because this turn ended; the next
+Consumer turn must continue from the first incomplete manager. The normal
+bounded retry lifecycle remains in force.
+
+Treat `analysis_reusable=true` as a preserve instruction: do not rewrite that
+member's analysis file. A report-level wording, duplication or layout finding
+does not make an unchanged member analysis stale. Correct the changed or newly
+collected member analysis that introduced the report issue, then regenerate the
+affected report sections. Rewrite an unchanged member only when Audit names that
+member's evidence or score as incorrect; preserve all other reusable files byte
+for byte.
+
+Treat Audit feedback as a concrete correction checklist. Resolve each finding
+against the named manager and KR, then update only the affected analyses and
+their report sections. Do not restart collection, rendering or publication
+until every required manager analysis is complete.
+
 1. Call `read_scheduled_context` for this run's trigger and artifact directory.
    Resolve the report date in Asia/Shanghai, using the scheduled trigger's date
    for scheduled reports and the explicitly requested date for backfills.
@@ -35,13 +74,21 @@ minutes, messages, logs, todos and calendars. Unreadable evidence remains a gap.
    Each result saves `okr-member-<userId-sha256>.json` with a verified source outcome. Retry a transient source failure with another member read; each read is one bounded attempt. Complete
    every member read before preparing analysis. Separate calls give source IO
    a bounded operation and expose real completed collection progress.
+   Before preparing or publishing, inspect each `source_failed` receipt. A
+   `scope: member` label or a diagnostic containing “member-bound” is not proof
+   that the failure is isolated to that person. Treat it as member-specific
+   only when the receipt gives a concrete underlying failure and verifiable
+   evidence that roster identity, authorization, and shared source access are
+   working. If that cannot be established, stop the run before analysis,
+   scoring, rendering, document writes, or notification; report the exact
+   available diagnostic and leave the prior publication untouched.
 4. Run `consumer_run_skill_script` with `name=ceo-weekly-okr-report`,
    `script=scripts/report.py`, and arguments:
    `prepare --roster-file okr-roster.json --members-dir . --period-label <YYYY Qn> --report-date <YYYY-MM-DD> --output-dir .`.
    The directory may contain other files; prepare selects exact userId records.
    Read `plan.json` and each prepared manager source with `read_task_artifact`; use offset pagination until the full source is read. Shared source or
    identity/authority failures stop the report; report the exact source error.
-   Verified missing goals and member-bound failures retain unscored sections,
+   Verified missing goals and proven member-specific failures retain unscored sections,
    never zero scores or substituted historical goals.
 
 Keep every file directly in the current run's artifact directory: these
@@ -85,18 +132,62 @@ it does not require a behavioral exemplar. For leadership and culture dimensions
 concrete case beyond that standard; 90 or more requires the applicable exemplar
 scope; 100 requires a company-level exemplar. Below 70 names the unmet behavior
 or contrary case.
+Do not treat routine performance of the role standard as an above-standard
+result. In particular, a manager's ordinary coaching and a director's reusable
+method used within their own team can support 70–79 when performed consistently;
+80+ needs a distinct result beyond the role requirement, with its scope and
+effect stated.
+Score each dimension independently from evidence that demonstrates that
+dimension's required behavior. A broad statement that "culture behavior is
+supported" does not establish AI-era capability; business delivery, customer
+acceptance, feature implementation or testing does not establish innovation
+unless the source connects the person's specific improvement to validation and
+an observed effect. Do not transfer evidence between dimensions. If the source
+does not establish the current standard for a dimension, score below 70 and
+state the missing behavior evidence; do not describe missing evidence as proof
+of poor conduct.
 Do not substitute business outcomes for these behavioral scores.
+
+Before rendering, verify every scored person's four leadership and three
+culture dimensions one by one against their named requirement and the exact
+source evidence. A summary statement that several behaviors meet standard only
+supports dimensions whose named behaviors actually match; do not assume it
+covers an unnamed dimension. Innovation requires a specific improvement,
+validation and observed effect. AI-era capability requires a specific AI use
+and an observed work quality or efficiency effect. Keep each dimension below
+70 when its own standard is not established, even if adjacent dimensions are
+supported. Audit must independently check all seven dimension/evidence/score
+matches for every scored person and return any unsupported standard score; do
+not approve based only on correct dimension labels, arithmetic or business-KR
+evidence. Independently inspect every score of 80 or more and require explicit
+evidence of a result beyond that person's role standard; do not infer that
+repeated work, routine same-team adoption, or a reusable method alone exceeds a
+director's standard. Any correction must update affected person totals, report sections,
+average and summary before full readback.
+
+Zero reported progress is not evidence that no outcome occurred. For every KR,
+inspect the actual progress history and search independent evidence using its
+distinctive objective/KR terms together with the responsible manager. Read any
+matching source before citing it. If targeted searches find no corroboration,
+score using the existing rubric and explain the evidence gap and the basis for
+the score; do not mark the manager or KR as an analysis failure. Do not infer a
+result from a percentage, title, or self-report.
 
 Keep progress, risks, next checkpoints and CEO decisions concise. Explain what
 changed this week separately from period-to-date scores. Never calculate final
 scores in prose: the script uses O×KR weights, the leadership/culture arithmetic
-means and the original culture coefficient formula.
+means and the original culture coefficient formula. Displayed calculated scores
+use one decimal place with conventional half-up rounding.
 
 If analysis cannot be completed for a member, create its analysis file as
 `{"_source_sha256":"<current-plan-digest>","analysis_failure":{"diagnostic":"the concrete unavailable evidence or analysis failure"}}`.
 This preserves the member as an unscored section; it cannot stand for a shared
 provider, runtime, or authentication failure. Those failures stop the task and
-remain visible in the normal task lifecycle.
+remain visible in the normal task lifecycle. This field is only for a concrete
+member-specific technical failure that prevents reading or interpreting that
+member's source. It is not a shortcut for unfinished analysis, a large roster,
+zero reported progress, missing comments, or a lack of corroborating business
+evidence; those are handled by the rubric and an explained evidence gap.
 
 ## Render and deliver
 
@@ -122,6 +213,10 @@ and its current revision. After any analysis correction, republish changed
 appendices as well as the main report. Before proposing the notification, compare
 all final provider readbacks with the current manifest artifacts and confirm
 each appendix's parent is the main node; Audit checks these same actual results.
+After every render, publish or update and fully read back every appendix in the
+current manifest, even when that member's analysis is unchanged. The report date,
+title, links or summary can change independently of the member analysis; an old
+appendix or its previous readback does not satisfy this run's manifest.
 Read back content through the returned readback artifact. Call
 `read_dingtalk_document_info(node_id)` to obtain each published document's
 canonical URL; preserve that provider URL for appendix links and delivery.

@@ -2568,7 +2568,7 @@ OKR 本机 SSO 在点击当前账号后先检查指定组织是否已可见；�
 
 日报窗口由 `ceo-daily-report/scripts/window.py` 按上次真实完成的历史事实计算，漏发并入下一份，同日重跑沿用原起点。日报位置与通知内容归该 Skill。管理周报的周一窗口、目标/上期文档、空白模板策略和三处内容更新归 `ceo-weekly-report` 的材料/渲染脚本；渲染器只检查实际读取字段与 JSONML，固定指标、材料覆盖与章节等业务要求由 Skill 和 Audit 判断。三处写入仍为 CEO 判断、公司指标和新增跟踪行。
 
-OKR 报告的应用层只读取明确群名的稳定名单和明确人员/周期的实时数据及来源回执。每人一次读取、单次最多 240 秒，模型可见真实步骤结果；纯本地 `ceo-weekly-okr-report/scripts/report.py` 按稳定 userId 准备输入、计算原有精确公式并渲染。Agent 保存成员产物以恢复进度，发布管理报告、成员子页并提出群摘要消息。 Skill 的 prepare 在计划中标记来源摘要匹配的 `analysis_reusable`，恢复保留这些分析原文，来源或评分日期变化才重新分析；审核修订只修改被指出的分析。未评分成员保留已知职级与逐人来源缺口，不生成分数。业务 KR 的完成档位与领导力/文化行为档位分别应用；行为评分使用正式维度，70–79 为符合标准，80 分及以上须有明确超标案例，90 分及以上须具备对应榜样范围证据。成员附录按主报告父节点解析并读回，最终群提案逐字使用 summary.md；这些步骤由 Skill 与现有 Audit 承担，未新增服务发布门槛。原独立周报 Agent 子任务、租约/缓存编排和星期日重复调度逻辑退出当前执行路径；历史记录保留。
+OKR 报告的应用层只读取明确群名的稳定名单和明确人员/周期的实时数据及来源回执。每人一次读取、单次最多 240 秒，模型可见真实步骤结果；纯本地 `ceo-weekly-okr-report/scripts/report.py` 按稳定 userId 准备输入、计算原有精确公式并渲染。Agent 保存成员产物以恢复进度，发布管理报告、成员子页并提出群摘要消息。恢复的 Consumer turn 先读 Audit 与产物，再刷新名单和每位成员当前来源各一次；由于没有独立摘要查询接口，刷新读取用于发现来源变化。prepare 对照新摘要复用未变化成员的完整分析，只重做来源变化或分析未完成成员；同一 turn 内成功的来源读取不重复。来源摘要相同但带 `analysis_failure` 占位的文件不算完成、不复用。逐 KR 检索独立证据，零进度或未找到佐证仍按既有评分规则完成并说明证据缺口；领导力和文化分数须由各自行为证据支持，禁止跨维度借证，Audit逐人核对七项维度证据和分数。未评分成员保留已知职级与逐人来源缺口，不生成分数。业务 KR 的完成档位与领导力/文化行为档位分别应用；行为评分使用正式维度，70–79 为符合标准，80 分及以上须有明确超出当前职级标准的具体效果（经理日常辅导、总监在团队内复用方法本身仍可属于本职标准），90 分及以上须具备对应榜样范围证据；显示分数保留一位小数并采用通常四舍五入。每次渲染后都按当前 manifest 写入或更新并完整读回全部报告和附录，即使成员分析没变；旧标题及旧读回不能代替本次结果。群提案逐字使用当前 summary.md；这些步骤由 Skill 与现有 Audit 承担，未新增服务发布门槛。原独立周报 Agent 子任务、租约/缓存编排和星期日重复调度逻辑退出当前执行路径；历史记录保留。
 
 发布时，现有 Consumer system contract publication 原子发布 Skill 文件、新脚本与新 managed revision，在服务停止窗口迁移三项报告任务定义，记录完整前后配置和版本；启动 seed 再运行保持幂等。待恢复的旧报告执行必须先自然结束；核查未完成执行的原始快照，不依赖当前任务仍保留旧命令或 Skill 引用。失败回滚按精确版本恢复任务配置、runtime config 和既有文件，并移除本次新建文件；任务 ID、历史触发快照、周期、时区和用户自定义文本保留。
 
@@ -2752,7 +2752,7 @@ Derek 2026-09-25。候选只是没确认的猜测，所以可以在控制台“�
   该任务的 `StructuredCodexRunner` 使用 `app/schemas/okr_review.schema.json` 声明
   原生输出：外围仍为通用 AgentEnvelope，`domain_payload` 为现有 OKR 模型的完整
   字段，所有 object 具备具体 properties、全部 required 字段和 `additionalProperties: false`。
-- 管理者 OKR 周报使用普通 scheduled Agent 与 `ceo-weekly-okr-report` Skill。实时取数按成员执行；评分公式、身份绑定和渲染在 Skill 脚本，来源和发布事实使用既有记录。历史 weekly_okr runtime/分析记录保留，当前调度不再创建该独立工作流。
+- 管理者 OKR 周报使用普通 scheduled Agent 与 `ceo-weekly-okr-report` Skill。实时取数按成员执行；评分公式、身份绑定和渲染在 Skill 脚本，来源和发布事实使用既有记录。恢复的 Consumer turn 先读 Audit 与产物，再刷新名单和每位成员当前来源各一次；由于没有独立摘要查询接口，刷新读取用于发现来源变化。prepare 对照新摘要复用未变化成员的完整分析，只重做来源变化或分析未完成成员；同一 turn 内成功的来源读取不重复。来源摘要相同但带 `analysis_failure` 占位的文件不算完成、不复用。逐 KR 检索独立证据，零进度或未找到佐证仍按既有评分规则完成并说明证据缺口；每个领导力和文化分数须由相应维度的行为证据支持，Audit 逐人核对七项；本轮未完成时保留完成项并使用正常有界重试，不能用 `analysis_failure` 代替未完成分析。历史 weekly_okr runtime/分析记录保留，当前调度不再创建该独立工作流。
 
 ## 文档索引
 
@@ -4742,7 +4742,7 @@ History 按明确 source_tables 构建查询时，仅在包含 email_actions 或
 
 ## Consumer purpose output 和有界权限等待
 
-新 Consumer wire 用 `action`、`reason`、`target`、`payload`、`evidence_refs` 表达业务核心；保留 summary、评分、阶段及长期记忆元数据。purpose 来自当前任务已选择的 OA Skill 或明确 OA 动作上下文，否则使用普通 purpose。schema 和解析器由同一 purpose 动作定义生成，拒绝未知动作、不完整参数及非法 ID 类型。`plan` 的 payload 是现有完整 ConsumerProposal；直接动作规范化为同样的提案。OA `return` 规范化为 dingtalk-oa/revert_task；它与 Audit 的 return 反馈分属不同协议。OA 请求参数 revert_action 是 REVERT_FOR_APPROVAL 或 REVERT_FOR_RESUBMIT，REDIRECT_PROCESS 是外部操作记录类型。候选追加服务绑定的 purpose_output；旧候选不重写。
+新 Consumer wire 用 `action`、`reason`、`target`、`payload`、`evidence_refs` 表达业务核心；`evidence_refs` 对每个结果都是必填字段，无可用引用时返回空数组，权限重试必须列出验证访问请求的引用；保留 summary、评分、阶段及长期记忆元数据。purpose 来自当前任务已选择的 OA Skill 或明确 OA 动作上下文，否则使用普通 purpose。schema 和解析器由同一 purpose 动作定义生成，拒绝未知动作、不完整参数及非法 ID 类型。`plan` 的 payload 是现有完整 ConsumerProposal；直接动作规范化为同样的提案。OA `return` 规范化为 dingtalk-oa/revert_task；它与 Audit 的 return 反馈分属不同协议。OA 请求参数 revert_action 是 REVERT_FOR_APPROVAL 或 REVERT_FOR_RESUBMIT，REDIRECT_PROCESS 是外部操作记录类型。候选追加服务绑定的 purpose_output；旧候选不重写。
 
 OA `request_access` 是普通 Consumer purpose 动作，不进入 Audit。target 必须包含准确流程和文件 ID；同一任务同一文件的权限请求去重，不同文件可分别申请。服务经现有 OA 评论执行器提交只读权限请求，并在同一 `service_state` purpose 记录里持久化 action key、分发时间、状态及回执。恢复时依据该记录精确对账；原回执未确认前不重发。Consumer 请求阶段必须结束当前材料审核；评论送达不证明权限已恢复。只有回执验证成功后才开始权限等待。权限未恢复时 Consumer 输出 `retry`，引用本任务已核验的权限申请回执；retry 同样不进入 Audit、不产生外部写操作，只安排预算内的延后重读。解析准备阶段和编排层均从当前任务已核验的原权限请求核对它确为 request_access，不解析 reason 关键词。兼容迁移前缺少 purpose_output 的旧 OA 候选时，只接受本任务唯一且完全匹配 `material-read-access-block` identity 的已核验评论；其他评论、未知 key、uncertain 回执和其他任务的请求不能充当成功申请。
 

@@ -33,6 +33,11 @@ CeoAttentionItem = report.CeoAttentionItem
 DimensionScoreReview = report.DimensionScoreReview
 KrScoreReview = report.KrScoreReview
 ManagerReportAnalysis = report.ManagerReportAnalysis
+
+
+def test_display_rounding_uses_half_up_at_one_decimal():
+    assert report._rounded(71.25) == 71.3
+    assert report._rounded(71.24) == 71.2
 WeeklyOkrAnalysis = report.WeeklyOkrAnalysis
 PublishedDocument = report.PublishedDocument
 render_group_summary = report.render_group_summary

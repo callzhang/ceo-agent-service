@@ -4,6 +4,7 @@ import argparse
 import hashlib
 import json
 from dataclasses import asdict, dataclass
+from decimal import Decimal, ROUND_HALF_UP
 from pathlib import Path
 from typing import Any, Literal
 from pydantic import BaseModel, ConfigDict, Field, PrivateAttr
@@ -731,7 +732,9 @@ def _weight_number(value: object) -> float:
 
 
 def _rounded(value: float | None) -> float | None:
-    return None if value is None else round(value, 1)
+    if value is None:
+        return None
+    return float(Decimal(str(value)).quantize(Decimal("0.1"), rounding=ROUND_HALF_UP))
 
 
 def _okr_stats(payload: dict[str, Any]) -> dict[str, Any]:
@@ -965,9 +968,13 @@ def prepare(
                 analysis_file=f"analysis-{key}.json",
             )
             analysis_file = output_dir / entry["analysis_file"]
+            existing_analysis = (
+                _read_json(analysis_file) if analysis_file.is_file() else None
+            )
             entry["analysis_reusable"] = (
-                analysis_file.is_file()
-                and _read_json(analysis_file).get("_source_sha256") == entry["source_sha256"]
+                isinstance(existing_analysis, dict)
+                and "analysis_failure" not in existing_analysis
+                and existing_analysis.get("_source_sha256") == entry["source_sha256"]
             )
         plan.append(entry)
     result = {

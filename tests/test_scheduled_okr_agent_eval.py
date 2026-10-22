@@ -5,9 +5,34 @@ from pathlib import Path
 from evals.scheduled_task_generic import okr_eval
 from evals.scheduled_task_generic.okr_fixture import Fixture, member_payload
 
-CASES = json.loads((Path(okr_eval.__file__).parent / "okr_cases.v3.json").read_text())[
+CASES = json.loads((Path(okr_eval.__file__).parent / "okr_cases.v4.json").read_text())[
     "cases"
 ]
+
+
+def test_okr_skill_resumes_saved_inputs_and_does_not_use_failure_for_missing_evidence():
+    root = Path(okr_eval.__file__).parents[2]
+    skill = " ".join(
+        (root / "ci/shared-skills/ceo-weekly-okr-report/SKILL.md")
+        .read_text()
+        .split()
+    )
+    assert "read each current member once" in skill
+    assert "Never repeat a successful member read again within the same Consumer turn" in skill
+    assert "resume at the first missing, changed or Audit-identified analysis" in skill
+    assert "Zero reported progress is not evidence that no outcome occurred" in skill
+    assert "It is not a shortcut for unfinished analysis" in skill
+    assert "A file containing `analysis_failure` is not a complete analysis" in skill
+    assert "return a retryable `analysis_incomplete` result" in skill
+    assert "Score each dimension independently" in skill
+    assert "Do not transfer evidence between dimensions" in skill
+    assert "Audit must independently check all seven dimension/evidence/score" in skill
+    assert "Innovation requires a specific improvement, validation and observed effect" in skill
+    assert "A `scope: member` label or a diagnostic containing “member-bound” is not proof" in skill
+    assert "Independently inspect every score of 80 or more" in skill
+    assert "routine same-team adoption" in skill
+    assert "publish or update and fully read back every appendix" in skill
+    assert "an old appendix or its previous readback does not satisfy this run's manifest" in skill
 
 
 def complete_fixture(tmp_path, case=None):
@@ -44,8 +69,14 @@ def complete_fixture(tmp_path, case=None):
                 {
                     "dimension": dimension,
                     "required_behavior": "Current level standard",
-                    "positive_evidence": "behavior-review",
-                    "missing_or_contrary_evidence": "No exemplar scope",
+                    "positive_evidence": (
+                        "behavior-review supports current standard"
+                        if score >= 70
+                        else "No dimension-specific evidence in behavior-review"
+                    ),
+                    "missing_or_contrary_evidence": (
+                        "No exemplar scope" if score >= 70 else "Current standard is not established"
+                    ),
                     "score": score,
                     "next_band_evidence": "Need independently verified extra effect",
                 }
@@ -87,11 +118,30 @@ def complete_fixture(tmp_path, case=None):
                             "improvement": "Verify effects",
                         }
                     ],
-                    "leadership_dimensions": dims(case["expected"]["leadership_dimensions"], 75),
-                    "culture_dimensions": dims(case["expected"]["culture_dimensions"], 75),
+                    "leadership_dimensions": dims(
+                        case["expected"]["leadership_dimensions"],
+                        60,
+                    ),
+                    "culture_dimensions": dims(
+                        case["expected"]["culture_dimensions"],
+                        60,
+                    ),
                 }
             ],
         }
+        for dimension in analysis["manager_reviews"][0]["leadership_dimensions"] + analysis["manager_reviews"][0]["culture_dimensions"]:
+            low, high = case["expected"]["behavioral_score_ranges"][dimension["dimension"]]
+            dimension["score"] = low if high <= 60 else low
+            dimension["positive_evidence"] = (
+                "behavior-review: dimension-specific current-standard evidence"
+                if high >= 70
+                else "No dimension-specific current-standard evidence"
+            )
+            dimension["missing_or_contrary_evidence"] = (
+                "No above-standard exemplar evidence"
+                if high >= 70
+                else "Current-standard behavior is not established"
+            )
         f.write_json(entry["analysis_file"], analysis)
     links = {
         m["user_id"]: "https://docs.example.invalid/child-" + m["user_id"]
@@ -191,12 +241,79 @@ def test_complete_actual_skill_output_passes_okr_acceptance(tmp_path):
 
 def test_preliminary_native_pass_does_not_satisfy_formal_behavior_rubric():
     saved = json.loads((Path(okr_eval.__file__).parent / "okr_results.v12.json").read_text())
-    case = json.loads((Path(okr_eval.__file__).parent / "okr_cases.v3.json").read_text())["cases"][0]
+    case = json.loads((Path(okr_eval.__file__).parent / "okr_cases.v4.json").read_text())["cases"][0]
     reviews = [r for a in saved["cases"][0]["final_grade"]["analyses"].values()
                for r in a["manager_reviews"]]
     checks = okr_eval.behavior_checks(reviews, case["expected"])
     assert not checks["formal_behavioral_dimensions"]
-    assert not checks["behavioral_standard_band"]
+    assert not checks["behavioral_scores_match_evidence"]
+
+
+def test_member_source_failure_fixture_proves_isolated_failure_scope():
+    case = CASES[2]
+    member = next(
+        item for item in case["facts"]["roster"]["managers"]
+        if item["user_id"] == "eval-failed"
+    )
+    outcome = member_payload(member, case["facts"])["sourceOutcome"]
+    assert outcome["kind"] == "source_failed"
+    assert outcome["scope"] == "member"
+    assert "404" in outcome["diagnostic"]
+    assert "roster and eval-a/eval-b reads succeeded" in outcome["diagnostic"]
+
+
+def test_native_resume_skips_incomplete_saved_case_without_audit_verdict():
+    pending = {"case_id": "recover-changed-date", "consumer": {"exit_code": 1}}
+    approved = {
+        "case_id": "composite-coverage",
+        "passed": True,
+        "final_audit": {"output": {"verdict": "approve"}},
+    }
+    audit_only = {
+        "case_id": "recover-changed-source",
+        "passed": False,
+        "final_audit": {"output": {"verdict": "approve"}},
+    }
+    assert okr_eval.approved_saved_case([pending, audit_only, approved], pending["case_id"]) is None
+    assert okr_eval.approved_saved_case([pending, audit_only, approved], audit_only["case_id"]) is None
+    assert okr_eval.approved_saved_case([pending, audit_only, approved], approved["case_id"]) == approved
+
+
+def test_native_consumer_output_requires_evidence_refs(tmp_path):
+    import pytest
+    from pydantic import ValidationError
+
+    schema = okr_eval.purpose_output_model("general").model_json_schema()
+    assert "evidence_refs" in schema["required"]
+    assert "Required on every purpose output" in schema["properties"]["evidence_refs"]["description"]
+    _, output = complete_fixture(tmp_path)
+    output.pop("evidence_refs")
+    with pytest.raises(ValidationError, match="evidence_refs"):
+        okr_eval.parse_consumer_purpose_output(
+            {"purpose_output_json": json.dumps(output, ensure_ascii=False)}
+        )
+
+
+def test_behavioral_rubric_requires_standard_scores_only_where_source_supports_them():
+    case = json.loads((Path(okr_eval.__file__).parent / "okr_cases.v4.json").read_text())["cases"][0]
+    expected = case["expected"]
+    review = {
+        "leadership_dimensions": [
+            {"dimension": dimension, "score": 75 if dimension != "创新能力" else 60}
+            for dimension in expected["leadership_dimensions"]
+        ],
+        "culture_dimensions": [
+            {"dimension": dimension, "score": 60 if dimension == "AI时代原生能力" else 75}
+            for dimension in expected["culture_dimensions"]
+        ],
+    }
+    assert okr_eval.behavior_checks([review], expected)["behavioral_scores_match_evidence"]
+
+    # Unsupported innovation or AI scores at the role-standard band are an
+    # overclaim; a blanket 70-79 check used to reward this exact inflation.
+    review["leadership_dimensions"][-1]["score"] = 70
+    review["culture_dimensions"][0]["score"] = 70
+    assert not okr_eval.behavior_checks([review], expected)["behavioral_scores_match_evidence"]
 
 
 def test_native_document_tools_use_actual_service_receipt_contract(tmp_path):
@@ -260,11 +377,10 @@ def test_hand_editing_canonical_summary_does_not_make_a_proposal_valid(tmp_path)
 
 def test_accepted_bytes_survive_stricter_canonical_and_owner_recheck(tmp_path):
     saved = json.loads((Path(okr_eval.__file__).parent / "okr_results.v13.json").read_text())
-    row = okr_eval.restore_accepted_candidate(saved, CASES[0], tmp_path)
-    result = okr_eval.grade(CASES[0], tmp_path, row["correction"]["output"])
-    assert result["passed"]
-    assert result["analysis_hashes"] == row["final_grade"]["analysis_hashes"]
-    assert result["checks"]["canonical_render_artifacts"]
+    import pytest
+
+    with pytest.raises(ValueError, match="fixed facts or expectations changed"):
+        okr_eval.restore_accepted_candidate(saved, CASES[0], tmp_path)
 
 
 def test_failed_saved_candidate_cannot_be_reused(tmp_path):
@@ -394,6 +510,33 @@ def test_prepare_marks_exact_analysis_reuse_without_rewriting(tmp_path):
     assert all((tmp_path / name).read_bytes() == body for name, body in before.items())
 
 
+def test_prepare_does_not_reuse_analysis_failure_placeholder(tmp_path):
+    case, _ = complete_fixture(tmp_path)
+    report = okr_eval.load_script("report")
+    plan = json.loads((tmp_path / "plan.json").read_text())
+    entry = next(e for e in plan["managers"] if e["user_id"] == "eval-a")
+    failure = {
+        "_source_sha256": entry["source_sha256"],
+        "analysis_failure": {"diagnostic": "analysis not completed"},
+    }
+    path = tmp_path / entry["analysis_file"]
+    original = path.read_bytes()
+    path.write_text(json.dumps(failure, ensure_ascii=False))
+    repeated = report.prepare(
+        roster_file=tmp_path / "okr-roster.json",
+        members_dir=tmp_path,
+        period_label=case["facts"]["period_label"],
+        report_date=case["facts"]["report_date"],
+        output_dir=tmp_path,
+    )
+    assert not next(
+        e for e in repeated["managers"] if e["user_id"] == "eval-a"
+    )["analysis_reusable"]
+    assert next(e for e in repeated["managers"] if e["user_id"] == "eval-b")["analysis_reusable"]
+    assert path.read_text() == json.dumps(failure, ensure_ascii=False)
+    assert original
+
+
 def test_okr_acceptance_rejects_wrong_group_or_body(tmp_path):
     case, output = complete_fixture(tmp_path)
     output["payload"]["actions"][0]["target"]["conversation_id"] = "other-group"
@@ -499,6 +642,12 @@ def test_group_summary_keeps_exact_member_gap_evidence(tmp_path):
 def test_cases_are_versioned_without_rewriting_failed_oracle():
     import hashlib
 
+    def stable_non_behavior_facts(facts):
+        stable = copy.deepcopy(facts)
+        stable["evidence"].pop("behavior", None)
+        stable["evidence"].pop("behavior_by_manager", None)
+        return stable
+
     root = Path(okr_eval.__file__).parent
     old = root / "okr_cases.v1.json"
     assert (
@@ -508,10 +657,26 @@ def test_cases_are_versioned_without_rewriting_failed_oracle():
     first = json.loads(old.read_text())["cases"]
     second = root / "okr_cases.v2.json"
     assert hashlib.sha256(second.read_bytes()).hexdigest() == "646a1857f50fd16a45d2f9520df906ee9dafbf0bb7864f4cd1226c961469bf04"
-    assert [c["facts"] for c in json.loads(second.read_text())["cases"]] == [c["facts"] for c in CASES]
+    old_v2 = json.loads(second.read_text())["cases"]
+    for before, after in zip(old_v2, CASES, strict=True):
+        assert stable_non_behavior_facts(before["facts"]) == stable_non_behavior_facts(after["facts"])
     assert hashlib.sha256((root / "okr_cases.v3.json").read_bytes()).hexdigest() == "c8ed2093242a7cef57f3025a2f062a7aa4a82da3b67901fcb92a7843b8569438"
+    fourth = root / "okr_cases.v4.json"
+    assert hashlib.sha256(fourth.read_bytes()).hexdigest() == "de85506221508bee7aa4db312d5c566a8f28b96a9ebac87d919ac34dbfe0ca5c"
+    old_v3 = json.loads((root / "okr_cases.v3.json").read_text())["cases"]
+    for before, after in zip(old_v3, CASES, strict=True):
+        assert stable_non_behavior_facts(before["facts"]) == stable_non_behavior_facts(after["facts"])
+        behavior = after["facts"]["evidence"]["behavior_by_manager"]
+        assert set(behavior) == {"eval-a", "eval-b"}
+        assert behavior["eval-a"]["id"] != behavior["eval-b"]["id"]
+        assert "林辰 [eval-a]" in behavior["eval-a"]["content"]
+        assert "林辰 [eval-b]" in behavior["eval-b"]["content"]
+        assert "负责人轮流主持并独立跟进跨团队依赖" in behavior["eval-a"]["content"]
+        assert "每周带两名工程师复盘定位方法" in behavior["eval-b"]["content"]
+    date_case = next(c for c in CASES if c["id"] == "recover-changed-date")
+    assert "没有AI使用及工作增益证据" in date_case["facts"]["evidence"]["behavior_by_manager"]["eval-b"]["content"]
     for before, after in zip(first, CASES, strict=True):
-        assert before["facts"] == after["facts"]
+        assert stable_non_behavior_facts(before["facts"]) == stable_non_behavior_facts(after["facts"])
         if "base_score_ranges" in before["expected"]:
             assert before["expected"]["base_score_ranges"]["eval-a"] == [60, 80]
             assert after["expected"]["base_score_ranges"]["eval-a"] == [100, 100]
