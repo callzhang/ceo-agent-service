@@ -63,7 +63,37 @@
   "repair": "A new scheduled_run_id requires a fresh roster and member snapshot. A retry, resumed turn, or Audit correction for the same scheduled_run_id reuses successful receipts and only collects missing or failed receipts. Scoring, evidence, Audit, document readback, and delivery requirements remain unchanged. Managed Skill version is 19; publication preconditions are refreshed from production commit 25eea1dc99e75ef7a18a7331f67b2e6274abe374, active runtime skill config 361, installed Skill hash f2781a3505e57bd7e6815f35f0d94b3fb4535b31b07900e1a28b5377ec140701 and managed revision 222.",
   "verification": {
     "tests": "After final Skill v19 and release-manifest updates: tests/test_scheduled_okr_agent_eval.py + tests/test_weekly_okr_report.py + tests/test_consumer_skill_script_boundary.py: 130 passed; tests/test_consumer_system_release.py + tests/test_scheduled_okr_agent_eval.py: 68 passed. Ruff, git diff --check and 26-file release preflight passed.",
-    "production_deployed": false,
-    "new_run_created": false
+    "production_deployed": true,
+    "new_run_created": true,
+    "deployment_commit": "d1652acd42d3a4e514a8107101c651f4c973950d",
+    "active_runtime_skill_config_id": 362,
+    "task6_version": 21,
+    "managed_skill_revision_id": 223,
+    "installed_skill_sha256": "18b23c5c6762ce0fa6cceedf8f1a7a14591327269897fcc56ba4ea32e9c78744",
+    "new_run_id": 392433,
+    "new_run_status": "skipped"
+  },
+  "post_deploy_run": {
+    "scheduled_run_id": 392433,
+    "task_config_version": 21,
+    "managed_skill_revision_id": 223,
+    "dispatch_status": "skipped",
+    "reason": "scheduled_task_execution_unavailable: runtime route codex_oauth: snapshot_expired; runtime route codex_api: snapshot_unhealthy; runtime route qwen_gpu4: snapshot_expired; runtime route claude_oauth: snapshot_expired",
+    "consumer_started": false,
+    "external_document_write": false,
+    "notification_receipt": false,
+    "replay_created": false
+  },
+  "recovery_readback": {
+    "service_pid": "60441",
+    "healthz": "ok",
+    "tasks_configured": 14,
+    "task6_next_scheduled_for": "2026-10-25T10:00:00Z",
+    "active_routes_at_readback": {
+      "codex_oauth": "healthy",
+      "codex_api": "unhealthy:codex_provider_overloaded",
+      "claude_oauth": "healthy",
+      "qwen_gpu4": "healthy"
+    }
   }
 }

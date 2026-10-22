@@ -516,3 +516,11 @@ task6 run **392187** 使用 task 配置 v20、managed Skill revision 222，派�
 此 Skill 修复尚未部署，也未创建新的运行。下一步提交并按正式流程部署；确认新配置快照绑定新 managed Skill revision 后，再创建一条 task6 手动验收运行。旧运行 392187 保持失败历史，不重放且不补发；新版运行仍需完整 Consumer/Audit、报告文档读回、持久通知回执和 provider 查询才能记作实际发布通过。
 
 发布前置哈希已按只读读回刷新：生产代码仍为 `25eea1dc`，healthz 正常；运行配置为 361，task6 正在使用的旧 Skill revision 为 222，安装 Skill 摘要为 `f2781a35…`。修复将 Skill metadata 版本提升至 19。候选发布清单与哈希前置现可对齐当前安装文件；部署后仍要核实新增 revision 和新 task 配置快照。
+
+### Skill v19 发布读回与 392433 分派结果
+
+`d1652acd42d3a4e514a8107101c651f4c973950d` 已经两阶段正式部署（服务代码及 Consumer/Skill 合约发布）。生产读回：PID 60441、healthz 正常、14 项定时任务仍在；active runtime Skill 配置 362；task6 配置 v21，managed revision 223，安装 Skill SHA-256 与候选完全一致。task6 仍是洛杉矶周日 03:00。
+
+部署后唯一创建的新验收 run **392433** 的不可变快照正确绑定 v21/revision223，但在 Consumer 启动前被分派器标记为 `skipped`：当时 `codex_oauth`、`qwen_gpu4`、`claude_oauth` 快照过期，`codex_api` 快照不健康。没有 Consumer/Audit trajectory、报告文档写入或通知回执，因此这不是新版 Agent 行为结果，也不能记为通过。稍后的运行时探测读回中，codex OAuth、Claude OAuth 和 Qwen 已恢复健康；Codex API 仍因 `codex_provider_overloaded` 不健康。健康快照恢复不能把 392433 的终态改成成功。
+
+按验收约束，不重放已 `skipped` 的报告，也不另建手动运行。新版 OKR 来源快照重试逻辑尚未取得真实 Consumer 证据；继续观察下一个正常 task6 调度 **2026-10-25 10:00 UTC（洛杉矶周日 03:00）**。该自然运行需实际使用 v21/revision223，并通过完整 Consumer/Audit、文档完整读回及真实通知持久回执/provider 查询，才能证明实际发布通过。
