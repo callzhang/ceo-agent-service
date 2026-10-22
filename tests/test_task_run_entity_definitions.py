@@ -100,6 +100,27 @@ def test_workbench_active_turn_partial_unique_contract_only_blocks_queued_or_run
         db.execute("update tasks set status='queued' where id=11")
 
 
+def test_workbench_active_turn_task_id_reassignment_checks_new_task_but_excludes_old_row():
+    db = sqlite3.connect(':memory:')
+    db.execute('pragma foreign_keys=on')
+    for ddl in task_run_entity_objects().values():
+        db.execute(ddl)
+    db.execute("insert into workbench_tasks(id,title,runtime_kind) values(1,'a','x'),(2,'b','x')")
+    db.execute("insert into tasks(id,kind,status,parameters_json,created_at,updated_at) values"
+               "(11,'workbench_turn','queued',jsonb('{}'),'now','now'),"
+               "(12,'workbench_turn','completed',jsonb('{}'),'now','now'),"
+               "(13,'workbench_turn','queued',jsonb('{}'),'now','now'),"
+               "(14,'workbench_turn','queued',jsonb('{}'),'now','now'),"
+               "(15,'workbench_turn','queued',jsonb('{}'),'now','now')")
+    turn_insert = "insert into workbench_turns(task_id,workbench_task_id,client_request_id,task_sequence,user_text,stop_requested,error_code,error_detail,resume_context,execution_run_id,runtime_quiesced_run_id,started_at,completed_at) values(?,?,?,?,'x',0,'','','','','','','')"
+    db.execute(turn_insert, (11, 1, 'active', 1))
+    db.execute(turn_insert, (12, 1, 'terminal', 2))
+    with pytest.raises(sqlite3.IntegrityError, match='active Workbench turn already exists'):
+        db.execute("update workbench_turns set task_id=13 where task_id=12")
+    db.execute(turn_insert, (14, 2, 'move', 1))
+    db.execute("update workbench_turns set task_id=15 where task_id=14")
+
+
 def test_current_source_active_turn_index_has_the_same_predicate_and_parent_key():
     from contextlib import closing
     from app.task20_definitions import create_task20_schema, TASK20_LAYOUTS

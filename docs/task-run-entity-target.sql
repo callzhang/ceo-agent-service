@@ -183,3 +183,11 @@ WHEN NEW.kind='workbench_turn' AND NEW.status IN ('queued','running')
              WHERE turn.task_id=NEW.id AND active.task_id<>NEW.id
                AND active_task.status IN ('queued','running'))
 BEGIN SELECT RAISE(ABORT,'active Workbench turn already exists'); END;
+
+CREATE TRIGGER trg_workbench_active_turn_task_id_update
+BEFORE UPDATE OF task_id ON workbench_turns
+WHEN (SELECT status FROM tasks WHERE id=NEW.task_id) IN ('queued','running')
+ AND EXISTS (SELECT 1 FROM workbench_turns active JOIN tasks active_task ON active_task.id=active.task_id
+             WHERE active.workbench_task_id=OLD.workbench_task_id AND active.task_id<>OLD.task_id
+               AND active_task.status IN ('queued','running'))
+BEGIN SELECT RAISE(ABORT,'active Workbench turn already exists'); END;
