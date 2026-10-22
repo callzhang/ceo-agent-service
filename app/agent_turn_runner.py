@@ -121,11 +121,16 @@ def _runtime_result_schema_id(
     legacy = hashlib.sha256(
         ("agent_turn_claude_result_v1\0" + execution_contract_digest).encode("utf-8")
     ).hexdigest()
-    if RuntimeKind(runtime_kind) is not RuntimeKind.CODEX_CLI or role is not AgentRole.CONSUMER:
+    if RuntimeKind(runtime_kind) is not RuntimeKind.CODEX_CLI or role not in {
+        AgentRole.CONSUMER, AgentRole.AUDIT,
+    }:
         return legacy
-    schema_bytes = native_output_schema_path(purpose=purpose).read_bytes()
+    schema_bytes = native_output_schema_path(role.value, purpose=purpose).read_bytes()
+    role_prefix = (
+        "consumer" if role is AgentRole.CONSUMER else "audit"
+    )
     return hashlib.sha256(
-        b"agent_turn_codex_consumer_native_result_v1\0"
+        f"agent_turn_codex_{role_prefix}_native_result_v1\0".encode("ascii")
         + execution_contract_digest.encode("utf-8")
         + b"\0" + schema_bytes
     ).hexdigest()
@@ -137,9 +142,11 @@ def _native_output_schema_for_route(
     *,
     purpose: str = "general",
 ) -> Path | None:
-    if RuntimeKind(runtime_kind) is not RuntimeKind.CODEX_CLI or role is not AgentRole.CONSUMER:
+    if RuntimeKind(runtime_kind) is not RuntimeKind.CODEX_CLI or role not in {
+        AgentRole.CONSUMER, AgentRole.AUDIT,
+    }:
         return None
-    return native_output_schema_path(purpose=purpose)
+    return native_output_schema_path(role.value, purpose=purpose)
 
 
 def _fallback_requested_session_id(
@@ -997,9 +1004,11 @@ class AgentTurnProcess(Generic[ResultT]):
         )
 
         def parse_result_for_route(raw: str, route: RuntimeRoute) -> ResultT:
-            if route.runtime_kind is RuntimeKind.CODEX_CLI and run.role is AgentRole.CONSUMER:
+            if route.runtime_kind is RuntimeKind.CODEX_CLI and run.role in {
+                AgentRole.CONSUMER, AgentRole.AUDIT,
+            }:
                 return parse_native_result(
-                    raw, "consumer", purpose=consumer_purpose, parser=parse_result,
+                    raw, run.role.value, purpose=consumer_purpose, parser=parse_result,
                 )
             return parse_result(raw)
 
