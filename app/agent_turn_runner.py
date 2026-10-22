@@ -813,6 +813,8 @@ class AgentTurnProcess(Generic[ResultT]):
         prompt: str,
         session_id: str | None,
         developer_instructions: str,
+        developer_instructions_by_runtime: Mapping[str, str] | None = None,
+        prompt_sections_by_runtime: Mapping[str, list[dict[str, str]]] | None = None,
         configure_command: Callable[[list[str]], None],
         parse_result: Callable[[str], ResultT],
         persist_conversation_session: bool,
@@ -1012,9 +1014,6 @@ class AgentTurnProcess(Generic[ResultT]):
             "operation_id": run.operation_id,
             "conversation_contract_hash": conversation_contract_hash,
             "prompt_sha256": hashlib.sha256(prompt.encode("utf-8")).hexdigest(),
-            "developer_instructions_sha256": hashlib.sha256(
-                developer_instructions.encode("utf-8")
-            ).hexdigest(),
             "required_capabilities": sorted(required_capabilities),
             "expected_actions_sha256": hashlib.sha256(
                 json.dumps(
@@ -1024,15 +1023,24 @@ class AgentTurnProcess(Generic[ResultT]):
                 ).encode("utf-8")
             ).hexdigest(),
         }
-        execution_contract_digest = hashlib.sha256(
-            json.dumps(
-                execution_contract, sort_keys=True, separators=(",", ":")
-            ).encode("utf-8")
-        ).hexdigest()
+        def developer_instructions_for(runtime_kind: RuntimeKind | str) -> str:
+            kind = runtime_kind.value if isinstance(runtime_kind, RuntimeKind) else runtime_kind
+            return (developer_instructions_by_runtime or {}).get(kind, developer_instructions)
+
+        def execution_contract_digest_for(runtime_kind: RuntimeKind | str) -> str:
+            contract = {
+                **execution_contract,
+                "developer_instructions_sha256": hashlib.sha256(
+                    developer_instructions_for(runtime_kind).encode("utf-8")
+                ).hexdigest(),
+            }
+            return hashlib.sha256(
+                json.dumps(contract, sort_keys=True, separators=(",", ":")).encode("utf-8")
+            ).hexdigest()
 
         def result_schema_id_for(runtime_kind: RuntimeKind | str) -> str:
             return _runtime_result_schema_id(
-                execution_contract_digest, runtime_kind, run.role,
+                execution_contract_digest_for(runtime_kind), runtime_kind, run.role,
                 purpose=consumer_purpose,
             )
 
@@ -1170,7 +1178,7 @@ class AgentTurnProcess(Generic[ResultT]):
                 executor_prompt = (
                     _claude_input_contract(
                         prompt=prompt,
-                        developer_instructions=developer_instructions,
+                        developer_instructions=developer_instructions_for(route.runtime_kind),
                     )
                     if route.runtime_kind is RuntimeKind.CLAUDE_CLI
                     else prompt
@@ -1242,7 +1250,7 @@ class AgentTurnProcess(Generic[ResultT]):
                         output_schema_path=native_schema_path,
                         use_output_schema=native_schema_path is not None,
                         approval_policy="on-failure",
-                        developer_instructions=developer_instructions,
+                        developer_instructions=developer_instructions_for(route.runtime_kind),
                         use_approval_bypass=True,
                         reasoning_effort=self.reasoning_effort or None,
                         tool_approval_modes_by_server=(
@@ -1276,15 +1284,29 @@ class AgentTurnProcess(Generic[ResultT]):
                     invocation_facts or {},
                     scoped_prompt_for_attempt,
                 )
+                route_prompt_sections = (prompt_sections_by_runtime or {}).get(
+                    route.runtime_kind.value
+                )
+                if scoped_prompt_for_attempt is not None:
+                    route_prompt_sections = (
+                        (scoped_prompt_for_attempt.get("prompt_sections_by_runtime") or {}).get(
+                            route.runtime_kind.value
+                        )
+                        or route_prompt_sections
+                    )
                 context_facts = {
                     **turn_invocation_facts,
                     "proposal_revision": run.proposal_revision,
                 }
+                if route_prompt_sections is not None:
+                    context_facts["prompt_sections"] = route_prompt_sections
                 runtime_context = render_runtime_context(
                     role=run.role.value, route=route, command=command, task=self.task,
                     current_time=rendered_at, invocation_facts=context_facts,
                 )
-                submitted_developer_instructions = append_runtime_context(developer_instructions, runtime_context)
+                submitted_developer_instructions = append_runtime_context(
+                    developer_instructions_for(route.runtime_kind), runtime_context
+                )
                 if route.runtime_kind is RuntimeKind.CODEX_CLI:
                     command = [
                         "developer_instructions=" + json.dumps(submitted_developer_instructions)

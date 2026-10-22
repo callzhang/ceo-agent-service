@@ -288,6 +288,16 @@ def daily_report_prompt() -> str:
     return (
         "使用 $ceo-daily-report 生成并发送 CEO 每日总结。"
         "用 read_scheduled_context 读取本次触发，用 read_service_activity 读取服务事实；"
+        "先查群消息；仅在会议管理细节仍缺失时，读取任务冻结的 dingtalk-minutes Skill 后再查听记摘要。"
+        "按 Skill 使用原生 DWS 读取其余材料、发布文档，并通过服务的已审核消息工具投递。"
+    )
+
+
+def _daily_report_prompt_before_conditional_minutes() -> str:
+    """Exact repository seed before making the Minutes read conditional."""
+    return (
+        "使用 $ceo-daily-report 生成并发送 CEO 每日总结。"
+        "用 read_scheduled_context 读取本次触发，用 read_service_activity 读取服务事实；"
         "按 Skill 使用原生 DWS 读取其余材料、发布文档，并通过服务的已审核消息工具投递。"
     )
 
@@ -473,6 +483,7 @@ SCHEDULED_TASK_DEFAULTS = (
         previous_agent_prompts=(
             _legacy_daily_report_prompt(),
             _legacy_daily_report_prompt_20261019(),
+            _daily_report_prompt_before_conditional_minutes(),
         ),
         previous_cron_expression="0 0 21 * * *",
         previous_timezone_name="Asia/Shanghai",

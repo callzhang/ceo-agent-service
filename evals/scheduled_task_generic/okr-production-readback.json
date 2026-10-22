@@ -1,5 +1,5 @@
 {
-  "observed_at": "2026-10-20T02:34:03.250601+00:00",
+  "observed_at": "2026-10-22T19:31:00Z",
   "scope": "Historical real publication readback; not new Agent natural-run acceptance",
   "natural_command_completion_facts": [
     {
@@ -245,6 +245,115 @@
       },
       "catchup_branch_exercised": false,
       "report_body_or_message_receipt_token_included": false
+    },
+    {
+      "observed_at": "2026-10-22T17:16:21.467Z",
+      "scope": "Post-deploy natural CEO daily report; no manual replay; publication completed but business coverage acceptance failed",
+      "production_commit": "036b14624cddbcff04098ebec7697644f95370c",
+      "production_pid": 65404,
+      "healthz_ok": true,
+      "scheduled_task_id": 14,
+      "scheduled_task_run_id": 392889,
+      "attempt_id": 15917,
+      "reply_task_id": 416905,
+      "trigger_kind": "scheduled",
+      "scheduled_for": "2026-10-22T13:00:00Z",
+      "dispatch_status": "dispatched",
+      "terminal_status": "done",
+      "task_config_version": 49,
+      "task_cron_expression": "0 0 6 * * *",
+      "task_timezone_name": "America/Los_Angeles",
+      "managed_skill": "ceo-daily-report",
+      "managed_skill_revision_id": 203,
+      "consumer_runs": [
+        {
+          "run_id": 392892,
+          "status": "completed",
+          "revision": 0
+        },
+        {
+          "run_id": 392902,
+          "status": "completed",
+          "revision": 1
+        }
+      ],
+      "audit_runs": [
+        {
+          "run_id": 392897,
+          "status": "completed_return",
+          "revision": 0
+        },
+        {
+          "run_id": 392910,
+          "status": "completed_approve",
+          "revision": 1
+        }
+      ],
+      "revision_count": 1,
+      "trajectory": {
+        "consumer_native_session_ids": [
+          "01a163b3-a5fb-76e0-ad54-3cffad6d9e03",
+          "01a163b5-790c-7131-a416-9c1739a00e69"
+        ],
+        "audit_native_session_ids": [
+          "01a163b4-fdb6-7193-914c-0e46858fee14",
+          "01a163b7-39b2-7703-bb5b-1574102bf1a4"
+        ],
+        "native_event_counts": [
+          20,
+          8,
+          15,
+          13
+        ],
+        "full_trajectory_read": true,
+        "audit_first_return_reason": "direct message omitted required daily key points",
+        "audit_final_reason": "approved message after key points were added; did not enforce group-chat read coverage"
+      },
+      "group_chat_coverage": {
+        "window_utc": {
+          "start": "2026-10-21T13:00:00Z",
+          "end": "2026-10-22T13:00:00Z"
+        },
+        "inventory_conversations": 65,
+        "inventory_pages": 6,
+        "inventory_endpoint_exhausted": true,
+        "message_window_read_calls": 0,
+        "report_disclosed_unread": true,
+        "accepted": false,
+        "failure_class": "actual Consumer/Audit behavior; required reads were not attempted and no provider read error occurred"
+      },
+      "document": {
+        "node_id": "EpGBa2Lm8a7NA9YlUReYRy6RVgN7R35y",
+        "title": "CEO 每日总结 2026-10-22",
+        "operation": "updated",
+        "complete_provider_readback": true,
+        "audit_readback_success": true,
+        "submitted_chars": 3498,
+        "submitted_sha256": "af8603ff73170beef2e12711587e335f64f905a84983a78e88882d85f7d0c834",
+        "provider_readback_chars": 3503,
+        "provider_readback_sha256": "a3c1a052563c8a78968a79545f83fc1aafeaacba0a969a47a6f78669f9f877e8",
+        "difference": "provider escaped underscore and asterisks with five backslashes",
+        "equal_after_provider_markdown_escape_normalization": true
+      },
+      "notification": {
+        "system_execution_id": 437,
+        "action_count": 1,
+        "verified_action_count": 1,
+        "persistent_receipt_id": 18626,
+        "persistent_receipt_state": "sent",
+        "provider_open_task_id": "qMJ0pqZF/YaOBL4AILYNozdI+2GCOENMbIdR159P1nU=",
+        "direct_provider_status_query": "SUCCESS",
+        "provider_message_id": "msgALB31lHY4qfhfubfDS6J7w==",
+        "action_identity": "ceo-daily-report-2026-10-22-direct-message",
+        "external_action_key": "5ad06228b3fe4384f1580b1c5839714f3d5c0b406194c5433c907097f3931245",
+        "previous_manual_run_id": 391245,
+        "previous_manual_action_identity": "ceo-daily-report:2026-10-22:direct-message:035504180730922",
+        "previous_manual_external_action_key": "82d6f82db1d61a0bd0b556188468776c0c3117a1d82b7bac92d31d707c0471ef",
+        "identity_conflict_observed": false
+      },
+      "root_cause": "The Skill allowed a source that was partly read to be disclosed and published, without distinguishing an actual failed/partial read from a read that was never attempted. Consumer skipped all message reads. Audit checked document and recipient but did not reject the explicitly disclosed unattempted group coverage.",
+      "repair": "Skill now requires reading every accessible group conversation, treats only actual attempted provider failures/timeouts/incomplete pages as partial-source exceptions, and requires Audit to return unattempted coverage. Added a focused contract regression; daily-report facts/receipt and coverage tests pass 23/23, consumer-system release tests pass 27/27, changed-test Ruff and diff checks pass. Commit, Skill publication, production readback, and next natural task14 execution remain pending.",
+      "replay_or_extra_send": false
     }
   ],
   "okr_real_children": {
@@ -408,5 +517,167 @@
     "fix_publication": "not yet published or deployed",
     "natural_scheduled_acceptance": false,
     "report_body_or_message_receipt_token_included": false
+  },
+  "latest_skill_publication_attempt": {
+    "observed_at": "2026-10-22T17:43:48Z",
+    "production_code_deploy_commit": "526f3df5ef04dca3ed991e78adba0232718a7bee",
+    "code_deploy_output": "deployed 0c63b498 -> 526f3df5",
+    "contract_publication_result": "failed_preflight",
+    "failure": "Consumer system release SHA mismatch: ci/shared-skills/ceo-weekly-okr-report/SKILL.md",
+    "root_cause": "The release manifest and frozen candidate precondition still pinned installed/managed weekly-OKR Skill revision 222 (f2781a35...), while read-only production state had advanced to managed revision 223 and both source and installed Skill bytes were 18b23c5c....",
+    "contract_files_written": false,
+    "rollback_completed": true,
+    "post_failure_healthz_ok": true,
+    "post_failure_pid": 57602,
+    "post_failure_queue_counts": {
+      "active": 0,
+      "queued": 199
+    },
+    "post_failure_attention_items": 22,
+    "post_failure_history_total": 37255,
+    "task14": {
+      "enabled": true,
+      "version": 50,
+      "timezone_name": "America/Los_Angeles",
+      "cron_expression": "0 0 6 * * *",
+      "next_run_at": "2026-10-23T13:00:00Z",
+      "managed_revision_id": 203
+    },
+    "task6": {
+      "version": 21,
+      "managed_revision_id": 223,
+      "managed_sha256": "18b23c5c6762ce0fa6cceedf8f1a7a14591327269897fcc56ba4ea32e9c78744"
+    },
+    "precondition_refresh": "Updated from current production readbacks only; no scoring rule, Skill body, or business threshold changed.",
+    "retry_pending": false,
+    "precondition_refresh_result": "Updated ceo-weekly-okr-report installed/managed hash and revision from production revision223 readback; updated ceo-daily-report approved candidate hash to the exact reviewed Skill SHA.",
+    "precondition_lock_test": "tests/test_scheduled_okr_agent_eval.py::test_release_manifest_pins_verified_current_installation passed after refresh.",
+    "retry_preflight": "_load_file_plan against the production checkout, current local managed Skill targets, and production audit_rules passed for all 26 assets using the candidate manifest.",
+    "resolved_by_commit": "6f26fcbc1a4fb25a8b63f2733f7571ec7d924598"
+  },
+  "latest_successful_skill_publication": {
+    "observed_at": "2026-10-22T17:50:41Z",
+    "production_commit": "6f26fcbc1a4fb25a8b63f2733f7571ec7d924598",
+    "deploy_output": "deployed 526f3df5 -> 6f26fcbc",
+    "deployment_pid": 60193,
+    "healthz_http_status": 200,
+    "healthz_ok": true,
+    "console_system_health": {
+      "state": "degraded",
+      "violations": 8,
+      "detail": "work item has no terminal handling Native delivery results readable: 311; unavailable: 73.",
+      "native_delivery_checked": 311,
+      "native_delivery_unavailable": 73
+    },
+    "queue_counts": {
+      "active": 0,
+      "queued": 199
+    },
+    "attention_total": 22,
+    "attention_groups": 20,
+    "history_total": 37257,
+    "scheduled_task_count": 14,
+    "runtime_skill_config": {
+      "id": 363,
+      "parent_id": 362,
+      "status": "active"
+    },
+    "task14": {
+      "version": 51,
+      "enabled": true,
+      "cron_expression": "0 0 6 * * *",
+      "timezone_name": "America/Los_Angeles",
+      "next_run_at": "2026-10-23T13:00:00Z",
+      "managed_skill_id": 21,
+      "managed_revision_id": 224,
+      "managed_revision_number": 9,
+      "managed_sha256": "32d24bb5f53b60bcf67b8a91582db258a05cac59c789391c862d3bd95719fc62",
+      "installed_skill_sha256": "32d24bb5f53b60bcf67b8a91582db258a05cac59c789391c862d3bd95719fc62"
+    },
+    "task13": {
+      "version": 44,
+      "managed_revision_id": 202,
+      "next_run_at": "2026-10-24T19:00:00Z"
+    },
+    "task6": {
+      "version": 22,
+      "managed_revision_id": 223,
+      "managed_sha256": "18b23c5c6762ce0fa6cceedf8f1a7a14591327269897fcc56ba4ea32e9c78744",
+      "next_run_at": "2026-10-25T10:00:00Z"
+    },
+    "natural_report_runs_created_or_replayed": false,
+    "next_step": "Observe task14 next normal run; require a complete group-chat inventory/read and Audit approval before counting the report as accepted."
+  },
+  "post_deploy_health_readback": {
+    "observed_at": "2026-10-22T19:31:00Z",
+    "production_commit": "6f26fcbc1a4fb25a8b63f2733f7571ec7d924598",
+    "pid": 60193,
+    "healthz_http_status": 200,
+    "system_health_state": "degraded",
+    "quality_gate": {
+      "checked_sources": 16,
+      "missing_sources": [],
+      "violations": [
+        {
+          "source": "work_summary_inputs",
+          "code": "failed",
+          "count": 2,
+          "source_type": "ai_minutes",
+          "stored_error_code": "runtime_result_validation_failed"
+        },
+        {
+          "source": "email_agent_classification_tasks",
+          "code": "failed",
+          "count": 1,
+          "stored_error_class": "gaierror_dns_resolution"
+        },
+        {
+          "source": "workbench",
+          "code": "unresolved",
+          "count": 4
+        },
+        {
+          "source": "daily_scan_state",
+          "code": "last_error",
+          "count": 1,
+          "scanner_name": "ai_minutes_sync",
+          "stored_error": "minutes list pagination exceeded 600 pages"
+        }
+      ],
+      "unresolved_recent_errors": [
+        {
+          "id": 15607,
+          "kind": "task_agent",
+          "source": "work_summary_input",
+          "count": 1
+        }
+      ],
+      "native_delivery_coverage": {
+        "checked": 311,
+        "unavailable": 73,
+        "audit_runs_observed": 384,
+        "classified_as_quality_gate_violation": false
+      }
+    },
+    "email_provider_actions": {
+      "status_error_type": "EmailActionAttemptConflict",
+      "observed_at": "2026-10-22T19:30:19Z",
+      "failed": 10,
+      "failed_retriable": 8,
+      "failed_nonretriable": 2,
+      "pending": 193,
+      "processing": 0,
+      "waiting_for_owner": 22,
+      "email_scans_last_success_at": "2026-10-22T19:31:20Z"
+    },
+    "disk_readback": {
+      "available_gib": 102,
+      "sqlite_main_bytes": 501170176,
+      "database_backup_disk_full_error_at": "2026-10-09T05:56:58Z",
+      "current_disk_full_confirmed": false
+    },
+    "mutations_or_replays_performed": false,
+    "business_report_acceptance_changed": false,
+    "triage_status": "The source counters and error classes are now identified; these system-health issues are unresolved and are not evidence of natural scheduled report acceptance."
   }
 }

@@ -2,10 +2,40 @@
 
 ## 状态与证据边界
 
-更新至 2026-10-22 UTC：task6 新配置 v20 / managed Skill revision 222 的手动运行
-392030 尚未产出报告。18/18 实时来源已读取，但 Consumer 因脚本审查摘要过期而在
-评分和写文档前失败；这一实际运行失败与 v49 的合成 4/4 通过分开记录。修复已在
-本地通过定向测试，待正式部署并用同一用户授权再运行后，才能核实审核和外部发布。
+截至 2026-10-22 17:50 UTC：task14 的自然运行 392889 已完成并产生真实文档更新和通知回执；
+但业务验收未通过。Consumer 读取了完整的 65 个群会话目录（6 页），却没有调用任何逐会话消息
+读取工具，最终报告也明确写出群聊未逐条读取。Audit 因消息最初缺少今日要点而退回一次，修订后
+批准了报告和通知，没有拦住未尝试的必需群聊覆盖。日报 Skill 修复及合约回归已完成；日报事实、
+回执和覆盖回归 **23 passed**，managed Skill 发布器定向回归 **27 passed**。代码已部署到
+`526f3df5ef04dca3ed991e78adba0232718a7bee`，但 task14 仍绑定旧 revision203。正式 Skill 发布首次
+被严格 precondition 拒绝：清单的 OKR 旧摘要仍写 revision222，而生产已运行 revision223、摘要
+`18b23c5c…`。发布器在改写合约前即拒绝，没有改写合约文件。随后按生产读回更新清单候选摘要和
+OKR revision223 的旧摘要；清单锁定测试和 26 文件只读 preflight 均通过。第二次正式发布已成功：
+生产 commit `6f26fcbc1a4fb25a8b63f2733f7571ec7d924598`，task14 v51 绑定 daily Skill managed
+revision224，SHA-256 `32d24bb5…`，与安装文件完全一致。healthz HTTP 200、PID60193；队列
+active0/queued199、Attention22、History37257。Console System Health 显示 degraded（8 项 violation；
+detail 包含未终态 work item，native delivery readback 有73/384项不可读），与 healthz 正常分开记录。
+已完成报告不重放、不补发；部署后的下一次自然日报才可验证修复是否真正生效。
+完整证据见文末 2026-10-22 自然日报记录及无正文生产读回 JSON。
+
+### 2026-10-22 自然日报 392889：发布完成，业务验收失败
+
+- 不可变执行快照：task14 配置 v49，managed `ceo-daily-report` revision203；reply416905、attempt15917，最终 `done`。Consumer 392892 revision0 与 392902 revision1 均完成；Audit 392897 revision0 返回，392910 revision1 批准。
+- 完整轨迹：Consumer 会话 `01a163b3-a5fb-76e0-ad54-3cffad6d9e03`、`01a163b5-790c-7131-a416-9c1739a00e69`；Audit 会话 `01a163b4-fdb6-7193-914c-0e46858fee14`、`01a163b7-39b2-7703-bb5b-1574102bf1a4`。运行覆盖 2026-10-21 13:00 至 2026-10-22 13:00 UTC。会话目录完整读取 65 个、共 6 页，但消息读取工具调用数为 0；报告自己也说明没有读取群聊消息。
+- 这是实际行为未达标：数据源返回了完整目录，Consumer 没有尝试必需的逐会话读取；Audit 的第一次退回只针对今日要点，第二次却批准了未覆盖的报告。不是评测误判，也不是 provider 读取失败。代码与 Skill 补强将明确区分“未尝试”和真实 provider 错误，并要求 Audit 对前者退回；实际错误/超时/不完整分页仍按既定策略披露，不降低覆盖要求。
+- 文档确已写入并由 provider 完整读回：标题《CEO 每日总结 2026-10-22》，节点 `EpGBa2Lm8a7NA9YlUReYRy6RVgN7R35y`。提交正文 3498 字符，SHA-256 `af8603ff73170beef2e12711587e335f64f905a84983a78e88882d85f7d0c834`；provider 读回 3503 字符，SHA-256 `a3c1a052563c8a78968a79545f83fc1aafeaacba0a969a47a6f78669f9f877e8`。差异仅为 provider 对 Markdown 中 `_`、`*` 的五处反斜杠转义，去转义后与提交正文完全相同。Consumer 返回内容、Audit 独立读取文档及文档信息均已核查。
+- 通知确有持久回执：System execution437、receipt18626、状态 `sent`；只读 provider 查询返回 `sendStatus=SUCCESS` 和真实 `openMessageId=msgALB31lHY4qfhfubfDS6J7w==`。
+- 纠正此前自动化指令中的错误描述：手动 run391245 与自然 run392889 的 action identity 和 external key 不同，因此不存在同一 identity 的正文冲突。两条消息各自有成功回执；没有因此触发额外发送。
+- run392889 保持原终态和外部结果，不重放、不补发。即使文档与通知发布成功，本次仍因来源覆盖失败而不计入新版自然验收通过。日报 Skill 合约修复已在 task14 v51 / managed revision224 生效；task13 当前 v44 / Skill202，task6 当前 v22 / Skill223，后两项 Skill 与 schedule 未改变。必须等待 task14 下一次正常触发 **2026-10-23 13:00 UTC**、task13 **2026-10-24 19:00 UTC** 和 task6 **2026-10-25 10:00 UTC**，按完整 trajectory、文档、审核和真实回执核验；此前不提前创建或补发报告。
+
+### 部署后服务健康核查（2026-10-22 19:31 UTC）
+
+这组 read-only 健康指标与三份报告的自然业务验收分开记录。healthz 仍返回 HTTP 200，但 System Health 为 degraded；质量门实际列出8条未解决项：2个 `ai_minutes` work-summary 输入以 `runtime_result_validation_failed` 失败，1个邮件分类任务以 DNS 名称解析错误失败，4条 workbench feedback 尚未记录 resolution，`ai_minutes_sync` 扫描器因听记列表翻页超过600页失败。最近4小时还存在1条 work-summary Task Agent 错误。另有 73/384 个最近 Audit run 没有可读 native delivery 结果；这是证据覆盖缺口，当前扫描没有据此生成 sent-receipt 违规。
+
+Email provider actions 当前显示10个失败项（8个可重试、2个不可重试）；worker 状态曾记录 `EmailActionAttemptConflict`。两个邮箱扫描在19:31 UTC均有成功时间戳。没有重放这些动作，也没有查看或记录邮件正文。database-backup 的“database or disk is full”错误时间为10月9日；本次只读机器核查有102 GiB可用空间、SQLite主库约501 MB，因此未把旧错误当作当前磁盘满问题。以上失败和未解决状态尚未修复，不能据此声称 Console System Health 已恢复正常。
+
+代码、Skill、原生合成验收、历史外部结果与新版自然业务结果分别记录。合成通过不替代真实运行；
+文档读回、Audit 决策和通知回执也分别核实。
 
 2026-10-20 UTC。原七案例的决策与独立正文/动作草稿验收已通过，详见
 [原验收记录](scheduled-task-generic-agent-validation.md)。本记录补充 OKR 的完整
