@@ -1,12 +1,16 @@
 """Caller-owned current Task20 to native Task/domain forward migration."""
 from __future__ import annotations
 
+import json
 import sqlite3
 from collections import defaultdict
 
 from app import task20_definitions, task_run_entity_definitions
 from app.task_lifecycle_current_schema import task_lifecycle_objects
-from app.task_lifecycle_definitions import LIFECYCLE_FIELDS, SOURCE_FIELDS, scalar as lifecycle_scalar
+from app.task_lifecycle_definitions import (
+    LIFECYCLE_FIELDS, SOURCE_FIELDS, scalar as lifecycle_scalar,
+    task_lifecycle_physical_field_map,
+)
 from app.task_entity_migration import (
     _typed_key, owner_indexes, translate_feedback_workbench_refs,
 )
@@ -15,6 +19,12 @@ from app.task8_storage import register_task8_functions
 _STAGE_PREFIX = "_task2b_"
 _DOMAIN_TARGETS = task_run_entity_definitions._DOMAIN_TARGETS
 _TASK_TABLES = task_run_entity_definitions._TASK_TABLES
+
+
+def _stored_public_key(value: object):
+    """Keep BLOB identity bytes as BLOB in the TEXT-affinity map column."""
+    kind, normalized = _typed_key(value)
+    return normalized if kind == "blob" else None if kind == "null" else str(normalized)
 
 
 def _quote(name: str) -> str:
@@ -94,6 +104,23 @@ def _validate_metadata(db: sqlite3.Connection, metadata: dict) -> None:
             or current_external["external_triggers"] != metadata["external_triggers"]):
         raise ValueError("current Task source declaration or allocator changed")
     task_run_entity_definitions.validate_task_run_field_map()
+    lifecycle_rows = task_lifecycle_physical_field_map()
+    if len(lifecycle_rows) != len(task20_definitions.TASK20_COLUMNS) * len(LIFECYCLE_FIELDS):
+        raise ValueError("Task physical lifecycle field coverage is incomplete")
+    if {(row["source_kind"], row["source_physical_field"])
+            for row in lifecycle_rows} != {
+            (kind, field) for kind in task20_definitions.TASK20_COLUMNS for field in LIFECYCLE_FIELDS}:
+        raise ValueError("Task physical lifecycle field coverage changed")
+    for row in lifecycle_rows:
+        task_owned = row["source_kind"] in SOURCE_FIELDS
+        if task_owned != (row["owner_scope"] == "native_task"):
+            raise ValueError("Task physical lifecycle owner scope changed")
+        if task_owned:
+            if (row["target_table"], row["target_physical_field"]) != (
+                    "tasks", row["source_physical_field"]):
+                raise ValueError("Task physical lifecycle target changed")
+        elif row["target_table"] is not None or row["retirement_reason"] is None:
+            raise ValueError("auxiliary Task lifecycle scalar must remain unowned")
 
 
 def _stage(db: sqlite3.Connection) -> dict[str, str]:
@@ -200,7 +227,7 @@ def resolve_source_public_owner(
     matches = db.execute(
         "select target_id from task_run_identity_map where source_kind=? "
         "and public_key=? and public_key_type=?",
-        (source_kind, None if public_key is None else str(public_key), _typed_key(public_key)[0]),
+        (source_kind, _stored_public_key(public_key), _typed_key(public_key)[0]),
     ).fetchall()
     if len(matches) > 1:
         raise ValueError("ambiguous typed Task source public identity")
@@ -457,7 +484,7 @@ def migrate_task_entities(db: sqlite3.Connection, metadata: dict) -> dict:
             continue
         db.execute("insert into task_run_identity_map(source_kind,physical_id,public_key,public_key_type,target_id) values(?,?,?,?,?)",
             (identity["source_kind"], identity["physical_id"],
-             None if identity["public_key"] is None else str(identity["public_key"]),
+             _stored_public_key(identity["public_key"]),
              _typed_key(identity["public_key"])[0], identity["target_id"]))
         identity_records.append(identity)
 
@@ -490,8 +517,267 @@ def migrate_task_entities(db: sqlite3.Connection, metadata: dict) -> dict:
     return {
         "counts": {kind: len(rows) for kind, rows in all_rows.items()},
         "identity_rows": len(identity_records),
+        "identity_edges": identity_records,
+        "public_owner_rows": public_rows,
         "raw_key_exceptions": raw_key_exceptions,
         "reference_exceptions": reference_exceptions,
         "task_sequence": metadata["task_sequence"],
         "source_objects": source_objects,
     }
+
+
+def _inverse_indexes(forward_metadata: dict) -> tuple[dict, dict, dict]:
+    public_rows = forward_metadata.get("public_owner_rows")
+    if not isinstance(public_rows, list):
+        raise ValueError("Task inverse requires exact forward identity metadata")
+    public = {}
+    for row in public_rows:
+        if not isinstance(row, dict) or set(row) != {"source_kind", "physical_id", "public_key", "target_id"}:
+            raise ValueError("invalid Task public owner metadata")
+        key = (row["source_kind"], _typed_key(row["public_key"]))
+        if key in public:
+            raise ValueError("ambiguous Task public owner metadata")
+        public[key] = row
+    public_identity = {(row["source_kind"], row["physical_id"]): row["public_key"] for row in public_rows}
+    edges = {(row["source_kind"], row["physical_id"]): row["public_key"]
+             for row in forward_metadata.get("identity_edges", [])}
+    public_target = {(row["source_kind"], row["target_id"]): row["public_key"] for row in public_rows}
+    public_index = {(row["source_kind"], _typed_key(row["public_key"])): row["target_id"]
+                    for row in public_rows}
+    return public, {}, {"public_by_source": public_identity, "public_target": public_target,
+                              "public_index": public_index, "edges": edges}
+
+
+def _native_value(db: sqlite3.Connection, item: dict, target_id: int):
+    table = item["target_table"]
+    field = item["target_field_or_expression"]
+    if table == "task_run_identity_map" or table is None or not field:
+        return None
+    if table == "tasks":
+        if field.startswith("parameters_json.$."):
+            key = field.partition("$.")[2]
+            row = db.execute("select json_extract(parameters_json,?) from main.tasks where id=?",
+                             ("$." + key, target_id)).fetchone()
+            if row is None or row[0] is None:
+                return None
+            value = row[0]
+            if isinstance(value, str):
+                try:
+                    decoded = json.loads(value)
+                except json.JSONDecodeError:
+                    return value
+                from app.task_entity_storage import _decode_scalar
+                if isinstance(decoded, dict) and decoded.get("t") in {"blob", "real", "inf", "-inf"}:
+                    return _decode_scalar(decoded)
+                return value
+            return value
+        row = db.execute("select " + _quote(field)
+                         + " from main.tasks where id=?", (target_id,)).fetchone()
+        return None if row is None else row[0]
+    if table == "task_inputs" and item["source_kind"] == "reply_tasks":
+        pointer = db.execute("select current_input_id from main.tasks where id=?", (target_id,)).fetchone()
+        if pointer is None or pointer[0] is None:
+            return None
+        row = db.execute(f"select {_quote(field)} from main.task_inputs where id=?", (pointer[0],)).fetchone()
+        return None if row is None else row[0]
+    columns = {row[1] for row in db.execute(f"pragma main.table_info({_quote(table)})")}
+    key_column = "id" if "id" in columns else "task_id" if "task_id" in columns else None
+    if key_column is None:
+        raise ValueError(f"native owner has no reconstructible identity: {table}")
+    row = db.execute(f"select {_quote(field)} from main.{_quote(table)} where {_quote(key_column)}=?",
+                     (target_id,)).fetchone()
+    return None if row is None else row[0]
+
+
+def restore_task_entities(db: sqlite3.Connection, source_metadata: dict, forward_metadata: dict) -> dict:
+    """Rebuild the exact current lifecycle Tasks declaration from native facts.
+
+    This routine is migration-only. The caller owns an FK-off transaction; it
+    never commits, changes transaction mode, or persists historical row bodies.
+    """
+    _transaction(db)
+    if (not isinstance(source_metadata, dict)
+            or set(source_metadata) != {"source_tasks", "task_sequence", "source_objects",
+                                        "external_fks", "external_triggers"}
+            or source_metadata["source_tasks"] != task_lifecycle_objects()):
+        raise ValueError("unsupported current Task source declaration metadata")
+    if not isinstance(forward_metadata, dict):
+        raise ValueError("invalid Task forward metadata")
+    required = {"source_objects", "task_sequence", "identity_edges", "public_owner_rows",
+                "raw_key_exceptions", "reference_exceptions"}
+    if not required.issubset(forward_metadata):
+        raise ValueError("incomplete Task inverse metadata")
+    if source_metadata["source_objects"] != forward_metadata["source_objects"]:
+        raise ValueError("Task source declaration metadata differs from forward capture")
+    _, _, identities = _inverse_indexes(forward_metadata)
+    from app import task20_definitions
+    from app.task_run_entity_definitions import task_run_field_map, task_run_entity_objects
+    from app.task_entity_migration import restore_feedback_workbench_ref
+    from app.task_lifecycle_storage import source_insert
+    from app.task_lifecycle_storage import encoded as encode_lifecycle_value
+    from app.storage_payload import TASK_RECORD_TYPES
+
+    expected_target = task_run_entity_objects()
+    with sqlite3.connect(":memory:") as expected_db:
+        table_sql = [(name, sql) for name, sql in expected_target.items()
+                     if sql.lstrip().lower().startswith("create table")]
+        other_sql = [(name, sql) for name, sql in expected_target.items()
+                     if not sql.lstrip().lower().startswith("create table")]
+        for _, sql in table_sql:
+            expected_db.execute(sql)
+        for _, sql in other_sql:
+            expected_db.execute(sql)
+        for name, _ in table_sql:
+            if _objects(db, name) != _objects(expected_db, name):
+                raise ValueError("Task native target declaration changed: " + name)
+
+    maps = defaultdict(list)
+    for item in task_run_field_map():
+        if item["mapping_layer"] == "logical_projection":
+            maps[item["source_kind"]].append(item)
+    raw_exceptions = {(r["source_kind"], r["physical_id"]): (r["value"], r["type"])
+                      for r in forward_metadata["raw_key_exceptions"]}
+    reference_exceptions = {}
+    for item in forward_metadata["reference_exceptions"]:
+        reference_exceptions[(item["source_kind"], item["physical_id"], item["field"])] = item
+
+    from app.task_run_entity_definitions import _DOMAIN_TARGETS, _TASK_TABLES
+    physical_rows = []
+    for kind in task20_definitions.TASK20_COLUMNS:
+        table = _DOMAIN_TARGETS.get(kind, "tasks")
+        if table == "tasks":
+            selector = {"reply_tasks": "reply"}.get(kind, _TASK_TABLES.get(kind, "domain"))
+            rows = db.execute("select id from main.tasks where kind=? order by id", (selector,)).fetchall()
+        else:
+            columns = {row[1] for row in db.execute(f"pragma main.table_info({_quote(table)})")}
+            key_column = "id" if "id" in columns else "task_id" if "task_id" in columns else None
+            if key_column is None:
+                raise ValueError(f"native owner has no reconstructible identity: {kind}")
+            rows = db.execute(f"select {_quote(key_column)} from main.{_quote(table)} order by {_quote(key_column)}").fetchall()
+        for (target_id,) in rows:
+            physical_rows.append({"source_kind": kind, "physical_id": int(target_id), "target_id": int(target_id)})
+    source_rows = []
+    for identity in physical_rows:
+        kind, physical_id, target_id = identity["source_kind"], identity["physical_id"], identity["target_id"]
+        public_key = identities["public_by_source"].get((kind, physical_id))
+        if public_key is None:
+            public_key = next((row["public_key"] for row in forward_metadata["public_owner_rows"]
+                               if row["source_kind"] == kind and row["physical_id"] == physical_id), None)
+        values = {}
+        if public_key is not None:
+            for identity_field in ("id", "task_id"):
+                if identity_field in task20_definitions.TASK20_PAYLOAD_FIELDS[kind]:
+                    values[identity_field] = public_key
+        for item in maps[kind]:
+            field = item["source_field"]
+            target = item["target_table"]
+            dest = item["target_field_or_expression"]
+            if field == "id" or field == "task_id" and target == "task_run_identity_map":
+                continue
+            if target == "task_run_identity_map" or item["retirement_reason"] is not None:
+                continue
+            value = _native_value(db, item, target_id)
+            if field in {"reply_task_id", "request_id", "task_id", "turn_id"}:
+                parent_kind = {"reply_task_id": "reply_tasks", "request_id": "okr_review_requests",
+                               "task_id": "workbench_tasks", "turn_id": "workbench_turns"}.get(field)
+                if parent_kind and value is not None:
+                    if type(value) is int:
+                        value = identities["public_target"].get((parent_kind, value), value)
+            if kind in {"feedback_processing_items", "feedback_processing_rounds"} and field in {
+                    "workbench_task_id", "workbench_turn_id"}:
+                raw_marker = reference_exceptions.get((kind, physical_id, field))
+                marker = None if raw_marker is None else {
+                    key: raw_marker[key] for key in ("field", "value", "type")
+                }
+                value = restore_feedback_workbench_ref(field=field, current_value=value,
+                    indexes={"public": identities["public_index"]}, unresolved_marker=marker)
+            if dest and dest.startswith("parameters_json.$."):
+                values[field] = value
+            elif field != "final_text":
+                values[field] = value
+        # Dispatch-only scalars are physical Task facts even though they are
+        # intentionally outside the older logical field map.
+        if kind in _TASK_TABLES:
+            for field in LIFECYCLE_FIELDS:
+                row = db.execute("select " + _quote(field)
+                                 + " from main.tasks where id=?", (target_id,)).fetchone()
+                values["__lifecycle_" + field] = None if row is None else row[0]
+        if kind == "reply_tasks":
+            for field in ("current_input_id", "claimed_input_id"):
+                row = db.execute(f"select {_quote(field)} from main.tasks where id=?", (target_id,)).fetchone()
+                values["__" + field] = None if row is None else row[0]
+        if kind in task20_definitions.TASK20_COLUMNS:
+            task_row = db.execute("select id from main.tasks where id=? and kind=?",
+                                  (target_id, {"reply_tasks": "reply"}.get(kind, _TASK_TABLES.get(kind, kind)))).fetchone()
+            if kind in {"reply_tasks", "work_summary_inputs", "meeting_alignment_jobs",
+                        "okr_review_requests", "weekly_okr_analysis_jobs", "workbench_turns",
+                        "email_agent_classification_tasks", "wechat_memory_import_jobs"} and task_row is None:
+                raise ValueError(f"native Task owner is missing for {kind}:{target_id}")
+        parent_id = None
+        parent_field = {
+            "reply_task_inputs": ("task_inputs", "task_id"),
+            "business_object_tasks": ("task_business_keys", "task_id"),
+            "workbench_turns": ("workbench_turns", "workbench_task_id"),
+            "workbench_artifacts": ("workbench_artifacts", "workbench_turn_id"),
+            "workbench_attachments": ("workbench_attachments", "workbench_task_id"),
+        }.get(kind)
+        if parent_field:
+            parent_table, parent_column = parent_field
+            parent_columns = {row[1] for row in db.execute(f"pragma main.table_info({_quote(parent_table)})")}
+            parent_key = "id" if "id" in parent_columns else "task_id"
+            row = db.execute(f"select {_quote(parent_column)} from main.{_quote(parent_table)} "
+                             f"where {_quote(parent_key)}=?",
+                             (target_id,)).fetchone()
+            if row is not None and row[0] is not None:
+                parent_id = int(row[0])
+        elif kind == "feedback_iteration_decisions":
+            row = db.execute(
+                "select batch.id from main.feedback_iteration_decisions decision "
+                "join main.feedback_processing_batches batch using(batch_id) where decision.id=?",
+                (target_id,),
+            ).fetchone()
+            parent_id = None if row is None else int(row[0])
+        source_rows.append((kind, physical_id, target_id, public_key, values, parent_id))
+
+    # Restore the source table under its exact captured declaration.
+    db.execute("drop table main.tasks")
+    for typ, name, sql in forward_metadata["source_objects"]:
+        if typ == "table":
+            db.execute(sql)
+    for kind, physical_id, target_id, public_key, values, parent_id in source_rows:
+        raw, raw_type = raw_exceptions.get((kind, physical_id), (None, None))
+        if (kind, physical_id) not in raw_exceptions:
+            raw_value = physical_id if public_key is None else public_key
+            raw_type = "text" if isinstance(raw_value, str) else "integer"
+            raw = str(raw_value) if raw_type == "text" else raw_value
+        source_values = {field: value for field, value in values.items()
+                         if field in task20_definitions.TASK20_PAYLOAD_FIELDS[kind]}
+        columns, expressions, parameters = source_insert(kind, source_values, {})
+        for field in LIFECYCLE_FIELDS:
+            if field not in columns:
+                columns.append(field)
+                value = values.get("__lifecycle_" + field)
+                if value is None:
+                    expressions.append("NULL")
+                else:
+                    expressions.append("jsonb(?)")
+                    parameters += (encode_lifecycle_value(value),)
+        base = ["_kind", "id", "legacy_key", "parent_id"]
+        insert_values = ["?", "?", "?", "?", *expressions]
+        bound = [TASK_RECORD_TYPES.code(kind), physical_id, raw, parent_id, *parameters]
+        if kind == "reply_tasks":
+            for field in ("current_input_id", "claimed_input_id"):
+                base.append(field)
+                insert_values.insert(len(base) - 1, "?")
+                bound.insert(len(base) - 1, values["__" + field])
+        insert_columns = [*base, *columns]
+        db.execute("insert into main.tasks(" + ",".join(map(_quote, insert_columns)) + ") values("
+                   + ",".join(insert_values) + ")", bound)
+    for typ, name, sql in forward_metadata["source_objects"]:
+        if typ != "table":
+            db.execute(sql)
+    db.execute("delete from main.sqlite_sequence where name='tasks'")
+    sequence = source_metadata["task_sequence"]
+    if sequence is not None:
+        db.execute("insert into main.sqlite_sequence(rowid,name,seq) values(?, 'tasks', ?)", sequence)
+    return {"rows": len(source_rows), "source_objects": forward_metadata["source_objects"]}

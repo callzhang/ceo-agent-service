@@ -14,6 +14,19 @@ LIFECYCLE_FIELDS = (
     "locked_at", "lease_owner", "lease_expires_at", "owner_pid", "generation",
     "adapter_name",
 )
+
+
+def task_lifecycle_physical_field_map():
+    """Declare physical lifecycle owners and auxiliary-domain NULL coverage."""
+    return tuple(
+        ({"source_kind": kind, "source_physical_field": field,
+          "owner_scope": "native_task", "target_table": "tasks", "target_physical_field": field}
+         if kind in SOURCE_FIELDS else
+         {"source_kind": kind, "source_physical_field": field,
+          "owner_scope": "auxiliary_domain", "target_table": None, "target_physical_field": None,
+          "retirement_reason": "auxiliary source row has no native Task lifecycle owner; source scalar is NULL"})
+        for kind in source.TASK20_COLUMNS for field in LIFECYCLE_FIELDS
+    )
 _BASE = ("status", "error", "created_at", "updated_at")
 SOURCE_FIELDS = {
     "reply_tasks": {f: f for f in (*_BASE, "available_at", "attempts", "locked_at")},
