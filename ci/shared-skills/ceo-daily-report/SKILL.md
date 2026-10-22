@@ -27,16 +27,22 @@ DingTalk document and send Derek (磊哥) a short direct message pointing to it.
   messages with management meaning (a request, approval, customer, partner,
   legal or money matter) and count the rest, such as sign-in codes.
 - **Group chats**: use the task-bound `agent_cli.recent_dingtalk_conversations`
-  and `agent_cli.read_dingtalk_messages_in_window` read operations for accessible
-  group conversations inside the report window, paging until the window is
-  covered. Keep only messages with management meaning: commitments, changes of
-  plan, disagreement, escalation, customer or financing signals, blocked work.
-  Count the rest.
+  operation to exhaust the inventory of accessible conversations in the report
+  window, then call `agent_cli.read_dingtalk_messages_in_window` for every
+  accessible group conversation. An inventory is not a message read. Complete
+  each conversation's pagination and count even an empty, successfully read
+  window as covered. Keep only messages with management meaning: commitments,
+  changes of plan, disagreement, escalation, customer or financing signals,
+  blocked work. Count the rest.
 - **Meetings**: when a meeting in the facts needs more than its follow-up
   message, load `dingtalk-minutes` and read its summary.
 
-A source that fails, times out, or is only partly read is recorded in the
-report's coverage section and the report is still written and delivered.
+Do not write the report or propose its notification while any required group
+conversation has not been read. Not attempted is not a source failure. A group
+conversation may be recorded as unavailable or partial only when its read
+operation actually fails, times out, or returns an incomplete page; record the
+conversation, requested window, and exact error or incomplete marker. In that
+case the report is still written and delivered with the limitation disclosed.
 Missing optional material never turns the run into a question for Derek.
 
 ## Report
@@ -80,6 +86,18 @@ with nothing in it says `无`; never pad it.
 
 These two writes are the run's only external actions. Do not reply in any
 group, change Tasks, or message anyone else.
+
+## Audit coverage check
+
+Before approving the document and direct-message proposal, Audit must check the
+report window and the group-chat coverage statement against the task's source
+evidence. If the inventory contains an accessible conversation with no
+`read_dingtalk_messages_in_window` attempt and no provider error, return the
+proposal: this is unattempted required coverage, not an allowed partial-source
+case. If a read was attempted and the provider returned an error, timeout, or
+incomplete page, verify the exact limitation is disclosed before approving the
+otherwise valid report. Do not require a second send or a new report to correct
+an audit return; the normal revision flow keeps the original run and action.
 
 **Retrying after an interrupted round.** An earlier round that stopped midway
 leaves each write in one of two states, and the lookup above tells you which:
