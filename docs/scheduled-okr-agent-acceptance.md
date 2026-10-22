@@ -2,6 +2,11 @@
 
 ## 状态与证据边界
 
+更新至 2026-10-22 UTC：task6 新配置 v20 / managed Skill revision 222 的手动运行
+392030 尚未产出报告。18/18 实时来源已读取，但 Consumer 因脚本审查摘要过期而在
+评分和写文档前失败；这一实际运行失败与 v49 的合成 4/4 通过分开记录。修复已在
+本地通过定向测试，待正式部署并用同一用户授权再运行后，才能核实审核和外部发布。
+
 2026-10-20 UTC。原七案例的决策与独立正文/动作草稿验收已通过，详见
 [原验收记录](scheduled-task-generic-agent-validation.md)。本记录补充 OKR 的完整
 Skill 工作流、恢复、部分来源失败和真实报告读回。最终四场景 **4/4 通过**，
@@ -474,3 +479,28 @@ v49 从头运行四场 native Consumer/Audit，**4/4 passed**；每场的终态�
 v49 配套定向测试 **125 passed**，Ruff 与 `git diff --check` 通过。集成最新主线后发现发布基线测试仍引用旧安装哈希：OA Skill 测试写死 revision 150 的哈希，但生产数据库显示当前 attendance Skill 为 revision 220、哈希 `6fd80713…`；dingtalk-oa-approval 当前 revision 221、哈希 `fc9a16dc…`。OKR Skill 和脚本的候选源摘要也需随本次文件变化更新。以上是发布摘要与测试基线过期，不是报告业务验收失败。已将前置快照、发布清单和 attendance 摘要断言更新为生产实际哈希，并更新 OKR Skill/script 的候选哈希；相关三文件回归现为 **152 passed**。
 
 当前生产读取为主线提交 `5eec88650`、PID `71765`、healthz 正常；task6 仍是配置 v19、不可变快照 198、managed Skill revision 209，旧失败运行 391405 未重放。本次 v49 Skill/script 候选仍未部署，尚未创建新的手动运行。提交并部署后，先核对 PID、healthz、队列、Attention、History、task6 新快照及 managed Skill revision/hash；确认执行绑定新版本后，才从正式 task6 手动入口创建一条新运行。新运行须以完整 Consumer/Audit 轨迹、终态、主文档和所有附录的 provider 完整读回、真实通知持久回执及 provider 查询为验收证据。绝不重放 391405 或任何已有外部回执的运行。
+
+## 2026-10-22 task6 手动执行与脚本审查阻塞
+
+正式入口创建的唯一当前 task6 手动运行是 **392030**，不可变快照绑定 task 配置
+v20 和 `ceo-weekly-okr-report` managed revision 222。前两次 Consumer 尝试
+392063/392065 因 Dingteam 专用登录态过期而停止；之后 Consumer 392092 仍报告同一认证
+错误。浏览器 Cookie 快照已按现有 `sync-chrome-cookies` 命令刷新，不曾绕过登录或读写
+用户凭据。随后系统自动对同一执行身份启动 Consumer 392114；该轮重新读了当前
+18 人名册和全部成员资料，18/18 请求完成，15 份为通过验证的实时季度 OKR，3 份明确
+返回本季度目标尚未建立。没有把缺失目标伪装成零分，也没有把它们当成读取失败。
+
+392114 在运行 `ceo-weekly-okr-report` 的 `prepare` 脚本前，以
+`operation_unavailable` 结束。完整 Consumer 轨迹显示：工具拒绝原因是
+`Consumer Skill script is not reviewed`；运行没有产生评分分析、报告正文、在线文档
+写入或通知提案，故也没有真实外部发送回执。生产源仓库中的 `report.py` 与已安装
+Skill 文件字节一致，但 `consumer-scripts.json` 仍固定旧脚本树摘要
+`94cb579f…`，而源码与安装包当前摘要都为 `a982ea36…`。这是审查清单未随已审核脚本
+变更更新的实际运行缺陷，不是验收器错误或业务材料标准问题。
+
+修复将 `consumer-scripts.json` 摘要同步到已安装和源代码完全相同的脚本树，并增加
+回归：旧摘要时测试先失败；更新后 `test_consumer_skill_script_boundary.py`、
+`test_weekly_okr_report.py` 和 `test_scheduled_okr_agent_eval.py` 共 **130 passed**。
+脚本入口列表、脚本内容、评分、审核、来源覆盖和投递条件都未改变。修复提交与部署后，
+只有在新的 task6 运行实际通过 Consumer/Audit、报告完整读回、通知持久回执及
+provider 查询后，才会将 OKR 新版自然/手动结果记为通过；392030 的失败历史保留不改。
