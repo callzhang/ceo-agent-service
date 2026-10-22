@@ -1,5 +1,10 @@
 # Changelog
 
+## 2026-10-22 — Action Entity test-artifact cleanup follow-up
+
+- Recorded Derek's explicit authorization for seven completed test roots totaling 22,921,090,840 logical bytes. The platform still rejected the exact deletion command before execution; all seven directories remain, so cleanup and reclaimed space are not claimed.
+- Updated [production acceptance](docs/action-entity-production-acceptance.md) with exact cleanup targets, the execution-policy blocker and preservation readback. The current daily backup completion marker and SHA-256 were verified; production data and native trajectories were retained. Runtime behavior is unchanged.
+
 ## 2026-10-22 — Action Entity Phase 1 production release
 
 - Deployed the first external-Action unit at runtime code `87a34d299d5749af1af454bfdd01c48a936799a4`, Store `2026-10-21.1` / Email53, with 14 ordinary tables. Production readback confirmed 15,472 common Actions, 18,621 receipts, 506 observers, and zero rows for each of seven retired populated source kinds.
