@@ -8,7 +8,7 @@ import json
 
 from app import action_storage as actions
 from app.action_email_storage import _columns, _quote
-from app.business_legacy_fields import current_action_objects as historical_objects, retained_action_payloads
+from app.business_legacy_fields import retained_action_payloads
 from app.current_schema_manifest import STORE_VERSION, EMAIL_VERSION, current_objects, schema_objects, require_current_pair
 from app.result_schema_release import _markers, _foreign_keys
 from app.state_storage import update_state_rows
@@ -21,8 +21,42 @@ WATER = "_current_actions_water"
 
 
 def source_objects(variant):
-    objects = [obj for obj in current_objects(email_ledger=True) if obj[2] != 'actions']
-    objects.extend((obj['type'], obj['name'], 'actions', obj['sql']) for obj in historical_objects(variant))
+    from app.current_action_schema import source_current_action_objects
+    objects = [obj for obj in current_objects(email_ledger=True)
+               if obj[2] not in {'actions', 'action_receipts', 'action_observers', 'action_entity_identity_map'}]
+    objects.extend((obj['type'], obj['name'], 'actions', obj['sql'])
+                   for obj in source_current_action_objects())
+    # The current direct-email guards use the unified Action projection.  The
+    # Store19.12 predecessor owns the email_actions-shaped guard text, which
+    # must remain exact for both preflight and inverse.  Keep this frozen
+    # predecessor declaration separate from the current target factory.
+    predecessor_guards = {
+        "trg_configs_direct_account_delete": (
+            "CREATE TRIGGER trg_configs_direct_account_delete before delete on configs "
+            "when old.record_type='email_accounts' and exists(select 1 from actions a where "
+            "a.record_type='email_actions' and a.email_account_id=old.public_key and "
+            "a.email_status='processing') begin select raise(abort,'email_direct_action_in_flight'); end"
+        ),
+        "trg_configs_direct_account_update": (
+            "CREATE TRIGGER trg_configs_direct_account_update before update on configs "
+            "when old.record_type='email_accounts' and exists(select 1 from actions a where "
+            "a.record_type='email_actions' and a.email_account_id=old.public_key and "
+            "a.email_status='processing') begin select raise(abort,'email_direct_action_in_flight'); end"
+        ),
+        "trg_emails_direct_action_blocks_plan_switch": (
+            "CREATE TRIGGER trg_emails_direct_action_blocks_plan_switch before update of "
+            "class_status,class_current_action_plan_id on emails when old.classification_id is not null "
+            "and new.classification_id is not null and (old.class_status is not new.class_status or "
+            "old.class_current_action_plan_id is not new.class_current_action_plan_id) and exists("
+            "select 1 from actions a where a.record_type='email_actions' and "
+            "a.email_classification_id=old.classification_id and a.email_status='processing') "
+            "begin select raise(abort,'email_direct_action_in_flight'); end"
+        ),
+    }
+    objects = [
+        (kind, name, table, predecessor_guards[name] if name in predecessor_guards else sql)
+        for kind, name, table, sql in objects
+    ]
     return tuple(sorted(objects, key=lambda obj: (obj[0], obj[1])))
 
 
@@ -69,8 +103,25 @@ def _rebuild(db, variant, *, inverse):
                       "(select 1 from actions p where p.record_type='reply_attempts' "
                       "and cast(p.legacy_key as integer)=a.memory_attempt_id) limit 1").fetchone():
             raise ValueError('Memory public parent cannot be resolved')
-    objects = historical_objects(variant) if inverse else current_action_objects()
-    cols = list(_columns(db, 'actions'))
+    if inverse:
+        from app.current_action_schema import source_current_action_objects
+        objects = source_current_action_objects()
+    else:
+        objects = current_action_objects()
+    source_cols = list(_columns(db, 'actions'))
+    target_objects = current_action_objects() if not inverse else None
+    if inverse:
+        from app.current_action_schema import source_current_action_objects
+        target_objects = source_current_action_objects()
+    table_sql = next(obj['sql'] for obj in target_objects if obj['type'] == 'table')
+    with closing(sqlite3.connect(':memory:')) as target_db:
+        from app.task8_storage import register_task8_functions
+        register_task8_functions(target_db)
+        target_db.execute(table_sql)
+        target_cols = [row[1] for row in target_db.execute('pragma table_xinfo(actions)')
+                       if row[6] == 0]
+    cols = [column for column in source_cols if column in target_cols]
+    cols.extend(column for column in target_cols if column not in cols)
     if not inverse and variant == 'actual_no_memory_fk':
         cols.append('memory_attempt_ref')
     if inverse and variant == 'actual_no_memory_fk':
@@ -79,6 +130,8 @@ def _rebuild(db, variant, *, inverse):
     for col in cols:
         if col == 'payload_json':
             select.append(f'ceo_current_actions_payload(a.record_type,a.payload_json,{parent_sql}) as payload_json')
+        elif col not in source_cols:
+            select.append('null as ' + _quote(col))
         elif col == 'memory_attempt_ref' and not inverse and variant == 'actual_no_memory_fk':
             select.append("(select p.id from actions p where a.record_type='memory_write_events' "
                           "and p.record_type='reply_attempts' and cast(p.legacy_key as integer)=a.memory_attempt_id) as memory_attempt_ref")

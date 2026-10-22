@@ -386,7 +386,21 @@ class SystemExecutor:
                         execution_id, self.owner, index, action_key,
                         reconciliation.status, reconciliation.provider_result,
                     )
-            attempt = self.store.begin_candidate_action(execution_id, self.owner, index, action_key)
+            preparation_reference = getattr(handler, "prepared_owner_reference", None)
+            preparation_owner = (
+                preparation_reference(action, row)
+                if callable(preparation_reference) else None
+            )
+            if preparation_owner is None or preparation_owner[0] is None:
+                attempt = self.store.begin_candidate_action(
+                    execution_id, self.owner, index, action_key,
+                )
+            else:
+                _, delivery_key = preparation_owner
+                attempt = self.store.begin_candidate_action(
+                    execution_id, self.owner, index, action_key,
+                    preparation_owner={"channel": "dingtalk", "delivery_key": delivery_key},
+                )
             if attempt["status"] == "verified":
                 self._project_completed_message(action, action_key, row, current_task)
                 completed.append(action.action_identity)

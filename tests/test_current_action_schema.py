@@ -16,6 +16,9 @@ from app.current_action_schema import (
 def db():
     connection = sqlite3.connect(":memory:")
     create_current_database_schema(connection)
+    connection.execute("drop table action_observers")
+    connection.execute("drop table action_receipts")
+    connection.execute("drop table action_entity_identity_map")
     connection.execute("drop table actions")
     create_current_action_schema(connection)
     connection.execute("pragma foreign_keys=on")
@@ -84,3 +87,27 @@ def test_current_payload_layout_does_not_select_a_historical_factory(monkeypatch
     payloads = current_action_payloads()
     assert "conversation_single_chat" in payloads.layouts["reply_attempts"].fields
     assert "attempt_id" not in payloads.layouts["memory_write_events"].fields
+
+
+def test_existing_current_action_schema_is_idempotent_and_rejects_tampered_map_without_writes():
+    connection = sqlite3.connect(":memory:")
+    create_current_database_schema(connection)
+
+    before = connection.execute(
+        "select type, name, tbl_name, sql from sqlite_schema order by type, name"
+    ).fetchall()
+    create_current_action_schema(connection)
+    assert connection.execute(
+        "select type, name, tbl_name, sql from sqlite_schema order by type, name"
+    ).fetchall() == before
+
+    connection.execute("drop index idx_action_identity_map_owner")
+    tampered = connection.execute(
+        "select type, name, tbl_name, sql from sqlite_schema order by type, name"
+    ).fetchall()
+    with pytest.raises(ValueError, match="unsupported current Action child declaration"):
+        create_current_action_schema(connection)
+    assert connection.execute(
+        "select type, name, tbl_name, sql from sqlite_schema order by type, name"
+    ).fetchall() == tampered
+    connection.close()

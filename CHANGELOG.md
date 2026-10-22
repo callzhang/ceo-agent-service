@@ -1,5 +1,11 @@
 # Changelog
 
+## 2026-10-22 — Action Entity Phase 1 production release
+
+- Deployed the first external-Action unit at runtime code `87a34d299d5749af1af454bfdd01c48a936799a4`, Store `2026-10-21.1` / Email53, with 14 ordinary tables. Production readback confirmed 15,472 common Actions, 18,621 receipts, 506 observers, and zero rows for each of seven retired populated source kinds.
+- Health, status, queues, Attention, History and sent-detail readback succeeded. The original sole FK finding remains; failed count stayed 36 and Attention stayed 19. The verified backup and bounded same-cohort capacity evidence are recorded in [production acceptance](docs/action-entity-production-acceptance.md).
+- Phase 1 is complete; other Action kinds, unsubscribe continuation, Task/Run, Email ownership and remaining business unification work remain separate and incomplete.
+
 ## 2026-10-22 — OA 附件预览授权工具
 
 - 评论附件的高级版下载在租户权益过期时返回 `benefit.status.invalid`，表单附件下载返回 `noPermission` 或 `success=false`，分身因此把可读的 PDF 报成没有权限（审批 202601071711000531430）。

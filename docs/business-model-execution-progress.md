@@ -1,6 +1,19 @@
 # Business model simplification: current completion and closeout
 
-## Current authoritative status — 2026-10-21
+## Action Entity Phase 1 production acceptance — 2026-10-22
+
+Phase 1 (the first external-Action unit, Tasks 1–7) is deployed and read back at production commit `87a34d299d5749af1af454bfdd01c48a936799a4`, after the standard deploy from production `036b14624cddbcff04098ebec7697644f95370c0` through `bf07de8d6210709cd76887cc14ebb9ef23fa5600`. The deployed Store marker is `2026-10-21.1`, Email ledger 53, with 14 ordinary tables. Production readback confirmed 15,472 common Actions, 18,621 Action Receipts and 506 Observers; all seven retired populated source kinds have zero rows. The original sole FK finding remains `runs(190042) -> tasks(1)`. Health, status, queues, Attention and History returned HTTP 200. PID is 2903.
+
+The deploy began with one active process and two active queue items; after quiet-wait/deploy, active items were zero. Queued count moved 146→155 as normal arrivals occurred during the interval, so this is not a claim that all queued work completed. Failed count stayed 36 and Attention stayed 19. History returned 20 rows; the exact sent-detail readback resolved Attempt 15914 / Action 105320 / receipt 5046 with parsed delivery status 200. No test fixture was present in production and native CLI/provider tests used only the strict in-memory substitute.
+
+The only retained verified deploy backup is `/Users/derek/Library/Application Support/ceo-agent-service/backups/auto-reply-before-upgrade-deploy-9351777a-c7be-4845-889a-5759fd342790.sqlite3` (501,170,176 bytes; `backup_is_complete=True`). Production was not VACUUMed: the main database file was 501,170,176 bytes at readback, freelist 1,037 pages (about 4.05 MiB), and WAL may vary. The separate same-cohort, VACUUMed source-derived copy was 494,678,016→492,015,616 bytes (−2,662,400; about 2.54 MiB), with table pages +1,548 and index pages −2,187. This is a bounded copy measurement, not a production shrink or performance claim.
+
+The reviewed release source is runtime code HEAD `87a34d299d5749af1af454bfdd01c48a936799a4`; this documentation-only closeout will have a different commit and does not change what is live. Phase 1 is complete. The wider program remains incomplete: other Action kinds, unsubscribe browser continuation/steps, Task/Run unification, Email ownership and remaining business-record work are separate units. This release does not claim full Actions retirement or whole-database unification.
+
+Evidence: [production acceptance](action-entity-production-acceptance.md), [Task 7 integration report](../.superpowers/sdd/2026-10-21-action-entity-unification/task-7-integration-report.md), [quiet-source repair report](../.superpowers/sdd/2026-10-21-action-entity-unification/task-7-quiet-source-report.md), [complete execution rulings](action-entity-execution-rulings.md), and [validation record](action-entity-unification-validation.md).
+
+
+## Historical production status at 2026-10-21 release (superseded by the 2026-10-22 Action Entity release)
 
 The approved A/B/C/D implementation and Store19.11 / Email53 production migration completed on 2026-10-20. The release was `a79d8e279`, with actual production schema, process, effective GPT-6 Luna/high configuration, health, queues, Attention and History read back. This describes that verified release, not an assertion about an unqueried later process. [Final release evidence](database-gpt6-release-validation.md) supersedes the earlier publication-pending checkpoints below.
 

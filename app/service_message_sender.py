@@ -121,6 +121,7 @@ class ServiceMessageSender:
             message.channel,
             message.delivery_key,
             provider_result,
+            operation="send_message",
         )
         return SendReceipt(message=message, provider_result=receipt)
 
@@ -171,7 +172,9 @@ class ServiceMessageSender:
         )
         if persisted_receipt is not None:
             provider_result = persisted_receipt
-        elif self.store.claim_native_reply_dispatch(message.channel, message.delivery_key):
+        elif self.store.claim_native_reply_dispatch(
+            message.channel, message.delivery_key, operation="send_reply_to_trigger",
+        ):
             provider_result = self.dingtalk.send_reply_to_trigger(
                 conversation, trigger, message.final_body,
             )
@@ -186,6 +189,7 @@ class ServiceMessageSender:
         if isinstance(provider_result, dict) and provider_result.get("success") is not False:
             provider_result = self.store.record_outbound_postfix_receipt(
                 message.channel, message.delivery_key, provider_result,
+                operation="send_reply_to_trigger",
             )
         verification = self._verify_native_reply_result(provider_result)
         if verification != "sent":

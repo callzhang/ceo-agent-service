@@ -104,6 +104,7 @@ class InMemoryProvider:
     def __init__(self, store, conversation):
         self.store, self.conversation, self.calls = store, conversation, []
         self.verifications = []
+        self.verification_results = []
         self.after_send = None
 
     def send_message(self, conversation_id, text, **target):
@@ -120,7 +121,9 @@ class InMemoryProvider:
     def verify_message_send_result(self, result):
         self.verifications.append(result)
         assert result["result"]["openMessageId"] == "native-copy-provider-receipt"
-        return {"state": "sent", "message_id": "native-copy-provider-receipt"}
+        verification = {"state": "sent", "message_id": "native-copy-provider-receipt"}
+        self.verification_results.append(verification)
+        return verification
 
     def reconcile_message_send(self, *args, **kwargs):
         return None

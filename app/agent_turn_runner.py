@@ -69,6 +69,7 @@ from app.codex_history import (
 )
 from app.codex_runner import _codex_home
 from app.native_trajectory import count_claude_session_lines, read_native_result_stream
+from app.native_agent_output import native_output_schema_path, parse_native_result
 from app.codex_runtime_adapter import CodexRuntimeAdapter
 from app.service_codex_config import service_mcp_tool_approval_modes_for_agent_role
 from app.friday_runtime_adapter import FridayRuntimeAdapter, FridayRuntimeError
@@ -108,6 +109,37 @@ _RUNTIME_DOMAIN_RESULT_CODEC_VERSION = 1
 # published output solely because its summary is moderately long.
 _RUNTIME_DOMAIN_RESULT_CODEC_MAX_BYTES = 64 * 1024
 _RUNTIME_RESULT_SUMMARY_MAX_CHARS = 8192
+
+
+def _runtime_result_schema_id(
+    execution_contract_digest: str,
+    runtime_kind: RuntimeKind | str,
+    role: AgentRole,
+    *,
+    purpose: str = "general",
+) -> str:
+    legacy = hashlib.sha256(
+        ("agent_turn_claude_result_v1\0" + execution_contract_digest).encode("utf-8")
+    ).hexdigest()
+    if RuntimeKind(runtime_kind) is not RuntimeKind.CODEX_CLI or role is not AgentRole.CONSUMER:
+        return legacy
+    schema_bytes = native_output_schema_path(purpose=purpose).read_bytes()
+    return hashlib.sha256(
+        b"agent_turn_codex_consumer_native_result_v1\0"
+        + execution_contract_digest.encode("utf-8")
+        + b"\0" + schema_bytes
+    ).hexdigest()
+
+
+def _native_output_schema_for_route(
+    runtime_kind: RuntimeKind | str,
+    role: AgentRole,
+    *,
+    purpose: str = "general",
+) -> Path | None:
+    if RuntimeKind(runtime_kind) is not RuntimeKind.CODEX_CLI or role is not AgentRole.CONSUMER:
+        return None
+    return native_output_schema_path(purpose=purpose)
 
 
 def _fallback_requested_session_id(
@@ -781,6 +813,8 @@ class AgentTurnProcess(Generic[ResultT]):
         prompt: str,
         session_id: str | None,
         developer_instructions: str,
+        developer_instructions_by_runtime: Mapping[str, str] | None = None,
+        prompt_sections_by_runtime: Mapping[str, list[dict[str, str]]] | None = None,
         configure_command: Callable[[list[str]], None],
         parse_result: Callable[[str], ResultT],
         persist_conversation_session: bool,
@@ -957,6 +991,18 @@ class AgentTurnProcess(Generic[ResultT]):
                 )
             )
 
+        consumer_purpose = (
+            str((invocation_facts or {}).get("consumer_purpose", "general"))
+            if run.role is AgentRole.CONSUMER else "general"
+        )
+
+        def parse_result_for_route(raw: str, route: RuntimeRoute) -> ResultT:
+            if route.runtime_kind is RuntimeKind.CODEX_CLI and run.role is AgentRole.CONSUMER:
+                return parse_native_result(
+                    raw, "consumer", purpose=consumer_purpose, parser=parse_result,
+                )
+            return parse_result(raw)
+
         required_capabilities = _required_runtime_capabilities(
             run=run,
             expected_actions=expected_actions,
@@ -968,9 +1014,6 @@ class AgentTurnProcess(Generic[ResultT]):
             "operation_id": run.operation_id,
             "conversation_contract_hash": conversation_contract_hash,
             "prompt_sha256": hashlib.sha256(prompt.encode("utf-8")).hexdigest(),
-            "developer_instructions_sha256": hashlib.sha256(
-                developer_instructions.encode("utf-8")
-            ).hexdigest(),
             "required_capabilities": sorted(required_capabilities),
             "expected_actions_sha256": hashlib.sha256(
                 json.dumps(
@@ -980,16 +1023,26 @@ class AgentTurnProcess(Generic[ResultT]):
                 ).encode("utf-8")
             ).hexdigest(),
         }
-        execution_contract_digest = hashlib.sha256(
-            json.dumps(
-                execution_contract, sort_keys=True, separators=(",", ":")
-            ).encode("utf-8")
-        ).hexdigest()
-        runtime_result_schema_id = hashlib.sha256(
-            ("agent_turn_claude_result_v1\0" + execution_contract_digest).encode(
-                "utf-8"
+        def developer_instructions_for(runtime_kind: RuntimeKind | str) -> str:
+            kind = runtime_kind.value if isinstance(runtime_kind, RuntimeKind) else runtime_kind
+            return (developer_instructions_by_runtime or {}).get(kind, developer_instructions)
+
+        def execution_contract_digest_for(runtime_kind: RuntimeKind | str) -> str:
+            contract = {
+                **execution_contract,
+                "developer_instructions_sha256": hashlib.sha256(
+                    developer_instructions_for(runtime_kind).encode("utf-8")
+                ).hexdigest(),
+            }
+            return hashlib.sha256(
+                json.dumps(contract, sort_keys=True, separators=(",", ":")).encode("utf-8")
+            ).hexdigest()
+
+        def result_schema_id_for(runtime_kind: RuntimeKind | str) -> str:
+            return _runtime_result_schema_id(
+                execution_contract_digest_for(runtime_kind), runtime_kind, run.role,
+                purpose=consumer_purpose,
             )
-        ).hexdigest()
 
         try:
             persisted_run = self.store.get_agent_run(run.id)
@@ -1009,7 +1062,9 @@ class AgentTurnProcess(Generic[ResultT]):
                     attempt
                     for attempt in reversed(runtime_attempts)
                     if attempt.status == "completed"
-                    and attempt.result_schema_id == runtime_result_schema_id
+                    and attempt.result_schema_id == result_schema_id_for(
+                        attempt.runtime_kind
+                    )
                 ),
                 None,
             )
@@ -1027,9 +1082,10 @@ class AgentTurnProcess(Generic[ResultT]):
                     raise RuntimeError("completed runtime result route mismatch")
                 try:
                     result = cast(ResultT, recover_completed_runtime_domain_result(
-                        completed_attempt, run, schema_id=runtime_result_schema_id,
+                        completed_attempt, run,
+                        schema_id=result_schema_id_for(completed_attempt.runtime_kind),
                         friday_adapter=self.friday_adapter,
-                        parse_result=parse_result,
+                        parse_result=lambda raw: parse_result_for_route(raw, route),
                     ))
                 except ValueError as exc:
                     raise CompletedRuntimeResultBlockedError(
@@ -1122,7 +1178,7 @@ class AgentTurnProcess(Generic[ResultT]):
                 executor_prompt = (
                     _claude_input_contract(
                         prompt=prompt,
-                        developer_instructions=developer_instructions,
+                        developer_instructions=developer_instructions_for(route.runtime_kind),
                     )
                     if route.runtime_kind is RuntimeKind.CLAUDE_CLI
                     else prompt
@@ -1183,15 +1239,18 @@ class AgentTurnProcess(Generic[ResultT]):
                 else:
                     claude_adapter = None
                     claude_normalizer = None
+                    native_schema_path = _native_output_schema_for_route(
+                        route.runtime_kind, run.role, purpose=consumer_purpose,
+                    )
                     command = self.codex_adapter.build_command(
                         route=route,
                         prompt=prompt,
                         session_id=route_session_id,
                         image_paths=image_paths,
-                        output_schema_path=None,
-                        use_output_schema=False,
+                        output_schema_path=native_schema_path,
+                        use_output_schema=native_schema_path is not None,
                         approval_policy="on-failure",
-                        developer_instructions=developer_instructions,
+                        developer_instructions=developer_instructions_for(route.runtime_kind),
                         use_approval_bypass=True,
                         reasoning_effort=self.reasoning_effort or None,
                         tool_approval_modes_by_server=(
@@ -1225,15 +1284,29 @@ class AgentTurnProcess(Generic[ResultT]):
                     invocation_facts or {},
                     scoped_prompt_for_attempt,
                 )
+                route_prompt_sections = (prompt_sections_by_runtime or {}).get(
+                    route.runtime_kind.value
+                )
+                if scoped_prompt_for_attempt is not None:
+                    route_prompt_sections = (
+                        (scoped_prompt_for_attempt.get("prompt_sections_by_runtime") or {}).get(
+                            route.runtime_kind.value
+                        )
+                        or route_prompt_sections
+                    )
                 context_facts = {
                     **turn_invocation_facts,
                     "proposal_revision": run.proposal_revision,
                 }
+                if route_prompt_sections is not None:
+                    context_facts["prompt_sections"] = route_prompt_sections
                 runtime_context = render_runtime_context(
                     role=run.role.value, route=route, command=command, task=self.task,
                     current_time=rendered_at, invocation_facts=context_facts,
                 )
-                submitted_developer_instructions = append_runtime_context(developer_instructions, runtime_context)
+                submitted_developer_instructions = append_runtime_context(
+                    developer_instructions_for(route.runtime_kind), runtime_context
+                )
                 if route.runtime_kind is RuntimeKind.CODEX_CLI:
                     command = [
                         "developer_instructions=" + json.dumps(submitted_developer_instructions)
@@ -1329,7 +1402,7 @@ class AgentTurnProcess(Generic[ResultT]):
                         pending_claude_session_id = trusted_session_id
                     else:
                         try:
-                            result = parse_result(process.stdout)
+                            result = parse_result_for_route(process.stdout, route)
                         except ResultParseError:
                             session_id_for_result = (
                                 observed_session_id or route_session_id
@@ -1348,7 +1421,7 @@ class AgentTurnProcess(Generic[ResultT]):
                             )
                             if not session_result:
                                 raise
-                            result = parse_result(session_result)
+                            result = parse_result_for_route(session_result, route)
                     break
                 if friday_failure is not None:
                     failure = friday_failure
@@ -1633,6 +1706,7 @@ class AgentTurnProcess(Generic[ResultT]):
                 native_end = count_claude_session_lines(native_session) if is_claude else session_transcript_end
                 native_reference = f"claude_session:{native_session}" if is_claude else attempt_transcript_reference
                 durable_consumer_result = run.role is AgentRole.CONSUMER
+                runtime_result_schema_id = result_schema_id_for(route.runtime_kind)
                 self.store.complete_agent_runtime_attempt(
                     active_attempt.id, native_session, native_reference,
                     attempt_transcript_start, native_end,

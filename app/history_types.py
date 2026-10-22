@@ -66,7 +66,7 @@ HISTORY_SOURCE_TABLES: tuple[str, ...] = (
     "follow_up_drafts",
     "work_todo_dingtalk_links",
     "scheduled_task_runs",
-    "email_actions",
+    "actions",
 )
 
 # How the calendar-invitation producer recognises an invitation card:

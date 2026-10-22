@@ -164,4 +164,3 @@ def test_verified_return_for_another_process_does_not_hide_failed_attention(tmp_
 
     visible_ids = {int(row["id"]) for row in _queue_attention_rows(store) if row["category"] == "Reply"}
     assert old in visible_ids
-

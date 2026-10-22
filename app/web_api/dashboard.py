@@ -20,7 +20,6 @@ from app.action_storage import (
 from app.configs_definitions import config_projection
 from app.state_definitions import state_projection
 from app.email_canonical_storage import email_classification_projection
-from app.shared_action_definitions import email_projection as email_action_projection
 from app.storage_payload import TASK_RECORD_TYPES
 from app.task20_definitions import TASK20_FIELDS, task20_column, task20_projection
 
@@ -314,20 +313,19 @@ def _append_auxiliary_queues(db, queues, now_text):
         where run.dispatch_status='pending'""",
         )
     )
-    actions = email_action_projection("email_actions")
+    from app.email_store import DIRECT_EMAIL_ACTION_SQL, _failed_action_retriable_sql
+
     classifications = email_classification_projection()
     # This is the current worker's retry predicate, not a second retry policy.
-    from app.email_store import _failed_action_retriable_sql
-
     sources.append(
         (
             "email_actions",
             "邮件操作",
-            f"""select mail.action_id as id,mail.status,
+        f"""select mail.action_id as id,mail.status,
         mail.attempt_count as attempts,mail.created_at,mail.updated_at,mail.next_attempt_at as available_at,
         mail.error,mail.started_at,'' as owner,'' as lease_expires_at,
         coalesce(nullif(c.subject,''),mail.action_type) as title,'' as detail_url
-        from ({actions}) mail join ({classifications}) c on c.id=mail.classification_id
+        from ({DIRECT_EMAIL_ACTION_SQL}) mail join ({classifications}) c on c.id=mail.classification_id
         where mail.action_plan_id=c.current_action_plan_id and c.status='processed'
           and (mail.status in ('pending','processing') or (mail.status='failed' and {_failed_action_retriable_sql("mail")}))""",
         )

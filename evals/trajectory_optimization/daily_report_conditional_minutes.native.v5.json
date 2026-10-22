@@ -1,0 +1,235 @@
+{
+  "model": "gpt-6-luna",
+  "reasoning_effort": "medium",
+  "mode": "anonymous_native_codex_oauth_fake_readonly_mcp",
+  "production_data": false,
+  "work_profile": "omitted",
+  "business_mcp": false,
+  "external_actions": false,
+  "runs": [
+    {
+      "case": "no_meeting_group_update",
+      "arm": "baseline",
+      "exit_code": 0,
+      "valid_wire": true,
+      "outcome": "proposal",
+      "tool_count": 17,
+      "tool_sequence": [
+        "read_scheduled_context",
+        "read_task_skill",
+        "read_task_skill",
+        "read_task_skill",
+        "read_task_skill",
+        "read_task_skill",
+        "consumer_artifact_write",
+        "consumer_run_skill_script",
+        "read_service_activity",
+        "recent_dingtalk_conversations",
+        "read_dingtalk_messages_in_window",
+        "read_service_activity",
+        "consumer_run_skill_script",
+        "consumer_artifact_write",
+        "consumer_document_write",
+        "read_task_artifact",
+        "read_system_action_contract"
+      ],
+      "skill_reads": [
+        "ceo-daily-report",
+        "dingtalk-chat",
+        "dingtalk-minutes",
+        "dingtalk-wiki",
+        "dingtalk-doc"
+      ],
+      "minutes_skill_before_facts": false,
+      "minutes_operations": [],
+      "skill_scripts": [
+        {
+          "script": "scripts/window.py",
+          "exit_code": 0
+        },
+        {
+          "script": "scripts/destination.py",
+          "exit_code": 0
+        }
+      ],
+      "report_sha256": "35b4be25ebad4d287050de85d9bdef66d4d7a2b92c258943039666adb280f126",
+      "report_mentions_synthetic_pilot": false,
+      "report_mentions_mina_owner": true,
+      "report_mentions_followup": true,
+      "document_write_and_readback": true,
+      "pending_direct_message_proposals": 1,
+      "input_tokens_total": 5060352,
+      "errors": []
+    },
+    {
+      "case": "no_meeting_group_update",
+      "arm": "candidate",
+      "exit_code": 0,
+      "valid_wire": true,
+      "outcome": "proposal",
+      "tool_count": 16,
+      "tool_sequence": [
+        "read_task_skill",
+        "read_scheduled_context",
+        "consumer_artifact_write",
+        "consumer_run_skill_script",
+        "read_service_activity",
+        "recent_dingtalk_conversations",
+        "read_dingtalk_messages_in_window",
+        "read_task_skill",
+        "read_task_skill",
+        "consumer_run_skill_script",
+        "read_task_skill",
+        "read_system_action_contract",
+        "read_system_action_contract",
+        "consumer_artifact_write",
+        "consumer_document_write",
+        "read_task_artifact"
+      ],
+      "skill_reads": [
+        "ceo-daily-report",
+        "dingtalk-wiki",
+        "dingtalk-doc",
+        "dingtalk-chat"
+      ],
+      "minutes_skill_before_facts": false,
+      "minutes_operations": [],
+      "skill_scripts": [
+        {
+          "script": "scripts/window.py",
+          "exit_code": 0
+        },
+        {
+          "script": "scripts/destination.py",
+          "exit_code": 0
+        }
+      ],
+      "report_sha256": "7d1e5cec7b8599b491db993622548a762b665e428400bbd250235c37abd5d1a3",
+      "report_mentions_synthetic_pilot": false,
+      "report_mentions_mina_owner": true,
+      "report_mentions_followup": true,
+      "document_write_and_readback": true,
+      "pending_direct_message_proposals": 1,
+      "input_tokens_total": null,
+      "errors": []
+    },
+    {
+      "case": "meeting_detail_needed",
+      "arm": "baseline",
+      "exit_code": 0,
+      "valid_wire": true,
+      "outcome": "proposal",
+      "tool_count": 20,
+      "tool_sequence": [
+        "read_task_skill",
+        "read_task_skill",
+        "read_scheduled_context",
+        "consumer_artifact_write",
+        "consumer_run_skill_script",
+        "read_service_activity",
+        "read_service_activity",
+        "recent_dingtalk_conversations",
+        "read_dingtalk_messages_in_window",
+        "read_task_skill",
+        "read_task_skill",
+        "list_dingtalk_minutes",
+        "read_dingtalk_minutes",
+        "read_task_skill",
+        "consumer_run_skill_script",
+        "read_system_action_contract",
+        "consumer_artifact_write",
+        "consumer_document_write",
+        "read_task_artifact",
+        "read_task_artifact"
+      ],
+      "skill_reads": [
+        "ceo-daily-report",
+        "dingtalk-minutes",
+        "dingtalk-wiki",
+        "dingtalk-doc",
+        "dingtalk-chat"
+      ],
+      "minutes_skill_before_facts": true,
+      "minutes_operations": [
+        "list_dingtalk_minutes",
+        "read_dingtalk_minutes"
+      ],
+      "skill_scripts": [
+        {
+          "script": "scripts/window.py",
+          "exit_code": 0
+        },
+        {
+          "script": "scripts/destination.py",
+          "exit_code": 0
+        }
+      ],
+      "report_sha256": "efa3e45620d7c76993a7f3e8459e12114df1878be58c43249c20b5718bebf2e1",
+      "report_mentions_synthetic_pilot": true,
+      "report_mentions_mina_owner": true,
+      "report_mentions_followup": true,
+      "document_write_and_readback": true,
+      "pending_direct_message_proposals": 1,
+      "input_tokens_total": 6836290,
+      "errors": []
+    },
+    {
+      "case": "meeting_detail_needed",
+      "arm": "candidate",
+      "exit_code": 0,
+      "valid_wire": true,
+      "outcome": "proposal",
+      "tool_count": 18,
+      "tool_sequence": [
+        "read_scheduled_context",
+        "read_task_skill",
+        "read_task_skill",
+        "read_task_skill",
+        "read_task_skill",
+        "consumer_artifact_write",
+        "consumer_run_skill_script",
+        "read_service_activity",
+        "recent_dingtalk_conversations",
+        "read_dingtalk_messages_in_window",
+        "read_task_skill",
+        "list_dingtalk_minutes",
+        "read_dingtalk_minutes",
+        "consumer_artifact_write",
+        "consumer_run_skill_script",
+        "consumer_document_write",
+        "read_task_artifact",
+        "read_system_action_contract"
+      ],
+      "skill_reads": [
+        "ceo-daily-report",
+        "dingtalk-chat",
+        "dingtalk-wiki",
+        "dingtalk-doc",
+        "dingtalk-minutes"
+      ],
+      "minutes_skill_before_facts": false,
+      "minutes_operations": [
+        "list_dingtalk_minutes",
+        "read_dingtalk_minutes"
+      ],
+      "skill_scripts": [
+        {
+          "script": "scripts/window.py",
+          "exit_code": 0
+        },
+        {
+          "script": "scripts/destination.py",
+          "exit_code": 0
+        }
+      ],
+      "report_sha256": "d66271f7488a0a71e9df494965f87dc3b002cd3100e161501dc1c219e3a46586",
+      "report_mentions_synthetic_pilot": true,
+      "report_mentions_mina_owner": true,
+      "report_mentions_followup": true,
+      "document_write_and_readback": true,
+      "pending_direct_message_proposals": 1,
+      "input_tokens_total": 5839729,
+      "errors": []
+    }
+  ]
+}

@@ -124,7 +124,8 @@ _EMAIL_HISTORICAL_COLUMNS = {
 EMAIL_ACTION_PROJECTIONS = {kind: email_action_projection(kind) for kind in EMAIL_ACTION_PROJECTIONS}
 
 EMAIL_PLAN_SQL = EMAIL_ACTION_PROJECTIONS["email_action_plans"]
-EMAIL_DIRECT_ACTION_SQL = EMAIL_ACTION_PROJECTIONS["email_actions"]
+# Direct effects have one current common Action owner; the historical
+# source-shaped projection remains available from the release module only.
 EMAIL_ATTEMPT_SQL = EMAIL_ACTION_PROJECTIONS["email_action_attempts"]
 EMAIL_RETRY_SQL = EMAIL_ACTION_PROJECTIONS["email_direct_retry_requests"]
 EMAIL_FEEDBACK_SQL = EMAIL_ACTION_PROJECTIONS["email_feedback_requests"]
@@ -146,6 +147,59 @@ EMAIL_UNSUBSCRIBE_STEP_SQL = EMAIL_ACTION_PROJECTIONS["email_unsubscribe_steps"]
 EMAIL_UNSUBSCRIBE_CANCELLATION_SQL = EMAIL_ACTION_PROJECTIONS[
     "email_unsubscribe_cancellations"
 ]
+
+# Actual direct effects are owned by common Actions. These caller-local views
+# retain the EmailStore row contract while taking status and attempt history
+# exclusively from that owner and its immutable receipts. Complex unsubscribe
+# workflows continue to use the specialized email projections above.
+DIRECT_EMAIL_ACTION_SQL = """
+select a.id as owner_id, a.id as action_id,
+       a.action_action_plan_id as action_plan_id,
+       a.action_classification_id as classification_id,
+       a.action_account_id as account_id, a.action_operation as action_type,
+       a.action_parameters_json as parameters_json, a.action_status as status,
+       p.config_version,
+       coalesce((select max(r.attempt_number) from action_receipts r
+                 where r.action_id=a.id and r.attempt_number is not null),0) as attempt_count,
+       (select r.started_at from action_receipts r where r.action_id=a.id
+          and r.attempt_number is not null order by r.id desc limit 1) as last_attempt_started_at,
+       coalesce(a.action_next_attempt_at,'') as next_attempt_at,
+       case when a.action_status='processing' then a.action_started_at
+            when a.action_status='pending' then null
+            else coalesce((select r.started_at from action_receipts r
+                           where r.action_id=a.id and r.attempt_number is not null
+                           order by r.attempt_number desc limit 1),'') end as started_at,
+       a.action_created_at as created_at, a.action_updated_at as updated_at,
+       case when a.action_status='processing' then '' else coalesce((select r.finished_at from action_receipts r where r.action_id=a.id
+          and r.attempt_number is not null order by r.id desc limit 1),'') end as finished_at,
+       case when a.action_status='processing' then '' else coalesce((select r.operation from action_receipts r where r.action_id=a.id
+          and r.attempt_number is not null order by r.id desc limit 1),'') end as provider_operation,
+       case when a.action_status='processing' then '' else coalesce((select r.target from action_receipts r where r.action_id=a.id
+          and r.attempt_number is not null order by r.id desc limit 1),'') end as provider_target,
+       case when a.action_status='processing' then '' else coalesce((select r.provider_result_id from action_receipts r where r.action_id=a.id
+          and r.attempt_number is not null order by r.id desc limit 1),'') end as provider_result_id,
+       case when a.action_status='processing' then '' else coalesce((select r.error_text from action_receipts r where r.action_id=a.id
+          and r.attempt_number is not null order by r.id desc limit 1),'') end as error
+from actions a
+join (""" + EMAIL_PLAN_SQL + """) p
+  on p.action_plan_id=a.action_action_plan_id
+where a.record_type='action' and a.action_action_plan_id is not null
+  and a.action_operation in ('archive','flag_important','mark_read','move','trash','label')
+"""
+
+DIRECT_EMAIL_ATTEMPT_SQL = """
+select r.id, a.id as action_id, r.attempt_number,
+       r.status, coalesce(r.operation,'') as provider_operation,
+       coalesce(r.target,'') as provider_target,
+       coalesce(r.provider_result_id,'') as provider_result_id,
+       coalesce(r.error_text,'') as error,
+       r.started_at, r.finished_at
+from action_receipts r join actions a on a.id=r.action_id
+where a.record_type='action' and a.action_operation in
+ ('archive','flag_important','mark_read','move','trash','label')
+  and r.attempt_number is not null
+"""
+EMAIL_DIRECT_ACTION_SQL = DIRECT_EMAIL_ACTION_SQL
 EMAIL_UNSUBSCRIBE_CLAIM_LOCATOR_SQL = email_action_projection(
     "email_unsubscribe_claims", include_rowid=True
 )
@@ -3108,7 +3162,7 @@ class EmailStore:
 
         self._validate_category_binding_completeness(db)
 
-        action_rows = list(db.execute(f"select * from ({EMAIL_DIRECT_ACTION_SQL})"))
+        action_rows = list(db.execute(f"select * from ({DIRECT_EMAIL_ACTION_SQL})"))
         actions_by_plan: dict[str, list[sqlite3.Row]] = {}
         actions_by_id: dict[str, sqlite3.Row] = {}
         for row in action_rows:
@@ -3134,7 +3188,8 @@ class EmailStore:
             )
             immutable_fields_match = plan is not None and (
                 action in plan.direct_actions
-                and row["action_id"] == _direct_action_id(plan.action_plan_id, action)
+                and row["action_plan_id"] == plan.action_plan_id
+                and row["action_type"] == action.value
                 and row["classification_id"] == plan.classification_id
                 and row["account_id"] == plan.account_id
                 and row["config_version"] == plan.config_version
@@ -3160,7 +3215,7 @@ class EmailStore:
 
         attempts_by_action: dict[str, list[sqlite3.Row]] = {}
         for row in db.execute(
-            f"select * from ({EMAIL_ATTEMPT_SQL}) order by action_id, attempt_number"
+            f"select * from ({DIRECT_EMAIL_ATTEMPT_SQL}) order by action_id, attempt_number"
         ):
             if row["status"] not in _TERMINAL_ATTEMPT_STATUSES:
                 raise EmailPersistenceCorruption(
@@ -3547,17 +3602,14 @@ class EmailStore:
     ) -> None:
         for action in plan.direct_actions:
             parameters = dict(plan.action_parameters.get(action, {}))
-            shared_action_lifecycle.ensure_effect_step(
+            shared_action_lifecycle.create_direct_email_action(
                 db,
-                "email",
                 {
-                    "action_id": _direct_action_id(plan.action_plan_id, action),
                     "action_plan_id": plan.action_plan_id,
                     "classification_id": plan.classification_id,
                     "account_id": plan.account_id,
                     "action_type": action.value,
                     "parameters_json": _json_dump(parameters),
-                    "config_version": plan.config_version,
                     "status": "pending",
                     "created_at": now,
                     "updated_at": now,
@@ -8783,7 +8835,7 @@ class EmailStore:
                        attempts.status, attempts.provider_operation,
                        attempts.provider_result_id, attempts.error,
                        attempts.started_at, attempts.finished_at
-                from ({EMAIL_ATTEMPT_SQL}) as attempts
+                from ({DIRECT_EMAIL_ATTEMPT_SQL}) as attempts
                 join ({EMAIL_DIRECT_ACTION_SQL}) as actions
                   on actions.action_id=attempts.action_id
                 where actions.classification_id=?
@@ -11006,12 +11058,20 @@ class EmailStore:
             raise ValueError("attempt status must be done, skipped or failed")
         with self._connect() as db:
             db.execute("begin immediate")
-            cursor = shared_action_lifecycle.transition(db, 'email', 'outcome', identity=action_id,
-                values=dict(attempt_number=attempt_number, status=status,
-                    provider_operation=provider_operation, provider_target=provider_target,
-                    provider_result_id=provider_result_id, error=error, started_at=started_at,
-                    finished_at=finished_at, updated_at=self._now()))
-            row = db.execute(f"select * from ({EMAIL_ATTEMPT_SQL}) where id=?", (cursor.lastrowid,)).fetchone()
+            owner = db.execute("select * from (" + DIRECT_EMAIL_ACTION_SQL + ") where action_id=?", (action_id,)).fetchone()
+            if owner is None:
+                raise EmailActionAttemptConflict(f"unknown direct email action {action_id}")
+            receipt_id = shared_action_lifecycle.record_direct_email_action_outcome(
+                db, action_id=action_id, expected_status=owner['status'],
+                expected_started_at=owner['started_at'], expected_attempt_count=owner['attempt_count'],
+                attempt_number=attempt_number, status=status,
+                provider_operation=provider_operation, provider_target=provider_target,
+                provider_result_id=provider_result_id, error=error,
+                started_at=started_at, finished_at=finished_at,
+                next_attempt_at=None, updated_at=self._now())
+            if receipt_id is None:
+                raise EmailActionAttemptConflict(f"direct action changed for {action_id}")
+            row = db.execute(f"select * from ({DIRECT_EMAIL_ATTEMPT_SQL}) where id=?", (receipt_id,)).fetchone()
         assert row is not None
         return dict(row)
 
@@ -11070,8 +11130,11 @@ class EmailStore:
                 phase_started_at = monotonic()
                 try:
                     attempt_number = int(row["attempt_count"]) + 1
-                    updated = shared_action_lifecycle.transition(db, 'email', 'claim', identity=row["action_id"], values={'started_at': claimed_at, 'updated_at': claimed_at}, expected={'status': row["status"], 'attempt_count': row["attempt_count"]}).rowcount
-                    if updated != 1:
+                    updated = shared_action_lifecycle.claim_direct_email_action(
+                        db, action_id=row["action_id"], expected_status=row["status"],
+                        expected_started_at=(row["started_at"] if row["status"] == "processing" else None),
+                        attempt_count=row["attempt_count"], claimed_at=claimed_at)
+                    if updated is None:
                         raise EmailActionAttemptConflict(
                             f"direct action claim changed for {row['action_id']}"
                         )
@@ -11115,7 +11178,7 @@ class EmailStore:
         candidate_classifications = db.execute(
             f"""
             select distinct a.classification_id
-            from ({EMAIL_DIRECT_ACTION_SQL}) as a
+            from ({DIRECT_EMAIL_ACTION_SQL}) as a
             cross join ({EMAIL_CLASSIFICATION_SQL}) as c on c.id=a.classification_id
             where a.status in ('pending', 'failed')
               and c.status='processed'
@@ -11131,7 +11194,7 @@ class EmailStore:
                        p.action_plan_version,
                        exists(select 1 from ({EMAIL_RETRY_SQL}) r where r.action_id=a.action_id and r.attempt_number=a.attempt_count) as explicit_retry_attempt,
                        exists(select 1 from ({EMAIL_RETRY_SQL}) r where r.action_id=a.action_id and r.attempt_number=a.attempt_count+1) as explicit_retry_scheduled
-                from ({EMAIL_DIRECT_ACTION_SQL}) as a
+                from ({DIRECT_EMAIL_ACTION_SQL}) as a
                 join ({EMAIL_CLASSIFICATION_SQL}) as c on c.id=a.classification_id
                 join ({EMAIL_PLAN_SQL}) as p on p.action_plan_id=a.action_plan_id
                 where a.classification_id=?
@@ -11187,12 +11250,12 @@ class EmailStore:
             default=None,
         )
 
-    def direct_action_ids_for_plan(self, action_plan_id: str) -> tuple[str, ...]:
+    def direct_action_ids_for_plan(self, action_plan_id: str) -> tuple[int, ...]:
         """Return only the direct action IDs owned by one immutable plan."""
 
         with self._connect() as db:
             rows = db.execute(
-                f"select action_id, action_type from ({EMAIL_DIRECT_ACTION_SQL}) where action_plan_id=?",
+                f"select action_id, action_type from ({DIRECT_EMAIL_ACTION_SQL}) where action_plan_id=?",
                 (action_plan_id,),
             ).fetchall()
         action_types = {row["action_type"] for row in rows}
@@ -11224,7 +11287,7 @@ class EmailStore:
     def direct_action_statuses_for_plan(self, action_plan_id: str) -> dict[str, str]:
         with self._connect() as db:
             rows = db.execute(
-                f"select action_id, status from ({EMAIL_DIRECT_ACTION_SQL}) where action_plan_id=?",
+                f"select action_id, status from ({DIRECT_EMAIL_ACTION_SQL}) where action_plan_id=?",
                 (action_plan_id,),
             ).fetchall()
         return {str(row["action_id"]): str(row["status"]) for row in rows}
@@ -11240,11 +11303,11 @@ class EmailStore:
                 select a.action_id, a.action_type, a.status,
                        t.provider_operation, t.provider_target,
                        t.provider_result_id, t.finished_at
-                from ({EMAIL_DIRECT_ACTION_SQL}) as a
-                join ({EMAIL_ATTEMPT_SQL}) as t
+                from ({DIRECT_EMAIL_ACTION_SQL}) as a
+                join ({DIRECT_EMAIL_ATTEMPT_SQL}) as t
                   on t.id=(
                     select max(latest.id)
-                    from ({EMAIL_ATTEMPT_SQL}) as latest
+                    from ({DIRECT_EMAIL_ATTEMPT_SQL}) as latest
                     where latest.action_id=a.action_id and latest.status='done'
                   )
                 where a.action_plan_id=? and a.status='done'
@@ -11589,7 +11652,7 @@ class EmailStore:
         """Claim one exact current-plan action without selecting account work."""
 
         claimed_at = _required_utc_timestamp(claimed_at, field="claimed_at")
-        if not isinstance(action_id, str) or not action_id.strip():
+        if not isinstance(action_id, (str, int)) or not str(action_id).strip():
             raise ValueError("action_id must be nonblank")
         with claim_connection(self) as db:
             if db is None:
@@ -11603,7 +11666,7 @@ class EmailStore:
                        p.action_plan_version,
                        exists(select 1 from ({EMAIL_RETRY_SQL}) r where r.action_id=a.action_id and r.attempt_number=a.attempt_count) as explicit_retry_attempt,
                        exists(select 1 from ({EMAIL_RETRY_SQL}) r where r.action_id=a.action_id and r.attempt_number=a.attempt_count+1) as explicit_retry_scheduled
-                from ({EMAIL_DIRECT_ACTION_SQL}) as a
+                from ({DIRECT_EMAIL_ACTION_SQL}) as a
                 join ({EMAIL_CLASSIFICATION_SQL}) as c on c.id=a.classification_id
                 join ({EMAIL_PLAN_SQL}) as p on p.action_plan_id=a.action_plan_id
                 where a.action_id=? and c.status='processed'
@@ -11613,7 +11676,7 @@ class EmailStore:
             if row is None or row["action_plan_id"] != row["current_action_plan_id"]:
                 return None
             siblings = db.execute(
-                f"select action_type, status from ({EMAIL_DIRECT_ACTION_SQL}) where action_plan_id=?",
+                f"select action_type, status from ({DIRECT_EMAIL_ACTION_SQL}) where action_plan_id=?",
                 (row["action_plan_id"],),
             ).fetchall()
             if any(item["status"] == "processing" for item in siblings):
@@ -11633,8 +11696,11 @@ class EmailStore:
             ):
                 return None
             attempt_number = int(row["attempt_count"]) + 1
-            updated = shared_action_lifecycle.transition(db, 'email', 'claim', identity=row["action_id"], values={'started_at': claimed_at, 'updated_at': claimed_at}, expected={'status': row["status"], 'attempt_count': row["attempt_count"]}).rowcount
-            if updated != 1:
+            updated = shared_action_lifecycle.claim_direct_email_action(
+                db, action_id=row["action_id"], expected_status=row["status"],
+                expected_started_at=(row["started_at"] if row["status"] == "processing" else None),
+                attempt_count=row["attempt_count"], claimed_at=claimed_at)
+            if updated is None:
                 raise EmailActionAttemptConflict(
                     f"direct action claim changed for {row['action_id']}"
                 )
@@ -11668,7 +11734,7 @@ class EmailStore:
                 f"""
                 select a.*, c.folder, c.uidvalidity, c.uid, c.rfc_message_id,
                        c.thread_id, c.stable_message_identity
-                from ({EMAIL_DIRECT_ACTION_SQL}) as a
+                from ({DIRECT_EMAIL_ACTION_SQL}) as a
                 join ({EMAIL_CLASSIFICATION_SQL}) as c on c.id=a.classification_id
                 where a.status='failed' and a.account_id=?
                   and a.action_type in ({placeholders})
@@ -11722,7 +11788,7 @@ class EmailStore:
                 select a.*, c.folder, c.uidvalidity, c.uid, c.rfc_message_id,
                        c.thread_id, c.stable_message_identity, p.actions_json,
                        p.action_plan_version
-                from ({EMAIL_DIRECT_ACTION_SQL}) a join ({EMAIL_CLASSIFICATION_SQL}) c
+                from ({DIRECT_EMAIL_ACTION_SQL}) a join ({EMAIL_CLASSIFICATION_SQL}) c
                   on c.id=a.classification_id
                 join ({EMAIL_PLAN_SQL}) p on p.action_plan_id=a.action_plan_id
                 where a.action_id=? and a.status='failed' and c.status='processed'
@@ -11744,7 +11810,7 @@ class EmailStore:
                 or row["error"] != failed.error
                 or row["provider_operation"] != failed.provider_operation
                 or db.execute(
-                    f"select 1 from ({EMAIL_DIRECT_ACTION_SQL}) where action_plan_id=? and status='processing'",
+                    f"select 1 from ({DIRECT_EMAIL_ACTION_SQL}) where action_plan_id=? and status='processing'",
                     (expected.action_plan_id,),
                 ).fetchone() is not None
                 or not self._direct_action_predecessors_done(db, row)
@@ -11768,15 +11834,10 @@ class EmailStore:
                         "requested_at": requested_at,
                     },
                 )
-                shared_action_lifecycle.transition(
-                    db, "email", "schedule",
-                    identity=expected.action_id, values=
-                    {
-                        "next_attempt_at": requested_at,
-                        "updated_at": requested_at,
-                    },
-                    expected={"status": "failed", "attempt_count": expected.attempt_number - 1},
-                )
+                if shared_action_lifecycle.schedule_direct_email_action(
+                    db, action_id=expected.action_id, expected_status="failed",
+                    next_attempt_at=requested_at, updated_at=requested_at) is None:
+                    raise EmailActionAttemptConflict(f"direct action changed for {expected.action_id}")
             return True
 
     def claim_failed_direct_action_for_reconciliation(
@@ -11806,7 +11867,7 @@ class EmailStore:
                 select a.*, c.folder, c.uidvalidity, c.uid, c.rfc_message_id,
                        c.thread_id, c.stable_message_identity,
                        c.current_action_plan_id
-                from ({EMAIL_DIRECT_ACTION_SQL}) as a
+                from ({DIRECT_EMAIL_ACTION_SQL}) as a
                 join ({EMAIL_CLASSIFICATION_SQL}) as c on c.id=a.classification_id
                 where a.action_id=? and c.status='processed'
                 """,
@@ -11820,13 +11881,18 @@ class EmailStore:
             ):
                 return None
             busy = db.execute(
-                f"select 1 from ({EMAIL_DIRECT_ACTION_SQL}) "
+                f"select 1 from ({DIRECT_EMAIL_ACTION_SQL}) "
                 "where action_plan_id=? and status='processing'",
                 (row["action_plan_id"],),
             ).fetchone()
             if busy is not None:
                 return None
-            shared_action_lifecycle.transition(db, 'email', 'claim', identity=action_id, values={'started_at': claimed_at, 'updated_at': claimed_at}, expected={'status': "failed", 'attempt_count': expected_attempt_count})
+            updated = shared_action_lifecycle.claim_direct_email_action(
+                db, action_id=action_id, expected_status="failed",
+                expected_started_at=None, attempt_count=expected_attempt_count,
+                claimed_at=claimed_at)
+            if updated is None:
+                raise EmailActionAttemptConflict(f"direct action claim changed for {action_id}")
             return self._claimed_direct_action(
                 row,
                 attempt_number=expected_attempt_count + 1,
@@ -11849,7 +11915,7 @@ class EmailStore:
                 "direct action is absent from its ActionPlan"
             )
         siblings = db.execute(
-            f"select action_type, status, parameters_json from ({EMAIL_DIRECT_ACTION_SQL}) "
+            f"select action_type, status, parameters_json from ({DIRECT_EMAIL_ACTION_SQL}) "
             "where classification_id=? and action_plan_id=?",
             (row["classification_id"], row["action_plan_id"]),
         ).fetchall()
@@ -12024,7 +12090,7 @@ class EmailStore:
                        c.thread_id, c.stable_message_identity,
                        c.status as classification_status,
                        c.current_action_plan_id
-                from ({EMAIL_DIRECT_ACTION_SQL}) as a
+                from ({DIRECT_EMAIL_ACTION_SQL}) as a
                 join ({EMAIL_CLASSIFICATION_SQL}) as c on c.id=a.classification_id
                 where a.action_id=?
                 """,
@@ -12099,19 +12165,20 @@ class EmailStore:
                     raise EmailActionAttemptConflict(
                         f"provider locator changed for {action.action_id}"
                     )
-            cursor = shared_action_lifecycle.transition(db, 'email', 'outcome', identity=action.action_id,
-                values=dict(attempt_number=action.attempt_number, status=status,
-                    provider_operation=provider_operation, provider_target=provider_target,
-                    provider_result_id=provider_result_id, error=error,
-                    started_at=action.claim_started_at, finished_at=finished_at,
-                    next_attempt_at=next_attempt_at, updated_at=finished_at),
-                expected={'status': 'processing', 'started_at': action.claim_started_at,
-                          'attempt_count': action.attempt_number - 1})
-            if cursor.rowcount != 1:
+            receipt_id = shared_action_lifecycle.record_direct_email_action_outcome(
+                db, action_id=action.action_id, expected_status='processing',
+                expected_started_at=action.claim_started_at,
+                expected_attempt_count=action.attempt_number - 1,
+                attempt_number=action.attempt_number, status=status,
+                provider_operation=provider_operation, provider_target=provider_target,
+                provider_result_id=provider_result_id, error=error,
+                started_at=action.claim_started_at, finished_at=finished_at,
+                next_attempt_at=next_attempt_at, updated_at=finished_at)
+            if receipt_id is None:
                 raise EmailActionAttemptConflict(f"direct action claim changed for {action.action_id}")
             attempt = db.execute(
-                f"select * from ({EMAIL_ATTEMPT_SQL}) where id=?",
-                (cursor.lastrowid,),
+                f"select * from ({DIRECT_EMAIL_ATTEMPT_SQL}) where id=?",
+                (receipt_id,),
             ).fetchone()
         assert attempt is not None
         return dict(attempt)
@@ -12137,7 +12204,7 @@ class EmailStore:
             rows = db.execute(
                 f"""
                 select a.*, c.stable_message_identity
-                from ({EMAIL_DIRECT_ACTION_SQL}) as a
+                from ({DIRECT_EMAIL_ACTION_SQL}) as a
                 join ({EMAIL_CLASSIFICATION_SQL}) as c on c.id=a.classification_id
                 where a.status='processing' and a.started_at < ?
                 order by a.action_id
@@ -12150,16 +12217,18 @@ class EmailStore:
                     f"select 1 from ({EMAIL_RETRY_SQL}) where action_id=? and attempt_number=?",
                     (row["action_id"], attempt_number),
                 ).fetchone() is not None
-                outcome = shared_action_lifecycle.transition(db, 'email', 'outcome', identity=row['action_id'],
-                    values=dict(attempt_number=attempt_number, status='failed',
-                        provider_operation='startup_recovery', provider_target=row['stable_message_identity'],
-                        provider_result_id='', error='stale_processing_recovered', started_at=row['started_at'],
-                        finished_at=recovered_at, updated_at=recovered_at,
-                        next_attempt_at=_next_attempt_at(recovered_at, attempt_number=attempt_number,
-                                                       retryable=not explicit_retry)),
-                    expected={'status': 'processing', 'started_at': row['started_at'],
-                              'attempt_count': row['attempt_count']})
-                if outcome.rowcount != 1:
+                outcome = shared_action_lifecycle.record_direct_email_action_outcome(
+                    db, action_id=row['action_id'], expected_status='processing',
+                    expected_started_at=row['started_at'],
+                    expected_attempt_count=row['attempt_count'], attempt_number=attempt_number,
+                    status='failed', provider_operation='startup_recovery',
+                    provider_target=row['stable_message_identity'], provider_result_id='',
+                    error='stale_processing_recovered', started_at=row['started_at'],
+                    finished_at=recovered_at,
+                    next_attempt_at=_next_attempt_at(recovered_at, attempt_number=attempt_number,
+                                                     retryable=not explicit_retry),
+                    updated_at=recovered_at)
+                if outcome is None:
                     raise EmailActionAttemptConflict(f"direct action claim changed for {row['action_id']}")
             return len(rows)
 
@@ -12174,7 +12243,7 @@ class EmailStore:
                        classifications.sender, classifications.subject,
                        classifications.preview, classifications.category,
                        classifications.received_at, actions.finished_at
-                from ({EMAIL_DIRECT_ACTION_SQL}) as actions
+                from ({DIRECT_EMAIL_ACTION_SQL}) as actions
                 join ({EMAIL_CLASSIFICATION_SQL}) as classifications
                   on classifications.id=actions.classification_id
                 where actions.action_type='flag_important'
@@ -12193,7 +12262,7 @@ class EmailStore:
         with self._connect() as db:
             rows = db.execute(
                 f"""
-                select * from ({EMAIL_ATTEMPT_SQL})
+                select * from ({DIRECT_EMAIL_ATTEMPT_SQL})
                 where action_id=? order by attempt_number
                 """,
                 (action_id,),

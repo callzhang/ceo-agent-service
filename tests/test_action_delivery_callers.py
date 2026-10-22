@@ -9,7 +9,7 @@ from contextlib import contextmanager
 
 import pytest
 
-from app.action_storage import SENT_REPLY_SQL, SENT_REPLY_OBSERVER_SQL, insert_action, update_action
+from app.action_storage import SENT_REPLY_SQL, SENT_REPLY_OBSERVER_SQL
 from app.action_delivery_storage import ACTUAL_SOURCE
 from app.store import AutoReplyStore
 from tests.test_agent_turn_store import _claim_consumer, _task
@@ -77,11 +77,16 @@ def test_duplicate_delivery_keeps_first_fact_records_new_observer_and_burns_id(t
         assert [(row["sent_reply_id"], row["agent_run_id"], row["reply_task_id"])
                 for row in rows] == [(first.id, first_run.id, task_id),
                                     (first.id, second_run.id, second_task.id)]
-        assert db.execute("select seq from sqlite_sequence where name='actions:sent_replies'").fetchone()[0] == 2
+        assert db.execute(
+            "select count(*) from action_receipts r join actions a on a.id=r.action_id "
+            "where a.record_type='action' and a.action_external_action_key='shared-send' "
+            "and r.provider_result_json is not null"
+        ).fetchone()[0] == 1
         assert db.execute("select 1 from sqlite_master where name='sent_reply_observers'").fetchone() is None
     store.record_sent_reply("next", "m3", "Later")
-    assert store.get_sent_reply("next", "m3").id == 3
-    assert store.max_sent_reply_id() == 3
+    next_reply = store.get_sent_reply("next", "m3")
+    assert next_reply.id > duplicate.id
+    assert store.max_sent_reply_id() == next_reply.id
 
 
 def test_completed_delivery_conflict_rolls_back_sent_and_receipt(tmp_path):
@@ -102,7 +107,10 @@ def test_completed_delivery_conflict_rolls_back_sent_and_receipt(tmp_path):
     with store._connect() as db:
         assert db.execute(f"select count(*) from ({SENT_REPLY_SQL})").fetchone()[0] == 1
         assert db.execute(f"select count(*) from ({SENT_REPLY_OBSERVER_SQL})").fetchone()[0] == 1
-        assert db.execute("select seq from sqlite_sequence where name='actions:sent_replies'").fetchone()[0] == sent.id
+        assert db.execute(
+            "select count(*) from action_receipts where action_id=? and provider_result_json is not null",
+            (sent.id,),
+        ).fetchone()[0] == 1
         assert not db.execute("pragma foreign_key_check").fetchall()
 
 
@@ -111,8 +119,14 @@ def test_feedback_pressure_and_attempt_mapping_read_sent_projection(tmp_path):
     store.record_sent_reply("conversation", "old", "Old", feedback_token="old-token")
     store.record_sent_reply("conversation", "new", "New", feedback_token="new-token")
     with store._connect() as db:
-        update_action(db, "sent_replies", 1, {"sent_at": "2026-05-30 12:00:00"})
-        update_action(db, "sent_replies", 2, {"sent_at": "2026-06-02 12:00:00"})
+        db.execute(
+            "update action_receipts set observed_at='2026-05-30 12:00:00' "
+            "where action_id=(select id from actions where action_trigger_message_id='old')"
+        )
+        db.execute(
+            "update action_receipts set observed_at='2026-06-02 12:00:00' "
+            "where action_id=(select id from actions where action_trigger_message_id='new')"
+        )
     store.upsert_feedback_event(key="feedback", feedback_token="old-token", rating="up",
                                 received_at="2026-06-01 12:00:00")
     stats = store.feedback_pressure_stats("conversation", now_utc="2026-06-12 12:00:00")
@@ -197,37 +211,43 @@ def test_sent_external_key_caller_seeks_existing_partial_index(tmp_path, monkeyp
     monkeypatch.setattr(store, "_connect", traced_connect)
     store.record_completed_agent_message_delivery(
         business_object_key=task.business_object_key, action_identity="reply",
-        operation="send", target_identifiers={"conversation_id": "conversation"},
+        operation="message.send", target_identifiers={"conversation_id": "conversation"},
         agent_run_id=run.id, external_action_key="plan-key",
         conversation_id="conversation", trigger_message_id="message",
         reply_text="Delivered", provider_result={"receipt": "accepted"},
     )
-    lookups = [sql for sql in statements if sql.startswith("select * from (select ")
-               and "external_action_key='plan-key'" in sql and "a.record_type='sent_replies'" in sql]
+    lookups = [sql for sql in statements if "action_external_action_key='plan-key'" in sql
+               and "record_type='action'" in sql]
     assert len(lookups) == 1
     with sqlite3.connect(store.path) as db:
         plan = [row[3] for row in db.execute("explain query plan " + lookups[0])]
-    assert any("SEARCH a USING INDEX idx_actions_sent_external_key (external_action_key=?)" in step
-               for step in plan)
+    assert any("USING INDEX idx_actions_action_external_key" in step for step in plan), plan
 
 
 @pytest.mark.parametrize("key", ["ordinary", " padded ", "nul\x00key"])
 def test_nonempty_external_key_lookup_keeps_native_result(tmp_path, key):
     source_path = tmp_path / "source.sqlite3"
-    with sqlite3.connect(source_path) as source:
-        objects = ACTUAL_SOURCE["sent_replies"]["objects"]
-        for obj in sorted(objects, key=lambda item: item["name"] != "sent_replies"):
-            source.execute(obj["sql"])
-        source.execute("insert into sent_replies(id,conversation_id,trigger_message_id,reply_text,external_action_key) "
-                       "values(1,'conversation','message','Delivered',?)", (key,))
-        native = source.execute("select id,reply_text from sent_replies where external_action_key=?",
-                                (key,)).fetchone()
     store = AutoReplyStore(tmp_path / "target.sqlite3")
     with store._connect() as db:
-        insert_action(db, "sent_replies", {
-            "id": 1, "conversation_id": "conversation", "trigger_message_id": "message",
-            "reply_text": "Delivered", "external_action_key": key,
+        from app.action_entity_storage import create_action
+        action = create_action(db, values={
+            "operation": "message.send",
+            "parameters_json": '{"conversation_id":"conversation","trigger_message_id":"message"}',
+            "status": "done", "external_action_key": key,
+            "action_identity": "identity", "delivery_channel": "dingtalk",
+            "conversation_id": "conversation", "trigger_message_id": "message",
+            "prepared_body": "Delivered", "created_at": "sent", "updated_at": "sent",
         })
+        from app.action_entity_storage import append_action_receipt, record_action_result
+        body = append_action_receipt(db, action['id'], values={
+            'provider_result_json': '{"receipt":"sent"}', 'observed_at': 'sent',
+        })
+        fact = append_action_receipt(db, action['id'], values={
+            'provider_receipt_id': body, 'observed_at': 'sent',
+        })
+        assert record_action_result(db, action['id'], expected={'delivery_receipt_id': None},
+                                    changes={'delivery_receipt_id': fact})
+        native = (action["id"], "Delivered")
         projected = db.execute(
             f"select id,reply_text from ({SENT_REPLY_SQL}) "
             "where external_action_key=? and external_action_key<>''", (key,),

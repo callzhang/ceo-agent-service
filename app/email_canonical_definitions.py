@@ -116,7 +116,7 @@ EMAILS_INDEX_SQL = (
 )
 
 
-def email_metadata_declaration(*, metadata_owner: bool = False):
+def email_metadata_declaration(*, metadata_owner: bool = False, action_owner: bool = False):
     """Select Email53 explicitly; the default Email52 declaration stays frozen."""
     if not metadata_owner:
         return EMAILS_TABLE_SQL, EMAILS_INDEX_SQL, EMAILS_TRIGGER_SQL
@@ -137,7 +137,16 @@ def email_metadata_declaration(*, metadata_owner: bool = False):
         "length(cast(unhex(replace(hex(message_preview),'00','01')) as text))<=1000),")
     indexes = tuple(sql.replace("account_id,class_folder,", "account_id,message_folder,")
                     for sql in EMAILS_INDEX_SQL)
-    return table, indexes, EMAILS_TRIGGER_SQL
+    triggers = EMAILS_TRIGGER_SQL
+    if action_owner:
+        triggers = tuple(
+            sql.replace(
+                "a.record_type='email_actions' and a.email_classification_id=old.classification_id and a.email_status='processing'",
+                "a.record_type='action' and a.action_classification_id=old.classification_id and a.action_status='processing' and a.action_operation in ('archive','flag_important','mark_read','move','trash','label')",
+            ) if sql.startswith("create trigger trg_emails_direct_action_blocks_plan_switch ") else sql
+            for sql in triggers
+        )
+    return table, indexes, triggers
 
 EMAILS_TRIGGER_SQL = (
     "create trigger trg_emails_class_source_insert before insert on emails when new.classification_id is not null and new.class_classification_source not in ('model','user','agent') begin select raise(abort,'invalid email classification source'); end",

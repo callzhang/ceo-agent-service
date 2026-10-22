@@ -141,6 +141,41 @@ describe("AttemptDetailPage", () => {
     expect(screen.queryByText("session-8448")).not.toBeInTheDocument();
   });
 
+  it("shows Action receipt identity and explicitly labels missing source facts", async () => {
+    getAttemptDetail.mockResolvedValueOnce({
+      item: {
+        ...detail,
+        delivery: {
+          action_id: 9201,
+          conversation_id: "conversation-source-1",
+          trigger_message_id: "trigger-source-1",
+          body: "Action owned message body",
+          receipt_id: 9202,
+          operation: null,
+          target: null,
+          sent_at: "2026-10-20T10:00:00+00:00",
+          source_available: false,
+          source_label: "来源事实未提供",
+          provider_message_id: "provider-message-1",
+          provider_receipt: { id: 9203, available: true, body: "{\"message_id\":\"provider-message-1\"}", result_digest: null },
+          recall_status: "",
+          recalled_at: null,
+        },
+      },
+      meta: { snapshot_at: "2026-10-20T10:00:00+00:00" },
+    });
+
+    renderPage();
+
+    const receipt = await screen.findByLabelText("Action 投递回执");
+    expect(receipt).toHaveTextContent("#9201");
+    expect(receipt).toHaveTextContent("#9203");
+    expect(receipt).toHaveTextContent("provider-message-1");
+    expect(receipt).toHaveTextContent("来源事实未提供");
+    expect(receipt).toHaveTextContent("操作未提供");
+    expect(receipt).toHaveTextContent("目标未提供");
+  });
+
   it("labels the human decision in plain language", async () => {
     getAttemptDetail.mockResolvedValueOnce({
       item: {

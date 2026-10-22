@@ -412,6 +412,17 @@ def in_flight_work(database_path: Path) -> int:
         reply_source, work_source = publication_task_sources(db)
         scheduled_source = publication_scheduled_source(db)
         meeting_jobs, meeting_runs = publication_meeting_sources(db)
+        email_action_source = None
+        if db.execute(
+            "select 1 from sqlite_schema where type='table' and name='email_schema_migrations'"
+        ).fetchone():
+            from app.email_publication_sources import publication_email_action_source
+
+            email_action_source = publication_email_action_source(db)
+        email_action_count = (
+            f"(select count(*) from ({email_action_source}) where status='processing')"
+            if email_action_source is not None else "0"
+        )
         return int(db.execute(
             f"select (select count(*) from ({runtime_source}) as runtime "
             "        where runtime.status not in ('completed','failed','superseded') "
@@ -456,8 +467,7 @@ def in_flight_work(database_path: Path) -> int:
             f" + (select count(*) from ({task20_projection('weekly_okr_analysis_jobs')}) "
             "    where status='running' and lease_owner<>'' "
             "    and julianday(lease_expires_at)>julianday('now'))"
-            " + (select count(*) from actions where record_type='email_actions' "
-            "    and email_status='processing')"
+            f" + {email_action_count}"
             " + (select count(*) from actions where record_type='meeting_memory_write_events' "
             "    and td_status='processing' and td_lease_owner<>'' "
             "    and julianday(td_lease_expires_at)>julianday('now'))"

@@ -1740,6 +1740,56 @@ def test_seed_migrates_legacy_daily_report_delivery_prompt(tmp_path: Path) -> No
     assert "机器人单聊" not in migrated.prompt
 
 
+def test_seed_migrates_only_exact_previous_daily_report_skill_sequence(
+    tmp_path: Path,
+) -> None:
+    from app.agent_cron.seeds import (
+        _daily_report_prompt_before_conditional_minutes,
+        daily_report_prompt,
+    )
+
+    store = AutoReplyStore(tmp_path / "daily-report-minutes-sequence.sqlite3")
+    options = _options(tmp_path, store, healthy_routes={"codex_oauth"})
+    seeded = seed_scheduled_tasks(
+        store=store, options=options, working_directory=tmp_path, now=NOW
+    )
+    daily = _task_by_key(seeded, "ceo-daily-report-daily-v1")
+    previous = store.update_scheduled_task(
+        daily.id,
+        expected_version=daily.version,
+        prompt=_daily_report_prompt_before_conditional_minutes(),
+        now=NOW,
+    )
+
+    migrated = _task_by_key(
+        seed_scheduled_tasks(
+            store=store, options=options, working_directory=tmp_path, now=NOW
+        ),
+        "ceo-daily-report-daily-v1",
+    )
+
+    assert migrated.version == previous.version + 1
+    assert migrated.prompt == daily_report_prompt()
+    assert migrated.prompt.index("read_service_activity") < migrated.prompt.index(
+        "dingtalk-minutes"
+    )
+    assert "仅在会议管理细节仍缺失" in migrated.prompt
+
+    custom = store.update_scheduled_task(
+        migrated.id,
+        expected_version=migrated.version,
+        prompt=migrated.prompt + " operator-customized",
+        now=NOW,
+    )
+    reseeded = _task_by_key(
+        seed_scheduled_tasks(
+            store=store, options=options, working_directory=tmp_path, now=NOW
+        ),
+        "ceo-daily-report-daily-v1",
+    )
+    assert reseeded == custom
+
+
 def test_seeds_no_longer_depend_on_runtime_health(tmp_path: Path) -> None:
     """An unhealthy fleet does not alter the configured seed state."""
     store = AutoReplyStore(tmp_path / "disabled.sqlite3")

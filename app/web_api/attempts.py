@@ -817,6 +817,7 @@ def build_attempt_detail(
         _attempt_detail_reply_text,
         _attempt_info_tooltip,
         _feedback_token_for_sent_reply,
+        _sent_reply_recall_message_id,
         _attempt_reason_text,
         _needs_human_decision_options,
         _quality_warnings,
@@ -957,6 +958,30 @@ def build_attempt_detail(
     agent_sessions = _agent_sessions(attempt, agent_runs)
     feedback_token = _feedback_token_for_sent_reply(sent_reply)
     feedback_events = store.list_feedback_events_for_tokens([feedback_token]).get(feedback_token, [])
+    delivery = None
+    if sent_reply is not None:
+        source_available = sent_reply.operation is not None and sent_reply.target is not None
+        delivery = {
+            "action_id": sent_reply.id,
+            "conversation_id": sent_reply.conversation_id,
+            "trigger_message_id": sent_reply.trigger_message_id,
+            "body": sent_reply.reply_text,
+            "receipt_id": sent_reply.receipt_id,
+            "operation": sent_reply.operation,
+            "target": sent_reply.target,
+            "sent_at": sent_reply.sent_at,
+            "source_available": source_available,
+            "source_label": "来源事实已记录" if source_available else "来源事实未提供",
+            "provider_message_id": sent_reply.provider_result_id or _sent_reply_recall_message_id(sent_reply),
+            "provider_receipt": {
+                "id": sent_reply.provider_receipt_id,
+                "available": sent_reply.provider_receipt_id is not None,
+                "body": sent_reply.send_result_json,
+                "result_digest": sent_reply.result_digest,
+            },
+            "recall_status": sent_reply.recall_status,
+            "recalled_at": sent_reply.recalled_at,
+        }
     rerun = (attempt_rerun_presentation(store, reply_task, agent_runs)
              if attempt.send_status == "failed" else RerunPresentation())
     latest_attempt = store.get_latest_reply_attempt_for_trigger(
@@ -1177,10 +1202,12 @@ def build_attempt_detail(
         "generated_reply": {
             "title": "生成回复",
             "text": normalize_display_value(
-                what_happened.get("proposed_text")
+                sent_reply.reply_text if sent_reply is not None and sent_reply.reply_text.strip()
+                else what_happened.get("proposed_text")
                 or _attempt_detail_reply_text(attempt, sent_reply)
             ),
         },
+        "delivery": delivery,
         "email": _email_payload(attempt, reply_task, email_store_factory),
         "references": _references_payload(attempt),
         "feedback": {

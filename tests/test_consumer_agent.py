@@ -24,8 +24,11 @@ from app.agent_result import ResultParseError
 from app.agent_wire_contracts import (
     ConsumerAgentWireResult,
     claude_consumer_output_schema,
+    consumer_wire_model,
     parse_consumer_agent_wire_result,
 )
+from app.native_agent_output import native_output_schema_path
+from app.prompt_composition import CONSUMER_OUTBOUND_INSTRUCTION, render_prompt_sections
 from app.agent_runtime_config import load_runtime_config
 from app.agent_runtime_contracts import RuntimeCapabilitySnapshot
 from app.agent_runtime_router import AgentRuntimeRouter
@@ -38,6 +41,7 @@ from app.consumer_agent import (
     ConsumerAgentRunner,
     audit_developer_instructions,
     consumer_developer_sections,
+    consumer_developer_sections_by_runtime,
     consumer_developer_instructions,
     consumer_wire_contract_hash,
     _consumer_source_context_fingerprint,
@@ -51,6 +55,7 @@ from app.process_runner import ProcessRunResult
 from app.store import AgentRole, AutoReplyStore
 from tests.runtime_route_env import claude_api_env, codex_api_env, set_env
 from tests.support.native_protocol import install_protocol_native_trajectories
+from tests.support.native_consumer_output_fixture import native_consumer_stream_for_command
 
 
 @pytest.fixture(autouse=True)
@@ -389,9 +394,10 @@ class CapturingExecutor:
     def __call__(self, command, *, on_stdout_line, **kwargs):
         self.prompts.append(str(kwargs["prompt"]))
         self.commands.append(command)
-        for line in self.stdout.splitlines():
+        stdout = native_consumer_stream_for_command(self.stdout, command)
+        for line in stdout.splitlines():
             on_stdout_line(line)
-        return ProcessRunResult(0, self.stdout, "")
+        return ProcessRunResult(0, stdout, "")
 
 
 def test_consumer_and_audit_receive_durable_memory_and_temporary_work_rules():
@@ -572,8 +578,8 @@ class FailingExecutor(CapturingExecutor):
         self.stderr = stderr
 
     def __call__(self, command, *, on_stdout_line, **kwargs):
-        super().__call__(command, on_stdout_line=on_stdout_line, **kwargs)
-        return ProcessRunResult(1, self.stdout, self.stderr)
+        converted = super().__call__(command, on_stdout_line=on_stdout_line, **kwargs)
+        return ProcessRunResult(1, converted.stdout, self.stderr)
 
 
 class SequencedRuntimeExecutor(CapturingExecutor):
@@ -586,8 +592,8 @@ class SequencedRuntimeExecutor(CapturingExecutor):
         result = self.results.pop(0)
         self.stdout = result.stdout
         self.environments.append(dict(kwargs["env"]))
-        super().__call__(command, on_stdout_line=on_stdout_line, **kwargs)
-        return result
+        converted = super().__call__(command, on_stdout_line=on_stdout_line, **kwargs)
+        return replace(result, stdout=converted.stdout)
 
 
 @pytest.mark.parametrize("started_session", [None, "new-session-before-capacity"])
@@ -905,6 +911,38 @@ def _result_jsonl(*, session: str = "session-a") -> str:
     )
 
 
+@pytest.mark.parametrize("purpose", ["general", "oa"])
+def test_consumer_codex_turn_uses_matching_native_schema_and_parser(
+    store, task, context, purpose,
+):
+    if purpose == "oa":
+        context = replace(context, required_proposal_action={"capability": "dingtalk-oa"})
+    wire_model = consumer_wire_model(purpose)
+    wire = wire_model.model_validate({
+        "action": "no_action", "reason": "Already handled", "target": {},
+        "payload": {}, "evidence_refs": [], "summary": "Already handled",
+        "risk": "low", "confidence": 1.0, "rule_coverage": 1.0,
+        "information_completeness": 1.0, "durable_memories": [],
+    }).model_dump(mode="json")
+    stream = "\n".join((
+        json.dumps({"type": "thread.started", "thread_id": f"native-{purpose}"}),
+        json.dumps({"type": "item.completed", "item": {
+            "type": "agent_message", "text": json.dumps(wire),
+        }}),
+    ))
+    executor = CapturingExecutor(stream)
+
+    result = ConsumerAgentRunner(
+        store=store, workspace=Path("/workspace"), executor=executor,
+    ).run(task, context, proposal_revision=0, parent_agent_run_id=None)
+
+    command = executor.commands[0]
+    assert command[command.index("--output-schema") + 1] == str(
+        native_output_schema_path("consumer", purpose=purpose)
+    )
+    assert result.result.outcome.value == "no_action"
+
+
 @pytest.mark.parametrize("summary", [
     "来源人在后续会话已发送参考文档；本轮没有发送，当前无需追加动作。",
     "本轮已发送通知。",
@@ -1130,6 +1168,25 @@ def test_consumer_prompt_schema_is_the_parser_schema():
         consumer_agent.parse_consumer_agent_wire_result
         is parse_consumer_agent_wire_result
     )
+
+
+def test_only_consumer_routes_with_native_output_schema_omit_wire_schema_text():
+    sections_by_runtime = consumer_developer_sections_by_runtime(
+        runtime_context="", work_profile="",
+    )
+    for runtime in ("codex_cli", "claude_cli"):
+        developer = render_prompt_sections(
+            sections_by_runtime[runtime], placement="developer",
+        )
+        assert "## Pydantic Wire Contract" not in developer
+        assert CONSUMER_OUTBOUND_INSTRUCTION in developer
+        assert "return the typed wire contract" in developer
+
+    friday = render_prompt_sections(
+        sections_by_runtime["friday_runtime"], placement="developer",
+    )
+    assert "## Pydantic Wire Contract" in friday
+    assert CONSUMER_OUTBOUND_INSTRUCTION in friday
 
 
 def test_claude_native_schema_projection_preserves_final_outcome_validation():
@@ -1750,7 +1807,7 @@ def test_consumer_reuses_matching_native_wire_despite_prompt_hash_change(store, 
     assert executor.commands[0][-2:] == ["session-old", "-"]
 
 
-def test_consumer_default_path_reads_native_wire_before_resume(
+def test_consumer_default_path_rejects_incompatible_native_wire_before_resume(
     store, task, context, monkeypatch, tmp_path
 ):
     session = tmp_path / "old-session.jsonl"
@@ -1788,10 +1845,8 @@ def test_consumer_default_path_reads_native_wire_before_resume(
         if option.startswith("developer_instructions=")
     )
     submitted_developer = json.loads(developer_option.partition("=")[2])
-    assert (
-        "## Pydantic Wire Contract\n"
-        + consumer_agent._schema_json(consumer_agent.consumer_wire_model("general"))
-    ) in submitted_developer
+    assert "## Pydantic Wire Contract" not in submitted_developer
+    assert CONSUMER_OUTBOUND_INSTRUCTION in submitted_developer
     assert store.get_codex_session_id(task.conversation_id) == "session-new"
 
 
@@ -2171,6 +2226,16 @@ def test_consumer_claude_runtime_receives_parent_execution_mode(
     command = executor.commands[0]
     assert "--json-schema" in command
     assert json.loads(command[command.index("--json-schema") + 1])["type"] == "object"
+    [saved_run] = store.list_agent_runs_for_task_generation(
+        task.id, task.execution_generation,
+    )
+    snapshot = next(
+        event for event in _prompt_observations(store, saved_run.id)
+        if event.get("type") == "runtime.prompt"
+    )
+    assert "## Pydantic Wire Contract" not in snapshot["developer_instructions"]
+    assert CONSUMER_OUTBOUND_INSTRUCTION in snapshot["developer_instructions"]
+    assert all(section["source"] != "Pydantic 业务模型" for section in snapshot["sections"])
 
 
 @pytest.mark.parametrize("failure_count", [1, 2])
@@ -2845,14 +2910,14 @@ def test_consumer_rejects_malformed_nested_output_locally(
         )
     )
 
-    with pytest.raises(ResultParseError, match="failed schema validation"):
+    with pytest.raises(ResultParseError, match="native result failed current Consumer wire contract"):
         ConsumerAgentRunner(
             store=store,
             workspace=Path("/workspace"),
             executor=executor,
         ).run(task, context, proposal_revision=0, parent_agent_run_id=None)
 
-    assert "--output-schema" not in executor.commands[0]
+    assert "--output-schema" in executor.commands[0]
 
 
 def test_consumer_accepts_valid_nested_output_locally(store, task, context):
@@ -2869,7 +2934,7 @@ def test_consumer_accepts_valid_nested_output_locally(store, task, context):
     assert result.result.proposal.actions[0].payload == {
         "text": "Verified notice."
     }
-    assert "--output-schema" not in executor.commands[0]
+    assert "--output-schema" in executor.commands[0]
 
 
 @pytest.mark.parametrize(
