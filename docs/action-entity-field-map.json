@@ -1280,7 +1280,7 @@
           "disposition": "retain",
           "evidence": "app/action_storage.py:SOURCE_COLUMNS.candidate_action_attempts.external_action_key",
           "target": "external_action_key",
-          "rule": "candidate_action_attempts.external_action_key exact stable identity",
+          "rule": "candidate_action_attempts.external_action_key is an exact stable identity retained on its common Action even without an external_action_results owner; repeated observations share that owner only when business_object_key, action_identity, operation, and target match, and this key alone does not create a canonical result",
           "inverse_rule": "Reconstruct candidate_action_attempts.external_action_key from actions.external_action_key via direct; preserve source nullness and exact stored representation.",
           "consumers": [
             "app/reviewed_candidate_store.py:ReviewedCandidateStoreMixin.list_candidate_action_attempts",

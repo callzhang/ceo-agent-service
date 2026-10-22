@@ -224,9 +224,12 @@ def _prepared_candidates(db: sqlite3.Connection) -> dict[tuple[str, str], dict]:
 def _transfer_candidates(db: sqlite3.Connection, rows: Iterable[dict], owners: dict[str, int],
                          result_receipts: dict[str, int], prepared_candidates: dict) -> dict:
     delivery_owners = {}
+    orphan_action_owners = {}
     for source in rows:
         key = source["external_action_key"] or None
         candidate, step = _candidate_action(db, source["execution_id"], source["action_index"])
+        target = _json_text(step.get("target", {}))
+        operation = step["operation"]
         values = {
             "external_action_key": key if key in owners else None,
             "business_object_key": candidate["business_object_key"],
@@ -236,21 +239,33 @@ def _transfer_candidates(db: sqlite3.Connection, rows: Iterable[dict], owners: d
         if action_id is not None:
             canonical = db.execute("select action_business_object_key,action_action_identity from actions where id=?",
                                    (action_id,)).fetchone()
-            target = _json_text(step.get("target", {}))
             receipt_target = db.execute("select target from action_receipts where id=?", (result_receipts[key],)).fetchone()[0]
             if (tuple(canonical) != (values["business_object_key"], values["action_identity"])
-                    or step["operation"] != db.execute("select operation from action_receipts where id=?",
+                    or operation != db.execute("select operation from action_receipts where id=?",
                                                         (result_receipts[key],)).fetchone()[0]
                     or target != receipt_target):
                 raise ValueError("candidate action conflicts with canonical external Action facts")
         else:
-            values["external_action_key"] = None
-            action_id = create_action(db, values=values)["id"]
+            if key:
+                identity = (values["business_object_key"], values["action_identity"], operation, target)
+                previous = orphan_action_owners.get(key)
+                if previous is not None:
+                    if previous[0] != identity:
+                        raise ValueError("candidate action key resolves to conflicting source facts")
+                    action_id = previous[1]
+                else:
+                    values.update({"external_action_key": key, "operation": operation})
+                    action_id = create_action(db, values=values)["id"]
+                    orphan_action_owners[key] = (identity, action_id)
+            else:
+                action_id = create_action(db, values=values)["id"]
         receipt_values = {
             "execution_id": source["execution_id"], "action_index": source["action_index"],
             "status": source["status"], "outcome_json": source["result_json"],
             "created_at": source["created_at"], "updated_at": source["updated_at"],
         }
+        if key and key not in owners:
+            receipt_values.update({"operation": operation, "target": target})
         if source["result_json"] is None and key in result_receipts:
             receipt_values["provider_receipt_id"] = result_receipts[key]
         receipt_id = append_action_receipt(db, action_id, values=receipt_values)

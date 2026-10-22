@@ -202,6 +202,144 @@ def test_populated_external_result_is_transferred_to_common_action(tmp_path, mon
                           "where source_type='candidate_action_attempts'").fetchone()[0] == action_id
 
 
+def _orphan_candidate_source(path, monkeypatch, targets):
+    """Build legitimate candidate executions with no canonical result owner."""
+    from app.action_storage import insert_action
+    from app import action_storage
+    from app.execution_owner_storage import create_plan_execution
+    from app.run_storage import insert_run
+    from app.task8_storage import register_task8_functions, task8_insert_parts
+    from app.current_action_schema_release import source_objects
+    import re
+
+    with closing(sqlite3.connect(path)) as db:
+        register_task8_functions(db)
+        actions_sql = next(obj[3] for obj in source_objects("fresh_memory_fk")
+                           if obj[0] == "table" and obj[1] == "actions")
+        source_codes = {name: int(code) for code, name in re.findall(
+            r"when (\d+) then '([^']+)'", actions_sql)}
+
+        class SourceRecordTypes:
+            def code(self, name):
+                return source_codes[name]
+
+        monkeypatch.setattr(action_storage, "ACTION_RECORD_TYPES", SourceRecordTypes())
+        task_parts = task8_insert_parts("reply_tasks", {
+            "channel": "dingtalk", "conversation_id": "conversation-orphan",
+            "conversation_title": "source", "single_chat": 0,
+            "trigger_message_id": "message-orphan", "trigger_create_time": "source",
+            "trigger_sender": "sender", "status": "done",
+            "business_object_key": "reply-task-orphan",
+        })
+        task_id = db.execute(
+            f"insert into tasks({task_parts.columns}) values({task_parts.values}) returning id",
+            task_parts.parameters,
+        ).fetchone()[0]
+        for offset, target in enumerate(targets):
+            run_id = 901 + offset
+            candidate_id = 201 + offset
+            insert_run(db, "agent_runs", {
+                "id": run_id, "task_id": task_id,
+                "execution_generation": f"generation-{offset}", "role": "consumer",
+            })
+            candidate_json = json.dumps({"proposal": {"actions": [{
+                "action_identity": "send_notice", "operation": "send_group_message",
+                "target": target,
+            }]}}, separators=(",", ":"))
+            insert_action(db, "review_candidates", {
+                "id": candidate_id, "task_id": task_id,
+                "execution_generation": f"generation-{offset}",
+                "consumer_run_id": run_id, "stage_index": 0, "proposal_revision": 0,
+                "candidate_digest": f"candidate-{offset}", "candidate_json": candidate_json,
+                "created_at": f"candidate-clock-{offset}",
+            }, execution_owner=True)
+            insert_action(db, "candidate_reviews", {
+                "id": 301 + offset, "candidate_id": candidate_id,
+                "audit_run_id": run_id, "decision": "approve",
+                "candidate_digest": f"candidate-{offset}", "result_json": "{}",
+                "created_at": f"review-clock-{offset}",
+            })
+            execution_id = create_plan_execution(
+                db, candidate_id=candidate_id, review_id=301 + offset, selection_id=None,
+                status="running", lease_owner="test", lease_expires_at="",
+            )
+            insert_action(db, "candidate_action_attempts", {
+                "id": 401 + offset, "execution_id": execution_id, "action_index": 0,
+                "external_action_key": "orphan-effect-key", "status": "uncertain",
+                "result_json": '{"reason":"provider_result_unknown"}',
+                "created_at": f"attempt-clock-{offset}", "updated_at": f"attempt-updated-{offset}",
+            }, execution_owner=True)
+        db.commit()
+        return tuple(row[0] for row in db.execute(
+            "select cast(legacy_key as integer) from actions "
+            "where record_type='candidate_action_attempts' order by id"))
+
+
+def test_orphan_candidate_key_roundtrips_and_reuses_only_same_action_owner(tmp_path, monkeypatch):
+    path = tmp_path / "orphan-candidate-key.sqlite3"
+    _source_database(path)
+    target = {"conversation_id": "conversation-orphan"}
+    source_ids = _orphan_candidate_source(path, monkeypatch, [target, target])
+
+    contract = _prepare(path)
+    release.publish_action_entity_release(path, contract)
+    with closing(sqlite3.connect(path)) as db:
+        action = db.execute(
+            "select id,action_external_action_key,action_business_object_key,"
+            "action_action_identity,action_operation from actions where record_type='action'"
+        ).fetchone()
+        assert action is not None
+        action_id = action[0]
+        assert action[1:] == (
+            "orphan-effect-key", "reply-task-orphan", "send_notice", "send_group_message",
+        )
+        assert db.execute(
+            "select action_id,execution_id,action_index,status,outcome_json,target "
+            "from action_receipts where action_id=? and execution_id is not null order by execution_id",
+            (action_id,),
+        ).fetchall() == [
+            (action_id, 1, 0, "uncertain", '{"reason":"provider_result_unknown"}',
+             '{"conversation_id":"conversation-orphan"}'),
+            (action_id, 2, 0, "uncertain", '{"reason":"provider_result_unknown"}',
+             '{"conversation_id":"conversation-orphan"}'),
+        ]
+        from app.action_storage import EXTERNAL_ACTION_RESULT_SQL
+        assert db.execute("select count(*) from (" + EXTERNAL_ACTION_RESULT_SQL + ")").fetchone() == (0,)
+        assert db.execute("select source_identity from action_entity_identity_map "
+                          "where source_type='candidate_action_attempts' order by source_identity").fetchall() == [
+            (json.dumps(["integer", source_ids[0]], separators=(",", ":")),),
+            (json.dumps(["integer", source_ids[1]], separators=(",", ":")),),
+        ]
+
+    release.invert_action_entity_release(path, contract)
+    with closing(sqlite3.connect(path)) as db:
+        assert db.execute("select external_action_key,status,result_json from actions "
+                          "where record_type='candidate_action_attempts' order by id").fetchall() == [
+            ("orphan-effect-key", "uncertain", '{"reason":"provider_result_unknown"}'),
+            ("orphan-effect-key", "uncertain", '{"reason":"provider_result_unknown"}'),
+        ]
+    release.publish_action_entity_release(path, _prepare(path))
+    with closing(sqlite3.connect(path)) as db:
+        assert db.execute("select count(*) from actions where record_type='action' "
+                          "and action_external_action_key='orphan-effect-key'").fetchone() == (1,)
+        assert db.execute("select count(*) from action_receipts where execution_id is not null "
+                          "and status='uncertain'").fetchone() == (2,)
+
+
+def test_orphan_candidate_key_conflict_aborts_conversion(tmp_path, monkeypatch):
+    path = tmp_path / "orphan-candidate-key-conflict.sqlite3"
+    _source_database(path)
+    _orphan_candidate_source(path, monkeypatch, [
+        {"conversation_id": "conversation-orphan"},
+        {"conversation_id": "different-target"},
+    ])
+    contract = _prepare(path)
+    before = _snapshot(path)
+    with pytest.raises(ValueError, match="candidate action key resolves to conflicting source facts"):
+        release.publish_action_entity_release(path, contract)
+    assert _snapshot(path) == before
+
+
 def test_inverse_keeps_colliding_public_ids_in_their_source_families(tmp_path, monkeypatch):
     path = tmp_path / "typed-public-id-collision.sqlite3"
     _source_database(path)
