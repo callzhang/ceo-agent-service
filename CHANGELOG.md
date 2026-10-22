@@ -1,5 +1,21 @@
 # Changelog
 
+## 2026-10-22 — OA 审批错误修复与近 3 天审批复核
+
+起因：Yuhang Cao 的“软件算法售卖报价（第二曲线）”审批连续失败 3 次（#15870、#15880、#15887），同事反映 AI 审批要求不合理。复核近 3 天 28 次运行：实际执行 22 个动作，其中 20 次退回、1 次同意、1 次评论。
+
+- **权限等待用完后，新触发不再判失败**（`bb9d0119`）：权限预算属于业务对象，新触发没有本代 Consumer run，原先被判 `permission_retry_state_invalid` / `failed`，每次扫描多一条失败。现在挂靠该对象最近一次已完成的 Consumer run，记为 `permission_blocked` / `blocked`。
+- **退回前先实读附件**（#233）：权限等待用完后，Consumer 提退回前必须对被阻塞文件实读一次；能读就按正常审批处理，仍读不了才提退回。起因是这个 PDF 实际可读，却被按“附件读不了”退回给了申请人。
+- **失败的 OA 记录在退回后只读收口**（#235）：失败的 OA Attempt，只要钉钉读回显示该节点已被本人的退回取消、且本人名下没有待办，就带证据跳过，不写钉钉。#15870、#15880 因此从 Failed 与 Attention 消失。
+- **审批规则**（#231）：同一审批最多退回两次，满两次后按证据判断或转 Derek 一次，取代“第 4 次拒绝”；请假 3 天以内不再要求非本人交接人，请假日期已过不再退回。依据：一天调休被连续退回 3 次，其中第二次退回时请假日已过；组织调整申请被退回 7 次，每次原部门上级都重新同意。
+- **部署后跟随最新 main**（#237）：排空等待静默后再取一次远端，安装当时最新的 fast-forward `origin/main`，使排队的部署发现生产已最新而不再排空。排空本身仍不让新任务被领取，这是让在途的活做完的前提。
+
+- **审批本身就是判断**（#257）：`dingtalk-oa-approval` 新增比例原则：审批链上的同意和相关方在流程里的陈述就是证据，只能向申请人要判断所需的事实，不能要“已被批准/已被确认”的证据；小额低风险事项一次最多问一个会改变结论的点；附件读不了先开预览授权再重读，不先让申请人开权限。`stardust-oa-people-review`：审批人再次点同意就是他的回答，不再退回同一个人，也不再要新上级的单独确认记录。只读重放（18 次，内联事实、无工具）里只有组织调整案例能区分新旧版本（旧 0/4 通过，新 2/2），请假案例连旧版本也没重现退回，所以请假部分的效果没有被证明。
+
+读回：OA 失败记录 0 条，Attention 无该审批；生产版本 `25eea1dc`，服务健康。
+
+未解决：钉钉里那次错误退回无法由服务撤销，该审批仍停在申请人节点，由 Derek 在钉钉处理。教训：重新处理一个已用尽权限预算的审批前，先核对耗尽路径会不会直接提退回；部署排空期间任务不会被领取，多个部署连续排空会叠加数十分钟。
+
 ## 2026-10-22 — Action Entity test-artifact cleanup follow-up
 
 - Recorded Derek's explicit authorization for seven completed test roots totaling 22,921,090,840 logical bytes. The platform still rejected the exact deletion command before execution; all seven directories remain, so cleanup and reclaimed space are not claimed.
