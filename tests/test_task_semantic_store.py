@@ -580,10 +580,8 @@ def test_schema_manifest_and_complete_record_columns(store, table):
                     db, include_followup_sync=True, include_candidates=True,
                     include_business_actions=True, inline_legacy_owner=True,
                 )
-                physical_table = "business"
             else:
                 assert schema_is_current(db)
-                physical_table = "actions"
         else:
             actual = {row["name"] for row in db.execute(f"pragma table_info({table})")}
     assert actual == expected

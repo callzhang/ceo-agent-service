@@ -8,7 +8,7 @@ import json
 import pytest
 
 from app.task8_storage import task8_set_parts
-from app.action_storage import EXTERNAL_ACTION_RESULT_SQL, SENT_REPLY_SQL, insert_action, update_action
+from app.action_storage import EXTERNAL_ACTION_RESULT_SQL, insert_action, update_action
 from app.run_storage import AGENT_RUN_SQL
 from app.store import AgentRole, AutoReplyStore
 from tests.test_action_receipt_source import source_values
