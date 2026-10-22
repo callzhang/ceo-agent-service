@@ -695,5 +695,64 @@
     "scheduler_catch_up_branch_verified": false,
     "host_sleep_or_wake_induced_for_check": false,
     "conclusion": "The observed sleep activity predates the deployed service process and crossed none of the monitored trigger times; it is not evidence that deployed catch-up works."
+  },
+  "current_runtime_readback": {
+    "observed_at": "2026-10-22T19:56:21Z",
+    "production_commit": "6f26fcbc1a4fb25a8b63f2733f7571ec7d924598",
+    "service_pid": 6423,
+    "service_started_at": "2026-10-22T12:55:03-07:00",
+    "healthz": {
+      "http": 200,
+      "ok": true
+    },
+    "queue_counts": {
+      "active": 0,
+      "queued": 221
+    },
+    "history_total": 37280,
+    "system_health": {
+      "state": "degraded",
+      "violations": 8,
+      "native_delivery_results_readable": 311,
+      "native_delivery_results_unavailable": 73
+    },
+    "scheduled_tasks": {
+      "count": 14,
+      "task14": {
+        "version": 51,
+        "managed_revision_id": 224,
+        "next_run_at": "2026-10-23T13:00:00Z",
+        "latest_run_id": 392889,
+        "latest_run_kind": "scheduled"
+      },
+      "task13": {
+        "version": 44,
+        "managed_revision_id": 202,
+        "next_run_at": "2026-10-24T19:00:00Z",
+        "latest_run_id": 391278,
+        "latest_run_kind": "manual"
+      },
+      "task6": {
+        "version": 22,
+        "managed_revision_id": 223,
+        "next_run_at": "2026-10-25T10:00:00Z",
+        "latest_run_id": 392433,
+        "latest_run_kind": "manual",
+        "latest_run_status": "skipped"
+      }
+    },
+    "service_restart_observation": {
+      "restarts_seen_at_local": [
+        "2026-10-22T12:50:29-07:00",
+        "2026-10-22T12:55:03-07:00"
+      ],
+      "production_commit_changed": false,
+      "restart_cause": "not established",
+      "sleep_or_full_wake_transition_observed": false,
+      "new_scheduled_report_run_created": false
+    },
+    "mutations_or_replays_performed": false,
+    "natural_report_acceptance_changed": false,
+    "conclusion": "The deployed service is healthy and all three task snapshots remain on the expected managed Skill revisions. The restarts did not coincide with a monitored report trigger and provide no evidence of sleep-resume catch-up. The next acceptance evidence must come from the normal scheduled runs."
   }
 }
