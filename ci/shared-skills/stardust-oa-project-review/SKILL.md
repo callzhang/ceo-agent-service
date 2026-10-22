@@ -29,6 +29,8 @@ Read the complete application, comments, attachments and linked project material
 
 Keep applicant assertions separate from independently verified records. An item that was submitted but could not be read is handled under the generic Skill's principle 5 (unread is not missing).
 
+Scale the review to the project (Derek, 2026-10-22). The checklist above is the full set for a large, hard-to-reverse or below-floor project. For a small, low-risk, reversible one, judged from the quote, cost and exposure shown in the form, check strategic fit and the margin rule, and ask at most one question that would change the decision. Differences that do not change revenue, cost, margin or scope (how the contracting entity or a document is named, formatting, a screenshot versus a table) are not grounds for a return; mention them in the approval remark when useful. A cost, margin or scope inconsistency is still a real gap.
+
 ### Known unknowns and reviewer-side read failures
 
 - Read the latest applicant comments and prior review history before asking for project facts. If the applicant has explicitly said a fact is not yet available, record it as a **known unknown** with its source and date; do not ask for the same fact again as though it were omitted. If that unknown is material, follow the generic Skill's decision table using the evidence available; do not invent a business threshold or treat repetition as new evidence.
