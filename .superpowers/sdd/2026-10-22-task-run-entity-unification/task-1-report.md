@@ -30,4 +30,4 @@ Run source wrappers, result framing/encoding, adopted-result identity, Run sourc
 
 ## Commit
 
-Pending at report creation; the final Task-only commit hash will be supplied in the handoff.
+`304598fc14d183c4c4a28b7ca00f5a60a1a77a0e` — Add pure Task entity schema contract. The claim row was removed after completion in a separate cleanup commit.
