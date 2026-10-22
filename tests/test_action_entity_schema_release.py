@@ -58,9 +58,11 @@ def _snapshot(path):
             return db.execute(query).fetchall() if table in tables else []
         return {
             "marker": tuple(db.execute("select value,updated_at from (select * from state where record_type='service_state') where key='store_schema_version'").fetchone()),
-            "actions": db.execute("select id,_kind,legacy_key,record_type,payload_json from actions order by id").fetchall(),
+            "actions": db.execute("select * from actions order by id").fetchall(),
             "receipts": rows("select * from action_receipts order by id", "action_receipts"),
             "observers": rows("select * from action_observers order by action_id,agent_run_id", "action_observers"),
+            "identity_map": rows("select * from action_entity_identity_map order by source_type,source_identity",
+                                  "action_entity_identity_map"),
             "history_refs": db.execute("select legacy_key,payload_json from actions where record_type='email_historical_operations' order by legacy_key").fetchall(),
         }
 
@@ -198,6 +200,122 @@ def test_populated_external_result_is_transferred_to_common_action(tmp_path, mon
              canonical_body)]
         assert db.execute("select action_id,receipt_id from action_entity_identity_map "
                           "where source_type='candidate_action_attempts'").fetchone()[0] == action_id
+
+
+def test_inverse_keeps_colliding_public_ids_in_their_source_families(tmp_path, monkeypatch):
+    path = tmp_path / "typed-public-id-collision.sqlite3"
+    _source_database(path)
+    with closing(sqlite3.connect(path)) as db:
+        from app.action_storage import insert_action
+        from app import action_storage
+        from app.execution_owner_storage import create_plan_execution
+        from app.run_storage import insert_run
+        from app.task8_storage import register_task8_functions, task8_insert_parts
+        from app.current_action_schema_release import source_objects
+        import re
+
+        register_task8_functions(db)
+        actions_sql = next(sql for kind, name, _table, sql in source_objects("fresh_memory_fk")
+                           if kind == "table" and name == "actions")
+        source_codes = {name: int(code) for code, name in re.findall(
+            r"when (\d+) then '([^']+)'", actions_sql)}
+
+        class SourceRecordTypes:
+            def code(self, name):
+                return source_codes[name]
+
+        monkeypatch.setattr(action_storage, "ACTION_RECORD_TYPES", SourceRecordTypes())
+        task_parts = task8_insert_parts("reply_tasks", {
+            "channel": "dingtalk", "conversation_id": "collision-conversation",
+            "conversation_title": "source", "single_chat": 0,
+            "trigger_message_id": "collision-trigger", "trigger_create_time": "source-clock",
+            "trigger_sender": "sender", "status": "done",
+            "business_object_key": "collision-business",
+        })
+        task_id = db.execute(
+            f"insert into tasks({task_parts.columns}) values({task_parts.values}) returning id",
+            task_parts.parameters,
+        ).fetchone()[0]
+        insert_run(db, "agent_runs", {
+            "id": 901, "task_id": task_id, "execution_generation": "collision-generation",
+            "role": "consumer",
+        })
+        result_values = (
+            ("effect-owner-a", "action-a", '{"user_id":"owner-a"}', '{"result":"a"}'),
+            ("effect-owner-b", "action-b", '{"user_id":"owner-b"}', '{"result":"b"}'),
+        )
+        for key, identity, target, provider_result in result_values:
+            insert_action(db, "external_action_results", {
+                "external_action_key": key, "business_object_key": "collision-business",
+                "action_identity": identity, "operation": "send_group_message",
+                "target_identifiers_json": target, "provider_result_json": provider_result,
+                "result_digest": f"digest-{key}", "first_agent_run_id": 901,
+                "created_at": f"clock-{key}",
+            })
+        candidate_json = json.dumps({"proposal": {"actions": [
+            {"action_identity": identity, "operation": "send_group_message",
+             "target": json.loads(target)}
+            for _key, identity, target, _provider_result in result_values
+        ]}}, separators=(",", ":"))
+        insert_action(db, "review_candidates", {
+            "id": 201, "task_id": task_id, "execution_generation": "collision-generation",
+            "consumer_run_id": 901, "stage_index": 0, "proposal_revision": 0,
+            "candidate_digest": "collision-candidate-digest", "candidate_json": candidate_json,
+            "created_at": "collision-candidate-clock",
+        }, execution_owner=True)
+        insert_action(db, "candidate_reviews", {
+            "id": 202, "candidate_id": 201, "audit_run_id": 901,
+            "decision": "approve", "candidate_digest": "collision-candidate-digest",
+            "result_json": "{}", "created_at": "collision-review-clock",
+        })
+        execution_id = create_plan_execution(db, candidate_id=201, review_id=202, selection_id=None,
+            status="running", lease_owner="collision-test", lease_expires_at="")
+        insert_action(db, "candidate_action_attempts", {
+            "id": 203, "execution_id": execution_id, "action_index": 0,
+            "external_action_key": "effect-owner-a", "status": "verified",
+            "result_json": None, "created_at": "attempt-a-clock", "updated_at": "attempt-a-updated",
+        }, execution_owner=True)
+        insert_action(db, "candidate_action_attempts", {
+            "id": 204, "execution_id": execution_id, "action_index": 1,
+            "external_action_key": "effect-owner-b", "status": "verified",
+            "result_json": None, "created_at": "attempt-b-clock", "updated_at": "attempt-b-updated",
+        }, execution_owner=True)
+        insert_action(db, "sent_replies", {
+            "id": 203, "conversation_id": "collision-conversation-b",
+            "trigger_message_id": "collision-trigger-b", "reply_text": "Sent owner B",
+            "sent_at": "sent-clock-b", "send_result_json": None, "channel": "dingtalk",
+            "agent_run_id": 901, "external_action_key": "effect-owner-b",
+        })
+        db.commit()
+
+    contract = _prepare(path)
+    release.publish_action_entity_release(path, contract)
+    with closing(sqlite3.connect(path)) as db:
+        candidate_map = dict(db.execute(
+            "select source_identity,action_id from action_entity_identity_map "
+            "where source_type='candidate_action_attempts'"))
+        sent_map = db.execute(
+            "select source_identity,action_id from action_entity_identity_map where source_type='sent_replies'"
+        ).fetchone()
+        source_203 = json.dumps(["integer", 203], separators=(",", ":"))
+        source_204 = json.dumps(["integer", 204], separators=(",", ":"))
+        assert set(candidate_map) == {source_203, source_204}
+        owner_a, owner_b = candidate_map[source_203], candidate_map[source_204]
+        assert sent_map == (source_203, owner_b)
+        assert owner_a != owner_b and owner_a not in (203, 204) and owner_b not in (203, 204)
+        assert db.execute("select count(distinct action_id) from action_entity_identity_map "
+                          "where source_type in ('candidate_action_attempts','sent_replies') "
+                          "and source_identity=?", (source_203,)).fetchone()[0] == 2
+
+    release.invert_action_entity_release(path, contract)
+    with closing(sqlite3.connect(path)) as db:
+        attempts = db.execute("select cast(legacy_key as integer),external_action_key from actions "
+                              "where record_type='candidate_action_attempts' order by cast(legacy_key as integer)").fetchall()
+        assert attempts == [(203, "effect-owner-a"), (204, "effect-owner-b")]
+        from app.action_storage import ACTION_PROJECTIONS
+        sent = db.execute("select id,external_action_key,send_result_json from (" +
+            ACTION_PROJECTIONS["sent_replies"] + ") where trigger_message_id='collision-trigger-b'").fetchone()
+        assert sent == (203, "effect-owner-b", None)
 
 
 def test_populated_prepared_sent_and_observer_facts_keep_distinct_receipts(tmp_path, monkeypatch):
@@ -768,29 +886,248 @@ def test_conflicting_identity_aborts_without_mutation(tmp_path, monkeypatch):
     assert _snapshot(path) == before
 
 
-def test_new_action_and_recall_survive_inverse(tmp_path):
+def test_new_action_and_recall_survive_inverse(tmp_path, monkeypatch):
     path = tmp_path / "current-facts.sqlite3"
     _source_database(path)
+    with closing(sqlite3.connect(path)) as db:
+        from app.run_storage import insert_run
+        from app.task8_storage import register_task8_functions, task8_insert_parts
+
+        register_task8_functions(db)
+        task_parts = task8_insert_parts("reply_tasks", {
+            "channel": "dingtalk", "conversation_id": "conversation-current",
+            "conversation_title": "source", "single_chat": 0,
+            "trigger_message_id": "trigger-current", "trigger_create_time": "source-clock",
+            "trigger_sender": "sender", "status": "done",
+            "business_object_key": "business-current",
+        })
+        task_id = db.execute(
+            f"insert into tasks({task_parts.columns}) values({task_parts.values}) returning id",
+            task_parts.parameters,
+        ).fetchone()[0]
+        insert_run(db, "agent_runs", {
+            "id": 901, "task_id": task_id, "execution_generation": "generation-current",
+            "role": "consumer",
+        })
+        db.commit()
     contract = _prepare(path)
     release.publish_action_entity_release(path, contract)
     with closing(sqlite3.connect(path)) as db:
-        from app.action_entity_storage import create_action, append_action_receipt, add_action_observer
+        db.row_factory = sqlite3.Row
+        from app.shared_action_lifecycle import (
+            claim_outbound_action, prepare_outbound_action,
+            record_outbound_action_receipt, record_sent_action,
+        )
 
-        action = create_action(db, values={"operation": "send_reply", "status": "done",
-                                           "prepared_body": "native task output"})
-        receipt = append_action_receipt(db, action["id"], values={
-            "operation": "send_reply", "status": "done", "provider_result_json": '{"id":"provider-1"}',
-            "provider_result_id": "provider-1", "observed_at": "provider receipt clock",
-        })
-        add_action_observer(db, action["id"], agent_run_id=901, task_id=701, created_at="observer clock")
-        db.execute("update actions set action_data=jsonb_set(action_data,'$.recall_status',json('" + '"recalled"' + "')) where id=?",
-                   (action["id"],))
+        db.execute("begin")
+        sent = record_sent_action(db, operation="send_message",
+            target_json='{"conversation_id":"conversation-current"}',
+            provider_json='{"id":"provider-1"}', result_digest="sha256:provider-1",
+            external_action_key="effect-current", business_object_key="business-current",
+            action_identity="notify", channel="dingtalk", conversation_id="conversation-current",
+            trigger_message_id="trigger-current", reply_text="native task output",
+            feedback_token="feedback-current", recall_key="recall-current", agent_run_id=901,
+            task_id=task_id, observed_at="provider receipt clock")
+        record_sent_action(db, operation="send_message",
+            target_json='{"conversation_id":"conversation-independent"}',
+            provider_json='{"id":"independent-provider"}', result_digest="sha256:independent-provider",
+            external_action_key="", business_object_key="business-current",
+            action_identity="independent-notify", channel="dingtalk",
+            conversation_id="conversation-independent", trigger_message_id="trigger-independent",
+            reply_text="independent local sent output", feedback_token="independent-feedback",
+            agent_run_id=901, task_id=task_id, observed_at="independent provider receipt clock")
+        prepared = prepare_outbound_action(db, channel="dingtalk", delivery_key="delivery-current",
+                                           final_body="prepared current output", feedback_token="prepared-feedback",
+                                           postfix_version="current-v1")
+        claim_outbound_action(db, channel="dingtalk", delivery_key="delivery-current",
+                             operation="send_message")
+        record_outbound_action_receipt(db, channel="dingtalk", delivery_key="delivery-current",
+                                       provider_result_json='{"dispatch":"prepared-1"}',
+                                       operation="send_message")
+        db.execute("update actions set action_data=jsonb_set(action_data,'$.recall_status',json(?)) where id=?",
+                   ('"recalled"', sent["action"]["id"]))
         db.commit()
+
+    # Seed the reviewed execution and direct Email action through their normal
+    # current Store callers, including a correction, two actual attempts,
+    # retry history, and an ordered historical-operation reference.
+    from app.store import AutoReplyStore
+    from tests.test_reviewed_candidate_store import _reviewed
+    reviewed_store = AutoReplyStore(path)
+    _reviewed_task, candidate, review, _candidate_body = _reviewed(reviewed_store, options=False)
+    execution = reviewed_store.claim_candidate_execution(candidate["id"], review["id"], "inverse-test", 60)
+    reviewed_store.begin_candidate_action(execution["id"], "inverse-test", 0, "effect-reviewed-current")
+    reviewed_store.record_candidate_external_action(
+        execution["id"], "inverse-test", 0, "effect-reviewed-current", "send", {"user_id": "x"},
+        {"provider_result": {"receipt": "local-reviewed"}, "verification": {"state": "ambiguous"}})
+    first_reviewed_result = reviewed_store.get_candidate_external_action("effect-reviewed-current")
+    first_reviewed_run = first_reviewed_result["first_agent_run_id"]
+    first_reviewed_clock = first_reviewed_result["created_at"]
+    with closing(sqlite3.connect(path)) as db:
+        db.row_factory = sqlite3.Row
+        db.execute("begin")
+        record_sent_action(db, operation=first_reviewed_result["operation"],
+            target_json=first_reviewed_result["target_identifiers_json"],
+            provider_json=first_reviewed_result["provider_result_json"],
+            result_digest=first_reviewed_result["result_digest"],
+            external_action_key="effect-reviewed-current",
+            business_object_key=first_reviewed_result["business_object_key"],
+            action_identity=first_reviewed_result["action_identity"], channel="dingtalk",
+            conversation_id="conversation-reviewed", trigger_message_id="trigger-reviewed-current",
+            reply_text="reviewed current output", feedback_token="reviewed-feedback",
+            agent_run_id=first_reviewed_result["first_agent_run_id"], task_id=candidate["task_id"],
+            observed_at="reviewed initial receipt clock")
+        db.commit()
+    reviewed_store.record_candidate_external_action(
+        execution["id"], "inverse-test", 0, "effect-reviewed-current", "send", {"user_id": "x"},
+        {"provider_result": {"receipt": "local-reviewed"}, "verification": {"state": "sent"}})
+
+    from app.email_store import EmailStore, email_imap_configuration_snapshot
+    from app.email_classifier_contracts import EmailAction, EmailClassificationStatus
+    from tests.test_email_store import _classification, _task2_account_values
+    email = EmailStore(path, validate_rows=False)
+    email.create_account(_task2_account_values("dingtalk-account", enabled=False))
+    classification = _classification(status=EmailClassificationStatus.PROCESSED,
+        classification_id=98121, actions=(EmailAction.TRASH,), action_parameters={})
+    email.persist_scan_result(classification, model_text="local inverse fixture")
+    direct_id = email.direct_action_ids_for_plan(classification.action_plan.action_plan_id)[0]
+    first_email_attempt = email.claim_direct_action(action_id=direct_id, claimed_at="2026-10-21T10:00:00+00:00")
+    assert first_email_attempt is not None and first_email_attempt.attempt_number == 1
+    email.complete_direct_action_attempt(first_email_attempt, status="failed", provider_operation="archive",
+        provider_target=first_email_attempt.locator.stable_message_identity, provider_result_id="",
+        error="local retry fixture", finished_at="2026-10-21T10:01:00+00:00", retryable=False)
+    failed = email.list_failed_direct_actions(account_id="dingtalk-account", action_types=(EmailAction.TRASH,),
+        limit=10, after_action_id=0, action_id=direct_id)[0]
+    retry_arguments = dict(source_locator=failed.action.locator, source_revision="inverse-source-revision",
+        requested_at="2026-10-21T10:30:00+00:00", account_configuration_snapshot=email_imap_configuration_snapshot(
+            email.get_account("dingtalk-account")))
+    assert email.release_source_verified_direct_action(failed, apply=False, **retry_arguments)
+    assert email.release_source_verified_direct_action(failed, apply=True, **retry_arguments)
+    second_email_attempt = email.claim_direct_action(action_id=direct_id, claimed_at="2026-10-21T11:00:00+00:00")
+    assert second_email_attempt is not None and second_email_attempt.attempt_number == 2
+    email.complete_direct_action_attempt(second_email_attempt, status="done", provider_operation="archive",
+        provider_target=second_email_attempt.locator.stable_message_identity,
+        provider_result_id="local-email-receipt", error="", finished_at="2026-10-21T11:01:00+00:00")
+    email.begin_historical_operation(account_id="dingtalk-account",
+        stable_message_identity=second_email_attempt.locator.stable_message_identity,
+        model_id="inverse-history", classification_id=98121,
+        action_plan_id=classification.action_plan.action_plan_id, action_ids=[direct_id],
+        predicted_category="fixture", threshold=0.5, probability=0.75, important=False)
+
+    from app.action_entity_transfer import _capture_inverse_facts
+    with closing(sqlite3.connect(path)) as db:
+        captured = _capture_inverse_facts(db)
+        assert next(row for row in captured["facts"]["external_action_results"]
+                    if row["external_action_key"] == "effect-reviewed-current")["provider_result_json"] == (
+                        '{"provider_result":{"receipt":"local-reviewed"},"verification":{"state":"sent"}}')
+        reviewed_canonical = next(row for row in captured["facts"]["external_action_results"]
+                                  if row["external_action_key"] == "effect-reviewed-current")
+        assert (reviewed_canonical["first_agent_run_id"], reviewed_canonical["created_at"]) == (
+            first_reviewed_run, first_reviewed_clock)
+        prepared_facts = captured["facts"]["outbound_postfixes"]
+        assert prepared_facts[0]["_receipt_json"] == '{"dispatch":"prepared-1"}'
+        assert prepared_facts[0]["_dispatch_created_at"] is not None
+        reviewed_facts = [row for row in captured["facts"]["candidate_action_attempts"]
+                          if row["external_action_key"] == "effect-reviewed-current"]
+        assert len(reviewed_facts) == 1, captured["facts"]["candidate_action_attempts"]
+        direct_source_public_id = next(row["action_id"] for row in captured["facts"]["email_actions"]
+                                       if row["_action_id"] == direct_id)
+        current_ids = {row[0] for row in db.execute(
+            "select id from actions where record_type='action'")}
+        current_reviewed_id = db.execute(
+            "select id from actions where record_type='action' and action_external_action_key=?",
+            ("effect-reviewed-current",),
+        ).fetchone()[0]
+    import app.action_entity_transfer as transfer
+    actual_restore = transfer.restore_inverse_facts
+
+    def restore_then_fail(db, inverse_facts):
+        actual_restore(db, inverse_facts)
+        raise RuntimeError("injected failure after inverse fact writes")
+
+    before_failed_inverse = _snapshot(path)
+    monkeypatch.setattr(transfer, "restore_inverse_facts", restore_then_fail)
+    with pytest.raises(RuntimeError, match="after inverse fact writes"):
+        release.invert_action_entity_release(path, contract)
+    assert _snapshot(path) == before_failed_inverse
+    monkeypatch.setattr(transfer, "restore_inverse_facts", actual_restore)
     release.invert_action_entity_release(path, contract)
     with closing(sqlite3.connect(path)) as db:
-        assert db.execute("select action_receipt_id from actions where id=?", (action["id"],)).fetchone() == (receipt,)
-        assert db.execute("select recall_status from actions where id=?", (action["id"],)).fetchone() == ("recalled",)
-        assert db.execute("select count(*) from action_observers where action_id=?", (action["id"],)).fetchone() == (1,)
+        from app.action_storage import ACTION_PROJECTIONS
+        assert db.execute("select conversation_id,trigger_message_id,reply_text,sent_at,"
+                          "send_result_json,recall_status,agent_run_id,external_action_key "
+                          "from (" + ACTION_PROJECTIONS["sent_replies"] + ")").fetchone() == (
+            "conversation-current", "trigger-current", "native task output", "provider receipt clock",
+            None, "recalled", 901, "effect-current")
+        assert db.execute("select provider_result_json from (" + ACTION_PROJECTIONS["external_action_results"] + ") "
+                          "where external_action_key='effect-current'").fetchone() == (
+            '{"id":"provider-1"}',)
+        assert db.execute("select send_result_json from (" + ACTION_PROJECTIONS["sent_replies"] + ") "
+                          "where trigger_message_id='trigger-reviewed-current'").fetchone() == (
+            '{"provider_result":{"receipt":"local-reviewed"},"verification":{"state":"ambiguous"}}',)
+        sent_ids = dict(db.execute("select trigger_message_id,id from (" + ACTION_PROJECTIONS[
+            "sent_replies"] + ")"))
+        observer_rows = db.execute("select sent_reply_id,agent_run_id,reply_task_id from (" +
+            ACTION_PROJECTIONS["sent_reply_observers"] + ") order by sent_reply_id").fetchall()
+        assert observer_rows == [
+            (sent_ids["trigger-current"], 901, task_id),
+            (sent_ids["trigger-independent"], 901, task_id),
+            (sent_ids["trigger-reviewed-current"], first_reviewed_run, candidate["task_id"]),
+        ]
+        independent_result = db.execute(
+            "select send_result_json from (" + ACTION_PROJECTIONS["sent_replies"] + ") "
+            "where trigger_message_id='trigger-independent'",
+        ).fetchone()
+        assert independent_result == ('{"id":"independent-provider"}',)
+        assert db.execute("select final_body,feedback_token,postfix_version,created_at from ("
+                          + ACTION_PROJECTIONS["outbound_postfixes"] + ")").fetchone() == (
+            "prepared current output", "prepared-feedback", "current-v1", prepared["prepared_at"])
+        from app.prepared_action_definitions import prepared_child_projection
+        assert db.execute("select provider_result_json from (" + prepared_child_projection(
+            "outbound_postfix_receipts") + ")").fetchone() == ('{"dispatch":"prepared-1"}',)
+        assert db.execute("select count(*) from (" + prepared_child_projection(
+            "native_reply_dispatches") + ")").fetchone() == (1,)
+        from app.action_storage import ACTION_PROJECTIONS
+        old_attempt = db.execute("select id,external_action_key,status,result_json from actions "
+            "where record_type='candidate_action_attempts' and external_action_key=?",
+            ("effect-reviewed-current",)).fetchone()
+        assert old_attempt is not None and old_attempt[0] != current_reviewed_id
+        assert old_attempt[1] == "effect-reviewed-current"
+        assert old_attempt[2:] == ("verified", None)
+        from app.action_email_definitions import EMAIL_ACTION_PROJECTIONS
+        assert db.execute("select action_id,attempt_number,status,provider_result_id from (" +
+            EMAIL_ACTION_PROJECTIONS["email_action_attempts"] + ") where action_id=? order by attempt_number",
+            (direct_source_public_id,)).fetchall() == [
+                (direct_source_public_id, 1, "failed", ""),
+                (direct_source_public_id, 2, "done", "local-email-receipt"),
+            ]
+        retry_projection = EMAIL_ACTION_PROJECTIONS["email_direct_retry_requests"]
+        assert db.execute("select action_id,attempt_number from (" + retry_projection + ")").fetchone() == (
+            direct_source_public_id, 2)
+        assert db.execute("select email_operation_action_ids_json from actions "
+                          "where record_type='email_historical_operations'").fetchone() == (
+            json.dumps([direct_source_public_id], separators=(",", ":")),)
+    # Re-forward the same DB through the accepted current translator; the new
+    # current facts remain readable through the normal projections.
+    second_contract = _prepare(path)
+    release.publish_action_entity_release(path, second_contract)
+    with closing(sqlite3.connect(path)) as db:
+        assert db.execute("select count(*) from actions where record_type='action' ").fetchone() == (
+            len(current_ids),)
+        from app.action_storage import EXTERNAL_ACTION_RESULT_SQL
+        assert db.execute("select provider_result_json,first_agent_run_id,created_at from (" +
+            EXTERNAL_ACTION_RESULT_SQL + ") where external_action_key=?",
+            ("effect-reviewed-current",)).fetchone() == (
+                '{"provider_result":{"receipt":"local-reviewed"},"verification":{"state":"sent"}}',
+                first_reviewed_run, first_reviewed_clock)
+        old_sent_body = db.execute("select sent.provider_result_json from actions a "
+            "join action_receipts sent on sent.id=a.action_delivery_receipt_id "
+            "where a.record_type='action' and a.action_trigger_message_id='trigger-reviewed-current'").fetchone()
+        assert old_sent_body == (
+            '{"provider_result":{"receipt":"local-reviewed"},"verification":{"state":"ambiguous"}}',)
+        assert db.execute("select action_prepared_body,action_postfix_version from actions "
+                          "where record_type='action' and action_delivery_key='delivery-current'").fetchone() == (
+            "prepared current output", "current-v1")
 
 
 def test_inverse_does_not_restore_source_snapshot(tmp_path):

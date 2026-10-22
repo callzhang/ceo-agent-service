@@ -17,7 +17,7 @@ import sqlite3
 from collections import Counter
 from typing import Mapping
 
-from app.current_action_schema_release import _foreign_keys, _rebuild, source_objects
+from app.current_action_schema_release import _foreign_keys, source_objects
 from app.current_schema_manifest import (
     STORE_VERSION as TARGET_STORE_VERSION,
     EMAIL_VERSION as TARGET_EMAIL_VERSION,
@@ -137,6 +137,66 @@ def _rebuild_action_owner_table(db):
     db.execute("drop table temp._action_entity_rows")
 
 
+def _rebuild_inverse_action_owner_table(db):
+    """Restore the frozen predecessor Actions declaration with raw cells.
+
+    Task 5C's Store19.12 source has four generated Attempt columns whose
+    values are carried in the original JSONB payload even though the older
+    generic 19.11 conversion layout omits them.  The inverse therefore copies
+    the stored predecessor/current intersection byte-for-byte and lets the
+    exact predecessor declaration regenerate its public projections.
+    """
+    from app.action_email_storage import _columns, _quote
+    from app.current_action_schema import source_current_action_objects
+
+    stage = "_action_entity_inverse_rows"
+    water = "_action_entity_inverse_water"
+    if db.execute("select 1 from temp.sqlite_schema where name in (?,?)", (stage, water)).fetchone():
+        raise ValueError("Action entity inverse TEMP collision")
+    target_objects = source_current_action_objects()
+    target_table = next(obj["sql"] for obj in target_objects if obj["type"] == "table")
+    with closing(sqlite3.connect(":memory:")) as target_db:
+        from app.task8_storage import register_task8_functions
+        register_task8_functions(target_db)
+        target_db.execute(target_table)
+        target_cols = [row[1] for row in target_db.execute("pragma table_xinfo(actions)") if row[6] == 0]
+    source_cols = _columns(db, "actions")
+    common = [column for column in source_cols if column in target_cols]
+    added = [column for column in target_cols if column not in source_cols]
+    if "id" not in common or "payload_json" not in common:
+        raise ValueError("Action entity inverse lacks source identity or raw payload")
+    names = ",".join(_quote(column) for column in (*common, *added))
+    source_values = [_quote(column) for column in common]
+    source_values.extend("null as " + _quote(column) for column in added)
+    db.execute("create temp table " + _quote(stage) + " as select "
+               + ",".join(source_values) + " from main.actions")
+    db.execute("create unique index temp.idx_action_entity_inverse_rows_id on "
+               + _quote(stage) + "(id)")
+    db.execute("create temp table " + _quote(water)
+               + " as select rowid,name,seq from main.sqlite_sequence")
+    db.execute("drop table main.actions")
+    db.execute(target_table)
+    db.execute(f"insert into main.actions({names}) select {names} from temp.{_quote(stage)} order by id")
+    for obj in target_objects:
+        if obj["type"] in {"index", "trigger"}:
+            db.execute(obj["sql"])
+    # Compare every stored cell that existed on both declarations, including
+    # JSONB BLOB bytes and SQLite storage classes. Only predecessor-only
+    # prepared-child columns are intentionally initialized to SQL NULL here.
+    compare_names = ",".join(_quote(column) for column in common)
+    typed = ",".join("typeof(" + _quote(column) + ")" for column in common)
+    for left, right in (("main.actions", "temp." + _quote(stage)),
+                        ("temp." + _quote(stage), "main.actions")):
+        if db.execute(f"select {compare_names},{typed} from {left} except "
+                      f"select {compare_names},{typed} from {right} limit 1").fetchone():
+            raise ValueError("Action entity inverse changed raw predecessor-intersection cells")
+    db.execute("delete from main.sqlite_sequence")
+    db.execute(f"insert into main.sqlite_sequence(rowid,name,seq) "
+               f"select rowid,name,seq from temp.{_quote(water)}")
+    db.execute("drop table temp." + _quote(stage))
+    db.execute("drop table temp." + _quote(water))
+
+
 def _source_expected(variant):
     return source_objects(variant)
 
@@ -234,11 +294,15 @@ def invert_action_entity_release(database: Path, contract: Mapping[str, object])
                 raise ValueError("Action entity inverse requires the exact published target")
             if _foreign_keys(db) != tuple(tuple(x) for x in contract["source_fk_findings"]):
                 raise ValueError("Action entity target FK findings changed before inverse")
+            from app.action_entity_transfer import _capture_inverse_facts, restore_inverse_facts
+            inverse_facts = _capture_inverse_facts(db)
             _drop_action_guards(db)
             db.execute("drop table action_entity_identity_map")
             db.execute("drop table action_observers")
             db.execute("drop table action_receipts")
-            _rebuild(db, contract["reply_variant"], inverse=True)
+            db.execute("delete from actions where record_type='action'")
+            _rebuild_inverse_action_owner_table(db)
+            restore_inverse_facts(db, inverse_facts)
             _create_action_guards(db, _source_expected(contract["reply_variant"]))
             update_state_rows(db, "service_state", {
                 "value": contract["source_marker"][0],

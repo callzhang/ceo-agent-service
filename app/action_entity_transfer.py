@@ -487,3 +487,385 @@ def transfer_source_facts(db: sqlite3.Connection, facts: dict[str, list[dict]]) 
     _transfer_observers(db, facts, sent_map)
     _transfer_email(db, facts)
     _rewrite_direct_retry_parents(db)
+
+
+def _identity_value(encoded: str):
+    value = json.loads(encoded)
+    if value[0] == "tuple":
+        return tuple(_identity_part_value(part) for part in value[1])
+    return _identity_part_value(value)
+
+
+def _identity_part_value(part):
+    kind, value = part
+    if kind == "integer":
+        return int(value)
+    if kind == "text":
+        return value
+    if kind == "null":
+        return None
+    raise ValueError("unsupported typed Action source identity")
+
+
+def _current_action_rows(db):
+    from app.action_entity_definitions import ACTION_FIELDS
+
+    cursor = db.execute("select id," + ",".join("action_" + field for field in ACTION_FIELDS)
+                        + " from actions where record_type='action' order by id")
+    names = ("id", *ACTION_FIELDS)
+    return [dict(zip(names, row, strict=True)) for row in cursor.fetchall()]
+
+
+def _capture_inverse_facts(db):
+    """Capture typed current facts before retiring the common Action rows."""
+    maps = {}
+    for source_type, encoded, action_id, receipt_id in db.execute(
+            "select source_type,source_identity,action_id,receipt_id from action_entity_identity_map"):
+        identity = _identity_value(encoded)
+        maps[(source_type, identity)] = (action_id, receipt_id)
+    mapped_source_by_action_receipt = {
+        (kind, action_id, receipt_id): identity
+        for (kind, identity), (action_id, receipt_id) in maps.items()
+        if receipt_id is not None
+    }
+    mapped_source_by_action = {}
+    for (kind, identity), (action_id, _receipt_id) in maps.items():
+        mapped_source_by_action.setdefault((kind, action_id), identity)
+    actions = _current_action_rows(db)
+    by_id = {row["id"]: row for row in actions}
+    # Use cursor metadata once; sqlite3.Row factories are not assumed here.
+    receipt_cursor = db.execute("select * from action_receipts order by id")
+    receipt_names = tuple(column[0] for column in receipt_cursor.description)
+    receipts = {row[0]: dict(zip(receipt_names, row, strict=True)) for row in receipt_cursor.fetchall()}
+    receipts_by_action = {}
+    for receipt in receipts.values():
+        receipts_by_action.setdefault(receipt["action_id"], []).append(receipt)
+    def mapped_id(kind, identity):
+        item = maps.get((kind, identity))
+        return item[0] if item else None
+
+    result = {kind: [] for kind in (
+        "external_action_results", "candidate_action_attempts", "outbound_postfixes",
+        "outbound_postfix_receipts", "native_reply_dispatches", "sent_replies",
+        "sent_reply_observers", "email_actions", "email_action_attempts",
+    )}
+    for action in actions:
+        action_receipts = receipts_by_action.get(action["id"], ())
+        key = action["external_action_key"]
+        canonical_body_json = None
+        if key:
+            binding_id = maps.get(("external_action_results", key), (None, None))[1]
+            bindings = [r for r in action_receipts if r["provider_receipt_id"] is not None
+                            and r["execution_id"] is None and r["attempt_number"] is None
+                            and r["id"] not in (action["delivery_receipt_id"], action["prepared_receipt_id"])
+                            and r["status"] is None and r["target"] is not None
+                            and r["agent_run_id"] is not None and r["created_at"] is not None]
+            binding = receipts.get(binding_id) if binding_id is not None else max(
+                bindings, key=lambda r: r["id"], default=None)
+            if binding is not None:
+                body = receipts.get(binding["provider_receipt_id"])
+                if body is None or body["provider_result_json"] is None:
+                    raise ValueError("canonical Action current body receipt is unavailable")
+                canonical_body_json = body["provider_result_json"]
+                result["external_action_results"].append({
+                    "external_action_key": key, "business_object_key": action["business_object_key"],
+                    "action_identity": action["action_identity"], "operation": binding["operation"],
+                    "target_identifiers_json": binding["target"],
+                    "provider_result_json": canonical_body_json,
+                    "result_digest": body["result_digest"], "first_agent_run_id": binding["agent_run_id"],
+                    "created_at": binding["created_at"],
+                })
+            elif maps.get(("external_action_results", key)) is not None:
+                raise ValueError("mapped canonical Action has no stable metadata receipt")
+
+        if action["delivery_channel"] is not None and action["delivery_key"] is not None:
+            pair = (action["delivery_channel"], action["delivery_key"])
+            if action["prepared_body"] is not None:
+                    result["outbound_postfixes"].append({
+                    "channel": pair[0], "delivery_key": pair[1], "final_body": action["prepared_body"],
+                    "feedback_token": action["feedback_token"] or "", "postfix_version": action["postfix_version"],
+                    "created_at": action["prepared_at"],
+                })
+            prepared = receipts.get(action["prepared_receipt_id"])
+            if prepared and prepared["provider_result_json"] is not None:
+                result["outbound_postfix_receipts"].append({
+                    "channel": pair[0], "delivery_key": pair[1],
+                    "provider_result_json": prepared["provider_result_json"],
+                    "created_at": prepared["observed_at"] or prepared["created_at"],
+                })
+            dispatch = next((r for r in action_receipts if r["dispatched_at"] is not None), None)
+            if dispatch:
+                result["native_reply_dispatches"].append({
+                    "channel": pair[0], "delivery_key": pair[1], "created_at": dispatch["dispatched_at"],
+                })
+            parent = next((row for row in result["outbound_postfixes"]
+                           if (row["channel"], row["delivery_key"]) == pair), None)
+            if parent is not None:
+                parent["_receipt_json"] = (prepared["provider_result_json"]
+                                           if prepared and prepared["provider_result_json"] is not None else None)
+                parent["_receipt_created_at"] = (prepared["observed_at"] or prepared["created_at"]
+                                                   if prepared and prepared["provider_result_json"] is not None else None)
+                parent["_dispatch_created_at"] = dispatch["dispatched_at"] if dispatch else None
+
+        for receipt in action_receipts:
+            if receipt["execution_id"] is not None and receipt["action_index"] is not None:
+                identity = mapped_source_by_action_receipt.get(
+                    ("candidate_action_attempts", action["id"], receipt["id"]))
+                # Keep the observation's own SQL NULL or exact local JSON.
+                # Canonical provider bodies remain separate external-result
+                # facts and are never copied into an absent local outcome.
+                outcome = receipt["outcome_json"]
+                if outcome is None and receipt["provider_receipt_id"] is not None:
+                    observed = receipts.get(receipt["provider_receipt_id"])
+                    if observed is None or observed["provider_result_json"] is None:
+                        raise ValueError("candidate observation points to an unavailable provider body")
+                    observed_json = observed["provider_result_json"]
+                    outcome = None if observed_json == canonical_body_json else observed_json
+                row = {"execution_id": receipt["execution_id"], "action_index": receipt["action_index"],
+                       "external_action_key": action["external_action_key"] or "", "status": receipt["status"],
+                       "result_json": outcome, "created_at": receipt["created_at"], "updated_at": receipt["updated_at"]}
+                if identity is not None:
+                    row["id"] = identity
+                result["candidate_action_attempts"].append(row)
+            if receipt["attempt_number"] is not None and action["action_plan_id"] is not None:
+                from hashlib import sha256
+                direct_id = "email-action:" + sha256(
+                    (action["action_plan_id"] + ":" + action["operation"]).encode()
+                ).hexdigest()
+                source_attempt = mapped_source_by_action_receipt.get(
+                    ("email_action_attempts", action["id"], receipt["id"]))
+                row = {"action_id": direct_id, "attempt_number": receipt["attempt_number"],
+                       "status": receipt["status"], "provider_operation": receipt["operation"] or "",
+                       "provider_target": receipt["target"] or "", "provider_result_id": receipt["provider_result_id"] or "",
+                       "error": receipt["error_text"] or "", "started_at": receipt["started_at"] or "",
+                       "finished_at": receipt["finished_at"] or ""}
+                if source_attempt is not None:
+                    row["id"] = source_attempt
+                result["email_action_attempts"].append(row)
+
+        if action["delivery_receipt_id"] is not None:
+            sent = receipts.get(action["delivery_receipt_id"])
+            if sent is None:
+                raise ValueError("Sent Action points to a missing exact delivery receipt")
+            identity = mapped_source_by_action_receipt.get(("sent_replies", action["id"], sent["id"]))
+            result_json = sent["provider_result_json"]
+            if sent["provider_receipt_id"] is not None:
+                body = receipts.get(sent["provider_receipt_id"])
+                if body is None or body["provider_result_json"] is None:
+                    raise ValueError("Sent Action points to an unavailable provider body")
+                result_json = None if body["provider_result_json"] == canonical_body_json else body["provider_result_json"]
+            row = {"conversation_id": action["conversation_id"], "trigger_message_id": action["trigger_message_id"],
+                   "reply_text": action["prepared_body"], "sent_at": sent["observed_at"],
+                   "send_result_json": result_json, "recall_key": action["recall_key"] or "",
+                   "recall_status": action["recall_status"] or "", "recall_error": action["recall_error"] or "",
+                   "recalled_at": action["recalled_at"], "feedback_token": action["feedback_token"] or "",
+                   "channel": action["delivery_channel"] or "dingtalk", "agent_run_id": sent["agent_run_id"],
+                   "external_action_key": action["external_action_key"] or ""}
+            if identity is not None:
+                row["id"] = identity
+            row["_action_id"] = action["id"]
+            result["sent_replies"].append(row)
+
+    from app.email_store import DIRECT_EMAIL_ACTION_SQL
+    cursor = db.execute("select * from (" + DIRECT_EMAIL_ACTION_SQL + ")")
+    names = tuple(c[0] for c in cursor.description)
+    for values in cursor.fetchall():
+        row = dict(zip(names, values, strict=True))
+        old_identity = mapped_source_by_action.get(("email_actions", row["owner_id"]))
+        if old_identity is None:
+            from hashlib import sha256
+            old_identity = "email-action:" + sha256(
+                (row["action_plan_id"] + ":" + row["action_type"]).encode()
+            ).hexdigest()
+        result["email_actions"].append({
+            "action_id": old_identity, "action_plan_id": row["action_plan_id"],
+            "classification_id": row["classification_id"], "account_id": row["account_id"],
+            "action_type": row["action_type"], "parameters_json": row["parameters_json"],
+            "status": row["status"], "attempt_count": row["attempt_count"],
+            "next_attempt_at": row["next_attempt_at"], "started_at": row["started_at"],
+            "finished_at": row["finished_at"], "provider_operation": row["provider_operation"],
+            "provider_target": row["provider_target"], "provider_result_id": row["provider_result_id"],
+            "error": row["error"], "config_version": row["config_version"],
+            "created_at": row["created_at"], "updated_at": row["updated_at"],
+            "_action_id": row["owner_id"],
+        })
+
+    observers = db.execute("select action_id,agent_run_id,task_id,created_at from action_observers").fetchall()
+    for action_id, agent_run_id, task_id, created_at in observers:
+        sent_id = mapped_source_by_action.get(("sent_replies", action_id))
+        if sent_id is None and by_id.get(action_id, {}).get("delivery_receipt_id") is None:
+            raise ValueError("Action observer has no predecessor Sent identity")
+        result["sent_reply_observers"].append({"_action_id": action_id, "agent_run_id": agent_run_id,
+                                               "reply_task_id": task_id, "created_at": created_at,
+                                               "_legacy_identity": (sent_id, agent_run_id) if sent_id else None})
+
+    represented = {row["_action_id"] for row in result["sent_replies"]}
+    represented.update(action_id for (kind, _identity), (action_id, _receipt) in maps.items()
+                       if kind in {"external_action_results", "candidate_action_attempts",
+                                   "outbound_postfixes", "email_actions"})
+    represented.update(action["id"] for action in actions if action["external_action_key"]
+                       or action["action_plan_id"] is not None
+                       or action["delivery_channel"] is not None and action["delivery_key"] is not None)
+    if {row["id"] for row in actions} - represented:
+        raise ValueError("current Action has no predecessor source-family projection")
+
+    history_path = __import__("app.current_action_schema", fromlist=["current_action_payloads"]).current_action_payloads().path(
+        "email_historical_operations", "action_ids_json")
+    history = []
+    for physical_id, ids_json in db.execute(
+            "select id,json_extract(payload_json,?) from actions where record_type='email_historical_operations'",
+            (history_path,)):
+        history.append((physical_id, json.loads(ids_json)))
+    retry = db.execute("select id,legacy_key,email_action_id from actions "
+                       "where record_type='email_direct_retry_requests' order by id").fetchall()
+    return {"facts": result, "maps": maps, "actions": actions, "receipts": receipts,
+            "observers": observers, "history": history, "retry": retry}
+
+
+def restore_inverse_facts(db, captured):
+    """Bind old source discriminator codes for one bounded inverse write."""
+    from app import action_storage as storage
+
+    source_types = storage.action_payloads(
+        "fresh_memory_fk", physical_provenance=True, selection_references=True,
+        execution_owner=True, shared_lifecycle=True, specialized_claims=True,
+        postfix_owner=True,
+    ).record_types
+    previous_record_types = storage.ACTION_RECORD_TYPES
+    storage.ACTION_RECORD_TYPES = source_types
+    try:
+        _restore_inverse_facts_bound(db, captured)
+    finally:
+        storage.ACTION_RECORD_TYPES = previous_record_types
+
+
+def _restore_inverse_facts_bound(db, captured):
+    """Write covered Action facts through the predecessor family allocators."""
+    from app import action_storage as storage
+    facts, maps = captured["facts"], captured["maps"]
+    sent_by_action = {}
+    email_by_target = {}
+
+    def mapped(kind, identity):
+        return identity if (kind, identity) in maps else None
+
+    def insert_predecessor_email_action(values):
+        """Write the exact predecessor Email payload with its rowid allocator."""
+        storage._check_fields("email_actions", values)
+        from app.shared_action_definitions import direct_step_layout
+
+        layout = direct_step_layout()
+        source_values = {field: values.get(field) for field in layout.fields}
+        if source_values["status"] != "processing":
+            # The predecessor contract retained the active start only while a
+            # step was processing; completed attempt clocks live in its
+            # email_action_attempts child family.
+            source_values["started_at"] = ""
+        payload = storage._action_payload(db, "email_actions", source_values, layout=layout)
+        storage._email_lock(db, (*values.values(), None))
+        rowid = storage._email_rowid_next(db, "email_actions")
+        cursor = db.execute(
+            "insert into actions(_kind,legacy_key,payload_json) values(?,?,?) returning id",
+            (storage.ACTION_RECORD_TYPES.code("email_actions"), str(rowid), payload),
+        )
+        physical_id = cursor.fetchone()[0]
+        cursor.fetchall()
+        return storage.ActionWriteResult(rowid, 1), physical_id
+
+    for row in facts["external_action_results"]:
+        storage.insert_action(db, "external_action_results", row)
+
+    for row in facts["candidate_action_attempts"]:
+        storage.insert_action(db, "candidate_action_attempts", row, execution_owner=True)
+
+    for row in facts["outbound_postfixes"]:
+        receipt_json = row.pop("_receipt_json", None)
+        receipt_clock = row.pop("_receipt_created_at", None)
+        dispatch_clock = row.pop("_dispatch_created_at", None)
+        storage.insert_action(db, "outbound_postfixes", row)
+        # These are physical columns in the genuine predecessor declaration.
+        # C1's common Action declaration embeds the same child facts as current
+        # receipt rows, but the old source stores them on the prepared parent.
+        child_values = {}
+        if receipt_json is not None:
+            child_values.update(postfix_receipt_provider_result_json=receipt_json,
+                                postfix_receipt_created_at=receipt_clock)
+        if dispatch_clock is not None:
+            child_values["postfix_dispatch_created_at"] = dispatch_clock
+        if child_values:
+            db.execute("update actions set " + ",".join(f"{column}=?" for column in child_values)
+                       + " where record_type='outbound_postfixes' and channel=? and delivery_key=?",
+                       (*child_values.values(), row["channel"], row["delivery_key"]))
+
+    for row in facts["sent_replies"]:
+        action_id = row.pop("_action_id")
+        result = storage.insert_action(db, "sent_replies", row)
+        source_id = result.lastrowid
+        sent_by_action[action_id] = source_id
+
+    for row in facts["email_actions"]:
+        values = dict(row)
+        source_id = values.pop("action_id")
+        current_owner = values.pop("_action_id")
+        values["action_id"] = source_id
+        _write_result, _physical_id = insert_predecessor_email_action(values)
+        owner = db.execute("select id from actions where record_type='email_actions' and email_action_id=?",
+                           (source_id,)).fetchone()
+        if owner is None:
+            raise ValueError("inverse direct Email writer did not create its exact source Action")
+        # Current physical parent IDs are not source identities; retain only this
+        # local translation for the explicitly covered retry/history references.
+        email_by_target[current_owner] = (source_id, owner[0])
+
+    for row in facts["email_action_attempts"]:
+        storage.insert_action(db, "email_action_attempts", row)
+
+    for action_id, agent_run_id, task_id, created_at in captured["observers"]:
+        sent_id = sent_by_action.get(action_id)
+        if sent_id is None:
+            original = next((identity for (kind, identity), (owner, _receipt) in maps.items()
+                             if kind == "sent_replies" and owner == action_id), None)
+            if original is not None:
+                sent_id = original
+        if sent_id is None:
+            raise ValueError("Action observer has no predecessor Sent identity")
+        storage.insert_action(db, "sent_reply_observers", {
+            "sent_reply_id": sent_id, "agent_run_id": agent_run_id,
+            "reply_task_id": task_id, "created_at": created_at,
+        }, execution_owner=True)
+
+    # Historical operation arrays carry public direct-Email keys; translate the
+    # current physical IDs back while preserving order and JSON string identity.
+    from app.action_entity_schema_release import _drop_action_guards
+    from app.current_action_schema_release import source_objects
+    _drop_action_guards(db)
+    db.execute("drop trigger if exists trg_actions_email_retry_immutable_update")
+    for physical_id, ids in captured["history"]:
+        if not isinstance(ids, list):
+            raise ValueError("Email historical operation Action IDs are not an ordered JSON list")
+        rewritten = []
+        for value in ids:
+            target_id = int(value)
+            parent = email_by_target.get(target_id)
+            if parent is None:
+                raise ValueError("Email historical operation references an unmapped current Action")
+            rewritten.append(parent[0])
+        # The source payload path is the same typed Email field path used by its writer.
+        from app.action_storage import _action_path
+        db.execute("update actions set payload_json=jsonb_set(payload_json,?,json_quote(?)) where id=?",
+                   (_action_path("email_historical_operations", "action_ids_json"),
+                    json.dumps(rewritten, ensure_ascii=False, separators=(",", ":")), physical_id))
+
+    for physical_id, legacy_key, old_parent_id in captured["retry"]:
+        pair = json.loads(legacy_key)
+        current_parent = int(pair[0])
+        translated = email_by_target.get(current_parent)
+        if translated is None:
+            raise ValueError("direct retry request references an unmapped current Email Action")
+        old_pair = json.dumps([translated[0], pair[1]], ensure_ascii=False, separators=(",", ":"))
+        db.execute("update actions set legacy_key=? where id=? "
+                   "and record_type='email_direct_retry_requests'",
+                   (old_pair, physical_id))
+    old_retry_guard = next(sql for kind, name, _table, sql in source_objects("fresh_memory_fk")
+                           if kind == "trigger" and name == "trg_actions_email_retry_immutable_update")
+    db.execute(old_retry_guard)
