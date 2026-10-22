@@ -43,6 +43,29 @@ from app.wechat.codex_safety import ControlledCliConfig, make_audit_agent_comman
 
 
 SERVICE_ROOT = Path(__file__).resolve().parent.parent
+SHARED_AGENT_INSTRUCTIONS_PATH = Path.home() / ".agents" / "AGENTS.md"
+PROJECT_AGENT_INSTRUCTIONS_PATH = SERVICE_ROOT / "AGENTS.md"
+
+
+def _trusted_agent_instruction_sections():
+    """Load only the shared and project instruction files trusted by this service."""
+    from app.prompt_composition import PromptSection
+
+    sections = []
+    for name, path in (
+        ("共享 Agent 指令", SHARED_AGENT_INSTRUCTIONS_PATH),
+        ("项目 Agent 指令", PROJECT_AGENT_INSTRUCTIONS_PATH),
+    ):
+        try:
+            content = path.read_text(encoding="utf-8").strip()
+        except OSError as exc:
+            raise RuntimeError(f"required {name} could not be loaded") from exc
+        if content:
+            labeled_content = f"## {name}\n\n{content}"
+            sections.append(
+                PromptSection("受信任运行指令", name, "developer", labeled_content)
+            )
+    return tuple(sections)
 
 
 def validate_audit_candidate_fields(result: AuditAgentResult, candidate: ConsumerAgentResult) -> None:
@@ -265,6 +288,9 @@ class AuditAgentRunner:
             prompt_configuration=configuration,
             purpose_name=purpose_name,
         )
+        # These exact files are trusted service instructions. Load them here so
+        # Audit does not depend on a constrained tool read outside task roots.
+        developer_sections += _trusted_agent_instruction_sections()
         frozen_names = frozen_task_skill_names(
             task.trigger_message_json, context.task.skill_names,
         )
