@@ -269,7 +269,7 @@
     "selection": "unique per candidate and exact review; option key only; branch body derived",
     "supplements": "1:N independent identity",
     "execution_progress": "one per Consumer Run; status and lease independent of runs.status",
-    "receipt_execution_association": "per receipt; 425 receipt rows map to 424 Action parents and one Action spans two Consumer Runs",
+    "receipt_execution_association": "per receipt FK to run_execution_progress(consumer_run_id); 425 receipt rows map to 424 Action parents and one Action spans two Consumer Runs",
     "observer_run": "preserve action_observers(agent_run_id) unchanged"
   },
   "frozen_source_metadata": {

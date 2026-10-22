@@ -105,7 +105,7 @@ TRIGGERS = (
 
 
 def receipt_schema_patch():
-    """Return the current Action receipt declaration with a typed Run FK.
+    """Return the current receipt declaration with a Consumer progress-owner FK.
 
     All existing receipt columns, provider lineage constraints, observer
     ownership, and immutability triggers are retained verbatim where possible.
@@ -115,7 +115,7 @@ def receipt_schema_patch():
         if sql.startswith("create table action_receipts"):
             sql = sql.replace(
                 "execution_id integer, action_index integer",
-                "execution_run_id integer references runs(id), action_index integer",
+                "execution_run_id integer references run_execution_progress(consumer_run_id), action_index integer",
             )
         elif sql.startswith("create unique index idx_action_receipts_execution_order"):
             sql = sql.replace(

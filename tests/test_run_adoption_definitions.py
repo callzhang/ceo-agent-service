@@ -6,10 +6,14 @@ import pytest
 
 from app.action_entity_definitions import ACTION_IDENTITY_MAP_DDL
 from app.action_storage import ACTION_RECORD_TYPES, SOURCE_COLUMNS
+from app.configs_definitions import CONFIG_INDEX_DDL, CONFIG_TABLE_DDL
 from app.run_adoption_definitions import (
     ADOPTED_SOURCE_KINDS, INDEXES, TABLES, TRIGGERS, adoption_source_fields,
     field_map, receipt_schema_patch, schema_sql, validate_field_map,
 )
+from app.run_entity_definitions import run_entity_objects
+from app.schedules_definitions import SCHEDULE_DDL, SCHEDULE_INDEXES
+from app.task_run_entity_definitions import task_run_entity_objects
 
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -18,28 +22,24 @@ ROOT = Path(__file__).resolve().parents[1]
 def _db():
     db = sqlite3.connect(":memory:")
     db.execute("pragma foreign_keys=on")
-    db.executescript("create table tasks(id integer primary key)")
-    db.executescript("""create table runs(
-      id integer primary key, task_id integer references tasks(id), parent_id integer references runs(id),
-      role text, status text, proposal_revision integer, execution_generation text)""")
-    db.executescript("create table emails(id integer primary key)")
-    db.executescript("create table configs(id integer primary key)")
-    db.executescript("create table provenance(id integer primary key)")
-    db.executescript("""create table business(id integer primary key, task_public_id text unique,
-      attention_item_public_id text unique, project_public_id text unique,
-      anchor_public_id text unique, work_cluster_public_id text unique)""")
-    action_target = (ROOT / "docs/action-entity-target.sql").read_text()
-    action_start = action_target.lower().index("create table actions")
-    action_sql = action_target[action_start:action_target.index(";", action_start) + 1]
-    db.execute(action_sql)
-    db.execute(ACTION_IDENTITY_MAP_DDL[0])
-    for sql in receipt_schema_patch():
+    db.create_function("unhex", 1, lambda value: bytes.fromhex(value) if value is not None else None, deterministic=True)
+    db.create_function("pow", 2, lambda x, y: x ** y, deterministic=True)
+    db.execute(SCHEDULE_DDL)
+    for sql in SCHEDULE_INDEXES:
         db.execute(sql)
-    for statement in action_target.splitlines():
-        statement = statement.strip()
-        if (statement.lower().startswith(("create index ", "create unique index "))
-                and " on actions" in statement.lower()):
-            db.execute(statement)
+    db.execute(CONFIG_TABLE_DDL)
+    for sql in CONFIG_INDEX_DDL:
+        db.execute(sql)
+    task_objects = task_run_entity_objects()
+    run_objects = run_entity_objects()
+    for objects in (task_objects, run_objects):
+        for sql in objects.values():
+            if sql.lstrip().lower().startswith("create table"):
+                db.execute(sql)
+    for objects in (task_objects, run_objects):
+        for sql in objects.values():
+            if sql.lstrip().lower().startswith(("create index", "create unique index", "create trigger")):
+                db.execute(sql)
     for sql in TABLES.values():
         db.execute(sql)
     for sql in INDEXES.values():
@@ -49,10 +49,33 @@ def _db():
     return db
 
 
+def _install_action_receipts(db):
+    # Existing Action table declaration is the current target artifact. Parent
+    # external domains are outside Task1C; configs/schedules/tasks/runs are real.
+    db.executescript("create table emails(id integer primary key)")
+    db.executescript("create table provenance(id integer primary key)")
+    db.executescript("""create table business(id integer primary key, task_public_id text unique,
+      attention_item_public_id text unique, project_public_id text unique,
+      anchor_public_id text unique, work_cluster_public_id text unique)""")
+    action_target = (ROOT / "docs/action-entity-target.sql").read_text()
+    action_start = action_target.lower().index("create table actions")
+    action_sql = action_target[action_start:action_target.index(";", action_start) + 1]
+    db.execute(action_sql)
+    for statement in action_target.splitlines():
+        statement = statement.strip()
+        if (statement.lower().startswith(("create index ", "create unique index "))
+                and " on actions" in statement.lower()):
+            db.execute(statement)
+    for sql in receipt_schema_patch():
+        db.execute(sql)
+    db.execute(ACTION_IDENTITY_MAP_DDL[0])
+
+
 def _run(db, run_id, task_id, role, status="completed", revision=1, parent=None):
-    db.execute("insert or ignore into tasks values(?)", (task_id,))
-    db.execute("insert into runs values(?,?,?,?,?,?,?)",
-               (run_id, task_id, parent, role, status, revision, "gen"))
+    db.execute("insert or ignore into tasks(id,kind,status,parameters_json,created_at,updated_at) "
+               "values(?, 'reply', 'completed', jsonb('{}'), 'now', 'now')", (task_id,))
+    db.execute("insert into runs(id,task_id,parent_id,execution_generation,role,proposal_revision,status) "
+               "values(?,?,?,?,?,?,?)", (run_id, task_id, parent, "gen", role, revision, status))
 
 
 def _result(db, consumer, digest="digest-a"):
@@ -78,6 +101,7 @@ def test_field_map_covers_current_source_fields_and_artifacts_are_exact():
     artifact = json.loads((ROOT / "docs/run-adoption-field-map.json").read_text())
     assert artifact["fields"] == _serialized_map()
     assert artifact["source_constraints"]["candidate_to_review"].startswith("1:N")
+    assert "run_execution_progress(consumer_run_id)" in artifact["source_constraints"]["receipt_execution_association"]
     assert set(SOURCE_COLUMNS["review_candidates"]) == set(mapping["review_candidates"])
     unknown = {kind: dict(fields) for kind, fields in mapping.items()}
     unknown["review_candidates"]["surprise"] = ("runs", "unexpected")
@@ -153,7 +177,16 @@ def test_consumer_and_audit_role_parent_and_predecessor_run_types_are_exact():
 def test_receipts_keep_action_provider_and_observer_lineage_with_per_receipt_runs():
     db = _db()
     _run(db, 10, 1, "consumer")
+    _run(db, 11, 1, "audit", parent=10)
     _run(db, 20, 2, "consumer")
+    _run(db, 21, 2, "audit", parent=20)
+    _run(db, 30, 3, "consumer")  # valid Consumer Run, but not an execution owner
+    for consumer, audit in ((10, 11), (20, 21)):
+        _result(db, consumer)
+        _review(db, consumer, audit)
+        db.execute("insert into run_execution_progress values(?,?,?,?,?,?,?,?,?)",
+                   (consumer, audit, None, "done", "", "", "{}", "now", "now"))
+    _install_action_receipts(db)
     # Existing Action entity code and generated columns remain the actual owner.
     db.commit()
     db.execute("pragma foreign_keys=off")  # Action's unrelated composite parents are outside this fixture.
@@ -173,7 +206,11 @@ def test_receipts_keep_action_provider_and_observer_lineage_with_per_receipt_run
     assert "execution_id" not in {r[1] for r in db.execute("pragma table_info(action_receipts)")}
     assert any("provider_receipt_id" in sql for sql in receipt_schema_patch())
     with pytest.raises(sqlite3.IntegrityError):
-        db.execute("insert into action_receipts(id,action_id,execution_run_id,action_index) values(4,1,9999,0)")
+        db.execute("insert into action_receipts(id,action_id,execution_run_id,action_index) values(4,1,11,0)")
+    with pytest.raises(sqlite3.IntegrityError):
+        db.execute("insert into action_receipts(id,action_id,execution_run_id,action_index) values(5,1,30,0)")
+    with pytest.raises(sqlite3.IntegrityError):
+        db.execute("insert into action_receipts(id,action_id,execution_run_id,action_index) values(6,1,9999,0)")
 
 
 def test_identity_map_keeps_typed_non_derivable_public_ids_and_artifact_exactness():
@@ -191,7 +228,8 @@ def test_identity_map_keeps_typed_non_derivable_public_ids_and_artifact_exactnes
 
 def test_receipt_patch_replaces_only_candidate_execution_association():
     patch = "\n".join(receipt_schema_patch())
-    assert "execution_run_id integer references runs(id)" in patch
+    assert "execution_run_id integer references run_execution_progress(consumer_run_id)" in patch
+    assert schema_sql().index("CREATE TABLE run_execution_progress") < schema_sql().index("create table action_receipts")
     assert "idx_action_receipts_execution_run_order on action_receipts(execution_run_id,action_index)" in patch
     assert "where execution_run_id is not null" in patch
     for required in ("provider_result_json", "provider_receipt_id", "action_observers", "trg_action_receipt_lineage_immutable"):

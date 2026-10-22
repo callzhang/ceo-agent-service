@@ -92,7 +92,7 @@ CREATE TRIGGER trg_run_adopted_predecessor_audit_update
   SELECT 1 FROM runs audit WHERE audit.id=NEW.predecessor_audit_run_id AND audit.role='audit')
  BEGIN SELECT RAISE(ABORT,'predecessor must be Audit Run'); END
 
-create table action_receipts (id integer primary key, action_id integer not null references actions(id), operation text, target text, provider_result_id text, provider_result_json text, result_digest text, status text check(status is null or status in ('done','skipped','failed','dispatched','verified','confirmed_no_effect','uncertain')), attempt_number integer, error_text text, agent_run_id integer, started_at text, finished_at text, execution_run_id integer references runs(id), action_index integer, outcome_json text, created_at text, updated_at text, observed_at text, dispatched_at text, provider_receipt_id integer references action_receipts(id))
+create table action_receipts (id integer primary key, action_id integer not null references actions(id), operation text, target text, provider_result_id text, provider_result_json text, result_digest text, status text check(status is null or status in ('done','skipped','failed','dispatched','verified','confirmed_no_effect','uncertain')), attempt_number integer, error_text text, agent_run_id integer, started_at text, finished_at text, execution_run_id integer references run_execution_progress(consumer_run_id), action_index integer, outcome_json text, created_at text, updated_at text, observed_at text, dispatched_at text, provider_receipt_id integer references action_receipts(id))
 
 create index idx_action_receipts_action on action_receipts(action_id,id)
 

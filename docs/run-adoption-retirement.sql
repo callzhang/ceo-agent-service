@@ -11,7 +11,7 @@
 --   from the exact bound candidate and option_key. Do not persist a duplicate option body.
 --
 -- Receipt contract delta only: action_receipts.execution_id (candidate execution public ID) becomes
---   action_receipts.execution_run_id REFERENCES runs(id), with a partial unique index on
+--   action_receipts.execution_run_id REFERENCES run_execution_progress(consumer_run_id), with a partial unique index on
 --   (execution_run_id,action_index) WHERE execution_run_id IS NOT NULL. This belongs on each receipt.
 --   Keep action_id, provider_result_id/json/digest, status, operation, target, keys, timestamps,
 --   provider_receipt_id and every provider/Delivery/Prepared receipt constraint and trigger.
