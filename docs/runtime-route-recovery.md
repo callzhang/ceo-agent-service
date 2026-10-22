@@ -30,8 +30,11 @@ run's immutable session binding would reject.
 Codex provider error events that report a terminal HTTP 429 enter this
 existing bounded capacity path. A tool result that merely contains 429 is not
 a provider failure. If the failed attempt observed a Codex session, the next
-same-route command uses native `codex exec resume` with that session; the
-configured retry limit and route failover remain unchanged.
+same-route command uses native `codex exec resume` with that session and sends
+`continue`; this also applies to a cold run whose first attempt created a
+session before returning 429. If no session was observed, the retry uses the
+original task prompt. The configured retry limit and route failover remain
+unchanged.
 
 When stale processing-task recovery returns a task to pending, it also releases
 that task's expired dispatcher claim in the same transaction. Otherwise a live

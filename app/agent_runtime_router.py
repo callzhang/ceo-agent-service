@@ -1063,6 +1063,7 @@ class RoutedCodexExecution:
             if not continuation_prompt or not continuation_session_id:
                 raise ValueError("continuation prompt and session must be non-empty")
         result_validation_retries_used = 0
+        capacity_retry_resume = False
         forced_retry_session_id: str | None = None
         terminal_failure: RuntimeFailure | None = None
         next_attempt_purpose = "normal"
@@ -1310,11 +1311,15 @@ class RoutedCodexExecution:
         while True:
             if result_validation_retries_used == 0:
                 prompt = (
-                    continuation_prompt
-                    if continuation_prompt is not None
-                    and route.runtime_kind in {RuntimeKind.CODEX_CLI, RuntimeKind.CLAUDE_CLI}
-                    and route_session_id == continuation_session_id
-                    else prompt_for(route.runtime_kind)
+                    "continue"
+                    if capacity_retry_resume and route_session_id
+                    else (
+                        continuation_prompt
+                        if continuation_prompt is not None
+                        and route.runtime_kind in {RuntimeKind.CODEX_CLI, RuntimeKind.CLAUDE_CLI}
+                        and route_session_id == continuation_session_id
+                        else prompt_for(route.runtime_kind)
+                    )
                 )
             from app.native_trajectory import count_claude_session_lines
 
@@ -1848,11 +1853,21 @@ class RoutedCodexExecution:
                 # the original prompt with its own correction turn.
                 prompt = prompt_for(route.runtime_kind)
                 result_validation_retries_used = 0
-            route_session_id = (
-                None
-                if next_decision.fresh_session
-                else self._session_for_route(conversation_id, route.name)
-            )
+            if plan.reason == "capacity_retry":
+                # A cold run has no completed conversation-session mapping yet,
+                # but the failed attempt may already have observed the native
+                # session created before the provider returned 429.
+                route_session_id = failed_attempt.session_id or self._session_for_route(
+                    conversation_id, route.name
+                )
+                capacity_retry_resume = bool(route_session_id)
+            else:
+                capacity_retry_resume = False
+                route_session_id = (
+                    None
+                    if next_decision.fresh_session
+                    else self._session_for_route(conversation_id, route.name)
+                )
             successor = self._claim_and_start(
                 workload_kind, workload_key, route, route_session_id
             )

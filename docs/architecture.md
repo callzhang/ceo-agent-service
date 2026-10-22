@@ -865,8 +865,10 @@ model、thinking 只作用于首选线路。managed Skill 必须绑定精确、�
 「首选 + 其余配置线路」检查，只有这些线路都不可用时 trigger 才为 `skipped`；Runtime 未配置、缺少能力、
 认证暂停或 Skill revision 不可用属于配置性不可用，每次进入 Attention；provider 暂时不可用导致
 的路由暂停（过载、传输断连）只体现为 run 记录和路由暂停状态，不按每次触发写 Attention。
-Codex provider 错误事件报告的最终 HTTP 429 按已有满载路线处理：先有界地同路线重试，
-已观察到 session 时用原生 `codex exec resume` 续接；工具结果正文出现 429 不触发此分类。
+Codex provider 错误事件报告的最终 HTTP 429 按已有满载路线处理：先有界地同路线重试；
+失败 attempt 已观察到 session 时，使用原生 `codex exec resume` 续接并发送 `continue`，
+包括冷启动首轮已创建 session 后才返回 429 的情况。未观察到 session 时仍提交原任务输入；
+工具结果正文出现 429 不触发此分类。
 派发后的执行可用性失败记录在 execution source，trigger 仍只表示已经派发。
 
 统一 Consumer Dispatcher 不建立第二套业务队列表。各 Queue Adapter 直接领取现有事实来源：
