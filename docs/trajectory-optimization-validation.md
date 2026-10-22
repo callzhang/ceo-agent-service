@@ -1493,17 +1493,14 @@ The Audit turns reread their selected Skills and facts for separate proposal
 revisions; their independent source verification is part of the current
 review behavior and cannot be removed based on byte overlap alone.
 
-No new runtime change passes the next selection gate today. The Task
-historical-row candidate above has repeated byte overlap but still lacks a
-natural post-#128 full trajectory and fixed cases proving that current-source
-facts, Project/Task decisions and exact citations survive narrower retrieval.
-Draft PR #127's speaker-index arm failed its fixed sensitive-audience case;
-the separate native Skill duplication it also addresses has not been shown to
-remain after PR #132. PR #129 changes only one Daily Report seed and its two
-synthetic comparisons show mixed token totals, so it does not establish a
-general scheduled-task improvement. Keep both candidates unreleased; do not
-add a prompt rule, remove historical rows, or broaden a task-specific edit to
-scheduled tasks without the missing trajectory and behavior evidence.
+At the 2026-10-18 checkpoint, no runtime change passed the next selection
+gate. The Task historical-row candidate lacked a natural post-#128 full
+trajectory and fixed cases; Draft PR #127 failed its sensitive-audience case;
+and PR #129 had only stale `daily_report_facts` synthetic evidence. The later
+2026-10-21 Daily Report trajectory and current-path v5 comparison are recorded
+in `daily-report-conditional-minutes-validation.md`; that evidence supersedes
+this checkpoint for PR #129, but does not establish a general scheduled-task
+improvement.
 
 ## Task acceptance-field native-schema no-go, 2026-10-18
 
