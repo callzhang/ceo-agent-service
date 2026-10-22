@@ -2,6 +2,8 @@
 
 Status: the owned-schema inverse blocker from the independent round-two review is reproduced and fixed. Parent acceptance remains pending, including the full frozen 37,358-row harness and the separate native-created identity-collision slice.
 
+Implementation commit: `c26685dc8` (`Retire owned native Task schema on inverse`).
+
 `restore_task_entities()` now stages current Task/domain facts, then drops every exact target table declared by `task_run_entity_objects()` before rebuilding the captured source `tasks` declaration. SQLite retires attached indexes and triggers with each owner. The inverse does not sweep by name or touch non-owned tables. The source table, indexes, triggers, current facts and original Task allocator entry are then restored by the existing source reconstruction path. The inverse returns `sparse_identity_metadata` containing identity edges, raw-key exceptions and unresolved-reference markers before `task_run_identity_map` is retired.
 
 Composition ordering: a future Run/Action/State coordinator must read and stage any needed current facts from the owned native Task/domain relations before calling this inverse. The caller remains responsible for the FK-off transaction and rollback. The returned sparse identity metadata remains available after the native identity map table has been dropped. This inverse does not claim a complete Run/Action/State coordinator or full-store cold start.
