@@ -92,9 +92,7 @@ def test_native_output_schema_is_selected_for_codex_consumers_only():
     assert _native_output_schema_for_route(RuntimeKind.CLAUDE_CLI, AgentRole.CONSUMER) is None
 
 
-def test_runtime_result_recovery_binds_native_consumer_schema():
-    from app.native_agent_output import native_output_schema_path
-
+def test_runtime_result_recovery_binds_native_consumer_schema(tmp_path, monkeypatch):
     execution_contract = "execution-contract-digest"
     native_id = _runtime_result_schema_id(
         execution_contract, RuntimeKind.CODEX_CLI, AgentRole.CONSUMER,
@@ -114,7 +112,20 @@ def test_runtime_result_recovery_binds_native_consumer_schema():
     assert native_id == _runtime_result_schema_id(
         execution_contract, RuntimeKind.CODEX_CLI, AgentRole.CONSUMER,
     )
-    assert native_output_schema_path().is_file()
+    schema_path = tmp_path / "consumer-schema.json"
+    schema_path.write_bytes(b'{"schema":"first"}')
+    monkeypatch.setattr(
+        agent_turn_runner, "native_output_schema_path",
+        lambda *, purpose="general": schema_path,
+    )
+    first_schema_id = _runtime_result_schema_id(
+        execution_contract, RuntimeKind.CODEX_CLI, AgentRole.CONSUMER,
+    )
+    schema_path.write_bytes(b'{"schema":"changed"}')
+    changed_schema_id = _runtime_result_schema_id(
+        execution_contract, RuntimeKind.CODEX_CLI, AgentRole.CONSUMER,
+    )
+    assert changed_schema_id != first_schema_id
 
 
 @pytest.mark.parametrize("role", [AgentRole.CONSUMER, AgentRole.AUDIT])

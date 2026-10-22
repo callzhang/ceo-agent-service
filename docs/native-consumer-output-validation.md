@@ -30,11 +30,11 @@
 
 - `gpt-5.6-sol` 冷启动返回严格有效的 `no_action`，同 session `continue` 也返回有效 `no_action`。
 - `gpt-5.6-sol` 的合成回复案例冷启动返回有效 `plan`，精确保留虚构会话/消息 ID 和回复正文，未调用消息发送或邮件工具。其完整 trajectory 只有两次本地只读 `exec`：读取共享 Agent 规则与 DingTalk chat Skill、查看可用操作目录；没有业务 MCP 调用或外部效果。对同 session 发 `continue` 后，Consumer 根据上一轮已有提案返回 `no_action`，没有重复提案。
-- 与生产配置一致的 `codex_oauth` / `gpt-6-luna` 使用完整 Consumer 角色命令、general 原生 Schema 和共享外发约束，读取由本地动作合同目录实现的只读假 MCP。冷启动返回通过现有 Consumer parser 的 `proposal`，唯一候选为虚构群 `demo-conversation-2026` 的 `dingtalk-chat/send_group_message`，事实均引用 `synthetic:meeting-note-1`；完整 JSONL 只有该只读合同调用，没有其他工具调用。沿用同一 session 续会话后返回 `no_action`，无候选、无 MCP 调用。该案例验证的是合同读取、候选结构、外发约束和 session 行为；没有连接 DWS，也没有执行真实发送。
+- 与生产配置一致的 `codex_oauth` / `gpt-6-luna` 使用 Consumer 角色工具/沙箱配置、general 原生 Schema 和共享外发约束，读取由本地动作合同目录实现的只读假 MCP。冷启动返回通过现有 Consumer parser 的 `proposal`，唯一候选为虚构群 `demo-conversation-2026` 的 `dingtalk-chat/send_group_message`，事实均引用 `synthetic:meeting-note-1`；完整 JSONL 只有该只读合同调用，没有其他工具调用。沿用同一 session 续会话后返回 `no_action`，无候选、无 MCP 调用。该案例验证的是合同读取、候选结构、外发约束和 session 行为；没有连接 DWS，也没有执行真实发送。
 - `gpt-5.6-luna` 合成冷启动和同 session 续会话均返回有效 `no_action`，没有外部工具调用；冷启动仅读取共享 Agent 规则，续会话没有工具调用。
 - 与生产 `.env` 一致的 `codex_oauth` / `gpt-6-luna` 在 general 与 OA Schema 下分别通过匿名 `no_action` 冷启动和同 session 续会话，四个结果都通过当前对应的 Consumer Pydantic parser，未发生外部工具调用。
 
-这些匿名运行只使用 Codex OAuth、合成输入、空 Work Profile、只读本地目录及假只读 MCP；没有连接 `codex_api`、Qwen、Claude、业务 MCP 或生产记录。原先一次 proposal 探针没有可用假 MCP 调用，后续按真实 Consumer 角色配置重新验证后已通过；前一次失败的具体 harness 原因没有足够证据，故不作归因。部署和生产回读仍未完成。
+这些匿名运行只使用 Codex OAuth、合成输入、空 Work Profile、只读本地目录及假只读 MCP；没有连接 `codex_api`、Qwen、Claude、业务 MCP 或生产记录。该 Consumer 探针通过 `make_consumer_agent_command` 生成角色工具/沙箱配置，并在测试中排除本机继承的 MCP 名称，因为本机 `ai_services` 配置的 transport 无效，会使 `--ignore-user-config` 加角色禁用项的探针在模型启动前失败；服务生产配置没有使用这份本机用户配置。假 MCP 工具调用本身已在完整 Consumer 角色工具配置下验证。部署和生产回读仍未完成。
 
 ## 安全与范围
 

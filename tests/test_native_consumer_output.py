@@ -6,6 +6,7 @@ from jsonschema import Draft202012Validator
 from app.agent_result import ResultParseError
 from app.agent_wire_contracts import consumer_wire_model, parse_consumer_agent_wire_result
 from app.native_agent_output import (
+    _decode,
     native_output_schema,
     native_output_schema_path,
     parse_native_output,
@@ -106,6 +107,26 @@ def test_native_consumer_restores_nested_dynamic_json_without_losing_special_key
     restored_action = restored["payload"]["actions"][0]
     assert restored_action["target"] == target
     assert restored_action["payload"] == payload
+
+
+@pytest.mark.parametrize(
+    ("encoded", "message"),
+    [
+        ({"entries": [{"key": "x", "value": "first"},
+                       {"key": "x", "value": "second"}]}, "duplicate"),
+        ({"entries": [{"key": 1, "value": "value"}]}, "string key and value"),
+        ({"entries": [{"key": "x"}]}, "string key and value"),
+    ],
+)
+def test_native_consumer_rejects_ambiguous_or_malformed_dynamic_json_entries(
+    encoded, message,
+):
+    dynamic_object = {
+        "type": "object",
+        "additionalProperties": {"type": "string"},
+    }
+    with pytest.raises(ValueError, match=message):
+        _decode(encoded, dynamic_object, {})
 
 
 def test_native_consumer_rejects_malformed_suffix_instead_of_salvaging_it():
