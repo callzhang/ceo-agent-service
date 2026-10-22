@@ -2,15 +2,20 @@
 
 ## 状态与证据边界
 
-截至 2026-10-22 17:43 UTC：task14 的自然运行 392889 已完成并产生真实文档更新和通知回执；
+截至 2026-10-22 17:50 UTC：task14 的自然运行 392889 已完成并产生真实文档更新和通知回执；
 但业务验收未通过。Consumer 读取了完整的 65 个群会话目录（6 页），却没有调用任何逐会话消息
 读取工具，最终报告也明确写出群聊未逐条读取。Audit 因消息最初缺少今日要点而退回一次，修订后
 批准了报告和通知，没有拦住未尝试的必需群聊覆盖。日报 Skill 修复及合约回归已完成；日报事实、
 回执和覆盖回归 **23 passed**，managed Skill 发布器定向回归 **27 passed**。代码已部署到
 `526f3df5ef04dca3ed991e78adba0232718a7bee`，但 task14 仍绑定旧 revision203。正式 Skill 发布首次
 被严格 precondition 拒绝：清单的 OKR 旧摘要仍写 revision222，而生产已运行 revision223、摘要
-`18b23c5c…`。发布器在改写合约前即拒绝，healthz 仍正常；正在把清单快照更新为只读读回的生产
-事实并重新发布。已完成报告不重放、不补发；部署后的下一次自然日报才可验证修复是否生效。
+`18b23c5c…`。发布器在改写合约前即拒绝，没有改写合约文件。随后按生产读回更新清单候选摘要和
+OKR revision223 的旧摘要；清单锁定测试和 26 文件只读 preflight 均通过。第二次正式发布已成功：
+生产 commit `6f26fcbc1a4fb25a8b63f2733f7571ec7d924598`，task14 v51 绑定 daily Skill managed
+revision224，SHA-256 `32d24bb5…`，与安装文件完全一致。healthz HTTP 200、PID60193；队列
+active0/queued199、Attention22、History37257。Console System Health 显示 degraded（8 项 violation；
+detail 包含未终态 work item，native delivery readback 有73/384项不可读），与 healthz 正常分开记录。
+已完成报告不重放、不补发；部署后的下一次自然日报才可验证修复是否真正生效。
 完整证据见文末 2026-10-22 自然日报记录及无正文生产读回 JSON。
 
 ### 2026-10-22 自然日报 392889：发布完成，业务验收失败
@@ -21,7 +26,7 @@
 - 文档确已写入并由 provider 完整读回：标题《CEO 每日总结 2026-10-22》，节点 `EpGBa2Lm8a7NA9YlUReYRy6RVgN7R35y`。提交正文 3498 字符，SHA-256 `af8603ff73170beef2e12711587e335f64f905a84983a78e88882d85f7d0c834`；provider 读回 3503 字符，SHA-256 `a3c1a052563c8a78968a79545f83fc1aafeaacba0a969a47a6f78669f9f877e8`。差异仅为 provider 对 Markdown 中 `_`、`*` 的五处反斜杠转义，去转义后与提交正文完全相同。Consumer 返回内容、Audit 独立读取文档及文档信息均已核查。
 - 通知确有持久回执：System execution437、receipt18626、状态 `sent`；只读 provider 查询返回 `sendStatus=SUCCESS` 和真实 `openMessageId=msgALB31lHY4qfhfubfDS6J7w==`。
 - 纠正此前自动化指令中的错误描述：手动 run391245 与自然 run392889 的 action identity 和 external key 不同，因此不存在同一 identity 的正文冲突。两条消息各自有成功回执；没有因此触发额外发送。
-- run392889 保持原终态和外部结果，不重放、不补发。即使文档与通知发布成功，本次仍因来源覆盖失败而不计入新版自然验收通过。Skill 合约修复通过定向测试；生产代码已更新，但正式 Skill 发布在 preflight 因生产 OKR Skill 摘要从 revision222 推进至223而失败，没有覆盖任务 6 或改写合约文件。已用生产读回的 task6 revision223 和 SHA 更新发布前置快照；重新发布、确认 task14 使用新 revision、并观察后续正常日报，是验收通过的必需步骤。task13、task6 仍只观察各自正常周报触发。
+- run392889 保持原终态和外部结果，不重放、不补发。即使文档与通知发布成功，本次仍因来源覆盖失败而不计入新版自然验收通过。日报 Skill 合约修复已在 task14 v51 / managed revision224 生效；task13 当前 v44 / Skill202，task6 当前 v22 / Skill223，后两项 Skill 与 schedule 未改变。必须等待 task14 下一次正常触发 **2026-10-23 13:00 UTC**、task13 **2026-10-24 19:00 UTC** 和 task6 **2026-10-25 10:00 UTC**，按完整 trajectory、文档、审核和真实回执核验；此前不提前创建或补发报告。
 
 代码、Skill、原生合成验收、历史外部结果与新版自然业务结果分别记录。合成通过不替代真实运行；
 文档读回、Audit 决策和通知回执也分别核实。
