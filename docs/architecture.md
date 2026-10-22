@@ -2,7 +2,7 @@
 
 ## 数据库结构与迁移合同
 
-本 checkout 的 Store `2026-10-19.12`／Email53 构造器与配对发布已选用最终结构：
+当前生产基线 Store `2026-10-19.12`／Email53 的构造器与配对发布已选用该阶段结构：
 `tasks`、`runs`、`actions`、`business`、`emails`、`provenance`、`configs`、
 `provider_state`、`schedules`、`state` 十张核心表，以及已有的
 `email_schema_migrations` 账本，共十一张普通表。正常空库直接建立最终声明，
@@ -20,10 +20,7 @@ C1 来源证据见[C1 生命周期验收](business-model-task-lifecycle-validati
 当前 C1／C2、A5 及 D 的范围见[业务简化计划](superpowers/plans/2026-10-19-business-model-simplification.md)，
 不能据此前阶段结案推断本轮全部完成或容量已通过。
 
-Action 实体统一目前仍是未发布候选：候选空库声明在同一 `actions` 表中增加 `_kind=70` 的共同 Action，
-并以 `action_receipts` 保存逐次 provider/execution 事实、`action_observers` 保存多个 Run 的观察关系。
-共同 owner 的创建、CAS 领取和结果更新由 `app.action_entity_storage` 提供，调用方持有事务。
-本候选尚未配对旧数据迁移、调用方切换或上线；当前运行服务仍按已选定声明运行。
+Action Entity 集成候选在隔离 worktree 已切换目标 callers，并完成配对迁移、当前事实逆迁、旧 Store 冷读/写与 re-forward。共同 Action 使用 `actions` 的 `_kind=70`；`action_receipts` 保存逐次 provider/execution 事实，`action_observers` 保存多个 Run 的观察关系，typed identity map 保留精确旧身份。创建、CAS 领取和结果更新由 `app.action_entity_storage` 提供，调用方持有事务。目标表总数为 14（生产来源 11）；其中新增 receipt、observer、identity-map 三张表。Task 7 以生产只读备份和严格内存 provider 替身验证了集成候选及一次 native Consumer/Audit approve。候选未推送、未部署；生产仍是 Store `2026-10-19.12`／Email53，不能把候选行为描述为当前生产行为。完整事实、实际退休类型及未覆盖边界见 [Task 7 集成报告](../.superpowers/sdd/2026-10-21-action-entity-unification/task-7-integration-report.md) 和 [验证记录](action-entity-unification-validation.md)。
 字段映射见 `docs/action-entity-field-map.json`；`docs/action-entity-target.sql` 是初始字段合同夹具，当前完整 Store/Email 目标声明见 `docs/action-entity-current-target.sql`。
 
 Tasks 合并二十种已有任务。七个结构列和十二个生命周期物理列可写；
@@ -2897,7 +2894,7 @@ Store `2026-10-13.1` 将候选、审查、选择、补充、执行和动作尝�
 及 attempt 的 execution 关系分别保留。读取使用明确类型投影；写入使用有限字段定义；没有旧物理表、
 兼容 view 或双写。`actions` 自己声明任务、运行及动作类型引用约束，不重复安装通用 child trigger。
 独立 `external_action_results` 在这段仍保留，后续迁入独立 receipt 类型；无候选回执不会被制造归属。
-完整十表目标还包括其余 actions、business、emails、provenance、configs、provider_state、schedules 和 state。
+这是第五期A当时的完整十表目标记录；后续候选目标表数见本文顶部的当前 Action Entity 集成状态。
 
 这个发布单元只接受准确的前版 Store `2026-10-12.1`。迁移前核对六表声明、字段及引用；迁移和 schema
 版本更新在同一事务内完成。配对逆迁从当前 `actions` 重建源表并恢复原版本记录，保留发布后的新增、更新、
@@ -2917,7 +2914,7 @@ AUTOINCREMENT 公开 ID 和 native sqlite_sequence 水位；自动分配与插�
 本发布单元只接受准确 Store15 声明，包括实际历史 ALTER 与实际 fresh constructor 的列顺序差异。
 配对逆迁按捕获的源声明恢复当前事实与当前水位，保留迁移后的新增、修改和删除，不恢复旧备份内容。
 发布 quiet-wait 读取器仅在明确声明的源／目标结构读取原生执行事实；恢复、审查、发送及回执策略不变。
-完整十表目标尚未完成；其余 actions 家族和第六至八期仍需要实施。是否上线以正式部署回执为准。
+在第五期B记录时，其余 Actions 家族和第六至八期仍未完成；后续 Action Entity 候选的范围及未发布状态见本文顶部 Task 7 状态。是否上线以正式部署回执为准。
 
 ### Store17 postfix 整合（已发布）
 

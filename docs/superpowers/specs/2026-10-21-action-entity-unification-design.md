@@ -1,7 +1,7 @@
 # Action 实体统一设计
 
-状态：供 Derek 审阅的设计；写计划不等于批准上线或已经实施。2026-10-21。
-代码基线：`7c37664518f04f8afcefd937b53484bef503a507`，Store19.12／Email53。
+状态：Task 1–7 集成候选已实现并完成本地/只读生产副本验收；仍待 parent 全分支审阅，未推送或部署。本文保留原设计及其约束。2026-10-22。
+原始代码基线：`7c37664518f04f8afcefd937b53484bef503a507`，Store19.12／Email53。Task 7 集成基线和生产配对证据见 [Task 7 报告](../../.superpowers/sdd/2026-10-21-action-entity-unification/task-7-integration-report.md)。
 
 ## 1. 问题与目标
 
@@ -72,4 +72,4 @@ Task 表达待完成工作；Run 表达执行/审查；Action 表达一个能独
 
 ## 8. 设计完成与否
 
-目前完成：目标、边界、既有字段来源及验证合同。尚未完成：逐字段/逐 caller 的完整契约、新 DDL、迁移实现与验收；详细计划把这些列为实施任务。新字段编码/索引和状态映射需要在 Task 1 以真实代码冻结并审阅，不能把本设计的概念表当作可执行 SQL。
+执行状态（2026-10-22）：详细字段映射、静态 DDL、迁移/逆迁、writer/reader/API/UI 切换及 Task 6–7 验收已落在当前候选；Task 7 报告给出生产 Store19.12／Email53 只读备份、旧版本 Store 冷读写、current-fact inverse/re-forward、真实 native Consumer/Audit 与严格内存 provider 的边界。覆盖的七个有数据 source families 转为共同 Action/Receipt/Observer/typed identity map；另两项零行旧 discriminator 声明已按其 child 事实归属处理。其余 Actions 类型、专有 unsubscribe、Task/Run 及其他业务类型不在本单元完成范围。候选仍未发布，生产仍是 Store19.12／Email53；parent 全分支审阅和正式 release/readback 尚未完成。

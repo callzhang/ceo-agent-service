@@ -1,5 +1,12 @@
 # Changelog
 
+## 2026-10-22 — Action Entity integrated release candidate
+
+- Integrated the Action Entity candidate with the latest observed `origin/main`; the paired release now covers seven populated external-action source families and preserves two zero-row legacy declarations and all out-of-scope Action families.
+- Verified a fresh read-only production-derived SQLite copy through forward migration, current-fact inverse, archived production Store cold read/write, and re-forward. Final integrated code passed one native Consumer/Audit approval using an in-memory provider substitute.
+- This is an isolated candidate: it has not been pushed or deployed, and production remains on Store19.12 / Email53. Evidence and limits are recorded in [Task 7 integration report](.superpowers/sdd/2026-10-21-action-entity-unification/task-7-integration-report.md).
+
+
 ## 2026-10-22 — OA 附件预览授权工具
 
 - 评论附件的高级版下载在租户权益过期时返回 `benefit.status.invalid`，表单附件下载返回 `noPermission` 或 `success=false`，分身因此把可读的 PDF 报成没有权限（审批 202601071711000531430）。

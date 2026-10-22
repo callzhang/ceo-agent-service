@@ -32,9 +32,9 @@
 
 **Files / Interfaces:** 详细契约、TDD 步骤、文件职责和验收见 `2026-10-21-action-entity-unification.md`；不得另行复制或简化其接口。
 
-- [ ] 完成详细计划 Task 1-7；先审阅字段/DDL，再顺序实施，独立审查和副本/回退通过后发布。
-- [ ] 输出实际退休类型、旧 writer/reader、索引和统一接口清单；未退出的退订步骤、方案/审查等列为未完成。
-- [ ] 将已稳定的 Action 接口作为后续两单元的输入，而不是再按邮件/会议/回复复制 Action。
+- [x] 详细计划 Task 1–7 已实施至可审阅候选；字段/DDL、caller 切换、fresh-copy inverse/old-code cold read-write/re-forward、native substitute approve 和 targeted backup tests 均有记录。正式发布另待 parent 全分支审阅。
+- [x] 实际七个有数据 source families、旧 writer/reader 范围及 unified Action/Receipt/Observer/identity-map 结构已记录；其余两项零行 discriminator 声明、专有 unsubscribe、方案/审查和其他 Actions 类型明确留在范围外。
+- [x] 本地候选 Action 接口可供后续单元设计引用；其尚未发布，后续单元不得依赖为生产已部署行为。
 
 ## Task 2: Task/Run 真正统一（后续独立 spec/plan，不在第一单元顺手实施）
 
