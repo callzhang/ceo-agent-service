@@ -1079,6 +1079,17 @@ def test_consumer_instructions_include_the_runtime_proposal_schema():
     assert "do not return a nested error object" in instructions
 
 
+def test_consumer_common_instruction_blocks_direct_external_delivery_without_changing_audit():
+    instruction = "Do not directly send external messages or email or execute approvals."
+    consumer = consumer_developer_instructions(runtime_context="", work_profile="")
+    audit = audit_developer_instructions(
+        "Verify the candidate.", runtime_context="", work_profile=""
+    )
+
+    assert consumer.count(instruction) == 1
+    assert instruction not in audit
+
+
 def test_consumer_capability_section_keeps_tool_contract_without_repeating_common_rules():
     sections = consumer_developer_sections(runtime_context="", work_profile="")
     capability = next(section.text for section in sections if section.name == "能力边界")

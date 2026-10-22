@@ -72,6 +72,48 @@ def test_unbound_failed_oa_attempt_is_skipped_only_after_exact_terminal_readback
     assert "COMPLETED" in store.evidence
 
 
+def _returned_but_running_process():
+    return {"result": {
+        "status": "RUNNING",
+        "tasks": [
+            {"taskId": "task-1", "userId": "principal-1", "taskStatus": "CANCELED"},
+            {"taskId": "task-applicant", "userId": "applicant-1", "taskStatus": "RUNNING"},
+        ],
+        "operationRecords": [{
+            "date": 1791889619840, "type": "REDIRECT_PROCESS",
+            "userId": "principal-1", "result": "NONE",
+        }],
+    }}
+
+
+def test_unbound_failed_oa_attempt_closes_when_principal_return_canceled_the_exact_task():
+    attempt = SimpleNamespace(
+        id=15880, channel="dingtalk", conversation_id="c", trigger_message_id="m",
+        send_status="failed", oa_process_instance_id="process-1", oa_task_id="task-1",
+    )
+
+    class Store:
+        def list_unbound_failed_oa_attempts(self, *, limit):
+            return [attempt]
+
+        def skip_unbound_failed_oa_attempt(self, attempt_id, *, terminal_evidence, **_):
+            self.evidence = terminal_evidence
+            return True
+
+    class Dws:
+        def read_oa_process_instance_openapi(self, process_id):
+            return _returned_but_running_process()
+
+    store = Store()
+    assert reconcile_unbound_failed_oa_attempts(
+        store, Dws(), current_user_id="principal-1"
+    ) == [15880]
+    assert "OA_RETURNED" in store.evidence
+    assert "CANCELED" in store.evidence
+    # Without knowing who the principal is, a running process proves nothing.
+    assert reconcile_unbound_failed_oa_attempts(store, Dws()) == []
+
+
 def test_unbound_failed_oa_attempt_stays_open_without_exact_terminal_evidence():
     attempt = SimpleNamespace(
         id=4595,
