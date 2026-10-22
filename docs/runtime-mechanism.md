@@ -2099,6 +2099,8 @@ Email 的分类确认不是 Agent 运行，也不会创建通用 `reply_task`。
 永久删除、IMAP `EXPUNGE`
 和清空 Trash 不存在可调用路径。
 
+稳定 Message-ID 查找若在多个文件夹命中，属于确定性身份歧义：在只读状态定位阶段失败，不执行邮件写入，也不自动重试；超时、DNS 和连接错误仍可重试。身份问题解决后，才可重新处理该邮件动作。
+
 Provider observation scan 在一个 SQLite 写事务内发布消息状态、authoritative folder 缺失项对账和
 folder generation 时间。generation 按账号和文件夹单独记录，分类状态读取仍投影该文件夹最近一次
 扫描时间；消息内容未变时不更新消息行及其索引。扫描成员先放入连接级临时表，再按
