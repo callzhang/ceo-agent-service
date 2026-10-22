@@ -16,7 +16,9 @@ Removed `supersedes_provider_receipt_id`, its one-successor index and trigger, r
 
 ## Evidence
 
-A genuine prior-mismatch regression was added first and passed in the focused five-node RED/GREEN set. The broader final focused set initially exposed a real stale-write regression: 39 passed and `tests/test_dingtalk_delivery_repair.py::test_executor_completes_corrected_uncertain_receipt_from_readback` failed because the canonical read returned the old envelope without `verification_repair`. Receipt tracing showed an ordinary later Sent/observation writer moving the binding from the corrected body back to the stale body. Binding creation is now non-advancing once a binding exists; explicit correction/readback callers perform the CAS advance. The exact regression then passed.
+A prior-mismatch regression was added before its implementation, but the initial failing output was not retained. The later five-node run passed; that does not establish a genuine RED, so the prior-mismatch RED evidence is a process gap.
+
+A separate, retained failure did expose the stale-write regression. The focused invocation listed below initially reported `39 passed, 1 failed`; the failure was `tests/test_dingtalk_delivery_repair.py::test_executor_completes_corrected_uncertain_receipt_from_readback`, which raised `KeyError: 'verification_repair'` after canonical projection returned the old envelope. Receipt tracing showed an ordinary later Sent/observation writer moving the binding from the corrected body back to the stale body. Binding creation is now non-advancing once a binding exists; explicit correction/readback callers perform the CAS advance. The exact regression passes in the 41-node rerun and in the additional focused caller checks below.
 
 Final focused correction/storage/contract/transfer/caller command:
 
@@ -32,7 +34,24 @@ pytest -q tests/test_store.py::test_reconcile_failed_agent_message_requires_send
 12 passed
 ```
 
-`ruff check` across all touched Python files, `python -m compileall` on changed modules, and `git diff --check` passed. No whole-suite run was performed. Task5C2 remains responsible for actual populated inverse, cold-old write, and fresh-forward proof.
+The three requested actual caller regressions were also run after the 12-node group:
+
+```text
+pytest -q tests/test_action_entity_callers.py::test_selected_reviewed_message_uses_prepared_action_through_sent tests/test_reviewed_candidate_store.py::test_old_revision_keeps_its_approved_binding tests/test_action_entity_callers.py::test_retry_keeps_original_external_identity
+3 passed
+```
+
+An earlier two-file diagnostic was run as `pytest -q tests/test_model_result_references.py tests/test_dingtalk_delivery_repair.py`; its recorded aggregate was `43 failed, 16 passed`. The per-run failed-node/output listing was not retained. The available `.pytest_cache/v/cache/lastfailed` is cumulative across runs and cannot establish that invocation's node list, so I do not attribute its entries to that run. During diagnosis, two concrete failure layers were observed: historical fixtures call `task8_insert_parts` against a Task20 physical declaration that lacks the expected `status` column, and a native legacy-readback fixture calls `restore_shared_actions` with a source declaration the converter does not support. These are fixture/source-conversion failures; because the original per-node output was not retained, I cannot claim they account for all 43 failures or classify the remaining failures. Current caller counterparts that did pass are named above, including corrected executor readback, exact native-chat readback, reverification preservation/rejection, failed-Audit recovery, and selected prepared/Sent/direct-retry paths. No broad rerun was performed.
+
+Exact hygiene commands, run on touched Python modules/files, passed:
+
+```text
+ruff check app/action_entity_definitions.py app/action_entity_transfer.py app/action_storage.py app/dingtalk_delivery_repair.py app/reviewed_candidate_store.py app/shared_action_lifecycle.py tests/test_action_entity_contract.py tests/test_action_entity_schema_release.py tests/test_action_entity_storage.py tests/test_model_result_references.py tests/test_shared_action_lifecycle.py tools/action_entity_contract.py
+python -m compileall -q app/action_entity_definitions.py app/action_entity_transfer.py app/action_storage.py app/dingtalk_delivery_repair.py app/reviewed_candidate_store.py app/shared_action_lifecycle.py tools/action_entity_contract.py
+git diff --check
+```
+
+Task5C2 remains responsible for actual populated inverse, cold-old write, and fresh-forward proof.
 
 ## Files
 
