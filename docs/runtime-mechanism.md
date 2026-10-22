@@ -705,6 +705,15 @@ identity, malformed ownership/status, and source-read failures retain prior
 keys because they cannot prove that Derek's responsibility ended. Non-OA
 pending/processing/needs_human status alone remains excluded.
 
+Current Attention also hides an older failed OA Reply Attempt only when a
+newer attempt for the same process is bound to its current Audit-approved
+candidate and the current `revert_task` execution is `done` with a verified DWS
+`REDIRECT_PROCESS` receipt, including the successful DingTalk response and
+matching process identity. The historical failed Attempt remains unchanged in
+History. Uncertain, incomplete, mismatched, or non-return evidence keeps the
+old failure visible. This projection does not change task state, receipts, or
+OA execution.
+
 Reconciliation removes an item when live detail proves the process terminal,
 the exact reviewed task is no longer assigned to Derek or is terminal, or when
 the exact reviewed task is canceled and the principal's latest

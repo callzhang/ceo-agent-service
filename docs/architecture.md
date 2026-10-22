@@ -478,6 +478,15 @@ normal queue and History views; a pending scanner key without a matched task
 timestamp is excluded because it cannot establish stalled work. This projection
 does not change the OA process, task, or provider receipt.
 
+Current Attention suppresses an older failed OA reply Attempt only after a
+newer attempt for the same process is linked to its current Audit-approved
+candidate and that candidate's `revert_task` execution is `done` with a verified
+DWS `REDIRECT_PROCESS` receipt (including the DingTalk success response and
+matching process identity). The failed Attempt remains failed in History; an
+uncertain, incomplete, mismatched, or non-return receipt leaves it visible.
+This is an Attention projection only and does not change task state, receipts,
+or OA execution.
+
 OA Reply Attempt History status and status filters use the owning task's
 current execution generation, matching Attempt detail; OA Attempts without a
 resolvable bound run resolve the task by channel, conversation and trigger message

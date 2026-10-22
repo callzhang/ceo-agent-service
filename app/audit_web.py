@@ -196,6 +196,9 @@ from app.action_storage import (
     REVIEW_CANDIDATE_SQL,
     CANDIDATE_REVIEW_SQL,
     CANDIDATE_SELECTION_SQL,
+    CANDIDATE_EXECUTION_SQL,
+    CANDIDATE_ACTION_ATTEMPT_SQL,
+    EXTERNAL_ACTION_RESULT_SQL,
     SENT_REPLY_SQL,
     REPLY_ATTEMPT_COMMON_SQL,
     task_delivery_projection,
@@ -3368,6 +3371,62 @@ def _reply_task_attention_diagnostics(raw: str, task_error: str) -> dict[str, st
     return {"error_code": diagnostic, "error": description}
 
 
+def _verified_oa_return_after_attempt(
+    db: sqlite3.Connection, *, process_instance_id: str, attempt_updated_at: str
+) -> bool:
+    """Whether a later, current approved execution verified this OA process return."""
+    if not process_instance_id.strip() or not attempt_updated_at.strip():
+        return False
+    row = db.execute(
+        f"""
+        select 1
+        from ({REPLY_ATTEMPT_COMMON_SQL}) attempts
+        join ({AGENT_RUN_SQL}) run on run.id=attempts.agent_run_id
+        join ({REPLY_TASK_CURRENT_SQL}) task on task.id=run.reply_task_id
+         and task.execution_generation=run.execution_generation
+        join ({REVIEW_CANDIDATE_SQL}) candidate
+          on candidate.task_id=task.id
+         and candidate.execution_generation=task.execution_generation
+         and candidate.invalidated_at=''
+        join ({CANDIDATE_REVIEW_SQL}) review
+          on review.candidate_id=candidate.id
+         and review.audit_run_id=run.id
+         and review.decision='approve'
+         and review.candidate_digest=candidate.candidate_digest
+        join ({CANDIDATE_EXECUTION_SQL}) execution
+          on execution.candidate_id=candidate.id
+         and execution.review_id=review.id
+         and execution.status='done'
+        join ({CANDIDATE_ACTION_ATTEMPT_SQL}) action_attempt
+          on action_attempt.execution_id=execution.id
+         and action_attempt.status='verified'
+        join ({EXTERNAL_ACTION_RESULT_SQL}) receipt
+          on receipt.external_action_key=action_attempt.external_action_key
+         and receipt.operation='revert_task'
+        where attempts.oa_process_instance_id=?
+          and datetime(attempts.updated_at)>datetime(?)
+          and candidate.id=(
+              select max(latest.id)
+              from ({REVIEW_CANDIDATE_SQL}) latest
+              where latest.task_id=candidate.task_id
+                and latest.execution_generation=candidate.execution_generation
+          )
+          and receipt.business_object_key=task.business_object_key
+          and json_valid(receipt.provider_result_json)
+          and json_extract(receipt.provider_result_json,'$.process_instance_id')=?
+          and json_extract(receipt.provider_result_json,'$.task_id')<>''
+          and json_extract(receipt.provider_result_json,'$.return_record.type')='REDIRECT_PROCESS'
+          and json_extract(receipt.provider_result_json,'$.return_record.user_id')<>''
+          and json_extract(receipt.provider_result_json,'$.provider_response.dingOpenErrcode')=0
+          and json_extract(receipt.provider_result_json,'$.provider_response.result')=1
+          and json_extract(receipt.provider_result_json,'$.provider_response.success')=1
+        limit 1
+        """,
+        (process_instance_id, attempt_updated_at, process_instance_id),
+    ).fetchone()
+    return row is not None
+
+
 def _queue_attention_rows(store: AutoReplyStore, *, limit: int | None = None) -> list[dict[str, str]]:
     specs = [
         (
@@ -3908,7 +3967,23 @@ def _queue_attention_rows(store: AutoReplyStore, *, limit: int | None = None) ->
                     }
                 )
 
-    for attempt in store.list_current_unresolved_problem_attempt_summaries(limit=limit):
+    unresolved_attempts = store.list_current_unresolved_problem_attempt_summaries(limit=limit)
+    attempt_oa_identity: dict[str, str] = {}
+    if unresolved_attempts:
+        attempt_ids = [int(item["id"]) for item in unresolved_attempts if str(item["id"]).isdigit()]
+        if attempt_ids:
+            placeholders = ",".join("?" for _ in attempt_ids)
+            with store._connect() as db:
+                attempt_oa_identity = {
+                    str(row["id"]): str(row["oa_process_instance_id"] or "")
+                    for row in db.execute(
+                        f"select id,oa_process_instance_id from ({REPLY_ATTEMPT_COMMON_SQL}) "
+                        f"where id in ({placeholders})",
+                        tuple(attempt_ids),
+                    ).fetchall()
+                }
+
+    for attempt in unresolved_attempts:
         send_status = str(attempt["send_status"] or "").casefold()
         # Attention is the service-error surface. A genuine business decision
         # stays available from its attempt/detail page, but must not inflate
@@ -3932,6 +4007,14 @@ def _queue_attention_rows(store: AutoReplyStore, *, limit: int | None = None) ->
             continue
         if send_status == "failed" and trigger_key in active_reply_task_triggers:
             continue
+        if send_status == "failed" and attempt_oa_identity.get(attempt["id"]):
+            with store._connect() as db:
+                if _verified_oa_return_after_attempt(
+                    db,
+                    process_instance_id=attempt_oa_identity[attempt["id"]],
+                    attempt_updated_at=attempt["updated_at"],
+                ):
+                    continue
         rows.append(
             {
                 "category": "Reply",
