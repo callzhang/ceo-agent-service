@@ -12,6 +12,38 @@ The inverse uses the exact predecessor declaration and raw source-shaped table r
 
 The first actual new-caller inverse probe hit a real conversion gap: `_action_path` could not represent the prepared receipt’s three ordinary physical TEXT columns. The recorded checkpoint is in `progress.md` (“C2 first actual new caller inverse RED”); the exact shell invocation and stderr were not retained, so I do not reconstruct them. The conversion now reads the source child projection from the actual prepared declaration (`postfix_receipt_provider_result_json`, `postfix_receipt_created_at`, and `postfix_dispatch_created_at`), preserving SQL NULL versus literal JSON text.
 
+### Controlled retrospective exact-base RED/GREEN
+
+To close the review evidence gap without claiming access to the historical run, I performed a new controlled comparison against the exact pre-C2 base `61632a97bd65fb51ea654e009a8276b6b6b1a435`. The archived app/tests/pyproject bundle SHA-256 is `d46d44555b9c12643888328b7ee06fac93e32c3f1f954a750e2a13a29e37d21b`. The shared probe script SHA-256 is `cd06f923fe79ca21d6437d5c9986bf646f67fcdbc5eed339d84ef8c1fbe904ca`; it creates a valid predecessor schema, uses current public `prepare_outbound_action`, `claim_outbound_action`, and `record_outbound_action_receipt` writers once, then invokes the actual public inverse and checks predecessor parent, receipt body, dispatch clock, and integrity. It does not call `_capture_inverse_facts` or another implementation-private helper.
+
+The single forward-seeded fixture SHA-256 is `9d83139bb124ff1952ffe8eb220c7fde4f1d73bd81ee05446a14bb0a89a99835`. I copied those exact bytes to `baseline3.sqlite3` and `current3.sqlite3` before either inverse. Both executions reported that same forward DB hash. The predecessor inverse module was imported from the extracted BASE archive (`action_entity_schema_release.py` SHA-256 `d62c0f60842077c52d65a889735fcc4c2e13e89321932c875920c2010975503c`); the current inverse module was imported from this worktree (SHA-256 `7f26e58ec52cf7aefe72511958b8036e15a5bf758f32e75b400da8fb99f8c9c1`).
+
+The exact BASE RED command was:
+
+```sh
+PYTHONPATH=/tmp/ceo-action-entity-validation.8rUAvK/task5c2-red-green-YMhcPV/base \
+  python /tmp/ceo-action-entity-validation.8rUAvK/task5c2-red-green-YMhcPV/prepared_inverse_probe.py \
+  inverse /tmp/ceo-action-entity-validation.8rUAvK/task5c2-red-green-YMhcPV/baseline3.sqlite3
+```
+
+It emitted `inverse_started_after_actual_writer` with the pinned BASE module path and the fixture hash above, then exited `1` in the predecessor `invert_action_entity_release` → `_rebuild(..., inverse=True)` conversion with:
+
+```text
+sqlite3.IntegrityError: NOT NULL constraint failed: actions.legacy_key
+```
+
+This failure occurs inside the real inverse after valid prepared facts were written; it is not a missing import, test helper, or malformed setup. It demonstrates the pre-C2 inverse cannot round-trip this new normal prepared Action. The historical first RED remains unclaimed and its exact invocation/output remains unavailable.
+
+The exact current GREEN command on the byte-identical pre-inverse fixture was:
+
+```sh
+PYTHONPATH=/Users/derek/.codex/worktrees/action-entity-plans/ceo-agent-service \
+  python /tmp/ceo-action-entity-validation.8rUAvK/task5c2-red-green-YMhcPV/prepared_inverse_probe.py \
+  inverse /tmp/ceo-action-entity-validation.8rUAvK/task5c2-red-green-YMhcPV/current3.sqlite3
+```
+
+It exited `0`. The observable parent body hash was `23faa265ea472d043bb36733457ba113468fd2dbd2da258a0308883874d899d8`, provider receipt body hash `e09b99b6d2369530bb339c089c9f788015e8248537ba791cdcf875040da1ab94`, dispatch clock was present, `quick_check=ok`, and the inverse retained the source’s empty FK finding set. This controlled comparison is a newly captured retrospective BASE-vs-current proof, not a reconstruction of the initial C2 RED chronology.
+
 The following focused regression command passed after the conversion and source-ID collision test were added:
 
 ```sh
