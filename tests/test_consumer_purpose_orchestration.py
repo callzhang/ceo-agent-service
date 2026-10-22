@@ -233,6 +233,38 @@ def test_manual_rerun_after_permission_exhaustion_allows_one_unbudgeted_access_c
     assert MAX_CONSECUTIVE_FAILED_TURNS == 4  # Initial call plus exactly three retries per role.
 
 
+def test_manual_access_check_accepts_legacy_verified_comment_receipt_without_resetting_budget(
+    tmp_path, monkeypatch
+):
+    store, task, _context = task_and_context(tmp_path)
+    runtime = AgentOrchestrator(store=store, consumer=ScriptedConsumer(store),
+                                audit=ScriptedAudit(store))
+    now = datetime.now(timezone.utc)
+    budget = PurposeRetryBudget(store, task.business_object_key or f"reply-task:{task.id}", "oa")
+    # Historical OA access requests persisted a verified comment receipt but
+    # did not create the newer access_requests reservation entry.
+    budget.schedule("legacy-verified-comment-receipt", now, "review", now)
+    for index in range(MAX_PURPOSE_RETRIES):
+        budget.reserve(f"legacy-reread:{index}", now + timedelta(hours=12 * (index + 1), seconds=1))
+
+    monkeypatch.setattr(store, "get_reply_attempt", lambda _attempt_id: type(
+        "Attempt", (), {"send_status": "blocked", "send_error": RETRY_EXHAUSTED,
+                        "agent_run_id": 91}
+    )())
+    monkeypatch.setattr(store, "get_agent_run", lambda *_args, **_kwargs: type(
+        "Run", (), {"role": AgentRole.CONSUMER, "execution_generation": 0}
+    )())
+    monkeypatch.setattr(store, "list_agent_runs_for_task_generation", lambda *_args, **_kwargs: [])
+    resumed_task = task.model_copy(update={
+        "execution_generation": "1", "manual_rerun_attempt_id": 78,
+    })
+
+    before = budget.state()["count"]
+    assert runtime._manual_permission_access_check(resumed_task, "oa", budget.state()) is True
+    assert runtime._manual_permission_access_check(resumed_task, "oa", budget.state()) is False
+    assert budget.state()["count"] == before == MAX_PURPOSE_RETRIES
+
+
 def test_worker_pass_limit_does_not_reserve_a_third_unstarted_retry(tmp_path):
     store, task, context = task_and_context(tmp_path)
     now = datetime.now(timezone.utc)

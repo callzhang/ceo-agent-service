@@ -181,7 +181,7 @@ class PurposeRetryBudget:
                 state.get("count", 0) >= MAX_PURPOSE_RETRIES
                 or now >= utc_time(state["deadline"])
             )
-            verified_request = any(
+            verified_request = bool(state.get("receipts")) or any(
                 item.get("status") == "verified"
                 for item in state.get("access_requests", [])
             )

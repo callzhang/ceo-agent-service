@@ -119,7 +119,7 @@ action identity，且旧候选只有一个对应评论动作。普通旧评论�
 Worker、定时任务和 Email 的等待分支遵守延后时间，不消耗普通任务 attempt 预算；
 权限等待自己的三次预算仍独立生效。
 
-达到限制后停止自动重读。服务把结果记录为 `permission_blocked`：Attempt 为 `blocked`，ReplyTask 停在 `needs_human` 队列外，明确表示等待文件权限，不表示审批失败或业务需要人工裁决。History 对精确的 `consumer_purpose_retry_exhausted` 才显示权限处理说明与“权限开通后重新读取”入口。该入口不重置预算，最多只发起一次人工触发的 Consumer 访问检查；若仍不可读则继续受阻，不再次申请、不自动重读，也不执行 OA 动作。确认读取成功后，Consumer 仍须独立形成新候选，由 Audit 审核业务结果，再按已有执行与读回门禁处理。
+达到限制后停止自动重读。服务把结果记录为 `permission_blocked`：Attempt 为 `blocked`，ReplyTask 停在 `needs_human` 队列外，明确表示等待文件权限，不表示审批失败或业务需要人工裁决。History 对精确的 `consumer_purpose_retry_exhausted` 才显示权限处理说明与“权限开通后重新读取”入口。该入口不重置预算，最多只发起一次人工触发的 Consumer 访问检查；若仍不可读则继续受阻，不再次申请、不自动重读，也不执行 OA 动作。新旧格式的已验证权限申请回执都可授权该单次检查：旧 OA 评论回执在迁移时存入 `receipts`，无需补造 `access_requests` 记录。点击入口表示操作员确认权限已开通；它不重发权限申请、不增加自动重读次数，且单次检查用后不可再次使用。确认读取成功后，Consumer 仍须独立形成新候选，由 Audit 审核业务结果，再按已有执行与读回门禁处理。
 业务动作完成或经审核 `no_action` 后关闭活动等待；原计数和期限保留。
 72 小时边界控制新读取的启动，不表示强制中断已经开始的调用。
 
