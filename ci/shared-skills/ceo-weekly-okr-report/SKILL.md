@@ -3,7 +3,7 @@ name: ceo-weekly-okr-report
 description: Use for scheduled Sunday or explicitly requested CEO-2 manager OKR progress reports, current-quarter evidence scoring, per-person scorecards, and delivery of the management report and group summary.
 metadata:
   managed_by: ceo-agent-service
-  version: 13
+  version: 18
 ---
 
 # CEO-2 Manager OKR Progress Report
@@ -22,6 +22,17 @@ independent evidence through Friday Memory, current DingTalk documents, wiki,
 minutes, messages, logs, todos and calendars. Unreadable evidence remains a gap.
 
 ## Collect and prepare
+
+Every execution must establish a fresh source snapshot before using prior
+artifacts, even when the task already has a `plan.json`, member source files,
+analysis files or a previously published report. Read the current roster and
+call `read_okr_member` once for every current roster member in this execution;
+the resulting receipts replace the saved source snapshot before `prepare`.
+Never infer that a member source is unchanged from a prior run or from the
+presence of a reusable analysis. A reusable analysis is eligible only after the
+current run's source receipt confirms the same user ID, period, outcome and
+source digest. If a turn resumes after these reads already completed in that
+same run, reuse those current-run receipts and do not repeat them.
 
 ### Resume after an audit return or an interrupted Consumer turn
 
@@ -61,6 +72,15 @@ Treat Audit feedback as a concrete correction checklist. Resolve each finding
 against the named manager and KR, then update only the affected analyses and
 their report sections. Do not restart collection, rendering or publication
 until every required manager analysis is complete.
+
+For a report/readback mismatch caused by a changed member source, update only
+the changed member's analysis and regenerate all affected report files and
+provider documents from the current analysis artifacts. A request to fix a
+shared report, appendix set, notification summary or document revision does
+not make other member analyses stale. In particular, never rewrite a file
+whose current plan entry says `analysis_reusable=true` unless Audit explicitly
+identifies that member's evidence or score as wrong; preserve those bytes
+through the correction and verify their digests before finishing.
 
 1. Call `read_scheduled_context` for this run's trigger and artifact directory.
    Resolve the report date in Asia/Shanghai, using the scheduled trigger's date
@@ -117,8 +137,10 @@ source or scoring date requires new analysis. Audit corrections change the
 identified analysis, preserving other valid members' files.
 
 Score each commitment using actual effects, independent evidence and completion
-time. Classify each KR as 业务OKR, 领导力 or 文化价值观; explain base_score and
-deadline-discounted score. Use current contact title to establish role level;
+time. For each KR, choose only an allowed `dingtang-okr-review` evidence band
+(0, 20, 40, 60, 80 or 100) for `base_score`; never invent intermediate values
+such as 30, 50 or 70. Explain any separate deadline discount applied by the
+script. Classify each KR as 业务OKR, 领导力 or 文化价值观. Use current contact title to establish role level;
 unresolved roles remain 职级待确认. Use the formal dimensions from
 `dingtang-okr-review`: leadership is 战略能力、团队赋能能力、组织协同能力、创新能力;
 culture is AI时代原生能力、I Can I Up、简单可信赖. Map observed behaviors to these
@@ -178,6 +200,22 @@ changed this week separately from period-to-date scores. Never calculate final
 scores in prose: the script uses O×KR weights, the leadership/culture arithmetic
 means and the original culture coefficient formula. Displayed calculated scores
 use one decimal place with conventional half-up rounding.
+
+When two or more roster members share a name, use each affected member's exact
+`subject_label` (name plus stable user ID) in every report-level progress,
+risk, decision and summary statement that attributes a fact to a person. Do not
+use the bare shared name for those facts; keep the individual scorecards bound
+to the same stable user ID throughout.
+
+Report only source categories that this execution actually read; do not list
+documents, wiki, minutes, chat or other independent sources as report inputs
+unless their contents were retrieved and used. Where the evidence supports a
+verified completed outcome, include it as a concise, owner-attributed progress
+highlight. Keep each material risk once in the summary; do not repeat the same
+customer-acceptance gap in both the risk list and another summary bullet.
+In `数据覆盖与限制`, state each coverage boundary once. When an Audit correction
+adds a limitation, merge it into the relevant existing line instead of appending
+a second sentence that repeats the same coverage fact.
 
 If analysis cannot be completed for a member, create its analysis file as
 `{"_source_sha256":"<current-plan-digest>","analysis_failure":{"diagnostic":"the concrete unavailable evidence or analysis failure"}}`.

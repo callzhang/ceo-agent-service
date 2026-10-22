@@ -28,7 +28,7 @@ from evals.scheduled_task_generic.okr_fixture import (
 )
 
 HERE = Path(__file__).parent
-CASES_PATH = HERE / "okr_cases.v4.json"
+CASES_PATH = HERE / "okr_cases.v5.json"
 
 
 def read_json(path):
@@ -208,6 +208,10 @@ def behavior_checks(reviews, expected):
     }
 
 
+def allowed_kr_evidence_band(score: float) -> bool:
+    return score in {0, 20, 40, 60, 80, 100}
+
+
 def _grade(case, work, output, prior=None):
     work = Path(work)
     expected = case["expected"]
@@ -281,6 +285,11 @@ def _grade(case, work, output, prior=None):
             expected["base_score_ranges"][r.user_id][0]
             <= k.base_score
             <= expected["base_score_ranges"][r.user_id][1]
+            for r in analysis.manager_reviews
+            for k in r.kr_reviews
+        ),
+        allowed_kr_evidence_bands=all(
+            allowed_kr_evidence_band(k.base_score)
             for r in analysis.manager_reviews
             for k in r.kr_reviews
         ),

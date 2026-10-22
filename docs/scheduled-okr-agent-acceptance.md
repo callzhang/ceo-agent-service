@@ -457,3 +457,18 @@ v37 使用 Skill 13、当前 `report.py` 与 v4 固定事实，四场均由新 C
 生产只读核查确认服务提交 `f8fed0d9aaf6bc2d2f61fbef5f2d1be1d033182c`、活跃 runtime skill 配置 356，OKR managed revision 209；历史失败运行 391405 仍终态失败，没有重放。原来的发布快照指向旧提交/配置，且 OA 通用 Skill 清单摘要落后于实际已安装内容。现已根据生产安装文件、Audit 规则文件和数据库内活跃 managed revision 只读重建发布前置快照；清单 `old_sha256` 与安装读回一致，`new_sha256` 与仓库候选源一致。发布前置定向测试、OKR 综合测试、Consumer purpose 和报告脚本测试共 **137 passed**；Ruff 和 `git diff --check` 通过。
 
 Skill 13 候选尚未部署；用户已授权部署后从 task6 正式调度入口启动一份新的手动验收。下一步走正常提交、推送和部署，再核实 PID、healthz、队列、History、不可变配置快照和 managed Skill revision，然后启动新运行。验收仍要求完整 Consumer/Audit 轨迹、所有报告文档实际读回及真实通知持久回执与 provider 查询。未达到这些条件前，不把合成验收记作生产结果，也不重放 391405 或任何已有外部回执的报告。
+
+### v38–v49：补齐严格恢复与报告计算验收
+
+v38–v48 的每轮失败结果均保留在对应 `okr_results.vNN.json` 中，没有覆盖旧证据。追踪后修正了以下实际问题和固定案例问题，评分与发布标准未下调：
+
+- 报告摘要仍用 Python 浮点格式显示 75.25 为 75.2；最终分 `59.85` 也会因二进制浮点显示为 59.8。`report.py` 现在用 Decimal 计算加权最终分、系数及一位小数 half-up 显示，并用同一 Decimal 算法显示主文平均值与群摘要平均值。
+- 恢复场景曾沿用旧成员源文件，未在本次执行重新读名册和全部成员。Skill version 14 起要求每轮先取得新源回执，再按当前 user ID、周期、结果及摘要决定是否复用分析。
+- Audit 只要求改报告和附录时，Consumer 曾重写未变化成员分析。Skill version 15 要求 `analysis_reusable=true` 的文件在报告修订期间保持原字节，除非 Audit 明确指出该成员的证据或分数有错。
+- 两位同名成员的报告级进展曾没标 user ID；报告也曾把未读取的文档、知识库、听记和群聊列为本轮评分来源，并重复写覆盖限制/客户验收风险。Skill versions 16–18 现要求进展与风险按 `subject_label` 归属，只列本轮实际读过的来源，重复风险与覆盖限制要合并。
+- 原生 Audit 发现 eval-a/eval-b 的行为来源材料不足以支持案例要求的岗位达标分。冻结的 v4 案例保持原样，新建 v5 补足可核验的当前周期事实；没有改变职级评分范围、创新/AI缺证要求或超标准行为门槛。v5 的评分 grader 还会拒绝非 0/20/40/60/80/100 的业务 KR 基础分。
+- 单成员 404 的原始合成回执不足以单独证明授权成功。模拟 provider 现提供带主体、请求 ID、授权状态、HTTP 状态和错误码的真实回执；单成员已授权 404 与共享认证失败 503 保持可区分，并由第四场验证共享故障阻止发布。
+
+v49 从头运行四场 native Consumer/Audit，**4/4 passed**；每场的终态均为 Audit approve 且评分、来源、分析恢复、文档完整读回、通知提案和机械检查通过。来源变化场验证 eval-a 字节保持不变、eval-b 重做；日期变化场按新日期刷新；共享认证失败场没有报告写入或群消息提案。结果在 `evals/scheduled_task_generic/okr_results.v49.json`，冻结输入为 `okr_cases.v5.json`。这些仍是隔离模拟 provider 的原生合成结果，`external_executor_available=false`，不代表生产发布或真实通知。
+
+v49 配套定向测试 **125 passed**，Ruff 与 `git diff --check` 通过。新的 Skill/script 尚未部署；下一步是把本次更改与最新 `origin/main` 安全集成，重新跑受影响测试，按正常流程发布并读取部署版本与任务配置，然后使用用户授权的正式 task6 手动入口创建一份新运行。运行 391405 和任何带既有外部回执的运行都不重放。生产手动运行仍须通过完整 Consumer/Audit 轨迹、主文档及全部附录的 provider 完整读回、真实通知持久回执和 provider 查询，才记为完成。

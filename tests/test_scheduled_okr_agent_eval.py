@@ -5,7 +5,7 @@ from pathlib import Path
 from evals.scheduled_task_generic import okr_eval
 from evals.scheduled_task_generic.okr_fixture import Fixture, member_payload
 
-CASES = json.loads((Path(okr_eval.__file__).parent / "okr_cases.v4.json").read_text())[
+CASES = json.loads((Path(okr_eval.__file__).parent / "okr_cases.v5.json").read_text())[
     "cases"
 ]
 
@@ -17,6 +17,17 @@ def test_okr_skill_resumes_saved_inputs_and_does_not_use_failure_for_missing_evi
         .read_text()
         .split()
     )
+    assert "Every execution must establish a fresh source snapshot" in skill
+    assert "Never infer that a member source is unchanged from a prior run" in skill
+    assert "A request to fix a shared report, appendix set, notification summary" in skill
+    assert "preserve those bytes through the correction" in skill
+    assert "use each affected member's exact `subject_label`" in skill
+    assert "Report only source categories that this execution actually read" in skill
+    assert "include it as a concise, owner-attributed progress highlight" in skill
+    assert "Keep each material risk once in the summary" in skill
+    assert "choose only an allowed `dingtang-okr-review` evidence band" in skill
+    assert "never invent intermediate values such as 30, 50 or 70" in skill
+    assert "state each coverage boundary once" in skill
     assert "read each current member once" in skill
     assert "Never repeat a successful member read again within the same Consumer turn" in skill
     assert "resume at the first missing, changed or Audit-identified analysis" in skill
@@ -239,9 +250,17 @@ def test_complete_actual_skill_output_passes_okr_acceptance(tmp_path):
     assert okr_eval.grade(case, tmp_path, output)["passed"]
 
 
+def test_okr_base_scores_use_only_formal_evidence_bands():
+    assert all(
+        okr_eval.allowed_kr_evidence_band(score)
+        for score in (0, 20, 40, 60, 80, 100)
+    )
+    assert not okr_eval.allowed_kr_evidence_band(30)
+
+
 def test_preliminary_native_pass_does_not_satisfy_formal_behavior_rubric():
     saved = json.loads((Path(okr_eval.__file__).parent / "okr_results.v12.json").read_text())
-    case = json.loads((Path(okr_eval.__file__).parent / "okr_cases.v4.json").read_text())["cases"][0]
+    case = json.loads((Path(okr_eval.__file__).parent / "okr_cases.v5.json").read_text())["cases"][0]
     reviews = [r for a in saved["cases"][0]["final_grade"]["analyses"].values()
                for r in a["manager_reviews"]]
     checks = okr_eval.behavior_checks(reviews, case["expected"])
@@ -255,11 +274,16 @@ def test_member_source_failure_fixture_proves_isolated_failure_scope():
         item for item in case["facts"]["roster"]["managers"]
         if item["user_id"] == "eval-failed"
     )
-    outcome = member_payload(member, case["facts"])["sourceOutcome"]
+    payload = member_payload(member, case["facts"])
+    outcome = payload["sourceOutcome"]
+    receipt = payload["providerReceipt"]
     assert outcome["kind"] == "source_failed"
     assert outcome["scope"] == "member"
     assert "404" in outcome["diagnostic"]
     assert "roster and eval-a/eval-b reads succeeded" in outcome["diagnostic"]
+    assert receipt["authorization_status"] == "granted"
+    assert receipt["http_status"] == 404
+    assert receipt["request_id"] == "fixture-okr-member-404"
 
 
 def test_native_resume_skips_incomplete_saved_case_without_audit_verdict():
@@ -295,7 +319,7 @@ def test_native_consumer_output_requires_evidence_refs(tmp_path):
 
 
 def test_behavioral_rubric_requires_standard_scores_only_where_source_supports_them():
-    case = json.loads((Path(okr_eval.__file__).parent / "okr_cases.v4.json").read_text())["cases"][0]
+    case = json.loads((Path(okr_eval.__file__).parent / "okr_cases.v5.json").read_text())["cases"][0]
     expected = case["expected"]
     review = {
         "leadership_dimensions": [
@@ -663,6 +687,8 @@ def test_cases_are_versioned_without_rewriting_failed_oracle():
     assert hashlib.sha256((root / "okr_cases.v3.json").read_bytes()).hexdigest() == "c8ed2093242a7cef57f3025a2f062a7aa4a82da3b67901fcb92a7843b8569438"
     fourth = root / "okr_cases.v4.json"
     assert hashlib.sha256(fourth.read_bytes()).hexdigest() == "de85506221508bee7aa4db312d5c566a8f28b96a9ebac87d919ac34dbfe0ca5c"
+    fifth = root / "okr_cases.v5.json"
+    assert fifth.is_file()
     old_v3 = json.loads((root / "okr_cases.v3.json").read_text())["cases"]
     for before, after in zip(old_v3, CASES, strict=True):
         assert stable_non_behavior_facts(before["facts"]) == stable_non_behavior_facts(after["facts"])
