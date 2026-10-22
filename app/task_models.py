@@ -819,6 +819,14 @@ class TaskDecision(StrictTaskModel):
             raise ValueError("source-backed owner assignment requires owner_evidence")
         if (
             self.action in {"skip", "record_candidate", "create_task"}
+            and (self.status is not None or self.business_relevance is not None)
+        ):
+            raise ValueError(
+                "new/skip decisions must omit status and business_relevance; "
+                "only update_task with update_fields may set them"
+            )
+        if (
+            self.action in {"skip", "record_candidate", "create_task"}
             and self.transition != "none"
         ):
             raise ValueError("new/skip decisions cannot transition an existing Task")
@@ -830,7 +838,7 @@ class TaskDecision(StrictTaskModel):
             self.status is not None or self.business_relevance is not None
         ):
             raise ValueError(
-                "status and business relevance require update_fields transition"
+                "update_task status and business relevance require update_fields transition"
             )
         if self.transition == "merge_identity":
             if (
