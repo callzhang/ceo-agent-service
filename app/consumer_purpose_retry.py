@@ -6,9 +6,12 @@ import json
 
 from app.state_definitions import state_projection
 from app.state_storage import state_json_field, upsert_state
+from app.external_retry import MAX_AUTOMATIC_RETRIES
 
-MAX_PURPOSE_RETRIES = 10
+MAX_PURPOSE_RETRIES = MAX_AUTOMATIC_RETRIES
 MAX_PERMISSION_WAIT = timedelta(days=3)
+PERMISSION_RETRY_INTERVAL = timedelta(hours=12)
+PERMISSION_RETRY_INTERVAL_SECONDS = int(PERMISSION_RETRY_INTERVAL.total_seconds())
 RETRY_REQUESTED = 'consumer_purpose_retry_requested'
 RETRY_EXHAUSTED = 'consumer_purpose_retry_exhausted'
 
@@ -39,7 +42,9 @@ class PurposeRetryBudget:
         if now >= utc_time(state['deadline']):
             raise RetryBudgetExhausted('permission retry deadline reached (72 hours)')
         if state['count'] >= MAX_PURPOSE_RETRIES:
-            raise RetryBudgetExhausted('permission retry count reached (10)')
+            raise RetryBudgetExhausted(
+                f'permission retry count reached ({MAX_PURPOSE_RETRIES})'
+            )
 
     def _update(self, mutate):
         with self.store._immediate_write_transaction() as db:
@@ -108,13 +113,15 @@ class PurposeRetryBudget:
             if state is None:
                 state = {'receipts': [], 'requested_at': requested_at.isoformat(),
                          'deadline': (requested_at + MAX_PERMISSION_WAIT).isoformat(),
-                         'count': 0, 'reservations': [], 'review': ''}
+                         'count': 0, 'reservations': [], 'review': '',
+                         'retry_interval_seconds': PERMISSION_RETRY_INTERVAL_SECONDS}
             else:
                 state.setdefault('access_requests', [])
                 if 'requested_at' not in state:
                     state.update({'receipts': [], 'requested_at': requested_at.isoformat(),
                                   'deadline': (requested_at + MAX_PERMISSION_WAIT).isoformat(),
-                                  'count': 0, 'reservations': [], 'review': ''})
+                                  'count': 0, 'reservations': [], 'review': '',
+                                  'retry_interval_seconds': PERMISSION_RETRY_INTERVAL_SECONDS})
                 # Existing persisted budgets used one receipt. Promote it into
                 # the receipt set in place, preserving the original deadline,
                 # count and reservation history.
@@ -130,10 +137,17 @@ class PurposeRetryBudget:
                 receipts.append({'receipt': receipt, 'requested_at': requested_at.isoformat()})
             self._check(state, now)
             state['closed'] = False
-            if state['review'] != review:
-                delay = min(300 * (2 ** state['count']), 12 * 3600)
-                state['next_at'] = min(now + timedelta(seconds=delay), utc_time(state['deadline'])).isoformat()
+            if (
+                state.get('retry_interval_seconds')
+                != PERMISSION_RETRY_INTERVAL_SECONDS
+                or state['review'] != review
+            ):
+                state['next_at'] = min(
+                    now + PERMISSION_RETRY_INTERVAL,
+                    utc_time(state['deadline']),
+                ).isoformat()
                 state['review'] = review
+                state['retry_interval_seconds'] = PERMISSION_RETRY_INTERVAL_SECONDS
             return state, utc_time(state['next_at'])
 
         return self._update(mutate)
@@ -153,6 +167,91 @@ class PurposeRetryBudget:
             state['count'] += 1
             state['reservations'].append(turn)
             return state, state['count']
+
+        return self._update(mutate)
+
+    def claim_manual_access_check(self, *, attempt_id: int, generation: int, now: datetime) -> bool:
+        """Reserve the single human-triggered access check after exhaustion."""
+        def mutate(state):
+            if not isinstance(state, dict):
+                return state, False
+            if state.get("manual_access_check"):
+                return state, False
+            exhausted = (
+                state.get("count", 0) >= MAX_PURPOSE_RETRIES
+                or (
+                    state.get("deadline") is not None
+                    and now >= utc_time(state["deadline"])
+                )
+            )
+            verified_request = bool(state.get("receipts")) or any(
+                item.get("status") == "verified"
+                for item in state.get("access_requests", [])
+            )
+            if not exhausted or not verified_request:
+                return state, False
+            state["manual_access_check"] = {
+                "attempt_id": attempt_id,
+                "generation": generation,
+                "reserved_at": now.astimezone(timezone.utc).isoformat(),
+            }
+            return state, True
+        return self._update(mutate)
+
+    def claim_oa_return_turn(self, *, source_consumer_run_id: int, now: datetime,
+                             failed_access_request: bool = False,
+                             bootstrap_without_source: bool = False,
+                             proposal_revision: int, parent_run_id: int | None,
+                             stage_index: int, predecessor_review_id: int | None,
+                             reply_task_id: int, execution_generation: str) -> bool:
+        """Reserve one Consumer turn to propose an audited OA return."""
+        if source_consumer_run_id <= 0 and not bootstrap_without_source:
+            return False
+
+        def mutate(state):
+            if not isinstance(state, dict):
+                return state, False
+            exhausted = (
+                state.get("count", 0) >= MAX_PURPOSE_RETRIES
+                or (
+                    state.get("deadline") is not None
+                    and now >= utc_time(state["deadline"])
+                )
+            )
+            verified_request = bool(state.get("receipts")) or any(
+                item.get("status") == "verified"
+                for item in state.get("access_requests", [])
+            )
+            known_failed_request = failed_access_request and any(
+                item.get("status") == "failed"
+                for item in state.get("access_requests", [])
+            )
+            if not ((exhausted and verified_request) or known_failed_request):
+                return state, False
+            claimed_turn = state.get("oa_return_turn")
+            if claimed_turn is None:
+                if source_consumer_run_id > 0:
+                    state["oa_return_source_consumer_run_id"] = source_consumer_run_id
+                state["oa_return_turn"] = {
+                    "source_consumer_run_id": source_consumer_run_id or None,
+                    "bootstrap_without_source": bootstrap_without_source,
+                    "proposal_revision": proposal_revision,
+                    "parent_run_id": parent_run_id,
+                    "stage_index": stage_index,
+                    "predecessor_review_id": predecessor_review_id,
+                    "reply_task_id": reply_task_id,
+                    "execution_generation": execution_generation,
+                }
+                return state, True
+            if bootstrap_without_source:
+                return state, bool(
+                    claimed_turn.get("bootstrap_without_source")
+                    and claimed_turn.get("proposal_revision") == proposal_revision
+                    and claimed_turn.get("parent_run_id") == parent_run_id
+                    and claimed_turn.get("reply_task_id") == reply_task_id
+                    and claimed_turn.get("execution_generation") == execution_generation
+                )
+            return state, state.get("oa_return_source_consumer_run_id") == source_consumer_run_id
 
         return self._update(mutate)
 

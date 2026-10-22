@@ -1768,3 +1768,34 @@ fixed-case standard.
 No runtime, prompt, Skill, route, delivery code or setting was changed or
 deployed. A later candidate needs to resolve exact-owner behavior on fixed
 repeats before reconsidering this reduction.
+
+## Missing Consumer capability retry loop, task 416428 (2026-10-22)
+
+The complete four-run Consumer trajectory for task 416428 is present in the
+production DB's saved run/session ranges and native Codex session files. The
+first three failed runs report the same missing OKR scoring-write capability
+using `operation_unavailable`, `capability_unavailable`, and
+`write_capability_unavailable`; the fourth supplies no error code. All four
+finish without an external score write. They ran before the service's existing
+`operation_unavailable` terminal policy was released, so all four were retried
+under the earlier generic policy. Later production runs 416071 and 416777
+persist `operation_unavailable` with `retryable: false`, confirming the current
+exact-code behavior.
+
+Root cause: the current exact `operation_unavailable` code has a service-owned
+terminal policy, while the repeated `capability_unavailable` and
+`write_capability_unavailable` spellings are still unknown and would fall into
+the generic bounded-retry policy. Those two spellings also appear in the older
+Consumer failures 405596 and 416209. The `dingtang-okr-review` Skill was read in
+these turns, but the service-managed Skill package contains no Consumer-script
+manifest or scoring-write entrypoint. This change only maps the two observed
+capability codes to the existing terminal policy and preserves their exact
+source codes for diagnosis. It does not add an OKR write capability, execute a
+Skill script, modify Audit, or perform an external action.
+
+Acceptance: both missing-capability spellings end without retry and retain the
+reported code; exact `operation_unavailable` stays terminal, an unknown failed
+code retains the existing bounded retry, and `dependency_read_unavailable`
+remains retryable. A future OKR scoring-write implementation is a separate
+capability and execution-contract task; no claim is made that task 416428 was
+completed.

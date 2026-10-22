@@ -2,6 +2,11 @@
 
 ## 状态与证据边界
 
+更新至 2026-10-22 UTC：task6 新配置 v20 / managed Skill revision 222 的手动运行
+392030 尚未产出报告。18/18 实时来源已读取，但 Consumer 因脚本审查摘要过期而在
+评分和写文档前失败；这一实际运行失败与 v49 的合成 4/4 通过分开记录。修复已在
+本地通过定向测试，待正式部署并用同一用户授权再运行后，才能核实审核和外部发布。
+
 2026-10-20 UTC。原七案例的决策与独立正文/动作草稿验收已通过，详见
 [原验收记录](scheduled-task-generic-agent-validation.md)。本记录补充 OKR 的完整
 Skill 工作流、恢复、部分来源失败和真实报告读回。最终四场景 **4/4 通过**，
@@ -305,3 +310,227 @@ got there first”，不能当成 Skill 发布成功。随后正式发布操作
 不能提前标记通过；本线程心跳继续核查。当前历史报告结果仍分别为日报真实
 文档与通知成功、管理周报实际写入但事项skipped、旧OKR服务主报告及18附录
 完整读回并发送SUCCESS。未重放或补发任何历史报告。
+
+## 用户授权的手动 OKR 运行 391405（2026-10-21 UTC）
+
+这是用户明确授权的正式调度入口手动运行，不算自然周报验收。触发快照绑定
+task6 配置 v14、managed `ceo-weekly-okr-report` revision 209。第一次 Consumer
+391423 因 `analysis_incomplete` 失败；自动重试 Consumer 391492 读取了18人，生成
+14份 `analysis_failure` 和4个 `goals_missing`，并写入主报告及18份附录。Audit
+391503 真实退回：14位有目标成员仍没有逐 KR 证据分析；只凭0进度和无评论不足以
+说明分析完成。该候选虽有当时的 provider 文档读回，但没有通过审核，不是最终报告。
+
+Consumer 对修订的第0、1、2次尝试（391505、391507、391512）都返回
+`analysis_incomplete`，没有完成逐 KR 分析、更新读回报告或提交通知；截至
+Consumer 391528 于 23:54:27 UTC 也以不可重试的 `execution_failed` 结束。它已重读
+18人、重建准备材料并查了钉钉消息/文档和服务活动，但没有写出或更新任何逐人分析、
+报告、附录或通知摘要。其终态理由是不能据有限检索对14位成员评分；没有文档写入或
+群消息发送。原候选 391492 的草稿文件仍保留，不能当作本次已通过发布。
+
+根因有两层，都是真实行为问题，不是评测误判：Consumer 多次从头重读成员来源，随后
+把大部分时间花在收集/少量宽泛检索上，没有按成员续做逐 KR 分析；此外，实际代码
+`report.py` 曾仅按来源摘要判断分析可复用，因此同摘要的 `analysis_failure` 占位也会被
+标记 `analysis_reusable=true`，不适合恢复未完成分析。没有审核通过候选或群消息回执。
+不要重放现有草稿；修复后的真实手动报告仍待新 Skill/script revision 正式部署后再运行。
+
+为此已在隔离 worktree 更新 OKR Skill 至候选 version 5，并修正 `report.py`：修订先核对
+Audit 与同次运行产物，只补缺失/变化来源；只有完整成功分析可复用，`analysis_failure`
+占位必须重新分析；逐人完成后保存。零进度和未找到佐证按原评分标准处理并说明缺口；
+若本轮未完成则保留已有进度并给现有有界重试机会。原定向评测文件在加入占位复用回归后
+**35项通过**；Ruff、diff 检查、Skill/script 发布摘要核对通过。此变更尚未正式发布或部署，
+其原生综合回归及新版实际报告运行仍未验收。
+
+### 原生综合验收 v19–v21 的行为评分判定根因
+
+v19 的最终报告使用了四项正式领导力维度和三项文化维度。它对有当前职级证据的战略、
+团队赋能、组织协同、担当和透明协作评分75；对缺少具体证据的创新能力和AI时代原生能力
+评分60，并明确说明证据缺口。输入的 `behavior-review` 只支持前述五项，没有创新行为或
+AI使用及增益证据。
+
+旧 grader 却要求每个人七项分数都在70–79。历史 v16 展示了这个判定会接受的误导结果：
+它对没有证据的创新能力和AI能力也给70，并把业务交付/客户验收当作行为证据。v19 的
+Agent 输出明确把缺少证据的两项记为60；旧 grader 因此报错，暴露了评测条件没有按事实
+区分维度。但后续 v20 原生重跑又把两项都打成70，理由仍分别只是完成业务交付和“文化
+行为总体有佐证”。这次失败证明除了旧 grader 判定过宽外，也有实际 Agent 行为问题：
+它会把别的维度证据挪用到创新和AI能力，审核也没有发现。
+
+评测现在按每个维度的输入证据分别验分：有当前标准证据的五项必须为70–79；缺少证据的
+创新及AI两项必须为0–60。回归也确保把这两项虚增至70会失败。这让评测更严格地核对
+证据，而不是放宽评分。v21 显示 Skill 的一般性“不得跨维度套证”仍不足：Agent 修正了
+eval-a 两项，也在 Audit 退回后修正了 eval-b 的 AI 项，但 eval-b 仍把“完成交付”当作
+创新能力证据打75，Audit 未发现。已将 Skill 提升至候选 version 8，要求渲染前逐人核对
+七个维度与原始来源；创新须有具体改进、验证和结果；Audit 必须逐项检查证据与分数，并
+在修改后重算受影响的总分、平均数和摘要。v22 还显示恢复场景没有刷新当前成员来源，导致
+输入已变但沿用旧来源，并让 eval-b 的业务分数仍超出新案例范围。当前没有单独的来源摘要
+查询接口，因此 Skill 和运行文档现要求恢复的每个 Consumer turn 先逐成员读取一次当前来源，
+再按摘要复用未变化分析；同一 turn 不得重复成功读取。v23 还遭遇一次运行环境未注入 fixture
+工具，以及评测恢复器读取未完成 case 时缺少 Audit 终态字段而崩溃。恢复器现有回归并能跳过
+未完成记录。
+
+v26 的报告日期变更场景已完成两轮 Consumer/Audit：最终报告采用 10 月20日触发日期，刷新
+四位成员来源，重做日期和摘要变化的分析，完整重渲染主文档、附录和待审核摘要；没有发送
+群消息。Audit 发现合成 `behavior-review` 虽称文化行为“有独立具体行为佐证”，但没有列出
+事例，Agent因此把两项下调至60。v4 固定案例现为该场景补入三项文化行为的具体情境和结果，
+同时保留创新及AI证据缺失，行为分数范围不变。该场景和其余案例须在新案例摘要下重跑；全部
+通过前不发布。
+
+v27 按新增的具体行为事实运行第一案例通过，第二案例仍失败：更新了主文档和发生变化的
+eval-b附录，却没有更新日期变化所影响的eval-a及两份未评分成员附录。评测当时因缺少旧
+附录对应的本轮写入回执抛出 `KeyError`，掩盖了完整性问题。候选 Skill version 9 现要求
+每次渲染都写入/更新并完整读回当前 manifest 的全部附录，不因成员分析未变化而跳过；grader
+现把缺回执记为失败检查，不再抛异常。恢复器也只复用同时满足 Audit approve 和 grader
+passed 的案例，防止把“审核通过但正文不完整”的候选当作已接受结果。
+
+v28 的 changed-source 修订 Consumer 返回的内层 production payload 缺少必需的
+`evidence_refs`，严格解析器据此拒绝；原评测器当时抛异常，没有把失败输出保存下来。评测器
+现在保留原始 envelope 和契约错误，同时仍将它判为失败，不放宽该字段要求。v29 通过了综合
+和来源变化案例，但日期变更案例的 Audit 发现行为证据没有按人员归属：共用行为摘要被应用到
+两位同名成员。v4 现在为两位成员提供各自绑定 userId 的行为事实，且保留创新与AI缺证；服务
+fixture 按被读取的成员返回对应来源。该案例待重新通过 Consumer、Audit、评分和完整文档读回。
+
+### v30–v32：输出字段契约问题与成员故障范围证据
+
+v30 再次出现 Consumer 结果没有 `evidence_refs`，严格生产解析拒绝。复查发现该轮评测
+把生产 purpose 对象编码在自由字符串中，CLI 的强制输出 schema 只约束外层字符串，
+因此这个工具运行时没有机械约束内层字段；生产解析仍拒绝缺字段，不能把拒绝当成通过。
+尝试将完整条件 schema 嵌入 CLI schema 后，v31 在模型执行前就因 strict schema 不支持
+嵌套 `allOf` 而返回 400，确认该 CLI 传输层不能直接强制这份生产条件 schema。撤销该
+评测方案，没有改解析器，也没有放宽 `evidence_refs`。现在通用 purpose schema 为此必填
+字段增加明确说明：每个结果都要有该字段；没有适用引用时为空数组，权限重试需提供已核验
+申请的引用。定向测试 **48 项通过**；已知发布摘要门禁仍因 `ceo-document-review` 的
+approved digest 与 release manifest 不匹配而单独失败。
+
+v32 使用上述 schema 说明重新进行完整原生四场景验收。`composite-coverage` 和
+`recover-changed-source` 的 Consumer、Audit、评分、公式、全部报告/附录读回及通知提案
+核查均通过。`recover-changed-date` 未通过：首次 Consumer 将来源结果的 `scope: member`
+标签和“member-bound source unavailable”泛化诊断当作足够证明，在没有底层错误与隔离证据时
+仍评分并写入更新版主文档和四份附录。Audit 正确退回。修订 Consumer 重读后确认仍无范围
+证据，正确以 `failed` 停止，没有再写文档或发送通知；但首次已产生的内容仍留在 provider，
+所以最终文档与完整审核要求未通过。失败原因是来源失败发生在首次发布之前没有被挡住。
+
+此外，这个冻结案例本身也不支持它原先要求的“成员级失败可保留为未评分成员”通过结果：
+模拟来源只有范围标签和泛化错误，Audit 无法核验证明故障只影响沈禾。因此案例输入与其预期
+不一致。没有降低标准；Skill version 10 现要求只有同时具备具体底层错误和同轮 roster/其他
+成员成功等可核查隔离证据，才能按成员级失败继续。单独的 `scope: member` 或
+“member-bound”文本不够；证据不足时必须在评分、渲染、文档写入和通知前停止。合成夹具已补
+入具体 userId 的当前周期 404、请求标识，以及同轮名册和其他成员读取成功的范围证据；这使
+案例能在原有审核标准下检验“真正的成员级来源缺失”。v32 失败轨迹完整保留。下一轮需用
+Skill v10 和修正后的固定来源事实重新运行四个场景，再决定是否为行为问题。
+
+v33 按修正后的来源范围输入重跑时，在第一场 `composite-coverage` 被 grader 拒绝：两位同名经理的
+“团队赋能能力”都被评分为65；Audit approve。追查当前 `dingtang-okr-review` 的明确标准后发现，
+测试只提供了职责分工，缺少经理辅导成员独立解决问题的证据；对总监也缺少可复用能力建设证据，
+所以固定案例要求该维度70–79并不成立。旧的“所有正式行为维度均达到当前职级标准”概括，不能替代
+这些具体事实。此处是固定输入的证据缺口，grader 的分数范围没有放宽。v4 现在给总监增加了指导组
+负责人轮流主持复盘、独立跟进依赖并由团队持续复用既有方法的当前周期证据；给经理增加每周辅导
+工程师复盘、独立处理一线问题和新成员按清单独立部署的证据；均不包含超出职级的组织级效果。该
+v33 失败结果保留。下一轮需在这些更准确的来源事实和 Skill v10 下重跑全部案例，复核评分和 Audit。
+
+v34 在首场再次暴露审核缺项。Audit 要求把 eval-a 总监的组织协同80降到75，并让Consumer修订；但 eval-a 的团队赋能80同样没有超出职级标准的效果，Audit 首轮漏检。grader 因此仍拒绝；报告保留失败，不能将Audit approve视为验收通过。现有Skill虽然要求80+有超标案例并逐项检查七维，但针对“每一个80+都要举出超标效果”说明不够直接。候选 Skill version 12 明确：经理日常辅导、总监在本团队内复用方法可以证明符合岗位标准，但本身不证明超标；Audit 要逐项检查所有80+的范围与效果。
+
+同轮二次Audit还发现 eval-b 四项领导力分数75、75、75、60的均值71.25被脚本显示为71.2。`report.py` 使用Python内置银行家舍入，未按当前验收口径通常四舍五入显示。已改为 Decimal `ROUND_HALF_UP`，并更新独立公式oracle和71.25边界测试。没有更改评分本身、权重、标准或一位小数精度。定向回归 **133 passed, 1 deselected**（唯一未执行项为已知的独立发布摘要门禁），Ruff 和 diff 检查通过。v34 完整结果保留；下一轮在 Skill 12、修正舍入脚本及当前四案例事实下重跑。
+
+### v35：OKR 四场原生综合验收通过
+
+v35 使用候选 Skill 12、`report.py` half-up 舍入和修正后的 v4 固定事实，从头运行四个场景，
+没有复用旧 Consumer/Audit 输出。状态 **passed 4/4**，每场独立 Audit 均 approve，所有机械检查全绿：
+
+- `composite-coverage`：同名成员区分、有效评分和两类未评分缺口通过；具体成员 404 的来源范围有同轮证据支持。
+- `recover-changed-source`：只重做变化来源对应分析，其他有效分析按来源摘要复用；更新并读回全部当前 manifest 附录。
+- `recover-changed-date`：按新触发日期刷新来源和受影响分析；成员级404范围通过审核，所有当前主/附录版本完整读回。
+- `shared-source-auth-failure`：识别共享来源故障并以 `failed` 停止；没有成功报告或群消息提案。
+
+每个目的输出都有必需的 `evidence_refs`。本轮检查到的报告、附录和群摘要均来自隔离模拟 provider；评测配置
+明确 `external_executor_available=false`，没有真实文档发布、群通知或生产运行。v35 仅证明候选代码/Skill 的
+原生合成验收通过。旧 391405 失败运行没有重放；真实自然运行与三份报告实际发布证据仍按生产回执单独核查。
+
+### v36：暴露未变化分析被改写
+
+v36 的第一场通过，但 `recover-changed-source` 未通过。完整轨迹显示 `prepare` 给未变化的 eval-a 标记
+`analysis_reusable=true`；Consumer 仍重写 eval-a 的分析文件。Audit 退回的是报告摘要重复，未指出 eval-a 的证据或评分错误；Consumer 的修订又改写了该文件。grader 的 `unchanged_analysis_reused` 检查因此失败，最终分析、附录和摘要虽读回、Audit 最终 approve，仍不能判该场通过。根因是实际 Agent 没遵守已有的保留要求，不是 grader 误判；v36 失败完整保留。
+
+Skill version 13 明确：`analysis_reusable=true` 时不得重写该成员文件；报告措辞、重复或排版反馈要修正在来源变化的成员分析或受影响的报告段落。只有 Audit 明确指出该成员证据或评分有误时才可改写，并继续逐字节保留其他可复用分析。
+
+### v37：四场原生综合验收通过
+
+v37 使用 Skill 13、当前 `report.py` 与 v4 固定事实，四场均由新 Consumer/Audit 运行完成，状态 **passed 4/4**，全部严格评分、成员身份、来源覆盖、审核、完整主文档与附录读回检查通过。特别是 `recover-changed-source` 中 eval-a 原样保留、eval-b 来源变化后重做；日期变化场按新日期重新分析；共享认证失败场在没有文档或通知提案的情况下终止。
+
+本轮仍是隔离模拟 provider，`external_executor_available=false`，不等于生产文档或群消息发布。v37 结果保存在 `evals/scheduled_task_generic/okr_results.v37.json`；v36 失败也保留在 `okr_results.v36.json`。
+
+### 当前生产发布与手动验收
+
+生产只读核查确认服务提交 `f8fed0d9aaf6bc2d2f61fbef5f2d1be1d033182c`、活跃 runtime skill 配置 356，OKR managed revision 209；历史失败运行 391405 仍终态失败，没有重放。原来的发布快照指向旧提交/配置，且 OA 通用 Skill 清单摘要落后于实际已安装内容。现已根据生产安装文件、Audit 规则文件和数据库内活跃 managed revision 只读重建发布前置快照；清单 `old_sha256` 与安装读回一致，`new_sha256` 与仓库候选源一致。发布前置定向测试、OKR 综合测试、Consumer purpose 和报告脚本测试共 **137 passed**；Ruff 和 `git diff --check` 通过。
+
+Skill 13 候选尚未部署；用户已授权部署后从 task6 正式调度入口启动一份新的手动验收。下一步走正常提交、推送和部署，再核实 PID、healthz、队列、History、不可变配置快照和 managed Skill revision，然后启动新运行。验收仍要求完整 Consumer/Audit 轨迹、所有报告文档实际读回及真实通知持久回执与 provider 查询。未达到这些条件前，不把合成验收记作生产结果，也不重放 391405 或任何已有外部回执的报告。
+
+### v38–v49：补齐严格恢复与报告计算验收
+
+v38–v48 的每轮失败结果均保留在对应 `okr_results.vNN.json` 中，没有覆盖旧证据。追踪后修正了以下实际问题和固定案例问题，评分与发布标准未下调：
+
+- 报告摘要仍用 Python 浮点格式显示 75.25 为 75.2；最终分 `59.85` 也会因二进制浮点显示为 59.8。`report.py` 现在用 Decimal 计算加权最终分、系数及一位小数 half-up 显示，并用同一 Decimal 算法显示主文平均值与群摘要平均值。
+- 恢复场景曾沿用旧成员源文件，未在本次执行重新读名册和全部成员。Skill version 14 起要求每轮先取得新源回执，再按当前 user ID、周期、结果及摘要决定是否复用分析。
+- Audit 只要求改报告和附录时，Consumer 曾重写未变化成员分析。Skill version 15 要求 `analysis_reusable=true` 的文件在报告修订期间保持原字节，除非 Audit 明确指出该成员的证据或分数有错。
+- 两位同名成员的报告级进展曾没标 user ID；报告也曾把未读取的文档、知识库、听记和群聊列为本轮评分来源，并重复写覆盖限制/客户验收风险。Skill versions 16–18 现要求进展与风险按 `subject_label` 归属，只列本轮实际读过的来源，重复风险与覆盖限制要合并。
+- 原生 Audit 发现 eval-a/eval-b 的行为来源材料不足以支持案例要求的岗位达标分。冻结的 v4 案例保持原样，新建 v5 补足可核验的当前周期事实；没有改变职级评分范围、创新/AI缺证要求或超标准行为门槛。v5 的评分 grader 还会拒绝非 0/20/40/60/80/100 的业务 KR 基础分。
+- 单成员 404 的原始合成回执不足以单独证明授权成功。模拟 provider 现提供带主体、请求 ID、授权状态、HTTP 状态和错误码的真实回执；单成员已授权 404 与共享认证失败 503 保持可区分，并由第四场验证共享故障阻止发布。
+
+v49 从头运行四场 native Consumer/Audit，**4/4 passed**；每场的终态均为 Audit approve 且评分、来源、分析恢复、文档完整读回、通知提案和机械检查通过。来源变化场验证 eval-a 字节保持不变、eval-b 重做；日期变化场按新日期刷新；共享认证失败场没有报告写入或群消息提案。结果在 `evals/scheduled_task_generic/okr_results.v49.json`，冻结输入为 `okr_cases.v5.json`。这些仍是隔离模拟 provider 的原生合成结果，`external_executor_available=false`，不代表生产发布或真实通知。
+
+v49 配套定向测试 **125 passed**，Ruff 与 `git diff --check` 通过。集成最新主线后发现发布基线测试仍引用旧安装哈希：OA Skill 测试写死 revision 150 的哈希，但生产数据库显示当前 attendance Skill 为 revision 220、哈希 `6fd80713…`；dingtalk-oa-approval 当前 revision 221、哈希 `fc9a16dc…`。OKR Skill 和脚本的候选源摘要也需随本次文件变化更新。以上是发布摘要与测试基线过期，不是报告业务验收失败。已将前置快照、发布清单和 attendance 摘要断言更新为生产实际哈希，并更新 OKR Skill/script 的候选哈希；相关三文件回归现为 **152 passed**。
+
+当前生产读取为主线提交 `5eec88650`、PID `71765`、healthz 正常；task6 仍是配置 v19、不可变快照 198、managed Skill revision 209，旧失败运行 391405 未重放。本次 v49 Skill/script 候选仍未部署，尚未创建新的手动运行。提交并部署后，先核对 PID、healthz、队列、Attention、History、task6 新快照及 managed Skill revision/hash；确认执行绑定新版本后，才从正式 task6 手动入口创建一条新运行。新运行须以完整 Consumer/Audit 轨迹、终态、主文档和所有附录的 provider 完整读回、真实通知持久回执及 provider 查询为验收证据。绝不重放 391405 或任何已有外部回执的运行。
+
+## 2026-10-22 task6 手动执行与脚本审查阻塞
+
+正式入口创建的唯一当前 task6 手动运行是 **392030**，不可变快照绑定 task 配置
+v20 和 `ceo-weekly-okr-report` managed revision 222。前两次 Consumer 尝试
+392063/392065 因 Dingteam 专用登录态过期而停止；之后 Consumer 392092 仍报告同一认证
+错误。浏览器 Cookie 快照已按现有 `sync-chrome-cookies` 命令刷新，不曾绕过登录或读写
+用户凭据。随后系统自动对同一执行身份启动 Consumer 392114；该轮重新读了当前
+18 人名册和全部成员资料，18/18 请求完成，15 份为通过验证的实时季度 OKR，3 份明确
+返回本季度目标尚未建立。没有把缺失目标伪装成零分，也没有把它们当成读取失败。
+
+392114 在运行 `ceo-weekly-okr-report` 的 `prepare` 脚本前，以
+`operation_unavailable` 结束。完整 Consumer 轨迹显示：工具拒绝原因是
+`Consumer Skill script is not reviewed`；运行没有产生评分分析、报告正文、在线文档
+写入或通知提案，故也没有真实外部发送回执。生产源仓库中的 `report.py` 与已安装
+Skill 文件字节一致，但 `consumer-scripts.json` 仍固定旧脚本树摘要
+`94cb579f…`，而源码与安装包当前摘要都为 `a982ea36…`。这是审查清单未随已审核脚本
+变更更新的实际运行缺陷，不是验收器错误或业务材料标准问题。
+
+修复将 `consumer-scripts.json` 摘要同步到已安装和源代码完全相同的脚本树，并增加
+回归：旧摘要时测试先失败；更新后 `test_consumer_skill_script_boundary.py`、
+`test_weekly_okr_report.py` 和 `test_scheduled_okr_agent_eval.py` 共 **130 passed**。
+脚本入口列表、脚本内容、评分、审核、来源覆盖和投递条件都未改变。修复提交与部署后，
+只有在新的 task6 运行实际通过 Consumer/Audit、报告完整读回、通知持久回执及
+provider 查询后，才会将 OKR 新版自然/手动结果记为通过；392030 的失败历史保留不改。
+
+### 392187：重试重复读取导致分析始终未开始
+
+task6 run **392187** 使用 task 配置 v20、managed Skill revision 222，派发到 reply task **416838**。Consumer attempt 392206、392275、392325 均在一次尝试内重新读取完整 18 人名册来源（15 人有 Q4 数据，3 人 `goals_missing`），重新运行 `prepare` 后只读到第一位成员的材料或评分 schema，随后以可重试的 `analysis_incomplete` 结束。attempt 392246 单独因 Codex provider 用量限制失败。三次 `analysis_incomplete` 轨迹都没有写出成员分析文件；该定时运行最终没有报告写入、通知提案或通知回执。
+
+这是实际执行行为缺陷，不是评测问题或 OKR 来源故障。完整轨迹显示，Skill 把“新定时执行必须取新快照”误写成“每次 Consumer 重试都必须重读全部来源”。串行读取 18 人耗时约 10–12 分钟，重试便反复耗尽执行时间，评分分析没有起步。无正文证据见 `evals/scheduled_task_generic/okr-same-run-resume-evidence.json`。
+
+修订后的 Skill 以 `scheduled_run_id` 区分新执行与重试：新定时运行仍须重新读取名册和所有成员；同一运行的 Consumer 重试、恢复和 Audit 修订复用该运行内已验证的来源回执，只补读缺失或失败项，并保留所有有效分析。评分、证据覆盖、Audit、文档完整读回和真实投递标准均未改变。更新了回归断言，定向测试 `tests/test_scheduled_okr_agent_eval.py`、`tests/test_weekly_okr_report.py` 和 `tests/test_consumer_skill_script_boundary.py` 为 **130 passed**；发布器与同一验收断言复测 **68 passed**。Ruff、`git diff --check` 与 26 项发布文件摘要 preflight 均通过。
+
+此 Skill 修复尚未部署，也未创建新的运行。下一步提交并按正式流程部署；确认新配置快照绑定新 managed Skill revision 后，再创建一条 task6 手动验收运行。旧运行 392187 保持失败历史，不重放且不补发；新版运行仍需完整 Consumer/Audit、报告文档读回、持久通知回执和 provider 查询才能记作实际发布通过。
+
+发布前置哈希已按只读读回刷新：生产代码仍为 `25eea1dc`，healthz 正常；运行配置为 361，task6 正在使用的旧 Skill revision 为 222，安装 Skill 摘要为 `f2781a35…`。修复将 Skill metadata 版本提升至 19。候选发布清单与哈希前置现可对齐当前安装文件；部署后仍要核实新增 revision 和新 task 配置快照。
+
+### Skill v19 发布读回与 392433 分派结果
+
+`d1652acd42d3a4e514a8107101c651f4c973950d` 已经两阶段正式部署（服务代码及 Consumer/Skill 合约发布）。生产读回：PID 60441、healthz 正常、14 项定时任务仍在；active runtime Skill 配置 362；task6 配置 v21，managed revision 223，安装 Skill SHA-256 与候选完全一致。task6 仍是洛杉矶周日 03:00。
+
+部署后唯一创建的新验收 run **392433** 的不可变快照正确绑定 v21/revision223，但在 Consumer 启动前被分派器标记为 `skipped`：当时 `codex_oauth`、`qwen_gpu4`、`claude_oauth` 快照过期，`codex_api` 快照不健康。没有 Consumer/Audit trajectory、报告文档写入或通知回执，因此这不是新版 Agent 行为结果，也不能记为通过。稍后的运行时探测读回中，codex OAuth、Claude OAuth 和 Qwen 已恢复健康；Codex API 仍因 `codex_provider_overloaded` 不健康。健康快照恢复不能把 392433 的终态改成成功。
+
+按验收约束，不重放已 `skipped` 的报告，也不另建手动运行。新版 OKR 来源快照重试逻辑尚未取得真实 Consumer 证据；继续观察下一个正常 task6 调度 **2026-10-25 10:00 UTC（洛杉矶周日 03:00）**。该自然运行需实际使用 v21/revision223，并通过完整 Consumer/Audit、文档完整读回及真实通知持久回执/provider 查询，才能证明实际发布通过。
+
+### 睡眠/路由恢复补跑根因与修复
+
+对 392433 的完整分派记录确认：此次运行在 Consumer 启动前因全部 Runtime 快照暂不可用而成为 `skipped`，期间没有文档写入或通知。该记录是历史终态，保持不变且不会重放。进一步追查调度器发现同类恢复缺陷：临时 provider 不可达时，Scheduler 也会把到期计划写成永久 `skipped` 并推进下一触发，导致主机从睡眠恢复后路由尚未就绪的情况错过补跑机会。
+
+修复后，两个暂时不可用状态的回归均通过，`tests/test_agent_cron_scheduler.py` **28 passed**；改动文件 Ruff 检查与 `git diff --check` 通过。修复经 PR #241 合并为 `036b14624cddbcff04098ebec7697644f95370c0`，正式部署输出 `deployed b0839448 -> 036b1462`。
+
+生产读回：PID **65404**，`/healthz` HTTP 200；队列 **active 1 / queued 152**，Attention **19**，History **37,179** 条；14 项定时任务仍在。task6 为 v21、洛杉矶周日 03:00、下次 **2026-10-25 10:00 UTC**；task13 为 v43、洛杉矶周六 12:00、下次 **2026-10-24 19:00 UTC**；task14 为 v49、洛杉矶每天 06:00、下次 **2026-10-22 13:00 UTC**。配置与触发时间保持原值。
+
+GitHub Quality 检查在运行测试前被全仓 Ruff 阶段挡住，报告 14 处旧 lint 错误，位于本 PR 未改动的 5 个测试文件；Vercel 状态因预览部署额度不足失败。代码相关的调度定向回归、改动文件 Ruff 与差异检查已通过。未修补无关文件，也未降低任何验收门槛。新版 task6 仍只观察 2026-10-25 10:00 UTC 的自然触发，不重放 392433。

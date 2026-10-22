@@ -8,6 +8,10 @@ from typing import Literal
 
 
 PromptPlacement = Literal["developer", "task"]
+CONSUMER_OUTBOUND_INSTRUCTION = (
+    "Do not directly send external messages or email or execute approvals. "
+    "Return the typed decision or proposal; the service handles external effects."
+)
 
 
 @dataclass(frozen=True)

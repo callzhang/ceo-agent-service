@@ -565,18 +565,18 @@ def test_two_tasks_can_share_runner_without_crossing_parent_or_context(tmp_path)
         ("runtime_provider_unreachable", "failed_terminal"),
         ("codex_provider_capacity_exhausted", "failed_terminal"),
         ("dependency_read_unavailable", "failed_terminal"),
-        ("agent_context_refresh_failed", "failed_retryable"),
+            ("agent_context_refresh_failed", "failed_terminal"),
     ],
 )
 @pytest.mark.parametrize("role", [AgentRole.CONSUMER, AgentRole.AUDIT])
-def test_six_persisted_technical_failures_prevent_another_provider_turn(
+def test_four_persisted_role_failures_prevent_another_provider_turn(
     tmp_path, code, expected_status, role
 ):
     store, task, context = task_and_context(tmp_path)
     parent = None
     if role is AgentRole.AUDIT:
         parent = ScriptedConsumer(store, candidate()).run(task, context, proposal_revision=0, parent_agent_run_id=None).run_id
-    for turn in range(6):
+    for turn in range(4):
         claim = store.claim_agent_run(task.id, task.execution_generation, role=role,
             proposal_revision=0, turn_attempt=turn, parent_agent_run_id=parent,
             operation_id=_operation_id(task, 0) if role is AgentRole.AUDIT else '', owner='test')
@@ -590,7 +590,9 @@ def test_six_persisted_technical_failures_prevent_another_provider_turn(
     if expected_status == "failed_retryable":
         assert "ROOT_CAUSE" in result.summary
     assert result.error.retryable is (expected_status == "failed_retryable")
-    assert len(store.list_agent_runs_for_task_generation(task.id, task.execution_generation)) == (7 if role is AgentRole.AUDIT else 6)
+    assert len(store.list_agent_runs_for_task_generation(task.id, task.execution_generation)) == (
+        5 if role is AgentRole.AUDIT else 4
+    )
 
 
 @pytest.mark.parametrize(

@@ -40,8 +40,8 @@ purpose 由服务从任务的 OA 链接、已选 Skill 或明确 OA 动作上下
 
 未知 action、非字符串 ID、缺失的必填参数和额外参数均不能作为合法新输出。
 服务从同一动作定义生成 schema 并校验输出，再规范化为现有内部候选。OA 的
-approve、reject、return、comment 和普通 plan 继续由 Audit 审阅；文件权限申请和
-权限等待 retry 是 Consumer purpose 动作，不提交给 Audit。
+approve、reject、return、comment 和普通 plan 都由 Audit 审阅；文件权限申请和权限等待 retry
+是 Consumer purpose 动作，不提交给 Audit。
 
 ### OA 的 `return` 是真实退回
 
@@ -103,23 +103,26 @@ action identity，且旧候选只有一个对应评论动作。普通旧评论�
 `reason: access requested` 不满足条件。
 `retry` 不是技术错误，不能同时携带非空技术错误码或置真的技术错误标志。
 
-### 最多 10 次，最长 72 小时
+### 最多 3 次重读，每次间隔 12 小时
 
 | 边界 | 实现语义 |
 | --- | --- |
 | 计数起点 | 原权限申请不计入；申请核实后的每次后续读取机会在启动前预留一次。 |
-| 次数上限 | 最多预留 10 次；不保证一定运行满 10 次 Consumer。预留后来源刷新失败或进程退出，该次仍消耗预算。 |
-| 时间起点 | 从已核实原申请的持久化 dispatch 记录时间起算，保守地固定 72 小时期限。 |
-| 退避间隔 | 首次 5 分钟，之后按已预留次数指数增长，单次最多 12 小时；下一次时间不晚于期限。 |
+| 次数上限 | 原权限申请不计入；最多预留 3 次后续 Consumer 重读。预留后来源刷新失败或进程退出，该次仍消耗预算。 |
+| 时间起点 | 从已核实原申请的持久化 dispatch 记录时间起算，保留 72 小时硬截止；先达到次数上限就停止。 |
+| 间隔 | 每次权限重读固定间隔 12 小时，不再指数退避。旧预算首次被新代码读取时更新为该间隔，保留原 deadline、已用次数和 reservation。 |
 | 停止条件 | 次数或时间先到任何一项即停止；到达期限时不再开始新读取或新 Consumer。 |
 | 持久化范围 | 所有文件的权限申请共用同一业务对象和 purpose 预算；没有业务键时绑定 reply task。session、revision、generation、重启和普通 attempt 退款不清零。 |
 | 幂等与恢复 | 同一预约重复检查不重复扣数；更换申请回执不能重置预算。 |
 
 次数预留使用现有 SQLite 短事务。模型不能指定重试次数、间隔、申请时间或期限。
 Worker、定时任务和 Email 的等待分支遵守延后时间，不消耗普通任务 attempt 预算；
-权限等待自己的十次预算仍独立生效。
+权限等待自己的三次预算仍独立生效。
 
-达到限制后停止自动重读并返回预算耗尽，不自动退回或拒绝，也不能据此认定材料业务不合格；之后若需 OA 业务决定，仍由 Consumer 形成新候选并交 Audit。
+OA purpose 达到限制后停止自动重读，并让 Consumer 再运行一次形成普通 OA 退回候选；该轮不得再次申请权限或安排重试，但提退回前必须对被阻塞文件实读一次：能读则按正常审批处理，仍读不了才提退回（权限可能已在最后一次重读之后开通）。即使恢复记录没有可关联的已完成 Consumer run，也要启动这次受限的 Consumer 退回轮次并继续 Audit，不能把权限预算状态异常归为 `failed`。退回说明仅限“审批账号当前无法访问材料，请提供可访问版本或修正权限”，然后按普通 Consumer → Audit → System Execution 和节点读回流程处理。服务不合成或直接执行退回；有效候选未形成时才进入人工处理。明确的权限申请失败也使用同一 OA 退回流程。外部访问权限问题本身不得被分类为 `failed`。
+
+非 OA purpose 在权限重读耗尽后仍可记录为 `permission_blocked`：Attempt 为 `blocked`，ReplyTask 停在 `needs_human` 队列外，表示等待权限处理。History 对精确的 `consumer_purpose_retry_exhausted` 可提供一次人工触发的 Consumer 访问检查；该入口保留原预算，只有原权限已开通时才使用，不重发权限申请、不增加自动重读次数。新旧格式的已验证权限申请回执都可授权该单次检查；旧 OA 评论回执在迁移时存入 `receipts`，无需补造 `access_requests` 记录。读取成功后，Consumer 仍须独立形成新候选，由 Audit 审核业务结果，再按已有执行与读回门禁处理。
+预算耗尽后，同一业务对象的新触发没有本代 Consumer run，也记为 `permission_blocked`，挂靠该对象最近一次已完成的 Consumer run，而不是 `permission_retry_state_invalid`；人工访问检查据此可用。
 业务动作完成或经审核 `no_action` 后关闭活动等待；原计数和期限保留。
 72 小时边界控制新读取的启动，不表示强制中断已经开始的调用。
 
@@ -142,7 +145,7 @@ Worker、定时任务和 Email 的等待分支遵守延后时间，不消耗普�
 - [OA 操作 Skill 来源](../ci/shared-skills/dingtalk-oa-approval/SKILL.md)
 - [文档审阅 Skill 来源](../ci/shared-skills/ceo-document-review/SKILL.md)
 
-十次和 72 小时的边界用受控时钟、SQLite 持久化和编排回归验证。
+三次重读、12 小时间隔和 72 小时截止的边界用受控时钟、SQLite 持久化和编排回归验证。
 原生 Consumer 的 retry/return 固定案例只验证模型与 schema 的互操作。
 部署、Skill 加载和业务动作是否完成分别核实，不能把测试通过、发布成功或
 申请送达等同于权限获批或 OA 业务完成；验证不重放历史 OA 动作。

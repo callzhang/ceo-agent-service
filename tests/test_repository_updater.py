@@ -177,6 +177,32 @@ def test_upgrade_stops_service_after_quiet_before_backup_and_restart(tmp_path: P
     assert calls == ["quiet", "stop", "restart", "health"]
 
 
+def test_unpinned_upgrade_installs_main_pushed_while_waiting_for_quiet(tmp_path: Path):
+    local, _ = fixture_repo(tmp_path)
+    op = operation(local)
+    updater_clone = tmp_path / "updater"
+
+    def push_while_waiting() -> None:
+        (updater_clone / "version.txt").write_text("newer\n", encoding="utf-8")
+        git(updater_clone, "add", "version.txt")
+        git(updater_clone, "commit", "-m", "newer")
+        git(updater_clone, "push", "origin", "main")
+
+    result = RepositoryUpdater(
+        local,
+        StateStore(),
+        database_path=tmp_path / "missing.sqlite3",
+        wait_for_quiet=push_while_waiting,
+        restart=lambda: None,
+        health=lambda: True,
+    ).execute(op)
+
+    newest = git(updater_clone, "rev-parse", "HEAD")
+    assert newest != op.target_commit
+    assert result.installed_commit == newest
+    assert git(local, "rev-parse", "HEAD") == newest
+
+
 def test_failed_fast_forward_restarts_original_service(tmp_path: Path):
     local, _ = fixture_repo(tmp_path)
     op = operation(local)

@@ -54,15 +54,38 @@ def member_payload(member, facts):
     if facts.get("shared_failure") or uid == "eval-failed":
         failure = facts.get("shared_failure") or {
             "scope": "member",
-            "diagnostic": "Synthetic member-bound source unavailable",
+            "diagnostic": (
+                "Current-quarter member endpoint returned 404 for userId "
+                "eval-failed (request_id=fixture-okr-member-404); roster and "
+                "eval-a/eval-b reads succeeded in this collection run, with no "
+                "shared authorization or runtime error"
+            ),
         }
         outcome.update(
             kind="source_failed",
             scope=failure["scope"],
             diagnostic=failure["diagnostic"],
-            evidence="Current source read failed; no score established",
+            evidence=(
+                "Verified isolated current-quarter member endpoint 404; the "
+                "same-run roster and other member reads succeeded"
+                if failure["scope"] == "member"
+                else "Shared source read failed; no score established"
+            ),
         )
-        return {"manager": identity, "sourceOutcome": outcome}
+        provider_receipt = {
+            "provider": "dingtang_okr",
+            "operation": "read_current_quarter_member",
+            "request_id": "fixture-okr-member-404" if failure["scope"] == "member" else "fixture-okr-auth-unavailable",
+            "principal_user_id": "fixture-principal",
+            "authorization_status": "granted" if failure["scope"] == "member" else "unavailable",
+            "http_status": 404 if failure["scope"] == "member" else 503,
+            "error_code": "member_not_found" if failure["scope"] == "member" else failure.get("code", "auth_unavailable"),
+        }
+        return {
+            "manager": identity,
+            "sourceOutcome": outcome,
+            "providerReceipt": provider_receipt,
+        }
     if uid == "eval-missing":
         outcome.update(
             kind="goals_missing",
@@ -100,8 +123,22 @@ def member_payload(member, facts):
     return {
         "manager": identity,
         "sourceOutcome": outcome,
+        "providerReceipt": {
+            "provider": "dingtang_okr",
+            "operation": "read_current_quarter_member",
+            "request_id": "fixture-okr-member-200-" + uid,
+            "principal_user_id": "fixture-principal",
+            "authorization_status": "granted",
+            "http_status": 200,
+            "error_code": "",
+        },
         "liveOkr": live,
-        "independentEvidence": [facts["evidence"][uid], facts["evidence"]["behavior"]],
+        "independentEvidence": [
+            facts["evidence"][uid],
+            facts["evidence"].get("behavior_by_manager", {}).get(
+                uid, facts["evidence"]["behavior"]
+            ),
+        ],
     }
 
 

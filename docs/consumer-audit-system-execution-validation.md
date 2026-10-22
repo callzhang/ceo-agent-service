@@ -1,5 +1,16 @@
 # Consumer / Audit / System Execution Validation
 
+## Current retry contract update, 2026-10-21
+
+The release checkpoint below records its original policy. Current automatic
+retry budgets allow at most three retries after the initial call (four calls
+total). Consumer and Audit technical failures each have a separate persisted
+four-call budget for the same execution generation and proposal revision; one
+role does not consume the other's count. Permission reads after a verified
+access request are separately limited to three later reads, 12 hours apart,
+within the preserved 72-hour deadline. Uncertain external effects still use
+receipt reconciliation and are never automatically replayed.
+
 ## Runtime acceptance checkpoint, 2026-10-05 20:35 America/Los_Angeles
 
 Runtime release `98d69c34350ce64cc96642ada5f8f7c265107832` passed Quality37407297779:10117 backend tests,88 skipped,44 deselected;650 frontend tests,2 skipped;2 browser tests and lint/build passed. Formal deploy-e4f2c160-37bf-42cd-862e-d90f963c6c00 succeeded30a68d36→98d69c34. Production HEAD, supervisor13715/API13720, worker load receipts13719/13721, active configuration14, nine published files, scheduled Skill refs and verified backup were read back. Native startup retention replaced the formal operation snapshot with its completed current daily backup; the separately verified maintenance pre-recovery snapshot remains retained. Health, Status, Attention, task Attention and historical Attempt APIs returned200. A later extra Status observation timed out; it is preserved separately and does not establish a latency improvement. The direct production quality scanner at03:35:38Z covered18 sources with no missing source or violation.

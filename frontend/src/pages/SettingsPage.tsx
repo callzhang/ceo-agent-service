@@ -912,6 +912,7 @@ function RuntimePanel({ payload, draft, setDraft, saveState, saveError }: { payl
       [`${prefix}KIND`]: route.kind,
       [`${prefix}BASE_URL`]: route.baseUrl,
       [`${prefix}MODEL`]: route.model,
+      [`${prefix}REASONING_EFFORT`]: "",
       [`${prefix}API_KEY`]: route.token,
     });
   };
@@ -950,7 +951,7 @@ function RuntimePanel({ payload, draft, setDraft, saveState, saveError }: { payl
     const before = addedRoutePrefix(from);
     const after = addedRoutePrefix(to);
     const carried: RecordValue = { ...draft };
-    for (const suffix of ["KIND", "BASE_URL", "MODEL", "API_KEY"]) {
+    for (const suffix of ["KIND", "BASE_URL", "MODEL", "REASONING_EFFORT", "API_KEY"]) {
       carried[`${after}${suffix}`] = raw(`${before}${suffix}`);
       delete carried[`${before}${suffix}`];
     }
@@ -991,6 +992,7 @@ function RuntimePanel({ payload, draft, setDraft, saveState, saveError }: { payl
     >
       {addedKind(raw(`${prefix}KIND`))?.needsBaseUrl && <label className="runtime-field"><span>API Base URL</span><input aria-label={`${name} API Base URL`} type="url" value={raw(`${prefix}BASE_URL`)} onChange={(event) => update(`${prefix}BASE_URL`, event.target.value)} /></label>}
       <label className="runtime-field"><span>模型</span><input aria-label={`${name} 模型`} value={raw(`${prefix}MODEL`)} onChange={(event) => update(`${prefix}MODEL`, event.target.value)} /></label>
+      {raw(`${prefix}KIND`).startsWith("codex") && <SelectField id={`added-${name}-effort`} label={`${name} Thinking strength`} value={raw(`${prefix}REASONING_EFFORT`)} onChange={(next) => update(`${prefix}REASONING_EFFORT`, next)}><option value="">跟随全局 Codex</option>{REASONING_EFFORT_OPTIONS.map((item) => <option key={item.value} value={item.value}>{item.label}</option>)}</SelectField>}
       {addedKind(raw(`${prefix}KIND`))?.needsToken && <SecretField id={`added-${name}-token`} label={`${name} API Token`} configured={Boolean(raw(`${prefix}API_KEY`))} value={raw(`${prefix}API_KEY`)} onChange={(next) => update(`${prefix}API_KEY`, next)} />}
     </RuntimeRouteCard>;
   };

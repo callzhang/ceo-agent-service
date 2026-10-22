@@ -21,13 +21,13 @@ from app.agent_runtime_contracts import (
     RuntimeFailureClass,
     RuntimeRoute,
 )
-from app.external_retry import retry_delay_seconds
+from app.external_retry import MAX_AUTOMATIC_RETRIES, retry_delay_seconds
 from app.store import AgentRuntimeAttempt
 
 # A provider that says it is full (429, model at capacity) is retried on the
 # same route this many times, with growing waits, before the route is paused
 # and the turn moves to the next runtime.
-CAPACITY_RETRIES_ON_SAME_ROUTE = 3
+CAPACITY_RETRIES_ON_SAME_ROUTE = MAX_AUTOMATIC_RETRIES
 CAPACITY_RETRY_BASE_DELAY_SECONDS = 10.0
 
 

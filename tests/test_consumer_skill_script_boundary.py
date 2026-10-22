@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import shutil
 from pathlib import Path
 
 import pytest
@@ -34,6 +35,19 @@ def test_report_skill_only_exposes_reviewed_entrypoints() -> None:
         _approved_consumer_skill_script(
             "ceo-weekly-report", "scripts/report_contract.py"
         )
+
+
+def test_okr_report_prepare_script_matches_reviewed_package(tmp_path, monkeypatch) -> None:
+    source = Path(__file__).resolve().parent.parent / "ci/shared-skills"
+    skill = source / "ceo-weekly-okr-report"
+    monkeypatch.setattr("app.agent_cli.CONSUMER_SCRIPT_SOURCE_ROOT", source)
+    monkeypatch.setattr(Path, "home", classmethod(lambda cls: tmp_path))
+    installed = tmp_path / ".agents/skills/ceo-weekly-okr-report"
+    shutil.copytree(skill, installed)
+
+    assert _approved_consumer_skill_script(
+        "ceo-weekly-okr-report", "scripts/report.py"
+    ).is_file()
 
 
 def test_installed_script_must_match_reviewed_package(tmp_path, monkeypatch) -> None:

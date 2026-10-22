@@ -6,13 +6,14 @@ import argparse
 import ast
 from dataclasses import asdict
 from datetime import UTC, datetime
-from decimal import Decimal
+from decimal import Decimal, ROUND_HALF_UP
 import json
 from pathlib import Path
 import shutil
 import subprocess
 import sys
 import tempfile
+from pydantic import ValidationError
 
 from app.consumer_purpose import purpose_output_model
 from app.action_contract_catalog import system_action_contract_document
@@ -27,11 +28,18 @@ from evals.scheduled_task_generic.okr_fixture import (
 )
 
 HERE = Path(__file__).parent
-CASES_PATH = HERE / "okr_cases.v3.json"
+CASES_PATH = HERE / "okr_cases.v5.json"
 
 
 def read_json(path):
     return json.loads(Path(path).read_text())
+
+
+def parse_consumer_purpose_output(raw):
+    """Decode the native string envelope and enforce the production contract."""
+    output = json.loads(raw["purpose_output_json"])
+    purpose_output_model("general").model_validate(output)
+    return output
 
 
 def calls(work):
@@ -78,28 +86,34 @@ def fully_read(trace, work, name):
 
 
 def readback_observed(trace, work, node, doc):
-    last_write = max(i for i,c in enumerate(trace)
-                     if c["tool"] == "consumer_document_write" and c["result"]["node_id"] == node)
-    following = trace[last_write + 1:]
-    expected = digest((work / doc["readback_name"]).read_bytes())
-    return fully_read(following, work, doc["readback_name"]) or any(
+    writes = [
+        i
+        for i, call in enumerate(trace)
+        if call["tool"] == "consumer_document_write" and call["result"]["node_id"] == node
+    ]
+    following = trace[writes[-1] + 1 :] if writes else trace
+    expected = digest((work / doc["readback_name"]).read_bytes()) if doc.get("readback_name") else None
+    return (expected is not None and fully_read(following, work, doc["readback_name"])) or any(
         call["tool"] == "read_dingtalk_document"
         and call["arguments"]["node_id"] == node
         and call["result"].get("complete") is True
         and call["result"].get("status") == "success"
         and call["result"]["content"]["nodeId"] == node
         and call["result"]["content"]["revision"] == doc["revision"]
-        and digest(json.dumps(call["result"], ensure_ascii=False).encode()) == expected
+        and (
+            expected is None
+            or digest(json.dumps(call["result"], ensure_ascii=False).encode()) == expected
+        )
         for call in following)
 
 
 def restore_accepted_candidate(saved, case, work, prior=None):
     """Restore actual saved bytes/receipts for stricter checks and a new Audit."""
-    if saved["cases_sha256"] != digest(CASES_PATH.read_bytes()):
-        raise ValueError("Saved fixed facts or expectations changed")
     row = next(r for r in saved["cases"] if r["case_id"] == case["id"])
     if row["final_audit"]["output"]["verdict"] != "approve":
         raise ValueError("A failed candidate cannot be reused")
+    if saved["cases_sha256"] != digest(CASES_PATH.read_bytes()):
+        raise ValueError("Saved fixed facts or expectations changed")
     fixture = Fixture(case["facts"], work)
     for call in row["raw_tool_trace"]:
         tool, args, result = call["tool"], call["arguments"], call["result"]
@@ -161,17 +175,41 @@ def restore_accepted_candidate(saved, case, work, prior=None):
     return row
 
 
+def approved_saved_case(saved_cases, case_id):
+    """Return only an actually audited saved candidate; pending rows are not reusable."""
+    return next(
+        (
+            row
+            for row in saved_cases
+            if row.get("case_id") == case_id
+            and row.get("passed") is True
+            and row.get("final_audit", {}).get("output", {}).get("verdict") == "approve"
+        ),
+        None,
+    )
+
+
 
 def behavior_checks(reviews, expected):
+    expected_ranges = expected["behavioral_score_ranges"]
     return {
         "formal_behavioral_dimensions": all(
             [d["dimension"] for d in r["leadership_dimensions"]] == expected["leadership_dimensions"]
             and [d["dimension"] for d in r["culture_dimensions"]] == expected["culture_dimensions"]
             for r in reviews),
-        "behavioral_standard_band": all(
-            expected["behavioral_standard_band"][0] <= d["score"] <= expected["behavioral_standard_band"][1]
-            for r in reviews for d in r["leadership_dimensions"] + r["culture_dimensions"]),
+        "behavioral_scores_match_evidence": all(
+            d["dimension"] in expected_ranges
+            and expected_ranges[d["dimension"]][0]
+            <= d["score"]
+            <= expected_ranges[d["dimension"]][1]
+            for r in reviews
+            for d in r["leadership_dimensions"] + r["culture_dimensions"]
+        ),
     }
+
+
+def allowed_kr_evidence_band(score: float) -> bool:
+    return score in {0, 20, 40, 60, 80, 100}
 
 
 def _grade(case, work, output, prior=None):
@@ -250,6 +288,11 @@ def _grade(case, work, output, prior=None):
             for r in analysis.manager_reviews
             for k in r.kr_reviews
         ),
+        allowed_kr_evidence_bands=all(
+            allowed_kr_evidence_band(k.base_score)
+            for r in analysis.manager_reviews
+            for k in r.kr_reviews
+        ),
     )
     checks.update(behavior_checks([r.model_dump() for r in analysis.manager_reviews], expected))
     duplicate_names = {m.name for m in managers if sum(n.name == m.name for n in managers) > 1}
@@ -276,9 +319,10 @@ def _grade(case, work, output, prior=None):
             )
             if culture >= floor
         )
-        # Existing script rounds the binary float formula to one decimal.
-        expected_final = round(
-            (float(business) * 0.7 + float(leadership) * 0.3) * float(coefficient), 1
+        # The published one-decimal score uses conventional half-up rounding.
+        raw_final = (business * Decimal("0.7") + leadership * Decimal("0.3")) * coefficient
+        expected_final = float(
+            raw_final.quantize(Decimal("0.1"), rounding=ROUND_HALF_UP)
         )
         oracle[review.user_id] = expected_final
     checks["formula_matches_independent_oracle"] = all(
@@ -349,8 +393,9 @@ def _grade(case, work, output, prior=None):
         receipts = {c["result"]["node_id"]: c["result"]
                     for c in trace if c["tool"] == "consumer_document_write"}
         checks["exact_artifact_submission"] = all(
-            receipts[node]["content_sha256"] == digest(doc["content"].encode())
-            and receipts[node]["readback"]["artifact_name"] == doc["readback_name"]
+            (receipt := receipts.get(node)) is not None
+            and receipt["content_sha256"] == digest(doc["content"].encode())
+            and receipt["readback"]["artifact_name"] == doc.get("readback_name")
             for node, doc in published.items())
         checks["full_readbacks_consumed"] = all(
             readback_observed(trace, work, node, doc) for node, doc in published.items()
@@ -446,7 +491,6 @@ def native(
         }
     )
     schema = output_dir / "schema.json"
-    schema.write_text(json.dumps(settings))
     output = output_dir / "output.json"
     fixture_args = [
         "-m",
@@ -507,6 +551,7 @@ def native(
                 purpose_output_model("general").model_json_schema(), ensure_ascii=False
             )
         )
+    schema.write_text(json.dumps(settings))
     command = [
         shutil.which("codex") or "codex",
         "exec",
@@ -558,12 +603,27 @@ def native(
             "prompt_sha256": digest(prompt.encode()),
         }
     raw = read_json(output)
-    from jsonschema import Draft202012Validator
+    from jsonschema import Draft202012Validator, ValidationError as JSONSchemaValidationError
 
-    Draft202012Validator(settings).validate(raw)
-    if role == "consumer":
-        raw = json.loads(raw["purpose_output_json"])
-        purpose_output_model("general").model_validate(raw)
+    try:
+        Draft202012Validator(settings).validate(raw)
+        if role == "consumer":
+            raw = parse_consumer_purpose_output(raw)
+    except (
+        JSONSchemaValidationError,
+        ValidationError,
+        json.JSONDecodeError,
+        KeyError,
+        TypeError,
+        ValueError,
+    ) as error:
+        return {
+            "exit_code": p.returncode,
+            "output": None,
+            "diagnostic": f"Native final output failed the production contract: {error}",
+            "raw_output": raw,
+            "prompt_sha256": digest(prompt.encode()),
+        }
     events = [
         json.loads(line)
         for line in (output_dir / "events.jsonl").read_text().splitlines()
@@ -707,8 +767,7 @@ def main():
                     artifacts.mkdir()
                 facts = root / "facts.json"
                 facts.write_text(json.dumps(case["facts"], ensure_ascii=False))
-                previous = next((r for r in saved["cases"] if r["case_id"] == case["id"]
-                    and r["final_audit"]["output"]["verdict"] == "approve"), None) if saved else None
+                previous = approved_saved_case(saved["cases"], case["id"]) if saved else None
                 rechecked = restore_accepted_candidate(saved, case, artifacts, prior) if previous else None
                 if rechecked and args.resume_reviewed_from:
                     row = dict(rechecked)

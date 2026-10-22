@@ -216,8 +216,24 @@ class AgentCronScheduler:
                 # settles; do not turn a missed run into a permanent skip.
                 continue
 
+            deferred_for_route_recovery = False
             while True:
                 reason, detail, overlap_run_id = self._skip_reason(task)
+                if reason == RUNTIME_UNAVAILABLE and self._runtime_route_is_paused(
+                    task
+                ):
+                    # Provider outages are temporary. Keep the planned instant
+                    # so a later tick can dispatch it after the route recovers.
+                    logger.warning(
+                        "agent_cron_scheduler_runtime_unavailable",
+                        extra={
+                            "scheduled_task_id": task.id,
+                            "scheduled_task_runtime_id": task.runtime_id,
+                            "scheduled_task_skip_detail": detail,
+                        },
+                    )
+                    deferred_for_route_recovery = True
+                    break
                 result = self._store.create_scheduled_task_run_if_current(
                     task.id,
                     expected_version=planned.task_version,
@@ -228,6 +244,8 @@ class AgentCronScheduler:
                 )
                 if result.state is not ScheduledTaskRunCreateState.RETRY:
                     break
+            if deferred_for_route_recovery:
+                continue
             if result.state is ScheduledTaskRunCreateState.STALE_TASK:
                 self.reload(current)
                 continue

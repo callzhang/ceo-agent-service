@@ -1,0 +1,145 @@
+{
+  "observed_at": "2026-10-22",
+  "scheduled_task_id": 6,
+  "scheduled_run_id": 392187,
+  "task_config_version": 20,
+  "managed_skill_revision_id": 222,
+  "reply_task_id": 416838,
+  "consumer_attempts": [
+    {
+      "run_id": 392206,
+      "attempt": 0,
+      "result": "analysis_incomplete",
+      "trajectory_facts": [
+        "Read all 18 current roster member sources",
+        "Prepared the analysis plan",
+        "Read the first member source and schema",
+        "Stopped before writing any member analysis"
+      ]
+    },
+    {
+      "run_id": 392246,
+      "attempt": 1,
+      "result": "codex_provider_capacity_exhausted",
+      "trajectory_facts": [
+        "Provider reported its usage limit"
+      ]
+    },
+    {
+      "run_id": 392275,
+      "attempt": 2,
+      "result": "analysis_incomplete",
+      "trajectory_facts": [
+        "Again read all 18 current roster member sources",
+        "Prepared the analysis plan",
+        "Read the first member source",
+        "Stopped before writing any member analysis"
+      ]
+    },
+    {
+      "run_id": 392325,
+      "attempt": 3,
+      "result": "analysis_incomplete",
+      "trajectory_facts": [
+        "Again read all 18 current roster member sources",
+        "Prepared the analysis plan",
+        "Listed current artifacts and read the first member schema",
+        "Stopped before writing any member analysis"
+      ]
+    }
+  ],
+  "source_snapshot": {
+    "roster_members": 18,
+    "collected": 15,
+    "goals_missing": 3,
+    "shared_source_failure": false
+  },
+  "external_outcome": {
+    "report_document_written": false,
+    "notification_proposed": false,
+    "notification_receipt": false
+  },
+  "root_cause": "The managed Skill required every resumed Consumer attempt to refresh the full roster and every member source. Serial collection consumed about 10-12 minutes per attempt, leaving retries without enough execution time to analyze the data.",
+  "repair": "A new scheduled_run_id requires a fresh roster and member snapshot. A retry, resumed turn, or Audit correction for the same scheduled_run_id reuses successful receipts and only collects missing or failed receipts. Scoring, evidence, Audit, document readback, and delivery requirements remain unchanged. Managed Skill version is 19; publication preconditions are refreshed from production commit 25eea1dc99e75ef7a18a7331f67b2e6274abe374, active runtime skill config 361, installed Skill hash f2781a3505e57bd7e6815f35f0d94b3fb4535b31b07900e1a28b5377ec140701 and managed revision 222.",
+  "verification": {
+    "tests": "After final Skill v19 and release-manifest updates: tests/test_scheduled_okr_agent_eval.py + tests/test_weekly_okr_report.py + tests/test_consumer_skill_script_boundary.py: 130 passed; tests/test_consumer_system_release.py + tests/test_scheduled_okr_agent_eval.py: 68 passed. Ruff, git diff --check and 26-file release preflight passed.",
+    "production_deployed": true,
+    "new_run_created": true,
+    "deployment_commit": "d1652acd42d3a4e514a8107101c651f4c973950d",
+    "active_runtime_skill_config_id": 362,
+    "task6_version": 21,
+    "managed_skill_revision_id": 223,
+    "installed_skill_sha256": "18b23c5c6762ce0fa6cceedf8f1a7a14591327269897fcc56ba4ea32e9c78744",
+    "new_run_id": 392433,
+    "new_run_status": "skipped"
+  },
+  "post_deploy_run": {
+    "scheduled_run_id": 392433,
+    "task_config_version": 21,
+    "managed_skill_revision_id": 223,
+    "dispatch_status": "skipped",
+    "reason": "scheduled_task_execution_unavailable: runtime route codex_oauth: snapshot_expired; runtime route codex_api: snapshot_unhealthy; runtime route qwen_gpu4: snapshot_expired; runtime route claude_oauth: snapshot_expired",
+    "consumer_started": false,
+    "external_document_write": false,
+    "notification_receipt": false,
+    "replay_created": false
+  },
+  "recovery_readback": {
+    "service_pid": "60441",
+    "healthz": "ok",
+    "tasks_configured": 14,
+    "task6_next_scheduled_for": "2026-10-25T10:00:00Z",
+    "active_routes_at_readback": {
+      "codex_oauth": "healthy",
+      "codex_api": "unhealthy:codex_provider_overloaded",
+      "claude_oauth": "healthy",
+      "qwen_gpu4": "healthy"
+    }
+  },
+  "scheduler_catch_up_recovery": {
+    "observed_at": "2026-10-22",
+    "historical_run_id": 392433,
+    "historical_run_unchanged": true,
+    "root_cause": "When all runtime routes were temporarily unavailable at dispatch time, the scheduler created a terminal skipped run and advanced next_run_at. A route recovery after host resume could not dispatch that missed trigger.",
+    "repair": "Keep the planned instant without creating a run while the selected runtime provider is temporarily unreachable; dispatch it once the route recovers. Preserve static route/configuration skip behavior and coalesce multiple missed instants to the latest one.",
+    "verification": {
+      "regression_before_fix": "2 failed as expected: both paused:codex_provider_overloaded and snapshot_missing created skipped runs instead of preserving the trigger.",
+      "regression_after_fix": "tests/test_agent_cron_scheduler.py: 28 passed, including route outage deferral/recovery and static route fault handling.",
+      "deployment": "Deployed by python -m app.deploy as 036b14624cddbcff04098ebec7697644f95370c0; production readback healthz HTTP 200, PID 65404, 14 scheduled tasks.",
+      "next_natural_okr_run": "2026-10-25T10:00:00Z",
+      "lint": "ruff check app/agent_cron/scheduler.py tests/test_agent_cron_scheduler.py passed; git diff --check passed.",
+      "ci": "GitHub Quality failed at full-repository Ruff before running tests: 14 existing lint findings in five files unchanged by this PR. Vercel preview failed because of the external deployment quota. These do not change the focused scheduler test result."
+    },
+    "production_readback": {
+      "deployed_commit": "036b14624cddbcff04098ebec7697644f95370c0",
+      "deploy_transition": "b0839448 -> 036b1462",
+      "service_pid": 65404,
+      "healthz": {
+        "http": 200,
+        "ok": true
+      },
+      "queues": {
+        "active": 1,
+        "queued": 152
+      },
+      "attention_groups": 19,
+      "history_total": 37179,
+      "scheduled_tasks": 14,
+      "task6": {
+        "version": 21,
+        "timezone": "America/Los_Angeles",
+        "next_run_at": "2026-10-25T10:00:00Z"
+      },
+      "task13": {
+        "version": 43,
+        "timezone": "America/Los_Angeles",
+        "next_run_at": "2026-10-24T19:00:00Z"
+      },
+      "task14": {
+        "version": 49,
+        "timezone": "America/Los_Angeles",
+        "next_run_at": "2026-10-22T13:00:00Z"
+      }
+    }
+  }
+}

@@ -106,6 +106,7 @@ class AgentTaskContext:
     predecessor_review_id: int | None = None
     prior_human_decisions: tuple[dict[str, object], ...] = ()
     business_state_changes: tuple[dict[str, object], ...] = ()
+    permission_return_required: bool = False
 
     @property
     def unresolved_image_count(self) -> int:
@@ -146,6 +147,17 @@ class AgentTaskContext:
                 "An Audit return does not advance the stage. For this replacement revision, "
                 "keep the exact service-bound stage_index and predecessor_review_id above. "
                 "Advance only after Audit approves this stage and its action has a verified completed execution receipt."
+            )
+        if self.permission_return_required:
+            sections.append(
+                "### Permission Retry Exhausted\n"
+                "The permitted file-access retries are exhausted, or the one permission request could not be completed. "
+                "Do not request access again or schedule another retry. Read the blocked file once now: access may have been granted since the last attempt. "
+                "If it reads, ignore the rest of this section and review the approval normally. "
+                "Only if it still cannot be read, prepare a normal `return` proposal asking the verified applicant or responsible source owner "
+                "to provide an accessible copy or correct the access path. State only the known access limitation; do not claim the file is missing or the business evidence is deficient. "
+                "Cite the persisted permission-request receipt or the exact failed-request evidence when available. "
+                "This is an OA business proposal and must pass Audit before execution. The service will not synthesize or execute the return."
             )
         return "\n\n".join(sections)
 

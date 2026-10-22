@@ -28,6 +28,7 @@ from app.meeting_alignment_models import (
     render_meeting_alignment_cross_field_rules,
 )
 from app.prompt import work_profile_instruction
+from app.prompt_composition import CONSUMER_OUTBOUND_INSTRUCTION
 from app.routed_result_privacy import audit_references_from_full_events
 from app.store import CodexSessionSearchResult
 
@@ -221,11 +222,13 @@ class MeetingAlignmentCodexRunner:
                 command_factory=CodexCommandFactory.standard(
                     developer_instructions=(
                         "Return exactly one MeetingAlignmentDecision JSON object.\n\n"
+                        "DWS 只用于群与身份的只读取证。\n"
+                        + CONSUMER_OUTBOUND_INSTRUCTION + "\n\n"
                         + BACKGROUND_AGENT_RUNTIME_BOUNDARY
                     ),
                     output_schema_path=MEETING_ALIGNMENT_DECISION_SCHEMA_PATH,
                     use_output_schema=True,
-                    skill_names=() if compact_prompt is not None else None,
+                    skill_names=("dingtalk-chat",) if compact_prompt is not None else None,
                     project_doc_max_bytes=0,
                 ),
                 parser=_encode_meeting_alignment_result,

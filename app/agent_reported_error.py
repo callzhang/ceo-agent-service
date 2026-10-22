@@ -87,6 +87,11 @@ def _reportable_policies() -> dict[str, ErrorPolicy]:
         # A turn cannot gain a missing declared operation by repeating the
         # same task against the same runtime capabilities.
         "operation_unavailable": _FINAL,
+        # The same terminal condition was reported by Consumer runs 416428
+        # under these two names. Preserve the original source_code below, but
+        # do not spend the bounded retry budget repeating an absent capability.
+        "capability_unavailable": _FINAL,
+        "write_capability_unavailable": _FINAL,
         # A dependency that was not there this turn may be there the next.
         "dependency_read_unavailable": _RECOVERS_BY_ITSELF,
         "xiaoqing_interview_mcp_not_injected": _RECOVERS_BY_ITSELF,

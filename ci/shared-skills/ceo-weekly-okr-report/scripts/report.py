@@ -4,6 +4,7 @@ import argparse
 import hashlib
 import json
 from dataclasses import asdict, dataclass
+from decimal import Decimal, ROUND_HALF_UP
 from pathlib import Path
 from typing import Any, Literal
 from pydantic import BaseModel, ConfigDict, Field, PrivateAttr
@@ -309,12 +310,12 @@ def _manager_scorecards(
             if leadership_score is None:
                 status = "领导力维度待补充"
             else:
-                final_score = (
-                    business_score * 0.7 + leadership_score * 0.3
-                ) * coefficient
+                final_score = _manager_final_score(
+                    business_score, leadership_score, coefficient
+                )
                 status = "已形成最终分"
         elif review.role_level == "专业贡献者":
-            final_score = business_score * coefficient
+            final_score = _scaled_score(business_score, coefficient)
             status = "已形成最终分（专业贡献者公式）"
         else:
             status = "职级待确认，暂不形成最终分"
@@ -399,7 +400,7 @@ def render_weekly_okr_report(
         "",
         f"- OKR 周期：{period_label}",
         f"- 管理者范围：CEO-2 管理群，共 {len(managers)} 人",
-        "- 数据口径：实时叮当 OKR 目标、KR 评论/进展，以及文档、知识库、AI听记、群聊等可读取的独立证据",
+        "- 数据口径：实时叮当 OKR 目标、KR 评论/进展；独立材料以本轮实际读取并列明的来源为准，未读取的来源不视为已核验",
         "- 综合证据评分：系统进度仅作为线索；每个 KR 按实际结果、证据强度和完成时间评分",
         "- 评分公式：业务 OKR 按 O 权重×KR 权重汇总；管理者最终分 =（业务 OKR×70% + 领导力×30%）×文化系数",
         "- 使用提醒：这是截至本周的证据完成度快照，不是季度末绩效预测；管理会应重点审阅证据缺口、风险和下周检查点",
@@ -411,7 +412,7 @@ def render_weekly_okr_report(
         "### 评分概览",
         "",
         f"- 已形成最终分：{len(finalized_scores)} 人；暂不形成：{pending_count} 人",
-        f"- 已形成最终分平均值：{sum(finalized_scores) / len(finalized_scores):.1f}"
+        f"- 已形成最终分平均值：{_display_average(finalized_scores)}"
         if finalized_scores
         else "- 已形成最终分平均值：暂不形成",
         f"- 低于 60 分：{sum(score < 60 for score in finalized_scores)} 人；"
@@ -593,7 +594,7 @@ def render_group_summary(
         "已按综合证据口径更新：系统进度仅作线索，结合评论/进展和独立证据逐 KR 评分。",
         f"评分概览：{manager_count} 人中 {len(finalized)} 人形成最终分，{pending} 人暂不形成最终分"
         + (
-            f"；已形成最终分的平均值为 {sum(finalized) / len(finalized):.1f}。"
+            f"；已形成最终分的平均值为 {_display_average(finalized)}。"
             if finalized
             else "。"
         ),
@@ -725,13 +726,34 @@ def _culture_coefficient(score: float) -> float:
     return 0.8
 
 
+def _manager_final_score(
+    business_score: float, leadership_score: float, coefficient: float
+) -> float:
+    value = (
+        Decimal(str(business_score)) * Decimal("0.7")
+        + Decimal(str(leadership_score)) * Decimal("0.3")
+    ) * Decimal(str(coefficient))
+    return float(value)
+
+
+def _scaled_score(business_score: float, coefficient: float) -> float:
+    return float(Decimal(str(business_score)) * Decimal(str(coefficient)))
+
+
 def _weight_number(value: object) -> float:
     number = _progress_number(value)
     return 0.0 if number is None else number
 
 
 def _rounded(value: float | None) -> float | None:
-    return None if value is None else round(value, 1)
+    if value is None:
+        return None
+    return float(Decimal(str(value)).quantize(Decimal("0.1"), rounding=ROUND_HALF_UP))
+
+
+def _display_average(values: list[float]) -> str:
+    average = sum(Decimal(str(value)) for value in values) / Decimal(len(values))
+    return str(average.quantize(Decimal("0.1"), rounding=ROUND_HALF_UP))
 
 
 def _okr_stats(payload: dict[str, Any]) -> dict[str, Any]:
@@ -965,9 +987,13 @@ def prepare(
                 analysis_file=f"analysis-{key}.json",
             )
             analysis_file = output_dir / entry["analysis_file"]
+            existing_analysis = (
+                _read_json(analysis_file) if analysis_file.is_file() else None
+            )
             entry["analysis_reusable"] = (
-                analysis_file.is_file()
-                and _read_json(analysis_file).get("_source_sha256") == entry["source_sha256"]
+                isinstance(existing_analysis, dict)
+                and "analysis_failure" not in existing_analysis
+                and existing_analysis.get("_source_sha256") == entry["source_sha256"]
             )
         plan.append(entry)
     result = {

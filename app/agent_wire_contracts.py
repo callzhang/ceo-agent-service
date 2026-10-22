@@ -228,7 +228,7 @@ class _AuditFeedbackWire(AuditFeedback):
 class _AuditWire(_WireBase):
     outcome: Literal["approve", "return", "reject", "failed"]
     evidence_refs: list[str] = Field(default_factory=list)
-    feedback: _AuditFeedbackWire | None
+    feedback: _AuditFeedbackWire | None = None
 
 
 class AuditAgentWireResult(RootModel[_AuditWire]):

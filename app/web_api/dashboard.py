@@ -11,6 +11,7 @@ import sqlite3
 from fastapi import FastAPI, Query
 
 from app.run_storage import MEETING_RUN_SQL, SCHEDULED_RUN_SQL
+from app.external_retry import MAX_AUTOMATIC_ATTEMPTS
 from app.action_storage import REPLY_ATTEMPT_COMMON_SQL
 from app.action_storage import (
     task_delivery_projection,
@@ -287,7 +288,7 @@ def _append_auxiliary_queues(db, queues, now_text):
             created_at,updated_at,next_attempt_at as available_at,error,'' as started_at,
             lease_owner as owner,lease_expires_at,operation as title,'' as detail_url
             from ({projection}) where status in ('queued','running')
-              or (status='failed' and attempt_count<3 and next_attempt_at<>'')""",
+              or (status='failed' and attempt_count<{MAX_AUTOMATIC_ATTEMPTS} and next_attempt_at<>'')""",
             )
         )
     sources.append(

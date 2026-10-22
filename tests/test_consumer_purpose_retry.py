@@ -16,12 +16,13 @@ from app.store import AutoReplyStore
 NOW = datetime(2026, 10, 19, 12, tzinfo=timezone.utc)
 
 
-def test_ten_retries_are_persisted_across_instances_and_revisions(tmp_path):
+def test_three_permission_retries_are_spaced_twelve_hours_and_persisted(tmp_path):
     path = tmp_path / 'state.db'
     budget = PurposeRetryBudget(AutoReplyStore(path), 'oa:process:task', 'oa')
     now = NOW
-    for attempt in range(10):
+    for attempt in range(3):
         next_at = budget.schedule('receipt', NOW, f'review-{attempt}', now)
+        assert next_at == now + timedelta(hours=12)
         # A repeated poll must not move the wakeup or deadline.
         assert budget.schedule('receipt', NOW, f'review-{attempt}', now + timedelta(seconds=1)) == next_at
         now = next_at
@@ -29,7 +30,7 @@ def test_ten_retries_are_persisted_across_instances_and_revisions(tmp_path):
         assert budget.reserve(f'new-session/revision-{attempt}', now) == attempt + 1
         assert budget.reserve(f'new-session/revision-{attempt}', now) == attempt + 1
     with pytest.raises(RetryBudgetExhausted, match='count'):
-        budget.schedule('receipt', NOW, 'review-11', now)
+        budget.schedule('receipt', NOW, 'review-4', now)
     with pytest.raises(RetryBudgetExhausted):
         budget.reserve('session-11', now)
 
@@ -65,7 +66,7 @@ def test_distinct_file_receipts_share_the_original_retry_budget(tmp_path):
     )
 
     state = budget.state()
-    assert second == second_request_time + timedelta(minutes=10)
+    assert second == second_request_time + timedelta(hours=12)
     assert state['count'] == 1
     assert state['deadline'] == (NOW + timedelta(days=3)).isoformat()
     assert {item['receipt'] for item in state['receipts']} == {
@@ -91,8 +92,8 @@ def test_consumer_permission_requests_are_file_scoped_and_audit_free_budget_is_s
     second = budget.schedule('request-b', second_time, 'consumer:2', second_time)
 
     state = budget.state()
-    assert first == NOW + timedelta(seconds=300)
-    assert second == second_time + timedelta(seconds=300)
+    assert first == NOW + timedelta(hours=12)
+    assert second == second_time + timedelta(hours=12)
     assert state['count'] == 0
     assert state['deadline'] == (NOW + timedelta(days=3)).isoformat()
     assert {row['receipt'] for row in state['receipts']} == {'request-a', 'request-b'}
@@ -126,6 +127,31 @@ def test_closed_budget_retains_the_original_counter_and_deadline(tmp_path):
     budget.schedule('receipt', NOW, 'review-2', due)
     assert budget.state()['count'] == 1
     assert budget.state()['deadline'] == (NOW + timedelta(days=3)).isoformat()
+
+
+def test_existing_permission_wait_moves_to_twelve_hour_interval_without_resetting_budget(
+    tmp_path,
+):
+    store = AutoReplyStore(tmp_path / 'state.db')
+    budget = PurposeRetryBudget(store, 'oa:x', 'oa')
+    legacy = {
+        'receipts': [{'receipt': 'receipt', 'requested_at': NOW.isoformat()}],
+        'requested_at': NOW.isoformat(),
+        'deadline': (NOW + timedelta(days=3)).isoformat(),
+        'count': 1,
+        'reservations': ['turn-1'],
+        'review': 'review-1',
+        'next_at': (NOW + timedelta(minutes=5)).isoformat(),
+    }
+    store.set_service_state(budget.key, json.dumps(legacy))
+
+    rechecked_at = NOW + timedelta(hours=1)
+    next_at = budget.schedule('receipt', NOW, 'review-1', rechecked_at)
+
+    assert next_at == rechecked_at + timedelta(hours=12)
+    assert budget.state()['count'] == 1
+    assert budget.state()['reservations'] == ['turn-1']
+    assert budget.state()['deadline'] == legacy['deadline']
 
 
 def test_retry_accepts_canonical_receipt_evidence_reference():

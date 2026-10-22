@@ -66,7 +66,11 @@ from app.feedback_spike import (
     build_events_url,
     send_feedback_spike_links,
 )
-from app.external_retry import is_external_dependency_error
+from app.external_retry import (
+    MAX_AUTOMATIC_ATTEMPTS,
+    MAX_AUTOMATIC_RETRIES,
+    is_external_dependency_error,
+)
 from app.message_split import split_dingtalk_text
 from app.service_heartbeat import run_service_heartbeat_loop
 from app.service_message_sender import ServiceMessageSender
@@ -148,7 +152,7 @@ def run_consumer_dispatcher_loop(
     dispatcher.run(stop_event=stop_event)
 
 
-WORK_SUMMARY_TRANSIENT_RETRY_ATTEMPTS = 3
+WORK_SUMMARY_TRANSIENT_RETRY_ATTEMPTS = MAX_AUTOMATIC_ATTEMPTS
 # The router raises this when another worker already holds the workload's
 # runtime attempt. It says nothing about the work item.
 RUNTIME_ATTEMPT_ACTIVE_CODE = "runtime_attempt_active"
@@ -231,7 +235,7 @@ class WorkerSettings(BaseModel):
     ding_robot_code: str | None = None
     ding_robot_name: str | None = DEFAULT_DING_ROBOT_NAME
     ding_receiver_user_id: str | None = None
-    dws_transient_retry_attempts: PositiveInt = 3
+    dws_transient_retry_attempts: PositiveInt = MAX_AUTOMATIC_RETRIES
     dws_transient_retry_delay_seconds: float = 1.0
     codex_timeout_seconds: PositiveInt = 1200
     codex_idle_timeout_seconds: PositiveInt = 900
@@ -244,6 +248,13 @@ class WorkerSettings(BaseModel):
     repository_upgrade_enabled: bool = repository_upgrade_enabled()
     repository_upgrade_remote: str = repository_upgrade_remote()
     repository_upgrade_branch: str = repository_upgrade_branch()
+
+    @field_validator("dws_transient_retry_attempts", mode="before")
+    @classmethod
+    def cap_dws_transient_retries(cls, value: object) -> object:
+        if value is None:
+            return value
+        return min(int(value), MAX_AUTOMATIC_RETRIES)
     repository_upgrade_check_interval_seconds: PositiveInt = repository_upgrade_check_interval_seconds()
 
     @field_validator("meeting_memory_workers")
@@ -1898,7 +1909,7 @@ def skip_stale_wechat_delivery_command(
     delivery_id: int,
     inactive_before: str,
     reason: str,
-    max_retries: int = 2,
+    max_retries: int = MAX_AUTOMATIC_RETRIES,
 ) -> None:
     store = AutoReplyStore(settings.db_path)
     delivery = store.get_wechat_delivery_by_id(delivery_id)
@@ -3924,7 +3935,9 @@ def _run_wechat_sender_loop(settings: WorkerSettings) -> None:
     from app import config as _cfg
     from app.wechat import service as _wx
     from app.wechat.accessibility import WechatSender
+    from app.wechat.audit import WechatDeliveryAuditor
     from app.wechat.reader_ipc import ReaderIpcError
+    from app.agent_runtime_production import build_production_routed_codex_execution
 
     store = AutoReplyStore(settings.db_path)
     state = None
@@ -3939,6 +3952,16 @@ def _run_wechat_sender_loop(settings: WorkerSettings) -> None:
     account = _wx.account_from_state(state)
     reader = _wx.build_reader()
     wsender = WechatSender(store, _wx.build_sender())
+    auditor = WechatDeliveryAuditor(
+        store,
+        build_production_routed_codex_execution(
+            store=store, workspace=settings.workspace,
+            total_timeout_seconds=settings.codex_timeout_seconds,
+            idle_timeout_seconds=settings.codex_idle_timeout_seconds,
+        ),
+        reader,
+        account,
+    )
     interval = 15
     consecutive_sqlite_lock_failures = 0
     consecutive_reader_failures = 0
@@ -3952,6 +3975,7 @@ def _run_wechat_sender_loop(settings: WorkerSettings) -> None:
                 sender_enabled=_cfg.wechat_sender_enabled(),
                 reader=reader,
                 account=account,
+                auditor=auditor,
             )
             store.resolve_unresolved_errors_by_kind(
                 "wechat_sender_loop_error",

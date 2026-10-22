@@ -37,6 +37,7 @@ from app.codex_runner import (
 from app.service_codex_config import service_mcp_config_options
 
 _SAFE_ENV_KEYS = {
+    "CEO_OKR_LIVE_SOURCE_COMMAND",
     "CODEX_CA_CERTIFICATE",
     "CODEX_HOME",
     "COLORTERM",
@@ -156,7 +157,11 @@ class CodexRuntimeAdapter:
             shell_environment_policy_core=True,
             sandbox_mode=sandbox_mode,
             skip_git_repo_check=skip_git_repo_check,
-            reasoning_effort=reasoning_effort,
+            reasoning_effort=(
+                reasoning_effort
+                if reasoning_effort is not None
+                else configured_route.reasoning_effort or None
+            ),
             project_doc_max_bytes=project_doc_max_bytes,
             skill_exclusion_override=codex_skill_config_override(
                 skill_names, inlined_names=inlined_skill_names

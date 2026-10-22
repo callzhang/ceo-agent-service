@@ -56,6 +56,12 @@ def _status_message(
         return "这条事项已判定无需回复，无需你操作。", False
     if status == "needs_human":
         return "这条事项等待你的决策。请阅读已核验事实后提交处理指令。", True
+    if status == "blocked" and getattr(attempt, "send_error", "") == "consumer_purpose_retry_exhausted":
+        return (
+            "权限申请后的自动重读次数已用完，审批仍待处理。权限开通后可重新读取并审核；"
+            "此状态不代表审批失败，也不会自动执行审批动作。",
+            False,
+        )
     if status == "failed":
         if rerun_block_reason:
             return rerun_block_reason, False
@@ -555,6 +561,7 @@ def _action_links(
     return {
         "can_rerun": (
             (status == "failed" and not rerun_block_reason)
+            or (status == "blocked" and attempt.send_error == "consumer_purpose_retry_exhausted" and not rerun_block_reason)
             or can_reopen_skipped_oa_review(attempt, reply_task)
         ),
         "rerun_label": rerun.label,

@@ -205,8 +205,8 @@ OKR 审核 runner 默认使用叮当 OKR Web live source，不再依赖本地 xl
 - `CEO_OKR_SOURCE_KIND=dingteam_web` 时，必须设置 `CEO_OKR_LIVE_SOURCE_COMMAND`。该命令接收
   `{user_id}` 和 `{period_label}` 占位符，并返回 worker 可用的实时 OKR JSON。
   本机 Dingteam Web source 命令示例：
-  `CEO_OKR_LIVE_SOURCE_COMMAND=/Users/derek/miniforge3/bin/python /Users/derek/.agents/skills/dingtang-okr-review/scripts/dingteam_okr_browser_source.py fetch --user-id {user_id} --period-label {period_label}`。
-  该命令使用 `dingtang-okr-review` skill 的专用 headless browser profile 和 token cache；登录态过期时先运行
+  `CEO_OKR_LIVE_SOURCE_COMMAND=/Users/derek/miniforge3/bin/python /Users/derek/Services/ceo-agent-service/scripts/dingteam_okr_headless_source.py --user-id {user_id} --period-label {period_label}`。
+  该入口复用 `dingtang-okr-review` Skill 的专用 browser profile 和 token cache；完整个人周期列表确认当前季度不存在时，返回可验证的成员级未建目标收据。登录态过期时先运行
   `/Users/derek/miniforge3/bin/python /Users/derek/.agents/skills/dingtang-okr-review/scripts/dingteam_okr_browser_source.py login`
   并扫码。脚本不读取普通 Chrome cookie、localStorage 或 session 文件。
 - 只有确认企业 OKR 数据暴露在 Agoal objective API 中时，才设置 `CEO_OKR_SOURCE_KIND=agoal`。
@@ -298,7 +298,7 @@ cp .env.example .env
 | `CEO_REPOSITORY_UPGRADE_CHECK_INTERVAL_SECONDS` | 自动检查远端更新的周期，默认 21600 秒（6 小时） |
 | `CEO_REPOSITORY_UPGRADE_DISABLED` | 设为 `1` 禁用周期检查；History 页面仍可手动查看已保存状态 |
 | `CEO_CODEX_MODEL` / `CEO_CODEX_MODEL_REASONING_EFFORT` / `CEO_CODEX_MODEL_PROVIDER` | Codex OAuth 默认模型、thinking 强度和可选 provider；默认 `gpt-5.5` + `medium`。在 `Settings → Agent Runtime` 中用下拉菜单修改；模型可选 `gpt-5.5`、`gpt-5.6-sol`、`gpt-5.6-terra`、`gpt-5.6-luna`。不提供 `gpt-5.6` 别名，因为 Codex CLI 的 ChatGPT OAuth 会拒绝该别名。保存到 `.env` 后重启主服务统一生效，认证与 MCP/skills 保持沿用当前安装用户配置。 |
-| `CEO_AGENT_RUNTIME_ROUTES` / `CEO_RUNTIME_<名字>_KIND` / `_BASE_URL` / `_MODEL` / `_API_KEY` | 可选的 API 路由（Codex API 或 Claude API）：在 `Settings → Agent Runtime` 用「新增 runtime」添加，名字自己起、可改名，模型自由填写。Token 留空保存会保留已有 Token。旧的 `CEO_CODEX_API_*` / `CEO_CLAUDE_API_*` 在服务启动时一次性迁移为名为 `codex_api` / `claude_api` 的添加线路。 |
+| `CEO_AGENT_RUNTIME_ROUTES` / `CEO_RUNTIME_<名字>_KIND` / `_BASE_URL` / `_MODEL` / `_REASONING_EFFORT` / `_API_KEY` | 可选的 Codex/Claude 路由：在 `Settings → Agent Runtime` 添加、改名和配置。Codex 添加线路可单独选择 thinking 强度；留空沿用全局 Codex 值。Token 留空保存会保留已有 Token。旧的 `CEO_CODEX_API_*` / `CEO_CLAUDE_API_*` 在服务启动时一次性迁移为名为 `codex_api` / `claude_api` 的添加线路。 |
 | `CEO_AGENT_RUNTIME_ROUTES` / `CEO_FRIDAY_RUNTIME_BASE_URL` / `CEO_FRIDAY_RUNTIME_PROJECT_ID` / `CEO_FRIDAY_RUNTIME_MODEL` / `CEO_FRIDAY_RUNTIME_PROVIDER_BASE_URL` / `CEO_FRIDAY_RUNTIME_PROVIDER_MODEL` / `CEO_FRIDAY_RUNTIME_PROVIDER_API_KEY` / `CEO_FRIDAY_RUNTIME_TICKET`（或 `CEO_FRIDAY_SESSION_TOKEN`） | 可选 Friday Runtime fallback：启用 `friday_runtime` 后填写 Friday Runtime 地址、project ID、Runtime provider 地址/模型/API Token 和一个 Runtime 凭据。Friday provider 配置使用独立的 `CEO_FRIDAY_RUNTIME_PROVIDER_*` 字段，不与 Codex API URL/key 共享；Runtime ticket/session token 仍只用于访问 Friday Runtime。本地无鉴权测试必须显式设置 `CEO_FRIDAY_RUNTIME_AUTH_DISABLED=1`。 |
 | `CEO_CODEX_CAPACITY_RETRY_DELAY` | Codex 明确返回 workspace credits、quota 或 usage limit 后的全局暂停期；默认 30 分钟，暂停期内不再启动新的 Codex 回复、工作汇总或会议分析，过期后自动恢复 |
 | `CEO_CODEX_CAPACITY_RETRY_MAX_DELAY` | Codex 容量持续不足时的最长探测间隔；默认 4 小时。探测从 `CEO_CODEX_CAPACITY_RETRY_DELAY` 开始逐次翻倍，成功后重置 |

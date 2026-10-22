@@ -196,6 +196,9 @@ from app.action_storage import (
     REVIEW_CANDIDATE_SQL,
     CANDIDATE_REVIEW_SQL,
     CANDIDATE_SELECTION_SQL,
+    CANDIDATE_EXECUTION_SQL,
+    CANDIDATE_ACTION_ATTEMPT_SQL,
+    EXTERNAL_ACTION_RESULT_SQL,
     SENT_REPLY_SQL,
     REPLY_ATTEMPT_COMMON_SQL,
     task_delivery_projection,
@@ -3368,6 +3371,62 @@ def _reply_task_attention_diagnostics(raw: str, task_error: str) -> dict[str, st
     return {"error_code": diagnostic, "error": description}
 
 
+def _verified_oa_return_after_attempt(
+    db: sqlite3.Connection, *, process_instance_id: str, attempt_updated_at: str
+) -> bool:
+    """Whether a later, current approved execution verified this OA process return."""
+    if not process_instance_id.strip() or not attempt_updated_at.strip():
+        return False
+    row = db.execute(
+        f"""
+        select 1
+        from ({REPLY_ATTEMPT_COMMON_SQL}) attempts
+        join ({AGENT_RUN_SQL}) run on run.id=attempts.agent_run_id
+        join ({REPLY_TASK_CURRENT_SQL}) task on task.id=run.reply_task_id
+         and task.execution_generation=run.execution_generation
+        join ({REVIEW_CANDIDATE_SQL}) candidate
+          on candidate.task_id=task.id
+         and candidate.execution_generation=task.execution_generation
+         and candidate.invalidated_at=''
+        join ({CANDIDATE_REVIEW_SQL}) review
+          on review.candidate_id=candidate.id
+         and review.audit_run_id=run.id
+         and review.decision='approve'
+         and review.candidate_digest=candidate.candidate_digest
+        join ({CANDIDATE_EXECUTION_SQL}) execution
+          on execution.candidate_id=candidate.id
+         and execution.review_id=review.id
+         and execution.status='done'
+        join ({CANDIDATE_ACTION_ATTEMPT_SQL}) action_attempt
+          on action_attempt.execution_id=execution.id
+         and action_attempt.status='verified'
+        join ({EXTERNAL_ACTION_RESULT_SQL}) receipt
+          on receipt.external_action_key=action_attempt.external_action_key
+         and receipt.operation='revert_task'
+        where attempts.oa_process_instance_id=?
+          and datetime(attempts.updated_at)>datetime(?)
+          and candidate.id=(
+              select max(latest.id)
+              from ({REVIEW_CANDIDATE_SQL}) latest
+              where latest.task_id=candidate.task_id
+                and latest.execution_generation=candidate.execution_generation
+          )
+          and receipt.business_object_key=task.business_object_key
+          and json_valid(receipt.provider_result_json)
+          and json_extract(receipt.provider_result_json,'$.process_instance_id')=?
+          and json_extract(receipt.provider_result_json,'$.task_id')<>''
+          and json_extract(receipt.provider_result_json,'$.return_record.type')='REDIRECT_PROCESS'
+          and json_extract(receipt.provider_result_json,'$.return_record.user_id')<>''
+          and json_extract(receipt.provider_result_json,'$.provider_response.dingOpenErrcode')=0
+          and json_extract(receipt.provider_result_json,'$.provider_response.result')=1
+          and json_extract(receipt.provider_result_json,'$.provider_response.success')=1
+        limit 1
+        """,
+        (process_instance_id, attempt_updated_at, process_instance_id),
+    ).fetchone()
+    return row is not None
+
+
 def _queue_attention_rows(store: AutoReplyStore, *, limit: int | None = None) -> list[dict[str, object]]:
     specs = [
         (
@@ -3910,7 +3969,23 @@ def _queue_attention_rows(store: AutoReplyStore, *, limit: int | None = None) ->
                     }
                 )
 
-    for attempt in store.list_current_unresolved_problem_attempt_summaries(limit=limit):
+    unresolved_attempts = store.list_current_unresolved_problem_attempt_summaries(limit=limit)
+    attempt_oa_identity: dict[str, str] = {}
+    if unresolved_attempts:
+        attempt_ids = [int(item["id"]) for item in unresolved_attempts if str(item["id"]).isdigit()]
+        if attempt_ids:
+            placeholders = ",".join("?" for _ in attempt_ids)
+            with store._connect() as db:
+                attempt_oa_identity = {
+                    str(row["id"]): str(row["oa_process_instance_id"] or "")
+                    for row in db.execute(
+                        f"select id,oa_process_instance_id from ({REPLY_ATTEMPT_COMMON_SQL}) "
+                        f"where id in ({placeholders})",
+                        tuple(attempt_ids),
+                    ).fetchall()
+                }
+
+    for attempt in unresolved_attempts:
         send_status = str(attempt["send_status"] or "").casefold()
         # Attention is the service-error surface. A genuine business decision
         # stays available from its attempt/detail page, but must not inflate
@@ -3934,6 +4009,14 @@ def _queue_attention_rows(store: AutoReplyStore, *, limit: int | None = None) ->
             continue
         if send_status == "failed" and trigger_key in active_reply_task_triggers:
             continue
+        if send_status == "failed" and attempt_oa_identity.get(attempt["id"]):
+            with store._connect() as db:
+                if _verified_oa_return_after_attempt(
+                    db,
+                    process_instance_id=attempt_oa_identity[attempt["id"]],
+                    attempt_updated_at=attempt["updated_at"],
+                ):
+                    continue
         rows.append(
             {
                 "category": "Reply",
@@ -12026,7 +12109,13 @@ def _attempt_rerun_block_reason(
     if attempt.resolved_at and attempt.send_status.strip().lower() in {"needs_human", "skipped"}:
         if not (allow_skipped_oa_review and attempt.send_status.strip().lower() == "skipped"):
             return attempt.resolution or "这条旧问题已退役，无需重新处理。"
-    if attempt.send_status.strip().lower() != "failed":
+    status = attempt.send_status.strip().lower()
+    if status == "blocked":
+        return (
+            "" if attempt.send_error == "consumer_purpose_retry_exhausted"
+            else "此受阻事项不支持通过重试重新处理。"
+        )
+    if status != "failed":
         return ""
     terminal_run = next(
         (
@@ -12564,6 +12653,7 @@ def _history_attention_html(
         "needs_manager": "需要你处理",
         "automatic_recovery": "系统失败，正在自动恢复",
         "failed": "处理失败，尚未完成",
+        "permission_wait": "等待文件权限",
     }.get(attention.kind, "处理状态待确认")
     retry_html = ""
     if attention.retry_at:
@@ -12579,6 +12669,7 @@ def _history_attention_html(
             "needs_manager": "请选择一种处理方式。",
             "automatic_recovery": "系统会按计划自动重试，你当前无需操作。",
             "failed": "这是执行或技术失败，不需要你判断业务规则；可查看技术详情，必要时重新处理。",
+            "permission_wait": "权限开通后再点“权限开通后重新读取”；这不会重复申请权限或直接执行审批动作。",
         }.get(attention.kind, "请查看当前状态和技术详情。")
         next_step_html = (
             '<div class="history-attention-next"><strong>你需要做什么：</strong>'
@@ -12971,14 +13062,29 @@ def _attempt_row_actions(
     )
     confirmation = (rerun.confirmation if rerun.explanation else
         "确认重新处理这条失败 attempt？可能会实际发送新回复或执行日历/OA动作。")
+    permission_wait_rerun = (
+        attempt.send_status.strip().lower() == "blocked"
+        and attempt.send_error == "consumer_purpose_retry_exhausted"
+    )
+    if permission_wait_rerun:
+        confirmation = (
+            "确认文件权限已开通？系统将重新读取并审核当前审批；若仍无权访问，"
+            "会继续等待，不会重复申请权限或直接执行审批动作。"
+        )
     return (
         "<div class=\"attempt-row-actions\">"
         + (
             f"<form method=\"post\" action=\"/attempts/{attempt.id}/rerun?return_to={return_to_query}\" "
             f"onsubmit=\"return confirm('{escape(confirmation)}')\">"
-            f"<button class=\"rerun\" type=\"submit\">{escape(rerun.label)}</button>"
+            f"<button class=\"rerun\" type=\"submit\">{escape('权限开通后重新读取' if permission_wait_rerun else rerun.label)}</button>"
             "</form>"
-            if attempt.send_status.strip().lower() == "failed" and not rerun_block_reason
+            if (
+                attempt.send_status.strip().lower() == "failed"
+                or (
+                    attempt.send_status.strip().lower() == "blocked"
+                    and attempt.send_error == "consumer_purpose_retry_exhausted"
+                )
+            ) and not rerun_block_reason
             else ""
         )
         + (
@@ -13906,7 +14012,13 @@ def _attempt_recovery_display_state(
     attempt: ReplyAttempt,
     task_cache: dict[tuple[str, str, str], ReplyTask | None],
 ) -> str:
-    if attempt.send_status.strip().lower() != "failed":
+    status = attempt.send_status.strip().lower()
+    if status == "blocked":
+        return (
+            "" if attempt.send_error == "consumer_purpose_retry_exhausted"
+            else "此受阻事项不支持通过重试重新处理。"
+        )
+    if status != "failed":
         return ""
     task = _reply_task_for_attempt(store, attempt, task_cache)
     if task is None:

@@ -21,6 +21,7 @@ from uuid import uuid4
 from app.email_category_config import VerifiedEmailFolderBinding
 from app.email_provider_folders import FolderRole, ProviderFolder
 from app.email_unsubscribe import TRANSIENT_BROWSER_UNSUBSCRIBE_RETRIES
+from app.external_retry import MAX_AUTOMATIC_ATTEMPTS
 
 
 SCAN_INTERVAL_SECONDS = 60
@@ -35,10 +36,10 @@ EMAIL_TASK_CLAIM_BATCH = 5
 STALE_EMAIL_TASK_SECONDS = 10 * 60
 MAX_EMAIL_TASK_PROCESSING_SECONDS = 60 * 60
 # Transient mailbox/network failures while loading a task are retried this often.
-EMAIL_TASK_TRANSIENT_RETRY_ATTEMPTS = 5
+EMAIL_TASK_TRANSIENT_RETRY_ATTEMPTS = MAX_AUTOMATIC_ATTEMPTS
 # An authorized unsubscribe entry missing from the message is looked for again
 # in this many fresh reads before it is believed to be gone for good.
-UNRESOLVED_UNSUBSCRIBE_RECHECKS = 5
+UNRESOLVED_UNSUBSCRIBE_RECHECKS = MAX_AUTOMATIC_ATTEMPTS
 UNRESOLVED_UNSUBSCRIBE_SELECTION_ERROR = "email_unsubscribe_candidate_unresolved"
 # A route that declines to place the audited unsubscribe call is retried this
 # many times before the refusal is treated as a capability the service lacks.

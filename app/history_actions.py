@@ -8,6 +8,7 @@ from app.meeting_alignment import DEFAULT_MEETING_MAX_ATTEMPTS
 from app.meeting_alignment_models import MeetingAlignmentJob, MeetingAlignmentRun
 from app.store import ReplyAttempt, ReplyTask
 from app.worker import MAX_REPLY_TASK_ATTEMPTS
+from app.consumer_purpose_retry import RETRY_EXHAUSTED
 
 
 _READABLE_FAILURE_REASONS = {
@@ -95,6 +96,19 @@ def reply_history_attention(
         choices = tuple(HistoryAction(o.key, o.label, o.instruction, o.consequence) for o in decision_options)
         return HistoryAttention(kind="needs_manager", reason=reason, external_effect=external_effect,
             actions=choices + _management_tail(include_retry=False))
+    if status == "blocked" and attempt.send_error == RETRY_EXHAUSTED:
+        return HistoryAttention(
+            kind="permission_wait",
+            reason=(
+                "权限申请后的 3 次自动重读已用完；审批仍待处理。"
+                "确认权限已开通后，可手动重新读取并审核。"
+            ),
+            external_effect="没有执行 OA 同意、拒绝或退回",
+            actions=(
+                HistoryAction("retry", "权限开通后重新读取"),
+                HistoryAction("details", "技术详情"),
+            ),
+        )
     if status == "failed":
         return HistoryAttention(
             kind="failed",

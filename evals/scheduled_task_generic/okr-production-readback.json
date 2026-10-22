@@ -308,5 +308,105 @@
     },
     "body_or_message_receipt_token_included": false,
     "supervisor_pid": 64002
+  },
+  "manual_authorized_run_391405_progress": {
+    "observed_at": "2026-10-21T23:56:02Z",
+    "scope": "User-authorized manual OKR report run; not natural scheduled-run acceptance",
+    "scheduled_task_run_id": 391405,
+    "reply_task_id": 416701,
+    "task_status": "failed",
+    "task_error_code": "execution_failed",
+    "task_snapshot": {
+      "task_version": 14,
+      "managed_skill_revision_id": 209
+    },
+    "consumer_runs": [
+      {
+        "id": 391423,
+        "revision": 0,
+        "turn_attempt": 0,
+        "status": "failed",
+        "error_code": "analysis_incomplete"
+      },
+      {
+        "id": 391492,
+        "revision": 0,
+        "turn_attempt": 1,
+        "status": "completed",
+        "analysis_failure_members": 14,
+        "goals_missing_members": 4
+      },
+      {
+        "id": 391505,
+        "revision": 1,
+        "turn_attempt": 0,
+        "status": "failed",
+        "error_code": "analysis_incomplete"
+      },
+      {
+        "id": 391507,
+        "revision": 1,
+        "turn_attempt": 1,
+        "status": "failed",
+        "error_code": "analysis_incomplete"
+      },
+      {
+        "id": 391512,
+        "revision": 1,
+        "turn_attempt": 2,
+        "status": "failed",
+        "error_code": "analysis_incomplete"
+      },
+      {
+        "id": 391528,
+        "revision": 1,
+        "turn_attempt": 3,
+        "status": "failed",
+        "error_code": "execution_failed",
+        "started_at": "2026-10-21T23:44:02Z",
+        "completed_at": "2026-10-21T23:54:27Z",
+        "analysis_files_updated": 0,
+        "report_write": false,
+        "group_message_sent": false
+      }
+    ],
+    "audit_runs": [
+      {
+        "id": 391503,
+        "revision": 0,
+        "status": "completed",
+        "outcome": "return"
+      }
+    ],
+    "confirmed_root_causes": [
+      "Actual Consumer behavior failure: revisions repeated the 18-member source collection and limited broad independent searches, then ended before completing per-KR analysis for the 14 members with goals. The Audit return was valid; no evaluator defect found.",
+      "The Skill prepare script marked any same-source-digest analysis file reusable, including analysis_failure placeholders, so a retry could skip incomplete members."
+    ],
+    "external_effects": {
+      "draft_report_documents_written_by_run_391492": true,
+      "audit_approved_final_candidate": false,
+      "run_391528_wrote_documents": false,
+      "group_message_sent": false,
+      "notification_receipt_exists": false
+    },
+    "fix_candidate": {
+      "managed_skill_version": 5,
+      "changes": [
+        "resume from same-run artifacts and Audit checklist",
+        "preserve completed manager analyses",
+        "target each KR with independent source searches and explain evidence gaps under existing rubric",
+        "retry incomplete work through existing bounded lifecycle",
+        "exclude analysis_failure placeholder from analysis reuse"
+      ]
+    },
+    "verification": {
+      "focused_evaluation": "35 passed, 1 unrelated release-precondition test deselected",
+      "ruff": "passed",
+      "git_diff_check": "passed",
+      "skill_and_script_release_hashes": "passed"
+    },
+    "fix_publication": "not yet published or deployed",
+    "natural_scheduled_acceptance": false,
+    "report_body_or_message_receipt_token_included": false
   }
 }

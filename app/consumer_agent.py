@@ -59,6 +59,7 @@ from app.friday_runtime_adapter import FridayRuntimeAdapter
 from app.config import principal_display_name
 from app.prompt import runtime_context_instruction
 from app.prompt_composition import (
+    CONSUMER_OUTBOUND_INSTRUCTION,
     PromptConfiguration,
     PromptSection,
     compose_consumer_task_assembly,
@@ -508,10 +509,11 @@ def consumer_task_session_contract_hash(selected_skills_hash: str, *, purpose_na
     payload = selected_skills_hash + "\n" + OA_AGENT_CAPABILITY_INSTRUCTIONS
     return "selected-skills:oa-ocr-handoff:" + sha256(payload.encode("utf-8")).hexdigest()
 
-CONSUMER_ROLE_BOUNDARY = """
+CONSUMER_ROLE_BOUNDARY = f"""
 You are Consumer Agent A. Complete the business preparation using the task's
 applicable Skills and permitted tools, including report and document work.
 Controlled structured actions are proposals: do not dispatch them yourself.
+{CONSUMER_OUTBOUND_INSTRUCTION}
 Audit reads and reviews the complete candidate; system code executes its exact
 persisted approved plan. Return one valid purpose output using its supplied action/reason/target/payload/evidence_refs schema and assessment metadata. Multi-operation work uses action=plan with the complete proposal in payload.
 Every action has a stable action_identity for the same intended external

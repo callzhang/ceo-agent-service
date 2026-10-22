@@ -50,6 +50,7 @@ def test_repository_consumer_release_manifest_tracks_oa_skill_digest():
     assert len(entry["old_sha256"]) == 64
     assert all(char in "0123456789abcdef" for char in entry["old_sha256"])
     assert entry["new_sha256"] == _digest((root / entry["source"]).read_bytes())
+    assert "old_managed_sha256" not in entry
     audit_source = "app/defaults/audit_rules.md"
     audit_entry = next(item for item in manifest["files"] if item["source"] == audit_source)
     assert audit_entry["old_sha256"] == "5dcfd33f48d23268296da5d89346eaf3a76ffec665e5d9a353c33654a5de8237"
@@ -170,7 +171,7 @@ def test_repository_consumer_release_manifest_includes_current_attendance_review
     entry = next(item for item in manifest["files"] if item["source"] == source)
 
     assert entry["target"] == "skills/stardust-oa-attendance-travel-review/SKILL.md"
-    assert entry["old_sha256"] == "edb3fd74d5a26512fff9c225b0cdf694412e611a5efdffdea0f392d9c37b8d2e"
+    assert entry["old_sha256"] == "6fd80713c61886e5f42d8bfea419f0db8ae00412e4805d9620068973917e5d46"
     assert entry["new_sha256"] == _digest((root / source).read_bytes())
 
 

@@ -35,6 +35,7 @@ from app.reviewed_candidate_store import (
     ReviewedCandidateStoreMixin,
 )
 from app.sqlite_schema_lock import schema_initialize_lock
+from app.external_retry import MAX_AUTOMATIC_ATTEMPTS, MAX_AUTOMATIC_RETRIES
 from app.email_canonical_storage import (
     email_classification_projection, email_message_projection,
 )
@@ -295,17 +296,17 @@ SQLITE_READ_CACHE_SIZE = -65536
 # Keep SQLite reads on its normal VFS path instead of retaining mapped pages
 # across concurrent checkpoints and external maintenance snapshots.
 SQLITE_MMAP_SIZE_BYTES = 0
-STORE_WRITE_LOCK_RETRY_ATTEMPTS = 3
+STORE_WRITE_LOCK_RETRY_ATTEMPTS = MAX_AUTOMATIC_ATTEMPTS
 STORE_WRITE_LOCK_RETRY_DELAY_SECONDS = 0.25
 DONE_FAILED_RUN_RECONCILE_BATCH_SIZE = 100
 SETTLED_REPLY_RECONCILE_BATCH_SIZE = 100
 OA_AUDIT_METADATA_BACKFILL_BATCH_SIZE = 100
-AGENT_RUN_WRITE_LOCK_RETRY_ATTEMPTS = 3
+AGENT_RUN_WRITE_LOCK_RETRY_ATTEMPTS = MAX_AUTOMATIC_ATTEMPTS
 AGENT_RUN_WRITE_LOCK_RETRY_DELAY_SECONDS = 0.25
 CODEX_SESSION_LOCK_STALE_SECONDS = 20 * 60
-CODEX_SESSION_LOCK_RETRY_ATTEMPTS = 3
+CODEX_SESSION_LOCK_RETRY_ATTEMPTS = MAX_AUTOMATIC_ATTEMPTS
 CODEX_SESSION_LOCK_RETRY_DELAY_SECONDS = 0.25
-SCHEMA_CHECK_LOCK_RETRY_ATTEMPTS = 3
+SCHEMA_CHECK_LOCK_RETRY_ATTEMPTS = MAX_AUTOMATIC_ATTEMPTS
 SCHEMA_CHECK_LOCK_RETRY_DELAY_SECONDS = 0.25
 CODEX_CAPACITY_PAUSE_STATE_KEY = "codex_capacity_pause"
 SERVICE_HEALTH_STATE_PREFIX = "service_health:"
@@ -6927,6 +6928,27 @@ class AutoReplyStore(LogicalRunStoreMixin, ReviewedCandidateStoreMixin):
             ).fetchone()
             return int(row["next_turn_attempt"])
 
+    def latest_completed_consumer_run_id_for_business_object(
+        self, business_object_key: str
+    ) -> int | None:
+        """The newest completed Consumer run on any task of one business object."""
+        if not business_object_key:
+            return None
+        with self._connect() as db:
+            row = db.execute(
+                f"""
+                select agent_runs.id
+                from ({AGENT_RUN_SQL}) as agent_runs
+                join ({REPLY_TASK_SQL}) as reply_tasks
+                  on reply_tasks.id=agent_runs.reply_task_id
+                where reply_tasks.business_object_key=?
+                  and agent_runs.role='consumer' and agent_runs.status='completed'
+                order by agent_runs.id desc limit 1
+                """,
+                (business_object_key,),
+            ).fetchone()
+        return int(row["id"]) if row else None
+
     def list_agent_runs_for_task_generation(
         self,
         reply_task_id: int,
@@ -9746,6 +9768,17 @@ class AutoReplyStore(LogicalRunStoreMixin, ReviewedCandidateStoreMixin):
                 join ({REPLY_TASK_SQL}) as tasks on tasks.id=runs.reply_task_id
                 where runs.status='running'
                   and tasks.status<>'processing'
+                  and not (
+                    runs.role='audit'
+                    and tasks.channel='wechat'
+                    and exists (
+                      select 1 from ({WECHAT_DELIVERY_SQL}) as deliveries
+                      where deliveries.reply_task_id=tasks.id
+                        and deliveries.execution_generation=runs.execution_generation
+                        and deliveries.status='ready_to_send'
+                        and runs.operation_id='wechat-delivery:' || deliveries.id
+                    )
+                  )
                 order by runs.id
                 limit ?
                 """,
@@ -9977,7 +10010,7 @@ class AutoReplyStore(LogicalRunStoreMixin, ReviewedCandidateStoreMixin):
     #: How many times a task may be resumed before it is allowed to fail. A
     #: resume that never stops is worse than a closed task: it hides a
     #: permanent fault behind an endless queue.
-    RESUMABLE_MAX_ATTEMPTS = 5
+    RESUMABLE_MAX_ATTEMPTS = MAX_AUTOMATIC_ATTEMPTS
 
     @classmethod
     def _failure_is_resumable(cls, structured_error_json: str | None) -> bool:
@@ -11427,6 +11460,8 @@ class AutoReplyStore(LogicalRunStoreMixin, ReviewedCandidateStoreMixin):
             for value in (account_id, target_type, target_id, conversation_id)
         ):
             raise ValueError("WeChat delivery target must be complete")
+        if set(evidence or {}) & {"audit_run_id", "audit_candidate_digest", "audit_decision"}:
+            raise ValueError("WeChat Audit fields are service-owned")
         with self._immediate_write_transaction() as db:
             task = db.execute(
                 f"select * from ({REPLY_TASK_CLAIMED_SQL}) as reply_tasks where id=? and status='processing' "
@@ -11522,6 +11557,8 @@ class AutoReplyStore(LogicalRunStoreMixin, ReviewedCandidateStoreMixin):
         ``reply_text`` is a candidate only.  The durable ready-to-send row always
         stores the immutable prepared final body, keyed by its own delivery ID.
         """
+        if set(evidence or {}) & {"audit_run_id", "audit_candidate_digest", "audit_decision"}:
+            raise ValueError("WeChat Audit fields are service-owned")
         with self._immediate_write_transaction() as db:
             task = db.execute(
                 f"""select execution_generation, trigger_text from ({REPLY_TASK_CURRENT_SQL}) as reply_tasks
@@ -11676,7 +11713,7 @@ class AutoReplyStore(LogicalRunStoreMixin, ReviewedCandidateStoreMixin):
     def requeue_unperformed_wechat_deliveries(
         self,
         *,
-        max_retries: int = 2,
+        max_retries: int = MAX_AUTOMATIC_RETRIES,
         retry_delay_seconds: int = 5 * 60,
     ) -> int:
         """Return aged pre-action failures to the send queue for a bounded retry."""
@@ -11973,6 +12010,21 @@ class AutoReplyStore(LogicalRunStoreMixin, ReviewedCandidateStoreMixin):
         from app.wechat.models import WechatDelivery
 
         with self._immediate_write_transaction() as db:
+            review_delivery = db.execute(
+                f"select * from ({WECHAT_DELIVERY_SQL}) where id=?", (delivery_id,)
+            ).fetchone()
+            if review_delivery is None:
+                return None
+            review_task = db.execute(
+                f"select * from ({REPLY_TASK_CURRENT_SQL}) where id=?",
+                (review_delivery["reply_task_id"],),
+            ).fetchone()
+            if (review_task is None
+                or review_task["execution_generation"] != expected_execution_generation
+                or not self._wechat_review_approved_in_connection(
+                    db, review_delivery, review_task
+                )):
+                return None
             assignments, set_args = task_delivery_set_parts(
                 "wechat_deliveries",
                 {"status": "sending", "pre_action_failure": 0, "error": ""},
@@ -12053,6 +12105,126 @@ class AutoReplyStore(LogicalRunStoreMixin, ReviewedCandidateStoreMixin):
             error=row["error"],
             pre_action_failure=bool(row["pre_action_failure"]),
         )
+
+    @staticmethod
+    def _wechat_review_approved_in_connection(db, delivery, task) -> bool:
+        from app.wechat.audit import wechat_audit_candidate, wechat_audit_digest
+
+        evidence = json.loads(delivery["evidence_json"])
+        run_id = evidence.get("audit_run_id")
+        if not isinstance(run_id, str) or not run_id.isdecimal():
+            return False
+        digest = wechat_audit_digest(wechat_audit_candidate(task, delivery))
+        if (evidence.get("audit_decision") != "approve"
+            or evidence.get("audit_candidate_digest") != digest):
+            return False
+        audit = db.execute(
+            f"select * from ({AGENT_RUN_SQL}) where id=?", (int(run_id),)
+        ).fetchone()
+        if (audit is None or audit["role"] != "audit"
+            or audit["status"] != "completed"
+            or audit["reply_task_id"] != task["id"]
+            or audit["execution_generation"] != delivery["execution_generation"]
+            or audit["operation_id"] != f"wechat-delivery:{delivery['id']}"):
+            return False
+        parent = db.execute(
+            f"select * from ({AGENT_RUN_SQL}) where id=?",
+            (audit["parent_agent_run_id"],),
+        ).fetchone()
+        return bool(parent is not None and parent["role"] == "consumer"
+                    and parent["status"] == "completed"
+                    and parent["reply_task_id"] == task["id"]
+                    and parent["execution_generation"] == delivery["execution_generation"])
+
+    def wechat_delivery_review_approved(self, delivery_id: int) -> bool:
+        with self._connect() as db:
+            delivery = db.execute(
+                f"select * from ({WECHAT_DELIVERY_SQL}) where id=?", (delivery_id,)
+            ).fetchone()
+            if delivery is None:
+                return False
+            task = db.execute(
+                f"select * from ({REPLY_TASK_CURRENT_SQL}) where id=?",
+                (delivery["reply_task_id"],),
+            ).fetchone()
+            return bool(task is not None
+                        and task["execution_generation"] == delivery["execution_generation"]
+                        and self._wechat_review_approved_in_connection(db, delivery, task))
+
+    def record_wechat_delivery_review(self, delivery_id: int, audit_run_id: int, decision) -> None:
+        """Bind a completed independent Audit result to the exact prepared effect."""
+        from app.wechat.audit import (
+            WechatAuditDecision, wechat_audit_candidate, wechat_audit_digest,
+        )
+
+        result = WechatAuditDecision.model_validate(decision)
+        run = self.get_agent_run(audit_run_id, load_events=True)
+        if (run is None or run.role is not AgentRole.AUDIT
+            or run.status != "completed" or not run.final_result_json
+            or WechatAuditDecision.model_validate_json(run.final_result_json) != result):
+            raise ValueError("WeChat Audit native result is unavailable or different")
+        with self._immediate_write_transaction() as db:
+            delivery = db.execute(
+                f"select * from ({WECHAT_DELIVERY_SQL}) where id=?", (delivery_id,)
+            ).fetchone()
+            if delivery is None:
+                raise ValueError("WeChat delivery does not exist")
+            task = db.execute(
+                f"select * from ({REPLY_TASK_CURRENT_SQL}) where id=?",
+                (delivery["reply_task_id"],),
+            ).fetchone()
+            if (task is None or task["execution_generation"] != delivery["execution_generation"]
+                or delivery["status"] not in ("ready_to_send", "failed")
+                or run.reply_task_id != task["id"]
+                or run.execution_generation != delivery["execution_generation"]
+                or run.operation_id != f"wechat-delivery:{delivery_id}"):
+                raise ValueError("WeChat review is not bound to the current delivery")
+            parent = db.execute(
+                f"select * from ({AGENT_RUN_SQL}) where id=?",
+                (run.parent_agent_run_id,),
+            ).fetchone()
+            if (parent is None or parent["role"] != "consumer"
+                or parent["status"] != "completed" or parent["reply_task_id"] != task["id"]
+                or parent["execution_generation"] != delivery["execution_generation"]):
+                raise ValueError("WeChat Audit parent is not the completed Consumer")
+            digest = wechat_audit_digest(wechat_audit_candidate(task, delivery))
+            if result.candidate_digest != digest:
+                raise ValueError("WeChat review candidate changed")
+            evidence = json.loads(delivery["evidence_json"])
+            prior = evidence.get("audit_run_id")
+            if prior is not None:
+                if (prior == str(audit_run_id)
+                    and evidence.get("audit_candidate_digest") == digest
+                    and evidence.get("audit_decision") == result.outcome):
+                    return
+                raise ValueError("WeChat delivery already has a different review")
+            evidence.update({
+                "audit_run_id": str(audit_run_id),
+                "audit_candidate_digest": digest,
+                "audit_decision": result.outcome,
+                "independent_audit_summary": result.summary,
+            })
+            values = {"evidence_json": json.dumps(evidence, ensure_ascii=False)}
+            if result.outcome == "reject":
+                values.update({"status": "failed", "error": "wechat_audit_rejected",
+                               "pre_action_failure": 1})
+            assignments, set_args = task_delivery_set_parts(
+                "wechat_deliveries", values,
+                update_sql={"updated_at": "current_timestamp"},
+            )
+            cursor = db.execute(
+                f"update actions set {assignments} "
+                "where record_type='wechat_deliveries' and cast(legacy_key as integer)=? "
+                "and td_status='ready_to_send'",
+                (*set_args, delivery_id),
+            )
+            if cursor.rowcount != 1:
+                raise AgentRunLeaseLostError("WeChat delivery review lost")
+            if result.outcome == "reject":
+                self._sync_wechat_delivery_reply_attempt(
+                    db, delivery_id=delivery_id, delivery_status="failed",
+                    error="wechat_audit_rejected",
+                )
 
     def set_wechat_delivery_status(
         self, delivery_id: int, status: str, *, error: str = "",
@@ -12165,7 +12337,7 @@ class AutoReplyStore(LogicalRunStoreMixin, ReviewedCandidateStoreMixin):
         expected_execution_generation: str,
         reason: str,
         inactive_before: str,
-        max_retries: int = 2,
+        max_retries: int = MAX_AUTOMATIC_RETRIES,
     ) -> None:
         generation = expected_execution_generation.strip()
         explanation = reason.strip()
@@ -23506,7 +23678,7 @@ class AutoReplyStore(LogicalRunStoreMixin, ReviewedCandidateStoreMixin):
                 )
             row = db.execute(
                 f"select * from ({SYNC_ACTION_PROJECTIONS['business_task_todo_sync_outbox']}) where "
-                "(status='queued' or (status='failed' and attempt_count<3 and next_attempt_at<=?)) "
+                f"(status='queued' or (status='failed' and attempt_count<{MAX_AUTOMATIC_ATTEMPTS} and next_attempt_at<=?)) "
                 "order by id limit 1", (now,)
             ).fetchone()
             if row is None:
@@ -23565,7 +23737,7 @@ class AutoReplyStore(LogicalRunStoreMixin, ReviewedCandidateStoreMixin):
             if row is None:
                 raise ValueError("business task todo sync outbox does not exist")
             attempts = int(row["attempt_count"])
-            exhausted = attempts >= 3
+            exhausted = attempts >= MAX_AUTOMATIC_ATTEMPTS
             next_attempt_at = "" if exhausted else (
                 datetime.strptime(now, "%Y-%m-%d %H:%M:%S") + timedelta(seconds=60 * attempts)
             ).strftime("%Y-%m-%d %H:%M:%S")
@@ -25935,7 +26107,28 @@ class AutoReplyStore(LogicalRunStoreMixin, ReviewedCandidateStoreMixin):
                               on projected_task.id=projected_run.reply_task_id
                             where projected_run.id=reply_attempts.agent_run_id
                               and projected_run.execution_generation=projected_task.execution_generation
-                              and coalesce(projected_task.error, '')<>'external_action_uncertain'
+                              and (
+                                  coalesce(projected_task.error, '')<>'external_action_uncertain'
+                                  or exists (
+                                      select 1
+                                      from ({REVIEW_CANDIDATE_SQL}) as verified_candidate
+                                      join ({CANDIDATE_REVIEW_SQL}) as verified_review
+                                        on verified_review.candidate_id=verified_candidate.id
+                                       and verified_review.audit_run_id=projected_run.id
+                                      join ({CANDIDATE_EXECUTION_SQL}) as verified_execution
+                                        on verified_execution.candidate_id=verified_candidate.id
+                                       and verified_execution.review_id=verified_review.id
+                                      where verified_candidate.task_id=projected_task.id
+                                        and verified_candidate.execution_generation=projected_task.execution_generation
+                                        and verified_candidate.id=(
+                                            select max(latest_candidate.id)
+                                            from ({REVIEW_CANDIDATE_SQL}) as latest_candidate
+                                            where latest_candidate.task_id=projected_task.id
+                                              and latest_candidate.execution_generation=projected_task.execution_generation
+                                        )
+                                        and verified_execution.status='done'
+                                  )
+                              )
                               and projected_task.status in ('pending', 'processing', 'running')
                         ) then (
                             select case when projected_task.status='processing' then 'running'
@@ -25945,7 +26138,28 @@ class AutoReplyStore(LogicalRunStoreMixin, ReviewedCandidateStoreMixin):
                               on projected_task.id=projected_run.reply_task_id
                             where projected_run.id=reply_attempts.agent_run_id
                               and projected_run.execution_generation=projected_task.execution_generation
-                              and coalesce(projected_task.error, '')<>'external_action_uncertain'
+                              and (
+                                  coalesce(projected_task.error, '')<>'external_action_uncertain'
+                                  or exists (
+                                      select 1
+                                      from ({REVIEW_CANDIDATE_SQL}) as verified_candidate
+                                      join ({CANDIDATE_REVIEW_SQL}) as verified_review
+                                        on verified_review.candidate_id=verified_candidate.id
+                                       and verified_review.audit_run_id=projected_run.id
+                                      join ({CANDIDATE_EXECUTION_SQL}) as verified_execution
+                                        on verified_execution.candidate_id=verified_candidate.id
+                                       and verified_execution.review_id=verified_review.id
+                                      where verified_candidate.task_id=projected_task.id
+                                        and verified_candidate.execution_generation=projected_task.execution_generation
+                                        and verified_candidate.id=(
+                                            select max(latest_candidate.id)
+                                            from ({REVIEW_CANDIDATE_SQL}) as latest_candidate
+                                            where latest_candidate.task_id=projected_task.id
+                                              and latest_candidate.execution_generation=projected_task.execution_generation
+                                        )
+                                        and verified_execution.status='done'
+                                  )
+                              )
                               and projected_task.status in ('pending', 'processing', 'running')
                             limit 1
                         )

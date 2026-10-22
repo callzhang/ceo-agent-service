@@ -7,7 +7,7 @@ from app.current_publication_sources import TARGET_STORE_VERSION, PREVIOUS_STORE
 from app.current_publication_sources import publication_scheduled_source
 
 from contextlib import ExitStack, closing, nullcontext
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from datetime import datetime, timezone
 import json
 import os
@@ -20,13 +20,14 @@ from typing import Callable, Protocol
 from urllib.request import urlopen
 
 from app.database_backup import _backup_directory_lock, create_database_backup
+from app.external_retry import MAX_AUTOMATIC_ATTEMPTS
 from app.repository_upgrade import GitRepository
 from app.current_publication_sources import publication_run_sources
 from app.current_publication_sources import publication_meeting_sources, publication_task_sources
 
 
 UPGRADE_OPERATION_STATE_KEY = "repository_upgrade_operation:v1"
-UPGRADE_STATE_WRITE_RETRY_ATTEMPTS = 3
+UPGRADE_STATE_WRITE_RETRY_ATTEMPTS = MAX_AUTOMATIC_ATTEMPTS
 UPGRADE_STATE_WRITE_RETRY_DELAY_SECONDS = 0.25
 LAUNCHD_STOP_TIMEOUT_SECONDS = 10.0
 LAUNCHD_STOP_POLL_SECONDS = 0.1
@@ -591,6 +592,7 @@ class RepositoryUpdater:
             self.repository.fetch(self.remote)
             records = self._recheck(operation)
             self.wait_for_quiet()
+            operation = self._follow_main_after_quiet(operation)
             self.stop()
             backup_path = None
             published: UpgradePublication | None = None
@@ -740,6 +742,33 @@ class RepositoryUpdater:
         if fingerprint != operation.expected_fingerprint:
             raise UpgradePreconditionError("repository fingerprint changed")
         return records
+
+    def _follow_main_after_quiet(self, operation: UpgradeOperation) -> UpgradeOperation:
+        """Install the newest main once the drain is quiet, not the one seen before it.
+
+        The quiet wait keeps claims closed for as long as in-flight work runs.
+        Commits pushed meanwhile ride this deploy, so the sessions queued behind
+        it find production already current and leave without draining again. A
+        pinned deploy installs exactly the commit it was given.
+        """
+        if self.pin_target_commit:
+            return operation
+        self.repository.fetch(self.remote)
+        latest = self.repository.resolve_ref(self.remote_ref)
+        if latest == operation.target_commit:
+            return operation
+        if not self.repository.is_ancestor(operation.target_commit, latest):
+            raise UpgradePreconditionError("repository revision changed")
+        return replace(
+            operation,
+            target_commit=latest,
+            expected_fingerprint=self.repository.fingerprint(
+                self.branch,
+                operation.original_commit,
+                latest,
+                self.repository.status_records(),
+            ),
+        )
 
     def _preserve_local_changes(self, operation: UpgradeOperation) -> None:
         if not operation.commit_message.strip():
