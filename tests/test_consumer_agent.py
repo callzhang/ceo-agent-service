@@ -1127,7 +1127,9 @@ def test_consumer_and_audit_share_direct_external_delivery_boundary():
     assert consumer.count(instruction) == 1
     assert "Consumer must not directly send external messages or email, or execute approvals." in audit
     assert "candidate prose is not a provider receipt" in audit
-    assert "Keep a valid typed outbound proposal eligible for review" in audit
+    assert "if they explicitly ask only for a draft or say the user will send it" in audit
+    assert "return or reject any candidate that proposes sending the message or email" in audit
+    assert "Otherwise keep a valid typed outbound proposal eligible for review" in audit
     assert "only system code may execute it after approval" in audit
 
 
