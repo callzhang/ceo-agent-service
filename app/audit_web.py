@@ -3742,7 +3742,7 @@ def _queue_attention_rows(store: AutoReplyStore, *, limit: int | None = None) ->
                 rows.append(
                     {
                         "category": "Email action",
-                        "id": int(row["id"]),
+                        "id": str(row["id"]),
                         "status": str(row["status"] or ""),
                         "context": str(row["context"] or ""),
                         "summary": str(row["summary"] or ""),

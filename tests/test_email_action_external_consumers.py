@@ -10,6 +10,10 @@ from app.email_canonical_storage import (
 from app.email_store import EmailStore
 from app.email_publication_sources import current_email_actions_available
 from app.store import AutoReplyStore
+from app.web_api.dashboard import register_dashboard_routes
+from app.web_api.registration import register_console_routes
+from fastapi import FastAPI
+from fastapi.testclient import TestClient
 
 pytest_plugins = ("tests.test_email_action_plan_direct_dao",)
 
@@ -52,6 +56,109 @@ def _two_failed_actions(path):
                 updated_at=stamp,
             ), source_rowid=rowid)
     return store
+
+
+def _current_direct_action_store(path):
+    from app.email_classifier_contracts import EmailAction, EmailClassificationStatus
+    from app.shared_action_lifecycle import record_direct_email_action_outcome
+    from tests.test_email_store import _classification
+
+    store = AutoReplyStore(path)
+    email = EmailStore(path)
+    ids = []
+    for classification_id, action in (
+        (301, EmailAction.ARCHIVE),
+        (302, EmailAction.FLAG_IMPORTANT),
+        (303, EmailAction.MARK_READ),
+    ):
+        classification = _classification(
+            status=EmailClassificationStatus.PROCESSED,
+            classification_id=classification_id,
+            message_id=f"dashboard-{classification_id}",
+            actions=(action,),
+            action_parameters={},
+        )
+        email.persist_scan_result(classification, model_text="synthetic")
+        ids.extend(email.direct_action_ids_for_plan(
+            classification.action_plan.action_plan_id
+        ))
+    with email._connect() as db:
+        record_direct_email_action_outcome(
+            db, action_id=ids[1], expected_status="pending",
+            expected_started_at=None, expected_attempt_count=0, attempt_number=1,
+            status="failed", provider_operation="move", provider_target="INBOX/Archive",
+            provider_result_id=None, error="provider_failed",
+            started_at="2026-10-20T16:57:00+00:00",
+            finished_at="2026-10-20T16:58:00+00:00",
+            next_attempt_at="2026-10-20T16:59:00+00:00",
+            updated_at="2026-10-20T16:58:00+00:00",
+        )
+        for attempt_number in range(1, 4):
+            record_direct_email_action_outcome(
+                db, action_id=ids[2],
+                expected_status="pending" if attempt_number == 1 else "failed",
+                expected_started_at=None, expected_attempt_count=attempt_number - 1,
+                attempt_number=attempt_number, status="failed",
+                provider_operation="mark_read", provider_target="INBOX/Message",
+                provider_result_id=None, error="provider_failed",
+                started_at=f"2026-10-20T16:5{attempt_number}:00+00:00",
+                finished_at=f"2026-10-20T16:5{attempt_number}:30+00:00",
+                next_attempt_at=f"2026-10-20T16:5{attempt_number + 1}:00+00:00",
+                updated_at=f"2026-10-20T16:5{attempt_number}:30+00:00",
+            )
+    return store, tuple(ids)
+
+
+def test_dashboard_queue_reads_current_actions_and_preserves_email_contract(tmp_path):
+    from app.audit_web import _email_action_queue_snapshot
+
+    store, action_ids = _current_direct_action_store(tmp_path / "dashboard.sqlite3")
+    with store._connect() as db:
+        snapshot = _email_action_queue_snapshot(db)
+    assert snapshot["pending"] == 1
+    assert snapshot["failed"] == 1
+    assert snapshot["retryable"] == 1
+    app = FastAPI()
+    register_dashboard_routes(app, store_factory=lambda: store)
+
+    response = TestClient(app).get("/api/console/dashboard/queues?state=queued")
+
+    assert response.status_code == 200
+    data = response.json()
+    email_rows = [row for row in data["items"] if row["source"] == "邮件操作"]
+    assert {row["id"] for row in email_rows} == {
+        f"email_actions:{action_ids[0]}", f"email_actions:{action_ids[1]}",
+    }
+    assert {row["id"]: row["status"] for row in email_rows} == {
+        f"email_actions:{action_ids[0]}": "pending",
+        f"email_actions:{action_ids[1]}": "failed",
+    }
+    assert {row["id"]: row["title"] for row in email_rows} == {
+        f"email_actions:{action_ids[0]}": "archive",
+        f"email_actions:{action_ids[1]}": "flag_important",
+    }
+    assert all(row["detail_url"] == "" for row in email_rows)
+
+
+def test_email_attention_id_matches_strict_worker_status_contract(tmp_path):
+    from tests.test_console_status_response import _status_payload
+
+    store, action_ids = _current_direct_action_store(tmp_path / "attention-current.sqlite3")
+    rows = [row for row in _queue_attention_rows(store) if row["category"] == "Email action"]
+    email_row = next(row for row in rows if row["summary"] == "INBOX/Message")
+
+    assert email_row["id"] == str(action_ids[2])
+    payload = _status_payload()
+    payload["attention_rows"] = rows
+    app = FastAPI()
+    register_console_routes(
+        app, lambda: store, status_payload_factory=lambda: payload,
+        feedback_backlog_factory=lambda: [], attention_rows_factory=lambda: rows,
+    )
+    response = TestClient(app).get("/api/console/status")
+    assert response.status_code == 200
+    assert next(row for row in response.json()["item"]["attention_rows"]
+                if row["category"] == "Email action")["id"] == str(action_ids[2])
 
 
 def test_history_keeps_native_signed_rowid_and_nullable_public_id(tmp_path):
