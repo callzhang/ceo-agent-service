@@ -2111,6 +2111,8 @@ turn 的长度给：`PROBE_TOTAL_TIMEOUT_SECONDS` 和 `PROBE_IDLE_TIMEOUT_SECOND
 任何已配置的路由名（含新增路由），并且**不采纳其它进程的快照**：显式探测必须给出本进程自己的
 结果，否则运维看到的可能是服务几十秒前的结论。
 
+路由执行错误会将已分类的失败类别、来源错误码和 `retryable_external_dependency` 同时写入 Runtime Attempt 与 AgentRun。能力错误按路由判定终止，容量和传输错误按路由判定重试；未分类的旧式错误保留 AgentRun 原有默认重试判断。
+
 ### Claude Runtime 路由
 
 Claude CLI 有两种路由：内置的 `claude_oauth` 用 `CEO_CLAUDE_MODEL`（默认 `sonnet`），

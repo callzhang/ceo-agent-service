@@ -2344,6 +2344,8 @@ URL 查询参数。外部反馈页可以收集评分，但不能通过链接、�
 
 `dependency_read_unavailable` 和 `agent_context_refresh_failed` 都计入该角色最多 4 次失败 turn 的预算，不形成无限外部等待例外。`agent_context_refresh_failed` 仍保留服务侧外部刷新等待；同码持久化 run 按共享退避逐步延长，最长 15 分钟。成功读取但无匹配数据、证据缺失/歧义或规则未定义走正常证据/业务判断，不能伪报依赖故障。权限申请后等待使用经审核的 Consumer purpose `retry`，规则如下。
 
+当路由执行失败时，已分类的 `RoutedCodexExecutionError.retryable_external_dependency` 同时决定 AgentRun 与 Runtime Attempt 的 `retryable` 记录。能力失败保持终止，容量和传输失败继续可重试；没有失败类别的旧式路由错误沿用既有默认值。
+
 ## 周期性工作的归属
 
 Derek，2026-09-18：**后台周期性工作必须是定时任务**，在控制台里可见、可开关。不允许把

@@ -258,6 +258,50 @@ def test_routed_runtime_failure_preserves_router_failure_code():
                       {"transcript_start": 0, "transcript_end": 0})]
 
 
+@pytest.mark.parametrize(
+    ("failure_class", "retryable", "expected_retryable"),
+    [
+        ("capability", False, False),
+        ("capacity", True, True),
+        (None, False, True),
+    ],
+)
+def test_routed_failure_persists_router_retryability(
+    failure_class, retryable, expected_retryable,
+):
+    from app.agent_runtime_contracts import RuntimeFailureClass
+    from app.agent_runtime_router import RoutedCodexExecutionError
+
+    calls = []
+
+    class Store:
+        def get_agent_run(self, run_id):
+            return SimpleNamespace(id=run_id, status="running")
+
+        def fail_agent_run(self, run_id, error, *, owner):
+            calls.append((run_id, error, owner))
+
+    runner = object.__new__(AgentTurnProcess)
+    runner.store = Store()
+    runner.owner = "test-owner"
+    error = RoutedCodexExecutionError(
+        "runtime_execution_failed",
+        failure_class=(RuntimeFailureClass(failure_class) if failure_class else None),
+        failure_code="provider_failure",
+        retryable_external_dependency=retryable,
+    )
+
+    runner._fail_routed_execution(SimpleNamespace(id=19), error)
+
+    assert calls[0][0] == 19
+    assert calls[0][1]["retryable"] is expected_retryable
+    assert calls[0][1]["source_code"] == "provider_failure"
+    assert calls[0][1]["stage"] == "execution"
+    assert calls[0][1]["source"] == "runtime"
+    assert calls[0][1]["session_continuable"] is True
+    assert calls[0][2] == "test-owner"
+
+
 def test_same_route_capacity_retry_resumes_observed_audit_session():
     assert _fallback_requested_session_id(
         previous_route_name="codex_oauth",
