@@ -63,13 +63,29 @@ def test_new_facts_checked_after_inverse():
 
 
 def test_capacity_uses_same_population_and_packing():
-    before = {"population_sha256": "same-facts", "vacuumed": True, "bytes": 100}
-    after = {"population_sha256": "same-facts", "vacuumed": True, "bytes": 80}
+    before = {"population_sha256": "same-facts", "vacuumed": True, "page_size": 4096, "bytes": 100}
+    after = {"population_sha256": "same-facts", "vacuumed": True, "page_size": 4096, "bytes": 80}
     assert_capacity_pair(before, after)
     with pytest.raises(AssertionError, match="population_sha256"):
         assert_capacity_pair(before, {**after, "population_sha256": "different-facts"})
     with pytest.raises(AssertionError, match="packing"):
         assert_capacity_pair(before, {**after, "vacuumed": False})
+    with pytest.raises(AssertionError, match="page_size"):
+        assert_capacity_pair(before, {**after, "page_size": 8192})
+    with pytest.raises(AssertionError, match="positive SQLite page size"):
+        assert_capacity_pair({**before, "page_size": 0}, {**after, "page_size": 0})
+
+
+def test_measure_records_actual_sqlite_page_size(tmp_path):
+    database = tmp_path / "custom-page-size.sqlite3"
+    with sqlite3.connect(database) as db:
+        db.execute("PRAGMA page_size=1024")
+        db.execute("CREATE TABLE sample (value TEXT)")
+
+    measured = validator._measure(database, vacuum=True)
+
+    assert measured["page_size"] == 1024
+    assert measured["vacuumed"] is True
 
 
 def _write_semantic_actions(path, *, shifted=False, changed_body=False, wrong_sent=False,

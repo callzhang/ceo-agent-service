@@ -20,7 +20,7 @@ python tools/validate_action_entity_copy.py \
   --new-root /path/to/current-code
 ```
 
-The current validator measures an old-schema baseline and a re-forwarded current database after VACUUM, and reports table and index pages/bytes, freelist, file size, index changes, and Action Entity table overhead. It does not VACUUM a production database or claim a business outcome from the native CLI or UI. Native CLI and browser acceptance are separate gates.
+The current validator measures an old-schema baseline and a re-forwarded current database after VACUUM, and reports actual `PRAGMA page_size` together with table and index pages/bytes, freelist, file size, index changes, and Action Entity table overhead. It requires both measured databases to have the same positive page size, population digest, and VACUUM state before comparing capacity. It does not VACUUM a production database or claim a business outcome from the native CLI or UI. Native CLI and browser acceptance are separate gates.
 
 ## Task 6A saved-copy evidence
 
@@ -48,4 +48,8 @@ To keep evidence non-destructive, the capacity run backed up each saved database
 
 The current database's four Action Entity tables occupy 146,780,160 bytes: `actions` 133,779,456; `action_receipts` 10,252,288; `action_observers` 24,576; and `action_entity_identity_map` 2,723,840. The identity-map indexes add 2,895,872 bytes (2,543,616 unique autoindex plus 352,256 lookup index). The net file reduction is small: current table pages grew by 1,539 (6,303,744 bytes) while index pages fell by 2,168 (8,880,128 bytes). These figures describe the tested same-fact copy and do not imply a production VACUUM or an operational performance change.
 
-The focused tests passed 9 cases. The reusable CLI was not rerun end-to-end after the comparator correction; the saved-copy comparator and paired VACUUM measurement were run directly to avoid repeating the already completed full lifecycle. Native CLI, browser acceptance, and full Task 6 review remain separate work.
+The original A1 focused run passed 9 cases. After the page-size review fix, the focused suite passes 10 cases. The reusable CLI was not rerun end-to-end after the comparator correction; the saved-copy comparator and paired VACUUM measurement were run directly to avoid repeating the already completed full lifecycle. Native CLI, browser acceptance, and full Task 6 review remain separate work.
+
+## Review fix round 1
+
+Task 6A1 review identified that the reusable capacity assertion did not record or compare page size, although the saved measurement pair was both 4,096 bytes per page. `_measure` now records the actual `PRAGMA page_size`; `assert_capacity_pair` requires matching, positive page sizes as well as matching populations and VACUUM state. A focused measurement test uses an actual 1,024-byte SQLite page size, and the pair test rejects mismatched and nonpositive sizes. The saved 4,096-byte capacity evidence above remains unchanged.

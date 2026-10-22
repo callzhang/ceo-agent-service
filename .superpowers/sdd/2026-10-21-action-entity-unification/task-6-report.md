@@ -21,3 +21,7 @@ For capacity, fresh SQLite backup copies of `before-inverse.sqlite3` and `cohort
 The first-red artifact `/tmp/task6-first-red.txt` is a missing-module pytest collection failure (SHA-256 `5cf4573c8433d596067c34cd34de4d80f7d8c7cdbe3becf99a3caf951f8dcb55`); it does not contain the unretained SQL failure. The full corrected-run log is `/tmp/task6-corrected-full-run.log` (SHA-256 `1dee340efc335b6ff69e9bd2852ff1f4ad1f75391d99df9ff0b094e49771b4b7`).
 
 The reusable CLI was not rerun end-to-end after the comparator correction, to avoid repeating the completed full lifecycle. The saved-copy comparator and paired capacity measurement were run directly. Native CLI, UI, production writes, live provider calls, push, and deployment were not performed.
+
+## Review fix round 1
+
+Task 6A1 review approved the bounded A1 work with one P2: the reusable capacity measure did not record or compare `PRAGMA page_size`, although the saved-copy proof measured 4,096-byte pages on both sides. `_measure` now records its actual positive page size, and `assert_capacity_pair` rejects differing or nonpositive sizes. Focused tests cover a real 1,024-byte SQLite page-size measurement and mismatch/nonpositive negatives. The saved-copy evidence and lifecycle artifacts were not changed or regenerated.

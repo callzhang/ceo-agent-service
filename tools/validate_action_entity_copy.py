@@ -77,11 +77,13 @@ def check_new_facts_survive_inverse(before: Mapping[str, str], after: Mapping[st
 
 
 def assert_capacity_pair(before: Mapping[str, Any], after: Mapping[str, Any]) -> None:
-    for field in ("population_sha256", "vacuumed"):
+    for field in ("population_sha256", "vacuumed", "page_size"):
         if before.get(field) != after.get(field):
             raise AssertionError(f"capacity cohorts differ in {field} packing/population")
     if before["vacuumed"] is not True:
         raise AssertionError("both capacity databases must use VACUUM packing")
+    if not isinstance(before["page_size"], int) or before["page_size"] <= 0:
+        raise AssertionError("capacity database page_size must be a positive SQLite page size")
 
 
 class StrictSubstituteProvider:
@@ -321,6 +323,7 @@ def _measure(db_path: Path, *, vacuum: bool) -> dict[str, Any]:
     with sqlite3.connect(db_path) as db:
         if vacuum:
             db.execute("VACUUM")
+        page_size = db.execute("PRAGMA page_size").fetchone()[0]
         pages = db.execute("pragma page_count").fetchone()[0]
         freelist = db.execute("pragma freelist_count").fetchone()[0]
         kinds = {name: kind for kind, name in db.execute(
@@ -350,6 +353,7 @@ def _measure(db_path: Path, *, vacuum: bool) -> dict[str, Any]:
             "select type,name,sql from sqlite_master where type='index' order by name"
         )}
     return {"vacuumed": vacuum,
+            "page_size": page_size,
             "table_pages": table_pages, "index_pages": index_pages,
             "freelist_pages": freelist, "page_count": pages,
             "table_bytes": table_bytes, "technical_table_bytes": technical,
