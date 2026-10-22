@@ -95,5 +95,19 @@
       "claude_oauth": "healthy",
       "qwen_gpu4": "healthy"
     }
+  },
+  "scheduler_catch_up_recovery": {
+    "observed_at": "2026-10-22",
+    "historical_run_id": 392433,
+    "historical_run_unchanged": true,
+    "root_cause": "When all runtime routes were temporarily unavailable at dispatch time, the scheduler created a terminal skipped run and advanced next_run_at. A route recovery after host resume could not dispatch that missed trigger.",
+    "repair": "Keep the planned instant without creating a run while the selected runtime provider is temporarily unreachable; dispatch it once the route recovers. Preserve static route/configuration skip behavior and coalesce multiple missed instants to the latest one.",
+    "verification": {
+      "regression_before_fix": "2 failed as expected: both paused:codex_provider_overloaded and snapshot_missing created skipped runs instead of preserving the trigger.",
+      "regression_after_fix": "tests/test_agent_cron_scheduler.py: 28 passed, including route outage deferral/recovery and static route fault handling.",
+      "deployment": "pending",
+      "next_natural_okr_run": "2026-10-25T10:00:00Z",
+      "lint": "ruff check app/agent_cron/scheduler.py tests/test_agent_cron_scheduler.py passed; git diff --check passed."
+    }
   }
 }

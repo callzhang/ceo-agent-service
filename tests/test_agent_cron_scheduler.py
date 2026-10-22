@@ -72,10 +72,18 @@ class UnavailableRuntimeRoute(AvailableOptions):
         self._unavailable_reason = unavailable_reason
 
     def list_runtime_options(self, **_kwargs: object) -> tuple[_RuntimeOption, ...]:
-        return (_RuntimeOption("codex_oauth", False, self._unavailable_reason),)
+        return (
+            _RuntimeOption(
+                "codex_oauth",
+                self._unavailable_reason is None,
+                self._unavailable_reason,
+            ),
+        )
 
     def resolve_runtime_route(self, route_name: str, **_kwargs: object) -> object:
-        raise ValueError(f"runtime route {route_name}: {self._unavailable_reason}")
+        if self._unavailable_reason is not None:
+            raise ValueError(f"runtime route {route_name}: {self._unavailable_reason}")
+        return object()
 
 
 class MissingOperationSkill(AvailableOptions):
@@ -539,21 +547,23 @@ def test_unavailable_runtime_is_skipped_and_recorded_in_existing_attention(
     "unavailable_reason",
     ["paused:codex_provider_overloaded", "snapshot_missing"],
 )
-def test_paused_or_unprobed_runtime_route_is_skipped_without_attention_error(
+def test_transient_runtime_unavailability_preserves_missed_trigger_until_recovery(
     tmp_path: Path,
     caplog,
     unavailable_reason: str,
 ) -> None:
     store = AutoReplyStore(tmp_path / "worker.sqlite3")
     task = _task(store)
-    scheduler = _scheduler(store, options=UnavailableRuntimeRoute(unavailable_reason))
+    options = UnavailableRuntimeRoute(unavailable_reason)
+    scheduler = _scheduler(store, options=options)
     scheduler.start(NOW)
+    planned = scheduler.next_run_at(task.id)
+    assert planned is not None
 
-    scheduler.tick(NOW + timedelta(minutes=1))
+    scheduler.tick(planned)
 
-    (run,) = store.list_scheduled_task_runs(task.id)
-    assert run.dispatch_status == "skipped"
-    assert run.skip_or_error_reason == RUNTIME_UNAVAILABLE
+    assert store.list_scheduled_task_runs(task.id) == ()
+    assert scheduler.next_run_at(task.id) == planned
     assert store.list_errors() == []
     [record] = [
         record
@@ -562,8 +572,16 @@ def test_paused_or_unprobed_runtime_route_is_skipped_without_attention_error(
     ]
     assert record.levelname == "WARNING"
     assert record.scheduled_task_id == task.id
-    assert record.scheduled_task_event_id == run.event_id
     assert unavailable_reason in record.scheduled_task_skip_detail
+
+    options._unavailable_reason = None
+    scheduler.tick(planned + timedelta(seconds=1))
+
+    (run,) = store.list_scheduled_task_runs(task.id)
+    assert run.dispatch_status == "pending"
+    assert run.scheduled_for == planned
+    assert run.skip_or_error_reason == ""
+    assert scheduler.next_run_at(task.id) == planned + timedelta(minutes=1)
 
 
 @pytest.mark.parametrize(
