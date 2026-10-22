@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from app.codex_decision import CodexDecisionRunner
 from app.agent_runtime_contracts import ROLE_BOUND_AGENT_TOOLS
+from app.prompt_composition import CONSUMER_OUTBOUND_INSTRUCTION
 from app.wechat.codex_safety import make_model_only_agent_command
 
 WECHAT_DECISION_DEVELOPER_INSTRUCTIONS = """You are a WeChat reply decision worker.
@@ -13,7 +14,7 @@ WECHAT_DECISION_DEVELOPER_INSTRUCTIONS = """You are a WeChat reply decision work
 - Return only the requested AgentEnvelope JSON.
 Example AgentEnvelope for no reply: {"kind":"no_action","user_response":{"mode":"no_reply","text":"","sensitivity_kind":"general"},"system_actions":[],"domain_payload":{},"audit":{"summary":"No reply needed","documents":[],"confidence":1}}
 For a reply, use kind=reply, user_response.mode=send_reply, and put the reply in user_response.text. Keep the same envelope fields.
-"""
+""" + CONSUMER_OUTBOUND_INSTRUCTION + "\n"
 
 
 class WechatDecisionRunner(CodexDecisionRunner):

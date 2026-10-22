@@ -1,6 +1,6 @@
 # Meeting Agent 原生 DWS 只读边界设计
 
-状态：强制只读权限仍是研究方案，未实施权限变更。2026-10-21 Derek 选择保留 Meeting Agent 的原生 `dws` 命令；在没有简单可靠的命令禁用办法时，先用简短的 Meeting Developer 指令约束 DWS 只读核验、禁止 Agent 直接对外操作，由服务继续投递。恢复 `dingtalk-chat` Skill 可见性的 [PR #224](https://github.com/callzhang/ceo-agent-service/pull/224) 仍需独立验证。这是行为约束，不宣称已取得强制只读隔离。
+状态：强制只读权限仍是研究方案，未实施权限变更。2026-10-21 Derek 选择保留 Meeting Agent 的原生 `dws` 命令；Meeting 专属指令只要求 DWS 读群与身份，禁止 Agent 直接向外发送消息、邮件和执行审批的约束由所有 Consumer 共用的指令提供，投递仍由服务处理。恢复 `dingtalk-chat` Skill 可见性的 [PR #224](https://github.com/callzhang/ceo-agent-service/pull/224) 已合并并部署。这是行为约束，不宣称已取得强制只读隔离。
 
 ## 问题和完成条件
 
@@ -40,4 +40,4 @@ Meeting 判断轮需要保留原生 DWS 的群搜索、完整成员、近期消�
 
 先用虚构 Meeting 与替身 DWS 检查冷启动和既有的同 session 输出纠错轮：确实执行群搜索、完整成员与近期消息读取，选对业务承接群；群证据不足时不猜测，人员敏感内容不进入未授权受众。然后在受控测试组织核对真实 DWS 授权：上述读取成功；直接调用、shell 包装、别名、绝对路径、`--yes` 和原始 API 等写入尝试均得到可归因的拒绝，且无外部效果。至少覆盖常用 Shortcut、底层原子发送、消息、邮件、审批、已有授权和其他可用的外发入口；不能以单个 `chat send` 规则代表全局禁写。
 
-强制安全权限若在后续实施，须按仓库 `AGENTS.md` 单独确认、单独提交和审查。本轮的提示约束也与 PR #224 的 Skill 可见性修复分开提交：先核对指令确实进入 Meeting 原生 Developer 输入，再用虚构案例确认 Agent 读取群证据且没有直接对外动作；PR #224 经独立审查后可按正式流程发布，并在生产回读版本、PID、健康、队列、Attention、History 及完整 Meeting trajectory。行为验证通过仍不等于 DWS 已被技术性禁止写入。
+强制安全权限若在后续实施，须按仓库 `AGENTS.md` 单独确认、单独提交和审查。PR #224 的 Skill 可见性修复与 PR #232 的 Meeting 提示此前已分开合并并部署；本轮只把外发禁令移入共享 Consumer 指令，Meeting 的 DWS 读群提示保留。此前匿名替身 DWS 案例证明了取证行为和该次未直接发送；尚无上线后的真实 Meeting trajectory 能证明后续每轮都如此。行为验证通过仍不等于 DWS 已被技术性禁止写入。
