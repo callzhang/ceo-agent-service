@@ -171,7 +171,7 @@ def test_meeting_runner_routes_compact_prompt_only_to_codex():
     call = routed.calls[0]
     assert call["prompt"] == "FULL FROZEN PROTOCOL"
     assert call["route_prompt_overrides"] == {RuntimeKind.CODEX_CLI: "MEETING RULE"}
-    assert call["command_factory"].skill_names == ()
+    assert call["command_factory"].skill_names == ("dingtalk-chat",)
     assert call["command_factory"].project_doc_max_bytes == 0
 
 
