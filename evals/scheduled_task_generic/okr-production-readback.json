@@ -841,5 +841,46 @@
     "mutations_or_replays_performed": false,
     "natural_report_acceptance_changed": false,
     "conclusion": "At this readback task14 is configuration v52 / managed Skill revision224, with the prompt that explicitly requires checking group messages first; its next normal trigger is 2026-10-23T13:00:00Z. The preceding natural run 392889 used v49, before both the prompt and Skill fixes. Task13 and task6 gained only version numbers at the latest readback; their effective execution snapshots are unchanged. Re-read the active config before the next run in case it changes again. The current macOS assertions indicate automatic idle sleep appears inhibited at the observation time, so the natural sleep-resume catch-up branch remains unverified; no app or power state was changed."
+  },
+  "runtime_readback_2026_10_22T201326Z": {
+    "observed_at": "2026-10-22T20:13:26Z",
+    "local_time": "2026-10-22T13:13:26-07:00",
+    "production_checkout": "/Users/derek/Services/ceo-agent-service",
+    "production_commit": "320f2002b9a886c4f7c593ddb17681b17eae9fe3",
+    "service_supervisor_pid": 11199,
+    "service_supervisor_started_at_local": "2026-10-22T13:06:57-07:00",
+    "api_worker_pid": 11203,
+    "healthz": {
+      "http": 200,
+      "ok": true
+    },
+    "scheduled_tasks": {
+      "enabled_count": 14,
+      "task14": {
+        "version": 52,
+        "managed_skill_revision_id": 224,
+        "latest_run_id": 392889,
+        "latest_run_trigger": "natural scheduled",
+        "next_run_at": "2026-10-23T13:00:00Z"
+      },
+      "task13": {
+        "version": 45,
+        "managed_skill_revision_id": 202,
+        "latest_run_id": 391278,
+        "latest_run_trigger": "manual",
+        "latest_run_status": "skipped",
+        "next_run_at": "2026-10-24T19:00:00Z"
+      },
+      "task6": {
+        "version": 23,
+        "managed_skill_revision_id": 223,
+        "latest_run_id": 392433,
+        "latest_run_status": "skipped",
+        "next_run_at": "2026-10-25T10:00:00Z"
+      }
+    },
+    "source": "read-only production checkout, launchd job, localhost healthz, schedules table, and immutable scheduled-task config snapshots",
+    "mutations_or_replays_performed": false,
+    "conclusion": "Production has advanced from the 20:00Z readback commit to 320f2002 while task14/13/6 effective configuration versions and managed Skill revisions remain 52/224, 45/202, and 23/223. Service health is HTTP 200 and there is no newer run for the three report tasks. The next report run is task14 at 2026-10-23T13:00:00Z; task13 and task6 remain due 2026-10-24T19:00:00Z and 2026-10-25T10:00:00Z."
   }
 }
