@@ -1642,15 +1642,7 @@ class AgentTurnProcess(Generic[ResultT]):
                         exc.failure_code or exc.code,
                         exc.retryable_external_dependency,
                     )
-            self._fail_running(
-                run,
-                exc.failure_code or exc.code,
-                detail=exc.reason or str(exc),
-                stage="execution",
-                source="runtime",
-                source_code=exc.failure_code or exc.code,
-                session_continuable=True,
-            )
+            self._fail_routed_execution(run, exc)
             raise
         except ReviewedSourceReadError as exc:
             if active_attempt is not None:
@@ -1950,6 +1942,24 @@ class AgentTurnProcess(Generic[ResultT]):
             error = RuntimeError(failure_code)
             error.detail = _process_failure_detail(process)
             raise error
+
+    def _fail_routed_execution(
+        self, run: AgentRun, exc: RoutedCodexExecutionError
+    ) -> None:
+        self._fail_running(
+            run,
+            exc.failure_code or exc.code,
+            detail=exc.reason or str(exc),
+            stage="execution",
+            source="runtime",
+            source_code=exc.failure_code or exc.code,
+            session_continuable=True,
+            retryable=(
+                exc.retryable_external_dependency
+                if exc.failure_class is not None
+                else None
+            ),
+        )
 
     def _fail_running(
         self,
