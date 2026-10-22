@@ -42,9 +42,9 @@
     {
       "source": "ci/shared-skills/ceo-daily-report/SKILL.md",
       "target": "skills/ceo-daily-report/SKILL.md",
-      "old_sha256": "45e10866372b48f484af27310a9bc07f9ea0538ca3cc1d675fd1bd45ce1fddce",
+      "old_sha256": "32d24bb5f53b60bcf67b8a91582db258a05cac59c789391c862d3bd95719fc62",
       "new_sha256": "32d24bb5f53b60bcf67b8a91582db258a05cac59c789391c862d3bd95719fc62",
-      "old_managed_sha256": "45e10866372b48f484af27310a9bc07f9ea0538ca3cc1d675fd1bd45ce1fddce"
+      "old_managed_sha256": "32d24bb5f53b60bcf67b8a91582db258a05cac59c789391c862d3bd95719fc62"
     },
     {
       "source": "ci/shared-skills/ceo-document-review/SKILL.md",
@@ -77,7 +77,7 @@
       "source": "ci/shared-skills/dingtalk-oa-approval/SKILL.md",
       "target": "skills/dingtalk-oa-approval/SKILL.md",
       "old_sha256": "fc9a16dce789e1f2640c2896758b6cb5adfadeb1e343efec5b1d56efe2698f52",
-      "new_sha256": "fc9a16dce789e1f2640c2896758b6cb5adfadeb1e343efec5b1d56efe2698f52"
+      "new_sha256": "f58544fee2f5a610ff60a9593bedff766b421dad00d9904ab48cbc636ed0194b"
     },
     {
       "source": "ci/shared-skills/stardust-oa-finance-review/SKILL.md",
