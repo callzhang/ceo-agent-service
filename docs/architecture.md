@@ -486,9 +486,15 @@ legacy failed Attempt labels are also reconciled to the matching task's current
 terminal status, and a failed or blocked Attempt with no owning task retains
 its own status. Current unresolved System Execution uncertainty continues to
 override task closure; the projection does not modify the Attempt, candidate,
-or execution receipt. Failed-only History selects Reply Attempt keys with this
-same status projection and hydrates only the selected Attempt IDs through it;
-count, status and displayed rows therefore use the same current state.
+or execution receipt. When a current OA candidate's Audit run and exact current
+execution are linked to the Attempt, a verified `done` execution also resolves
+the stale `external_action_uncertain` task error for History projection while
+the task is still pending, processing or running; History then shows that live
+task state without rewriting the stored Attempt or task error. An unresolved
+execution remains `uncertain`. Failed-only History selects Reply Attempt keys
+with this same status projection and hydrates only the selected Attempt IDs
+through it; count, status and displayed rows therefore use the same current
+state.
 
 An operator may reconcile one existing uncertain OA return through the dedicated
 History endpoint. It requires the exact current reviewed candidate/review, an

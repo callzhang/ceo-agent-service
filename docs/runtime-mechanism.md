@@ -4395,7 +4395,12 @@ current terminal status; without an owning task, the Attempt keeps its own
 failure or block status. Historical action stays in the action field. An
 unresolved current System Execution remains `uncertain` even when the task was
 later closed; History reads never rewrite the Attempt or execution receipt.
-Other History types retain their own status projections.
+When the exact current candidate's Audit run and System Execution are linked
+to the Attempt, a verified `done` execution resolves a stale
+`external_action_uncertain` task error for History projection while the task
+remains pending, processing or running. History then shows the live task state
+without rewriting the stored Attempt or task error. An unresolved execution
+remains `uncertain`. Other History types retain their own status projections.
 The failed-only Reply Attempt key selection and page hydration both use this
 same canonical projection, so OA legacy labels, pending tasks and unresolved
 uncertainty are counted and displayed consistently.

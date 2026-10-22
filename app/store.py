@@ -26122,7 +26122,28 @@ class AutoReplyStore(LogicalRunStoreMixin, ReviewedCandidateStoreMixin):
                               on projected_task.id=projected_run.reply_task_id
                             where projected_run.id=reply_attempts.agent_run_id
                               and projected_run.execution_generation=projected_task.execution_generation
-                              and coalesce(projected_task.error, '')<>'external_action_uncertain'
+                              and (
+                                  coalesce(projected_task.error, '')<>'external_action_uncertain'
+                                  or exists (
+                                      select 1
+                                      from ({REVIEW_CANDIDATE_SQL}) as verified_candidate
+                                      join ({CANDIDATE_REVIEW_SQL}) as verified_review
+                                        on verified_review.candidate_id=verified_candidate.id
+                                       and verified_review.audit_run_id=projected_run.id
+                                      join ({CANDIDATE_EXECUTION_SQL}) as verified_execution
+                                        on verified_execution.candidate_id=verified_candidate.id
+                                       and verified_execution.review_id=verified_review.id
+                                      where verified_candidate.task_id=projected_task.id
+                                        and verified_candidate.execution_generation=projected_task.execution_generation
+                                        and verified_candidate.id=(
+                                            select max(latest_candidate.id)
+                                            from ({REVIEW_CANDIDATE_SQL}) as latest_candidate
+                                            where latest_candidate.task_id=projected_task.id
+                                              and latest_candidate.execution_generation=projected_task.execution_generation
+                                        )
+                                        and verified_execution.status='done'
+                                  )
+                              )
                               and projected_task.status in ('pending', 'processing', 'running')
                         ) then (
                             select case when projected_task.status='processing' then 'running'
@@ -26132,7 +26153,28 @@ class AutoReplyStore(LogicalRunStoreMixin, ReviewedCandidateStoreMixin):
                               on projected_task.id=projected_run.reply_task_id
                             where projected_run.id=reply_attempts.agent_run_id
                               and projected_run.execution_generation=projected_task.execution_generation
-                              and coalesce(projected_task.error, '')<>'external_action_uncertain'
+                              and (
+                                  coalesce(projected_task.error, '')<>'external_action_uncertain'
+                                  or exists (
+                                      select 1
+                                      from ({REVIEW_CANDIDATE_SQL}) as verified_candidate
+                                      join ({CANDIDATE_REVIEW_SQL}) as verified_review
+                                        on verified_review.candidate_id=verified_candidate.id
+                                       and verified_review.audit_run_id=projected_run.id
+                                      join ({CANDIDATE_EXECUTION_SQL}) as verified_execution
+                                        on verified_execution.candidate_id=verified_candidate.id
+                                       and verified_execution.review_id=verified_review.id
+                                      where verified_candidate.task_id=projected_task.id
+                                        and verified_candidate.execution_generation=projected_task.execution_generation
+                                        and verified_candidate.id=(
+                                            select max(latest_candidate.id)
+                                            from ({REVIEW_CANDIDATE_SQL}) as latest_candidate
+                                            where latest_candidate.task_id=projected_task.id
+                                              and latest_candidate.execution_generation=projected_task.execution_generation
+                                        )
+                                        and verified_execution.status='done'
+                                  )
+                              )
                               and projected_task.status in ('pending', 'processing', 'running')
                             limit 1
                         )
