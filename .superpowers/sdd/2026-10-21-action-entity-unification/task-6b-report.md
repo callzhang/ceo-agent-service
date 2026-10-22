@@ -30,11 +30,24 @@ CUA displayed inline screenshots of the filtered History record and Attempt deta
 
 The copied Dashboard's service-status read failed: its `WorkerStatus` validation rejected integer `attention_rows[2].id` and `attention_rows[3].id` where strings are required. A dashboard queues request also returned HTTP 500 in the server log. The Dashboard includes unrelated historical failed-item cards with copied private content. Acceptance relied on the matching History row and Attempt detail only; those unrelated cards were not captured as durable evidence or quoted here. The History and Attempt workflow, feedback save, and recall confirmation were visibly rendered. An HTTP success alone was not treated as acceptance. This Dashboard load issue is reported as an observed UI concern; no implementation fix was made in this acceptance scope.
 
+## Dashboard current-reader recheck
+
+After the reviewed fix at HEAD `1aadefb95e63282e574b8009f9294cab6014c9ac`, I made a new SQLite online backup from the retained accepted final copy at `/tmp/action-entity-task6b.vESxM3/dashboard-recheck.sqlite3`. The final readback copy is `/tmp/action-entity-task6b.vESxM3/dashboard-recheck-final.sqlite3`, SHA-256 `7732ba9cac36047b19d497aeb5ad1959995e9f2d034119ccc9983920f21abdc5`; this matches the accepted-copy input because the recheck is read-only. The original Task 6A3 source SHA-256 remains `73515ca8c30230a0bb67149aa9773a4584ac418caaa0050d9eee7960bd6091d0`. The fix commit changed only backend code, tests and docs, so the prior successful frontend build assets were unchanged.
+
+The task-owned recheck launcher reused `create_audit_app`, `lifespan="off"`, no workers, empty `RuntimeRegistry`, `_NonExecutingExecutor`, and the strict recall-only fake. It served HEAD `1aadefb95` at `http://127.0.0.1:8876`. No fake method was called and no provider operation occurred.
+
+Visible Chrome loaded the Dashboard as `Service 运行中`, Active `0`, Queued `56`. I selected Queued and expanded an Email action; the UI displayed `email_actions:126046`, `pending`, and first attempt. Its `detail_url` is empty. This matches the existing current Dashboard queue contract for Email actions without a linked Attempt; there was no common Action detail URL to follow, so none is claimed or invented.
+
+Visible Settings → Attention loaded 17 unresolved items. Expanding an Email-action Attention row showed its error detail and `此问题尚无关联的 Attempt 详情。` The read-only current Attention projection against the final copy returned Email-action IDs `134250` and `134221` as Python strings, both failed. Direct read-only lookup confirmed both physical `actions.id` values still resolve to current Action records with operation `move` and status `failed`. The Attention detail mapping returns no Attempt URL for this Email-action category, consistent with its current contract.
+
+No additional screenshot file was produced: the CUA accessibility observations captured the visible result, while the host screenshot capture remains unavailable and broad screenshots would expose unrelated private history. No other queue detail was opened. The server was stopped through its owned PTY with Ctrl+C. The prior feedback, recalled state, provider receipt, body hash and earlier accepted copy remain intact.
+
 ## Checks and cleanup boundary
 
 - `npm run build` in the isolated `frontend`: passed.
 - Browser: filtered History → seeded Attempt detail → feedback save → fake recall; visible saved state confirmed.
 - Persistence: final SQLite online backup and public Store readback confirmed feedback; Action/receipt readback confirmed recall and unchanged receipt/body facts.
+- Dashboard follow-up: on HEAD `1aadefb95`, the visible service state and Email queue loaded; the Attention string IDs map to current Action rows on the fresh read-only copy. The current UI exposes no detail URL for these unlinked Email actions.
 - Source candidate SHA-256: unchanged (`73515ca8...6091d0`).
 - Server lifecycle: launched in the owned PTY with `lifespan="off"` and stopped with normal PTY Ctrl+C after browser acceptance. Do not remove the acceptance DB copies, fake log, or launcher until parent review/release is complete.
 - Scope result: no production implementation changes, no outbound provider sends or real recalls, no push/deploy. Task 6A1/A2/A3/A4 remain the separately recorded gates; full Task 6 and final Task 7 are not complete.
