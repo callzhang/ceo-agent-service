@@ -57,6 +57,18 @@ def test_bundled_business_skill_inventory_is_exact_and_valid():
     assert all(skill.managed_by == "ceo-agent-service" for skill in skills)
 
 
+def test_message_triage_skill_audit_respects_counterpart_owned_commitment():
+    skill = (
+        Path(__file__).resolve().parents[1]
+        / "ci/shared-skills/ceo-message-triage/SKILL.md"
+    ).read_text(encoding="utf-8")
+
+    assert "counterpart-owned follow-up" in skill
+    assert "does not by itself create a new action for the principal" in skill
+    assert "unfinished deliverable is not evidence that the principal must follow up" in skill
+    assert "direct request, decision, commitment, or next step from the principal" in skill
+
+
 def test_work_tracking_discovery_describes_the_existing_task_agent_role(monkeypatch):
     monkeypatch.setenv("CEO_SKILLS_ROOT", str(Path(__file__).resolve().parents[1] / "ci" / "shared-skills"))
     skill = next(item for item in load_bundled_business_skills() if item.name == "ceo-work-tracking")
