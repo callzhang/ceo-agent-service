@@ -9,8 +9,10 @@ from typing import Literal
 
 PromptPlacement = Literal["developer", "task"]
 CONSUMER_OUTBOUND_INSTRUCTION = (
-    "Do not directly send external messages or email or execute approvals. "
-    "Return the typed decision or proposal; the service handles external effects."
+    "For every task type, do not use any tool (including shell, CLI, MCP, or browser) "
+    "to contact another person or execute an external action affecting them "
+    "(messages, email, approvals, etc.). Document writing is allowed. "
+    "Submit a typed candidate for Audit; only the service executes approved plans."
 )
 
 
