@@ -1,0 +1,12 @@
+-- Task1B disposition. This is documentation only; no migration is selected.
+-- Physical IDs and source public keys are migration metadata only.
+-- Preserve legacy typed public IDs and per-table allocator high-water marks in
+-- run_entity_identity_map; it stores no copied source row or trajectory.
+-- Keep the numeric CAST ordering value alongside the original public key for
+-- historical source indexes/UI ordering; physical IDs are not a substitute.
+-- Source runs.id=190042 (agent_runs) retains task_id=404225 and job_id=4908
+-- as the sole inherited missing-Task FK exception. Do not synthesize a Task.
+-- record_type/legacy_key are absent from target business tables.
+-- Projection JSON is adopted business result data in run_adopted_results.
+-- final_result_json, result_envelope_json, and tool_events_json were not
+-- physical source columns and are not created by this target contract.
