@@ -3915,6 +3915,8 @@ Attempt detail 的 System Execution 只对当前审核候选，或已有执行�
 
 Meeting 的 Codex CLI 每轮显式设置 `project_doc_max_bytes=0`，省去 CLI 自动加载的工作区 `AGENTS.md`；服务装配的会议来源、工作人格、冻结托管 Skill、结果 Schema 与受众校验不变。非 Codex 路线不使用这个 CLI 配置。
 
+Meeting Codex Developer 指令限定 DWS 只读核验群证据，不允许 Agent 直接发消息、邮件或执行审批等影响他人的操作；Agent 只返回决策，由既有服务流程投递。该指令是模型行为约束，不是 DWS 或 shell 的强制权限隔离；命令、凭据及投递实现均未改变。
+
 会议 Skill 范围（2026-10-18）：服务仍保存并组装本轮全部冻结材料。仅 Codex CLI 路线在存在冻结托管会议 Skill 时，使用该完整托管规则构造实际提交输入，过滤原生 Skill 目录中的重复正文；服务已完成听记、日历等操作读取后，不再将对应操作 Skill 全文交给会议判断轮。Claude/Friday 及缺少托管会议 Skill 的旧任务保持原输入。原生输出纠错沿本路线的实际输入继续，切换路线时改用目标路线的输入；会议结果、受众和投递契约不变。匿名固定对照及早期校验漏判见 `docs/meeting-managed-skill-scope-validation.md`；修正校验后的三轮结果见 `evals/trajectory_optimization/meeting_skill_scope_native.v3.json`。
 
 

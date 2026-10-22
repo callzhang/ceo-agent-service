@@ -221,6 +221,8 @@ class MeetingAlignmentCodexRunner:
                 command_factory=CodexCommandFactory.standard(
                     developer_instructions=(
                         "Return exactly one MeetingAlignmentDecision JSON object.\n\n"
+                        "DWS 仅用于群证据的只读查询。不要直接发消息、邮件或执行审批等影响他人的操作；"
+                        "只返回决策，由服务完成投递。\n\n"
                         + BACKGROUND_AGENT_RUNTIME_BOUNDARY
                     ),
                     output_schema_path=MEETING_ALIGNMENT_DECISION_SCHEMA_PATH,
