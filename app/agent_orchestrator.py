@@ -425,7 +425,12 @@ class AgentOrchestrator:
                         if self._manual_permission_access_check(task, purpose, saved):
                             pass
                         else:
-                            return self._permission_wait_exhausted(task, str(exc))
+                            exhausted = self._permission_wait_exhausted(
+                                task, str(exc), purpose=purpose
+                            )
+                            if isinstance(exhausted, OrchestrationResult):
+                                return exhausted
+                            state = exhausted
             attempts[key] = attempts.get(key, 0) + 1
             try:
                 fresh = refresh_context()
@@ -761,6 +766,7 @@ class AgentOrchestrator:
                 review_result.feedback,
                 stage_index=result.stage_index,
                 predecessor_review_id=result.predecessor_review_id,
+                permission_return_required=self._is_permission_return_turn(task, consumer),
             )
         current = self.store.current_reviewed_candidate(
             task.id, task.execution_generation
@@ -898,7 +904,8 @@ class AgentOrchestrator:
             now=self.now(),
         )
 
-    def _permission_wait_exhausted(self, task, detail, *, run_id: int | None = None):
+    def _permission_wait_exhausted(self, task, detail, *, purpose="oa",
+                                   run_id: int | None = None):
         if not run_id:
             runs = self.store.list_agent_runs_for_task_generation(
                 task.id, task.execution_generation, load_events=False
@@ -906,18 +913,35 @@ class AgentOrchestrator:
             consumers = [run for run in runs if run.role is AgentRole.CONSUMER and run.status == "completed"]
             if consumers:
                 run_id = max(consumers, key=lambda run: run.id).id
+        if not run_id and purpose == "oa":
+            budget = self._purpose_budget(task, "oa")
+            turn = {"proposal_revision": 0, "parent_run_id": None,
+                    "stage_index": 0, "predecessor_review_id": None}
+            if not budget.claim_oa_return_turn(
+                source_consumer_run_id=0, now=self.now(),
+                bootstrap_without_source=True, reply_task_id=task.id,
+                execution_generation=task.execution_generation, **turn,
+            ):
+                return OrchestrationResult(
+                    "needs_human", 0, AgentRole.CONSUMER,
+                    "OA permission retry exhausted, but no source run can be bound to a return proposal",
+                    AgentError(), self._feedback_cycles(task),
+                )
+            return _NextConsumer(
+                proposal_revision=0, parent_run_id=None, feedback=None,
+                stage_index=0, predecessor_review_id=None,
+                permission_return_required=True,
+            )
         if not run_id and task.business_object_key:
-            # A fresh trigger for an object whose permission wait already ran
-            # out has no Consumer run of its own. The wait belongs to the
-            # object, so it is blocked on the Consumer run that made it.
+            # A repeated fresh trigger after an already-claimed return turn
+            # must wait on the original run instead of sending another return.
             run_id = self.store.latest_completed_consumer_run_id_for_business_object(
                 task.business_object_key
             )
         if not run_id:
             return OrchestrationResult(
-                "failed_terminal", 0, AgentRole.CONSUMER,
-                "permission retry exhausted without a completed Consumer run",
-                AgentError(code="permission_retry_state_invalid", retryable=False),
+                "permission_blocked", 0, AgentRole.CONSUMER, detail,
+                AgentError(code=RETRY_EXHAUSTED, retryable=False),
                 self._feedback_cycles(task),
             )
         return OrchestrationResult(
@@ -951,6 +975,8 @@ class AgentOrchestrator:
             source_consumer_run_id=consumer.id,
             now=self.now(),
             failed_access_request=failed_access_request,
+            reply_task_id=task.id,
+            execution_generation=task.execution_generation,
             **turn,
         ):
             return OrchestrationResult(
@@ -970,16 +996,26 @@ class AgentOrchestrator:
 
     def _is_permission_return_turn(self, task, consumer):
         state = self._purpose_budget(task, "oa").state() or {}
-        source_id = state.get("oa_return_source_consumer_run_id")
-        if not source_id or int(source_id) == consumer.id:
+        turn = state.get("oa_return_turn") or {}
+        if not turn:
             return False
-        source = self.store.get_agent_run(int(source_id), load_events=False)
+        if turn.get("reply_task_id") is not None:
+            return bool(
+                turn.get("reply_task_id") == task.id == consumer.reply_task_id
+                and turn.get("execution_generation") == task.execution_generation
+                == consumer.execution_generation
+                and consumer.proposal_revision >= turn.get("proposal_revision", 0)
+            )
+        # Older reservations predate task/generation fields; their source run
+        # provides the same binding without changing persisted legacy state.
+        source_id = state.get("oa_return_source_consumer_run_id")
+        source = self.store.get_agent_run(int(source_id), load_events=False) if source_id else None
         return bool(
             source
-            and source.reply_task_id == consumer.reply_task_id == task.id
-            and source.execution_generation == consumer.execution_generation == task.execution_generation
-            and source.proposal_revision == consumer.proposal_revision
-            and source.parent_agent_run_id == consumer.parent_agent_run_id
+            and source.reply_task_id == task.id == consumer.reply_task_id
+            and source.execution_generation == task.execution_generation
+            == consumer.execution_generation
+            and consumer.proposal_revision >= turn.get("proposal_revision", 0)
         )
 
     def _purpose_terminal(self, state, status, error, execution=None):

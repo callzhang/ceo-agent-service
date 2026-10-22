@@ -199,11 +199,52 @@ def test_permission_retry_exhaustion_forms_audited_oa_return(tmp_path):
     result = runtime.process(task, context, refresh_context=lambda: context)
 
     budget = PurposeRetryBudget(store, task.business_object_key or f'reply-task:{task.id}', 'oa')
-    assert result.status == 'executed'
+    assert result.status == 'executed', (result.error.code, result.summary)
     assert budget.state()['count'] == 3
     assert len(consumer.calls) == 5  # Request + three rereads + one non-reading return proposal.
     assert len(handler.calls) == 2  # One request comment and one audited OA return.
     assert len(audit.calls) == 1  # Only the OA return proposal is audited.
+
+
+def test_exhausted_permission_without_saved_consumer_run_still_proposes_oa_return(tmp_path):
+    store, task, context = task_and_context(tmp_path)
+    context = replace(context, skill_names=('dingtalk-oa-approval',))
+    clock = [datetime.now(timezone.utc) + timedelta(minutes=5)]
+    budget = PurposeRetryBudget(store, task.business_object_key or f'reply-task:{task.id}', 'oa')
+    requested_at = clock[0] - timedelta(days=1)
+    budget.begin_access_request(file_id='file-a', action_key='permission-request-1',
+                                candidate_id=1, now=requested_at)
+    budget.finish_access_request(file_id='file-a', action_key='permission-request-1',
+                                 status='verified', result={'provider_receipt_id': 'receipt-1'},
+                                 now=requested_at)
+    budget.schedule('receipt-1', requested_at, 'review-1', requested_at)
+    for index in range(MAX_PURPOSE_RETRIES):
+        clock[0] = datetime.fromisoformat(budget.state()['next_at']) + timedelta(seconds=1)
+        budget.reserve(f'prior-turn-{index}', clock[0])
+    assert budget.state()['count'] == MAX_PURPOSE_RETRIES
+
+    def return_after_exhaustion(fresh):
+        assert fresh.permission_return_required is True
+        return output('return', target={'process_instance_id': 'p', 'task_id': 't',
+                                        'target_activity_id': 'owner'},
+                      payload={'remark': '请提供审批账号可访问的材料。',
+                               'revert_action': 'REVERT_FOR_RESUBMIT'})
+
+    consumer = ScriptedConsumer(store, return_after_exhaustion)
+    audit = ScriptedAudit(store, 'approve')
+    handler = VerifiedHandler()
+    runtime = AgentOrchestrator(store=store, consumer=consumer, audit=audit,
+        system_executor=SystemExecutor(store, {
+            ('dingtalk-oa', 'revert_task'): handler,
+        }), now=lambda: clock[0])
+
+    result = runtime.process(task, context, refresh_context=lambda: context)
+
+    assert result.status == 'executed'
+    assert len(consumer.calls) == 1
+    assert len(audit.calls) == 1
+    assert len(handler.calls) == 1
+    assert budget.state()['count'] == MAX_PURPOSE_RETRIES
 
 
 def test_definitive_permission_request_denial_proposes_audited_oa_return(tmp_path):
@@ -342,7 +383,7 @@ def test_worker_pass_limit_does_not_reserve_a_third_unstarted_retry(tmp_path):
     assert len(consumer.calls) == budget.state()['count'] == 2
 
 
-def test_fresh_trigger_on_exhausted_permission_wait_is_blocked_on_the_earlier_consumer_run(tmp_path):
+def test_fresh_trigger_on_exhausted_permission_wait_proposes_audited_oa_return(tmp_path):
     store, _, context = task_and_context(tmp_path)
     key = "oa-node:instance:task"
     store.enqueue_reply_task(
@@ -358,6 +399,15 @@ def test_fresh_trigger_on_exhausted_permission_wait_is_blocked_on_the_earlier_co
         operation_id="", owner="consumer",
     )
     store.complete_agent_run(claim.run.id, output("no_action").model_dump(mode="json"), owner="consumer")
+    store.complete_reply_task(
+        first.id, expected_execution_generation=first.execution_generation
+    )
+    fresh = store.ensure_reply_task(
+        channel="dingtalk", conversation_id="conversation", conversation_title="Test",
+        single_chat=True, trigger_message_id="oa-next", trigger_sender="Derek",
+        trigger_create_time="2026-10-04 00:01:00", trigger_text="Review again",
+        business_object_key=key, execution_generation="new-trigger",
+    )
 
     now = datetime.now(timezone.utc)
     budget = PurposeRetryBudget(store, key, "oa")
@@ -367,18 +417,48 @@ def test_fresh_trigger_on_exhausted_permission_wait_is_blocked_on_the_earlier_co
     budget.schedule("receipt", now, "review", now)
     for index in range(MAX_PURPOSE_RETRIES):
         budget.reserve(f"turn:{index}", now + timedelta(hours=12 * (index + 1), seconds=1))
+    assert fresh.business_object_key == key
+    assert budget.state()["count"] == MAX_PURPOSE_RETRIES
+    assert budget.claim_oa_return_turn(
+        source_consumer_run_id=0, now=now + timedelta(days=2),
+        bootstrap_without_source=True, proposal_revision=0, parent_run_id=None,
+        stage_index=0, predecessor_review_id=None, reply_task_id=fresh.id,
+        execution_generation=fresh.execution_generation,
+    )
+    assert not budget.claim_oa_return_turn(
+        source_consumer_run_id=0, now=now + timedelta(days=2),
+        bootstrap_without_source=True, proposal_revision=0, parent_run_id=None,
+        stage_index=0, predecessor_review_id=None, reply_task_id=fresh.id + 1,
+        execution_generation="duplicate-trigger",
+    )
 
-    consumer = ScriptedConsumer(store)
+    def return_after_exhaustion(fresh):
+        assert fresh.permission_return_required is True
+        return output('return', target={'process_instance_id': 'p', 'task_id': 't',
+                                       'target_activity_id': 'owner'},
+                      payload={'remark': '请提供审批账号可访问的材料。',
+                               'revert_action': 'REVERT_FOR_RESUBMIT'})
+
+    consumer = ScriptedConsumer(store, return_after_exhaustion, return_after_exhaustion)
+    audit = ScriptedAudit(store, 'return', 'approve')
+    handler = VerifiedHandler()
     runtime = AgentOrchestrator(
-        store=store, consumer=consumer, audit=ScriptedAudit(store),
+        store=store, consumer=consumer, audit=audit,
+        system_executor=SystemExecutor(store, {
+            ('dingtalk-oa', 'revert_task'): handler,
+        }),
         now=lambda: now + timedelta(days=2),
     )
-    fresh = first.model_copy(update={"execution_generation": "new-trigger"})
-    fresh_context = replace(context, task_id=first.id, trigger_message_id='oa',
+    fresh_context = replace(context, task_id=fresh.id, channel=fresh.channel,
+                            conversation_id=fresh.conversation_id,
+                            conversation_title=fresh.conversation_title,
+                            trigger_message_id=fresh.trigger_message_id,
+                            trigger_text=fresh.trigger_text,
                             skill_names=('dingtalk-oa-approval',))
     result = runtime.process(fresh, fresh_context, refresh_context=lambda: fresh_context)
 
-    assert result.status == 'permission_blocked'
-    assert result.final_run_id == claim.run.id
-    assert result.error.code == RETRY_EXHAUSTED
-    assert consumer.calls == []
+    assert result.status == 'executed', (result.error.code, result.summary, len(consumer.calls))
+    assert result.error.code == ''
+    assert len(consumer.calls) == 2
+    assert len(audit.calls) == 2
+    assert len(handler.calls) == 1

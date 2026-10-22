@@ -200,10 +200,12 @@ class PurposeRetryBudget:
 
     def claim_oa_return_turn(self, *, source_consumer_run_id: int, now: datetime,
                              failed_access_request: bool = False,
+                             bootstrap_without_source: bool = False,
                              proposal_revision: int, parent_run_id: int | None,
-                             stage_index: int, predecessor_review_id: int | None) -> bool:
+                             stage_index: int, predecessor_review_id: int | None,
+                             reply_task_id: int, execution_generation: str) -> bool:
         """Reserve one Consumer turn to propose an audited OA return."""
-        if source_consumer_run_id <= 0:
+        if source_consumer_run_id <= 0 and not bootstrap_without_source:
             return False
 
         def mutate(state):
@@ -226,18 +228,30 @@ class PurposeRetryBudget:
             )
             if not ((exhausted and verified_request) or known_failed_request):
                 return state, False
-            claimed = state.get("oa_return_source_consumer_run_id")
-            if claimed is None:
-                state["oa_return_source_consumer_run_id"] = source_consumer_run_id
+            claimed_turn = state.get("oa_return_turn")
+            if claimed_turn is None:
+                if source_consumer_run_id > 0:
+                    state["oa_return_source_consumer_run_id"] = source_consumer_run_id
                 state["oa_return_turn"] = {
-                    "source_consumer_run_id": source_consumer_run_id,
+                    "source_consumer_run_id": source_consumer_run_id or None,
+                    "bootstrap_without_source": bootstrap_without_source,
                     "proposal_revision": proposal_revision,
                     "parent_run_id": parent_run_id,
                     "stage_index": stage_index,
                     "predecessor_review_id": predecessor_review_id,
+                    "reply_task_id": reply_task_id,
+                    "execution_generation": execution_generation,
                 }
                 return state, True
-            return state, claimed == source_consumer_run_id
+            if bootstrap_without_source:
+                return state, bool(
+                    claimed_turn.get("bootstrap_without_source")
+                    and claimed_turn.get("proposal_revision") == proposal_revision
+                    and claimed_turn.get("parent_run_id") == parent_run_id
+                    and claimed_turn.get("reply_task_id") == reply_task_id
+                    and claimed_turn.get("execution_generation") == execution_generation
+                )
+            return state, state.get("oa_return_source_consumer_run_id") == source_consumer_run_id
 
         return self._update(mutate)
 

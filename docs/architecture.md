@@ -1530,7 +1530,7 @@ OA 权限预算耗尽后停止文件重读，由 Consumer 再运行一次提出�
 `permission_blocked` / `blocked`，在 `needs_human` 队列外等待；History 的一次人工访问检查
 入口保留原预算且只适用于权限已开通后的确认读取。
 
-权限预算属于业务对象，不属于某一次触发。同一审批在预算耗尽后收到新触发（新的 execution generation，尚无本代 Consumer run）时，不再判为 `permission_retry_state_invalid` / `failed`，而是挂靠该业务对象最近一次已完成的 Consumer run，记为 `permission_blocked` / `blocked`，使 History 提供“权限开通后重新读取”的单次人工访问检查。
+权限预算属于业务对象，不属于某一次触发。同一审批在预算耗尽后收到新触发（新的 execution generation，尚无本代 Consumer run）时，若还没有已认领的 OA 退回轮次，就启动一个禁止再读取材料的 Consumer 轮次，提出普通 OA `return` 候选并继续 Audit、执行器和节点读回；该业务对象只认领一次，后续重复触发挂靠最近一次已完成的 Consumer run，记为 `permission_blocked` / `blocked`，避免重复退回。没有可用的 Consumer run 时进入人工处理，不记为权限 `failed`。
 
 系统执行器使用现有 provider client、ServiceMessageSender、external_action_key 和成功回执库。消息加载审核后的精确正文、目标及服务预先准备的后缀；不要求运行中的 Audit，也不向 Agent 暴露发送工具。OA 使用精确实例、节点、动作和参数，保存并回读节点结果。已完成动作不因后续通知失败而重跑。
 
