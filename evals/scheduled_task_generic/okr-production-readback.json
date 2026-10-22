@@ -1,5 +1,5 @@
 {
-  "observed_at": "2026-10-22T17:16:21.467Z",
+  "observed_at": "2026-10-22T17:43:48Z",
   "scope": "Historical real publication readback; not new Agent natural-run acceptance",
   "natural_command_completion_facts": [
     {
@@ -517,5 +517,41 @@
     "fix_publication": "not yet published or deployed",
     "natural_scheduled_acceptance": false,
     "report_body_or_message_receipt_token_included": false
+  },
+  "latest_skill_publication_attempt": {
+    "observed_at": "2026-10-22T17:43:48Z",
+    "production_code_deploy_commit": "526f3df5ef04dca3ed991e78adba0232718a7bee",
+    "code_deploy_output": "deployed 0c63b498 -> 526f3df5",
+    "contract_publication_result": "failed_preflight",
+    "failure": "Consumer system release SHA mismatch: ci/shared-skills/ceo-weekly-okr-report/SKILL.md",
+    "root_cause": "The release manifest and frozen candidate precondition still pinned installed/managed weekly-OKR Skill revision 222 (f2781a35...), while read-only production state had advanced to managed revision 223 and both source and installed Skill bytes were 18b23c5c....",
+    "contract_files_written": false,
+    "rollback_completed": true,
+    "post_failure_healthz_ok": true,
+    "post_failure_pid": 57602,
+    "post_failure_queue_counts": {
+      "active": 0,
+      "queued": 199
+    },
+    "post_failure_attention_items": 22,
+    "post_failure_history_total": 37255,
+    "task14": {
+      "enabled": true,
+      "version": 50,
+      "timezone_name": "America/Los_Angeles",
+      "cron_expression": "0 0 6 * * *",
+      "next_run_at": "2026-10-23T13:00:00Z",
+      "managed_revision_id": 203
+    },
+    "task6": {
+      "version": 21,
+      "managed_revision_id": 223,
+      "managed_sha256": "18b23c5c6762ce0fa6cceedf8f1a7a14591327269897fcc56ba4ea32e9c78744"
+    },
+    "precondition_refresh": "Updated from current production readbacks only; no scoring rule, Skill body, or business threshold changed.",
+    "retry_pending": true,
+    "precondition_refresh_result": "Updated ceo-weekly-okr-report installed/managed hash and revision from production revision223 readback; updated ceo-daily-report approved candidate hash to the exact reviewed Skill SHA.",
+    "precondition_lock_test": "tests/test_scheduled_okr_agent_eval.py::test_release_manifest_pins_verified_current_installation passed after refresh.",
+    "retry_preflight": "_load_file_plan against the production checkout, current local managed Skill targets, and production audit_rules passed for all 26 assets using the candidate manifest."
   }
 }
