@@ -76,8 +76,8 @@
     {
       "source": "ci/shared-skills/dingtalk-oa-approval/SKILL.md",
       "target": "skills/dingtalk-oa-approval/SKILL.md",
-      "old_sha256": "5fb5ce8e721a4240a461d257d50bfb057cff593a4229b923f987f6097c168b4b",
-      "new_sha256": "6ec0c61c40c12f8db56b1999fb6aa2e989d5f74f968f99a4d91e1b3e9dd2b7b9"
+      "old_sha256": "58f19e46262199c78bb3077767a7e2628fd6f660bc24e3cf3c5b41c6f26d4ab6",
+      "new_sha256": "526c29f4f90119717a81938826303d98dfa3f9c3fa9f96cd5c233df2cd4c7ce6"
     },
     {
       "source": "ci/shared-skills/stardust-oa-finance-review/SKILL.md",
@@ -101,7 +101,7 @@
       "source": "ci/shared-skills/stardust-oa-attendance-travel-review/SKILL.md",
       "target": "skills/stardust-oa-attendance-travel-review/SKILL.md",
       "old_sha256": "edb3fd74d5a26512fff9c225b0cdf694412e611a5efdffdea0f392d9c37b8d2e",
-      "new_sha256": "edb3fd74d5a26512fff9c225b0cdf694412e611a5efdffdea0f392d9c37b8d2e"
+      "new_sha256": "6fd80713c61886e5f42d8bfea419f0db8ae00412e4805d9620068973917e5d46"
     },
     {
       "source": "ci/shared-skills/ceo-daily-report/scripts/destination.py",
