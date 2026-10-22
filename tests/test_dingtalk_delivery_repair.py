@@ -311,7 +311,6 @@ def _legacy_native_readback_case(tmp_path, monkeypatch):
     publish_action_entity_release(path, contract)
     store = AutoReplyStore(path)
     task = store.get_reply_task(task_id)
-    handler = SimpleNamespace(sends=1)
     with store._connect() as db:
         receipt = db.execute(
             f"select * from ({EXTERNAL_ACTION_RESULT_SQL}) where external_action_key=?",
@@ -320,14 +319,60 @@ def _legacy_native_readback_case(tmp_path, monkeypatch):
         receipt = dict(receipt)
     sent = store.get_sent_reply(task.conversation_id, task.trigger_message_id)
     readback = _native_chat_proof(task, sent)
-    return store, task, handler, receipt, readback
+    return store, task, receipt, readback
+
+
+def _legacy_delivery_facts(store, task, external_action_key):
+    from app.action_storage import (
+        CANDIDATE_ACTION_ATTEMPT_SQL,
+        REVIEW_CANDIDATE_SQL,
+        SENT_REPLY_SQL,
+    )
+
+    with store._connect() as db:
+        action = db.execute(
+            "select id,action_external_action_key,action_business_object_key,action_action_identity "
+            "from actions where record_type='action' and action_external_action_key=?",
+            (external_action_key,),
+        ).fetchall()
+        result = db.execute(
+            f"select external_action_key,business_object_key,action_identity,first_agent_run_id "
+            f"from ({EXTERNAL_ACTION_RESULT_SQL}) where external_action_key=?",
+            (external_action_key,),
+        ).fetchall()
+        sent = db.execute(
+            f"select id,external_action_key,reply_text from ({SENT_REPLY_SQL}) "
+            "where channel=? and conversation_id=? and trigger_message_id=?",
+            (task.channel, task.conversation_id, task.trigger_message_id),
+        ).fetchall()
+        candidates = db.execute(
+            f"select id from ({REVIEW_CANDIDATE_SQL}) where task_id=?",
+            (task.id,),
+        ).fetchall()
+        action_attempts = db.execute(
+            f"select id from ({CANDIDATE_ACTION_ATTEMPT_SQL}) where external_action_key=?",
+            (external_action_key,),
+        ).fetchall()
+    return {
+        "action": tuple(tuple(row) for row in action),
+        "result": tuple(tuple(row) for row in result),
+        "sent": tuple(tuple(row) for row in sent),
+        "candidate_ids": tuple(tuple(row) for row in candidates),
+        "candidate_action_attempt_ids": tuple(tuple(row) for row in action_attempts),
+    }
 
 
 def test_native_chat_readback_settles_legacy_completed_reply_without_inventing_audit(tmp_path, monkeypatch):
-    store, task, handler, receipt, readback = _legacy_native_readback_case(tmp_path, monkeypatch)
+    store, task, receipt, readback = _legacy_native_readback_case(tmp_path, monkeypatch)
     original_provider = json.loads(receipt["provider_result_json"])
     sent_before = store.get_sent_reply(task.conversation_id, task.trigger_message_id)
     assert sent_before.reply_text == "Exact prepared advice"
+    delivery_facts_before = _legacy_delivery_facts(store, task, receipt["external_action_key"])
+    assert len(delivery_facts_before["action"]) == 1
+    assert len(delivery_facts_before["result"]) == 1
+    assert len(delivery_facts_before["sent"]) == 1
+    assert delivery_facts_before["candidate_ids"] == ()
+    assert delivery_facts_before["candidate_action_attempt_ids"] == ()
     from app.logical_run_storage import AGENT_RUN_SQL
 
     with store._connect() as db:
@@ -337,7 +382,6 @@ def test_native_chat_readback_settles_legacy_completed_reply_without_inventing_a
         ).fetchone()
     assert apply_native_chat_readback(store, readback)
     assert store.get_reply_task(task.id).status == "done"
-    assert handler.sends == 1
     result = json.loads(store.get_candidate_external_action(receipt["external_action_key"])["provider_result_json"])
     assert result["provider_result"] == original_provider["provider_result"]
     assert result["verification_repair"]["previous_verification"] == original_provider["verification"]
@@ -345,6 +389,7 @@ def test_native_chat_readback_settles_legacy_completed_reply_without_inventing_a
         receipt["provider_result_json"].encode()
     ).hexdigest()
     assert result["verification_repair"]["approval_reconstructed"] is False
+    assert result["verification_repair"]["native_chat_readback"]["quoted_trigger_id"] == task.trigger_message_id
     with store._connect() as db:
         settled_receipt = db.execute(
             f"select * from ({EXTERNAL_ACTION_RESULT_SQL}) where external_action_key=?",
@@ -358,6 +403,8 @@ def test_native_chat_readback_settles_legacy_completed_reply_without_inventing_a
         assert tuple(settled_run) == tuple(original_run)
         settled_sent = store.get_sent_reply(task.conversation_id, task.trigger_message_id)
         assert settled_sent.reply_text == sent_before.reply_text
+    delivery_facts_after = _legacy_delivery_facts(store, task, receipt["external_action_key"])
+    assert delivery_facts_after == delivery_facts_before
     assert result["verification"]["source"] == "native_chat_readback"
     assert result["verification_repair"]["approval_reconstructed"] is False
     assert result["verification_repair"]["settlement_basis"] == "verified_existing_legacy_reply_delivery"
@@ -371,7 +418,7 @@ def test_native_chat_readback_settles_legacy_completed_reply_without_inventing_a
 
 @pytest.mark.parametrize("mutation", ["permission", "receipt_target"])
 def test_legacy_native_readback_requires_unreviewed_exact_historical_facts(tmp_path, mutation, monkeypatch):
-    store, task, _handler, receipt, readback = _legacy_native_readback_case(tmp_path, monkeypatch)
+    store, task, receipt, readback = _legacy_native_readback_case(tmp_path, monkeypatch)
     with store._immediate_write_transaction() as db:
         if mutation == "permission":
             attempt = db.execute(
