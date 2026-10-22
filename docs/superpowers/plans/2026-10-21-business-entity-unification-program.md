@@ -22,7 +22,7 @@
 
 1. 不同旧类型相同整数 ID：不能误合并；第一单元 Task 1/2 覆盖。
 2. 多个观察者共享一个真实 effect：不能重复发送；第一单元 Task 3/4 覆盖。
-3. 生产推进后副本基线过期：发布前重取源并重新验证；第一单元 Task 6/7 覆盖。
+3. 生产推进后副本基线过期：发布前重取源并重新验证；第一单元 Task 6/7 已从新生产来源复验并完成部署读回。
 4. Schema 回退包含正迁后的新记录：不能回滚成旧数据快照；第一单元 Task 5/6 覆盖。
 5. 旧 UI/API 仍调用已删除 DTO：必须随 runtime 原子切换；第一单元 Task 4 覆盖。
 
@@ -32,9 +32,9 @@
 
 **Files / Interfaces:** 详细契约、TDD 步骤、文件职责和验收见 `2026-10-21-action-entity-unification.md`；不得另行复制或简化其接口。
 
-- [x] 详细计划 Task 1–7 已实施至可审阅候选；字段/DDL、caller 切换、fresh-copy inverse/old-code cold read-write/re-forward、native substitute approve 和 targeted backup tests 均有记录。正式发布另待 parent 全分支审阅。
+- [x] 第一外部 Action 单元 Task 1–7 已完成、通过 parent SPEC/QUALITY 审阅、标准部署并完成生产读回；详见 [Phase 1 生产验收](../../action-entity-production-acceptance.md)。
 - [x] 实际七个有数据 source families、旧 writer/reader 范围及 unified Action/Receipt/Observer/identity-map 结构已记录；其余两项零行 discriminator 声明、专有 unsubscribe、方案/审查和其他 Actions 类型明确留在范围外。
-- [x] 本地候选 Action 接口可供后续单元设计引用；其尚未发布，后续单元不得依赖为生产已部署行为。
+- [x] 生产 Action 接口已发布，可供后续独立单元设计引用；后续工作仍须按各自边界实施与验收。
 
 ## Task 2: Task/Run 真正统一（后续独立 spec/plan，不在第一单元顺手实施）
 

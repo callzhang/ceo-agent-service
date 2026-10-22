@@ -2,13 +2,7 @@
 
 ## 数据库结构与迁移合同
 
-当前生产基线 Store `2026-10-19.12`／Email53 的构造器与配对发布已选用该阶段结构：
-`tasks`、`runs`、`actions`、`business`、`emails`、`provenance`、`configs`、
-`provider_state`、`schedules`、`state` 十张核心表，以及已有的
-`email_schema_migrations` 账本，共十一张普通表。正常空库直接建立最终声明，
-历史源结构只用于明确迁移及 schema inverse，运行时不探测或回退到旧格式。
-本轮运行时精简采用单一 Actions 声明：保留已有四个 Attempt 元数据字段，Memory 事件只用已有 `memory_attempt_ref` 物理外键引用父 Attempt，公开查询仍返回原 Attempt ID。新写入统一采用原生产 actual 默认值。
-运行时只允许真正空库建表或准确当前声明冷启动；缺表、缺列、缺索引、缺触发器、历史声明或版本混合均在修改 journal／schema／业务行前拒绝。启动不补对象、不回填 OA 元数据。Store-first 可以暂时没有 Email 账本；Email 构造器只在这个准确状态下建立账本与首次默认配置。
+当前生产基线为 Store `2026-10-21.1`／Email53，包含十张核心表、Email 迁移账本及三张 Action Entity 表，共 14 张普通表。生产运行时代码为 `87a34d299d5749af1af454bfdd01c48a936799a4`，PID 2903；健康、状态、队列、Attention 和 History 读回均为 HTTP 200。共同 Action、Receipt、Observer 分别有 15,472、18,621、506 条；本期退休的七个已填充来源类型均为零。原唯一 FK finding `runs(190042) -> tasks(1)` 保留。准确发布边界、读回与容量限制见[Phase 1 生产验收](action-entity-production-acceptance.md)。
 显式 Store19.11／Email53 → Store19.12／Email53 工具重建 Actions，逐值保留四字段、类型、公开／物理身份、其他业务事实与回执及分配水位；schema inverse 恢复捕获的原声明与版本时钟并保留当前数据。fresh 来源没有四字段的所有权，若迁移后新增非中性值，逆迁明确拒绝而不删除事实。生产实际来源为 actual，具有这四字段。
 历史 D 九字段退休工具仍供明确旧版本迁移与逆迁调用，已批准的九字段逆迁仍填中性默认值，原评估值不再保存。Email48→49、49→50 的必要历史 DDL／校验已移至显式 history 模块，不由正常构造器加载。Workbench 附件文件维护属于业务行为，保留。
 当前验收见[运行时声明清理验证](runtime-current-schema-validation.md)。历史 GPT-6 原生链路证据见[此前发布验收](database-gpt6-release-validation.md)。
@@ -20,7 +14,7 @@ C1 来源证据见[C1 生命周期验收](business-model-task-lifecycle-validati
 当前 C1／C2、A5 及 D 的范围见[业务简化计划](superpowers/plans/2026-10-19-business-model-simplification.md)，
 不能据此前阶段结案推断本轮全部完成或容量已通过。
 
-Action Entity 集成候选在隔离 worktree 已切换目标 callers，并完成配对迁移、当前事实逆迁、旧 Store 冷读/写与 re-forward。共同 Action 使用 `actions` 的 `_kind=70`；`action_receipts` 保存逐次 provider/execution 事实，`action_observers` 保存多个 Run 的观察关系，typed identity map 保留精确旧身份。创建、CAS 领取和结果更新由 `app.action_entity_storage` 提供，调用方持有事务。目标表总数为 14（生产来源 11）；其中新增 receipt、observer、identity-map 三张表。Task 7 以生产只读备份和严格内存 provider 替身验证了集成候选及一次 native Consumer/Audit approve。候选未推送、未部署；生产仍是 Store `2026-10-19.12`／Email53，不能把候选行为描述为当前生产行为。完整事实、实际退休类型及未覆盖边界见 [Task 7 集成报告](../.superpowers/sdd/2026-10-21-action-entity-unification/task-7-integration-report.md) 和 [验证记录](action-entity-unification-validation.md)。
+Action Entity Phase 1 已部署，当前生产即使用统一 Action owner：`actions` 的 `_kind=70` 保存共同 Action，`action_receipts` 保存逐次 provider/execution 事实，`action_observers` 保存多个 Run 的观察关系，typed identity map 保留精确旧身份。生产 Store `2026-10-21.1`／Email53 有 14 张普通表；创建、CAS 领取和结果更新由 `app.action_entity_storage` 提供，调用方持有事务。生产读回、准确退休清单、copy 容量结果和剩余路线见[Phase 1 生产验收](action-entity-production-acceptance.md)。这只表示第一外部 Action 单元完成，不表示全部 Actions 或数据库已统一。
 字段映射见 `docs/action-entity-field-map.json`；`docs/action-entity-target.sql` 是初始字段合同夹具，当前完整 Store/Email 目标声明见 `docs/action-entity-current-target.sql`。
 
 Tasks 合并二十种已有任务。七个结构列和十二个生命周期物理列可写；
@@ -2916,7 +2910,7 @@ AUTOINCREMENT 公开 ID 和 native sqlite_sequence 水位；自动分配与插�
 本发布单元只接受准确 Store15 声明，包括实际历史 ALTER 与实际 fresh constructor 的列顺序差异。
 配对逆迁按捕获的源声明恢复当前事实与当前水位，保留迁移后的新增、修改和删除，不恢复旧备份内容。
 发布 quiet-wait 读取器仅在明确声明的源／目标结构读取原生执行事实；恢复、审查、发送及回执策略不变。
-在第五期B记录时，其余 Actions 家族和第六至八期仍未完成；后续 Action Entity 候选的范围及未发布状态见本文顶部 Task 7 状态。是否上线以正式部署回执为准。
+在第五期B记录时，其余 Actions 家族和第六至八期仍未完成。随后第一外部 Action 单元已部署；当前生产状态见本文开头，其他 Action 家族和后续阶段仍未完成。
 
 ### Store17 postfix 整合（已发布）
 
@@ -3504,7 +3498,7 @@ The credential and runtime-path rejection rules and one-correction budget do not
 Reply declaration selectors accept an explicit optional Skill configuration receipt scaffold and forward it to the existing complete-shape recognizer. The default remains false for historical callers; current State Memory and generic publication readers select the complete current declaration.
 
 
-Current database construction (Store19.12/Email53): blank Store/Email construction installs the ten core tables plus the Email ledger directly. Cold opens require the exact current declaration. Missing auxiliaries are errors; startup never repairs schema or backfills OA metadata. Historical source factories serve explicit migration/inverse tools only. Publication requires production-copy typed-fact comparison, current-data inverse, old-code cold read, and reforward proof; evidence is recorded in runtime-current-schema-validation.md.
+Current database construction (Store2026-10-21.1/Email53): blank Store/Email construction installs the ten core tables, the Email ledger and the three Action Entity tables directly. Cold opens require the exact current declaration. Missing auxiliaries are errors; startup never repairs schema or backfills OA metadata. Historical source factories serve explicit migration/inverse tools only. Publication requires production-copy typed-fact comparison, current-data inverse, old-code cold read, and reforward proof; evidence is recorded in runtime-current-schema-validation.md.
 
 Current Signal creation and reads retain exact source identity, locator, hash
 and byte count without an original-body table. Semantic replay/import,

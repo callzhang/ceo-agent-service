@@ -34,6 +34,8 @@
 
 ## 执行边界与源证据
 
+当前执行状态（2026-10-22）：Task 1–7 已完成；Phase 1 已部署并完成生产 readback，当前生产代码为 `87a34d299d5749af1af454bfdd01c48a936799a4`。部署记录见[生产验收](../../action-entity-production-acceptance.md)。
+
 原计划记录（2026-10-21）：计划起初未执行，规划 worktree `/Users/derek/.codex/worktrees/action-entity-plans/ceo-agent-service`，分支 `codex/action-entity-plans-20261021`，基线 `7c37664518f04f8afcefd937b53484bef503a507`。Task 1–7 后续状态以本文末尾的执行记录和 Task 7 报告为准。
 
 沿用 Derek 已选择的 Subagent-Driven。每任务依次实施、规格审查、质量审查；字段/DDL 冻结在 Task 1 的审查点先通过，Task 2-7 随后必须完成。方案/审查政策不在此次范围；如存储改造必须改变判定政策，停止该策略变更并单独提出，不顺手实现。
@@ -156,13 +158,13 @@ invert_action_entity_release(database: Path, contract: Mapping[str, object]) -> 
 - [x] **Step 1: 写发布验收用例。** 覆盖新备份失败保留旧备份、新备份完整后才清理旧备份、升级失败按显式schema inverse恢复并保留新事实；复用现有deploy/backup测试，不更改既有失败恢复策略。
 - [x] **Step 2: 运行对应测试。** 先定位 `rg --files tests | rg 'deploy|backup'`，只执行覆盖上述行为的现有文件；出现回归先复现并修复，不以泛化try/except或兼容分支掩盖。
 - [x] **Step 3: 集成最新origin并重新冻结。** 核对生产schema/HEAD，源变化则重取副本并重跑受影响正逆迁与native验收；不复制主目录未提交修改、不rebase/reset他人工作。更新当前实现文档的确切退出范围；范围外方案/审查/退订等明确仍未完成。
-- [ ] **Step 4: 推送完整commit后执行** `python -m app.deploy`。预期既有静默/备份/FF/启动/health流程成功；备份验证先于旧备份清理。不得手工kill/kickstart生产，不恢复旧数据副本冒充schema回退。
-- [ ] **Step 5: 只读读回并提交验收记录。** 核对生产commit/PID/healthz、queues、Attention、History及目标详情/真实历史回执；比较部署前后失败/卡住项和既有FK差分。新写入字段/旧目标类型实际退休、系统无测试fixture、无真实测试发送；未观察到的业务分支不标通过。提交 `docs(actions): record unified entity production acceptance`。
+- [x] **Step 4: 推送完整commit后执行** `python -m app.deploy`。预期既有静默/备份/FF/启动/health流程成功；备份验证先于旧备份清理。不得手工kill/kickstart生产，不恢复旧数据副本冒充schema回退。
+- [x] **Step 5: 只读读回并提交验收记录。** 核对生产commit/PID/healthz、queues、Attention、History及目标详情/真实历史回执；比较部署前后失败/卡住项和既有FK差分。新写入字段/旧目标类型实际退休、系统无测试fixture、无真实测试发送；未观察到的业务分支不标通过。提交 `docs(actions): record unified entity production acceptance`。
 
 ## 计划自审与执行交接
 
 - 规格覆盖：身份/唯一归属→Task1/2；执行恢复→Task3；UI→Task4；迁移回退→Task5；副本/native/容量→Task6；备份/发布→Task7。
 - 技术名称：Task2四接口由Task3/4/5使用；Task5三个release接口由Task6/7通过既有发布框架使用。新增函数是计划接口，不宣称现有代码已提供。
-- 历史设计上下文（2026-10-21计划初稿）：当时Task1仍是DDL/字段审查门槛，字段/基数证据尚待取得；这一前置状态已由Task1审查冻结的字段映射和证据、以及随后完成的Task2-6实施与验收取代。当前完成状态以Task1-6已勾选步骤为准；Task7发布与生产读回仍未完成。
+- 历史设计上下文（2026-10-21计划初稿）：当时Task1仍是DDL/字段审查门槛，字段/基数证据尚待取得；这一前置状态已由Task1审查冻结的字段映射和证据、Task2–6实施验收、Task7标准部署及生产读回取代。当前 Task 1–7 均完成；具体生产边界和读回见[Phase 1 生产验收](../../action-entity-production-acceptance.md)。
 - 范围：只统一已有外部动作。Task/Run全面统一、方案审查的最终归属、退订专有步骤及业务/错误类退出属于总路线后续独立计划；本单元通过不代表59种Action已经全部消失。
-- 原始计划轮次只写文档。Task 1–6 实现已在隔离分支完成；Task 7 由单一 implementer 执行，没有委派 helper/reviewer/subagent；Task 7 将 `origin/main` 的 `c2b4ab0155225fa7e0d66d342549c765c4e16c16` 合并为 `cfce5260cefe0c9232a13bc22b50111ed4b3250b`，冲突保留 upstream OA 与 Action 两侧语义。fresh production-derived copy 完成 forward/current-fact inverse/archived production Store cold-read/write/re-forward；final integrated code 完成一个 native approve，使用严格内存 provider。六项聚焦备份/逆迁测试通过。最终生产发布与部署读回仍待 parent 全分支审阅，因此 Task 7 Step 4–5 未勾选。详细数据与限制见 [Task 7 报告](../../.superpowers/sdd/2026-10-21-action-entity-unification/task-7-integration-report.md)。
+- 原始计划轮次只写文档。Task 1–6 实现已在隔离分支完成；Task 7 由单一 implementer 执行，随后经过独立 parent SPEC/QUALITY 全分支审阅；Task 7 将 `origin/main` 的 `c2b4ab0155225fa7e0d66d342549c765c4e16c16` 合并为 `cfce5260cefe0c9232a13bc22b50111ed4b3250b`，冲突保留 upstream OA 与 Action 两侧语义。fresh production-derived copy 完成 forward/current-fact inverse/archived production Store cold-read/write/re-forward；final integrated code 完成一个 native approve，使用严格内存 provider。六项聚焦备份/逆迁测试通过。parent 全分支 SPEC/QUALITY 审阅通过后，Task 7 按标准流程部署并完成生产读回；Step 4–5 已勾选。详细数据与限制见 [Task 7 报告](../../../.superpowers/sdd/2026-10-21-action-entity-unification/task-7-integration-report.md)。
