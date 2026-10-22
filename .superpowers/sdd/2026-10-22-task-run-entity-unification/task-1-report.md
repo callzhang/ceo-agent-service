@@ -37,4 +37,5 @@ Run/Action DDL, adopted-result ownership, Run identity/public keys and wrapper/r
 ## Commits
 
 - `cd63a3b1462de02a54bd6db43cd4fecfa33ce6c3` — Preserve active Workbench task uniqueness; adds review fixes and evidence.
+- `19013019c1540c757fb515e14547a6c20e5c8be4` — Guard Workbench Task-ID reparenting; closes the rereview gap.
 - Claim-row cleanup is recorded in a follow-up commit after this report was finalized.
