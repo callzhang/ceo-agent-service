@@ -179,7 +179,10 @@ class PurposeRetryBudget:
                 return state, False
             exhausted = (
                 state.get("count", 0) >= MAX_PURPOSE_RETRIES
-                or now >= utc_time(state["deadline"])
+                or (
+                    state.get("deadline") is not None
+                    and now >= utc_time(state["deadline"])
+                )
             )
             verified_request = bool(state.get("receipts")) or any(
                 item.get("status") == "verified"
@@ -193,6 +196,49 @@ class PurposeRetryBudget:
                 "reserved_at": now.astimezone(timezone.utc).isoformat(),
             }
             return state, True
+        return self._update(mutate)
+
+    def claim_oa_return_turn(self, *, source_consumer_run_id: int, now: datetime,
+                             failed_access_request: bool = False,
+                             proposal_revision: int, parent_run_id: int | None,
+                             stage_index: int, predecessor_review_id: int | None) -> bool:
+        """Reserve one Consumer turn to propose an audited OA return."""
+        if source_consumer_run_id <= 0:
+            return False
+
+        def mutate(state):
+            if not isinstance(state, dict):
+                return state, False
+            exhausted = (
+                state.get("count", 0) >= MAX_PURPOSE_RETRIES
+                or (
+                    state.get("deadline") is not None
+                    and now >= utc_time(state["deadline"])
+                )
+            )
+            verified_request = bool(state.get("receipts")) or any(
+                item.get("status") == "verified"
+                for item in state.get("access_requests", [])
+            )
+            known_failed_request = failed_access_request and any(
+                item.get("status") == "failed"
+                for item in state.get("access_requests", [])
+            )
+            if not ((exhausted and verified_request) or known_failed_request):
+                return state, False
+            claimed = state.get("oa_return_source_consumer_run_id")
+            if claimed is None:
+                state["oa_return_source_consumer_run_id"] = source_consumer_run_id
+                state["oa_return_turn"] = {
+                    "source_consumer_run_id": source_consumer_run_id,
+                    "proposal_revision": proposal_revision,
+                    "parent_run_id": parent_run_id,
+                    "stage_index": stage_index,
+                    "predecessor_review_id": predecessor_review_id,
+                }
+                return state, True
+            return state, claimed == source_consumer_run_id
+
         return self._update(mutate)
 
 

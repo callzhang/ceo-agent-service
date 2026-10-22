@@ -153,7 +153,7 @@ def test_verified_legacy_permission_request_is_not_sent_again(tmp_path):
     assert handler.calls == []
 
 
-def test_permission_retry_budget_exhaustion_waits_without_becoming_failure(tmp_path):
+def test_permission_retry_exhaustion_forms_audited_oa_return(tmp_path):
     store, task, context = task_and_context(tmp_path)
     context = replace(context, skill_names=('dingtalk-oa-approval',))
     clock = [datetime.now(timezone.utc) + timedelta(minutes=5)]
@@ -167,10 +167,25 @@ def test_permission_retry_budget_exhaustion_waits_without_becoming_failure(tmp_p
         return result.model_copy(update={'stage_index': fresh.stage_index,
                                          'predecessor_review_id': fresh.predecessor_review_id})
 
-    consumer = ScriptedConsumer(store, request, still_waiting, still_waiting, still_waiting)
-    audit = ScriptedAudit(store)
+    def return_after_exhaustion(fresh):
+        assert fresh.permission_return_required is True
+        result = output('return', target={'process_instance_id': 'p', 'task_id': 't',
+                                          'target_activity_id': 'owner'},
+                        payload={'remark': '请提供审批账号可访问的材料，以便继续核对。',
+                                 'revert_action': 'REVERT_FOR_RESUBMIT'},
+                        refs=[fresh.prior_receipts[0].receipt_id])
+        return result.model_copy(update={'stage_index': fresh.stage_index,
+                                         'predecessor_review_id': fresh.predecessor_review_id})
+
+    consumer = ScriptedConsumer(store, request, still_waiting, still_waiting,
+                                still_waiting, return_after_exhaustion)
+    audit = ScriptedAudit(store, 'approve')
+    handler = VerifiedHandler()
     runtime = AgentOrchestrator(store=store, consumer=consumer, audit=audit,
-        system_executor=SystemExecutor(store, {('dingtalk-oa', 'comment'): VerifiedHandler()}),
+        system_executor=SystemExecutor(store, {
+            ('dingtalk-oa', 'comment'): handler,
+            ('dingtalk-oa', 'revert_task'): handler,
+        }),
         now=lambda: clock[0])
     result = runtime.process(task, context, refresh_context=lambda: context)
     assert result.error.code == RETRY_REQUESTED
@@ -184,12 +199,62 @@ def test_permission_retry_budget_exhaustion_waits_without_becoming_failure(tmp_p
     result = runtime.process(task, context, refresh_context=lambda: context)
 
     budget = PurposeRetryBudget(store, task.business_object_key or f'reply-task:{task.id}', 'oa')
-    assert result.status == 'permission_blocked'
-    assert result.error.code == RETRY_EXHAUSTED
-    assert result.final_run_id == consumer.calls[-1][0]
+    assert result.status == 'executed'
     assert budget.state()['count'] == 3
-    assert len(consumer.calls) == 4  # Initial request plus exactly three permission rereads.
-    assert audit.calls == []
+    assert len(consumer.calls) == 5  # Request + three rereads + one non-reading return proposal.
+    assert len(handler.calls) == 2  # One request comment and one audited OA return.
+    assert len(audit.calls) == 1  # Only the OA return proposal is audited.
+
+
+def test_definitive_permission_request_denial_proposes_audited_oa_return(tmp_path):
+    from app.system_executor import ActionOutcome
+
+    class DeniedPermissionHandler:
+        def __init__(self):
+            self.calls = []
+
+        def dispatch(self, action, *, action_key, candidate):
+            self.calls.append(action_key)
+            return ActionOutcome("failed", {"reason": "forbidden.accessDenied"})
+
+        def reconcile(self, action, *, action_key, candidate):
+            return None
+
+    store, task, context = task_and_context(tmp_path)
+    context = replace(context, skill_names=('dingtalk-oa-approval',))
+    now = datetime.now(timezone.utc) + timedelta(minutes=5)
+    request = output('request_access',
+                     target={'process_instance_id': 'p', 'file_id': 'file-a'},
+                     payload={'content': 'Please grant read access'})
+
+    def return_for_denied_access(fresh):
+        assert fresh.permission_return_required is True
+        result = output('return', target={'process_instance_id': 'p', 'task_id': 't',
+                                          'target_activity_id': 'owner'},
+                        payload={'remark': '审批账号无法读取该材料，请提供可访问版本。',
+                                 'revert_action': 'REVERT_FOR_RESUBMIT'})
+        return result.model_copy(update={'stage_index': fresh.stage_index,
+                                         'predecessor_review_id': fresh.predecessor_review_id})
+
+    consumer = ScriptedConsumer(store, request, return_for_denied_access)
+    audit = ScriptedAudit(store, 'approve')
+    denied_handler = DeniedPermissionHandler()
+    return_handler = VerifiedHandler()
+    runtime = AgentOrchestrator(store=store, consumer=consumer, audit=audit,
+        system_executor=SystemExecutor(store, {
+            ('dingtalk-oa', 'comment'): denied_handler,
+            ('dingtalk-oa', 'revert_task'): return_handler,
+        }), now=lambda: now)
+
+    result = runtime.process(task, context, refresh_context=lambda: context)
+
+    budget = PurposeRetryBudget(store, task.business_object_key or f'reply-task:{task.id}', 'oa')
+    assert result.status == 'executed'
+    assert budget.access_request_for_file('file-a')['status'] == 'failed'
+    assert len(consumer.calls) == 2
+    assert len(denied_handler.calls) == 1
+    assert len(audit.calls) == 1
+    assert len(return_handler.calls) == 1
 
 
 def test_manual_rerun_after_permission_exhaustion_allows_one_unbudgeted_access_check(
