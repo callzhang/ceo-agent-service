@@ -1337,8 +1337,7 @@ Codex Consumer 可在 task-bound `/tmp` 工作区进行原生代码执行；Audi
 Codex Consumer 命令按当前 `consumer_purpose` 选择 general/OA 原生输出 Schema，并在模型输出后
 把动态 JSON 键值条目无损还原，再交给现有严格 wire/Pydantic 解析器；OA 动作仍按原有
 action-specific target/payload 合同校验。已完成运行结果的 schema identity 绑定实际提交的 Schema
-字节，避免用旧自由格式结果恢复新原生格式运行。Audit 仍使用原自由格式 Codex 输出；Claude、Friday、
-Consumer 业务判断、审核、SystemExecutor 外部动作流程及共享的“Consumer 不直接发送对外消息或邮件”约束不变。
+字节，避免用旧自由格式结果恢复新原生格式运行。Consumer 的 Codex 与 Claude 原生 schema 路线不再把同一份 Pydantic wire schema 重复放进服务 Developer 文本；Friday 无原生 schema 的路线仍保留完整文本，Audit 输入不变。预览及运行快照使用同一路线装配。所有 Consumer 继续共用“不得直接发送对外消息、邮件或执行审批”的约束；解析、业务判断、审核与 SystemExecutor 外部动作流程不变。
 
 `dingtang-okr/score_kr` 同样走现有候选、Audit 和 SystemExecutor 执行记录；服务通过
 已同步登录态的无头 Chrome 页面调用页面原生 API。只读入口返回周期、当前批次、目标、
@@ -3398,7 +3397,7 @@ Prompts 的 Developer/User/Profile 各自保留 Template 与 Rendered preview �
 
 Prompts 内容标题随当前查看方式显示「模板」或「渲染结果」，与所选 Developer/User/Profile 页签对应；完整运行输入仍位于独立只读「运行输入」页签。
 
-Developer Prompt 只承载适用于所有任务的角色、能力、证据、系统动作、完整 Pydantic 输出契约及共同工作原则；工作人格仍注入 Consumer 与 Audit，Audit Rules 只进入 Audit。OA、日历、消息受众、OKR、招聘和文档等专项流程由当前任务选择的 Skill 承载，不再作为全任务 Developer 规则重复注入。User Prompt 是 Consumer 的完整任务模板，必须包含恰好一个 `{{task_context}}`，仅支持普通文本和这个插槽。任务来源、定时要求、stage、反馈、既有回执及 continuation 先由服务组装成完整上下文，再填入插槽；不将旧消息块模板叠加到后台任务。Workbench、独立 WeChat、纯服务命令及 Email 退订保留各自入口和显式指令。
+Developer Prompt 只承载适用于所有任务的角色、能力、证据、系统动作、对应路线所需的输出契约及共同工作原则；工作人格仍注入 Consumer 与 Audit，Audit Rules 只进入 Audit。Consumer 使用 Codex 或 Claude 原生输出 Schema 时，服务输入省去重复的完整 Pydantic wire schema 文本；没有原生 schema 的 Friday 路线仍保留该文本，Audit 输入不变。所有 Consumer 路线继续共用不得直接发送对外消息、邮件或执行审批的角色约束；本精简不改变该约束、严格 Pydantic 业务校验、原生 schema、Audit 或 System 执行流程。OA、日历、消息受众、OKR、招聘和文档等专项流程由当前任务选择的 Skill 承载，不再作为全任务 Developer 规则重复注入。User Prompt 是 Consumer 的完整任务模板，必须包含恰好一个 `{{task_context}}`，仅支持普通文本和这个插槽。任务来源、定时要求、stage、反馈、既有回执及 continuation 先由服务组装成完整上下文，再填入插槽；不将旧消息块模板叠加到后台任务。Workbench、独立 WeChat、纯服务命令及 Email 退订保留各自入口和显式指令。
 
 Consumer 和 Audit 每轮 Task 输入均传入当前任务已保存的专项指令，来源为「已保存任务配置」，现有运行输入快照记录该段来源和长度。Audit 不只从候选转述推断任务规则。`task_specific_instructions` 复用 Consumer 已有的精确 Skill 附录分离逻辑；只分离已知的完整末尾附录，不截断正文或按业务关键词改写。生成发现提示不重复预载，自定义 Skill 约定仍在 Skill 段保留。没有专项指令的任务不添加空段；审核权限、规则优先级、反馈和 session 行为不变。
 

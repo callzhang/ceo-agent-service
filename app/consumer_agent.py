@@ -874,11 +874,20 @@ class ConsumerAgentRunner:
                 ),
             )
 
+        developer_sections_by_runtime = consumer_developer_sections_by_runtime(
+            runtime_context="",
+            prompt_configuration=configuration,
+            purpose_name=purpose_name,
+        )
         developer_sections = consumer_developer_sections(
             runtime_context="",
             prompt_configuration=configuration,
             purpose_name=purpose_name,
         )
+        developer_instructions_by_runtime = {
+            runtime_kind: render_prompt_sections(sections, placement="developer")
+            for runtime_kind, sections in developer_sections_by_runtime.items()
+        }
         frozen_skill_names_for_task = frozen_task_skill_names(
             task.trigger_message_json, context.skill_names,
         )
@@ -982,6 +991,10 @@ class ConsumerAgentRunner:
                 developer_sections, full_task_sections
             ),
         }
+        prompt_sections_by_runtime = {
+            runtime_kind: prompt_section_facts(sections, full_task_sections)
+            for runtime_kind, sections in developer_sections_by_runtime.items()
+        }
         session_scoped_prompt = None
         matching_routes = [
             name for name, persisted_id in route_sessions.items()
@@ -1032,11 +1045,16 @@ class ConsumerAgentRunner:
                     developer_sections, compact_sections
                 ),
             }
+            compact_prompt_sections_by_runtime = {
+                runtime_kind: prompt_section_facts(sections, compact_sections)
+                for runtime_kind, sections in developer_sections_by_runtime.items()
+            }
             session_scoped_prompt = {
                 "route_name": matching_codex_routes[0],
                 "session_id": session_id,
                 "prompt": compact_prompt,
                 "invocation_facts": compact_invocation_facts,
+                "prompt_sections_by_runtime": compact_prompt_sections_by_runtime,
             }
         result = process.execute(
                 run=claim.run,
@@ -1044,6 +1062,8 @@ class ConsumerAgentRunner:
                 prompt=full_task_prompt,
                 session_id=session_id,
                 developer_instructions=developer_instructions,
+                developer_instructions_by_runtime=developer_instructions_by_runtime,
+                prompt_sections_by_runtime=prompt_sections_by_runtime,
                 configure_command=configure_consumer_command,
                 parse_result=lambda raw: _parse_consumer_result(raw, purpose=purpose_name),
                 prepare_result=lambda parsed: _prepare_reviewable_candidate(
@@ -1253,6 +1273,7 @@ def consumer_developer_sections(
     work_profile: str | None = None,
     prompt_configuration: PromptConfiguration | None = None,
     purpose_name: str = "general",
+    include_wire_contract: bool = True,
 ) -> tuple[PromptSection, ...]:
     # Retain the legacy argument for caller compatibility, but never expose
     # Audit's independent review policy to the Consumer.
@@ -1263,6 +1284,7 @@ def consumer_developer_sections(
         skill_instruction=CONSUMER_DYNAMIC_SKILL_BODY,
         common_principles=configuration.developer_instructions,
         wire_model=consumer_wire_model(purpose_name),
+        include_wire_contract=include_wire_contract,
     )
     sections = _role_developer_sections(
         core,
@@ -1286,6 +1308,31 @@ def consumer_developer_sections(
             configuration.work_profile if work_profile is None else work_profile,
         ),
     )
+
+
+def consumer_developer_sections_by_runtime(
+    audit_rules: str | None = None,
+    *,
+    skill_protocol: str = "",
+    runtime_context: str | None = None,
+    work_profile: str | None = None,
+    prompt_configuration: PromptConfiguration | None = None,
+    purpose_name: str = "general",
+) -> dict[str, tuple[PromptSection, ...]]:
+    """Return the matching Developer sections for each Consumer runtime."""
+    native_schema_runtimes = {RuntimeKind.CODEX_CLI, RuntimeKind.CLAUDE_CLI}
+    return {
+        runtime.value: consumer_developer_sections(
+            audit_rules,
+            skill_protocol=skill_protocol,
+            runtime_context=runtime_context,
+            work_profile=work_profile,
+            prompt_configuration=prompt_configuration,
+            purpose_name=purpose_name,
+            include_wire_contract=runtime not in native_schema_runtimes,
+        )
+        for runtime in RuntimeKind
+    }
 
 
 def default_consumer_skill_protocol() -> str:
@@ -1430,6 +1477,7 @@ def _developer_instruction_sections(
     skill_instruction: str,
     common_principles: str,
     wire_model: type[ConsumerAgentWireResult] | type[AuditAgentWireResult],
+    include_wire_contract: bool = True,
 ) -> tuple[PromptSection, ...]:
     sections: list[PromptSection] = []
     if audit_rules is not None:
@@ -1461,14 +1509,15 @@ def _developer_instruction_sections(
                 "developer",
                 "## System Action Contracts\n" + system_action_contracts_text(),
             ),
-            PromptSection(
-                "输出契约",
-                "Pydantic 业务模型",
-                "developer",
-                f"## Pydantic Wire Contract\n{_schema_json(wire_model)}",
-            ),
         )
     )
+    if include_wire_contract:
+        sections.append(PromptSection(
+            "输出契约",
+            "Pydantic 业务模型",
+            "developer",
+            f"## Pydantic Wire Contract\n{_schema_json(wire_model)}",
+        ))
     return tuple(sections)
 
 

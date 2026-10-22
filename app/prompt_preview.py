@@ -8,7 +8,8 @@ from app.agent_runtime_config import AgentRuntimeConfig
 from app.agent_runtime_contracts import RuntimeKind
 from app.audit_rules import render_audit_rules
 from app.config import workspace_path
-from app.consumer_agent import consumer_developer_sections, audit_developer_sections, default_task_skill_catalog
+from app.consumer_agent import (consumer_developer_sections_by_runtime, audit_developer_sections,
+    default_task_skill_catalog)
 from app.business_skills import frozen_task_skill_binding, frozen_task_skill_names, render_task_skill_discovery
 from app.prompt_composition import (PromptSection, append_runtime_context, load_prompt_configuration,
     prompt_section_facts, render_prompt_sections)
@@ -161,7 +162,9 @@ def current_prompt_preview(
     fingerprints = configuration.fingerprints()
     profile = configuration.work_profile
     if role == "consumer":
-        developer_sections = consumer_developer_sections(runtime_context="", work_profile=profile, prompt_configuration=configuration)
+        developer_sections = consumer_developer_sections_by_runtime(
+            runtime_context="", work_profile=profile, prompt_configuration=configuration,
+        )[route.runtime_kind.value]
     else:
         rules = render_audit_rules(AgentRole.AUDIT, create_missing=False)
         developer_sections = audit_developer_sections(rules, runtime_context="", work_profile=profile, prompt_configuration=configuration, purpose_name=audit_purpose_name)
