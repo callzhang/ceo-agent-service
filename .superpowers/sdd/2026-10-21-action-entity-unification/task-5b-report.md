@@ -6,7 +6,7 @@
 
 The read-only source was `/tmp/ceo-action-entity-validation.8rUAvK/source.sqlite3`, 496,410,624 bytes, mode `0444`, SHA-256 `799307664c58aeb2163eb44fa18a3261fadeb36fabf9e8534e905fdfe966f1a1`. Preflight observed marker `2026-10-19.12`, Email schema maximum 53, reply variant `fresh_memory_fk`, source schema SHA-256 `9d97aae7d76124ab74af9091cf82260ee24a30857c54dc7435e80ab1e898e007`, and one existing FK finding.
 
-The forward publish ran once on the owned, initially byte-identical copy `/tmp/ceo-action-entity-validation.8rUAvK/task5b-populated-forward-dz8st8a8/populated-forward.sqlite3`. It called `prepare_action_entity_release(copy)` and `publish_action_entity_release(copy, contract)`. The release transaction’s exact target manifest, FK multiset, and `quick_check` guards all passed before commit. Final marker is `2026-10-21.1`; final copy SHA-256 is `2235fddcca1ec5557edf11c961621dec1f19e46f95e63e0d0e20f5d195f26bdb`. The readonly source SHA-256 was rechecked after publish and remains unchanged.
+There was one successful forward publish commit on the owned, initially byte-identical copy `/tmp/ceo-action-entity-validation.8rUAvK/task5b-populated-forward-dz8st8a8/populated-forward.sqlite3`; this does not mean there was only one full-source attempt. Earlier diagnostic attempts on owned copies rolled back while resolving the source’s 57-versus-53 reply-layout boundary, a generated-column name mismatch, a dispatch-only prepared-child pointer, and the two real direct-retry parent FK references. Those attempts were not committed. The successful command called `prepare_action_entity_release(copy)` followed by `publish_action_entity_release(copy, contract)`. The release transaction’s exact target manifest, FK multiset, and `quick_check` guards all passed before its commit. Final marker is `2026-10-21.1`; final copy SHA-256 is `2235fddcca1ec5557edf11c961621dec1f19e46f95e63e0d0e20f5d195f26bdb`. The readonly source SHA-256 was rechecked after publish and remains unchanged.
 
 An extra post-publish verifier initially compared source out-of-scope rows with every target row not in a retired family. That predicate also included newly-created common Action owners, so it stopped on a 15,263-row difference; the release was already committed and its own guards had passed. The verifier was corrected to compare only the exact 39 source-retained record types. That comparison covered 72,478 rows and all shared physical source columns. It found only two changed cells, both `legacy_key` on the two `email_direct_retry_requests` rows; each is the specifically approved composite parent reference rewrite. No other out-of-scope source cell changed. The newly-added `action_data` column is SQL NULL on all 72,478 unchanged non-Action rows.
 
@@ -22,7 +22,7 @@ The release retained the original one-row FK finding multiset and passed `pragma
 
 ## Direct-retry FK exception
 
-Two surviving `email_direct_retry_requests` rows referenced the retired `email_actions` parent through the existing generated composite FK. The target now generates parent type `action`, enforces `email_action_id -> actions.id`, and checks the parent’s `record_type='action'` on insert and composite-key update. The migration resolves each source public parent key through the typed `email_actions` map and rewrites only element 0 of the retry composite `legacy_key`; the remainder of the row, payload, attempt number, status, and clocks remain unchanged. Both actual rows resolve to a common Action. No old public-key alias, new business field, or additional global index was added.
+Two surviving `email_direct_retry_requests` rows referenced the retired `email_actions` parent through the existing generated composite FK. The target now generates parent type `action`, enforces `email_action_id -> actions.id`, and checks the parent’s `record_type='action'` on insert and composite-key update. The source parent `action_id` is not a separate stored control cell: the generated `email_action_id` projection decodes element 0 of each retry row’s composite `legacy_key` (`[source action_id, attempt_number]`). The migration resolves that source public parent key through the typed `email_actions` map and rewrites only composite-key element 0; element 1, payload, status, and clocks remain unchanged. The changed generated projection then resolves to the target Action physical ID. Both actual rows resolve to a common Action. No old public-key alias, new business field, or additional global index was added.
 
 A fresh current `EmailStore` regression exercises the source-verified retry Store API from a real eligible failed trash Action and checks that the new request points to the same common Action ID. The archived predecessor API harness is not used for this assertion: its fixture creates Store13.5/Email51, which this explicit Task5B source release correctly rejects before reaching that API. That older fixture chain is not changed here.
 
@@ -38,3 +38,59 @@ Passed focused checks:
 A broader `pytest -q tests/test_email_action_storage.py` probe returned 9 passed and one fixture failure: `test_email_generated_fields_are_null_for_older_actions_and_absent_email_fields` constructs the schema through `create_action_schema()` but then calls the compact-source `_kind` writer, which reports `table actions has no column named _kind`. No `action_storage.py` writer or test was changed for that mismatch; it is outside the forward-release/API tests above. The archived paired direct-retry test likewise remains outside this gate because its Store13.5/Email51 source marker is unsupported by this bounded 19.12/53 release.
 
 Task5C remains responsible for actual current-data inverse, old-code cold-open/reforward acceptance, and source-faithful canonical correction/receipt retention. No provider/native CLI, production database, push, deploy, or cleanup of shared source/archive paths was performed. Keep the owned populated copy at the exact path above for Task5C handoff.
+
+
+## Recorded TDD and reproducibility details
+
+The populated external-result test was first run as a genuine RED before the translator was complete:
+
+```sh
+pytest -q tests/test_action_entity_schema_release.py::test_populated_external_result_is_transferred_to_common_action
+```
+
+It failed at the expected target `CHECK` constraint because the source row had not yet been transferred into a valid common Action. The exact initial pytest traceback/output was not retained in the final Task5B execution record; this sentence records the observed failure class and intended assertion boundary, not a reconstructed traceback. No RED test was rerun solely to recreate that output.
+
+The exact seven-case final synthetic/current-API command and captured result were:
+
+```sh
+pytest -q tests/test_action_entity_schema_release.py::test_forward_preserves_business_facts_and_receipts tests/test_action_entity_schema_release.py::test_populated_external_result_is_transferred_to_common_action tests/test_action_entity_schema_release.py::test_populated_prepared_sent_and_observer_facts_keep_distinct_receipts tests/test_action_entity_schema_release.py::test_direct_email_translation_preserves_attempt_identity_and_rewrites_history_ids tests/test_action_entity_schema_release.py::test_direct_retry_parent_retargets_only_the_covered_action_reference tests/test_action_entity_schema_release.py::test_conflicting_identity_aborts_without_mutation tests/test_action_entity_callers.py::test_retry_keeps_original_external_identity
+```
+
+```text
+.......                                                                  [100%]
+7 passed in 32.13s
+```
+
+The exact contract/manifest command and result were:
+
+```sh
+pytest -q tests/test_action_entity_contract.py tests/test_action_entity_schema_release.py::test_current_release_ddl_matches_target_manifest
+```
+
+```text
+..............                                                           [100%]
+14 passed in 10.46s
+```
+
+The current caller regressions were run with:
+
+```sh
+pytest -q tests/test_action_entity_callers.py::test_prepared_message_caller_uses_common_action_and_owned_receipts tests/test_action_entity_callers.py::test_retry_keeps_original_external_identity
+```
+
+```text
+..                                                                       [100%]
+2 passed in 8.40s
+```
+
+Scoped static checks were run with these exact commands:
+
+```sh
+ruff check app/action_entity_transfer.py app/action_entity_schema_release.py app/action_email_definitions.py app/current_action_schema.py tools/action_entity_contract.py tests/test_action_entity_schema_release.py tests/test_action_entity_callers.py
+python -m compileall -q app/action_entity_transfer.py app/action_entity_schema_release.py app/action_email_definitions.py app/current_action_schema.py tools/action_entity_contract.py tests/test_action_entity_schema_release.py tests/test_action_entity_callers.py
+git diff --check
+```
+
+The final captured Ruff result was `All checks passed!`; `compileall` and `git diff --check` exited 0 with no output. These same scoped checks were repeated after the caller-fixture correction and before commit.
+
+The actual copy runner and aggregate verifier were inline Python invocations and were not saved as a separate script. For Task5C reproduction, the implementation entrypoints are `app.action_entity_schema_release.prepare_action_entity_release`, `publish_action_entity_release`, and `app.action_entity_transfer.capture_source_facts`, `_identity`, and `transfer_source_facts`. The aggregate checks used: `PRAGMA table_xinfo(actions)` columns with `hidden=0`; exact source-retained record-type set from `RETIRED_ACTION_TYPES`; ordered source/target rows filtered to that same retained set; per-row equality for every shared stored source column except `legacy_key` on `email_direct_retry_requests`; and exact count of two such exceptions. For mapped source facts, identity-map joins used `(source_type, _identity(source_key))`, then SHA-256 comparisons to the mapped `action_receipts` values; `capture_source_facts` supplied source projections, including raw SQL NULL result distinctions. Prepared and Sent parent-body checks compared source `final_body`/`reply_text` hashes to the mapped Action `action_prepared_body`. No script path exists for those inline checks, so the counts above are recorded evidence, not a claim of a reusable saved verifier.
