@@ -3,6 +3,7 @@ from __future__ import annotations
 
 from app.action_entity_definitions import RECEIPT_SCHEMA_DDL
 from app.action_storage import SOURCE_COLUMNS
+from app.schema_sql import serialize_schema_sql
 
 
 ADOPTED_SOURCE_KINDS = (
@@ -231,4 +232,5 @@ def validate_field_map(mapping=None):
 
 
 def schema_sql():
-    return "\n\n".join((*TABLES.values(), *INDEXES.values(), *TRIGGERS.values(), *receipt_schema_patch())) + "\n"
+    objects = {**TABLES, **INDEXES, **TRIGGERS, **receipt_schema_objects()}
+    return serialize_schema_sql(objects)

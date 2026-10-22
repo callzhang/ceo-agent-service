@@ -109,6 +109,24 @@ def test_field_map_covers_current_source_fields_and_artifacts_are_exact():
         validate_field_map(unknown)
 
 
+def test_committed_adoption_sql_executes_after_native_prerequisites():
+    from app.run_adoption_definitions import receipt_schema_objects
+    from app.schema_sql import serialize_schema_sql
+    from app.task_run_entity_assembly import task_run_entity_assembly_objects
+
+    complete = task_run_entity_assembly_objects()
+    adoption_names = set(TABLES) | set(INDEXES) | set(TRIGGERS) | set(receipt_schema_objects())
+    prerequisites = {name: sql for name, sql in complete.items() if name not in adoption_names}
+    db = sqlite3.connect(":memory:")
+    db.execute("PRAGMA foreign_keys=ON")
+    db.executescript(serialize_schema_sql(prerequisites))
+    db.executescript((ROOT / "docs/run-adoption-target.sql").read_text())
+    actual = {name: sql for name, sql in db.execute(
+        "SELECT name,sql FROM sqlite_schema WHERE name NOT GLOB 'sqlite_*'")}
+    assert actual == complete
+    assert db.execute("PRAGMA foreign_key_check").fetchall() == []
+
+
 def _serialized_map():
     return [
         {"source_kind": kind, "source_field": field,

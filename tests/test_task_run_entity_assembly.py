@@ -96,10 +96,11 @@ def test_run_source_metadata_matches_current_native_factory_oracle():
 def test_complete_assembly_sql_artifact_is_deterministic():
     from app.run_adoption_definitions import field_map as adoption_field_map
     from app.run_entity_definitions import run_entity_field_map
+    from app.schema_sql import serialize_schema_sql
     from app.task_run_entity_definitions import task_run_field_map
 
     objects = task_run_entity_assembly_objects()
-    expected = "\n\n".join(objects[name] for name in sorted(objects)) + "\n"
+    expected = serialize_schema_sql(objects)
     assert (ROOT / "docs/task-run-entity-assembly-target.sql").read_text() == expected
     field_map = json.loads((ROOT / "docs/task-run-entity-assembly-field-map.json").read_text())
     adoption_rows = [
@@ -114,6 +115,19 @@ def test_complete_assembly_sql_artifact_is_deterministic():
     assert len(field_map["adoption_fields"]) == 43
     assert (ROOT / "docs/task-run-entity-assembly-retirement.sql").read_text().startswith(
         "-- Unactivated Task/Run assembly retirement inventory; not executable migration SQL.\n")
+
+
+def test_committed_assembly_sql_artifact_executes_and_matches_complete_catalog():
+    from app.task_run_entity_assembly import task_run_entity_assembly_objects
+
+    expected = task_run_entity_assembly_objects()
+    db = sqlite3.connect(":memory:")
+    db.execute("PRAGMA foreign_keys=ON")
+    db.executescript((ROOT / "docs/task-run-entity-assembly-target.sql").read_text())
+    actual = {name: sql for name, sql in db.execute(
+        "SELECT name,sql FROM sqlite_schema WHERE name NOT GLOB 'sqlite_*'")}
+    assert actual == expected
+    assert db.execute("PRAGMA foreign_key_check").fetchall() == []
 
 
 def test_adoption_receipt_parent_is_real_consumer_progress_and_run_role_is_enforced():
