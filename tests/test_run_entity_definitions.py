@@ -60,10 +60,10 @@ def test_runs_keep_natural_absence_and_separate_provenance_and_adopted_result():
     db.execute("INSERT INTO runs(id,task_id,parent_id,created_at) VALUES (1,1,NULL,'now')")
     db.execute("INSERT INTO tasks(id,kind,status,parameters_json,created_at,updated_at) VALUES (2,'meeting_alignment','queued',jsonb('{\"meeting_id\":\"m\"}'),'now','now')")
     db.execute("INSERT INTO runs(id,task_id,parent_id,created_at) VALUES (2,2,1,'now')")
-    db.execute("INSERT INTO run_provenance VALUES (2,'meeting_alignment_runs',4908)")
+    db.execute("INSERT INTO run_provenance VALUES (2,'meeting_alignment_runs',NULL)")
     db.execute("INSERT INTO run_adopted_results VALUES (2,'{}')")
     assert db.execute("SELECT status,error,updated_at FROM runs WHERE id=1").fetchone() == (None, None, None)
-    assert db.execute("SELECT source_type,job_id FROM run_provenance WHERE run_id=2").fetchone() == ('meeting_alignment_runs', 4908)
+    assert db.execute("SELECT source_type,job_id FROM run_provenance WHERE run_id=2").fetchone() == ('meeting_alignment_runs', None)
     assert db.execute("PRAGMA foreign_key_check").fetchall() == []
     with pytest.raises(sqlite3.IntegrityError):
         db.execute("INSERT INTO run_provenance VALUES (1,'meeting_alignment_runs',NULL)")

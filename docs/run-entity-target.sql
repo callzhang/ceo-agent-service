@@ -92,7 +92,19 @@ CREATE INDEX idx_email_samples_id ON email_classifier_runtime_samples(id DESC)
 CREATE INDEX idx_email_samples_model ON email_classifier_runtime_samples(model_id,id DESC)
 CREATE INDEX idx_setup_events_id ON setup_wizard_events(id DESC)
 CREATE INDEX idx_setup_events_step ON setup_wizard_events(step_id,id)
-CREATE TRIGGER trg_run_provenance_task_kind_insert BEFORE INSERT ON run_provenance WHEN NEW.source_type IN ('task_agent_runs','meeting_alignment_runs','okr_review_runs') AND EXISTS (SELECT 1 FROM runs r JOIN tasks t ON t.id=r.task_id WHERE r.id=NEW.run_id AND t.kind<>CASE NEW.source_type WHEN 'task_agent_runs' THEN 'work_summary' WHEN 'meeting_alignment_runs' THEN 'meeting_alignment' ELSE 'okr_review' END) BEGIN SELECT RAISE(ABORT,'Run source and Task kind mismatch'); END
+CREATE TRIGGER trg_run_provenance_task_kind_insert BEFORE INSERT ON run_provenance
+WHEN (NEW.source_type='task_agent_runs' AND NOT EXISTS (
+ SELECT 1 FROM runs r JOIN tasks t ON t.id=r.task_id
+ WHERE r.id=NEW.run_id AND t.kind='work_summary'))
+ OR (NEW.source_type='meeting_alignment_runs' AND (
+ EXISTS (SELECT 1 FROM runs r JOIN tasks t ON t.id=r.task_id
+         WHERE r.id=NEW.run_id AND (t.kind<>'meeting_alignment' OR NEW.job_id IS NOT NULL))
+ OR (NOT EXISTS (SELECT 1 FROM runs r JOIN tasks t ON t.id=r.task_id
+                 WHERE r.id=NEW.run_id) AND NEW.job_id IS NULL)))
+ OR (NEW.source_type='okr_review_runs' AND NOT EXISTS (
+ SELECT 1 FROM runs r JOIN tasks t ON t.id=r.task_id
+ WHERE r.id=NEW.run_id AND t.kind='okr_review'))
+BEGIN SELECT RAISE(ABORT,'Run source and Task kind mismatch'); END
 CREATE TRIGGER trg_run_provenance_immutable BEFORE UPDATE ON run_provenance BEGIN SELECT RAISE(ABORT,'Run provenance is immutable'); END
 CREATE TRIGGER trg_workbench_events_task_kind_insert BEFORE INSERT ON workbench_events WHEN NOT EXISTS (SELECT 1 FROM tasks WHERE id=NEW.task_id AND kind='workbench_turn') BEGIN SELECT RAISE(ABORT,'Workbench event requires Workbench Task'); END
 CREATE TRIGGER trg_workbench_events_task_kind_update BEFORE UPDATE OF task_id ON workbench_events WHEN NOT EXISTS (SELECT 1 FROM tasks WHERE id=NEW.task_id AND kind='workbench_turn') BEGIN SELECT RAISE(ABORT,'Workbench event requires Workbench Task'); END
