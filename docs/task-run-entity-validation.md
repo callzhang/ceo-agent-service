@@ -18,6 +18,12 @@ The in-memory full schema enables foreign keys, executes every assembled table/i
 
 This closes the local Task1 schema contract only. It does not select a migration, activate runtime readers or writers, copy data, contact providers, inspect or modify production, push, deploy, or assert a current production schema. The three historical `first_agent_run_id` fixture failures remain assigned to Task3 and are not counted as green.
 
+## Task2B semantic-reference utility (2026-10-22)
+
+The unactivated `app/task_entity_migration.py` utility builds kind-qualified physical and typed-public identity indexes for a composed Task migration. It translates feedback Workbench TEXT references only when exact public-key resolution finds the current owner; unresolved historical strings remain unchanged. Its inverse resolves canonical native IDs back to the exact source public TEXT key. Action feedback parent IDs are resolved from typed source public IDs to the actual native owner ID, including owner families that currently have no rows. These helpers are not a forward/inverse Task data migration and do not alter source Actions, schema, runtime readers, or publication.
+
+Focused evidence: `pytest -q tests/test_task_entity_migration.py` — 3 passed; Ruff and `git diff --check` passed. The Task2B forward/inverse converter and source/target round-trip remain outstanding.
+
 ## Verification
 
 - Focused GREEN: `pytest -q tests/test_task_run_entity_assembly.py tests/test_run_adoption_definitions.py tests/test_task_run_entity_definitions.py tests/test_run_entity_definitions.py` — 42 passed.
