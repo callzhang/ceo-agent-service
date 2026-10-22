@@ -1,7 +1,7 @@
 {
-  "observed_at": "2026-10-22T09:21:29Z",
-  "production_commit": "25eea1dc99e75ef7a18a7331f67b2e6274abe374",
-  "runtime_skill_config_id": 361,
+  "observed_at": "2026-10-22T17:43:48Z",
+  "production_commit": "526f3df5ef04dca3ed991e78adba0232718a7bee",
+  "runtime_skill_config_id": 362,
   "files": [
     {
       "source": "ci/shared-skills/ceo-weekly-report/SKILL.md",
@@ -40,7 +40,7 @@
     {
       "source": "ci/shared-skills/ceo-daily-report/SKILL.md",
       "installed_sha256": "45e10866372b48f484af27310a9bc07f9ea0538ca3cc1d675fd1bd45ce1fddce",
-      "approved_new_sha256": "45e10866372b48f484af27310a9bc07f9ea0538ca3cc1d675fd1bd45ce1fddce",
+      "approved_new_sha256": "32d24bb5f53b60bcf67b8a91582db258a05cac59c789391c862d3bd95719fc62",
       "managed_revision_id": 203,
       "managed_sha256": "45e10866372b48f484af27310a9bc07f9ea0538ca3cc1d675fd1bd45ce1fddce"
     },
@@ -107,10 +107,10 @@
     },
     {
       "source": "ci/shared-skills/ceo-weekly-okr-report/SKILL.md",
-      "installed_sha256": "f2781a3505e57bd7e6815f35f0d94b3fb4535b31b07900e1a28b5377ec140701",
+      "installed_sha256": "18b23c5c6762ce0fa6cceedf8f1a7a14591327269897fcc56ba4ea32e9c78744",
       "approved_new_sha256": "18b23c5c6762ce0fa6cceedf8f1a7a14591327269897fcc56ba4ea32e9c78744",
-      "managed_revision_id": 222,
-      "managed_sha256": "f2781a3505e57bd7e6815f35f0d94b3fb4535b31b07900e1a28b5377ec140701"
+      "managed_revision_id": 223,
+      "managed_sha256": "18b23c5c6762ce0fa6cceedf8f1a7a14591327269897fcc56ba4ea32e9c78744"
     },
     {
       "source": "ci/shared-skills/ceo-weekly-okr-report/scripts/analysis.schema.json",
