@@ -102,9 +102,10 @@ def test_org_change_orders_evidence_by_timestamp_and_does_not_repeat_a_verified_
     assert "source-timestamp order using the DWS operation records" in text
     assert "Only material submitted after the latest verified return for the same gap can count as post-return new evidence" in text
     assert "timestamped before that return is not new evidence" in text
-    assert "an approver's `AGREE` alone does not resolve the gap" in text
-    assert "preserve the current OA task as pending with `no_action`" in text
-    assert "do not issue another return or duplicate comment" in text
+    assert "If the responsible approver then approves again, treat that as the approver's decision" in text
+    assert "an approver's `AGREE` alone does not resolve the gap" not in text
+    assert "or when no authorized decision has resolved a previously returned gap" in text
+    assert "do not return or comment again on the unchanged gap" in text
     assert "Reviewer-side read or OCR failures are not applicant-resolvable gaps" in text
 
 

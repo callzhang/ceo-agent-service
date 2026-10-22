@@ -14,7 +14,6 @@ from tests.workbench_caller_fixtures import empty_source13, advance_source16_to_
 from app.workbench.store import WorkbenchConflictError, WorkbenchStore
 from app.task8_storage import task8_insert_parts, task8_set_parts
 from app.task20_definitions import task20_column, task20_projection
-from app.state_definitions import state_projection
 from app.task12_storage import insert_task12
 
 

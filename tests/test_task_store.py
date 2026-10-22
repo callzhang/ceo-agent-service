@@ -8,7 +8,6 @@ from threading import Barrier
 
 import pytest
 
-import app.store as store_module
 from app.store import TASK_LOGICAL_RUN_SQL
 from app.store import AgentRole, AutoReplyStore
 from app.task_storage import REPLY_TASK_SQL, WORK_SUMMARY_INPUT_SQL, task_id_expression
