@@ -1179,6 +1179,12 @@ def test_only_consumer_routes_with_native_output_schema_omit_wire_schema_text():
     sections_by_runtime = consumer_developer_sections_by_runtime(
         runtime_context="", work_profile="",
     )
+    universal_effect_boundary = "For every task type, do not use any tool"
+    assert universal_effect_boundary in CONSUMER_OUTBOUND_INSTRUCTION
+    assert "(messages, email, approvals, etc.)" in CONSUMER_OUTBOUND_INSTRUCTION
+    for sections in sections_by_runtime.values():
+        developer = render_prompt_sections(sections, placement="developer")
+        assert universal_effect_boundary in developer
     for runtime in ("codex_cli", "claude_cli"):
         developer = render_prompt_sections(
             sections_by_runtime[runtime], placement="developer",

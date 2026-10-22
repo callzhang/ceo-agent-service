@@ -117,15 +117,23 @@ def _runtime_result_schema_id(
     role: AgentRole,
     *,
     purpose: str = "general",
+    credential_mode: CredentialMode | None = None,
 ) -> str:
     legacy = hashlib.sha256(
         ("agent_turn_claude_result_v1\0" + execution_contract_digest).encode("utf-8")
     ).hexdigest()
-    if RuntimeKind(runtime_kind) is not RuntimeKind.CODEX_CLI or role is not AgentRole.CONSUMER:
+    if RuntimeKind(runtime_kind) is not RuntimeKind.CODEX_CLI or role not in {
+        AgentRole.CONSUMER, AgentRole.AUDIT,
+    }:
         return legacy
-    schema_bytes = native_output_schema_path(purpose=purpose).read_bytes()
+    if role is AgentRole.AUDIT and credential_mode is not CredentialMode.LOCAL_OAUTH:
+        return legacy
+    schema_bytes = native_output_schema_path(role.value, purpose=purpose).read_bytes()
+    role_prefix = (
+        "consumer" if role is AgentRole.CONSUMER else "audit"
+    )
     return hashlib.sha256(
-        b"agent_turn_codex_consumer_native_result_v1\0"
+        f"agent_turn_codex_{role_prefix}_native_result_v1\0".encode("ascii")
         + execution_contract_digest.encode("utf-8")
         + b"\0" + schema_bytes
     ).hexdigest()
@@ -136,10 +144,15 @@ def _native_output_schema_for_route(
     role: AgentRole,
     *,
     purpose: str = "general",
+    credential_mode: CredentialMode | None = None,
 ) -> Path | None:
-    if RuntimeKind(runtime_kind) is not RuntimeKind.CODEX_CLI or role is not AgentRole.CONSUMER:
+    if RuntimeKind(runtime_kind) is not RuntimeKind.CODEX_CLI or role not in {
+        AgentRole.CONSUMER, AgentRole.AUDIT,
+    }:
         return None
-    return native_output_schema_path(purpose=purpose)
+    if role is AgentRole.AUDIT and credential_mode is not CredentialMode.LOCAL_OAUTH:
+        return None
+    return native_output_schema_path(role.value, purpose=purpose)
 
 
 def _fallback_requested_session_id(
@@ -997,9 +1010,16 @@ class AgentTurnProcess(Generic[ResultT]):
         )
 
         def parse_result_for_route(raw: str, route: RuntimeRoute) -> ResultT:
-            if route.runtime_kind is RuntimeKind.CODEX_CLI and run.role is AgentRole.CONSUMER:
+            if (
+                route.runtime_kind is RuntimeKind.CODEX_CLI
+                and run.role is AgentRole.CONSUMER
+            ) or (
+                route.runtime_kind is RuntimeKind.CODEX_CLI
+                and run.role is AgentRole.AUDIT
+                and route.credential_mode is CredentialMode.LOCAL_OAUTH
+            ):
                 return parse_native_result(
-                    raw, "consumer", purpose=consumer_purpose, parser=parse_result,
+                    raw, run.role.value, purpose=consumer_purpose, parser=parse_result,
                 )
             return parse_result(raw)
 
@@ -1038,10 +1058,14 @@ class AgentTurnProcess(Generic[ResultT]):
                 json.dumps(contract, sort_keys=True, separators=(",", ":")).encode("utf-8")
             ).hexdigest()
 
-        def result_schema_id_for(runtime_kind: RuntimeKind | str) -> str:
+        def result_schema_id_for(
+            runtime_kind: RuntimeKind | str,
+            route: RuntimeRoute | None = None,
+        ) -> str:
             return _runtime_result_schema_id(
                 execution_contract_digest_for(runtime_kind), runtime_kind, run.role,
                 purpose=consumer_purpose,
+                credential_mode=route.credential_mode if route is not None else None,
             )
 
         try:
@@ -1057,33 +1081,31 @@ class AgentTurnProcess(Generic[ResultT]):
                     transcript_end_line=persisted_run.transcript_end_line,
                 )
             runtime_attempts = self.store.list_agent_runtime_attempts(run.id)
-            completed_attempt = next(
-                (
-                    attempt
-                    for attempt in reversed(runtime_attempts)
-                    if attempt.status == "completed"
-                    and attempt.result_schema_id == result_schema_id_for(
-                        attempt.runtime_kind
-                    )
-                ),
-                None,
-            )
+            completed_attempt = None
+            completed_route = None
+            for attempt in reversed(runtime_attempts):
+                if attempt.status != "completed":
+                    continue
+                attempt_route = next((candidate for candidate in self.runtime_config.routes
+                    if candidate.name == attempt.route_name
+                    and candidate.runtime_kind.value == attempt.runtime_kind), None)
+                if (attempt_route is not None
+                        and attempt.result_schema_id == result_schema_id_for(
+                            attempt.runtime_kind, attempt_route,
+                        )):
+                    completed_attempt = attempt
+                    completed_route = attempt_route
+                    break
             if completed_attempt is not None:
-                route = next(
-                    (
-                        candidate
-                        for candidate in self.runtime_config.routes
-                        if candidate.name == completed_attempt.route_name
-                        and candidate.runtime_kind.value == completed_attempt.runtime_kind
-                    ),
-                    None,
-                )
+                route = completed_route
                 if route is None:
                     raise RuntimeError("completed runtime result route mismatch")
                 try:
                     result = cast(ResultT, recover_completed_runtime_domain_result(
                         completed_attempt, run,
-                        schema_id=result_schema_id_for(completed_attempt.runtime_kind),
+                        schema_id=result_schema_id_for(
+                            completed_attempt.runtime_kind, route,
+                        ),
                         friday_adapter=self.friday_adapter,
                         parse_result=lambda raw: parse_result_for_route(raw, route),
                     ))
@@ -1241,6 +1263,7 @@ class AgentTurnProcess(Generic[ResultT]):
                     claude_normalizer = None
                     native_schema_path = _native_output_schema_for_route(
                         route.runtime_kind, run.role, purpose=consumer_purpose,
+                        credential_mode=route.credential_mode,
                     )
                     command = self.codex_adapter.build_command(
                         route=route,
@@ -1619,15 +1642,7 @@ class AgentTurnProcess(Generic[ResultT]):
                         exc.failure_code or exc.code,
                         exc.retryable_external_dependency,
                     )
-            self._fail_running(
-                run,
-                exc.failure_code or exc.code,
-                detail=exc.reason or str(exc),
-                stage="execution",
-                source="runtime",
-                source_code=exc.failure_code or exc.code,
-                session_continuable=True,
-            )
+            self._fail_routed_execution(run, exc)
             raise
         except ReviewedSourceReadError as exc:
             if active_attempt is not None:
@@ -1706,7 +1721,7 @@ class AgentTurnProcess(Generic[ResultT]):
                 native_end = count_claude_session_lines(native_session) if is_claude else session_transcript_end
                 native_reference = f"claude_session:{native_session}" if is_claude else attempt_transcript_reference
                 durable_consumer_result = run.role is AgentRole.CONSUMER
-                runtime_result_schema_id = result_schema_id_for(route.runtime_kind)
+                runtime_result_schema_id = result_schema_id_for(route.runtime_kind, route)
                 self.store.complete_agent_runtime_attempt(
                     active_attempt.id, native_session, native_reference,
                     attempt_transcript_start, native_end,
@@ -1927,6 +1942,24 @@ class AgentTurnProcess(Generic[ResultT]):
             error = RuntimeError(failure_code)
             error.detail = _process_failure_detail(process)
             raise error
+
+    def _fail_routed_execution(
+        self, run: AgentRun, exc: RoutedCodexExecutionError
+    ) -> None:
+        self._fail_running(
+            run,
+            exc.failure_code or exc.code,
+            detail=exc.reason or str(exc),
+            stage="execution",
+            source="runtime",
+            source_code=exc.failure_code or exc.code,
+            session_continuable=True,
+            retryable=(
+                exc.retryable_external_dependency
+                if exc.failure_class is not None
+                else None
+            ),
+        )
 
     def _fail_running(
         self,

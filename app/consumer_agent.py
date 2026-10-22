@@ -1065,7 +1065,12 @@ class ConsumerAgentRunner:
                 developer_instructions_by_runtime=developer_instructions_by_runtime,
                 prompt_sections_by_runtime=prompt_sections_by_runtime,
                 configure_command=configure_consumer_command,
-                parse_result=lambda raw: _parse_consumer_result(raw, purpose=purpose_name),
+                parse_result=lambda raw: _parse_consumer_result(
+                    raw,
+                    purpose=purpose_name,
+                    stage_index=context.stage_index,
+                    predecessor_review_id=context.predecessor_review_id,
+                ),
                 prepare_result=lambda parsed: _prepare_reviewable_candidate(
                     parsed,
                     store=self.store,
@@ -1351,7 +1356,9 @@ def default_task_skill_catalog(
     return tuple(dict((entry.name, entry) for entry in catalog).values())
 
 
-def _parse_consumer_result(raw: str, *, purpose="general"):
+def _parse_consumer_result(
+    raw: str, *, purpose="general", stage_index=None, predecessor_review_id=None
+):
     """Reject a Consumer failure that reports a page it never opened.
 
     The Consumer turn is read-only and has no browser: it cannot have
@@ -1369,7 +1376,15 @@ def _parse_consumer_result(raw: str, *, purpose="general"):
 
     from app.email_unsubscribe import BROWSER_EXECUTION_ERROR_CODES
 
-    result = parse_consumer_agent_wire_result(raw, purpose=purpose)
+    # Stage lineage is bound to the JSON candidate before wire validation, so a
+    # model mistake in these service-owned fields cannot turn an ordinary result
+    # into a schema failure or a candidate predecessor mismatch.
+    result = parse_consumer_agent_wire_result(
+        raw,
+        purpose=purpose,
+        stage_index=stage_index,
+        predecessor_review_id=predecessor_review_id,
+    )
     if result.outcome is not ConsumerOutcome.FAILED:
         return result
     code = str(getattr(result.error, "code", "") or "")

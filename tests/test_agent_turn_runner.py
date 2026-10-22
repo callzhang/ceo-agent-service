@@ -78,7 +78,7 @@ def test_other_route_or_session_keeps_full_prompt(
     assert facts is full_facts
 
 
-def test_native_output_schema_is_selected_for_codex_consumers_only():
+def test_native_output_schema_is_selected_for_codex_consumer_and_audit():
     general = _native_output_schema_for_route(
         RuntimeKind.CODEX_CLI, AgentRole.CONSUMER,
     )
@@ -88,7 +88,16 @@ def test_native_output_schema_is_selected_for_codex_consumers_only():
 
     assert general is not None and general.name == "consumer_general_agent_native_output.schema.json"
     assert oa is not None and oa.name == "consumer_oa_agent_native_output.schema.json"
-    assert _native_output_schema_for_route(RuntimeKind.CODEX_CLI, AgentRole.AUDIT) is None
+    audit = _native_output_schema_for_route(
+        RuntimeKind.CODEX_CLI, AgentRole.AUDIT,
+        credential_mode=CredentialMode.LOCAL_OAUTH,
+    )
+    assert audit is not None and audit.name == "audit_agent_native_output.schema.json"
+    assert _native_output_schema_for_route(
+        RuntimeKind.CODEX_CLI, AgentRole.AUDIT,
+        credential_mode=CredentialMode.SERVICE_API,
+    ) is None
+    assert _native_output_schema_for_route(RuntimeKind.CLAUDE_CLI, AgentRole.AUDIT) is None
     assert _native_output_schema_for_route(RuntimeKind.CLAUDE_CLI, AgentRole.CONSUMER) is None
 
 
@@ -102,13 +111,19 @@ def test_runtime_result_recovery_binds_native_consumer_schema(tmp_path, monkeypa
     )
     audit_id = _runtime_result_schema_id(
         execution_contract, RuntimeKind.CODEX_CLI, AgentRole.AUDIT,
+        credential_mode=CredentialMode.LOCAL_OAUTH,
     )
     oa_id = _runtime_result_schema_id(
         execution_contract, RuntimeKind.CODEX_CLI, AgentRole.CONSUMER, purpose="oa",
     )
 
-    assert len({native_id, claude_id, audit_id, oa_id}) == 3
-    assert audit_id == claude_id
+    audit_api_id = _runtime_result_schema_id(
+        execution_contract, RuntimeKind.CODEX_CLI, AgentRole.AUDIT,
+        credential_mode=CredentialMode.SERVICE_API,
+    )
+    assert len({native_id, claude_id, audit_id, audit_api_id, oa_id}) == 4
+    assert audit_api_id == claude_id
+    assert audit_id != claude_id
     assert native_id == _runtime_result_schema_id(
         execution_contract, RuntimeKind.CODEX_CLI, AgentRole.CONSUMER,
     )
@@ -116,7 +131,7 @@ def test_runtime_result_recovery_binds_native_consumer_schema(tmp_path, monkeypa
     schema_path.write_bytes(b'{"schema":"first"}')
     monkeypatch.setattr(
         agent_turn_runner, "native_output_schema_path",
-        lambda *, purpose="general": schema_path,
+        lambda role="consumer", *, purpose="general": schema_path,
     )
     first_schema_id = _runtime_result_schema_id(
         execution_contract, RuntimeKind.CODEX_CLI, AgentRole.CONSUMER,
@@ -241,6 +256,50 @@ def test_routed_runtime_failure_preserves_router_failure_code():
 
     assert calls == [((18, "process", "runtime_executor_failed", False),
                       {"transcript_start": 0, "transcript_end": 0})]
+
+
+@pytest.mark.parametrize(
+    ("failure_class", "retryable", "expected_retryable"),
+    [
+        ("capability", False, False),
+        ("capacity", True, True),
+        (None, False, True),
+    ],
+)
+def test_routed_failure_persists_router_retryability(
+    failure_class, retryable, expected_retryable,
+):
+    from app.agent_runtime_contracts import RuntimeFailureClass
+    from app.agent_runtime_router import RoutedCodexExecutionError
+
+    calls = []
+
+    class Store:
+        def get_agent_run(self, run_id):
+            return SimpleNamespace(id=run_id, status="running")
+
+        def fail_agent_run(self, run_id, error, *, owner):
+            calls.append((run_id, error, owner))
+
+    runner = object.__new__(AgentTurnProcess)
+    runner.store = Store()
+    runner.owner = "test-owner"
+    error = RoutedCodexExecutionError(
+        "runtime_execution_failed",
+        failure_class=(RuntimeFailureClass(failure_class) if failure_class else None),
+        failure_code="provider_failure",
+        retryable_external_dependency=retryable,
+    )
+
+    runner._fail_routed_execution(SimpleNamespace(id=19), error)
+
+    assert calls[0][0] == 19
+    assert calls[0][1]["retryable"] is expected_retryable
+    assert calls[0][1]["source_code"] == "provider_failure"
+    assert calls[0][1]["stage"] == "execution"
+    assert calls[0][1]["source"] == "runtime"
+    assert calls[0][1]["session_continuable"] is True
+    assert calls[0][2] == "test-owner"
 
 
 def test_same_route_capacity_retry_resumes_observed_audit_session():

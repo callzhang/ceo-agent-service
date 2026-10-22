@@ -66,6 +66,9 @@ def test_role_boundary_invariant_is_complete_across_all_core_prompts():
     assert "future source update" in _AUDIT_AGENT_RULES
     assert "personal blocked or sleep hold" not in _AUDIT_AGENT_RULES
     assert "sourced importance comparison" not in _AUDIT_AGENT_RULES
+    assert "For every task type" in _AUDIT_AGENT_RULES
+    assert "actions contacting or changing state for another person require Audit review" in _AUDIT_AGENT_RULES
+    assert "only system code may execute approved plans" in _AUDIT_AGENT_RULES
     assert "Consumer Agent A gathers facts and proposes a typed candidate" in consumer_developer_instructions()
     assert "## 原请求与取证" in SEED_DEVELOPER_PROMPT_TEMPLATE.read_text(encoding="utf-8")
 
@@ -90,6 +93,8 @@ def test_audit_core_prompt_contains_only_runtime_invariants():
     assert "reusable rule choices" in text
     assert "current-instance decision" in text
     assert "applies_to=task_class" in text
+    assert "For every task type" in text
+    assert "actions contacting or changing state for another person require Audit review" in text
 
 
 def test_audit_field_feedback_is_grounded_in_current_candidate_json():
