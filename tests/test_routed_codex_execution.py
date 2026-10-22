@@ -2436,11 +2436,15 @@ def test_a_typed_workload_parser_reads_friday_s_final_message(tmp_path, monkeypa
     assert Answer.model_validate_json(result.value).ok is True
 
 
-def _provider_full_executor(calls: list[str], full_calls: int):
+def _provider_full_executor(
+    calls: list[str], full_calls: int, prompts: list[str] | None = None
+):
     """Fail the first ``full_calls`` calls as provider-full, then answer 42."""
 
     def executor(command, **kwargs):
         calls.append(kwargs["env"]["ROUTE"])
+        if prompts is not None:
+            prompts.append(kwargs["prompt"])
         if len(calls) <= full_calls:
             return ProcessRunResult(1, "", "server_overloaded")
         return ProcessRunResult(0, json.dumps({"type": "result", "value": 42}), "")
@@ -2466,13 +2470,14 @@ def test_a_full_provider_is_retried_on_the_same_route_before_switching(store, co
     """Derek, 2026-09-17: on 429 retry three times, then switch runtime."""
     key = seed_structured_parent(store)
     calls: list[str] = []
+    prompts: list[str] = []
     sleeps: list[float] = []
     routed = RoutedCodexExecution(
         store=store,
         config=config,
         router=make_router(store, config),
         adapter=CorrectionTurnFailureAdapter(CORRECTION_TURN_PROVIDER_FAILURES[0]),
-        executor=_provider_full_executor(calls, full_calls=2),
+        executor=_provider_full_executor(calls, full_calls=2, prompts=prompts),
         sleep=sleeps.append,
     )
 
@@ -2481,9 +2486,46 @@ def test_a_full_provider_is_retried_on_the_same_route_before_switching(store, co
     assert result.value == 42
     assert result.route_name == "codex_oauth"
     assert calls == ["codex_oauth"] * 3
+    assert prompts == ["analyze"] * 3
     assert sleeps == [10.0, 20.0]
     # Retries that succeed never take the route away from other work.
     assert store.active_runtime_route_pause("codex_oauth", now=NOW) is None
+
+
+def test_a_cold_capacity_retry_resumes_observed_session_with_continue(store, config):
+    key = seed_structured_parent(store)
+    adapter = CorrectionTurnFailureAdapter(CORRECTION_TURN_PROVIDER_FAILURES[0])
+    prompts: list[str] = []
+    sleeps: list[float] = []
+
+    def executor(command, **kwargs):
+        prompts.append(kwargs["prompt"])
+        if len(prompts) == 1:
+            return ProcessRunResult(
+                1,
+                json.dumps({"type": "thread.started", "thread_id": "cold-429-session"}),
+                "provider returned HTTP 429",
+            )
+        return ProcessRunResult(
+            0, json.dumps({"type": "result", "value": 42}), ""
+        )
+
+    routed = RoutedCodexExecution(
+        store=store,
+        config=config,
+        router=make_router(store, config),
+        adapter=adapter,
+        executor=executor,
+        sleep=sleeps.append,
+        session_id_parser=lambda raw: json.loads(raw).get("thread_id"),
+    )
+
+    result = _run_structured(routed, key)
+
+    assert result.value == 42
+    assert [command[1] for command in adapter.commands] == [None, "cold-429-session"]
+    assert prompts == ["analyze", "continue"]
+    assert sleeps == [10.0]
 
 
 def test_a_provider_still_full_after_three_retries_switches_runtime(store, config):

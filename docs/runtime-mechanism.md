@@ -2760,6 +2760,9 @@ Derek 2026-09-25。候选只是没确认的猜测，所以可以在控制台“�
 - 路由失败和恢复：`docs/runtime-route-recovery.md`
 - Runtime 路由、fallback 决策与 429 重试：`docs/architecture.md` 的「Agent 失败重试」与各 Runtime 路由小节，
   实现在 `app/runtime_fallback.py`
+- 429 同路线重试在失败 attempt 已观察 session 时续用该 session，并提交 `continue`；冷启动首次返回
+  429 也保留从失败 attempt 取得的 session。无 session 时重放原任务输入。细节见
+  `docs/runtime-route-recovery.md`。
 - Consumer/Audit 反馈设计：`docs/superpowers/specs/2026-08-06-consumer-audit-agent-design.md`
 - OKR 领域输入和输出：`docs/superpowers/specs/2026-06-08-okr-review-runner-design.md`
 - 当前实现：`app/agent_orchestrator.py`、`app/consumer_agent.py`、`app/audit_agent.py`、`app/okr_review.py`、`app/weekly_okr_report.py`、`app/store.py`
