@@ -87,3 +87,7 @@ publicationfreezeaf007868. B2b copy/native/current-facts inverse acceptance has
 SPEC/QUALITY approval; fresh productionpreflight/backup/publicationpending.
 C1nine-kind raw-byte/old-code inverse checks have passed during implementation;
 source not frozen/reviewed/live. A5/C2/fullDremainopen.
+
+## Task/Run unification status (2026-10-22)
+
+Phase 1 figures, marker/version, PID, backup measurements and production readbacks recorded above are dated observations for their stated source and time. They are not current production assertions. Task1 schema assembly is a local, unactivated contract; Phase 2 has not been published or deployed. A fresh current-production claim requires a new read-only inspection of the active checkout, database and service state. The historical `runs(190042) -> tasks(1)` foreign-key finding is an ordinal-1 entry in `PRAGMA foreign_key_list` (the fourth returned value is the key ordinal), not proof that the referenced Task is missing. No data repair is authorized or implied by that observation.

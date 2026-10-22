@@ -201,7 +201,6 @@ def test_only_one_running_eligible_run_exists_per_task():
     db.execute("INSERT INTO tasks(id,kind,status,parameters_json,created_at,updated_at) VALUES (4,'reply','queued',jsonb('{}'),'now','now')")
     db.execute("INSERT INTO runs(id,task_id,status,created_at) VALUES (20,4,'running','now')")
     db.execute("INSERT INTO runs(id,task_id,status,created_at) VALUES (21,4,'running','now')")
-    db.execute("UPDATE tasks SET kind='work_summary' WHERE id=4")
     with pytest.raises(sqlite3.IntegrityError):
         db.execute("INSERT INTO run_provenance VALUES (20,'task_agent_runs',NULL)")
 

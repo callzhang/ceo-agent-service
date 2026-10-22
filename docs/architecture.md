@@ -3968,3 +3968,7 @@ validation shares the existing complete-record parser. Literal body bytes cannot
 supply a UID attribute. This supports real multipart filename literals and UID
 attributes after a literal without changing account, generation or message
 identity checks. See `docs/email-classification-source-repair-validation.md`.
+
+### Task/Run entity Phase 2 candidate (2026-10-22)
+
+The local Task1 schema assembly defines an unactivated Task/Run/Action-receipt contract, including separate `run_projections` and `run_adopted_results` owners, Task-kind immutability, and typed OKR item parent mapping. Task1 local schema work does not mean Phase 2 runtime publication, migration, or deployment. Production figures and release identifiers in the adjacent Phase 1 record are dated observations; refresh current runtime state before relying on them.

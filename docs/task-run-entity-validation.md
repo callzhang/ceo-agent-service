@@ -20,3 +20,9 @@ Run/Action DDL, adopted-result ownership, Run identity/public keys, and wrapper/
 - Schema proof: 66 target objects execute; validation passes all 287 map rows.
 - The prior baseline remains 363 passed / 3 known pre-assertion failures: the fixture inserts retired `external_action_results.first_agent_run_id`; current Action storage raises before the assertions. This revision does not alter that behavior.
 - No full suite, runtime activation, provider, production, backup or deploy operation was performed.
+
+## Task1 assembly update (2026-10-22)
+
+The local unactivated assembly in `app/task_run_entity_assembly.py` now combines the native Task, Run, adopted-result and Action-receipt declarations with duplicate object-name rejection. Task DDL preserves the source Task-kind immutability trigger and maps `okr_review_items.request_id` through the verified public-to-physical OKR request mapping to `tasks.id`, guarded by `kind='okr_review'`. Source query paths for email-classification, feedback-processing, WeChat import, Workbench turns and Workbench tasks are represented by target indexes. The schema inspector reports index names from `PRAGMA index_list`.
+
+Focused local tests cover assembly DDL execution against prerequisite table shapes, matching and wrong-kind OKR parents, Task kind immutability with status updates, and index-name inspection. This is schema-contract evidence only. It does not activate the assembled schema or establish complete parity against every retained Phase1 Action/config/state/email/provenance/native prerequisite; that full-source assembly proof and independent review remain open. The three known historical `first_agent_run_id` fixture failures remain Task3 coverage and are not treated as green.

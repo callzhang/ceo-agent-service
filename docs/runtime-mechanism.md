@@ -4927,3 +4927,7 @@ validation shares the existing complete-record parser. Literal body bytes cannot
 supply a UID attribute. This supports real multipart filename literals and UID
 attributes after a literal without changing account, generation or message
 identity checks. See `docs/email-classification-source-repair-validation.md`.
+
+### Task/Run entity Phase 2 candidate (2026-10-22)
+
+Task1 has a local unactivated schema assembly for Tasks, Runs, adopted results and Action receipt execution ownership. `run_projections` remains the professional Run projection owner, distinct from `run_adopted_results`; no runtime reader or writer uses the candidate assembly. Phase 1 production version, PID, backup and data counts elsewhere in this document are historical readbacks for their recorded dates, not a current-state guarantee. The previous `runs(190042) -> tasks(1)` finding identifies `PRAGMA foreign_key_list` ordinal 1 and must not be described as a missing Task or repaired without fresh evidence and an explicit migration scope.

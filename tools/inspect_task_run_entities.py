@@ -25,7 +25,7 @@ def inspect(path: str) -> dict:
                        for row in db.execute(f'PRAGMA table_info("{name}")')]
                 for name, item in actual.items() if item["type"] == "table"
             },
-            "indexes": {name: [row[0] for row in db.execute(f'PRAGMA index_list("{name}")')]
+            "indexes": {name: [row[1] for row in db.execute(f'PRAGMA index_list("{name}")')]
                         for name, item in actual.items() if item["type"] == "table"},
             "foreign_keys": {name: [list(row) for row in db.execute(f'PRAGMA foreign_key_list("{name}")')]
                              for name, item in actual.items() if item["type"] == "table"},
