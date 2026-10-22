@@ -545,10 +545,19 @@ def test_audit_parent_must_be_completed_exact_consumer_candidate(setup):
 
 
 def test_actual_audit_runner_uses_production_review_instructions(setup, monkeypatch):
+    import app.audit_agent as audit_agent
     from app.agent_context import _AUDIT_AGENT_RULES
     from app.audit_rules import SEED_AUDIT_RULES_TEMPLATE, render_audit_rules
     from app.consumer_agent import audit_developer_instructions
 
+    instructions_dir = Path(setup[0].path).parent / "agent-instructions"
+    instructions_dir.mkdir()
+    shared_instructions = instructions_dir / "shared.md"
+    project_instructions = instructions_dir / "project.md"
+    shared_instructions.write_text("Shared trusted agent instruction.", encoding="utf-8")
+    project_instructions.write_text("Project trusted agent instruction.", encoding="utf-8")
+    monkeypatch.setattr(audit_agent, "SHARED_AGENT_INSTRUCTIONS_PATH", shared_instructions)
+    monkeypatch.setattr(audit_agent, "PROJECT_AGENT_INSTRUCTIONS_PATH", project_instructions)
     monkeypatch.setenv("CEO_AUDIT_RULES_TEMPLATE_PATH", str(SEED_AUDIT_RULES_TEMPLATE))
     _store, task, parent, _context, _config, _router = setup
     context = replace(_context, audit_rules="")
@@ -560,7 +569,12 @@ def test_actual_audit_runner_uses_production_review_instructions(setup, monkeypa
     [snapshot] = [event for event in executor.active_events
                   if event.get("type") == "runtime.prompt"]
     rendered_rules = render_audit_rules(AgentRole.AUDIT)
-    assert actual == audit_developer_instructions(rendered_rules, runtime_context="") + "\n\n" + snapshot["runtime_context"]
+    expected = audit_developer_instructions(rendered_rules, runtime_context="")
+    expected += "\n\n## 共享 Agent 指令\n\nShared trusted agent instruction."
+    expected += "\n\n## 项目 Agent 指令\n\nProject trusted agent instruction."
+    expected += "\n\n" + snapshot["runtime_context"]
+    assert "Shared trusted agent instruction." in actual, actual[-3000:]
+    assert actual == expected
     assert actual == snapshot["developer_instructions"]
     assert (actual + executor.prompts[0]).count(_AUDIT_AGENT_RULES) == 1
     assert f"## Audit Rules\n{rendered_rules}" in actual
@@ -574,6 +588,15 @@ def test_actual_audit_runner_uses_production_review_instructions(setup, monkeypa
     assert task_rules == ""
     assert rendered_rules not in executor.prompts[0]
     assert "只读审核" in snapshot["runtime_context"]
+
+
+def test_audit_runner_fails_when_required_trusted_instructions_are_missing(setup, monkeypatch):
+    import app.audit_agent as audit_agent
+
+    missing = Path(setup[0].path).parent / "missing-agent-instructions.md"
+    monkeypatch.setattr(audit_agent, "SHARED_AGENT_INSTRUCTIONS_PATH", missing)
+    with pytest.raises(RuntimeError, match="required 共享 Agent 指令 could not be loaded"):
+        audit_agent._trusted_agent_instruction_sections()
 
 
 def test_oa_audit_runner_selects_read_only_ocr_handoff_from_task_skill(setup):
