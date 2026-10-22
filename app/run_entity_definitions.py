@@ -266,14 +266,19 @@ def validate_run_entity_contract(mapping=None) -> None:
         if source_name != row["source_field"] or actual_metadata != source_metadata:
             raise ValueError(f"source declaration metadata mismatch: {(row['source_kind'], row['source_field'])}")
     db = sqlite3.connect(":memory:")
-    db.execute("PRAGMA foreign_keys=ON")
     from app.task_run_entity_definitions import task_run_entity_objects
-    for ddl in task_run_entity_objects().values():
-        db.execute(ddl)
-    db.execute("CREATE TABLE schedules(id INTEGER PRIMARY KEY)")
-    db.execute("CREATE TABLE configs(schedule_snapshot_public_id INTEGER PRIMARY KEY)")
-    for ddl in run_entity_objects().values():
-        db.execute(ddl)
+    task_objects = task_run_entity_objects()
+    run_objects = run_entity_objects()
+    for ddl in (*task_objects.values(), *run_objects.values()):
+        if ddl.lstrip().lower().startswith("create table"):
+            db.execute(ddl)
+    from app.configs_storage import create_configs_schema
+    from app.schedules_storage import create_schedules_schema
+    create_schedules_schema(db)
+    create_configs_schema(db)
+    for ddl in (*task_objects.values(), *run_objects.values()):
+        if not ddl.lstrip().lower().startswith("create table"):
+            db.execute(ddl)
     target_columns = {
         name: {column[1] for column in db.execute(f'PRAGMA table_info("{name}")')}
         for name, in db.execute("SELECT name FROM sqlite_schema WHERE type='table'")

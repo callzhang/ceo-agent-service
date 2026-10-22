@@ -44,7 +44,7 @@ def _db():
         db.execute(sql)
     for sql in INDEXES.values():
         db.execute(sql)
-    for sql in TRIGGERS:
+    for sql in TRIGGERS.values():
         db.execute(sql)
     return db
 

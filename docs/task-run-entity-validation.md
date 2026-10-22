@@ -1,4 +1,4 @@
-# Task entity contract validation (2026-10-22, Task1A revision)
+# Task and Run entity contract validation (2026-10-22)
 
 This is a pure, unactivated Task-only contract. It covers 20 current logical Task20 projections, not historical pre-Task20 tables. The map contains 267 logical fields and 20 distinct physical-ID rows (287 total). Target DDL is pinned in `task_run_entity_objects()` and no longer builds target schema by iterating the source factory. Map validation uses the frozen Task20 catalog only to verify source ownership metadata, and checks every destination against actual target table columns.
 
@@ -8,13 +8,19 @@ The active Workbench-turn source predicate is represented by target triggers on 
 
 Reply current-input identity uniqueness remains derived through the bound input row, and multiple revisions for one Task remain allowed. WorkSummary, Meeting, OKR review, weekly analysis, Workbench global `client_request_id`, and per-Task sequence uniqueness are represented. The inverse map is keyed by `(source_kind, physical_id)` and retains public-key value/type separately. `workbench_turns.final_text` remains non-persisted because its source declaration is `storage='none'`.
 
-## Open parity concerns
+## Task1 native assembly closure
 
-Run/Action DDL, adopted-result ownership, Run identity/public keys, and wrapper/result framing remain separate assembly work. Task-domain parent FK/default parity and remaining source non-unique query indexes still need a table-by-table review. In particular, `okr_review_items.request_id` and all source parent edges should be explicitly checked before assembly. No source or production data was modified.
+The target factory assembles 479 deterministic declarations using the target Task, Run, Action, adoption and receipt owners plus the individual native creators for schedules, configs, State, provider state, provenance, Email, Business and the Email migration ledger. It does not call the old Task20/Run11 factories or the current whole-schema factory. A separate test-only source oracle confirms every retained unchanged object is byte-identical to its current native declaration. The complete assembled SQL is frozen in `task-run-entity-assembly-target.sql`; the combined Task/Run/adoption field map is in `task-run-entity-assembly-field-map.json`, with retirement notes in `task-run-entity-assembly-retirement.sql`.
+
+Source coverage is 287 Task map rows (267 logical fields plus 20 physical ID rows), 632 Run map rows (79 fields across 8 source kinds), and 43 adoption source fields. Run metadata validation still reads actual source Run DDL explicitly; it is not part of the target factory. The assembly test patches the whole-schema and old Task/Run creators to fail and confirms target construction succeeds. Another source-oracle test compares current DDL and SQL affinity/null/default metadata. Retained Action cross-guards are translated to Run provenance, reply Task kind, feedback parent, meeting parent, and reply Task delivery owners. Real SQLite operations cover adopted results, professional Run projections, execution progress and receipt references, meeting claims, feedback parents, reply memory actions, and invalid parent cases.
+
+The in-memory full schema enables foreign keys, executes every assembled table/index/trigger, matches the exact SQLite catalog object-name set, and returns no `foreign_key_check` findings. The Action declaration retires only adopted source families and their source-only indexes; current native Action kinds remain, with the already-retired candidate-attempt kind kept absent. Task kind immutability is enforced while lifecycle status remains mutable. `okr_review_items.request_id` references its real Task parent and rejects other Task kinds.
+
+This closes the local Task1 schema contract only. It does not select a migration, activate runtime readers or writers, copy data, contact providers, inspect or modify production, push, deploy, or assert a current production schema. The three historical `first_agent_run_id` fixture failures remain assigned to Task3 and are not counted as green.
 
 ## Verification
 
-- Focused GREEN: `/Users/derek/miniforge3/bin/python -m pytest -q tests/test_task_run_entity_definitions.py` — 11 passed.
+- Focused GREEN: `pytest -q tests/test_task_run_entity_assembly.py tests/test_run_adoption_definitions.py tests/test_task_run_entity_definitions.py tests/test_run_entity_definitions.py` — 42 passed.
 - Added paired current-source checks for (1) active Workbench-turn partial uniqueness and (2) actual SQLite INTEGER-affinity admission of a string value through the source insert helper and JSONB target.
 - Metadata tamper tests independently change SQL type, null contract, source default, and storage wrapper; each is rejected by `validate_task_run_field_map()`.
 - Schema proof: 66 target objects execute; validation passes all 287 map rows.

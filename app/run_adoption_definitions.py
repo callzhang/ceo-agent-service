@@ -68,40 +68,42 @@ INDEXES = {
         "CREATE INDEX idx_run_adopted_supplements_consumer ON run_adopted_supplements(consumer_run_id,id)",
 }
 
-TRIGGERS = (
-    """CREATE TRIGGER trg_run_adopted_results_consumer_insert
+TRIGGERS = {
+    "trg_run_adopted_results_consumer_insert": """CREATE TRIGGER trg_run_adopted_results_consumer_insert
  BEFORE INSERT ON run_adopted_results
- WHEN NOT EXISTS(SELECT 1 FROM runs r WHERE r.id=NEW.consumer_run_id AND r.role='consumer')
- BEGIN SELECT RAISE(ABORT,'adopted result owner must be Consumer Run'); END""",
-    """CREATE TRIGGER trg_run_adopted_results_consumer_update
+ WHEN NOT EXISTS(SELECT 1 FROM runs r JOIN tasks t ON t.id=r.task_id
+  WHERE r.id=NEW.consumer_run_id AND r.role='consumer' AND t.kind='reply')
+ BEGIN SELECT RAISE(ABORT,'adopted result owner must be Consumer Run for reply Task'); END""",
+    "trg_run_adopted_results_consumer_update": """CREATE TRIGGER trg_run_adopted_results_consumer_update
  BEFORE UPDATE OF consumer_run_id ON run_adopted_results
- WHEN NOT EXISTS(SELECT 1 FROM runs r WHERE r.id=NEW.consumer_run_id AND r.role='consumer')
- BEGIN SELECT RAISE(ABORT,'adopted result owner must be Consumer Run'); END""",
-    """CREATE TRIGGER trg_run_adopted_reviews_binding_insert
+ WHEN NOT EXISTS(SELECT 1 FROM runs r JOIN tasks t ON t.id=r.task_id
+  WHERE r.id=NEW.consumer_run_id AND r.role='consumer' AND t.kind='reply')
+ BEGIN SELECT RAISE(ABORT,'adopted result owner must be Consumer Run for reply Task'); END""",
+    "trg_run_adopted_reviews_binding_insert": """CREATE TRIGGER trg_run_adopted_reviews_binding_insert
  BEFORE INSERT ON run_adopted_reviews
  WHEN NOT EXISTS(SELECT 1 FROM runs audit JOIN runs consumer ON consumer.id=NEW.consumer_run_id
   WHERE audit.id=NEW.audit_run_id AND audit.role='audit' AND audit.parent_id=consumer.id
    AND audit.task_id=consumer.task_id AND audit.execution_generation=consumer.execution_generation
    AND audit.proposal_revision=consumer.proposal_revision)
  BEGIN SELECT RAISE(ABORT,'review must bind the matching Audit Run'); END""",
-    """CREATE TRIGGER trg_run_adopted_reviews_binding_update
+    "trg_run_adopted_reviews_binding_update": """CREATE TRIGGER trg_run_adopted_reviews_binding_update
  BEFORE UPDATE OF audit_run_id,consumer_run_id ON run_adopted_reviews
  WHEN NOT EXISTS(SELECT 1 FROM runs audit JOIN runs consumer ON consumer.id=NEW.consumer_run_id
   WHERE audit.id=NEW.audit_run_id AND audit.role='audit' AND audit.parent_id=consumer.id
    AND audit.task_id=consumer.task_id AND audit.execution_generation=consumer.execution_generation
    AND audit.proposal_revision=consumer.proposal_revision)
  BEGIN SELECT RAISE(ABORT,'review must bind the matching Audit Run'); END""",
-    """CREATE TRIGGER trg_run_adopted_predecessor_audit_insert
+    "trg_run_adopted_predecessor_audit_insert": """CREATE TRIGGER trg_run_adopted_predecessor_audit_insert
  BEFORE INSERT ON run_adopted_results
  WHEN NEW.predecessor_audit_run_id IS NOT NULL AND NOT EXISTS(
   SELECT 1 FROM runs audit WHERE audit.id=NEW.predecessor_audit_run_id AND audit.role='audit')
  BEGIN SELECT RAISE(ABORT,'predecessor must be Audit Run'); END""",
-    """CREATE TRIGGER trg_run_adopted_predecessor_audit_update
+    "trg_run_adopted_predecessor_audit_update": """CREATE TRIGGER trg_run_adopted_predecessor_audit_update
  BEFORE UPDATE OF predecessor_audit_run_id ON run_adopted_results
  WHEN NEW.predecessor_audit_run_id IS NOT NULL AND NOT EXISTS(
   SELECT 1 FROM runs audit WHERE audit.id=NEW.predecessor_audit_run_id AND audit.role='audit')
  BEGIN SELECT RAISE(ABORT,'predecessor must be Audit Run'); END""",
-)
+}
 
 
 def receipt_schema_patch():
@@ -126,6 +128,21 @@ def receipt_schema_patch():
             sql = sql.replace("execution_id", "execution_run_id")
         declarations.append(sql)
     return tuple(declarations)
+
+
+def receipt_schema_objects():
+    names = (
+        "action_receipts", "idx_action_receipts_action",
+        "idx_action_receipts_execution_run_order", "action_observers",
+        "trg_action_receipt_owner_insert", "trg_action_observer_owner_insert",
+        "trg_action_receipt_reference_owner_insert", "trg_action_receipt_reference_owner_update",
+        "trg_action_delivery_receipt_owner_delete", "trg_action_receipt_identity_immutable",
+        "trg_action_receipt_lineage_immutable",
+    )
+    declarations = receipt_schema_patch()
+    if len(names) != len(declarations):
+        raise ValueError("Action receipt declaration names are incomplete")
+    return dict(zip(names, declarations, strict=True))
 
 
 def adoption_source_fields():
@@ -214,4 +231,4 @@ def validate_field_map(mapping=None):
 
 
 def schema_sql():
-    return "\n\n".join((*TABLES.values(), *INDEXES.values(), *TRIGGERS, *receipt_schema_patch())) + "\n"
+    return "\n\n".join((*TABLES.values(), *INDEXES.values(), *TRIGGERS.values(), *receipt_schema_patch())) + "\n"

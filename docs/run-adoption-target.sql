@@ -56,13 +56,15 @@ CREATE INDEX idx_run_adopted_supplements_consumer ON run_adopted_supplements(con
 
 CREATE TRIGGER trg_run_adopted_results_consumer_insert
  BEFORE INSERT ON run_adopted_results
- WHEN NOT EXISTS(SELECT 1 FROM runs r WHERE r.id=NEW.consumer_run_id AND r.role='consumer')
- BEGIN SELECT RAISE(ABORT,'adopted result owner must be Consumer Run'); END
+ WHEN NOT EXISTS(SELECT 1 FROM runs r JOIN tasks t ON t.id=r.task_id
+  WHERE r.id=NEW.consumer_run_id AND r.role='consumer' AND t.kind='reply')
+ BEGIN SELECT RAISE(ABORT,'adopted result owner must be Consumer Run for reply Task'); END
 
 CREATE TRIGGER trg_run_adopted_results_consumer_update
  BEFORE UPDATE OF consumer_run_id ON run_adopted_results
- WHEN NOT EXISTS(SELECT 1 FROM runs r WHERE r.id=NEW.consumer_run_id AND r.role='consumer')
- BEGIN SELECT RAISE(ABORT,'adopted result owner must be Consumer Run'); END
+ WHEN NOT EXISTS(SELECT 1 FROM runs r JOIN tasks t ON t.id=r.task_id
+  WHERE r.id=NEW.consumer_run_id AND r.role='consumer' AND t.kind='reply')
+ BEGIN SELECT RAISE(ABORT,'adopted result owner must be Consumer Run for reply Task'); END
 
 CREATE TRIGGER trg_run_adopted_reviews_binding_insert
  BEFORE INSERT ON run_adopted_reviews
