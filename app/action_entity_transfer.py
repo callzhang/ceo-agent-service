@@ -93,12 +93,15 @@ def _rowdict(cursor, row) -> dict:
 
 def _candidate_action(db: sqlite3.Connection, execution_id: int, action_index: int) -> tuple[dict, dict]:
     """Resolve the action through its exact candidate, execution and selection FKs."""
-    from app.action_storage import REVIEW_CANDIDATE_SQL, CANDIDATE_EXECUTION_SQL, CANDIDATE_SELECTION_SQL
+    from app.action_storage import (
+        REVIEW_CANDIDATE_SQL, CANDIDATE_EXECUTION_SQL, CANDIDATE_REVIEW_SQL,
+        CANDIDATE_SELECTION_SQL,
+    )
     from app.task20_definitions import task20_projection
     from app import shared_action_lifecycle
 
     task_sql = task20_projection("reply_tasks")
-    cursor = db.execute(f"""select c.*,t.business_object_key,e.selection_id
+    cursor = db.execute(f"""select c.*,t.business_object_key,e.review_id,e.selection_id
         from ({CANDIDATE_EXECUTION_SQL}) e
         join ({REVIEW_CANDIDATE_SQL}) c on c.id=e.candidate_id
         join ({task_sql}) t on t.id=c.task_id where e.id=?""", (execution_id,))
@@ -106,14 +109,25 @@ def _candidate_action(db: sqlite3.Connection, execution_id: int, action_index: i
     if row is None:
         raise ValueError("candidate action has no exact candidate execution owner")
     candidate = _rowdict(cursor, row)
+    review_cursor = db.execute(
+        f"select * from ({CANDIDATE_REVIEW_SQL}) where id=? and candidate_id=?",
+        (candidate["review_id"], candidate["id"]),
+    )
+    review_row = review_cursor.fetchone()
+    review = None if review_row is None else _rowdict(review_cursor, review_row)
+    if (review is None or review["decision"] != "approve"
+            or review["candidate_digest"] != candidate["candidate_digest"]):
+        raise ValueError("candidate action is not bound to its exact approved review")
     selection = None
     if candidate["selection_id"] is not None:
         cursor = db.execute(f"select * from ({CANDIDATE_SELECTION_SQL}) where id=?",
                             (candidate["selection_id"],))
-        selected = cursor.fetchone()
-        if selected is None:
-            raise ValueError("candidate action selection owner is missing")
-        selection = _rowdict(cursor, selected)
+        selected_row = cursor.fetchone()
+        selected = None if selected_row is None else _rowdict(cursor, selected_row)
+        if (selected is None or selected["candidate_id"] != candidate["id"]
+                or selected["review_id"] != candidate["review_id"]):
+            raise ValueError("candidate action selection is not bound to its exact approved review")
+        selection = selected
     steps = shared_action_lifecycle.reviewed_action_steps(db, candidate, selection=selection)
     if not 0 <= action_index < len(steps):
         raise ValueError("candidate action index is outside its exact approved plan")
@@ -149,42 +163,53 @@ def _delivery_key(business_key: str, identity: str, generation: str, revision: i
 
 
 def _prepared_candidates(db: sqlite3.Connection) -> dict[tuple[str, str], dict]:
-    """Index only candidate action identities proven by the frozen delivery-key equation."""
-    from app.action_storage import REVIEW_CANDIDATE_SQL
+    """Index only steps of an exact approved execution and selected branch."""
+    from app.action_storage import CANDIDATE_EXECUTION_SQL, REVIEW_CANDIDATE_SQL, CANDIDATE_SELECTION_SQL
     from app.task20_definitions import task20_projection
+    from app.shared_action_lifecycle import reviewed_action_steps
 
     result = {}
-    cursor = db.execute(f"""select c.*,t.business_object_key,t.channel from ({REVIEW_CANDIDATE_SQL}) c
-        join ({task20_projection('reply_tasks')}) t on t.id=c.task_id""")
-    for row in cursor:
-        candidate = _rowdict(cursor, row)
-        data = json.loads(candidate["candidate_json"])
-        plans = [("", data.get("proposal"))]
-        options = data.get("decision_options")
-        if options is not None:
-            if not isinstance(options, list):
-                raise ValueError("candidate decision options are not an array")
-            plans.extend((option.get("key", ""), option.get("plan"))
-                         for option in options if isinstance(option, dict))
-        for option_key, plan in plans:
-            actions = plan.get("actions", []) if isinstance(plan, dict) else []
-            if not isinstance(actions, list):
-                raise ValueError("candidate action plan is not an array")
-            for step in actions:
-                identity = step.get("action_identity") if isinstance(step, dict) else None
-                if not isinstance(identity, str) or not identity:
-                    raise ValueError("prepared candidate action has no stable identity")
-                identity = identity + (":" + option_key if option_key else "")
-                key = _delivery_key(candidate["business_object_key"], identity,
-                                    candidate["execution_generation"], candidate["proposal_revision"])
-                fact = {"business_object_key": candidate["business_object_key"],
-                        "action_identity": identity, "operation": step.get("operation"),
-                        "target": step.get("target", {}), "channel": candidate["channel"]}
-                index = (fact["channel"], key)
-                old = result.get(index)
-                if old is not None and old != fact:
-                    raise ValueError("prepared delivery key resolves to conflicting candidate actions")
-                result[index] = fact
+    executions = db.execute(f"select id from ({CANDIDATE_EXECUTION_SQL}) order by id").fetchall()
+    for (execution_id,) in executions:
+        cursor = db.execute(f"""select c.*,t.business_object_key,t.channel,e.review_id,e.selection_id
+            from ({CANDIDATE_EXECUTION_SQL}) e
+            join ({REVIEW_CANDIDATE_SQL}) c on c.id=e.candidate_id
+            join ({task20_projection('reply_tasks')}) t
+              on t.id=c.task_id where e.id=?""", (execution_id,))
+        candidate = _rowdict(cursor, cursor.fetchone())
+        candidate_channel = candidate["channel"]
+        selection = None
+        if candidate["selection_id"] is not None:
+            selection_cursor = db.execute(
+                f"select * from ({CANDIDATE_SELECTION_SQL}) where id=?",
+                (candidate["selection_id"],),
+            )
+            selection_row = selection_cursor.fetchone()
+            selection = None if selection_row is None else _rowdict(selection_cursor, selection_row)
+            if (selection is None or selection["candidate_id"] != candidate["id"]
+                    or selection["review_id"] != candidate["review_id"]):
+                raise ValueError("candidate execution selection is not bound to its exact review")
+        steps = reviewed_action_steps(db, candidate, selection=selection)
+        for action_index, step in enumerate(steps):
+            candidate, step = _candidate_action(db, execution_id, action_index)
+            identity = step["action_identity"]
+            if candidate.get("selection_id") is not None:
+                from app.action_storage import CANDIDATE_SELECTION_SQL
+                option_key = db.execute(
+                    f"select option_key from ({CANDIDATE_SELECTION_SQL}) where id=?",
+                    (candidate["selection_id"],),
+                ).fetchone()[0]
+                identity += ":" + option_key if option_key else ""
+            index = (candidate_channel, _delivery_key(
+                candidate["business_object_key"], identity,
+                candidate["execution_generation"], candidate["proposal_revision"],
+            ))
+            fact = {"business_object_key": candidate["business_object_key"],
+                    "action_identity": identity, "channel": candidate_channel}
+            old = result.get(index)
+            if old is not None and old != fact:
+                raise ValueError("prepared delivery key resolves to conflicting approved execution steps")
+            result[index] = fact
     return result
 
 
@@ -254,7 +279,7 @@ def _transfer_postfixes(db: sqlite3.Connection, facts: dict[str, list[dict]], ow
         action_id = delivery_owners.get(identity)
         if action_id is None and candidate is not None:
             action_id = create_action(db, values={"business_object_key": candidate["business_object_key"],
-                "action_identity": candidate["action_identity"], "operation": candidate["operation"],
+                "action_identity": candidate["action_identity"],
                 "delivery_channel": source["channel"], "delivery_key": source["delivery_key"]})["id"]
         if action_id is None:
             action_id = create_action(db, values={"delivery_channel": identity[0],
@@ -270,8 +295,7 @@ def _transfer_postfixes(db: sqlite3.Connection, facts: dict[str, list[dict]], ow
                 current_identity = db.execute("select action_business_object_key,action_action_identity,action_operation from actions where id=?",
                                               (action_id,)).fetchone()
                 if (current_identity[0] not in (None, candidate["business_object_key"])
-                        or current_identity[1] not in (None, candidate["action_identity"])
-                        or current_identity[2] not in (None, candidate["operation"])):
+                        or current_identity[1] not in (None, candidate["action_identity"])):
                     raise ValueError("prepared candidate identity conflicts with its exact delivery-key owner")
             for field, value in {"prepared_body": source["final_body"], "delivery_channel": source["channel"],
                                  "delivery_key": source["delivery_key"], "feedback_token": source["feedback_token"],

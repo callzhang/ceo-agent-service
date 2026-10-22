@@ -271,6 +271,59 @@ def test_populated_prepared_sent_and_observer_facts_keep_distinct_receipts(tmp_p
             "result_json": None, "created_at": "candidate-attempt-clock",
             "updated_at": "candidate-attempt-updated",
         }, execution_owner=True)
+        # Only an actual execution bound to its matching approved review may
+        # supply candidate identity to a prepared delivery owner.
+        unselected_delivery_key = agent_message_delivery_key(
+            business_object_key="business-sent", action_identity="unselected-plan:unused",
+            execution_generation="generation-unselected", proposal_revision=0,
+        )
+        unapproved_delivery_key = agent_message_delivery_key(
+            business_object_key="business-sent", action_identity="unapproved-plan",
+            execution_generation="generation-unapproved", proposal_revision=0,
+        )
+        approved_prepared_delivery_key = agent_message_delivery_key(
+            business_object_key="business-sent", action_identity="approved-prepared-only:chosen",
+            execution_generation="generation-approved-prepared", proposal_revision=0,
+        )
+        for candidate_id, decision, generation, candidate_json in (
+            (214, "approve", "generation-unselected",
+             '{"proposal":{"actions":[]},"decision_options":[{"key":"unused",'
+             '"plan":{"actions":[{"action_identity":"unselected-plan",'
+             '"operation":"send_message","target":{"channel":"group"}}]}}]}'),
+            (215, "return", "generation-unapproved",
+             '{"proposal":{"actions":[{"action_identity":"unapproved-plan",'
+             '"operation":"send_message","target":{"channel":"group"}}]}}'),
+            (216, "approve", "generation-approved-prepared",
+             '{"proposal":{"actions":[]},"decision_options":[{"key":"chosen",'
+             '"plan":{"actions":[{"action_identity":"approved-prepared-only",'
+             '"operation":"send_message","target":{"channel":"group"}}]}}]}'),
+        ):
+            digest = f"candidate-{candidate_id}-digest"
+            run_id = 910 + candidate_id
+            insert_run(db, "agent_runs", {
+                "id": run_id, "task_id": task_id,
+                "execution_generation": generation, "role": "consumer",
+            })
+            insert_action(db, "review_candidates", {
+                "id": candidate_id, "task_id": task_id,
+                "execution_generation": generation, "consumer_run_id": run_id,
+                "stage_index": 0, "proposal_revision": 0, "candidate_digest": digest,
+                "candidate_json": candidate_json, "created_at": f"candidate-{candidate_id}-clock",
+            }, execution_owner=True)
+            review_id = candidate_id + 100
+            insert_action(db, "candidate_reviews", {
+                "id": review_id, "candidate_id": candidate_id, "audit_run_id": run_id,
+                "decision": decision, "candidate_digest": digest,
+                "result_json": "{}", "created_at": f"review-{candidate_id}-clock",
+            })
+            if candidate_id == 216:
+                selected = insert_action(db, "candidate_selections", {
+                    "candidate_id": candidate_id, "review_id": review_id,
+                    "option_key": "chosen",
+                }, selection_references=True)
+                create_plan_execution(db, candidate_id=candidate_id, review_id=review_id,
+                                      selection_id=selected.lastrowid, status="running", lease_owner="test",
+                                      lease_expires_at="")
         insert_action(db, "outbound_postfixes", {
             "channel": "dingtalk", "delivery_key": "prepared-key",
             "final_body": "prepared-body", "feedback_token": "feedback",
@@ -286,6 +339,16 @@ def test_populated_prepared_sent_and_observer_facts_keep_distinct_receipts(tmp_p
             "final_body": "dispatch-only-body", "feedback_token": "dispatch-feedback",
             "postfix_version": "postfix-v3", "created_at": "dispatch-only-prepared-clock",
         })
+        for delivery_key, label in (
+            (unselected_delivery_key, "unselected"),
+            (unapproved_delivery_key, "unapproved"),
+            (approved_prepared_delivery_key, "approved-prepared-only"),
+        ):
+            insert_action(db, "outbound_postfixes", {
+                "channel": "dingtalk", "delivery_key": delivery_key,
+                "final_body": f"{label}-body", "feedback_token": f"{label}-feedback",
+                "postfix_version": f"{label}-version", "created_at": f"{label}-clock",
+            })
         db.execute("update actions set postfix_receipt_provider_result_json=?,postfix_receipt_created_at=?,"
                    "postfix_dispatch_created_at=? where record_type='outbound_postfixes' and delivery_key=?",
                    ('{"accepted":true}', "provider-clock", "dispatch-clock", "prepared-key"))
@@ -335,6 +398,19 @@ def test_populated_prepared_sent_and_observer_facts_keep_distinct_receipts(tmp_p
         assert dispatch_only[1] is None
         assert db.execute("select dispatched_at,provider_result_json from action_receipts where action_id=?",
                           (dispatch_only[0],)).fetchone() == ("dispatch-only-clock", None)
+        prepared_only = db.execute(
+            "select id,action_business_object_key,action_action_identity,action_operation "
+            "from actions where record_type='action' and action_delivery_key=?",
+            (approved_prepared_delivery_key,),
+        ).fetchone()
+        assert prepared_only[1:] == ("business-sent", "approved-prepared-only:chosen", None)
+        for delivery_key in (unselected_delivery_key, unapproved_delivery_key):
+            unproven = db.execute(
+                "select action_business_object_key,action_action_identity,action_operation "
+                "from actions where record_type='action' and action_delivery_key=?",
+                (delivery_key,),
+            ).fetchone()
+            assert unproven == (None, None, None)
         canonical_id = db.execute("select action_id from action_entity_identity_map "
                                    "where source_type='external_action_results'").fetchone()[0]
         sent_maps = {json.loads(source_identity)[1]: (action_id, receipt_id)
@@ -372,56 +448,120 @@ def test_populated_prepared_sent_and_observer_facts_keep_distinct_receipts(tmp_p
             (911, task_id, "observer-clock")]
 
 
-def test_direct_email_translation_preserves_attempt_identity_and_rewrites_history_ids(tmp_path):
+def test_direct_email_translation_preserves_attempt_identity_and_rewrites_history_ids(tmp_path, monkeypatch):
     path = tmp_path / "email-translation.sqlite3"
     _source_database(path)
-    contract = _prepare(path)
-    release.publish_action_entity_release(path, contract)
     with closing(sqlite3.connect(path)) as db:
+        from app import action_storage
+        from app.action_storage import insert_action, _action_payload
         from app.action_email_history_storage import insert_email_history
-        from app.action_entity_transfer import _transfer_email
+        from app.current_action_schema import current_action_payloads
+        from app.current_action_schema_release import source_objects
+        from app.action_entity_transfer import capture_source_facts
+        import re
 
+        source_sql = next(sql for kind, name, _table, sql in source_objects("fresh_memory_fk")
+                          if kind == "table" and name == "actions")
+        source_codes = {name: int(code) for code, name in re.findall(
+            r"when (\d+) then '([^']+)'", source_sql)}
+
+        class SourceRecordTypes:
+            def code(self, name):
+                return source_codes[name]
+
+        monkeypatch.setattr(action_storage, "ACTION_RECORD_TYPES", SourceRecordTypes())
+        db.execute("""insert into emails(
+            classification_id,message_id,account_id,stable_message_identity,uidvalidity,uid,
+            class_model_text,class_confidence,class_margin,class_probabilities_json,
+            class_model_id,class_config_version,class_status,class_classification_source,
+            class_agent_result_json,class_legacy_processed_without_plan,class_confirmed_at,
+            class_created_at,class_updated_at,message_folder,message_rfc_message_id,
+            message_thread_identity,message_sender,message_recipients_json,message_subject,
+            message_normalized_text,message_preview,message_attachment_metadata_json,
+            message_received_at,message_created_at,message_updated_at
+        ) values(1,1,'account-1','stable-1',1,1,'model text',0.5,0.1,'{}',
+            'model-1','config-v1','processed','model','{}',0,'confirmed','created','updated',
+            'INBOX','<message-1>','thread-1','sender-1','[]','subject','body','preview','[]',
+            'received','created','updated')""")
+        for index, plan_id in enumerate(("plan-1", "plan-2"), 1):
+            plan = {
+                "action_plan_id": plan_id, "action_plan_version": index,
+                "classification_id": 1, "account_id": "account-1", "category": "work",
+                "classification_source": "model", "confidence": 0.5, "model_id": "model-1",
+                "config_version": "config-v1", "actions_json": "[]",
+                "action_parameters_json": "{}", "legacy_serialization_pre_v16": 0,
+                "created_at": f"plan-created-{index}",
+            }
+            db.execute(
+                "insert into actions(_kind,legacy_key,payload_json) values(?,?,?)",
+                (source_codes["email_action_plans"], str(index), _action_payload(
+                    db, "email_action_plans", plan,
+                    layout=current_action_payloads().layouts["email_action_plans"])),
+            )
+        direct_actions = (
+            ("old-direct-action", "plan-1", "archive", "first-result"),
+            ("second-direct-action", "plan-2", "label", "second-result"),
+        )
+        for position, (action_id, plan_id, action_type, result_id) in enumerate(direct_actions, 1):
+            direct = {
+                "action_id": action_id, "action_plan_id": plan_id,
+                "classification_id": 1, "account_id": "account-1", "action_type": action_type,
+                    "parameters_json": "{}", "config_version": "config-v1", "status": "pending",
+                    "started_at": "", "next_attempt_at": "",
+                    "created_at": f"created-{position}", "updated_at": f"updated-{position}",
+            }
+            db.execute(
+                "insert into actions(_kind,legacy_key,payload_json) values(?,?,?)",
+                (source_codes["email_actions"], str(22 + position), _action_payload(
+                    db, "email_actions", direct,
+                    layout=current_action_payloads().layouts["email_actions"])),
+            )
+            insert_action(db, "email_action_attempts", {
+                "id": 6 + position, "action_id": action_id, "attempt_number": position,
+                "status": "done", "provider_operation": action_type.upper(),
+                "provider_target": f"mailbox:message-{position}", "provider_result_id": result_id,
+                "error": "", "started_at": f"attempt-start-{position}",
+                "finished_at": f"attempt-finish-{position}",
+            })
         insert_email_history(db, "email_historical_operations", {
             "operation_id": "operation-1", "account_id": "account-1",
             "stable_message_identity": "message-identity", "model_id": "model-1",
             "classification_id": 1, "action_plan_id": "plan-1",
-            "action_ids_json": '["old-direct-action"]', "predicted_category": "work",
-            "threshold": 0.4, "probability": 0.8, "important": 0,
-            "status": "processing", "action_outcome": "", "created_at": "history-created",
-            "updated_at": "history-updated",
+            "action_ids_json": '["old-direct-action","second-direct-action"]',
+            "predicted_category": "work", "threshold": 0.4, "probability": 0.8,
+            "important": 0, "status": "processing", "action_outcome": "",
+            "created_at": "history-created", "updated_at": "history-updated",
         })
-        history_id = db.execute("select id from actions where record_type='email_historical_operations'").fetchone()[0]
-        facts = {
-            "email_actions": [{
-                "action_id": "old-direct-action", "action_plan_id": "plan-1",
-                "classification_id": 1, "account_id": "account-1", "action_type": "archive",
-                "parameters_json": '{"folder":"archive"}', "status": "done",
-                "next_attempt_at": "", "started_at": "started", "finished_at": "finished",
-                "created_at": "created", "updated_at": "updated", "attempt_count": 2,
-                "provider_operation": "ARCHIVE", "provider_target": "mailbox:message",
-                "provider_result_id": "latest-result", "error": "",
-            }],
-            "email_action_attempts": [
-                {"id": 7, "action_id": "old-direct-action", "attempt_number": 1,
-                 "status": "failed", "provider_operation": "ARCHIVE", "provider_target": "mailbox:message",
-                 "provider_result_id": "first-result", "error": "first", "started_at": "first-start",
-                 "finished_at": "first-finish"},
-                {"id": 8, "action_id": "old-direct-action", "attempt_number": 1,
-                 "status": "done", "provider_operation": "ARCHIVE", "provider_target": "mailbox:message",
-                 "provider_result_id": "latest-result", "error": "", "started_at": "last-start",
-                 "finished_at": "last-finish"},
-            ],
-            "email_historical_operations": [{
-                "physical_id": history_id, "action_ids_json": '["old-direct-action"]',
-            }],
+        db.commit()
+
+    with closing(sqlite3.connect(path)) as db:
+        source_facts = capture_source_facts(db)
+        assert len(source_facts["email_actions"]) == 2
+        assert len(source_facts["email_action_attempts"]) == 2
+        assert source_facts["email_historical_operations"][0]["action_ids_json"] == (
+            '["old-direct-action","second-direct-action"]')
+
+    contract = _prepare(path)
+    release.publish_action_entity_release(path, contract)
+    with closing(sqlite3.connect(path)) as db:
+        maps = {
+            identity: action_id for identity, action_id in db.execute(
+                "select source_identity,action_id from action_entity_identity_map "
+                "where source_type='email_actions'")
         }
-        _transfer_email(db, facts)
-        action_id = db.execute("select action_id from action_entity_identity_map where source_type='email_actions'").fetchone()[0]
+        action_ids = [maps[json.dumps(["text", source_id], separators=(",", ":"))]
+                      for source_id in ("old-direct-action", "second-direct-action")]
         assert db.execute("select action_id,attempt_number,status,provider_result_id from action_receipts "
-                          "where action_id=? order by id", (action_id,)).fetchall() == [
-            (action_id, 1, "failed", "first-result"), (action_id, 1, "done", "latest-result")]
-        assert db.execute("select email_operation_action_ids_json from actions where record_type='email_historical_operations' "
-                          "and id=?", (history_id,)).fetchone() == (f'["{action_id}"]',)
+                          "where action_id in (?,?) and attempt_number is not null order by id",
+                          action_ids).fetchall() == [
+            (action_ids[0], 1, "done", "first-result"),
+            (action_ids[1], 2, "done", "second-result"),
+        ]
+        history = db.execute(
+            "select email_operation_action_ids_json from actions "
+            "where record_type='email_historical_operations'"
+        ).fetchone()
+        assert history == (json.dumps([str(value) for value in action_ids], separators=(",", ":")),)
 
 
 def test_direct_retry_parent_retargets_only_the_covered_action_reference(tmp_path):
