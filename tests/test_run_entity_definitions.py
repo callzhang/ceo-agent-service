@@ -57,11 +57,33 @@ def test_contract_is_valid_and_artifacts_are_exact():
         assert (row["sql_type"], row["null_contract"], row["source_default"]) == (sql_type.upper(), null_contract, default)
     artifact = json.loads((ROOT / "docs/run-entity-field-map.json").read_text())
     assert artifact == expected
-    target = "\n".join(run_entity_objects().values()) + "\n"
+    from app.schema_sql import serialize_schema_sql
+    target = serialize_schema_sql(run_entity_objects())
     assert (ROOT / "docs/run-entity-target.sql").read_text() == target
     assert """-- Physical IDs and source public keys are migration metadata only.""" in (ROOT / "docs/run-entity-retirement.sql").read_text()
     assert len(expected) == 8 * len(SOURCE_DECLARED_FIELDS)
     assert all(row["identity_order_semantics"] for row in expected if row["source_field"] == "legacy_key")
+
+
+def test_committed_run_sql_executes_after_task_and_native_schedule_config_prerequisites():
+    from app.configs_storage import create_configs_schema
+    from app.schedules_storage import create_schedules_schema
+    from app.task8_storage import register_task8_functions
+
+    db = sqlite3.connect(":memory:")
+    db.execute("PRAGMA foreign_keys=ON")
+    register_task8_functions(db)
+    db.executescript((ROOT / "docs/task-run-entity-target.sql").read_text())
+    create_schedules_schema(db)
+    create_configs_schema(db)
+    prerequisites = {name: sql for name, sql in db.execute(
+        "SELECT name,sql FROM sqlite_schema WHERE name NOT GLOB 'sqlite_*'")}
+    db.executescript((ROOT / "docs/run-entity-target.sql").read_text())
+    actual = {name: sql for name, sql in db.execute(
+        "SELECT name,sql FROM sqlite_schema WHERE name NOT GLOB 'sqlite_*'")}
+    expected = prerequisites | run_entity_objects()
+    assert actual == expected
+    assert db.execute("PRAGMA foreign_key_check").fetchall() == []
 
 
 def test_runs_keep_natural_absence_and_separate_provenance_and_adopted_result():
