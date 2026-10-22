@@ -1,0 +1,1177 @@
+{
+  "additionalProperties": false,
+  "properties": {
+    "reason": {
+      "minLength": 1,
+      "type": "string"
+    },
+    "evidence_refs": {
+      "description": "Required on every purpose output. List the source or artifact references supporting this action when available; use an empty list when none apply. For retry, include at least one reference that verifies the access request.",
+      "items": {
+        "type": "string"
+      },
+      "type": "array"
+    },
+    "summary": {
+      "minLength": 1,
+      "type": "string"
+    },
+    "error_code": {
+      "anyOf": [
+        {
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ]
+    },
+    "error_retryable": {
+      "type": "boolean"
+    },
+    "error_authorization_required": {
+      "type": "boolean"
+    },
+    "risk": {
+      "$ref": "#/$defs/RiskLevel"
+    },
+    "confidence": {
+      "maximum": 1.0,
+      "minimum": 0.0,
+      "type": "number"
+    },
+    "rule_coverage": {
+      "maximum": 1.0,
+      "minimum": 0.0,
+      "type": "number"
+    },
+    "information_completeness": {
+      "maximum": 1.0,
+      "minimum": 0.0,
+      "type": "number"
+    },
+    "durable_memories": {
+      "description": "Before you finish, check whether this turn confirmed anything durable: a person's preference, a decision that was made, a reusable rule or convention, an accepted project rule, a stable business fact, long-term context, or the explicit next step of unfinished work. If it did, list each one as its own item here. Skip temporary tasks, logs, code, one-off errors, unconfirmed guesses, sensitive original text, secrets or tokens, unauthorized document content, and anything already in Memory. An empty list is the right answer when nothing durable came up this turn -- but check every turn, don't default to empty.",
+      "items": {
+        "$ref": "#/$defs/DurableMemory"
+      },
+      "type": "array"
+    },
+    "decision_options": {
+      "items": {
+        "$ref": "#/$defs/DecisionOption"
+      },
+      "maxItems": 4,
+      "type": "array"
+    },
+    "requested_input": {
+      "anyOf": [
+        {
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ]
+    },
+    "needs_human_reason": {
+      "anyOf": [
+        {
+          "maxLength": 100,
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ]
+    },
+    "decision_basis": {
+      "anyOf": [
+        {
+          "$ref": "#/$defs/DecisionBasis"
+        },
+        {
+          "type": "null"
+        }
+      ]
+    },
+    "stage_index": {
+      "minimum": 0,
+      "type": "integer"
+    },
+    "predecessor_review_id": {
+      "anyOf": [
+        {
+          "minimum": 1,
+          "type": "integer"
+        },
+        {
+          "type": "null"
+        }
+      ]
+    },
+    "continue_after_execution": {
+      "type": "boolean"
+    },
+    "decision": {
+      "anyOf": [
+        {
+          "type": "object",
+          "properties": {
+            "action": {
+              "type": "string",
+              "enum": [
+                "plan"
+              ]
+            },
+            "target": {
+              "additionalProperties": false,
+              "properties": {},
+              "type": "object",
+              "required": []
+            },
+            "payload": {
+              "additionalProperties": false,
+              "properties": {
+                "objective": {
+                  "minLength": 1,
+                  "type": "string"
+                },
+                "actions": {
+                  "items": {
+                    "$ref": "#/$defs/ProposedAction"
+                  },
+                  "minItems": 1,
+                  "type": "array"
+                },
+                "sourced_facts": {
+                  "items": {
+                    "$ref": "#/$defs/ProposalFact"
+                  },
+                  "type": "array"
+                },
+                "authored_judgment": {
+                  "type": "string"
+                }
+              },
+              "required": [
+                "objective",
+                "actions",
+                "sourced_facts",
+                "authored_judgment"
+              ],
+              "type": "object"
+            }
+          },
+          "required": [
+            "action",
+            "target",
+            "payload"
+          ],
+          "additionalProperties": false
+        },
+        {
+          "type": "object",
+          "properties": {
+            "action": {
+              "type": "string",
+              "enum": [
+                "no_action"
+              ]
+            },
+            "target": {
+              "additionalProperties": false,
+              "properties": {},
+              "type": "object",
+              "required": []
+            },
+            "payload": {
+              "additionalProperties": false,
+              "properties": {},
+              "type": "object",
+              "required": []
+            }
+          },
+          "required": [
+            "action",
+            "target",
+            "payload"
+          ],
+          "additionalProperties": false
+        },
+        {
+          "type": "object",
+          "properties": {
+            "action": {
+              "type": "string",
+              "enum": [
+                "retry"
+              ]
+            },
+            "target": {
+              "additionalProperties": false,
+              "properties": {},
+              "type": "object",
+              "required": []
+            },
+            "payload": {
+              "additionalProperties": false,
+              "properties": {},
+              "type": "object",
+              "required": []
+            },
+            "evidence_refs": {
+              "minItems": 1
+            }
+          },
+          "required": [
+            "action",
+            "target",
+            "payload",
+            "evidence_refs"
+          ],
+          "additionalProperties": false
+        },
+        {
+          "type": "object",
+          "properties": {
+            "action": {
+              "type": "string",
+              "enum": [
+                "failed"
+              ]
+            },
+            "target": {
+              "additionalProperties": false,
+              "properties": {},
+              "type": "object",
+              "required": []
+            },
+            "payload": {
+              "additionalProperties": false,
+              "properties": {},
+              "type": "object",
+              "required": []
+            }
+          },
+          "required": [
+            "action",
+            "target",
+            "payload"
+          ],
+          "additionalProperties": false
+        },
+        {
+          "type": "object",
+          "properties": {
+            "action": {
+              "type": "string",
+              "enum": [
+                "needs_human"
+              ]
+            },
+            "target": {
+              "additionalProperties": false,
+              "properties": {},
+              "type": "object",
+              "required": []
+            },
+            "payload": {
+              "additionalProperties": false,
+              "properties": {},
+              "type": "object",
+              "required": []
+            }
+          },
+          "required": [
+            "action",
+            "target",
+            "payload"
+          ],
+          "additionalProperties": false
+        },
+        {
+          "type": "object",
+          "properties": {
+            "action": {
+              "type": "string",
+              "enum": [
+                "approve"
+              ]
+            },
+            "target": {
+              "additionalProperties": false,
+              "properties": {
+                "process_instance_id": {
+                  "minLength": 1,
+                  "type": "string"
+                },
+                "task_id": {
+                  "minLength": 1,
+                  "type": "string"
+                }
+              },
+              "required": [
+                "process_instance_id",
+                "task_id"
+              ],
+              "type": "object"
+            },
+            "payload": {
+              "additionalProperties": false,
+              "properties": {
+                "remark": {
+                  "minLength": 1,
+                  "type": "string"
+                }
+              },
+              "required": [
+                "remark"
+              ],
+              "type": "object"
+            }
+          },
+          "required": [
+            "action",
+            "target",
+            "payload"
+          ],
+          "additionalProperties": false
+        },
+        {
+          "type": "object",
+          "properties": {
+            "action": {
+              "type": "string",
+              "enum": [
+                "reject"
+              ]
+            },
+            "target": {
+              "additionalProperties": false,
+              "properties": {
+                "process_instance_id": {
+                  "minLength": 1,
+                  "type": "string"
+                },
+                "task_id": {
+                  "minLength": 1,
+                  "type": "string"
+                }
+              },
+              "required": [
+                "process_instance_id",
+                "task_id"
+              ],
+              "type": "object"
+            },
+            "payload": {
+              "additionalProperties": false,
+              "properties": {
+                "remark": {
+                  "minLength": 1,
+                  "type": "string"
+                }
+              },
+              "required": [
+                "remark"
+              ],
+              "type": "object"
+            }
+          },
+          "required": [
+            "action",
+            "target",
+            "payload"
+          ],
+          "additionalProperties": false
+        },
+        {
+          "type": "object",
+          "properties": {
+            "action": {
+              "type": "string",
+              "enum": [
+                "return"
+              ]
+            },
+            "target": {
+              "additionalProperties": false,
+              "properties": {
+                "process_instance_id": {
+                  "minLength": 1,
+                  "type": "string"
+                },
+                "task_id": {
+                  "minLength": 1,
+                  "type": "string"
+                },
+                "target_activity_id": {
+                  "minLength": 1,
+                  "type": "string"
+                }
+              },
+              "required": [
+                "process_instance_id",
+                "task_id",
+                "target_activity_id"
+              ],
+              "type": "object"
+            },
+            "payload": {
+              "additionalProperties": false,
+              "properties": {
+                "remark": {
+                  "minLength": 1,
+                  "type": "string"
+                },
+                "revert_action": {
+                  "enum": [
+                    "REVERT_FOR_APPROVAL",
+                    "REVERT_FOR_RESUBMIT"
+                  ],
+                  "type": "string"
+                }
+              },
+              "required": [
+                "remark",
+                "revert_action"
+              ],
+              "type": "object"
+            }
+          },
+          "required": [
+            "action",
+            "target",
+            "payload"
+          ],
+          "additionalProperties": false
+        },
+        {
+          "type": "object",
+          "properties": {
+            "action": {
+              "type": "string",
+              "enum": [
+                "comment"
+              ]
+            },
+            "target": {
+              "additionalProperties": false,
+              "properties": {
+                "process_instance_id": {
+                  "minLength": 1,
+                  "type": "string"
+                }
+              },
+              "required": [
+                "process_instance_id"
+              ],
+              "type": "object"
+            },
+            "payload": {
+              "additionalProperties": false,
+              "properties": {
+                "content": {
+                  "minLength": 1,
+                  "type": "string"
+                }
+              },
+              "required": [
+                "content"
+              ],
+              "type": "object"
+            }
+          },
+          "required": [
+            "action",
+            "target",
+            "payload"
+          ],
+          "additionalProperties": false
+        },
+        {
+          "type": "object",
+          "properties": {
+            "action": {
+              "type": "string",
+              "enum": [
+                "request_access"
+              ]
+            },
+            "target": {
+              "additionalProperties": false,
+              "properties": {
+                "process_instance_id": {
+                  "minLength": 1,
+                  "type": "string"
+                },
+                "file_id": {
+                  "minLength": 1,
+                  "type": "string"
+                }
+              },
+              "required": [
+                "process_instance_id",
+                "file_id"
+              ],
+              "type": "object"
+            },
+            "payload": {
+              "additionalProperties": false,
+              "properties": {
+                "content": {
+                  "minLength": 1,
+                  "type": "string"
+                }
+              },
+              "required": [
+                "content"
+              ],
+              "type": "object"
+            }
+          },
+          "required": [
+            "action",
+            "target",
+            "payload"
+          ],
+          "additionalProperties": false
+        }
+      ]
+    }
+  },
+  "required": [
+    "reason",
+    "evidence_refs",
+    "summary",
+    "error_code",
+    "error_retryable",
+    "error_authorization_required",
+    "risk",
+    "confidence",
+    "rule_coverage",
+    "information_completeness",
+    "durable_memories",
+    "decision_options",
+    "requested_input",
+    "needs_human_reason",
+    "decision_basis",
+    "stage_index",
+    "predecessor_review_id",
+    "continue_after_execution",
+    "decision"
+  ],
+  "type": "object",
+  "$defs": {
+    "ConsumerProposal": {
+      "additionalProperties": false,
+      "properties": {
+        "objective": {
+          "minLength": 1,
+          "type": "string"
+        },
+        "actions": {
+          "items": {
+            "$ref": "#/$defs/ProposedAction"
+          },
+          "minItems": 1,
+          "type": "array"
+        },
+        "sourced_facts": {
+          "items": {
+            "$ref": "#/$defs/ProposalFact"
+          },
+          "type": "array"
+        },
+        "authored_judgment": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "objective",
+        "actions",
+        "sourced_facts",
+        "authored_judgment"
+      ],
+      "type": "object"
+    },
+    "DecisionBasis": {
+      "additionalProperties": false,
+      "description": "The compact evidence chain a person needs to assess an escalation.",
+      "properties": {
+        "verified_facts": {
+          "items": {
+            "$ref": "#/$defs/ProposalFact"
+          },
+          "minItems": 1,
+          "type": "array"
+        },
+        "rule_evidence": {
+          "items": {
+            "$ref": "#/$defs/ProposalFact"
+          },
+          "minItems": 1,
+          "type": "array"
+        },
+        "quality_explanation": {
+          "minLength": 1,
+          "type": "string"
+        },
+        "no_external_action_evidence": {
+          "items": {
+            "$ref": "#/$defs/ProposalFact"
+          },
+          "minItems": 1,
+          "type": "array"
+        },
+        "conclusion": {
+          "minLength": 1,
+          "type": "string"
+        }
+      },
+      "required": [
+        "verified_facts",
+        "rule_evidence",
+        "quality_explanation",
+        "no_external_action_evidence",
+        "conclusion"
+      ],
+      "type": "object"
+    },
+    "DecisionOption": {
+      "additionalProperties": false,
+      "description": "One reusable rule choice for a class of business tasks.",
+      "properties": {
+        "key": {
+          "minLength": 1,
+          "type": "string"
+        },
+        "label": {
+          "minLength": 1,
+          "type": "string"
+        },
+        "instruction": {
+          "minLength": 1,
+          "type": "string"
+        },
+        "consequence": {
+          "minLength": 1,
+          "type": "string"
+        },
+        "applies_to": {
+          "const": "task_class",
+          "description": "Human feedback chooses a reusable rule for this task class, not this instance's action.",
+          "type": "string"
+        },
+        "plan": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/ConsumerProposal"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "terminal_outcome": {
+          "anyOf": [
+            {
+              "const": "skipped",
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "reason": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        }
+      },
+      "required": [
+        "key",
+        "label",
+        "instruction",
+        "consequence",
+        "applies_to",
+        "plan",
+        "terminal_outcome",
+        "reason"
+      ],
+      "type": "object"
+    },
+    "DurableMemory": {
+      "additionalProperties": false,
+      "description": "Only information this turn confirmed that should outlive it: a person's preference, a decision that was made, a reusable rule or convention, a stable business fact, or the explicit next step of unfinished work. Never temporary tasks, logs, code, one-off errors, unconfirmed guesses, sensitive original text, secrets or tokens, unauthorized document content, or anything already in Memory. Name people by name, never 'the user'.",
+      "properties": {
+        "title": {
+          "description": "One-line title.",
+          "minLength": 1,
+          "type": "string"
+        },
+        "content": {
+          "description": "One to three sentences of plain language about one thing.",
+          "minLength": 1,
+          "type": "string"
+        },
+        "source_time": {
+          "description": "ISO-8601 time the information arose in its source (the message, meeting or document), not the time of this turn.",
+          "minLength": 1,
+          "type": "string"
+        },
+        "source_refs": {
+          "description": "Where it came from: message ids, document links, approval ids.",
+          "items": {
+            "type": "string"
+          },
+          "minItems": 1,
+          "type": "array"
+        },
+        "subject": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/DurableMemorySubject"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "description": "The main person, project, customer or organization."
+        }
+      },
+      "required": [
+        "title",
+        "content",
+        "source_time",
+        "source_refs",
+        "subject"
+      ],
+      "type": "object"
+    },
+    "DurableMemorySubject": {
+      "additionalProperties": false,
+      "properties": {
+        "type": {
+          "enum": [
+            "Person",
+            "Project",
+            "Customer",
+            "Organization"
+          ],
+          "type": "string"
+        },
+        "name": {
+          "minLength": 1,
+          "type": "string"
+        }
+      },
+      "required": [
+        "type",
+        "name"
+      ],
+      "type": "object"
+    },
+    "JsonValue": {
+      "anyOf": [
+        {
+          "type": "string"
+        },
+        {
+          "type": "number"
+        },
+        {
+          "type": "boolean"
+        },
+        {
+          "type": "null"
+        },
+        {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/JsonValue"
+          }
+        },
+        {
+          "type": "object",
+          "properties": {
+            "entries": {
+              "type": "array",
+              "items": {
+                "type": "object",
+                "properties": {
+                  "key": {
+                    "type": "string"
+                  },
+                  "value": {
+                    "$ref": "#/$defs/JsonValue"
+                  }
+                },
+                "required": [
+                  "key",
+                  "value"
+                ],
+                "additionalProperties": false
+              }
+            }
+          },
+          "required": [
+            "entries"
+          ],
+          "additionalProperties": false,
+          "description": "Lossless JSON object encoded as key/value entries."
+        }
+      ]
+    },
+    "ProposalFact": {
+      "additionalProperties": false,
+      "properties": {
+        "assertion": {
+          "minLength": 1,
+          "type": "string"
+        },
+        "references": {
+          "items": {
+            "type": "string"
+          },
+          "minItems": 1,
+          "type": "array"
+        }
+      },
+      "required": [
+        "assertion",
+        "references"
+      ],
+      "type": "object"
+    },
+    "ProposedAction": {
+      "additionalProperties": false,
+      "properties": {
+        "description": {
+          "minLength": 1,
+          "type": "string"
+        },
+        "action_identity": {
+          "minLength": 1,
+          "type": "string"
+        },
+        "capability": {
+          "minLength": 1,
+          "type": "string"
+        },
+        "operation": {
+          "minLength": 1,
+          "type": "string"
+        },
+        "target": {
+          "type": "object",
+          "properties": {
+            "entries": {
+              "type": "array",
+              "items": {
+                "type": "object",
+                "properties": {
+                  "key": {
+                    "type": "string"
+                  },
+                  "value": {
+                    "$ref": "#/$defs/JsonValue"
+                  }
+                },
+                "required": [
+                  "key",
+                  "value"
+                ],
+                "additionalProperties": false
+              },
+              "minItems": 1
+            }
+          },
+          "required": [
+            "entries"
+          ],
+          "additionalProperties": false,
+          "description": "Lossless JSON object encoded as key/value entries."
+        },
+        "payload": {
+          "type": "object",
+          "properties": {
+            "entries": {
+              "type": "array",
+              "items": {
+                "type": "object",
+                "properties": {
+                  "key": {
+                    "type": "string"
+                  },
+                  "value": {
+                    "$ref": "#/$defs/JsonValue"
+                  }
+                },
+                "required": [
+                  "key",
+                  "value"
+                ],
+                "additionalProperties": false
+              }
+            }
+          },
+          "required": [
+            "entries"
+          ],
+          "additionalProperties": false,
+          "description": "Lossless JSON object encoded as key/value entries."
+        },
+        "effect": {
+          "description": "external when performing this action changes something outside the service and a provider must accept it; none when it changes nothing -- a verification, or a state already in place. An action that carries a message body is always external.",
+          "enum": [
+            "external",
+            "none"
+          ],
+          "type": "string"
+        }
+      },
+      "required": [
+        "description",
+        "action_identity",
+        "capability",
+        "operation",
+        "target",
+        "payload",
+        "effect"
+      ],
+      "type": "object"
+    },
+    "RiskLevel": {
+      "description": "Estimated consequence if the proposed result is acted on incorrectly.",
+      "enum": [
+        "low",
+        "medium",
+        "high"
+      ],
+      "type": "string"
+    },
+    "_OAConsumerWire": {
+      "additionalProperties": false,
+      "properties": {
+        "action": {
+          "minLength": 1,
+          "type": "string",
+          "enum": [
+            "plan",
+            "no_action",
+            "retry",
+            "failed",
+            "needs_human",
+            "approve",
+            "reject",
+            "return",
+            "comment",
+            "request_access"
+          ]
+        },
+        "reason": {
+          "minLength": 1,
+          "type": "string"
+        },
+        "target": {
+          "type": "object",
+          "properties": {
+            "entries": {
+              "type": "array",
+              "items": {
+                "type": "object",
+                "properties": {
+                  "key": {
+                    "type": "string"
+                  },
+                  "value": {
+                    "$ref": "#/$defs/JsonValue"
+                  }
+                },
+                "required": [
+                  "key",
+                  "value"
+                ],
+                "additionalProperties": false
+              }
+            }
+          },
+          "required": [
+            "entries"
+          ],
+          "additionalProperties": false,
+          "description": "Lossless JSON object encoded as key/value entries."
+        },
+        "payload": {
+          "type": "object",
+          "properties": {
+            "entries": {
+              "type": "array",
+              "items": {
+                "type": "object",
+                "properties": {
+                  "key": {
+                    "type": "string"
+                  },
+                  "value": {
+                    "$ref": "#/$defs/JsonValue"
+                  }
+                },
+                "required": [
+                  "key",
+                  "value"
+                ],
+                "additionalProperties": false
+              }
+            }
+          },
+          "required": [
+            "entries"
+          ],
+          "additionalProperties": false,
+          "description": "Lossless JSON object encoded as key/value entries."
+        },
+        "evidence_refs": {
+          "description": "Required on every purpose output. List the source or artifact references supporting this action when available; use an empty list when none apply. For retry, include at least one reference that verifies the access request.",
+          "items": {
+            "type": "string"
+          },
+          "type": "array"
+        },
+        "summary": {
+          "minLength": 1,
+          "type": "string"
+        },
+        "error_code": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "error_retryable": {
+          "type": "boolean"
+        },
+        "error_authorization_required": {
+          "type": "boolean"
+        },
+        "risk": {
+          "$ref": "#/$defs/RiskLevel"
+        },
+        "confidence": {
+          "maximum": 1.0,
+          "minimum": 0.0,
+          "type": "number"
+        },
+        "rule_coverage": {
+          "maximum": 1.0,
+          "minimum": 0.0,
+          "type": "number"
+        },
+        "information_completeness": {
+          "maximum": 1.0,
+          "minimum": 0.0,
+          "type": "number"
+        },
+        "durable_memories": {
+          "description": "Before you finish, check whether this turn confirmed anything durable: a person's preference, a decision that was made, a reusable rule or convention, an accepted project rule, a stable business fact, long-term context, or the explicit next step of unfinished work. If it did, list each one as its own item here. Skip temporary tasks, logs, code, one-off errors, unconfirmed guesses, sensitive original text, secrets or tokens, unauthorized document content, and anything already in Memory. An empty list is the right answer when nothing durable came up this turn -- but check every turn, don't default to empty.",
+          "items": {
+            "$ref": "#/$defs/DurableMemory"
+          },
+          "type": "array"
+        },
+        "decision_options": {
+          "items": {
+            "$ref": "#/$defs/DecisionOption"
+          },
+          "maxItems": 4,
+          "type": "array"
+        },
+        "requested_input": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "needs_human_reason": {
+          "anyOf": [
+            {
+              "maxLength": 100,
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "decision_basis": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/DecisionBasis"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "stage_index": {
+          "minimum": 0,
+          "type": "integer"
+        },
+        "predecessor_review_id": {
+          "anyOf": [
+            {
+              "minimum": 1,
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "continue_after_execution": {
+          "type": "boolean"
+        }
+      },
+      "required": [
+        "action",
+        "reason",
+        "target",
+        "payload",
+        "evidence_refs",
+        "summary",
+        "error_code",
+        "error_retryable",
+        "error_authorization_required",
+        "risk",
+        "confidence",
+        "rule_coverage",
+        "information_completeness",
+        "durable_memories",
+        "decision_options",
+        "requested_input",
+        "needs_human_reason",
+        "decision_basis",
+        "stage_index",
+        "predecessor_review_id",
+        "continue_after_execution"
+      ],
+      "type": "object"
+    }
+  }
+}
