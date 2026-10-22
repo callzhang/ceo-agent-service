@@ -105,9 +105,41 @@
     "verification": {
       "regression_before_fix": "2 failed as expected: both paused:codex_provider_overloaded and snapshot_missing created skipped runs instead of preserving the trigger.",
       "regression_after_fix": "tests/test_agent_cron_scheduler.py: 28 passed, including route outage deferral/recovery and static route fault handling.",
-      "deployment": "pending",
+      "deployment": "Deployed by python -m app.deploy as 036b14624cddbcff04098ebec7697644f95370c0; production readback healthz HTTP 200, PID 65404, 14 scheduled tasks.",
       "next_natural_okr_run": "2026-10-25T10:00:00Z",
-      "lint": "ruff check app/agent_cron/scheduler.py tests/test_agent_cron_scheduler.py passed; git diff --check passed."
+      "lint": "ruff check app/agent_cron/scheduler.py tests/test_agent_cron_scheduler.py passed; git diff --check passed.",
+      "ci": "GitHub Quality failed at full-repository Ruff before running tests: 14 existing lint findings in five files unchanged by this PR. Vercel preview failed because of the external deployment quota. These do not change the focused scheduler test result."
+    },
+    "production_readback": {
+      "deployed_commit": "036b14624cddbcff04098ebec7697644f95370c0",
+      "deploy_transition": "b0839448 -> 036b1462",
+      "service_pid": 65404,
+      "healthz": {
+        "http": 200,
+        "ok": true
+      },
+      "queues": {
+        "active": 1,
+        "queued": 152
+      },
+      "attention_groups": 19,
+      "history_total": 37179,
+      "scheduled_tasks": 14,
+      "task6": {
+        "version": 21,
+        "timezone": "America/Los_Angeles",
+        "next_run_at": "2026-10-25T10:00:00Z"
+      },
+      "task13": {
+        "version": 43,
+        "timezone": "America/Los_Angeles",
+        "next_run_at": "2026-10-24T19:00:00Z"
+      },
+      "task14": {
+        "version": 49,
+        "timezone": "America/Los_Angeles",
+        "next_run_at": "2026-10-22T13:00:00Z"
+      }
     }
   }
 }
