@@ -2830,7 +2830,10 @@ service stop and backup. If new work starts during the post-wait fetch, the
 deployer waits for quiet again within the original 30-minute deadline before
 stopping the service. The updater merges the literal commit, so a later ref
 change cannot expand an exact-SHA approval. Omitting the flag retains the
-ordinary current-main deploy path; `--restart` does not accept a target SHA.
+ordinary current-main deploy path: after the quiet wait it fetches once more and installs the newest
+fast-forward `origin/main`, so commits pushed while claims were closed ride this deploy and the sessions
+queued behind it find production already current and exit without draining again (a main rewrite that
+drops the planned target fails before the stop). `--restart` does not accept a target SHA.
 `--skip-quiet-wait` on `python -m app.deploy --restart` skips only the quiet wait
 before a settings-only service restart.
 If fast-forward fails before a replacement revision is installed, the updater
