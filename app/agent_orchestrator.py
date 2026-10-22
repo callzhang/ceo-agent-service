@@ -643,9 +643,23 @@ class AgentOrchestrator:
         candidate = self.store.persist_review_candidate(task, consumer, result)
         purpose_action = (result.purpose_output or {}).get("action")
         if purpose_action == "request_access":
-            return self._purpose_access_request_state(
-                task, consumer, result, candidate["id"], cycles,
+            # An old, already-dispatched request must continue through its
+            # original receipt ledger so a deployment never sends it again.
+            # A new request has no reservation and enters the ordinary Audit
+            # and reviewed SystemExecutor path below.
+            target = (result.purpose_output or {}).get("target") or {}
+            file_id = target.get("file_id")
+            budget = self._purpose_budget(
+                task, (result.purpose_output or {}).get("purpose", "oa")
             )
+            request = (
+                budget.access_request_for_file(file_id)
+                if isinstance(file_id, str) else None
+            )
+            if request is not None:
+                return self._purpose_access_request_state(
+                    task, consumer, result, candidate["id"], cycles,
+                )
         if purpose_action == "retry":
             return self._purpose_retry_from_consumer(
                 task, consumer, result, candidate["id"], cycles,
