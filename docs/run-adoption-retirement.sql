@@ -1,0 +1,25 @@
+-- Task1C retirement/inverse contract. Planning metadata only; not executable migration SQL.
+--
+-- Source families retired after all runtime callers and inverse proofs close:
+-- review_candidates: task_id, execution_generation, consumer_run_id and proposal_revision
+--   move to the Consumer Run owner; predecessor_review_id resolves to predecessor_audit_run_id.
+-- candidate_reviews, candidate_selections, candidate_supplements and candidate_execution_alias
+--   projections retire after exact Run-owned references and identity-map coverage are proven.
+-- candidate_executions is embedded progress on review_candidates in current source; move it to
+--   run_execution_progress keyed by Consumer Run, retaining independent status/lease/result/clocks.
+-- candidate_selections.branch_json is already absent from physical payload and remains derived
+--   from the exact bound candidate and option_key. Do not persist a duplicate option body.
+--
+-- Receipt contract delta only: action_receipts.execution_id (candidate execution public ID) becomes
+--   action_receipts.execution_run_id REFERENCES runs(id), with a partial unique index on
+--   (execution_run_id,action_index) WHERE execution_run_id IS NOT NULL. This belongs on each receipt.
+--   Keep action_id, provider_result_id/json/digest, status, operation, target, keys, timestamps,
+--   provider_receipt_id and every provider/Delivery/Prepared receipt constraint and trigger.
+--   Keep action_observers(agent_run_id,task_id) as observer identity; do not repoint it to owner Run.
+--
+-- Preserve exact source physical IDs and typed source public IDs in run_adoption_identity_map.
+-- Candidate/review/execution IDs are not derivable from Run IDs. Supplements keep their independent
+-- row identity through target_child_id. The extra source receipt 18622 has no attempt-map row but
+-- remains represented by its receipt identity plus execution_run_id/action_index.
+-- Keep ReplyAttempt and non-candidate Action kinds under current owners. Do not copy trajectories.
+-- No caller, runtime, source database, migration, provider, or production changes are included.
