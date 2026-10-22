@@ -3935,7 +3935,9 @@ def _run_wechat_sender_loop(settings: WorkerSettings) -> None:
     from app import config as _cfg
     from app.wechat import service as _wx
     from app.wechat.accessibility import WechatSender
+    from app.wechat.audit import WechatDeliveryAuditor
     from app.wechat.reader_ipc import ReaderIpcError
+    from app.agent_runtime_production import build_production_routed_codex_execution
 
     store = AutoReplyStore(settings.db_path)
     state = None
@@ -3950,6 +3952,16 @@ def _run_wechat_sender_loop(settings: WorkerSettings) -> None:
     account = _wx.account_from_state(state)
     reader = _wx.build_reader()
     wsender = WechatSender(store, _wx.build_sender())
+    auditor = WechatDeliveryAuditor(
+        store,
+        build_production_routed_codex_execution(
+            store=store, workspace=settings.workspace,
+            total_timeout_seconds=settings.codex_timeout_seconds,
+            idle_timeout_seconds=settings.codex_idle_timeout_seconds,
+        ),
+        reader,
+        account,
+    )
     interval = 15
     consecutive_sqlite_lock_failures = 0
     consecutive_reader_failures = 0
@@ -3963,6 +3975,7 @@ def _run_wechat_sender_loop(settings: WorkerSettings) -> None:
                 sender_enabled=_cfg.wechat_sender_enabled(),
                 reader=reader,
                 account=account,
+                auditor=auditor,
             )
             store.resolve_unresolved_errors_by_kind(
                 "wechat_sender_loop_error",

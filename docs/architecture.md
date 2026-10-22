@@ -1882,8 +1882,8 @@ Consumer 可以直接使用普通工作工具，写入并读回本任务本代�
 自然语言完成短语，也不把摘要转换成执行事实。是否引用历史完成、是否还需要业务动作，由
 完整候选、来源及实际回执判断；风险拒绝、授权缺失与历史拒绝不可重放的机制保留。
 
-上述新审核执行契约适用于实际使用 AgentOrchestrator 的业务候选。已授权微信会话的 task3 保留原有 WechatReplyConsumer / WechatDecisionRunner 决策与持久化 delivery，随后由独立 Sender 循环发送；它没有独立 Audit 回合，本次未迁移到 candidate/review/SystemExecutor。微信结果中的 audit_summary 不是独立审核回执。系统任务对应表不代表新增该任务的审核流程。
-微信决策 Agent 在 Codex 和 Claude 路线仅接收模型输入并返回结构化结果：Codex 禁用原生命令、浏览器、插件及全部 MCP server，使用只读 sandbox；Claude 关闭全部工具；不具备角色工具边界的 Friday 路线不参与该决策。该环境限制只阻止 Agent 自己调用对人动作，不改变独立 Sender 既有的自动或人工确认模式，也不把 Consumer 的自述视为独立审核。
+上述 AgentOrchestrator 候选仍走完整的 Consumer → Audit → SystemExecutor。已授权微信会话的 task3 保留独立的 WechatReplyConsumer / WechatDecisionRunner、持久化 delivery 与 Sender；微信 Consumer 的 `audit_summary` 只是自述。微信待发送记录由服务先补全最终正文，再由独立 model-only Audit Agent 读取原始触发消息、同一会话最近消息及精确目标/正文，输出批准或拒绝。审核结果与当前任务代次、Consumer 父运行、delivery ID 和候选摘要绑定；自动发送、人工确认和重试都在同一个数据库领取入口校验已完成的批准运行及未变的目标/正文。拒绝关闭待发送记录，审核失败或来源不可读时保持不可发送。微信没有迁入通用 candidate/review/SystemExecutor 表，发送回执仍由现有 Sender 持久化。
+微信决策和独立审核在 Codex 与 Claude 路线都运行于 model-only 环境：Codex 禁用原生命令、浏览器、插件及全部 MCP server，使用只读 sandbox；Claude 关闭全部工具；不具备角色工具边界的 Friday 路线不参与。普通 Consumer 的角色工具列表没有发消息、发邮件或 OA 执行入口，原生命令位于无网络的工作区沙箱；文档与任务材料写入仍按原能力边界执行。审核通过后仍遵循 Sender 原有自动或人工确认模式。
 WechatDecisionRunner 的首轮 Developer 指令提供一个简短且有效的 `AgentEnvelope` 不回复示例，以及回复时须填写的字段；完整 Pydantic 校验、同 session 格式修正和独立发送阶段保持原有契约。该示例只进入微信决策入口，不注入通用 Consumer/Audit。
 
 发布可达性使用独立的显式单任务调度暂缓入口 `app.reply_task_deferral`，默认只读；本次操作

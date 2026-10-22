@@ -9740,6 +9740,17 @@ class AutoReplyStore(LogicalRunStoreMixin, ReviewedCandidateStoreMixin):
                 join ({REPLY_TASK_SQL}) as tasks on tasks.id=runs.reply_task_id
                 where runs.status='running'
                   and tasks.status<>'processing'
+                  and not (
+                    runs.role='audit'
+                    and tasks.channel='wechat'
+                    and exists (
+                      select 1 from ({WECHAT_DELIVERY_SQL}) as deliveries
+                      where deliveries.reply_task_id=tasks.id
+                        and deliveries.execution_generation=runs.execution_generation
+                        and deliveries.status='ready_to_send'
+                        and runs.operation_id='wechat-delivery:' || deliveries.id
+                    )
+                  )
                 order by runs.id
                 limit ?
                 """,
@@ -11421,6 +11432,8 @@ class AutoReplyStore(LogicalRunStoreMixin, ReviewedCandidateStoreMixin):
             for value in (account_id, target_type, target_id, conversation_id)
         ):
             raise ValueError("WeChat delivery target must be complete")
+        if set(evidence or {}) & {"audit_run_id", "audit_candidate_digest", "audit_decision"}:
+            raise ValueError("WeChat Audit fields are service-owned")
         with self._immediate_write_transaction() as db:
             task = db.execute(
                 f"select * from ({REPLY_TASK_CLAIMED_SQL}) as reply_tasks where id=? and status='processing' "
@@ -11516,6 +11529,8 @@ class AutoReplyStore(LogicalRunStoreMixin, ReviewedCandidateStoreMixin):
         ``reply_text`` is a candidate only.  The durable ready-to-send row always
         stores the immutable prepared final body, keyed by its own delivery ID.
         """
+        if set(evidence or {}) & {"audit_run_id", "audit_candidate_digest", "audit_decision"}:
+            raise ValueError("WeChat Audit fields are service-owned")
         with self._immediate_write_transaction() as db:
             task = db.execute(
                 f"""select execution_generation, trigger_text from ({REPLY_TASK_CURRENT_SQL}) as reply_tasks
@@ -11967,6 +11982,21 @@ class AutoReplyStore(LogicalRunStoreMixin, ReviewedCandidateStoreMixin):
         from app.wechat.models import WechatDelivery
 
         with self._immediate_write_transaction() as db:
+            review_delivery = db.execute(
+                f"select * from ({WECHAT_DELIVERY_SQL}) where id=?", (delivery_id,)
+            ).fetchone()
+            if review_delivery is None:
+                return None
+            review_task = db.execute(
+                f"select * from ({REPLY_TASK_CURRENT_SQL}) where id=?",
+                (review_delivery["reply_task_id"],),
+            ).fetchone()
+            if (review_task is None
+                or review_task["execution_generation"] != expected_execution_generation
+                or not self._wechat_review_approved_in_connection(
+                    db, review_delivery, review_task
+                )):
+                return None
             assignments, set_args = task_delivery_set_parts(
                 "wechat_deliveries",
                 {"status": "sending", "pre_action_failure": 0, "error": ""},
@@ -12047,6 +12077,126 @@ class AutoReplyStore(LogicalRunStoreMixin, ReviewedCandidateStoreMixin):
             error=row["error"],
             pre_action_failure=bool(row["pre_action_failure"]),
         )
+
+    @staticmethod
+    def _wechat_review_approved_in_connection(db, delivery, task) -> bool:
+        from app.wechat.audit import wechat_audit_candidate, wechat_audit_digest
+
+        evidence = json.loads(delivery["evidence_json"])
+        run_id = evidence.get("audit_run_id")
+        if not isinstance(run_id, str) or not run_id.isdecimal():
+            return False
+        digest = wechat_audit_digest(wechat_audit_candidate(task, delivery))
+        if (evidence.get("audit_decision") != "approve"
+            or evidence.get("audit_candidate_digest") != digest):
+            return False
+        audit = db.execute(
+            f"select * from ({AGENT_RUN_SQL}) where id=?", (int(run_id),)
+        ).fetchone()
+        if (audit is None or audit["role"] != "audit"
+            or audit["status"] != "completed"
+            or audit["reply_task_id"] != task["id"]
+            or audit["execution_generation"] != delivery["execution_generation"]
+            or audit["operation_id"] != f"wechat-delivery:{delivery['id']}"):
+            return False
+        parent = db.execute(
+            f"select * from ({AGENT_RUN_SQL}) where id=?",
+            (audit["parent_agent_run_id"],),
+        ).fetchone()
+        return bool(parent is not None and parent["role"] == "consumer"
+                    and parent["status"] == "completed"
+                    and parent["reply_task_id"] == task["id"]
+                    and parent["execution_generation"] == delivery["execution_generation"])
+
+    def wechat_delivery_review_approved(self, delivery_id: int) -> bool:
+        with self._connect() as db:
+            delivery = db.execute(
+                f"select * from ({WECHAT_DELIVERY_SQL}) where id=?", (delivery_id,)
+            ).fetchone()
+            if delivery is None:
+                return False
+            task = db.execute(
+                f"select * from ({REPLY_TASK_CURRENT_SQL}) where id=?",
+                (delivery["reply_task_id"],),
+            ).fetchone()
+            return bool(task is not None
+                        and task["execution_generation"] == delivery["execution_generation"]
+                        and self._wechat_review_approved_in_connection(db, delivery, task))
+
+    def record_wechat_delivery_review(self, delivery_id: int, audit_run_id: int, decision) -> None:
+        """Bind a completed independent Audit result to the exact prepared effect."""
+        from app.wechat.audit import (
+            WechatAuditDecision, wechat_audit_candidate, wechat_audit_digest,
+        )
+
+        result = WechatAuditDecision.model_validate(decision)
+        run = self.get_agent_run(audit_run_id, load_events=True)
+        if (run is None or run.role is not AgentRole.AUDIT
+            or run.status != "completed" or not run.final_result_json
+            or WechatAuditDecision.model_validate_json(run.final_result_json) != result):
+            raise ValueError("WeChat Audit native result is unavailable or different")
+        with self._immediate_write_transaction() as db:
+            delivery = db.execute(
+                f"select * from ({WECHAT_DELIVERY_SQL}) where id=?", (delivery_id,)
+            ).fetchone()
+            if delivery is None:
+                raise ValueError("WeChat delivery does not exist")
+            task = db.execute(
+                f"select * from ({REPLY_TASK_CURRENT_SQL}) where id=?",
+                (delivery["reply_task_id"],),
+            ).fetchone()
+            if (task is None or task["execution_generation"] != delivery["execution_generation"]
+                or delivery["status"] not in ("ready_to_send", "failed")
+                or run.reply_task_id != task["id"]
+                or run.execution_generation != delivery["execution_generation"]
+                or run.operation_id != f"wechat-delivery:{delivery_id}"):
+                raise ValueError("WeChat review is not bound to the current delivery")
+            parent = db.execute(
+                f"select * from ({AGENT_RUN_SQL}) where id=?",
+                (run.parent_agent_run_id,),
+            ).fetchone()
+            if (parent is None or parent["role"] != "consumer"
+                or parent["status"] != "completed" or parent["reply_task_id"] != task["id"]
+                or parent["execution_generation"] != delivery["execution_generation"]):
+                raise ValueError("WeChat Audit parent is not the completed Consumer")
+            digest = wechat_audit_digest(wechat_audit_candidate(task, delivery))
+            if result.candidate_digest != digest:
+                raise ValueError("WeChat review candidate changed")
+            evidence = json.loads(delivery["evidence_json"])
+            prior = evidence.get("audit_run_id")
+            if prior is not None:
+                if (prior == str(audit_run_id)
+                    and evidence.get("audit_candidate_digest") == digest
+                    and evidence.get("audit_decision") == result.outcome):
+                    return
+                raise ValueError("WeChat delivery already has a different review")
+            evidence.update({
+                "audit_run_id": str(audit_run_id),
+                "audit_candidate_digest": digest,
+                "audit_decision": result.outcome,
+                "independent_audit_summary": result.summary,
+            })
+            values = {"evidence_json": json.dumps(evidence, ensure_ascii=False)}
+            if result.outcome == "reject":
+                values.update({"status": "failed", "error": "wechat_audit_rejected",
+                               "pre_action_failure": 1})
+            assignments, set_args = task_delivery_set_parts(
+                "wechat_deliveries", values,
+                update_sql={"updated_at": "current_timestamp"},
+            )
+            cursor = db.execute(
+                f"update actions set {assignments} "
+                "where record_type='wechat_deliveries' and cast(legacy_key as integer)=? "
+                "and td_status='ready_to_send'",
+                (*set_args, delivery_id),
+            )
+            if cursor.rowcount != 1:
+                raise AgentRunLeaseLostError("WeChat delivery review lost")
+            if result.outcome == "reject":
+                self._sync_wechat_delivery_reply_attempt(
+                    db, delivery_id=delivery_id, delivery_status="failed",
+                    error="wechat_audit_rejected",
+                )
 
     def set_wechat_delivery_status(
         self, delivery_id: int, status: str, *, error: str = "",
