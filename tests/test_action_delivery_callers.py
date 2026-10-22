@@ -226,7 +226,6 @@ def test_sent_external_key_caller_seeks_existing_partial_index(tmp_path, monkeyp
 
 @pytest.mark.parametrize("key", ["ordinary", " padded ", "nul\x00key"])
 def test_nonempty_external_key_lookup_keeps_native_result(tmp_path, key):
-    source_path = tmp_path / "source.sqlite3"
     store = AutoReplyStore(tmp_path / "target.sqlite3")
     with store._connect() as db:
         from app.action_entity_storage import create_action

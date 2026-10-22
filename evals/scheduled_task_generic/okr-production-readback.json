@@ -679,5 +679,350 @@
     "mutations_or_replays_performed": false,
     "business_report_acceptance_changed": false,
     "triage_status": "The source counters and error classes are now identified; these system-health issues are unresolved and are not evidence of natural scheduled report acceptance."
+  },
+  "sleep_resume_host_readback": {
+    "observed_at": "2026-10-22T19:46:02Z",
+    "source": "read-only pmset -g log",
+    "host_timezone": "America/Los_Angeles",
+    "delayed_scheduled_run_2026_10_20": {
+      "readback_observed_at": "2026-10-22T20:34:46Z",
+      "scheduled_task_run_id": 388053,
+      "scheduled_task_id": 14,
+      "trigger_kind": "scheduled",
+      "scheduled_for": "2026-10-20T13:00:00Z",
+      "created_at": "2026-10-20T22:36:19Z",
+      "dispatched_at": "2026-10-20T22:50:30Z",
+      "dispatch_status": "dispatched",
+      "execution_id": "416316",
+      "occurrence_count": 1,
+      "snapshot_id": 153,
+      "delay_after_scheduled_time_seconds": 34579,
+      "interpretation": "The same-day daily run was delayed by about 9 hours 36 minutes, not absent for the entire day. This old run predates the currently deployed scheduler catch-up repair and does not verify that repair."
+    },
+    "scheduled_window_power_readback": {
+      "readback_observed_at": "2026-10-22T20:37:20Z",
+      "window_local": {
+        "start": "2026-10-20T05:50:00-07:00",
+        "end": "2026-10-20T06:10:00-07:00"
+      },
+      "maintenance_wakes_local": [
+        "2026-10-20T05:52:58-07:00",
+        "2026-10-20T06:06:29-07:00"
+      ],
+      "observed_activity": "Two CPU maintenance wakes; no full wake in the scheduled window",
+      "first_full_wake_local": "2026-10-20T13:38:00-07:00",
+      "supports_host_asleep_at_schedule": true,
+      "proves_service_process_state_at_schedule": false
+    },
+    "causal_limit": "The power timeline strongly points to host sleep at the scheduled time, but cannot establish service process state at 06:00 or explain the roughly two hours between first full wake and scheduled-run creation. A separate startup-recovery SQL error was also present and later fixed; current evidence cannot apportion the delay between the two causes.",
+    "production_service_pid": 60193,
+    "production_service_started_at": "2026-10-22T10:49:48-07:00",
+    "last_observed_sleep_activity_before_service_start": {
+      "first_maintenance_sleep_at": "2026-10-21T21:27:30-07:00",
+      "last_full_wake_at": "2026-10-21T21:46:37-07:00",
+      "task14_task13_task6_trigger_crossed": false
+    },
+    "sleep_or_wake_transition_after_service_start_observed": false,
+    "scheduler_catch_up_branch_verified": false,
+    "host_sleep_or_wake_induced_for_check": false,
+    "conclusion": "The observed sleep activity predates the deployed service process and crossed none of the monitored trigger times; it is not evidence that deployed catch-up works."
+  },
+  "runtime_readback_2026_10_22T195621Z": {
+    "observed_at": "2026-10-22T19:56:21Z",
+    "production_commit": "6f26fcbc1a4fb25a8b63f2733f7571ec7d924598",
+    "service_pid": 6423,
+    "service_started_at": "2026-10-22T12:55:03-07:00",
+    "healthz": {
+      "http": 200,
+      "ok": true
+    },
+    "queue_counts": {
+      "active": 0,
+      "queued": 221
+    },
+    "history_total": 37280,
+    "system_health": {
+      "state": "degraded",
+      "violations": 8,
+      "native_delivery_results_readable": 311,
+      "native_delivery_results_unavailable": 73
+    },
+    "scheduled_tasks": {
+      "count": 14,
+      "task14": {
+        "version": 51,
+        "managed_revision_id": 224,
+        "next_run_at": "2026-10-23T13:00:00Z",
+        "latest_run_id": 392889,
+        "latest_run_kind": "scheduled"
+      },
+      "task13": {
+        "version": 44,
+        "managed_revision_id": 202,
+        "next_run_at": "2026-10-24T19:00:00Z",
+        "latest_run_id": 391278,
+        "latest_run_kind": "manual"
+      },
+      "task6": {
+        "version": 22,
+        "managed_revision_id": 223,
+        "next_run_at": "2026-10-25T10:00:00Z",
+        "latest_run_id": 392433,
+        "latest_run_kind": "manual",
+        "latest_run_status": "skipped"
+      }
+    },
+    "service_restart_observation": {
+      "restarts_seen_at_local": [
+        "2026-10-22T12:50:29-07:00",
+        "2026-10-22T12:55:03-07:00"
+      ],
+      "production_commit_changed": false,
+      "restart_cause": "not established",
+      "sleep_or_full_wake_transition_observed": false,
+      "new_scheduled_report_run_created": false
+    },
+    "mutations_or_replays_performed": false,
+    "natural_report_acceptance_changed": false,
+    "conclusion": "The deployed service is healthy and all three task snapshots remain on the expected managed Skill revisions. The restarts did not coincide with a monitored report trigger and provide no evidence of sleep-resume catch-up. The next acceptance evidence must come from the normal scheduled runs."
+  },
+  "latest_runtime_readback": {
+    "observed_at": "2026-10-22T20:00:16Z",
+    "production_commit": "bbf39dea5772f30052a47fee4aef0f95fd5c1b4d",
+    "deployment_commit_subject": "fix(release): align active daily skill revision digest",
+    "service_pid": 7775,
+    "service_started_at": "2026-10-22T12:58:26-07:00",
+    "healthz": {
+      "http": 200,
+      "ok": true
+    },
+    "system_health": {
+      "state": "degraded",
+      "violations": 8,
+      "native_delivery_results_readable": 311,
+      "native_delivery_results_unavailable": 73
+    },
+    "scheduled_tasks": {
+      "count": 14,
+      "task14": {
+        "version": 52,
+        "managed_revision_id": 224,
+        "managed_sha256": "32d24bb5f53b60bcf67b8a91582db258a05cac59c789391c862d3bd95719fc62",
+        "prompt_sha256": "68e510a10dc954c670dc673665c0d740a302a3be00240ffdaa650906df045eb2",
+        "prompt": "使用 $ceo-daily-report 生成并发送 CEO 每日总结。用 read_scheduled_context 读取本次触发，用 read_service_activity 读取服务事实；先查群消息；仅在会议管理细节仍缺失时，读取任务冻结的 dingtalk-minutes Skill 后再查听记摘要。按 Skill 使用原生 DWS 读取其余材料、发布文档，并通过服务的已审核消息工具投递。",
+        "next_run_at": "2026-10-23T13:00:00Z",
+        "latest_run_id": 392889
+      },
+      "task13": {
+        "version": 45,
+        "managed_revision_id": 202,
+        "prompt_sha256": "7230236c54702d17e64c0762fa0f7da994ba17388707d97f8d9012ef0f9969cb",
+        "next_run_at": "2026-10-24T19:00:00Z",
+        "latest_run_id": 391278
+      },
+      "task6": {
+        "version": 23,
+        "managed_revision_id": 223,
+        "managed_sha256": "18b23c5c6762ce0fa6cceedf8f1a7a14591327269897fcc56ba4ea32e9c78744",
+        "prompt_sha256": "3abfd2df21cfafd7b45c3a629cd4f194477cc27dfb161aff507fabab0d32d906",
+        "next_run_at": "2026-10-25T10:00:00Z",
+        "latest_run_id": 392433,
+        "latest_run_status": "skipped"
+      }
+    },
+    "effective_config_snapshot_comparison": {
+      "task14_version_49_to_50": "prompt changed to explicitly check group messages first and read minutes only when meeting details are missing; this is the first configuration containing the current prompt hash",
+      "task14_version_50_to_51": "managed Skill reference changed from revision 203 to revision 224; prompt and schedule stayed the same",
+      "task14_version_51_to_52": "identical after excluding task_version metadata; Skill revision 224, prompt hash, runtime, schedule, timezone, and other execution fields are unchanged",
+      "task13_version_44_to_45": "identical after excluding task_version metadata; Skill revision 202, prompt hash, runtime, schedule, timezone, and other execution fields are unchanged",
+      "task6_version_22_to_23": "identical after excluding task_version metadata; Skill revision 223, prompt hash, runtime, schedule, timezone, and other execution fields are unchanged",
+      "source": "read-only production configs projection of immutable scheduled_task_config_versions snapshots"
+    },
+    "restart_observation": {
+      "service_started_at": "2026-10-22T12:58:26-07:00",
+      "production_commit_changed_from_previous_readback": true,
+      "previous_commit": "6f26fcbc1a4fb25a8b63f2733f7571ec7d924598",
+      "cause": "production moved from the previous readback commit to the then-current origin/main commit; no host sleep or full-wake transition was observed",
+      "new_scheduled_report_run_created": false
+    },
+    "host_idle_sleep_assertion_readback": {
+      "observed_at": "2026-10-22T20:10:40Z",
+      "local_time": "2026-10-22T13:10:40-07:00",
+      "prevent_user_idle_system_sleep": true,
+      "assertions": [
+        {
+          "pid": 4320,
+          "application": "Claude",
+          "assertion": "NoIdleSleepAssertion",
+          "name": "Electron",
+          "process_started_at_local": "2026-10-20T13:41:35-07:00"
+        },
+        {
+          "pid": 32669,
+          "application": "ChatGPT",
+          "assertion": "NoIdleSleepAssertion",
+          "name": "Electron",
+          "process_started_at_local": "2026-10-22T01:52:38-07:00"
+        }
+      ],
+      "powerd_assertion": "Prevent sleep while display is on",
+      "conclusion": "At this observation, automatic idle sleep appears inhibited while these assertions are active. This does not establish whether lid-close or an explicit sleep request is inhibited. No application, process, or power setting was changed."
+    },
+    "host_idle_sleep_policy_recheck": {
+      "observed_at": "2026-10-22T20:21:06Z",
+      "local_time": "2026-10-22T13:21:06-07:00",
+      "configured_sleep_minutes": {
+        "ac_power": 1,
+        "battery_power": 30
+      },
+      "configured_display_sleep_minutes": {
+        "ac_power": 20,
+        "battery_power": 10
+      },
+      "prevent_user_idle_system_sleep": true,
+      "live_idle_sleep_assertions": [
+        {
+          "pid": 4320,
+          "application": "Claude",
+          "assertion": "NoIdleSleepAssertion",
+          "name": "Electron",
+          "process_started_at_local": "2026-10-20T13:41:35-07:00"
+        },
+        {
+          "pid": 32669,
+          "application": "ChatGPT",
+          "assertion": "NoIdleSleepAssertion",
+          "name": "Electron",
+          "process_started_at_local": "2026-10-22T01:52:38-07:00"
+        }
+      ],
+      "conclusion": "The configured idle-sleep timers are enabled, including one minute on AC power, but macOS still reports PreventUserIdleSystemSleep and live NoIdleSleepAssertion holders. This supports the conclusion that application assertions are preventing normal idle sleep at this observation. It does not establish lid-close or explicit-sleep behavior. No settings or processes were changed."
+    },
+    "host_sleep_resume_catch_up_verified": false,
+    "mutations_or_replays_performed": false,
+    "natural_report_acceptance_changed": false,
+    "conclusion": "At this readback task14 is configuration v52 / managed Skill revision224, with the prompt that explicitly requires checking group messages first; its next normal trigger is 2026-10-23T13:00:00Z. The preceding natural run 392889 used v49, before both the prompt and Skill fixes. Task13 and task6 gained only version numbers at the latest readback; their effective execution snapshots are unchanged. Re-read the active config before the next run in case it changes again. The current macOS assertions indicate automatic idle sleep appears inhibited at the observation time, so the natural sleep-resume catch-up branch remains unverified; no app or power state was changed."
+  },
+  "runtime_readback_2026_10_22T201326Z": {
+    "observed_at": "2026-10-22T20:13:26Z",
+    "local_time": "2026-10-22T13:13:26-07:00",
+    "production_checkout": "/Users/derek/Services/ceo-agent-service",
+    "production_commit": "320f2002b9a886c4f7c593ddb17681b17eae9fe3",
+    "service_supervisor_pid": 11199,
+    "service_supervisor_started_at_local": "2026-10-22T13:06:57-07:00",
+    "api_worker_pid": 11203,
+    "healthz": {
+      "http": 200,
+      "ok": true
+    },
+    "scheduled_tasks": {
+      "enabled_count": 14,
+      "task14": {
+        "version": 52,
+        "managed_skill_revision_id": 224,
+        "latest_run_id": 392889,
+        "latest_run_trigger": "natural scheduled",
+        "next_run_at": "2026-10-23T13:00:00Z"
+      },
+      "task13": {
+        "version": 45,
+        "managed_skill_revision_id": 202,
+        "latest_run_id": 391278,
+        "latest_run_trigger": "manual",
+        "latest_run_status": "skipped",
+        "next_run_at": "2026-10-24T19:00:00Z"
+      },
+      "task6": {
+        "version": 23,
+        "managed_skill_revision_id": 223,
+        "latest_run_id": 392433,
+        "latest_run_status": "skipped",
+        "next_run_at": "2026-10-25T10:00:00Z"
+      }
+    },
+    "source": "read-only production checkout, launchd job, localhost healthz, schedules table, and immutable scheduled-task config snapshots",
+    "mutations_or_replays_performed": false,
+    "conclusion": "Production has advanced from the 20:00Z readback commit to 320f2002 while task14/13/6 effective configuration versions and managed Skill revisions remain 52/224, 45/202, and 23/223. Service health is HTTP 200 and there is no newer run for the three report tasks. The next report run is task14 at 2026-10-23T13:00:00Z; task13 and task6 remain due 2026-10-24T19:00:00Z and 2026-10-25T10:00:00Z."
+  },
+  "runtime_readback_2026_10_22T204343Z": {
+    "observed_at": "2026-10-22T20:43:43Z",
+    "local_time": "2026-10-22T13:43:43-07:00",
+    "production_checkout": "/Users/derek/Services/ceo-agent-service",
+    "production_commit": "b32279d03fdd3bf5af73848bd47afdebccbee9ba",
+    "service_supervisor_pid": 34594,
+    "service_supervisor_started_at_local": "2026-10-22T13:39:42-07:00",
+    "service_worker_pid": 34597,
+    "service_worker_started_at_local": "2026-10-22T13:39:42-07:00",
+    "audit_web_pid": 34598,
+    "email_worker_pid": 34599,
+    "healthz": {
+      "http": 200,
+      "ok": true
+    },
+    "scheduled_tasks": {
+      "enabled_count": 14,
+      "task14": {
+        "version": 52,
+        "managed_skill_revision_id": 224,
+        "latest_run_id": 392889,
+        "latest_run_trigger": "natural scheduled",
+        "next_run_at": "2026-10-23T13:00:00Z"
+      },
+      "task13": {
+        "version": 45,
+        "managed_skill_revision_id": 202,
+        "latest_run_id": 391278,
+        "latest_run_trigger": "manual",
+        "latest_run_status": "skipped",
+        "next_run_at": "2026-10-24T19:00:00Z"
+      },
+      "task6": {
+        "version": 23,
+        "managed_skill_revision_id": 223,
+        "latest_run_id": 392433,
+        "latest_run_status": "skipped",
+        "next_run_at": "2026-10-25T10:00:00Z"
+      }
+    },
+    "task14_skill_file_readback": {
+      "config_snapshot_id": 14414,
+      "task_config_version": 52,
+      "managed_skill_revision_id": 224,
+      "repository_skill_sha256": "32d24bb5f53b60bcf67b8a91582db258a05cac59c789391c862d3bd95719fc62",
+      "installed_skill_sha256": "32d24bb5f53b60bcf67b8a91582db258a05cac59c789391c862d3bd95719fc62",
+      "hashes_match": true
+    },
+    "previous_natural_task14_run_terminal_readback": {
+      "scheduled_run_id": 392889,
+      "reply_task_id": 416905,
+      "reply_task_status": "done",
+      "consumer_runs": [
+        {"run_id": 392892, "revision": 0, "status": "completed"},
+        {"run_id": 392902, "revision": 1, "status": "completed"}
+      ],
+      "audit_runs": [
+        {"run_id": 392897, "revision": 0, "status": "completed"},
+        {"run_id": 392910, "revision": 1, "status": "completed"}
+      ],
+      "no_in_flight_attempts_for_this_run": true
+    },
+    "host_sleep_observation": {
+      "observed_at": "2026-10-22T20:47:32Z",
+      "ac_idle_sleep_minutes": 1,
+      "prevent_user_idle_system_sleep": true,
+      "prevent_system_sleep": false,
+      "active_assertions": [
+        {"process": "powerd", "name": "Powerd - Prevent sleep while display is on"},
+        {"process": "ChatGPT", "name": "Electron NoIdleSleepAssertion"},
+        {"process": "Claude", "name": "Electron NoIdleSleepAssertion"}
+      ],
+      "filtered_powerd_sleep_wake_log_matches_last_3h": 0,
+      "no_host_settings_or_processes_changed": true,
+      "conclusion": "Idle sleep was inhibited at observation time. This does not establish lid-close or explicit-sleep behavior; the natural sleep-resume catch-up branch remains unverified."
+    },
+    "source": "read-only production checkout HEAD, launchd process list, localhost healthz, schedules table, and immutable scheduled-task config snapshots",
+    "mutations_or_replays_performed": false,
+    "new_report_runs_since_prior_readback": false,
+    "conclusion": "Production is now commit b32279d with a new service worker PID 34597 started at 13:39:42 PDT; the reason for the restart was not established. Healthz remains HTTP 200. Immutable config snapshots still bind task14 v52/revision224, task13 v45/revision202, and task6 v23/revision223. Latest report runs remain 392889, 391278, and 392433 respectively; no post-fix natural report run exists yet. No report was created or replayed, and the host sleep-resume catch-up branch remains unverified."
   }
 }
