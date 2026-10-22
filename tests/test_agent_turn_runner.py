@@ -88,8 +88,15 @@ def test_native_output_schema_is_selected_for_codex_consumer_and_audit():
 
     assert general is not None and general.name == "consumer_general_agent_native_output.schema.json"
     assert oa is not None and oa.name == "consumer_oa_agent_native_output.schema.json"
-    audit = _native_output_schema_for_route(RuntimeKind.CODEX_CLI, AgentRole.AUDIT)
+    audit = _native_output_schema_for_route(
+        RuntimeKind.CODEX_CLI, AgentRole.AUDIT,
+        credential_mode=CredentialMode.LOCAL_OAUTH,
+    )
     assert audit is not None and audit.name == "audit_agent_native_output.schema.json"
+    assert _native_output_schema_for_route(
+        RuntimeKind.CODEX_CLI, AgentRole.AUDIT,
+        credential_mode=CredentialMode.SERVICE_API,
+    ) is None
     assert _native_output_schema_for_route(RuntimeKind.CLAUDE_CLI, AgentRole.AUDIT) is None
     assert _native_output_schema_for_route(RuntimeKind.CLAUDE_CLI, AgentRole.CONSUMER) is None
 
@@ -104,12 +111,18 @@ def test_runtime_result_recovery_binds_native_consumer_schema(tmp_path, monkeypa
     )
     audit_id = _runtime_result_schema_id(
         execution_contract, RuntimeKind.CODEX_CLI, AgentRole.AUDIT,
+        credential_mode=CredentialMode.LOCAL_OAUTH,
     )
     oa_id = _runtime_result_schema_id(
         execution_contract, RuntimeKind.CODEX_CLI, AgentRole.CONSUMER, purpose="oa",
     )
 
-    assert len({native_id, claude_id, audit_id, oa_id}) == 4
+    audit_api_id = _runtime_result_schema_id(
+        execution_contract, RuntimeKind.CODEX_CLI, AgentRole.AUDIT,
+        credential_mode=CredentialMode.SERVICE_API,
+    )
+    assert len({native_id, claude_id, audit_id, audit_api_id, oa_id}) == 4
+    assert audit_api_id == claude_id
     assert audit_id != claude_id
     assert native_id == _runtime_result_schema_id(
         execution_contract, RuntimeKind.CODEX_CLI, AgentRole.CONSUMER,
