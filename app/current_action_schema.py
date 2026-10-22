@@ -76,9 +76,11 @@ def create_current_action_schema(db: sqlite3.Connection):
     if actual:
         if actual != expected:
             raise ValueError("unsupported current Actions declaration")
-        actual_children = actions._objects(db, "action_receipts") + actions._objects(db, "action_observers")
+        actual_children = (actions._objects(db, "action_receipts")
+                          + actions._objects(db, "action_observers")
+                          + actions._objects(db, "action_entity_identity_map"))
         if actual_children != expected_children:
-            raise ValueError("unsupported current Action receipt/observer declaration")
+            raise ValueError("unsupported current Action child declaration")
         return
     actions._require_available_names(db, (*expected, *expected_children))
     for obj in sorted(expected, key=lambda item: item["type"] != "table"):
