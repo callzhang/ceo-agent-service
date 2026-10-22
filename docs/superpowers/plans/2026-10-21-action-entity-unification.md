@@ -103,7 +103,11 @@ record_action_result(db, action_id: int, *, expected: Mapping[str, object], chan
 
 ## Task 4: 切换详情、回执、撤回和反馈读取
 
-**Files:** Modify `app/history_actions.py`, `app/history.py`, `app/web_api/registration.py`, `app/store.py` 中 Sent/recall读取、`frontend/src/` 实际调用文件；Create `tests/test_action_entity_views.py`。
+**Files to inspect (not presumed edits):** `app/history.py` and `app/history_actions.py`. `history.py` owns the `HistoryItem` model and `safe_observability_error` formatter; its call sites pass already selected values and it owns no Action/source query. `history_actions.py` renders Attention/action choices from caller-supplied `ReplyAttempt`/`ReplyTask`/`HistoryItem` projections; it owns no SQL or History-source selection. Do not edit either file cosmetically or change its existing policy.
+
+**Files requiring edits for this implementation:** `app/action_storage.py` (shared Sent projection/receipt facts), `app/store.py` (Sent and current History Action readers), `app/audit_web.py` (Action queue/Attention projections), `app/email_store.py` (current Action attempt observability), `app/history_types.py` (current History source-owner registry), `app/web_api/registration.py` (semantic History presentation/detail mapping), `app/web_api/attempts.py` (Action detail/receipt/recall/feedback), `frontend/src/api/attempts.ts`, `frontend/src/pages/AttemptDetailPage.tsx`, its focused test, `tests/test_action_entity_views.py`, and the preserved mixed History/Attention/queue/important node in `tests/test_shared_action_lifecycle.py`. Update `docs/architecture.md` and `docs/runtime-mechanism.md` when the current History source identity changes. These are the actual edited paths; narrow additional files require a source-owned reader and a named regression.
+
+**History identity contract:** covered direct-email History rows use `source_table='actions'`, `source_id=actions.id`, and `id='action:' || actions.id`. The user-facing `history_type='email_action'`, type filter, status mapping, and `/email` detail route remain semantic behavior. Do not keep `email_actions` as a current-reader alias or restore `email-action:<source-id>` identity. Explicit source/migration/inverse code may still read the legacy namespace.
 **Consumes:** Task2 `get_action`；Task1 observer/Task/Run关系；Task3真实执行数据。
 **Produces:** 所有目标页面/API以Action身份读取，保留外部消息身份、时间、撤回与反馈语义；没有旧类型DTO路由。
 

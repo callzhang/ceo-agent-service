@@ -168,3 +168,59 @@ def test_source_missing_is_visible_in_detail(tmp_path):
     assert detail["delivery"]["operation"] is None
     assert detail["delivery"]["target"] is None
     assert detail["delivery"]["source_label"] == "来源事实未提供"
+
+
+def test_email_history_uses_action_identity_and_semantic_type_filter(tmp_path):
+    from app.email_classifier_contracts import EmailAction, EmailClassificationStatus
+    from app.email_store import EmailStore
+    from tests.test_console_web_api import _client
+    from tests.test_email_store import _classification, _task2_account_values
+
+    path = tmp_path / "worker.sqlite3"
+    store, email = AutoReplyStore(path), EmailStore(path)
+    email.create_account(_task2_account_values("history-account", enabled=False))
+    classification = _classification(
+        status=EmailClassificationStatus.PROCESSED,
+        classification_id=8401,
+        actions=(EmailAction.ARCHIVE,),
+        action_parameters={},
+    )
+    email.persist_scan_result(classification, model_text="synthetic history fixture")
+    action_id = email.direct_action_ids_for_plan(classification.action_plan.action_plan_id)[0]
+    claim = email.claim_direct_action(
+        action_id=action_id,
+        claimed_at="2026-10-20T10:00:00+00:00",
+    )
+    assert claim is not None
+    email.complete_direct_action_attempt(
+        claim,
+        status="done",
+        provider_operation="archive",
+        provider_target=claim.locator.stable_message_identity,
+        provider_result_id="synthetic-history-receipt",
+        error="",
+        finished_at="2026-10-20T10:01:00+00:00",
+    )
+
+    with _client(tmp_path) as client:
+        response = client.get(
+            "/api/console/history",
+            params={"object_type": "email_action", "page_size": 20},
+        )
+
+    assert response.status_code == 200
+    payload = response.json()
+    assert payload["meta"]["total"] == 1
+    item = payload["items"][0]
+    assert (item["id"], item["type"], item["kind"], item["status"]) == (
+        str(action_id), "email_action", "email_action", "done"
+    )
+    assert item["detail_url"] == (
+        f"/email?tab=all&selected={classification.classification_id}"
+    )
+    with store._connect() as db:
+        row = db.execute(
+            "select id, record_type from actions where id=?", (action_id,)
+        ).fetchone()
+    assert row["record_type"] == "action"
+    assert item["id"] == str(row["id"])

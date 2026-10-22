@@ -25574,10 +25574,10 @@ class AutoReplyStore(LogicalRunStoreMixin, ReviewedCandidateStoreMixin):
                   )
             """,
         }
-        if (not source_tables or "email_actions" in source_tables) and self._email_actions_history_available():
+        if (not source_tables or "actions" in source_tables) and self._email_actions_history_available():
             from app.email_store import DIRECT_ACTION_MAX_ATTEMPTS, DIRECT_EMAIL_ACTION_SQL
 
-            candidate_queries["email_actions"] = f"""
+            candidate_queries["actions"] = f"""
                 select actions.action_id as source_id,
                        coalesce(datetime(actions.updated_at), actions.updated_at) as occurred_at
                 from ({DIRECT_EMAIL_ACTION_SQL}) as actions
@@ -26336,7 +26336,7 @@ class AutoReplyStore(LogicalRunStoreMixin, ReviewedCandidateStoreMixin):
                 join ({config_projection('scheduled_task_config_versions')}) as configs on configs.id=runs.snapshot_id
                 where {history_types.scheduled_run_filter_sql("runs")}
         """
-        if (not source_tables or "email_actions" in source_tables) and self._email_actions_history_available():
+        if (not source_tables or "actions" in source_tables) and self._email_actions_history_available():
             # The EmailStore projection gives the common Action id and its
             # current receipt facts; the domain source label remains stable.
             from app.email_store import DIRECT_ACTION_MAX_ATTEMPTS, DIRECT_EMAIL_ACTION_SQL
@@ -26344,8 +26344,8 @@ class AutoReplyStore(LogicalRunStoreMixin, ReviewedCandidateStoreMixin):
             query += f"""
                 union all
                 select
-                    'email-action:' || actions.action_id as id,
-                    'email_actions' as source_table,
+                    'action:' || actions.action_id as id,
+                    'actions' as source_table,
                     actions.action_id as source_id,
                     coalesce(datetime(actions.updated_at), actions.updated_at) as occurred_at,
                     'Email action' as category,

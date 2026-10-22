@@ -5,6 +5,7 @@ import sqlite3
 import pytest
 
 from app import email_store as email_module
+from app import history_types
 from app import shared_action_lifecycle as lifecycle
 from app import shared_action_definitions as shared
 from app.email_classifier_contracts import EmailAction, EmailClassificationStatus
@@ -272,8 +273,17 @@ def test_direct_email_owner_and_important_listing_read_current_attempt_fields(tm
         assert failed['status'] == 'failed'
         assert failed['error'] == 'readers failure'
     assert email.list_action_attempts(action_id)[0]['status'] == 'failed'
-    total, rows = store.list_operation_logs_with_count(limit=10, statuses=('failed',), source_tables=('email_actions',))
+    total, rows = store.list_operation_logs_with_count(
+        limit=10,
+        statuses=('failed',),
+        history_types=(history_types.EMAIL_ACTION,),
+        source_tables=('actions',),
+    )
     assert total == 1 and rows[0].status == 'failed'
+    assert (rows[0].source_table, rows[0].source_id, rows[0].id) == (
+        'actions', action_id, f'action:{action_id}'
+    )
+    assert rows[0].history_type == history_types.EMAIL_ACTION
     attention = [row for row in _queue_attention_rows(store) if row['category'] == 'Email action']
     assert len(attention) == 1 and attention[0]['id'] == action_id
     with store._connect() as db:
@@ -289,3 +299,13 @@ def test_direct_email_owner_and_important_listing_read_current_attempt_fields(tm
     flagged = email.list_flagged_important_between(datetime(2020, 1, 1, tzinfo=timezone.utc),
                                                    datetime(2100, 1, 1, tzinfo=timezone.utc))
     assert [(row['action_id'], row['finished_at']) for row in flagged] == [(important_id, '2026-10-19T11:01:00+00:00')]
+    total, page = store.list_operation_logs_with_count(
+        limit=1,
+        offset=1,
+        history_types=(history_types.EMAIL_ACTION,),
+        source_tables=('actions',),
+    )
+    assert total == 2 and len(page) == 1
+    assert page[0].source_table == 'actions'
+    assert page[0].history_type == history_types.EMAIL_ACTION
+    assert page[0].source_id in {action_id, important_id}
