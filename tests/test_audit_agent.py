@@ -162,9 +162,26 @@ class CapturingExecutor:
         self.commands.append(command)
         self.prompts.append(kwargs["prompt"])
         self.environments.append(dict(kwargs["env"]))
-        for line in self.stdout.splitlines():
+        stdout = self.stdout
+        if any("audit_agent_native_output.schema.json" in str(part) for part in command):
+            lines = stdout.splitlines()
+            for index, line in enumerate(lines):
+                event = json.loads(line)
+                item = event.get("item", {})
+                if item.get("type") != "agent_message":
+                    continue
+                output = json.loads(item["text"])
+                if "outcome" in output:
+                    output["decision"] = {
+                        "outcome": output.pop("outcome"),
+                        "feedback": output.pop("feedback", None),
+                    }
+                item["text"] = json.dumps(output)
+                lines[index] = json.dumps(event)
+            stdout = "\n".join(lines)
+        for line in stdout.splitlines():
             on_stdout_line(line)
-        return ProcessRunResult(0, self.stdout, "")
+        return ProcessRunResult(0, stdout, "")
 
 
 @pytest.fixture
