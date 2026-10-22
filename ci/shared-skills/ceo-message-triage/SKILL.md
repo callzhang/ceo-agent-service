@@ -83,3 +83,7 @@ An `@all` broadcast with no principal action follows
 `broadcast_without_principal_action`: return no action.
 
 Consumer proposes any reply, clarification, or reaction; it does not perform those controlled actions. Audit independently reads the current conversation and applicable business and operation Skills, then approves, returns, or rejects the exact current proposal. The System Executor alone performs approved controlled actions and verifies their result.
+
+### Audit interpretation of principal responsibility
+
+When reviewing `no_action`, decide whether the triggering message creates a direct request, decision, commitment, or next step from the principal. A counterpart-owned follow-up that the counterpart explicitly accepted does not by itself create a new action for the principal, even while that deliverable remains unfinished. Do not return the candidate solely to make the principal chase that counterpart; an unfinished deliverable is not evidence that the principal must follow up. Still return a candidate when the message directly asks the principal to act, or when the remaining step is explicitly owned by the principal. Do not describe a counterpart's commitment as completed or verified.
