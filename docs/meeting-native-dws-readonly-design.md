@@ -17,6 +17,7 @@ Meeting 判断轮需要保留原生 DWS 的群搜索、完整成员、近期消�
 - DWS 还提供宿主接管的 PAT 行为授权：设置 `DINGTALK_DWS_AGENTCODE` 时，缺少 PAT scope 的调用返回给宿主处理；`chat chmod` 称 chat 写 scope 的授权须经宿主 UI。但当前 Codex 子进程的环境白名单没有传入该标识或 `DWS_CONFIG_DIR`；合成环境探针证实两者均被剔除。PAT 与开放平台应用权限是两套机制，底层发送和已有授权仍需验证。[DWS PAT 说明](https://github.com/DingTalk-Real-AI/dingtalk-workspace-cli/blob/main/skills/multi/dingtalk-misc/references/pat.md)
 - DWS 官方文档称应用只能调用已获授权的 API。这支持研究独立的只读应用授权，但不证明当前应用的授权范围，也不证明同一进程无法读取其他可写凭据。`dws auth status --readonly` 仅为**认证状态的本地只读快照**，不是业务命令只读模式。[DWS 官方说明](https://github.com/DingTalk-Real-AI/dingtalk-workspace-cli#security-by-design)
 - DWS 源码中，`dws api` 为原始 HTTP 请求单独取得**应用级令牌**，凭据依次来自命令参数、环境或应用配置（后者可取 Keychain）；它不走群消息 Shortcut 的确认入口，也不通过缺少 MCP PAT scope 时的重试分支。本机默认 DWS 目录存在应用配置文件（只检查存在性，未读取内容）。因此只证明宿主 PAT 能约束 MCP 命令，仍不足以证明同一 shell 进程不能用原始 API 写入。[原始 API 令牌路径](https://github.com/DingTalk-Real-AI/dingtalk-workspace-cli/blob/v1.0.65/internal/app/api_command.go)、[PAT 错误处理](https://github.com/DingTalk-Real-AI/dingtalk-workspace-cli/blob/v1.0.65/internal/app/pat_auth_retry.go)
+- 本机执行 `codex sandbox -P ':read-only'` 的隔离探针，子进程仍成功 `open()` 当前用户的 `~/.dws/app.json`；探针立即关闭文件，未读取或输出内容。这只证明内置文件系统只读模式**不隔离已有 DWS 应用配置**，不能据此推断远端令牌有效或某项写入实际获准。要保留原生命令并做到业务只读，还需验证独立凭据和进程访问边界。
 
 ## 研究路径：验证服务端权限与凭据隔离
 
