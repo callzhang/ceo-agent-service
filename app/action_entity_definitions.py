@@ -21,7 +21,6 @@ RECEIPT_FIELDS = (
     "provider_result_json", "result_digest", "agent_run_id", "observed_at", "error_text",
     "dispatched_at", "started_at", "finished_at", "execution_id", "action_index",
     "outcome_json", "created_at", "updated_at", "provider_receipt_id",
-    "supersedes_provider_receipt_id",
 )
 RECEIPT_ALLOWED_FIELDS = frozenset(RECEIPT_FIELDS)
 ACTION_GENERATED_COLUMNS = tuple(
@@ -47,14 +46,10 @@ RECEIPT_SCHEMA_DDL = (
     "status text check(status is null or status in ('done','skipped','failed','dispatched','verified','confirmed_no_effect','uncertain')), "
     "attempt_number integer, error_text text, agent_run_id integer, started_at text, finished_at text, "
     "execution_id integer, action_index integer, outcome_json text, created_at text, updated_at text, "
-    "observed_at text, dispatched_at text, provider_receipt_id integer references action_receipts(id), "
-    "supersedes_provider_receipt_id integer references action_receipts(id), "
-    "check(supersedes_provider_receipt_id is null or supersedes_provider_receipt_id<id))",
+    "observed_at text, dispatched_at text, provider_receipt_id integer references action_receipts(id))",
     "create index idx_action_receipts_action on action_receipts(action_id,id)",
     "create unique index idx_action_receipts_execution_order on action_receipts(execution_id,action_index) "
     "where execution_id is not null",
-    "create unique index idx_action_receipts_one_successor on action_receipts(supersedes_provider_receipt_id) "
-    "where supersedes_provider_receipt_id is not null",
     "create table action_observers (action_id integer not null references actions(id), agent_run_id integer not null, "
     "task_id integer not null, created_at text not null, primary key(action_id,agent_run_id))",
     "create trigger trg_action_receipt_owner_insert before insert on action_receipts when not exists("
@@ -67,10 +62,6 @@ RECEIPT_SCHEMA_DDL = (
     "when new.provider_receipt_id is not null and not exists(select 1 from action_receipts r "
     "where r.id=new.provider_receipt_id and r.action_id=new.action_id and r.provider_result_json is not null) "
     "begin select raise(abort,'provider receipt reference must resolve within Action'); end",
-    "create trigger trg_action_receipt_supersedes_owner_insert before insert on action_receipts "
-    "when new.supersedes_provider_receipt_id is not null and not exists(select 1 from action_receipts r "
-    "where r.id=new.supersedes_provider_receipt_id and r.action_id=new.action_id and r.provider_result_json is not null) "
-    "begin select raise(abort,'superseded provider receipt must resolve within Action'); end",
     "create trigger trg_action_receipt_reference_owner_update before update of provider_receipt_id on action_receipts "
     "when new.provider_receipt_id is not null and old.provider_receipt_id is not new.provider_receipt_id and not exists("
     "select 1 from action_receipts r where r.id=new.provider_receipt_id and r.action_id=new.action_id and r.provider_result_json is not null) "
@@ -81,11 +72,10 @@ RECEIPT_SCHEMA_DDL = (
     "create trigger trg_action_receipt_identity_immutable before update of id,action_id on action_receipts "
     "when old.id is not new.id or old.action_id is not new.action_id begin "
     "select raise(abort,'receipt identity and owner are immutable'); end",
-    "create trigger trg_action_receipt_lineage_immutable before update of provider_result_json,result_digest,supersedes_provider_receipt_id,provider_receipt_id on action_receipts "
+    "create trigger trg_action_receipt_lineage_immutable before update of provider_result_json,result_digest,provider_receipt_id on action_receipts "
     "when old.provider_result_json is not new.provider_result_json or "
     "(old.result_digest is not new.result_digest and not (old.result_digest is null and "
     "exists(select 1 from actions a where a.record_type='action' and a.id=old.action_id and a.action_delivery_receipt_id=old.id))) or "
-    "old.supersedes_provider_receipt_id is not new.supersedes_provider_receipt_id or "
     "(old.provider_receipt_id is not new.provider_receipt_id and not ("
     "((exists(select 1 from actions a where a.record_type='action' and a.id=old.action_id and a.action_delivery_receipt_id=old.id) "
     "or (old.provider_result_json is null and old.execution_id is null and old.action_index is null) "

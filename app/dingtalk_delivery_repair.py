@@ -144,14 +144,14 @@ def apply_delivery_reverification(store, proof: dict) -> bool:
             # Agent runs and historical Attempt rows are never rewritten.
             run = db.execute(f"select * from ({AGENT_RUN_SQL}) where id=?", (row["first_agent_run_id"],)).fetchone()
             if run is not None:
-                task = db.execute(f"select tasks.*, {task20_column('reply_tasks', 'execution_generation')} as execution_generation, {task20_column('reply_tasks', 'status')} as status, {task20_column('reply_tasks', 'error')} as error from tasks where record_type='reply_tasks' and legacy_key=?", (str(run["reply_task_id"]),)).fetchone()
-                if task is not None and task["execution_generation"] == run["execution_generation"]:
-                    if task["status"] in ("pending", "processing"):
+                task = db.execute(f"select tasks.*, {task20_column('reply_tasks', 'execution_generation')} as repair_generation, {task20_column('reply_tasks', 'status')} as repair_status, {task20_column('reply_tasks', 'error')} as repair_error from tasks where record_type='reply_tasks' and legacy_key=?", (str(run["reply_task_id"]),)).fetchone()
+                if task is not None and task["repair_generation"] == run["execution_generation"]:
+                    if task["repair_status"] in ("pending", "processing"):
                         raise ValueError("delivery task is active")
-                    if task["status"] == "done":
+                    if task["repair_status"] == "done":
                         changed["verification_repair"]["previous_task_state"] = {
-                            "id": run["reply_task_id"], "execution_generation": task["execution_generation"],
-                            "status": task["status"], "error": task["error"],
+                            "id": run["reply_task_id"], "execution_generation": task["repair_generation"],
+                            "status": task["repair_status"], "error": task["repair_error"],
                         }
                         db.execute(f"""update tasks set {task8_set_parts('reply_tasks', {}, update_sql={'status': "'failed'", 'error': '?', 'updated_at': '?'}).sql} where id=?""",
                                    (error_code, proof["queried_at"], task["id"]))
@@ -162,7 +162,13 @@ def apply_delivery_reverification(store, proof: dict) -> bool:
             result_digest=hashlib.sha256(body.encode()).hexdigest(),
             agent_run_id=row["first_agent_run_id"], observed_at=proof["queried_at"],
             status=action_status,
-            supersedes_provider_receipt_id=row["provider_receipt_id"],
+        )
+        shared_action_lifecycle.advance_canonical_provider_reference(
+            db, action_id=shared_action_lifecycle._reviewed_action_by_key(db, key)['id'],
+            provider_receipt_id=provider_receipt_id,
+        )
+        shared_action_lifecycle.advance_sent_provider_reference(
+            db, external_action_key=key, provider_receipt_id=provider_receipt_id,
         )
         for attempt in attempts:
             shared_action_lifecycle.record_reviewed_action_outcome(
@@ -171,6 +177,11 @@ def apply_delivery_reverification(store, proof: dict) -> bool:
                 status=action_status, agent_run_id=attempt["agent_run_id"],
                 updated_at=proof["queried_at"],
             )
+        shared_action_lifecycle.retire_unreferenced_provider_receipt(
+            db, action_id=shared_action_lifecycle._reviewed_action_by_key(db, key)['id'],
+            receipt_id=row['provider_receipt_id'],
+            expected_provider_json=row['provider_result_json'],
+        )
     return True
 
 
@@ -349,7 +360,7 @@ def apply_native_chat_readback(store, proof: dict) -> bool:
                 },
             }}
             result_json = json.dumps(changed, ensure_ascii=False, sort_keys=True, separators=(",", ":"))
-            shared_action_lifecycle.record_reviewed_provider_receipt(
+            provider_receipt_id = shared_action_lifecycle.record_reviewed_provider_receipt(
                 db, external_action_key=sent["external_action_key"],
                 operation=receipt["operation"],
                 target_json=receipt["target_identifiers_json"],
@@ -357,7 +368,21 @@ def apply_native_chat_readback(store, proof: dict) -> bool:
                 result_digest=hashlib.sha256(result_json.encode()).hexdigest(),
                 agent_run_id=receipt["first_agent_run_id"], observed_at=queried_at,
                 status="verified",
-                supersedes_provider_receipt_id=receipt["provider_receipt_id"],
+            )
+            shared_action_lifecycle.advance_canonical_provider_reference(
+                db, action_id=shared_action_lifecycle._reviewed_action_by_key(
+                    db, sent['external_action_key'])['id'],
+                provider_receipt_id=provider_receipt_id,
+            )
+            shared_action_lifecycle.advance_sent_provider_reference(
+                db, external_action_key=sent["external_action_key"],
+                provider_receipt_id=provider_receipt_id,
+            )
+            shared_action_lifecycle.retire_unreferenced_provider_receipt(
+                db, action_id=shared_action_lifecycle._reviewed_action_by_key(
+                    db, sent['external_action_key'])['id'],
+                receipt_id=receipt['provider_receipt_id'],
+                expected_provider_json=receipt['provider_result_json'],
             )
             task_cursor = db.execute(
                 f"""update tasks set {task8_set_parts('reply_tasks', {}, update_sql={'status': "'done'", 'error': "''", 'available_at': "''", 'locked_at': 'null', 'updated_at': '?'}).sql} where record_type='reply_tasks' and id=? and {task20_column('reply_tasks', 'status')}='failed' and {task20_column('reply_tasks', 'error')}='external_action_uncertain' and {task20_column('reply_tasks', 'execution_generation')}=?""",
@@ -463,7 +488,15 @@ def apply_native_chat_readback(store, proof: dict) -> bool:
             provider_json=result_json, result_digest=result_digest,
             agent_run_id=receipt["first_agent_run_id"], observed_at=queried_at,
             status="verified",
-            supersedes_provider_receipt_id=receipt["provider_receipt_id"],
+        )
+        shared_action_lifecycle.advance_canonical_provider_reference(
+            db, action_id=shared_action_lifecycle._reviewed_action_by_key(
+                db, sent['external_action_key'])['id'],
+            provider_receipt_id=provider_receipt_id,
+        )
+        shared_action_lifecycle.advance_sent_provider_reference(
+            db, external_action_key=sent["external_action_key"],
+            provider_receipt_id=provider_receipt_id,
         )
 
         for attempt in attempts:
@@ -475,6 +508,12 @@ def apply_native_chat_readback(store, proof: dict) -> bool:
                 provider_receipt_id=(provider_receipt_id if confirmed else attempt["provider_receipt_id"]),
                 agent_run_id=attempt["agent_run_id"], updated_at=queried_at,
             )
+        shared_action_lifecycle.retire_unreferenced_provider_receipt(
+            db, action_id=shared_action_lifecycle._reviewed_action_by_key(
+                db, sent['external_action_key'])['id'],
+            receipt_id=receipt['provider_receipt_id'],
+            expected_provider_json=receipt['provider_result_json'],
+        )
         execution_result = SystemExecutionResult(
             outcome="executed", summary="Existing DingTalk reply verified by complete native chat history readback",
             external_result={"operation_id": sent["external_action_key"],

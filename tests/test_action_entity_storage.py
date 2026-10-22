@@ -107,14 +107,13 @@ def test_distinct_historical_receipts_survive():
     })
     second = append_action_receipt(db, action["id"], values={
         "provider_result_json": '{"status":"sent"}', "result_digest": "new",
-        "supersedes_provider_receipt_id": first,
     })
     assert [tuple(row) for row in db.execute("select provider_result_json from action_receipts where id in (?,?) order by id", (first, second))] == [
         ('{"status":"unknown"}',), ('{"status":"sent"}',),
     ]
 
 
-def test_external_result_projection_uses_canonical_correction_tip():
+def test_external_result_projection_uses_direct_canonical_binding():
     from app.action_storage import EXTERNAL_ACTION_RESULT_SQL
 
     db = entity_db()
@@ -160,7 +159,6 @@ def test_external_result_projection_uses_canonical_correction_tip():
     correction = append_action_receipt(db, action["id"], values={
         "operation": "message.send", "target": '{"id":"target"}',
         "provider_result_json": '{"receipt":"corrected"}', "result_digest": "corrected",
-        "supersedes_provider_receipt_id": original,
         "agent_run_id": agent_run_id,
     })
     sent_fact = append_action_receipt(db, action["id"], values={
@@ -168,6 +166,12 @@ def test_external_result_projection_uses_canonical_correction_tip():
         "target": '{"id":"target"}', "result_digest": "original",
         "agent_run_id": agent_run_id, "observed_at": "sent-clock",
         "created_at": "canonical-root-clock",
+    })
+    binding = append_action_receipt(db, action["id"], values={
+        "provider_receipt_id": correction, "operation": "message.send",
+        "target": '{"id":"target"}', "result_digest": "original",
+        "agent_run_id": agent_run_id, "created_at": "canonical-root-clock",
+        "observed_at": "canonical-observed-clock",
     })
     from app.action_entity_storage import record_action_result
     assert record_action_result(db, action["id"], expected={"delivery_receipt_id": None},
@@ -179,6 +183,15 @@ def test_external_result_projection_uses_canonical_correction_tip():
         ("external-key",),
     ).fetchone()
     assert tuple(result) == ('{"receipt":"corrected"}', correction, '{"id":"target"}')
+    assert db.execute(
+        "select send_result_json from (select r.provider_result_json as send_result_json "
+        "from actions a join action_receipts s on s.id=a.action_delivery_receipt_id "
+        "join action_receipts r on r.id=s.provider_receipt_id where a.id=?)", (action["id"],)
+    ).fetchone()[0] == '{"receipt":"original"}'
+    assert tuple(db.execute(
+        "select provider_receipt_id,created_at,agent_run_id from action_receipts where id=?",
+        (binding,),
+    ).fetchone()) == (correction, "canonical-root-clock", agent_run_id)
 
 
 def test_execution_slot_has_one_current_observation_but_provider_versions_remain_distinct():
@@ -206,7 +219,6 @@ def test_execution_slot_has_one_current_observation_but_provider_versions_remain
     })
     new_version = append_action_receipt(db, action["id"], values={
         "provider_result_json": '{"accepted":true}', "result_digest": "new",
-        "supersedes_provider_receipt_id": old_version,
     })
     assert old_version != new_version != first
 

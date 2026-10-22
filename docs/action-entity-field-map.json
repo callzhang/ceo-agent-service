@@ -2964,11 +2964,11 @@
     "normalization_reason": "Multiple candidate execution observations can share one verified canonical external result. Keep local outcomes and clocks on execution observation receipts; keep the provider result once on its canonical result receipt.",
     "version_lineage": {
       "version_owner": "Action Receipt.provider_result_json",
-      "current_version": "For an observation's exact provider_receipt_id, follow its unique supersedes_provider_receipt_id successor chain; the terminal provider-result receipt with no successor in that chain is the current canonical version. Unlinked receipt facts remain independent roots.",
-      "supersedes": "supersedes_provider_receipt_id points to a prior immutable provider-result receipt owned by the same Action; the link cannot be changed after insert; one successor per prior version and links point to lower receipt IDs",
-      "reference": "provider_receipt_id on each NULL local outcome is set to the exact provider-result version referenced and cannot be changed once set",
-      "source_correction": "Copy-before-update in app/action_storage.py:preserve_candidate_result_references and app/reviewed_candidate_store.py:record_candidate_external_action; append accepted ambiguous-to-sent correction with same nested provider_result and preserve the old body",
-      "independent_facts": "A provider-result receipt without a supersedes link is a distinct historical fact. Do not attach email attempts or any other receipt solely because they share an Action."
+      "current_version": "The canonical reference-only metadata receipt points directly to the current immutable provider-result body. Each candidate observation and Sent fact keeps its exact provider_receipt_id, so passive correction preserves the source-observable prior body.",
+      "canonical_binding": "The canonical metadata receipt preserves the first source operation, target, agent_run_id, created_at and observed_at. Its provider_receipt_id may advance to the corrected body; current result_digest is projected from that referenced body.",
+      "source_correction": "record_candidate_external_action accepts only the source ambiguous-to-sent transition with unchanged nested provider_result. The current observation advances to the corrected body. Other exact observation/Sent references stay on their original immutable body; only an unreferenced replaced verification wrapper may be retired.",
+      "prior_mismatch": "If a prior reconciliation supplies a result different from the existing canonical body, preserve the canonical metadata and body and keep the supplied result local to that exact attempt.",
+      "independent_facts": "A distinct provider send receipt and any body still referenced by an independent observation or Sent fact remain intact. No receipt is attached solely because it shares an Action."
     }
   },
   "target": {
@@ -3312,17 +3312,7 @@
           "sent_replies.send_result_json"
         ],
         "nullable": true,
-        "meaning": "Technical exact-reference link from a local NULL outcome to its provider-result receipt version; initial assignment requires the referenced result receipt to have the same immutable Action owner, and set links cannot be changed."
-      },
-      {
-        "name": "supersedes_provider_receipt_id",
-        "sources": [
-          "external_action_results.external_action_key",
-          "external_action_results.provider_result_json",
-          "external_action_results.result_digest"
-        ],
-        "nullable": true,
-        "meaning": "Append-only technical lineage from a corrected canonical result version to its prior provider receipt; the reference and receipt owner identity are immutable, and one successor per version identifies the chain tip."
+        "meaning": "Technical reference from an exact local observation or reference-only canonical metadata receipt to an immutable provider-result body. Observation/Sent references retain their exact source body; only the canonical metadata reference advances during an accepted source correction."
       }
     ],
     "table": "actions",
@@ -3361,7 +3351,7 @@
     ],
     "current_release_ddl": "docs/action-entity-current-target.sql",
     "current_release_ddl_scope": "Exact 507-object current Store/Email target manifest; generated directly from current_objects(email_ledger=True). The original action-entity-target.sql remains the initial field-contract fixture used by its validator.",
-    "current_release_ddl_sha256": "90aa2b32a5111db110a16a10fb75d94b3a93098791cc568b546945f4395d282e"
+    "current_release_ddl_sha256": "b5711b67f0597da0530b25bdcb238f29a0b279622f4751b07a384df744db83e9"
   },
   "indexes": [
     {
@@ -3398,11 +3388,6 @@
       "name": "idx_action_receipts_execution_order",
       "decision": "replace with unique partial",
       "reason": "preserve source candidate_action_attempts UNIQUE(execution_id,action_index) cardinality for one current observation per execution/action slot; ordinary provider receipt versions have NULL execution_id and remain distinct."
-    },
-    {
-      "name": "idx_action_receipts_one_successor",
-      "decision": "add unique partial",
-      "reason": "a provider receipt version may have only one immutable successor in its correction chain"
     },
     {
       "name": "email_direct_retry_requests.email_action_id -> actions.id",

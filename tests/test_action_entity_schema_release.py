@@ -171,22 +171,31 @@ def test_populated_external_result_is_transferred_to_common_action(tmp_path, mon
         maps = db.execute(
             "select source_type,action_id,receipt_id from action_entity_identity_map order by source_type"
         ).fetchall()
-        canonical_receipt = db.execute(
-            "select id from action_receipts where action_id=? and execution_id is null", (action_id,),
-        ).fetchone()[0]
+        canonical_body, canonical_binding = db.execute(
+            "select body.id,binding.id from action_receipts binding "
+            "join action_receipts body on body.id=binding.provider_receipt_id "
+            "where binding.action_id=? and binding.provider_result_json is null "
+            "and binding.provider_receipt_id is not null", (action_id,),
+        ).fetchone()
         attempt_receipt = db.execute(
             "select id from action_receipts where action_id=? and execution_id is not null", (action_id,),
         ).fetchone()[0]
         assert maps == [
             ("candidate_action_attempts", action_id, attempt_receipt),
-            ("external_action_results", action_id, canonical_receipt),
+            ("external_action_results", action_id, canonical_binding),
         ]
+        assert db.execute("select operation,target,result_digest,agent_run_id,created_at,observed_at "
+                          "from action_receipts where id=?", (canonical_binding,)).fetchone() == (
+            "send_group_message", '{"conversation_id":"conversation-5"}',
+            "sha256:provider-17", 901, "2026-10-21T10:00:00Z",
+            "2026-10-21T10:00:00Z",
+        )
+        assert canonical_body != canonical_binding
         assert db.execute("select action_id,execution_id,action_index,status,outcome_json,provider_receipt_id "
                           "from action_receipts where action_id=? and execution_id is not null",
                           (action_id,)).fetchall() == [
             (action_id, execution_id, 0, "verified", None,
-             db.execute("select id from action_receipts where action_id=? and execution_id is null",
-                        (action_id,)).fetchone()[0])]
+             canonical_body)]
         assert db.execute("select action_id,receipt_id from action_entity_identity_map "
                           "where source_type='candidate_action_attempts'").fetchone()[0] == action_id
 

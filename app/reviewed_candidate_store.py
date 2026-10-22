@@ -515,17 +515,22 @@ class ReviewedCandidateStoreMixin:
                         or saved["operation"] != action["operation"]
                         or saved["target_identifiers_json"] != target_json):
                     raise ValueError("conflicting external action result")
-                provider_receipt_id = (saved["provider_receipt_id"]
-                                       if saved is not None and saved["provider_result_json"] == provider_json
-                                       else shared_action_lifecycle.record_reviewed_provider_receipt(
-                                           db, external_action_key=external_action_key,
-                                           operation=action["operation"], target_json=target_json,
-                                           provider_json=provider_json, result_digest=result_digest,
-                                           agent_run_id=candidate["consumer_run_id"],
-                                           observed_at=_db_timestamp(db),
-                                           supersedes_provider_receipt_id=(saved["provider_receipt_id"] if saved else None),
-                                       ))
-                result_json = None
+                if saved is not None and saved["provider_result_json"] == provider_json:
+                    provider_receipt_id = saved["provider_receipt_id"]
+                    result_json = None
+                elif saved is not None:
+                    # The predecessor keeps an independently observed result
+                    # when another execution already owns the canonical body.
+                    provider_receipt_id = saved["provider_receipt_id"]
+                else:
+                    provider_receipt_id = shared_action_lifecycle.record_reviewed_provider_receipt(
+                        db, external_action_key=external_action_key,
+                        operation=action["operation"], target_json=target_json,
+                        provider_json=provider_json, result_digest=result_digest,
+                        agent_run_id=candidate["consumer_run_id"],
+                        observed_at=_db_timestamp(db),
+                    )
+                    result_json = None
             else:
                 provider_receipt_id = None
             shared_action_lifecycle.record_reviewed_action_outcome(
@@ -589,10 +594,7 @@ class ReviewedCandidateStoreMixin:
                 or saved["operation"] != operation or saved["target_identifiers_json"] != target_json):
                 raise ValueError("conflicting external action result")
             provider_receipt_id = saved["provider_receipt_id"] if saved is not None else None
-            if saved is None or saved["provider_result_json"] != provider_json:
-                supersedes_id = provider_receipt_id
-            else:
-                supersedes_id = None
+            replaced_provider_json = None
             if saved is not None and saved["provider_result_json"] != provider_json:
                 previous = json.loads(saved["provider_result_json"])
                 if (previous.get("verification", {}).get("state") != "ambiguous"
@@ -601,6 +603,7 @@ class ReviewedCandidateStoreMixin:
                     raise ValueError("conflicting external action result")
                 updated = {**previous, **provider_result}
                 provider_json = _json(updated)
+                replaced_provider_json = saved["provider_result_json"]
                 provider_receipt_id = None
             if provider_receipt_id is None or provider_json != saved["provider_result_json"]:
                 provider_receipt_id = shared_action_lifecycle.record_reviewed_provider_receipt(
@@ -608,13 +611,22 @@ class ReviewedCandidateStoreMixin:
                     target_json=target_json, provider_json=provider_json,
                     result_digest=hashlib.sha256(provider_json.encode()).hexdigest(),
                     agent_run_id=candidate["consumer_run_id"], observed_at=_db_timestamp(db),
-                    supersedes_provider_receipt_id=supersedes_id,
+                )
+                shared_action_lifecycle.advance_canonical_provider_reference(
+                    db, action_id=attempt['action_owner_id'],
+                    provider_receipt_id=provider_receipt_id,
                 )
             shared_action_lifecycle.record_reviewed_action_outcome(
                 db, attempt=attempt, status="verified", result_json=None,
                 provider_receipt_id=provider_receipt_id,
                 agent_run_id=candidate["consumer_run_id"], updated_at=_db_timestamp(db),
             )
+            if replaced_provider_json is not None:
+                shared_action_lifecycle.retire_unreferenced_provider_receipt(
+                    db, action_id=attempt['action_owner_id'],
+                    receipt_id=saved['provider_receipt_id'],
+                    expected_provider_json=replaced_provider_json,
+                )
             saved = db.execute(f"select * from ({EXTERNAL_ACTION_RESULT_SQL}) where external_action_key=?", (external_action_key,)).fetchone()
             return dict(saved)
 

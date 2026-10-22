@@ -383,6 +383,13 @@ def record_sent_action(db, *, operation=None, target_json=None, provider_json, r
                 expected={'delivery_receipt_id': None},
                 changes={'delivery_receipt_id': sent_fact_id}) is None:
             raise ValueError('Sent receipt reference changed during write')
+    if external_action_key and provider_json is not None:
+        _bind_provider_receipt_metadata(
+            db, action_id=action['id'], provider_receipt_id=int(receipt_id),
+            operation=operation, target_json=target_json,
+            result_digest=result_digest, agent_run_id=agent_run_id,
+            observed_at=now, created_at=now,
+        )
     if agent_run_id is not None and task_id is not None:
         add_action_observer(db, action['id'], agent_run_id=agent_run_id,
                             task_id=task_id, created_at=now)
@@ -395,72 +402,120 @@ def _bind_provider_receipt_metadata(db, *, action_id, provider_receipt_id,
     """Record canonical source metadata as a reference to an immutable body."""
     if any(value is None for value in (operation, target_json, result_digest, agent_run_id)):
         return None
-    expected = (operation, target_json, result_digest, agent_run_id)
     from app.action_entity_storage import get_action, update_sent_receipt
     action = get_action(db, action_id)
-    sent_fact = None
-    if action is not None and action['delivery_receipt_id'] is not None:
-        sent_fact = db.execute(
-            'select id,provider_receipt_id,operation,target,result_digest,agent_run_id,created_at '
-            'from action_receipts where id=? and action_id=?',
-            (action['delivery_receipt_id'], action_id),
-        ).fetchone()
-    existing = None if sent_fact is not None else db.execute(
-        'select id,operation,target,result_digest,agent_run_id from action_receipts '
-        'where action_id=? and provider_receipt_id is not null and provider_result_json is null '
-        'and execution_id is null and action_index is null order by id limit 1',
-        (action_id,),
-    ).fetchone()
-    if sent_fact is not None:
-        values = tuple(sent_fact[key] for key in ('operation', 'target', 'result_digest', 'agent_run_id'))
-        changes = {}
-        for field, value in zip(('operation', 'target', 'result_digest', 'agent_run_id'), expected):
-            if sent_fact[field] is None:
-                changes[field] = value
-            elif sent_fact[field] != value:
-                raise ValueError('Sent receipt already has different canonical metadata')
-        if sent_fact['provider_receipt_id'] != provider_receipt_id:
-            changes['provider_receipt_id'] = provider_receipt_id
-        # Canonical creation time belongs to the adopted canonical root; the
-        # original Sent observation clock remains immutable on this row.
-        if sent_fact['created_at'] is None:
-            changes['created_at'] = created_at
-            changes['updated_at'] = created_at
-        if changes and update_sent_receipt(
-            db, action_id, receipt_id=int(sent_fact['id']),
-            expected={key: sent_fact[key] for key in (
-                'provider_receipt_id', 'operation', 'target', 'result_digest', 'agent_run_id'
-            )}, changes=changes,
-        ) is None:
-            raise ValueError('Sent receipt metadata changed during adoption')
-        return int(sent_fact['id'])
+    if action is None:
+        raise ValueError('canonical provider Action is missing')
+    metadata = db.execute(
+        'select id,provider_receipt_id,operation,target,result_digest,agent_run_id,created_at,observed_at '
+        'from action_receipts where action_id=? and provider_result_json is null '
+        'and provider_receipt_id is not null and status is null and attempt_number is null '
+        'and execution_id is null and action_index is null '
+        'and target is not null and agent_run_id is not null and created_at is not null '
+        'and id not in (select coalesce(action_delivery_receipt_id,-1) from actions where id=?) '
+        'and id not in (select coalesce(action_prepared_receipt_id,-1) from actions where id=?)',
+        (action_id, action_id, action_id),
+    ).fetchall()
+    if len(metadata) > 1:
+        raise ValueError('ambiguous canonical provider metadata receipts')
+    existing = metadata[0] if metadata else None
     if existing is not None:
-        if (existing['operation'] not in (None, operation)
-                or existing['target'] not in (None, target_json)
-                or existing['agent_run_id'] not in (None, agent_run_id)):
-            raise ValueError('provider body already has different canonical metadata')
-        old_reference = db.execute(
-            'select provider_receipt_id from action_receipts where id=?',
-            (existing['id'],),
-        ).fetchone()[0]
-        changes = {'provider_receipt_id': provider_receipt_id}
-        for field, value in (('operation', operation), ('target', target_json),
-                             ('result_digest', result_digest), ('agent_run_id', agent_run_id)):
-            if existing[field] is None:
-                changes[field] = value
-        if update_sent_receipt(
-            db, action_id, receipt_id=int(existing['id']),
-            expected={'provider_receipt_id': old_reference}, changes=changes,
+        if ((existing['operation'] is not None and existing['operation'] != operation)
+                or existing['target'] != target_json):
+            raise ValueError('canonical provider metadata identity changed')
+        # An ordinary writer may observe an older receipt after correction.
+        # Binding creation never moves an established canonical pointer.
+        changes = {}
+        if existing['operation'] is None:
+            changes['operation'] = operation
+        if changes and update_sent_receipt(
+            db, action_id=action_id, receipt_id=int(existing['id']),
+            expected={'operation': existing['operation']},
+            changes=changes,
         ) is None:
-            raise ValueError('canonical provider reference changed during correction')
+            raise ValueError('canonical provider metadata changed during binding')
         return int(existing['id'])
-    from app.action_entity_storage import append_action_receipt, get_action
+    from app.action_entity_storage import append_action_receipt
     return append_action_receipt(db, action_id, values={
         'provider_receipt_id': provider_receipt_id, 'operation': operation,
         'target': target_json, 'result_digest': result_digest,
         'agent_run_id': agent_run_id, 'observed_at': observed_at,
         'created_at': created_at, 'updated_at': created_at,
     })
+
+
+def advance_canonical_provider_reference(db, *, action_id, provider_receipt_id):
+    """Move the stable canonical binding for one explicit corrected result."""
+    from app.action_entity_storage import update_sent_receipt
+
+    metadata = db.execute(
+        'select id,provider_receipt_id from action_receipts where action_id=? '
+        'and provider_result_json is null and provider_receipt_id is not null '
+        'and status is null and attempt_number is null and execution_id is null '
+        'and action_index is null and target is not null and agent_run_id is not null '
+        'and created_at is not null '
+        'and id not in (select coalesce(action_delivery_receipt_id,-1) from actions where id=?) '
+        'and id not in (select coalesce(action_prepared_receipt_id,-1) from actions where id=?)',
+        (action_id, action_id, action_id),
+    ).fetchall()
+    if len(metadata) != 1:
+        raise ValueError('canonical provider metadata binding is missing or ambiguous')
+    binding = metadata[0]
+    if update_sent_receipt(
+        db, action_id=action_id, receipt_id=int(binding['id']),
+        expected={'provider_receipt_id': binding['provider_receipt_id']},
+        changes={'provider_receipt_id': provider_receipt_id},
+    ) is None:
+        raise ValueError('canonical provider reference changed during correction')
+    return int(binding['id'])
+
+
+def retire_unreferenced_provider_receipt(db, *, action_id, receipt_id,
+                                         expected_provider_json):
+    """Retire one replaced verification wrapper when no source fact uses it."""
+    if not db.in_transaction:
+        raise ValueError('provider receipt retirement requires caller-owned transaction')
+    row = db.execute(
+        'select provider_result_json from action_receipts where id=? and action_id=?',
+        (receipt_id, action_id),
+    ).fetchone()
+    if row is None or row['provider_result_json'] != expected_provider_json:
+        raise ValueError('replaced provider receipt changed before retirement')
+    referenced = db.execute(
+        'select exists(select 1 from action_receipts where provider_receipt_id=?) '
+        'or exists(select 1 from actions where record_type=\'action\' and '
+        '(action_delivery_receipt_id=? or action_prepared_receipt_id=?))',
+        (receipt_id, receipt_id, receipt_id),
+    ).fetchone()[0]
+    if referenced:
+        return False
+    cursor = db.execute(
+        'delete from action_receipts where id=? and action_id=? and provider_result_json=?',
+        (receipt_id, action_id, expected_provider_json),
+    )
+    return cursor.rowcount == 1
+
+
+def advance_sent_provider_reference(db, *, external_action_key, provider_receipt_id):
+    """Explicit delivery repair adopts a provider body into the Sent fact."""
+    from app.action_entity_storage import update_sent_receipt
+
+    action = _reviewed_action_by_key(db, external_action_key)
+    if action is None or action['delivery_receipt_id'] is None:
+        return False
+    fact = db.execute(
+        'select provider_receipt_id from action_receipts where id=? and action_id=?',
+        (action['delivery_receipt_id'], action['id']),
+    ).fetchone()
+    if fact is None:
+        raise ValueError('Sent receipt reference is missing during explicit repair')
+    if update_sent_receipt(
+        db, action['id'], receipt_id=action['delivery_receipt_id'],
+        expected={'provider_receipt_id': fact['provider_receipt_id']},
+        changes={'provider_receipt_id': provider_receipt_id},
+    ) is None:
+        raise ValueError('Sent provider reference changed during explicit repair')
+    return True
 
 
 def reviewed_action_steps(db, plan, *, selection=None):
@@ -507,7 +562,7 @@ def claim_outbound_action(db, *, channel, delivery_key, operation):
     """Commit the possible-effect boundary once for one prepared Action."""
     if not db.in_transaction:
         raise ValueError('prepared Action claim requires caller-owned transaction')
-    from app.action_entity_storage import append_action_receipt, get_action
+    from app.action_entity_storage import append_action_receipt
 
     action_id = _prepared_message_action_id(db, channel, delivery_key)
     if action_id is None:
@@ -633,9 +688,7 @@ def begin_reviewed_action(db, *, execution_id, action_index, external_action_key
                           action, candidate, preparation_owner=None,
                           created_at, updated_at):
     """Claim one reviewed effect and append its per-execution observation."""
-    from app.action_entity_storage import (
-        add_action_observer, claim_action, create_action, get_action,
-    )
+    from app.action_entity_storage import claim_action, create_action, get_action
     from app.action_storage import CANDIDATE_ACTION_ATTEMPT_SQL
 
     if not db.in_transaction:
@@ -746,8 +799,6 @@ def begin_reviewed_action(db, *, execution_id, action_index, external_action_key
 def record_reviewed_action_outcome(db, *, attempt, status, result_json,
                                    provider_receipt_id, agent_run_id, updated_at):
     """Update the current execution observation and common Action phase."""
-    from app.action_entity_storage import get_action, record_action_result
-
     if not db.in_transaction:
         raise ValueError('reviewed Action result requires caller-owned transaction')
     action = _reviewed_action_by_key(db, attempt['external_action_key'])
@@ -764,8 +815,7 @@ def record_reviewed_action_outcome(db, *, attempt, status, result_json,
 
 def record_reviewed_provider_receipt(db, *, external_action_key, operation,
                                      target_json, provider_json, result_digest,
-                                     agent_run_id, observed_at, status='verified',
-                                     supersedes_provider_receipt_id=None):
+                                     agent_run_id, observed_at, status='verified'):
     """Append one canonical provider receipt version to the common Action."""
     from app.action_entity_storage import append_action_receipt, get_action
 
@@ -779,23 +829,9 @@ def record_reviewed_provider_receipt(db, *, external_action_key, operation,
         'provider_result_json': provider_json, 'result_digest': result_digest,
         'agent_run_id': agent_run_id, 'observed_at': observed_at,
         'created_at': observed_at, 'updated_at': observed_at,
-        'supersedes_provider_receipt_id': supersedes_provider_receipt_id,
     })
     current = get_action(db, action['id'])
-    if current is not None and current['delivery_receipt_id'] is not None:
-        fact = db.execute(
-            'select provider_receipt_id,observed_at from action_receipts where id=? and action_id=?',
-            (current['delivery_receipt_id'], action['id']),
-        ).fetchone()
-        if fact is not None:
-            from app.action_entity_storage import update_sent_receipt
-            if update_sent_receipt(
-                db, action['id'], receipt_id=current['delivery_receipt_id'],
-                expected={'provider_receipt_id': fact['provider_receipt_id']},
-                changes={'provider_receipt_id': receipt_id},
-            ) is None:
-                raise ValueError('Sent provider reference changed during explicit reverification')
-    elif current is not None:
+    if current is not None and external_action_key:
         _bind_provider_receipt_metadata(
             db, action_id=action['id'], provider_receipt_id=receipt_id,
             operation=operation, target_json=target_json, result_digest=result_digest,
@@ -809,7 +845,7 @@ def adopt_verified_sent_action(db, *, external_action_key, business_object_key,
                                provider_json, result_digest, agent_run_id,
                                observed_at):
     """Attach already-verified Sent evidence to its common Action owner."""
-    from app.action_entity_storage import create_action, get_action, record_action_result
+    from app.action_entity_storage import create_action, record_action_result
 
     if not db.in_transaction:
         raise ValueError('verified Sent adoption requires caller-owned transaction')

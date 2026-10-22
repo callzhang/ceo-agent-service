@@ -33,7 +33,8 @@ def install_action_target(db):
     table_start = DDL.index('CREATE TABLE actions')
     table_end = DDL.index(');', table_start) + 2
     db.execute(DDL[table_start:table_end])
-    for marker in ('create table action_receipts', 'create table action_observers'):
+    for marker in ('create table action_receipts', 'create table action_observers',
+                   'create table action_entity_identity_map'):
         start = DDL.lower().index(marker)
         end = DDL.lower().index(');', start) + 2
         db.execute(DDL[start:end])
@@ -41,7 +42,7 @@ def install_action_target(db):
         sql = line.strip()
         if sql.lower().startswith(('create index ', 'create unique index ')):
             db.execute(sql)
-    for marker in ('create trigger trg_action_receipt_owner_insert', 'create trigger trg_action_observer_owner_insert', 'create trigger trg_action_receipt_reference_owner_insert', 'create trigger trg_action_receipt_supersedes_owner_insert', 'create trigger trg_action_receipt_reference_owner_update', 'create trigger trg_action_receipt_identity_immutable', 'create trigger trg_action_receipt_lineage_immutable'):
+    for marker in ('create trigger trg_action_receipt_owner_insert', 'create trigger trg_action_observer_owner_insert', 'create trigger trg_action_receipt_reference_owner_insert', 'create trigger trg_action_receipt_reference_owner_update', 'create trigger trg_action_receipt_identity_immutable', 'create trigger trg_action_receipt_lineage_immutable'):
         start = DDL.lower().index(marker)
         end = DDL.lower().index('end;', start) + 4
         db.executescript(DDL[start:end])
@@ -237,19 +238,22 @@ def test_duplicate_execution_keys_share_one_action_without_losing_local_outcomes
         ]
 
 
-def test_null_reference_stays_bound_to_original_provider_receipt_after_correction():
+def test_canonical_binding_moves_without_changing_exact_observation_reference():
     with sqlite3.connect(':memory:') as db:
         db.execute('pragma foreign_keys=on')
         install_action_target(db)
         db.execute('pragma foreign_keys=off')
-        db.execute("insert into actions(id,_kind,legacy_key,action_data,payload_json) values (1,70,NULL,jsonb(?),jsonb('[]'))", (json.dumps({'external_action_key':'stable-key','status':'verified'}),))
+        action_data = {'external_action_key':'stable-key','business_object_key':'business',
+                       'action_identity':'identity','status':'verified'}
+        db.execute("insert into actions(id,_kind,legacy_key,action_data,payload_json) values (1,70,NULL,jsonb(?),jsonb('[]'))", (json.dumps(action_data),))
         db.commit()
         db.execute('pragma foreign_keys=on')
         old_body = '{"verification":{"state":"ambiguous"},"provider_result":{"id":"provider-1"}}'
         corrected_body = '{"verification":{"state":"sent"},"provider_result":{"id":"provider-1"}}'
-        db.execute("insert into action_receipts(id,action_id,provider_result_json,result_digest,created_at) values (1,1,?,'d1','v1')", (old_body,))
+        db.execute("insert into action_receipts(id,action_id,operation,target,provider_result_json,result_digest,agent_run_id,created_at) values (1,1,'send','target',?,'d1',21,'first-clock')", (old_body,))
         db.execute("insert into action_receipts(id,action_id,status,execution_id,action_index,outcome_json,provider_receipt_id,updated_at) values (2,1,'verified',10,0,NULL,1,'t1')")
-        db.execute("insert into action_receipts(id,action_id,provider_result_json,result_digest,created_at,supersedes_provider_receipt_id) values (3,1,?,'d2','v2',1)", (corrected_body,))
+        db.execute("insert into action_receipts(id,action_id,operation,target,provider_result_json,result_digest,agent_run_id,created_at) values (3,1,'send','target',?,'d2',22,'corrected-clock')", (corrected_body,))
+        db.execute("insert into action_receipts(id,action_id,provider_receipt_id,operation,target,result_digest,agent_run_id,created_at,observed_at) values (4,1,1,'send','target','d1',21,'first-clock','sent-clock')")
         db.commit()
         db.execute('pragma foreign_keys=off')
         db.execute("insert into actions(id,_kind,legacy_key,action_data,payload_json) values (2,70,NULL,jsonb(?),jsonb('[]'))", (json.dumps({'external_action_key':'other-key','status':'verified'}),))
@@ -258,20 +262,17 @@ def test_null_reference_stays_bound_to_original_provider_receipt_after_correctio
         db.execute("insert into action_receipts(id,action_id,provider_result_json,result_digest,created_at) values (8,2,'{}','other','other-action')")
         assert db.execute('select provider_receipt_id,outcome_json from action_receipts where id=2').fetchone() == (1, None)
         assert db.execute('select r.provider_result_json from action_receipts o join action_receipts r on r.id=o.provider_receipt_id where o.id=2').fetchone()[0] == old_body
-        assert db.execute('select provider_result_json,supersedes_provider_receipt_id from action_receipts where id=3').fetchone() == (corrected_body, 1)
-        assert db.execute('with recursive chain(id) as (select provider_receipt_id from action_receipts where id=2 union all select r.id from action_receipts r join chain c on r.supersedes_provider_receipt_id=c.id) select id from chain where not exists(select 1 from action_receipts n where n.supersedes_provider_receipt_id=chain.id)').fetchone()[0] == 3
-        db.execute("insert into action_receipts(id,action_id,provider_result_json,created_at) values (4,1,'null','unlinked-historical')")
-        db.execute("insert into action_receipts(id,action_id,provider_result_json,created_at) values (5,1,'{}','unlinked-historical-2')")
-        db.execute("insert into action_receipts(id,action_id,status,outcome_json,created_at) values (6,1,'uncertain','null','no-provider-body')")
-        assert db.execute('select provider_result_json,supersedes_provider_receipt_id from action_receipts where id in (4,5) order by id').fetchall() == [('null', None), ('{}', None)]
-        assert db.execute('select provider_result_json,outcome_json from action_receipts where id=6').fetchone() == (None, 'null')
+        assert db.execute('select provider_receipt_id,created_at,agent_run_id from action_receipts where id=4').fetchone() == (1, 'first-clock', 21)
+        db.execute('update action_receipts set provider_receipt_id=3 where id=4')
+        assert db.execute('select provider_receipt_id,created_at,agent_run_id from action_receipts where id=4').fetchone() == (3, 'first-clock', 21)
+        assert db.execute('select r.provider_result_json from action_receipts m join action_receipts r on r.id=m.provider_receipt_id where m.id=4').fetchone()[0] == corrected_body
         with pytest.raises(sqlite3.IntegrityError):
             db.execute('update action_receipts set provider_result_json=? where id=1', (corrected_body,))
-        assert db.execute('select provider_receipt_id from action_receipts where id=2').fetchone()[0] == 1
-        db.execute('update action_receipts set provider_receipt_id=3 where id=2')
-        assert db.execute('select provider_receipt_id from action_receipts where id=2').fetchone()[0] == 3
-        with pytest.raises(sqlite3.IntegrityError):
-            db.execute('update action_receipts set supersedes_provider_receipt_id=null where id=3')
+        db.execute("insert into action_receipts(id,action_id,provider_result_json,created_at) values (5,1,'null','unlinked-historical')")
+        db.execute("insert into action_receipts(id,action_id,provider_result_json,created_at) values (6,1,'{}','unlinked-historical-2')")
+        db.execute("insert into action_receipts(id,action_id,status,outcome_json,created_at) values (7,1,'uncertain','null','no-provider-body')")
+        assert db.execute('select provider_result_json from action_receipts where id in (5,6) order by id').fetchall() == [('null',), ('{}',)]
+        assert db.execute('select provider_result_json,outcome_json from action_receipts where id=7').fetchone() == (None, 'null')
         with pytest.raises(sqlite3.IntegrityError):
             db.execute('update action_receipts set action_id=2 where id=1')
         with pytest.raises(sqlite3.IntegrityError):
@@ -282,9 +283,7 @@ def test_null_reference_stays_bound_to_original_provider_receipt_after_correctio
         db.execute('update action_receipts set provider_receipt_id=1 where id=9')
         assert db.execute('select provider_receipt_id from action_receipts where id=9').fetchone()[0] == 1
         with pytest.raises(sqlite3.IntegrityError):
-            db.execute('insert into action_receipts(id,action_id,provider_result_json,supersedes_provider_receipt_id) values (7,1,\'{}\',1)')
-        with pytest.raises(sqlite3.IntegrityError):
-            db.execute("insert into action_receipts(action_id,status,execution_id,action_index,provider_receipt_id) values (1,'verified',11,0,999)")
+            db.execute("insert into action_receipts(id,action_id,status,execution_id,action_index,provider_receipt_id) values (11,1,'verified',11,0,999)")
 
 
 def test_missing_parent_and_distinct_receipt_facts_are_preserved():

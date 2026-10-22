@@ -66,44 +66,19 @@ def source_identity(source_table: str, source_id: object) -> tuple[str, str, str
 
 
 def build_target_ddl() -> str:
-    """Rebuild the current Actions declaration with one shared Action kind."""
-    from app.current_action_schema import source_current_action_objects
+    """Render the exact current shared Actions and receipt declarations."""
+    from app.current_action_schema import current_action_objects, _action_entity_objects
 
-    objects = source_current_action_objects()
-    table = next(item["sql"] for item in objects if item["type"] == "table")
-    table = table.replace("_kind in (", f"_kind in ({ACTION_KIND},", 1)
-    table = table.replace("case _kind when ", f"case _kind when {ACTION_KIND} then 'action' when ", 1)
-    table = table.replace("legacy_key text not null check(case when", "legacy_key text check(record_type='action' and legacy_key is null or (case when", 1)
-    table = table.replace("end),task_id integer references", "end)),task_id integer references", 1)
-    table = table.replace("payload_json blob not null,", "action_data blob,payload_json blob not null,", 1)
-    generated = "," + ",".join(
-        f"action_{name} {type_name.lower()} generated always as "
-        f"(case when _kind={ACTION_KIND} then json_extract(action_data,'$.{name}') end) virtual"
-        for name, type_name in ACTION_COLUMNS.items()
-    )
-    marker = ",check(record_type<>'review_candidates'"
-    if marker not in table:
-        raise ValueError("current Actions declaration changed; target rebuild marker missing")
-    table = table.replace(marker, generated + marker, 1)
-    status_sql = ",".join("'" + value.replace("'", "''") + "'" for value in _declared_status_values()['action_status'])
-    table = table[:-1] + f",check(record_type<>'action' or (legacy_key is null and typeof(action_data)='blob' and json_valid(action_data,8) and json_type(action_data)='object')),check(record_type='action' or action_data is null),check(record_type<>'action' or action_status is null or action_status in ({status_sql})))"
-    rendered = ["-- Full current Actions declaration rebuilt with one common Action kind (70).",
-                "-- Existing kinds retain their original columns, checks, indexes and triggers.",
-                "-- Action fields use one fixed JSONB object; generated columns are virtual.", table]
-    for item in objects:
-        if item["type"] == "table":
-            continue
-        sql = item["sql"]
-        if item["type"] == "index" and item["name"] == "idx_actions_public_id":
-            sql = sql.replace("where record_type<>", "where record_type<>'action' and record_type<>", 1)
-        rendered.append(sql)
-    from app.current_action_schema import current_action_objects
-    rendered.extend(item['sql'] for item in current_action_objects()
-                    if item['type'] == 'trigger'
-                    and item['name'].startswith('trg_action_delivery_receipt_owner_'))
-    from app.action_entity_definitions import ACTION_INDEX_DDL, RECEIPT_SCHEMA_DDL
-    rendered.extend(ACTION_INDEX_DDL)
-    rendered.extend(RECEIPT_SCHEMA_DDL)
+    rendered = [
+        "-- Current unified Actions declaration and its fixed receipt relationships.",
+        "-- This artifact is rendered from the same declarations used by blank current stores.",
+    ]
+    action_objects = current_action_objects()
+    entity_objects = _action_entity_objects()
+    rendered.extend(item["sql"] for item in sorted(
+        action_objects, key=lambda item: item["type"] != "table"))
+    rendered.extend(item["sql"] for item in sorted(
+        entity_objects, key=lambda item: item["type"] != "table"))
     return ";\n".join(rendered) + ";\n"
 
 
@@ -260,10 +235,12 @@ def validate_action_entity_contract(contract: dict) -> None:
     if contract.get('receipts', {}).get('preserve_distinct_values') is not True:
         raise ValueError('distinct receipt facts must be retained')
     lineage = contract.get('receipts', {}).get('version_lineage', {})
-    if (lineage.get('current_version') != "For an observation's exact provider_receipt_id, follow its unique supersedes_provider_receipt_id successor chain; the terminal provider-result receipt with no successor in that chain is the current canonical version. Unlinked receipt facts remain independent roots."
-            or 'supersedes_provider_receipt_id' not in lineage.get('supersedes', '')
-            or 'provider_receipt_id' not in lineage.get('reference', '')
-            or 'without a supersedes link' not in lineage.get('independent_facts', '')):
+    if (not all(isinstance(lineage.get(key), str) and lineage[key] for key in (
+            'current_version', 'canonical_binding', 'source_correction',
+            'prior_mismatch', 'independent_facts'))
+            or 'directly to the current immutable provider-result body' not in lineage['current_version']
+            or 'first source operation' not in lineage['canonical_binding']
+            or 'exact attempt' not in lineage['prior_mismatch']):
         raise ValueError('provider receipt version lineage is incomplete')
 
 

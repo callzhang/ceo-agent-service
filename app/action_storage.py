@@ -1005,45 +1005,20 @@ def preserve_candidate_result_references(db, external_action_key, provider_resul
     """Action receipt bodies are immutable and need no denormalized copies."""
     return None
 
-CANONICAL_PROVIDER_RECEIPT_SQL = """with recursive
-canonical_binding(action_id,binding_id,receipt_id,operation,target,result_digest,agent_run_id,created_at) as (
-    select a.id,fact.id,fact.provider_receipt_id,fact.operation,fact.target,
-           fact.result_digest,fact.agent_run_id,fact.created_at
-    from actions a join action_receipts fact on fact.id=coalesce(a.action_delivery_receipt_id,
-      (select metadata.id from action_receipts metadata where metadata.action_id=a.id
-       and metadata.provider_receipt_id is not null and metadata.provider_result_json is null
-       and metadata.execution_id is null and metadata.action_index is null
-       order by metadata.id limit 1))
-    where a.record_type='action' and fact.provider_receipt_id is not null
-), canonical_ancestors(action_id,binding_id,receipt_id,operation,target,result_digest,agent_run_id,created_at) as (
-    select b.action_id,b.binding_id,r.id,b.operation,b.target,b.result_digest,b.agent_run_id,b.created_at
-    from canonical_binding b join action_receipts r
-      on r.id=b.receipt_id and r.action_id=b.action_id and r.provider_result_json is not null
-    union all
-    select root.action_id,root.binding_id,prior.id,root.operation,root.target,
-           root.result_digest,root.agent_run_id,root.created_at
-    from canonical_ancestors root join action_receipts prior
-      on prior.id=(select r.supersedes_provider_receipt_id from action_receipts r
-                   where r.id=root.receipt_id and r.action_id=root.action_id)
-), canonical_roots(action_id,binding_id,root_id,operation,target,result_digest,agent_run_id,created_at) as (
-    select ancestor.action_id,ancestor.binding_id,ancestor.receipt_id,ancestor.operation,
-           ancestor.target,ancestor.result_digest,ancestor.agent_run_id,ancestor.created_at
-    from canonical_ancestors ancestor join action_receipts root on root.id=ancestor.receipt_id
-    where root.supersedes_provider_receipt_id is null
-), canonical_tips(action_id,binding_id,root_id,receipt_id,operation,target,result_digest,agent_run_id,created_at) as (
-    select root.action_id,root.binding_id,root.root_id,root.root_id,root.operation,
-           root.target,root.result_digest,root.agent_run_id,root.created_at
-    from canonical_roots root
-    union all
-    select tip.action_id,tip.binding_id,tip.root_id,next.id,tip.operation,tip.target,
-           tip.result_digest,tip.agent_run_id,tip.created_at
-    from canonical_tips tip join action_receipts next
-      on next.action_id=tip.action_id and next.supersedes_provider_receipt_id=tip.receipt_id
-)
-select action_id,binding_id,root_id,receipt_id,operation,target,result_digest,agent_run_id,created_at
-from canonical_tips where not exists(
-  select 1 from action_receipts successor where successor.action_id=canonical_tips.action_id
-    and successor.supersedes_provider_receipt_id=canonical_tips.receipt_id)"""
+CANONICAL_PROVIDER_RECEIPT_SQL = """select a.id as action_id,metadata.id as binding_id,
+       body.id as receipt_id,coalesce(metadata.operation,a.action_operation) as operation,
+       metadata.target,metadata.result_digest,
+       metadata.agent_run_id,metadata.created_at
+from actions a join action_receipts metadata on metadata.action_id=a.id
+join action_receipts body on body.id=metadata.provider_receipt_id and body.action_id=a.id
+where a.record_type='action' and metadata.provider_result_json is null
+  and metadata.provider_receipt_id is not null and metadata.status is null
+  and metadata.attempt_number is null and metadata.execution_id is null
+  and metadata.action_index is null and metadata.target is not null
+  and metadata.agent_run_id is not null and metadata.created_at is not null
+  and metadata.id is not a.action_delivery_receipt_id
+  and metadata.id is not a.action_prepared_receipt_id
+  and body.provider_result_json is not null"""
 
 EXTERNAL_ACTION_RESULT_SQL = f"""select a.action_external_action_key as external_action_key,
        a.action_business_object_key as business_object_key,

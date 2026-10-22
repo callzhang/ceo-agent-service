@@ -61,13 +61,12 @@ def test_prepared_receipt_is_pinned_separately_from_sent_and_canonical_bodies(tm
         })
         record_action_result(db, action_id,
             expected={'delivery_receipt_id': None}, changes={'delivery_receipt_id': sent_fact})
-        append_action_receipt(db, action_id, values={
-            'operation': 'send_reply_to_trigger', 'target': 'delivery-key',
-            'provider_result_json': '{"source":"canonical"}',
-            'provider_result_id': 'canonical-provider-id', 'result_digest': 'digest',
-            'agent_run_id': 501, 'observed_at': 'canonical-clock',
-            'supersedes_provider_receipt_id': sent_body,
-        })
+        lifecycle.record_reviewed_provider_receipt(
+            db, external_action_key='external-key',
+            operation='send_reply_to_trigger', target_json='delivery-key',
+            provider_json='{"source":"canonical"}', result_digest='digest',
+            agent_run_id=501, observed_at='canonical-clock',
+        )
         prepared_read = db.execute(
             f'select provider_result_json from ({OUTBOUND_POSTFIX_RECEIPT_SQL})').fetchone()[0]
         sent_read = db.execute(f'select send_result_json from ({SENT_REPLY_SQL})').fetchone()[0]
@@ -150,7 +149,6 @@ def test_retry_claim_projection_does_not_reuse_previous_terminal_result(tmp_path
 
 
 def test_completion_rechecks_claim_after_attempt_insert_and_rolls_back(tmp_path):
-    from app.email_store import EmailActionAttemptConflict
     path = tmp_path / 'cas.sqlite3'
     AutoReplyStore(path)
     email = EmailStore(path)

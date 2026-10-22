@@ -141,6 +141,7 @@ def _transfer_external_results(db: sqlite3.Connection, rows: Iterable[dict], own
             raise ValueError("canonical external Action key is empty")
         key = source["external_action_key"]
         action_id = create_action(db, values={
+            "operation": source["operation"],
             "external_action_key": key,
             "business_object_key": source["business_object_key"],
             "action_identity": source["action_identity"],
@@ -151,9 +152,16 @@ def _transfer_external_results(db: sqlite3.Connection, rows: Iterable[dict], own
             "result_digest": source["result_digest"], "agent_run_id": source["first_agent_run_id"],
             "observed_at": source["created_at"],
         })
+        binding_id = append_action_receipt(db, action_id, values={
+            "provider_receipt_id": receipt_id, "operation": source["operation"],
+            "target": source["target_identifiers_json"],
+            "result_digest": source["result_digest"],
+            "agent_run_id": source["first_agent_run_id"],
+            "created_at": source["created_at"], "observed_at": source["created_at"],
+        })
         owners[key] = action_id
         receipts[key] = receipt_id
-        _map(db, "external_action_results", key, action_id, receipt_id)
+        _map(db, "external_action_results", key, action_id, binding_id)
 
 
 def _delivery_key(business_key: str, identity: str, generation: str, revision: int) -> str:
