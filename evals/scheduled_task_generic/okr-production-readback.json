@@ -684,6 +684,37 @@
     "observed_at": "2026-10-22T19:46:02Z",
     "source": "read-only pmset -g log",
     "host_timezone": "America/Los_Angeles",
+    "delayed_scheduled_run_2026_10_20": {
+      "readback_observed_at": "2026-10-22T20:34:46Z",
+      "scheduled_task_run_id": 388053,
+      "scheduled_task_id": 14,
+      "trigger_kind": "scheduled",
+      "scheduled_for": "2026-10-20T13:00:00Z",
+      "created_at": "2026-10-20T22:36:19Z",
+      "dispatched_at": "2026-10-20T22:50:30Z",
+      "dispatch_status": "dispatched",
+      "execution_id": "416316",
+      "occurrence_count": 1,
+      "snapshot_id": 153,
+      "delay_after_scheduled_time_seconds": 34579,
+      "interpretation": "The same-day daily run was delayed by about 9 hours 36 minutes, not absent for the entire day. This old run predates the currently deployed scheduler catch-up repair and does not verify that repair."
+    },
+    "scheduled_window_power_readback": {
+      "readback_observed_at": "2026-10-22T20:37:20Z",
+      "window_local": {
+        "start": "2026-10-20T05:50:00-07:00",
+        "end": "2026-10-20T06:10:00-07:00"
+      },
+      "maintenance_wakes_local": [
+        "2026-10-20T05:52:58-07:00",
+        "2026-10-20T06:06:29-07:00"
+      ],
+      "observed_activity": "Two CPU maintenance wakes; no full wake in the scheduled window",
+      "first_full_wake_local": "2026-10-20T13:38:00-07:00",
+      "supports_host_asleep_at_schedule": true,
+      "proves_service_process_state_at_schedule": false
+    },
+    "causal_limit": "The power timeline strongly points to host sleep at the scheduled time, but cannot establish service process state at 06:00 or explain the roughly two hours between first full wake and scheduled-run creation. A separate startup-recovery SQL error was also present and later fixed; current evidence cannot apportion the delay between the two causes.",
     "production_service_pid": 60193,
     "production_service_started_at": "2026-10-22T10:49:48-07:00",
     "last_observed_sleep_activity_before_service_start": {
