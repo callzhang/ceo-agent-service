@@ -201,8 +201,6 @@ from app.action_storage import (
     task_delivery_projection,
 )
 
-from app.shared_action_definitions import email_projection as email_action_projection
-
 MEETING_JOB_SQL = task20_projection('meeting_alignment_jobs')
 OKR_REQUEST_SQL = task20_projection('okr_review_requests')
 REPLY_TASK_SQL = task20_projection('reply_tasks')
@@ -2812,8 +2810,10 @@ def _reply_task_queue_snapshot(db: sqlite3.Connection) -> dict[str, object]:
 def _email_action_queue_snapshot(db: sqlite3.Connection) -> dict[str, object]:
     """Project only actions the worker can still execute for the current plan."""
 
+    from app.email_store import DIRECT_EMAIL_ACTION_SQL
+
     current_plan = f"""
-        from ({email_action_projection('email_actions')}) as a
+        from ({DIRECT_EMAIL_ACTION_SQL}) as a
          cross join ({email_classification_projection()}) as c on c.id=a.classification_id
         where a.action_plan_id=c.current_action_plan_id
           and c.status='processed'
@@ -3368,7 +3368,7 @@ def _reply_task_attention_diagnostics(raw: str, task_error: str) -> dict[str, st
     return {"error_code": diagnostic, "error": description}
 
 
-def _queue_attention_rows(store: AutoReplyStore, *, limit: int | None = None) -> list[dict[str, str]]:
+def _queue_attention_rows(store: AutoReplyStore, *, limit: int | None = None) -> list[dict[str, object]]:
     specs = [
         (
             "Work item",
@@ -3708,6 +3708,8 @@ def _queue_attention_rows(store: AutoReplyStore, *, limit: int | None = None) ->
             # once it is outside its retry window, so both surfaces agree.
             # Drive compact failed-row selection before large classification
             # payloads. Source rowid preserves nullable public action IDs.
+            from app.email_store import DIRECT_EMAIL_ACTION_SQL
+
             email_action_sql = f"""
                 select a.action_id as id, a.status,
                        coalesce(nullif(c.sender, ''), a.account_id) as context,
@@ -3717,13 +3719,13 @@ def _queue_attention_rows(store: AutoReplyStore, *, limit: int | None = None) ->
                            a.action_type
                        ) as summary,
                        a.updated_at, a.error
-                from ({email_action_projection('email_actions', include_rowid=True)}) as a
+                from ({DIRECT_EMAIL_ACTION_SQL}) as a
                 cross join ({email_classification_projection()}) as c on c.id=a.classification_id
                 where a.action_plan_id=c.current_action_plan_id
                   and c.status='processed'
-                  and a.rowid in (
-                      select rowid from ({email_action_projection('email_actions', include_rowid=True)})
-                      where lower(status)='failed'
+                  and a.action_id in (
+                      select failed.action_id from ({DIRECT_EMAIL_ACTION_SQL}) as failed
+                      where lower(failed.status)='failed'
                   )
                   and not (
                         a.attempt_count < ?
@@ -3740,7 +3742,7 @@ def _queue_attention_rows(store: AutoReplyStore, *, limit: int | None = None) ->
                 rows.append(
                     {
                         "category": "Email action",
-                        "id": str(row["id"]),
+                        "id": int(row["id"]),
                         "status": str(row["status"] or ""),
                         "context": str(row["context"] or ""),
                         "summary": str(row["summary"] or ""),

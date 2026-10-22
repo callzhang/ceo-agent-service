@@ -129,6 +129,8 @@ created_at 及整个原始 JSONB payload 不改写。三个 nullable TEXT 物理
 
 Task3（2026-10-21）将 reviewed、direct-email、prepared-message 与 Sent 执行恢复切换到同一 Action owner。调用方保留原事务、审批、provider 核验和不确定结果恢复边界；prepared 的准备、claim、接受回执仍在各自原有提交边界。prepared Action 在真实发送调用时才记录 provider operation；prepared facts 不借用 Sent 或 provider 时钟。审查执行在每个 execution/action_index 保留一个可更新的当前观察，旧执行的观察与 provider receipt 仍独立保留。direct-email retry 复用原 Action identity 并追加各次执行观察。Sent 历史缺失的 canonical operation、target、digest 或 action identity 保持 NULL；已核验的 failed-Audit 恢复可把这些事实绑定到原 provider body receipt，不复制正文、不重发。普通 provider receipt 不会仅因 ID 较新而取代 canonical correction chain。复杂 unsubscribe 保留原专有流程；这次切换不改变任何审批、授权、核验或重试规则。
 
+Task4（2026-10-21，候选）将 direct-email History、Attention、队列快照、重要邮件清单及邮件分类可观测性读取切换到 Action 与 Action Receipt。发送详情以 Action 的物理 ID、正文、准确 Sent 回执和 `observed_at` 展示；provider 正文只从该 Action 的 provider receipt 读取，缺失的 operation/target 显示为未提供，不合成来源事实。多个 Run observer 仍对应一条发送效果。撤回只更新同一 Action 的撤回字段，不新增发送或改写原发送回执；feedback token 从同一 Action 取得，并继续按其原 conversation/trigger 身份关联消息和反馈。邮件退订仍走其专有流程。
+
 A5a 的既有配对发布只接受准确 Store19.8／Email53，发布 Store19.9／Email53；
 C1 Task 声明和所有历史 Actions 声明输出冻结。current-data inverse 用当前父值重建
 旧子事实，包含正迁后的新准备、claim 和接受回执；只保存声明变体和原 marker 元数据。

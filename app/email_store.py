@@ -124,6 +124,8 @@ EMAIL_ACTION_PROJECTIONS = {kind: email_action_projection(kind) for kind in EMAI
 
 EMAIL_PLAN_SQL = EMAIL_ACTION_PROJECTIONS["email_action_plans"]
 EMAIL_DIRECT_ACTION_SQL = EMAIL_ACTION_PROJECTIONS["email_actions"]
+# Frozen source-shaped projection for historical source-contract assertions;
+# all current direct-action readers use DIRECT_EMAIL_ATTEMPT_SQL below.
 EMAIL_ATTEMPT_SQL = EMAIL_ACTION_PROJECTIONS["email_action_attempts"]
 EMAIL_RETRY_SQL = EMAIL_ACTION_PROJECTIONS["email_direct_retry_requests"]
 EMAIL_FEEDBACK_SQL = EMAIL_ACTION_PROJECTIONS["email_feedback_requests"]
@@ -8836,7 +8838,7 @@ class EmailStore:
                        attempts.status, attempts.provider_operation,
                        attempts.provider_result_id, attempts.error,
                        attempts.started_at, attempts.finished_at
-                from ({EMAIL_ATTEMPT_SQL}) as attempts
+                from ({DIRECT_EMAIL_ATTEMPT_SQL}) as attempts
                 join ({EMAIL_DIRECT_ACTION_SQL}) as actions
                   on actions.action_id=attempts.action_id
                 where actions.classification_id=?

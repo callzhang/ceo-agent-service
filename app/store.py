@@ -711,6 +711,12 @@ class SentReply(BaseModel):
     trigger_message_id: str
     reply_text: str
     send_result_json: str = ""
+    receipt_id: int
+    operation: str | None = None
+    target: str | None = None
+    result_digest: str | None = None
+    provider_receipt_id: int | None = None
+    provider_result_id: str | None = None
     recall_key: str = ""
     recall_status: str = ""
     recall_error: str = ""
@@ -25569,12 +25575,12 @@ class AutoReplyStore(LogicalRunStoreMixin, ReviewedCandidateStoreMixin):
             """,
         }
         if (not source_tables or "email_actions" in source_tables) and self._email_actions_history_available():
-            from app.email_store import DIRECT_ACTION_MAX_ATTEMPTS
+            from app.email_store import DIRECT_ACTION_MAX_ATTEMPTS, DIRECT_EMAIL_ACTION_SQL
 
             candidate_queries["email_actions"] = f"""
-                select actions.rowid as source_id,
+                select actions.action_id as source_id,
                        coalesce(datetime(actions.updated_at), actions.updated_at) as occurred_at
-                from ({email_action_projection('email_actions', include_rowid=True)}) as actions
+                from ({DIRECT_EMAIL_ACTION_SQL}) as actions
                 join ({email_classification_projection()}) as messages
                   on messages.id=actions.classification_id
                 where actions.status='failed'
@@ -26331,16 +26337,16 @@ class AutoReplyStore(LogicalRunStoreMixin, ReviewedCandidateStoreMixin):
                 where {history_types.scheduled_run_filter_sql("runs")}
         """
         if (not source_tables or "email_actions" in source_tables) and self._email_actions_history_available():
-            # The email tables belong to EmailStore, which the service opens
-            # on this same SQLite file; a store opened alone has none.
-            from app.email_store import DIRECT_ACTION_MAX_ATTEMPTS
+            # The EmailStore projection gives the common Action id and its
+            # current receipt facts; the domain source label remains stable.
+            from app.email_store import DIRECT_ACTION_MAX_ATTEMPTS, DIRECT_EMAIL_ACTION_SQL
 
             query += f"""
                 union all
                 select
-                    'email-action:' || actions.rowid as id,
+                    'email-action:' || actions.action_id as id,
                     'email_actions' as source_table,
-                    actions.rowid as source_id,
+                    actions.action_id as source_id,
                     coalesce(datetime(actions.updated_at), actions.updated_at) as occurred_at,
                     'Email action' as category,
                     actions.action_type as action,
@@ -26385,7 +26391,7 @@ class AutoReplyStore(LogicalRunStoreMixin, ReviewedCandidateStoreMixin):
                     0 as project_id,
                     0 as todo_id,
                     0 as follow_up_id
-                from ({email_action_projection('email_actions', include_rowid=True)}) as actions
+                from ({DIRECT_EMAIL_ACTION_SQL}) as actions
                 join ({email_classification_projection()}) as messages
                   on messages.id=actions.classification_id
             """

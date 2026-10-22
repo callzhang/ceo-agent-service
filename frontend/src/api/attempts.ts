@@ -155,6 +155,27 @@ export interface AttemptDetail {
   trigger: { title: string; text: string };
   audit_explanation: { title: string; text: string };
   generated_reply: { title: string; text: string };
+  delivery: {
+    action_id: number;
+    conversation_id: string;
+    trigger_message_id: string;
+    body: string;
+    receipt_id: number;
+    operation: string | null;
+    target: string | null;
+    sent_at: string;
+    source_available: boolean;
+    source_label: string;
+    provider_message_id: string;
+    provider_receipt: {
+      id: number | null;
+      available: boolean;
+      body: string;
+      result_digest: string | null;
+    };
+    recall_status: string;
+    recalled_at: string | null;
+  } | null;
   references: Array<{ title: string; source: string; relevance: string }>;
   feedback: { reviewer_feedback: string; corrected_reply: string; feedback_url: string; events: AttemptFeedbackEvent[] };
   decision_options: Array<{
