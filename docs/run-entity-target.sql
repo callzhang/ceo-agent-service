@@ -9,7 +9,7 @@ CREATE TABLE runs (
 CREATE TABLE run_provenance (
  run_id INTEGER PRIMARY KEY REFERENCES runs(id), source_type TEXT NOT NULL
  CHECK(source_type IN ('task_agent_runs','meeting_alignment_runs','okr_review_runs')), job_id INTEGER)
-CREATE TABLE run_adopted_results (
+CREATE TABLE run_projections (
  run_id INTEGER PRIMARY KEY REFERENCES runs(id), projection_json TEXT NOT NULL)
 CREATE TABLE runtime_attempts (
  id INTEGER PRIMARY KEY AUTOINCREMENT, parent_id INTEGER REFERENCES runs(id),
@@ -25,20 +25,26 @@ CREATE TABLE runtime_attempts (
  result_schema_id TEXT NOT NULL, started_at TEXT NOT NULL, finished_at TEXT NOT NULL,
  created_at TEXT NOT NULL, updated_at TEXT NOT NULL,
  UNIQUE(workload_kind,workload_key,attempt_number),
+ CHECK(attempt_number>0),
+ CHECK(status IN ('starting','running','completed','failed','superseded')),
+ CHECK((workload_kind='agent_run' AND parent_id IS NOT NULL AND workload_key=CAST(parent_id AS TEXT)) OR
+       (workload_kind<>'agent_run' AND parent_id IS NULL)),
  CHECK((session_mode='fresh' AND source_session_id='') OR
-       (session_mode='resume' AND source_session_id<>'')),
+       (session_mode='resume' AND trim(source_session_id)<>'')),
+ CHECK((attempt_purpose='normal' AND validation_retry_policy_id='' AND validation_result_schema_id='') OR
+       (attempt_purpose='result_validation_correction' AND trim(validation_retry_policy_id)<>'' AND trim(validation_result_schema_id)<>'')),
  CHECK(parent_id IS NOT NULL OR status NOT IN ('starting','running') OR
        (trim(lease_owner)<>'' AND trim(lease_expires_at)<>'')))
 CREATE TABLE run_failures (
  id INTEGER PRIMARY KEY AUTOINCREMENT, run_id INTEGER NOT NULL REFERENCES runs(id),
- phase TEXT, structured_error_json TEXT, created_at TEXT NOT NULL DEFAULT current_timestamp)
+ phase TEXT NOT NULL, structured_error_json TEXT NOT NULL, created_at TEXT NOT NULL)
 CREATE TABLE schedule_occurrences (
  id INTEGER PRIMARY KEY AUTOINCREMENT, scheduled_task_id INTEGER NOT NULL REFERENCES schedules(id),
- trigger_kind TEXT NOT NULL, scheduled_for TEXT, dispatch_status TEXT NOT NULL,
- skip_or_error_reason TEXT, event_id TEXT UNIQUE, execution_kind TEXT, execution_id TEXT,
- dispatched_at TEXT, first_scheduled_for TEXT, occurrence_count INTEGER,
- result_summary TEXT, snapshot_id INTEGER REFERENCES configs(schedule_snapshot_public_id),
- lease_owner TEXT, lease_expires_at TEXT, created_at TEXT NOT NULL,
+ trigger_kind TEXT NOT NULL, scheduled_for TEXT NOT NULL, dispatch_status TEXT NOT NULL,
+ skip_or_error_reason TEXT NOT NULL, event_id TEXT NOT NULL UNIQUE, execution_kind TEXT NOT NULL, execution_id TEXT NOT NULL,
+ dispatched_at TEXT, first_scheduled_for TEXT NOT NULL, occurrence_count INTEGER NOT NULL,
+ result_summary TEXT NOT NULL, snapshot_id INTEGER REFERENCES configs(schedule_snapshot_public_id),
+ lease_owner TEXT NOT NULL, lease_expires_at TEXT, created_at TEXT NOT NULL,
  CHECK(trigger_kind IN ('scheduled','manual')),
  CHECK(dispatch_status IN ('pending','dispatched','skipped','failed')))
 CREATE TABLE workbench_events (
@@ -105,7 +111,29 @@ WHEN (NEW.source_type='task_agent_runs' AND NOT EXISTS (
  SELECT 1 FROM runs r JOIN tasks t ON t.id=r.task_id
  WHERE r.id=NEW.run_id AND t.kind='okr_review'))
 BEGIN SELECT RAISE(ABORT,'Run source and Task kind mismatch'); END
-CREATE TRIGGER trg_run_provenance_immutable BEFORE UPDATE ON run_provenance BEGIN SELECT RAISE(ABORT,'Run provenance is immutable'); END
+CREATE TRIGGER trg_run_provenance_source_immutable BEFORE UPDATE OF source_type ON run_provenance WHEN NEW.source_type IS NOT OLD.source_type BEGIN SELECT RAISE(ABORT,'Run provenance source is immutable'); END
+CREATE TRIGGER trg_run_provenance_job_mapping_update BEFORE UPDATE OF job_id ON run_provenance
+WHEN (NEW.source_type='meeting_alignment_runs' AND NOT (
+ EXISTS (SELECT 1 FROM runs r JOIN tasks t ON t.id=r.task_id
+         WHERE r.id=NEW.run_id AND t.kind='meeting_alignment') AND NEW.job_id IS NULL
+ OR (NOT EXISTS (SELECT 1 FROM runs r JOIN tasks t ON t.id=r.task_id
+                 WHERE r.id=NEW.run_id) AND NEW.job_id IS NOT NULL)))
+ OR (NEW.source_type<>'meeting_alignment_runs' AND NEW.job_id IS NOT NULL)
+BEGIN SELECT RAISE(ABORT,'Run source job mapping mismatch'); END
+CREATE TRIGGER trg_runs_task_kind_update BEFORE UPDATE OF task_id ON runs
+WHEN EXISTS (SELECT 1 FROM run_provenance p WHERE p.run_id=NEW.id AND (
+ (p.source_type='task_agent_runs' AND NOT EXISTS (SELECT 1 FROM tasks t WHERE t.id=NEW.task_id AND t.kind='work_summary')) OR
+ (p.source_type='meeting_alignment_runs' AND NOT (
+   (EXISTS (SELECT 1 FROM tasks t WHERE t.id=NEW.task_id AND t.kind='meeting_alignment') AND p.job_id IS NULL) OR
+   (NEW.task_id IS NULL AND p.job_id IS NOT NULL))) OR
+ (p.source_type='okr_review_runs' AND NOT EXISTS (SELECT 1 FROM tasks t WHERE t.id=NEW.task_id AND t.kind='okr_review'))))
+BEGIN SELECT RAISE(ABORT,'Run source and Task kind mismatch'); END
+CREATE TRIGGER trg_run_provenance_active_task_unique BEFORE INSERT ON run_provenance WHEN NEW.source_type IN ('task_agent_runs','meeting_alignment_runs') AND EXISTS (SELECT 1 FROM runs current JOIN tasks t ON t.id=current.task_id JOIN runs other ON other.task_id=current.task_id WHERE current.id=NEW.run_id AND current.status='running' AND t.kind IN ('work_summary','meeting_alignment') AND other.id<>current.id AND other.status='running') BEGIN SELECT RAISE(ABORT,'active logical Run already exists for Task'); END
+CREATE TRIGGER trg_runs_parent_logical_insert BEFORE INSERT ON runs WHEN NEW.parent_id IS NOT NULL AND EXISTS (SELECT 1 FROM run_provenance WHERE run_id=NEW.parent_id) BEGIN SELECT RAISE(ABORT,'Run parent must be logical'); END
+CREATE TRIGGER trg_runs_parent_logical_update BEFORE UPDATE OF parent_id ON runs WHEN NEW.parent_id IS NOT NULL AND EXISTS (SELECT 1 FROM run_provenance WHERE run_id=NEW.parent_id) BEGIN SELECT RAISE(ABORT,'Run parent must be logical'); END
+CREATE TRIGGER trg_run_provenance_not_parent BEFORE INSERT ON run_provenance WHEN EXISTS (SELECT 1 FROM runs WHERE parent_id=NEW.run_id) BEGIN SELECT RAISE(ABORT,'professional Run cannot have children'); END
+CREATE TRIGGER trg_runs_active_task_insert BEFORE INSERT ON runs WHEN NEW.status='running' AND NEW.task_id IS NOT NULL AND EXISTS (SELECT 1 FROM tasks t JOIN runs r ON r.task_id=t.id WHERE t.id=NEW.task_id AND t.kind IN ('work_summary','meeting_alignment') AND r.status='running') BEGIN SELECT RAISE(ABORT,'active logical Run already exists for Task'); END
+CREATE TRIGGER trg_runs_active_task_update BEFORE UPDATE OF task_id,status ON runs WHEN NEW.status='running' AND NEW.task_id IS NOT NULL AND EXISTS (SELECT 1 FROM tasks t JOIN runs r ON r.task_id=t.id WHERE t.id=NEW.task_id AND t.kind IN ('work_summary','meeting_alignment') AND r.id<>NEW.id AND r.status='running') BEGIN SELECT RAISE(ABORT,'active logical Run already exists for Task'); END
 CREATE TRIGGER trg_workbench_events_task_kind_insert BEFORE INSERT ON workbench_events WHEN NOT EXISTS (SELECT 1 FROM tasks WHERE id=NEW.task_id AND kind='workbench_turn') BEGIN SELECT RAISE(ABORT,'Workbench event requires Workbench Task'); END
 CREATE TRIGGER trg_workbench_events_task_kind_update BEFORE UPDATE OF task_id ON workbench_events WHEN NOT EXISTS (SELECT 1 FROM tasks WHERE id=NEW.task_id AND kind='workbench_turn') BEGIN SELECT RAISE(ABORT,'Workbench event requires Workbench Task'); END
-CREATE TRIGGER trg_runtime_attempt_lineage_immutable BEFORE UPDATE OF parent_id,workload_kind,workload_key,attempt_number,session_mode,source_session_id,session_id,transcript_reference,transcript_start,transcript_end ON runtime_attempts WHEN NEW.parent_id IS NOT OLD.parent_id OR NEW.workload_kind IS NOT OLD.workload_kind OR NEW.workload_key IS NOT OLD.workload_key OR NEW.attempt_number IS NOT OLD.attempt_number OR NEW.session_mode IS NOT OLD.session_mode OR NEW.source_session_id IS NOT OLD.source_session_id OR NEW.session_id IS NOT OLD.session_id OR NEW.transcript_reference IS NOT OLD.transcript_reference OR NEW.transcript_start IS NOT OLD.transcript_start OR NEW.transcript_end IS NOT OLD.transcript_end BEGIN SELECT RAISE(ABORT,'runtime attempt lineage is immutable'); END
+CREATE TRIGGER trg_runtime_attempt_lineage_immutable BEFORE UPDATE OF attempt_purpose,validation_retry_policy_id,validation_result_schema_id,parent_id,workload_kind,workload_key,attempt_number,session_mode,source_session_id,session_id,transcript_reference,transcript_start,transcript_end ON runtime_attempts WHEN NEW.attempt_purpose IS NOT OLD.attempt_purpose OR NEW.validation_retry_policy_id IS NOT OLD.validation_retry_policy_id OR NEW.validation_result_schema_id IS NOT OLD.validation_result_schema_id OR NEW.parent_id IS NOT OLD.parent_id OR NEW.workload_kind IS NOT OLD.workload_kind OR NEW.workload_key IS NOT OLD.workload_key OR NEW.attempt_number IS NOT OLD.attempt_number OR NEW.session_mode IS NOT OLD.session_mode OR NEW.source_session_id IS NOT OLD.source_session_id OR NEW.session_id IS NOT OLD.session_id OR NEW.transcript_reference IS NOT OLD.transcript_reference OR NEW.transcript_start IS NOT OLD.transcript_start OR NEW.transcript_end IS NOT OLD.transcript_end BEGIN SELECT RAISE(ABORT,'runtime attempt lineage is immutable'); END

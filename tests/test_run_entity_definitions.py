@@ -9,7 +9,6 @@ from app.run_entity_definitions import (
     validate_run_entity_contract,
 )
 from app.task_run_entity_definitions import task_run_entity_objects
-from app.logical_run_definitions import LOGICAL_RUN_TABLE_DDL
 from app.run_entity_definitions import SOURCE_DECLARED_FIELDS
 
 
@@ -35,10 +34,20 @@ def insert_attempt(db, values):
     db.execute("INSERT INTO runtime_attempts(" + ",".join(columns) + ") VALUES (" + ",".join("?" for _ in columns) + ")", values)
 
 
+def valid_attempt(parent_id=1, workload_kind="agent_run", workload_key="1", attempt=1,
+                  status="completed", mode="fresh", source_session="",
+                  purpose="normal", retry_policy="", schema_id=""):
+    return (parent_id, workload_kind, workload_key, attempt, "route", "codex", "oauth",
+            "model", mode, source_session, purpose, retry_policy, schema_id, "session",
+            "transcript", 0, 1, status, "", "", 0, "owner", "expiry", "", "result",
+            "start", "finish", "create", "update")
+
+
 def test_contract_is_valid_and_artifacts_are_exact():
     validate_run_entity_contract()
     source = sqlite3.connect(":memory:")
-    source.execute(LOGICAL_RUN_TABLE_DDL)
+    from app.logical_run_definitions import logical_run_objects
+    source.execute(logical_run_objects()["runs"])
     source_columns = {row[1]: row for row in source.execute("PRAGMA table_info(runs)")}
     assert tuple(source_columns) == SOURCE_DECLARED_FIELDS
     expected = run_entity_field_map()
@@ -61,32 +70,38 @@ def test_runs_keep_natural_absence_and_separate_provenance_and_adopted_result():
     db.execute("INSERT INTO tasks(id,kind,status,parameters_json,created_at,updated_at) VALUES (2,'meeting_alignment','queued',jsonb('{\"meeting_id\":\"m\"}'),'now','now')")
     db.execute("INSERT INTO runs(id,task_id,parent_id,created_at) VALUES (2,2,1,'now')")
     db.execute("INSERT INTO run_provenance VALUES (2,'meeting_alignment_runs',NULL)")
-    db.execute("INSERT INTO run_adopted_results VALUES (2,'{}')")
+    db.execute("INSERT INTO run_projections VALUES (2,'{}')")
     assert db.execute("SELECT status,error,updated_at FROM runs WHERE id=1").fetchone() == (None, None, None)
     assert db.execute("SELECT source_type,job_id FROM run_provenance WHERE run_id=2").fetchone() == ('meeting_alignment_runs', None)
     assert db.execute("PRAGMA foreign_key_check").fetchall() == []
     with pytest.raises(sqlite3.IntegrityError):
         db.execute("INSERT INTO run_provenance VALUES (1,'meeting_alignment_runs',NULL)")
+    with pytest.raises(sqlite3.IntegrityError):
+        db.execute("UPDATE run_provenance SET source_type='task_agent_runs' WHERE run_id=2")
+    with pytest.raises(sqlite3.IntegrityError):
+        db.execute("UPDATE run_provenance SET job_id=4908 WHERE run_id=2")
 
 
 def test_one_run_has_many_attempts_and_standalone_invocation_is_valid():
     db = database()
     db.execute("INSERT INTO runs(id,created_at) VALUES (1,'now')")
-    insert_attempt(db, (1, 'task', 'key', 1, 'route-a', 'codex', 'oauth', 'model', 'fresh', '', 'execute', 'retry', 'schema', 'session-a', 'ref', 0, 1, 'running', '', '', 0, 'owner', 'later', '', 'schema', 'now', '', 'now', 'now'))
-    insert_attempt(db, (1,'task','key',2,'route-b','codex','oauth','model','resume','session-a','execute','retry','schema','session-b','ref',2,3,'completed','','',0,'','','','schema','now','now','now','now'))
-    insert_attempt(db, (None,'standalone','x',1,'route-c','codex','oauth','model','fresh','','execute','retry','schema','session-c','ref',0,1,'running','','',0,'lease','expires','','schema','now','','now','now'))
+    insert_attempt(db, valid_attempt(status='running'))
+    insert_attempt(db, valid_attempt(attempt=2, status='completed', mode='resume', source_session='session'))
+    insert_attempt(db, valid_attempt(parent_id=None, workload_kind='standalone', workload_key='x', status='running'))
     assert db.execute("SELECT count(*) FROM runtime_attempts WHERE parent_id=1").fetchone()[0] == 2
     with pytest.raises(sqlite3.IntegrityError):
-        insert_attempt(db, (1,'task','key',1,'route-z','codex','oauth','model','fresh','','execute','retry','schema','session-z','ref',0,1,'running','','',0,'owner','later','','schema','now','','now','now'))
+        insert_attempt(db, valid_attempt())
     with pytest.raises(sqlite3.IntegrityError):
         db.execute("UPDATE runtime_attempts SET source_session_id='rewritten' WHERE attempt_number=2")
     with pytest.raises(sqlite3.IntegrityError):
-        insert_attempt(db, (None,'standalone','y',1,'route-d','codex','oauth','model','fresh','','execute','retry','schema','session-d','ref',0,1,'running','','',0,'','','','schema','now','','now','now'))
+        missing_lease = list(valid_attempt(parent_id=None, workload_kind='standalone', workload_key='y', status='running'))
+        missing_lease[21:23] = ['', '']
+        insert_attempt(db, missing_lease)
 
 
 def test_schedule_dispatch_state_and_domain_uniqueness_are_preserved():
     db = database()
-    row = (1, 'scheduled', '2026-01-01', 'pending', None, 'event', None, None, None, '2026-01-01', 1, None, 8, None, None, 'now')
+    row = (1, 'scheduled', '2026-01-01', 'pending', '', 'event', 'reply_task', '1', None, '2026-01-01', 1, '{}', 8, 'owner', 'expiry', 'now')
     db.execute("INSERT INTO schedule_occurrences VALUES (NULL,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)", row)
     assert db.execute("SELECT dispatch_status FROM schedule_occurrences WHERE id=1").fetchone()[0] == 'pending'
     with pytest.raises(sqlite3.IntegrityError):
@@ -112,4 +127,92 @@ def test_public_id_collisions_across_source_kinds_are_supported():
         ('scheduled_task_runs', 20, '7', 'text', 7, 1, 194000),
     ])
     assert db.execute("SELECT count(*) FROM run_entity_identity_map WHERE public_key='7'").fetchone()[0] == 2
+
+
+def test_attempt_source_predicates_and_correction_lineage_are_preserved():
+    db = database()
+    db.execute("INSERT INTO runs(id,created_at) VALUES (1,'now')")
+    insert_attempt(db, valid_attempt())
+    bad = [
+        valid_attempt(attempt=0),
+        valid_attempt(status="queued"),
+        valid_attempt(workload_kind="agent_run", workload_key="different"),
+        valid_attempt(parent_id=None, workload_kind="agent_run", workload_key="1"),
+        valid_attempt(mode="resume", source_session="   "),
+        valid_attempt(purpose="normal", retry_policy="policy"),
+        valid_attempt(purpose="result_validation_correction", retry_policy=" ", schema_id="schema"),
+    ]
+    for values in bad:
+        with pytest.raises(sqlite3.IntegrityError):
+            insert_attempt(db, values)
+    insert_attempt(db, valid_attempt(attempt=2, purpose="result_validation_correction",
+                                    retry_policy="policy", schema_id="schema"))
+    with pytest.raises(sqlite3.IntegrityError):
+        db.execute("UPDATE runtime_attempts SET validation_retry_policy_id='other' WHERE attempt_number=2")
+    with pytest.raises(sqlite3.IntegrityError):
+        db.execute("UPDATE runtime_attempts SET attempt_purpose='normal',validation_retry_policy_id='',validation_result_schema_id='' WHERE attempt_number=2")
+
+
+def test_professional_runs_cannot_be_parents_or_attach_after_becoming_parent():
+    db = database()
+    db.execute("INSERT INTO tasks(id,kind,status,parameters_json,created_at,updated_at) VALUES (2,'work_summary','queued',jsonb('{}'),'now','now')")
+    db.execute("INSERT INTO tasks(id,kind,status,parameters_json,created_at,updated_at) VALUES (3,'reply','queued',jsonb('{}'),'now','now')")
+    db.execute("INSERT INTO runs(id,task_id,created_at) VALUES (10,2,'now')")
+    db.execute("INSERT INTO run_provenance VALUES (10,'task_agent_runs',NULL)")
+    with pytest.raises(sqlite3.IntegrityError):
+        db.execute("UPDATE runs SET task_id=3 WHERE id=10")
+    with pytest.raises(sqlite3.IntegrityError):
+        db.execute("INSERT INTO runs(id,parent_id,created_at) VALUES (11,10,'now')")
+    db.execute("INSERT INTO runs(id,created_at) VALUES (12,'now')")
+    db.execute("INSERT INTO runs(id,parent_id,created_at) VALUES (13,12,'now')")
+    with pytest.raises(sqlite3.IntegrityError):
+        db.execute("INSERT INTO run_provenance VALUES (12,'task_agent_runs',NULL)")
+
+
+def test_source_required_run_failure_and_schedule_facts_reject_nulls():
+    db = database()
+    db.execute("INSERT INTO runs(id,created_at) VALUES (1,'now')")
+    with pytest.raises(sqlite3.IntegrityError):
+        db.execute("INSERT INTO run_failures(run_id,phase,structured_error_json,created_at) VALUES (1,NULL,'{}','now')")
+    with pytest.raises(sqlite3.IntegrityError):
+        db.execute("INSERT INTO run_failures(run_id,phase,structured_error_json,created_at) VALUES (1,'audit',NULL,'now')")
+    occurrence = (1,'scheduled','2026-01-01','pending','', 'event', 'reply_task','1',None,
+                  '2026-01-01',1,'{}',8,'owner','expiry','now')
+    insert_sql = "INSERT INTO schedule_occurrences VALUES (NULL,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)"
+    db.execute(insert_sql, occurrence)
+    fields = ["scheduled_task_id","trigger_kind","scheduled_for","dispatch_status","skip_or_error_reason","event_id","execution_kind","execution_id","dispatched_at","first_scheduled_for","occurrence_count","result_summary","snapshot_id","lease_owner","lease_expires_at","created_at"]
+    for index in (0, 1, 2, 3, 4, 5, 6, 7, 9, 10, 11, 13, 15):
+        invalid = list(occurrence)
+        invalid[index] = None
+        with pytest.raises(sqlite3.IntegrityError):
+            db.execute("INSERT INTO schedule_occurrences(" + ",".join(fields) + ") VALUES (" + ",".join("?" for _ in fields) + ")", invalid)
+
+
+def test_only_one_running_eligible_run_exists_per_task():
+    db = database()
+    db.execute("INSERT INTO tasks(id,kind,status,parameters_json,created_at,updated_at) VALUES (2,'work_summary','queued',jsonb('{}'),'now','now')")
+    db.execute("INSERT INTO runs(id,task_id,status,created_at) VALUES (10,2,'running','now')")
+    db.execute("INSERT INTO run_provenance VALUES (10,'task_agent_runs',NULL)")
+    with pytest.raises(sqlite3.IntegrityError):
+        db.execute("INSERT INTO runs(id,task_id,status,created_at) VALUES (11,2,'running','now')")
+    db.execute("INSERT INTO runs(id,task_id,status,created_at) VALUES (12,2,'completed','now')")
+    with pytest.raises(sqlite3.IntegrityError):
+        db.execute("UPDATE runs SET status='running' WHERE id=12")
+    db.execute("INSERT INTO tasks(id,kind,status,parameters_json,created_at,updated_at) VALUES (4,'reply','queued',jsonb('{}'),'now','now')")
+    db.execute("INSERT INTO runs(id,task_id,status,created_at) VALUES (20,4,'running','now')")
+    db.execute("INSERT INTO runs(id,task_id,status,created_at) VALUES (21,4,'running','now')")
+    db.execute("UPDATE tasks SET kind='work_summary' WHERE id=4")
+    with pytest.raises(sqlite3.IntegrityError):
+        db.execute("INSERT INTO run_provenance VALUES (20,'task_agent_runs',NULL)")
+
+
+def test_validator_rejects_wrong_or_nonexistent_target_column():
+    mapping = run_entity_field_map()
+    mapping[0] = {**mapping[0], "target_field": "not_a_column"}
+    with pytest.raises(ValueError, match="target mapping mismatch|unknown target field"):
+        validate_run_entity_contract(mapping)
+    mapping = run_entity_field_map()
+    mapping[0] = {**mapping[0], "target_field": "role"}
+    with pytest.raises(ValueError, match="target mapping mismatch"):
+        validate_run_entity_contract(mapping)
 

@@ -549,7 +549,7 @@
     "source_kind": "agent_runs",
     "source_field": "projection_json",
     "target_owner": "source fact",
-    "target_table": "run_adopted_results",
+    "target_table": "run_projections",
     "target_field": "projection_json",
     "retirement_reason": null,
     "migration_metadata_only": false,

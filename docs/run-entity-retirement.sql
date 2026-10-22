@@ -7,6 +7,6 @@
 -- Source runs.id=190042 (agent_runs) retains task_id=404225 and job_id=4908
 -- as the sole inherited missing-Task FK exception. Do not synthesize a Task.
 -- record_type/legacy_key are absent from target business tables.
--- Projection JSON is adopted business result data in run_adopted_results.
+-- Professional projection JSON is source-backed business output in run_projections; reserve run_adopted_results for the Task1C candidate/review owner.
 -- final_result_json, result_envelope_json, and tool_events_json were not
 -- physical source columns and are not created by this target contract.
