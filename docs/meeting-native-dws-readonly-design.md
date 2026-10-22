@@ -18,6 +18,15 @@ Meeting 判断轮需要保留原生 DWS 的群搜索、完整成员、近期消�
 - DWS 官方文档称应用只能调用已获授权的 API。这支持研究独立的只读应用授权，但不证明当前应用的授权范围，也不证明同一进程无法读取其他可写凭据。`dws auth status --readonly` 仅为**认证状态的本地只读快照**，不是业务命令只读模式。[DWS 官方说明](https://github.com/DingTalk-Real-AI/dingtalk-workspace-cli#security-by-design)
 - DWS 源码中，`dws api` 为原始 HTTP 请求单独取得**应用级令牌**，凭据依次来自命令参数、环境或应用配置（后者可取 Keychain）；它不走群消息 Shortcut 的确认入口，也不通过缺少 MCP PAT scope 时的重试分支。本机默认 DWS 目录存在应用配置文件（只检查存在性，未读取内容）。因此只证明宿主 PAT 能约束 MCP 命令，仍不足以证明同一 shell 进程不能用原始 API 写入。[原始 API 令牌路径](https://github.com/DingTalk-Real-AI/dingtalk-workspace-cli/blob/v1.0.65/internal/app/api_command.go)、[PAT 错误处理](https://github.com/DingTalk-Real-AI/dingtalk-workspace-cli/blob/v1.0.65/internal/app/pat_auth_retry.go)
 - 本机执行 `codex sandbox -P ':read-only'` 的隔离探针，子进程仍成功 `open()` 当前用户的 `~/.dws/app.json`；探针立即关闭文件，未读取或输出内容。这只证明内置文件系统只读模式**不隔离已有 DWS 应用配置**，不能据此推断远端令牌有效或某项写入实际获准。要保留原生命令并做到业务只读，还需验证独立凭据和进程访问边界。
+- 本机用 macOS `sandbox-exec` 做只拒绝 `~/.dws` 文件读取的探针：Python 直接运行、以及经 `/bin/zsh -lc` 运行时，打开同一配置文件均返回 `Operation not permitted`。探针没有读取配置内容或调用业务 API。这证明进程级路径规则能覆盖 shell 包装；它**没有**证明 Keychain、其他凭据路径、网络或 DWS 服务端写权限也被隔离。
+
+## 候选方案与当前判断
+
+- **仅用 Codex 内置 `:read-only` 或命令禁用规则：不满足条件。**前者仍可读取当前用户的 DWS 配置；后者的 DWS 前缀规则已被 shell 包装绕过。两者均不能作为“可读群、不可发消息”的权限证明。
+- **同一系统用户下再套进程沙箱：只作为候选。**路径拒绝探针有效，且保留原生 `dws` 命令，但需要逐一证明它拦住当前用户可用的所有写凭据、Keychain 和替代外发通道，同时允许 DWS 只读身份、Codex 登录和群读取。现有探针不足以做出这个结论。
+- **隔离的系统身份加只读 DWS 身份：优先验证。**让 Meeting 判断进程继续执行原生 Codex 和 `dws`，但使用独立的 OS 用户、该用户自己的 Codex home 与仅有群读取权限的 DWS 凭据；生产服务继续持有投递所需的凭据。独立用户须不能访问生产用户的 DWS 配置、Keychain 或其他写凭据。此方案也必须用真实服务端拒绝回执验证，不能仅从配置或权限名称推断安全性。切换运行身份、配置凭据及权限均属后续单独确认的实现，不在本文落地。
+
+本机目前只发现一个未标识为测试环境的 DWS profile；没有隔离测试组织的写入拒绝回执。因此以上是验证顺序，不是已通过的只读实现。PR #224 继续保持草稿。
 
 ## 研究路径：验证服务端权限与凭据隔离
 
