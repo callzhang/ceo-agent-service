@@ -1,4 +1,5 @@
 from copy import deepcopy
+import json
 from typing import Literal
 
 from pydantic import (
@@ -256,9 +257,28 @@ class AuditAgentWireResult(RootModel[_AuditWire]):
         })
 
 
-def parse_consumer_agent_wire_result(raw: str, *, purpose="general") -> ConsumerAgentResult:
+def parse_consumer_agent_wire_result(
+    raw: str,
+    *,
+    purpose="general",
+    stage_index: int | None = None,
+    predecessor_review_id: int | None = None,
+) -> ConsumerAgentResult:
     try:
-        return parse_typed_agent_result(raw, consumer_wire_model(purpose)).to_result()
+        transform_candidate = None
+        if stage_index is not None:
+            def bind_stage_lineage(candidate: str) -> str:
+                payload = json.loads(candidate)
+                payload["stage_index"] = stage_index
+                payload["predecessor_review_id"] = predecessor_review_id
+                return json.dumps(payload)
+
+            transform_candidate = bind_stage_lineage
+        return parse_typed_agent_result(
+            raw,
+            consumer_wire_model(purpose),
+            transform_candidate=transform_candidate,
+        ).to_result()
     except ResultParseError:
         raise
     except (ValidationError, ValueError) as exc:

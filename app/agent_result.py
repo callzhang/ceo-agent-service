@@ -1,6 +1,6 @@
 import json
 from enum import StrEnum
-from typing import TypeVar
+from typing import Callable, TypeVar
 
 from pydantic import BaseModel, ConfigDict, Field, ValidationError
 
@@ -78,6 +78,8 @@ ResultModelT = TypeVar("ResultModelT", bound=BaseModel)
 def parse_typed_agent_result(
     raw: str,
     model_type: type[ResultModelT],
+    *,
+    transform_candidate: Callable[[str], str] | None = None,
 ) -> ResultModelT:
     payloads = _primary_turn_payloads(_parse_jsonl_payloads(raw))
     schema_error: ValidationError | None = None
@@ -88,6 +90,8 @@ def parse_typed_agent_result(
             continue
         try:
             normalized = _normalize_result_text(candidate)
+            if transform_candidate is not None:
+                normalized = transform_candidate(normalized)
             return model_type.model_validate_json(normalized)
         except ResultSyntaxError as exc:
             if syntax_error is None:
