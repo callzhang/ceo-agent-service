@@ -32,4 +32,5 @@ Run/Action DDL, adopted-result ownership, Run identity/public keys and wrapper/r
 
 ## Commits
 
-Pending at report creation; the revision hash will be supplied in the handoff.
+- `cd63a3b1462de02a54bd6db43cd4fecfa33ce6c3` — Preserve active Workbench task uniqueness; adds review fixes and evidence.
+- Claim-row cleanup is recorded in a follow-up commit after this report was finalized.
