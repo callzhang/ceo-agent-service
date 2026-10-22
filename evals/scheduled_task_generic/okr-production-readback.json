@@ -1006,6 +1006,20 @@
       ],
       "no_in_flight_attempts_for_this_run": true
     },
+    "host_sleep_observation": {
+      "observed_at": "2026-10-22T20:47:32Z",
+      "ac_idle_sleep_minutes": 1,
+      "prevent_user_idle_system_sleep": true,
+      "prevent_system_sleep": false,
+      "active_assertions": [
+        {"process": "powerd", "name": "Powerd - Prevent sleep while display is on"},
+        {"process": "ChatGPT", "name": "Electron NoIdleSleepAssertion"},
+        {"process": "Claude", "name": "Electron NoIdleSleepAssertion"}
+      ],
+      "filtered_powerd_sleep_wake_log_matches_last_3h": 0,
+      "no_host_settings_or_processes_changed": true,
+      "conclusion": "Idle sleep was inhibited at observation time. This does not establish lid-close or explicit-sleep behavior; the natural sleep-resume catch-up branch remains unverified."
+    },
     "source": "read-only production checkout HEAD, launchd process list, localhost healthz, schedules table, and immutable scheduled-task config snapshots",
     "mutations_or_replays_performed": false,
     "new_report_runs_since_prior_readback": false,
