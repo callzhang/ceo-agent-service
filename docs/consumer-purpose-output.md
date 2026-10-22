@@ -122,6 +122,7 @@ Worker、定时任务和 Email 的等待分支遵守延后时间，不消耗普�
 OA purpose 达到限制后停止自动重读，并让 Consumer 再运行一次形成普通 OA 退回候选；该轮不得读取、重试或再次申请被阻塞的文件。退回说明仅限“审批账号当前无法访问材料，请提供可访问版本或修正权限”，然后按普通 Consumer → Audit → System Execution 和节点读回流程处理。服务不合成或直接执行退回；有效候选未形成时才进入人工处理。明确的权限申请失败也使用同一 OA 退回流程。外部访问权限问题本身不得被分类为 `failed`。
 
 非 OA purpose 在权限重读耗尽后仍可记录为 `permission_blocked`：Attempt 为 `blocked`，ReplyTask 停在 `needs_human` 队列外，表示等待权限处理。History 对精确的 `consumer_purpose_retry_exhausted` 可提供一次人工触发的 Consumer 访问检查；该入口保留原预算，只有原权限已开通时才使用，不重发权限申请、不增加自动重读次数。新旧格式的已验证权限申请回执都可授权该单次检查；旧 OA 评论回执在迁移时存入 `receipts`，无需补造 `access_requests` 记录。读取成功后，Consumer 仍须独立形成新候选，由 Audit 审核业务结果，再按已有执行与读回门禁处理。
+预算耗尽后，同一业务对象的新触发没有本代 Consumer run，也记为 `permission_blocked`，挂靠该对象最近一次已完成的 Consumer run，而不是 `permission_retry_state_invalid`；人工访问检查据此可用。
 业务动作完成或经审核 `no_action` 后关闭活动等待；原计数和期限保留。
 72 小时边界控制新读取的启动，不表示强制中断已经开始的调用。
 

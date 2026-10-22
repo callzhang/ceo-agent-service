@@ -340,3 +340,45 @@ def test_worker_pass_limit_does_not_reserve_a_third_unstarted_retry(tmp_path):
     result = runtime.process(task, context, refresh_context=lambda: context)
     assert result.status == 'failed_retryable'
     assert len(consumer.calls) == budget.state()['count'] == 2
+
+
+def test_fresh_trigger_on_exhausted_permission_wait_is_blocked_on_the_earlier_consumer_run(tmp_path):
+    store, _, context = task_and_context(tmp_path)
+    key = "oa-node:instance:task"
+    store.enqueue_reply_task(
+        channel="dingtalk", conversation_id="conversation", conversation_title="Test",
+        single_chat=True, trigger_message_id="oa", trigger_sender="Derek",
+        trigger_create_time="2026-10-04 00:00:00", trigger_text="Review",
+        business_object_key=key,
+    )
+    first = next(task for task in store.claim_reply_tasks(2) if task.business_object_key == key)
+    claim = store.claim_agent_run(
+        first.id, first.execution_generation, role=AgentRole.CONSUMER,
+        proposal_revision=0, turn_attempt=1, parent_agent_run_id=None,
+        operation_id="", owner="consumer",
+    )
+    store.complete_agent_run(claim.run.id, output("no_action").model_dump(mode="json"), owner="consumer")
+
+    now = datetime.now(timezone.utc)
+    budget = PurposeRetryBudget(store, key, "oa")
+    budget.begin_access_request(file_id="file-a", action_key="request", candidate_id=1, now=now)
+    budget.finish_access_request(file_id="file-a", action_key="request", status="verified",
+                                 result={}, now=now)
+    budget.schedule("receipt", now, "review", now)
+    for index in range(MAX_PURPOSE_RETRIES):
+        budget.reserve(f"turn:{index}", now + timedelta(hours=12 * (index + 1), seconds=1))
+
+    consumer = ScriptedConsumer(store)
+    runtime = AgentOrchestrator(
+        store=store, consumer=consumer, audit=ScriptedAudit(store),
+        now=lambda: now + timedelta(days=2),
+    )
+    fresh = first.model_copy(update={"execution_generation": "new-trigger"})
+    fresh_context = replace(context, task_id=first.id, trigger_message_id='oa',
+                            skill_names=('dingtalk-oa-approval',))
+    result = runtime.process(fresh, fresh_context, refresh_context=lambda: fresh_context)
+
+    assert result.status == 'permission_blocked'
+    assert result.final_run_id == claim.run.id
+    assert result.error.code == RETRY_EXHAUSTED
+    assert consumer.calls == []

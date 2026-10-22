@@ -906,6 +906,13 @@ class AgentOrchestrator:
             consumers = [run for run in runs if run.role is AgentRole.CONSUMER and run.status == "completed"]
             if consumers:
                 run_id = max(consumers, key=lambda run: run.id).id
+        if not run_id and task.business_object_key:
+            # A fresh trigger for an object whose permission wait already ran
+            # out has no Consumer run of its own. The wait belongs to the
+            # object, so it is blocked on the Consumer run that made it.
+            run_id = self.store.latest_completed_consumer_run_id_for_business_object(
+                task.business_object_key
+            )
         if not run_id:
             return OrchestrationResult(
                 "failed_terminal", 0, AgentRole.CONSUMER,
