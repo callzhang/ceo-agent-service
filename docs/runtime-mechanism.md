@@ -635,7 +635,11 @@ task is terminal. The skip records process/task identity and the observed
 terminal state, preserves the uncertain delivery error and original provider
 receipt, and removes the task from actionable Attention without claiming the
 message was sent. Nonterminal, mismatched, incomplete, or failed OA reads leave
-the task unresolved. When this exact closure was already recorded for a historical
+the task unresolved. A failed OA Attempt with no owning Reply Task is closed by the same read-only scan
+when the exact reviewed task is terminal and either the process is terminal or the principal's own
+return canceled that task and left nothing pending for the principal (the process may still be
+RUNNING at the applicant); the evidence records `OA_RETURNED`, the Attempt leaves Failed and
+Attention, and nothing is sent or rewritten. When this exact closure was already recorded for a historical
 Attempt, History projects the follow-up as `skipped` in both list and detail while
 the raw provider/System Execution receipt remains `uncertain`; the status means
 no further follow-up is actionable, not that delivery failed or succeeded.
