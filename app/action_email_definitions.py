@@ -682,8 +682,15 @@ def email_schema_parts(reply_value_check, *, payloads=None, shared_lifecycle=Fal
                       if kind in fields_by_kind and any(fk[1] == parent for fk in fks))
         if not kinds:
             continue
-        scope = ",".join(repr(kind) for kind in kinds)
-        generated.append(f"{discriminator} text generated always as (case when record_type in ({scope}) then '{parent}' end) virtual")
+        if (shared_lifecycle and parent == "email_actions" and "email_actions" in retired_types
+                and kinds == ("email_direct_retry_requests",)):
+            generated.append(
+                f"{discriminator} text generated always as "
+                "(case when record_type='email_direct_retry_requests' then 'action' end) virtual"
+            )
+        else:
+            scope = ",".join(repr(kind) for kind in kinds)
+            generated.append(f"{discriminator} text generated always as (case when record_type in ({scope}) then '{parent}' end) virtual")
 
     checks = []
     for kind, fields in fields_by_kind.items():
@@ -705,7 +712,11 @@ def email_schema_parts(reply_value_check, *, payloads=None, shared_lifecycle=Fal
         if kind not in fields_by_kind:
             continue
         for field, parent, _, update, delete in rows:
-            if parent == "email_classifications":
+            if (shared_lifecycle and "email_actions" in retired_types
+                    and kind == "email_direct_retry_requests" and parent == "email_actions"):
+                clause = (f"foreign key(email_{field}) references actions(id) "
+                          f"on update {update} on delete {delete}")
+            elif parent == "email_classifications":
                 clause = (f"foreign key(email_{field}) references email_classifications(id) "
                           f"on update {update} on delete {delete}")
             else:
@@ -752,10 +763,22 @@ def email_schema_parts(reply_value_check, *, payloads=None, shared_lifecycle=Fal
         "and email_attempt_number=new.email_attempt_number) "
         "begin select raise(abort,'email_direct_retry_request_immutable'); end",
     ]
+    if shared_lifecycle and "email_actions" in retired_types:
+        triggers.extend((
+            "create trigger trg_actions_email_retry_parent_insert before insert on actions "
+            "when new.record_type='email_direct_retry_requests' and not exists(select 1 from actions p "
+            "where p.id=cast(new.email_action_id as integer) and p.record_type='action') "
+            "begin select raise(abort,'FOREIGN KEY constraint failed'); end",
+            "create trigger trg_actions_email_retry_parent_update before update of legacy_key on actions "
+            "when new.record_type='email_direct_retry_requests' and not exists(select 1 from actions p "
+            "where p.id=cast(new.email_action_id as integer) and p.record_type='action') "
+            "begin select raise(abort,'FOREIGN KEY constraint failed'); end",
+        ))
+    if shared_lifecycle:
+        triggers = triggers[2:]  # Count is now the attempt ledger's derived value.
     if "email_actions" in retired_types:
         triggers = [sql for sql in triggers if "email_attempt_count" not in sql and "email_action_id=new.email_action_id" not in sql]
     if shared_lifecycle:
-        triggers = triggers[2:]  # Count is now the attempt ledger's derived value.
         if "email_actions" not in retired_types:
             checks.append("check(record_type<>'email_actions' or (email_status='processing' or email_started_at=''))")
     return generated, checks, fks, indexes, triggers

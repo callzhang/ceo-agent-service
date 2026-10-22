@@ -2944,7 +2944,15 @@
       "effect_owner": "sent_replies"
     },
     "orphan_policy": "retain independent fact",
-    "receipt_reuse": "same external_action_key may be observed by multiple Runs"
+    "receipt_reuse": "same external_action_key may be observed by multiple Runs",
+    "direct_retry_parent": {
+      "source_edge": "email_direct_retry_requests.action_id -> email_actions.action_id",
+      "forward": "Map the typed email_actions public key through action_entity_identity_map; change only element 0 of the retry row composite legacy_key and its generated parent projection to the common Action physical id.",
+      "target_fk": "email_direct_retry_requests.email_action_id -> actions.id with generated email_operation_parent_type = action and parent type-protection triggers.",
+      "scope": "Only covered-parent references declared by this existing source FK; current populated source contains 2 rows.",
+      "inverse": "Task 5C resolves the common Action id through the typed email_actions identity map and restores the source public action_id in the composite retry key.",
+      "preservation": "All other retry payload, row id, attempt number, status and clocks remain exact; no updated_at rewrite."
+    }
   },
   "receipts": {
     "collection": "action_receipts",
@@ -3350,7 +3358,10 @@
         "constraints": "Nullable owner-local FK to action_receipts.id; the pointed receipt must be owned by this Action and contain a provider result. Runtime reads use this explicit Action pointer, never identity-map old namespaces.",
         "capacity": "One nullable integer generated Action field and two owner triggers; no provider body or business data is duplicated."
       }
-    ]
+    ],
+    "current_release_ddl": "docs/action-entity-current-target.sql",
+    "current_release_ddl_scope": "Exact 507-object current Store/Email target manifest; generated directly from current_objects(email_ledger=True). The original action-entity-target.sql remains the initial field-contract fixture used by its validator.",
+    "current_release_ddl_sha256": "90aa2b32a5111db110a16a10fb75d94b3a93098791cc568b546945f4395d282e"
   },
   "indexes": [
     {
@@ -3392,12 +3403,26 @@
       "name": "idx_action_receipts_one_successor",
       "decision": "add unique partial",
       "reason": "a provider receipt version may have only one immutable successor in its correction chain"
+    },
+    {
+      "name": "email_direct_retry_requests.email_action_id -> actions.id",
+      "decision": "retarget existing source FK",
+      "reason": "The source FK covers a surviving control row whose parent email_actions owner retires. Preserve the existing generated parent discriminator and enforce record_type=action through the two type-protection triggers; no alias public key or extra business column/index is introduced."
     }
   ],
   "retirement": {
-    "records": "first-release source records translate into one Action layout, with receipts/observers in supporting relations",
+    "records": "All populated source rows in the seven covered families translate to common Action, Action Receipt, Action Observer and typed identity-map facts; exact covered generated kinds, projections, indexes and family-only DDL are retired.",
     "full_type_retirement": false,
-    "remaining": "email unsubscribe writers and continuation/step records remain outside this contract"
+    "remaining": "Email unsubscribe/control, feedback, historical operations and direct retry request rows remain outside the owner conversion; direct retry parent references to migrated email_actions are retargeted through the typed map.",
+    "covered_source_families": [
+      "external_action_results",
+      "candidate_action_attempts",
+      "outbound_postfixes",
+      "sent_replies",
+      "sent_reply_observers",
+      "email_actions",
+      "email_action_attempts"
+    ]
   },
   "evidence_locations": [
     "app/action_email_definitions.py:EMAIL_FIELDS",

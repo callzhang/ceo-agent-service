@@ -49,8 +49,7 @@ def test_prepared_message_caller_uses_common_action_and_owned_receipts(tmp_path)
             (owner["id"],),
         ).fetchone()[0] == 0
         assert db.execute(
-            "select count(*) from actions where record_type='outbound_postfixes' "
-            "and delivery_key=?", (prepared.delivery_key,),
+            "select count(*) from actions where record_type='outbound_postfixes'"
         ).fetchone()[0] == 0
 
 
@@ -151,7 +150,7 @@ def test_reviewed_email_prepared_share_owner(tmp_path):
     path = tmp_path / "shared-action-owner.sqlite3"
     store = AutoReplyStore(path)
     sender = ServiceMessageSender(store=store, dingtalk=AcceptedOnceThenReadback())
-    prepared = sender.prepare(channel="dingtalk", delivery_key="prepared", body="Prepared")
+    sender.prepare(channel="dingtalk", delivery_key="prepared", body="Prepared")
 
     _, candidate, review, _ = _reviewed(store, options=False)
     execution = store.claim_candidate_execution(candidate["id"], review["id"], "worker", 60)
@@ -462,14 +461,15 @@ def test_selected_reviewed_message_uses_prepared_action_through_sent(tmp_path, m
 
 
 def test_retry_keeps_original_external_identity(tmp_path):
-    from app.email_classifier_contracts import EmailClassificationStatus
-    from app.email_store import EmailStore
+    from app.email_classifier_contracts import EmailAction, EmailClassificationStatus
+    from app.email_store import EmailStore, email_imap_configuration_snapshot
     from tests.test_email_store import _classification, _task2_account_values
 
     store = EmailStore(tmp_path / "direct-retry-identity.sqlite3")
-    store.create_account(_task2_account_values("account", enabled=False))
+    store.create_account(_task2_account_values("dingtalk-account", enabled=False))
     classification = _classification(
         status=EmailClassificationStatus.PROCESSED, classification_id=903,
+        actions=(EmailAction.TRASH,), action_parameters={},
     )
     store.persist_scan_result(classification, model_text="fixture features")
     action_id = store.direct_action_ids_for_plan(
@@ -483,8 +483,35 @@ def test_retry_keeps_original_external_identity(tmp_path):
         first, status="failed", provider_operation="archive",
         provider_target=first.locator.stable_message_identity,
         provider_result_id="", error="transient provider failure",
-        finished_at="2026-10-19T10:01:00+00:00",
+        finished_at="2026-10-19T10:01:00+00:00", retryable=False,
     )
+    failed = store.list_failed_direct_actions(
+        account_id=first.account_id, action_types=(EmailAction.TRASH,), limit=10,
+        after_action_id=0, action_id=first.action_id,
+    )[0]
+    account_snapshot = email_imap_configuration_snapshot(
+        store.get_account(first.account_id),
+    )
+    retry_arguments = dict(
+        source_locator=failed.action.locator,
+        source_revision="verified-source-revision",
+        requested_at="2026-10-19T10:30:00+00:00",
+        account_configuration_snapshot=account_snapshot,
+    )
+    assert store.release_source_verified_direct_action(
+        failed, apply=False, **retry_arguments,
+    )
+    assert store.release_source_verified_direct_action(
+        failed, apply=True, **retry_arguments,
+    )
+    with store._connect() as db:
+        assert tuple(db.execute(
+            "select email_operation_parent_type,email_action_id from actions "
+            "where record_type='email_direct_retry_requests'",
+        ).fetchone()) == ("action", str(action_id))
+        assert tuple(db.execute(
+            "select record_type from actions where id=?", (int(action_id),),
+        ).fetchone()) == ("action",)
     retry = store.claim_direct_action(
         action_id=action_id, claimed_at="2026-10-19T11:00:00+00:00",
     )

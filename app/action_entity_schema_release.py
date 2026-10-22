@@ -14,6 +14,7 @@ from pathlib import Path
 import hashlib
 import json
 import sqlite3
+from collections import Counter
 from typing import Mapping
 
 from app.current_action_schema_release import _foreign_keys, _rebuild, source_objects
@@ -96,6 +97,46 @@ def _create_target_children(db):
         db.execute(obj["sql"])
 
 
+def _rebuild_action_owner_table(db):
+    """Replace only the Actions declaration, preserving every surviving stored cell."""
+    from app.current_action_schema import current_action_objects
+    from app.action_email_storage import _quote
+
+    if db.execute("select 1 from temp.sqlite_schema where name='_action_entity_rows'").fetchone():
+        raise ValueError("Action entity transfer TEMP collision")
+    source_cols = [row[1] for row in db.execute("pragma main.table_xinfo(actions)") if row[6] == 0]
+    target_table = next(obj["sql"] for obj in current_action_objects() if obj["type"] == "table")
+    with closing(sqlite3.connect(":memory:")) as target_db:
+        from app.task8_storage import register_task8_functions
+        register_task8_functions(target_db)
+        target_db.execute(target_table)
+        target_cols = [row[1] for row in target_db.execute("pragma table_xinfo(actions)") if row[6] == 0]
+    common = [column for column in source_cols if column in target_cols]
+    added = [column for column in target_cols if column not in source_cols]
+    select = [_quote(column) for column in common]
+    select.extend("null as " + _quote(column) for column in added)
+    if "id" not in common or "payload_json" not in common:
+        raise ValueError("Action entity transfer lacks the physical source identity or payload")
+    sequence_rows = db.execute("select rowid,name,seq from main.sqlite_sequence").fetchall()
+    db.execute("create temp table _action_entity_rows as select " + ",".join(select) + " from main.actions")
+    before = db.execute("select count(*) from temp._action_entity_rows").fetchone()[0]
+    db.execute("drop table main.actions")
+    target_objects = current_action_objects()
+    db.execute(target_table)
+    names = ",".join(_quote(column) for column in (*common, *added))
+    db.execute(f"insert into main.actions({names}) select {names} from temp._action_entity_rows order by id")
+    if db.execute("select count(*) from main.actions").fetchone()[0] != before:
+        raise ValueError("Action entity transfer changed surviving Action row count")
+    if db.execute(f"select {names} from main.actions except select {names} from temp._action_entity_rows limit 1").fetchone():
+        raise ValueError("Action entity transfer changed surviving stored cells")
+    for obj in target_objects:
+        if obj["type"] in {"index", "trigger"}:
+            db.execute(obj["sql"])
+    db.execute("delete from main.sqlite_sequence")
+    db.executemany("insert into main.sqlite_sequence(rowid,name,seq) values(?,?,?)", sequence_rows)
+    db.execute("drop table temp._action_entity_rows")
+
+
 def _source_expected(variant):
     return source_objects(variant)
 
@@ -129,18 +170,47 @@ def publish_action_entity_release(database: Path, contract: Mapping[str, object]
             marker, _, variant = _check_source(db, contract)
             if _foreign_keys(db) != tuple(tuple(x) for x in contract["source_fk_findings"]):
                 raise ValueError("Action entity source FK findings changed after preparation")
+            from app.action_entity_transfer import capture_source_facts, transfer_source_facts
+
+            source_facts = capture_source_facts(db)
+            from app.current_action_schema import RETIRED_ACTION_TYPES
+
+            covered = tuple(sorted(RETIRED_ACTION_TYPES))
+            db.execute(
+                "delete from actions where record_type in (" + ",".join("?" for _ in covered) + ")",
+                covered,
+            )
             _drop_action_guards(db)
-            _rebuild(db, variant, inverse=False)
+            _rebuild_action_owner_table(db)
             _create_target_children(db)
+            transfer_source_facts(db, source_facts)
             _create_action_guards(db, _target_expected())
             update_state_rows(db, "service_state", {
                 "value": TARGET_STORE_VERSION,
                 "updated_at": datetime.now(timezone.utc).isoformat(),
             }, where_sql="key=?", parameters=(VERSION_KEY,))
-            if (schema_objects(db) != _target_expected()
-                    or _foreign_keys(db) != tuple(tuple(x) for x in contract["source_fk_findings"])
-                    or db.execute("pragma quick_check").fetchone()[0] != "ok"):
-                raise ValueError("Action entity target declaration, FK, or integrity mismatch")
+            actual_schema = schema_objects(db)
+            target_schema = _target_expected()
+            actual_fk = _foreign_keys(db)
+            quick_check = db.execute("pragma quick_check").fetchone()[0]
+            if (actual_schema != target_schema
+                    or actual_fk != tuple(tuple(x) for x in contract["source_fk_findings"])
+                    or quick_check != "ok"):
+                expected_names = {(kind, name) for kind, name, _, _ in target_schema}
+                actual_names = {(kind, name) for kind, name, _, _ in actual_schema}
+                expected_fk = tuple(tuple(x) for x in contract["source_fk_findings"])
+                def fk_counts(rows):
+                    return Counter((row[0], row[2], row[3]) for row in rows)
+                expected_fk_counts = fk_counts(expected_fk)
+                actual_fk_counts = fk_counts(actual_fk)
+                raise ValueError(
+                    "Action entity target declaration, FK, or integrity mismatch: "
+                    f"missing={sorted(expected_names-actual_names)} extra={sorted(actual_names-expected_names)} "
+                    f"fk_equal={actual_fk == tuple(tuple(x) for x in contract['source_fk_findings'])} "
+                    f"fk_added={sorted((key, count - expected_fk_counts[key]) for key, count in actual_fk_counts.items() if count > expected_fk_counts[key])} "
+                    f"fk_removed={sorted((key, count - actual_fk_counts[key]) for key, count in expected_fk_counts.items() if count > actual_fk_counts[key])} "
+                    f"quick_check={quick_check}"
+                )
             db.commit()
         except BaseException:
             db.rollback()

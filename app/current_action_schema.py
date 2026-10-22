@@ -15,7 +15,8 @@ from app.action_entity_definitions import RECEIPT_SCHEMA_DDL, ACTION_IDENTITY_MA
 
 RETIRED_ACTION_TYPES = frozenset({
     "candidate_action_attempts", "external_action_results", "outbound_postfixes",
-    "sent_replies", "sent_reply_observers", "email_actions", "email_action_attempts",
+    "outbound_postfix_receipts", "native_reply_dispatches", "sent_replies",
+    "sent_reply_observers", "email_actions", "email_action_attempts",
 })
 
 

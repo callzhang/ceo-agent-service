@@ -24,7 +24,7 @@ Action 实体统一目前仍是未发布候选：候选空库声明在同一 `ac
 并以 `action_receipts` 保存逐次 provider/execution 事实、`action_observers` 保存多个 Run 的观察关系。
 共同 owner 的创建、CAS 领取和结果更新由 `app.action_entity_storage` 提供，调用方持有事务。
 本候选尚未配对旧数据迁移、调用方切换或上线；当前运行服务仍按已选定声明运行。
-字段与约束以 `docs/action-entity-field-map.json`、`docs/action-entity-target.sql` 为候选合同。
+字段映射见 `docs/action-entity-field-map.json`；`docs/action-entity-target.sql` 是初始字段合同夹具，当前完整 Store/Email 目标声明见 `docs/action-entity-current-target.sql`。
 
 Tasks 合并二十种已有任务。七个结构列和十二个生命周期物理列可写；
 `payload_json` 只保存当前 `TASK20_PAYLOAD_FIELDS`／`TASK20_LAYOUTS` 的业务值数组。
@@ -131,7 +131,9 @@ Task3（2026-10-21）将 reviewed、direct-email、prepared-message 与 Sent 执
 
 Task4（2026-10-21，候选）将 direct-email History、Attention、队列快照、重要邮件清单及邮件分类可观测性读取切换到 Action 与 Action Receipt。发送详情以 Action 的物理 ID、正文、准确 Sent 回执和 `observed_at` 展示；provider 正文只从该 Action 的 provider receipt 读取，缺失的 operation/target 显示为未提供，不合成来源事实。多个 Run observer 仍对应一条发送效果。撤回只更新同一 Action 的撤回字段，不新增发送或改写原发送回执；feedback token 从同一 Action 取得，并继续按其原 conversation/trigger 身份关联消息和反馈。邮件退订仍走其专有流程。
 
-Task5A（2026-10-21，候选）在当前真实 prepared-message caller 与 reviewed SystemExecutor 路径中，以 `agent_message_delivery_key` 对应的 channel/delivery key，将已准备的 Action owner 绑定到已审批选项的 reviewed Action，再由同一 owner 承载 dispatch observation、canonical provider receipt、Sent receipt 和 observer。选项 key、task generation 与 proposal revision 保持在源 delivery identity 中；provider 仍只调用一次。此窄范围尚未完成 populated migration、current-data inverse 或 old-code cold-open/reforward 验收，未发布；不改变审批、provider 核验或现有 retry/reconciliation policy。
+Task5A（2026-10-21）在当前真实 prepared-message caller 与 reviewed SystemExecutor 路径中，以 `agent_message_delivery_key` 对应的 channel/delivery key，将已准备的 Action owner 绑定到已审批选项的 reviewed Action，再由同一 owner 承载 dispatch observation、canonical provider receipt、Sent receipt 和 observer。选项 key、task generation 与 proposal revision 保持在源 delivery identity 中；provider 仍只调用一次。
+
+Task5B（2026-10-21，本地前向迁移已验证）把只读 Store19.12／Email53 源中的七个 covered families 转为共同 Action、Action Receipt、Action Observer 与 typed identity map；确定的 canonical、approved-step、delivery-key 和原 owner 引用才合并，孤立来源保留为独立 Action。退休 covered source kinds 与其 family-only DDL。两个仍在范围外的 direct-retry control rows 只把既有 `email_actions` 父引用经 typed map 改到 `actions.id`，其他 control 字段和时钟保持原值。完整 populated copy 通过 target manifest、原有单条 FK finding 多重集与 `quick_check`；对源中 72,478 条未覆盖 Action 行逐物理字段比较，唯一变化是这两个 retry row 的 parent composite-key 单元。该证明仅覆盖独立拥有的本地副本，不是 current-data inverse、old-code cold-open/reforward、发布或生产行为验收；Task5C 与独立最终审查仍是发布门槛。没有改变审批、provider 核验或 retry/reconciliation policy。
 
 A5a 的既有配对发布只接受准确 Store19.8／Email53，发布 Store19.9／Email53；
 C1 Task 声明和所有历史 Actions 声明输出冻结。current-data inverse 用当前父值重建

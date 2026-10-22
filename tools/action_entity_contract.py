@@ -107,6 +107,21 @@ def build_target_ddl() -> str:
     return ";\n".join(rendered) + ";\n"
 
 
+def build_current_release_target_ddl() -> str:
+    """Render the exact current Store/Email target schema manifest."""
+    from app.current_schema_manifest import current_objects
+
+    rendered = [
+        "-- Exact current Store/Email release target schema manifest.",
+        "-- Generated object SQL is kept in manifest order; this is the populated Action release target.",
+    ]
+    rendered.extend(
+        f"-- {kind} {name}\n{sql};"
+        for kind, name, _table, sql in current_objects(email_ledger=True)
+    )
+    return "\n\n".join(rendered) + "\n"
+
+
 def validate_action_entity_contract(contract: dict) -> None:
     expected = _declared_source_fields()
     sources = contract.get('sources')
