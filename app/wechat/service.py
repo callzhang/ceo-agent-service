@@ -176,6 +176,7 @@ def process_ready_wechat_deliveries(
     sender_enabled: bool,
     reader=None,
     account=None,
+    auditor=None,
 ) -> int:
     """Auto mode + sender enabled: send every ready_to_send delivery. Confirm mode
     (or sender disabled): send nothing — hold them for explicit approval. Returns
@@ -186,6 +187,9 @@ def process_ready_wechat_deliveries(
         account=account,
         sender=getattr(sender, "runner", None),
     )
+    if auditor is not None:
+        for delivery in pending_wechat_deliveries(store):
+            auditor.review(delivery)
     if not sender_enabled or mode != "auto":
         return 0
     deliveries = pending_wechat_deliveries(store)
@@ -193,6 +197,8 @@ def process_ready_wechat_deliveries(
         return 0
     sent = 0
     for delivery in deliveries:
+        if not store.wechat_delivery_review_approved(delivery.id):
+            continue
         try:
             delivery = _refresh_direct_binding_evidence(delivery, reader, account)
         except Exception:
@@ -232,6 +238,8 @@ def approve_wechat_delivery(store, sender, delivery_id: int) -> str:
     )
     if delivery is None:
         raise ValueError(f"no pending delivery {delivery_id}")
+    if not store.wechat_delivery_review_approved(delivery.id):
+        raise ValueError(f"WeChat delivery awaits independent audit: {delivery_id}")
     scope = _scope_for_delivery(store, delivery)
     if scope is None:
         raise ValueError("no reply scope for delivery target")

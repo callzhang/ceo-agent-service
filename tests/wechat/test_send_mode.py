@@ -1,8 +1,13 @@
 import pytest
+from unittest.mock import patch
 
 from app.codex_decision import append_signature
-from app.store import AgentRunLeaseLostError, AutoReplyStore
+from app.dingtalk_models import CodexAction, CodexDecision
+from app.store import AgentRole, AgentRunLeaseLostError, AutoReplyStore
 from app.wechat import service
+from app.wechat.audit import (
+    WechatAuditDecision, wechat_audit_candidate, wechat_audit_digest,
+)
 from app.wechat.accessibility import AccessibilityResult, SendOutcome, WechatSender
 from app.wechat.models import WechatAccount, WechatMessage, WechatReplyScope
 
@@ -29,6 +34,32 @@ def _seed(store, *, binding="verified", task_id=1):
     )
     assert delivery is not None
     assert delivery.reply_text == prepared.final_body
+    task = store.get_reply_task(task_id)
+    parent = store.claim_agent_run(
+        task.id, task.execution_generation, role=AgentRole.CONSUMER,
+        proposal_revision=0, turn_attempt=0, parent_agent_run_id=None,
+        operation_id="", owner="consumer-test",
+    ).run
+    store.complete_agent_run(parent.id, CodexDecision(
+        action=CodexAction.SEND_REPLY, reply_text="收到", reason="fixture",
+        audit_summary="Consumer proposal",
+    ).model_dump(mode="json"), owner="consumer-test")
+    review = WechatAuditDecision(
+        outcome="approve",
+        candidate_digest=wechat_audit_digest(wechat_audit_candidate(task, delivery)),
+        summary="Fixture's independently reviewed reply",
+    )
+    audit = store.claim_agent_run(
+        task.id, task.execution_generation, role=AgentRole.AUDIT,
+        proposal_revision=0, turn_attempt=0, parent_agent_run_id=parent.id,
+        operation_id=f"wechat-delivery:{delivery.id}", owner="audit-test",
+    ).run
+    store.complete_agent_run(audit.id, review.model_dump(mode="json"), owner="audit-test")
+    with patch(
+        "app.native_trajectory.read_native_result_json_from_attempt",
+        return_value=review.model_dump_json(),
+    ):
+        store.record_wechat_delivery_review(delivery.id, audit.id, review)
     return delivery
 
 

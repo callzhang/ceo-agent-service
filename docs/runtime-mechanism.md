@@ -2470,10 +2470,9 @@ Reader 会把 WeChat 共享文章的标题、摘要和 URL 解码为文本，因
 
 独立微信 Consumer 的 `CodexDecision` 不是统一 Audit 候选。完成时仅对持久任务
 通道为 `wechat`、包含有效 `action` 且不含 `outcome` 的旧契约免于候选采纳；
-代次、角色和运行终态仍需匹配。该路径不生成审核批准或 System 回执，原结果仍
-只存原生轨迹。新版 proposal 及其他通道
+代次、角色和运行终态仍需匹配。原决策结果保留在原生轨迹。新版 proposal 及其他通道
 继续执行完整候选校验，独立微信既有交付检查和外部动作拒绝不变。
-该微信决策运行在 model-only 环境：Codex 没有原生命令和 MCP 工具，Claude 没有工具，Friday 不可选；文本回复仍由持久化 Sender 单独投递。model-only 不等于投递前有独立 Audit，自动发送模式的后续审核缺口仍需另行解决。
+微信 Consumer 和新增的独立 Audit 均在 model-only 环境运行：Codex 没有原生命令和 MCP 工具，Claude 没有工具，Friday 不可选。Consumer 写出 delivery 后，服务先持久化带尾缀的最终正文；Sender 循环读取最新同会话消息，Audit 以原始触发消息和精确 delivery 目标、正文为候选进行审核。Audit 得知最终正文含服务按既有策略追加的签名，仍审查实际完整正文，但不把这段签名误认作 Consumer 文本缺陷。Audit 运行与 Consumer 父运行同属当前代次，模型输出为批准或拒绝、候选 SHA-256 及摘要。数据库把已完成 Audit 的原生结果核对后，将运行 ID、摘要和决定记入 delivery；自动和人工发送入口及数据库 `claim_wechat_delivery` 均只领取批准且正文、目标、任务输入未变的记录。拒绝关闭记录，技术失败不授权发送。可重试的提供商容量失败保留同一 Audit run 和路由尝试，短暂停租后继续/恢复，不另建候选；重启恢复也不会把仍绑定当前待发送 delivery 的运行误判为孤儿。不可重试失败有界终止。原有自动/人工确认模式、Sender 目标绑定和回执核对保持有效。
 
 AgentRun 的终态重复完成先在写事务外读取准确原生引用。独立微信原生
 `AgentEnvelope` 按 Runner 同一解析及依赖失败规则转换为 `CodexDecision`，
