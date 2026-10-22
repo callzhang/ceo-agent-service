@@ -1,14 +1,13 @@
-# Task2B report — partial semantic-reference implementation
+# Task2B report — forward slice only
 
-Status: incomplete. This commit implements and tests the semantic-reference utility only. The requested forward migration, current-fact inverse, all-20-family conversion, allocator preservation, source/target declaration validation, and round-trip fixture have not been implemented. Do not use this as a migration or publication candidate.
+Status: **incomplete; inverse handoff required**. Commit `da582aec3` implements the forward current-lifecycle Task/domain conversion. It does not provide the required current-fact inverse, inverse identity allocator, inverse→reforward round trip, or native-new-fact collision proof. Do not treat Task2B as accepted or use this as a publication candidate.
 
-Implemented in `app/task_entity_migration.py`:
+`app/task_entity_schema.py` exposes:
 
-- Build indexes by source kind + physical ID and by source kind + typed public ID.
-- Translate feedback Workbench TEXT refs only on exact source-public-key matches; preserve unresolved strings and record sparse field/value/type markers.
-- Resolve typed Action feedback public IDs to the actual target owner ID, including kinds with zero current rows. The composed Task3 converter must call this typed resolution as it rewrites source Action FKs.
-- Restore canonical Workbench IDs to their exact source public TEXT key by owner identity.
+- `capture_task_entities(db)`: requires a caller-owned FK-off transaction; validates the exact `task_lifecycle_current_schema.task_lifecycle_objects()` declaration and captures source objects, `tasks` sequence and external Tasks FK/trigger inventory.
+- `migrate_task_entities(db, metadata)`: stages the 20 Task lifecycle projections and decoded lifecycle scalar fields transiently, installs native Task/domain owners and returns counts, identity/public-owner edges, sparse raw-key and reference exceptions, and source allocator/declaration metadata. Caller retains transaction, FK-check and broader Run/Action/State composition ownership.
+- `resolve_source_public_owner(...)` and `resolve_dispatcher_claim_source_id(...)`: exact typed identity handoff for composed Action-parent and Task-backed State rewrites. Unresolved State history returns `None`; it does not manufacture a Task.
 
-Focused verification: `pytest -q tests/test_task_entity_migration.py` — 3 passed; Ruff and `git diff --check` passed. This does not satisfy Task2B's required forward/inverse conversion contract.
+The focused fixture uses the actual current lifecycle declaration and writer. It covers all 20 families, different physical/public input IDs with independent current/claimed pointers, selected parent identity translations, extra lifecycle dispatch scalar facts and SQL NULLs, declaration rejection, and caller rollback. Semantic helper tests cover unresolved Workbench references and typed Action parents. Last verified focused command, including the two uncommitted additions (`identity_edges`/`public_owner_rows` return metadata and rollback regression test): `pytest -q tests/test_task_entity_schema.py tests/test_task_entity_migration.py` — 8 passed. Ruff and `py_compile` passed before those additions; the additions remain uncommitted.
 
-Commit: see the task handoff for the commit SHA.
+The uncommitted product files are `app/task_entity_schema.py` and `tests/test_task_entity_schema.py`. They contain only the two additions identified above. No runtime activation, publication, provider/native CLI, production access, or full-suite test occurred.
