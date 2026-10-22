@@ -63,3 +63,15 @@ def test_public_id_lookup_is_kind_and_storage_type_qualified():
         assert "missing" in str(exc)
     else:
         raise AssertionError("integer public ID was conflated with TEXT public ID")
+
+
+def test_unresolved_numeric_text_ref_is_restored_from_containing_owner_marker():
+    indexes = owner_indexes([
+        {"source_kind": "workbench_tasks", "physical_id": 123,
+         "public_key": "resolved-owner", "target_id": 123},
+    ])
+    marker = {"field": "workbench_task_id", "value": "123", "type": "text"}
+    assert restore_feedback_workbench_ref(
+        field="workbench_task_id", current_value="123", indexes=indexes,
+        unresolved_marker=marker,
+    ) == "123"

@@ -61,9 +61,9 @@ def translate_feedback_workbench_refs(
     task_target = task_indexes["public"].get(task_key)
     turn_target = turn_indexes["public"].get(turn_key)
     original_task, original_turn = task_ref, turn_ref
-    if task_target is None:
+    if task_target is None and original_task:
         markers.append({"field": "workbench_task_id", "value": original_task, "type": "text"})
-    if turn_target is None:
+    if turn_target is None and original_turn:
         markers.append({"field": "workbench_turn_id", "value": original_turn, "type": "text"})
     return (original_task if task_target is None else str(task_target),
             original_turn if turn_target is None else str(turn_target))
@@ -71,10 +71,19 @@ def translate_feedback_workbench_refs(
 
 def restore_feedback_workbench_ref(
     *, field: str, current_value: str, indexes: Mapping,
+    unresolved_marker: Mapping | None = None,
 ) -> str:
     """Restore a canonical Workbench integer-text reference to its old key."""
     if field not in {"workbench_task_id", "workbench_turn_id"}:
         raise ValueError("unsupported feedback Workbench reference field")
+    if unresolved_marker is not None:
+        if (set(unresolved_marker) != {"field", "value", "type"}
+                or unresolved_marker["field"] != field
+                or unresolved_marker["type"] != "text"
+                or not isinstance(unresolved_marker["value"], str)
+                or unresolved_marker["value"] == ""):
+            raise ValueError("invalid unresolved Workbench identity marker")
+        return unresolved_marker["value"]
     kind = "workbench_tasks" if field == "workbench_task_id" else "workbench_turns"
     try:
         target_id = int(current_value)
