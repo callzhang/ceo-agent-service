@@ -94,6 +94,7 @@ def _write_semantic_actions(path, *, shifted=False, changed_body=False, wrong_se
     observer_id = 22 if shifted else 2
     email_id = 33 if shifted else 3
     event_id = 44 if remap_out_of_scope else 4
+    candidate_id = 55 if shifted else 6
     with sqlite3.connect(path) as db:
         db.executescript(
             "create table actions ("
@@ -119,6 +120,8 @@ def _write_semantic_actions(path, *, shifted=False, changed_body=False, wrong_se
                     "changed" if changed_body else "stable"))
         db.execute("insert into actions(id,_kind,legacy_key) values(?,?,?)",
                    (event_id, "business_task_events", "event:source-id"))
+        db.execute("insert into actions(id,_kind,legacy_key) values(?,?,?)",
+                   (candidate_id, "candidate_action_attempts", "candidate:source-id"))
 
 
 def test_semantic_cohort_normalizes_only_covered_typed_action_ids(tmp_path):
@@ -130,8 +133,9 @@ def test_semantic_cohort_normalizes_only_covered_typed_action_ids(tmp_path):
     result = _compare_source_databases(before, inverse)
 
     assert result["exact_match"] is True
-    assert result["action_typed_identity_count"] == 5
+    assert result["action_typed_identity_count"] == 6
     assert result["physical_action_id_remaps_by_type"] == {
+        "candidate_action_attempts": 1,
         "email_actions": 1,
         "sent_replies": 2,
         "sent_reply_observers": 1,

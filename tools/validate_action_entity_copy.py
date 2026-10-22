@@ -130,12 +130,6 @@ def _population_digest(db_path: Path) -> str:
         return h.hexdigest()
 
 
-_COVERED_PHYSICAL_ID_REMAP_TYPES = frozenset({
-    "email_actions", "email_action_attempts", "outbound_postfixes",
-    "sent_replies", "sent_reply_observers",
-})
-
-
 def _hash_value(digest: Any, value: Any) -> None:
     if value is None:
         digest.update(b"N")
@@ -235,6 +229,8 @@ def _database_rows_digest(db_path: Path) -> tuple[str, int, dict[str, int], dict
 
 def _compare_source_databases(expected: Path, actual: Path) -> dict[str, Any]:
     """Compare every source fact, retaining physical identity outside covered types."""
+    from app.current_action_schema import RETIRED_ACTION_TYPES
+
     expected_digest, expected_rows, expected_counts, expected_actions = _database_rows_digest(expected)
     actual_digest, actual_rows, actual_counts, actual_actions = _database_rows_digest(actual)
     if set(expected_actions.get("physical_id_by_identity", {})) != set(actual_actions.get("physical_id_by_identity", {})):
@@ -245,7 +241,7 @@ def _compare_source_databases(expected: Path, actual: Path) -> dict[str, Any]:
         if before_id != after_id:
             record_type = expected_actions["record_type_by_identity"][identity]
             remaps[record_type] = remaps.get(record_type, 0) + 1
-    out_of_scope_remaps = sorted(set(remaps) - _COVERED_PHYSICAL_ID_REMAP_TYPES)
+    out_of_scope_remaps = sorted(set(remaps) - RETIRED_ACTION_TYPES)
     if out_of_scope_remaps:
         raise AssertionError("out-of-scope physical Action IDs changed: " + ", ".join(out_of_scope_remaps))
     if expected_actions.get("sent_reference_identity_sha256") != actual_actions.get("sent_reference_identity_sha256"):
