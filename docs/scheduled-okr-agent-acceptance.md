@@ -2,21 +2,15 @@
 
 ## 状态与证据边界
 
-截至 2026-10-22 17:50 UTC：task14 的自然运行 392889 已完成并产生真实文档更新和通知回执；
-但业务验收未通过。Consumer 读取了完整的 65 个群会话目录（6 页），却没有调用任何逐会话消息
-读取工具，最终报告也明确写出群聊未逐条读取。Audit 因消息最初缺少今日要点而退回一次，修订后
-批准了报告和通知，没有拦住未尝试的必需群聊覆盖。日报 Skill 修复及合约回归已完成；日报事实、
-回执和覆盖回归 **23 passed**，managed Skill 发布器定向回归 **27 passed**。代码已部署到
-`526f3df5ef04dca3ed991e78adba0232718a7bee`，但 task14 仍绑定旧 revision203。正式 Skill 发布首次
-被严格 precondition 拒绝：清单的 OKR 旧摘要仍写 revision222，而生产已运行 revision223、摘要
-`18b23c5c…`。发布器在改写合约前即拒绝，没有改写合约文件。随后按生产读回更新清单候选摘要和
-OKR revision223 的旧摘要；清单锁定测试和 26 文件只读 preflight 均通过。第二次正式发布已成功：
-生产 commit `6f26fcbc1a4fb25a8b63f2733f7571ec7d924598`，task14 v51 绑定 daily Skill managed
-revision224，SHA-256 `32d24bb5…`，与安装文件完全一致。healthz HTTP 200、PID60193；队列
-active0/queued199、Attention22、History37257。Console System Health 显示 degraded（8 项 violation；
-detail 包含未终态 work item，native delivery readback 有73/384项不可读），与 healthz 正常分开记录。
-已完成报告不重放、不补发；部署后的下一次自然日报才可验证修复是否真正生效。
-完整证据见文末 2026-10-22 自然日报记录及无正文生产读回 JSON。
+截至 2026-10-22 20:42 UTC，task14 最新自然运行 392889 已完成，真实文档和通知都已发布，
+但业务验收失败：Consumer 读取了 65 个群会话目录，却没有读取任何会话消息；Audit 批准了
+未覆盖群聊的报告。该运行保留原终态，不重放、不补发。后续日报 Skill 修复已发布并绑定
+managed revision224；最新生产配置分别为 task14 v52/revision224、task13 v45/revision202、
+task6 v23/revision223，14 项任务启用，healthz HTTP 200。task14 的 392889 使用旧配置 v49 /
+revision203，因此尚无修复后的自然日报验收结果。接下来的正常触发为 task14 **2026-10-23
+13:00 UTC**、task13 **2026-10-24 19:00 UTC**、task6 **2026-10-25 10:00 UTC**。这些配置、
+最近运行和触发时间来自 2026-10-22 20:13 UTC 生产只读读回，详见无正文生产证据 JSON。
+不手动创建或重放报告，也不额外发送通知。
 
 ### 2026-10-22 自然日报 392889：发布完成，业务验收失败
 
