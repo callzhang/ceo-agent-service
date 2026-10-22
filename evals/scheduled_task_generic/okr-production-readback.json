@@ -1,5 +1,5 @@
 {
-  "observed_at": "2026-10-22T17:50:41Z",
+  "observed_at": "2026-10-22T19:31:00Z",
   "scope": "Historical real publication readback; not new Agent natural-run acceptance",
   "natural_command_completion_facts": [
     {
@@ -607,5 +607,77 @@
     },
     "natural_report_runs_created_or_replayed": false,
     "next_step": "Observe task14 next normal run; require a complete group-chat inventory/read and Audit approval before counting the report as accepted."
+  },
+  "post_deploy_health_readback": {
+    "observed_at": "2026-10-22T19:31:00Z",
+    "production_commit": "6f26fcbc1a4fb25a8b63f2733f7571ec7d924598",
+    "pid": 60193,
+    "healthz_http_status": 200,
+    "system_health_state": "degraded",
+    "quality_gate": {
+      "checked_sources": 16,
+      "missing_sources": [],
+      "violations": [
+        {
+          "source": "work_summary_inputs",
+          "code": "failed",
+          "count": 2,
+          "source_type": "ai_minutes",
+          "stored_error_code": "runtime_result_validation_failed"
+        },
+        {
+          "source": "email_agent_classification_tasks",
+          "code": "failed",
+          "count": 1,
+          "stored_error_class": "gaierror_dns_resolution"
+        },
+        {
+          "source": "workbench",
+          "code": "unresolved",
+          "count": 4
+        },
+        {
+          "source": "daily_scan_state",
+          "code": "last_error",
+          "count": 1,
+          "scanner_name": "ai_minutes_sync",
+          "stored_error": "minutes list pagination exceeded 600 pages"
+        }
+      ],
+      "unresolved_recent_errors": [
+        {
+          "id": 15607,
+          "kind": "task_agent",
+          "source": "work_summary_input",
+          "count": 1
+        }
+      ],
+      "native_delivery_coverage": {
+        "checked": 311,
+        "unavailable": 73,
+        "audit_runs_observed": 384,
+        "classified_as_quality_gate_violation": false
+      }
+    },
+    "email_provider_actions": {
+      "status_error_type": "EmailActionAttemptConflict",
+      "observed_at": "2026-10-22T19:30:19Z",
+      "failed": 10,
+      "failed_retriable": 8,
+      "failed_nonretriable": 2,
+      "pending": 193,
+      "processing": 0,
+      "waiting_for_owner": 22,
+      "email_scans_last_success_at": "2026-10-22T19:31:20Z"
+    },
+    "disk_readback": {
+      "available_gib": 102,
+      "sqlite_main_bytes": 501170176,
+      "database_backup_disk_full_error_at": "2026-10-09T05:56:58Z",
+      "current_disk_full_confirmed": false
+    },
+    "mutations_or_replays_performed": false,
+    "business_report_acceptance_changed": false,
+    "triage_status": "The source counters and error classes are now identified; these system-health issues are unresolved and are not evidence of natural scheduled report acceptance."
   }
 }
