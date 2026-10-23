@@ -120,7 +120,7 @@
       "target": "skills/ceo-weekly-okr-report/SKILL.md",
       "old_sha256": "49ba4b0bdafdd2ba54989f6bd1ad6b799417464f2dad2cbeefb721eb85a32f8e",
       "new_sha256": "49ba4b0bdafdd2ba54989f6bd1ad6b799417464f2dad2cbeefb721eb85a32f8e",
-      "old_managed_sha256": "49ba4b0bdafdd2ba54989f6bd1ad6b799417464f2dad2cbeefb721eb85a32f8e"
+      "old_managed_sha256": "038973933c0e8ff70f9c87b2912107a5d3ae0efcb53aeaf308e9bd3f091c01b9"
     },
     {
       "source": "ci/shared-skills/ceo-weekly-okr-report/scripts/analysis.schema.json",
