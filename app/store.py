@@ -8684,6 +8684,10 @@ class AutoReplyStore(LogicalRunStoreMixin, ReviewedCandidateStoreMixin):
                     raise ValueError(
                         "Revised Consumer parent must be the previous Audit turn"
                     )
+            prior_revision_predicate = (
+                "proposal_revision<=?" if role is AgentRole.AUDIT
+                else "proposal_revision=?"
+            )
             prior_session = db.execute(
                 f"""
                 select case
@@ -8693,8 +8697,8 @@ class AutoReplyStore(LogicalRunStoreMixin, ReviewedCandidateStoreMixin):
                   else codex_session_id end as codex_session_id
                 from ({AGENT_RUN_SQL}) as agent_runs
                 where reply_task_id=? and execution_generation=? and role=?
-                  and proposal_revision=?
-                order by turn_attempt desc, id desc
+                  and {prior_revision_predicate}
+                order by proposal_revision desc, turn_attempt desc, id desc
                 limit 1
                 """,
                 (

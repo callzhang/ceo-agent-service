@@ -2331,6 +2331,95 @@ def test_consumer_parent_follows_previous_audit_revision(tmp_path):
         )
 
 
+def test_audit_revision_reuses_its_own_session_not_consumer_session(tmp_path):
+    store = AutoReplyStore(tmp_path / "turns.sqlite3")
+    task = _task(store)
+    consumer_0 = _claim_consumer(store, task).run
+    store.set_agent_run_session(
+        consumer_0.id, "consumer-session", owner="consumer"
+    )
+    audit_0 = store.claim_agent_run(
+        task.id,
+        task.execution_generation,
+        role=AgentRole.AUDIT,
+        proposal_revision=0,
+        turn_attempt=0,
+        parent_agent_run_id=consumer_0.id,
+        operation_id="operation-0",
+        owner="audit-0",
+    ).run
+    store.set_agent_run_session(audit_0.id, "audit-session", owner="audit-0")
+
+    consumer_1 = store.claim_agent_run(
+        task.id,
+        task.execution_generation,
+        role=AgentRole.CONSUMER,
+        proposal_revision=1,
+        turn_attempt=0,
+        parent_agent_run_id=audit_0.id,
+        operation_id="",
+        owner="consumer-1",
+    ).run
+    audit_1 = store.claim_agent_run(
+        task.id,
+        task.execution_generation,
+        role=AgentRole.AUDIT,
+        proposal_revision=1,
+        turn_attempt=0,
+        parent_agent_run_id=consumer_1.id,
+        operation_id="operation-1",
+        owner="audit-1",
+    ).run
+
+    assert audit_1.codex_session_id == "audit-session"
+    assert audit_1.codex_session_id != consumer_1.codex_session_id
+
+
+def test_audit_revision_does_not_resume_noncontinuable_prior_session(tmp_path):
+    store = AutoReplyStore(tmp_path / "turns.sqlite3")
+    task = _task(store)
+    consumer_0 = _claim_consumer(store, task).run
+    audit_0 = store.claim_agent_run(
+        task.id,
+        task.execution_generation,
+        role=AgentRole.AUDIT,
+        proposal_revision=0,
+        turn_attempt=0,
+        parent_agent_run_id=consumer_0.id,
+        operation_id="operation-0",
+        owner="audit-0",
+    ).run
+    store.set_agent_run_session(audit_0.id, "expired-audit-session", owner="audit-0")
+    store.fail_agent_run(
+        audit_0.id,
+        {"code": "session_invalid", "retryable": True, "session_continuable": False},
+        owner="audit-0",
+    )
+
+    consumer_1 = store.claim_agent_run(
+        task.id,
+        task.execution_generation,
+        role=AgentRole.CONSUMER,
+        proposal_revision=1,
+        turn_attempt=0,
+        parent_agent_run_id=audit_0.id,
+        operation_id="",
+        owner="consumer-1",
+    ).run
+    audit_1 = store.claim_agent_run(
+        task.id,
+        task.execution_generation,
+        role=AgentRole.AUDIT,
+        proposal_revision=1,
+        turn_attempt=0,
+        parent_agent_run_id=consumer_1.id,
+        operation_id="operation-1",
+        owner="audit-1",
+    ).run
+
+    assert audit_1.codex_session_id == ""
+
+
 def test_clear_agent_run_session_targets_one_turn(tmp_path):
     store = AutoReplyStore(tmp_path / "turns.sqlite3")
     task = _task(store)
