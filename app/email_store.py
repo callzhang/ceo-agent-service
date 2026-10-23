@@ -11185,8 +11185,20 @@ class EmailStore:
               and c.current_action_plan_id=a.action_plan_id
             """
         ).fetchall()
-        for candidate_classification in candidate_classifications:
-            siblings = db.execute(
+        # One batched read per 500 classifications. The projection cannot push
+        # a classification filter down to the action rows, so each lookup scans
+        # every direct action; one lookup per candidate made a single claim cost
+        # about 17 s with ~600 pending actions, and the locked recheck repeated
+        # it while holding the SQLite writer lock.
+        candidate_ids = [
+            int(candidate["classification_id"])
+            for candidate in candidate_classifications
+        ]
+        siblings_by_classification: dict[int, list[sqlite3.Row]] = {}
+        for offset in range(0, len(candidate_ids), 500):
+            batch = candidate_ids[offset : offset + 500]
+            placeholders = ",".join("?" for _ in batch)
+            for sibling in db.execute(
                 f"""
                 select a.*, c.folder, c.uidvalidity, c.uid, c.rfc_message_id,
                        c.thread_id, c.stable_message_identity,
@@ -11197,11 +11209,16 @@ class EmailStore:
                 from ({DIRECT_EMAIL_ACTION_SQL}) as a
                 join ({EMAIL_CLASSIFICATION_SQL}) as c on c.id=a.classification_id
                 join ({EMAIL_PLAN_SQL}) as p on p.action_plan_id=a.action_plan_id
-                where a.classification_id=?
+                where a.classification_id in ({placeholders})
                   and c.status='processed'
                 """,
-                (candidate_classification["classification_id"],),
-            ).fetchall()
+                batch,
+            ).fetchall():
+                siblings_by_classification.setdefault(
+                    int(sibling["classification_id"]), []
+                ).append(sibling)
+        for classification_id in candidate_ids:
+            siblings = siblings_by_classification.get(classification_id)
             if not siblings:
                 continue
             if any(sibling["status"] == "processing" for sibling in siblings):
