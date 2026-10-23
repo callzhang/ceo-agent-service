@@ -1955,6 +1955,67 @@ def test_scan_pending_oa_approvals_revisits_an_untouched_approval_the_next_day(t
     )
 
 
+def test_scan_pending_oa_approvals_does_not_reset_failed_retry_budget_for_same_revision(
+    tmp_path,
+):
+    class FakeDws:
+        record_time = 1
+
+        def list_pending_oa_approvals(self, *, page, size, start, end):
+            return [DwsOaApprovalCandidate(process_instance_id="proc-1", title="付款申请")]
+
+        def get_current_user_id(self):
+            return "principal-user-1"
+
+        def read_oa_approval_tasks(self, process_instance_id):
+            return {"result": {"tasks": [{"taskId": "task-1", "status": "RUNNING"}]}}
+
+        def read_oa_process_instance_openapi(self, process_instance_id):
+            return {
+                "result": {
+                    "tasks": [{
+                        "taskId": "task-1",
+                        "userId": "principal-user-1",
+                        "status": "RUNNING",
+                    }]
+                }
+            }
+
+        def read_oa_approval_records(self, process_instance_id):
+            return {
+                "result": {
+                    "operationRecords": [{
+                        "operationType": "ADD_REMARK",
+                        "operationTime": self.record_time,
+                        "userId": "requester",
+                    }]
+                }
+            }
+
+    dws = FakeDws()
+    store = AutoReplyStore(tmp_path / "task.sqlite3")
+    first = datetime.fromisoformat("2026-07-31T19:00:00+08:00")
+    assert scan_pending_oa_approvals(store, dws, now=first) == 1
+
+    [task] = store.list_reply_tasks(channel="dingtalk")
+    claimed = store.claim_reply_task(task.id)
+    assert claimed is not None
+    store.fail_reply_task(
+        claimed.id,
+        "consumer_retry_exhausted",
+        expected_execution_generation=claimed.execution_generation,
+    )
+
+    # The same pending evidence cannot start a new execution generation and
+    # refund the exhausted Consumer/Audit retry budget on the next daily scan.
+    assert scan_pending_oa_approvals(store, dws, now=first + timedelta(days=1)) == 0
+
+    # A new source record changes the evidence revision and is eligible for a
+    # fresh review budget.
+    dws.record_time = 2
+    assert scan_pending_oa_approvals(store, dws, now=first + timedelta(days=2)) == 1
+
+
 def test_scan_pending_oa_approvals_keeps_an_approval_the_agent_only_commented_on(
     tmp_path,
 ):
