@@ -1496,5 +1496,47 @@
     },
     "managed_skill_note": "Current task6 snapshot remains pinned to revision245; a newly imported identical repository revision247 exists but does not alter prior scheduled run snapshots.",
     "acceptance_status": "Read-only current production snapshot only. No report was triggered and no external effect was created. PR #294 remains unmerged and undeployed; task14 qualifying natural outcome, task13 natural outcome, task6 post-deploy manual acceptance and passive sleep-resume catch-up evidence remain outstanding. PR #309 full Quality run 40011245295 was still in progress at this readback."
+  },
+  "production_recovery_2026_10_23_23_49_33Z": {
+    "observed_at": "2026-10-23T23:49:33Z",
+    "source": "Read-only production checkout HEAD, healthz, launchctl print-disabled/print, process list, in_flight_work() and the projected Email action status.",
+    "production_commit": "215802c21a1127bb9cd8aff9f7689b7828ecb5a6",
+    "healthz_http_status": 0,
+    "launch_agent": {
+      "enabled": true,
+      "loaded": false,
+      "service_process_present": false
+    },
+    "normal_restart_attempt": {
+      "command": "python -m app.deploy --restart",
+      "result": "stopped while wait_until_quiet was waiting; no restart/bootstrap was reached",
+      "in_flight_work_count": 1,
+      "drain_lock_released": true
+    },
+    "blocking_local_action": {
+      "kind": "email_action",
+      "id": 120060,
+      "operation": "move",
+      "status": "processing",
+      "started_at": "2026-10-23T23:18:11+00:00",
+      "updated_at": "2026-10-23T23:18:11+00:00",
+      "local_delivery_receipt_id": null,
+      "provider_effect_status": "not_checked"
+    },
+    "provider_query": {
+      "command": "dws mail mailbox list --format json",
+      "mailbox_count": 2,
+      "exact_local_account_id_match_count": 0,
+      "message_get_invoked": false,
+      "reason": "No exact source-account mapping; no mailbox or message ID was guessed."
+    },
+    "quality_run": {
+      "run_id": 40040357025,
+      "attempt": 2,
+      "head_sha": "6533329f00d2edcb5286250d2333407bc6e7c3e4",
+      "status": "failure",
+      "npm_test_step": "cancelled during pytest at about 4 percent; no pytest summary or cancellation actor in logs"
+    },
+    "acceptance_status": "Service remains unavailable. The initiating service stop and Email provider effect are unverified. Do not clear or replay the Email action; reconcile its source trajectory and provider state before retrying the normal restart. No report run or notification was created. Natural report acceptance and sleep-resume catch-up remain outstanding."
   }
 }

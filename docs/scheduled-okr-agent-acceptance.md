@@ -810,3 +810,13 @@ Derek 明确确认日报按北京时间报告日期取数：主窗口从该日 0
 ### 2026-10-23 latest-main 合并后质量门禁状态
 
 PR #294 已将 `origin/main` `08e6692f4a2c13dd2f81a038c221f06a0f0a0c46` 以正常 merge 纳入，合并提交为 `75257f9d298a00377ea26206216409f40818b1dd`。冲突文件已逐项保留两侧有效内容，日报 Skill 与摘要按北京自然日契约收敛；四个定向套件 107 项通过。旧 Quality run `40028538559` 仍在旧 head `4c3a7b554` 执行 npm test，无法验证新提交，已请求取消并于 23:15 UTC 结束为 `cancelled`。截至本记录，GitHub 尚未为合并提交生成新的 Quality run；故正式质量门禁、PR 合并和部署均未完成。未触发报告、通知或其它外部业务动作。
+
+### 2026-10-23 23:49 UTC 生产恢复和 Quality 复核
+
+最新只读复核仍显示生产 checkout 为 `215802c21a1127bb9cd8aff9f7689b7828ecb5a6`；healthz 无法连接，LaunchAgent label 在 gui/501 中未加载但仍为 enabled，服务进程不存在。只读 SQLite 检查发现唯一阻止静默重启的工作是本地 Email action **120060**：operation 为 `move`，状态仍为 `processing`，started/updated 均为 `2026-10-23T23:18:11Z`，本地 `action_delivery_receipt_id` 为空。provider 侧状态尚未核验，因此不能据此断定 move 是否已发生。
+
+已通过仓库规定的 `python -m app.deploy --restart` 请求恢复服务。命令在 `wait_until_quiet` 中因这一个 processing Email action 保持等待；在确认尚未执行 restart/bootstrap 之后中断本次等待，释放 deployment drain 锁。没有手动调用 launchctl。该记录证明 restart 被现有外部动作保护逻辑拦住，不证明是谁或为何卸载了 launchd 服务；服务停止的发起原因仍未查实。不得直接清除 action 状态或重试 move。需要先按其原有 task/Consumer/Audit 与 provider 事实确认外部效果，再用正式恢复流程处理；生产服务恢复后再继续报告调度验收。
+
+PR #294 的 exact-head Quality run `40040357025`（head `6533329f00d2edcb5286250d2333407bc6e7c3e4`）attempt 2 在 `npm test` 的 pytest 约 4% 时被 GitHub 标为 cancelled，job 结论为 failure；日志只记录 `The operation was canceled`，没有取消来源或 pytest 汇总。相同 main commit 的 Quality run `40038497470` 也在 pytest 约 13 分钟后以同样的 cancelled 步骤结束。它们都不能算作测试失败的根因结论，也不能算通过。PR 的 108 项定向测试与 Ruff 仍通过；完整 Quality、PR 合并和发布保持未完成。无正文恢复读回见 `okr-production-readback.json` 的 `production_recovery_2026_10_23_23_49_33Z`。
+
+为核实 move 的 provider 状态，按 `dingtalk-mail` 流程只读读取了当前 mailbox 列表：返回 2 个邮箱，但没有一个邮箱标识与 action 关联记录中的 `account_id` 精确匹配。没有猜测账号或 messageId，因此没有对任何邮箱调用 `message get`。provider move 状态仍未查实，action 不能被清理或重放。
