@@ -470,6 +470,40 @@ def test_false_field_feedback_corrects_audit_without_revising_or_approving_candi
     assert context.candidate_digest == result.result.candidate_digest
 
 
+def test_missing_candidate_field_path_error_names_path_and_parent_fields(setup):
+    store, task, parent, context, _config, _router = setup
+    lines = _wire(outcome="return").splitlines()
+    event = json.loads(lines[-1])
+    output = json.loads(event["item"]["text"])
+    output["feedback"].update(
+        observation_basis="candidate_fields",
+        candidate_field_assertions=[{
+            "path": ["proposal", "summary"],
+            "value": "private-candidate-value",
+            "json_type": "string",
+        }],
+    )
+    event["item"]["text"] = json.dumps(output)
+    lines[-1] = json.dumps(event)
+    with pytest.raises(ResultParseError, match="candidate field assertion"):
+        _runner(setup, CapturingExecutor("\n".join(lines))).run(
+            task, context, turn_attempt=0, parent_agent_run_id=parent.id)
+
+    failed = store.get_agent_run_for_turn(task.id, task.execution_generation,
+        role=AgentRole.AUDIT, proposal_revision=0, turn_attempt=0)
+    detail = json.loads(failed.structured_error_json)["detail"]
+    assert '["proposal", "summary"]' in detail
+    assert '"objective"' in detail
+    assert '"actions"' in detail
+    assert "private-candidate-value" not in detail
+
+    executor = CapturingExecutor(_wire(outcome="return"))
+    _runner(setup, executor).run(
+        task, context, turn_attempt=1, parent_agent_run_id=parent.id)
+    assert '["proposal", "summary"]' in executor.prompts[0]
+    assert '"objective"' in executor.prompts[0]
+
+
 def test_sensitive_audit_output_is_a_result_failure_not_a_process_outage(setup):
     store, task, parent, context, _config, _router = setup
     lines = _wire(outcome="return").splitlines()
