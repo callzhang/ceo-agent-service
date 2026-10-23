@@ -1029,6 +1029,8 @@ Attempt 详情页默认展示 `reply_attempt` 的 current projection，并允许
 解析的诊断不替换任务自己的错误。展示这些字段不证明外部操作已执行，不改变拒绝、重试、
 人工决定或任务状态。
 
+定时 Agent task 的 Attention 以同一 scheduled task 最新的已派发 run 为当前状态。较早 run 的失败 Reply task 和绑定它的失败 Reply Attempt 继续保留在 History，但不增加 Attention；最新 run 失败时仍显示其失败记录。尚未派发的触发不覆盖当前 run，pending/processing/needs_human 本身仍不构成 Attention。
+
 如果同一业务对象的 History 出现多个旧 task，模式迁移可以重建 `business_object_tasks` 的当前映射，
 但不得删除旧输入、run、session、tool event、provider 结果或错误事件。当前投影修正不能被解释为
 “历史从未失败过”。

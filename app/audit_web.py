@@ -3600,8 +3600,8 @@ def _queue_attention_rows(store: AutoReplyStore, *, limit: int | None = None) ->
                     and json_valid(reply_tasks.trigger_message_json)
                     and json_extract(reply_tasks.trigger_message_json, '$.action_type')='unsubscribe'
                   )
-                  -- A later successful run of the same scheduled task is the
-                  -- authoritative recovery for an older scheduled reply task.
+                  -- Only the latest dispatched run of a scheduled task is current.
+                  -- Older failed Reply tasks remain in History, regardless of outcome.
                   and not exists (
                       select 1
                       from ({SCHEDULED_RUN_SQL}) as stale_run
@@ -3610,10 +3610,6 @@ def _queue_attention_rows(store: AutoReplyStore, *, limit: int | None = None) ->
                        and exists (
                            select 1
                            from ({SCHEDULED_RUN_SQL}) as later_run
-                           join ({REPLY_TASK_SQL}) as later_task
-                             on later_run.execution_kind='reply_task'
-                            and cast(later_run.execution_id as integer)=later_task.id
-                            and lower(later_task.status) in ('done', 'skipped')
                            where later_run.scheduled_task_id=stale_run.scheduled_task_id
                              and later_run.id>stale_run.id
                              and later_run.dispatch_status='dispatched'
@@ -3971,6 +3967,7 @@ def _queue_attention_rows(store: AutoReplyStore, *, limit: int | None = None) ->
 
     unresolved_attempts = store.list_current_unresolved_problem_attempt_summaries(limit=limit)
     attempt_oa_identity: dict[str, str] = {}
+    superseded_scheduled_attempt_ids: set[str] = set()
     if unresolved_attempts:
         attempt_ids = [int(item["id"]) for item in unresolved_attempts if str(item["id"]).isdigit()]
         if attempt_ids:
@@ -3984,8 +3981,31 @@ def _queue_attention_rows(store: AutoReplyStore, *, limit: int | None = None) ->
                         tuple(attempt_ids),
                     ).fetchall()
                 }
+                covered_rows = db.execute(
+                    f"""
+                    select attempts.id
+                    from ({REPLY_ATTEMPT_COMMON_SQL}) attempts
+                    join ({AGENT_RUN_SQL}) attempt_run on attempt_run.id=attempts.agent_run_id
+                    join ({SCHEDULED_RUN_SQL}) old_run
+                      on old_run.execution_kind='reply_task'
+                     and cast(old_run.execution_id as integer)=attempt_run.reply_task_id
+                    where attempts.id in ({placeholders})
+                      and exists (
+                          select 1 from ({SCHEDULED_RUN_SQL}) latest_run
+                          where latest_run.scheduled_task_id=old_run.scheduled_task_id
+                            and latest_run.id>old_run.id
+                            and latest_run.dispatch_status='dispatched'
+                      )
+                    """,
+                    tuple(attempt_ids),
+                ).fetchall()
+                superseded_scheduled_attempt_ids = {
+                    str(row["id"]) for row in covered_rows
+                }
 
     for attempt in unresolved_attempts:
+        if attempt["id"] in superseded_scheduled_attempt_ids:
+            continue
         send_status = str(attempt["send_status"] or "").casefold()
         # Attention is the service-error surface. A genuine business decision
         # stays available from its attempt/detail page, but must not inflate
