@@ -173,3 +173,19 @@ class LogicalRunStoreMixin:
                               ), native_available=not reason, native_reason=reason,
                               tool_events_available=available, tool_events_reason=event_reason)
             return values
+
+    def list_okr_review_runs(self, task_id: int) -> list[dict[str, object]]:
+        """Read OKR review history by canonical Task identity and native Run IDs."""
+        from app.task_entity_storage import get_task
+
+        with self._connect() as db:
+            task = get_task(db, task_id)
+            if task is None or task["kind"] != "okr_review":
+                raise ValueError("OKR review history requires an OKR review Task")
+            run_ids = [int(row[0]) for row in db.execute(
+                "select r.id from runs r join run_provenance p on p.run_id=r.id "
+                "where r.task_id=? and p.source_type='okr_review_runs' order by r.id desc",
+                (task_id,),
+            ).fetchall()]
+        return [run for run_id in run_ids
+                if (run := self.get_professional_run(run_id)) is not None]

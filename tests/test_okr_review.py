@@ -19,7 +19,7 @@ from app.okr_review import (
     requested_okr_period,
 )
 from app.okr_models import OkrReviewItem, OkrReviewPayload
-from app.store import AutoReplyStore
+from test_okr_review_task_runtime import PersistedStructuredRunner, _store
 
 
 def test_okr_review_item_requires_two_scores_and_discount_reasons():
@@ -622,37 +622,8 @@ def test_normalize_okr_review_domain_payload_renders_assessment_and_gaps():
     assert "{" not in summary  # no raw JSON
 
 
-class FakeStructuredRunnerForOkr:
-    def __init__(self, envelope):
-        self.envelope = envelope
-        self.calls = []
-
-    def run(
-        self,
-        request_id,
-        conversation_id,
-        conversation_title,
-        single_chat,
-        prompt,
-        *,
-        owner,
-    ):
-        self.calls.append((conversation_id, conversation_title, single_chat, prompt, owner))
-        return type(
-            "Run",
-            (),
-            {
-                "envelope": self.envelope,
-                "codex_session_id": "session-okr",
-                "transcript_start_line": 1,
-                "transcript_end_line": 10,
-                "audit_tool_events": [{"tool": "memory_recall"}],
-            },
-        )()
-
-
 def test_process_okr_review_request_persists_items_and_marks_done(tmp_path):
-    store = AutoReplyStore(tmp_path / "worker.sqlite3")
+    store = _store()
     request_id = store.create_okr_review_request(
         conversation_id="cid-1",
         conversation_title="吴婷",
@@ -715,7 +686,7 @@ def test_process_okr_review_request_persists_items_and_marks_done(tmp_path):
     schema = json.loads(schema_path.read_text(encoding="utf-8"))
     Draft202012Validator.check_schema(schema)
     Draft202012Validator(schema).validate(envelope.model_dump(mode="json"))
-    runner = FakeStructuredRunnerForOkr(envelope)
+    runner = PersistedStructuredRunner(store, envelope)
 
     reply = process_okr_review_request(
         store=store,
@@ -726,14 +697,14 @@ def test_process_okr_review_request_persists_items_and_marks_done(tmp_path):
 
     loaded = store.get_okr_review_request(request_id)
     assert loaded.status == "done"
-    assert loaded.codex_session_id == "session-okr"
+    assert loaded.codex_session_id == "structured-session"
     assert "员工主张分" in reply
     assert runner.calls[0][4] == f"okr_review:{request_id}"
     assert json.loads(runner.envelope.model_dump_json())["kind"] == "okr_review"
 
 
 def test_process_okr_review_request_uses_live_source_owner_as_person_name(tmp_path):
-    store = AutoReplyStore(tmp_path / "worker.sqlite3")
+    store = _store()
     request_id = store.create_okr_review_request(
         conversation_id="cid-group",
         conversation_title="OKR 群",
@@ -799,7 +770,7 @@ def test_process_okr_review_request_uses_live_source_owner_as_person_name(tmp_pa
             "audit": {"summary": "审核完成。", "documents": [], "confidence": 0.8},
         }
     )
-    runner = FakeStructuredRunnerForOkr(envelope)
+    runner = PersistedStructuredRunner(store, envelope)
 
     reply = process_okr_review_request(
         store=store,
@@ -816,7 +787,7 @@ def test_process_okr_review_request_uses_live_source_owner_as_person_name(tmp_pa
 
 
 def test_process_okr_review_request_preserves_group_conversation_kind(tmp_path):
-    store = AutoReplyStore(tmp_path / "worker.sqlite3")
+    store = _store()
     request_id = store.create_okr_review_request(
         conversation_id="cid-group",
         conversation_title="OKR 群",
@@ -873,7 +844,7 @@ def test_process_okr_review_request_preserves_group_conversation_kind(tmp_path):
             "audit": {"summary": "审核完成。", "documents": [], "confidence": 0.8},
         }
     )
-    runner = FakeStructuredRunnerForOkr(envelope)
+    runner = PersistedStructuredRunner(store, envelope)
 
     process_okr_review_request(
         store=store,

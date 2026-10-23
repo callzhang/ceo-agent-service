@@ -14674,7 +14674,7 @@ class AutoReplyStore(LogicalRunStoreMixin, ReviewedCandidateStoreMixin):
                 task = get_task(db, task_id)
                 assert task is not None
                 if task["status"] == "failed":
-                    parameters = {**task["parameters"], "okr_source_json": okr_source_json}
+                    parameters = {**task["parameters"], "okr_source_json": okr_source_json, "codex_session_id": ""}
                     update_task_cas(
                         db, task_id=task_id, expected={"status": "failed"},
                         changes={"status": "pending", "error": "", "updated_at": db.execute("select current_timestamp").fetchone()[0]},
@@ -14683,8 +14683,7 @@ class AutoReplyStore(LogicalRunStoreMixin, ReviewedCandidateStoreMixin):
                 return task_id
             now = db.execute("select current_timestamp").fetchone()[0]
             task = create_task(db, values={
-                "kind": "okr_review", "status": "pending", "available_at": "",
-                "attempts": 0, "error": "", "locked_at": None,
+                "kind": "okr_review", "status": "pending", "error": "",
                 "created_at": now, "updated_at": now,
             }, parameters={
                 "conversation_id": conversation_id, "conversation_title": conversation_title,
@@ -14708,7 +14707,7 @@ class AutoReplyStore(LogicalRunStoreMixin, ReviewedCandidateStoreMixin):
     def claim_okr_review_requests(self, limit: int) -> list[OkrReviewRequest]:
         if limit <= 0:
             return []
-        from app.task_entity_storage import get_task, update_task_cas
+        from app.task_entity_storage import update_task_cas
 
         with self._immediate_write_transaction() as db:
             rows = db.execute(
@@ -14729,69 +14728,61 @@ class AutoReplyStore(LogicalRunStoreMixin, ReviewedCandidateStoreMixin):
     def reset_recoverable_okr_review_requests(
         self, *, processing_max_age_seconds: int | None = None
     ) -> list[OkrReviewRequest]:
+        from app.task_entity_storage import get_task, update_task_cas
+
         with self._immediate_write_transaction() as db:
-            lease_projection = "(" + task_claims.claim_projection() + ")"
             lock_projection = "(" + state_projection("codex_session_locks") + ")"
-            params: list[object] = []
             processing_clause = (
-                "request.status='processing' and not exists ("
-                f"select 1 from {lease_projection} claim "
-                "where claim.adapter_name='okr_review' "
-                "and claim.source_id=cast(request.id as text) "
-                "and claim.owner<>'' "
-                "and claim.lease_expires_at>current_timestamp)"
+                "task.status='processing' and not (task.adapter_name='okr_review' "
+                "and coalesce(task.lease_owner,'')<>'' "
+                "and task.lease_expires_at>current_timestamp)"
             )
+            params: list[object] = []
             if processing_max_age_seconds is not None:
                 if processing_max_age_seconds <= 0:
                     return []
-                processing_clause = (
-                    processing_clause + " "
-                    "and datetime(request.updated_at) <= datetime('now', ?)"
-                )
+                processing_clause += " and datetime(task.updated_at)<=datetime('now', ?)"
                 params.append(f"-{int(processing_max_age_seconds)} seconds")
             rows = db.execute(
                 f"""
-                select *
-                from ({OKR_REQUEST_SQL}) as request
-                where ({processing_clause})
-                   or (
-                       request.status='failed'
-                       and request.error like 'codex session locked:%'
-                       and not exists (
-                           select 1
-                           from {lock_projection} as codex_session_locks
-                           where codex_session_locks.conversation_id =
-                                 request.conversation_id
-                             and datetime(codex_session_locks.locked_at) >
-                                 datetime('now', ?)
-                       )
-                   )
-                order by request.updated_at, request.id
+                select task.id from tasks task
+                where task.kind='okr_review' and (
+                    ({processing_clause}) or (
+                        task.status='failed'
+                        and task.error like 'codex session locked:%'
+                        and not exists (
+                            select 1 from {lock_projection} locks
+                            where locks.conversation_id=json_extract(task.parameters_json,'$.conversation_id')
+                              and datetime(locks.locked_at)>datetime('now', ?)
+                        )
+                    )
+                ) order by task.updated_at,task.id
                 """,
                 (*params, f"-{CODEX_SESSION_LOCK_STALE_SECONDS} seconds"),
             ).fetchall()
-            request_ids = [row["id"] for row in rows]
-            if not request_ids:
+            tasks = [get_task(db, int(row["id"])) for row in rows]
+            tasks = [task for task in tasks if task is not None]
+            if not tasks:
                 return []
-            owners = [f"okr_review:{request_id}" for request_id in request_ids]
-            owner_placeholders = ",".join("?" for _ in owners)
+            owners = [f"okr_review:{task['id']}" for task in tasks]
+            placeholders = ",".join("?" for _ in owners)
             db.execute(
-                f"""
-                delete from state
-                where record_type='codex_session_locks' and owner in ({owner_placeholders})
-                """,
+                f"delete from state where record_type='codex_session_locks' and owner in ({placeholders})",
                 owners,
             )
-            request_placeholders = ",".join("?" for _ in request_ids)
-            db.execute(
-                f"""
-                update tasks
-                set {task8_set_parts('okr_review_requests', {}, update_sql={'status': "'pending'", 'error': "''", 'codex_session_id': "''", 'updated_at': 'current_timestamp'}, payload_source='tasks.payload_json').sql}  where record_type='okr_review_requests'
-                  and cast(legacy_key as integer) in ({request_placeholders})
-                """,
-                request_ids,
-            )
-            return [self._okr_review_request_from_row(row) for row in rows]
+            stamp = db.execute("select current_timestamp").fetchone()[0]
+            reset = []
+            for task in tasks:
+                parameters = dict(task["parameters"])
+                parameters["codex_session_id"] = ""
+                update_task_cas(
+                    db, task_id=int(task["id"]),
+                    expected={"status": task["status"], "updated_at": task["updated_at"]},
+                    changes={"status": "pending", "error": "", "updated_at": stamp},
+                    parameters=parameters,
+                )
+                reset.append(self._okr_review_request_from_task(task))
+            return reset
 
     def get_okr_review_request(self, request_id: int) -> OkrReviewRequest:
         from app.task_entity_storage import get_task
@@ -14805,42 +14796,75 @@ class AutoReplyStore(LogicalRunStoreMixin, ReviewedCandidateStoreMixin):
     def mark_okr_review_request_done(
         self, request_id: int, *, codex_session_id: str
     ) -> None:
+        from app.task_entity_storage import get_task, update_task_cas
+
         with self._connect() as db:
-            db.execute(
-                f"""
-                update tasks
-                set {task8_set_parts('okr_review_requests', {}, update_sql={'status': "'done'", 'error': "''", 'codex_session_id': '?', 'updated_at': 'current_timestamp'}, payload_source='tasks.payload_json').sql}  where record_type='okr_review_requests'
-                  and cast(legacy_key as integer)=?
-                """,
-                (codex_session_id, request_id),
+            task = get_task(db, request_id)
+            if task is None or task["kind"] != "okr_review":
+                raise ValueError(f"okr review request not found: {request_id}")
+            update_task_cas(
+                db, task_id=request_id, expected={"status": task["status"]},
+                changes={"status": "done", "error": "", "updated_at": db.execute("select current_timestamp").fetchone()[0]},
+                parameters={**task["parameters"], "codex_session_id": codex_session_id},
             )
 
     def mark_okr_review_request_failed(self, request_id: int, error: str) -> None:
+        from app.task_entity_storage import get_task, update_task_cas
+
         with self._connect() as db:
-            db.execute(
-                f"""
-                update tasks
-                set {task8_set_parts('okr_review_requests', {}, update_sql={'status': "'failed'", 'error': '?', 'updated_at': 'current_timestamp'}, payload_source='tasks.payload_json').sql}  where record_type='okr_review_requests'
-                  and cast(legacy_key as integer)=?
-                """,
-                (error, request_id),
+            task = get_task(db, request_id)
+            if task is None or task["kind"] != "okr_review":
+                raise ValueError(f"okr review request not found: {request_id}")
+            update_task_cas(
+                db, task_id=request_id, expected={"status": task["status"]},
+                changes={"status": "failed", "error": error, "updated_at": db.execute("select current_timestamp").fetchone()[0]},
             )
 
-
-
     def record_okr_review_item(
-        self,
-        *,
-        request_id: int,
-        objective_title: str,
-        objective_weight: float,
-        kr_title: str,
-        kr_weight: float,
-        item_json: str,
+        self, *, request_id: int, objective_title: str, objective_weight: float,
+        kr_title: str, kr_weight: float, item_json: str,
     ) -> int:
         with self._connect() as db:
-            cursor = insert_task12(db, 'okr_review_items', {'request_id': request_id, 'objective_title': objective_title, 'objective_weight': objective_weight, 'kr_title': kr_title, 'kr_weight': kr_weight, 'item_json': item_json})
-            return int(cursor.lastrowid)
+            owner = db.execute("select kind from tasks where id=?", (request_id,)).fetchone()
+            if owner is None or owner["kind"] != "okr_review":
+                raise ValueError(f"okr review request not found: {request_id}")
+            row = db.execute(
+                "insert into okr_review_items(request_id,objective_title,objective_weight,kr_title,kr_weight,item_json) "
+                "values(?,?,?,?,?,?) returning id",
+                (request_id, objective_title, objective_weight, kr_title, kr_weight, item_json),
+            ).fetchone()
+            return int(row["id"])
+
+    def bind_okr_review_runtime_attempt(self, *, task_id: int, run_id: int, attempt_id: int) -> None:
+        """Bind the returned structured attempt to the validated review's new Run."""
+        from app.run_entity_storage import (
+            get_run, get_run_provenance, get_runtime_attempt,
+            update_runtime_attempt_cas,
+        )
+        from app.task_entity_storage import get_task
+
+        with self._agent_run_write_transaction(None) as (db, _):
+            task = get_task(db, task_id)
+            run = get_run(db, run_id)
+            provenance = get_run_provenance(db, run_id)
+            attempt = get_runtime_attempt(db, attempt_id)
+            if task is None or task["kind"] != "okr_review":
+                raise ValueError("OKR RuntimeAttempt owner Task is invalid")
+            if run is None or run["task_id"] != task_id or provenance is None or provenance["source_type"] != "okr_review_runs":
+                raise ValueError("OKR RuntimeAttempt owner Run is invalid")
+            if attempt is None or attempt["workload_kind"] != "structured" or attempt["workload_key"] != str(task_id) or attempt["status"] != "completed":
+                raise ValueError("OKR RuntimeAttempt does not match the completed structured request")
+            if attempt["parent_id"] == run_id:
+                return
+            if attempt["parent_id"] is not None:
+                raise ValueError("structured RuntimeAttempt already has a different Run owner")
+            if update_runtime_attempt_cas(
+                db, attempt_id=attempt_id,
+                expected={"parent_id": None, "workload_kind": "structured",
+                          "workload_key": str(task_id), "status": "completed"},
+                changes={"parent_id": run_id},
+            ) is None:
+                raise ValueError("structured RuntimeAttempt changed before OKR Run binding")
 
     def upsert_conversation(
         self,

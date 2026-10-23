@@ -1,24 +1,13 @@
 import json
-import sqlite3
-
 import pytest
 
 from app.run_storage import insert_run
-from app.task12_storage import task12_projection
-from app.store import MEETING_LOGICAL_RUN_SQL,OKR_LOGICAL_RUN_SQL,TASK_LOGICAL_RUN_SQL
+from app.store import MEETING_LOGICAL_RUN_SQL,TASK_LOGICAL_RUN_SQL
 from app import native_trajectory
 from app.agent_envelope import AgentEnvelope
 from app.store import AutoReplyStore
 from app.task_agent import TaskAgentDecision
 from tests.test_meeting_alignment import summary_decision
-
-
-def _okr_parent(store):
-    return store.create_okr_review_request(
-        conversation_id="c", conversation_title="OKR", trigger_message_id="m",
-        trigger_sender="sender", trigger_sender_user_id="owner", trigger_text="review",
-        period_label="period", period_start="", period_end="", okr_source_json="{}",
-    )
 
 
 def _message(text):
@@ -328,45 +317,44 @@ def test_raw_task_decision_rejects_all_invalid_candidates(monkeypatch):
 
 
 def test_okr_run_keeps_business_items_and_reads_native_envelope(tmp_path, monkeypatch):
-    store = AutoReplyStore(tmp_path / "store.sqlite3")
-    envelope = AgentEnvelope.model_validate({
-        "kind": "okr_review",
-        "user_response": {"mode": "no_reply", "text": "", "sensitivity_kind": "general"},
-        "system_actions": [], "domain_payload": {},
-        "audit": {"summary": "native audit", "documents": [], "confidence": 1.0},
+    from test_okr_review_task_runtime import NOW, _envelope, _request, _store
+
+    store = _store()
+    envelope = _envelope([]).model_copy(update={
+        "audit": _envelope([]).audit.model_copy(update={"summary": "native audit"}),
     })
     native = tmp_path / "okr.jsonl"
     native.write_text(_message(envelope.model_dump_json()) + "\n")
     monkeypatch.setattr(native_trajectory, "find_codex_session_path", lambda *args, **kwargs: native)
-    assert _okr_parent(store) == 1
-    run = store.create_logical_run('okr_review_runs', task_public_id=1, codex_session_id="native-okr", codex_transcript_start_line=0, codex_transcript_end_line=1)
+    task_id, _ = _request(store)
+    run = store.create_professional_run(task_id, session_id="native-okr", transcript_start=0, transcript_end=1)
     store.record_okr_review_item(
-        request_id=1, objective_title="O", objective_weight=1.0,
+        request_id=task_id, objective_title="O", objective_weight=1.0,
         kr_title="KR", kr_weight=1.0, item_json='{"adopted":"business"}',
     )
-    with sqlite3.connect(store.path) as db:
-        _attempt(db, run, "1", "native-okr", 0, 1, 1, kind="structured")
-        assert not {"envelope_json", "audit_summary", "audit_tool_events_json"} & {
-            column[0] for column in db.execute(f"select * from ({OKR_LOGICAL_RUN_SQL}) where id=?", (run,)).description
-        }
-        assert db.execute(f"select item_json from ({task12_projection('okr_review_items')})").fetchone()[0] == '{"adopted":"business"}'
-    loaded = store.get_logical_run('okr_review_runs', run)
+    attempt = store.claim_runtime_operation_attempt("structured", str(task_id), "codex_oauth", "codex_cli", "local_oauth", "test", owner=f"okr_review:{task_id}", lease_seconds=1800, now=NOW)
+    store.mark_agent_runtime_attempt_running_once(attempt.id, owner=f"okr_review:{task_id}", now=NOW)
+    store.complete_agent_runtime_attempt(attempt.id, "native-okr", "token", 0, 1, owner=f"okr_review:{task_id}", now=NOW)
+    store.bind_okr_review_runtime_attempt(task_id=task_id, run_id=run, attempt_id=attempt.id)
+    with store._connect() as db:
+        assert db.execute("select item_json from okr_review_items where request_id=?", (task_id,)).fetchone()[0] == '{"adopted":"business"}'
+    loaded = store.get_professional_run(run)
     assert loaded["native_available"] is True
     assert loaded["tool_events_available"] is True
     assert json.loads(loaded["envelope_json"])["kind"] == "okr_review"
     assert loaded["audit_summary"] == "native audit"
     with store._connect() as db:
-        db.execute(
-            "update runs set status='failed' where record_type='agent_runtime_attempts' and workload_kind='structured' and workload_key='1'"
-        )
-    unavailable = store.get_logical_run('okr_review_runs', run)
+        db.execute("update runtime_attempts set status='failed' where id=?", (attempt.id,))
+    unavailable = store.get_professional_run(run)
     assert unavailable["native_available"] is False
     assert unavailable["native_reason"] == "native_reference_unavailable"
     assert unavailable["tool_events_available"] is False
 
 
 def test_okr_runs_for_same_request_read_only_their_own_completed_attempt(tmp_path, monkeypatch):
-    store = AutoReplyStore(tmp_path / "store.sqlite3")
+    from test_okr_review_task_runtime import NOW, _request, _store
+
+    store = _store()
     paths = {}
     for session, summary in (("first-session", "first review"),
                              ("second-session", "second review")):
@@ -385,25 +373,30 @@ def test_okr_runs_for_same_request_read_only_their_own_completed_attempt(tmp_pat
         native_trajectory, "find_codex_session_path",
         lambda session, **kwargs: paths[session],
     )
-    assert _okr_parent(store) == 1
-    first = store.create_logical_run('okr_review_runs', task_public_id=1, codex_session_id="first-session", codex_transcript_start_line=0, codex_transcript_end_line=1)
-    second = store.create_logical_run('okr_review_runs', task_public_id=1, codex_session_id="second-session", codex_transcript_start_line=0, codex_transcript_end_line=1)
-    with store._connect() as db:
-        _attempt(db, first, "1", "first-session", 0, 1, 1, kind="structured")
-        _attempt(db, second, "1", "second-session", 0, 1, 2, kind="structured")
-    assert store.get_logical_run('okr_review_runs', first)["audit_summary"] == "first review"
-    assert store.get_logical_run('okr_review_runs', second)["audit_summary"] == "second review"
+    task_id, _ = _request(store)
+    first = store.create_professional_run(task_id, session_id="first-session", transcript_start=0, transcript_end=1)
+    second = store.create_professional_run(task_id, session_id="second-session", transcript_start=0, transcript_end=1)
+    attempts = []
+    for session, run in (("first-session", first), ("second-session", second)):
+        attempt = store.claim_runtime_operation_attempt("structured", str(task_id), "codex_oauth", "codex_cli", "local_oauth", "test", owner=f"okr_review:{task_id}", lease_seconds=1800, now=NOW)
+        store.mark_agent_runtime_attempt_running_once(attempt.id, owner=f"okr_review:{task_id}", now=NOW)
+        store.complete_agent_runtime_attempt(attempt.id, session, "token", 0, 1, owner=f"okr_review:{task_id}", now=NOW)
+        store.bind_okr_review_runtime_attempt(task_id=task_id, run_id=run, attempt_id=attempt.id)
+        attempts.append(attempt.id)
+    assert store.get_professional_run(first)["audit_summary"] == "first review"
+    assert store.get_professional_run(second)["audit_summary"] == "second review"
 
     paths["first-session"] = None
-    missing = store.get_logical_run('okr_review_runs', first)
+    missing = store.get_professional_run(first)
     assert missing["native_available"] is False
     assert missing["native_reason"] == "native_source_unavailable"
     assert missing["envelope_json"] == "{}"
-    assert store.get_logical_run('okr_review_runs', second)["audit_summary"] == "second review"
+    assert store.get_professional_run(second)["audit_summary"] == "second review"
 
 
 def test_okr_run_uses_completed_friday_provider_reference(tmp_path, monkeypatch):
     from app import friday_runtime_adapter
+    from test_okr_review_task_runtime import NOW, _request, _store
 
     envelope = AgentEnvelope.model_validate({
         "kind": "okr_review",
@@ -421,24 +414,14 @@ def test_okr_run_uses_completed_friday_provider_reference(tmp_path, monkeypatch)
             return envelope.model_dump_json()
 
     monkeypatch.setattr(friday_runtime_adapter, "FridayRuntimeAdapter", FakeAdapter)
-    store = AutoReplyStore(tmp_path / "store.sqlite3")
-    assert _okr_parent(store) == 1
-    run = store.create_logical_run('okr_review_runs', task_public_id=1, codex_session_id="friday_thread:okr-thread", codex_transcript_start_line=0, codex_transcript_end_line=0)
-    with store._connect() as db:
-        insert_run(
-            db, 'agent_runtime_attempts', {
-                'workload_kind': 'structured',
-                'workload_key': '1',
-                'attempt_number': 1,
-                'route_name': 'test',
-                'runtime_kind': 'friday_runtime',
-                'credential_mode': 'local_oauth',
-                'model': 'test',
-                'session_id': 'friday_thread:okr-thread',
-                'status': 'completed',
-            },
-        )
-    loaded = store.get_logical_run('okr_review_runs', run)
+    store = _store()
+    task_id, _ = _request(store)
+    run = store.create_professional_run(task_id, session_id="friday_thread:okr-thread", transcript_start=0, transcript_end=0)
+    attempt = store.claim_runtime_operation_attempt("structured", str(task_id), "codex_oauth", "friday_runtime", "local_oauth", "test", owner=f"okr_review:{task_id}", lease_seconds=1800, now=NOW)
+    store.mark_agent_runtime_attempt_running_once(attempt.id, owner=f"okr_review:{task_id}", now=NOW)
+    store.complete_agent_runtime_attempt(attempt.id, "friday_thread:okr-thread", "token", 0, 0, owner=f"okr_review:{task_id}", now=NOW)
+    store.bind_okr_review_runtime_attempt(task_id=task_id, run_id=run, attempt_id=attempt.id)
+    loaded = store.get_professional_run(run)
     assert loaded["native_available"] is True
     assert loaded["audit_summary"] == "Friday review"
     assert loaded["audit_tool_events_json"] == "[]"

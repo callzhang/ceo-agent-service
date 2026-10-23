@@ -65,6 +65,8 @@ Run，也保留自己的调用 lease、ordinal、session 与失败状态，不�
 此本地候选未启用 constructor 或全 family runtime，Email、Workbench、WeChat Task 生产者仍需
 各自完成原子 Task/DTO/workload-reader 转换。
 
+Task2D3 将 OKR review 的原有 request creator/dedupe、claim、stale recovery、done/failed、item 写入与 Run history/detail 读改为 canonical Task、Run、RuntimeAttempt owner。顺序仍是 routed CLI result → normalization/validation → professional Run create → 精确绑定该次 result 返回的 `attempt_id` → domain items → Task done/render。无效结果不创建 Run；已完成的 CLI attempt 留在 parent NULL。绑定校验同一 OKR Task、`structured` workload key、completed attempt 和该 Task 所属的 `okr_review_runs` Run，只 CAS 写入 NULL parent，不按 session、最新 attempt 或旧 source key 猜测。Task 不存在的 attempts/due/locks/lease/generation 和 OKR Run 不存在的 status/error/role/generation 均保持 SQL NULL。Run detail 从 native Run ID/provenance 检索，尝试只从实际 `parent_id` 关系读取；孤立 Run 不推断旧 request ID 或补 Task。weekly OKR analysis 是独立 Task family，本单元不涉及；constructor、全 family History/dashboard、provider 与生产仍未启用。Task2D3 基于原 review BASE `360dfa1`，与已独立复核的 Task3E4 Fix2 `30426e7` 交错；具体命令、测试和依赖见 `task-2d3-okr-review-report.md`。
+
 Store19.8 的 C1 将九种实际可执行 Task 的源 status、due、attempt、error、时间与
 既有 owner／PID／generation／expiry 事实移到单一物理列；不存在的源字段保持
 SQL NULL，另外十一种记录保持原业务状态且没有通用生命周期。物理列保存一个
