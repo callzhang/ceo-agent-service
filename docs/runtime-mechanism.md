@@ -547,7 +547,8 @@ Consumer 会话兼容键还绑定本轮实际选中的 Skill 正文：冻结 Ski
 Developer 中的原生输出 schema SHA-256 指纹，并与本轮 purpose 的服务 schema 比较；一致才续接。
 Codex 的原生结构化 schema 通过 CLI 参数传入，不会完整保存在 Developer 文本里，因此 Developer 只记录
 精简指纹；旧会话仍可通过完整 Pydantic wire schema 精确核验。指纹不匹配或缺失时，只清除该路线的会话
-指针，本轮携完整事实和当前 Developer 开新 session。
+指针，本轮携完整事实和当前 Developer 开新 session。原生指纹后可以继续出现以 `## ` 开始的独立 Developer
+段落；任意其他尾随文本仍视为格式无效，不能用来判定 session schema 兼容。
 仅普通 Developer 文案或 Work Profile 变化不会触发此检查失败。Claude 每轮重新提交当前
 Developer，Audit 会话规则、审批权限和动作门槛不变；旧原生会话与历史运行记录仍保留。
 

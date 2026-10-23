@@ -1869,6 +1869,45 @@ def test_consumer_default_path_rejects_incompatible_native_wire_before_resume(
     assert store.get_codex_session_id(task.conversation_id) == "session-new"
 
 
+def test_consumer_default_path_resumes_native_schema_with_later_developer_sections(
+    store, task, context, monkeypatch, tmp_path
+):
+    session = tmp_path / "native-session.jsonl"
+    schema_hash = consumer_agent.sha256(
+        native_output_schema_path("consumer").read_bytes()
+    ).hexdigest()
+    developer = (
+        "## Native Output Schema SHA-256\n" + schema_hash
+        + "\n\n## Capability Instructions\nRead-only capabilities follow."
+    )
+    session.write_text(json.dumps({
+        "type": "response_item",
+        "payload": {
+            "type": "message", "role": "developer",
+            "content": [{"type": "input_text", "text": developer}],
+            "internal_chat_message_metadata_passthrough": {
+                "content_item_kinds": ["generic.developer_instructions"]
+            },
+        },
+    }) + "\n")
+    monkeypatch.setattr(consumer_agent, "find_codex_session_path", lambda *_args, **_kwargs: session)
+    monkeypatch.setattr(
+        "app.native_prompt_input.native.find_codex_session_path",
+        lambda *_args, **_kwargs: session,
+    )
+    store.upsert_conversation(task.conversation_id, "Group", False, "session-old")
+    store.set_codex_session_contract_hash(task.conversation_id, "old-contract")
+    executor = CapturingExecutor(_result_jsonl(session="session-old"))
+
+    ConsumerAgentRunner(
+        store=store, workspace=Path("/workspace"), executor=executor
+    ).run(task, context, proposal_revision=0, parent_agent_run_id=None)
+
+    assert executor.commands[0][3:5] == ["exec", "resume"]
+    assert executor.commands[0][-2:] == ["session-old", "-"]
+    assert store.get_codex_session_id(task.conversation_id) == "session-old"
+
+
 def test_consumer_forced_rerun_resumes_the_compatible_session(store, task, context):
     store.upsert_conversation(task.conversation_id, "Group", False, "session-old")
     store.set_codex_session_contract_hash(
