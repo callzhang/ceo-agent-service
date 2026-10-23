@@ -17252,7 +17252,7 @@ class AutoReplyStore(LogicalRunStoreMixin, ReviewedCandidateStoreMixin):
         keys = tuple(decision.feedback_keys)
         with self._immediate_write_transaction() as db:
             batch = db.execute(
-                f"""select status from ({task12_projection('feedback_processing_batches')}) as feedback_processing_batches where batch_id=?""",
+                f"""select status from ({_native_feedback_batch_projection()}) as feedback_processing_batches where batch_id=?""",
                 (cleaned_batch_id,),
             ).fetchone()
             if batch is None or str(batch["status"]) != "processing":
@@ -17262,8 +17262,8 @@ class AutoReplyStore(LogicalRunStoreMixin, ReviewedCandidateStoreMixin):
                 f"""select item.feedback_key, item.current_round_id, item.batch_id,
                            item.status, round.workbench_task_id,
                            round.workbench_turn_id
-                    from ({task12_projection('feedback_processing_items')}) as item
-                    join ({task12_projection('feedback_processing_rounds')}) as round
+                    from ({_native_feedback_item_projection()}) as item
+                    join ({_native_feedback_round_projection()}) as round
                       on round.id=item.current_round_id
                      and round.feedback_key=item.feedback_key
                      and round.batch_id=item.batch_id
@@ -17302,12 +17302,14 @@ class AutoReplyStore(LogicalRunStoreMixin, ReviewedCandidateStoreMixin):
                 raise FeedbackIterationAssociationMismatchError(
                     "feedback iteration decision must match the current processing round association"
                 )
-            _task12_insert = task12_insert_parts(db, 'feedback_iteration_decisions', {'batch_id': cleaned_batch_id, 'workbench_task_id': canonical_task_id, 'workbench_turn_id': canonical_turn_id, 'decision_json': decision.model_dump_json()})
-            db.execute(
-                f"""{_task12_insert.sql}""",
-                _task12_insert.parameters,
+            cursor = db.execute(
+                "insert into feedback_iteration_decisions"
+                "(batch_id,workbench_task_id,workbench_turn_id,decision_json)"
+                " values(?,?,?,?)",
+                (cleaned_batch_id, canonical_task_id, canonical_turn_id,
+                 decision.model_dump_json()),
             )
-            decision_id = int(_task12_insert.source_rowid)
+            decision_id = int(cursor.lastrowid)
             insert_feedback_decision_items(db, [
                 {"decision_id": decision_id, "feedback_key": key,
                  "round_id": round_ids_by_key[key]} for key in keys
@@ -17318,7 +17320,7 @@ class AutoReplyStore(LogicalRunStoreMixin, ReviewedCandidateStoreMixin):
                           decision.created_at,
                           json_group_array(item.feedback_key) as feedback_keys_json,
                           json_group_array(item.round_id) as round_ids_json
-                     from ({task12_projection('feedback_iteration_decisions')}) as decision
+                     from feedback_iteration_decisions as decision
                      join ({FEEDBACK_DECISION_ITEM_SQL}) item on item.decision_id=decision.id
                     where decision.id=?
                     group by decision.id""",
@@ -17337,7 +17339,7 @@ class AutoReplyStore(LogicalRunStoreMixin, ReviewedCandidateStoreMixin):
                           decision.created_at,
                           json_group_array(item.feedback_key) as feedback_keys_json,
                           json_group_array(item.round_id) as round_ids_json
-                     from ({task12_projection('feedback_iteration_decisions')}) as decision
+                     from feedback_iteration_decisions as decision
                      join ({FEEDBACK_DECISION_ITEM_SQL}) item on item.decision_id=decision.id
                     where decision.batch_id=?
                     group by decision.id
@@ -17581,7 +17583,7 @@ class AutoReplyStore(LogicalRunStoreMixin, ReviewedCandidateStoreMixin):
             return None
         with self._immediate_write_transaction() as db:
             item = db.execute(
-                f"""select * from ({task12_projection('feedback_processing_items')}) as feedback_processing_items where feedback_key=?""",
+                f"""select * from ({_native_feedback_item_projection()}) as feedback_processing_items where feedback_key=?""",
                 (cleaned_key,),
             ).fetchone()
             if item is None:
@@ -17611,10 +17613,10 @@ class AutoReplyStore(LogicalRunStoreMixin, ReviewedCandidateStoreMixin):
                 ) from exc
             current_round = db.execute(
                 f"""
-                select * from ({task12_projection('feedback_processing_rounds')}) as feedback_processing_rounds where id=? and feedback_key=? and batch_id=? and status='resolved'
+                select * from ({_native_feedback_round_projection()}) as feedback_processing_rounds where id=? and feedback_key=? and batch_id=? and status='resolved'
                    and round_number=(
                        select max(latest_round.round_number)
-                         from ({task12_projection('feedback_processing_rounds')}) as latest_round
+                         from ({_native_feedback_round_projection()}) as latest_round
                         where latest_round.feedback_key=?
                    )
                 """,
@@ -17630,7 +17632,7 @@ class AutoReplyStore(LogicalRunStoreMixin, ReviewedCandidateStoreMixin):
                 (cleaned_key,),
             ).fetchone()
             batch = db.execute(
-                f"""select status, requested_count, resolved_at, updated_at from ({task12_projection('feedback_processing_batches')}) as feedback_processing_batches where batch_id=?""",
+                f"""select status, requested_count, resolved_at, updated_at from ({_native_feedback_batch_projection()}) as feedback_processing_batches where batch_id=?""",
                 (str(item["batch_id"] or ""),),
             ).fetchone()
             if (
@@ -17666,9 +17668,9 @@ class AutoReplyStore(LogicalRunStoreMixin, ReviewedCandidateStoreMixin):
             ).fetchone()
             reopen_timestamp = str(reopen_timestamp_row["reopen_timestamp"])
             cursor = db.execute(
-                f"""update tasks set {task12_set_parts('feedback_processing_rounds', {}, update_sql={'reopened_at': '?', 'reopen_reason': '?'}).sql} where record_type='feedback_processing_rounds' and {task20_column('feedback_processing_rounds', 'id')}=? and {task20_column('feedback_processing_rounds', 'feedback_key')}=? and {task20_column('feedback_processing_rounds', 'batch_id')}=? and {task20_column('feedback_processing_rounds', 'status')}='resolved'
-                   and trim({task20_column('feedback_processing_rounds', 'reopened_at')})='' and trim({task20_column('feedback_processing_rounds', 'reopen_reason')})=''
-                """,
+                "update feedback_processing_rounds set reopened_at=?,reopen_reason=? "
+                "where id=? and feedback_key=? and batch_id=? and status='resolved' "
+                "and trim(reopened_at)='' and trim(reopen_reason)=''",
                 (
                     reopen_timestamp,
                     reason,
@@ -17692,8 +17694,12 @@ class AutoReplyStore(LogicalRunStoreMixin, ReviewedCandidateStoreMixin):
                 "created_at": reopen_timestamp,
             })
             cursor = db.execute(
-                f"""update tasks set {task12_set_parts('feedback_processing_items', {}, update_sql={'current_round_id': '0', 'batch_id': "''", 'status': "'pending'", 'workbench_task_id': "''", 'workbench_turn_id': "''", 'attempt_id': '0', 'agent_run_id': '0', 'commit_sha': "''", 'test_evidence_json': "'{}'", 'restart_evidence_json': "'{}'", 'health_evidence_json': "'{}'", 'note': "''", 'resolved_at': "''", 'updated_at': 'current_timestamp'}).sql} where record_type='feedback_processing_items' and {task20_column('feedback_processing_items', 'feedback_key')}=? and {task20_column('feedback_processing_items', 'status')}='resolved' and {task20_column('feedback_processing_items', 'current_round_id')}=?
-                """,
+                "update feedback_processing_items set current_round_id=0,batch_id='',"
+                "workbench_task_id='',workbench_turn_id='',attempt_id=0,agent_run_id=0,"
+                "commit_sha='',test_evidence_json='{}',restart_evidence_json='{}',"
+                "health_evidence_json='{}',note='',resolved_at='' "
+                "where feedback_key=? and current_round_id=? and task_id in "
+                "(select id from tasks where kind='feedback_processing' and status='resolved')",
                 (cleaned_key, round_id),
             )
             if cursor.rowcount != 1:
@@ -17701,13 +17707,19 @@ class AutoReplyStore(LogicalRunStoreMixin, ReviewedCandidateStoreMixin):
                     "feedback processing history is incomplete",
                     error_code=FEEDBACK_REOPEN_HISTORY_INCOMPLETE,
                 )
+            db.execute(
+                "update tasks set status='pending',updated_at=current_timestamp "
+                "where kind='feedback_processing' and id=(select task_id "
+                "from feedback_processing_items where feedback_key=?)",
+                (cleaned_key,),
+            )
             if reopen_feedback_event(db, cleaned_key) != 1:
                 raise FeedbackProcessingReopenError(
                     "feedback processing history is incomplete",
                     error_code=FEEDBACK_REOPEN_HISTORY_INCOMPLETE,
                 )
             refreshed = db.execute(
-                f"""select * from ({task12_projection('feedback_processing_items')}) as feedback_processing_items where feedback_key=?""",
+                f"""select * from ({_native_feedback_item_projection()}) as feedback_processing_items where feedback_key=?""",
                 (cleaned_key,),
             ).fetchone()
         assert refreshed is not None
@@ -17775,7 +17787,7 @@ class AutoReplyStore(LogicalRunStoreMixin, ReviewedCandidateStoreMixin):
             return None
         with self._immediate_write_transaction() as db:
             current = db.execute(
-                f"""select * from ({task12_projection('feedback_processing_items')}) as feedback_processing_items where feedback_key=?""",
+                f"""select * from ({_native_feedback_item_projection()}) as feedback_processing_items where feedback_key=?""",
                 (cleaned_key,),
             ).fetchone()
             if current is None:
@@ -17793,7 +17805,7 @@ class AutoReplyStore(LogicalRunStoreMixin, ReviewedCandidateStoreMixin):
                 )
             current_round = db.execute(
                 f"""
-                select * from ({task12_projection('feedback_processing_rounds')}) as feedback_processing_rounds where id=? and feedback_key=? and batch_id=? and status='processing'
+                select * from ({_native_feedback_round_projection()}) as feedback_processing_rounds where id=? and feedback_key=? and batch_id=? and status='processing'
                 """,
                 (round_id, cleaned_key, batch_id),
             ).fetchone()
@@ -17805,8 +17817,10 @@ class AutoReplyStore(LogicalRunStoreMixin, ReviewedCandidateStoreMixin):
             ):
                 raise ValueError("feedback association requires the exact current processing round")
             round_cursor = db.execute(
-                f"""update tasks set {task12_set_parts('feedback_processing_rounds', {}, update_sql={'workbench_task_id': '?', 'workbench_turn_id': '?', 'attempt_id': '?', 'agent_run_id': '?', 'updated_at': 'current_timestamp'}).sql} where record_type='feedback_processing_rounds' and {task20_column('feedback_processing_rounds', 'id')}=? and {task20_column('feedback_processing_rounds', 'feedback_key')}=? and {task20_column('feedback_processing_rounds', 'batch_id')}=? and {task20_column('feedback_processing_rounds', 'status')}='processing'
-                """,
+                "update feedback_processing_rounds set workbench_task_id=?,"
+                "workbench_turn_id=?,attempt_id=?,agent_run_id=?,"
+                "updated_at=current_timestamp "
+                "where id=? and feedback_key=? and batch_id=? and status='processing'",
                 (
                     workbench_task_id,
                     workbench_turn_id,
@@ -17818,9 +17832,11 @@ class AutoReplyStore(LogicalRunStoreMixin, ReviewedCandidateStoreMixin):
                 ),
             )
             item_cursor = db.execute(
-                f"""update tasks set {task12_set_parts('feedback_processing_items', {}, update_sql={'workbench_task_id': '?', 'workbench_turn_id': '?', 'attempt_id': '?', 'agent_run_id': '?', 'updated_at': 'current_timestamp'}).sql} where record_type='feedback_processing_items' and {task20_column('feedback_processing_items', 'feedback_key')}=? and {task20_column('feedback_processing_items', 'current_round_id')}=? and {task20_column('feedback_processing_items', 'batch_id')}=?
-                  and {task20_column('feedback_processing_items', 'status')}='processing'
-                """,
+                "update feedback_processing_items set workbench_task_id=?,"
+                "workbench_turn_id=?,attempt_id=?,agent_run_id=? "
+                "where feedback_key=? and current_round_id=? and batch_id=? "
+                "and task_id in (select id from tasks where kind='feedback_processing' "
+                "and status='processing')",
                 (
                     workbench_task_id,
                     workbench_turn_id,
@@ -17833,8 +17849,13 @@ class AutoReplyStore(LogicalRunStoreMixin, ReviewedCandidateStoreMixin):
             )
             if round_cursor.rowcount != 1 or item_cursor.rowcount != 1:
                 raise ValueError("feedback association requires the exact current processing round")
+            db.execute(
+                "update tasks set updated_at=current_timestamp where kind='feedback_processing' "
+                "and id=(select task_id from feedback_processing_items where feedback_key=?)",
+                (cleaned_key,),
+            )
             row = db.execute(
-                f"""select * from ({task12_projection('feedback_processing_items')}) as feedback_processing_items where feedback_key=?""",
+                f"""select * from ({_native_feedback_item_projection()}) as feedback_processing_items where feedback_key=?""",
                 (cleaned_key,),
             ).fetchone()
         return self._feedback_processing_item_from_row(row) if row else None
@@ -17901,7 +17922,7 @@ class AutoReplyStore(LogicalRunStoreMixin, ReviewedCandidateStoreMixin):
                 args.append(value)
         with self._immediate_write_transaction() as db:
             current = db.execute(
-                f"""select * from ({task12_projection('feedback_processing_items')}) as feedback_processing_items where feedback_key=?""",
+                f"""select * from ({_native_feedback_item_projection()}) as feedback_processing_items where feedback_key=?""",
                 (cleaned_key,),
             ).fetchone()
             if current is None:
@@ -17913,7 +17934,7 @@ class AutoReplyStore(LogicalRunStoreMixin, ReviewedCandidateStoreMixin):
             batch_id = str(current["batch_id"] or "")
             current_round = db.execute(
                 f"""
-                select * from ({task12_projection('feedback_processing_rounds')}) as feedback_processing_rounds where id=? and feedback_key=? and batch_id=? and status='processing'
+                select * from ({_native_feedback_round_projection()}) as feedback_processing_rounds where id=? and feedback_key=? and batch_id=? and status='processing'
                 """,
                 (round_id, cleaned_key, batch_id),
             ).fetchone()
@@ -17947,18 +17968,33 @@ class AutoReplyStore(LogicalRunStoreMixin, ReviewedCandidateStoreMixin):
                     changed = True
             if not changed:
                 return self._feedback_processing_item_from_row(current)
+            round_sql = ",".join(f"{field}={expression}"
+                                  for field, expression in assignments.items())
+            item_assignments = {field: expression for field, expression in assignments.items()
+                                if field != "updated_at"}
+            item_sql = ",".join(f"{field}={expression}"
+                                 for field, expression in item_assignments.items())
             round_cursor = db.execute(
-                f"""update tasks set {task12_set_parts('feedback_processing_rounds', {}, update_sql=assignments).sql} where record_type='feedback_processing_rounds' and {task20_column('feedback_processing_rounds', 'id')}=? and {task20_column('feedback_processing_rounds', 'feedback_key')}=? and {task20_column('feedback_processing_rounds', 'batch_id')}=? and {task20_column('feedback_processing_rounds', 'status')}='processing'""",
+                f"update feedback_processing_rounds set {round_sql} "
+                "where id=? and feedback_key=? and batch_id=? and status='processing'",
                 [*args, round_id, cleaned_key, batch_id],
             )
             item_cursor = db.execute(
-                f"""update tasks set {task12_set_parts('feedback_processing_items', {}, update_sql=assignments).sql} where record_type='feedback_processing_items' and {task20_column('feedback_processing_items', 'feedback_key')}=? and {task20_column('feedback_processing_items', 'current_round_id')}=? and {task20_column('feedback_processing_items', 'batch_id')}=? and {task20_column('feedback_processing_items', 'status')}='processing'""",
+                f"update feedback_processing_items set {item_sql} "
+                "where feedback_key=? and current_round_id=? and batch_id=? "
+                "and task_id in (select id from tasks where kind='feedback_processing' "
+                "and status='processing')",
                 [*args, cleaned_key, round_id, batch_id],
             )
             if round_cursor.rowcount != 1 or item_cursor.rowcount != 1:
                 raise ValueError("evidence patch requires the exact current processing round")
+            db.execute(
+                "update tasks set updated_at=current_timestamp where kind='feedback_processing' "
+                "and id=(select task_id from feedback_processing_items where feedback_key=?)",
+                (cleaned_key,),
+            )
             row = db.execute(
-                f"""select * from ({task12_projection('feedback_processing_items')}) as feedback_processing_items where feedback_key=?""",
+                f"""select * from ({_native_feedback_item_projection()}) as feedback_processing_items where feedback_key=?""",
                 (cleaned_key,),
             ).fetchone()
         return self._feedback_processing_item_from_row(row) if row else None
@@ -18355,7 +18391,7 @@ class AutoReplyStore(LogicalRunStoreMixin, ReviewedCandidateStoreMixin):
         if not batch_resolved_at.strip() or not batch_updated_at.strip():
             raise ValueError("resolved batch completion timestamp is incomplete")
         rounds = db.execute(
-            f"""select * from ({task12_projection('feedback_processing_rounds')}) as feedback_processing_rounds where batch_id=? order by feedback_key, id""",
+            f"""select * from ({_native_feedback_round_projection()}) as feedback_processing_rounds where batch_id=? order by feedback_key, id""",
             (batch_id,),
         ).fetchall()
         round_keys = [str(round_row["feedback_key"]) for round_row in rounds]
@@ -18515,7 +18551,7 @@ class AutoReplyStore(LogicalRunStoreMixin, ReviewedCandidateStoreMixin):
             if bool(reopened_at) != bool(reopen_reason):
                 raise ValueError("resolved batch reopen history is incomplete")
             item = db.execute(
-                f"""select * from ({task12_projection('feedback_processing_items')}) as feedback_processing_items where feedback_key=?""",
+                f"""select * from ({_native_feedback_item_projection()}) as feedback_processing_items where feedback_key=?""",
                 (feedback_key,),
             ).fetchone()
             source = db.execute(
@@ -18572,11 +18608,11 @@ class AutoReplyStore(LogicalRunStoreMixin, ReviewedCandidateStoreMixin):
                 continue
             current_round = db.execute(
                 f"""
-                select * from ({task12_projection('feedback_processing_rounds')}) as feedback_processing_rounds where id=? and feedback_key=? and batch_id=? and status=?
+                select * from ({_native_feedback_round_projection()}) as feedback_processing_rounds where id=? and feedback_key=? and batch_id=? and status=?
                    and round_number>?
                    and round_number=(
                        select max(latest_round.round_number)
-                         from ({task12_projection('feedback_processing_rounds')}) as latest_round
+                         from ({_native_feedback_round_projection()}) as latest_round
                         where latest_round.feedback_key=?
                    )
                 """,
@@ -18647,7 +18683,7 @@ class AutoReplyStore(LogicalRunStoreMixin, ReviewedCandidateStoreMixin):
                       decision.created_at,
                       json_group_array(item.feedback_key) as feedback_keys_json,
                       json_group_array(item.round_id) as round_ids_json
-                 from ({task12_projection('feedback_iteration_decisions')}) as decision
+                 from feedback_iteration_decisions as decision
                  join ({FEEDBACK_DECISION_ITEM_SQL}) item on item.decision_id=decision.id
                 where decision.batch_id=?
                 group by decision.id
@@ -18800,7 +18836,7 @@ class AutoReplyStore(LogicalRunStoreMixin, ReviewedCandidateStoreMixin):
         )
         with self._immediate_write_transaction() as db:
             batch = db.execute(
-                f"""select status, requested_count, resolved_at, updated_at from ({task12_projection('feedback_processing_batches')}) as feedback_processing_batches where batch_id=?""",
+                f"""select status, requested_count, resolved_at, updated_at from ({_native_feedback_batch_projection()}) as feedback_processing_batches where batch_id=?""",
                 (cleaned_batch_id,),
             ).fetchone()
             if batch is None:
@@ -18829,13 +18865,13 @@ class AutoReplyStore(LogicalRunStoreMixin, ReviewedCandidateStoreMixin):
                 raise ValueError("resolution requires valid batch membership")
             rows = db.execute(
                 f"""
-                select * from ({task12_projection('feedback_processing_items')}) as feedback_processing_items where batch_id=? order by feedback_key
+                select * from ({_native_feedback_item_projection()}) as feedback_processing_items where batch_id=? order by feedback_key
                 """,
                 (cleaned_batch_id,),
             ).fetchall()
             round_rows = db.execute(
                 f"""
-                select * from ({task12_projection('feedback_processing_rounds')}) as feedback_processing_rounds where batch_id=? order by feedback_key, id
+                select * from ({_native_feedback_round_projection()}) as feedback_processing_rounds where batch_id=? order by feedback_key, id
                 """,
                 (cleaned_batch_id,),
             ).fetchall()
@@ -19024,9 +19060,9 @@ class AutoReplyStore(LogicalRunStoreMixin, ReviewedCandidateStoreMixin):
             )
             for item, current_round in verified:
                 round_cursor = db.execute(
-                    f"""update tasks set {task12_set_parts('feedback_processing_rounds', {}, update_sql={'status': "'resolved'", 'resolved_at': '?', 'backlog_evidence_json': '?', 'scope_receipt_json': '?', 'updated_at': '?'}).sql} where record_type='feedback_processing_rounds' and {task20_column('feedback_processing_rounds', 'id')}=? and {task20_column('feedback_processing_rounds', 'feedback_key')}=? and {task20_column('feedback_processing_rounds', 'batch_id')}=?
-                       and {task20_column('feedback_processing_rounds', 'status')}='processing'
-                    """,
+                    "update feedback_processing_rounds set status='resolved',resolved_at=?,"
+                    "backlog_evidence_json=?,scope_receipt_json=?,updated_at=? "
+                    "where id=? and feedback_key=? and batch_id=? and status='processing'",
                     (
                         resolution_timestamp,
                         backlog_json,
@@ -19038,11 +19074,10 @@ class AutoReplyStore(LogicalRunStoreMixin, ReviewedCandidateStoreMixin):
                     ),
                 )
                 item_cursor = db.execute(
-                    f"""update tasks set {task12_set_parts('feedback_processing_items', {}, update_sql={'status': "'resolved'", 'resolved_at': '?', 'updated_at': '?'}).sql} where record_type='feedback_processing_items' and {task20_column('feedback_processing_items', 'feedback_key')}=? and {task20_column('feedback_processing_items', 'batch_id')}=? and {task20_column('feedback_processing_items', 'current_round_id')}=?
-                       and {task20_column('feedback_processing_items', 'status')}='processing'
-                    """,
+                    "update feedback_processing_items set resolved_at=? where feedback_key=? "
+                    "and batch_id=? and current_round_id=? and task_id in "
+                    "(select id from tasks where kind='feedback_processing' and status='processing')",
                     (
-                        resolution_timestamp,
                         resolution_timestamp,
                         str(item["feedback_key"]),
                         cleaned_batch_id,
@@ -19050,6 +19085,15 @@ class AutoReplyStore(LogicalRunStoreMixin, ReviewedCandidateStoreMixin):
                     ),
                 )
                 if round_cursor.rowcount != 1 or item_cursor.rowcount != 1:
+                    raise ValueError("resolution current round changed during update")
+                task_cursor = db.execute(
+                    "update tasks set status='resolved',updated_at=? where kind='feedback_processing' "
+                    "and status='processing' and id=(select task_id from feedback_processing_items "
+                    "where feedback_key=? and current_round_id=? and batch_id=?)",
+                    (resolution_timestamp, str(item["feedback_key"]),
+                     int(current_round["id"]), cleaned_batch_id),
+                )
+                if task_cursor.rowcount != 1:
                     raise ValueError("resolution current round changed during update")
                 insert_feedback_action(db, "feedback_processing_transitions", {
                     "feedback_key": str(item["feedback_key"]),
@@ -19063,8 +19107,8 @@ class AutoReplyStore(LogicalRunStoreMixin, ReviewedCandidateStoreMixin):
             if resolve_feedback_events(db, item_keys, resolution_timestamp) != requested_count:
                 raise ValueError("resolution source feedback changed during update")
             cursor = db.execute(
-                f"""update tasks set {task12_set_parts('feedback_processing_batches', {}, update_sql={'status': "'resolved'", 'resolved_at': '?', 'updated_at': '?'}).sql} where record_type='feedback_processing_batches' and {task20_column('feedback_processing_batches', 'batch_id')}=? and {task20_column('feedback_processing_batches', 'status')}='processing'
-                """,
+                "update feedback_processing_batches set status='resolved',resolved_at=?,"
+                "updated_at=? where batch_id=? and status='processing'",
                 (resolution_timestamp, resolution_timestamp, cleaned_batch_id),
             )
             if cursor.rowcount != 1:

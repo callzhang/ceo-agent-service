@@ -18,7 +18,8 @@ from app.task_lifecycle_definitions import (
 )
 from app.task_entity_migration import (
     _typed_key, owner_indexes, restore_feedback_round_pointer,
-    translate_feedback_round_pointer, translate_feedback_workbench_refs,
+    restore_feedback_scope_receipt, translate_feedback_round_pointer,
+    translate_feedback_scope_receipt, translate_feedback_workbench_refs,
 )
 from app.task8_storage import register_task8_functions
 
@@ -575,6 +576,13 @@ def migrate_task_entities(
                     if kind == "feedback_processing_items" and source_field == "current_round_id":
                         ref_markers = []
                         value = translate_feedback_round_pointer(value, indexes, ref_markers)
+                        for marker in ref_markers:
+                            reference_exceptions.append({"source_kind": kind,
+                                "physical_id": row["_physical_id"], **marker})
+                    if kind == "feedback_processing_rounds" and source_field == "scope_receipt_json":
+                        ref_markers = []
+                        value = translate_feedback_scope_receipt(value, indexes,
+                                                                unresolved=ref_markers)
                         for marker in ref_markers:
                             reference_exceptions.append({"source_kind": kind,
                                 "physical_id": row["_physical_id"], **marker})
@@ -1262,6 +1270,16 @@ def restore_task_entities(db: sqlite3.Connection, source_metadata: dict, forward
                     marker = None
                 value = restore_feedback_round_pointer(
                     value, {"public": identities["public_index"]}, marker)
+            if kind == "feedback_processing_rounds" and field == "scope_receipt_json":
+                prefix = "scope_receipt_json."
+                receipt_markers = {
+                    name[len(prefix):]: item
+                    for (owner_kind, owner_id, name), item in reference_exceptions.items()
+                    if owner_kind == kind and owner_id == physical_id
+                    and name.startswith(prefix)
+                }
+                value = restore_feedback_scope_receipt(
+                    value, {"public": inverse_public_index}, unresolved=receipt_markers)
             if dest and dest.startswith("parameters_json.$."):
                 values[field] = value
             elif field != "final_text":

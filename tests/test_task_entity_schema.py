@@ -286,11 +286,21 @@ def test_feedback_workbench_and_current_round_refs_follow_typed_handoff_two_cycl
             "workbench_task_id": "wb-task-a", "workbench_turn_id": "wb-turn-a",
             "current_round_id": 229,
         })
+        update_task12(db, "feedback_processing_rounds", 229, {
+            "scope_receipt_json": sqlite3.Binary(json.dumps({
+                "decision_id": 227, "scope": "code",
+                "evidence": {"associations": {"feedback-a": {
+                    "workbench_task_id": "wb-task-a", "workbench_turn_id": "wb-turn-a",
+                    "attempt_id": 44, "agent_run_id": 13003,
+                }}, "private_note": "preserve this"},
+            }, sort_keys=True).encode()),
+        })
         db.execute(append_only)
         source_metadata = capture_task_entities(db)
         handoff = {"version": 1, "owners": [
             {"source_kind": "workbench_tasks", "source_physical_id": 202, "canonical_id": 1202},
             {"source_kind": "workbench_turns", "source_physical_id": 203, "canonical_id": 1203},
+            {"source_kind": "feedback_iteration_decisions", "source_physical_id": 227, "canonical_id": 1227},
             {"source_kind": "feedback_processing_rounds", "source_physical_id": 229, "canonical_id": 1229},
         ]}
 
@@ -299,8 +309,29 @@ def test_feedback_workbench_and_current_round_refs_follow_typed_handoff_two_cycl
                           "from feedback_processing_items where task_id=228").fetchone() == (
             "1202", "1203", 1229)
         assert db.execute("select workbench_task_id,workbench_turn_id "
-                          "from feedback_iteration_decisions where id=227").fetchone() == (
+                          "from feedback_iteration_decisions where id=1227").fetchone() == (
             "1202", "1203")
+        mapped_decision = db.execute(
+            "select id from feedback_iteration_decisions order by id limit 1"
+        ).fetchone()[0]
+        native_receipt = json.loads(db.execute(
+            "select scope_receipt_json from feedback_processing_rounds where id=1229"
+        ).fetchone()[0])
+        assert db.execute(
+            "select typeof(scope_receipt_json) from feedback_processing_rounds where id=1229"
+        ).fetchone()[0] == "blob"
+        assert native_receipt["decision_id"] == mapped_decision
+        assert native_receipt["evidence"]["associations"]["feedback-a"] == {
+            "workbench_task_id": "1202", "workbench_turn_id": "1203",
+            "attempt_id": 44, "agent_run_id": 13003,
+        }
+        assert native_receipt["evidence"]["private_note"] == "preserve this"
+        native_receipt["evidence"]["associations"]["feedback-a"]["attempt_id"] = 45
+        native_receipt["evidence"]["private_note"] = "current native edit"
+        db.execute(
+            "update feedback_processing_rounds set scope_receipt_json=? where id=1229",
+            (sqlite3.Binary(json.dumps(native_receipt, sort_keys=True).encode()),),
+        )
         inverse = restore_task_entities(db, source_metadata, forward)
         item_projection = task12_projection("feedback_processing_items", include_rowid=True)
         assert db.execute("select workbench_task_id,workbench_turn_id,current_round_id from ("
@@ -310,14 +341,40 @@ def test_feedback_workbench_and_current_round_refs_follow_typed_handoff_two_cycl
         assert db.execute("select workbench_task_id,workbench_turn_id from ("
                           + decision_projection + ") where rowid=227").fetchone() == (
             "wb-task-a", "wb-turn-a")
+        restored_receipt = json.loads(db.execute(
+            "select scope_receipt_json from (" + task12_projection(
+                "feedback_processing_rounds", include_rowid=True
+            ) + ") where rowid=229"
+        ).fetchone()[0])
+        assert db.execute(
+            "select typeof(scope_receipt_json) from (" + task12_projection(
+                "feedback_processing_rounds", include_rowid=True
+            ) + ") where rowid=229"
+        ).fetchone()[0] == "blob"
+        assert restored_receipt["decision_id"] == 227
+        assert restored_receipt["evidence"]["associations"]["feedback-a"] == {
+            "workbench_task_id": "wb-task-a", "workbench_turn_id": "wb-turn-a",
+            "attempt_id": 45, "agent_run_id": 13003,
+        }
+        assert restored_receipt["evidence"]["private_note"] == "current native edit"
 
         second = migrate_task_entities(db, source_metadata,
             source_context=inverse["source_context"], inverse_identity=inverse["inverse_identity"])
         assert db.execute("select workbench_task_id,workbench_turn_id,current_round_id "
                           "from feedback_processing_items where task_id=228").fetchone() == (
             "1202", "1203", 1229)
+        reforward_receipt = json.loads(db.execute(
+            "select scope_receipt_json from feedback_processing_rounds where id=1229"
+        ).fetchone()[0])
+        assert reforward_receipt["evidence"]["associations"]["feedback-a"]["attempt_id"] == 45
         restore_task_entities(db, source_metadata, second)
         assert db.execute("select current_round_id from (" + item_projection + ") where rowid=228").fetchone() == (229,)
+        final_receipt = json.loads(db.execute(
+            "select scope_receipt_json from (" + task12_projection(
+                "feedback_processing_rounds", include_rowid=True
+            ) + ") where rowid=229"
+        ).fetchone()[0])
+        assert final_receipt["evidence"]["associations"]["feedback-a"]["attempt_id"] == 45
         assert db.execute("pragma foreign_key_check").fetchall() == []
 
 
@@ -1595,3 +1652,159 @@ def test_native_feedback_claim_after_converted_reopen_clears_captured_unresolved
             "where feedback_key='feedback-a'"
         ).fetchone()
         assert tuple(source_item) == ("", "", native_item[2], "processing")
+
+
+def test_new_native_feedback_resolution_receipt_survives_inverse_reforward_cycles(
+    tmp_path, monkeypatch,
+):
+    from app.action_feedback_storage import insert_feedback_action
+    from app.feedback_processing import (
+        FeedbackIterationAcceptance, FeedbackIterationDecision, ResolutionEvidence,
+    )
+    from app.store import AutoReplyStore
+    from app.task_run_entity_assembly import task_run_entity_assembly_objects
+
+    source = _source()
+    source.row_factory = sqlite3.Row
+    update_task12(source, "feedback_processing_items", 228, {
+        "status": "pending", "batch_id": "", "current_round_id": 0,
+        "workbench_task_id": "", "workbench_turn_id": "", "attempt_id": 0,
+        "agent_run_id": 0, "commit_sha": "", "test_evidence_json": "{}",
+        "restart_evidence_json": "{}", "health_evidence_json": "{}",
+        "note": "", "resolved_at": "",
+    })
+    update_task12(source, "feedback_processing_rounds", 229, {
+        "status": "resolved", "batch_id": "old-batch",
+        "resolved_at": "resolve-clock", "reopened_at": "reopen-clock",
+        "reopen_reason": "confirmed reopen",
+    })
+    metadata = capture_task_entities(source)
+    handoff = {"version": 1, "owners": [
+        {"source_kind": "workbench_tasks", "source_physical_id": 202, "canonical_id": 1202},
+        {"source_kind": "workbench_turns", "source_physical_id": 203, "canonical_id": 1203},
+        {"source_kind": "feedback_iteration_decisions", "source_physical_id": 227, "canonical_id": 1227},
+        {"source_kind": "feedback_processing_rounds", "source_physical_id": 229, "canonical_id": 1229},
+    ]}
+    forward = migrate_task_entities(source, metadata, inverse_identity=handoff)
+    objects = task_run_entity_assembly_objects()
+    for name, ddl in objects.items():
+        present = source.execute("select 1 from sqlite_schema where name=?", (name,)).fetchone()
+        if present is None and ddl.lstrip().lower().startswith("create table"):
+            source.execute(ddl)
+    for name, ddl in objects.items():
+        present = source.execute("select 1 from sqlite_schema where name=?", (name,)).fetchone()
+        if present is None and not ddl.lstrip().lower().startswith("create table"):
+            source.execute(ddl)
+    # Finish migration/assembly writes before SQLite's online backup. A backup
+    # from this connection cannot progress while it owns an open write txn.
+    source.commit()
+    db_path = tmp_path / "native-feedback-resolution.sqlite3"
+    with sqlite3.connect(db_path) as target:
+        source.backup(target)
+    source.close()
+
+    store = AutoReplyStore.__new__(AutoReplyStore)
+    store.path = db_path
+    store.busy_timeout_seconds = 5
+    store.busy_timeout_milliseconds = 5000
+    store._read_snapshot_connection = ContextVar("native_feedback_receipt_snapshot", default=None)
+    store._reused_connection = ContextVar("native_feedback_receipt_reused", default=None)
+    monkeypatch.setattr(store, "feedback_iteration_enabled", lambda: True)
+    with store._immediate_write_transaction() as db:
+        insert_feedback_action(db, "feedback_events", {
+            "key": "feedback-a", "feedback_token": "token-a",
+        })
+    item = store.claim_feedback_processing_items("new-batch", ["feedback-a"])[0]
+    store.associate_feedback_processing_turn(
+        "feedback-a", expected_batch_id="new-batch",
+        workbench_task_id="1202", workbench_turn_id="1203",
+        attempt_id=13, agent_run_id=27,
+    )
+    commit_sha = "a" * 40
+    test = {"pytest": {"exit_code": 0}}
+    restart = {"launchd_label": "com.ceo-agent-service.main", "before_pid": 10, "after_pid": 11}
+    health = {"url": "http://127.0.0.1:8765/healthz", "status_code": 200, "ok": True}
+    store.patch_feedback_processing_item_evidence(
+        "feedback-a", commit_sha=commit_sha, test_evidence=test,
+        restart_evidence=restart, health_evidence=health,
+    )
+    decision = FeedbackIterationDecision(
+        scope="code", root_cause="verified source defect",
+        feedback_keys=["feedback-a"], source_references=["source record"],
+        why_not_code="not applicable",
+        acceptance=FeedbackIterationAcceptance(
+            scenario="current feedback", expected_behavior="resolved with receipt",
+            verification=["focused test"],
+        ),
+    )
+    decision_record = store.record_feedback_iteration_decision(
+        "new-batch", decision, workbench_task_id="1202", workbench_turn_id="1203",
+    )
+    receipt = ResolutionEvidence(
+        commit_sha=commit_sha, test_evidence=test, restart_evidence=restart,
+        health_evidence=health,
+        backlog_evidence={"processing": 0, "failed": 0, "retryable": 0},
+        associations={"feedback-a": {
+            "workbench_task_id": "1202", "workbench_turn_id": "1203",
+            "attempt_id": 13, "agent_run_id": 27,
+        }},
+    )
+    assert store.resolve_feedback_processing_batch(
+        "new-batch", receipt, commit_is_ancestor=True,
+    ) is True
+
+    with store._connect() as db:
+        db.row_factory = sqlite3.Row
+        native_round = db.execute(
+            "select * from feedback_processing_rounds where id=?", (item.current_round_id,),
+        ).fetchone()
+        current = json.loads(native_round["scope_receipt_json"])
+        assert current["decision_id"] == decision_record.id
+        assert current["evidence"]["associations"]["feedback-a"]["workbench_task_id"] == "1202"
+        db.execute("pragma foreign_keys=off")
+        db.execute("begin immediate")
+        inverse = restore_task_entities(db, metadata, forward)
+        source_round = db.execute(
+            "select * from (" + task12_projection("feedback_processing_rounds")
+            + ") where feedback_key='feedback-a' and round_number=2"
+        ).fetchone()
+        restored = AutoReplyStore._scope_resolution_receipt(source_round)
+        assert restored is not None
+        source_decision_id, scope, source_evidence = restored
+        assert scope == "code"
+        source_decision = db.execute(
+            "select id,decision_json from (" + task12_projection(
+                "feedback_iteration_decisions"
+            ) + ") where id=?", (source_decision_id,),
+        ).fetchone()
+        assert source_decision is not None
+        assert source_decision_id == source_decision["id"]
+        assert source_decision_id == decision_record.id
+        assert json.loads(source_decision["decision_json"])["scope"] == scope
+        assert source_round["status"] == "resolved"
+        assert source_evidence.associations["feedback-a"].workbench_task_id == "wb-task-a"
+        assert source_evidence.associations["feedback-a"].workbench_turn_id == "wb-turn-a"
+        assert source_evidence.associations["feedback-a"].attempt_id == 13
+        assert source_evidence.associations["feedback-a"].agent_run_id == 27
+        portable_identity = json.loads(json.dumps(inverse["inverse_identity"]))
+        restored_metadata = capture_task_entities(db)
+        reforward = migrate_task_entities(
+            db, restored_metadata, source_context=inverse["source_context"],
+            inverse_identity=portable_identity,
+        )
+        migrated_round = db.execute(
+            "select * from feedback_processing_rounds where feedback_key='feedback-a' "
+            "and round_number=2"
+        ).fetchone()
+        migrated_receipt = json.loads(migrated_round["scope_receipt_json"])
+        assert migrated_receipt["decision_id"] == decision_record.id
+        assert migrated_receipt["evidence"]["associations"]["feedback-a"]["workbench_task_id"] == "1202"
+        restore_task_entities(db, restored_metadata, reforward)
+        second_source_round = db.execute(
+            "select * from (" + task12_projection("feedback_processing_rounds")
+            + ") where feedback_key='feedback-a' and round_number=2"
+        ).fetchone()
+        final_receipt = AutoReplyStore._scope_resolution_receipt(second_source_round)
+        assert final_receipt is not None
+        assert final_receipt[0] == source_decision_id
+        assert final_receipt[2] == source_evidence

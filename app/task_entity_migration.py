@@ -6,6 +6,7 @@ caller-owned migration. They do not infer an owner from a numeric-looking key.
 from __future__ import annotations
 
 from collections.abc import Iterable, Mapping
+import json
 
 
 def _typed_key(value: object) -> tuple[str, object]:
@@ -109,6 +110,131 @@ def translate_feedback_round_pointer(value: object, indexes: Mapping,
             unresolved.append({"field": "current_round_id", "value": value, "type": "integer"})
         return value
     return target
+
+
+def _feedback_scope_receipt(value: object) -> tuple[object, bool]:
+    """Decode only source-admitted JSON text; leave other SQLite values opaque."""
+    if isinstance(value, str):
+        raw = value
+    elif isinstance(value, (bytes, bytearray, memoryview)):
+        try:
+            raw = bytes(value).decode("utf-8")
+        except UnicodeDecodeError:
+            return value, False
+    else:
+        return value, False
+    try:
+        parsed = json.loads(raw)
+    except (TypeError, ValueError, json.JSONDecodeError):
+        return value, False
+    if not isinstance(parsed, dict):
+        return value, False
+    return parsed, True
+
+
+def translate_feedback_scope_receipt(
+    value: object, indexes: Mapping, *, unresolved: list[dict] | None = None,
+) -> object:
+    """Translate the three typed owner leaves embedded in a scope receipt."""
+    receipt, decoded = _feedback_scope_receipt(value)
+    if not decoded:
+        return value
+    original = value
+    is_blob = isinstance(value, (bytes, bytearray, memoryview))
+    changed = False
+    decision_id = receipt.get("decision_id")
+    if type(decision_id) is int:
+        target = indexes["public"].get((
+            "feedback_iteration_decisions", ("integer", decision_id),
+        ))
+        if target is not None:
+            receipt["decision_id"] = target
+            changed = True
+        elif unresolved is not None:
+            unresolved.append({"field": "scope_receipt_json.decision_id",
+                               "value": decision_id, "type": "integer"})
+    evidence = receipt.get("evidence")
+    associations = evidence.get("associations") if isinstance(evidence, dict) else None
+    if isinstance(associations, dict):
+        for key, association in associations.items():
+            if not isinstance(association, dict):
+                continue
+            for field, kind in (("workbench_task_id", "workbench_tasks"),
+                                ("workbench_turn_id", "workbench_turns")):
+                ref = association.get(field)
+                if not isinstance(ref, str):
+                    continue
+                target = indexes["public"].get((kind, ("text", ref)))
+                marker_field = f"scope_receipt_json.associations.{key}.{field}"
+                if target is None:
+                    if ref and unresolved is not None:
+                        unresolved.append({"field": marker_field, "value": ref,
+                                           "type": "text"})
+                else:
+                    association[field] = str(target)
+                    changed = True
+    if not changed:
+        return original
+    encoded = json.dumps(receipt, ensure_ascii=False, sort_keys=True)
+    return encoded.encode("utf-8") if is_blob else encoded
+
+
+def restore_feedback_scope_receipt(
+    value: object, indexes: Mapping, *, unresolved: Mapping[str, Mapping] | None = None,
+) -> object:
+    """Restore only current typed owner leaves, preserving captured unresolved facts."""
+    receipt, decoded = _feedback_scope_receipt(value)
+    if not decoded:
+        return value
+    original = value
+    is_blob = isinstance(value, (bytes, bytearray, memoryview))
+    changed = False
+    decision_id = receipt.get("decision_id")
+    if type(decision_id) is int:
+        marker = (unresolved or {}).get("scope_receipt_json.decision_id")
+        if marker is not None and marker.get("value") == decision_id:
+            source_id = marker["value"]
+            if source_id != decision_id:
+                receipt["decision_id"] = source_id
+                changed = True
+        else:
+            refs = [key for (kind, key), target in indexes["public"].items()
+                    if kind == "feedback_iteration_decisions" and target == decision_id]
+            if len(refs) > 1:
+                raise ValueError("ambiguous native Feedback decision identity during inverse")
+            if refs and refs[0][0] == "integer":
+                receipt["decision_id"] = refs[0][1]
+                changed = True
+    evidence = receipt.get("evidence")
+    associations = evidence.get("associations") if isinstance(evidence, dict) else None
+    if isinstance(associations, dict):
+        for key, association in associations.items():
+            if not isinstance(association, dict):
+                continue
+            for field, kind in (("workbench_task_id", "workbench_tasks"),
+                                ("workbench_turn_id", "workbench_turns")):
+                ref = association.get(field)
+                if not isinstance(ref, str):
+                    continue
+                marker_field = f"scope_receipt_json.associations.{key}.{field}"
+                marker = (unresolved or {}).get(marker_field)
+                if marker is not None and marker.get("value") == ref:
+                    continue
+                if not (ref.isascii() and ref.isdecimal() and str(int(ref)) == ref):
+                    continue
+                target_id = int(ref)
+                refs = [public_key for (owner_kind, public_key), target
+                        in indexes["public"].items()
+                        if owner_kind == kind and target == target_id]
+                if len(refs) > 1:
+                    raise ValueError("ambiguous native Workbench identity during inverse")
+                if refs and refs[0][0] == "text":
+                    association[field] = str(refs[0][1])
+                    changed = True
+    if not changed:
+        return original
+    encoded = json.dumps(receipt, ensure_ascii=False, sort_keys=True)
+    return encoded.encode("utf-8") if is_blob else encoded
 
 
 def restore_feedback_round_pointer(value: object, indexes: Mapping,

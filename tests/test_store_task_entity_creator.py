@@ -779,6 +779,113 @@ def test_native_feedback_batch_claim_replay_and_public_reads(tmp_path, monkeypat
         ]
 
 
+def test_native_feedback_completion_decision_resolve_reopen_cycle(tmp_path, monkeypatch):
+    from app.feedback_processing import (
+        FeedbackIterationAcceptance, FeedbackIterationDecision, ResolutionEvidence,
+    )
+
+    store = _target_store(tmp_path / "feedback-native-completion.sqlite3")
+    monkeypatch.setattr(store, "feedback_iteration_enabled", lambda: True)
+    for key in ("feedback-a", "feedback-b"):
+        _add_feedback_event(store, key)
+    store.create_feedback_processing_batch(["feedback-a", "feedback-b"], batch_id="batch-a")
+    claimed = store.claim_feedback_processing_items("batch-a", ["feedback-a", "feedback-b"])
+    for item in claimed:
+        empty = store.associate_feedback_processing_turn(
+            item.feedback_key, expected_batch_id="batch-a",
+            workbench_task_id="", workbench_turn_id="", attempt_id=0, agent_run_id=0,
+        )
+        assert empty.workbench_task_id == empty.workbench_turn_id == ""
+        store.associate_feedback_processing_turn(
+            item.feedback_key, expected_batch_id="batch-a",
+            workbench_task_id="wb-task", workbench_turn_id="wb-turn",
+            attempt_id=13, agent_run_id=27,
+        )
+        store.patch_feedback_processing_item_evidence(
+            item.feedback_key, commit_sha="a" * 40,
+            test_evidence={"pytest": {"exit_code": 0}},
+            restart_evidence={"launchd_label": "com.ceo-agent-service.main",
+                              "before_pid": 10, "after_pid": 11},
+            health_evidence={"url": "http://127.0.0.1:8765/healthz",
+                             "status_code": 200, "ok": True},
+        )
+        before = store.get_feedback_processing_item(item.feedback_key)
+        store.patch_feedback_processing_item_evidence(
+            item.feedback_key, commit_sha="a" * 40,
+            test_evidence={"pytest": {"exit_code": 0}},
+            restart_evidence={"launchd_label": "com.ceo-agent-service.main",
+                              "before_pid": 10, "after_pid": 11},
+            health_evidence={"url": "http://127.0.0.1:8765/healthz",
+                             "status_code": 200, "ok": True},
+        )
+        assert store.get_feedback_processing_item(item.feedback_key).updated_at == before.updated_at
+        store.patch_feedback_processing_item_evidence(
+            item.feedback_key, test_evidence={"pytest": {"exit_code": 0, "cases": 1}},
+        )
+        after_change = store.get_feedback_processing_item(item.feedback_key)
+        with store._connect() as db:
+            round_evidence = db.execute(
+                "select test_evidence_json,updated_at from feedback_processing_rounds "
+                "where id=?", (after_change.current_round_id,),
+            ).fetchone()
+        assert json.loads(round_evidence["test_evidence_json"]) == after_change.test_evidence
+        assert after_change.updated_at and round_evidence["updated_at"]
+    decision = FeedbackIterationDecision(
+        scope="code", root_cause="verified source defect",
+        feedback_keys=["feedback-a", "feedback-b"],
+        source_references=["source record"], why_not_code="not applicable",
+        acceptance=FeedbackIterationAcceptance(
+            scenario="both feedback items", expected_behavior="fixed behavior",
+            verification=["focused test"],
+        ),
+    )
+    record = store.record_feedback_iteration_decision(
+        "batch-a", decision, workbench_task_id="wb-task", workbench_turn_id="wb-turn",
+    )
+    assert set(record.feedback_keys) == {"feedback-a", "feedback-b"}
+    assert len(record.round_ids) == 2
+    assert len(store.list_feedback_iteration_decisions("batch-a")) == 1
+    with store._connect() as db:
+        assert db.execute("select count(*) from tasks where kind='feedback_processing'").fetchone()[0] == 2
+        assert db.execute("select count(*) from feedback_processing_rounds").fetchone()[0] == 2
+        assert db.execute("select count(*) from feedback_iteration_decisions").fetchone()[0] == 1
+        assert db.execute(
+            "select count(*) from actions where record_type='feedback_iteration_decision_items'"
+        ).fetchone()[0] == 2
+        assert db.execute(
+            "select count(*) from tasks task join feedback_processing_items item "
+            "on item.task_id=task.id where task.status='processing'"
+        ).fetchone()[0] == 2
+    receipt = ResolutionEvidence(
+        commit_sha="a" * 40,
+        test_evidence={"pytest": {"exit_code": 0, "cases": 1}},
+        restart_evidence={"launchd_label": "com.ceo-agent-service.main",
+                          "before_pid": 10, "after_pid": 11},
+        health_evidence={"url": "http://127.0.0.1:8765/healthz",
+                         "status_code": 200, "ok": True},
+        backlog_evidence={"processing": 0, "failed": 0, "retryable": 0},
+        associations={key: {"workbench_task_id": "wb-task", "workbench_turn_id": "wb-turn",
+                            "attempt_id": 13, "agent_run_id": 27}
+                      for key in ("feedback-a", "feedback-b")},
+    )
+    assert store.resolve_feedback_processing_batch(
+        "batch-a", receipt, commit_is_ancestor=True,
+    ) is True
+    assert store.resolve_feedback_processing_batch(
+        "batch-a", None, commit_is_ancestor=True,
+    ) is True
+    assert store.resolve_feedback_processing_batch(
+        "batch-a", receipt, commit_is_ancestor=True,
+    ) is True
+    reopened = store.reopen_feedback_processing_item("feedback-a", reason="confirmed follow-up")
+    assert reopened.status == "pending" and reopened.current_round_id == 0
+    assert store.get_feedback_processing_item("feedback-b").status == "resolved"
+    store.create_feedback_processing_batch(["feedback-a"], batch_id="batch-b")
+    next_round = store.claim_feedback_processing_items("batch-b", ["feedback-a"])[0]
+    assert next_round.status == "processing"
+    assert next_round.current_round_id != record.round_ids[0]
+
+
 def test_native_feedback_create_and_capability_refusals_are_atomic(tmp_path, monkeypatch):
     store = _target_store(tmp_path / "feedback-native-refusal.sqlite3")
     monkeypatch.setattr(store, "feedback_iteration_enabled", lambda: True)
