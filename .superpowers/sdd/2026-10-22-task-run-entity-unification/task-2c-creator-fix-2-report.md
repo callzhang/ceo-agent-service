@@ -1,6 +1,6 @@
 # Task2C creator Fix 2 report
 
-Status: implemented and locally verified; awaiting independent SPEC and QUALITY re-review. Implementation commit: `a7327abf6`. Report commit: `f84dfb586`.
+Status: implemented, locally verified, and approved by independent SPEC and QUALITY re-review (`task-2c-creator-rereview-2.md`). Implementation commit: `a7327abf6`; original evidence record: `60a4ce017`.
 
 ## Corrected DTO behavior
 
