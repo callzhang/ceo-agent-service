@@ -43,7 +43,7 @@
       "source": "ci/shared-skills/ceo-daily-report/SKILL.md",
       "target": "skills/ceo-daily-report/SKILL.md",
       "old_sha256": "32d24bb5f53b60bcf67b8a91582db258a05cac59c789391c862d3bd95719fc62",
-      "new_sha256": "32d24bb5f53b60bcf67b8a91582db258a05cac59c789391c862d3bd95719fc62",
+      "new_sha256": "a7c7caaedc5fc63446e20f53ca4bf69d643cca50578c2eda723dfc6f6d9a810e",
       "old_managed_sha256": "32d24bb5f53b60bcf67b8a91582db258a05cac59c789391c862d3bd95719fc62"
     },
     {
@@ -113,7 +113,7 @@
       "source": "ci/shared-skills/ceo-daily-report/scripts/window.py",
       "target": "skills/ceo-daily-report/scripts/window.py",
       "old_sha256": "516921590066f2d19b0cb8a46eaa57b02f6927db5b4980fc3516e94b1fee0480",
-      "new_sha256": "516921590066f2d19b0cb8a46eaa57b02f6927db5b4980fc3516e94b1fee0480"
+      "new_sha256": "4f30d1b82c43076f74bb1c3c16137a905a6c03e14a35b79a59fb8b324ac6126d"
     },
     {
       "source": "ci/shared-skills/ceo-weekly-okr-report/SKILL.md",
