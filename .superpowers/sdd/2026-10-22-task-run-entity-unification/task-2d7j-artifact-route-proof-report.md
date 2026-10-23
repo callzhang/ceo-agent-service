@@ -88,4 +88,4 @@ Static checks:
 - `python -m py_compile scripts/validate_task_2d7j_workbench_artifact_routes.py tests/test_task_2d7j_workbench_artifact_routes.py` — passed.
 - `git diff --check` — passed.
 
-No product runtime/schema/source constructor changes were made in Fix1. This closes the operator provenance finding only; parent retains the scoped rereview and composite acceptance decision.
+Fix1 code/operator/test/report commit: `b2f594e8ba7e11e7eb2369004ca861d69475e9fe` (`Pin predecessor hashes in Workbench proof operator`). No product runtime/schema/source constructor changes were made in Fix1. This closes the operator provenance finding only; parent retains the scoped rereview and composite acceptance decision.
