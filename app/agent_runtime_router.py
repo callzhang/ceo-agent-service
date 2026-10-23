@@ -758,9 +758,9 @@ class AgentRuntimeRouter:
 
         persisted_attempt = self._store.get_agent_runtime_attempt(failed_attempt.id)
         if (
-            failed_attempt.agent_run_id != persisted_run.id
+            failed_attempt.parent_id != persisted_run.id
             or persisted_attempt is None
-            or persisted_attempt.agent_run_id != persisted_run.id
+            or persisted_attempt.parent_id != persisted_run.id
             or persisted_attempt != failed_attempt
         ):
             return RuntimeRouteDecision(None, False, "attempt_run_mismatch")
@@ -800,12 +800,12 @@ class AgentRuntimeRouter:
             return RuntimeRouteDecision(None, False, "operation_not_runnable")
         persisted_attempt = self._store.get_agent_runtime_attempt(failed_attempt.id)
         if (
-            failed_attempt.agent_run_id is not None
+            failed_attempt.workload_kind == "agent_run"
             or failed_attempt.workload_kind != workload_kind
             or failed_attempt.workload_key != workload_key
             or persisted_attempt is None
             or persisted_attempt != failed_attempt
-            or persisted_attempt.agent_run_id is not None
+            or persisted_attempt.workload_kind == "agent_run"
             or persisted_attempt.workload_kind != workload_kind
             or persisted_attempt.workload_key != workload_key
         ):
@@ -2020,14 +2020,14 @@ class RoutedCodexExecution:
         *,
         agent_run_id: int | None,
     ) -> list[AgentRuntimeAttempt]:
-        if agent_run_id is not None:
-            return self._store.list_agent_runtime_attempts(agent_run_id)
+        if workload_kind == "agent_run":
+            return self._store.list_agent_runtime_attempts(int(workload_key))
         return self._store.list_runtime_operation_attempts(workload_kind, workload_key)
 
     def _renew_attempt_parent_lease(
         self, attempt: AgentRuntimeAttempt
     ) -> AgentRuntimeAttempt:
-        if attempt.agent_run_id is None:
+        if attempt.workload_kind != "agent_run":
             return self._store.renew_runtime_operation_attempt_lease(
                 attempt.id,
                 owner=self._owner,

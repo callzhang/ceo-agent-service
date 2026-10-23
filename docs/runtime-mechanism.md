@@ -50,6 +50,17 @@ Review business ID 与 Audit Run ID 分开。此孤立单元未启用 constructo
 不代表完整 runtime cutover。`fail_expired_agent_run` 只更新 Run 终态，不新增 failure 事件；
 其他 recovery/requeue 的既有 failure-event producers 仍待各自迁移。
 
+Task3E4 将实际 `AutoReplyStore` RuntimeAttempt 的 claim、start/session/effect、lease、
+complete/adoption、fail、supersede、recovery 和历史读取直接切到 `runtime_attempts`；
+`AgentRuntimeAttempt.parent_id` 是原生 Run ID，DTO 不再暴露来源名 `agent_run_id`，也不保存
+空的结果 envelope 字段。完成时仍校验调用方传入的 envelope schema/大小，并只在原事务内
+采用 Consumer 结果及 `result_ref`。只有 `workload_kind='agent_run'` 才使用 Agent Run lease、
+终态与 adoption；Task、decision-repair 和 Meeting 操作即使绑定 professional Run，也保留
+自己的调用 lease、ordinal、session 与失败状态，不终结父 Run。Task/Meeting 绑定按当前原生
+Task/Run provenance 解析；Reply、全局 dashboard/History 及其他来源型生命周期读取仍有
+后续切换。此本地候选未启用 constructor 或全 family runtime，Email、Workbench、WeChat
+Task 生产者仍需各自完成原子 Task/DTO/workload-reader 转换。
+
 Store19.8 的 C1 将九种实际可执行 Task 的源 status、due、attempt、error、时间与
 既有 owner／PID／generation／expiry 事实移到单一物理列；不存在的源字段保持
 SQL NULL，另外十一种记录保持原业务状态且没有通用生命周期。物理列保存一个

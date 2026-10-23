@@ -994,7 +994,7 @@ class AgentRuntimeAttempt(BaseModel):
     model_config = ConfigDict(frozen=True)
 
     id: int
-    agent_run_id: int | None = None
+    parent_id: int | None = None
     workload_kind: str
     workload_key: str
     attempt_number: int
@@ -1019,7 +1019,6 @@ class AgentRuntimeAttempt(BaseModel):
     lease_owner: str = ""
     lease_expires_at: str = ""
     result_schema_id: str = ""
-    result_envelope_json: str = ""
     started_at: str
     finished_at: str = ""
     created_at: str
@@ -7371,6 +7370,31 @@ class AutoReplyStore(LogicalRunStoreMixin, ReviewedCandidateStoreMixin):
     def _runtime_operation_parent_exists(
         db: sqlite3.Connection, workload_kind: str, workload_key: str
     ) -> bool:
+        if workload_kind == "meeting":
+            return db.execute(
+                "select 1 from runs r join run_provenance p on p.run_id=r.id "
+                "where r.id=? and p.source_type='meeting_alignment_runs' and r.status='running'",
+                (int(workload_key),),
+            ).fetchone() is not None
+        if workload_kind == "structured":
+            return db.execute(
+                "select 1 from tasks t join runs r on r.task_id=t.id "
+                "join run_provenance p on p.run_id=r.id "
+                "where t.id=? and t.kind='okr_review' and t.status='processing' "
+                "and p.source_type='okr_review_runs' and r.status='running'",
+                (int(workload_key),),
+            ).fetchone() is not None
+        if workload_kind == "task":
+            task_id, separator, suffix = workload_key.partition(":")
+            if not separator or suffix == "decision_repair.1" or suffix.startswith("decision_repair."):
+                return db.execute(
+                    "select 1 from tasks t join runs r on r.task_id=t.id "
+                    "join run_provenance p on p.run_id=r.id "
+                    "where t.id=? and t.kind='work_summary' "
+                    "and t.execution_generation=r.execution_generation "
+                    "and p.source_type='task_agent_runs' and r.status='running'",
+                    (int(task_id),),
+                ).fetchone() is not None
         if workload_kind == "weekly_okr":
             parts = workload_key.split(":")
             week_end, manager_user_id, source_digest = parts[:3]
@@ -7476,6 +7500,41 @@ class AutoReplyStore(LogicalRunStoreMixin, ReviewedCandidateStoreMixin):
                 else (int(row_id),)
             )
         return db.execute(query, args).fetchone() is not None
+
+    @staticmethod
+    def _runtime_operation_parent_id(
+        db: sqlite3.Connection, workload_kind: str, workload_key: str
+    ) -> int | None:
+        if workload_kind == "meeting":
+            row = db.execute(
+                "select r.id from runs r join run_provenance p on p.run_id=r.id "
+                "where r.id=? and p.source_type='meeting_alignment_runs' and r.status='running'",
+                (int(workload_key),),
+            ).fetchone()
+            return None if row is None else int(row[0])
+        if workload_kind == "structured":
+            row = db.execute(
+                "select r.id from tasks t join runs r on r.task_id=t.id "
+                "join run_provenance p on p.run_id=r.id "
+                "where t.id=? and t.kind='okr_review' and t.status='processing' "
+                "and p.source_type='okr_review_runs' and r.status='running'",
+                (int(workload_key),),
+            ).fetchone()
+            return None if row is None else int(row[0])
+        if workload_kind == "task":
+            task_id, separator, suffix = workload_key.partition(":")
+            if not separator or suffix.startswith("decision_repair."):
+                row = db.execute(
+                    "select r.id from tasks t join runs r on r.task_id=t.id "
+                    "join run_provenance p on p.run_id=r.id "
+                    "where t.id=? and t.kind='work_summary' "
+                    "and t.execution_generation=r.execution_generation "
+                    "and p.source_type='task_agent_runs' and r.status='running' "
+                    "order by r.id desc limit 1",
+                    (int(task_id),),
+                ).fetchone()
+                return None if row is None else int(row[0])
+        return None
 
     @staticmethod
     def _validate_runtime_attempt_details(
@@ -7595,6 +7654,7 @@ class AutoReplyStore(LogicalRunStoreMixin, ReviewedCandidateStoreMixin):
             if lease_seconds <= 0:
                 raise ValueError("lease_seconds must be positive")
         with self._agent_run_write_transaction(now) as (db, (now_value, now_text)):
+            parent_id = agent_run_id
             lease_expires_at = (
                 (now_value + timedelta(seconds=lease_seconds)).strftime(
                     "%Y-%m-%d %H:%M:%S"
@@ -7604,7 +7664,7 @@ class AutoReplyStore(LogicalRunStoreMixin, ReviewedCandidateStoreMixin):
             )
             if agent_run_id is not None:
                 run = db.execute(
-                    f'select status from ({AGENT_RUN_SQL}) as agent_runs where id=?',
+                    "select status from runs where id=? and role in ('consumer','audit')",
                     (agent_run_id,),
                 ).fetchone()
                 if run is None or run["status"] != "running":
@@ -7615,6 +7675,10 @@ class AutoReplyStore(LogicalRunStoreMixin, ReviewedCandidateStoreMixin):
                 raise ValueError(
                     "runtime operation parent does not exist or is not running"
                 )
+            else:
+                parent_id = self._runtime_operation_parent_id(
+                    db, workload_kind, workload_key
+                )
             if db.execute(
                 f"""
                 select 1 from ({state_projection('runtime_route_pauses')})
@@ -7624,8 +7688,8 @@ class AutoReplyStore(LogicalRunStoreMixin, ReviewedCandidateStoreMixin):
             ).fetchone() is not None:
                 raise RuntimeRoutePausedError("runtime route is paused")
             active = db.execute(
-                f"""
-                select * from ({RUNTIME_ATTEMPT_SQL}) as agent_runtime_attempts
+                """
+                select * from runtime_attempts as agent_runtime_attempts
                 where workload_kind=? and workload_key=? and route_name=?
                   and status in ('starting', 'running')
                 order by attempt_number
@@ -7661,42 +7725,38 @@ class AutoReplyStore(LogicalRunStoreMixin, ReviewedCandidateStoreMixin):
                 return self._agent_runtime_attempt_from_row(active)
             attempt_number = int(
                 db.execute(
-                    f"""
+                    """
                     select coalesce(max(attempt_number), 0) + 1 as attempt_number
-                    from ({RUNTIME_ATTEMPT_SQL}) as agent_runtime_attempts
+                    from runtime_attempts as agent_runtime_attempts
                     where workload_kind=? and workload_key=?
                     """,
                     (workload_kind, workload_key),
                 ).fetchone()["attempt_number"]
             )
-            cursor = insert_run(
-                db, 'agent_runtime_attempts', {
-                'parent_id': agent_run_id,
-                'workload_kind': workload_kind,
-                'workload_key': workload_key,
-                'attempt_number': attempt_number,
-                'route_name': route_name,
-                'runtime_kind': runtime_kind,
-                'credential_mode': credential_mode,
-                'model': model,
-                'session_mode': session_mode,
-                'source_session_id': source_session_id,
-                'attempt_purpose': attempt_purpose,
-                'validation_retry_policy_id': validation_retry_policy_id,
-                'validation_result_schema_id': validation_result_schema_id,
-                'status': "starting",
-                'lease_owner': owner,
-                'lease_expires_at': lease_expires_at,
-                'started_at': now_text,
-                'created_at': now_text,
-                'updated_at': now_text,
-                },
-            )
-            row = db.execute(
-                f'select * from ({RUNTIME_ATTEMPT_SQL}) as agent_runtime_attempts where id=?',
-                (cursor.lastrowid,),
-            ).fetchone()
-            return self._agent_runtime_attempt_from_row(row)
+            from app.run_entity_storage import create_runtime_attempt
+            created = create_runtime_attempt(db, values={
+                "parent_id": parent_id,
+                "workload_kind": workload_kind,
+                "workload_key": workload_key,
+                "attempt_number": attempt_number,
+                "route_name": route_name,
+                "runtime_kind": runtime_kind,
+                "credential_mode": credential_mode,
+                "model": model,
+                "session_mode": session_mode,
+                "source_session_id": source_session_id,
+                "attempt_purpose": attempt_purpose,
+                "validation_retry_policy_id": validation_retry_policy_id,
+                "validation_result_schema_id": validation_result_schema_id,
+                "session_id": "", "transcript_reference": "",
+                "transcript_start": 0, "transcript_end": 0,
+                "status": "starting", "failure_class": "", "failure_code": "",
+                "failover_permitted": 0, "lease_owner": owner,
+                "lease_expires_at": lease_expires_at, "first_effect_started_at": "",
+                "result_schema_id": "", "started_at": now_text, "finished_at": "",
+                "created_at": now_text, "updated_at": now_text,
+            })
+            return self._agent_runtime_attempt_from_row(created)
 
     def claim_agent_runtime_attempt(
         self,
@@ -7775,7 +7835,7 @@ class AutoReplyStore(LogicalRunStoreMixin, ReviewedCandidateStoreMixin):
         attempt_id: int,
     ) -> sqlite3.Row:
         row = db.execute(
-            f'select * from ({RUNTIME_ATTEMPT_SQL}) as agent_runtime_attempts where id=?', (attempt_id,)
+            "select * from runtime_attempts where id=?", (attempt_id,)
         ).fetchone()
         if row is None:
             raise ValueError("agent runtime attempt does not exist")
@@ -7785,7 +7845,7 @@ class AutoReplyStore(LogicalRunStoreMixin, ReviewedCandidateStoreMixin):
     def _require_runtime_attempt_owner(
         row: sqlite3.Row, *, owner: str, now_text: str
     ) -> None:
-        if row["agent_run_id"] is not None:
+        if row["workload_kind"] == "agent_run":
             return
         if row["lease_owner"] != owner or row["lease_expires_at"] <= now_text:
             raise AgentRuntimeAttemptLeaseLostError(
@@ -7806,9 +7866,9 @@ class AutoReplyStore(LogicalRunStoreMixin, ReviewedCandidateStoreMixin):
                 raise ValueError("cannot transition terminal runtime attempt to running")
             cursor = db.execute(
                 """
-                update runs as agent_runtime_attempts
+                update runtime_attempts as agent_runtime_attempts
                 set status='running', updated_at=?
-                where agent_runtime_attempts.record_type='agent_runtime_attempts' and cast(agent_runtime_attempts.legacy_key as integer)=? and status='starting'
+                where agent_runtime_attempts.id=? and status='starting'
                 """,
                 (now_text, attempt_id),
             )
@@ -7840,16 +7900,16 @@ class AutoReplyStore(LogicalRunStoreMixin, ReviewedCandidateStoreMixin):
                 )
             cursor = db.execute(
                 """
-                update runs as agent_runtime_attempts
+                update runtime_attempts as agent_runtime_attempts
                 set status='running',
-                    lease_expires_at=case when parent_id is null then ?
+                    lease_expires_at=case when workload_kind<>'agent_run' then ?
                                           else lease_expires_at end,
                     first_effect_started_at=case
-                        when parent_id is null and ? then ?
+                        when workload_kind<>'agent_run' and ? then ?
                         else first_effect_started_at end,
                     updated_at=?
-                where agent_runtime_attempts.record_type='agent_runtime_attempts' and cast(agent_runtime_attempts.legacy_key as integer)=? and status='starting'
-                  and (parent_id is not null
+                where agent_runtime_attempts.id=? and status='starting'
+                  and (workload_kind='agent_run'
                        or (lease_owner=? and lease_expires_at>?))
                 """,
                 (
@@ -7936,7 +7996,10 @@ class AutoReplyStore(LogicalRunStoreMixin, ReviewedCandidateStoreMixin):
             )
             if row["status"] == "completed":
                 if agent_run_final_result is not None:
-                    candidate = db.execute(f"select candidate_json from ({REVIEW_CANDIDATE_SQL}) where consumer_run_id=?", (row["agent_run_id"],)).fetchone()
+                    candidate = db.execute(
+                        "select candidate_json from run_adopted_results where consumer_run_id=?",
+                        (row["parent_id"],),
+                    ).fetchone()
                     if candidate is None or candidate[0] != agent_run_final_result_json:
                         raise ValueError("conflicting terminal rewrite")
                 if actual == expected:
@@ -7946,13 +8009,13 @@ class AutoReplyStore(LogicalRunStoreMixin, ReviewedCandidateStoreMixin):
             if row["status"] in {"failed", "superseded"}:
                 raise ValueError("cannot complete terminal runtime attempt")
             if agent_run_final_result is not None:
-                if row["agent_run_id"] is None:
+                if row["workload_kind"] != "agent_run" or row["parent_id"] is None:
                     raise ValueError("agent run result reference requires agent run")
                 reference = envelope.get("result_ref")
                 if (
                     not isinstance(reference, dict)
                     or set(reference) != {"agent_run_id", "result_sha256"}
-                    or reference.get("agent_run_id") != row["agent_run_id"]
+                    or reference.get("agent_run_id") != row["parent_id"]
                     or reference.get("result_sha256")
                     != hashlib.sha256(
                         agent_run_final_result_json.encode("utf-8")
@@ -7961,7 +8024,7 @@ class AutoReplyStore(LogicalRunStoreMixin, ReviewedCandidateStoreMixin):
                     raise ValueError("agent run result reference mismatch")
                 run_row = self._require_current_agent_run_write_access(
                     db,
-                    int(row["agent_run_id"]),
+                    int(row["parent_id"]),
                     owner=owner,
                     now_text=now_text,
                     expected_status="running",
@@ -7970,13 +8033,13 @@ class AutoReplyStore(LogicalRunStoreMixin, ReviewedCandidateStoreMixin):
                     raise ValueError("agent run result reference requires Consumer")
             cursor = db.execute(
                 """
-                update runs as agent_runtime_attempts
+                update runtime_attempts as agent_runtime_attempts
                 set status='completed', session_id=?, transcript_reference=?,
                     transcript_start=?, transcript_end=?, result_schema_id=?,
                     lease_owner='', lease_expires_at='',
                     finished_at=?, updated_at=?
-                where agent_runtime_attempts.record_type='agent_runtime_attempts' and cast(agent_runtime_attempts.legacy_key as integer)=? and status in ('starting', 'running')
-                  and (parent_id is not null
+                where agent_runtime_attempts.id=? and status in ('starting', 'running')
+                  and (workload_kind='agent_run'
                        or (lease_owner=? and lease_expires_at>?))
                 """,
                 (
@@ -8011,23 +8074,26 @@ class AutoReplyStore(LogicalRunStoreMixin, ReviewedCandidateStoreMixin):
                         structured_error_json='',
                         transcript_end=?, lease_owner='', lease_expires_at='',
                         completed_at=?, updated_at=?
-                    where agent_runs.record_type='agent_runs' and agent_runs.source_type is null and id=? and status='running' and lease_owner=?
+                    where agent_runs.id=? and role in ('consumer','audit') and status='running' and lease_owner=?
                       and lease_expires_at>?
                     """,
                     (
                         agent_run_transcript_end,
                         now_text,
                         now_text,
-                        row["agent_run_id"],
+                        row["parent_id"],
                         owner,
                         now_text,
                     ),
                 )
                 if run_cursor.rowcount != 1:
                     raise AgentRunLeaseLostError(
-                        f"agent run lease lost: {row['agent_run_id']}"
+                        f"agent run lease lost: {row['parent_id']}"
                     )
-                completed_run = db.execute(f'select * from ({AGENT_RUN_SQL}) as agent_runs where id=?', (row["agent_run_id"],)).fetchone()
+                completed_run = db.execute(
+                    "select * from runs where id=? and role in ('consumer','audit')",
+                    (row["parent_id"],),
+                ).fetchone()
                 self._adopt_review_candidate_in_connection(db, completed_run, agent_run_final_result)
             return self._agent_runtime_attempt_from_row(
                 self._runtime_attempt_for_transition(db, attempt_id)
@@ -8045,7 +8111,7 @@ class AutoReplyStore(LogicalRunStoreMixin, ReviewedCandidateStoreMixin):
             raise ValueError("lease_seconds must be positive")
         with self._agent_run_write_transaction(now) as (db, (now_value, now_text)):
             row = self._runtime_attempt_for_transition(db, attempt_id)
-            if row["agent_run_id"] is not None:
+            if row["workload_kind"] == "agent_run":
                 raise ValueError("operation lease requires generalized workload")
             self._require_runtime_attempt_owner(row, owner=owner, now_text=now_text)
             expires_at = (
@@ -8053,9 +8119,9 @@ class AutoReplyStore(LogicalRunStoreMixin, ReviewedCandidateStoreMixin):
             ).strftime("%Y-%m-%d %H:%M:%S")
             cursor = db.execute(
                 """
-                update runs as agent_runtime_attempts
+                update runtime_attempts as agent_runtime_attempts
                 set lease_expires_at=?, updated_at=?
-                where agent_runtime_attempts.record_type='agent_runtime_attempts' and cast(agent_runtime_attempts.legacy_key as integer)=? and status in ('starting', 'running')
+                where agent_runtime_attempts.id=? and status in ('starting', 'running')
                   and lease_owner=? and lease_expires_at>?
                 """,
                 (expires_at, now_text, attempt_id, owner, now_text),
@@ -8080,9 +8146,9 @@ class AutoReplyStore(LogicalRunStoreMixin, ReviewedCandidateStoreMixin):
         )
         with self._agent_run_write_transaction(now) as (db, (_, now_text)):
             row = db.execute(
-                f"""
-                select * from ({RUNTIME_ATTEMPT_SQL}) as agent_runtime_attempts
-                where agent_run_id is null and workload_kind=? and workload_key=?
+                """
+                select * from runtime_attempts as agent_runtime_attempts
+                where workload_kind<>'agent_run' and workload_kind=? and workload_key=?
                   and status in ('starting', 'running')
                 order by attempt_number desc limit 1
                 """,
@@ -8094,11 +8160,11 @@ class AutoReplyStore(LogicalRunStoreMixin, ReviewedCandidateStoreMixin):
                 return self._agent_runtime_attempt_from_row(row)
             cursor = db.execute(
                 """
-                update runs as agent_runtime_attempts
+                update runtime_attempts as agent_runtime_attempts
                 set status='failed', failure_class='process',
                     failure_code='runtime_lease_expired', failover_permitted=1,
                     lease_owner='', lease_expires_at='', finished_at=?, updated_at=?
-                where agent_runtime_attempts.record_type='agent_runtime_attempts' and cast(agent_runtime_attempts.legacy_key as integer)=? and status in ('starting', 'running')
+                where agent_runtime_attempts.id=? and status in ('starting', 'running')
                   and first_effect_started_at='' and lease_expires_at<=?
                 """,
                 (now_text, now_text, row["id"], now_text),
@@ -8161,17 +8227,18 @@ class AutoReplyStore(LogicalRunStoreMixin, ReviewedCandidateStoreMixin):
             ).strftime("%Y-%m-%d %H:%M:%S")
             terminal_meeting_cursor = db.execute(
                 """
-                update runs as attempt
+                update runtime_attempts as attempt
                 set status='failed', failure_class='process',
                     failure_code='runtime_parent_requeued', failover_permitted=1,
                     lease_owner='', lease_expires_at='', finished_at=?, updated_at=?
-                where attempt.record_type='agent_runtime_attempts' and attempt.status in ('starting', 'running')
-                  and attempt.parent_id is null
+                where attempt.workload_kind='meeting' and attempt.status in ('starting', 'running')
+                  and attempt.parent_id is not null
                   and attempt.workload_kind='meeting'
                   and exists (
                     select 1 from runs parent
-                    where parent.record_type='agent_runs' and parent.source_type='meeting_alignment_runs'
-                      and parent.legacy_key=attempt.workload_key
+                    join run_provenance provenance on provenance.run_id=parent.id
+                    where provenance.source_type='meeting_alignment_runs'
+                      and parent.id=attempt.parent_id
                       and parent.status<>'running'
                   )
                 """,
@@ -8185,8 +8252,8 @@ class AutoReplyStore(LogicalRunStoreMixin, ReviewedCandidateStoreMixin):
                   and job.{task20_column('weekly_okr_analysis_jobs', 'lease_expires_at')}!=''
                   and job.{task20_column('weekly_okr_analysis_jobs', 'lease_expires_at')}<=?
                   and exists (
-                    select 1 from ({RUNTIME_ATTEMPT_SQL}) as attempt
-                    where attempt.agent_run_id is null
+                    select 1 from runtime_attempts as attempt
+                    where attempt.workload_kind<>'agent_run'
                       and attempt.workload_kind='weekly_okr'
                       and attempt.workload_key like (
                         job.{task20_column('weekly_okr_analysis_jobs', 'week_end')} || ':' || job.{task20_column('weekly_okr_analysis_jobs', 'manager_user_id')} || ':' ||
@@ -8199,20 +8266,21 @@ class AutoReplyStore(LogicalRunStoreMixin, ReviewedCandidateStoreMixin):
                 (now_text, now_text, now_text),
             )
             cursor = db.execute(
-                f"""
-                update runs as attempt
+                """
+                update runtime_attempts as attempt
                 set status='failed', failure_class='process',
                     failure_code='runtime_lease_expired', failover_permitted=1,
                     lease_owner='', lease_expires_at='', finished_at=?, updated_at=?
-                where attempt.record_type='agent_runtime_attempts' and attempt.status in ('starting', 'running')
+                where attempt.status in ('starting', 'running')
                   and (
                     (attempt.lease_expires_at!='' and attempt.lease_expires_at<=?)
                     or (attempt.lease_expires_at='' and attempt.updated_at<=?)
                     or (
-                      attempt.parent_id is not null
+                      attempt.workload_kind='agent_run'
                       and exists (
-                        select 1 from ({AGENT_RUN_SQL}) parent
+                        select 1 from runs parent
                         where parent.id=attempt.parent_id
+                          and parent.role in ('consumer','audit')
                           and parent.status in ('completed', 'failed')
                       )
                     )
@@ -8247,11 +8315,11 @@ class AutoReplyStore(LogicalRunStoreMixin, ReviewedCandidateStoreMixin):
             ).strftime("%Y-%m-%d %H:%M:%S")
             cursor = db.execute(
                 """
-                update runs as agent_runtime_attempts
+                update runtime_attempts as agent_runtime_attempts
                 set status='failed', failure_class='process',
                     failure_code='runtime_start_stalled', failover_permitted=1,
                     lease_owner='', lease_expires_at='', finished_at=?, updated_at=?
-                where agent_runtime_attempts.record_type='agent_runtime_attempts' and parent_id is null
+                where workload_kind<>'agent_run'
                   and status in ('starting', 'running')
                   and session_id=''
                   and transcript_reference=''
@@ -8273,11 +8341,11 @@ class AutoReplyStore(LogicalRunStoreMixin, ReviewedCandidateStoreMixin):
         with self._agent_run_write_transaction(None) as (db, (_, now_text)):
             cursor = db.execute(
                 f"""
-                update runs as attempt
+                update runtime_attempts as attempt
                 set status='superseded', failure_class='', failure_code='',
                     failover_permitted=0, lease_owner='', lease_expires_at='',
                     finished_at=?, updated_at=?
-                where attempt.record_type='agent_runtime_attempts' and attempt.parent_id is null
+                where attempt.workload_kind='memory' and attempt.parent_id is null
                   and attempt.workload_kind='memory'
                   and attempt.status in ('starting', 'running')
                   and attempt.first_effect_started_at=''
@@ -8329,23 +8397,18 @@ class AutoReplyStore(LogicalRunStoreMixin, ReviewedCandidateStoreMixin):
                     return self._agent_runtime_attempt_from_row(row)
                 raise ValueError("cannot mutate terminal runtime attempt")
             self._require_runtime_attempt_owner(row, owner=owner, now_text=now_text)
-            db.execute(
-                """
-                update runs as agent_runtime_attempts
-                set session_id=?, transcript_reference=?,
-                    transcript_start=coalesce(?,transcript_start),
-                    transcript_end=max(transcript_end,coalesce(?,transcript_start)),
-                    updated_at=?
-                where agent_runtime_attempts.record_type='agent_runtime_attempts' and cast(agent_runtime_attempts.legacy_key as integer)=? and status in ('starting', 'running')
-                  and (parent_id is not null
-                       or (lease_owner=? and lease_expires_at>?))
-                """,
-                (
-                    session_id, selected_reference, transcript_start, transcript_start,
-                    now_text, attempt_id,
-                    owner, now_text,
-                ),
-            )
+            from app.run_entity_storage import update_runtime_attempt_cas
+            changes = {
+                "session_id": session_id,
+                "transcript_reference": selected_reference,
+                "transcript_start": row["transcript_start"] if transcript_start is None else transcript_start,
+                "transcript_end": max(row["transcript_end"], row["transcript_start"] if transcript_start is None else transcript_start),
+                "updated_at": now_text,
+            }
+            if update_runtime_attempt_cas(
+                db, attempt_id=attempt_id, expected={"status": row["status"]}, changes=changes
+            ) is None:
+                raise ValueError("runtime attempt transition conflict")
             return self._agent_runtime_attempt_from_row(
                 self._runtime_attempt_for_transition(db, attempt_id)
             )
@@ -8416,7 +8479,10 @@ class AutoReplyStore(LogicalRunStoreMixin, ReviewedCandidateStoreMixin):
             )
             if row["status"] == "failed":
                 if agent_run_error is not None:
-                    run = db.execute(f'select status,structured_error_json,transcript_end_line from ({AGENT_RUN_SQL}) as agent_runs where id=?', (row["agent_run_id"],)).fetchone()
+                    run = db.execute(
+                        "select status,structured_error_json,transcript_end from runs where id=? and role in ('consumer','audit')",
+                        (row["parent_id"],),
+                    ).fetchone()
                     if run is None or tuple(run) != ("failed", error_json, agent_run_transcript_end):
                         raise ValueError("conflicting terminal rewrite")
                 if actual == expected:
@@ -8428,21 +8494,21 @@ class AutoReplyStore(LogicalRunStoreMixin, ReviewedCandidateStoreMixin):
             if row["status"] == "superseded":
                 raise ValueError("cannot fail terminal runtime attempt")
             if agent_run_error is not None:
-                if row["agent_run_id"] is None:
+                if row["workload_kind"] != "agent_run" or row["parent_id"] is None:
                     raise ValueError("agent run error requires agent run")
                 self._require_current_agent_run_write_access(
-                    db, row["agent_run_id"], owner=owner, now_text=now_text,
+                    db, row["parent_id"], owner=owner, now_text=now_text,
                     expected_status="running",
                 )
             cursor = db.execute(
                 """
-                update runs as agent_runtime_attempts
+                update runtime_attempts as agent_runtime_attempts
                 set status='failed', failure_class=?, failure_code=?,
                     failover_permitted=?, session_id=?, transcript_reference=?,
                     transcript_start=?, transcript_end=?, lease_owner='',
                     lease_expires_at='', finished_at=?, updated_at=?
-                where agent_runtime_attempts.record_type='agent_runtime_attempts' and cast(agent_runtime_attempts.legacy_key as integer)=? and status in ('starting', 'running')
-                  and (parent_id is not null
+                where agent_runtime_attempts.id=? and status in ('starting', 'running')
+                  and (workload_kind='agent_run'
                        or (lease_owner=? and lease_expires_at>?))
                 """,
                 (
@@ -8467,11 +8533,11 @@ class AutoReplyStore(LogicalRunStoreMixin, ReviewedCandidateStoreMixin):
                     set status='failed',structured_error_json=?,
                         transcript_end=?,lease_owner='',lease_expires_at='',
                         completed_at=?,updated_at=?
-                    where agent_runs.record_type='agent_runs' and agent_runs.source_type is null and id=? and status='running' and lease_owner=? and lease_expires_at>?""",
+                    where agent_runs.id=? and role in ('consumer','audit') and status='running' and lease_owner=? and lease_expires_at>?""",
                     (error_json, agent_run_transcript_end, now_text, now_text,
-                     row["agent_run_id"], owner, now_text))
+                     row["parent_id"], owner, now_text))
                 if cursor.rowcount != 1:
-                    raise AgentRunLeaseLostError(f"agent run lease lost: {row['agent_run_id']}")
+                    raise AgentRunLeaseLostError(f"agent run lease lost: {row['parent_id']}")
             return self._agent_runtime_attempt_from_row(
                 self._runtime_attempt_for_transition(db, attempt_id)
             )
@@ -8489,8 +8555,8 @@ class AutoReplyStore(LogicalRunStoreMixin, ReviewedCandidateStoreMixin):
             if row["status"] != "failed":
                 raise ValueError("only failed runtime attempts can be superseded")
             successor = db.execute(
-                f"""
-                select 1 from ({RUNTIME_ATTEMPT_SQL}) as agent_runtime_attempts
+                """
+                select 1 from runtime_attempts as agent_runtime_attempts
                 where workload_kind=? and workload_key=? and attempt_number>?
                 limit 1
                 """,
@@ -8500,9 +8566,9 @@ class AutoReplyStore(LogicalRunStoreMixin, ReviewedCandidateStoreMixin):
                 raise ValueError("runtime attempt requires a durably claimed successor")
             cursor = db.execute(
                 """
-                update runs as agent_runtime_attempts
+                update runtime_attempts as agent_runtime_attempts
                 set status='superseded', updated_at=?
-                where agent_runtime_attempts.record_type='agent_runtime_attempts' and cast(agent_runtime_attempts.legacy_key as integer)=? and status='failed'
+                where agent_runtime_attempts.id=? and status='failed'
                 """,
                 (now_text, attempt_id),
             )
@@ -8518,9 +8584,9 @@ class AutoReplyStore(LogicalRunStoreMixin, ReviewedCandidateStoreMixin):
     ) -> list[AgentRuntimeAttempt]:
         with self._connect() as db:
             rows = db.execute(
-                f"""
-                select * from ({RUNTIME_ATTEMPT_SQL}) as agent_runtime_attempts
-                where agent_run_id=?
+                """
+                select * from runtime_attempts
+                where workload_kind='agent_run' and parent_id=?
                 order by attempt_number
                 """,
                 (agent_run_id,),
@@ -8548,13 +8614,13 @@ class AutoReplyStore(LogicalRunStoreMixin, ReviewedCandidateStoreMixin):
                 chunk = run_ids[start : start + 800]
                 placeholders = ", ".join("?" for _ in chunk)
                 rows = db.execute(
-                    f"select * from ({RUNTIME_ATTEMPT_SQL}) as agent_runtime_attempts "
-                    f"where agent_run_id in ({placeholders}) "
-                    "order by agent_run_id, attempt_number",
+                    f"select * from runtime_attempts "
+                    f"where workload_kind='agent_run' and parent_id in ({placeholders}) "
+                    "order by parent_id, attempt_number",
                     tuple(chunk),
                 ).fetchall()
                 for row in rows:
-                    run_id = int(row["agent_run_id"])
+                    run_id = int(row["parent_id"])
                     attempts_by_run[run_id].append(
                         self._agent_runtime_attempt_from_row(row)
                     )
@@ -8570,9 +8636,9 @@ class AutoReplyStore(LogicalRunStoreMixin, ReviewedCandidateStoreMixin):
         )
         with self._connect() as db:
             rows = db.execute(
-                f"""
-                select * from ({RUNTIME_ATTEMPT_SQL}) as agent_runtime_attempts
-                where agent_run_id is null
+                """
+                select * from runtime_attempts
+                where workload_kind<>'agent_run'
                   and workload_kind=? and workload_key=?
                 order by attempt_number
                 """,
@@ -8596,7 +8662,7 @@ class AutoReplyStore(LogicalRunStoreMixin, ReviewedCandidateStoreMixin):
     def get_agent_runtime_attempt(self, attempt_id: int) -> AgentRuntimeAttempt | None:
         with self._connect() as db:
             row = db.execute(
-                f'select * from ({RUNTIME_ATTEMPT_SQL}) as agent_runtime_attempts where id=?', (attempt_id,)
+                'select * from runtime_attempts where id=?', (attempt_id,)
             ).fetchone()
             return None if row is None else self._agent_runtime_attempt_from_row(row)
 
@@ -8617,18 +8683,12 @@ class AutoReplyStore(LogicalRunStoreMixin, ReviewedCandidateStoreMixin):
             self._require_runtime_attempt_owner(row, owner=owner, now_text=now_text)
             if row["first_effect_started_at"]:
                 return self._agent_runtime_attempt_from_row(row)
-            cursor = db.execute(
-                """
-                update runs as agent_runtime_attempts
-                set first_effect_started_at=?, updated_at=?
-                where agent_runtime_attempts.record_type='agent_runtime_attempts' and cast(agent_runtime_attempts.legacy_key as integer)=? and status in ('starting', 'running')
-                  and first_effect_started_at=''
-                  and (parent_id is not null
-                       or (lease_owner=? and lease_expires_at>?))
-                """,
-                (effect_started_at, now_text, attempt_id, owner, now_text),
-            )
-            if cursor.rowcount != 1:
+            from app.run_entity_storage import update_runtime_attempt_cas
+            if update_runtime_attempt_cas(
+                db, attempt_id=attempt_id,
+                expected={"status": row["status"], "first_effect_started_at": ""},
+                changes={"first_effect_started_at": effect_started_at, "updated_at": now_text},
+            ) is None:
                 raise ValueError("runtime attempt transition conflict")
             return self._agent_runtime_attempt_from_row(
                 self._runtime_attempt_for_transition(db, attempt_id)
@@ -13426,10 +13486,8 @@ class AutoReplyStore(LogicalRunStoreMixin, ReviewedCandidateStoreMixin):
         """The route and model of an Agent run's last runtime attempt."""
         with self._connect() as db:
             row = db.execute(
-                f"""
-                select route_name, model from ({RUNTIME_ATTEMPT_SQL}) as agent_runtime_attempts
-                where agent_run_id=? order by id desc limit 1
-                """,
+                "select route_name, model from runtime_attempts "
+                "where parent_id=? and workload_kind='agent_run' order by id desc limit 1",
                 (agent_run_id,),
             ).fetchone()
         return (row["route_name"], row["model"]) if row is not None else ("", "")
@@ -13554,9 +13612,9 @@ class AutoReplyStore(LogicalRunStoreMixin, ReviewedCandidateStoreMixin):
                 """
             ).fetchall()
             runtime_rows = db.execute(
-                f"""
+                """
                 select workload_key, status, lease_owner, lease_expires_at
-                from ({RUNTIME_ATTEMPT_SQL}) as agent_runtime_attempts
+                from runtime_attempts
                 where workload_kind='memory'
                   and workload_key like 'meeting_memory_write_event:%'
                   and status in ('starting', 'running')

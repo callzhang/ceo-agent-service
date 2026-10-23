@@ -7,7 +7,10 @@ import pytest
 
 from app.task_run_entity_assembly import task_run_entity_assembly_objects
 from app import run_entity_storage, task_entity_storage
-from app.store import AutoReplyStore
+from app.store import (
+    AutoReplyStore, AgentRuntimeAttemptLeaseLostError,
+    AgentRuntimeAttemptStartConflictError,
+)
 
 
 def _native_store(monkeypatch):
@@ -80,6 +83,267 @@ def _native_actions(count):
         "capability": "test", "operation": "act",
         "target": {"id": str(index)}, "payload": {"value": str(index)},
     } for index in range(count)]
+
+
+def test_runtime_attempt_claim_and_agent_history_use_native_parent_owner(monkeypatch):
+    store, db, task, _completed_consumer = _native_store(monkeypatch)
+    run = run_entity_storage.create_run(db, values={
+        "task_id": task["id"], "execution_generation": "gen-1",
+        "role": "consumer", "proposal_revision": 0, "turn_attempt": 1,
+        "status": "running", "lease_owner": "runtime-owner",
+        "lease_expires_at": "2026-10-24 00:00:00",
+        "created_at": "now", "updated_at": "now",
+    })
+    db.commit()
+
+    attempt = store.claim_agent_runtime_attempt(
+        run["id"], "codex_oauth", "codex_cli", "local_oauth", "gpt-6",
+    )
+
+    assert attempt.parent_id == run["id"]
+    assert not hasattr(attempt, "agent_run_id")
+    assert not hasattr(attempt, "result_envelope_json")
+    assert store.get_agent_runtime_attempt(attempt.id) == attempt
+    assert store.list_agent_runtime_attempts(run["id"]) == [attempt]
+    assert store.list_runtime_operation_attempts("memory", "memory_write_event:1") == []
+    row = db.execute("select parent_id,workload_kind,workload_key from runtime_attempts where id=?",
+                     (attempt.id,)).fetchone()
+    assert tuple(row) == (run["id"], "agent_run", str(run["id"]))
+
+    started = store.mark_agent_runtime_attempt_running_once(attempt.id, now="2026-10-23 12:00:00")
+    sessioned = store.set_agent_runtime_attempt_session(
+        started.id, "native-session", "transcript://native", transcript_start=4,
+        now="2026-10-23 12:00:01",
+    )
+    effected = store.note_runtime_attempt_effect_started(
+        sessioned.id, "2026-10-23 12:00:02",
+    )
+    assert (effected.status, effected.session_id, effected.transcript_start,
+            effected.transcript_end, effected.first_effect_started_at) == (
+        "running", "native-session", 4, 4, "2026-10-23 12:00:02",
+    )
+    result = {
+        "outcome": "no_action", "summary": "No action needed",
+        "stage_index": 0, "predecessor_review_id": None,
+    }
+    result_json = json.dumps(result, ensure_ascii=False, sort_keys=True, separators=(",", ":"))
+    envelope = json.dumps({
+        "schema_id": "consumer.v1",
+        "result_ref": {
+            "agent_run_id": run["id"],
+            "result_sha256": hashlib.sha256(result_json.encode()).hexdigest(),
+        },
+    }, separators=(",", ":"))
+    completed = store.complete_agent_runtime_attempt(
+        effected.id, "native-session", "transcript://native", 4, 9,
+        result_schema_id="consumer.v1", result_envelope_json=envelope,
+        agent_run_final_result=result, agent_run_transcript_end=9,
+        owner="runtime-owner", now="2026-10-23 12:00:03",
+    )
+    assert completed.status == "completed"
+    assert tuple(db.execute("select status,transcript_end from runs where id=?", (run["id"],)).fetchone()) == ("completed", 9)
+    assert store.adopted_candidate_for_consumer_run(run["id"])["candidate_json"] == result_json
+
+
+def test_professional_parent_does_not_change_operation_lease_or_finish_parent(monkeypatch):
+    store, db, _reply_task, _consumer = _native_store(monkeypatch)
+    task = task_entity_storage.create_task(db, values={
+        "kind": "work_summary", "status": "running",
+        "execution_generation": "professional-gen",
+        "created_at": "now", "updated_at": "now",
+    }, parameters={})
+    run = run_entity_storage.create_run(db, values={
+        "task_id": task["id"], "execution_generation": "professional-gen",
+        "role": "task_agent", "status": "running",
+        "created_at": "now", "updated_at": "now",
+    })
+    run_entity_storage.set_run_provenance(db, run_id=run["id"], source_type="task_agent_runs")
+    db.commit()
+
+    attempt = store.claim_runtime_operation_attempt(
+        "task", str(task["id"]), "codex_oauth", "codex_cli", "local_oauth", "gpt-6",
+        owner="operation-owner", lease_seconds=900, now="2026-10-23 12:00:00",
+    )
+    assert attempt.parent_id == run["id"]
+    assert (attempt.lease_owner, attempt.lease_expires_at) == (
+        "operation-owner", "2026-10-23 12:15:00",
+    )
+    assert store.list_agent_runtime_attempts(run["id"]) == []
+    assert store.list_runtime_operation_attempts("task", str(task["id"])) == [attempt]
+
+    started = store.mark_agent_runtime_attempt_running_once(
+        attempt.id, owner="operation-owner", lease_seconds=900,
+        now="2026-10-23 12:00:01",
+    )
+    sessioned = store.set_agent_runtime_attempt_session(
+        started.id, "operation-session", "transcript://operation",
+        owner="operation-owner", now="2026-10-23 12:00:02",
+    )
+    completed = store.complete_agent_runtime_attempt(
+        sessioned.id, "operation-session", "transcript://operation", 0, 3,
+        owner="operation-owner", now="2026-10-23 12:00:03",
+    )
+    assert completed.status == "completed"
+    assert store.complete_agent_runtime_attempt(
+        sessioned.id, "operation-session", "transcript://operation", 0, 3,
+        owner="operation-owner", now="2026-10-23 12:00:04",
+    ) == completed
+    assert tuple(db.execute("select status,session_id from runs where id=?", (run["id"],)).fetchone()) == (
+        "running", None,
+    )
+
+
+def test_routed_execution_uses_native_store_for_professional_operation(monkeypatch, tmp_path):
+    from datetime import UTC, datetime
+    from uuid import uuid4
+
+    from app.agent_runtime_config import load_runtime_config
+    from app.agent_runtime_contracts import RuntimeCapabilitySnapshot
+    from app.agent_runtime_router import (
+        AgentRuntimeRouter, CodexCommandFactory, RoutedCodexExecution,
+        RoutedResultCodec,
+    )
+    from app.process_runner import ProcessRunResult
+    from tests.support.native_protocol import install_protocol_native_trajectories
+
+    class SubstituteAdapter:
+        def build_command(self, **_kwargs):
+            return ["codex-substitute"]
+
+        def build_env(self, _route):
+            return {}
+
+    class SubstituteExecutor:
+        session_id = str(uuid4())
+
+        def __call__(self, _command, **_kwargs):
+            records = [
+                {"type": "thread.started", "thread_id": self.session_id},
+                {"type": "item.completed", "item": {
+                    "type": "agent_message", "text": "7",
+                }},
+                {"type": "turn.completed"},
+            ]
+            return ProcessRunResult(0, "\n".join(json.dumps(row) for row in records), "")
+
+    install_protocol_native_trajectories(tmp_path, monkeypatch, SubstituteExecutor)
+    store, db, _reply_task, _consumer = _native_store(monkeypatch)
+    task = task_entity_storage.create_task(db, values={
+        "kind": "work_summary", "status": "running",
+        "execution_generation": "professional-gen",
+        "created_at": "now", "updated_at": "now",
+    }, parameters={})
+    run = run_entity_storage.create_run(db, values={
+        "task_id": task["id"], "execution_generation": "professional-gen",
+        "role": "task_agent", "status": "running",
+        "created_at": "now", "updated_at": "now",
+    })
+    run_entity_storage.set_run_provenance(db, run_id=run["id"], source_type="task_agent_runs")
+    db.commit()
+    meeting_run = run_entity_storage.create_run(db, values={
+        "task_id": None, "status": "running", "created_at": "now", "updated_at": "now",
+    })
+    run_entity_storage.set_run_provenance(
+        db, run_id=meeting_run["id"], source_type="meeting_alignment_runs", job_id=4908,
+    )
+    db.commit()
+    config = load_runtime_config({"CEO_AGENT_RUNTIME_ROUTES": "codex_oauth"})
+    snapshot = RuntimeCapabilitySnapshot(
+        route_name="codex_oauth", capabilities=frozenset({"structured_output"}),
+        healthy=True, checked_at="2026-10-23T11:59:00+00:00",
+        expires_at="2026-10-23T12:10:00+00:00",
+    )
+    router = AgentRuntimeRouter(
+        routes=config.routes, store=store,
+        snapshots={"codex_oauth": snapshot},
+        now=lambda: datetime(2026, 10, 23, 12, 0, tzinfo=UTC),
+    )
+    execution = RoutedCodexExecution(
+        store=store, config=config, router=router, adapter=SubstituteAdapter(),
+        executor=SubstituteExecutor(), owner="routed-owner", lease_seconds=120,
+        session_id_parser=lambda _stdout: "native-routed-session",
+        session_line_counter=lambda _session_id: 3,
+        now=lambda: datetime(2026, 10, 23, 12, 0, tzinfo=UTC),
+    )
+
+    result = execution.execute(
+        workload_kind="task", workload_key=str(task["id"]), prompt="Return 7",
+        command_factory=CodexCommandFactory.standard(developer_instructions="Return one integer."),
+        parser=lambda raw: int(json.loads(raw.splitlines()[1])["item"]["text"]),
+        result_codec=RoutedResultCodec.integer(schema_id="test.integer.v1"),
+        required_capabilities=frozenset({"structured_output"}),
+    )
+
+    assert result.value == 7
+    attempt = store.get_agent_runtime_attempt(result.attempt_id)
+    assert attempt is not None and attempt.parent_id == run["id"]
+    assert attempt.workload_kind == "task" and attempt.status == "completed"
+    assert tuple(db.execute("select status,session_id from runs where id=?", (run["id"],)).fetchone()) == (
+        "running", None,
+    )
+
+    retry = store.claim_runtime_operation_attempt(
+        "task", str(task["id"]), "codex_oauth", "codex_cli", "local_oauth", "gpt-6",
+        owner="operation-owner", lease_seconds=900, now="2026-10-23 12:00:04",
+    )
+    decision_repair = store.claim_runtime_operation_attempt(
+        "task", f"{task['id']}:decision_repair.1", "codex_oauth", "codex_cli",
+        "local_oauth", "gpt-6", owner="operation-owner", lease_seconds=30,
+        now="2026-10-23 12:00:05",
+    )
+    assert (retry.parent_id, retry.attempt_number) == (run["id"], 2)
+    assert (decision_repair.parent_id, decision_repair.attempt_number) == (run["id"], 1)
+    failed = store.fail_agent_runtime_attempt(
+        retry.id, "process", "substitute_failed", True,
+        owner="operation-owner", now="2026-10-23 12:00:06",
+    )
+    assert failed.status == "failed"
+    assert store.fail_agent_runtime_attempt(
+        retry.id, "process", "substitute_failed", True,
+        owner="operation-owner", now="2026-10-23 12:00:07",
+    ) == failed
+    assert tuple(db.execute("select status,structured_error_json from runs where id=?", (run["id"],)).fetchone()) == (
+        "running", None,
+    )
+    with pytest.raises(AgentRuntimeAttemptLeaseLostError, match="lease lost"):
+        store.renew_runtime_operation_attempt_lease(
+            decision_repair.id, owner="operation-owner", lease_seconds=30,
+            now="2026-10-23 12:01:00",
+        )
+    reclaimed = store.recover_expired_runtime_operation_attempt(
+        "task", f"{task['id']}:decision_repair.1", now="2026-10-23 12:01:00",
+    )
+    assert reclaimed is not None and reclaimed.failure_code == "runtime_lease_expired"
+    successor = store.claim_runtime_operation_attempt(
+        "task", f"{task['id']}:decision_repair.1", "codex_oauth", "codex_cli",
+        "local_oauth", "gpt-6", owner="operation-owner", lease_seconds=30,
+        now="2026-10-23 12:01:01",
+    )
+    assert (successor.parent_id, successor.attempt_number) == (run["id"], 2)
+    meeting_attempt = store.claim_runtime_operation_attempt(
+        "meeting", str(meeting_run["id"]), "codex_oauth", "codex_cli", "local_oauth",
+        "gpt-6", owner="meeting-owner", lease_seconds=30, now="2026-10-23 12:02:00",
+    )
+    assert meeting_attempt.parent_id == meeting_run["id"]
+    assert meeting_attempt.workload_kind == "meeting"
+    with pytest.raises(AgentRuntimeAttemptStartConflictError, match="process start"):
+        store.mark_agent_runtime_attempt_running_once(
+            meeting_attempt.id, owner="wrong-owner", now="2026-10-23 12:02:01",
+        )
+    started_meeting_attempt = store.mark_agent_runtime_attempt_running_once(
+        meeting_attempt.id, owner="meeting-owner", now="2026-10-23 12:02:01",
+    )
+    assert started_meeting_attempt.status == "running"
+    store.complete_agent_runtime_attempt(
+        meeting_attempt.id, "meeting-session", "codex_session:meeting-session", 1, 4,
+        owner="meeting-owner", now="2026-10-23 12:02:02",
+    )
+    assert tuple(db.execute("select status,session_id from runs where id=?", (meeting_run["id"],)).fetchone()) == (
+        "running", None,
+    )
+    assert tuple(db.execute("select status,session_id from runs where id=?", (run["id"],)).fetchone()) == (
+        "running", None,
+    )
 
 
 def test_system_executor_uses_native_run_progress_and_receipt_owner(monkeypatch):
