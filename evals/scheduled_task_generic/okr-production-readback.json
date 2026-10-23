@@ -1200,5 +1200,55 @@
     "daily_skill_candidate_sha256": "dd355212ba37f02ace76c1659e6a4449f376fd3045c97ff9f8a662ec5547fafb",
     "daily_skill_installed_baseline_sha256": "32d24bb5f53b60bcf67b8a91582db258a05cac59c789391c862d3bd95719fc62",
     "daily_skill_candidate_repair": "Clarify the existing rolling-window script contract and Audit check after run396111. The managed revision must be published before a later natural report can validate the repair."
+  },
+  "latest_production_readback_2026_10_23": {
+    "observed_at": "2026-10-23T14:33:08Z",
+    "source": "GET /api/console/scheduled-tasks, GET /healthz, production git HEAD, process list",
+    "production_commit": "944138f6a4169a145d51b6f960ec778c2ae74e7d",
+    "merged_change": "PR #298",
+    "healthz": {
+      "http_status": 200,
+      "status": "ok"
+    },
+    "processes": {
+      "supervisor_pid": 39441,
+      "service_worker_pid": 39445,
+      "audit_web_pid": 39446,
+      "email_worker_pid": 39447
+    },
+    "scheduled_task_count": 14,
+    "tasks": {
+      "6": {
+        "version": 31,
+        "enabled": true,
+        "cron_expression": "0 0 3 * * 0",
+        "timezone": "America/Los_Angeles",
+        "next_run_at": "2026-10-25T10:00:00Z",
+        "managed_skill": "ceo-weekly-okr-report",
+        "managed_revision_id": 240,
+        "latest_run_id": 395969
+      },
+      "13": {
+        "version": 52,
+        "enabled": true,
+        "cron_expression": "0 0 12 * * 6",
+        "timezone": "America/Los_Angeles",
+        "next_run_at": "2026-10-24T19:00:00Z",
+        "managed_skill": "ceo-weekly-report",
+        "managed_revision_id": 202,
+        "latest_run_id": 391278
+      },
+      "14": {
+        "version": 59,
+        "enabled": true,
+        "cron_expression": "0 0 6 * * *",
+        "timezone": "America/Los_Angeles",
+        "next_run_at": "2026-10-24T13:00:00Z",
+        "managed_skill": "ceo-daily-report",
+        "managed_revision_id": 224,
+        "latest_run_id": 396111
+      }
+    },
+    "acceptance_status": "This is a runtime/configuration readback only; it is not new report business acceptance. PR #294 remains unmerged and undeployed."
   }
 }

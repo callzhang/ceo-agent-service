@@ -739,3 +739,7 @@ Audit 两次退回后，要求将窗口改成北京时间零点到零点；Consu
 2026-10-23 13:41 UTC 只读复核 production commit `682c7893ee6393246f7fa3c9d923b31c5aad7c59`、runtime Skill config 370、healthz HTTP 200；task6 当前 v30 / managed OKR Skill revision240。此前候选前置文件仍把 task6 已安装基线记为 revision235 / SHA `d7584ca0…`。已获 Derek 明确授权后，只更新 `okr-release-preconditions.json` 中的基线元数据与 task6 已安装/managed SHA、revision 字段到线上当前值；approved candidate 仍为 SHA `49ba4b0b…`。
 
 逐项重算结果：日报已安装基线/revision224 的 source、installed、manifest old SHA、precondition installed SHA 都是 `32d24bb5…`；OKR revision240 的 source、installed、manifest、precondition SHA 都是 `49ba4b0b…`；OKR Consumer scripts 源码和已安装目录的脚本树 SHA 都是 `7e8fb42e…`，与 `consumer-scripts.json` 一致。因此没有改写 OKR 脚本摘要。日报 Skill 契约澄清后，release manifest 的 `new_sha256` 和 precondition 的 `approved_new_sha256` 已同步为 `dd355212…`，installed/old baseline 保持 `32d24bb5…`。没有更改 OKR 评分规则、群覆盖、审核、完整读回或投递门槛。同步后的无正文读回见 `okr-production-readback.json` 的 `release_artifact_convergence`。该摘要核对与代码候选合并、部署和自然 OKR 结果验收分开记录。
+
+### 2026-10-23 线上状态复读：PR #298 后
+
+14:33 UTC 只读复查显示，PR #298 合入后的生产 HEAD 为 `944138f6a4169a145d51b6f960ec778c2ae74e7d`，healthz HTTP 200，进程 PID 为 supervisor 39441、service worker 39445、audit-web 39446、email-worker 39447；线上仍有 14 项定时任务。task6 当前 v31 / managed `ceo-weekly-okr-report` revision240，下一次 10月25日 10:00 UTC；task13 v52 / revision202，下一次10月24日 19:00 UTC；task14 v59 / revision224，下一次10月24日 13:00 UTC。最近运行仍分别是 task6 手动395969、task13 手动391278、task14 自然396111，没有新的报告运行。此状态读回只说明新生产提交健康且任务配置保留；PR #294 仍未合并、未部署，也没有新增自然业务验收结果。无正文快照见 `okr-production-readback.json` 的 `latest_production_readback_2026_10_23`。
