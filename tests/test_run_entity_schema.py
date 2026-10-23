@@ -6,6 +6,7 @@ import pytest
 
 from app import logical_run_current_schema, run_entity_definitions, runs11_current_schema
 from app.run_entity_schema import capture_run_entities, migrate_run_entities, restore_run_entities
+from app.run_entity_schema import _relocate_run_owner_sequence_rowids
 
 _TARGET_NAMES = set(run_entity_definitions.run_entity_objects())
 _TARGET_TABLES = {name for name, sql in run_entity_definitions.run_entity_objects().items()
@@ -94,6 +95,46 @@ def _source_row(db, kind, values):
     columns = tuple(row)
     db.execute("insert into runs(" + ",".join(columns) + ") values(" +
                ",".join("?" for _ in columns) + ")", tuple(row[c] for c in columns))
+
+
+def test_run_owner_allocator_composes_with_captured_source_sequence_rowids():
+    db = sqlite3.connect(":memory:")
+    source_names = ("tasks:published", "tasks")
+    for name in source_names:
+        db.execute(f'create table "{name}"(id integer primary key autoincrement)')
+        db.execute(f'insert into "{name}"(id) values(2)')
+    db.execute('update sqlite_sequence set seq=3 where name="tasks"')
+    db.execute("insert into sqlite_sequence(rowid,name,seq) values(3,'runs:published',2)")
+    db.execute('create table "runs"(id integer primary key autoincrement)')
+    db.execute('insert into "runs"(id) values(2)')
+    db.execute("insert into sqlite_sequence(rowid,name,seq) values(5,'runs:reserved',44)")
+    source_rows = tuple(db.execute(
+        "select rowid,name,seq from sqlite_sequence order by rowid"))
+    assert source_rows == ((1, "tasks:published", 2), (2, "tasks", 3),
+                           (3, "runs:published", 2), (4, "runs", 2),
+                           (5, "runs:reserved", 44))
+
+    # Run conversion drops the source table, then creates the native owner;
+    # its first sequence row reuses captured source ROWID 4.
+    db.execute('drop table "runs"')
+    db.execute("delete from sqlite_sequence where name='runs:reserved'")
+    db.execute("create table workbench_events(id integer primary key autoincrement)")
+    db.execute("insert into workbench_events(id) values(2)")
+    assert db.execute(
+        "select rowid,name,seq from sqlite_sequence where name='workbench_events'"
+    ).fetchone() == (4, "workbench_events", 2)
+
+    run_source_rows = tuple(row for row in source_rows if row[1].startswith("runs"))
+    _relocate_run_owner_sequence_rowids(db, run_source_rows, {"workbench_events"})
+    for row in run_source_rows:
+        db.execute("delete from sqlite_sequence where name=?", (row[1],))
+        db.execute("insert into sqlite_sequence(rowid,name,seq) values(?,?,?)", row)
+    assert tuple(db.execute(
+        "select rowid,name,seq from sqlite_sequence where name in "
+        "('tasks:published','tasks','runs:published','runs','runs:reserved') order by rowid")) == source_rows
+    assert db.execute(
+        "select rowid,name,seq from sqlite_sequence where name='workbench_events'"
+    ).fetchone() == (6, "workbench_events", 2)
 
 
 def _run_source(*, orphan_task_id=None, include_task_source_metadata=False, workbench_artifact_public_id=None):
@@ -273,11 +314,36 @@ def test_artifact_created_uuid_reference_survives_native_forward_and_inverse():
             (json.dumps({"artifact_id": artifact_public_id, "retained": {"x": 1}}),),
         )
         source_metadata = capture_run_entities(db)
+        source_sequences = tuple(source_metadata["sequence_rows"])
+        assert source_sequences == ((10, "runs", 8000), (12, "runs:published", 8000))
+        unrelated_sequences = tuple(db.execute(
+            "select rowid,name,seq from sqlite_sequence where name='runs_other'"))
+        owner_highwaters = {owner: None for owner in (
+            "runs", "runtime_attempts", "run_failures", "schedule_occurrences",
+            "workbench_events", "codex_session_search_index",
+            "email_classifier_runtime_samples", "setup_wizard_events")}
+        owner_highwaters["workbench_events"] = 1304
         forward = migrate_run_entities(
             db, source_metadata, task_metadata=task_forward,
-            run_handoff=_run_handoff(db, source_metadata),
+            run_handoff=_run_handoff(db, source_metadata, owner_highwaters=owner_highwaters),
         )
+        assert tuple(db.execute(
+            "select rowid,name,seq from sqlite_sequence where name in ('runs','runs:published') "
+            "order by rowid")) == source_sequences
+        assert tuple(db.execute(
+            "select rowid,name,seq from sqlite_sequence where name='runs_other'")) == unrelated_sequences
+        event_sequence_row = db.execute(
+            "select rowid,name,seq from sqlite_sequence where name='workbench_events'"
+        ).fetchone()
+        assert event_sequence_row[0] > max(row[0] for row in source_sequences)
         event = db.execute("select task_id,payload_json from workbench_events where sequence=1").fetchone()
+        next_event_id = db.execute(
+            "insert into workbench_events(task_id,sequence,event_type,payload_json,created_at) "
+            "values(?,2,'allocator_probe','{}','now') returning id", (event[0],),
+        ).fetchone()[0]
+        assert next_event_id > 1304
+        db.execute("delete from workbench_events where id=?", (next_event_id,))
+        owner_highwaters["workbench_events"] = next_event_id
         artifact_id = json.loads(event[1])["artifact_id"]
         artifact = db.execute("select workbench_turn_id from workbench_artifacts where id=?", (int(artifact_id),)).fetchone()
         assert int(artifact_id) > 0
@@ -293,6 +359,8 @@ def test_artifact_created_uuid_reference_survives_native_forward_and_inverse():
             "select payload_json from runs where record_type='workbench_events' and id=1304"
         ).fetchone()[0]
         assert json.loads(restored) == {"artifact_id": artifact_public_id, "retained": {"x": 1}}
+        assert tuple(db.execute(
+            "select rowid,name,seq from sqlite_sequence where name='runs_other'")) == unrelated_sequences
         db.commit()
 
         # Repeat the actual handoff twice: UUID source identity and unrelated
@@ -308,8 +376,14 @@ def test_artifact_created_uuid_reference_survives_native_forward_and_inverse():
             next_run_source = capture_run_entities(db)
             next_run_forward = migrate_run_entities(
                 db, next_run_source, task_metadata=next_task_forward,
-                run_handoff=_run_handoff(db, next_run_source),
+                run_handoff=_run_handoff(db, next_run_source,
+                                         owner_highwaters=owner_highwaters),
             )
+            assert tuple(db.execute(
+                "select rowid,name,seq from sqlite_sequence where name='runs_other'")) == unrelated_sequences
+            assert db.execute(
+                "select seq from sqlite_sequence where name='workbench_events'"
+            ).fetchone()[0] >= owner_highwaters["workbench_events"]
             native_event = db.execute(
                 "select task_id,payload_json from workbench_events where sequence=1"
             ).fetchone()

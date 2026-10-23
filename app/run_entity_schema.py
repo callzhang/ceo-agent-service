@@ -109,6 +109,39 @@ def _sequence_rows(db: sqlite3.Connection) -> list[tuple]:
         _SOURCE_SEQUENCE_NAMES)]
 
 
+def _relocate_run_owner_sequence_rowids(db: sqlite3.Connection,
+                                        source_sequence_rows: list[tuple],
+                                        owner_names) -> None:
+    """Move only native Run-owner sequence rows that block captured source ROWIDs.
+
+    sqlite_sequence.rowid is incidental identity for a target owner created by
+    this conversion. Source rowids and watermarks are contractual facts. Move
+    colliding target entries above the current sequence table high-water before
+    restoring those source rows; the owner name and AUTOINCREMENT high-water
+    remain unchanged.
+    """
+    source_rowids = {int(row[0]) for row in source_sequence_rows if row[0] is not None}
+    if not source_rowids:
+        return
+    current_max = db.execute(
+        "select coalesce(max(rowid),0) from main.sqlite_sequence").fetchone()[0]
+    next_rowid = int(current_max) + 1
+    occupied = source_rowids | {
+        int(row[0]) for row in db.execute("select rowid from main.sqlite_sequence")
+    }
+    for owner in sorted(set(owner_names)):
+        row = db.execute(
+            "select rowid from main.sqlite_sequence where name=?", (owner,)
+        ).fetchone()
+        if row is not None and int(row[0]) in source_rowids:
+            while next_rowid in occupied:
+                next_rowid += 1
+            db.execute("update main.sqlite_sequence set rowid=? where name=?",
+                       (next_rowid, owner))
+            occupied.add(next_rowid)
+            next_rowid += 1
+
+
 def _run_fk_findings(db: sqlite3.Connection) -> tuple[tuple, ...]:
     # Only records the actual pre-existing Run edges. It is content-free and
     # lets a composed migration preserve an orphan without inventing its Task.
@@ -742,6 +775,8 @@ def migrate_run_entities(db: sqlite3.Connection, source_metadata: dict, *,
     # whose retained sample rows no longer reach the old highwater). Source
     # names are restored after target inserts so those inserts cannot lower
     # or otherwise rewrite the captured rowid/name/seq facts.
+    _relocate_run_owner_sequence_rowids(
+        db, source_metadata["sequence_rows"], _SOURCE_TO_OWNER.values())
     for source_sequence in source_metadata["sequence_rows"]:
         db.execute("delete from main.sqlite_sequence where name=?", (source_sequence[1],))
         db.execute("insert into main.sqlite_sequence(rowid,name,seq) values(?,?,?)",
@@ -1338,6 +1373,8 @@ def restore_run_entities(db: sqlite3.Connection, source_metadata: dict,
     for name, sql in source_metadata["source_objects"].items():
         if name != "runs":
             db.execute(sql)
+    _relocate_run_owner_sequence_rowids(
+        db, source_metadata["sequence_rows"], _SOURCE_TO_OWNER.values())
     restored_sequence_rows = [list(row) for row in source_metadata["sequence_rows"]]
     by_sequence = {row[1]: row for row in restored_sequence_rows}
     required_waters = {
