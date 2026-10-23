@@ -18,9 +18,9 @@ def test_okr_skill_resumes_saved_inputs_and_does_not_use_failure_for_missing_evi
     )
     assert "Do not invent or require a separate local performance-policy" in skill
     assert "the missing document does not block member analysis or publication" in skill
-    assert "An empty independent-document search is an evidence gap, not a reason to stop analysis" in skill
-    assert "continue with the next live-OKR manager" in skill
-    assert "write a complete schema-valid analysis for every manager" in skill
+    assert "An empty search is an evidence gap, not a reason to stop" in skill
+    assert "Process live-OKR managers sequentially" in skill
+    assert "write and verify the complete schema-valid" in skill
     assert "The discrete bands above apply only to each KR's `base_score`" in skill
     assert "70–79 is the valid role-standard band" in skill
     assert "replace the proposal content with those exact bytes" in skill
