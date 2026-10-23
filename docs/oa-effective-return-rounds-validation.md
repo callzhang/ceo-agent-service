@@ -21,3 +21,7 @@ Attempt 15888 的 DWS 流水共有四次 `REDIRECT_PROCESS`，Audit 摘要称其
 `tests/test_oa_effective_return_rounds.py` 检查通用 OA Skill、人员 Skill 和发布清单是否保留这些规则。测试在 Skill 更新前失败（2 failed），更新后通过。原 `tests/test_oa_return_policy_skill.py` 还断言“最多退回两次”，与现行获批阈值矛盾；已改为验证“三次有效退回”且不以动作数替代逐轮核验。相关 Skill 测试 7 项通过，Consumer system release 测试 27 项通过，Ruff 与 `git diff --check` 通过。
 
 这次只更新审核 Skill 与其发布清单，不修改运行时动作代码，不执行 OA 动作，不改变审批权限。
+
+## Skill 发布基线核验
+
+首次发布预检被 OKR Skill 的旧摘要挡住。只读核对仓库文件、`~/.agents/skills/ceo-weekly-okr-report/SKILL.md` 和生产运行时配置 369 后，三者当前均为 `49ba4b0b…`；发布清单仍把安装文件和旧 managed 绑定记为 `d7584ca0…`。这是旧部署快照未随此前已完成的 OKR 发布同步，不是新的 OKR 内容变更。清单的两个旧摘要已对齐到已安装文件和活动绑定，并加入回归断言；新摘要仍指向同一 `49ba4b0b…` 内容，因此此项为无内容变化。OA Skill 发布仍需通过正式发布流程和运行时加载回执验证，不能以清单修正或代码部署代替。

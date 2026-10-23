@@ -99,6 +99,24 @@ def test_release_manifest_pins_current_finance_card_and_active_managed_skill_has
     }
 
 
+def test_okr_release_baseline_matches_already_installed_skill():
+    root = Path(__file__).resolve().parents[1]
+    manifest = json.loads(
+        (root / "ci/consumer-system-contract-release.json").read_text(encoding="utf-8")
+    )
+    entry = next(
+        item for item in manifest["files"]
+        if item["source"] == "ci/shared-skills/ceo-weekly-okr-report/SKILL.md"
+    )
+    installed = Path.home() / ".agents/skills/ceo-weekly-okr-report/SKILL.md"
+
+    installed_digest = _digest(installed.read_bytes())
+    source_digest = _digest((root / entry["source"]).read_bytes())
+    assert entry["old_sha256"] == installed_digest
+    assert entry["old_managed_sha256"] == installed_digest
+    assert entry["new_sha256"] == source_digest
+
+
 def test_finance_rule_card_counts_only_valid_applicant_resolvable_returns():
     root = Path(__file__).resolve().parents[1]
     card = (
