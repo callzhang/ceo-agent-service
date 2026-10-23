@@ -1566,6 +1566,37 @@ def test_task_first_run_inverse_emits_json_handoff_from_restored_task_source():
         db.close()
 
 
+def test_run_inverse_rejects_unknown_current_task_identity_metadata_before_mutation():
+    from app.task_entity_schema import restore_task_entities, _inverse_identity_digest
+
+    db, task_forward, task_source_metadata = _run_source(include_task_source_metadata=True)
+    try:
+        run_source_metadata = capture_run_entities(db)
+        run_forward = migrate_run_entities(
+            db, run_source_metadata, task_metadata=task_forward,
+            run_handoff=_run_handoff(db, run_source_metadata))
+        task_inverse = restore_task_entities(db, task_source_metadata, task_forward)
+        task_inverse["inverse_identity"]["unrecognized_owner_data"] = []
+        task_inverse["source_context"]["handoff_sha256"] = _inverse_identity_digest(
+            task_inverse["inverse_identity"])
+        native_rows = {table: tuple(tuple(row) for row in db.execute(
+            f'select * from "{table}" order by 1')) for table in _TARGET_TABLES}
+        native_catalog = tuple(db.execute(
+            "select type,name,tbl_name,sql from sqlite_schema where name not like 'sqlite_%' "
+            "order by name"))
+        with pytest.raises(ValueError, match="unsupported inverse Task identity handoff"):
+            restore_run_entities(db, run_source_metadata, run_forward,
+                                 task_metadata=task_forward,
+                                 task_inverse_metadata=task_inverse)
+        assert {table: tuple(tuple(row) for row in db.execute(
+            f'select * from "{table}" order by 1')) for table in _TARGET_TABLES} == native_rows
+        assert tuple(db.execute(
+            "select type,name,tbl_name,sql from sqlite_schema where name not like 'sqlite_%' "
+            "order by name")) == native_catalog
+    finally:
+        db.close()
+
+
 def test_task_first_new_run_facts_survive_old_write_and_two_json_cycles():
     import hashlib
     import struct

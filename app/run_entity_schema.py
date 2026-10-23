@@ -735,25 +735,16 @@ def _inverse_task_ids(db: sqlite3.Connection, task_metadata: dict,
             raise ValueError("Run inverse requires actual Task2B inverse metadata")
         inverse = task_inverse_metadata["inverse_identity"]
         context = task_inverse_metadata["source_context"]
-        if (type(inverse) is not dict or set(inverse) != {"version", "owners", "meeting_business_keys"}
-                or inverse["version"] != 1 or type(inverse["owners"]) is not list
-                or type(context) is not dict or context.get("version") != 1):
+        if (type(inverse) is not dict or type(context) is not dict
+                or set(context) != {"version", "handoff_required", "handoff_sha256"}
+                or context["version"] != 1
+                or type(context["handoff_required"]) is not bool
+                or not isinstance(context["handoff_sha256"], str)):
             raise ValueError("invalid Task2B inverse identity context")
-        from app.task_entity_schema import _inverse_identity_digest
+        from app.task_entity_schema import _inverse_identity_digest, _validate_inverse_identity
+        source_physical = _validate_inverse_identity(inverse)["owners"]
         if context.get("handoff_sha256") != _inverse_identity_digest(inverse):
             raise ValueError("Task2B inverse identity context digest mismatch")
-        source_physical = {}
-        for edge in inverse["owners"]:
-            if (type(edge) is not dict or set(edge) != {
-                    "source_kind", "source_physical_id", "canonical_id"}
-                    or edge["source_kind"] not in task20_definitions.TASK20_COLUMNS
-                    or type(edge["source_physical_id"]) is not int
-                    or type(edge["canonical_id"]) is not int):
-                raise ValueError("invalid Task2B inverse identity edge")
-            key = (edge["source_kind"], edge["source_physical_id"])
-            if key in source_physical or edge["source_physical_id"] == edge["canonical_id"]:
-                raise ValueError("duplicate or redundant Task2B inverse identity edge")
-            source_physical[key] = edge["canonical_id"]
         source_to_target, target_to_source = {}, {}
         public_by_source = {}
         relevant_kinds = {*_PROFESSIONAL_TASK_KINDS.values(), "reply_tasks",
