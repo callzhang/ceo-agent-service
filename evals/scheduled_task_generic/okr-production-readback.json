@@ -429,6 +429,25 @@
           "start": "2026-10-22T13:00:00+00:00",
           "end": "2026-10-23T13:00:00+00:00"
         },
+        "loaded_skill_evidence": {
+          "consumer": {
+            "session_id": "01a168e6-da04-7a92-883a-54e37b3aefde",
+            "read_task_skill_envelope_sha256": "c6260fac389ac6ce7eae7bfb6e74a613fffd58ee1122af3832fe104e175df027",
+            "declared_revision_id": 224,
+            "declared_skill_sha256": "32d24bb5f53b60bcf67b8a91582db258a05cac59c789391c862d3bd95719fc62",
+            "skill_content_sha256_after_removing_four_line_metadata_header": "32d24bb5f53b60bcf67b8a91582db258a05cac59c789391c862d3bd95719fc62",
+            "matches_run_snapshot": true
+          },
+          "audit": {
+            "session_id": "01a168ee-038d-7b41-8e9f-f8e70f450f38",
+            "read_task_skill_envelope_sha256": "c6260fac389ac6ce7eae7bfb6e74a613fffd58ee1122af3832fe104e175df027",
+            "declared_revision_id": 224,
+            "declared_skill_sha256": "32d24bb5f53b60bcf67b8a91582db258a05cac59c789391c862d3bd95719fc62",
+            "skill_content_sha256_after_removing_four_line_metadata_header": "32d24bb5f53b60bcf67b8a91582db258a05cac59c789391c862d3bd95719fc62",
+            "matches_run_snapshot": true
+          },
+          "verification_method": "Compared the exact read_task_skill tool result in each native session with the immutable run snapshot and managed revision API. The tool prepends a four-line managed-Skill metadata header; after removing only that header, both Skill bodies hash to the frozen revision SHA."
+        },
         "first_window_group_coverage": {
           "inventory_groups": 47,
           "unique_read_ids": 51,

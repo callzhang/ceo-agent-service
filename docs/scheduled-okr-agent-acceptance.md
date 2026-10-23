@@ -734,6 +734,8 @@ Consumer 首轮按脚本输出使用滚动窗口 `[2026-10-22T13:00Z, 2026-10-23
 
 Audit 两次退回后，要求将窗口改成北京时间零点到零点；Consumer 照做并用 `[2026-10-22T16:00Z, 2026-10-23T16:00Z)` 重新取数。这个结束时刻比本次触发晚三小时，不能作为本次已完成的事实窗口。第三轮 Audit 却批准了这个候选，系统真实更新了文档并投递通知。因此 **run396111 外部发布完成，但业务验收未通过**。最终 provider 文档为《CEO 每日总结 2026-10-23》，节点 `jb9Y4gmKWrEarRzjirlXn44X8GXn6lpz`；Audit 完整读回 12,206 字节 Markdown，SHA-256 `7717bf2d4c524f46f08f9bf5de54a2aba253c4990a86e7f667933f42a4c6164d`。系统执行私聊 1/1，持久回执 `verified`；provider 状态查询为 `sent`，真实 `openMessageId=msgLBUcMEslUpzdonZK98leaw==`。这些证明外部操作真实完成，不代表业务验收通过；不重放、不补发。
 
+为区分窗口判断错误与 Skill 绑定错误，另从 Consumer 和 Audit 的原生会话逐一读回 `read_task_skill` 结果。两边工具结果都带四行 revision 元数据头，声明 revision224 / SHA-256 `32d24bb5…`；剥去这四行后，正文哈希均为 `32d24bb5…`，与运行快照和 managed revision224 完全一致。Audit 确实加载了正确 Skill，失误是它的窗口判断与该 Skill 的脚本契约相矛盾，并在第三轮批准了结束时间晚于触发时刻的窗口；不是评测器把旧内容误判为缺失。详细无正文证据记录在 JSON 的 `trajectory.loaded_skill_evidence`。
+
 根因是脚本与 Skill/Audit 契约冲突：`scripts/window.py` 按批准过的迁移要求提供滚动区间（首次回看24小时，之后从上次成功触发点续接，漏发区间并入下一份，同日重跑保留原起点）；Skill 却称“一个北京时间日”，Audit 因此强制改成午夜边界。不是脚本计算错误。候选修复明确脚本是唯一窗口来源：报告标题按脚本 `report_date`，所有事实与群消息严格使用其 `[start,end)`，正文写出精确北京时间起止时刻；Audit 不再改成午夜区间。群聊覆盖、审核、完整文档读回和投递要求不变。候选 Skill SHA 为 `dd355212ba37f02ace76c1659e6a4449f376fd3045c97ff9f8a662ec5547fafb`；已用定向契约回归确认，日报事实 + 相关摘要门禁 **41 passed**，`tests/test_scheduled_okr_agent_eval.py::test_release_manifest_pins_verified_current_installation` 独立复核、Ruff 和 `git diff --check` 通过。更新 managed revision 并部署后，下一自然日报 **2026-10-24 13:00 UTC** 才可验证修复。
 
 生产只读复核：commit `682c7893ee6393246f7fa3c9d923b31c5aad7c59`、healthz HTTP 200、worker PID 22383；task14 v58/revision224、task13 v51/revision202、task6 v30/revision240 均启用。task13 下次 **2026-10-24 19:00 UTC**，task6 下次 **2026-10-25 10:00 UTC**。睡眠恢复补跑仍未观察。
