@@ -1,4 +1,5 @@
 import sqlite3
+import json
 
 import pytest
 
@@ -13,6 +14,22 @@ _TARGET_TABLES = {name for name, sql in run_entity_definitions.run_entity_object
 def _create(objects, db):
     for sql in objects.values():
         db.execute(sql)
+
+
+
+def _run_handoff(db, source_metadata, *, identity_edges=(), owner_highwaters=None):
+    from app.run_entity_schema import run_handoff_context, run_handoff_digest
+
+    owners = ("runs", "runtime_attempts", "run_failures", "schedule_occurrences",
+              "workbench_events", "codex_session_search_index",
+              "email_classifier_runtime_samples", "setup_wizard_events")
+    highwaters = ({owner: None for owner in owners} if owner_highwaters is None
+                  else owner_highwaters)
+    edges = sorted(identity_edges, key=lambda edge: (edge["source_kind"], edge["source_physical_id"]))
+    context = run_handoff_context(source_metadata)
+    return {"version": 1, "source_context": context, "identity_edges": edges,
+            "owner_highwaters": highwaters,
+            "digest": run_handoff_digest(context, edges, highwaters)}
 
 
 def test_capture_requires_exact_selected_current_run_oracle():
@@ -51,7 +68,7 @@ def test_forward_source_catalog_change_rejects_before_mutation():
         db.execute("drop index idx_agent_runs_status")
         original = tuple(db.execute("select id,record_type from runs order by id"))
         with pytest.raises(ValueError, match="selected-current"):
-            migrate_run_entities(db, metadata, task_metadata=task_metadata)
+            migrate_run_entities(db, metadata, task_metadata=task_metadata, run_handoff=_run_handoff(db, metadata))
         assert tuple(db.execute("select id,record_type from runs order by id")) == original
         assert db.execute("select 1 from sqlite_schema where name='runs'").fetchone()
     finally:
@@ -229,7 +246,7 @@ def test_forward_migrates_all_eight_current_source_kinds_and_typed_facts():
         unrelated_sequence = tuple(db.execute(
             "select rowid,name,seq from sqlite_sequence where name='runs_other'"))
         metadata = capture_run_entities(db)
-        result = migrate_run_entities(db, metadata, task_metadata=task_metadata)
+        result = migrate_run_entities(db, metadata, task_metadata=task_metadata, run_handoff=_run_handoff(db, metadata))
         assert tuple(db.execute(
             "select rowid,name,seq from sqlite_sequence where name='runs_other'")) == unrelated_sequence
         assert set(before) == set(run_entity_definitions.SOURCE_FIELDS)
@@ -327,6 +344,168 @@ def test_forward_migrates_all_eight_current_source_kinds_and_typed_facts():
         db.close()
 
 
+def test_portable_handoff_remaps_all_eight_typed_run_owners_and_references():
+    db, task_metadata = _run_source()
+    try:
+        db.execute("update runs set parent_id=1001 where id=1002")
+        source = capture_run_entities(db)
+        # Same canonical integer across different owners is valid. Within the
+        # runs owner, every source Run receives a distinct canonical identity.
+        edge_targets = {
+            ("agent_runs", 1001): 9101, ("agent_runs", 1002): 9102,
+            ("agent_runs", 1101): 9111, ("agent_runs", 1102): 9112,
+            ("agent_runs", 1103): 9113, ("agent_runtime_attempts", 1202): 9101,
+            ("agent_run_state_events", 1302): 9402,
+            ("scheduled_task_runs", 1303): 9503,
+            ("workbench_events", 1304): 9604,
+            ("codex_session_search_index", 1305): 9705,
+            ("email_classifier_runtime_samples", 1306): 9806,
+            ("setup_wizard_events", 1307): 9907,
+        }
+        edges = [dict(source_kind=kind, source_physical_id=physical, canonical_id=canonical)
+                 for (kind, physical), canonical in edge_targets.items()]
+        highwaters = {owner: None for owner in _run_handoff(db, source)["owner_highwaters"]}
+        handoff = _run_handoff(db, source, identity_edges=edges, owner_highwaters=highwaters)
+        handoff = json.loads(json.dumps(handoff))
+        migrate_run_entities(db, source, task_metadata=task_metadata, run_handoff=handoff)
+        assert tuple(db.execute("select id,task_id,parent_id from runs order by id")) == (
+            (9101, 201, None), (9102, 201, 9101), (9111, 220, None),
+            (9112, 221, None), (9113, 222, None))
+        assert tuple(db.execute("select run_id,source_type from run_provenance order by run_id")) == (
+            (9111, "task_agent_runs"), (9112, "meeting_alignment_runs"),
+            (9113, "okr_review_runs"))
+        assert db.execute("select run_id from run_projections").fetchone()[0] == 9111
+        assert db.execute("select parent_id,workload_key from runtime_attempts where id=9101").fetchone() == (
+            9101, "9101")
+        assert db.execute("select workload_key from runtime_attempts where id=1201").fetchone()[0] == (
+            "9111:decision_repair.2")
+        assert db.execute("select run_id from run_failures").fetchone()[0] == 9101
+        assert db.execute("select id,execution_id from schedule_occurrences "
+                           "where execution_kind='reply_task'").fetchone() == (9503, "201")
+        assert db.execute("select id,task_id from workbench_events").fetchone() == (9604, 203)
+        assert db.execute("select id,source_id from codex_session_search_index").fetchone() == (
+            9705, "9112")
+        assert db.execute("select id from email_classifier_runtime_samples").fetchone()[0] == 9806
+        assert db.execute("select id from setup_wizard_events").fetchone()[0] == 9907
+        identity = db.execute(
+            "select physical_id,typeof(public_key),public_key,target_id from run_entity_identity_map "
+            "where source_kind='agent_runs' and physical_id=1101").fetchone()
+        assert identity == (1101, "text", "201", 9111)
+    finally:
+        db.close()
+
+
+@pytest.mark.parametrize("mutation, message", [
+    ("missing", "portable B3 identity handoff"),
+    ("digest", "digest mismatch"),
+    ("context", "mismatched portable Run handoff"),
+    ("unknown", "unknown or malformed"),
+    ("duplicate", "duplicate portable"),
+    ("collision", "canonical Run ID collision"),
+    ("dangling", "dangling portable"),
+])
+def test_portable_handoff_rejections_precede_source_replacement(mutation, message):
+    db, task_metadata = _run_source()
+    try:
+        source = capture_run_entities(db)
+        original = tuple(db.execute("select * from runs order by id"))
+        handoff = _run_handoff(db, source)
+        if mutation == "missing":
+            handoff = None
+        elif mutation == "digest":
+            handoff["digest"] = "0" * 64
+        elif mutation == "context":
+            handoff["source_context"] = "f" * 64
+            from app.run_entity_schema import run_handoff_digest
+            handoff["digest"] = run_handoff_digest(
+                handoff["source_context"], handoff["identity_edges"], handoff["owner_highwaters"])
+        elif mutation == "unknown":
+            handoff["identity_edges"] = [dict(source_kind="unknown", source_physical_id=1,
+                                                canonical_id=2)]
+            from app.run_entity_schema import run_handoff_digest
+            handoff["digest"] = run_handoff_digest(
+                handoff["source_context"], handoff["identity_edges"], handoff["owner_highwaters"])
+        elif mutation == "duplicate":
+            edge = dict(source_kind="agent_runs", source_physical_id=1001, canonical_id=9101)
+            handoff["identity_edges"] = [edge, edge.copy()]
+            from app.run_entity_schema import run_handoff_digest
+            handoff["digest"] = run_handoff_digest(
+                handoff["source_context"], handoff["identity_edges"], handoff["owner_highwaters"])
+        elif mutation == "collision":
+            handoff["identity_edges"] = [
+                dict(source_kind="agent_runs", source_physical_id=1001, canonical_id=9101),
+                dict(source_kind="agent_runs", source_physical_id=1002, canonical_id=9101)]
+            from app.run_entity_schema import run_handoff_digest
+            handoff["digest"] = run_handoff_digest(
+                handoff["source_context"], handoff["identity_edges"], handoff["owner_highwaters"])
+        else:
+            handoff["identity_edges"] = [dict(source_kind="agent_runs", source_physical_id=9999,
+                                                canonical_id=9101)]
+            from app.run_entity_schema import run_handoff_digest
+            handoff["digest"] = run_handoff_digest(
+                handoff["source_context"], handoff["identity_edges"], handoff["owner_highwaters"])
+        with pytest.raises(ValueError, match=message):
+            migrate_run_entities(db, source, task_metadata=task_metadata, run_handoff=handoff)
+        assert tuple(db.execute("select * from runs order by id")) == original
+        assert logical_run_current_schema.current_run11_schema_is_current(db)
+    finally:
+        db.close()
+
+
+@pytest.mark.parametrize("highwater, next_id", [(0, 1), (12000, 12001)])
+def test_empty_native_run_owner_retains_captured_highwater_after_migration(highwater, next_id):
+    db, task_metadata = _run_source()
+    try:
+        db.execute("delete from runs where record_type='setup_wizard_events'")
+        source = capture_run_entities(db)
+        highwaters = {owner: None for owner in _run_handoff(db, source)["owner_highwaters"]}
+        highwaters["setup_wizard_events"] = highwater
+        migrate_run_entities(db, source, task_metadata=task_metadata,
+                             run_handoff=_run_handoff(db, source, owner_highwaters=highwaters))
+        assert db.execute("select count(*) from setup_wizard_events").fetchone()[0] == 0
+        assert db.execute("select seq from sqlite_sequence where name='setup_wizard_events'").fetchone()[0] == highwater
+        db.execute("insert into setup_wizard_events(step_id,action_id,status,summary,evidence_json,"
+                   "stdout_excerpt,stderr_excerpt,created_at,finished_at) "
+                   "values('step','action','completed','summary','{}','out','err','created','finished')")
+        assert db.execute("select id from setup_wizard_events").fetchone()[0] == next_id
+    finally:
+        db.close()
+
+
+def test_handoff_survives_real_old_source_insert_with_fresh_capture():
+    from app.task_entity_schema import capture_task_entities, migrate_task_entities, restore_task_entities
+
+    db, task_metadata, task_source_metadata = _run_source(include_task_source_metadata=True)
+    try:
+        restore_task_entities(db, task_source_metadata, task_metadata)
+        before_write = capture_run_entities(db)
+        edges = [dict(source_kind="agent_runs", source_physical_id=1001, canonical_id=9101)]
+        handoff = _run_handoff(db, before_write, identity_edges=edges)
+        _source_row(db, "agent_runs", {
+            "id": 1500, "legacy_key": "1500", "task_id": 201,
+            "execution_generation": "consumer-new", "role": "consumer", "proposal_revision": 0,
+            "turn_attempt": 0, "operation_id": "consumer-new-op", "status": "completed",
+            "session_id": "new-session", "transcript_start": 0, "transcript_end": 0,
+            "structured_error_json": "{}", "lease_owner": "", "lease_expires_at": "",
+            "started_at": "start", "completed_at": "done", "created_at": "created",
+            "updated_at": "updated",
+        })
+        fresh_task_capture = capture_task_entities(db)
+        fresh_task_metadata = migrate_task_entities(db, fresh_task_capture)
+        fresh_source = capture_run_entities(db)
+        assert handoff["source_context"] == _run_handoff(db, fresh_source)["source_context"]
+        migrate_run_entities(db, fresh_source, task_metadata=fresh_task_metadata,
+                             run_handoff=json.loads(json.dumps(handoff)))
+        assert db.execute("select id,status from runs where id in (9101,1500) order by id").fetchall() == [
+            (1500, "completed"), (9101, "completed")]
+        assert db.execute(
+            "select physical_id,target_id from run_entity_identity_map "
+            "where source_kind='agent_runs' and physical_id in (1001,1500) order by physical_id"
+        ).fetchall() == [(1001, 9101), (1500, 1500)]
+    finally:
+        db.close()
+
+
 @pytest.mark.parametrize("public_key", ["201suffix", "201.0", b"201"])
 def test_forward_uses_source_sqlite_cast_for_professional_public_identity(public_key):
     db, task_metadata = _run_source()
@@ -345,7 +524,7 @@ def test_forward_uses_source_sqlite_cast_for_professional_public_identity(public
         assert source_run == (1101, 201)
 
         run_metadata = capture_run_entities(db)
-        migrate_run_entities(db, run_metadata, task_metadata=task_metadata)
+        migrate_run_entities(db, run_metadata, task_metadata=task_metadata, run_handoff=_run_handoff(db, run_metadata))
 
         identity = db.execute(
             "select typeof(public_key),public_key,public_key_type,public_key_order "
@@ -381,7 +560,7 @@ def test_forward_is_rollbackable_by_caller_and_preserves_all_source_allocators()
             ("runs:setup_wizard_events", 22),
         }
         assert all(row[1] != "runs_other" for row in captured["sequence_rows"])
-        migrate_run_entities(db, captured, task_metadata=task_metadata)
+        migrate_run_entities(db, captured, task_metadata=task_metadata, run_handoff=_run_handoff(db, captured))
         assert db.execute("select count(*) from run_provenance").fetchone()[0] == 3
         db.rollback()
         assert tuple(db.execute("select * from runs order by id")) == before_rows
@@ -413,7 +592,7 @@ def test_wrong_existing_native_task_kind_mapping_is_rejected_before_run_writes()
         assert db.execute("select kind from tasks where id=220").fetchone()[0] == "work_summary"
         before = tuple(db.execute("select id,record_type,task_id from runs order by id"))
         with pytest.raises(ValueError, match="typed Task owner kind mismatch"):
-            migrate_run_entities(db, run_metadata, task_metadata=task_metadata)
+            migrate_run_entities(db, run_metadata, task_metadata=task_metadata, run_handoff=_run_handoff(db, run_metadata))
         assert tuple(db.execute("select id,record_type,task_id from runs order by id")) == before
         assert db.execute("select 1 from sqlite_schema where name='run_provenance'").fetchone() is None
     finally:
@@ -425,10 +604,14 @@ def test_forward_preserves_a_captured_missing_physical_task_edge_without_fabrica
     try:
         metadata = capture_run_entities(db)
         assert ("runs", 1400, "tasks", 1) in metadata["run_fk_findings"]
-        migrate_run_entities(db, metadata, task_metadata=task_metadata)
-        assert db.execute("select task_id from runs where id=1400").fetchone()[0] == 999
+        handoff = _run_handoff(
+            db, metadata,
+            identity_edges=[dict(source_kind="agent_runs", source_physical_id=1400,
+                                 canonical_id=9140)])
+        migrate_run_entities(db, metadata, task_metadata=task_metadata, run_handoff=handoff)
+        assert db.execute("select task_id from runs where id=9140").fetchone()[0] == 999
         assert not db.execute("select 1 from tasks where id=999").fetchone()
-        assert tuple(db.execute("pragma foreign_key_check(runs)")) == (("runs", 1400, "tasks", 1),)
+        assert tuple(db.execute("pragma foreign_key_check(runs)")) == (("runs", 9140, "tasks", 1),)
     finally:
         db.close()
 
@@ -439,7 +622,7 @@ def test_existing_identity_inverse_restores_all_eight_current_source_kinds():
         source_objects = logical_run_current_schema.current_run11_objects()
         source_rows = tuple(db.execute("select * from runs order by id"))
         run_metadata = capture_run_entities(db)
-        forward_metadata = migrate_run_entities(db, run_metadata, task_metadata=task_metadata)
+        forward_metadata = migrate_run_entities(db, run_metadata, task_metadata=task_metadata, run_handoff=_run_handoff(db, run_metadata))
         # Current native owner values are the inverse source of truth.
         db.execute("update runs set status='failed' where id=1001")
         db.execute("update runs set session_id='edited-session',transcript_start=3,"
@@ -487,7 +670,7 @@ def test_existing_identity_inverse_restores_all_eight_current_source_kinds():
             ",".join("?" for _ in source_objects) + ")", tuple(source_objects))}
         assert actual_objects == source_objects
         db.execute("update runs set status='completed' where id=1001")
-        refoward = migrate_run_entities(db, run_metadata, task_metadata=task_metadata)
+        refoward = migrate_run_entities(db, run_metadata, task_metadata=task_metadata, run_handoff=_run_handoff(db, run_metadata))
         assert refoward["source_objects"] == source_objects
         assert db.execute("select status from runs where id=1001").fetchone() == ("completed",)
         assert db.execute("select session_id,transcript_start,transcript_end from runs where id=1001").fetchone() == (
@@ -509,7 +692,7 @@ def test_existing_identity_inverse_rejects_new_native_run_identity_without_mutat
     db, task_metadata = _run_source()
     try:
         run_metadata = capture_run_entities(db)
-        forward_metadata = migrate_run_entities(db, run_metadata, task_metadata=task_metadata)
+        forward_metadata = migrate_run_entities(db, run_metadata, task_metadata=task_metadata, run_handoff=_run_handoff(db, run_metadata))
         before = tuple(db.execute("select * from runs order by id"))
         db.execute("insert into runs(id,created_at) values(90000,'new native')")
         db.execute("insert into run_entity_identity_map(source_kind,physical_id,public_key,public_key_type,target_id) "
@@ -526,7 +709,7 @@ def test_existing_identity_inverse_rejects_native_owned_catalog_drift_before_ret
     db, task_metadata = _run_source()
     try:
         run_metadata = capture_run_entities(db)
-        forward_metadata = migrate_run_entities(db, run_metadata, task_metadata=task_metadata)
+        forward_metadata = migrate_run_entities(db, run_metadata, task_metadata=task_metadata, run_handoff=_run_handoff(db, run_metadata))
         before = tuple(db.execute("select * from runs order by id"))
         db.execute("create index idx_unexpected_run_inverse on runs(status)")
         with pytest.raises(ValueError, match="Run native target declaration changed: runs"):
@@ -545,7 +728,7 @@ def test_inverse_caller_rollback_preserves_native_facts_and_unrelated_schema_all
         db.execute("create index unrelated_run_inverse_value on unrelated_run_inverse(value)")
         db.execute("insert into unrelated_run_inverse(value) values(x'00ff')")
         run_metadata = capture_run_entities(db)
-        forward_metadata = migrate_run_entities(db, run_metadata, task_metadata=task_metadata)
+        forward_metadata = migrate_run_entities(db, run_metadata, task_metadata=task_metadata, run_handoff=_run_handoff(db, run_metadata))
         db.commit()
         native_catalog = tuple(db.execute(
             "select type,name,tbl_name,sql from sqlite_schema where name not like 'sqlite_%' order by name"))
@@ -571,7 +754,7 @@ def test_existing_identity_inverse_keeps_only_captured_missing_task_reference():
     db, task_metadata = _run_source(orphan_task_id=999)
     try:
         run_metadata = capture_run_entities(db)
-        forward_metadata = migrate_run_entities(db, run_metadata, task_metadata=task_metadata)
+        forward_metadata = migrate_run_entities(db, run_metadata, task_metadata=task_metadata, run_handoff=_run_handoff(db, run_metadata))
         assert ("runs", 1400, "tasks", 1) in run_metadata["run_fk_findings"]
         restore_run_entities(db, run_metadata, forward_metadata, task_metadata=task_metadata)
         assert db.execute("select task_id from runs where id=1400").fetchone() == (999,)
@@ -589,7 +772,7 @@ def test_run_then_task_inverse_allows_source_getter_and_writer_before_immediate_
     try:
         db.execute("update runs set status='running' where id=1101")
         run_source_metadata = capture_run_entities(db)
-        run_forward = migrate_run_entities(db, run_source_metadata, task_metadata=task_forward)
+        run_forward = migrate_run_entities(db, run_source_metadata, task_metadata=task_forward, run_handoff=_run_handoff(db, run_source_metadata))
         restore_run_entities(db, run_source_metadata, run_forward, task_metadata=task_forward)
         restore_task_entities(db, task_source_metadata, task_forward)
 
@@ -610,7 +793,7 @@ def test_run_then_task_inverse_allows_source_getter_and_writer_before_immediate_
 
         new_task_capture = capture_task_entities(db)
         new_task_forward = migrate_task_entities(db, new_task_capture)
-        migrate_run_entities(db, run_source_metadata, task_metadata=new_task_forward)
+        migrate_run_entities(db, run_source_metadata, task_metadata=new_task_forward, run_handoff=_run_handoff(db, run_source_metadata))
         assert tuple(db.execute("select status,error from runs where id=1101").fetchone()) == (
             "failed", "updated by predecessor Run writer")
     finally:

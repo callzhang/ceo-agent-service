@@ -2,6 +2,8 @@
 from __future__ import annotations
 
 import sqlite3
+import hashlib
+import json
 
 from app import logical_run_current_schema, run_entity_definitions, task20_definitions
 from app.runs11_definitions import RUN11_NEW_KINDS
@@ -26,6 +28,7 @@ _SOURCE_TO_OWNER = {
     "email_classifier_runtime_samples": "email_classifier_runtime_samples",
     "setup_wizard_events": "setup_wizard_events",
 }
+_HANDOFF_VERSION = 1
 
 
 def _quote(name: str) -> str:
@@ -192,7 +195,7 @@ def _task_public_owner(db: sqlite3.Connection, source_kind: str, public_key):
     return target_id
 
 
-def _run_public_maps(db: sqlite3.Connection, rows):
+def _run_public_maps(db: sqlite3.Connection, rows, owner_maps: dict):
     by_physical = {}
     by_namespace_public = {}
     public_order_by_physical = {}
@@ -206,13 +209,114 @@ def _run_public_maps(db: sqlite3.Connection, rows):
     for physical, kind, namespace, cast_key in cast_rows:
         public_order_by_physical[physical] = cast_key
         if kind == "agent_runs":
-            by_namespace_public[(namespace, "int", cast_key)] = physical
+            by_namespace_public[(namespace, "int", cast_key)] = _run_target_id(
+                owner_maps, kind, physical)
     for kind, row in rows:
         if kind != "agent_runs":
             continue
         physical = row["id"]
-        by_physical[physical] = physical
+        by_physical[physical] = _run_target_id(owner_maps, kind, physical)
     return by_physical, by_namespace_public, public_order_by_physical
+
+
+def _canonical_json(value) -> bytes:
+    return json.dumps(value, sort_keys=True, separators=(",", ":"),
+                      ensure_ascii=False).encode("utf-8")
+
+
+def run_handoff_context(source_metadata: dict) -> str:
+    """Bind a handoff to selected source DDL, not mutable rows or allocators."""
+    return hashlib.sha256(_canonical_json(source_metadata["source_objects"])).hexdigest()
+
+
+def run_handoff_digest(source_context: str, identity_edges: list,
+                       owner_highwaters: dict) -> str:
+    """Digest the JSON-portable B3 Run identity handoff payload."""
+    return hashlib.sha256(_canonical_json({
+        "version": _HANDOFF_VERSION, "source_context": source_context,
+        "identity_edges": identity_edges, "owner_highwaters": owner_highwaters,
+    })).hexdigest()
+
+
+def _run_owner_maps(rows, handoff: dict, source_metadata: dict) -> dict:
+    owners = tuple(dict.fromkeys(_SOURCE_TO_OWNER.values()))
+    if type(handoff) is not dict or set(handoff) != {
+            "version", "source_context", "identity_edges", "owner_highwaters", "digest"}:
+        raise ValueError("Run conversion requires portable B3 identity handoff")
+    if (type(handoff["version"]) is not int or handoff["version"] != _HANDOFF_VERSION
+            or type(handoff["source_context"]) is not str
+            or handoff["source_context"] != run_handoff_context(source_metadata)
+            or type(handoff["identity_edges"]) is not list
+            or type(handoff["owner_highwaters"]) is not dict
+            or set(handoff["owner_highwaters"]) != set(owners)
+            or type(handoff["digest"]) is not str):
+        raise ValueError("invalid or mismatched portable Run handoff")
+    if handoff["digest"] != run_handoff_digest(
+            handoff["source_context"], handoff["identity_edges"], handoff["owner_highwaters"]):
+        raise ValueError("portable Run handoff digest mismatch")
+    highwaters = handoff["owner_highwaters"]
+    if any(value is not None and (type(value) is not int or value < 0)
+           for value in highwaters.values()):
+        raise ValueError("invalid native Run owner high-water")
+    sources = {(kind, row["id"]): row for kind, row in rows}
+    edges = {}
+    ordered_keys = []
+    for edge in handoff["identity_edges"]:
+        if type(edge) is not dict or set(edge) != {
+                "source_kind", "source_physical_id", "canonical_id"}:
+            raise ValueError("invalid portable Run identity edge")
+        kind, source_id, canonical_id = (edge["source_kind"], edge["source_physical_id"],
+                                         edge["canonical_id"])
+        if (type(kind) is not str or kind not in _SOURCE_TO_OWNER
+                or type(source_id) is not int or source_id < 1
+                or type(canonical_id) is not int or canonical_id < 1
+                or source_id == canonical_id):
+            raise ValueError("unknown or malformed portable Run identity edge")
+        key = (kind, source_id)
+        ordered_keys.append(key)
+        if key in edges:
+            raise ValueError("duplicate portable Run identity edge")
+        if key not in sources:
+            raise ValueError("dangling portable Run identity edge")
+        edges[key] = canonical_id
+    if len(edges) != len(handoff["identity_edges"]):
+        raise ValueError("duplicate portable Run identity edge")
+    if ordered_keys != sorted(ordered_keys):
+        raise ValueError("portable Run identity edges are not deterministically sorted")
+    maps = {owner: {} for owner in owners}
+    targets = {owner: set() for owner in owners}
+    for kind, row in rows:
+        owner = _SOURCE_TO_OWNER[kind]
+        source_id = row["id"]
+        target_id = edges.get((kind, source_id), source_id)
+        if target_id in targets[owner]:
+            raise ValueError(f"canonical Run ID collision in owner {owner}: {target_id}")
+        targets[owner].add(target_id)
+        maps[owner][(kind, source_id)] = target_id
+    return maps
+
+
+def _run_target_id(owner_maps: dict, source_kind: str, source_id: int) -> int:
+    return owner_maps[_SOURCE_TO_OWNER[source_kind]][(source_kind, source_id)]
+
+
+def _restore_owner_highwaters(db: sqlite3.Connection, owner_maps: dict,
+                              highwaters: dict) -> None:
+    for owner, ids in owner_maps.items():
+        maximum = max(ids.values(), default=0)
+        captured = highwaters[owner]
+        source_global = db.execute(
+            "select seq from main.sqlite_sequence where name=?", (owner,)).fetchone()
+        # The selected source's global `runs` AUTOINCREMENT row and the native
+        # `runs` owner share one SQLite sequence name after conversion. Keep
+        # its source value as a floor alongside the independent native water.
+        desired = max(maximum, captured or 0, source_global[0] if source_global else 0)
+        existing = db.execute("select rowid from main.sqlite_sequence where name=?", (owner,)).fetchone()
+        if desired or existing or captured is not None:
+            if existing:
+                db.execute("update main.sqlite_sequence set seq=? where name=?", (desired, owner))
+            else:
+                db.execute("insert into main.sqlite_sequence(name,seq) values(?,?)", (owner, desired))
 
 
 def _workload_key(db, row, task_edges, run_physical, run_public):
@@ -290,7 +394,7 @@ def _declared_name(sql: str) -> str:
 
 
 def migrate_run_entities(db: sqlite3.Connection, source_metadata: dict, *,
-                         task_metadata: dict) -> dict:
+                         task_metadata: dict, run_handoff: dict) -> dict:
     """Forward all eight source families into their declared native owners.
 
     ``task_metadata`` is the result of Task2B's forward migration in this same
@@ -317,8 +421,10 @@ def migrate_run_entities(db: sqlite3.Connection, source_metadata: dict, *,
             raise ValueError(f"Run entity target object name already occupied: {name}")
     db.execute(f"create temp table {_quote(_STAGE)} as select * from main.runs")
     rows = list(_source_rows(db))
-    run_physical, run_public, run_public_order = _run_public_maps(db, rows)
+    owner_maps = _run_owner_maps(rows, run_handoff, source_metadata)
+    run_physical, run_public, run_public_order = _run_public_maps(db, rows, owner_maps)
     kinds_by_id = {row["id"]: kind for kind, row in rows}
+    rows_by_id = {row["id"]: row for _, row in rows}
     orphan_refs = _captured_task_orphans(db, rows, source_metadata["run_fk_findings"])
     # Resolve all references before writing target rows. A missing old Task FK
     # is retained only when it was already a captured source finding.
@@ -328,6 +434,12 @@ def migrate_run_entities(db: sqlite3.Connection, source_metadata: dict, *,
                            _PROFESSIONAL_TASK_KINDS.get(row.get("source_type"), "reply_tasks"))
             if (row["id"], "task_id", row["task_id"]) not in orphan_refs:
                 _task_physical_owner(db, task_edges, source_kind, row["task_id"])
+        if kind == "agent_runs" and row["parent_id"] is not None:
+            parent_kind = kinds_by_id.get(row["parent_id"])
+            if parent_kind != "agent_runs":
+                raise ValueError(f"unresolved logical Run parent: {row['parent_id']!r}")
+            if rows_by_id[row["parent_id"]]["source_type"] is not None:
+                raise ValueError(f"logical Run parent is not Consumer/Audit: {row['parent_id']!r}")
         if kind == "agent_runtime_attempts":
             parent = row["parent_id"]
             if parent is not None and parent not in kinds_by_id:
@@ -357,7 +469,10 @@ def migrate_run_entities(db: sqlite3.Connection, source_metadata: dict, *,
             if destination == owner and target_field in target_columns.get(owner, set()):
                 fields[target_field] = value
         if kind == "agent_runs":
-            fields["id"] = source["id"]
+            fields["id"] = _run_target_id(owner_maps, kind, source["id"])
+            if source["parent_id"] is not None:
+                parent_kind = kinds_by_id[source["parent_id"]]
+                fields["parent_id"] = _run_target_id(owner_maps, parent_kind, source["parent_id"])
             fields.pop("source_type", None)
             fields.pop("job_id", None)
             fields.pop("projection_json", None)
@@ -369,21 +484,25 @@ def migrate_run_entities(db: sqlite3.Connection, source_metadata: dict, *,
             _insert(db, "runs", fields)
             source_type = source["source_type"]
             if source_type in _PROFESSIONAL:
-                _insert(db, "run_provenance", {"run_id": source["id"], "source_type": source_type,
+                canonical_id = fields["id"]
+                _insert(db, "run_provenance", {"run_id": canonical_id, "source_type": source_type,
                                                 "job_id": source["job_id"]})
                 if source["projection_json"] is not None:
-                    _insert(db, "run_projections", {"run_id": source["id"],
+                    _insert(db, "run_projections", {"run_id": canonical_id,
                                                      "projection_json": source["projection_json"]})
         else:
             for name in ("source_id", "execution_id", "workload_key"):
                 if name in fields:
                     fields[name] = _source_reference(
                         db, kind, source, name, task_edges, run_physical, run_public)
-            fields["id"] = source["id"]
+            fields["id"] = _run_target_id(owner_maps, kind, source["id"])
             if kind == "agent_runtime_attempts":
-                fields["parent_id"] = source["parent_id"]
+                fields["parent_id"] = (None if source["parent_id"] is None else
+                                        _run_target_id(owner_maps,
+                                                       kinds_by_id[source["parent_id"]],
+                                                       source["parent_id"]))
             elif kind == "agent_run_state_events":
-                fields["run_id"] = source["parent_id"]
+                fields["run_id"] = _run_target_id(owner_maps, "agent_runs", source["parent_id"])
             elif kind == "workbench_events":
                 if source["task_id"] is not None:
                     fields["task_id"] = _task_physical_owner(
@@ -398,7 +517,7 @@ def migrate_run_entities(db: sqlite3.Connection, source_metadata: dict, *,
         _insert(db, "run_entity_identity_map", {
             "source_kind": kind, "physical_id": source["id"], "public_key": public_key,
             "public_key_type": public_type, "public_key_order": public_order,
-            "target_id": source["id"], "allocator_highwater": None,
+            "target_id": _run_target_id(owner_maps, kind, source["id"]), "allocator_highwater": None,
         })
     for name, sql in _TARGETS.items():
         if not sql.lstrip().lower().startswith("create table "):
@@ -411,8 +530,11 @@ def migrate_run_entities(db: sqlite3.Connection, source_metadata: dict, *,
         db.execute("delete from main.sqlite_sequence where name=?", (source_sequence[1],))
         db.execute("insert into main.sqlite_sequence(rowid,name,seq) values(?,?,?)",
                    source_sequence)
-    expected_orphans = {(physical, value) for physical, field, value in orphan_refs
-                        if field == "task_id"}
+    _restore_owner_highwaters(db, owner_maps, run_handoff["owner_highwaters"])
+    expected_orphans = {
+        (_run_target_id(owner_maps, kinds_by_id[physical], physical), value)
+        for physical, field, value in orphan_refs if field == "task_id"
+    }
     actual_orphans = {(run_id, task_id) for run_id, task_id in db.execute(
         "select r.id,r.task_id from main.runs r where r.task_id is not null "
         "and not exists(select 1 from main.tasks t where t.id=r.task_id)")}

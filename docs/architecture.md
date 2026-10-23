@@ -102,6 +102,22 @@ History、search、UI 和实际业务 handler 选择共同 owner。字段映射�
 Run 声明匹配时使用 `source_type IS NULL` 的 Consumer／Audit 投影；早期没有
 `source_type` 的声明保持原投影。已有等待、活跃 claim、租约和锁判断不改变。
 
+Task/Run Phase 2 的 B3B1 forward 接受显式版本 1 JSON Run identity handoff；它只
+含稀疏 `(source_kind, source_physical_id, canonical_id)` 边、八个原生 Run owner 的
+独立 AUTOINCREMENT high-water、只绑定选定 source DDL 的 capture context 和 SHA-256 digest；合法旧源写入可在
+inverse 后发生，forward 每次以新的 source capture 校验当前行、FK 和 sequence 事实。当前选定
+`logical_run_current_schema` 仍是唯一 Run 来源；缺少或与 capture 不匹配的 handoff、
+未知／重复／悬空身份以及同一 owner 内的 canonical ID 冲突在替换源 `runs` 表前
+拒绝。Run ID 与 logical parent、专业 provenance/projection、runtime parent/workload、failure、schedule、
+Workbench 与 Meeting search 引用都用同一预计算 typed map；Task ID 仍由 Task2B
+metadata 解析，来源中原有的 missing Task FK 保持相同 Run 边。来源公开键仍以原
+SQLite `CAST(... AS INTEGER)` 语义解析；identity map 分别保留来源物理 ID、公开键
+及其 SQLite 类型和 canonical target。native owner 水位至少取 handoff 捕获值和迁入行最大 canonical ID。`runs` 的
+SQLite 序列名同时承载来源 global runs 水位，因此保留来源 global 水位、handoff
+原生水位和 canonical 行最大值的最大值及来源 ROWID；published/per-kind 与其他
+来源 sequence 行保持原 ROWID/name/value，并保留在 capture metadata 供 inverse 使用。该候选不包含
+B3B2 inverse handoff producer、新 native Run 分配或全新事实 inverse，也未激活运行时。
+
 Actions 保留五十九种物理类型：五十八种方案、审查、候选、修订、动作、尝试、步骤、业务事件和回执，以及一种只保留旧 execution 身份的技术 alias。
 类型只存 `_kind`，业务值使用声明的 JSONB 槽位及 prepared Action 的三个源限定列；公开字段按其唯一 owner 读取。
 公开 ID 与物理 Action ID 保持区别，各源 AUTO 水位和普通隐藏 ROWID 语义保留。
