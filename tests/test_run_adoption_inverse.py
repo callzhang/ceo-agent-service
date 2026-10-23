@@ -327,12 +327,14 @@ def test_actual_c2a_task_run_inverse_planner_uses_current_review_and_source_run_
 
 
 def test_actual_task_run_then_adoption_inverse_restores_source_action_catalog_and_facts():
+    import json
     import sqlite3
 
+    from app.run_adoption_schema import capture_run_adoptions
     from app.run_adoption_inverse import restore_run_adoptions
     from app.run_adoption_schema import migrate_run_adoptions
-    from app.run_entity_schema import restore_run_entities
-    from app.task_entity_schema import restore_task_entities
+    from app.run_entity_schema import capture_run_entities, migrate_run_entities, restore_run_entities
+    from app.task_entity_schema import capture_task_entities, migrate_task_entities, restore_task_entities
     from tests.test_run_adoption_schema import _populated_source, _source_snapshot
 
     db, context = _populated_source(remap_tasks=True, remap_runs=True,
@@ -367,5 +369,59 @@ def test_actual_task_run_then_adoption_inverse_restores_source_action_catalog_an
         assert db.execute("pragma foreign_key_check").fetchall() == []
         assert db.execute("pragma integrity_check").fetchone()[0] == "ok"
         assert db.execute("select count(*) from temp.sqlite_schema where name like '_run_adoption_%'").fetchone()[0] == 0
+
+        # Re-capture the restored source and perform a fresh portable forward.
+        # This proves Selection 18 survives the complete physical -> native ->
+        # source -> native path, rather than only the inverse row builder.
+        source_receipts = tuple(db.execute(
+            "select id,provider_result_json,result_digest,status,created_at "
+            "from action_receipts order by id"))
+        source_run_provenance = tuple(db.execute(
+            "select id,projection_json,source_type,job_id from runs "
+            "where record_type='agent_runs' order by id"))
+        task_source = capture_task_entities(db)
+        run_source = capture_run_entities(db)
+        adoption_source = capture_run_adoptions(db)
+        task_forward = migrate_task_entities(
+            db, task_source, source_context=task_inverse["source_context"],
+            inverse_identity=json.loads(json.dumps(task_inverse["inverse_identity"])))
+        run_forward = migrate_run_entities(
+            db, run_source, task_metadata=task_forward,
+            run_handoff=json.loads(json.dumps(run_inverse["run_handoff"])))
+        adoption_forward = migrate_run_adoptions(
+            db, adoption_source, task_metadata=task_forward, run_metadata=run_forward)
+
+        audit_target = next(edge["target_id"] for edge in run_forward["identity_edges"]
+                           if edge["source_kind"] == "agent_runs" and edge["physical_id"] == 9007)
+        consumer_target = next(edge["target_id"] for edge in run_forward["identity_edges"]
+                              if edge["source_kind"] == "agent_runs" and edge["physical_id"] == 9006)
+        assert db.execute("select consumer_run_id,selection_id,status from run_execution_progress").fetchone() == (
+            consumer_target, 18, "done")
+        assert db.execute("select id,consumer_run_id,audit_run_id,decision,result_json "
+                          "from run_adopted_reviews where id=7").fetchone() == (
+            7, consumer_target, audit_target, "approve", '{"outcome":"approve"}')
+        assert db.execute("select id,consumer_run_id,audit_run_id,option_key "
+                          "from run_adopted_selections where id=18").fetchone() == (
+            18, consumer_target, audit_target, "stop")
+        assert db.execute("select candidate_digest,candidate_json from run_adopted_results "
+                          "where consumer_run_id=?", (consumer_target,)).fetchone() == (
+            context["digest"], context["candidate_json"])
+        assert tuple(db.execute(
+            "select id,provider_result_json,result_digest,status,created_at "
+            "from action_receipts order by id")) == source_receipts
+        run_targets = {edge["physical_id"]: edge["target_id"]
+                       for edge in run_forward["identity_edges"]
+                       if edge["source_kind"] == "agent_runs"}
+        for source_id, projection, source_type, job_id in source_run_provenance:
+            target_id = run_targets[source_id]
+            projected = db.execute("select projection_json from run_projections where run_id=?",
+                                    (target_id,)).fetchone()
+            assert (None if projected is None else projected[0]) == projection
+            provenance = db.execute("select source_type,job_id from run_provenance where run_id=?",
+                                    (target_id,)).fetchone()
+            assert provenance == ((source_type, job_id) if source_type is not None else None)
+        assert adoption_forward["receipt_count"] == len(source_receipts)
+        assert db.execute("pragma foreign_key_check").fetchall() == []
+        assert db.execute("pragma integrity_check").fetchone()[0] == "ok"
     finally:
         db.close()
