@@ -2198,6 +2198,14 @@ Run 的 role；`codex_session_id` 仍取 ReplyAttempt 本身的既有 source con
 corrected reply 的原条件。API 后端已由真实 `register_console_routes` 注册路径覆盖；
 候选仍未激活，完整浏览器 UI 和旧 constructor 冷启动仍属于后续验收范围。
 
+Task2D9 将 OA notification intake/adoption/reminder claim 与结果转换直接写到
+`oa_notification_events`，保留不透明 provider `task_id` 文本、first-write-wins 身份和
+claimed-attempt CAS。Email historical candidate enqueue/list/state 直接使用
+`email_historical_candidates`。四段身份、provider projection 与 normalized-input hash
+刷新、deferred retry facts、due-deferred quota、UID 排序和同 UIDVALIDITY cursor high-water
+保持原语义；page 和 cursor 仍原子提交，selection 不 claim。该切片是待独立复核的本地候选，
+旧 Store constructor 和更广的 runtime cutover 不在范围内。
+
 当前未发布开发候选已启用三个 Feedback→Actions 存储类型。Store 的反馈事件、
 处理转换和迭代决策子项读写使用类型化 Actions 投影/辅助函数；QualityGate 也读取同一
 投影。新建 Store 在现有发布事务内短暂建立精确的空原声明并立即迁入 Actions，重开与修复

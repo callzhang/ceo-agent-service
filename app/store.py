@@ -70,7 +70,7 @@ from app import task_lifecycle_storage as task_claims
 from app.task8_storage import (
     register_task8_functions, task8_insert_parts, task8_set_parts,
 )
-from app.task12_storage import insert_task12, task12_projection, task12_set_parts
+from app.task12_storage import insert_task12, task12_projection
 from app.action_feedback_definitions import feedback_projection
 from app.action_feedback_storage import (insert_feedback_action,
     upsert_feedback_event, insert_feedback_decision_items,
@@ -6356,9 +6356,22 @@ class AutoReplyStore(LogicalRunStoreMixin, ReviewedCandidateStoreMixin):
             else bool(requires_reply)
         )
         with self._immediate_write_transaction() as db:
-            insert_task12(db, 'oa_notification_events', {'event_kind': event_kind, 'requires_reply': int(reply_required), 'process_instance_id': process_instance_id.strip(), 'task_id': task_id.strip(), 'channel': channel, 'conversation_id': conversation_id, 'conversation_title': conversation_title, 'trigger_message_id': trigger_message_id, 'trigger_create_time': trigger_create_time, 'trigger_sender': trigger_sender, 'trigger_text': trigger_text, 'trigger_message_json': trigger_message_json, 'oa_url': oa_url, 'status': 'pending' if reply_required else 'ignored'}, ignore=True)
+            db.execute(
+                """insert into oa_notification_events (
+                    event_kind, requires_reply, process_instance_id, task_id, channel,
+                    conversation_id, conversation_title, trigger_message_id,
+                    trigger_create_time, trigger_sender, trigger_text,
+                    trigger_message_json, oa_url, status
+                ) values (?,?,?,?,?,?,?,?,?,?,?,?,?,?)
+                on conflict(channel,conversation_id,trigger_message_id) do nothing""",
+                (event_kind, int(reply_required), process_instance_id.strip(),
+                 task_id.strip(), channel, conversation_id, conversation_title,
+                 trigger_message_id, trigger_create_time, trigger_sender,
+                 trigger_text, trigger_message_json, oa_url,
+                 'pending' if reply_required else 'ignored'),
+            )
             row = db.execute(
-                f"\n                select id from ({task12_projection('oa_notification_events')})\n                where channel=? and conversation_id=? and trigger_message_id=?\n                ",
+                "select id from oa_notification_events where channel=? and conversation_id=? and trigger_message_id=?",
                 (channel, conversation_id, trigger_message_id),
             ).fetchone()
             if row is None:
@@ -6374,7 +6387,10 @@ class AutoReplyStore(LogicalRunStoreMixin, ReviewedCandidateStoreMixin):
             return 0
         with self._immediate_write_transaction() as db:
             cursor = db.execute(
-                f"""update tasks set {task12_set_parts('oa_notification_events', {}, update_sql={'task_id': '?', 'status': "'adopted'", 'updated_at': 'current_timestamp'}).sql} where record_type='oa_notification_events' and "oa_notification_events__requires_reply"=1 and "oa_notification_events__process_instance_id"=?\n                  and "oa_notification_events__status" in ('pending', 'adopted')\n                  and ("oa_notification_events__task_id"='' or "oa_notification_events__task_id"=?)\n                """,
+                """update oa_notification_events set task_id=?, status='adopted',
+                    updated_at=current_timestamp where requires_reply=1
+                    and process_instance_id=? and status in ('pending', 'adopted')
+                    and (task_id='' or task_id=?)""",
                 (node_id, process_id, node_id),
             )
             return int(cursor.rowcount)
@@ -6387,19 +6403,27 @@ class AutoReplyStore(LogicalRunStoreMixin, ReviewedCandidateStoreMixin):
         with self._connect() as db:
             if process_id:
                 rows = db.execute(
-                    f"\n                    select * from ({task12_projection('oa_notification_events')})\n                    where requires_reply=1 and process_instance_id=?\n                      and status in ('pending', 'adopted')\n                      and task_id=?\n                    order by id\n                    ",
+                    """select * from oa_notification_events
+                    where requires_reply=1 and process_instance_id=?
+                      and status in ('pending', 'adopted') and task_id=?
+                    order by id""",
                     (process_id, node_id),
                 ).fetchall()
             else:
                 rows = db.execute(
-                    f"\n                    select * from ({task12_projection('oa_notification_events')})\n                    where requires_reply=1 and status in ('pending', 'adopted')\n                    order by id\n                    "
+                    """select * from oa_notification_events
+                    where requires_reply=1 and status in ('pending', 'adopted')
+                    order by id"""
                 ).fetchall()
             return [dict(row) for row in rows]
 
     def claim_oa_reminder_target(self, event_id: int, attempt_id: int) -> bool:
         with self._immediate_write_transaction() as db:
             cursor = db.execute(
-                f"""update tasks set {task12_set_parts('oa_notification_events', {}, update_sql={'status': "'sending'", 'claimed_attempt_id': '?', 'updated_at': 'current_timestamp'}).sql} where record_type='oa_notification_events' and "oa_notification_events__id"=? and "oa_notification_events__requires_reply"=1\n                  and "oa_notification_events__status" in ('pending', 'adopted')\n                  and "oa_notification_events__claimed_attempt_id"=0\n                """,
+                """update oa_notification_events set status='sending',
+                    claimed_attempt_id=?, updated_at=current_timestamp
+                    where id=? and requires_reply=1 and status in ('pending', 'adopted')
+                    and claimed_attempt_id=0""",
                 (attempt_id, event_id),
             )
             return cursor.rowcount == 1
@@ -6409,7 +6433,9 @@ class AutoReplyStore(LogicalRunStoreMixin, ReviewedCandidateStoreMixin):
     ) -> bool:
         with self._immediate_write_transaction() as db:
             cursor = db.execute(
-                f"""update tasks set {task12_set_parts('oa_notification_events', {}, update_sql={'status': "'sent'", 'result_attempt_id': '?', 'sent_at': 'current_timestamp', 'updated_at': 'current_timestamp'}).sql} where record_type='oa_notification_events' and "oa_notification_events__id"=? and "oa_notification_events__status"='sending' and "oa_notification_events__claimed_attempt_id"=?\n                """,
+                """update oa_notification_events set status='sent', result_attempt_id=?,
+                    sent_at=current_timestamp, updated_at=current_timestamp
+                    where id=? and status='sending' and claimed_attempt_id=?""",
                 (result_attempt_id, event_id, attempt_id),
             )
             return cursor.rowcount == 1
@@ -6419,7 +6445,9 @@ class AutoReplyStore(LogicalRunStoreMixin, ReviewedCandidateStoreMixin):
     ) -> bool:
         with self._immediate_write_transaction() as db:
             cursor = db.execute(
-                f"""update tasks set {task12_set_parts('oa_notification_events', {}, update_sql={'status': "'adopted'", 'claimed_attempt_id': '0', 'last_error': '?', 'updated_at': 'current_timestamp'}).sql} where record_type='oa_notification_events' and "oa_notification_events__id"=? and "oa_notification_events__status"='sending' and "oa_notification_events__claimed_attempt_id"=?\n                """,
+                """update oa_notification_events set status='adopted',
+                    claimed_attempt_id=0, last_error=?, updated_at=current_timestamp
+                    where id=? and status='sending' and claimed_attempt_id=?""",
                 (error, event_id, attempt_id),
             )
             return cursor.rowcount == 1
