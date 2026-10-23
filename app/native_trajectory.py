@@ -649,7 +649,9 @@ def hydrate_run_events_from_attempts(row, attempts, db_path: str) -> list[dict]:
 def read_native_result_json(db, row) -> str:
     """Project the original native JSON object without runtime validation."""
     attempts = db.execute(
-        f"select runtime_kind, session_id, transcript_start, transcript_end from ({RUNTIME_ATTEMPT_SQL}) as agent_runtime_attempts where agent_run_id=? and status='completed' order by id desc limit 1", (row["id"],),
+        """select runtime_kind,session_id,transcript_start,transcript_end
+            from runtime_attempts where parent_id=? and status='completed'
+            order by id desc limit 1""", (row["id"],),
     ).fetchone()
     return read_native_result_json_from_attempt(row, attempts)
 
@@ -663,8 +665,8 @@ def read_native_result_json_from_attempt(row, attempt) -> str:
         kind, session_id = attempt["runtime_kind"], attempt["session_id"]
         start, end = attempt["transcript_start"], attempt["transcript_end"]
     else:
-        kind, session_id = "codex_cli", row["codex_session_id"]
-        start, end = row["transcript_start_line"], row["transcript_end_line"]
+        kind, session_id = "codex_cli", row["session_id"]
+        start, end = row["transcript_start"], row["transcript_end"]
     raw = read_native_result_stream(kind, session_id, start, end)
     if not raw:
         return ""

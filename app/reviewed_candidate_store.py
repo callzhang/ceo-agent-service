@@ -7,7 +7,6 @@ import json
 import sqlite3
 from datetime import datetime, timedelta, timezone
 from typing import Any
-from app.logical_run_storage import AGENT_RUN_SQL
 from app.model_action_schema import candidate_option, selected_branch
 from app import shared_action_lifecycle
 from app.execution_owner_storage import create_plan_execution, update_plan_execution
@@ -19,7 +18,6 @@ from app.action_storage import (
     CANDIDATE_EXECUTION_SQL,
     CANDIDATE_ACTION_ATTEMPT_SQL, candidate_action_attempt_row,
     EXTERNAL_ACTION_RESULT_SQL,
-    insert_action,
 )
 
 
@@ -67,9 +65,17 @@ def _db_timestamp(db: sqlite3.Connection) -> str:
 
 class ReviewedCandidateStoreMixin:
     def _candidate_context(self, db: sqlite3.Connection, candidate_id: int) -> sqlite3.Row:
-        row = db.execute(f"""select c.*, t.execution_generation as current_generation,
-            t.business_object_key from ({REVIEW_CANDIDATE_SQL}) c join ({REPLY_TASK_SQL}) t on t.id=c.task_id
-            where c.id=?""", (candidate_id,)).fetchone()
+        row = db.execute("""select c.consumer_run_id as id,c.consumer_run_id as consumer_run_id,
+            r.task_id,r.execution_generation,
+            r.proposal_revision, c.stage_index,
+            c.predecessor_audit_run_id as predecessor_review_id,
+            c.candidate_digest, c.candidate_json, c.invalidated_at, c.invalidation_reason,
+            c.created_at, t.execution_generation as current_generation, ti.channel,
+            ti.business_object_key as business_object_key
+            from run_adopted_results c join runs r on r.id=c.consumer_run_id
+            join tasks t on t.id=r.task_id
+            left join task_inputs ti on ti.id=t.current_input_id
+            where c.consumer_run_id=? and r.role='consumer' and t.kind='reply'""", (candidate_id,)).fetchone()
         if row is None:
             raise ValueError("candidate does not exist")
         if row["execution_generation"] != row["current_generation"]:
@@ -78,7 +84,10 @@ class ReviewedCandidateStoreMixin:
 
     def _review_context(self, db: sqlite3.Connection, candidate_id: int, review_id: int) -> tuple[sqlite3.Row, sqlite3.Row]:
         candidate = self._candidate_context(db, candidate_id)
-        review = db.execute(f"select * from ({CANDIDATE_REVIEW_SQL}) where id=? and candidate_id=?", (review_id, candidate_id)).fetchone()
+        review = db.execute("""select audit_run_id as id, consumer_run_id as candidate_id,
+            audit_run_id, decision, candidate_digest, result_json, created_at
+            from run_adopted_reviews where audit_run_id=? and consumer_run_id=?""",
+            (review_id, candidate_id)).fetchone()
         if review is None or review["decision"] != "approve" or review["candidate_digest"] != candidate["candidate_digest"]:
             raise ValueError("approved review mismatch")
         if candidate["invalidated_at"]:
@@ -86,9 +95,9 @@ class ReviewedCandidateStoreMixin:
         return candidate, review
 
     def _check_historical_runtime_refusal(self, db: sqlite3.Connection, business_object_key: str) -> None:
-        rows = db.execute(f"""select r.structured_error_json from ({AGENT_RUN_SQL}) r
-            join ({REPLY_TASK_SQL}) t on t.id=r.reply_task_id
-            where t.business_object_key=? and r.structured_error_json<>''""", (business_object_key,))
+        rows = db.execute("""select r.structured_error_json from runs r
+            join task_inputs i on i.task_id=r.task_id
+            where i.business_object_key=? and r.structured_error_json<>''""", (business_object_key,))
         for row in rows:
             try:
                 error = json.loads(row[0])
@@ -102,7 +111,9 @@ class ReviewedCandidateStoreMixin:
         body = _json(prepared_result)
         digest = hashlib.sha256(body.encode()).hexdigest()
         data = json.loads(body)
-        task_row = db.execute(f"select execution_generation, channel from ({REPLY_TASK_SQL}) where id=?", (run["reply_task_id"],)).fetchone()
+        task_row = db.execute("""select t.execution_generation, ti.channel from tasks t
+            left join task_inputs ti on ti.id=t.current_input_id
+            where t.id=? and t.kind='reply'""", (run["task_id"],)).fetchone()
         if (task_row is not None and task_row["channel"] == "wechat"
             and "action" in data and "outcome" not in data):
             from app.dingtalk_models import CodexDecision
@@ -118,37 +129,45 @@ class ReviewedCandidateStoreMixin:
         if (task_row is None or run is None or task_row[0] != run["execution_generation"]
             or run["role"] != "consumer" or run["status"] != "completed"):
             raise ValueError("completed Consumer candidate mismatch")
-        latest = db.execute(f"""select id from ({AGENT_RUN_SQL}) as agent_runs where reply_task_id=?
+        latest = db.execute("""select id from runs as agent_runs where task_id=?
             and execution_generation=? and role='consumer' and status='completed'
-            and proposal_revision=(select max(current_run.proposal_revision) from ({AGENT_RUN_SQL}) current_run
-                where current_run.reply_task_id=? and current_run.execution_generation=?
+            and proposal_revision=(select max(current_run.proposal_revision) from runs current_run
+                where current_run.task_id=? and current_run.execution_generation=?
                   and current_run.role='consumer')
             order by proposal_revision desc, turn_attempt desc, id desc limit 1""",
-            (run["reply_task_id"], run["execution_generation"], run["reply_task_id"], run["execution_generation"])).fetchone()
+            (run["task_id"], run["execution_generation"], run["task_id"], run["execution_generation"])).fetchone()
         if latest is None or latest["id"] != run["id"]:
             raise ValueError("stale Consumer candidate")
         stage = data.get("stage_index", 0)
-        predecessor = data.get("predecessor_review_id")
+        predecessor = None
         if not isinstance(stage, int) or stage < 0:
             raise ValueError("invalid candidate stage")
-        if predecessor is not None:
-            prior = db.execute(f"""select c.task_id, c.execution_generation, c.stage_index,
-                r.decision, e.status as execution_status
-                from ({CANDIDATE_REVIEW_SQL}) r join ({REVIEW_CANDIDATE_SQL}) c on c.id=r.candidate_id
-                left join ({CANDIDATE_EXECUTION_SQL}) e on e.review_id=r.id
-                where r.id=?""", (predecessor,)).fetchone()
-            if (prior is None or prior["task_id"] != run["reply_task_id"]
+        if stage > 0:
+            predecessor = run["parent_id"]
+            prior = db.execute("""select c.stage_index, r.decision, p.status as execution_status,
+                r.consumer_run_id, rr.task_id, rr.execution_generation,
+                ar.role as audit_role, ar.task_id as audit_task_id,
+                ar.execution_generation as audit_generation, ar.parent_id as audit_parent_id
+                from run_adopted_reviews r join run_adopted_results c
+                  on c.consumer_run_id=r.consumer_run_id
+                join runs rr on rr.id=r.consumer_run_id
+                join runs ar on ar.id=r.audit_run_id
+                left join run_execution_progress p on p.consumer_run_id=r.consumer_run_id
+                where r.audit_run_id=?""", (predecessor,)).fetchone()
+            if (prior is None or prior["task_id"] != run["task_id"]
                 or prior["execution_generation"] != run["execution_generation"]
+                or prior["audit_role"] != "audit" or prior["audit_task_id"] != run["task_id"]
+                or prior["audit_generation"] != run["execution_generation"]
+                or prior["audit_parent_id"] != prior["consumer_run_id"]
                 or prior["stage_index"] != stage - 1 or prior["decision"] != "approve"
                 or prior["execution_status"] not in ("done", "skipped")):
                 raise ValueError("candidate predecessor mismatch")
-        shared_action_lifecycle.persist_plan(db, "reviewed", {
-            "task_id": run["reply_task_id"], "execution_generation": run["execution_generation"],
-            "consumer_run_id": run["id"], "stage_index": stage,
-            "proposal_revision": run["proposal_revision"], "predecessor_review_id": predecessor,
-            "candidate_digest": digest, "candidate_json": body,
-        }, ignore=True)
-        saved = db.execute(f"select * from ({REVIEW_CANDIDATE_SQL}) where consumer_run_id=?", (run["id"],)).fetchone()
+        db.execute("""insert into run_adopted_results
+            (consumer_run_id,stage_index,predecessor_audit_run_id,candidate_digest,candidate_json,
+             invalidated_at,invalidation_reason,created_at)
+            values(?,?,?,?,?,'','',current_timestamp) on conflict(consumer_run_id) do nothing""",
+            (run["id"], stage, predecessor, digest, body))
+        saved = self._candidate_context(db, run["id"])
         if saved["candidate_digest"] != digest or saved["candidate_json"] != body:
             raise ValueError("candidate content conflict")
         return dict(saved)
@@ -157,18 +176,19 @@ class ReviewedCandidateStoreMixin:
         """Validate the already adopted candidate; completed turns are immutable."""
         body = _json(prepared_result)
         with self._connect() as db:
-            saved = db.execute(f"""select c.*, r.status as run_status, t.execution_generation as current_generation
-                from ({REVIEW_CANDIDATE_SQL}) c join ({AGENT_RUN_SQL}) r on r.id=c.consumer_run_id
-                join ({REPLY_TASK_SQL}) t on t.id=c.task_id where c.consumer_run_id=?""", (consumer_run.id,)).fetchone()
+            saved = self._candidate_context(db, consumer_run.id) if db.execute(
+                "select 1 from run_adopted_results where consumer_run_id=?", (consumer_run.id,)
+            ).fetchone() else None
+            run = db.execute("select status from runs where id=?", (consumer_run.id,)).fetchone()
             if (saved is None or saved["task_id"] != task.id
                 or saved["execution_generation"] != task.execution_generation
                 or saved["current_generation"] != task.execution_generation
-                or saved["run_status"] != "completed" or saved["candidate_json"] != body):
+                or run is None or run["status"] != "completed" or saved["candidate_json"] != body):
                 raise ValueError("completed Consumer candidate mismatch")
-            latest = db.execute(f"""select r.id from ({AGENT_RUN_SQL}) r join ({REVIEW_CANDIDATE_SQL}) c on c.consumer_run_id=r.id
-                where r.reply_task_id=? and r.execution_generation=? and r.status='completed'
-                  and r.proposal_revision=(select max(proposal_revision) from ({AGENT_RUN_SQL}) as agent_runs
-                    where reply_task_id=? and execution_generation=? and role='consumer')
+            latest = db.execute("""select r.id from runs r join run_adopted_results c on c.consumer_run_id=r.id
+                where r.task_id=? and r.execution_generation=? and r.status='completed'
+                  and r.proposal_revision=(select max(proposal_revision) from runs as agent_runs
+                    where task_id=? and execution_generation=? and role='consumer')
                 order by r.proposal_revision desc, r.turn_attempt desc, r.id desc limit 1""",
                 (task.id, task.execution_generation, task.id, task.execution_generation)).fetchone()
             if latest is None or latest["id"] != consumer_run.id:
@@ -177,19 +197,26 @@ class ReviewedCandidateStoreMixin:
 
     def adopted_candidate_for_consumer_run(self, run_id: int) -> dict[str, Any] | None:
         with self._connect() as db:
-            return _row(db.execute(f"select * from ({REVIEW_CANDIDATE_SQL}) where consumer_run_id=?", (run_id,)).fetchone())
+            if not db.execute("select 1 from run_adopted_results where consumer_run_id=?", (run_id,)).fetchone():
+                return None
+            return _row(self._candidate_context(db, run_id))
 
     def get_review_candidate(self, candidate_id: int) -> dict[str, Any] | None:
         with self._connect() as db:
-            return _row(db.execute(f"select * from ({REVIEW_CANDIDATE_SQL}) where id=?", (candidate_id,)).fetchone())
+            if not db.execute("select 1 from run_adopted_results where consumer_run_id=?", (candidate_id,)).fetchone():
+                return None
+            return _row(self._candidate_context(db, candidate_id))
 
     def reviewed_candidate_for_audit_run(self, audit_run_id: int) -> dict[str, Any] | None:
         """Read an old reviewed question for History without making it actionable."""
         with self._connect() as db:
-            return _row(db.execute(f"""select c.*, r.id as review_id, r.audit_run_id, r.decision,
-                s.id as selection_id, s.option_key, s.status as selection_status
-                from ({CANDIDATE_REVIEW_SQL}) r join ({REVIEW_CANDIDATE_SQL}) c on c.id=r.candidate_id
-                left join ({CANDIDATE_SELECTION_SQL}) s on s.candidate_id=c.id
+            return _row(db.execute("""select c.consumer_run_id as id,c.consumer_run_id as candidate_id,
+                r.audit_run_id as review_id,r.audit_run_id,r.decision,r.candidate_digest,r.result_json,
+                c.stage_index,c.predecessor_audit_run_id as predecessor_review_id,c.candidate_json,c.invalidated_at,
+                c.invalidation_reason,c.created_at,s.id as selection_id,s.option_key,
+                s.status as selection_status
+                from run_adopted_reviews r join run_adopted_results c on c.consumer_run_id=r.consumer_run_id
+                left join run_adopted_selections s on s.consumer_run_id=c.consumer_run_id
                 where r.audit_run_id=?""", (audit_run_id,)).fetchone())
 
     def _adopt_candidate_review_in_connection(self, db, candidate_id, audit_run_id, result):
@@ -201,17 +228,19 @@ class ReviewedCandidateStoreMixin:
         candidate = self._candidate_context(db, candidate_id)
         if candidate["invalidated_at"]:
             raise ValueError("candidate invalidated")
-        run = db.execute(f'select * from ({AGENT_RUN_SQL}) as agent_runs where id=?', (audit_run_id,)).fetchone()
+        run = db.execute("select * from runs where id=?", (audit_run_id,)).fetchone()
         if (run is None or run["status"] != "completed" or run["role"] != "audit"
-            or run["reply_task_id"] != candidate["task_id"] or run["execution_generation"] != candidate["execution_generation"]
-            or run["proposal_revision"] != candidate["proposal_revision"] or run["parent_agent_run_id"] != candidate["consumer_run_id"]
+            or run["task_id"] != candidate["task_id"] or run["execution_generation"] != candidate["execution_generation"]
+            or run["proposal_revision"] != candidate["proposal_revision"] or run["parent_id"] != candidate["consumer_run_id"]
             or data.get("candidate_digest") != candidate["candidate_digest"]):
             raise ValueError("completed Audit review mismatch")
-        insert_action(db, "candidate_reviews", {
-            "candidate_id": candidate_id, "audit_run_id": audit_run_id, "decision": decision,
-            "candidate_digest": candidate["candidate_digest"], "result_json": body,
-        }, ignore=True)
-        saved = db.execute(f"select * from ({CANDIDATE_REVIEW_SQL}) where audit_run_id=?", (audit_run_id,)).fetchone()
+        db.execute("""insert into run_adopted_reviews
+            (audit_run_id,consumer_run_id,candidate_digest,decision,result_json,created_at)
+            values(?,?,?,?,?,current_timestamp) on conflict(audit_run_id) do nothing""",
+            (audit_run_id, candidate_id, candidate["candidate_digest"], decision, body))
+        saved = db.execute("""select audit_run_id as id,consumer_run_id as candidate_id,
+            audit_run_id,decision,candidate_digest,result_json,created_at
+            from run_adopted_reviews where audit_run_id=?""", (audit_run_id,)).fetchone()
         if saved["candidate_id"] != candidate_id or saved["decision"] != decision or saved["result_json"] != body:
             raise ValueError("review content conflict")
         return dict(saved)
@@ -220,8 +249,8 @@ class ReviewedCandidateStoreMixin:
         """Validate the adopted review or import an exactly matching native result."""
         body = _json(result)
         with self._immediate_write_transaction() as db:
-            saved = db.execute(f"select * from ({CANDIDATE_REVIEW_SQL}) where audit_run_id=?", (audit_run_id,)).fetchone()
-            run = db.execute(f'select * from ({AGENT_RUN_SQL}) as agent_runs where id=?', (audit_run_id,)).fetchone()
+            saved = db.execute("select * from run_adopted_reviews where audit_run_id=?", (audit_run_id,)).fetchone()
+            run = db.execute("select * from runs where id=?", (audit_run_id,)).fetchone()
             from app.native_trajectory import read_native_result_json
             persisted_body = saved["result_json"] if saved else read_native_result_json(db, run) if run else ""
             if not persisted_body or _json(json.loads(persisted_body)) != body:
@@ -230,69 +259,92 @@ class ReviewedCandidateStoreMixin:
 
     def current_reviewed_candidate(self, task_id: int, generation: str) -> dict[str, Any] | None:
         with self._connect() as db:
-            row = db.execute(f"""select c.*, r.id as review_id, r.audit_run_id, r.decision, s.id as selection_id,
-                s.option_key, s.status as selection_status
-                from ({REVIEW_CANDIDATE_SQL}) c join ({REPLY_TASK_SQL}) t on t.id=c.task_id
-                join ({CANDIDATE_REVIEW_SQL}) r on r.candidate_id=c.id
-                left join ({CANDIDATE_SELECTION_SQL}) s on s.candidate_id=c.id
-                where c.task_id=? and c.execution_generation=? and t.execution_generation=?
+            row = db.execute("""select c.consumer_run_id as id,c.consumer_run_id as candidate_id,
+                r.audit_run_id as review_id,r.audit_run_id,r.decision,r.candidate_digest as review_digest,
+                c.stage_index,c.predecessor_audit_run_id as predecessor_review_id,
+                c.candidate_json,c.candidate_digest,
+                c.invalidated_at,c.invalidation_reason,c.created_at,s.id as selection_id,
+                s.audit_run_id as selection_audit_run_id,s.option_key,s.status as selection_status
+                from run_adopted_results c join runs owner on owner.id=c.consumer_run_id
+                join tasks t on t.id=owner.task_id join run_adopted_reviews r on r.consumer_run_id=c.consumer_run_id
+                left join run_adopted_selections s on s.consumer_run_id=c.consumer_run_id
+                where owner.task_id=? and owner.execution_generation=? and t.execution_generation=?
                 and c.invalidated_at='' and r.decision='approve'
-                and c.id=(select max(id) from ({REVIEW_CANDIDATE_SQL}) where task_id=? and execution_generation=?)
-                order by r.id desc limit 1""", (task_id, generation, generation, task_id, generation)).fetchone()
-            return _derived_selection(db, row)
+                and owner.id=(select run.id from runs run join run_adopted_results ar on ar.consumer_run_id=run.id
+                  where run.task_id=? and run.execution_generation=? and run.role='consumer'
+                  and run.status='completed' order by run.proposal_revision desc,run.turn_attempt desc,run.id desc limit 1)
+                order by r.audit_run_id desc limit 1""", (task_id, generation, generation, task_id, generation)).fetchone()
+            result = _derived_selection(db, row)
+            if result is not None:
+                result["audit_run_id"] = result.pop("review_id")
+            return result
 
     def get_candidate_selection(self, candidate_id: int) -> dict[str, Any] | None:
         """Read the selection of this immutable candidate, including old stages."""
         with self._connect() as db:
-            row = db.execute(f"select * from ({CANDIDATE_SELECTION_SQL}) where candidate_id=?",
-                             (candidate_id,)).fetchone()
+            row = db.execute("""select s.id,s.consumer_run_id as candidate_id,s.audit_run_id as review_id,
+                s.option_key,s.status,s.created_at,c.candidate_json
+                from run_adopted_selections s join run_adopted_results c
+                on c.consumer_run_id=s.consumer_run_id where s.consumer_run_id=?""", (candidate_id,)).fetchone()
             return _derived_selection(db, row, selection_key="id")
 
     def select_candidate_option(self, candidate_id: int, review_id: int, option_key: str) -> dict[str, Any]:
         with self._immediate_write_transaction() as db:
             candidate, _ = self._review_context(db, candidate_id, review_id)
-            if db.execute(f"select max(id) from ({REVIEW_CANDIDATE_SQL}) where task_id=? and execution_generation=?", (candidate["task_id"], candidate["execution_generation"])).fetchone()[0] != candidate_id:
+            if db.execute("""select id from runs where task_id=? and execution_generation=?
+                and role='consumer' and status='completed' order by proposal_revision desc,
+                turn_attempt desc,id desc limit 1""", (candidate["task_id"], candidate["execution_generation"])).fetchone()[0] != candidate_id:
                 raise ValueError("stale candidate")
             branch = candidate_option(candidate["candidate_json"], option_key)
             if branch.get("plan") is None and branch.get("terminal_outcome") != "skipped":
                 raise ValueError("unbound option")
-            prior = db.execute(f"select * from ({CANDIDATE_SELECTION_SQL}) where candidate_id=?", (candidate_id,)).fetchone()
+            prior = db.execute("""select s.id,s.consumer_run_id as candidate_id,s.audit_run_id as review_id,
+                s.option_key,s.status,s.created_at,c.candidate_json from run_adopted_selections s
+                join run_adopted_results c on c.consumer_run_id=s.consumer_run_id
+                where s.consumer_run_id=?""", (candidate_id,)).fetchone()
             if prior is not None:
                 if prior["review_id"] != review_id or prior["option_key"] != option_key:
                     raise ValueError("selection_conflict")
                 return _derived_selection(db, prior, selection_key="id")
-            insert_action(db, "candidate_selections", {
-                "candidate_id": candidate_id, "review_id": review_id,
-                "option_key": option_key,
-            }, selection_references=True)
-            return _derived_selection(db, db.execute(f"select * from ({CANDIDATE_SELECTION_SQL}) where candidate_id=?", (candidate_id,)).fetchone(), selection_key="id")
+            db.execute("""insert into run_adopted_selections
+                (consumer_run_id,audit_run_id,option_key,status,created_at)
+                values(?,?,?,'selected',current_timestamp)""", (candidate_id, review_id, option_key))
+            row = db.execute("""select s.id,s.consumer_run_id as candidate_id,s.audit_run_id as review_id,
+                s.option_key,s.status,s.created_at,c.candidate_json
+                from run_adopted_selections s join run_adopted_results c
+                on c.consumer_run_id=s.consumer_run_id where s.consumer_run_id=?""", (candidate_id,)).fetchone()
+            return _derived_selection(db, row, selection_key="id")
 
     def record_candidate_supplement(self, candidate_id: int, instruction: str) -> dict[str, Any]:
         if not instruction.strip():
             raise ValueError("instruction is empty")
         with self._immediate_write_transaction() as db:
             self._candidate_context(db, candidate_id)
-            inserted = insert_action(db, "candidate_supplements", {
-                "candidate_id": candidate_id, "instruction": instruction,
-            })
-            shared_action_lifecycle.update_plan(db, "reviewed", candidate_id, {
-                "invalidated_at": _db_timestamp(db), "invalidation_reason": "supplement",
-            }, where_sql="invalidated_at=''")
-            return dict(db.execute(f"select * from ({CANDIDATE_SUPPLEMENT_SQL}) where id=?", (inserted.lastrowid,)).fetchone())
+            inserted = db.execute("""insert into run_adopted_supplements
+                (consumer_run_id,instruction,created_at) values(?,?,current_timestamp)""",
+                (candidate_id, instruction))
+            db.execute("""update run_adopted_results set invalidated_at=?,invalidation_reason='supplement'
+                where consumer_run_id=? and invalidated_at=''""", (_db_timestamp(db), candidate_id))
+            return dict(db.execute("""select id,consumer_run_id as candidate_id,instruction,created_at
+                from run_adopted_supplements where id=?""", (inserted.lastrowid,)).fetchone())
 
     def invalidate_review_candidate(self, candidate_id: int, reason: str) -> dict[str, Any]:
         if not reason.strip():
             raise ValueError("invalidation reason is empty")
         with self._immediate_write_transaction() as db:
             self._candidate_context(db, candidate_id)
-            shared_action_lifecycle.update_plan(db, "reviewed", candidate_id, {
-                "invalidated_at": _db_timestamp(db), "invalidation_reason": reason,
-            }, where_sql="invalidated_at=''")
-            return dict(db.execute(f"select * from ({REVIEW_CANDIDATE_SQL}) where id=?", (candidate_id,)).fetchone())
+            db.execute("""update run_adopted_results set invalidated_at=?,invalidation_reason=?
+                where consumer_run_id=? and invalidated_at=''""", (_db_timestamp(db), reason, candidate_id))
+            return dict(self._candidate_context(db, candidate_id))
 
     def get_candidate_execution(self, candidate_id: int) -> dict[str, Any] | None:
         with self._connect() as db:
-            return _row(db.execute(f"select * from ({CANDIDATE_EXECUTION_SQL}) where candidate_id=?", (candidate_id,)).fetchone())
+            return _row(db.execute("""select p.consumer_run_id as id,p.consumer_run_id as candidate_id,
+                p.approved_audit_run_id as review_id,s.id as selection_id,p.status,p.lease_owner,
+                p.lease_expires_at,p.result_json,p.created_at,p.updated_at
+                from run_execution_progress p left join run_adopted_selections s
+                  on s.consumer_run_id=p.consumer_run_id and s.audit_run_id=p.selected_audit_run_id
+                where p.consumer_run_id=?""", (candidate_id,)).fetchone())
 
     def wake_selected_candidate_execution(self, candidate_id: int, review_id: int) -> dict[str, Any]:
         """Queue the selected plan in the same task generation, without a new Agent turn."""
@@ -649,7 +701,9 @@ class ReviewedCandidateStoreMixin:
 
     def get_candidate_review_for_audit_run(self, audit_run_id: int) -> dict[str, Any] | None:
         with self._connect() as db:
-            return _row(db.execute(f"select * from ({CANDIDATE_REVIEW_SQL}) where audit_run_id=?", (audit_run_id,)).fetchone())
+            return _row(db.execute("""select audit_run_id as id,consumer_run_id as candidate_id,
+                audit_run_id,decision,candidate_digest,result_json,created_at
+                from run_adopted_reviews where audit_run_id=?""", (audit_run_id,)).fetchone())
 
     def list_verified_candidate_actions(self, task_id: int) -> list[dict[str, Any]]:
         """Return owned receipt results for the business object's verified stages."""

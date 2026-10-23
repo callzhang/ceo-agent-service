@@ -1217,14 +1217,16 @@ class AgentOrchestrator:
             )
         return None
 
-    @staticmethod
-    def _business_revision(state: _NextExecution) -> _NextConsumer:
+    def _business_revision(self, state: _NextExecution) -> _NextConsumer:
+        adopted = self.store.get_review_candidate(state.consumer_run.id)
+        if adopted is None:
+            raise ValueError("completed Consumer adoption is missing")
         return _NextConsumer(
             state.consumer_run.proposal_revision + 1,
             state.audit_run.id,
             None,
-            stage_index=state.consumer_result.stage_index,
-            predecessor_review_id=state.consumer_result.predecessor_review_id,
+            stage_index=adopted["stage_index"],
+            predecessor_review_id=adopted["predecessor_review_id"],
         )
 
     def _stage_for_parent(self, parent: AgentRun | None) -> dict[str, object]:
@@ -1234,7 +1236,12 @@ class AgentOrchestrator:
             self.store.get_agent_run(parent.parent_agent_run_id, load_events=False)
         )
         review = self.store.get_candidate_review_for_audit_run(parent.id)
-        execution = self.store.get_candidate_execution(review["candidate_id"]) if review else None
+        if review is None:
+            raise ValueError("Audit adoption is unavailable for stage context")
+        adopted = self.store.get_review_candidate(review["candidate_id"])
+        if adopted is None:
+            raise ValueError("Consumer adoption is unavailable for stage context")
+        execution = self.store.get_candidate_execution(review["candidate_id"])
         if (self._audit_result(parent).outcome is AuditOutcome.APPROVE
             and (
                 previous_candidate.continue_after_execution
@@ -1243,12 +1250,12 @@ class AgentOrchestrator:
             and execution and execution["status"] == "done"):
             review_id = review["id"]
             return {
-                "stage_index": previous_candidate.stage_index + 1,
+                "stage_index": adopted["stage_index"] + 1,
                 "predecessor_review_id": review_id,
             }
         return {
-            "stage_index": previous_candidate.stage_index,
-            "predecessor_review_id": previous_candidate.predecessor_review_id,
+            "stage_index": adopted["stage_index"],
+            "predecessor_review_id": adopted["predecessor_review_id"],
         }
 
     def _technical_state(self, task: ReplyTask, run: AgentRun, cycles: int):
