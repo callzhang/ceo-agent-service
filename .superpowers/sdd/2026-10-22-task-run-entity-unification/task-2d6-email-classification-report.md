@@ -90,10 +90,14 @@ they were not rewritten, skipped, or represented as passing. The native
 classifier tests, including schema/lifecycle/retry/claim/race and source
 migration tests, pass.
 
-For the fail-first evidence, the exact legacy Task12 projection used by the
-BASE adapter was run against `task_run_entity_assembly_objects()` and failed on
-the actual native `tasks` declaration (`no such column: record_type`). The
-native adapter tests then pass using the same assembled target declarations.
+For fail-first evidence, the unchanged full `EmailClassificationTaskAdapter`
+from BASE `093509585ad0cb6a81fa4c264e1916fa7df760eb` was loaded from Git with
+its original module globals and executed against the actual assembled native
+fixture at `/private/tmp/ceo-task-run-phase2-_ntbufyi/task2d6-parent-actual-base-red/native.sqlite3`.
+`ensure_task(_classification_input(uid=918))` failed with
+`sqlite3.OperationalError: no such column: record_type`. A separate direct
+probe of BASE's exact Task12 projection also failed against the same target.
+The native adapter tests then pass using those assembled target declarations.
 `_native_email_store` explicitly binds the real EmailStore connection code to
 assembled test DDL; it does not claim EmailStore's production constructor has
 been switched to the assembled schema.
