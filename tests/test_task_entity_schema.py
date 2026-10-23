@@ -1808,3 +1808,201 @@ def test_new_native_feedback_resolution_receipt_survives_inverse_reforward_cycle
         assert final_receipt is not None
         assert final_receipt[0] == source_decision_id
         assert final_receipt[2] == source_evidence
+
+
+def test_source_resolved_feedback_receipt_validates_then_native_reopens_and_claims(
+    tmp_path, monkeypatch,
+):
+    """Carry a genuine source-owned resolution through conversion and current APIs."""
+    from app.action_feedback_storage import insert_feedback_action, insert_feedback_decision_items
+    from app.feedback_processing import (
+        FeedbackIterationAcceptance, FeedbackIterationDecision, ResolutionEvidence,
+    )
+    from app.store import AutoReplyStore
+    from app.current_database_schema import create_current_database_schema
+    from app.run_adoption_schema import capture_run_adoptions, migrate_run_adoptions
+    from app.run_entity_schema import capture_run_entities, migrate_run_entities
+    from app.task_run_entity_assembly import task_run_entity_assembly_objects
+
+    source = _source()
+    source.row_factory = sqlite3.Row
+    create_current_database_schema(source)
+    source.commit()
+    source.execute("pragma foreign_keys=off")
+    source.execute("begin immediate")
+    timestamp = "2026-10-22T12:00:00+00:00"
+    commit_sha = "a" * 40
+    test_evidence = {"pytest": {"exit_code": 0}}
+    restart_evidence = {
+        "launchd_label": "com.ceo-agent-service.main", "before_pid": 10, "after_pid": 11,
+    }
+    health_evidence = {
+        "url": "http://127.0.0.1:8765/healthz", "status_code": 200, "ok": True,
+    }
+    backlog_evidence = {"processing": 0, "failed": 0, "retryable": 0}
+    association = {
+        "workbench_task_id": "wb-task-a", "workbench_turn_id": "wb-turn-a",
+        "attempt_id": 44, "agent_run_id": 13003,
+    }
+    source_evidence = ResolutionEvidence(
+        commit_sha=commit_sha, test_evidence=test_evidence,
+        restart_evidence=restart_evidence, health_evidence=health_evidence,
+        backlog_evidence=backlog_evidence, associations={"feedback-a": association},
+    )
+    decision = FeedbackIterationDecision(
+        scope="code", root_cause="verified source defect", feedback_keys=["feedback-a"],
+        source_references=["source record"], why_not_code="not applicable",
+        acceptance=FeedbackIterationAcceptance(
+            scenario="captured source receipt", expected_behavior="accepted after conversion",
+            verification=["native validator", "reopen and claim"],
+        ),
+    )
+    decision_json = decision.model_dump_json()
+    # Preserve the source's append-only decision contract while seeding this
+    # actual historical row through its existing task12 writer.
+    trigger_sql = source.execute(
+        "select sql from sqlite_schema where type='trigger' and name='trg_task20_decision_update'"
+    ).fetchone()[0]
+    source.execute("drop trigger trg_task20_decision_update")
+    update_task12(source, "feedback_iteration_decisions", 227, {
+        "batch_id": "batch-a", "workbench_task_id": "wb-task-a",
+        "workbench_turn_id": "wb-turn-a", "decision_json": decision_json,
+        "created_at": timestamp,
+    })
+    source.execute(trigger_sql)
+    round_receipt = {
+        "decision_id": 227, "scope": "code", "evidence": source_evidence.model_dump(mode="json"),
+    }
+    update_task12(source, "feedback_processing_batches", 204, {
+        "batch_id": "batch-a", "status": "resolved", "requested_count": 1,
+        "created_at": timestamp, "updated_at": timestamp, "resolved_at": timestamp,
+    })
+    update_task12(source, "feedback_processing_items", 228, {
+        "status": "resolved", "batch_id": "batch-a", "current_round_id": 229,
+        "workbench_task_id": "wb-task-a", "workbench_turn_id": "wb-turn-a",
+        "attempt_id": 44, "agent_run_id": 13003, "commit_sha": commit_sha,
+        "test_evidence_json": json.dumps(test_evidence),
+        "restart_evidence_json": json.dumps(restart_evidence),
+        "health_evidence_json": json.dumps(health_evidence),
+        "resolved_at": timestamp, "created_at": timestamp, "updated_at": timestamp,
+    })
+    update_task12(source, "feedback_processing_rounds", 229, {
+        "round_number": 1, "batch_id": "batch-a", "status": "resolved",
+        "workbench_task_id": "wb-task-a", "workbench_turn_id": "wb-turn-a",
+        "attempt_id": 44, "agent_run_id": 13003, "commit_sha": commit_sha,
+        "test_evidence_json": json.dumps(test_evidence),
+        "restart_evidence_json": json.dumps(restart_evidence),
+        "health_evidence_json": json.dumps(health_evidence),
+        "backlog_evidence_json": json.dumps(backlog_evidence), "receipt_version": 2,
+        "started_at": timestamp, "resolved_at": timestamp, "created_at": timestamp,
+        "updated_at": timestamp, "scope_receipt_json": json.dumps(round_receipt),
+    })
+    insert_feedback_action(source, "feedback_events", {
+        "key": "feedback-a", "feedback_token": "token-a", "resolved_at": timestamp,
+        "created_at": timestamp, "updated_at": timestamp,
+    })
+    insert_feedback_action(source, "feedback_processing_transitions", {
+        "feedback_key": "feedback-a", "round_id": 229, "batch_id": "batch-a",
+        "from_status": "pending", "to_status": "processing", "created_at": timestamp,
+    })
+    insert_feedback_action(source, "feedback_processing_transitions", {
+        "feedback_key": "feedback-a", "round_id": 229, "batch_id": "batch-a",
+        "from_status": "processing", "to_status": "resolved",
+        "workbench_task_id": "wb-task-a", "workbench_turn_id": "wb-turn-a",
+        "created_at": timestamp,
+    })
+    insert_feedback_decision_items(source, [{
+        "decision_id": 227, "feedback_key": "feedback-a", "round_id": 229,
+    }])
+    assert source.execute(
+        "select count(*) from actions where record_type='feedback_processing_transitions'"
+    ).fetchone()[0] == 2
+    assert tuple(source.execute(
+        "select fb_decision_id,fb_feedback_key,fb_round_id from actions "
+        "where record_type='feedback_iteration_decision_items'"
+    ).fetchone()) == (227, "feedback-a", 229)
+    adoption_source = capture_run_adoptions(source)
+    metadata = capture_task_entities(source)
+    run_source = capture_run_entities(source)
+    handoff = {"version": 1, "owners": [
+        {"source_kind": "workbench_tasks", "source_physical_id": 202, "canonical_id": 1202},
+        {"source_kind": "workbench_turns", "source_physical_id": 203, "canonical_id": 1203},
+        {"source_kind": "feedback_iteration_decisions", "source_physical_id": 227, "canonical_id": 1227},
+        {"source_kind": "feedback_processing_rounds", "source_physical_id": 229, "canonical_id": 1229},
+    ]}
+    task_forward = migrate_task_entities(source, metadata, inverse_identity=handoff)
+    from tests.test_run_entity_schema import _run_handoff
+    run_handoff = _run_handoff(source, run_source)
+    run_forward = migrate_run_entities(
+        source, run_source, task_metadata=task_forward, run_handoff=run_handoff,
+    )
+    migrate_run_adoptions(
+        source, adoption_source, task_metadata=task_forward, run_metadata=run_forward,
+    )
+    assert tuple(source.execute(
+        "select fb_decision_id,fb_feedback_key,fb_round_id from actions "
+        "where record_type='feedback_iteration_decision_items'"
+    ).fetchone()) == (1227, "feedback-a", 1229)
+    assert tuple(source.execute(
+        "select fb_transition_round_id,fb_transition_workbench_task_id,"
+        "fb_transition_workbench_turn_id from actions "
+        "where record_type='feedback_processing_transitions' and fb_transition_to_status='resolved'"
+    ).fetchone()) == (1229, "1202", "1203")
+    assert source.execute(
+        "select fb_event_resolved_at from actions where record_type='feedback_events' "
+        "and fb_event_key='feedback-a'"
+    ).fetchone()[0] == timestamp
+    objects = task_run_entity_assembly_objects()
+    present = {row[0] for row in source.execute("select name from sqlite_schema")}
+    for name, ddl in objects.items():
+        if name not in present and ddl.lstrip().lower().startswith("create table"):
+            source.execute(ddl)
+            present.add(name)
+    for name, ddl in objects.items():
+        if name not in present and not ddl.lstrip().lower().startswith("create table"):
+            source.execute(ddl)
+            present.add(name)
+    # Complete legitimate source writes before online backup; otherwise SQLite
+    # backup waits forever on this connection's pending write transaction.
+    source.commit()
+    db_path = tmp_path / "source-resolved-feedback.sqlite3"
+    with sqlite3.connect(db_path) as target:
+        source.backup(target)
+    source.close()
+
+    store = AutoReplyStore.__new__(AutoReplyStore)
+    store.path = db_path
+    store.busy_timeout_seconds = 5
+    store.busy_timeout_milliseconds = 5000
+    store._read_snapshot_connection = ContextVar("source_resolved_feedback_snapshot", default=None)
+    store._reused_connection = ContextVar("source_resolved_feedback_reused", default=None)
+    monkeypatch.setattr(store, "feedback_iteration_enabled", lambda: True)
+    assert store.resolve_feedback_processing_batch(
+        "batch-a", None, commit_is_ancestor=True,
+    ) is True
+    with store._connect() as db:
+        receipt = db.execute(
+            "select scope_receipt_json from feedback_processing_rounds where id=1229"
+        ).fetchone()[0]
+        assert json.loads(receipt)["decision_id"] == 1227
+        assert tuple(db.execute(
+            "select workbench_task_id,workbench_turn_id from feedback_iteration_decisions where id=1227"
+        ).fetchone()) == ("1202", "1203")
+
+    reopened_item = store.reopen_feedback_processing_item(
+        "feedback-a", reason="reopen converted source",
+    )
+    assert reopened_item.status == "pending"
+    assert reopened_item.current_round_id == 0
+    reopened = store.claim_feedback_processing_items("next-batch", ["feedback-a"])[0]
+    assert reopened.status == "processing"
+    assert reopened.current_round_id != 1229
+    assert reopened.workbench_task_id == reopened.workbench_turn_id == ""
+    with store._connect() as db:
+        assert db.execute(
+            "select status,reopened_at,reopen_reason from feedback_processing_rounds where id=1229"
+        ).fetchone()[0] == "resolved"
+        assert [tuple(row) for row in db.execute(
+            "select round_number,status from feedback_processing_rounds where feedback_key='feedback-a' "
+            "order by round_number"
+        ).fetchall()] == [(1, "resolved"), (2, "processing")]
