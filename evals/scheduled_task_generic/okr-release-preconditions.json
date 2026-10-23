@@ -108,9 +108,10 @@
     {
       "source": "ci/shared-skills/ceo-weekly-okr-report/SKILL.md",
       "installed_sha256": "49ba4b0bdafdd2ba54989f6bd1ad6b799417464f2dad2cbeefb721eb85a32f8e",
-      "approved_new_sha256": "038973933c0e8ff70f9c87b2912107a5d3ae0efcb53aeaf308e9bd3f091c01b9",
+      "approved_new_sha256": "54d3e45e58cdf819d21d9ad4c3973030a5a70de75b0f8d583995a5a496464d5e",
       "managed_revision_id": 245,
-      "managed_sha256": "038973933c0e8ff70f9c87b2912107a5d3ae0efcb53aeaf308e9bd3f091c01b9"
+      "managed_sha256": "038973933c0e8ff70f9c87b2912107a5d3ae0efcb53aeaf308e9bd3f091c01b9",
+      "new_sha256": "038973933c0e8ff70f9c87b2912107a5d3ae0efcb53aeaf308e9bd3f091c01b9"
     },
     {
       "source": "ci/shared-skills/ceo-weekly-okr-report/scripts/analysis.schema.json",

@@ -1,0 +1,1203 @@
+{
+  "version": 8,
+  "synthetic_only": true,
+  "cases": [
+    {
+      "id": "composite-coverage",
+      "facts": {
+        "roster": {
+          "name": "CEO-2 管理群",
+          "conversation_id": "cid-okr-fixture",
+          "managers": [
+            {
+              "name": "林辰",
+              "title": "总监",
+              "user_id": "eval-a",
+              "open_dingtalk_id": "open-eval-a"
+            },
+            {
+              "name": "林辰",
+              "title": "经理",
+              "user_id": "eval-b",
+              "open_dingtalk_id": "open-eval-b"
+            },
+            {
+              "name": "周乔",
+              "title": "经理",
+              "user_id": "eval-missing",
+              "open_dingtalk_id": "open-eval-missing"
+            },
+            {
+              "name": "沈禾",
+              "title": "经理",
+              "user_id": "eval-failed",
+              "open_dingtalk_id": "open-eval-failed"
+            }
+          ]
+        },
+        "period_label": "2026 Q4",
+        "report_date": "2026-10-19",
+        "evidence": {
+          "eval-a": {
+            "id": "evidence-a",
+            "content": "交付已由客户验收且在目标场景投入使用，复盘确认承诺范围按时完成，但没有超额效果或跨团队标杆证据。"
+          },
+          "eval-b": {
+            "id": "evidence-b",
+            "content": "功能已实现并完成内部测试，尚未获得客户验收或实际使用效果。"
+          },
+          "behavior": {
+            "id": "behavior-review",
+            "content": "本周期逐项核对四项领导力行为：目标清晰、角色分工、节奏与复盘、跨团队协同，均达到当前职级标准，未体现超额标杆行为。三项文化行为客户导向、担当、透明协作均有独立具体行为佐证，表现良好但没有组织级标杆证据。"
+          },
+          "behavior_by_manager": {
+            "eval-a": {
+              "id": "behavior-review-eval-a",
+              "content": "本周期行为记录明确绑定林辰 [eval-a]。领导力：本人将公司年度目标转成覆盖本季度的中期计划，平衡成熟业务交付与新业务试点，并按月复核指标、调整既有资源安排，使团队持续按计划完成当前承诺（战略能力达到总监岗位标准，没有公司级战略成果）；明确研发与客户接口人的责任（角色分工）；本周期按既有项目复盘模板指导各组负责人，由负责人轮流主持并独立跟进跨团队依赖，团队能持续使用该方法；未形成组织外推广或公司级人才体系。组织每周跨团队复盘并跟进依赖（节奏与复盘、跨团队协同）。文化：收到客户反馈后调整交付顺序并取得客户确认（客户导向）；部署遇到问题时本人协调研发定位并跟进至修复（担当）；每周提前同步风险、依赖和进度并按承诺更新（透明协作）。没有组织级标杆案例；没有具体创新方案、验证过程及效果；没有AI使用及工作增益证据。"
+            },
+            "eval-b": {
+              "id": "behavior-review-eval-b",
+              "content": "本周期行为记录明确绑定林辰 [eval-b]。领导力：本人把部门目标拆成每周可核验的前线交付与客户验证指标，发现客户验收存在偏差后调整验证安排、明确补救责任人并推动团队按新节奏执行（战略能力达到经理岗位标准，没有超出经理标准的结果）；明确研发和客户验证的责任人（角色分工）；本周期每周带两名工程师复盘定位方法，支持他们独立处理前线问题；新成员按现有清单独立完成一次部署；没有跨团队赋能机制或超出经理标准的结果。定期同步进展并推动客户、研发对齐交付依赖（节奏与复盘、跨团队协同）。文化：发现客户验证风险后提前调整验证安排并向客户确认（客户导向）；遇到部署问题时主动协调研发定位并跟进关闭（担当）；每周使用简短状态清单同步真实风险、依赖、负责人和里程碑变化，相关研发与客户接口人按约确认交接并及时收到更新；没有隐瞒未验收状态或把内部测试说成客户验收（透明可信赖，符合当前经理岗位标准，但没有客户验收或团队外复用的超标成果）。没有组织级标杆案例；没有具体创新方案、验证过程及效果；没有AI使用及工作增益证据。"
+            }
+          }
+        }
+      },
+      "expected": {
+        "roster_ids": [
+          "eval-a",
+          "eval-b",
+          "eval-missing",
+          "eval-failed"
+        ],
+        "scored_ids": [
+          "eval-a",
+          "eval-b"
+        ],
+        "gaps": {
+          "eval-missing": "goals_missing",
+          "eval-failed": "source_failed"
+        },
+        "group_id": "cid-okr-fixture",
+        "kr_ids": {
+          "eval-a": [
+            "kr-eval-a"
+          ],
+          "eval-b": [
+            "kr-eval-b"
+          ]
+        },
+        "base_score_ranges": {
+          "eval-a": [
+            100,
+            100
+          ],
+          "eval-b": [
+            40,
+            60
+          ]
+        },
+        "rewrite_ids": [
+          "eval-a",
+          "eval-b"
+        ],
+        "preserve_ids": [],
+        "preserve_unscored_roster_titles": true,
+        "summary_contains_actual_member_gaps": true,
+        "leadership_dimensions": [
+          "战略能力",
+          "团队赋能能力",
+          "组织协同能力",
+          "创新能力"
+        ],
+        "culture_dimensions": [
+          "AI时代原生能力",
+          "I Can I Up",
+          "简单可信赖"
+        ],
+        "behavioral_score_ranges": {
+          "战略能力": [
+            70,
+            79
+          ],
+          "团队赋能能力": [
+            70,
+            79
+          ],
+          "组织协同能力": [
+            70,
+            79
+          ],
+          "创新能力": [
+            0,
+            60
+          ],
+          "AI时代原生能力": [
+            0,
+            60
+          ],
+          "I Can I Up": [
+            70,
+            79
+          ],
+          "简单可信赖": [
+            70,
+            79
+          ]
+        },
+        "independent_source_ids": [
+          "eval-evidence-2b0652a9fd02acfb",
+          "eval-behavior-2b0652a9fd02acfb",
+          "eval-evidence-5a2949b1fc19c78b",
+          "eval-behavior-5a2949b1fc19c78b"
+        ]
+      }
+    },
+    {
+      "id": "fresh-source-snapshot",
+      "facts": {
+        "roster": {
+          "name": "CEO-2 管理群",
+          "conversation_id": "cid-okr-fixture",
+          "managers": [
+            {
+              "name": "林辰",
+              "title": "总监",
+              "user_id": "eval-a",
+              "open_dingtalk_id": "open-eval-a"
+            },
+            {
+              "name": "林辰",
+              "title": "经理",
+              "user_id": "eval-b",
+              "open_dingtalk_id": "open-eval-b"
+            },
+            {
+              "name": "周乔",
+              "title": "经理",
+              "user_id": "eval-missing",
+              "open_dingtalk_id": "open-eval-missing"
+            },
+            {
+              "name": "沈禾",
+              "title": "经理",
+              "user_id": "eval-failed",
+              "open_dingtalk_id": "open-eval-failed"
+            }
+          ]
+        },
+        "period_label": "2026 Q4",
+        "report_date": "2026-10-19",
+        "evidence": {
+          "eval-a": {
+            "id": "evidence-a",
+            "content": "交付已由客户验收且在目标场景投入使用，复盘确认承诺范围按时完成，但没有超额效果或跨团队标杆证据。"
+          },
+          "eval-b": {
+            "id": "evidence-b-v2",
+            "content": "客户复核撤回了先前内部测试通过结论。当前只有可演示原型，尚无稳定可运行的交付物，也没有验收或实际使用；旧测试结论已失效。"
+          },
+          "behavior": {
+            "id": "behavior-review",
+            "content": "本周期逐项核对四项领导力行为：目标清晰、角色分工、节奏与复盘、跨团队协同，均达到当前职级标准，未体现超额标杆行为。三项文化行为客户导向、担当、透明协作均有独立具体行为佐证，表现良好但没有组织级标杆证据。"
+          },
+          "behavior_by_manager": {
+            "eval-a": {
+              "id": "behavior-review-eval-a",
+              "content": "本周期行为记录明确绑定林辰 [eval-a]。领导力：本人将公司年度目标转成覆盖本季度的中期计划，平衡成熟业务交付与新业务试点，并按月复核指标、调整既有资源安排，使团队持续按计划完成当前承诺（战略能力达到总监岗位标准，没有公司级战略成果）；明确研发与客户接口人的责任（角色分工）；本周期按既有项目复盘模板指导各组负责人，由负责人轮流主持并独立跟进跨团队依赖，团队能持续使用该方法；未形成组织外推广或公司级人才体系。组织每周跨团队复盘并跟进依赖（节奏与复盘、跨团队协同）。文化：收到客户反馈后调整交付顺序并取得客户确认（客户导向）；部署遇到问题时本人协调研发定位并跟进至修复（担当）；每周提前同步风险、依赖和进度并按承诺更新（透明协作）。没有组织级标杆案例；没有具体创新方案、验证过程及效果；没有AI使用及工作增益证据。"
+            },
+            "eval-b": {
+              "id": "behavior-review-eval-b",
+              "content": "本周期行为记录明确绑定林辰 [eval-b]。领导力：本人把部门目标拆成每周可核验的前线交付与客户验证指标，发现客户验收存在偏差后调整验证安排、明确补救责任人并推动团队按新节奏执行（战略能力达到经理岗位标准，没有超出经理标准的结果）；明确研发和客户验证的责任人（角色分工）；本周期每周带两名工程师复盘定位方法，支持他们独立处理前线问题；新成员按现有清单独立完成一次部署；没有跨团队赋能机制或超出经理标准的结果。定期同步进展并推动客户、研发对齐交付依赖（节奏与复盘、跨团队协同）。文化：发现客户验证风险后提前调整验证安排并向客户确认（客户导向）；遇到部署问题时主动协调研发定位并跟进关闭（担当）；每周使用简短状态清单同步真实风险、依赖、负责人和里程碑变化，相关研发与客户接口人按约确认交接并及时收到更新；没有隐瞒未验收状态或把内部测试说成客户验收（透明可信赖，符合当前经理岗位标准，但没有客户验收或团队外复用的超标成果）。没有组织级标杆案例；没有具体创新方案、验证过程及效果；没有AI使用及工作增益证据。"
+            }
+          }
+        },
+        "run_id": 2,
+        "previous_run_id": 1
+      },
+      "expected": {
+        "roster_ids": [
+          "eval-a",
+          "eval-b",
+          "eval-missing",
+          "eval-failed"
+        ],
+        "scored_ids": [
+          "eval-a",
+          "eval-b"
+        ],
+        "gaps": {
+          "eval-missing": "goals_missing",
+          "eval-failed": "source_failed"
+        },
+        "group_id": "cid-okr-fixture",
+        "kr_ids": {
+          "eval-a": [
+            "kr-eval-a"
+          ],
+          "eval-b": [
+            "kr-eval-b"
+          ]
+        },
+        "base_score_ranges": {
+          "eval-a": [
+            100,
+            100
+          ],
+          "eval-b": [
+            20,
+            40
+          ]
+        },
+        "rewrite_ids": [
+          "eval-b"
+        ],
+        "preserve_ids": [
+          "eval-a"
+        ],
+        "preserve_unscored_roster_titles": true,
+        "summary_contains_actual_member_gaps": true,
+        "leadership_dimensions": [
+          "战略能力",
+          "团队赋能能力",
+          "组织协同能力",
+          "创新能力"
+        ],
+        "culture_dimensions": [
+          "AI时代原生能力",
+          "I Can I Up",
+          "简单可信赖"
+        ],
+        "behavioral_score_ranges": {
+          "战略能力": [
+            70,
+            79
+          ],
+          "团队赋能能力": [
+            70,
+            79
+          ],
+          "组织协同能力": [
+            70,
+            79
+          ],
+          "创新能力": [
+            0,
+            60
+          ],
+          "AI时代原生能力": [
+            0,
+            60
+          ],
+          "I Can I Up": [
+            70,
+            79
+          ],
+          "简单可信赖": [
+            70,
+            79
+          ]
+        }
+      }
+    },
+    {
+      "id": "fresh-date-snapshot",
+      "facts": {
+        "roster": {
+          "name": "CEO-2 管理群",
+          "conversation_id": "cid-okr-fixture",
+          "managers": [
+            {
+              "name": "林辰",
+              "title": "总监",
+              "user_id": "eval-a",
+              "open_dingtalk_id": "open-eval-a"
+            },
+            {
+              "name": "林辰",
+              "title": "经理",
+              "user_id": "eval-b",
+              "open_dingtalk_id": "open-eval-b"
+            },
+            {
+              "name": "周乔",
+              "title": "经理",
+              "user_id": "eval-missing",
+              "open_dingtalk_id": "open-eval-missing"
+            },
+            {
+              "name": "沈禾",
+              "title": "经理",
+              "user_id": "eval-failed",
+              "open_dingtalk_id": "open-eval-failed"
+            }
+          ]
+        },
+        "period_label": "2026 Q4",
+        "report_date": "2026-10-20",
+        "evidence": {
+          "eval-a": {
+            "id": "evidence-a",
+            "content": "交付已由客户验收且在目标场景投入使用，复盘确认承诺范围按时完成，但没有超额效果或跨团队标杆证据。"
+          },
+          "eval-b": {
+            "id": "evidence-b",
+            "content": "功能已实现并完成内部测试，尚未获得客户验收或实际使用效果。"
+          },
+          "behavior": {
+            "id": "behavior-review",
+            "content": "本周期逐项核对四项领导力行为：目标清晰、角色分工、节奏与复盘、跨团队协同，均达到当前职级标准，未体现超额标杆行为。三项文化行为均有独立具体行为佐证：客户导向方面，按客户反馈调整交付顺序并完成现场验收；担当方面，遇到部署问题后本人协调研发定位并持续跟进至修复；透明协作方面，每周提前同步依赖、风险和里程碑变更，并按约定更新进展。没有组织级标杆证据。"
+          },
+          "behavior_by_manager": {
+            "eval-a": {
+              "id": "behavior-review-eval-a",
+              "content": "本周期行为记录明确绑定林辰 [eval-a]。领导力：本人将公司年度目标转成覆盖本季度的中期计划，平衡成熟业务交付与新业务试点，并按月复核指标、调整既有资源安排，使团队持续按计划完成当前承诺（战略能力达到总监岗位标准，没有公司级战略成果）；明确研发与客户接口人的责任（角色分工）；本周期按既有项目复盘模板指导各组负责人，由负责人轮流主持并独立跟进跨团队依赖，团队能持续使用该方法；未形成组织外推广或公司级人才体系。组织每周跨团队复盘并跟进依赖（节奏与复盘、跨团队协同）。文化：收到客户反馈后调整交付顺序并取得客户确认（客户导向）；部署遇到问题时本人协调研发定位并跟进至修复（担当）；每周提前同步风险、依赖和进度并按承诺更新（透明协作）。没有组织级标杆案例；没有具体创新方案、验证过程及效果；没有AI使用及工作增益证据。"
+            },
+            "eval-b": {
+              "id": "behavior-review-eval-b",
+              "content": "本周期行为记录明确绑定林辰 [eval-b]。领导力：本人把部门目标拆成每周可核验的前线交付与客户验证指标，发现客户验收存在偏差后调整验证安排、明确补救责任人并推动团队按新节奏执行（战略能力达到经理岗位标准，没有超出经理标准的结果）；明确研发和客户验证的责任人（角色分工）；本周期每周带两名工程师复盘定位方法，支持他们独立处理前线问题；新成员按现有清单独立完成一次部署；没有跨团队赋能机制或超出经理标准的结果。定期同步进展并推动客户、研发对齐交付依赖（节奏与复盘、跨团队协同）。文化：发现客户验证风险后提前调整验证安排并向客户确认（客户导向）；遇到部署问题时主动协调研发定位并跟进关闭（担当）；每周使用简短状态清单同步真实风险、依赖、负责人和里程碑变化，相关研发与客户接口人按约确认交接并及时收到更新；没有隐瞒未验收状态或把内部测试说成客户验收（透明可信赖，符合当前经理岗位标准，但没有客户验收或团队外复用的超标成果）。没有组织级标杆案例；没有具体创新方案、验证过程及效果；没有AI使用及工作增益证据。"
+            }
+          }
+        },
+        "run_id": 3,
+        "previous_run_id": 1
+      },
+      "expected": {
+        "roster_ids": [
+          "eval-a",
+          "eval-b",
+          "eval-missing",
+          "eval-failed"
+        ],
+        "scored_ids": [
+          "eval-a",
+          "eval-b"
+        ],
+        "gaps": {
+          "eval-missing": "goals_missing",
+          "eval-failed": "source_failed"
+        },
+        "group_id": "cid-okr-fixture",
+        "kr_ids": {
+          "eval-a": [
+            "kr-eval-a"
+          ],
+          "eval-b": [
+            "kr-eval-b"
+          ]
+        },
+        "base_score_ranges": {
+          "eval-a": [
+            100,
+            100
+          ],
+          "eval-b": [
+            40,
+            60
+          ]
+        },
+        "rewrite_ids": [
+          "eval-a",
+          "eval-b"
+        ],
+        "preserve_ids": [],
+        "preserve_unscored_roster_titles": true,
+        "summary_contains_actual_member_gaps": true,
+        "leadership_dimensions": [
+          "战略能力",
+          "团队赋能能力",
+          "组织协同能力",
+          "创新能力"
+        ],
+        "culture_dimensions": [
+          "AI时代原生能力",
+          "I Can I Up",
+          "简单可信赖"
+        ],
+        "behavioral_score_ranges": {
+          "战略能力": [
+            70,
+            79
+          ],
+          "团队赋能能力": [
+            70,
+            79
+          ],
+          "组织协同能力": [
+            70,
+            79
+          ],
+          "创新能力": [
+            0,
+            60
+          ],
+          "AI时代原生能力": [
+            0,
+            60
+          ],
+          "I Can I Up": [
+            70,
+            79
+          ],
+          "简单可信赖": [
+            70,
+            79
+          ]
+        },
+        "independent_source_ids": [
+          "eval-evidence-2b0652a9fd02acfb",
+          "eval-behavior-2b0652a9fd02acfb",
+          "eval-evidence-5a2949b1fc19c78b",
+          "eval-behavior-5a2949b1fc19c78b"
+        ]
+      }
+    },
+    {
+      "id": "shared-source-auth-failure",
+      "facts": {
+        "roster": {
+          "name": "CEO-2 管理群",
+          "conversation_id": "cid-okr-fixture",
+          "managers": [
+            {
+              "name": "林辰",
+              "title": "总监",
+              "user_id": "eval-a",
+              "open_dingtalk_id": "open-eval-a"
+            },
+            {
+              "name": "林辰",
+              "title": "经理",
+              "user_id": "eval-b",
+              "open_dingtalk_id": "open-eval-b"
+            },
+            {
+              "name": "周乔",
+              "title": "经理",
+              "user_id": "eval-missing",
+              "open_dingtalk_id": "open-eval-missing"
+            },
+            {
+              "name": "沈禾",
+              "title": "经理",
+              "user_id": "eval-failed",
+              "open_dingtalk_id": "open-eval-failed"
+            }
+          ]
+        },
+        "period_label": "2026 Q4",
+        "report_date": "2026-10-19",
+        "evidence": {
+          "eval-a": {
+            "id": "evidence-a",
+            "content": "交付已由客户验收且在目标场景投入使用，复盘确认承诺范围按时完成，但没有超额效果或跨团队标杆证据。"
+          },
+          "eval-b": {
+            "id": "evidence-b",
+            "content": "功能已实现并完成内部测试，尚未获得客户验收或实际使用效果。"
+          },
+          "behavior": {
+            "id": "behavior-review",
+            "content": "本周期逐项核对四项领导力行为：目标清晰、角色分工、节奏与复盘、跨团队协同，均达到当前职级标准，未体现超额标杆行为。三项文化行为客户导向、担当、透明协作均有独立具体行为佐证，表现良好但没有组织级标杆证据。"
+          },
+          "behavior_by_manager": {
+            "eval-a": {
+              "id": "behavior-review-eval-a",
+              "content": "本周期行为记录明确绑定林辰 [eval-a]。领导力：本人将交付目标拆成有验收标准的里程碑（目标清晰）；明确研发与客户接口人的责任（角色分工）；本周期按既有项目复盘模板指导各组负责人，由负责人轮流主持并独立跟进跨团队依赖，团队能持续使用该方法；未形成组织外推广或公司级人才体系。组织每周跨团队复盘并跟进依赖（节奏与复盘、跨团队协同）。文化：收到客户反馈后调整交付顺序并取得客户确认（客户导向）；部署遇到问题时本人协调研发定位并跟进至修复（担当）；每周提前同步风险、依赖和进度并按承诺更新（透明协作）。没有组织级标杆案例；没有具体创新方案、验证过程及效果；没有AI使用及工作增益证据。"
+            },
+            "eval-b": {
+              "id": "behavior-review-eval-b",
+              "content": "本周期行为记录明确绑定林辰 [eval-b]。领导力：本人将当前交付目标和阶段验收条件写清（目标清晰）；明确研发和客户验证的责任人（角色分工）；本周期每周带两名工程师复盘定位方法，支持他们独立处理前线问题；新成员按现有清单独立完成一次部署；没有跨团队赋能机制或超出经理标准的结果。定期同步进展并推动客户、研发对齐交付依赖（节奏与复盘、跨团队协同）。文化：发现客户验证风险后提前调整验证安排并向客户确认（客户导向）；遇到部署问题时主动协调研发定位并跟进关闭（担当）；定期提前同步风险、依赖和里程碑变化并按约更新（透明协作）。没有组织级标杆案例；没有具体创新方案、验证过程及效果；没有AI使用及工作增益证据。"
+            }
+          }
+        },
+        "shared_failure": {
+          "scope": "shared",
+          "code": "auth_unavailable",
+          "diagnostic": "Synthetic shared OKR authentication failure; no current member data can be read."
+        }
+      },
+      "expected": {
+        "must_stop": true,
+        "allowed_actions": [
+          "failed"
+        ],
+        "no_document_writes": true,
+        "behavioral_score_ranges": {
+          "战略能力": [
+            70,
+            79
+          ],
+          "团队赋能能力": [
+            70,
+            79
+          ],
+          "组织协同能力": [
+            70,
+            79
+          ],
+          "创新能力": [
+            0,
+            60
+          ],
+          "AI时代原生能力": [
+            0,
+            60
+          ],
+          "I Can I Up": [
+            70,
+            79
+          ],
+          "简单可信赖": [
+            70,
+            79
+          ]
+        }
+      }
+    },
+    {
+      "id": "empty-independent-search-continues-analysis",
+      "facts": {
+        "roster": {
+          "name": "CEO-2 管理群",
+          "conversation_id": "cid-okr-fixture",
+          "managers": [
+            {
+              "name": "林辰",
+              "title": "总监",
+              "user_id": "eval-a",
+              "open_dingtalk_id": "open-eval-a"
+            },
+            {
+              "name": "林辰",
+              "title": "经理",
+              "user_id": "eval-b",
+              "open_dingtalk_id": "open-eval-b"
+            },
+            {
+              "name": "周乔",
+              "title": "经理",
+              "user_id": "eval-missing",
+              "open_dingtalk_id": "open-eval-missing"
+            },
+            {
+              "name": "沈禾",
+              "title": "经理",
+              "user_id": "eval-failed",
+              "open_dingtalk_id": "open-eval-failed"
+            }
+          ]
+        },
+        "period_label": "2026 Q4",
+        "report_date": "2026-10-19",
+        "evidence": {
+          "eval-a": {
+            "id": "evidence-a",
+            "content": "交付已由客户验收且在目标场景投入使用，复盘确认承诺范围按时完成，但没有超额效果或跨团队标杆证据。"
+          },
+          "eval-b": {
+            "id": "evidence-b",
+            "content": "功能已实现并完成内部测试，尚未获得客户验收或实际使用效果。"
+          },
+          "behavior": {
+            "id": "behavior-review",
+            "content": "本周期逐项核对四项领导力行为：目标清晰、角色分工、节奏与复盘、跨团队协同，均达到当前职级标准，未体现超额标杆行为。三项文化行为客户导向、担当、透明协作均有独立具体行为佐证，表现良好但没有组织级标杆证据。"
+          },
+          "behavior_by_manager": {
+            "eval-a": {
+              "id": "behavior-review-eval-a",
+              "content": "本周期行为记录明确绑定林辰 [eval-a]。领导力：本人将公司年度目标转成覆盖本季度的中期计划，平衡成熟业务交付与新业务试点，并按月复核指标、调整既有资源安排，使团队持续按计划完成当前承诺（战略能力达到总监岗位标准，没有公司级战略成果）；明确研发与客户接口人的责任（角色分工）；本周期按既有项目复盘模板指导各组负责人，由负责人轮流主持并独立跟进跨团队依赖，团队能持续使用该方法；未形成组织外推广或公司级人才体系。组织每周跨团队复盘并跟进依赖（节奏与复盘、跨团队协同）。文化：收到客户反馈后调整交付顺序并取得客户确认（客户导向）；部署遇到问题时本人协调研发定位并跟进至修复（担当）；每周提前同步风险、依赖和进度并按承诺更新（透明协作）。没有组织级标杆案例；没有具体创新方案、验证过程及效果；没有AI使用及工作增益证据。"
+            },
+            "eval-b": {
+              "id": "behavior-review-eval-b",
+              "content": "本周期行为记录明确绑定林辰 [eval-b]。领导力：本人把部门目标拆成每周可核验的前线交付与客户验证指标，发现客户验收存在偏差后调整验证安排、明确补救责任人并推动团队按新节奏执行（战略能力达到经理岗位标准，没有超出经理标准的结果）；明确研发和客户验证的责任人（角色分工）；本周期每周带两名工程师复盘定位方法，支持他们独立处理前线问题；新成员按现有清单独立完成一次部署；没有跨团队赋能机制或超出经理标准的结果。定期同步进展并推动客户、研发对齐交付依赖（节奏与复盘、跨团队协同）。文化：发现客户验证风险后提前调整验证安排并向客户确认（客户导向）；遇到部署问题时主动协调研发定位并跟进关闭（担当）；每周使用简短状态清单同步真实风险、依赖、负责人和里程碑变化，相关研发与客户接口人按约确认交接并及时收到更新；没有隐瞒未验收状态或把内部测试说成客户验收（透明可信赖，符合当前经理岗位标准，但没有客户验收或团队外复用的超标成果）。没有组织级标杆案例；没有具体创新方案、验证过程及效果；没有AI使用及工作增益证据。"
+            }
+          }
+        },
+        "no_independent_document_ids": [
+          "eval-a",
+          "eval-b"
+        ]
+      },
+      "expected": {
+        "roster_ids": [
+          "eval-a",
+          "eval-b",
+          "eval-missing",
+          "eval-failed"
+        ],
+        "scored_ids": [
+          "eval-a",
+          "eval-b"
+        ],
+        "gaps": {
+          "eval-missing": "goals_missing",
+          "eval-failed": "source_failed"
+        },
+        "group_id": "cid-okr-fixture",
+        "kr_ids": {
+          "eval-a": [
+            "kr-eval-a"
+          ],
+          "eval-b": [
+            "kr-eval-b"
+          ]
+        },
+        "base_score_ranges": {
+          "eval-a": [
+            100,
+            100
+          ],
+          "eval-b": [
+            40,
+            60
+          ]
+        },
+        "rewrite_ids": [
+          "eval-a",
+          "eval-b"
+        ],
+        "preserve_ids": [],
+        "preserve_unscored_roster_titles": true,
+        "summary_contains_actual_member_gaps": true,
+        "leadership_dimensions": [
+          "战略能力",
+          "团队赋能能力",
+          "组织协同能力",
+          "创新能力"
+        ],
+        "culture_dimensions": [
+          "AI时代原生能力",
+          "I Can I Up",
+          "简单可信赖"
+        ],
+        "behavioral_score_ranges": {
+          "战略能力": [
+            70,
+            79
+          ],
+          "团队赋能能力": [
+            70,
+            79
+          ],
+          "组织协同能力": [
+            70,
+            79
+          ],
+          "创新能力": [
+            0,
+            60
+          ],
+          "AI时代原生能力": [
+            0,
+            60
+          ],
+          "I Can I Up": [
+            70,
+            79
+          ],
+          "简单可信赖": [
+            70,
+            79
+          ]
+        },
+        "independent_searches_without_matches": [
+          {
+            "user_id": "eval-a",
+            "display_name": "林辰"
+          },
+          {
+            "user_id": "eval-b",
+            "display_name": "林辰"
+          }
+        ]
+      }
+    },
+    {
+      "id": "empty-search-18-managers-incremental-analysis",
+      "facts": {
+        "roster": {
+          "name": "CEO-2 管理群",
+          "conversation_id": "cid-okr-fixture",
+          "managers": [
+            {
+              "name": "管理者01",
+              "title": "经理",
+              "user_id": "okr-manager-01",
+              "open_dingtalk_id": "open-okr-manager-01"
+            },
+            {
+              "name": "管理者02",
+              "title": "经理",
+              "user_id": "okr-manager-02",
+              "open_dingtalk_id": "open-okr-manager-02"
+            },
+            {
+              "name": "管理者03",
+              "title": "经理",
+              "user_id": "okr-manager-03",
+              "open_dingtalk_id": "open-okr-manager-03"
+            },
+            {
+              "name": "管理者04",
+              "title": "经理",
+              "user_id": "okr-manager-04",
+              "open_dingtalk_id": "open-okr-manager-04"
+            },
+            {
+              "name": "管理者05",
+              "title": "经理",
+              "user_id": "okr-manager-05",
+              "open_dingtalk_id": "open-okr-manager-05"
+            },
+            {
+              "name": "管理者06",
+              "title": "经理",
+              "user_id": "okr-manager-06",
+              "open_dingtalk_id": "open-okr-manager-06"
+            },
+            {
+              "name": "管理者07",
+              "title": "经理",
+              "user_id": "okr-manager-07",
+              "open_dingtalk_id": "open-okr-manager-07"
+            },
+            {
+              "name": "管理者08",
+              "title": "经理",
+              "user_id": "okr-manager-08",
+              "open_dingtalk_id": "open-okr-manager-08"
+            },
+            {
+              "name": "管理者09",
+              "title": "经理",
+              "user_id": "okr-manager-09",
+              "open_dingtalk_id": "open-okr-manager-09"
+            },
+            {
+              "name": "管理者10",
+              "title": "经理",
+              "user_id": "okr-manager-10",
+              "open_dingtalk_id": "open-okr-manager-10"
+            },
+            {
+              "name": "管理者11",
+              "title": "经理",
+              "user_id": "okr-manager-11",
+              "open_dingtalk_id": "open-okr-manager-11"
+            },
+            {
+              "name": "管理者12",
+              "title": "经理",
+              "user_id": "okr-manager-12",
+              "open_dingtalk_id": "open-okr-manager-12"
+            },
+            {
+              "name": "管理者13",
+              "title": "经理",
+              "user_id": "okr-manager-13",
+              "open_dingtalk_id": "open-okr-manager-13"
+            },
+            {
+              "name": "管理者14",
+              "title": "经理",
+              "user_id": "okr-manager-14",
+              "open_dingtalk_id": "open-okr-manager-14"
+            },
+            {
+              "name": "管理者15",
+              "title": "经理",
+              "user_id": "okr-manager-15",
+              "open_dingtalk_id": "open-okr-manager-15"
+            },
+            {
+              "name": "管理者16",
+              "title": "经理",
+              "user_id": "okr-manager-16",
+              "open_dingtalk_id": "open-okr-manager-16"
+            },
+            {
+              "name": "管理者17",
+              "title": "经理",
+              "user_id": "okr-manager-17",
+              "open_dingtalk_id": "open-okr-manager-17"
+            },
+            {
+              "name": "管理者18",
+              "title": "经理",
+              "user_id": "okr-manager-18",
+              "open_dingtalk_id": "open-okr-manager-18"
+            }
+          ]
+        },
+        "period_label": "2026 Q4",
+        "report_date": "2026-10-19",
+        "evidence": {
+          "okr-manager-01": {
+            "id": "evidence-01",
+            "content": "仅有合规证据源读取记录，缺少独立文档印证；不得据此推断超额结果。"
+          },
+          "okr-manager-02": {
+            "id": "evidence-02",
+            "content": "仅有合规证据源读取记录，缺少独立文档印证；不得据此推断超额结果。"
+          },
+          "okr-manager-03": {
+            "id": "evidence-03",
+            "content": "仅有合规证据源读取记录，缺少独立文档印证；不得据此推断超额结果。"
+          },
+          "okr-manager-04": {
+            "id": "evidence-04",
+            "content": "仅有合规证据源读取记录，缺少独立文档印证；不得据此推断超额结果。"
+          },
+          "okr-manager-05": {
+            "id": "evidence-05",
+            "content": "仅有合规证据源读取记录，缺少独立文档印证；不得据此推断超额结果。"
+          },
+          "okr-manager-06": {
+            "id": "evidence-06",
+            "content": "仅有合规证据源读取记录，缺少独立文档印证；不得据此推断超额结果。"
+          },
+          "okr-manager-07": {
+            "id": "evidence-07",
+            "content": "仅有合规证据源读取记录，缺少独立文档印证；不得据此推断超额结果。"
+          },
+          "okr-manager-08": {
+            "id": "evidence-08",
+            "content": "仅有合规证据源读取记录，缺少独立文档印证；不得据此推断超额结果。"
+          },
+          "okr-manager-09": {
+            "id": "evidence-09",
+            "content": "仅有合规证据源读取记录，缺少独立文档印证；不得据此推断超额结果。"
+          },
+          "okr-manager-10": {
+            "id": "evidence-10",
+            "content": "仅有合规证据源读取记录，缺少独立文档印证；不得据此推断超额结果。"
+          },
+          "okr-manager-11": {
+            "id": "evidence-11",
+            "content": "仅有合规证据源读取记录，缺少独立文档印证；不得据此推断超额结果。"
+          },
+          "okr-manager-12": {
+            "id": "evidence-12",
+            "content": "仅有合规证据源读取记录，缺少独立文档印证；不得据此推断超额结果。"
+          },
+          "okr-manager-13": {
+            "id": "evidence-13",
+            "content": "仅有合规证据源读取记录，缺少独立文档印证；不得据此推断超额结果。"
+          },
+          "okr-manager-14": {
+            "id": "evidence-14",
+            "content": "仅有合规证据源读取记录，缺少独立文档印证；不得据此推断超额结果。"
+          },
+          "okr-manager-15": {
+            "id": "evidence-15",
+            "content": "仅有合规证据源读取记录，缺少独立文档印证；不得据此推断超额结果。"
+          },
+          "behavior": {
+            "id": "behavior-review",
+            "content": "本期行为证据未提供可独立核实的具体结果。"
+          }
+        },
+        "no_independent_document_ids": [
+          "okr-manager-01",
+          "okr-manager-02",
+          "okr-manager-03",
+          "okr-manager-04",
+          "okr-manager-05",
+          "okr-manager-06",
+          "okr-manager-07",
+          "okr-manager-08",
+          "okr-manager-09",
+          "okr-manager-10",
+          "okr-manager-11",
+          "okr-manager-12",
+          "okr-manager-13",
+          "okr-manager-14",
+          "okr-manager-15"
+        ],
+        "goals_missing_ids": [
+          "okr-manager-16",
+          "okr-manager-17",
+          "okr-manager-18"
+        ]
+      },
+      "expected": {
+        "roster_ids": [
+          "okr-manager-01",
+          "okr-manager-02",
+          "okr-manager-03",
+          "okr-manager-04",
+          "okr-manager-05",
+          "okr-manager-06",
+          "okr-manager-07",
+          "okr-manager-08",
+          "okr-manager-09",
+          "okr-manager-10",
+          "okr-manager-11",
+          "okr-manager-12",
+          "okr-manager-13",
+          "okr-manager-14",
+          "okr-manager-15",
+          "okr-manager-16",
+          "okr-manager-17",
+          "okr-manager-18"
+        ],
+        "scored_ids": [
+          "okr-manager-01",
+          "okr-manager-02",
+          "okr-manager-03",
+          "okr-manager-04",
+          "okr-manager-05",
+          "okr-manager-06",
+          "okr-manager-07",
+          "okr-manager-08",
+          "okr-manager-09",
+          "okr-manager-10",
+          "okr-manager-11",
+          "okr-manager-12",
+          "okr-manager-13",
+          "okr-manager-14",
+          "okr-manager-15"
+        ],
+        "gaps": {
+          "okr-manager-16": "goals_missing",
+          "okr-manager-17": "goals_missing",
+          "okr-manager-18": "goals_missing"
+        },
+        "group_id": "cid-okr-fixture",
+        "kr_ids": {
+          "okr-manager-01": [
+            "kr-okr-manager-01"
+          ],
+          "okr-manager-02": [
+            "kr-okr-manager-02"
+          ],
+          "okr-manager-03": [
+            "kr-okr-manager-03"
+          ],
+          "okr-manager-04": [
+            "kr-okr-manager-04"
+          ],
+          "okr-manager-05": [
+            "kr-okr-manager-05"
+          ],
+          "okr-manager-06": [
+            "kr-okr-manager-06"
+          ],
+          "okr-manager-07": [
+            "kr-okr-manager-07"
+          ],
+          "okr-manager-08": [
+            "kr-okr-manager-08"
+          ],
+          "okr-manager-09": [
+            "kr-okr-manager-09"
+          ],
+          "okr-manager-10": [
+            "kr-okr-manager-10"
+          ],
+          "okr-manager-11": [
+            "kr-okr-manager-11"
+          ],
+          "okr-manager-12": [
+            "kr-okr-manager-12"
+          ],
+          "okr-manager-13": [
+            "kr-okr-manager-13"
+          ],
+          "okr-manager-14": [
+            "kr-okr-manager-14"
+          ],
+          "okr-manager-15": [
+            "kr-okr-manager-15"
+          ]
+        },
+        "base_score_ranges": {
+          "okr-manager-01": [
+            0,
+            100
+          ],
+          "okr-manager-02": [
+            0,
+            100
+          ],
+          "okr-manager-03": [
+            0,
+            100
+          ],
+          "okr-manager-04": [
+            0,
+            100
+          ],
+          "okr-manager-05": [
+            0,
+            100
+          ],
+          "okr-manager-06": [
+            0,
+            100
+          ],
+          "okr-manager-07": [
+            0,
+            100
+          ],
+          "okr-manager-08": [
+            0,
+            100
+          ],
+          "okr-manager-09": [
+            0,
+            100
+          ],
+          "okr-manager-10": [
+            0,
+            100
+          ],
+          "okr-manager-11": [
+            0,
+            100
+          ],
+          "okr-manager-12": [
+            0,
+            100
+          ],
+          "okr-manager-13": [
+            0,
+            100
+          ],
+          "okr-manager-14": [
+            0,
+            100
+          ],
+          "okr-manager-15": [
+            0,
+            100
+          ]
+        },
+        "rewrite_ids": [
+          "okr-manager-01",
+          "okr-manager-02",
+          "okr-manager-03",
+          "okr-manager-04",
+          "okr-manager-05",
+          "okr-manager-06",
+          "okr-manager-07",
+          "okr-manager-08",
+          "okr-manager-09",
+          "okr-manager-10",
+          "okr-manager-11",
+          "okr-manager-12",
+          "okr-manager-13",
+          "okr-manager-14",
+          "okr-manager-15"
+        ],
+        "preserve_ids": [],
+        "preserve_unscored_roster_titles": true,
+        "summary_contains_actual_member_gaps": true,
+        "leadership_dimensions": [
+          "战略能力",
+          "团队赋能能力",
+          "组织协同能力",
+          "创新能力"
+        ],
+        "culture_dimensions": [
+          "AI时代原生能力",
+          "I Can I Up",
+          "简单可信赖"
+        ],
+        "behavioral_score_ranges": {
+          "战略能力": [
+            0,
+            100
+          ],
+          "团队赋能能力": [
+            0,
+            100
+          ],
+          "组织协同能力": [
+            0,
+            100
+          ],
+          "创新能力": [
+            0,
+            100
+          ],
+          "AI时代原生能力": [
+            0,
+            100
+          ],
+          "I Can I Up": [
+            0,
+            100
+          ],
+          "简单可信赖": [
+            0,
+            100
+          ]
+        },
+        "independent_searches_without_matches": [
+          {
+            "user_id": "okr-manager-01",
+            "display_name": "管理者01"
+          },
+          {
+            "user_id": "okr-manager-02",
+            "display_name": "管理者02"
+          },
+          {
+            "user_id": "okr-manager-03",
+            "display_name": "管理者03"
+          },
+          {
+            "user_id": "okr-manager-04",
+            "display_name": "管理者04"
+          },
+          {
+            "user_id": "okr-manager-05",
+            "display_name": "管理者05"
+          },
+          {
+            "user_id": "okr-manager-06",
+            "display_name": "管理者06"
+          },
+          {
+            "user_id": "okr-manager-07",
+            "display_name": "管理者07"
+          },
+          {
+            "user_id": "okr-manager-08",
+            "display_name": "管理者08"
+          },
+          {
+            "user_id": "okr-manager-09",
+            "display_name": "管理者09"
+          },
+          {
+            "user_id": "okr-manager-10",
+            "display_name": "管理者10"
+          },
+          {
+            "user_id": "okr-manager-11",
+            "display_name": "管理者11"
+          },
+          {
+            "user_id": "okr-manager-12",
+            "display_name": "管理者12"
+          },
+          {
+            "user_id": "okr-manager-13",
+            "display_name": "管理者13"
+          },
+          {
+            "user_id": "okr-manager-14",
+            "display_name": "管理者14"
+          },
+          {
+            "user_id": "okr-manager-15",
+            "display_name": "管理者15"
+          }
+        ],
+        "require_incremental_member_analysis": true
+      }
+    }
+  ]
+}
