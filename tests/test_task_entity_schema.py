@@ -893,6 +893,85 @@ def test_meeting_identity_index_preserves_source_blob_marker_text_and_text_affin
         db.rollback()
 
 
+def test_composite_task_identity_indexes_preserve_every_source_component_through_migration():
+    from app.action_storage import _encoded_native_sqlite_value
+
+    identities = (
+        ("okr_review_requests", "okr_review", "conversation_id", "trigger_message_id"),
+        ("weekly_okr_analysis_jobs", "okr_analysis", "week_end", "manager_user_id", "source_digest"),
+    )
+    with closing(_source()) as db:
+        next_id = 417000
+        source_blob_rows = []
+        source_inserted = []
+        for kind, target_kind, *identity_fields in identities:
+            for selected_field in identity_fields:
+                blob_value = f"{kind}-{selected_field}".encode()
+                marker_text = json.dumps({"t": "blob", "v": blob_value.hex()}, separators=(",", ":"))
+                shared = {field: f"shared-{kind}-{selected_field}-{field}"
+                          for field in identity_fields}
+                common = payload(db, kind)
+                common.update(shared)
+                pair_ids = (next_id, next_id + 1)
+                next_id += 2
+                for physical_id, value, storage_type in (
+                    (pair_ids[0], sqlite3.Binary(blob_value), "blob"),
+                    (pair_ids[1], marker_text, "text"),
+                ):
+                    values = dict(common)
+                    values[selected_field] = value
+                    columns, expressions, parameters = source_insert(kind, values, {})
+                    db.execute(
+                        'insert into tasks("_kind","id","legacy_key","parent_id",'
+                        + ",".join('"' + column + '"' for column in columns) + ") values(?,?,?,? ,"
+                        + ",".join(expressions) + ")",
+                        (TASK_RECORD_TYPES.code(kind), physical_id, str(physical_id), None, *parameters),
+                    )
+                    source_inserted.append((kind, target_kind, physical_id, selected_field, storage_type))
+                    if storage_type == "blob":
+                        source_blob_rows.append((kind, target_kind, physical_id, values, selected_field))
+                assert db.execute(
+                    "select typeof(" + selected_field + ")," + selected_field + " from ("
+                    + task20_definitions.task20_projection(kind) + ") where id in (?,?) order by id",
+                    (str(pair_ids[0]), str(pair_ids[1])),
+                ).fetchall() == [("blob", blob_value), ("text", marker_text)]
+
+                duplicate_values = dict(common)
+                duplicate_values[selected_field] = sqlite3.Binary(blob_value)
+                columns, expressions, parameters = source_insert(kind, duplicate_values, {})
+                with pytest.raises(sqlite3.IntegrityError):
+                    db.execute(
+                        'insert into tasks("_kind","id","legacy_key","parent_id",'
+                        + ",".join('"' + column + '"' for column in columns) + ") values(?,?,?,? ,"
+                        + ",".join(expressions) + ")",
+                        (TASK_RECORD_TYPES.code(kind), next_id, str(next_id), None, *parameters),
+                    )
+                next_id += 1
+
+        db.commit()
+        db.execute("begin immediate")
+        source_metadata = capture_task_entities(db)
+        migrate_task_entities(db, source_metadata)
+
+        for kind, target_kind, physical_id, selected_field, source_type in source_inserted:
+            row = db.execute(
+                "select json_type(parameters_json,'$." + selected_field + "'),"
+                "typeof(jsonb_extract(parameters_json,'$." + selected_field + "')) "
+                "from tasks where id=?", (physical_id,),
+            ).fetchone()
+            assert row == (("object", "blob") if source_type == "blob" else ("text", "text"))
+
+        for kind, target_kind, physical_id, values, _selected_field in source_blob_rows:
+            params = {field: _encoded_native_sqlite_value(value) for field, value in values.items()}
+            with pytest.raises(sqlite3.IntegrityError):
+                db.execute(
+                    "insert into tasks(kind,status,parameters_json,created_at,updated_at) "
+                    "values(?, 'pending', jsonb(?), 'now', 'now')",
+                    (target_kind, json.dumps(params, ensure_ascii=False, allow_nan=False, separators=(",", ":"))),
+                )
+        db.rollback()
+
+
 def test_inverse_preserves_hidden_task12_rowid_legacy_key_for_natural_key_owner():
     with closing(_source()) as db:
         physical_id = db.execute(

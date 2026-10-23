@@ -17,6 +17,13 @@ No runtime lookup caller or source schema changed. This is a correction to the u
 - `python -m compileall -q app/task_run_entity_definitions.py tests/test_task_entity_schema.py` — passed.
 - `git diff --check` — passed after the final edits.
 
+## Composite coverage follow-up
+
+The first review found that the initial regression exercised only Meeting's single-column index. The follow-up regression now runs the actual source writers and migration for every composite component: OKR review `conversation_id` and `trigger_message_id`, plus weekly analysis `week_end`, `manager_user_id` and `source_digest`. For each component, its BLOB and exactly matching marker-looking TEXT values are tested with the remaining composite components held constant. The source admits each typed pair and rejects a repeated BLOB composite; migration retains the pair as distinct native parameter values; each native index rejects a repeated BLOB composite.
+
+- `pytest -q tests/test_task_entity_schema.py -k composite_task_identity_indexes_preserve_every_source_component_through_migration` — 1 passed.
+- `pytest -q tests/test_task_entity_schema.py tests/test_task_run_entity_assembly.py` — 35 passed (21.55s). Ruff, compileall and `git diff --check` passed after the follow-up test edit.
+
 ## Commits
 
 - Product, regression, candidate SQL, behavior docs and report: `4b1bb37449a7293cb3e9b7e6f02efee8058f3b1a`.
