@@ -6307,9 +6307,14 @@ class AutoReplyStore(LogicalRunStoreMixin, ReviewedCandidateStoreMixin):
         )
 
     def list_reply_task_inputs(self, task_id: int) -> list[dict[str, object]]:
+        from app import task_entity_storage
+
         with self._connect() as db:
+            task = task_entity_storage.get_task(db, task_id)
+            if task is None or task["kind"] != "reply":
+                return []
             result = [dict(row) for row in db.execute(
-                f'select * from ({REPLY_TASK_INPUT_SQL}) where reply_task_id=? order by id', (task_id,)
+                "select * from task_inputs where task_id=? order by id", (task_id,)
             )]
         for row in result:
             if row["input_compacted"]:
@@ -9456,19 +9461,26 @@ class AutoReplyStore(LogicalRunStoreMixin, ReviewedCandidateStoreMixin):
         after_id: int | None = None,
         max_id: int | None = None,
     ) -> list[ReplyTask]:
+        from app import task_entity_storage
+
         if limit <= 0:
             return []
         with self._connect() as db:
             now_expression = "current_timestamp" if now is None else "?"
             clauses = [
+                "kind='reply'",
                 "status='pending'",
+                "exists(select 1 from task_inputs where task_inputs.id=tasks.current_input_id and task_inputs.task_id=tasks.id)",
                 f"(available_at='' or datetime(available_at) <= datetime({now_expression}))",
             ]
             args: list[str | int] = []
             if now is not None:
                 args.append(now)
             if channel is not None:
-                clauses.append("channel=?")
+                clauses.append(
+                    "exists(select 1 from task_inputs where task_inputs.id=tasks.current_input_id "
+                    "and task_inputs.task_id=tasks.id and task_inputs.channel=?)"
+                )
                 args.append(channel)
             if after_id is not None:
                 clauses.append("id>?")
@@ -9478,16 +9490,14 @@ class AutoReplyStore(LogicalRunStoreMixin, ReviewedCandidateStoreMixin):
                 args.append(max_id)
             args.append(limit)
             rows = db.execute(
-                f"""
-                select *
-                from ({REPLY_TASK_CURRENT_SQL}) as reply_tasks
-                where {' and '.join(clauses)}
-                order by id
-                limit ?
-                """,
+                f"select id from tasks where {' and '.join(clauses)} order by id limit ?",
                 args,
             ).fetchall()
-            return [self._reply_task_from_row(row) for row in rows]
+            return [
+                self._reply_task_from_native(task)
+                for row in rows
+                if (task := task_entity_storage.get_task_with_inputs(db, int(row["id"]))) is not None
+            ]
 
 
     def max_pending_reply_task_id(
@@ -9499,36 +9509,40 @@ class AutoReplyStore(LogicalRunStoreMixin, ReviewedCandidateStoreMixin):
         with self._connect() as db:
             now_expression = "current_timestamp" if now is None else "?"
             clauses = [
+                "kind='reply'",
                 "status='pending'",
+                "exists(select 1 from task_inputs where task_inputs.id=tasks.current_input_id and task_inputs.task_id=tasks.id)",
                 f"(available_at='' or datetime(available_at) <= datetime({now_expression}))",
             ]
             args: list[str] = []
             if now is not None:
                 args.append(now)
             if channel is not None:
-                clauses.append("channel=?")
+                clauses.append(
+                    "exists(select 1 from task_inputs where task_inputs.id=tasks.current_input_id "
+                    "and task_inputs.task_id=tasks.id and task_inputs.channel=?)"
+                )
                 args.append(channel)
             row = db.execute(
-                f"""
-                select max(id) as max_id
-                from ({REPLY_TASK_SQL})
-                where {' and '.join(clauses)}
-                """,
+                f"select max(id) as max_id from tasks where {' and '.join(clauses)}",
                 args,
             ).fetchone()
             return row["max_id"] if row is not None else None
 
     def get_reply_task(self, task_id: int) -> ReplyTask | None:
+        from app import task_entity_storage
+
         with self._connect() as db:
-            row = db.execute(
-                f"select * from ({REPLY_TASK_CURRENT_SQL}) as reply_tasks where id=?",
-                (task_id,),
-            ).fetchone()
-            return self._reply_task_from_row(row) if row is not None else None
+            task = task_entity_storage.get_task_with_inputs(db, task_id)
+            if task is None or task["kind"] != "reply":
+                return None
+            return self._reply_task_from_native(task)
 
     def claim_reply_task(
         self, task_id: int, now: str | None = None
     ) -> ReplyTask | None:
+        from app import task_entity_storage
+
         with claim_connection(self, immediate=True) as db:
             if db is None:
                 return None
@@ -9539,23 +9553,27 @@ class AutoReplyStore(LogicalRunStoreMixin, ReviewedCandidateStoreMixin):
             cursor = db.execute(
                 f"""
                 update tasks
-                set {task8_set_parts('reply_tasks', {}, update_sql={'status': "'processing'", 'attempts': f"""{task20_column('reply_tasks', 'attempts')} + 1""", 'claimed_input_version': f"""{task20_column('reply_tasks', 'input_version')}""", 'locked_at': 'current_timestamp', 'available_at': "''", 'updated_at': 'current_timestamp'}, structural_sql={'claimed_input_id': 'current_input_id'}, payload_source='tasks.payload_json').sql}  where record_type='reply_tasks' and id=?
-                  and {task20_column('reply_tasks', 'status')}='pending'
-                  and ({task20_column('reply_tasks', 'available_at')}='' or datetime({task20_column('reply_tasks', 'available_at')}) <= datetime({now_expression}))
+                set status='processing', attempts=attempts+1,
+                    claimed_input_id=current_input_id,
+                    claimed_input_version=input_version,
+                    locked_at=current_timestamp, available_at='', updated_at=current_timestamp
+                where id=? and kind='reply' and status='pending'
+                  and (available_at='' or datetime(available_at) <= datetime({now_expression}))
                 """,
                 args,
             )
             if cursor.rowcount != 1:
                 return None
-            row = db.execute(
-                f"select * from ({REPLY_TASK_CURRENT_SQL}) as reply_tasks where id=?",
-                (task_id,),
-            ).fetchone()
-            return self._reply_task_from_row(row)
+            task = task_entity_storage.get_task_with_inputs(db, task_id)
+            if task is None:
+                raise RuntimeError("claimed reply task disappeared")
+            return self._reply_task_from_native(task)
 
     def claim_reply_tasks(
         self, limit: int, now: str | None = None, *, channel: str = "dingtalk"
     ) -> list[ReplyTask]:
+        from app import task_entity_storage
+
         if limit <= 0:
             return []
         # Empty polling must not contend with real writes. Recheck below after
@@ -9572,37 +9590,36 @@ class AutoReplyStore(LogicalRunStoreMixin, ReviewedCandidateStoreMixin):
             args.append(limit)
             rows = db.execute(
                 f"""
-                select *
-                from ({REPLY_TASK_CURRENT_SQL}) as reply_tasks
-                where status='pending'
-                  and channel=?
+                select id
+                from tasks
+                where kind='reply' and status='pending'
+                  and exists(select 1 from task_inputs where task_id=tasks.id and id=current_input_id and channel=?)
                   and (available_at='' or datetime(available_at) <= datetime({now_expression}))
                 order by id
                 limit ?
                 """,
                 args,
             ).fetchall()
-            task_ids = [row["id"] for row in rows]
+            task_ids = [int(row["id"]) for row in rows]
             if not task_ids:
                 return []
             placeholders = ",".join("?" for _ in task_ids)
             db.execute(
                 f"""
                 update tasks
-                set {task8_set_parts('reply_tasks', {}, update_sql={'status': "'processing'", 'attempts': f"""{task20_column('reply_tasks', 'attempts')} + 1""", 'claimed_input_version': f"""{task20_column('reply_tasks', 'input_version')}""", 'locked_at': 'current_timestamp', 'available_at': "''", 'updated_at': 'current_timestamp'}, structural_sql={'claimed_input_id': 'current_input_id'}, payload_source='tasks.payload_json').sql}  where record_type='reply_tasks' and id in ({placeholders})
+                set status='processing', attempts=attempts+1,
+                    claimed_input_id=current_input_id,
+                    claimed_input_version=input_version,
+                    locked_at=current_timestamp, available_at='', updated_at=current_timestamp
+                where kind='reply' and id in ({placeholders}) and status='pending'
                 """,
                 task_ids,
             )
-            claimed_rows = db.execute(
-                f"""
-                select *
-                from ({REPLY_TASK_CURRENT_SQL}) as reply_tasks
-                where id in ({placeholders})
-                order by id
-                """,
-                task_ids,
-            ).fetchall()
-            return [self._reply_task_from_row(row) for row in claimed_rows]
+            return [
+                self._reply_task_from_native(task)
+                for task_id in task_ids
+                if (task := task_entity_storage.get_task_with_inputs(db, task_id)) is not None
+            ]
 
     def list_stale_processing_reply_tasks(
         self,
@@ -15340,15 +15357,18 @@ class AutoReplyStore(LogicalRunStoreMixin, ReviewedCandidateStoreMixin):
     def update_reply_task_trigger(
         self, task_id: int, *, trigger_text: str, trigger_message_json: str
     ) -> int:
+        from app import task_entity_storage
+
         with self._immediate_write_transaction() as db:
-            row = db.execute(
-                f"select * from ({REPLY_TASK_CURRENT_SQL}) as reply_tasks where id=? and status='pending' and attempts=0",
-                (task_id,),
-            ).fetchone()
-            if row is None:
+            task = task_entity_storage.get_task_with_inputs(db, task_id)
+            if (
+                task is None or task["kind"] != "reply"
+                or task["status"] != "pending" or task["attempts"] != 0
+                or task["current_input"] is None
+            ):
                 return 0
             self._refresh_reply_input_in_transaction(
-                db, row, trigger_text, trigger_message_json
+                db, task, trigger_text, trigger_message_json
             )
             return 1
 
@@ -15356,11 +15376,17 @@ class AutoReplyStore(LogicalRunStoreMixin, ReviewedCandidateStoreMixin):
     def _refresh_reply_input_in_transaction(
         cls,
         db: sqlite3.Connection,
-        row: sqlite3.Row,
+        row: Mapping[str, object],
         trigger_text: str,
         trigger_message_json: str,
     ) -> int:
+        from app import task_entity_storage
+
         snapshot = dict(row)
+        current_input = row["current_input"]
+        if not isinstance(current_input, Mapping):
+            raise RuntimeError("reply task has no bound current input")
+        snapshot.update(current_input)
         snapshot.update(
             trigger_text=trigger_text, trigger_message_json=trigger_message_json
         )
@@ -15371,17 +15397,30 @@ class AutoReplyStore(LogicalRunStoreMixin, ReviewedCandidateStoreMixin):
                 separators=(",", ":"),
             ).encode()
         ).hexdigest()
-        input_id = cls._append_reply_input_snapshot(
-            db,
-            int(row["id"]),
-            snapshot,
-            revision_key=f"refresh:{row['input_version'] + 1}:{digest}",
+        new_input, _inserted = task_entity_storage.append_task_input(
+            db, task_id=int(row["id"]), values={
+                field: snapshot[field] for field in (
+                    "channel", "conversation_id", "conversation_title", "single_chat",
+                    "trigger_message_id", "trigger_create_time", "trigger_sender",
+                    "trigger_text", "trigger_message_json", "oa_url",
+                    "business_object_key",
+                )
+            } | {
+                "input_revision_key": f"refresh:{row['input_version'] + 1}:{digest}",
+                "input_provenance_json": cls._reply_input_provenance(
+                    trigger_text, trigger_message_json,
+                ),
+                "input_compacted": 0,
+            },
         )
-        db.execute(
-            f"""update tasks set {task8_set_parts('reply_tasks', {}, update_sql={'input_version': f"""{task20_column('reply_tasks', 'input_version')}+1""", 'updated_at': 'current_timestamp'}, structural_sql={'current_input_id': "(select id from tasks where record_type='reply_task_inputs' and cast(legacy_key as integer)=?)"}, payload_source='tasks.payload_json').sql}  where record_type='reply_tasks' and id=?""",
-            (input_id, row["id"]),
+        updated = task_entity_storage.bind_current_input(
+            db, task_id=int(row["id"]), input_id=int(new_input["id"]),
+            expected_input_version=int(row["input_version"]),
+            input_version=int(row["input_version"]) + 1,
         )
-        return input_id
+        if updated is None:
+            raise RuntimeError("reply task input refresh lost its owner")
+        return int(new_input["id"])
 
     def update_pending_reply_task_trigger_for_message(
         self,
@@ -15392,18 +15431,29 @@ class AutoReplyStore(LogicalRunStoreMixin, ReviewedCandidateStoreMixin):
         trigger_message_json: str,
         channel: str = "dingtalk",
     ) -> int:
+        from app import task_entity_storage
+
         with self._immediate_write_transaction() as db:
-            row = db.execute(
-                f"select * from ({REPLY_TASK_CURRENT_SQL}) as reply_tasks where channel=? and conversation_id=? and trigger_message_id=? and status='pending' and attempts=0",
+            rows = db.execute(
+                "select tasks.id from tasks join task_inputs on task_inputs.id=tasks.current_input_id "
+                "where tasks.kind='reply' and tasks.status='pending' and tasks.attempts=0 "
+                "and task_inputs.channel=? and task_inputs.conversation_id=? "
+                "and task_inputs.trigger_message_id=? order by tasks.id limit 1",
                 (channel, conversation_id, trigger_message_id),
             ).fetchone()
-            if row is None or (
-                row["trigger_text"] == trigger_text
-                and row["trigger_message_json"] == trigger_message_json
+            if rows is None:
+                return 0
+            task = task_entity_storage.get_task_with_inputs(db, int(rows["id"]))
+            if task is None:
+                return 0
+            current_input = task["current_input"]
+            if current_input is None or (
+                current_input["trigger_text"] == trigger_text
+                and current_input["trigger_message_json"] == trigger_message_json
             ):
                 return 0
             self._refresh_reply_input_in_transaction(
-                db, row, trigger_text, trigger_message_json
+                db, task, trigger_text, trigger_message_json
             )
             return 1
 

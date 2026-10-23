@@ -208,6 +208,130 @@ def test_creator_keeps_distinct_channels_separate_and_oa_provisional_key_refines
         assert db.execute("select count(*) from task_inputs where task_id=?", (provisional.id,)).fetchone()[0] == 2
 
 
+def test_native_reply_queue_claim_and_input_refresh_keep_claimed_snapshot(tmp_path):
+    store = _target_store(tmp_path / "target.sqlite3")
+    first = store.ensure_reply_task(**_creator_kwargs(_spec(
+        "queue-1", business_key="queue-business", available_at="2026-10-23 10:00:00",
+    )))
+    other_channel = store.ensure_reply_task(**_creator_kwargs(_spec(
+        "queue-2", channel="wechat", business_key="wechat-business",
+    )))
+    later = store.ensure_reply_task(**_creator_kwargs(_spec(
+        "queue-3", business_key="later-business", available_at="2026-10-23 12:00:00",
+    )))
+    bulk = store.ensure_reply_task(**_creator_kwargs(_spec(
+        "queue-4", business_key="bulk-business",
+    )))
+
+    assert store.peek_reply_tasks(0, now="2026-10-23 11:00:00") == []
+    assert [task.id for task in store.peek_reply_tasks(5, now="2026-10-23 11:00:00", channel="dingtalk")] == [first.id, bulk.id]
+    assert store.max_pending_reply_task_id(now="2026-10-23 11:00:00", channel="dingtalk") == bulk.id
+    assert store.peek_reply_tasks(5, now="2026-10-23 11:00:00", channel="wechat")[0].id == other_channel.id
+    assert store.peek_reply_tasks(
+        5, now="2026-10-23 11:00:00", channel="dingtalk",
+        after_id=first.id, max_id=bulk.id,
+    )[0].id == bulk.id
+
+    claimed = store.claim_reply_task(first.id, now="2026-10-23 11:00:00")
+    assert claimed is not None
+    assert claimed.status == "processing" and claimed.attempts == 1
+    assert claimed.claimed_input_id == claimed.current_input_id
+    execution = store.get_reply_task_for_execution(first.id, claimed.execution_generation)
+    assert execution is not None and execution.trigger_text == "message queue-1"
+
+    revised = store.ensure_reply_task(**_creator_kwargs(_spec(
+        "queue-5", business_key="queue-business", trigger_text="new current input",
+    )))
+    assert revised.id == first.id
+    assert revised.current_input_id != claimed.claimed_input_id
+    assert revised.claimed_input_id == claimed.claimed_input_id
+    assert store.get_reply_task(first.id).trigger_text == "new current input"
+    assert store.get_reply_task_for_execution(first.id, claimed.execution_generation).trigger_text == "message queue-1"
+    assert store.list_reply_task_inputs(first.id)[-1]["task_id"] == first.id
+    assert "reply_task_id" not in store.list_reply_task_inputs(first.id)[-1]
+    assert [task.id for task in store.claim_reply_tasks(
+        4, now="2026-10-23 11:00:00", channel="dingtalk",
+    )] == [bulk.id]
+    assert store.claim_reply_task(first.id, now="2026-10-23 11:00:00") is None
+    assert store.get_reply_task(later.id).attempts == 0
+
+
+def test_native_bulk_claim_rechecks_after_preview_loses_task(tmp_path, monkeypatch):
+    store = _target_store(tmp_path / "target.sqlite3")
+    task = store.ensure_reply_task(**_creator_kwargs(_spec("race-1")))
+    original_peek = store.peek_reply_tasks
+
+    def claim_after_preview(*args, **kwargs):
+        preview = original_peek(*args, **kwargs)
+        assert preview and preview[0].id == task.id
+        assert store.claim_reply_task(task.id, now="2026-10-23 11:00:00")
+        return preview
+
+    monkeypatch.setattr(store, "peek_reply_tasks", claim_after_preview)
+    assert store.claim_reply_tasks(1, now="2026-10-23 11:00:00") == []
+    assert store.get_reply_task(task.id).attempts == 1
+
+
+def test_native_reply_refresh_guards_and_explicit_same_bytes_increment(tmp_path, monkeypatch):
+    store = _target_store(tmp_path / "target.sqlite3")
+    task = store.ensure_reply_task(**_creator_kwargs(_spec("refresh-1")))
+
+    assert store.update_pending_reply_task_trigger_for_message(
+        "conversation", "refresh-1", trigger_text=task.trigger_text,
+        trigger_message_json=task.trigger_message_json,
+    ) == 0
+    assert store.update_reply_task_trigger(
+        task.id, trigger_text=task.trigger_text,
+        trigger_message_json=task.trigger_message_json,
+    ) == 1
+    same_bytes_refresh = store.get_reply_task(task.id)
+    assert same_bytes_refresh.input_version == task.input_version + 1
+    assert same_bytes_refresh.current_input_id != task.current_input_id
+
+    original_inputs = store.list_reply_task_inputs(task.id)
+
+    def fail_current_bind(*args, **kwargs):
+        raise RuntimeError("input pointer bind failed")
+
+    monkeypatch.setattr(task_entity_storage, "bind_current_input", fail_current_bind)
+    with pytest.raises(RuntimeError, match="input pointer bind failed"):
+        store.update_reply_task_trigger(
+            task.id, trigger_text="rolled back", trigger_message_json="{}",
+        )
+    assert store.get_reply_task(task.id).input_version == same_bytes_refresh.input_version
+    assert store.list_reply_task_inputs(task.id) == original_inputs
+    monkeypatch.undo()
+
+    assert store.update_pending_reply_task_trigger_for_message(
+        "conversation", "refresh-1", trigger_text="changed",
+        trigger_message_json='{"id":"refresh-1"}',
+    ) == 1
+    refreshed = store.get_reply_task(task.id)
+    assert refreshed.input_version == same_bytes_refresh.input_version + 1
+    assert refreshed.trigger_text == "changed"
+    assert [row["trigger_text"] for row in store.list_reply_task_inputs(task.id)] == [
+        "message refresh-1", "message refresh-1", "changed",
+    ]
+    provenance = store.list_reply_task_inputs(task.id)[-1]["input_provenance_json"]
+    with store._immediate_write_transaction() as db:
+        db.execute(
+            "update task_inputs set trigger_text='',trigger_message_json='',input_compacted=1,"
+            "input_provenance_json=? where id=?",
+            (provenance, refreshed.current_input_id),
+        )
+    compacted = store.list_reply_task_inputs(task.id)[-1]
+    assert compacted["input_compacted"] == 1
+    assert '"input_compacted":true' in compacted["trigger_message_json"]
+    claimed = store.claim_reply_task(task.id, now="2026-10-23 11:00:00")
+    assert claimed is not None
+    assert store.update_reply_task_trigger(
+        task.id, trigger_text="too late", trigger_message_json="{}",
+    ) == 0
+    execution = store.get_reply_task_for_execution(task.id, claimed.execution_generation)
+    assert execution is not None and execution.input_compacted
+    assert '"input_compacted":true' in execution.trigger_message_json
+
+
 def test_oa_refinement_updates_claimed_context_key_but_keeps_claimed_source_bytes(tmp_path):
     store = _target_store(tmp_path / "target.sqlite3")
     provisional = store.ensure_reply_task(**_creator_kwargs(_spec(
