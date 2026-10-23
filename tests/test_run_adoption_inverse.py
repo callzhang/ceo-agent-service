@@ -130,6 +130,23 @@ def test_planner_rejects_missing_positive_run_handoff_owner():
         db.close()
 
 
+def test_inverse_weak_run_reference_uses_sparse_edge_or_actual_source_membership():
+    from app.run_adoption_inverse import _inverse_weak_run_ref, _run_sources
+
+    db = _db()
+    try:
+        db.execute("insert into runs values(30,1,'consumer','g3',2,'agent_runs')")
+        run_map, source_runs = _run_sources(db, _inverse_for_fixture())
+        assert _inverse_weak_run_ref(10, run_map, source_runs) == 910
+        assert _inverse_weak_run_ref(30, run_map, source_runs) == 30
+        assert _inverse_weak_run_ref(0, run_map, source_runs) == 0
+        assert _inverse_weak_run_ref(None, run_map, source_runs) is None
+        with pytest.raises(ValueError, match="missing source Run owner: 31"):
+            _inverse_weak_run_ref(31, run_map, source_runs)
+    finally:
+        db.close()
+
+
 def test_reused_review_business_id_under_another_audit_does_not_reuse_stale_source_identity():
     db = _db()
     try:
@@ -305,5 +322,50 @@ def test_actual_c2a_task_run_inverse_planner_uses_current_review_and_source_run_
         occupied = {row[0] for row in db.execute("select id from actions")}
         assert occupied.isdisjoint(item["physical_id"] for item in plan["adoptions"]
                                    if item["new"] or item["reassigned"])
+    finally:
+        db.close()
+
+
+def test_actual_task_run_then_adoption_inverse_restores_source_action_catalog_and_facts():
+    import sqlite3
+
+    from app.run_adoption_inverse import restore_run_adoptions
+    from app.run_adoption_schema import migrate_run_adoptions
+    from app.run_entity_schema import restore_run_entities
+    from app.task_entity_schema import restore_task_entities
+    from tests.test_run_adoption_schema import _populated_source, _source_snapshot
+
+    db, context = _populated_source(remap_tasks=True, remap_runs=True,
+                                    nonagent_run_owner=True,
+                                    stop_before_adoption=True)
+    db.row_factory = sqlite3.Row
+    original = context["source_snapshot"]
+    try:
+        forward = migrate_run_adoptions(
+            db, context["adoption_source"], task_metadata=context["task_metadata"],
+            run_metadata=context["run_metadata"])
+        task_inverse = restore_task_entities(
+            db, context["task_source_metadata"], context["task_metadata"])
+        run_inverse = restore_run_entities(
+            db, context["run_source_metadata"], context["run_metadata"],
+            task_metadata=context["task_metadata"], task_inverse_metadata=task_inverse)
+        result = restore_run_adoptions(
+            db, context["adoption_source"], forward,
+            task_metadata=context["task_metadata"],
+            task_inverse_metadata=task_inverse, run_inverse_metadata=run_inverse)
+        assert result == {"version": 1, "action_count": 10, "receipt_count": 2,
+                          "observer_count": 2, "retained_count": 1,
+                          "adopted_count": 9, "reassigned_identity_count": 0}
+        db.row_factory = None
+        restored = _source_snapshot(db)
+        assert restored["catalog"] == original["catalog"]
+        assert restored["rows"][2:] == original["rows"][2:]
+        action_sequence_names = {"actions", "action_receipts", "action_observers",
+                                 "action_entity_identity_map"}
+        assert tuple(row for row in restored["sequences"] if row[1] in action_sequence_names) == tuple(
+            row for row in original["sequences"] if row[1] in action_sequence_names)
+        assert db.execute("pragma foreign_key_check").fetchall() == []
+        assert db.execute("pragma integrity_check").fetchone()[0] == "ok"
+        assert db.execute("select count(*) from temp.sqlite_schema where name like '_run_adoption_%'").fetchone()[0] == 0
     finally:
         db.close()

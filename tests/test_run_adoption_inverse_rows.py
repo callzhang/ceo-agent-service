@@ -92,7 +92,7 @@ def test_actual_retained_rows_roundtrip_typed_run_task_feedback_and_payload_fact
 
 
 def test_positive_missing_run_reference_rejects_without_mutating_native_actions():
-    db, context, _, task_inverse, run_inverse = _inverse_fixture(task_delivery=True)
+    db, context, forward, task_inverse, run_inverse = _inverse_fixture(task_delivery=True)
     try:
         before = [tuple(row) for row in db.execute("select * from actions order by id")]
         edges = [edge for edge in run_inverse["run_handoff"]["identity_edges"]
@@ -103,7 +103,9 @@ def test_positive_missing_run_reference_rejects_without_mutating_native_actions(
             run_inverse["run_handoff"]["source_context"], edges,
             run_inverse["run_handoff"]["owner_highwaters"])
         with pytest.raises(ValueError, match="missing source Run owner"):
-            retained_action_source_rows(db, context["adoption_source"],
+            from app.run_adoption_inverse import restore_run_adoptions
+            restore_run_adoptions(db, context["adoption_source"], forward,
+                task_metadata=context["task_metadata"],
                 task_inverse_metadata=task_inverse, run_inverse_metadata=run_inverse)
         assert [tuple(row) for row in db.execute("select * from actions order by id")] == before
     finally:
@@ -111,14 +113,16 @@ def test_positive_missing_run_reference_rejects_without_mutating_native_actions(
 
 
 def test_missing_typed_task_owner_rejects_even_if_another_kind_uses_same_id():
-    db, context, _, task_inverse, run_inverse = _inverse_fixture(
+    db, context, forward, task_inverse, run_inverse = _inverse_fixture(
         task_delivery=True, unresolved_task=True)
     try:
         # The bad positive reference was introduced before Task/Run inverse;
         # 201 is a Reply Task source ID and 7777 has no typed source owner.
         before = [tuple(row) for row in db.execute("select * from actions order by id")]
         with pytest.raises(ValueError, match="missing typed source Task owner"):
-            retained_action_source_rows(db, context["adoption_source"],
+            from app.run_adoption_inverse import restore_run_adoptions
+            restore_run_adoptions(db, context["adoption_source"], forward,
+                task_metadata=context["task_metadata"],
                 task_inverse_metadata=task_inverse, run_inverse_metadata=run_inverse)
         assert [tuple(row) for row in db.execute("select * from actions order by id")] == before
     finally:
@@ -246,6 +250,63 @@ def test_adopted_row_plan_reassigns_a_source_physical_id_taken_by_a_current_acti
         db.close()
 
 
+def test_materializer_keeps_current_action_receipts_observers_and_map_on_collision():
+    from app.action_entity_storage import ACTION_KIND_CODE
+    from app.run_adoption_inverse import plan_run_adoption_inverse, restore_run_adoptions
+
+    db, context, forward, task_inverse, run_inverse = _inverse_fixture()
+    try:
+        candidate_identity = next(row for row in forward["identities"]
+                                  if row[0] == "review_candidates")
+        occupied_id = int(candidate_identity[1])
+        for (trigger_name,) in db.execute(
+                "select name from main.sqlite_schema where type='trigger' and tbl_name='actions'"):
+            db.execute('drop trigger main."' + trigger_name.replace('"', '""') + '"')
+        db.execute("insert into actions(id,_kind,legacy_key,action_data,payload_json) "
+                   "values(?,?,null,jsonb('{}'),jsonb('[]'))",
+                   (occupied_id, ACTION_KIND_CODE))
+        from app.task_run_entity_assembly import _action_objects
+        for sql in _action_objects().values():
+            if sql.lstrip().lower().startswith("create trigger"):
+                db.execute(sql)
+        from app.action_entity_storage import add_action_observer, append_action_receipt
+        first = append_action_receipt(db, occupied_id, values={
+            "operation": "send", "status": "done", "provider_result_json": "{}",
+            "observed_at": "collision-provider-clock"})
+        second = append_action_receipt(db, occupied_id, values={
+            "operation": "send", "status": "done",
+            "observed_at": "collision-lineage-clock"})
+        db.execute("update action_receipts set provider_receipt_id=? where id=?",
+                   (first, second))
+        add_action_observer(db, occupied_id, agent_run_id=0, task_id=0,
+                            created_at="collision-observer-clock")
+        db.execute("insert into action_entity_identity_map values(?,?,?,?)",
+                   ("generic", "collision-owner", occupied_id, second))
+        plan = plan_run_adoption_inverse(db, context["adoption_source"], forward,
+                                         run_inverse_metadata=run_inverse)
+        candidate = next(item for item in plan["adoptions"]
+                         if item["source_kind"] == "review_candidates"
+                         and item["mapped_physical_id"] == occupied_id)
+        assert candidate["physical_id"] != occupied_id
+
+        restore_run_adoptions(
+            db, context["adoption_source"], forward,
+            task_metadata=context["task_metadata"],
+            task_inverse_metadata=task_inverse, run_inverse_metadata=run_inverse)
+        assert db.execute("select record_type from actions where id=?", (occupied_id,)).fetchone()[0] == "action"
+        assert tuple(db.execute("select action_id,provider_receipt_id from action_receipts where id=?",
+                                (second,)).fetchone()) == (occupied_id, first)
+        assert tuple(db.execute("select action_id,agent_run_id,task_id from action_observers").fetchone()) == (
+            occupied_id, 0, 0)
+        assert tuple(db.execute("select action_id,receipt_id from action_entity_identity_map").fetchone()) == (
+            occupied_id, second)
+        assert db.execute("select id from actions where record_type='review_candidates' "
+                          "and legacy_key=?", (candidate["public_id"],)).fetchone()[0] == candidate["physical_id"]
+        assert db.execute("pragma foreign_key_check").fetchall() == []
+    finally:
+        db.close()
+
+
 def test_adopted_rows_follow_current_supplements_after_retirement_and_addition():
     from app.run_adoption_inverse import adopted_action_source_rows
     from app.current_action_schema import current_action_payloads
@@ -332,7 +393,7 @@ def test_adopted_rows_include_a_new_native_review_and_run_created_before_inverse
             (consumer, audit["id"], candidate, "approve", result, "new-native-review-clock")).fetchone()[0]
         created.update({"consumer": consumer, "audit": audit["id"], "review": review_id})
 
-    db, context, forward, _, run_inverse = _inverse_fixture(before_inverse=add_native_review)
+    db, context, forward, task_inverse, run_inverse = _inverse_fixture(before_inverse=add_native_review)
     try:
         rows = adopted_action_source_rows(db, context["adoption_source"], forward,
             run_inverse_metadata=run_inverse)
@@ -350,5 +411,16 @@ def test_adopted_rows_include_a_new_native_review_and_run_created_before_inverse
         assert payload["result_json"] == '{"candidate_digest":"' + db.execute(
             "select candidate_digest from run_adopted_reviews where id=?", (created["review"],)).fetchone()[0] + '","outcome":"approve"}'
         assert payload["created_at"] == "new-native-review-clock"
+        from app.run_adoption_inverse import restore_run_adoptions
+        restored = restore_run_adoptions(
+            db, context["adoption_source"], forward,
+            task_metadata=context["task_metadata"],
+            task_inverse_metadata=task_inverse, run_inverse_metadata=run_inverse)
+        assert restored["adopted_count"] == len(rows)
+        stored = db.execute(
+            "select id,audit_run_id from actions where record_type='candidate_reviews' "
+            "and legacy_key=?", (str(created["review"]),)).fetchone()
+        assert stored is not None and stored["audit_run_id"] == expected_audit_id
+        assert db.execute("pragma foreign_key_check").fetchall() == []
     finally:
         db.close()

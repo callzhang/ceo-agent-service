@@ -178,9 +178,16 @@ def _rebuild_actions(db, task_metadata, task_public_index, task_map, run_map, so
         f'select * from temp."{_ALL_ACTION_CAPTURE}" where record_type not in '
         "('review_candidates','candidate_reviews','candidate_selections','candidate_supplements',"
         "'candidate_executions','candidate_execution_alias','candidate_action_attempts') order by id")]
-    if "task_id" in source_columns and "task_id" not in target_columns:
-        if any(row["task_id"] is not None for row in retained):
-            raise ValueError("retained source Action task_id has no assembled target representation")
+    stored_source_columns = set(row[1] for row in db.execute(
+        "pragma main.table_xinfo(actions)") if row[6] == 0)
+    stored_target_columns = set(target_columns)
+    retired_columns = stored_source_columns - stored_target_columns
+    populated_retired = sorted(
+        column for column in retired_columns
+        if any(row[column] is not None for row in retained))
+    if populated_retired:
+        raise ValueError("retained source Action columns have no assembled target representation: "
+                         + ",".join(populated_retired))
     db.execute("drop table main.actions")
     db.execute(target_sql)
     columns = [name for name in target_columns if name in source_columns]

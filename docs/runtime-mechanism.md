@@ -129,6 +129,12 @@ owner high-water、selected source DDL context 与 SHA-256 digest；source seque
 删除事实不会从初始快照复活。Task-first composed inverse
 与 handoff producer仍是 migration-only；没有激活运行时。
 
+C2B2C 的 `restore_run_adoptions` 是未激活的 migration helper：在 Task inverse 与 Run
+inverse 后，使用当前 native adopted rows、receipts、observers 和 identity map 重建旧
+Actions 及其完整来源 catalog，不读取初始 TEMP 行快照。调用方负责 FK-off transaction
+及 commit/rollback。正向 materializer 按来源与目标的实际 stored-column 差集检查保留行，
+遇到 populated retired-only field 会在丢失前拒绝。完整 frozen copy 和旧 cold-writer 双周期仍属后续验收。
+
 Actions 保留五十九种物理类型：五十八种方案、审查、候选、修订、动作、尝试、步骤、业务事件和回执，以及一种只保留旧 execution 身份的技术 alias。
 类型只存 `_kind`，业务值使用声明的 JSONB 槽位及 prepared Action 的三个源限定列；公开字段按其唯一 owner 读取。
 公开 ID 与物理 Action ID 保持区别，各源 AUTO 水位和普通隐藏 ROWID 语义保留。

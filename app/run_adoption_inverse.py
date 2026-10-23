@@ -100,6 +100,15 @@ def _source_run(canonical_id, canonical_to_source, physical_runs):
     return physical, run
 
 
+def _inverse_weak_run_ref(value, canonical_to_source, physical_runs):
+    """Translate a current Run ID through its sparse edge or actual source membership."""
+    if value is None or value == 0:
+        return value
+    if type(value) is not int:
+        raise ValueError(f"invalid stored Run reference type: {value!r}")
+    return _source_run(value, canonical_to_source, physical_runs)[0]
+
+
 def _map_rows(db, forward_metadata, canonical_to_source, physical_runs):
     rows = db.execute("select source_kind,source_physical_id,source_public_id,source_public_id_type,target_run_id,target_child_id from main.run_adoption_identity_map").fetchall()
     try:
@@ -288,17 +297,11 @@ def plan_run_adoption_inverse(db: sqlite3.Connection, source_metadata: dict,
             "reassigned_identity_count": sum(item["reassigned"] for item in plans)}
 
 
-_RETIRED_ACTION_COLUMNS = frozenset({
-    "task_id", "consumer_run_id", "audit_run_id", "predecessor_review_id",
-    "candidate_id", "review_id", "execution_review_id", "execution_selection_id",
-})
-
-
-def _table_stored_columns(sql):
+def _table_stored_columns(sql, table="actions"):
     scratch = sqlite3.connect(":memory:")
     try:
         scratch.execute(sql)
-        return tuple(row[1] for row in scratch.execute("pragma table_xinfo(actions)")
+        return tuple(row[1] for row in scratch.execute(f'pragma table_xinfo("{table}")')
                      if row[6] == 0)
     finally:
         scratch.close()
@@ -391,10 +394,7 @@ def retained_action_source_rows(db: sqlite3.Connection, source_metadata: dict, *
     source_actions_sql = next(item["sql"] for item in source_objects if item["name"] == "actions")
     source_columns = _table_stored_columns(source_actions_sql)
     target_columns = _table_stored_columns(source_sql)
-    unexpected_missing = set(source_columns) - set(target_columns) - _RETIRED_ACTION_COLUMNS
-    if unexpected_missing:
-        raise ValueError("source Action stored columns lack native representation: "
-                         + ",".join(sorted(unexpected_missing)))
+    retired_columns = set(source_columns) - set(target_columns)
     run_map, physical_runs = _run_sources(db, run_inverse_metadata)
     task_owners = _task_inverse_owners(task_inverse_metadata)
     result = []
@@ -402,7 +402,8 @@ def retained_action_source_rows(db: sqlite3.Connection, source_metadata: dict, *
     native_columns = tuple(item[0] for item in cursor.description)
     for values in cursor.fetchall():
         native = dict(zip(native_columns, values, strict=True))
-        row = {column: native[column] if column in native else None for column in source_columns}
+        row = {column: native[column] if column in native and column not in retired_columns
+               else None for column in source_columns}
         for field in ("agent_run_id",):
             if field in native and field in row:
                 value = native[field]
@@ -410,10 +411,8 @@ def retained_action_source_rows(db: sqlite3.Connection, source_metadata: dict, *
                     row[field] = None
                 elif type(value) is not int:
                     raise ValueError(f"invalid stored Run reference type: {field}")
-                elif value == 0:
-                    row[field] = value
                 else:
-                    row[field] = _source_run(value, run_map, physical_runs)[0]
+                    row[field] = _inverse_weak_run_ref(value, run_map, physical_runs)
         for field, kind in (("td_reply_task_id", "reply_tasks"),
                             ("td_meeting_job_id", "meeting_alignment_jobs"),
                             ("td_claim_job_id", "meeting_alignment_jobs")):
@@ -594,3 +593,142 @@ def adopted_action_source_rows(db: sqlite3.Connection, source_metadata: dict,
     if any(set(row) != set(source_columns) for row in result):
         raise ValueError("adopted Action row differs from source stored columns")
     return result
+
+
+def restore_run_adoptions(db: sqlite3.Connection, source_metadata: dict,
+                          forward_metadata: dict, *, task_metadata: dict,
+                          task_inverse_metadata: dict,
+                          run_inverse_metadata: dict) -> dict:
+    """Rebuild source Actions and its current receipt/observer catalogs.
+
+    The caller must have run Task inverse then Run inverse in the same
+    FK-off transaction. This routine owns no commit and keeps only facts
+    represented by current native rows.
+    """
+    if not db.in_transaction or db.execute("pragma foreign_keys").fetchone()[0]:
+        raise ValueError("adoption inverse materialization requires caller-owned FK-off transaction")
+    plan = plan_run_adoption_inverse(db, source_metadata, forward_metadata,
+                                     run_inverse_metadata=run_inverse_metadata)
+    retained = retained_action_source_rows(
+        db, source_metadata, task_inverse_metadata=task_inverse_metadata,
+        run_inverse_metadata=run_inverse_metadata)
+    adopted = adopted_action_source_rows(
+        db, source_metadata, forward_metadata,
+        run_inverse_metadata=run_inverse_metadata, identity_plan=plan)
+    action_cursor = db.execute("select * from main.actions order by id")
+    current_action_columns = tuple(item[0] for item in action_cursor.description)
+    native_actions = [dict(zip(current_action_columns, row, strict=True))
+                      for row in action_cursor.fetchall()]
+    physical_map = {int(row["id"]): int(row["id"]) for row in native_actions
+                    if row["record_type"] not in {"review_candidates", "candidate_reviews",
+                    "candidate_selections", "candidate_supplements", "candidate_execution_alias"}}
+
+    # Current receipts carry canonical Run references; source execution_id is
+    # the source public alias. Preserve every other stored SQLite value.
+    receipt_catalog = source_metadata["receipt_catalog"]
+    source_receipt_sql = next(row[2] for row in receipt_catalog
+                              if row[0] == "table" and row[1] == "action_receipts")
+    receipt_columns = _table_stored_columns(source_receipt_sql, "action_receipts")
+    native_receipt_columns = tuple(row[1] for row in db.execute(
+        "pragma main.table_info(action_receipts)"))
+    run_map, physical_runs = _run_sources(db, run_inverse_metadata)
+    alias_by_run = {}
+    for item in plan["adoptions"]:
+        if item["source_kind"] == "candidate_execution_alias":
+            alias_by_run[int(item["canonical_run_id"])] = _cast_public_integer(
+                item["public_id"], item["public_id_type"])
+    receipts = []
+    provider_lineage = []
+    for values in db.execute("select * from main.action_receipts order by id"):
+        native = dict(zip(native_receipt_columns, values, strict=True))
+        row = {column: native.get(column) for column in receipt_columns}
+        row["action_id"] = physical_map[int(native["action_id"])]
+        execution_run = native.get("execution_run_id")
+        if execution_run is None:
+            row["execution_id"] = None
+        else:
+            try:
+                row["execution_id"] = alias_by_run[int(execution_run)]
+            except KeyError as exc:
+                raise ValueError("receipt execution Run has no current source alias") from exc
+        row["agent_run_id"] = _inverse_weak_run_ref(
+            native.get("agent_run_id"), run_map, physical_runs)
+        if row.get("provider_receipt_id") is not None:
+            provider_lineage.append((int(row["id"]), row["provider_receipt_id"]))
+        row["provider_receipt_id"] = None
+        receipts.append(row)
+    observer_columns = tuple(row[1] for row in db.execute(
+        "pragma main.table_info(action_observers)"))
+    observers = []
+    task_owners = _task_inverse_owners(task_inverse_metadata)
+    for values in db.execute("select * from main.action_observers order by action_id,agent_run_id"):
+        row = dict(zip(observer_columns, values, strict=True))
+        row["action_id"] = physical_map[int(row["action_id"])]
+        row["agent_run_id"] = _inverse_weak_run_ref(
+            row["agent_run_id"], run_map, physical_runs)
+        if row["task_id"] != 0:
+            row["task_id"] = _task_source_physical(
+                db, task_owners, "reply_tasks", row["task_id"])
+        observers.append({column: row.get(column) for column in _table_stored_columns(
+            next(item[2] for item in source_metadata["observer_catalog"]
+                 if item[0] == "table" and item[1] == "action_observers"), "action_observers")})
+    identity_sql = next(row[2] for row in source_metadata["identity_catalog"]
+                        if row[0] == "table" and row[1] == "action_entity_identity_map")
+    identity_columns = _table_stored_columns(identity_sql, "action_entity_identity_map")
+    current_identity_columns = tuple(row[1] for row in db.execute(
+        "pragma main.table_info(action_entity_identity_map)"))
+    identity_rows = []
+    for values in db.execute("select * from main.action_entity_identity_map"):
+        row = dict(zip(current_identity_columns, values, strict=True))
+        if row.get("action_id") is not None:
+            row["action_id"] = physical_map[int(row["action_id"])]
+        identity_rows.append({column: row.get(column) for column in identity_columns})
+
+    all_catalog = ([("actions", source_metadata["action_catalog"]),
+                    ("action_receipts", source_metadata["receipt_catalog"]),
+                    ("action_observers", source_metadata["observer_catalog"]),
+                    ("action_entity_identity_map", source_metadata["identity_catalog"])])
+    current_sequences = [tuple(row) for row in db.execute(
+        "select rowid,name,seq from main.sqlite_sequence")]
+    for table, _ in all_catalog:
+        db.execute(f'drop table main."{table}"')
+    for table, catalog in all_catalog:
+        for kind in ("table",):
+            for object_type, name, sql in catalog:
+                if object_type == kind:
+                    db.execute(sql)
+    def insert_rows(table, rows):
+        for row in rows:
+            columns = tuple(row)
+            db.execute(f'insert into main."{table}" '
+                       f'({",".join(chr(34)+c+chr(34) for c in columns)}) '
+                       f'values ({",".join("?" for _ in columns)})',
+                       tuple(row[column] for column in columns))
+    insert_rows("actions", sorted(retained + adopted, key=lambda row: row["id"]))
+    insert_rows("action_receipts", receipts)
+    insert_rows("action_observers", observers)
+    insert_rows("action_entity_identity_map", identity_rows)
+    for table, catalog in all_catalog:
+        for object_type, _name, sql in catalog:
+            if object_type != "table":
+                db.execute(sql)
+    for receipt_id, provider_id in provider_lineage:
+        db.execute("update main.action_receipts set provider_receipt_id=? where id=?",
+                   (provider_id, receipt_id))
+    for table in ("run_execution_progress", "run_adopted_selections",
+                  "run_adopted_supplements", "run_adopted_reviews",
+                  "run_adopted_results", "run_adoption_identity_map"):
+        db.execute(f'drop table main."{table}"')
+    # Preserve current sequence rows, since source Actions and receipts use
+    # ordinary integer primary keys and must not acquire fabricated waters.
+    db.execute("delete from main.sqlite_sequence where name in "
+               "('actions','action_receipts','action_observers','action_entity_identity_map')")
+    for rowid, name, seq in current_sequences:
+        if name not in {"actions", "action_receipts", "action_observers", "action_entity_identity_map"}:
+            continue
+        db.execute("insert into main.sqlite_sequence(rowid,name,seq) values(?,?,?)",
+                   (rowid, name, seq))
+    return {"version": 1, "action_count": len(retained) + len(adopted),
+            "receipt_count": len(receipts), "observer_count": len(observers),
+            "retained_count": len(retained), "adopted_count": len(adopted),
+            "reassigned_identity_count": plan["reassigned_identity_count"]}

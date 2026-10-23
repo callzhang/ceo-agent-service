@@ -391,7 +391,7 @@ def test_retained_generic_action_task_reference_is_rejected_before_target_loss()
     db, context = _populated_source(remap_tasks=True, generic_action_task_id=201,
                                     stop_before_adoption=True)
     try:
-        with pytest.raises(ValueError, match="retained source Action task_id has no assembled target representation"):
+        with pytest.raises(ValueError, match="retained source Action columns have no assembled target representation: task_id"):
             migrate_run_adoptions(db, context["adoption_source"], task_metadata=context["task_metadata"],
                                   run_metadata=context["run_metadata"])
         db.rollback()
