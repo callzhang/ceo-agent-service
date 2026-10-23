@@ -118,6 +118,14 @@ class DeterministicEmailProvider(Protocol):
         action_type: EmailAction,
     ) -> ProviderMessageState: ...
 
+    def find_states(
+        self,
+        locator: StoredEmailLocator,
+        *,
+        action_type: EmailAction,
+        folders: Collection[str] | None = None,
+    ) -> list[ProviderMessageState]: ...
+
     def apply(
         self,
         locator: StoredEmailLocator,
@@ -177,6 +185,32 @@ class DeterministicEmailActionExecutor:
                     action.locator,
                     action_type=action.action_type,
                 )
+            except ImapMessageLookupAmbiguous as exc:
+                # A prior MOVE may have invalidated the persisted source UID.
+                # If a global Message-ID search then finds copies in multiple
+                # folders, only an exact read in the resolved destination can
+                # prove that this action already took effect.
+                if destination is None:
+                    return self._failed(action, "READ", "provider_read_failed", exc)
+                try:
+                    target_matches = self.provider.find_states(
+                        action.locator,
+                        action_type=action.action_type,
+                        folders={destination},
+                    )
+                except Exception as read_exc:
+                    return self._failed(
+                        action, "READ", "provider_read_failed", read_exc
+                    )
+                if len(target_matches) != 1:
+                    return self._failed(action, "READ", "provider_read_failed", exc)
+                current = target_matches[0]
+                if not current.satisfies(
+                    action.action_type,
+                    action.parameters,
+                    destination_folder=destination,
+                ):
+                    return self._failed(action, "READ", "provider_read_failed", exc)
             except ImapMessageUnavailable as exc:
                 if _message_unavailable_satisfies_action(action, exc):
                     return ProviderActionResult(
