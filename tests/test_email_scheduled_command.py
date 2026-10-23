@@ -1,4 +1,5 @@
 import json
+import socket
 import sqlite3
 from hashlib import sha256
 from types import SimpleNamespace
@@ -67,6 +68,101 @@ def test_email_scheduled_command_without_accounts_is_an_idempotent_noop() -> Non
     )()
 
     assert summary == "email-message-check-once accounts=0 discovered=0 failures=0"
+
+
+def test_email_discovery_retries_transient_dns_with_capped_backoff() -> None:
+    attempts = []
+    delays = []
+
+    def scan_account(_account, _model):
+        attempts.append(1)
+        if len(attempts) < 3:
+            raise socket.gaierror("temporary DNS failure")
+        return {"persisted_count": 1}
+
+    bootstrap = SimpleNamespace(
+        load_enabled_accounts=lambda: ({"account_id": "account-1"},),
+        load_active_model=lambda: object(),
+        scan_account=scan_account,
+        record_health=lambda *_args: None,
+    )
+
+    summary = EmailMessageCheckOnceCommand(
+        SimpleNamespace(),
+        dependency_builder=lambda _settings: bootstrap,
+        sleep=delays.append,
+    )()
+
+    assert summary == "email-message-check-once accounts=1 discovered=1 failures=0"
+    assert len(attempts) == 3
+    assert delays == [1.0, 2.0]
+
+
+@pytest.mark.parametrize(
+    ("error", "retry_count", "transient"),
+    (
+        (socket.gaierror("temporary DNS failure"), 3, True),
+        (TimeoutError("provider timed out"), 3, True),
+        (ConnectionError("IMAP login failed: invalid credentials"), 1, False),
+        (ConnectionError("email IMAP credential is unavailable"), 1, False),
+        (ValueError("invalid local scan state"), 1, False),
+    ),
+)
+def test_email_discovery_only_external_transient_errors_use_retry_path(
+    error: Exception, retry_count: int, transient: bool
+) -> None:
+    attempts = []
+    delays = []
+    bootstrap = SimpleNamespace(
+        load_enabled_accounts=lambda: ({"account_id": "account-1"},),
+        load_active_model=lambda: object(),
+        scan_account=lambda *_args: (
+            attempts.append(1) or (_ for _ in ()).throw(error)
+        ),
+        record_health=lambda *_args: None,
+    )
+
+    with pytest.raises(TimeoutError if transient else RuntimeError, match="email discovery failed"):
+        EmailMessageCheckOnceCommand(
+            SimpleNamespace(),
+            dependency_builder=lambda _settings: bootstrap,
+            sleep=delays.append,
+        )()
+
+    assert len(attempts) == retry_count
+    assert delays == ([1.0, 2.0] if transient else [])
+
+
+def test_email_discovery_mixed_external_and_internal_failures_remain_internal() -> None:
+    attempts = []
+    delays = []
+
+    def scan_account(account, _model):
+        attempts.append(account["account_id"])
+        if account["account_id"] == "network":
+            raise socket.gaierror("temporary DNS failure")
+        raise ValueError("invalid local scan state")
+
+    bootstrap = SimpleNamespace(
+        load_enabled_accounts=lambda: (
+            {"account_id": "network"},
+            {"account_id": "internal"},
+        ),
+        load_active_model=lambda: object(),
+        scan_account=scan_account,
+        record_health=lambda *_args: None,
+    )
+
+    with pytest.raises(RuntimeError, match="2 account operation") as raised:
+        EmailMessageCheckOnceCommand(
+            SimpleNamespace(),
+            dependency_builder=lambda _settings: bootstrap,
+            sleep=delays.append,
+        )()
+
+    assert not isinstance(raised.value, TimeoutError)
+    assert attempts == ["network", "network", "network", "internal"]
+    assert delays == [1.0, 2.0]
 
 
 def test_scheduled_loader_widens_only_the_history_embedding_deadline(
