@@ -2,7 +2,7 @@
 
 Base: `2980895e12fd0ff9c428667eff0bb2b662949213`.
 
-Implementation commits: documentation-only changes based on accepted ledger evidence through Task2D8R at `2980895e12fd0ff9c428667eff0bb2b662949213`. Final handoff HEAD is recorded by the parent after commit; this report intentionally does not embed its own commit SHA.
+Implementation commit: `43c90bd6f1e5e94d0f29c92678ee3d5cd0371276`, documentation-only changes based on accepted ledger evidence through Task2D8R at `2980895e12fd0ff9c428667eff0bb2b662949213`. Final handoff HEAD is recorded by the parent after commit; this report intentionally does not embed its own commit SHA.
 
 ## Files changed
 
@@ -11,7 +11,6 @@ Implementation commits: documentation-only changes based on accepted ledger evid
 - `docs/architecture.md`
 - `docs/runtime-mechanism.md`
 - `docs/superpowers/plans/2026-10-22-task-run-entity-unification.md`
-- `docs/agent-claims.md` (this unit's claim row)
 - This report
 
 ## Corrections
