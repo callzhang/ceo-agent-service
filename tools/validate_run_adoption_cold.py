@@ -29,11 +29,120 @@ def snapshot(db: sqlite3.Connection) -> dict:
                   "run_adopted_supplements", "run_execution_progress"):
         exists = db.execute("select 1 from main.sqlite_schema where type='table' and name=?",
                             (table,)).fetchone()
+        result[table + "_columns"] = ([row[1] for row in db.execute(
+            f'pragma main.table_info("{table}")')] if exists else [])
         result[table] = ([tuple(row) for row in db.execute(f'select * from "{table}" order by rowid')]
                          if exists else [])
     result["sqlite_sequence"] = [tuple(row) for row in db.execute(
         "select rowid,name,seq from main.sqlite_sequence order by rowid")]
     return result
+
+
+def keyed_rows(value: dict, table: str, key_columns: tuple[str, ...]) -> dict[tuple, tuple]:
+    columns = value[table + "_columns"]
+    positions = {name: index for index, name in enumerate(columns)}
+    return {tuple(row[positions[name]] for name in key_columns): row
+            for row in value[table]}
+
+
+def compare_expected_delta(before: dict, after: dict, old_write: dict,
+                           expected_allocator_rows: list[tuple]) -> None:
+    """Compare exact typed rows; admit only one supplement and its invalidation."""
+    row_keys = {
+        "actions": ("id",), "action_receipts": ("id",),
+        "action_observers": ("action_id", "agent_run_id"),
+        "action_entity_identity_map": ("source_type", "source_identity"),
+        "run_adopted_reviews": ("id",), "run_adopted_selections": ("id",),
+        "run_execution_progress": ("consumer_run_id",),
+    }
+    for table, keys in row_keys.items():
+        if before[table + "_columns"] != after[table + "_columns"]:
+            raise AssertionError(f"column contract changed across cold cycle: {table}")
+        if keyed_rows(before, table, keys) != keyed_rows(after, table, keys):
+            raise AssertionError(f"unexpected cold-cycle row delta in {table}")
+
+    result_table = "run_adopted_results"
+    results_before = keyed_rows(before, result_table, ("consumer_run_id",))
+    results_after = keyed_rows(after, result_table, ("consumer_run_id",))
+    columns = before[result_table + "_columns"]
+    if columns != after[result_table + "_columns"] or results_before.keys() != results_after.keys():
+        raise AssertionError("adopted Candidate owner set or columns changed across cold cycle")
+    target_key = (9106,)
+    if target_key not in results_before:
+        raise AssertionError("expected Consumer Candidate is absent from baseline")
+    expected = list(results_before[target_key])
+    expected[columns.index("invalidated_at")] = old_write["invalidated_at"]
+    expected[columns.index("invalidation_reason")] = old_write["reason"]
+    if tuple(expected) != results_after[target_key]:
+        raise AssertionError("old DAO Candidate delta differs from its exact invalidation readback")
+    for key in results_before.keys() - {target_key}:
+        if results_before[key] != results_after[key]:
+            raise AssertionError("unrelated adopted Candidate row changed across cold cycle")
+
+    supplements = "run_adopted_supplements"
+    old_supplements = keyed_rows(before, supplements, ("id",))
+    new_supplements = keyed_rows(after, supplements, ("id",))
+    if before[supplements + "_columns"] != after[supplements + "_columns"]:
+        raise AssertionError("supplement declaration changed across cold cycle")
+    if not old_supplements.keys() <= new_supplements.keys():
+        raise AssertionError("an existing native supplement was retired during cold write")
+    if any(old_supplements[key] != new_supplements[key] for key in old_supplements):
+        raise AssertionError("an existing native supplement changed during cold write")
+    added = new_supplements.keys() - old_supplements.keys()
+    if len(added) != 1:
+        raise AssertionError("cold DAO write did not add exactly one current supplement")
+    added_row = new_supplements[next(iter(added))]
+    supplement_columns = after[supplements + "_columns"]
+    supplement = dict(zip(supplement_columns, added_row, strict=True))
+    if (supplement["id"] != old_write["supplement_id"]
+            or supplement["consumer_run_id"] != 9106
+            or supplement["instruction"] != old_write["supplement_instruction"]
+            or supplement["created_at"] != old_write["supplement_created_at"]):
+        raise AssertionError("new current supplement differs from old DAO's returned row")
+
+    # The forward converter returns the per-kind Run allocator rows it derived
+    # from captured source waters, inverse identity handoffs and assigned IDs.
+    # Merge those with untouched non-Run allocators from the baseline, then
+    # compare exact names, rowids and waters to the database readback.
+    run_names = {row[1] for row in expected_allocator_rows}
+    merged = [row for row in before["sqlite_sequence"] if row[1] not in run_names]
+    merged.extend(expected_allocator_rows)
+    expected = sorted(merged, key=lambda row: row[0])
+    if after["sqlite_sequence"] != expected:
+        raise AssertionError("allocator rows differ from the forward handoff plus unchanged non-Run waters")
+
+
+def derive_run_allocator(source_metadata: dict, inverse_handoff: dict,
+                          prior_identity_edges: list[dict], native_run_ids: set[int],
+                          source_physical_ids: set[int]) -> tuple[list[tuple], list[int]]:
+    """Derive exact Run sequence waters from source facts and newly native rows."""
+    waters = {row[1]: int(row[2]) for row in source_metadata["sequence_rows"]}
+    owner_highwaters = inverse_handoff["run_handoff"]["owner_highwaters"]
+    source_run_water = max([waters.get("runs", 0), *[value or 0 for value in owner_highwaters.values()]])
+    inverse_edges = inverse_handoff["run_handoff"]["identity_edges"]
+    previously_mapped_native = ({int(edge["target_id"]) for edge in prior_identity_edges}
+                                | {int(edge["canonical_id"]) for edge in inverse_edges})
+    unowned_native = sorted(native_run_ids - previously_mapped_native)
+    next_physical = max(source_run_water, max(source_physical_ids, default=0)) + 1
+    assigned = []
+    for _native_id in unowned_native:
+        while next_physical in source_physical_ids:
+            next_physical += 1
+        assigned.append(next_physical)
+        source_physical_ids.add(next_physical)
+        next_physical += 1
+    required = {
+        "runs": max(source_run_water, max(assigned, default=0)),
+        "runs:published": max(waters.get("runs:published", 0), max(assigned, default=0)),
+    }
+    expected = [list(row) for row in source_metadata["sequence_rows"]]
+    by_name = {row[1]: row for row in expected}
+    for name, water in required.items():
+        if name in by_name:
+            by_name[name][2] = max(int(by_name[name][2]), int(water))
+        elif water:
+            expected.append([None, name, int(water)])
+    return [tuple(row) for row in expected], assigned
 
 
 def old_dao(root: Path, database: Path, output: Path, cycle: int) -> dict:
@@ -82,6 +191,8 @@ result={"module":sys.modules["app.reviewed_candidate_store"].__file__,
  "candidate_id":before["id"],"review_id":fixture["review_id"],
  "audit_run_id":fixture["audit_run_id"],"selection_id":fixture["selection_id"],
  "supplement_id":supplement["id"],"invalidated_at":after["invalidated_at"],
+ "supplement_instruction":supplement["instruction"],
+ "supplement_created_at":supplement["created_at"],
  "reason":after["invalidation_reason"],"candidate_digest":before["candidate_digest"]}
 Path(output).write_text(json.dumps(result,sort_keys=True))
 '''.replace("EXPECTED_DIGEST", "__DIGEST__")
@@ -194,12 +305,16 @@ def main() -> int:
     (out / "fixture.json").write_text(json.dumps(fixture))
     report = {"predecessor_root": str(predecessor), "cycles": []}
     for cycle in (1, 2):
+        baseline = snapshot(db)
+        native_run_ids_before = {int(row[0]) for row in db.execute("select id from runs")}
+        prior_run_identity_edges = context["run_metadata"]["identity_edges"]
         task_inverse = restore_task_entities(db, context["task_source_metadata"], context["task_metadata"])
         run_inverse = restore_run_entities(db, context["run_source_metadata"], context["run_metadata"],
             task_metadata=context["task_metadata"], task_inverse_metadata=task_inverse)
         restore_run_adoptions(db, context["adoption_source"], forward,
             task_metadata=context["task_metadata"], task_inverse_metadata=task_inverse,
             run_inverse_metadata=run_inverse)
+        inverse_source_run_ids = {int(row[0]) for row in db.execute("select id from runs")}
         db.commit()
         if db.execute("pragma integrity_check").fetchone()[0] != "ok" or db.execute(
                 "pragma foreign_key_check").fetchall():
@@ -274,6 +389,10 @@ def main() -> int:
         run_forward = migrate_run_entities(db, run_source,
             task_metadata=task_forward,
             run_handoff=portable["run_inverse_handoff"]["run_handoff"])
+        prior_mapped_native_ids = {int(edge["target_id"]) for edge in prior_run_identity_edges}
+        inverse_allocations = [edge for edge in run_inverse["run_handoff"]["identity_edges"]
+            if int(edge["canonical_id"]) in native_run_ids_before
+            and int(edge["canonical_id"]) not in prior_mapped_native_ids]
         from app.run_adoption_schema import _identity_maps, _run_id, _source_actions, _task_physical_ref
         task_map, run_map, _ = _identity_maps(db, task_forward, run_forward)
         source_candidate = next(item for item in _source_actions(db)["review_candidates"]
@@ -328,9 +447,25 @@ def main() -> int:
         context["run_metadata"] = run_forward
         context["adoption_source"] = adoption_source
         post_forward = snapshot(db)
+        expected_allocator_rows, assigned_run_physical_ids = derive_run_allocator(
+            run_source, run_inverse, prior_run_identity_edges, native_run_ids_before,
+            inverse_source_run_ids)
+        if [tuple(row) for row in run_forward["sequence_rows"]] != expected_allocator_rows:
+            raise AssertionError(json.dumps({"message": "Run forward allocator output differs from source-water and owner-allocation derivation",
+                "derived": expected_allocator_rows, "forward": run_forward["sequence_rows"],
+                "assigned": assigned_run_physical_ids, "native_ids": sorted(native_run_ids_before),
+                "mapped_ids": sorted(int(edge["target_id"]) for edge in prior_run_identity_edges),
+                "source_ids": sorted(inverse_source_run_ids), "source_sequences": run_source["sequence_rows"],
+                "owner_highwaters": run_inverse["run_handoff"]["owner_highwaters"]}, default=repr))
+        compare_expected_delta(baseline, post_forward, old, expected_allocator_rows)
         if len(post_forward["run_adopted_supplements"]) != 2 + cycle:
             raise AssertionError("fresh forward lost an old-code supplement")
         report["cycles"][-1]["forward_snapshot_sha256"] = digest(post_forward)
+        report["cycles"][-1]["forward_allocator_rows"] = post_forward["sqlite_sequence"]
+        report["cycles"][-1]["assigned_run_physical_ids"] = assigned_run_physical_ids
+        report["cycles"][-1]["inverse_allocated_run_identities"] = inverse_allocations
+        report["cycles"][-1]["allocator_delta"] = {
+            "before": baseline["sqlite_sequence"], "after": post_forward["sqlite_sequence"]}
         report["cycles"][-1]["forward_counts"] = {
             table: len(post_forward[table]) for table in ("actions", "action_receipts",
                 "action_observers", "run_adopted_results", "run_adopted_reviews",

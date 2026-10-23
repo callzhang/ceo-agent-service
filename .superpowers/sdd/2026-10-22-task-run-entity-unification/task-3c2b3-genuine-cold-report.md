@@ -17,10 +17,10 @@ The runner JSON-serialized and decoded only actual Task, Run, adoption metadata 
 ```sh
 python tools/validate_run_adoption_cold.py \
   --predecessor-root /private/tmp/ceo-task-run-phase2-_ntbufyi/predecessor-c38ce12cf \
-  --output-dir /tmp/task3c2b3-coldrun-final
+  --output-dir /tmp/task3c2b3-coldrun-acceptance
 ```
 
-Exit code: `0`. Machine-readable output: `/tmp/task3c2b3-coldrun-final/report.json`.
+Exit code: `0`. Machine-readable output: `/tmp/task3c2b3-coldrun-acceptance/report.json`.
 
 ## Cycle evidence
 
@@ -28,15 +28,15 @@ Both cycles used predecessor module `/private/tmp/ceo-task-run-phase2-_ntbufyi/p
 
 | Cycle | Old DAO supplement ID | Inverse source counts (Actions / receipts / observers) | Fresh forward counts (adopted results / Reviews / selections / supplements / progress) | Portable metadata SHA-256 | Inverse source SHA-256 | Fresh forward SHA-256 |
 |---|---:|---:|---:|---|---|---|
-| 1 | 52 | 13 / 4 / 3 | 2 / 3 / 1 / 3 / 2 | `cfe5bbec27e72491409d42f18d7dff16bb69be11822057f66940190f675f6223` | `34f86d0a4d1436c2310fc02d13c5220c906e38dcce5810466301cbf1c9037a8d` | `ee83819fbf6c8d850a013ee6055dfb41457875f7362cf875716ef1e310322603` |
-| 2 | 53 | 14 / 4 / 3 | 2 / 3 / 1 / 4 / 2 | `f791e1955aeef201fba85ebf001571f315761dd3752d46546e0f4132046ae6b5` | `c3535c5170dde889644e4e4e9f7365f64a7662d25fd20fd0558c7332123506e5` | `17db8db811d384f67ac2127784bd6e6a98e362f86be028765d68ce7d6bff9bdc` |
+| 1 | 52 | 13 / 4 / 3 | 2 / 3 / 1 / 3 / 2 | `cfe5bbec27e72491409d42f18d7dff16bb69be11822057f66940190f675f6223` | `2bc3662029a5689962698d322843dca5ffeae27fb2e71fb34d38c1a56231960e` | `a16318cf912f80e218c11d7015714839f5573e210fa7acc30b0933a376015d47` |
+| 2 | 53 | 14 / 4 / 3 | 2 / 3 / 1 / 4 / 2 | `f791e1955aeef201fba85ebf001571f315761dd3752d46546e0f4132046ae6b5` | `550d2620238697b237d04a3ad7e6f4686e140cfe8be017f911ad487bb9ca1470` | `4b352bd15b3e64cc5e9f47d609fc9a23b79eea396a631ef319f149d81a03931e` |
 
-The second cycle starts from the first cycle's fresh-forward database, rather than a recreated fixture. The new Review and Audit Run remained present after both cycles; its current native Review ID and timestamp, supplement retirement/addition, collision owner, receipt `provider_receipt_id`, and identity-map relationship are checked directly, not inferred from counts.
+The second cycle starts from the first cycle's fresh-forward database, rather than a recreated fixture. Before each cycle, the validator snapshots typed rows and columns for every native Action/receipt/observer/identity-map and adopted table. After fresh forward, it compares every existing row exactly, allowing only the old DAO's read-back invalidation on Consumer Run 9106 and the exact returned supplement row. It compares the Review `result_json`, candidate body/digest/timestamp/type, all receipts and provider lineage, observations, and identity facts as full stored rows. SQLite allocator rows are checked separately against the forward converter's returned per-kind waters merged with unchanged non-Run waters; cycle 1 inverse assigns the previously unmapped native Audit Run 9112 source physical ID 9113. The forward handoff preserves the captured Run/published waters at 9113 (from 9011/9112 baseline), and cycle 2 reuses the same identity with no new allocation or water increase. The new Review and Audit Run remained present after both cycles; supplement retirement/addition, collision owner, receipt `provider_receipt_id`, and identity-map relationship are checked directly, not inferred from counts.
 
 ## Verification and remaining gates
 
-`python -m py_compile tools/validate_run_adoption_cold.py`, Ruff on the runner, and `git diff --check` passed. The runner itself is the bounded integration execution; no full suite or large source copy was run. Task5 still owns the full 14-Store constructor, new Task/multi-input/native CLI/UI acceptance, and broader publication gates. No production checkout, providers, push, or deploy were touched.
+`python -m py_compile tools/validate_run_adoption_cold.py`, Ruff on the runner, and `git diff --check` passed. The validator also compares all existing typed native rows exactly after each forward, with only the precise invalidation and expected supplement row allowed to differ. Allocator waters are evaluated separately from the returned Run forward handoff, including preservation of the cycle-1 global reservation at 9113 and its unchanged cycle-2 water. The runner itself is the bounded integration execution; no full suite or large source copy was run. Task5 still owns the full 14-Store constructor, new Task/multi-input/native CLI/UI acceptance, and broader publication gates. No production checkout, providers, push, or deploy were touched.
 
 ## Commit
 
-Implementation, validation documentation, this report, and this worktree's claim row were committed together as `338466749` (`Validate Task3C2B3 genuine old DAO cold cycles`). The unrelated dirty C2A report was excluded and remains untouched.
+Implementation, validation documentation, this report, and this worktree's claim row were first committed as `338466749` and `0e801238e`; strict row and allocator evidence is finalized in the follow-up commit recorded in the claim row. The unrelated dirty C2A report was excluded and remains untouched.
