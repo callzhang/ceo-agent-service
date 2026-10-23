@@ -32,10 +32,10 @@
 **Consumes:** approved spec; current Task20/lifecycle/logical Run/Action Entity declarations and actual caller identity constraints.
 **Produces:** exact `task_run_entity_objects() -> dict[str,str]`, `task_run_field_map() -> tuple[dict,...]` and complete SQL fixtures; every logical/physical retained source field is mapped exactly once or explicitly derived/retired. Map entries include source kind/field, physical or logical owner, target table/field/expression, retirement reason, SQL type/NULL contract and caller evidence. Target names/columns fixed in those artifacts for Tasks2–4. No undefined destinations. No activation.
 
-- [ ] Write tests failing on missing target, duplicate/missing source field, unknown field accepted, missing full input key/multi-key relation, real unique/FK semantics and target fixture drift.
-- [ ] Verify RED, implement complete declarations/inspector and schema artifacts with source-backed domain tables and Run result/selection/execution ownership; explicitly decide every target field, primary/public identity and inverse metadata strategy. Decisions refine approved source-backed contract, never add business meaning.
-- [ ] Create target in memory and execute all DDL/keys/triggers; run focused baseline and new tests; inspect current production metadata read-only or verified backup without exposing bodies/secrets.
-- [ ] Fix documentation timing/backup wording, record exact DDL coverage and baseline/test/capacity boundaries, commit own changes/report.
+- [x] Write tests failing on missing target, duplicate/missing source field, unknown field accepted, missing full input key/multi-key relation, real unique/FK semantics and target fixture drift.
+- [x] Verify RED, implement complete declarations/inspector and schema artifacts with source-backed domain tables and Run result/selection/execution ownership; explicitly decide every target field, primary/public identity and inverse metadata strategy. Decisions refine approved source-backed contract, never add business meaning.
+- [x] Create target in memory and execute all DDL/keys/triggers; run focused baseline and new tests; inspect current production metadata read-only or verified backup without exposing bodies/secrets.
+- [x] Fix documentation timing/backup wording, record exact DDL coverage and baseline/test/capacity boundaries, commit own changes/report.
 
 ## Task 2: Task/input/business-result migration and current runtime
 
