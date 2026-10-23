@@ -207,24 +207,35 @@ def test_professional_parent_does_not_change_operation_lease_or_finish_parent(mo
         "execution_generation": "professional-gen",
         "created_at": "now", "updated_at": "now",
     }, parameters={})
+    run_entity_storage.create_run(db, values={
+        "task_id": None, "status": "completed", "created_at": "now", "updated_at": "now",
+    })
     run = run_entity_storage.create_run(db, values={
-        "task_id": task["id"], "execution_generation": "professional-gen",
-        "role": "task_agent", "status": "running",
+        "task_id": task["id"], "status": "running",
         "created_at": "now", "updated_at": "now",
     })
     run_entity_storage.set_run_provenance(db, run_id=run["id"], source_type="task_agent_runs")
+    newer_run = run_entity_storage.create_run(db, values={
+        "task_id": task["id"], "status": "completed",
+        "created_at": "now", "updated_at": "now",
+    })
+    run_entity_storage.set_run_provenance(
+        db, run_id=newer_run["id"], source_type="task_agent_runs",
+    )
     db.commit()
 
     attempt = store.claim_runtime_operation_attempt(
-        "task", str(task["id"]), "codex_oauth", "codex_cli", "local_oauth", "gpt-6",
+        "task", str(run["id"]), "codex_oauth", "codex_cli", "local_oauth", "gpt-6",
         owner="operation-owner", lease_seconds=900, now="2026-10-23 12:00:00",
     )
     assert attempt.parent_id == run["id"]
+    assert run["id"] != task["id"] and newer_run["id"] != run["id"]
+    assert run["execution_generation"] is None and run["role"] is None
     assert (attempt.lease_owner, attempt.lease_expires_at) == (
         "operation-owner", "2026-10-23 12:15:00",
     )
     assert store.list_agent_runtime_attempts(run["id"]) == []
-    assert store.list_runtime_operation_attempts("task", str(task["id"])) == [attempt]
+    assert store.list_runtime_operation_attempts("task", str(run["id"])) == [attempt]
 
     started = store.mark_agent_runtime_attempt_running_once(
         attempt.id, owner="operation-owner", lease_seconds=900,
@@ -288,13 +299,16 @@ def test_routed_execution_uses_native_store_for_professional_operation(monkeypat
         "execution_generation": "professional-gen",
         "created_at": "now", "updated_at": "now",
     }, parameters={})
+    run_entity_storage.create_run(db, values={
+        "task_id": None, "status": "completed", "created_at": "now", "updated_at": "now",
+    })
     run = run_entity_storage.create_run(db, values={
-        "task_id": task["id"], "execution_generation": "professional-gen",
-        "role": "task_agent", "status": "running",
+        "task_id": task["id"], "status": "running",
         "created_at": "now", "updated_at": "now",
     })
     run_entity_storage.set_run_provenance(db, run_id=run["id"], source_type="task_agent_runs")
     db.commit()
+    assert run["id"] != task["id"]
     meeting_run = run_entity_storage.create_run(db, values={
         "task_id": None, "status": "running", "created_at": "now", "updated_at": "now",
     })
@@ -322,7 +336,7 @@ def test_routed_execution_uses_native_store_for_professional_operation(monkeypat
     )
 
     result = execution.execute(
-        workload_kind="task", workload_key=str(task["id"]), prompt="Return 7",
+        workload_kind="task", workload_key=str(run["id"]), prompt="Return 7",
         command_factory=CodexCommandFactory.standard(developer_instructions="Return one integer."),
         parser=lambda raw: int(json.loads(raw.splitlines()[1])["item"]["text"]),
         result_codec=RoutedResultCodec.integer(schema_id="test.integer.v1"),
@@ -337,12 +351,57 @@ def test_routed_execution_uses_native_store_for_professional_operation(monkeypat
         "running", None,
     )
 
+    structured_task = task_entity_storage.create_task(db, values={
+        "kind": "okr_review", "status": "processing",
+        "created_at": "now", "updated_at": "now",
+    }, parameters={
+        "conversation_id": "native-okr", "conversation_title": "OKR",
+        "period_end": "2026-10-23", "period_label": "Q4", "period_start": "2026-10-01",
+        "trigger_message_id": "okr-message", "trigger_sender": "Derek",
+        "trigger_text": "Review this OKR",
+    })
+    db.commit()
+    assert db.execute(
+        "select count(*) from runs where task_id=?", (structured_task["id"],)
+    ).fetchone()[0] == 0
+    structured_result = execution.execute(
+        workload_kind="structured", workload_key=str(structured_task["id"]),
+        prompt="Return 7", command_factory=CodexCommandFactory.standard(
+            developer_instructions="Return one integer.",
+        ), parser=lambda raw: int(json.loads(raw.splitlines()[1])["item"]["text"]),
+        result_codec=RoutedResultCodec.integer(schema_id="test.integer.v1"),
+        required_capabilities=frozenset({"structured_output"}),
+    )
+    structured_attempt = store.get_agent_runtime_attempt(structured_result.attempt_id)
+    assert structured_result.value == 7
+    assert structured_attempt is not None and structured_attempt.parent_id is None
+    assert structured_attempt.status == "completed"
+    assert db.execute(
+        "select count(*) from runs where task_id=?", (structured_task["id"],)
+    ).fetchone()[0] == 0
+    pending_structured = task_entity_storage.create_task(db, values={
+        "kind": "okr_review", "status": "pending",
+        "created_at": "now", "updated_at": "now",
+    }, parameters={
+        "conversation_id": "native-okr-pending", "conversation_title": "OKR",
+        "period_end": "2026-10-23", "period_label": "Q4", "period_start": "2026-10-01",
+        "trigger_message_id": "okr-message-pending", "trigger_sender": "Derek",
+        "trigger_text": "Review this OKR",
+    })
+    db.commit()
+    with pytest.raises(ValueError, match="runtime operation parent"):
+        store.claim_runtime_operation_attempt(
+            "structured", str(pending_structured["id"]), "codex_oauth", "codex_cli",
+            "local_oauth", "gpt-6", owner="operation-owner", lease_seconds=30,
+            now="2026-10-23 12:00:04",
+        )
+
     retry = store.claim_runtime_operation_attempt(
-        "task", str(task["id"]), "codex_oauth", "codex_cli", "local_oauth", "gpt-6",
+        "task", str(run["id"]), "codex_oauth", "codex_cli", "local_oauth", "gpt-6",
         owner="operation-owner", lease_seconds=900, now="2026-10-23 12:00:04",
     )
     decision_repair = store.claim_runtime_operation_attempt(
-        "task", f"{task['id']}:decision_repair.1", "codex_oauth", "codex_cli",
+        "task", f"{run['id']}:decision_repair.1", "codex_oauth", "codex_cli",
         "local_oauth", "gpt-6", owner="operation-owner", lease_seconds=30,
         now="2026-10-23 12:00:05",
     )
@@ -366,11 +425,11 @@ def test_routed_execution_uses_native_store_for_professional_operation(monkeypat
             now="2026-10-23 12:01:00",
         )
     reclaimed = store.recover_expired_runtime_operation_attempt(
-        "task", f"{task['id']}:decision_repair.1", now="2026-10-23 12:01:00",
+        "task", f"{run['id']}:decision_repair.1", now="2026-10-23 12:01:00",
     )
     assert reclaimed is not None and reclaimed.failure_code == "runtime_lease_expired"
     successor = store.claim_runtime_operation_attempt(
-        "task", f"{task['id']}:decision_repair.1", "codex_oauth", "codex_cli",
+        "task", f"{run['id']}:decision_repair.1", "codex_oauth", "codex_cli",
         "local_oauth", "gpt-6", owner="operation-owner", lease_seconds=30,
         now="2026-10-23 12:01:01",
     )

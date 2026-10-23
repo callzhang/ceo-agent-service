@@ -42,3 +42,25 @@ After changing that access to `parent_id`:
 - `git diff --check` — passed.
 
 This fix does not add a separate resume/correction test; the exact existing native-storage coverage is identified above. End-to-end native CLI resume/correction acceptance remains a later runtime integration gate.
+
+## Fix2/5 workload-parent identity correction
+
+Native Task Agent operations use the exact `run_id` supplied by `app/task_agent.py`, including `run_id:decision_repair.N`. The prior helper treated that key as a Task ID, joined to Runs by Task, required a matching Task/Run generation and selected the latest running Run. The native helper now validates and stores only the exact Run ID when its `run_provenance.source_type='task_agent_runs'` and Run status is `running`; it does not synthesize role/generation values or use a latest-Run lookup. The regression uses a Task ID different from its Run ID, leaves native Run `role` and `execution_generation` NULL, and places a newer completed Run on the same Task. Plain and decision-repair keys point to the exact requested Run and retain independent attempt ordinals. The substitute-executor routed test now supplies the Run ID as its Task Agent workload key.
+
+Structured OKR work now checks the native `okr_review` Task's existing `processing` status before CLI execution. It can claim and complete an actual routed attempt while no professional Run exists; its attempt parent remains NULL. A non-processing OKR Task remains refused. The later OKR producer must bind the exact returned RuntimeAttempt ID to the professional Run created after validated CLI output; this fix does not edit that producer. Unreachable source-shaped structured/Meeting checks and the source Task-Agent fallback were removed only from the native operation-parent helper; other workload source checks remain.
+
+Fail-first evidence:
+
+- With Task ID/Run ID deliberately distinct, `pytest -q --tb=short tests/test_native_reviewed_candidate_store.py::test_professional_parent_does_not_change_operation_lease_or_finish_parent tests/test_native_reviewed_candidate_store.py::test_routed_execution_uses_native_store_for_professional_operation` — **2 failed** at runtime-parent validation, reproducing the Task-ID/Run-ID assumption.
+- Temporarily restoring the prior structured pre-CLI Run requirement, `pytest -q --tb=short tests/test_native_reviewed_candidate_store.py::test_routed_execution_uses_native_store_for_professional_operation` — **1 failed** before execution with `ValueError: runtime operation parent does not exist or is not running`, for the processing OKR Task with no Run.
+
+After the native identity changes:
+
+- `pytest -q --tb=short tests/test_native_reviewed_candidate_store.py` — **16 passed**.
+- `pytest -q --tb=short tests/test_run_entity_storage.py::test_runtime_attempt_native_parent_observation_lineage_and_cas` — **1 passed**; this existing test covers resumed correction source-session retention and immutable correction lineage.
+- `ruff check tests/test_native_reviewed_candidate_store.py app/agent_runtime_router.py` — passed.
+- `ruff check --ignore F401 app/store.py` — passed. Full-file Ruff reports an unchanged `F401` import at `app/store.py:14711`, outside this fix's diff.
+- `python -m py_compile app/store.py tests/test_native_reviewed_candidate_store.py` — passed.
+- `git diff --check` — passed.
+
+The native Task/Run tests remain local unactivated acceptance evidence; there was no provider/model CLI, constructor/bootstrap activation, production action, or release. End-to-end OKR post-validation exact-attempt binding remains with Task2D3; full native CLI resume/correction acceptance remains a later runtime integration gate.

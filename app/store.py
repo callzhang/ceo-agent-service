@@ -7378,22 +7378,17 @@ class AutoReplyStore(LogicalRunStoreMixin, ReviewedCandidateStoreMixin):
             ).fetchone() is not None
         if workload_kind == "structured":
             return db.execute(
-                "select 1 from tasks t join runs r on r.task_id=t.id "
-                "join run_provenance p on p.run_id=r.id "
-                "where t.id=? and t.kind='okr_review' and t.status='processing' "
-                "and p.source_type='okr_review_runs' and r.status='running'",
+                "select 1 from tasks where id=? and kind='okr_review' "
+                "and status='processing'",
                 (int(workload_key),),
             ).fetchone() is not None
         if workload_kind == "task":
-            task_id, separator, suffix = workload_key.partition(":")
+            run_id, separator, suffix = workload_key.partition(":")
             if not separator or suffix == "decision_repair.1" or suffix.startswith("decision_repair."):
                 return db.execute(
-                    "select 1 from tasks t join runs r on r.task_id=t.id "
-                    "join run_provenance p on p.run_id=r.id "
-                    "where t.id=? and t.kind='work_summary' "
-                    "and t.execution_generation=r.execution_generation "
-                    "and p.source_type='task_agent_runs' and r.status='running'",
-                    (int(task_id),),
+                    "select 1 from runs r join run_provenance p on p.run_id=r.id "
+                    "where r.id=? and p.source_type='task_agent_runs' and r.status='running'",
+                    (int(run_id),),
                 ).fetchone() is not None
         if workload_kind == "weekly_okr":
             parts = workload_key.split(":")
@@ -7406,14 +7401,7 @@ class AutoReplyStore(LogicalRunStoreMixin, ReviewedCandidateStoreMixin):
                 query += f""" and cast(legacy_key as integer)=? and {task20_column('weekly_okr_analysis_jobs', 'lease_owner')}=?"""
                 args += (int(parts[3]), parts[4])
             return db.execute(query, args).fetchone() is not None
-        if workload_kind == "structured":
-            query = (f"""select 1 from tasks where record_type='okr_review_requests' and cast(legacy_key as integer)=? and {task20_column('okr_review_requests', 'status')}='processing'""")
-            args = (int(workload_key),)
-        elif workload_kind == "meeting":
-            query = ("select 1 from runs where record_type='agent_runs' and source_type='meeting_alignment_runs' "
-                     "and cast(legacy_key as integer)=? and status='running'")
-            args = (int(workload_key),)
-        elif workload_kind == "task":
+        if workload_kind == "task":
             row_id, separator, suffix = workload_key.partition(":")
             if suffix.startswith("deadline_backfill"):
                 # The deadline backfill is keyed by TODO. Checking it against
@@ -7429,7 +7417,7 @@ class AutoReplyStore(LogicalRunStoreMixin, ReviewedCandidateStoreMixin):
                     "and status in ('active', 'waiting', 'done', 'archived')"
                 )
             else:
-                query = "select 1 from runs r join run_provenance p on p.run_id=r.id where r.id=? and p.source_type='task_agent_runs' and r.status='running'"
+                return False
             args = (int(row_id),)
         elif workload_kind == "email_classification":
             query = (
@@ -7513,25 +7501,14 @@ class AutoReplyStore(LogicalRunStoreMixin, ReviewedCandidateStoreMixin):
             ).fetchone()
             return None if row is None else int(row[0])
         if workload_kind == "structured":
-            row = db.execute(
-                "select r.id from tasks t join runs r on r.task_id=t.id "
-                "join run_provenance p on p.run_id=r.id "
-                "where t.id=? and t.kind='okr_review' and t.status='processing' "
-                "and p.source_type='okr_review_runs' and r.status='running'",
-                (int(workload_key),),
-            ).fetchone()
-            return None if row is None else int(row[0])
+            return None
         if workload_kind == "task":
-            task_id, separator, suffix = workload_key.partition(":")
+            run_id, separator, suffix = workload_key.partition(":")
             if not separator or suffix.startswith("decision_repair."):
                 row = db.execute(
-                    "select r.id from tasks t join runs r on r.task_id=t.id "
-                    "join run_provenance p on p.run_id=r.id "
-                    "where t.id=? and t.kind='work_summary' "
-                    "and t.execution_generation=r.execution_generation "
-                    "and p.source_type='task_agent_runs' and r.status='running' "
-                    "order by r.id desc limit 1",
-                    (int(task_id),),
+                    "select r.id from runs r join run_provenance p on p.run_id=r.id "
+                    "where r.id=? and p.source_type='task_agent_runs' and r.status='running'",
+                    (int(run_id),),
                 ).fetchone()
                 return None if row is None else int(row[0])
         return None

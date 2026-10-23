@@ -55,11 +55,15 @@ complete/adoption、fail、supersede、recovery 和历史读取直接切到 `run
 `AgentRuntimeAttempt.parent_id` 是原生 Run ID，DTO 不再暴露来源名 `agent_run_id`，也不保存
 空的结果 envelope 字段。完成时仍校验调用方传入的 envelope schema/大小，并只在原事务内
 采用 Consumer 结果及 `result_ref`。只有 `workload_kind='agent_run'` 才使用 Agent Run lease、
-终态与 adoption；Task、decision-repair 和 Meeting 操作即使绑定 professional Run，也保留
-自己的调用 lease、ordinal、session 与失败状态，不终结父 Run。Task/Meeting 绑定按当前原生
-Task/Run provenance 解析；Reply、全局 dashboard/History 及其他来源型生命周期读取仍有
-后续切换。此本地候选未启用 constructor 或全 family runtime，Email、Workbench、WeChat
-Task 生产者仍需各自完成原子 Task/DTO/workload-reader 转换。
+终态与 adoption。Task Agent plain/decision-repair key 使用调用方传入的精确 professional Run ID，
+并只检查该 Run 的 running 状态及 `task_agent_runs` provenance；不从 Task ID、latest Run、role
+或 execution generation 推断父级。Structured OKR 在 native Task 为 processing 时即可领取，
+CLI 前的 RuntimeAttempt 保持 parent NULL；后续 producer 必须将确切返回的 attempt ID 绑定到
+验证成功后创建的 professional Run。Task/decision-repair 和 Meeting 操作即使绑定 professional
+Run，也保留自己的调用 lease、ordinal、session 与失败状态，不终结父 Run。Meeting 按精确 Run ID
+和自身 provenance 解析。Reply、全局 dashboard/History 及其他来源型生命周期读取仍有后续切换。
+此本地候选未启用 constructor 或全 family runtime，Email、Workbench、WeChat Task 生产者仍需
+各自完成原子 Task/DTO/workload-reader 转换。
 
 Store19.8 的 C1 将九种实际可执行 Task 的源 status、due、attempt、error、时间与
 既有 owner／PID／generation／expiry 事实移到单一物理列；不存在的源字段保持
