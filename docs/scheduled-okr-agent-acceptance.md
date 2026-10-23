@@ -763,3 +763,9 @@ Audit 两次退回后，要求将窗口改成北京时间零点到零点；Consu
 逐项核对发布前置中的26个目标：25个已安装 managed Skill 文件与1个 audit_rules 目标的 installed SHA 全匹配，26个仓库候选源 SHA 也全匹配。仅将 `okr-release-preconditions.json` 的观察时间和 production commit 更新为本次实测值；所有 installed SHA、approved candidate SHA、managed revision 和任务配置保持原值。此次只读复核没有创建运行或外部副作用。完整无正文证据见 `okr-production-readback.json` 中的 `production_readback_2026_10_23_16_33_42Z` 历史快照及更新后的 `latest_production_readback_2026_10_23`。
 
 代码/合成验收与生产读回分开：PR #294 最新提交 `c1a2e1f1` 的 Quality run `40003848416` 仍在运行；PR 未合并或部署。下一步等该 exact-head Quality 终态，再按正式流程合并、部署、读回；部署后仅执行用户已授权的 task6 手动验收，避免重放已完成或 skipped 的报告。
+
+### 2026-10-23 latest-main release-summary reconciliation
+
+After this acceptance snapshot, PR #294's base advanced to upstream 8f3a5a4c0 (PRs #283 and #306). It was merged normally into the isolated PR branch as merge commit 4611abd1c; no conflicts or history rewrite. The upstream release manifest changed the candidate digest for dingtalk-oa-approval/SKILL.md from the prior installed SHA to c8130e8dcfb4c6d40980d63a27b2d2c501eba7c4b89497339dcbbf8ead230ccb. Recomputed source SHA matches the manifest exactly. Reconciled only approved_new_sha256 in okr-release-preconditions.json to this verified candidate; the installed baseline remains 981e443d…, matching the production readback. No task configuration, acceptance threshold, report behavior, external state, or installed production data changed. This is a release-candidate digest update, not evidence that the OA Skill candidate is deployed.
+
+At the start of the merge, exact-head Quality run 40006355891 was still executing npm test for the previous PR head c26ee4e40; it cannot validate the merged head. A new exact-head Quality run is required after pushing the reconciled merge. PR #294 remains unmerged and undeployed, and no report run or external effect was created.
