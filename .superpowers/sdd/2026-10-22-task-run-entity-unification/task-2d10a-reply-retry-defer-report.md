@@ -59,3 +59,16 @@ This is not complete Reply runtime cutover. Remaining units include `requeue_rep
 ## Changeset
 
 Implementation commit: `ae0d7edf3c36ca76ebf348d2f112fac3d1b9dac9`. Claim released in the following documentation commit.
+
+## Independent review Fix 1 (base `67bdb8f6a5f28d44e624d2f63a8b059f43f67e37`)
+
+Addressed the review finding by extending the actual assembled-Store deferral test only. A normal deferral with `refund_attempt=True` and `attempts=0` persists `attempts=0`. Both regular and authorization deferral reject a failed (terminal) Task with the exact `AgentRunLeaseLostError("reply task superseded: <id>")`; the test reads back status, attempts, lock, availability, error, `updated_at`, and generation and proves no field changed. No product code or deferral policy changed.
+
+Fix 1 verification:
+
+- `pytest -q tests/test_store_task_entity_creator.py -k reply_deferrals_update_native_task_without_touching_input_owners` — **1 passed, 49 deselected**.
+- `ruff check tests/test_store_task_entity_creator.py` — **All checks passed**.
+- `python -m compileall -q tests/test_store_task_entity_creator.py` — passed.
+- `git diff --check` — passed.
+
+Review Fix 1 commit: recorded in the follow-up handoff after commit.

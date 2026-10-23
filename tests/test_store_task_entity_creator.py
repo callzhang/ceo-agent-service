@@ -245,6 +245,54 @@ def test_reply_deferrals_update_native_task_without_touching_input_owners(tmp_pa
         )
         assert owner["current_input_id"] == task.current_input_id
 
+    floor_task = store.ensure_reply_task(**_creator_kwargs(_spec("defer-zero-floor")))
+    with store._connect() as db:
+        db.execute(
+            "update tasks set status='processing',attempts=0,locked_at='zero-floor-lease' where id=?",
+            (floor_task.id,),
+        )
+    store.defer_reply_task(
+        floor_task.id, "zero-floor wait", expected_execution_generation=floor_task.execution_generation,
+        refund_attempt=True,
+    )
+    with store._connect() as db:
+        owner = task_entity_storage.get_task(db, floor_task.id)
+        assert (owner["status"], owner["attempts"], owner["locked_at"], owner["error"]) == (
+            "pending", 0, None, "zero-floor wait",
+        )
+
+    terminal_task = store.ensure_reply_task(**_creator_kwargs(_spec("defer-terminal")))
+    with store._connect() as db:
+        db.execute(
+            "update tasks set status='failed',attempts=4,locked_at=null,available_at='later',"
+            "error='terminal state' where id=?",
+            (terminal_task.id,),
+        )
+        before = tuple(db.execute(
+            "select status,attempts,locked_at,available_at,error,updated_at,execution_generation "
+            "from tasks where id=?",
+            (terminal_task.id,),
+        ).fetchone())
+    with pytest.raises(AgentRunLeaseLostError) as regular_terminal:
+        store.defer_reply_task(
+            terminal_task.id, "must not defer terminal",
+            expected_execution_generation=terminal_task.execution_generation,
+        )
+    assert str(regular_terminal.value) == f"reply task superseded: {terminal_task.id}"
+    with pytest.raises(AgentRunLeaseLostError) as auth_terminal:
+        store.defer_reply_task_for_authorization(
+            terminal_task.id, "must not auth-defer terminal",
+            expected_execution_generation=terminal_task.execution_generation,
+        )
+    assert str(auth_terminal.value) == f"reply task superseded: {terminal_task.id}"
+    with store._connect() as db:
+        after = tuple(db.execute(
+            "select status,attempts,locked_at,available_at,error,updated_at,execution_generation "
+            "from tasks where id=?",
+            (terminal_task.id,),
+        ).fetchone())
+    assert after == before
+
     with store._connect() as db:
         db.execute("update tasks set status='processing',attempts=2,locked_at='lease' where id=?", (task.id,))
     with pytest.raises(AgentRunLeaseLostError, match="superseded"):
