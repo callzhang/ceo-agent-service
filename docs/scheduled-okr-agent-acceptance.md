@@ -749,3 +749,9 @@ Audit 两次退回后，要求将窗口改成北京时间零点到零点；Consu
 ### 2026-10-23 线上状态复读：PR #298 后
 
 14:33 UTC 只读复查显示，PR #298 合入后的生产 HEAD 为 `944138f6a4169a145d51b6f960ec778c2ae74e7d`，healthz HTTP 200，进程 PID 为 supervisor 39441、service worker 39445、audit-web 39446、email-worker 39447；线上仍有 14 项定时任务。task6 当前 v31 / managed `ceo-weekly-okr-report` revision240，下一次 10月25日 10:00 UTC；task13 v52 / revision202，下一次10月24日 19:00 UTC；task14 v59 / revision224，下一次10月24日 13:00 UTC。最近运行仍分别是 task6 手动395969、task13 手动391278、task14 自然396111，没有新的报告运行。此状态读回只说明新生产提交健康且任务配置保留；PR #294 仍未合并、未部署，也没有新增自然业务验收结果。无正文快照见 `okr-production-readback.json` 的 `latest_production_readback_2026_10_23`。
+
+### 2026-10-23 16:33 UTC 生产与发布基线复读
+
+只读复核生产 HEAD `5a6a3d6fbe1243a451713add06387774042fdda6`、healthz HTTP 200、Runtime Skill config 372（parent 371）、14 项任务；进程 PID 为 supervisor 86371、service worker 86378、audit-web 86379、email-worker 86380。当前 task6 v32 / managed `ceo-weekly-okr-report` revision240（SHA `49ba4b0b…`），下次 10月25日 10:00 UTC；task13 v53 / `ceo-weekly-report` revision202（SHA `ececf8bf…`），下次10月24日19:00 UTC；task14 v60 / `ceo-daily-report` revision224（SHA `32d24bb5…`），下次10月24日13:00 UTC。最近运行仍是 task6手动395969（done）、task13手动391278（skipped）、task14自然396111（done，但业务验收失败）；未发现新报告运行。
+
+发布清单逐项核对26个目标文件：已安装旧摘要和候选源新摘要全部匹配。发布前置快照此前仍记录旧的生产 commit/config 和 OA 出勤 Skill 摘要；根据当前安装读回已刷新为 commit `5a6a3d6`、config372、出勤 Skill SHA `12fe5ae6…`。此更新仅修复发布基线证据，不改任务 Skill 或报告逻辑。PR #294 仍未合并、未部署；没有触发报告或产生外部副作用。完整无正文数据见 `okr-production-readback.json` 的 `latest_production_readback_2026_10_23` 和 `okr-release-preconditions.json`。

@@ -1231,53 +1231,93 @@
     "daily_skill_candidate_repair": "Clarify the existing rolling-window script contract and Audit check after run396111. The managed revision must be published before a later natural report can validate the repair."
   },
   "latest_production_readback_2026_10_23": {
-    "observed_at": "2026-10-23T14:33:08Z",
-    "source": "GET /api/console/scheduled-tasks, GET /healthz, production git HEAD, process list",
-    "production_commit": "944138f6a4169a145d51b6f960ec778c2ae74e7d",
-    "merged_change": "PR #298",
+    "observed_at": "2026-10-23T16:33:42Z",
+    "source": "Read-only GET /api/console/scheduled-tasks and per-task /runs, GET /api/console/settings/runtime-skill-configs/current and managed revision hashes, GET /healthz, production git HEAD, process list, and installed Skill file hashes.",
+    "previous_observation": {
+      "observed_at": "2026-10-23T14:33:08Z",
+      "production_commit": "944138f6a4169a145d51b6f960ec778c2ae74e7d",
+      "task_versions": {
+        "6": 31,
+        "13": 52,
+        "14": 59
+      }
+    },
+    "production_commit": "5a6a3d6fbe1243a451713add06387774042fdda6",
+    "runtime_skill_config": {
+      "id": 372,
+      "parent_id": 371
+    },
     "healthz": {
       "http_status": 200,
       "status": "ok"
     },
     "processes": {
-      "supervisor_pid": 39441,
-      "service_worker_pid": 39445,
-      "audit_web_pid": 39446,
-      "email_worker_pid": 39447
+      "supervisor_pid": 86371,
+      "service_worker_pid": 86378,
+      "audit_web_pid": 86379,
+      "email_worker_pid": 86380
     },
     "scheduled_task_count": 14,
+    "release_manifest_readback": {
+      "entries": 26,
+      "installed_old_sha_mismatches": 0,
+      "candidate_new_sha_mismatches": 0,
+      "only_non_skill_target": "app/defaults/audit_rules.md -> audit_rules"
+    },
     "tasks": {
       "6": {
-        "version": 31,
+        "version": 32,
         "enabled": true,
         "cron_expression": "0 0 3 * * 0",
         "timezone": "America/Los_Angeles",
         "next_run_at": "2026-10-25T10:00:00Z",
         "managed_skill": "ceo-weekly-okr-report",
         "managed_revision_id": 240,
-        "latest_run_id": 395969
+        "managed_skill_sha256": "49ba4b0bdafdd2ba54989f6bd1ad6b799417464f2dad2cbeefb721eb85a32f8e",
+        "latest_run_id": 395969,
+        "latest_run_trigger_kind": "manual",
+        "latest_run_snapshot_task_version": 30,
+        "latest_run_attempt_id": 15985,
+        "latest_run_attempt_status": "completed",
+        "reply_task_id": 417176,
+        "reply_task_status": "done"
       },
       "13": {
-        "version": 52,
+        "version": 53,
         "enabled": true,
         "cron_expression": "0 0 12 * * 6",
         "timezone": "America/Los_Angeles",
         "next_run_at": "2026-10-24T19:00:00Z",
         "managed_skill": "ceo-weekly-report",
         "managed_revision_id": 202,
-        "latest_run_id": 391278
+        "managed_skill_sha256": "ececf8bf22e740573b68c0a4e1f1d6cd7db166a2fb2c6991737cce03890d22a9",
+        "latest_run_id": 391278,
+        "latest_run_trigger_kind": "manual",
+        "latest_run_snapshot_task_version": 35,
+        "latest_run_attempt_id": 15867,
+        "latest_run_attempt_status": "skipped",
+        "reply_task_id": 416693,
+        "reply_task_status": "done"
       },
       "14": {
-        "version": 59,
+        "version": 60,
         "enabled": true,
         "cron_expression": "0 0 6 * * *",
         "timezone": "America/Los_Angeles",
         "next_run_at": "2026-10-24T13:00:00Z",
         "managed_skill": "ceo-daily-report",
         "managed_revision_id": 224,
-        "latest_run_id": 396111
+        "managed_skill_sha256": "32d24bb5f53b60bcf67b8a91582db258a05cac59c789391c862d3bd95719fc62",
+        "latest_run_id": 396111,
+        "latest_run_trigger_kind": "scheduled",
+        "latest_run_snapshot_task_version": 58,
+        "latest_run_attempt_id": 15986,
+        "latest_run_attempt_status": "completed",
+        "reply_task_id": 417179,
+        "reply_task_status": "done",
+        "business_acceptance": "failed: final window ended three hours after scheduled_for; do not replay"
       }
     },
-    "acceptance_status": "This is a runtime/configuration readback only; it is not new report business acceptance. PR #294 remains unmerged and undeployed."
+    "acceptance_status": "Live configuration/process readback only. No new report run or external effect was created. Task6 post-deploy manual verification, task14/task13/task6 qualifying report outcomes, and passive sleep-resume catch-up evidence remain outstanding. PR #294 remains unmerged and undeployed."
   }
 }
