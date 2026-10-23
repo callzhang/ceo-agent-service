@@ -348,6 +348,15 @@ class EmailActionAttemptConflict(RuntimeError):
     """A direct-action attempt conflicts with append-only history."""
 
 
+def _stored_action_started_at(db: sqlite3.Connection, action_id: int) -> str | None:
+    """The Action owner's own started_at, which the direct-action view hides for pending rows."""
+
+    from app.action_entity_storage import get_action
+
+    action = get_action(db, int(action_id))
+    return None if action is None else action["started_at"]
+
+
 class EmailReplyReceiptConflict(RuntimeError):
     """A stable automatic-reply identity conflicts with durable provider evidence."""
 
@@ -11132,7 +11141,7 @@ class EmailStore:
                     attempt_number = int(row["attempt_count"]) + 1
                     updated = shared_action_lifecycle.claim_direct_email_action(
                         db, action_id=row["action_id"], expected_status=row["status"],
-                        expected_started_at=(row["started_at"] if row["status"] == "processing" else None),
+                        expected_started_at=_stored_action_started_at(db, row["action_id"]),
                         attempt_count=row["attempt_count"], claimed_at=claimed_at)
                     if updated is None:
                         raise EmailActionAttemptConflict(
@@ -11698,7 +11707,7 @@ class EmailStore:
             attempt_number = int(row["attempt_count"]) + 1
             updated = shared_action_lifecycle.claim_direct_email_action(
                 db, action_id=row["action_id"], expected_status=row["status"],
-                expected_started_at=(row["started_at"] if row["status"] == "processing" else None),
+                expected_started_at=_stored_action_started_at(db, row["action_id"]),
                 attempt_count=row["attempt_count"], claimed_at=claimed_at)
             if updated is None:
                 raise EmailActionAttemptConflict(
