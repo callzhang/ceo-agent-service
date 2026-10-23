@@ -257,18 +257,32 @@ def test_native_store_rejects_stale_generation_and_rolls_back_child_rowids(monke
     body = {"outcome": "needs_human", "stage_index": 0, "predecessor_review_id": None,
         "decision_options": [{"key": "stop", "terminal_outcome": "skipped", "reason": "stop"}]}
     with db:
-        store._adopt_review_candidate_in_connection(db, consumer, body)
+        candidate = store._adopt_review_candidate_in_connection(db, consumer, body)
+        audit = run_entity_storage.create_run(db, values={
+            "task_id": task["id"], "parent_id": consumer["id"], "execution_generation": "gen-1",
+            "role": "audit", "proposal_revision": 0, "turn_attempt": 0, "status": "completed",
+            "created_at": "now", "updated_at": "now",
+        })
+        review_body = {"outcome": "approve", "candidate_digest": candidate["candidate_digest"]}
+        review = store._adopt_candidate_review_in_connection(db, consumer["id"], audit["id"], review_body)
     db.commit()
     task_entity_storage.update_task_cas(db, task_id=task["id"],
         expected={"execution_generation": "gen-1"}, changes={"execution_generation": "gen-2"})
     db.commit()
+    for historical in (store.get_review_candidate(consumer["id"]),
+                       store.adopted_candidate_for_consumer_run(consumer["id"])):
+        assert historical["candidate_json"] == candidate["candidate_json"]
+        assert historical["candidate_digest"] == candidate["candidate_digest"]
+        assert historical["execution_generation"] == "gen-1"
+    assert store.get_review_candidate(-1) is None
+    assert review["id"] != review["audit_run_id"]
+    assert store.current_reviewed_candidate(task["id"], "gen-1") is None
     try:
-        store.get_review_candidate(consumer["id"])
+        store.select_candidate_option(consumer["id"], review["id"], "stop")
     except ValueError as exc:
         assert str(exc) == "candidate generation mismatch"
     else:
         raise AssertionError("stale generation candidate remained actionable")
-    assert store.current_reviewed_candidate(task["id"], "gen-1") is None
 
     # The Store's in-transaction adoption write and child rows share the
     # caller's transaction; rollback leaves neither rows nor consumed ROWIDs.

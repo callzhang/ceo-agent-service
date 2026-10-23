@@ -64,8 +64,9 @@ def _db_timestamp(db: sqlite3.Connection) -> str:
 
 
 class ReviewedCandidateStoreMixin:
-    def _candidate_context(self, db: sqlite3.Connection, candidate_id: int) -> sqlite3.Row:
-        row = db.execute("""select c.consumer_run_id as id,c.consumer_run_id as consumer_run_id,
+    def _adopted_candidate_row(self, db: sqlite3.Connection, candidate_id: int) -> sqlite3.Row | None:
+        """Read the stored adoption and its native owners without applying current eligibility."""
+        return db.execute("""select c.consumer_run_id as id,c.consumer_run_id as consumer_run_id,
             r.task_id,r.execution_generation,
             r.proposal_revision, c.stage_index,
             c.predecessor_review_id as predecessor_review_id,
@@ -76,6 +77,9 @@ class ReviewedCandidateStoreMixin:
             join tasks t on t.id=r.task_id
             left join task_inputs ti on ti.id=t.current_input_id
             where c.consumer_run_id=? and r.role='consumer' and t.kind='reply'""", (candidate_id,)).fetchone()
+
+    def _candidate_context(self, db: sqlite3.Connection, candidate_id: int) -> sqlite3.Row:
+        row = self._adopted_candidate_row(db, candidate_id)
         if row is None:
             raise ValueError("candidate does not exist")
         if row["execution_generation"] != row["current_generation"]:
@@ -195,15 +199,11 @@ class ReviewedCandidateStoreMixin:
 
     def adopted_candidate_for_consumer_run(self, run_id: int) -> dict[str, Any] | None:
         with self._connect() as db:
-            if not db.execute("select 1 from run_adopted_results where consumer_run_id=?", (run_id,)).fetchone():
-                return None
-            return _row(self._candidate_context(db, run_id))
+            return _row(self._adopted_candidate_row(db, run_id))
 
     def get_review_candidate(self, candidate_id: int) -> dict[str, Any] | None:
         with self._connect() as db:
-            if not db.execute("select 1 from run_adopted_results where consumer_run_id=?", (candidate_id,)).fetchone():
-                return None
-            return _row(self._candidate_context(db, candidate_id))
+            return _row(self._adopted_candidate_row(db, candidate_id))
 
     def reviewed_candidate_for_audit_run(self, audit_run_id: int) -> dict[str, Any] | None:
         """Read an old reviewed question for History without making it actionable."""
