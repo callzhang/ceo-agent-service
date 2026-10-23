@@ -77,7 +77,7 @@
       "source": "ci/shared-skills/dingtalk-oa-approval/SKILL.md",
       "target": "skills/dingtalk-oa-approval/SKILL.md",
       "old_sha256": "b58fb9bbfed06503c2326be27596f68e641e4188f4ba81c9c0d7a649be80a660",
-      "new_sha256": "0175ea381b80b3ce7b12084af9a88b4664342697f19ad466b30fcb5f67037197"
+      "new_sha256": "27d4efcb5cba3f5b9b0bd3783ba1c53ec13e04fa32beb63f0acd4a6b8aa45c29"
     },
     {
       "source": "ci/shared-skills/stardust-oa-finance-review/SKILL.md",
@@ -120,7 +120,7 @@
       "target": "skills/ceo-weekly-okr-report/SKILL.md",
       "old_sha256": "d7584ca089596f09f943d659b67943d04d9bc2c47d8fb15831a1109b94229d9a",
       "new_sha256": "d7584ca089596f09f943d659b67943d04d9bc2c47d8fb15831a1109b94229d9a",
-      "old_managed_sha256": "18b23c5c6762ce0fa6cceedf8f1a7a14591327269897fcc56ba4ea32e9c78744"
+      "old_managed_sha256": "d7584ca089596f09f943d659b67943d04d9bc2c47d8fb15831a1109b94229d9a"
     },
     {
       "source": "ci/shared-skills/ceo-weekly-okr-report/scripts/analysis.schema.json",
