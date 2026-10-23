@@ -114,7 +114,21 @@ def test_role_command_uses_only_task_bound_agent_cli(adapter, route):
         policy=ClaudeCommandPolicy.consumer(task_id=17, db_path="/tmp/role.sqlite3", execution_generation="claim-generation"),
     )
     assert "--restricted" in command
-    assert command[command.index("--tools") + 1] == "Read,Glob,Grep"
+    # Derek 2026-10-23: the Consumer has a shell on every route, confined by the
+    # CLI sandbox; Audit stays read-only (asserted below).
+    assert command[command.index("--tools") + 1] == "Read,Glob,Grep,Bash"
+    sandbox = json.loads(command[command.index("--settings") + 1])["sandbox"]
+    assert sandbox["enabled"] is True
+    assert sandbox["failIfUnavailable"] is True
+    assert sandbox["allowUnsandboxedCommands"] is False
+    assert sandbox["filesystem"] == {"allowWrite": [str(Path.home() / ".dws")]}
+    assert sandbox["network"]["strictAllowlist"] is True
+    audit = adapter.build_command(
+        route=route, session_id=None, max_turns=5,
+        policy=ClaudeCommandPolicy.audit(task_id=17, db_path="/tmp/role.sqlite3", execution_generation="claim-generation"),
+    )
+    assert audit[audit.index("--tools") + 1] == "Read,Glob,Grep"
+    assert "sandbox" not in json.loads(audit[audit.index("--settings") + 1])
     mcp_config = json.loads(command[command.index("--mcp-config") + 1])
     assert set(mcp_config["mcpServers"]) == {"agent_cli"}
     assert mcp_config["mcpServers"]["agent_cli"] == {

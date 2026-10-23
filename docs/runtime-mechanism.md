@@ -840,11 +840,16 @@ Premium benefit has expired) or the form download is refused, the Consumer runs
 preview access opening the attachment in DingTalk grants), then reads the body with
 `read_dingtalk_drive_file(node_id=file_id, space_id, file_name)` or
 `dws drive +download`. The Skill limits that shell to reads and this preview
-authorization; the Consumer sandbox therefore has network access and the dws state
-directory (`~/.dws`) as its only writable root (`sandbox_workspace_write.network_access=true`,
-`writable_roots=[~/.dws]`). Audit has no shell and no preview tool; the Claude-route
-Consumer has no shell either, so it cannot open preview access. There is no service
-tool for preview authorization any more. (Derek, 2026-10-22/23.)
+authorization. The Consumer has the same shell on every route, confined the same
+way. Codex: `sandbox_workspace_write.network_access=true`,
+`writable_roots=[~/.dws]`, working directory = the task directory. Claude: the
+`Bash` tool plus an inline `sandbox` setting (`failIfUnavailable`,
+`allowUnsandboxedCommands=false`, `filesystem.allowWrite=[~/.dws]`, network limited to
+`*.dingtalk.com` and `*.aliyuncs.com`, `enableWeakerNetworkIsolation` so the Go `dws`
+binary can verify TLS inside the macOS sandbox), run with the task directory as the
+process working directory (the sandbox allows writes there). Audit has no shell on
+any route. There is no service tool for preview authorization any more.
+(Derek, 2026-10-22/23.)
 
 `retry-source-verified-email-action --account ... --action-id ...` examines one
 current failed move/trash action through the existing read-only IMAP wrapper.

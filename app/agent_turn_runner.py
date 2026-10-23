@@ -29,6 +29,7 @@ from app.agent_effects import (
 from app.agent_result import ResultParseError
 from app.agent_wire_contracts import claude_consumer_output_schema
 from app.reviewed_sources import ReviewedSourceReadError
+from app.task_artifacts import task_artifact_directory
 from app.agent_runtime_config import AgentRuntimeConfig, load_runtime_config
 from app.agent_runtime_contracts import (
     CredentialMode,
@@ -1390,6 +1391,17 @@ class AgentTurnProcess(Generic[ResultT]):
                             "",
                         )
                     else:
+                        # Codex gets its task directory through `--cd`; the Claude
+                        # CLI has no such flag, and its sandbox lets the shell
+                        # write in the process cwd, so the Consumer runs there.
+                        run_options = (
+                            {"cwd": str(task_artifact_directory(
+                                self.task.id, run.execution_generation, create=True,
+                            ))}
+                            if route.runtime_kind is RuntimeKind.CLAUDE_CLI
+                            and run.role is AgentRole.CONSUMER
+                            else {}
+                        )
                         process = self.executor(
                             command,
                             prompt=executor_prompt,
@@ -1397,6 +1409,7 @@ class AgentTurnProcess(Generic[ResultT]):
                             total_timeout_seconds=TOTAL_TIMEOUT_SECONDS,
                             idle_timeout_seconds=IDLE_TIMEOUT_SECONDS,
                             on_stdout_line=persist_line,
+                            **run_options,
                         )
                         self.store.append_agent_run_event(run.id, {"type": "runtime.prompt.invoked",
                             "runtime_attempt_id": active_attempt.id}, owner=self.owner)
