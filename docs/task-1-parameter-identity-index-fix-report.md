@@ -17,6 +17,11 @@ No runtime lookup caller or source schema changed. This is a correction to the u
 - `python -m compileall -q app/task_run_entity_definitions.py tests/test_task_entity_schema.py` — passed.
 - `git diff --check` — passed after the final edits.
 
+## Commits
+
+- Product, regression, candidate SQL, behavior docs and report: `4b1bb37449a7293cb3e9b7e6f02efee8058f3b1a`.
+- Claim release: `ebdbdfbd71ce2f317086793bf37ece4b76879594`.
+
 ## Artifacts
 
 Updated `app/task_run_entity_definitions.py`, the focused regression in `tests/test_task_entity_schema.py`, regenerated `docs/task-run-entity-assembly-target.sql`, and the candidate contract paragraphs in `docs/architecture.md` and `docs/runtime-mechanism.md`.
