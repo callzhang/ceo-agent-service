@@ -836,9 +836,28 @@
         "ci/shared-skills/stardust-oa-people-review/SKILL.md"
       ],
       "quality_workflow_run_id": 39919036248,
-      "quality_workflow_state_at_readback": "in_progress on previous head; merged head requires fresh run"
+      "quality_workflow_state_at_readback": "in_progress on previous head; merged head requires fresh run",
+      "mainline_publication_attempt": "failed before contract file writes on stale OKR old managed SHA; candidate branch now pins live revision235 SHA"
     },
     "new_report_run_created": false,
+    "external_effects": false
+  },
+  "latest_mainline_publication_attempt": {
+    "observed_by": "2026-10-23T08:18:29.964201Z",
+    "result": "failed_preflight",
+    "error": "Consumer system configured Skill has a different revision: ceo-weekly-okr-report",
+    "root_cause": "mainline release manifest expected old managed SHA 18b23c5c... but live task6 bound managed revision 235 has SHA d7584ca0...",
+    "contract_files_written": false,
+    "production_after_attempt": {
+      "commit": "b07bd9877b78a8d0ab1cc616485671d44918ae37",
+      "service_pid": 60615,
+      "healthz_http_status": 200,
+      "runtime_skill_config_id": 368,
+      "task6_latest_run_id": 394981,
+      "task13_latest_run_id": 391278,
+      "task14_latest_run_id": 392889
+    },
+    "report_runs_created": false,
     "external_effects": false
   }
 }
