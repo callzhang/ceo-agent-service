@@ -1413,5 +1413,69 @@
       }
     },
     "acceptance_status": "Live configuration/process readback only. No new report run or external effect was created. Task6 post-deploy manual verification, task14/task13/task6 qualifying report outcomes, and passive sleep-resume catch-up evidence remain outstanding. PR #294 remains unmerged and undeployed."
+  },
+  "production_readback_2026_10_23_19_42_35Z": {
+    "observed_at": "2026-10-23T19:42:35Z",
+    "source": "Read-only production checkout HEAD, launchctl/ps, GET /healthz, GET /api/console/scheduled-tasks/{6,13,14}/runs, current runtime Skill config, managed revision digests, and installed release target SHA-256 readback.",
+    "production_commit": "ce841e3826b62cddd068eb9eb36d17deb07de156",
+    "healthz_http_status": 200,
+    "supervisor_pid": 49517,
+    "task_count": 14,
+    "scheduled_tasks": {
+      "6": {
+        "version": 34,
+        "enabled": true,
+        "cron": "0 0 3 * * 0",
+        "timezone": "America/Los_Angeles",
+        "next_run_at": "2026-10-25T10:00:00Z",
+        "managed_skill": "ceo-weekly-okr-report",
+        "managed_revision_id": 245,
+        "managed_sha256": "038973933c0e8ff70f9c87b2912107a5d3ae0efcb53aeaf308e9bd3f091c01b9",
+        "latest_run_id": 395969,
+        "latest_run_kind": "manual"
+      },
+      "13": {
+        "version": 54,
+        "enabled": true,
+        "cron": "0 0 12 * * 6",
+        "timezone": "America/Los_Angeles",
+        "next_run_at": "2026-10-24T19:00:00Z",
+        "managed_skill": "ceo-weekly-report",
+        "managed_revision_id": 202,
+        "managed_sha256": "ececf8bf22e740573b68c0a4e1f1d6cd7db166a2fb2c6991737cce03890d22a9",
+        "latest_run_id": 391278,
+        "latest_run_kind": "manual",
+        "latest_run_status": "skipped"
+      },
+      "14": {
+        "version": 61,
+        "enabled": true,
+        "cron": "0 0 6 * * *",
+        "timezone": "America/Los_Angeles",
+        "next_run_at": "2026-10-24T13:00:00Z",
+        "managed_skill": "ceo-daily-report",
+        "managed_revision_id": 224,
+        "managed_sha256": "32d24bb5f53b60bcf67b8a91582db258a05cac59c789391c862d3bd95719fc62",
+        "latest_run_id": 396111,
+        "latest_run_kind": "scheduled",
+        "latest_run_status": "completed",
+        "business_acceptance": "failed: the final read window extended three hours past scheduled_for; do not replay"
+      }
+    },
+    "release_asset_readback": {
+      "entries": 26,
+      "installed_old_sha_mismatches": 0,
+      "candidate_new_sha_mismatches": 0,
+      "source_matches": {
+        "dingtalk-oa-approval/SKILL.md": "c8130e8dcfb4c6d40980d63a27b2d2c501eba7c4b89497339dcbbf8ead230ccb",
+        "ceo-weekly-okr-report/SKILL.md": "038973933c0e8ff70f9c87b2912107a5d3ae0efcb53aeaf308e9bd3f091c01b9"
+      }
+    },
+    "runtime_skill_config": {
+      "id": 376,
+      "parent_id": 375
+    },
+    "managed_skill_note": "Current task6 snapshot remains pinned to revision245; a newly imported identical repository revision247 exists but does not alter prior scheduled run snapshots.",
+    "acceptance_status": "Read-only current production snapshot only. No report was triggered and no external effect was created. PR #294 remains unmerged and undeployed; task14 qualifying natural outcome, task13 natural outcome, task6 post-deploy manual acceptance and passive sleep-resume catch-up evidence remain outstanding. PR #309 full Quality run 40011245295 was still in progress at this readback."
   }
 }
