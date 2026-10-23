@@ -151,7 +151,7 @@ def test_candidate_review_selection_and_progress_reference_closure():
     db.execute("insert into run_adopted_selections values(?,?,?,?,?,?)", (1, 10, 11, "yes", "selected", "now"))
     db.execute("insert into run_adopted_supplements values(1,10,'one','now')")
     db.execute("insert into run_adopted_supplements values(2,10,'two','later')")
-    db.execute("insert into run_execution_progress values(10,11,11,'running','worker','lease','{}','now','now')")
+    db.execute("insert into run_execution_progress values(10,11,1,'running','worker','lease','{}','now','now')")
     # Logical completion and external execution progress have independent state.
     assert db.execute("select status from runs where id=10").fetchone() == ("completed",)
     assert db.execute("select status from run_execution_progress where consumer_run_id=10").fetchone() == ("running",)
@@ -165,10 +165,37 @@ def test_candidate_review_selection_and_progress_reference_closure():
     with pytest.raises(sqlite3.IntegrityError):
         db.execute("insert into run_adopted_selections values(?,?,?,?,?,?)", (3, 20, 11, "yes", "selected", "now"))
     with pytest.raises(sqlite3.IntegrityError):
-        db.execute("insert into run_execution_progress values(20,11,null,'done','','','{}','now','now')")
+        db.execute("insert into run_execution_progress values(20,99,null,'done','','','{}','now','now')")
     # Source selection bodies are derived from the bound candidate; target stores only option_key.
     assert "branch_json" not in {r[1] for r in db.execute("pragma table_info(run_adopted_selections)")}
     assert db.execute("select option_key from run_adopted_selections").fetchone() == ("yes",)
+
+
+def test_progress_selection_uses_actual_identity_and_deferred_owner_binding():
+    db = _db()
+    for run_id, role, parent in ((10, "consumer", None), (11, "audit", 10),
+                                 (12, "audit", 10)):
+        _run(db, run_id, 1, role, parent=parent)
+    _result(db, 10)
+    _review(db, 10, 11)
+    _review(db, 10, 12, decision="return")
+    db.execute("insert into run_adopted_selections values(501,10,12,'yes','selected','now')")
+
+    # Owner mismatch is deferred while both referenced rows exist.
+    db.execute("insert into run_execution_progress values(10,11,501,'done','','','{}','a','b')")
+    db.execute("update run_execution_progress set approved_audit_run_id=12 where consumer_run_id=10")
+    db.commit()
+    assert db.execute("select selection_id from run_execution_progress").fetchone() == (501,)
+
+    # Existence remains immediate.
+    with pytest.raises(sqlite3.IntegrityError):
+        db.execute("insert into run_execution_progress values(20,11,999,'done','','','{}','a','b')")
+
+    # A final cross-Review pair exists at both immediate FKs but fails at COMMIT.
+    db.execute("update run_execution_progress set approved_audit_run_id=11 where consumer_run_id=10")
+    with pytest.raises(sqlite3.IntegrityError):
+        db.commit()
+    db.rollback()
 
 
 def test_consumer_and_audit_role_parent_and_predecessor_run_types_are_exact():

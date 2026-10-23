@@ -143,13 +143,14 @@ def test_native_store_adopts_candidate_review_selection_and_supplement(monkeypat
     assert store.get_candidate_execution(consumer["id"]) is None
 
     db.execute("""insert into run_execution_progress
-        (consumer_run_id,approved_audit_run_id,selected_audit_run_id,status,lease_owner,
+        (consumer_run_id,approved_audit_run_id,selection_id,status,lease_owner,
          lease_expires_at,result_json,created_at,updated_at)
-        values(?,?,?,'done','','','{}','now','now')""", (consumer["id"], audit["id"], audit["id"]))
+        values(?,?,?,'done','','','{}','now','now')""", (consumer["id"], audit["id"], current_selection["id"]))
     db.commit()
     current_execution = store.get_candidate_execution(consumer["id"])
     assert current_execution["review_id"] == review["id"]
     assert current_execution["audit_run_id"] == audit["id"]
+    assert current_execution["selection_id"] == current_selection["id"]
     later = run_entity_storage.create_run(db, values={
         "task_id": task["id"], "parent_id": audit["id"], "execution_generation": "gen-1",
         "role": "consumer", "proposal_revision": 1, "turn_attempt": 0, "status": "completed",

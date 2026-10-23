@@ -384,7 +384,7 @@ def migrate_run_adoptions(db: sqlite3.Connection, source_metadata: dict, *,
             raise ValueError("progress has unresolved Review physical identity")
         approved_audit = review_owner[old_review][0]
         selected = candidate["execution_selection_id"]
-        selected_audit = None
+        selection_id = None
         if selected is not None:
             selection = selection_by_physical.get(selected)
             if selection is None:
@@ -392,9 +392,9 @@ def migrate_run_adoptions(db: sqlite3.Connection, source_metadata: dict, *,
             review = reviews.get(selection["review_id"])
             if review is None:
                 raise ValueError("selected branch has unresolved Review identity")
-            selected_audit = _run_id(run_map, review["audit_run_id"])
+            selection_id = int(selection["legacy_key"])
         _insert(db, "run_execution_progress", {"consumer_run_id": consumer,
-            "approved_audit_run_id": approved_audit, "selected_audit_run_id": selected_audit,
+            "approved_audit_run_id": approved_audit, "selection_id": selection_id,
             "status": candidate["execution_status"], "lease_owner": candidate["execution_lease_owner"],
             "lease_expires_at": candidate["execution_lease_expires_at"],
             "result_json": candidate["execution_result_json"], "created_at": candidate["execution_created_at"],

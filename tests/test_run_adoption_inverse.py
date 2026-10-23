@@ -55,7 +55,7 @@ def _db(*, simple_actions=False):
     db.execute("insert into run_adopted_selections values(18,10,11,'x','selected','s')")
     db.execute("insert into run_adopted_supplements values(30,10,'one','a')")
     db.execute("insert into run_adopted_supplements values(31,10,'two','b')")
-    db.execute("insert into run_execution_progress values(10,11,11,'done','','','{}','a','b')")
+    db.execute("insert into run_execution_progress values(10,11,18,'done','','','{}','a','b')")
     db.execute("insert into run_execution_progress values(20,21,null,'done','','','{}','c','d')")
     db.execute("insert into run_adoption_identity_map values('review_candidates',100,'40','integer',10,null)")
     db.execute("insert into run_adoption_identity_map values('candidate_reviews',101,'7','integer',11,7)")

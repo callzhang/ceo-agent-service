@@ -284,6 +284,7 @@ def test_actual_old_source_forward_moves_candidate_review_selection_supplements_
                           "from run_adopted_reviews").fetchone() == (7, 9007, 9006, digest)
         assert db.execute("select id,audit_run_id,option_key from run_adopted_selections").fetchone() == (
             18, 9007, "stop")
+        assert db.execute("select selection_id from run_execution_progress").fetchone() == (18,)
         assert tuple(db.execute("select id,instruction from run_adopted_supplements order by id")) == (
             (30, "first"), (31, "second"))
         assert tuple(db.execute("select execution_run_id,result_digest from action_receipts order by id")) == (

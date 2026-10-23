@@ -173,6 +173,7 @@ CREATE TABLE run_adopted_selections (
  audit_run_id INTEGER NOT NULL, option_key TEXT NOT NULL,
  status TEXT NOT NULL, created_at TEXT NOT NULL,
  UNIQUE(consumer_run_id), UNIQUE(consumer_run_id,audit_run_id),
+ UNIQUE(id,consumer_run_id,audit_run_id),
  FOREIGN KEY(consumer_run_id,audit_run_id)
   REFERENCES run_adopted_reviews(consumer_run_id,audit_run_id));
 
@@ -197,15 +198,15 @@ CREATE TABLE run_entity_identity_map (
 
 CREATE TABLE run_execution_progress (
  consumer_run_id INTEGER PRIMARY KEY REFERENCES run_adopted_results(consumer_run_id),
- approved_audit_run_id INTEGER NOT NULL,
- selected_audit_run_id INTEGER,
+ approved_audit_run_id INTEGER NOT NULL REFERENCES run_adopted_reviews(audit_run_id),
+ selection_id INTEGER REFERENCES run_adopted_selections(id),
  status TEXT NOT NULL CHECK(status IN ('running','done','skipped','failed','retry','uncertain')),
  lease_owner TEXT NOT NULL, lease_expires_at TEXT NOT NULL,
  result_json TEXT NOT NULL, created_at TEXT NOT NULL, updated_at TEXT NOT NULL,
  FOREIGN KEY(consumer_run_id,approved_audit_run_id)
-  REFERENCES run_adopted_reviews(consumer_run_id,audit_run_id),
- FOREIGN KEY(consumer_run_id,selected_audit_run_id)
-  REFERENCES run_adopted_selections(consumer_run_id,audit_run_id));
+  REFERENCES run_adopted_reviews(consumer_run_id,audit_run_id) DEFERRABLE INITIALLY DEFERRED,
+ FOREIGN KEY(selection_id,consumer_run_id,approved_audit_run_id)
+  REFERENCES run_adopted_selections(id,consumer_run_id,audit_run_id) DEFERRABLE INITIALLY DEFERRED);
 
 CREATE TABLE run_failures (
  id INTEGER PRIMARY KEY AUTOINCREMENT, run_id INTEGER NOT NULL REFERENCES runs(id),

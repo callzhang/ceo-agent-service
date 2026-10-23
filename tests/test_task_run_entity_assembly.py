@@ -149,7 +149,7 @@ def test_adoption_receipt_parent_is_real_consumer_progress_and_run_role_is_enfor
     _result(db, 10)
     _review(db, 10, 11)
     db.execute("insert into run_adopted_selections values(1,10,11,'yes','selected','now')")
-    db.execute("insert into run_execution_progress values(10,11,11,'running','worker','lease','{}','now','now')")
+    db.execute("insert into run_execution_progress values(10,11,1,'running','worker','lease','{}','now','now')")
     assert db.execute("select projection_json from run_projections where run_id=10").fetchone() == ("{}",)
     assert db.execute("select candidate_json from run_adopted_results where consumer_run_id=10").fetchone()[0].startswith("{")
     from app.action_entity_storage import create_action

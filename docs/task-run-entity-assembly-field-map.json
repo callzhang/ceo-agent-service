@@ -201,7 +201,7 @@
     {
       "source_field": "selection_id",
       "source_kind": "candidate_executions",
-      "target_field_or_expression": "selected_audit_run_id",
+      "target_field_or_expression": "selection_id (actual Selection business ID)",
       "target_table": "run_execution_progress"
     },
     {

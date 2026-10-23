@@ -344,7 +344,7 @@ class ReviewedCandidateStoreMixin:
                 from run_execution_progress p join run_adopted_reviews review
                   on review.audit_run_id=p.approved_audit_run_id
                 left join run_adopted_selections s
-                  on s.consumer_run_id=p.consumer_run_id and s.audit_run_id=p.selected_audit_run_id
+                  on s.id=p.selection_id
                 where p.consumer_run_id=?""", (candidate_id,)).fetchone())
 
     def wake_selected_candidate_execution(self, candidate_id: int, review_id: int) -> dict[str, Any]:

@@ -482,6 +482,7 @@ def adopted_action_source_rows(db: sqlite3.Connection, source_metadata: dict,
     candidate_physical = {}
     review_physical = {}
     selection_physical = {}
+    selection_physical_by_id = {}
     # Resolve predecessor and execution references only after every identity
     # has been planned, so forward references never depend on row order.
     adopted_reviews = db.execute(
@@ -492,10 +493,13 @@ def adopted_action_source_rows(db: sqlite3.Connection, source_metadata: dict,
         review_physical[(int(consumer), int(audit))] = int(item["physical_id"])
     adopted_selections = db.execute(
         "select id,consumer_run_id,audit_run_id,option_key,status,created_at from main.run_adopted_selections order by id").fetchall()
+    selection_owner_by_id = {}
     for row in adopted_selections:
         native_id, consumer, audit, *_ = row
         item = plan_by_owner[("candidate_selections", (int(native_id), int(consumer)))]
         selection_physical[(int(consumer), int(audit))] = int(item["physical_id"])
+        selection_physical_by_id[int(native_id)] = int(item["physical_id"])
+        selection_owner_by_id[int(native_id)] = (int(consumer), int(audit))
     candidate_physical = {
         int(item["canonical_run_id"]): int(item["physical_id"])
         for item in plan["adoptions"] if item["source_kind"] == "review_candidates"
@@ -515,11 +519,11 @@ def adopted_action_source_rows(db: sqlite3.Connection, source_metadata: dict,
                 row[name] = value
         return row
 
-    progress_columns = ("consumer_run_id", "approved_audit_run_id", "selected_audit_run_id",
+    progress_columns = ("consumer_run_id", "approved_audit_run_id", "selection_id",
                         "status", "lease_owner", "lease_expires_at", "result_json",
                         "created_at", "updated_at")
     progress_rows = {int(row[0]): dict(zip(progress_columns, row, strict=True))
-        for row in db.execute("select consumer_run_id,approved_audit_run_id,selected_audit_run_id,status,lease_owner,lease_expires_at,result_json,created_at,updated_at from main.run_execution_progress")}
+        for row in db.execute("select consumer_run_id,approved_audit_run_id,selection_id,status,lease_owner,lease_expires_at,result_json,created_at,updated_at from main.run_execution_progress")}
 
     for row in db.execute("select consumer_run_id,stage_index,predecessor_review_id,candidate_digest,candidate_json,invalidated_at,invalidation_reason,created_at from main.run_adopted_results"):
         consumer, stage, predecessor, digest, body, invalidated, reason, created = row
@@ -543,9 +547,11 @@ def adopted_action_source_rows(db: sqlite3.Connection, source_metadata: dict,
             if (consumer, approved) not in review_physical:
                 raise ValueError("unresolved adopted execution Review reference")
             selection_ref = None
-            if progress["selected_audit_run_id"] is not None:
-                selected_audit = int(progress["selected_audit_run_id"])
-                selection_ref = selection_physical.get((consumer, selected_audit))
+            if progress["selection_id"] is not None:
+                selection_id = int(progress["selection_id"])
+                if selection_owner_by_id.get(selection_id) != (consumer, approved):
+                    raise ValueError("adopted execution Selection does not match its Consumer and approved Review")
+                selection_ref = selection_physical_by_id.get(selection_id)
                 if selection_ref is None:
                     raise ValueError("unresolved adopted execution Selection reference")
             alias = plan_by_owner[("candidate_execution_alias", (consumer, None))]
