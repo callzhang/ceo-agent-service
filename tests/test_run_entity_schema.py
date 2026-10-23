@@ -1068,6 +1068,109 @@ def test_task_first_new_run_facts_survive_old_write_and_two_json_cycles():
         db.close()
 
 
+def test_inverse_retires_deleted_mapped_occurrence_and_cache_without_resurrection():
+    import json
+    from app.task_entity_schema import capture_task_entities, migrate_task_entities, restore_task_entities
+
+    db, task_forward, task_source_metadata = _run_source(
+        orphan_task_id=987654, include_task_source_metadata=True)
+    owners = ("runs", "runtime_attempts", "run_failures", "schedule_occurrences",
+              "workbench_events", "codex_session_search_index",
+              "email_classifier_runtime_samples", "setup_wizard_events")
+
+    def owner_rows():
+        return {table: tuple(tuple(row) for row in db.execute(f'select * from "{table}" order by 1'))
+                for table in owners}
+
+    def inverse_once(run_source_metadata, run_forward):
+        task_inverse = restore_task_entities(db, task_source_metadata, task_forward)
+        run_inverse = restore_run_entities(db, run_source_metadata, run_forward,
+            task_metadata=task_forward, task_inverse_metadata=task_inverse)
+        return task_inverse, run_inverse
+
+    try:
+        original_source_rows = {
+            kind: tuple(db.execute("select * from runs where record_type=? order by id", (kind,)))
+            for kind in run_entity_definitions.SOURCE_FIELDS
+        }
+        run_source_metadata = capture_run_entities(db)
+        run_forward = migrate_run_entities(db, run_source_metadata, task_metadata=task_forward,
+            run_handoff=_run_handoff(db, run_source_metadata))
+        edge_by_source = {(row["source_kind"], row["physical_id"]): row["target_id"]
+                          for row in run_forward["identity_edges"]}
+        occurrence_canonical = edge_by_source[("scheduled_task_runs", 1303)]
+        cache_canonical = edge_by_source[("codex_session_search_index", 1305)]
+        native_state = owner_rows()
+        native_catalog = tuple(tuple(row) for row in db.execute(
+            "select type,name,sql from sqlite_schema where name in (" +
+            ",".join("?" for _ in owners) + ") order by name", owners))
+        owner_waters = {name: db.execute("select seq from sqlite_sequence where name=?", (name,)).fetchone()
+                        for name in owners}
+        db.execute("savepoint retired_inverse_rollback")
+        db.execute("delete from schedule_occurrences where id=?", (occurrence_canonical,))
+        db.execute("delete from codex_session_search_index where id=?", (cache_canonical,))
+
+        task_inverse, run_inverse = inverse_once(run_source_metadata, run_forward)
+        restored_rows = {kind: tuple(db.execute("select * from runs where record_type=? order by id", (kind,)))
+                         for kind in run_entity_definitions.SOURCE_FIELDS}
+        for kind, before_rows in original_source_rows.items():
+            expected = tuple(row for row in before_rows if not (
+                kind == "scheduled_task_runs" and row[0] == 1303
+                or kind == "codex_session_search_index" and row[0] == 1305))
+            assert restored_rows[kind] == expected
+        assert not any(edge["source_kind"] == "scheduled_task_runs" and edge["source_physical_id"] == 1303
+                       for edge in run_inverse["run_handoff"]["identity_edges"])
+        assert not any(edge["source_kind"] == "codex_session_search_index" and edge["source_physical_id"] == 1305
+                       for edge in run_inverse["run_handoff"]["identity_edges"])
+        assert tuple(db.execute("pragma foreign_key_check")) == (("runs", 1400, "tasks", 1),)
+        for owner, before_water in owner_waters.items():
+            assert run_inverse["run_handoff"]["owner_highwaters"][owner] == (
+                None if before_water is None else before_water[0])
+
+        fresh_task_metadata = capture_task_entities(db)
+        fresh_run_metadata = capture_run_entities(db)
+        portable_run_handoff = json.loads(json.dumps(run_inverse["run_handoff"]))
+        task_source_metadata = fresh_task_metadata
+        task_forward = migrate_task_entities(db, fresh_task_metadata,
+            source_context=task_inverse["source_context"],
+            inverse_identity=json.loads(json.dumps(task_inverse["inverse_identity"])))
+        run_forward = migrate_run_entities(db, fresh_run_metadata, task_metadata=task_forward,
+            run_handoff=portable_run_handoff)
+        assert db.execute("select 1 from schedule_occurrences where id=?", (occurrence_canonical,)).fetchone() is None
+        assert db.execute("select 1 from codex_session_search_index where id=?", (cache_canonical,)).fetchone() is None
+        assert tuple(db.execute("pragma foreign_key_check")) == (("runs", 1400, "tasks", 1),)
+
+        task_inverse, run_inverse = inverse_once(fresh_run_metadata, run_forward)
+        for kind, source_id in (("scheduled_task_runs", 1303), ("codex_session_search_index", 1305)):
+            assert db.execute("select 1 from runs where record_type=? and id=?", (kind, source_id)).fetchone() is None
+        assert run_inverse["run_handoff"]["owner_highwaters"]["schedule_occurrences"] >= (
+            owner_waters["schedule_occurrences"][0] or 0)
+        assert run_inverse["run_handoff"]["owner_highwaters"]["codex_session_search_index"] >= (
+            owner_waters["codex_session_search_index"][0] or 0)
+        repeated_task_metadata = capture_task_entities(db)
+        repeated_run_metadata = capture_run_entities(db)
+        task_forward = migrate_task_entities(db, repeated_task_metadata,
+            source_context=task_inverse["source_context"],
+            inverse_identity=json.loads(json.dumps(task_inverse["inverse_identity"])))
+        run_forward = migrate_run_entities(db, repeated_run_metadata, task_metadata=task_forward,
+            run_handoff=json.loads(json.dumps(run_inverse["run_handoff"])))
+        assert db.execute("select 1 from schedule_occurrences where id=?", (occurrence_canonical,)).fetchone() is None
+        assert db.execute("select 1 from codex_session_search_index where id=?", (cache_canonical,)).fetchone() is None
+        assert tuple(db.execute("pragma foreign_key_check")) == (("runs", 1400, "tasks", 1),)
+        db.execute("rollback to retired_inverse_rollback")
+        db.execute("release retired_inverse_rollback")
+        assert owner_rows() == native_state
+        restored_catalog = tuple(tuple(row) for row in db.execute(
+            "select type,name,sql from sqlite_schema where name in (" +
+            ",".join("?" for _ in owners) + ") order by name", owners))
+        assert restored_catalog == native_catalog
+        for owner, before_water in owner_waters.items():
+            after_water = db.execute("select seq from sqlite_sequence where name=?", (owner,)).fetchone()
+            assert after_water == before_water
+    finally:
+        db.close()
+
+
 def _q(identifier):
     return '"' + identifier.replace('"', '""') + '"'
 

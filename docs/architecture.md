@@ -126,7 +126,9 @@ owner high-water、selected source DDL context 与 SHA-256 digest；source seque
 来源 public legacy key 维护独立水位；新专业 Run 的 public key 与旧 `create_logical_run`
 触发器一致，取新物理 ID 的文本形式，既有专业 public key 原样保留。八个 owner 的缺省值
 不相互推导，insert 后 delete 的 AUTOINCREMENT 水位也随 JSON handoff 保存。未映射 native
-删除事实不会从初始快照复活。Task-first composed inverse
+删除事实不会从初始快照复活；原先有映射但当前 owner 已不存在的 occurrence/cache 行会从
+还原源事实中退休，handoff 也只携带仍存在的 owner 身份。保留的子事实若因此产生悬空引用仍拒绝，
+不会借退休过滤掩盖。Task-first composed inverse
 与 handoff producer仍是 migration-only；没有激活运行时。
 
 Actions 保留五十九种物理类型：五十八种方案、审查、候选、修订、动作、尝试、步骤、业务事件和回执，以及一种只保留旧 execution 身份的技术 alias。

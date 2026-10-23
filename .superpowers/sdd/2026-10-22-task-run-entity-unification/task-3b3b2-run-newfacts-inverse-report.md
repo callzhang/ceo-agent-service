@@ -24,6 +24,18 @@ The committed mixed regression creates synthetic native facts across all eight R
 
 The parent independently ran the frozen 37,421-Task/262,889-Run synthetic source probe successfully before the final focused child-water and Workbench FK regression additions. It covered both inverse/old-write/JSON/reforward cycles, all eight owners, typed hashes, the inherited orphan, and monotonic owner waters. This is synthetic migration evidence, not runtime/CLI/Action/UI or release acceptance.
 
+## Fix 1 review follow-up: current-fact retirement
+
+The review finding said an original source-mapped native row missing at inverse was rejected. Inspection found the current-owner filter already runs before the required-identity check: absent source-mapped owner facts are omitted from reconstructed source rows and from the sparse handoff, while a missing identity still referenced by a retained fact remains an error. No product-code defect was demonstrated, so this follow-up changes no migration behavior. It adds a regression for an unreferenced source-mapped schedule occurrence and cache row, verifies current source reconstruction and repeated JSON forward/inverse cycles do not resurrect either row, checks all eight captured owner high-waters and the inherited orphan, and proves savepoint rollback restores native owner rows, catalog, and sequence facts.
+
+Verification for the Fix 1 regression:
+
+- `pytest -q tests/test_run_entity_schema.py -k inverse_retires_deleted_mapped_occurrence_and_cache_without_resurrection --basetemp /private/tmp/ceo-task-run-phase2-_ntbufyi/fix1-focused --tb=short` — 1 passed, 30 deselected.
+- `pytest -q tests/test_run_entity_schema.py --basetemp /private/tmp/ceo-task-run-phase2-_ntbufyi/fix1-module --tb=short` — 31 passed.
+- `ruff check app/run_entity_schema.py tests/test_run_entity_schema.py` — passed; `python -m compileall -q app/run_entity_schema.py` — passed; `git diff --check` — passed.
+
+This is regression evidence for existing retirement behavior; it does not establish a broad deletion policy or authorize runtime retention changes. No production/native CLI/provider action, push, or deploy was performed.
+
 ## Scope boundary
 
 No runtime closure, Action conversion, provider/native CLI execution, production checkout, push, or deploy was performed. B3B2 remains migration-only. The full repository suite and production behavior were not tested.

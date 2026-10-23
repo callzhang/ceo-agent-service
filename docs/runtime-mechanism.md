@@ -432,7 +432,9 @@ classification 使用既有 actual 声明，message 使用既有 fresh 声明。
 旧构造器及原 Actions 转换读回确认，按完整声明 hash 识别；不做 SQL 格式归一化，
 未知组合仍拒绝。逆迁保存并恢复本次实际捕获的完整声明。
 Tasks 在 State 之后转换，Config FK 翻译先于 Runs 扩展；inverse 按依赖逆序从当前
-事实重建。原来源表只在转换事务中暂存，最终 schema predicate 不允许旧容器残留。
+事实重建。Run inverse 只重建仍有当前 owner 的 source-mapped 事实；已删除的 occurrence/cache
+不会从 capture 中复活，仍被保留事实引用的缺失身份继续作为错误拒绝。原来源表只在转换事务中
+暂存，最终 schema predicate 不允许旧容器残留。
 
 Child 在事务内目标校验之后、COMMIT 之前 flush 全套十个逆迁元数据组件；Parent
 仅接受完整集合，子进程异常／超时仍保留完整逆迁信息并传播原始失败，截断传输不作为
