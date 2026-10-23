@@ -312,6 +312,9 @@ def test_ambiguous_message_does_not_satisfy_trash() -> None:
         def read_state(self, locator, *, action_type):
             raise module.ImapMessageUnavailable("message lookup was ambiguous")
 
+        def find_states(self, locator, *, action_type, folders=None):
+            return []
+
         def apply(self, locator, action_type, parameters, *, observed_state):
             pytest.fail("ambiguous trash must not issue a provider write")
 
@@ -1506,6 +1509,34 @@ def test_production_imap_move_timeout_retries_by_message_id_without_second_move(
     assert any(call[:2] == ("uid", "SEARCH") for call in retry_session.calls)
     assert first_session.logged_out is True
     assert retry_session.logged_out is True
+
+
+def test_production_imap_ambiguous_message_id_reads_only_move_destination() -> None:
+    module = import_module("app.email_provider_actions")
+    message_id = "<message@example.com>"
+    session = FakeWritableImapSession(
+        mailboxes={
+            "INBOX": (set(), 42),
+            "Projects": (set(), 84),
+            "Archive": (set(), 126),
+        },
+        messages={
+            "INBOX": {8: ("<other@example.com>", set())},
+            "Projects": {19: (message_id, set())},
+            "Archive": {55: (message_id, set())},
+        },
+    )
+
+    result = module.DeterministicEmailActionExecutor(
+        module.ImapDeterministicProvider(session, account_id="account-1")
+    ).execute(_action(EmailAction.MOVE, {"target_folder": "Projects"}))
+
+    assert result.status == "done"
+    assert result.provider_operation == "readback_noop"
+    assert result.updated_locator is not None
+    assert result.updated_locator.folder == "Projects"
+    assert not any(call[:2] == ("uid", "MOVE") for call in session.calls)
+    assert not any(call[:2] == ("uid", "COPY") for call in session.calls)
 
 
 def test_production_imap_quotes_discovered_special_use_folder_for_uid_move() -> None:

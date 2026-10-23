@@ -5,7 +5,7 @@ from pathlib import Path
 from evals.scheduled_task_generic import okr_eval
 from evals.scheduled_task_generic.okr_fixture import Fixture, member_payload
 
-CASES = json.loads((Path(okr_eval.__file__).parent / "okr_cases.v5.json").read_text())[
+CASES = json.loads((Path(okr_eval.__file__).parent / "okr_cases.v6.json").read_text())[
     "cases"
 ]
 
@@ -17,8 +17,22 @@ def test_okr_skill_resumes_saved_inputs_and_does_not_use_failure_for_missing_evi
         .read_text()
         .split()
     )
-    assert "Every new scheduled execution (a new `scheduled_run_id`) must establish a fresh" in skill
-    assert "A Consumer retry, resumed turn or Audit correction for the same `scheduled_run_id`" in skill
+    assert "Do not invent or require a separate local performance-policy" in skill
+    assert "the missing document does not block member analysis or publication" in skill
+    assert "Do not copy provider status codes, machine error labels or raw diagnostics into analyses, report text or the message proposal" in skill
+    assert "an unreadable current-quarter record does not establish that the member has no goal" in skill
+    assert "`read_scheduled_context.run_id` is this execution's scheduled run ID" in skill
+    assert "call `read_okr_roster` plus `read_okr_member` once for every current roster member" in skill
+    assert "search independent DingTalk documents using the" in skill
+    assert "`search_dingtalk_documents`" in skill
+    assert "A concrete current-quarter `member_not_found`/404 receipt is member-specific" in skill
+    assert "Use `reply_to_message` only when the trigger is an actual message" in skill
+    assert "compare each summary bullet and risk item by manager and KR" in skill
+    assert "Call a result a \"this-week\" change only when a source includes a date" in skill
+    assert "in `ceo_attention_items` when it needs a specific CEO decision or in that manager's `risks`, not in both" in skill
+    assert "missing positive evidence with no concrete" in skill
+    assert "A score below `50` requires repeated or high-impact" in skill
+    assert "A Consumer retry, resumed turn or Audit correction for the same `read_scheduled_context.run_id`" in skill
     assert "reuse its verified roster and member source receipts instead of rereading all members" in skill
     assert "Never infer that a member source is unchanged from an earlier scheduled execution" in skill
     assert "A request to fix a shared report, appendix set, notification summary" in skill
@@ -32,6 +46,11 @@ def test_okr_skill_resumes_saved_inputs_and_does_not_use_failure_for_missing_evi
     assert "state each coverage boundary once" in skill
     assert "On a retry of the same scheduled execution, read only missing/failed member receipts" in skill
     assert "Never repeat a successful member read within the same scheduled execution" in skill
+    assert "call `list_task_artifacts`" in skill
+    assert "reuse listed roster and member receipt artifacts" in skill
+    assert "`prepare` validates their userId, period, outcome and source digest" in skill
+    assert "read `plan.json`, each schema" in skill
+    assert "Do not try to open the Python script source or task artifacts with `read_text_file`" in skill
     assert "resume at the first missing, changed or Audit-identified analysis" in skill
     assert "Zero reported progress is not evidence that no outcome occurred" in skill
     assert "It is not a shortcut for unfinished analysis" in skill
@@ -40,12 +59,21 @@ def test_okr_skill_resumes_saved_inputs_and_does_not_use_failure_for_missing_evi
     assert "Score each dimension independently" in skill
     assert "Do not transfer evidence between dimensions" in skill
     assert "Audit must independently check all seven dimension/evidence/score" in skill
+    assert "A missed or incomplete business KR does not lower a leadership or culture dimension" in skill
+    assert "a below-standard score requires dimension-specific evidence of an unmet behavior or contrary pattern" in skill
     assert "Innovation requires a specific improvement, validation and observed effect" in skill
     assert "A `scope: member` label or a diagnostic containing “member-bound” is not proof" in skill
     assert "Independently inspect every score of 80 or more" in skill
     assert "routine same-team adoption" in skill
     assert "publish or update and fully read back every appendix" in skill
     assert "an old appendix or its previous readback does not satisfy this run's manifest" in skill
+    correction = skill.split("### Correct an Audit return before publication", 1)[1].split(
+        "## Collect and prepare", 1
+    )[0]
+    assert "Audit correction is not a prose-only edit" in correction
+    assert "Update the affected `analysis-<userId>.json` or `appendix-links.json`" in correction
+    assert "rerun `scripts/report.py render`" in correction
+    assert "Never write generated report outputs with `consumer_artifact_write`" in correction
 
 
 def complete_fixture(tmp_path, case=None):
@@ -62,6 +90,21 @@ def complete_fixture(tmp_path, case=None):
                 "arguments": {"user_id": m["user_id"]},
                 "result": {},
             }
+        )
+    for node_id, document in f.independent_documents().items():
+        trace.extend(
+            [
+                {
+                    "tool": "search_dingtalk_documents",
+                    "arguments": {"query": document["title"]},
+                    "result": {"documents": [{"nodeId": node_id, "name": document["title"]}]},
+                },
+                {
+                    "tool": "read_dingtalk_document",
+                    "arguments": {"node_id": node_id},
+                    "result": {"content": document["content"]},
+                },
+            ]
         )
     report = okr_eval.load_script("report")
     plan = report.prepare(
@@ -356,6 +399,36 @@ def test_native_document_tools_use_actual_service_receipt_contract(tmp_path):
         assert result["readback"]["artifact_name"].endswith(".readback.json")
 
 
+def test_native_fixture_exposes_searchable_independent_evidence(tmp_path):
+    f = Fixture(CASES[0]["facts"], tmp_path)
+    with f.production_tools("consumer") as tools:
+        matches = tools["search_dingtalk_documents"]("林辰 eval-a")
+        nodes = {item["node_id"] for item in matches["documents"]}
+        assert "eval-evidence-2b0652a9fd02acfb" in nodes
+        assert "eval-behavior-2b0652a9fd02acfb" in nodes
+        evidence = tools["read_dingtalk_document"]("eval-evidence-2b0652a9fd02acfb")
+        assert evidence["content"]["markdown"] == f.facts["evidence"]["eval-a"]["content"]
+
+
+def test_native_fixture_exposes_previous_scheduled_run_id(tmp_path):
+    f = Fixture(CASES[1]["facts"], tmp_path)
+    context = f.scheduled_context()
+    assert context["run_id"] == 2
+    assert context["history"] == [{"run_id": 1, "status": "completed"}]
+
+
+def test_native_audit_revision_receives_previous_review_context():
+    prior = {
+        "verdict": "revise",
+        "feedback": ["Keep the customer-acceptance risk in one report section."],
+    }
+    context = okr_eval.audit_revision_context(prior)
+    assert "Previous Audit revision context" in context
+    assert "not source facts or authorization" in context
+    assert "Keep the customer-acceptance risk in one report section." in context
+    assert "judge the current candidate independently" in context
+
+
 def test_actual_artifact_reader_reports_zero_based_ranges_on_full_reads(tmp_path):
     f = Fixture(CASES[0]["facts"], tmp_path)
     text = "## Heading\n"
@@ -413,8 +486,11 @@ def test_failed_saved_candidate_cannot_be_reused(tmp_path):
     import pytest
 
     saved = json.loads((Path(okr_eval.__file__).parent / "okr_results.v13.json").read_text())
+    frozen_case = json.loads(
+        (Path(okr_eval.__file__).parent / "okr_cases.v5.json").read_text()
+    )["cases"][2]
     with pytest.raises(ValueError, match="failed candidate"):
-        okr_eval.restore_accepted_candidate(saved, CASES[2], tmp_path)
+        okr_eval.restore_accepted_candidate(saved, frozen_case, tmp_path)
 
 
 def test_manifest_paths_must_belong_to_current_artifact_directory(tmp_path):
@@ -634,6 +710,12 @@ def test_native_transport_keeps_real_purpose_validation_inside_envelope(
             'mcp_servers.okr_acceptance.default_tools_approval_mode="approve"'
             in command
         )
+        fixture_args = next(
+            json.loads(value.split("=", 1)[1])
+            for value in command
+            if value.startswith("mcp_servers.okr_acceptance.args=")
+        )
+        assert fixture_args[-2:] == ["--run-id", "42"]
         assert '"allOf"' in kwargs["input"]
         Path(command[command.index("--output-last-message") + 1]).write_text(
             json.dumps({"purpose_output_json": json.dumps(wire)})
@@ -642,9 +724,108 @@ def test_native_transport_keeps_real_purpose_validation_inside_envelope(
 
     monkeypatch.setattr(okr_eval.subprocess, "run", accepted)
     phase = okr_eval.native(
-        "consumer", facts, tmp_path / "artifacts", tmp_path / "native", []
+        "consumer", facts, tmp_path / "artifacts", tmp_path / "native", [],
+        scheduled_run_id=42,
     )
     assert phase["output"] == wire
+
+
+def test_synthetic_audit_prompt_states_its_offline_execution_boundary(
+    tmp_path, monkeypatch
+):
+    from types import SimpleNamespace
+
+    facts = tmp_path / "facts.json"
+    facts.write_text("{}")
+    inputs = []
+
+    def accepted(command, **kwargs):
+        inputs.append(kwargs["input"])
+        Path(command[command.index("--output-last-message") + 1]).write_text(
+            json.dumps({"verdict": "approve", "feedback": []})
+        )
+        return SimpleNamespace(returncode=0)
+
+    monkeypatch.setattr(okr_eval.subprocess, "run", accepted)
+    okr_eval.native("audit", facts, tmp_path / "artifacts", tmp_path / "audit", [])
+
+    assert "本评测只评估合成 verdict" in inputs[0]
+
+
+def test_native_feedback_continues_after_audit_returns_another_revision(
+    tmp_path, monkeypatch
+):
+    calls = []
+    outputs = iter(
+        [
+            {"output": {"candidate": "second correction"}},
+            {"output": {"verdict": "approve", "feedback": []}},
+        ]
+    )
+
+    def fake_native(role, *args, **kwargs):
+        calls.append((role, args, kwargs))
+        return next(outputs)
+
+    monkeypatch.setattr(okr_eval, "native", fake_native)
+    latest_consumer = {"output": {"candidate": "first correction"}}
+    corrections = [{"output": {"candidate": "first correction"}}]
+    audits = [
+        {"output": {"verdict": "revise", "feedback": ["first finding"]}},
+        {"output": {"verdict": "revise", "feedback": ["second finding"]}},
+    ]
+
+    latest_consumer, corrections, audits = okr_eval.continue_native_feedback(
+        tmp_path / "facts.json",
+        tmp_path / "artifacts",
+        tmp_path,
+        [],
+        latest_consumer,
+        corrections,
+        audits,
+        scheduled_run_id=42,
+    )
+
+    assert latest_consumer["output"]["candidate"] == "second correction"
+    assert len(corrections) == 2
+    assert audits[-1]["output"]["verdict"] == "approve"
+    assert calls[0][2]["feedback"] == audits[1]["output"]
+    assert all(call[2]["scheduled_run_id"] == 42 for call in calls)
+
+
+def test_native_feedback_keeps_the_production_cycle_bound(tmp_path, monkeypatch):
+    calls = []
+    outputs = iter(
+        [
+            {"output": {"candidate": "second correction"}},
+            {"output": {"verdict": "revise", "feedback": ["third finding"]}},
+            {"output": {"candidate": "third correction"}},
+            {"output": {"verdict": "revise", "feedback": ["fourth finding"]}},
+        ]
+    )
+
+    def fake_native(role, *args, **kwargs):
+        calls.append((role, args, kwargs))
+        return next(outputs)
+
+    monkeypatch.setattr(okr_eval, "native", fake_native)
+    _, corrections, audits = okr_eval.continue_native_feedback(
+        tmp_path / "facts.json",
+        tmp_path / "artifacts",
+        tmp_path,
+        [],
+        {"output": {"candidate": "first correction"}},
+        [{"output": {"candidate": "first correction"}}],
+        [
+            {"output": {"verdict": "revise", "feedback": ["first finding"]}},
+            {"output": {"verdict": "revise", "feedback": ["second finding"]}},
+        ],
+        scheduled_run_id=42,
+    )
+
+    assert len(corrections) == 3
+    assert len(audits) == 4
+    assert len(calls) == 4
 
 
 def test_unscored_current_roster_titles_are_not_erased(tmp_path):
@@ -663,6 +844,8 @@ def test_group_summary_keeps_exact_member_gap_evidence(tmp_path):
     summary = (tmp_path / "summary.md").read_text()
     for gap in analysis.member_gaps:
         assert gap.evidence in summary
+    assert "404" not in summary
+    assert "OKR 目标记录未能读取" in summary
 
 
 def test_cases_are_versioned_without_rewriting_failed_oracle():
@@ -672,6 +855,8 @@ def test_cases_are_versioned_without_rewriting_failed_oracle():
         stable = copy.deepcopy(facts)
         stable["evidence"].pop("behavior", None)
         stable["evidence"].pop("behavior_by_manager", None)
+        stable.pop("run_id", None)
+        stable.pop("previous_run_id", None)
         return stable
 
     root = Path(okr_eval.__file__).parent
@@ -691,6 +876,21 @@ def test_cases_are_versioned_without_rewriting_failed_oracle():
     assert hashlib.sha256(fourth.read_bytes()).hexdigest() == "de85506221508bee7aa4db312d5c566a8f28b96a9ebac87d919ac34dbfe0ca5c"
     fifth = root / "okr_cases.v5.json"
     assert fifth.is_file()
+    assert hashlib.sha256(fifth.read_bytes()).hexdigest() == "ae2cd3caecb562d6efa305f4249a4f39b1cad68e8dbbe02cd7a65a1f0ef3b448"
+    sixth = root / "okr_cases.v6.json"
+    assert sixth.is_file()
+    sixth_cases = json.loads(sixth.read_text())["cases"]
+    assert [case["id"] for case in sixth_cases] == [
+        "composite-coverage",
+        "fresh-source-snapshot",
+        "fresh-date-snapshot",
+        "shared-source-auth-failure",
+    ]
+    old_fifth = json.loads(fifth.read_text())["cases"]
+    for before, after in zip(old_fifth, sixth_cases, strict=True):
+        assert stable_non_behavior_facts(before["facts"]) == stable_non_behavior_facts(after["facts"])
+        if after["id"] in {"fresh-source-snapshot", "fresh-date-snapshot"}:
+            assert "resume_from" not in after
     old_v3 = json.loads((root / "okr_cases.v3.json").read_text())["cases"]
     for before, after in zip(old_v3, CASES, strict=True):
         assert stable_non_behavior_facts(before["facts"]) == stable_non_behavior_facts(after["facts"])
@@ -701,7 +901,7 @@ def test_cases_are_versioned_without_rewriting_failed_oracle():
         assert "林辰 [eval-b]" in behavior["eval-b"]["content"]
         assert "负责人轮流主持并独立跟进跨团队依赖" in behavior["eval-a"]["content"]
         assert "每周带两名工程师复盘定位方法" in behavior["eval-b"]["content"]
-    date_case = next(c for c in CASES if c["id"] == "recover-changed-date")
+    date_case = next(c for c in CASES if c["id"] == "fresh-date-snapshot")
     assert "没有AI使用及工作增益证据" in date_case["facts"]["evidence"]["behavior_by_manager"]["eval-b"]["content"]
     for before, after in zip(first, CASES, strict=True):
         assert stable_non_behavior_facts(before["facts"]) == stable_non_behavior_facts(after["facts"])
@@ -836,3 +1036,52 @@ def test_release_manifest_pins_verified_current_installation():
         assert entry["new_sha256"] == row["approved_new_sha256"], row["source"]
         if "managed_sha256" in row:
             assert entry["old_managed_sha256"] == row["managed_sha256"]
+
+
+def test_synthetic_scheduled_context_exposes_current_artifacts_without_contents(tmp_path):
+    fixture = Fixture(CASES[0]["facts"], tmp_path)
+    content = '{"private":"must not be exposed"}'
+    (tmp_path / "analysis.json").write_text(content)
+
+    tool = fixture.build_server("consumer", {})._tool_manager.get_tool(
+        "read_scheduled_context"
+    ).fn
+
+    context = tool()
+
+    assert {
+        "name": "analysis.json",
+        "sha256": okr_eval.digest(content.encode()),
+    } in context["task_artifacts"]
+    assert all("content" not in artifact for artifact in context["task_artifacts"])
+    assert "must not be exposed" not in json.dumps(context)
+
+
+def test_synthetic_scheduled_context_uses_requested_run_id(tmp_path):
+    fixture = Fixture(CASES[0]["facts"], tmp_path, scheduled_run_id=42)
+    tool = fixture.build_server("consumer", {})._tool_manager.get_tool(
+        "read_scheduled_context"
+    ).fn
+
+    assert tool()["run_id"] == 42
+
+
+def test_native_phase_failure_keeps_diagnostic_and_fixture_tool_trace(tmp_path):
+    fixture = Fixture(CASES[0]["facts"], tmp_path)
+    fixture.record("read_scheduled_context", {}, {"task_artifacts": []})
+    audit = {
+        "output": None,
+        "diagnostic": "Native final output failed the production contract",
+    }
+
+    result = okr_eval.native_failure_case(
+        "composite-coverage", tmp_path, "audit", audit=audit
+    )
+
+    assert result["failed_phase"] == "audit"
+    assert result["audit"]["diagnostic"] == audit["diagnostic"]
+    assert result["raw_tool_trace"][0]["tool"] == "read_scheduled_context"
+
+
+def test_okr_eval_pins_scheduled_context_implementation_hash():
+    assert "read_scheduled_context" in okr_eval.application_contract_hashes()

@@ -5400,6 +5400,56 @@ def test_dingtalk_message_and_recovery_commands_never_run_concurrently(
     assert events == ["start:fast", "end:fast", "start:recovery", "end:recovery"]
 
 
+def test_minute_producer_defers_instead_of_waiting_behind_recovery(
+    tmp_path, monkeypatch
+):
+    import threading
+
+    monkeypatch.setenv("CEO_WECHAT_READER_ENABLED", "1")
+    recovery_entered = threading.Event()
+    release_recovery = threading.Event()
+    calls: list[str] = []
+
+    class Worker:
+        def produce_once(self, max_tasks=None, *, recovery=False, calendar_only=None):
+            label = "recovery" if recovery else "fast"
+            calls.append(label)
+            if recovery:
+                recovery_entered.set()
+                assert release_recovery.wait(timeout=5)
+            return 0
+
+    registry = cli._service_command_registry(
+        AutoReplyStore(tmp_path / "recovery-priority.sqlite3"),
+        Worker(),
+        SimpleNamespace(max_batches=1),
+    )
+    monkeypatch.setattr(cli, "scan_completed_dingtalk_todos_command", lambda _settings: 0)
+    recovery = threading.Thread(
+        target=lambda: registry.run("recover-recent-messages"), daemon=True
+    )
+    recovery.start()
+    assert recovery_entered.wait(timeout=5)
+
+    result: list[str] = []
+    minute = threading.Thread(
+        target=lambda: result.append(registry.run("produce-once")), daemon=True
+    )
+    try:
+        minute.start()
+        minute.join(timeout=0.5)
+        assert not minute.is_alive(), "minute scan must not queue behind recovery"
+        assert result == ["produce-once deferred=producer_busy"]
+        assert calls == ["recovery"]
+    finally:
+        release_recovery.set()
+        recovery.join(timeout=5)
+        minute.join(timeout=5)
+
+    assert registry.run("produce-once") == "produce-once queued=0"
+    assert calls == ["recovery", "fast"]
+
+
 def test_recover_recent_messages_service_command_also_scans_completed_todos(
     tmp_path, monkeypatch
 ):

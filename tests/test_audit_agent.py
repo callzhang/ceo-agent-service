@@ -380,6 +380,46 @@ def test_review_only_run_preserves_session_and_uses_bound_read_cli(setup):
     assert snapshot["invocation_facts"]["skill_names"] == []
 
 
+def test_audit_revision_resumes_audit_owned_session_without_replacing_consumer_session(setup):
+    store, task, consumer_0, context_0, _config, _router = setup
+    store.upsert_conversation_runtime_session(
+        task.conversation_id, "codex_oauth", "consumer-owned-session", "consumer-contract"
+    )
+    audit_0 = _runner(setup, CapturingExecutor(_wire(outcome="return"))).run(
+        task, context_0, turn_attempt=0, parent_agent_run_id=consumer_0.id,
+    )
+
+    candidate = context_0.candidate
+    consumer_1 = store.claim_agent_run(
+        task.id,
+        task.execution_generation,
+        role=AgentRole.CONSUMER,
+        proposal_revision=1,
+        turn_attempt=0,
+        parent_agent_run_id=audit_0.run_id,
+        operation_id="",
+        owner="consumer-revision-1",
+    ).run
+    store.complete_agent_run(
+        consumer_1.id, candidate.model_dump(mode="json"), owner="consumer-revision-1"
+    )
+    context_1 = replace(
+        context_0, proposal_revision=1, operation_id="audit-operation-1"
+    )
+    executor_1 = CapturingExecutor(_wire(outcome="approve"))
+    audit_1 = _runner(setup, executor_1).run(
+        task, context_1, turn_attempt=0, parent_agent_run_id=consumer_1.id,
+    )
+
+    assert audit_1.result.outcome is AuditOutcome.APPROVE
+    assert store.get_agent_run(audit_1.run_id).codex_session_id == "audit-session"
+    assert "resume" in executor_1.commands[0]
+    assert "audit-session" in executor_1.commands[0]
+    assert store.get_conversation_runtime_session(
+        task.conversation_id, "codex_oauth"
+    ) == "consumer-owned-session"
+
+
 @pytest.mark.parametrize("outcome", ["return", "reject"])
 def test_audit_feedback_is_business_review_without_external_result(setup, outcome):
     _store, task, parent, context, _config, _router = setup
@@ -468,6 +508,40 @@ def test_false_field_feedback_corrects_audit_without_revising_or_approving_candi
     assert result.result.outcome is AuditOutcome.RETURN
     assert "Audit candidate field assertion" in executor.prompts[0]
     assert context.candidate_digest == result.result.candidate_digest
+
+
+def test_missing_candidate_field_path_error_names_path_and_parent_fields(setup):
+    store, task, parent, context, _config, _router = setup
+    lines = _wire(outcome="return").splitlines()
+    event = json.loads(lines[-1])
+    output = json.loads(event["item"]["text"])
+    output["feedback"].update(
+        observation_basis="candidate_fields",
+        candidate_field_assertions=[{
+            "path": ["proposal", "summary"],
+            "value": "private-candidate-value",
+            "json_type": "string",
+        }],
+    )
+    event["item"]["text"] = json.dumps(output)
+    lines[-1] = json.dumps(event)
+    with pytest.raises(ResultParseError, match="candidate field assertion"):
+        _runner(setup, CapturingExecutor("\n".join(lines))).run(
+            task, context, turn_attempt=0, parent_agent_run_id=parent.id)
+
+    failed = store.get_agent_run_for_turn(task.id, task.execution_generation,
+        role=AgentRole.AUDIT, proposal_revision=0, turn_attempt=0)
+    detail = json.loads(failed.structured_error_json)["detail"]
+    assert '["proposal", "summary"]' in detail
+    assert '"objective"' in detail
+    assert '"actions"' in detail
+    assert "private-candidate-value" not in detail
+
+    executor = CapturingExecutor(_wire(outcome="return"))
+    _runner(setup, executor).run(
+        task, context, turn_attempt=1, parent_agent_run_id=parent.id)
+    assert '["proposal", "summary"]' in executor.prompts[0]
+    assert '"objective"' in executor.prompts[0]
 
 
 def test_sensitive_audit_output_is_a_result_failure_not_a_process_outage(setup):

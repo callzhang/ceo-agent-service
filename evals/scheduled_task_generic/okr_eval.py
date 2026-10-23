@@ -28,7 +28,8 @@ from evals.scheduled_task_generic.okr_fixture import (
 )
 
 HERE = Path(__file__).parent
-CASES_PATH = HERE / "okr_cases.v5.json"
+CASES_PATH = HERE / "okr_cases.v6.json"
+MAX_NATIVE_FEEDBACK_CYCLES = 3
 
 
 def read_json(path):
@@ -51,6 +52,21 @@ def calls(work):
     )
 
 
+def native_failure_case(case_id, work, failed_phase, **phases):
+    trace = calls(work)
+    return {
+        "case_id": case_id,
+        **phases,
+        "failed_phase": failed_phase,
+        "passed": False,
+        "trace": [
+            {"tool": call["tool"], "arguments": call["arguments"]}
+            for call in trace
+        ],
+        "raw_tool_trace": [persisted_call(call) for call in trace],
+    }
+
+
 def persisted_call(call):
     if call["tool"] == "read_task_skill" and "content" in call["result"]:
         return {**call, "result": {"skill_source_sha256": digest(call["result"]["content"].encode())}}
@@ -60,7 +76,8 @@ def persisted_call(call):
 def application_contract_hashes():
     names = {"_write_document_artifact", "_read_task_file", "_task_file_path",
              "consumer_document_write", "consumer_artifact_write", "read_task_artifact",
-             "list_task_artifacts", "read_dingtalk_document_info", "read_dingtalk_document"}
+             "list_task_artifacts", "read_scheduled_context", "read_dingtalk_document_info",
+             "read_dingtalk_document"}
     tree = ast.parse((run.ROOT / "app/agent_cli.py").read_text())
     return {node.name: digest(ast.dump(node, include_attributes=False).encode())
             for node in ast.walk(tree) if isinstance(node, ast.FunctionDef) and node.name in names}
@@ -427,11 +444,34 @@ def _grade(case, work, output, prior=None):
         )
     if expected.get("summary_contains_actual_member_gaps"):
         checks["specific_gap_reasons_in_summary"] = all(
-            g.evidence in summary_text and g.kind in summary_text
+            g.user_id in summary_text
+            and report._gap_status_label(g.kind) in summary_text
+            and g.kind not in summary_text
+            and (
+                (g.kind == "goals_missing" and "目标列表为空" in summary_text)
+                or (
+                    g.kind == "source_failed"
+                    and "404" not in summary_text
+                    and "OKR 目标记录未能读取" in summary_text
+                    and any(term in summary_text for term in ("无法确认", "不能判断"))
+                    and "同轮名单及其他成员读取成功" in summary_text
+                )
+            )
             for g in analysis.member_gaps
         )
     proposal = wire.to_proposal()
     actions = list(proposal.actions) if proposal else []
+    required_independent = set(expected.get("independent_source_ids", []))
+    if required_independent:
+        searched = any(c["tool"] == "search_dingtalk_documents" for c in trace)
+        read_sources = {
+            c["arguments"].get("node_id")
+            for c in trace
+            if c["tool"] == "read_dingtalk_document"
+        }
+        checks["independent_sources_searched_and_read"] = (
+            searched and required_independent <= read_sources
+        )
     checks["exact_summary_proposal"] = (
         len(actions) == 1
         and actions[0].capability == "dingtalk-chat"
@@ -469,7 +509,15 @@ def grade(case, work, output, prior=None):
 
 
 def native(
-    role, facts_file, artifacts, output_dir, flags, previous=None, feedback=None
+    role,
+    facts_file,
+    artifacts,
+    output_dir,
+    flags,
+    previous=None,
+    feedback=None,
+    scheduled_run_id=1,
+    previous_review=None,
 ):
     output_dir.mkdir(parents=True, exist_ok=True)
     settings = (
@@ -501,6 +549,8 @@ def native(
         str(artifacts),
         "--role",
         "audit" if role == "audit" else "consumer",
+        "--run-id",
+        str(scheduled_run_id),
     ]
     fixture_flags = [
         "-c",
@@ -538,12 +588,14 @@ def native(
             "作为独立 Audit，按所选两个 Skill、当前来源、实际生成产物与 mock provider 读回核查这次 OKR 报告。"
             "使用只读工具检查来源身份、同名成员、名单覆盖、证据评分、缺口、公式、来源摘要恢复与发布/通知边界。"
             "共享认证/运行时失败不能变成单成员缺口或成功报告。报告日期以触发为准。"
+            "本评测只评估合成 verdict，不会把结果提交给 System Executor 或任何服务执行器，也不会执行外部动作。"
             "没有预期答案提供给你；发现错误返回 revise 与具体反馈，否则 approve。不能修改正文或执行外部动作。\n"
             "当前 Consumer 结果："
             + json.dumps(previous, ensure_ascii=False)
             + "\n"
             + system_action_contract_document()
         )
+        prompt = audit_revision_context(previous_review) + prompt
     if role == "consumer":
         prompt += (
             "\nNative transport envelope: purpose_output_json encodes this complete production purpose schema. Its conditional branches are enforced by the real service parser after decoding:\n"
@@ -672,6 +724,63 @@ def native(
     }
 
 
+def audit_revision_context(previous_review):
+    if not previous_review:
+        return ""
+    return (
+        "Previous Audit revision context (not source facts or authorization):\n"
+        + json.dumps(previous_review, ensure_ascii=False)
+        + "\nResolve each carried return point or explain why its requested change is unsupported; "
+        "judge the current candidate independently.\n"
+    )
+
+
+def continue_native_feedback(
+    facts_file,
+    artifacts,
+    root,
+    flags,
+    latest_consumer,
+    corrections,
+    audits,
+    *,
+    scheduled_run_id,
+):
+    while (
+        audits[-1]["output"]["verdict"] == "revise"
+        and len(corrections) < MAX_NATIVE_FEEDBACK_CYCLES
+    ):
+        revision = len(corrections) + 1
+        correction = native(
+            "consumer",
+            facts_file,
+            artifacts,
+            root / f"correction-{revision}",
+            flags,
+            previous=latest_consumer["output"],
+            feedback=audits[-1]["output"],
+            scheduled_run_id=scheduled_run_id,
+        )
+        corrections.append(correction)
+        latest_consumer = correction
+        if correction["output"] is None:
+            break
+        audit = native(
+            "audit",
+            facts_file,
+            artifacts,
+            root / f"audit-after-correction-{revision}",
+            flags,
+            previous=latest_consumer["output"],
+            scheduled_run_id=scheduled_run_id,
+            previous_review=audits[-1]["output"],
+        )
+        audits.append(audit)
+        if audit["output"] is None:
+            break
+    return latest_consumer, corrections, audits
+
+
 def main():
     parser = argparse.ArgumentParser()
     parser.add_argument("--output", default="okr_results.v1.json", help="Result filename in this evaluation directory")
@@ -748,7 +857,7 @@ def main():
         ) as temp:
             directory = Path(temp)
             completed = {}
-            for case in manifest["cases"]:
+            for scheduled_run_id, case in enumerate(manifest["cases"], start=1):
                 root = directory / case["id"]
                 root.mkdir()
                 artifacts = root / "artifacts"
@@ -783,17 +892,13 @@ def main():
                     print(case["id"], "PASS (same native outputs rescored)", flush=True)
                     continue
                 consumer = rechecked["consumer"] if rechecked else native(
-                    "consumer", facts, artifacts, root / "consumer", flags
+                    "consumer", facts, artifacts, root / "consumer", flags,
+                    scheduled_run_id=scheduled_run_id,
                 )
                 if consumer["output"] is None:
-                    result["cases"].append(
-                        {
-                            "case_id": case["id"],
-                            "consumer": consumer,
-                            "passed": False,
-                            "raw_tool_trace": calls(artifacts),
-                        }
-                    )
+                    result["cases"].append(native_failure_case(
+                        case["id"], artifacts, "consumer", consumer=consumer
+                    ))
                     break
                 first = rechecked["first_grade"] if rechecked else grade(case, artifacts, consumer["output"], prior)
                 audit = rechecked["audit"] if rechecked else native(
@@ -803,7 +908,15 @@ def main():
                     root / "audit",
                     flags,
                     previous=consumer["output"],
+                    scheduled_run_id=scheduled_run_id,
                 )
+                if audit["output"] is None:
+                    result["cases"].append(native_failure_case(
+                        case["id"], artifacts, "audit",
+                        consumer=consumer, first_grade=first, audit=audit,
+                    ))
+                    destination.write_text(json.dumps(result, ensure_ascii=False, indent=2) + "\n")
+                    break
                 correction = rechecked["correction"] if rechecked else None
                 if not rechecked and audit["output"]["verdict"] == "revise":
                     correction = native(
@@ -814,7 +927,16 @@ def main():
                         flags,
                         previous=consumer["output"],
                         feedback=audit["output"],
+                        scheduled_run_id=scheduled_run_id,
                     )
+                    if correction["output"] is None:
+                        result["cases"].append(native_failure_case(
+                            case["id"], artifacts, "correction",
+                            consumer=consumer, first_grade=first, audit=audit,
+                            correction=correction,
+                        ))
+                        destination.write_text(json.dumps(result, ensure_ascii=False, indent=2) + "\n")
+                        break
                 final_audit = audit
                 if correction or rechecked:
                     final_audit = native(
@@ -824,20 +946,68 @@ def main():
                         root / "audit-after-correction",
                         flags,
                         previous=(correction or consumer)["output"],
+                        scheduled_run_id=scheduled_run_id,
+                        previous_review=audit["output"],
                     )
+                    if final_audit["output"] is None:
+                        result["cases"].append(native_failure_case(
+                            case["id"], artifacts, "final_audit",
+                            consumer=consumer, first_grade=first, audit=audit,
+                            correction=correction, final_audit=final_audit,
+                        ))
+                        destination.write_text(json.dumps(result, ensure_ascii=False, indent=2) + "\n")
+                        break
+                corrections = [correction] if correction else []
+                audit_rounds = [audit]
+                if final_audit is not audit:
+                    audit_rounds.append(final_audit)
+                latest_consumer = correction or consumer
+                if not rechecked:
+                    latest_consumer, corrections, audit_rounds = continue_native_feedback(
+                        facts,
+                        artifacts,
+                        root,
+                        flags,
+                        latest_consumer,
+                        corrections,
+                        audit_rounds,
+                        scheduled_run_id=scheduled_run_id,
+                    )
+                    final_audit = audit_rounds[-1]
+                    if corrections and corrections[-1]["output"] is None:
+                        result["cases"].append(native_failure_case(
+                            case["id"], artifacts, "correction",
+                            consumer=consumer, first_grade=first, audit=audit,
+                            correction=correction,
+                            additional_corrections=corrections[1:],
+                            audit_rounds=audit_rounds,
+                        ))
+                        destination.write_text(json.dumps(result, ensure_ascii=False, indent=2) + "\n")
+                        break
+                    if final_audit["output"] is None:
+                        result["cases"].append(native_failure_case(
+                            case["id"], artifacts, "final_audit",
+                            consumer=consumer, first_grade=first, audit=audit,
+                            correction=correction,
+                            additional_corrections=corrections[1:],
+                            audit_rounds=audit_rounds,
+                        ))
+                        destination.write_text(json.dumps(result, ensure_ascii=False, indent=2) + "\n")
+                        break
                 result["pending_case"] = {
                     "case_id": case["id"], "consumer": consumer,
                     "audit": audit, "correction": correction, "final_audit": final_audit,
+                    "additional_corrections": corrections[1:],
+                    "audit_rounds": audit_rounds,
                 }
                 destination.write_text(json.dumps(result, ensure_ascii=False, indent=2) + "\n")
                 final = grade(
-                    case, artifacts, (correction or consumer)["output"], prior
+                    case, artifacts, latest_consumer["output"], prior
                 )
                 phases = [
                     consumer,
-                    audit,
-                    *([correction] if correction else []),
-                    *([final_audit] if final_audit is not audit else []),
+                    *audit_rounds,
+                    *corrections,
                 ]
                 passed = (
                     final["passed"]
@@ -854,6 +1024,8 @@ def main():
                     "first_grade": first,
                     "audit": audit,
                     "correction": correction,
+                    "additional_corrections": corrections[1:],
+                    "audit_rounds": audit_rounds,
                     "final_audit": final_audit,
                     "final_grade": final,
                     "passed": passed,

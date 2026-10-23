@@ -151,12 +151,40 @@ class DocumentProvider:
         self.fixture = fixture
 
     def run_json(self, command):
+        if command[1:3] == ["doc", "search"]:
+            query = command[command.index("--query") + 1].casefold()
+            matches = [
+                {"nodeId": node, "name": doc["title"], "extension": "md",
+                 "contentType": "text/markdown", "nodeType": "document",
+                 "docUrl": "https://docs.example.invalid/" + node}
+                for node, doc in self.fixture.independent_documents().items()
+                if query in doc["title"].casefold()
+            ]
+            return {"documents": matches}
         if command[1:3] != ["wiki", "+node-list"]:
             raise ValueError("Unconfigured synthetic provider operation")
         parent = command[command.index("--folder") + 1]
         return {"data": {"hasMore": False, "nodes": [
             {"nodeId": node, "name": doc["title"]}
             for node, doc in self.fixture.documents().items() if doc["parent_id"] == parent]}}
+
+    def search_documents(self, query, page_size=5):
+        from app.dws_client import DwsDocumentSearchResult
+
+        tokens = query.casefold().replace("[", " ").replace("]", " ").split()
+        matches = [
+            DwsDocumentSearchResult(
+                node_id=node,
+                name=document["title"],
+                extension="md",
+                content_type="text/markdown",
+                node_type="document",
+                doc_url="https://docs.example.invalid/" + node,
+            )
+            for node, document in self.fixture.independent_documents().items()
+            if all(token in document["title"].casefold() for token in tokens)
+        ]
+        return matches[:page_size]
 
     def create_report_document(self, *, name, content, doc_format, folder_id):
         if doc_format != "markdown":
@@ -176,6 +204,12 @@ class DocumentProvider:
         return {"ok": True, "data": {"nodeId": node_id, "success": True}}
 
     def read_doc(self, node_id):
+        if node_id in self.fixture.independent_documents():
+            doc = self.fixture.independent_documents()[node_id]
+            return {"complete": True, "status": "success", "content": {
+                "markdown": doc["content"], "nodeId": node_id,
+                "title": doc["title"], "revision": doc["revision"],
+                "success": True, "docUrl": "https://docs.example.invalid/" + node_id}}
         doc = self.fixture.documents()[node_id]
         return {"complete": True, "status": "success", "content": {
             "markdown": doc["content"], "nodeId": node_id, "title": doc["title"],
@@ -191,8 +225,9 @@ class DocumentProvider:
 
 
 class Fixture:
-    def __init__(self, facts, work):
+    def __init__(self, facts, work, scheduled_run_id=1):
         self.facts, self.work = facts, Path(work)
+        self.scheduled_run_id = scheduled_run_id
         self.work.mkdir(parents=True, exist_ok=True)
         self.trace_path = self.work.with_name(self.work.name + "-tool-calls.jsonl")
         self.docs_path = self.work.with_name(self.work.name + "-provider.json")
@@ -220,8 +255,60 @@ class Fixture:
             "sha256": digest(p.read_bytes()),
         }
 
+    def artifact_manifest(self):
+        return [
+            {"name": path.name, "sha256": digest(path.read_bytes())}
+            for path in sorted(self.work.iterdir())
+            if path.is_file()
+            and not path.is_symlink()
+            and not path.name.startswith(".task-artifact-")
+        ]
+
+    def scheduled_context(self):
+        previous_run_id = self.facts.get("previous_run_id")
+        history = (
+            [{"run_id": previous_run_id, "status": "completed"}]
+            if previous_run_id is not None
+            else []
+        )
+        return {
+            "scheduled_for": self.facts["report_date"] + "T10:00:00Z",
+            "timezone_name": "Asia/Shanghai",
+            "run_id": self.facts.get("run_id", self.scheduled_run_id),
+            "scheduled_task_id": 1,
+            "task_version": 1,
+            "principal_user_id": "fixture-principal",
+            "history": history,
+            "artifact_directory": str(self.work),
+            "task_artifacts": self.artifact_manifest(),
+        }
+
     def documents(self):
         return json.loads(self.docs_path.read_text()) if self.docs_path.exists() else {}
+
+    def independent_documents(self):
+        """Synthetic searchable evidence, separate from each live OKR payload."""
+        result = {}
+        roster = self.facts["roster"]["managers"]
+        evidence = self.facts["evidence"]
+        behavior_by_manager = evidence.get("behavior_by_manager", {})
+        for manager in roster:
+            uid = manager["user_id"]
+            if uid in evidence:
+                material = evidence[uid]
+                result["eval-evidence-" + key(uid)] = {
+                    "title": f"独立交付证据｜{manager['name']} [{uid}]",
+                    "content": material.get("content", material) if isinstance(material, dict) else material,
+                    "revision": 1,
+                }
+            behavior = behavior_by_manager.get(uid, evidence.get("behavior"))
+            if behavior:
+                result["eval-behavior-" + key(uid)] = {
+                    "title": f"独立行为记录｜{manager['name']} [{uid}]",
+                    "content": behavior.get("content", behavior) if isinstance(behavior, dict) else behavior,
+                    "revision": 1,
+                }
+        return result
 
     @contextmanager
     def production_tools(self, role):
@@ -233,7 +320,7 @@ class Fixture:
             stack.enter_context(patch.object(agent_cli, "_bound_scheduled_run", return_value=(None, None)))
             stack.enter_context(patch("app.dws_client.DwsClient", return_value=DocumentProvider(self)))
             bound = agent_cli.build_role_server(role, task_id=1, db_path=Path("/unused-fixture-db"), execution_generation="fixture")
-            names = ["read_task_artifact", "list_task_artifacts", "read_dingtalk_document", "read_dingtalk_document_info"]
+            names = ["read_task_artifact", "list_task_artifacts", "read_dingtalk_document", "read_dingtalk_document_info", "search_dingtalk_documents"]
             if role == "consumer":
                 names += ["consumer_artifact_write", "consumer_document_write"]
 
@@ -319,13 +406,7 @@ class Fixture:
             return self.record(
                 "read_scheduled_context",
                 {},
-                {
-                    "scheduled_for": self.facts["report_date"] + "T10:00:00Z",
-                    "timezone_name": "Asia/Shanghai",
-                    "run_id": 1, "scheduled_task_id": 1, "task_version": 1,
-                    "principal_user_id": "fixture-principal", "history": [],
-                    "artifact_directory": str(self.work),
-                },
+                self.scheduled_context(),
             )
 
         for name, callback in production.items():
@@ -422,5 +503,8 @@ if __name__ == "__main__":
     parser.add_argument("--facts", required=True)
     parser.add_argument("--work", required=True)
     parser.add_argument("--role", choices=("consumer", "audit"), default="consumer")
+    parser.add_argument("--run-id", type=int, default=1)
     args = parser.parse_args()
-    Fixture(json.loads(Path(args.facts).read_text()), args.work).serve(args.role)
+    Fixture(
+        json.loads(Path(args.facts).read_text()), args.work, args.run_id
+    ).serve(args.role)

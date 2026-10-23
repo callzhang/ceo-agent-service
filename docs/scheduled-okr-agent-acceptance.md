@@ -2,6 +2,24 @@
 
 ## 状态与证据边界
 
+### 2026-10-23 授权手动 OKR run 394267：登录恢复后仍未完成分析
+
+run394267 使用不可变 task6 v23 / managed `ceo-weekly-okr-report` revision223，执行任务
+416922；最终 History attempt15921 为 `failed`，Consumer 连续四次 `analysis_incomplete`
+后停止。登录恢复后，Consumer 成功读取18名管理者的名单及来源，取得15份Q4 OKR，另有3人
+确无Q4目标。随后第一轮要求读取一个不存在的本地绩效制度文件，未继续按已声明的 OKR
+评分口径分析；其余重试也未进入评分。原因是实际 Consumer 行为，不是评测误判或认证失败。
+本次没有 Audit、评分、文档写入或通知回执，也没有外部动作；旧运行保持失败且未重放。
+
+当前生产 commit `4441aada0d36cde843eccd89f4d5f0a58c4aa268`，healthz 正常；task6仍为 v26 /
+managed revision223，下次自然触发为 **2026-10-25 10:00 UTC**。候选修复明确让 Agent 使用
+Skill 已声明的评分口径，并将额外材料缺失记录为限制。日报、message-triage、OA 审批、People
+Skill 的安装摘要和 repository 摘要已按只读读回收敛；message-triage 当前 managed revision225
+摘要也已核实。发布锁定测试 27 项、脚本边界和 precondition 检查 6 项、OKR/report 定向回归
+134 项通过。代码和 Skill 仍仅在隔离分支，尚未正式发布或部署；发布后按 Derek 已授权范围新建
+一次手动验证运行，并与自然运行分开统计。
+无正文证据：[run394267 readback](../evals/scheduled_task_generic/okr-manual-394267-post-login-readback.json)。
+
 截至 2026-10-22 17:50 UTC：task14 的自然运行 392889 已完成并产生真实文档更新和通知回执；
 但业务验收未通过。Consumer 读取了完整的 65 个群会话目录（6 页），却没有调用任何逐会话消息
 读取工具，最终报告也明确写出群聊未逐条读取。Audit 因消息最初缺少今日要点而退回一次，修订后
@@ -564,3 +582,38 @@ task6 run **392187** 使用 task 配置 v20、managed Skill revision 222，派�
 生产读回：PID **65404**，`/healthz` HTTP 200；队列 **active 1 / queued 152**，Attention **19**，History **37,179** 条；14 项定时任务仍在。task6 为 v21、洛杉矶周日 03:00、下次 **2026-10-25 10:00 UTC**；task13 为 v43、洛杉矶周六 12:00、下次 **2026-10-24 19:00 UTC**；task14 为 v49、洛杉矶每天 06:00、下次 **2026-10-22 13:00 UTC**。配置与触发时间保持原值。
 
 GitHub Quality 检查在运行测试前被全仓 Ruff 阶段挡住，报告 14 处旧 lint 错误，位于本 PR 未改动的 5 个测试文件；Vercel 状态因预览部署额度不足失败。代码相关的调度定向回归、改动文件 Ruff 与差异检查已通过。未修补无关文件，也未降低任何验收门槛。新版 task6 仍只观察 2026-10-25 10:00 UTC 的自然触发，不重放 392433。
+## 2026-10-23 OKR 综合验收修复续记
+
+原生综合验收 `okr_results.v69.json` 四场 **4/4 passed**，覆盖完整报告、同周期来源变化恢复、报告日期变化恢复和共享认证失败保护。四场使用隔离 mock provider，没有连接真实外部执行器，不能代替生产发布证据。更早的 v50–v68 失败结果均保留供根因追查。
+
+v50–v68 轨迹定位出实际报告问题：固定渲染器曾把没有来源日期的结果放进“本周重点进展”；缺口区域把内部状态码及原始英文诊断写入中文报告；日期变化恢复会沿用旧标题并写入新日期正文；修订时模型曾改写来源未变成员分析，或重复索要已核验的验收证据。`report.py` 现以“已核实进展”和报告日表述报告，把缺口转换为中文业务说明，并保留 404 不能证明目标是否存在的边界。Skill 现要求来源文件只由 `prepare` 生成、可复用分析逐字节保留、日期变化使用新标题，并只提出当前确实缺少的下一步证据。合成 Audit 提示澄清 mock 审核不会执行对外动作；gap grader 核对可读状态、成员身份和关键事实，不要求报告展示内部状态码。
+
+定向测试 `tests/test_weekly_okr_report.py` 与 `tests/test_scheduled_okr_agent_eval.py` 为 **126 passed**；Consumer runtime/release 子集 **8 passed**；改动文件 Ruff 与 `git diff --check` 通过。完整 release-manifest 固定快照测试尚未通过：另一项 active daily-report 认领正在修改同一发布清单，其 `old_sha256` 当前为 32d24bb5，而本机验证记录中的 installed/managed SHA 为 45e10866。`consumer-scripts.json` 也仍由 `codex-okr-skill-script-review-digest-20261022` 认领；OKR 脚本修改后预期脚本树摘要为 `59a125b5…`，尚未更新。没有把这些并发清单差异写成通过，也没有部署或触发 task6。用户已授权部署后正式手动触发；需要共享发布哈希认领收敛、相关发布测试通过后，再按正式流程发布、读取生产配置与 History，并创建新的 task6 手动验收运行。
+
+### task6 run 394267 真实失败核查
+
+生产 History 显示手动 run **394267**（task6 v23 / managed Skill revision223）派发到 reply task **416922**，终态 `failed`。四次 Consumer 尝试（runtime run **394476、394493、394496、394499**）全部以 `analysis_incomplete` 结束；第一轮已读 18 人名册、15 人有效 Q4 源和 3 项 `goals_missing`，`prepare` 成功生成 source/plan/schema，但没有保存任何成员分析，随后没有 Audit、文档写入或通知。最终 History 标记 `agent_reported_failure (analysis_incomplete)`，`what_happened.reached_the_outside_world=false`，没有外部副作用。
+
+完整 trajectory 中，第一轮尝试读取一个未配置的本地绩效制度文件，工具返回路径不存在；随后虽读了 schema 并查阅历史记忆，仍未继续分析。后续重试又读取了同一批成员源，最终都停在未完成分析。根因是 Agent 把未找到的补充制度材料当成了分析阻断条件，而本任务 Skill 和 `$dingtang-okr-review` 已有足够的正式评分口径。该次失败是实际 Consumer 行为问题，不是评测误报或数据源故障。
+
+已在 Skill 中明确：不要求额外本地制度文件；如找到的补充材料无法读取，应把它记录为证据限制，继续使用已声明的评分口径，不阻止分析或发布。没有降低 0/20/40/60/80/100 评分档、证据要求、Audit、完整读回或通知门槛。Skill 回归断言加入后，`tests/test_weekly_okr_report.py` 与 `tests/test_scheduled_okr_agent_eval.py` 定向套件为 **126 passed**；改动文件 Ruff 与 `git diff --check` 通过。原生综合验收 `okr_results.v70.json` **4/4 passed**，覆盖完整报告、来源变化恢复、日期变化恢复及共享来源认证失败保护；它仍未模拟线上缺失本地制度文件的具体调用，根因修复需由下一条真实 task6 运行验证。此修复未部署；不重放 394267，待发布门槛收敛后创建一条新的 task6 手动验收运行。
+
+### 发布门禁复核（2026-10-23）
+
+修复提交 `0b226b55e` 合并最新 `origin/main` 后，重新运行定向测试：报告/综合评测 **126 passed**，Agent 工具说明 **8 passed**，改动文件 Ruff 与差异检查通过。发布专项 `tests/test_consumer_skill_script_boundary.py` 为 **4 passed / 1 failed**；失败项 `test_okr_report_prepare_script_matches_reviewed_package` 明确指出 OKR Skill 的 `consumer-scripts.json` 仍固定旧脚本树摘要，现有 `scripts/report.py` 改动尚未纳入已审核摘要。全局 pinned-release 测试另因日报行的 `old_sha256=32d24bb5…` 与已核实 `installed_sha256=45e10866…` 不一致而失败。两处均是发布清单未收敛，不代表降低或绕过 Skill 脚本审核；对应文件仍由既有 active claim 认领。尚未推送、部署或创建新 task6 运行。
+
+### v71–v76：修复后原生综合验收通过
+
+v71 首次复现了实际工作流违规：Consumer 收到 Audit 修订后直接覆写 `summary.md`、`main.md` 和 `full.md`，Audit 仍批准；独立渲染字节比对正确拒绝该候选。Skill 现将“改分析输入—重新 render—更新文档—完整读回”列为审核退回后的明确步骤，并明确禁止把生成文件当作修订输入。v72–v73 又暴露状态码泄露：报告脚本将成员 404 写入正文，而原评测器错误要求正文出现 404。脚本改用普通业务描述，评测器要求保留缺口原因、禁止泄露状态码；v73 轨迹同时确认 Consumer 也曾把内部状态码写进分析风险。
+
+v74–v75 发现合成 Audit 没收到生产审核上下文中的上一轮退回意见，造成反馈来回漂移；合成 Audit 现携带上一轮 review，仍须独立核对当前候选。v75 还发现 Consumer 曾因业务 KR 未完成，把独立来源明确标为“达到经理标准”的战略行为维度打低；Skill 现明确业务 KR 与领导力/文化维度独立评分，低于标准分必须有该维度自身的反向证据。以上修正均保留评分、来源覆盖、Audit、完整读回和通知要求。
+
+最新原生验收结果为 [v76 body-free readback](../evals/scheduled_task_generic/okr-native-v76-readback.json)，完整合成轨迹保存在 [okr_results.v76.json](../evals/scheduled_task_generic/okr_results.v76.json)：**4/4 场景通过**，每场最终 Audit `approve`，所有机械检查通过；包括 canonical render、完整文档读回、摘要逐字一致、同周期来源更新、跨日期快照和共享来源认证失败保护。合成 provider 不具备外部执行器；这证明代码/Skill/Agent 综合验收通过，不证明生产发布或真实群消息送达。v71–v75 失败原样保留，不用后续结果覆盖。
+
+固定评测对照使用同一模型、CLI、冻结 case hash 和 grader hash：v75 的 `fresh-source-snapshot` 在 Audit approve 后因 `behavioral_scores_match_evidence` 失败，eval-b 战略能力为60；v76 同场景 Audit approve、全检查通过，分数为70，与来源中“达到经理岗位标准”的明确证据一致。没有改变 case 事实、评分范围或 grader 要求。
+
+v76 后的定向测试为 `tests/test_weekly_okr_report.py` 与 `tests/test_scheduled_okr_agent_eval.py` **136 passed**，Consumer Skill 脚本边界 **5 passed**，完整 `tests/test_consumer_system_release.py` **27 passed**；改动文件 Ruff 与 `git diff --check` 通过。共享 Skill/脚本摘要已同步到 release manifest、脚本审核清单及匹配的生产安装/managed 旧摘要前置文件。production 尚未部署，也尚未创建 run394267 的替代运行。
+
+### PR #277 的远端检查结果
+
+PR #277 已打开，固定 v75/v76 case、模型/CLI 和 grader 对照及本地回归均附在 PR/无正文证据中。GitHub Quality 在 `npm test` 的首步全仓 Ruff lint 中失败，报 **16 项**、位于 7 个测试文件；逐个确认这 7 个文件与 `origin/main` 字节相同，单独在当前代码和这些原样文件上复现同一 lint 错误。后续 npm、workbench 和浏览器步骤因此未运行。Vercel 预览因账号额度限制失败，平台提示 24 小时后可重试。改动文件 Ruff、OKR 定向测试、Consumer 脚本审核测试及 release-manifest 测试均通过；没有为清绿而改动无关测试、降低门槛或跳过 OKR 验收。production 尚未部署；需先处理或获准接受上述远端基线阻塞，再继续正式合并/部署和新 task6 运行。
