@@ -139,9 +139,12 @@ def _project(store: AutoReplyStore, title: str) -> int:
     )
 
 
+@pytest.mark.parametrize("closed_as", ["skipped", "failed"])
 def test_console_attempt_detail_exposes_retry_for_expired_wechat_delivery(
-    tmp_path: Path, monkeypatch
+    tmp_path: Path, monkeypatch, closed_as
 ):
+    """A pre-action failure is retryable from History whether or not the CLI
+    skip step ran; delivery 140 stayed failed and had no retry button."""
     db_path = tmp_path / "worker.sqlite3"
     store = AutoReplyStore(db_path)
     store.replace_wechat_reply_scopes("acct-1", [WechatReplyScope(
@@ -166,17 +169,19 @@ def test_console_attempt_detail_exposes_retry_for_expired_wechat_delivery(
         trigger_text="Can you help later?", action="send_reply",
         sensitivity_kind="normal", send_status="pending", channel="wechat",
     )
-    store.mark_wechat_delivery_sending(delivery_id, now="2026-09-08 19:00:00")
-    store.set_wechat_delivery_status(
-        delivery_id, "failed", error="target_open_failed", pre_action_failure=True,
-    )
     with store._connect() as db:
-        update_action(db, "reply_attempts", attempt_id, {"retry_count": 2})
-    delivery = store.get_wechat_delivery_by_id(delivery_id)
-    store.skip_exhausted_stale_wechat_delivery(
-        delivery_id, expected_execution_generation=delivery.execution_generation,
-        reason="expired_after_target_open_retries", inactive_before="2026-09-08 20:00:00",
-    )
+        update_task_delivery_action(db, "wechat_deliveries", delivery_id, {
+            "status": "failed", "error": "wechat_ui_not_ready",
+            "pre_action_failure": 1, "action_started_at": "2026-09-08 19:00:00",
+        })
+        update_action(db, "reply_attempts", attempt_id, {"retry_count": 3})
+    if closed_as == "skipped":
+        delivery = store.get_wechat_delivery_by_id(delivery_id)
+        store.skip_exhausted_stale_wechat_delivery(
+            delivery_id, expected_execution_generation=delivery.execution_generation,
+            reason="expired_after_target_open_retries",
+            inactive_before="2026-09-08 20:00:00",
+        )
     retried: list[int] = []
     opened: list[tuple[str, str, str]] = []
     monkeypatch.setattr(
@@ -202,7 +207,7 @@ def test_console_attempt_detail_exposes_retry_for_expired_wechat_delivery(
 
     assert detail.status_code == 200
     assert detail.json()["item"]["status"]["message"] == (
-        "这条微信回复此前未能打开会话，尚未发送；你可以重试。"
+        "这条微信回复在发送前失败，尚未发送；你可以重试。"
     )
     assert detail.json()["item"]["actions"] == {
         **detail.json()["item"]["actions"],

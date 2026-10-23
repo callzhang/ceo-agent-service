@@ -9084,31 +9084,64 @@ def test_worker_status_uses_wechat_delivery_outcome_not_raw_failed_status(
     assert unknown_queue["latest_error"] == "read_only_reconciliation_inconclusive"
 
 
-def test_worker_attention_explains_pre_action_wechat_delivery_failure(
-    tmp_path: Path,
-):
-    store = AutoReplyStore(tmp_path / "worker.sqlite3")
-    delivery_id = _seed_wechat_pending(store)
-    store.mark_wechat_delivery_sending(delivery_id)
-    store.set_wechat_delivery_status(
-        delivery_id,
-        "failed",
-        error="target_open_failed",
-        pre_action_failure=True,
-    )
+def _fail_wechat_delivery_before_action(
+    store: AutoReplyStore, delivery_id: int, error: str
+) -> None:
+    """Leave a delivery in the state a failed pre-action send persists.
 
+    The send claim now needs an approved independent Audit, which these
+    Attention-projection tests do not exercise, so the row is written as the
+    failed pre-action state directly.
+    """
+    from app.action_storage import task_delivery_set_parts
+
+    assignments, set_args = task_delivery_set_parts(
+        "wechat_deliveries",
+        {"status": "failed", "error": error, "pre_action_failure": 1},
+        update_sql={"updated_at": "current_timestamp"},
+    )
+    with store._connect() as db:
+        db.execute(
+            f"update actions as wechat_deliveries set {assignments} "
+            "where wechat_deliveries.record_type='wechat_deliveries' "
+            "and cast(wechat_deliveries.legacy_key as integer)=?",
+            (*set_args, delivery_id),
+        )
+
+
+def _wechat_attention_error(store: AutoReplyStore, delivery_id: int) -> str:
     payload = build_worker_status_payload(store)
     row = next(
         item
         for item in payload["attention_rows"]
         if item["category"] == "WeChat delivery" and item["id"] == str(delivery_id)
     )
-
     assert row["status"] == "failed"
-    assert row["error"] == (
-        "The target could not be opened before send; no message was sent. "
+    return row["error"]
+
+
+def test_worker_attention_explains_pre_action_wechat_delivery_failure(
+    tmp_path: Path,
+):
+    store = AutoReplyStore(tmp_path / "worker.sqlite3")
+    delivery_id = _seed_wechat_pending(store)
+    _fail_wechat_delivery_before_action(store, delivery_id, "target_open_failed")
+
+    assert _wechat_attention_error(store, delivery_id) == (
+        "The send failed before any action (target_open_failed); no message was sent. "
         "A fresh target check is required before retry."
     )
+
+
+def test_worker_attention_names_the_real_pre_action_wechat_failure(tmp_path: Path):
+    """Delivery 140 failed with wechat_ui_not_ready, not an unopenable target."""
+    store = AutoReplyStore(tmp_path / "worker.sqlite3")
+    delivery_id = _seed_wechat_pending(store)
+    _fail_wechat_delivery_before_action(store, delivery_id, "wechat_ui_not_ready")
+
+    error = _wechat_attention_error(store, delivery_id)
+    assert "wechat_ui_not_ready" in error
+    assert "could not be opened" not in error
 
 
 def test_worker_status_ignores_wechat_delivery_from_old_execution_generation(

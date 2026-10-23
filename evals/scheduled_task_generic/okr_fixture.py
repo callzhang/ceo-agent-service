@@ -86,7 +86,7 @@ def member_payload(member, facts):
             "sourceOutcome": outcome,
             "providerReceipt": provider_receipt,
         }
-    if uid == "eval-missing":
+    if uid in facts.get("goals_missing_ids", ["eval-missing"]):
         outcome.update(
             kind="goals_missing",
             evidence="Verified current period exists and complete live objective list is empty",
@@ -94,6 +94,15 @@ def member_payload(member, facts):
         return {
             "manager": identity,
             "sourceOutcome": outcome,
+            "providerReceipt": {
+                "provider": "dingtang_okr",
+                "operation": "read_current_quarter_member",
+                "request_id": "fixture-okr-member-200-" + uid,
+                "principal_user_id": "fixture-principal",
+                "authorization_status": "granted",
+                "http_status": 200,
+                "error_code": "",
+            },
             "liveOkr": {
                 "userId": uid,
                 "periodLabel": facts["period_label"],

@@ -4363,6 +4363,8 @@ def test_store_restores_wal_for_current_schema_database(tmp_path: Path):
     db_path = tmp_path / "worker.sqlite3"
     AutoReplyStore(db_path)
     store_module._INITIALIZED_STORE_PATHS.clear()
+    # Leaving WAL needs this to be the only connection to the file.
+    store_module._close_idle_connections()
     with sqlite3.connect(db_path) as db:
         assert db.execute("pragma journal_mode = delete").fetchone()[0] == "delete"
 
@@ -4552,6 +4554,9 @@ def test_store_connections_close_after_context_exit(tmp_path: Path):
     with store._connect() as db:
         db.execute("select 1").fetchone()
 
+    # The connection now waits in this thread's idle slot for the next call;
+    # closing the slot closes it.
+    store_module._close_idle_connections()
     with pytest.raises(sqlite3.ProgrammingError):
         db.execute("select 1").fetchone()
 

@@ -12,6 +12,7 @@ const TasksPage = lazy(() => import("../pages/TasksPage").then((module) => ({ de
 const ScheduledTasksPage = lazy(() => import("../pages/ScheduledTasksPage").then((module) => ({ default: module.ScheduledTasksPage })));
 const AttentionPage = lazy(() => import("../pages/AttentionPage").then((module) => ({ default: module.AttentionPage })));
 const DashboardPage = lazy(() => import("../pages/DashboardPage").then((module) => ({ default: module.DashboardPage })));
+const HistoryTaskPage = lazy(() => import("../pages/HistoryTaskPage").then((module) => ({ default: module.HistoryTaskPage })));
 const StatusPage = lazy(() => import("../pages/StatusPage").then((module) => ({ default: module.StatusPage })));
 const FeedbackPage = lazy(() => import("../pages/FeedbackPage").then((module) => ({ default: module.FeedbackPage })));
 const EmailPage = lazy(() => import("../pages/EmailPage").then((module) => ({ default: module.EmailPage })));
@@ -73,6 +74,7 @@ function ConsoleRoutes() {
     <Routes>
       <Route path="/" element={<AgentRoute />} />
       <Route path="/history" element={<DashboardPage />} />
+      <Route path="/history/tasks/:taskId" element={<HistoryTaskPage />} />
       <Route path="/history/errors/:errorId" element={<RuntimeErrorDetailPage />} />
       <Route path="/history/attempts/:attemptId" element={<AttemptDetailPage />} />
       <Route path="/history/meeting-attempts/:runId" element={<MeetingAttemptPage endpoint="/api/console/meeting-attempts/:id" />} />

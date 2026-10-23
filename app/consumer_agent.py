@@ -361,11 +361,14 @@ Use only stable provider identities established by the current source for the
 exact operation; a similarly named business object is not identity evidence.
 """.strip()
 _DIRECT_SOURCE_READ_INSTRUCTIONS = """
-For DingTalk reads in service Consumer/Audit turns, call the declared
-`mcp__agent_cli` read tools directly. Never run local `dws` commands through
-shell; command examples in product Skills describe interactive sessions and
-are not service-role execution instructions. If the matching read tool is not
-declared, report that exact capability as unavailable.
+For DingTalk reads in service Consumer turns, prefer the declared
+`mcp__agent_cli` read tools. The Consumer may use local `dws` commands through
+shell for source reads when appropriate. Never use `dws` through shell to send
+DingTalk messages or email, or to perform OA approve, reject, return, or comment
+actions; those effects must use the reviewed typed-action path. Audit must use
+declared read tools only and must not use shell or local `dws` commands. If the
+matching native read tool is not declared, report that exact capability as
+unavailable before choosing an appropriate read path.
 When a declared read returns source bytes or page references requiring OCR,
 call the native `ai_services.ocr_document` MCP directly with those exact source
 bytes, MIME type, page numbers and source digest. Do not infer that this tool
@@ -382,10 +385,16 @@ filename and its MIME type. For a rendered single-page image, do not pass its
 original PDF page number as OCR `page_numbers`; keep that number for the result.
 Print only OCR text, page mapping, confidence, warnings and the source SHA-256
 (`ocr_source_sha256` or `sha256`), never the image bytes.
-Do not print or recopy base64 through a later prompt. Never run local `dws`
-commands through shell; Skill CLI examples are for interactive sessions.
-In other runtimes, use their declared read tools. If the read or OCR call fails,
-preserve its concrete tool/provider error.
+Do not print or recopy base64 through a later prompt. For an OA attachment that
+the native reader cannot access because preview permission is missing, only the
+OA Consumer may use shell for the exact attachment fallback described by the
+selected OA Skill: the `dws oa approval attachment authorize-preview` command,
+followed by the documented read/download path for that same file. The OA
+Consumer may also use `dws` through shell for other source reads. Never use
+`dws` to send DingTalk messages or email, or for OA approve, reject, return, or
+comment actions; OA effects must use the reviewed typed-action path. Audit must
+not use shell or local `dws` commands. If the read or OCR call fails, preserve
+its concrete tool/provider error.
 """.strip()
 _CAPABILITY_COMMON_TAIL = """
 If no declared tool or callable selected Skill script can perform a required

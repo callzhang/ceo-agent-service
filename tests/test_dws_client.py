@@ -6101,6 +6101,83 @@ def test_run_json_retries_message_read_system_error_commands(monkeypatch, comman
     assert sleeps == [1.0]
 
 
+def test_run_json_retries_message_list_gateway_http_500(monkeypatch):
+    """The gateway's 5xx arrives as generic code 1 with reason http_500.
+
+    10-21 08:07 a group scan read failed once with exactly this payload and
+    stayed an Attention error although the next read would have succeeded.
+    """
+    calls = []
+    sleeps = []
+    gateway_error = (
+        '{"error.code": 1, "error.message": "request to '
+        'https://mcp-gw.dingtalk.com returned HTTP 500", '
+        '"error.reason": "http_500"}'
+    )
+    command = [
+        "dws", "chat", "message", "list", "--group", "cid-1",
+        "--time", "2026-10-21 16:07:07", "--direction", "older",
+        "--limit", "50", "--format", "json",
+    ]
+
+    def fake_run(command_arg, text, capture_output, check, timeout, env=None):
+        calls.append(command_arg)
+        if len(calls) == 1:
+            return SimpleNamespace(returncode=1, stdout="", stderr=gateway_error)
+        return SimpleNamespace(returncode=0, stdout='{"ok":true}', stderr="")
+
+    monkeypatch.setattr("app.dws_client.subprocess.run", fake_run)
+    monkeypatch.setattr("app.dws_client.time.sleep", sleeps.append)
+
+    assert DwsClient().run_json(command) == {"ok": True}
+    assert calls == [command, command]
+
+
+def test_run_json_marks_exhausted_gateway_http_500_retryable_for_the_worker(
+    monkeypatch,
+):
+    gateway_error = (
+        '{"error.code": 1, "error.message": "request to '
+        'https://mcp-gw.dingtalk.com returned HTTP 503", '
+        '"error.reason": "http_503"}'
+    )
+    command = ["dws", "chat", "message", "list", "--group", "cid-1"]
+
+    monkeypatch.setattr(
+        "app.dws_client.subprocess.run",
+        lambda *args, **kwargs: SimpleNamespace(
+            returncode=1, stdout="", stderr=gateway_error
+        ),
+    )
+    monkeypatch.setattr("app.dws_client.time.sleep", lambda seconds: None)
+
+    with pytest.raises(DwsError) as raised:
+        DwsClient().run_json(command)
+    assert raised.value.code == "http_503"
+    assert raised.value.retryable_external_dependency is True
+
+
+def test_run_json_does_not_retry_chat_message_send_gateway_http_500(monkeypatch):
+    calls = []
+    gateway_error = (
+        '{"error.code": 1, "error.message": "request to '
+        'https://mcp-gw.dingtalk.com returned HTTP 500", '
+        '"error.reason": "http_500"}'
+    )
+    command = ["dws", "chat", "message", "send", "--group", "cid-1"]
+
+    def fake_run(command_arg, text, capture_output, check, timeout, env=None):
+        calls.append(command_arg)
+        return SimpleNamespace(returncode=1, stdout="", stderr=gateway_error)
+
+    monkeypatch.setattr("app.dws_client.subprocess.run", fake_run)
+    monkeypatch.setattr("app.dws_client.time.sleep", lambda seconds: None)
+
+    with pytest.raises(DwsError):
+        DwsClient().run_json(command)
+    assert calls == [command]
+
+
 def test_run_json_does_not_retry_chat_message_send_system_error(monkeypatch):
     calls = []
     system_error_payload = (

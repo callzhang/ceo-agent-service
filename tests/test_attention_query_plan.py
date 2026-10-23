@@ -1,11 +1,14 @@
 from pathlib import Path
 import json
 import sqlite3
+from datetime import datetime, timezone
 
 import pytest
 
 from app.audit_web import _queue_attention_rows, _reply_task_queue_snapshot, _work_summary_input_queue_snapshot
-from app.store import AutoReplyStore
+from app.action_storage import update_action
+import app.store as store_module
+from app.store import AgentRole, AutoReplyStore
 from app.task8_storage import task8_insert_parts, task8_set_parts
 from app.task20_definitions import task20_column, task20_projection
 from app.work_summary_payload import decode_work_summary_payload
@@ -358,10 +361,14 @@ def test_work_attention_scalar_scan_ignores_unrelated_task_growth(tmp_path, monk
             decoded.append(value)
             return decode_work_summary_payload(value)
 
+        store_module._close_idle_connections()  # measure on a fresh connection both times
         with store._connect() as db:
             db.create_function("decode_work_summary_payload", 1, decode, deterministic=True)
             db.set_progress_handler(progress, 10)
-            selected = db.execute(query).fetchall()
+            try:
+                selected = db.execute(query).fetchall()
+            finally:
+                db.set_progress_handler(None, 0)
         assert [row["id"] for row in selected] == [failed]
         assert decoded == ['{"summary":"exact failed body"}']
         assert steps < 400000
@@ -377,3 +384,87 @@ def test_work_attention_scalar_scan_ignores_unrelated_task_growth(tmp_path, monk
                 "status": "done",
             })
     assert measured_query() == before
+
+
+@pytest.mark.parametrize("latest_status", ["done", "failed"])
+def test_attention_counts_only_the_latest_dispatched_run_of_a_scheduled_task(
+    tmp_path: Path, latest_status: str,
+):
+    store = AutoReplyStore(tmp_path / "worker.sqlite3")
+    now = datetime(2026, 10, 23, 12, 0, tzinfo=timezone.utc)
+    schedule = store.create_scheduled_task(
+        name="Weekly report", prompt="Send weekly report",
+        cron_expression="0 12 * * 5", timezone_name="UTC",
+        runtime_id="codex_oauth", working_directory=str(tmp_path), now=now,
+    )
+
+    def dispatched_task(run_number: int, status: str):
+        scheduled_run = store.create_scheduled_task_run(
+            schedule.id, trigger_kind="manual", scheduled_for=now, now=now,
+        )
+        task = store.ensure_reply_task(
+            conversation_id=f"scheduled-task-run:{scheduled_run.id}",
+            conversation_title="Weekly report", single_chat=False,
+            trigger_message_id=f"event-{run_number}", trigger_create_time=now.isoformat(),
+            trigger_sender="Agent Cron", trigger_text="Send weekly report",
+            channel="scheduled", execution_generation=f"scheduled-run-{scheduled_run.id}",
+            business_object_key=f"scheduled-task-run:{scheduled_run.id}",
+        )
+        owner = f"dispatcher-{run_number}"
+        assert store.claim_scheduled_task_run(
+            scheduled_run.id, owner=owner, lease_seconds=600, now=now,
+        ) is not None
+        store.link_scheduled_task_run_execution(
+            scheduled_run.id, owner=owner, execution_kind="reply_task",
+            execution_id=str(task.id), now=now,
+        )
+        store.finish_scheduled_task_dispatch(
+            scheduled_run.id, owner=owner, status="dispatched", now=now,
+        )
+        attempt_id = None
+        if status == "failed":
+            agent_run = store.claim_agent_run(
+                task.id, task.execution_generation, role=AgentRole.CONSUMER,
+                proposal_revision=0, turn_attempt=0, parent_agent_run_id=None,
+                operation_id="", owner=f"consumer-{run_number}",
+            ).run
+            claimed_task = store.claim_reply_task(task.id)
+            assert claimed_task is not None
+            store.fail_agent_run(agent_run.id, {"code": "test_failure"},
+                                 owner=f"consumer-{run_number}")
+            store.fail_reply_task(
+                task.id, "test failure",
+                expected_execution_generation=task.execution_generation,
+            )
+            attempt_id = store.record_reply_attempt(
+                conversation_id=task.conversation_id,
+                conversation_title=task.conversation_title,
+                trigger_message_id=task.trigger_message_id,
+                trigger_sender="Agent Cron", trigger_text=task.trigger_text,
+                action="agent_run", sensitivity_kind="general",
+                send_status="failed", channel="scheduled",
+            )
+            with store._connect() as db:
+                update_action(db, "reply_attempts", attempt_id,
+                              {"agent_run_id": agent_run.id})
+        else:
+            claimed_task = store.claim_reply_task(task.id)
+            assert claimed_task is not None
+            store.complete_reply_task(
+                task.id, expected_execution_generation=task.execution_generation,
+            )
+        return task, attempt_id
+
+    old_task, old_attempt_id = dispatched_task(1, "failed")
+    newest_task, newest_attempt_id = dispatched_task(2, latest_status)
+    rows = _queue_attention_rows(store)
+    task_ids = {row["id"] for row in rows if row["category"] == "Reply task"}
+    attempt_ids = {row["id"] for row in rows if row["category"] == "Reply"}
+
+    assert str(old_task.id) not in task_ids
+    assert str(old_attempt_id) not in attempt_ids
+    if latest_status == "done":
+        assert str(newest_task.id) not in task_ids
+        assert str(newest_attempt_id) not in attempt_ids
+    else:
+        assert str(newest_task.id) in task_ids or str(newest_attempt_id) in attempt_ids

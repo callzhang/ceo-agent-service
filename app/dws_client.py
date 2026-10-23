@@ -4565,9 +4565,17 @@ class DwsClient:
     def is_message_read_retryable_error_code(cls, code: str | None) -> bool:
         if not code:
             return False
-        return code in cls.MESSAGE_LIST_RETRYABLE_ERROR_CODES or code.upper().endswith(
-            cls.MESSAGE_LIST_RETRYABLE_ERROR_SUFFIXES
+        return (
+            code in cls.MESSAGE_LIST_RETRYABLE_ERROR_CODES
+            or code.upper().endswith(cls.MESSAGE_LIST_RETRYABLE_ERROR_SUFFIXES)
+            or cls.is_gateway_server_error_code(code)
         )
+
+    @staticmethod
+    def is_gateway_server_error_code(code: object) -> bool:
+        """Whether ``code`` is the gateway's ``http_<5xx>`` failure reason."""
+        prefix, _, status = str(code or "").partition("_")
+        return prefix == "http" and status.isdigit() and 500 <= int(status) <= 599
 
     @staticmethod
     def _command_path_matches(
@@ -4803,6 +4811,11 @@ class DwsClient:
             and dotted_server_error_code
         ):
             return dotted_server_error_code
+        dotted_reason = payload.get("error.reason")
+        if DwsClient.is_gateway_server_error_code(dotted_reason):
+            # The gateway reports its own 5xx under the generic code ``1``;
+            # the reason is the only field that says it is a server failure.
+            return dotted_reason
         dotted_error_code = payload.get("error.code")
         if isinstance(dotted_error_code, str) and dotted_error_code:
             return dotted_error_code

@@ -261,7 +261,7 @@ export interface BusinessProjectDetail {
 export interface TaskFilters { categories: string[]; task_states: string[]; }
 export interface TaskList extends ConsoleList<TaskSummary> { filters: TaskFilters; }
 export interface TaskDetail extends TaskSummary { description: string; background: string; blocker: string; tags: string[]; facts: Array<{ id: string; description: unknown; source: unknown; created: string; updated: string }>; todos: Array<Record<string, unknown>>; updates: Array<Record<string, unknown>>; evidence_candidates: Array<Record<string, unknown>>; unlinked_follow_ups: Array<Record<string, unknown>>; }
-export interface HistoryItem { id: string; occurred_at: string; title: string; type: string; status: string; summary: unknown; actor: string; detail_url: string; kind?: string; input?: string; output?: string; action?: string; }
+export interface HistoryItem { id: string; occurred_at: string; title: string; type: string; status: string; summary: unknown; actor: string; detail_url: string; kind?: string; input?: string; output?: string; action?: string; task_id?: number; run_count?: number; }
 /** One History type as the service names it (Derek 2026-09-25: the filter lists every kind of work the service runs). */
 export interface HistoryTypeOption { value: string; label: string; }
 export interface HistoryChart { labels: string[]; series: Array<{ name: string; data: number[] }>; total: number; range: string; }

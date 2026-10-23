@@ -110,11 +110,11 @@ def test_okr_release_baseline_matches_already_installed_skill():
         item for item in manifest["files"]
         if item["source"] == "ci/shared-skills/ceo-weekly-okr-report/SKILL.md"
     )
-    # The repository source carries the revision that is already bound in the
-    # runtime (Derek 2026-10-23: runtime edits are absorbed into the repository).
+    # The release manifest pins the old managed Skill and candidate separately.
     source_digest = _digest((root / entry["source"]).read_bytes())
     assert entry["new_sha256"] == source_digest
-    assert entry["old_managed_sha256"] == source_digest
+    assert entry["old_managed_sha256"] == "54d3e45e58cdf819d21d9ad4c3973030a5a70de75b0f8d583995a5a496464d5e"
+    assert entry["old_sha256"] == entry["old_managed_sha256"]
 
 
 def test_finance_rule_card_counts_only_valid_applicant_resolvable_returns():

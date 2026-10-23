@@ -781,3 +781,22 @@ The production installed release targets now match the current candidate for the
 PR #294 was normally merged with current main in its isolated worktree. No report was triggered. The authorized task6 manual acceptance remains pending until PR #294 passes its exact-head checks and is deployed; natural task14/task13/task6 outcomes and passive sleep-resume catch-up remain separate gates.
 
 The reconciled PR #294 head is `ff219d87961ba76b13ad5d14e0126d136372a5a9`, normally merged with production main `ce841e3826b62cddd068eb9eb36d17deb07de156`. Targeted release/OKR tests pass 80/80; Ruff, `git diff --check`, JSON validation, and the 26-entry old/installed + new/approved + managed/source digest comparison pass. The first run found one stale literal in the OA release test: production had already installed the exact candidate `c8130e8d…`, while the assertion still pinned its former `981e443d…` baseline. Updated the expected digest to the independently read installed value; no runtime guard or acceptance criterion was removed. Exact-head Quality run `40014583517` is in progress. Vercel preview is rate-limited and no frontend files are changed. PR #309 Quality run `40011245295` also remains in progress; neither run is being counted as passed. PR #294 is not merged/deployed, and no report or external action was triggered.
+### 2026-10-23 18 人空搜索验收复核
+
+匿名冻结案例 `empty-search-18-managers-incremental-analysis`：18 人中 15 人有 live OKR、3 人成功读取但目标列表为空；15 次独立文档搜索均无匹配。v82 完整轨迹发现，Consumer 写入第 1 位成员分析后先读取了第 2 位成员 source/schema，之后才读回第 1 位；Audit 仍批准候选。根因是 Skill 同时要求逐人读回和 prepare 后预读所有成员材料。现已改为按名册逐人延迟读取，grader 也会拦查下一位的 source/schema、搜索是否早于当前分析读回。
+
+修订后 [v83 合成验收](../evals/scheduled_task_generic/okr_results.v83.json) 通过：15/15 成员顺序断言通过、3 位无目标成员保持未评分；最终 Audit approve，2 轮修订后完整报告、provider 读回和摘要候选均通过。全部使用隔离合成数据和工具，没有真实报告重放或外发。`tests/test_scheduled_okr_agent_eval.py tests/test_consumer_system_release.py` 为 **81 passed**，Ruff 与差异检查通过。Skill 发布摘要和候选摘要前置条件已同步；当时正式发布仍待 PR 合并，后续发布及生产回读见本文末。
+
+### 2026-10-23 PR #311 周 OKR 顺序分析正式发布
+
+PR #311 合入 `c4bfea2` 后，第一次自然空闲发布在 Consumer/Skill 预检处安全回滚：清单将生产已安装的周 OKR Skill 旧摘要记为 `49ba4b0b…`，但实际文件与绑定 managed revision 均为 `03897393…`。PR #312 只修正该旧目标摘要并增加回归断言，未改 OKR Skill 内容或报告行为；合并提交为 `93a66535f14f5706dc28785a9698821bcde0fb14`。
+
+第二次使用正常静默等待发布成功，deploy operation `deploy-4bf5d989-3b81-4ef8-bd38-542e62ffc422` 的 Consumer/Skill 回执为 `verified`。生产 checkout 位于该提交且干净；launchd supervisor PID `99938`，service worker `99942`，Audit web `99943`，email worker `99944`；`/healthz` 返回 HTTP 200。运行配置 `377` 为 active（父配置 `376`），task6 的 managed `ceo-weekly-okr-report` 引用更新到 revision `248`，其数据库与安装文件 SHA-256 均为 `54d3e45e…`。当前 worker 对配置 377 的加载回执无错误，26 项发布资产全部摘要匹配，task6 任务引用读回一致。没有新建 task6 运行，也没有重放失败 run。
+
+发布后只读运行快照：所有业务任务 processing 为 0，email provider 队列 pending 599；Attention 14；History 的 failed 筛选共 29 项。`/healthz` 正常之外，System Health 页面显示 degraded（7 项违规，native delivery 结果 378 项可读、48 项不可读）；该健康告警与本次 Skill 发布分开记录，不能用 HTTP 200 覆盖。
+
+### 2026-10-23 日报窗口契约更新
+
+Derek 明确确认日报按北京时间报告日期取数：主窗口从该日 00:00 到本次实际 `scheduled_for`，不得越过触发时刻；漏掉的报告日期作为独立 catch-up 覆盖呈现，不并入当天主窗口。按此新确认的业务契约复核 run396111：其首轮采用旧的滚动窗口，最终候选又被改成北京时间零点到次日零点（比触发时刻晚三小时），所以该自然结果仍不通过。历史运行和外部发布证据不变，不重放、不补发。
+
+最新实现由 `scripts/window.py` 同时提供当日报告窗口和单独的漏日补充窗口；Skill 将两者分别标注。日报 Skill 候选 SHA-256 `a7c7caaedc5fc63446e20f53ca4bf69d643cca50578c2eda723dfc6f6d9a810e`，窗口脚本候选 SHA-256 `4f30d1b82c43076f74bb1c3c16137a905a6c03e14a35b79a59fb8b324ac6126d`。定向窗口/事实、Consumer 发布和脚本边界验收共 58 项通过；仍需 exact-head Quality、正式发布及后续自然结果核查。此前“滚动窗口是最终约定”的记录描述的是当时旧契约；本节记录后续确认的约定。

@@ -5,7 +5,7 @@ from pathlib import Path
 from evals.scheduled_task_generic import okr_eval
 from evals.scheduled_task_generic.okr_fixture import Fixture, member_payload
 
-CASES = json.loads((Path(okr_eval.__file__).parent / "okr_cases.v7.json").read_text())["cases"]
+CASES = json.loads((Path(okr_eval.__file__).parent / "okr_cases.v8.json").read_text())["cases"]
 BASE_CASES = CASES[:4]
 
 
@@ -19,8 +19,10 @@ def test_okr_skill_resumes_saved_inputs_and_does_not_use_failure_for_missing_evi
     assert "Do not invent or require a separate local performance-policy" in skill
     assert "the missing document does not block member analysis or publication" in skill
     assert "An empty search is an evidence gap, not a reason to stop" in skill
-    assert "Process live-OKR managers sequentially" in skill
-    assert "write and verify the complete schema-valid" in skill
+    assert "Process live-OKR managers in roster order" in skill
+    assert "do not preload a later manager's files" in skill
+    assert "Do not read the next manager's source or schema" in skill
+    assert "write and read back the complete schema-valid analysis artifact" in skill
     assert "The discrete bands above apply only to each KR's `base_score`" in skill
     assert "70–79 is the valid role-standard band" in skill
     assert "replace the proposal content with those exact bytes" in skill
@@ -55,7 +57,7 @@ def test_okr_skill_resumes_saved_inputs_and_does_not_use_failure_for_missing_evi
     assert "call `list_task_artifacts`" in skill
     assert "reuse listed roster and member receipt artifacts" in skill
     assert "`prepare` validates their userId, period, outcome and source digest" in skill
-    assert "read `plan.json`, each schema" in skill
+    assert "read `plan.json`" in skill
     assert "Do not try to open the Python script source or task artifacts with `read_text_file`" in skill
     assert "resume at the first missing, changed or Audit-identified analysis" in skill
     assert "Zero reported progress is not evidence that no outcome occurred" in skill
@@ -80,6 +82,18 @@ def test_okr_skill_resumes_saved_inputs_and_does_not_use_failure_for_missing_evi
     assert "Update the affected `analysis-<userId>.json` or `appendix-links.json`" in correction
     assert "rerun `scripts/report.py render`" in correction
     assert "Never write generated report outputs with `consumer_artifact_write`" in correction
+
+
+def test_18_manager_case_keeps_21_beijing_trigger_cutoff_and_unscored_gaps():
+    case = next(c for c in CASES if c["id"] == "empty-search-18-managers-incremental-analysis")
+    facts, expected = case["facts"], case["expected"]
+    assert len(facts["roster"]["managers"]) == 18
+    assert len(expected["scored_ids"]) == 15
+    assert len(expected["gaps"]) == 3
+    assert expected["require_incremental_member_analysis"] is True
+    missing = set(expected["gaps"])
+    assert all(member_payload(m, facts)["sourceOutcome"]["kind"] == "goals_missing"
+               for m in facts["roster"]["managers"] if m["user_id"] in missing)
 
 
 def complete_fixture(tmp_path, case=None):

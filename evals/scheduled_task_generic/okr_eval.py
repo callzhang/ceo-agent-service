@@ -28,7 +28,7 @@ from evals.scheduled_task_generic.okr_fixture import (
 )
 
 HERE = Path(__file__).parent
-CASES_PATH = HERE / "okr_cases.v7.json"
+CASES_PATH = HERE / "okr_cases.v8.json"
 MAX_NATIVE_FEEDBACK_CYCLES = 3
 
 
@@ -486,6 +486,96 @@ def _grade(case, work, output, prior=None):
             and c["result"].get("documents") == []
             for c in trace
         )
+    sequence_rows = []
+    if expected.get("require_incremental_member_analysis"):
+        live_ids = expected["scored_ids"]
+        plan = read_json(work / "plan.json")
+        member_inputs = {
+            entry["user_id"]: {entry["source_file"], entry["schema_file"]}
+            for entry in plan["managers"]
+            if entry["outcome"] == "collected"
+        }
+        sequence_ok = True
+        for position, uid in enumerate(live_ids):
+            search_index = next(
+                (
+                    i
+                    for i, call in enumerate(trace)
+                    if call["tool"] == "search_dingtalk_documents"
+                    and uid in call["arguments"].get("query", "")
+                ),
+                None,
+            )
+            next_member_work = next(
+                (
+                    i
+                    for i, call in enumerate(trace)
+                    if search_index is not None
+                    and i > search_index
+                    and (
+                        (
+                            call["tool"] == "search_dingtalk_documents"
+                            and any(
+                                other in call["arguments"].get("query", "")
+                                for other in live_ids[position + 1 :]
+                            )
+                        )
+                        or (
+                            call["tool"] == "read_task_artifact"
+                            and any(
+                                call["arguments"].get("name") in member_inputs[other]
+                                for other in live_ids[position + 1 :]
+                            )
+                        )
+                    )
+                ),
+                len(trace),
+            )
+            artifact_name = f"analysis-{key(uid)}.json"
+            write_index = next(
+                (
+                    i
+                    for i, call in enumerate(trace)
+                    if call["tool"] == "consumer_artifact_write"
+                    and call["arguments"].get("name") == artifact_name
+                ),
+                None,
+            )
+            write_sha = (
+                trace[write_index]["result"].get("sha256")
+                if write_index is not None
+                else None
+            )
+            read_index = next(
+                (
+                    i
+                    for i, call in enumerate(trace)
+                    if write_index is not None
+                    and i > write_index
+                    and call["tool"] == "read_task_artifact"
+                    and call["arguments"].get("name") == artifact_name
+                    and call["result"].get("sha256") == write_sha
+                ),
+                None,
+            )
+            row_ok = (
+                search_index is not None
+                and write_index is not None
+                and read_index is not None
+                and search_index < write_index < read_index < next_member_work
+            )
+            sequence_ok = sequence_ok and row_ok
+            sequence_rows.append(
+                {
+                    "user_id": uid,
+                    "search_index": search_index,
+                    "write_index": write_index,
+                    "readback_index": read_index,
+                    "next_manager_work_index": next_member_work,
+                    "passed": row_ok,
+                }
+            )
+        checks["incremental_member_search_write_readback"] = sequence_ok
     checks["exact_summary_proposal"] = (
         len(actions) == 1
         and actions[0].capability == "dingtalk-chat"
@@ -506,6 +596,7 @@ def _grade(case, work, output, prior=None):
         "manifest": manifest,
         "rendered_full": (work / "full.md").read_text(),
         "mock_document_count": len(published),
+        "incremental_sequence": sequence_rows,
     }
 
 

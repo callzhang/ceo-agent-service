@@ -64,8 +64,8 @@ def test_organization_redirect_timeout_opens_user_chrome_and_keeps_failure(
         with browser.signed_in_console(tmp_path):
             pytest.fail('a timed-out organization redirect must not yield a console')
 
-    assert page.get_by_text.call_args.args == (browser.MINUTES_CONSOLE_ORG,)
-    assert page.get_by_text.return_value.first.click.call_args.kwargs['timeout'] == 10_000
+    assert page.locator.call_args.args == (browser._ORG_PICKER_ITEM,)
+    assert page.locator.return_value.first.click.call_args.kwargs['timeout'] == 10_000
     assert page.wait_for_url.call_args.kwargs['timeout'] == 10_000
     open_page.assert_called_once_with(
         [
