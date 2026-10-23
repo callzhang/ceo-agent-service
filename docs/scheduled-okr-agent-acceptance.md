@@ -709,7 +709,7 @@ PR #277 已打开，固定 v75/v76 case、模型/CLI 和 grader 对照及本地�
 
 该轨迹里 `consumer_document_write` 共 62 次：9 次成功、53 次失败。其中 52 次 DWS 返回 `doc_write_verification_failed`，其明示含义是“写入已经执行，但回读验证失败”；另一次把 30 字符文档 node ID 传给 `wiki +node-list --folder`，DWS 拒绝该 ID 格式。多个失败写入后，Consumer 随即读取对应文档；最终主报告和 18 份附录的 provider 正文读回完整，所以实际报告已交付，但这不能证明每次工具写入通过了格式保真校验。
 
-进一步按失败调用对应的精确 provider 版本比对了一个主报告创建、一个附录创建和同一附录更新。三个样本的有序文字 token 都与输入相同，但 DWS 回读会改写 Markdown：空行被删除，列表中的 `+` 被转义；主报告样本还丢失了表格右对齐标记，Markdown 解析后的对齐属性确实不同。因此这是样本中真实存在的 provider 格式/回读差异，不能按“评测误报”关闭，也不能只凭文字相同视作完全保真。它解释了至少部分验证失败的机制，但尚未逐一对应全部 52 次失败，整体根因仍未完全查实。分样本、版本和无正文比较结果见 `okr-production-readback.json` 的 `manual_authorized_run_395969.write_verification_investigation`。
+进一步按失败调用对应的精确 provider 版本比对了一个主报告创建、一个附录创建和同一附录更新。三个样本的有序文字 token 都与输入相同，但 DWS 的 Markdown 回读会改写空白和列表标记。随后对主报告的同一版本直接读取完整 JSONML：评分表有 19 行、8 列，95 个适用单元段落都保留了右对齐属性；Markdown 回读却省略了右对齐分隔符。因此该主报告样本是 Markdown 投影/写入校验误报，存储的文档结构并未丢失对齐。DWS 上游也记录过表格内 Markdown 回读序列化与 JSONML 内容不一致的问题（[issue #811](https://github.com/DingTalk-Real-AI/dingtalk-workspace-cli/issues/811)），这与本次直接版本读回相符，但 issue 的示例与版本不同，不能单独证明本次运行根因。三个样本表明有一类工具校验错误来自 Markdown 往返比较；它尚未逐一解释全部 52 次失败，仍需对其余失败按精确版本核对。无正文统计见 `okr-production-readback.json` 的 `manual_authorized_run_395969.write_verification_investigation`。
 
 完整 Consumer trajectory 还显示 DWS 将 `--content` 下的文档正文写进了失败诊断；这是独立的诊断隐私问题，PR #294 候选已为 `--content`/`--content-file` 参数增加脱敏回归，尚未合并部署。当前本机 DWS 为 v1.0.65；其他版本上相似验证问题的上游报告不能单独证明本次全部根因。本记录不把本次手动运行算作自然调度验收，也不据此关闭 task14/task13 自然报告及睡眠恢复补跑验收。
 

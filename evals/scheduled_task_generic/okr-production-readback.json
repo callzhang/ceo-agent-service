@@ -1153,11 +1153,19 @@
           "readback_lines": 91,
           "ordered_text_tokens": 656,
           "ordered_text_tokens_equal": true,
+          "provider_jsonml": {
+            "table_count": 2,
+            "scoring_table_rows": 19,
+            "scoring_table_columns": 8,
+            "scoring_table_cell_paragraphs_with_right_alignment": 95,
+            "scoring_table_cell_paragraphs": 152,
+            "source_alignment_preserved_in_document_structure": true
+          },
           "format_differences": [
             "five blank lines were removed",
             "a list marker containing plus was escaped as backslash-plus",
             "two table delimiter rows were reserialized with wider dash runs",
-            "one table right-alignment marker was absent from readback; parsed table alignment differed"
+            "the Markdown projection omitted right-alignment markers even though the exact JSONML document version retained right alignment on all 95 applicable scoring-table cell paragraphs"
           ]
         },
         {
@@ -1178,8 +1186,8 @@
           "readback_lines": 63
         }
       ],
-      "conclusion": "The samples prove DWS Markdown serialization differences explain verification mismatches for these sampled versions, but do not establish the cause of all 52 failures. Token equality alone is insufficient for acceptance: the main report sample lost a table alignment attribute, so provider formatting fidelity still needs resolution.",
-      "classification": "actual provider formatting/readback mismatch in sampled writes; full set of 52 not yet explained; not a pure evaluator false positive"
+      "conclusion": "The exact main-report JSONML version preserves the scoring-table right alignment that its Markdown readback projection omitted. This is a DWS Markdown serializer/verifier mismatch in the sampled write, not a loss in the stored document structure. It explains the sampled verification failure mechanism but does not establish the cause of all 52 failures; verify each remaining failure against its exact provider version and JSONML structure.",
+      "classification": "DWS Markdown projection/verifier false negative in the sampled main-report write; full set of 52 not yet explained"
     },
     "classification": "Manual business publication completed and fully read back. The DWS tool reported write-verification failures and one invalid folder-ID call; final provider content and notification receipt were independently confirmed. The deeper cause of DWS verification mismatch is not established. This is not a natural scheduled-run acceptance result."
   },
