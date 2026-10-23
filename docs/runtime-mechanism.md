@@ -4902,9 +4902,13 @@ are unchanged. Regression and release evidence is in
 
 Dedicated Email classification tasks allow at most three retries after the
 initial call (four processing attempts total) per explicit retry. A retryable
-read/network/model failure returns to pending with the existing capped backoff
-only before the fourth attempt; the fourth failure
-ends failed and retains the actual error. Expired running claims consume the
+failure returns to pending with the existing capped backoff only when its
+exception identifies a transient transport failure (such as DNS resolution,
+connection reset/refusal, timeout, or a runtime error explicitly marked
+retryable by the router). Authentication, TLS, configuration, malformed-input
+and other logic failures end failed without retry. Retryable failures are
+requeued only before the fourth attempt; the fourth failure ends failed and
+retains the actual error. Expired running claims consume the
 same budget and become failed once it is exhausted. Startup recovery and queue
 claiming also close previously exhausted pending records, including ones with a
 future available_at, without incrementing their old count or calling the mail

@@ -3,8 +3,11 @@
 from __future__ import annotations
 
 import json
+import imaplib
 import logging
 import os
+import socket
+import ssl
 import sys
 import time
 from collections.abc import Callable, Mapping, Sequence
@@ -56,6 +59,38 @@ CLASSIFICATION_DRAIN_MAX_SECONDS = 120.0
 # either consumer finishes it, rotating its execution generation underneath
 # the first consumer.
 _TERMINAL_DIRECT_RECOVERY_LOCK = Lock()
+
+
+def _email_classifier_failure_is_retryable(exc: BaseException) -> bool:
+    """Retry only known transient transport failures from classifier work."""
+    current: BaseException | None = exc
+    visited: set[int] = set()
+    while current is not None and id(current) not in visited:
+        visited.add(id(current))
+        if isinstance(current, ssl.SSLError):
+            return False
+        if isinstance(current, imaplib.IMAP4.error) and not isinstance(
+            current, imaplib.IMAP4.abort
+        ):
+            return False
+        retryable = getattr(current, "retryable_external_dependency", None)
+        if retryable is not None:
+            return bool(retryable)
+        if isinstance(
+            current,
+            (
+                socket.gaierror,
+                TimeoutError,
+                ConnectionResetError,
+                ConnectionAbortedError,
+                ConnectionRefusedError,
+                BrokenPipeError,
+                imaplib.IMAP4.abort,
+            ),
+        ):
+            return True
+        current = current.__cause__ or current.__context__
+    return False
 
 
 def _agent_classification_action_plan(
@@ -980,25 +1015,10 @@ def run_email_classification_task_once(
             completed_classification_id = classification_id
         return outcome
     except Exception as exc:
-        from pydantic import ValidationError
-        from app.email_store import (
-            EmailClassificationConflict,
-            EmailClassificationIdentityCollision,
-        )
-
-        permanent = isinstance(
-            exc,
-            (
-                json.JSONDecodeError,
-                ValidationError,
-                EmailClassificationConflict,
-                EmailClassificationIdentityCollision,
-            ),
-        ) or (isinstance(exc, ValueError) and not isinstance(exc, ConnectionError))
         adapter.fail(
             task,
             error=f"{type(exc).__name__}:{exc}",
-            retryable=not permanent,
+            retryable=_email_classifier_failure_is_retryable(exc),
         )
         raise
     finally:

@@ -2,7 +2,10 @@ from __future__ import annotations
 
 from tests.support.email_listing_oracle import StoredEmailListingOracle
 import json
+import imaplib
 import sqlite3
+import socket
+import ssl
 
 import time
 from contextlib import contextmanager
@@ -17,6 +20,8 @@ from types import SimpleNamespace
 
 import pytest
 
+from app.agent_runtime_contracts import RuntimeFailureClass
+from app.agent_runtime_router import RoutedCodexExecutionError
 from app.action_storage import (
     delete_email_action,
     email_action_projection,
@@ -4669,11 +4674,35 @@ def test_classification_worker_recovers_crash_before_task_production_without_age
     assert adapter.get_task(classifier_task.task_id).status == "done"
 
 
+def _imap_authentication_failure() -> ConnectionError:
+    error = ConnectionError("IMAP login failed")
+    error.__cause__ = imaplib.IMAP4.error("AUTHENTICATIONFAILED")
+    return error
+
+
 @pytest.mark.parametrize(
     ("error", "expected_status"),
     (
         (ValueError("invalid Agent JSON"), "failed"),
-        (ConnectionError("offline"), "pending"),
+        (socket.gaierror(-2, "name resolution failed"), "pending"),
+        (ssl.SSLError("certificate verify failed"), "failed"),
+        (ConnectionError("email IMAP TLS is required"), "failed"),
+        (_imap_authentication_failure(), "failed"),
+        (
+            RoutedCodexExecutionError(
+                "runtime_provider_auth_failed",
+                failure_class=RuntimeFailureClass.AUTHENTICATION,
+            ),
+            "failed",
+        ),
+        (
+            RoutedCodexExecutionError(
+                "runtime_provider_unreachable",
+                failure_class=RuntimeFailureClass.TRANSPORT,
+                retryable_external_dependency=True,
+            ),
+            "pending",
+        ),
     ),
 )
 def test_classifier_distinguishes_permanent_and_transient_failures(
