@@ -53,7 +53,8 @@ def facts(db, projection):
 
 @pytest.mark.parametrize('variant',actions.REPLY_VARIANTS)
 def test_explicit_forward_current_writes_inverse_reforward(tmp_path,variant):
-    path=tmp_path/'source.sqlite3';source_database(path,variant)
+    path=tmp_path/'source.sqlite3'
+    source_database(path,variant)
     with sqlite3.connect(path) as db:
         before = {kind:facts(db,actions.reply_action_projection(kind,variant)) for kind in actions.REPLY_ACTION_TYPES}
         water = tuple(db.execute('select rowid,name,seq from sqlite_sequence order by rowid'))
@@ -83,19 +84,23 @@ def test_explicit_forward_current_writes_inverse_reforward(tmp_path,variant):
 
 
 def test_unresolvable_public_memory_parent_fails_without_changes(tmp_path):
-    path=tmp_path/'invalid.sqlite3';source_database(path,'actual_no_memory_fk')
+    path=tmp_path/'invalid.sqlite3'
+    source_database(path,'actual_no_memory_fk')
     with sqlite3.connect(path) as db:
         pointer=_layouts('actual_no_memory_fk')['memory_write_events'].path('attempt_id')
         db.execute('update actions set payload_json=jsonb_set(payload_json,?,999) where id=102',(pointer,))
-    before=dump(path);release=prepare_current_action_schema_release(ROOT,path)
+    before=dump(path)
+    release=prepare_current_action_schema_release(ROOT,path)
     with pytest.raises(ValueError,match='cannot be resolved'):
         release.publish()
     assert dump(path)==before
 
 
 def test_fresh_inverse_refuses_to_erase_new_retained_fact(tmp_path):
-    path=tmp_path/'fresh.sqlite3';source_database(path,'fresh_memory_fk')
-    release=prepare_current_action_schema_release(ROOT,path);release.publish()
+    path=tmp_path/'fresh.sqlite3'
+    source_database(path,'fresh_memory_fk')
+    release=prepare_current_action_schema_release(ROOT,path)
+    release.publish()
     with sqlite3.connect(path) as db:
         actions.update_action(db,'reply_attempts',17,{'universal_execution_id':'new-owned-fact'})
     before=dump(path)
