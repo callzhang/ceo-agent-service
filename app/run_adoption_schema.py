@@ -207,12 +207,12 @@ def _rebuild_actions(db, task_metadata, task_map, task_owner, run_map, source_se
         if "action_data" in values and values["action_data"] is not None:
             data = values["action_data"]
             ref, ref_type = db.execute(
-                "select json_extract(?, '$.action_agent_run_id'), "
-                "json_type(?, '$.action_agent_run_id')", (data, data)).fetchone()
+                "select json_extract(?, '$.agent_run_id'), "
+                "json_type(?, '$.agent_run_id')", (data, data)).fetchone()
             if ref_type not in (None, "null"):
                 translated = _translate_weak_run_ref(run_map, ref)
                 values["action_data"] = db.execute(
-                    "select jsonb_set(?, '$.action_agent_run_id', ?)",
+                    "select jsonb_set(?, '$.agent_run_id', ?)",
                     (data, translated)).fetchone()[0]
         _insert(db, "actions", values)
     for name, sql in objects.items():
