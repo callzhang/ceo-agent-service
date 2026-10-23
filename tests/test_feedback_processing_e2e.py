@@ -4,7 +4,8 @@ This fixture models the historical feedback reported for attempt #8308.  It
 uses the real local Console API and persists only the deterministic summary
 and references; no model invocation is involved in the import step.
 """
-from app.action_storage import update_action, _native_payload
+from app.action_storage import update_action
+from app.action_feedback_storage import insert_feedback_action
 from app.task12_storage import task12_set_parts
 from app.task20_definitions import task20_column
 
@@ -20,6 +21,7 @@ import app.web_api.registration as registration_module
 from app.audit_web import create_audit_app
 from app.store import AutoReplyStore
 from app.web_api.registration import register_console_routes
+from test_store_task_entity_creator import _target_store
 
 
 class _NonExecutingExecutor:
@@ -73,7 +75,7 @@ def _registered_route_client(
     },
 ) -> tuple[TestClient, AutoReplyStore]:
     db_path = tmp_path / "route-worker.sqlite3"
-    store = AutoReplyStore(db_path)
+    store = _target_store(db_path)
     app = FastAPI()
     register_console_routes(
         app,
@@ -283,22 +285,17 @@ def _seed_feedback_noise(
             "select coalesce(max(cast(legacy_key as integer)),0)+1 "
             "from actions where record_type='feedback_events'"
         ).fetchone()[0]
-        timestamp = db.execute("select current_timestamp").fetchone()[0]
-        db.executemany(
-            "insert into actions(record_type,legacy_key,payload_json) "
-            "values('feedback_events',?,?)",
-            [
-                (str(first_rowid + index), _native_payload({
+        for index in range(count):
+            insert_feedback_action(
+                db,
+                "feedback_events",
+                {
                     "key": f"noise-{index:05d}",
                     "feedback_token": f"noise-token-{index:05d}",
-                    "rating": "", "rating_label": "", "comment": "",
-                    "original_text": "", "reply_text": "", "source": "",
-                    "received_at": received_at, "resolved_at": "", "raw_json": "{}",
-                    "created_at": timestamp, "updated_at": timestamp,
-                }))
-                for index in range(count)
-            ],
-        )
+                    "received_at": received_at,
+                },
+                source_rowid=first_rowid + index,
+            )
 
 
 def test_batch_detail_reads_exact_item_beyond_general_feedback_limit(tmp_path: Path):
@@ -383,20 +380,20 @@ def test_resolve_ignores_cached_refreshing_zero_and_uses_fresh_backlog(
     feedback_repository: Path,
 ):
     receipt = _main_receipt()
-    with _registered_route_client(
+    client, store = _registered_route_client(
         tmp_path,
         feedback_backlog_factory=lambda: {
             "processing": 1,
             "failed": 0,
             "retryable": 0,
         },
-    )[0] as client:
-        store = AutoReplyStore(tmp_path / "route-worker.sqlite3")
-        _seed_processing_batch_for_resolution(
-            store,
-            batch_id="batch-fresh-backlog",
-            receipt=receipt,
-        )
+    )
+    _seed_processing_batch_for_resolution(
+        store,
+        batch_id="batch-fresh-backlog",
+        receipt=receipt,
+    )
+    with client:
         response = client.post(
             "/api/console/feedback/batches/batch-fresh-backlog/resolve",
             json=receipt,

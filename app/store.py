@@ -70,7 +70,7 @@ from app import task_lifecycle_storage as task_claims
 from app.task8_storage import (
     register_task8_functions, task8_insert_parts, task8_set_parts,
 )
-from app.task12_storage import insert_task12, task12_insert_parts, task12_projection, task12_set_parts
+from app.task12_storage import insert_task12, task12_projection, task12_set_parts
 from app.action_feedback_definitions import feedback_projection
 from app.action_feedback_storage import (insert_feedback_action,
     upsert_feedback_event, insert_feedback_decision_items,
@@ -17041,16 +17041,40 @@ class AutoReplyStore(LogicalRunStoreMixin, ReviewedCandidateStoreMixin):
                 "original_text": original_text, "reply_text": reply_text,
                 "source": source, "received_at": received_at, "raw_json": raw_json,
             })
-            # Keep a durable, independently mutable processing projection while
-            # preserving the original feedback event as the source of truth.
-            _task12_insert = task12_insert_parts(db, 'feedback_processing_items', {'feedback_key': key}, insert_sql={'status': f"case when trim((select resolved_at from ({FEEDBACK_EVENT_SQL}) where key=?)) <> ''\n                              then 'resolved' else 'pending' end", 'resolved_at': f"coalesce((select resolved_at from ({FEEDBACK_EVENT_SQL}) where key=?), '')"}, insert_parameters=(key, key,))
-            db.execute(
-                f"""{_task12_insert.sql} on conflict({task20_column('feedback_processing_items', 'feedback_key')}) where record_type='feedback_processing_items' do update set {task12_set_parts('feedback_processing_items', {}, update_sql={'status': f"""case when trim((select resolved_at from ({FEEDBACK_EVENT_SQL}) where key=excluded.{task20_column('feedback_processing_items', 'feedback_key')})) <> ''
-                                then 'resolved' else tasks.{task20_column('feedback_processing_items', 'status')} end""", 'resolved_at': f"""case when trim((select resolved_at from ({FEEDBACK_EVENT_SQL}) where key=excluded.{task20_column('feedback_processing_items', 'feedback_key')})) <> ''
-                                     then (select resolved_at from ({FEEDBACK_EVENT_SQL}) where key=excluded.{task20_column('feedback_processing_items', 'feedback_key')})
-                                     else tasks.{task20_column('feedback_processing_items', 'resolved_at')} end""", 'updated_at': 'current_timestamp'}).sql}""",
-                _task12_insert.parameters,
-            )
+            existing = db.execute(
+                "select task_id from feedback_processing_items where feedback_key=?",
+                (key,),
+            ).fetchone()
+            if existing is None:
+                event = db.execute(
+                    f"select resolved_at from ({FEEDBACK_EVENT_SQL}) where key=?",
+                    (key,),
+                ).fetchone()
+                resolved_at = str(event["resolved_at"] or "") if event else ""
+                status = "resolved" if resolved_at.strip() else "pending"
+                task_timestamp = str(db.execute("select current_timestamp").fetchone()[0])
+                task = task_entity_storage.create_task(
+                    db,
+                    values={
+                        "kind": "feedback_processing",
+                        "status": status,
+                        "created_at": task_timestamp,
+                        "updated_at": task_timestamp,
+                    },
+                )
+                db.execute(
+                    "insert into feedback_processing_items(task_id,feedback_key,batch_id,"
+                    "workbench_task_id,workbench_turn_id,attempt_id,agent_run_id,commit_sha,"
+                    "test_evidence_json,restart_evidence_json,health_evidence_json,note,"
+                    "resolved_at,current_round_id) values(?,?,?,'','',0,0,'','{}','{}','{}','',?,0)",
+                    (task["id"], key, "", resolved_at),
+                )
+            else:
+                db.execute(
+                    "update tasks set updated_at=current_timestamp "
+                    "where id=? and kind='feedback_processing'",
+                    (existing["task_id"],),
+                )
 
     @staticmethod
     def _feedback_processing_round_pointer(
@@ -19333,9 +19357,9 @@ class AutoReplyStore(LogicalRunStoreMixin, ReviewedCandidateStoreMixin):
                     on manual.feedback_key = fe.key
                 left join ({REPLY_ATTEMPT_COMMON_SQL}) as ra
                     on ra.id = coalesce(latest.attempt_id, manual.attempt_id)
-                left join ({AGENT_RUN_SQL}) ar
+                left join (select id,role,session_id from runs) ar
                     on ar.id = ra.agent_run_id
-                left join ({task12_projection('feedback_processing_items')}) as pi
+                left join ({_native_feedback_item_projection()}) as pi
                     on pi.feedback_key = fe.key
                 order by fe.received_at desc, fe.updated_at desc
                 limit ?
@@ -19417,9 +19441,9 @@ class AutoReplyStore(LogicalRunStoreMixin, ReviewedCandidateStoreMixin):
                     on manual.feedback_key = fe.key
                 left join ({REPLY_ATTEMPT_COMMON_SQL}) as ra
                     on ra.id = coalesce(latest.attempt_id, manual.attempt_id)
-                left join ({AGENT_RUN_SQL}) ar
+                left join (select id,role,session_id from runs) ar
                     on ar.id = ra.agent_run_id
-                left join ({task12_projection('feedback_processing_items')}) as pi
+                left join ({_native_feedback_item_projection()}) as pi
                     on pi.feedback_key = fe.key
                 order by fe.key asc
                 """,
@@ -19464,7 +19488,7 @@ class AutoReplyStore(LogicalRunStoreMixin, ReviewedCandidateStoreMixin):
                 )
                 select count(*) as pending_count
                 from ({FEEDBACK_EVENT_SQL}) fe
-                left join ({task12_projection('feedback_processing_items')}) as pi
+                left join ({_native_feedback_item_projection()}) as pi
                     on pi.feedback_key = fe.key
                 left join latest_attempt_by_token latest
                     on latest.feedback_token = fe.feedback_token

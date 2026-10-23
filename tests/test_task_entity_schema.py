@@ -1551,7 +1551,6 @@ def test_feedback_item_batch_id_matches_source_through_forward_inverse_reforward
 
 
 def test_native_feedback_claim_after_converted_reopen_clears_captured_unresolved_refs(tmp_path, monkeypatch):
-    from app.action_feedback_storage import insert_feedback_action
     from app.store import AutoReplyStore
 
     source = _source()
@@ -1599,10 +1598,10 @@ def test_native_feedback_claim_after_converted_reopen_clears_captured_unresolved
     store._read_snapshot_connection = ContextVar("converted_feedback_snapshot", default=None)
     store._reused_connection = ContextVar("converted_feedback_reused", default=None)
     monkeypatch.setattr(store, "feedback_iteration_enabled", lambda: True)
-    with store._immediate_write_transaction() as db:
-        insert_feedback_action(db, "feedback_events", {
-            "key": "feedback-a", "feedback_token": "token-a",
-        })
+    store.upsert_feedback_event(
+        key="feedback-a", feedback_token="token-a",
+    )
+    assert store.list_user_feedback_items_by_keys(["feedback-a"])[0].processing_status == "pending"
 
     claimed = store.claim_feedback_processing_items("new-batch", ["feedback-a"])
     assert claimed[0].status == "processing"
@@ -1652,6 +1651,109 @@ def test_native_feedback_claim_after_converted_reopen_clears_captured_unresolved
             "where feedback_key='feedback-a'"
         ).fetchone()
         assert tuple(source_item) == ("", "", native_item[2], "processing")
+
+
+def test_feedback_intake_task_survives_source_inverse_and_reforward(tmp_path):
+    from app.store import AutoReplyStore, FEEDBACK_EVENT_SQL
+
+    source = _source()
+    source.row_factory = sqlite3.Row
+    source.execute("pragma foreign_keys=off")
+    source.execute("delete from tasks where id in (228,229)")
+    source.commit()
+    source.execute("begin immediate")
+    metadata = capture_task_entities(source)
+    forward = migrate_task_entities(source, metadata)
+
+    from app.task_run_entity_assembly import task_run_entity_assembly_objects
+
+    assembled_objects = task_run_entity_assembly_objects()
+    present = {row[0] for row in source.execute("select name from sqlite_schema")}
+    for name, ddl in assembled_objects.items():
+        if ddl.lstrip().lower().startswith("create table") and name not in present:
+            source.execute(ddl)
+            present.add(name)
+    for name, ddl in assembled_objects.items():
+        if not ddl.lstrip().lower().startswith("create table") and name not in present:
+            source.execute(ddl)
+            present.add(name)
+    source.commit()
+
+    target_path = tmp_path / "feedback-intake-reforward.sqlite3"
+    target = sqlite3.connect(target_path)
+    source.backup(target)
+    target.close()
+    source.close()
+
+    store = AutoReplyStore.__new__(AutoReplyStore)
+    store.path = target_path
+    store.busy_timeout_seconds = 5
+    store.busy_timeout_milliseconds = 5000
+    store._read_snapshot_connection = ContextVar("feedback_intake_snapshot", default=None)
+    store._reused_connection = ContextVar("feedback_intake_reused", default=None)
+    store.upsert_feedback_event(
+        key="feedback:new-native", feedback_token="token-new-native", comment="first",
+    )
+    with store._connect() as db:
+        item = db.execute(
+            "select task.id,task.status,item.feedback_key,item.attempt_id,item.agent_run_id "
+            "from tasks task join feedback_processing_items item on item.task_id=task.id "
+            "where item.feedback_key=?",
+            ("feedback:new-native",),
+        ).fetchone()
+        task_id = int(item[0])
+        assert tuple(item)[1:] == ("pending", "feedback:new-native", 0, 0)
+        db.execute(
+            "update tasks set status='processing',updated_at='current-native-time' where id=?",
+            (task_id,),
+        )
+        db.execute(
+            "update feedback_processing_items set attempt_id=41,agent_run_id=42,note='native edit',"
+            "test_evidence_json=? where task_id=?",
+            ('{"native":true}', task_id),
+        )
+    store.upsert_feedback_event(
+        key="feedback:new-native", feedback_token="token-new-native", comment="edited",
+    )
+    public_item = store.list_user_feedback_items_by_keys(["feedback:new-native"])[0]
+    assert public_item.processing_status == "processing"
+    with store._connect() as db:
+        event = db.execute(
+            f"select key,comment from ({FEEDBACK_EVENT_SQL}) where key=?",
+            ("feedback:new-native",),
+        ).fetchone()
+        assert tuple(event) == ("feedback:new-native", "edited")
+
+        db.execute("pragma foreign_keys=off")
+        db.execute("begin immediate")
+        inverse = restore_task_entities(db, metadata, forward)
+        restored = db.execute(
+            "select feedback_key,attempt_id,agent_run_id,test_evidence_json,note,status "
+            "from (" + task12_projection("feedback_processing_items") + ") "
+            "where feedback_key='feedback:new-native'"
+        ).fetchone()
+        assert tuple(restored) == (
+            "feedback:new-native", 41, 42, '{"native":true}', "native edit", "processing",
+        )
+        source_metadata = capture_task_entities(db)
+        reforward = migrate_task_entities(
+            db, source_metadata, source_context=inverse["source_context"],
+            inverse_identity=inverse["inverse_identity"],
+        )
+        native = db.execute(
+            "select item.feedback_key,item.attempt_id,item.agent_run_id,item.test_evidence_json,"
+            "item.note,task.status from feedback_processing_items item "
+            "join tasks task on task.id=item.task_id where item.feedback_key='feedback:new-native'"
+        ).fetchone()
+        assert tuple(native) == (
+            "feedback:new-native", 41, 42, '{"native":true}', "native edit", "processing",
+        )
+        event = db.execute(
+            f"select key,comment from ({FEEDBACK_EVENT_SQL}) where key=?",
+            ("feedback:new-native",),
+        ).fetchone()
+        assert tuple(event) == ("feedback:new-native", "edited")
+        restore_task_entities(db, source_metadata, reforward)
 
 
 def test_new_native_feedback_resolution_receipt_survives_inverse_reforward_cycles(

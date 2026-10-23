@@ -4,12 +4,12 @@ from fastapi import FastAPI
 from fastapi.testclient import TestClient
 import pytest
 
-from app.store import AutoReplyStore
 from app.web_api.registration import register_console_routes
+from test_store_task_entity_creator import _target_store
 
 
 def test_feedback_iteration_api_reports_disabled_capability_and_rejects_claim(tmp_path):
-    store = AutoReplyStore(tmp_path / "feedback.sqlite3")
+    store = _target_store(tmp_path / "feedback.sqlite3")
     store.upsert_feedback_event(key="manual:1", feedback_token="token")
     store.create_feedback_processing_batch(["manual:1"], batch_id="batch-1")
     store.set_feedback_iteration_enabled(False)
@@ -27,7 +27,7 @@ def test_feedback_iteration_api_reports_disabled_capability_and_rejects_claim(tm
 
 
 def test_feedback_iteration_decision_api_rejects_forged_round_identity(tmp_path):
-    store = AutoReplyStore(tmp_path / "feedback.sqlite3")
+    store = _target_store(tmp_path / "feedback.sqlite3")
     store.upsert_feedback_event(key="manual:1", feedback_token="token")
     store.create_feedback_processing_batch(["manual:1"], batch_id="batch-1")
     store.claim_feedback_processing_items("batch-1", ["manual:1"])
@@ -62,7 +62,7 @@ def test_feedback_iteration_decision_api_rejects_forged_round_identity(tmp_path)
 def test_feedback_iteration_decision_api_rejects_non_string_provenance(
     tmp_path, task_id, turn_id
 ):
-    store = AutoReplyStore(tmp_path / "feedback.sqlite3")
+    store = _target_store(tmp_path / "feedback.sqlite3")
     store.upsert_feedback_event(key="manual:1", feedback_token="token")
     store.create_feedback_processing_batch(["manual:1"], batch_id="batch-1")
     store.claim_feedback_processing_items("batch-1", ["manual:1"])
@@ -91,7 +91,7 @@ def test_feedback_iteration_decision_api_rejects_non_string_provenance(
 
 
 def test_feedback_item_patch_keeps_empty_optional_workbench_references(tmp_path):
-    store = AutoReplyStore(tmp_path / "feedback.sqlite3")
+    store = _target_store(tmp_path / "feedback.sqlite3")
     store.upsert_feedback_event(key="manual:1", feedback_token="token")
     store.create_feedback_processing_batch(["manual:1"], batch_id="batch-1")
     store.claim_feedback_processing_items("batch-1", ["manual:1"])

@@ -2186,6 +2186,16 @@ PR 的 detached checkout 或缺少本地 `main` 不应改变测试结果；测�
 Feedback API 是现有本地后端边界内的操作接口，供 Workbench 和仓库 Agent 共用；它不对
 公网暴露，也不增加 feedback 专用鉴权或第二套 Agent 流程。
 
+Task2D8C 将反馈 intake、列表和待处理数读切换到当前开发候选的实际 native Store。
+首次 event upsert 在同一事务中创建唯一 `feedback_processing` Task 和对应 detail，
+并依据源 event 当前 `resolved_at` 初始化 Task 状态；重复 upsert 按既有冲突规则更新源 event 并更新 Task.updated_at，不重置已有 Task 状态、detail 关联/证据或轮次。Task 持有处理状态与
+生命周期时间，Feedback detail 持有关联、证据和当前 round。列表与 by-key 读仍按
+最新已发送 token attempt 或 manual key 解析回复上下文，role/session 直接读取 native
+Run；这个回复上下文的 attempt/run 与处理 detail 中保存的 `attempt_id`、`agent_run_id`
+是不同事实。pending count 沿用 unresolved、pending、无 reviewer feedback 且无
+corrected reply 的原条件。API 后端已由真实 `register_console_routes` 注册路径覆盖；
+候选仍未激活，完整浏览器 UI 和旧 constructor 冷启动仍属于后续验收范围。
+
 当前未发布开发候选已启用三个 Feedback→Actions 存储类型。Store 的反馈事件、
 处理转换和迭代决策子项读写使用类型化 Actions 投影/辅助函数；QualityGate 也读取同一
 投影。新建 Store 在现有发布事务内短暂建立精确的空原声明并立即迁入 Actions，重开与修复

@@ -10,10 +10,13 @@ from app.store import (
     AutoReplyStore,
     AgentRunLeaseLostError,
     EmailReplyTaskAuthorizationConflict,
+    FEEDBACK_EVENT_SQL,
     ReplyTaskIdentityConflict,
     ReplyTaskSpec,
 )
 from app import task_entity_storage
+from app.action_storage import insert_action
+from app.action_entity_storage import append_action_receipt, create_action, record_action_result
 from app.action_feedback_storage import insert_feedback_action
 from app.task8_storage import register_task8_functions
 from app.task_run_entity_assembly import task_run_entity_assembly_objects
@@ -92,6 +95,146 @@ def test_reply_creator_uses_native_owners_and_returns_same_task_for_message_dedu
         assert parameters["manual_rerun_attempt_id"] == 17
         assert db.execute("select count(*) from task_inputs where task_id=?", (first.id,)).fetchone()[0] == 1
         assert db.execute("select count(*) from task_business_keys where task_id=?", (first.id,)).fetchone()[0] == 1
+
+
+def test_feedback_event_upsert_creates_one_native_task_and_preserves_processing_state(tmp_path):
+    store = _target_store(tmp_path / "target.sqlite3")
+
+    store.upsert_feedback_event(
+        key="feedback:one", feedback_token="token-one", comment="first",
+    )
+    with store._connect() as db:
+        created = db.execute(
+            "select task.id,task.kind,task.status,item.feedback_key,item.resolved_at "
+            "from tasks task join feedback_processing_items item on item.task_id=task.id "
+            "where item.feedback_key=?",
+            ("feedback:one",),
+        ).fetchone()
+        task_id = int(created["id"])
+        assert tuple(created)[1:] == (
+            "feedback_processing", "pending", "feedback:one", "",
+        )
+        db.execute(
+            "update tasks set status='processing',updated_at='prior-event-time' where id=?",
+            (task_id,),
+        )
+        db.execute(
+            "update feedback_processing_items set workbench_task_id='wb-task',"
+            "workbench_turn_id='wb-turn',attempt_id=7,agent_run_id=11,"
+            "test_evidence_json=?,note='kept' where task_id=?",
+            ('{"passed":true}', task_id),
+        )
+
+    store.upsert_feedback_event(
+        key="feedback:one", feedback_token="token-one", comment="updated",
+    )
+
+    with store._connect() as db:
+        rows = db.execute(
+            "select task.id,task.status,item.workbench_task_id,item.workbench_turn_id,"
+            "item.attempt_id,item.agent_run_id,item.test_evidence_json,item.note,task.updated_at "
+            "from tasks task join feedback_processing_items item on item.task_id=task.id "
+            "where item.feedback_key=?",
+            ("feedback:one",),
+        ).fetchall()
+        assert len(rows) == 1
+        assert tuple(rows[0])[:8] == (
+            task_id, "processing", "wb-task", "wb-turn", 7, 11,
+            '{"passed":true}', "kept",
+        )
+        assert rows[0]["updated_at"] != "prior-event-time"
+        assert db.execute(
+            f"select comment from ({FEEDBACK_EVENT_SQL}) where key=?",
+            ("feedback:one",),
+        ).fetchone()[0] == "updated"
+    assert store.list_user_feedback_items()[0].processing_status == "processing"
+    assert store.list_user_feedback_items_by_keys(["feedback:one"])[0].processing_status == "processing"
+    assert store.count_pending_user_feedback_items() == 0
+
+
+def test_feedback_event_and_task_intake_roll_back_together(tmp_path, monkeypatch):
+    store = _target_store(tmp_path / "target.sqlite3")
+
+    def fail_create_task(*args, **kwargs):
+        raise RuntimeError("injected Task creation failure")
+
+    monkeypatch.setattr(task_entity_storage, "create_task", fail_create_task)
+    with pytest.raises(RuntimeError, match="injected Task creation failure"):
+        store.upsert_feedback_event(
+            key="feedback:rollback", feedback_token="token-rollback",
+        )
+
+    with store._connect() as db:
+        assert db.execute(
+            f"select count(*) from ({FEEDBACK_EVENT_SQL}) where key=?",
+            ("feedback:rollback",),
+        ).fetchone()[0] == 0
+        assert db.execute("select count(*) from tasks").fetchone()[0] == 0
+
+
+def test_feedback_backlog_keeps_latest_token_and_manual_attempt_context(tmp_path):
+    store = _target_store(tmp_path / "target.sqlite3")
+    with store._connect() as db:
+        sent = create_action(db, values={
+            "conversation_id": "conversation",
+            "trigger_message_id": "message",
+            "prepared_body": "sent reply",
+            "feedback_token": "token-latest",
+            "status": "done",
+            "delivery_channel": "dingtalk",
+            "delivery_key": "conversation:message",
+        })
+        receipt_id = append_action_receipt(db, sent["id"], values={
+            "operation": "send_reply_to_trigger",
+            "target": "conversation:message",
+            "status": "done",
+            "dispatched_at": "2026-10-23T10:00:00Z",
+            "observed_at": "2026-10-23T10:00:01Z",
+        })
+        assert record_action_result(
+            db, sent["id"], expected={"delivery_receipt_id": None},
+            changes={"delivery_receipt_id": receipt_id},
+        ) is not None
+        for attempt_id, final_reply, reviewer_feedback, corrected_reply in (
+            (101, "earlier", "earlier review", "earlier correction"),
+            (102, "latest", "latest review", "latest correction"),
+            (103, "manual context", "manual review", "manual correction"),
+        ):
+            conversation_id = "manual-conversation" if attempt_id == 103 else "conversation"
+            trigger_message_id = "manual-message" if attempt_id == 103 else "message"
+            insert_action(db, "reply_attempts", {
+                "id": attempt_id,
+                "conversation_id": conversation_id,
+                "conversation_title": "Conversation",
+                "trigger_message_id": trigger_message_id,
+                "trigger_sender": "sender",
+                "trigger_text": "trigger context",
+                "action": "send_reply",
+                "sensitivity_kind": "general",
+                "send_status": "sent",
+                "final_reply_text": final_reply,
+                "reviewer_feedback": reviewer_feedback,
+                "corrected_reply_text": corrected_reply,
+            })
+
+    store.upsert_feedback_event(
+        key="token-feedback", feedback_token="token-latest",
+    )
+    store.upsert_feedback_event(key="manual:103", feedback_token="")
+
+    token_item = store.list_user_feedback_items_by_keys(["token-feedback"])[0]
+    manual_item = store.list_user_feedback_items_by_keys(["manual:103"])[0]
+    assert (token_item.attempt_id, token_item.final_reply_text) == (102, "latest")
+    assert (token_item.reviewer_feedback, token_item.corrected_reply_text) == (
+        "latest review", "latest correction",
+    )
+    assert token_item.attempt_role == ""
+    assert (manual_item.attempt_id, manual_item.final_reply_text) == (
+        103, "manual context",
+    )
+    assert (manual_item.reviewer_feedback, manual_item.corrected_reply_text) == (
+        "", "",
+    )
 
 
 def test_business_key_reuses_task_and_advances_current_without_moving_claimed_input(tmp_path):
