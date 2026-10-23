@@ -2501,6 +2501,11 @@ trigger 记录里，一次外部抖动不会在每分钟的命令上刷出成串
 `scheduled_task_service_command_unavailable` 跳过。服务命令任务不经过 Runtime、Skill、
 Consumer 或 Audit，也不产生 reply task、agent run 或 reply_attempt。
 
+DingTalk 的分钟级 `produce-once` / `calendar-invites-once` 与 `recover-recent-messages`
+共用锁，避免同一 producer 并发读取。若恢复扫描正在进行，分钟级命令不等待锁，而是返回
+`deferred=producer_busy` 并结束本次 trigger；下一个分钟级定时触发会补做增量扫描。恢复扫描仍会
+等待已经开始的短增量扫描结束。任务入队继续按原会话和触发消息身份去重，不创建重复任务。
+
 `wechat-produce-once` 默认每五分钟对唯一就绪的微信账号跑一次 producer。Reader 的可用性是
 `wechat.reader` 健康事实而不是 trigger 失败：没有就绪账号时命令返回跳过摘要；Reader IPC 连续
 失败 3 次时请求一次 Reader 重启、把健康标为 degraded 并只记录一条

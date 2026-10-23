@@ -1034,26 +1034,29 @@ def _service_command_registry(
     from app.email_scheduled_command import EmailMessageCheckOnceCommand
     from app.wechat.scheduled_command import WechatProduceOnceCommand
 
-    # The minute-by-minute check and the hourly recovery are the same producer
-    # over the same conversations, so one lock serialises them: whichever
-    # arrives second waits for the first pass to return instead of overlapping.
+    # The minute-by-minute check and the hourly recovery use the same producer
+    # over the same conversations, so they must not overlap. A minute-level
+    # check must not wait behind a long recovery pass: its next scheduled tick
+    # will make the same idempotent discovery after recovery completes.
     dingtalk_producer_lock = threading.Lock()
 
-    def produce_once_command() -> str:
-        with dingtalk_producer_lock:
+    def run_fast_producer(command_name: str, *, calendar_only: bool) -> str:
+        if not dingtalk_producer_lock.acquire(blocking=False):
+            return f"{command_name} deferred=producer_busy"
+        try:
             queued = reply_worker.produce_once(
                 max_tasks=settings.max_batches,
-                calendar_only=False,
+                calendar_only=calendar_only,
             )
-        return f"produce-once queued={queued}"
+        finally:
+            dingtalk_producer_lock.release()
+        return f"{command_name} queued={queued}"
+
+    def produce_once_command() -> str:
+        return run_fast_producer("produce-once", calendar_only=False)
 
     def calendar_invites_once_command() -> str:
-        with dingtalk_producer_lock:
-            queued = reply_worker.produce_once(
-                max_tasks=settings.max_batches,
-                calendar_only=True,
-            )
-        return f"calendar-invites-once queued={queued}"
+        return run_fast_producer("calendar-invites-once", calendar_only=True)
 
     def recover_recent_messages_command() -> str:
         with dingtalk_producer_lock:
