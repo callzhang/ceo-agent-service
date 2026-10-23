@@ -1141,95 +1141,34 @@
     },
     "write_verification_investigation": {
       "observed_at": "2026-10-23",
-      "method": "Read exact provider document versions corresponding to failed DWS create/update calls, then compare source and provider Markdown without retaining report bodies in this evidence file.",
+      "method": "Mapped each failed update using its exact --node argument and each create using the exact document title, then matched writes against that document own ordered provider version history. Per-document write and version counts reconcile.",
       "failure_population": {
         "verification_failures": 52,
         "write_format": "markdown",
-        "exact_provider_versions_mapped": 41,
-        "remaining_unmapped": 11,
-        "mapped_markdown_readbacks_token_equal": 36,
-        "mapped_markdown_readbacks_token_different": 5,
-        "token_differences_on_four_updates_of_same_appendix": 4,
-        "one_remaining_mapping_uncertain": true
+        "exact_provider_versions_mapped": 52,
+        "remaining_unmapped": 0,
+        "provider_jsonml_reads_succeeded": 52,
+        "provider_jsonml_read_errors": 0,
+        "normalized_visible_word_sequences_equal": 52,
+        "versions_preserving_table_structures": 52
       },
-      "samples": [
-        {
-          "operation": "create main report",
-          "document_id": "EpGBa2Lm8a7NA9YlURBxLPkBVgN7R35y",
-          "provider_version": 1,
-          "source_characters": 5138,
-          "readback_characters": 5207,
-          "source_lines": 96,
-          "readback_lines": 91,
-          "ordered_text_tokens": 656,
-          "ordered_text_tokens_equal": true,
-          "provider_jsonml": {
-            "table_count": 2,
-            "scoring_table_rows": 19,
-            "scoring_table_columns": 8,
-            "scoring_table_cell_paragraphs_with_right_alignment": 95,
-            "scoring_table_cell_paragraphs": 152,
-            "source_alignment_preserved_in_document_structure": true
-          },
-          "format_differences": [
-            "five blank lines were removed",
-            "a list marker containing plus was escaped as backslash-plus",
-            "two table delimiter rows were reserialized with wider dash runs",
-            "the Markdown projection omitted right-alignment markers even though the exact JSONML document version retained right alignment on all 95 applicable scoring-table cell paragraphs"
-          ]
-        },
-        {
-          "operation": "create appendix",
-          "provider_version": 1,
-          "source_characters": 7147,
-          "readback_characters": 7233,
-          "ordered_text_tokens_equal": true,
-          "format_differences": ["two blank lines were removed"]
-        },
-        {
-          "operation": "update same appendix",
-          "provider_version": 2,
-          "source_characters": 7175,
-          "readback_characters": 7261,
-          "ordered_text_tokens_equal": true,
-          "source_lines": 65,
-          "readback_lines": 63,
-          "format_difference": "two blank lines were removed"
-        },
-        {
-          "operation": "four consecutive appendix updates",
-          "provider_versions": [2, 3, 4, 5],
-          "source_markdown_readback": {
-            "all_versions_differ_by_three_ordered_tokens": true,
-            "first_difference_context": "a table cell with raw HTML line breaks"
-          },
-          "source_cell": {
-            "html_break_tags": 6,
-            "intended_boundary": "separate multiple statements within one table cell"
-          },
-          "exact_provider_jsonml": {
-            "paragraphs_in_cell": 1,
-            "newline_characters": 0,
-            "html_break_tags": 0,
-            "line_breaks_preserved": false
-          },
-          "classification": "actual report formatting loss in the cell; not only a verifier false negative"
-        }
-      ],
+      "normalization_boundary": "Markdown serialization is not byte-identical. Comparison normalizes DWS Markdown and JSONML to visible text and compares word order; it does not assert exact punctuation, whitespace, or styling equivalence.",
+      "resolved_break_cell_case": {
+        "source_cell_html_break_tags": 6,
+        "exact_provider_jsonml_paragraphs_in_cell": 7,
+        "source_and_provider_visible_words_equal": true,
+        "statement_boundaries_preserved_as_paragraphs": true,
+        "classification": "The earlier claimed content loss came from associating the write with the wrong node/version; exact mapping shows preserved paragraph boundaries."
+      },
+      "classification": "DWS Markdown projection / write-verifier false positives. The 52 exact JSONML readbacks preserve normalized visible text order and table structures; this evidence does not claim byte-identical Markdown serialization.",
       "candidate_fix": {
-        "change": "ceo-weekly-okr-report scripts/report.py now converts line breaks in Markdown table cells to a visible full-width semicolon instead of raw <br> HTML, preserving statement boundaries without provider-dropped markup.",
-        "regression": "tests/test_weekly_okr_report.py::test_markdown_table_cell_newlines_use_visible_separator_not_html_breaks failed before the change and passes after it.",
-        "focused_tests_passed": 86,
-        "ruff": "passed",
-        "diff_check": "passed",
-        "release_script_sha256": "f7a96413191b9bd77eb10d86a0c1f7298dde662f80465a16610a2e21af8d627b",
-        "release_script_tree_sha256": "4e24f3ac5584f6230c0fcd71b67673c9c73d1ce0409f41aca96a7c51089b7a72",
-        "status": "candidate_not_deployed"
-      },
-      "conclusion": "There are at least two distinct causes: DWS Markdown projection/verifier false negatives where exact text tokens or JSONML formatting are preserved, and actual line-break loss when raw <br> inside an OKR appendix table cell is stored as a single paragraph without breaks. The candidate report-script fix addresses the confirmed line-break loss. 11 of the 52 failures are still not mapped to exact provider versions, and one of the 41 mapped calls has an uncertain create-node association; do not treat all 52 as explained or accepted yet.",
-      "classification": "mixed: confirmed DWS Markdown verifier false negatives plus confirmed table-cell line-break loss; remaining failures require exact-version mapping and post-fix run verification"
+        "report_formatter_semicolon_change": "withdrawn; no report behavior change is justified by the corrected provider evidence",
+        "report_formatter_regression_test": "removed",
+        "document_body_diagnostic_redaction": "separate candidate change; retained",
+        "status": "no report formatter change required"
+      }
     },
-    "classification": "Manual business publication completed and fully read back with a verified notification. The DWS tool reported write-verification failures and one invalid folder-ID call. Investigation found both DWS Markdown projection/verifier false negatives and a real table-cell line-break loss; the candidate Skill renderer fix is not deployed, and 11 failures plus one create mapping are still unresolved. This is not a natural scheduled-run acceptance result."
+    "classification": "Manual business publication completed and was fully read back with a verified notification. The DWS tool reported 52 Markdown write-verification failures and one separate invalid folder-ID call. Exact per-document and per-version investigation mapped all 52 failures; JSONML readbacks preserved normalized visible text order and table structures, including the cell statement boundaries. The Markdown projection/verifier failures are evaluation/serialization mismatches, not confirmed report-content loss. This is not a natural scheduled-run acceptance result."
   },
   "follow_up_document_parent_listing_fix": {
     "status": "candidate_tested_not_deployed",

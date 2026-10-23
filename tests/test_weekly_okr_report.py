@@ -43,10 +43,6 @@ def test_display_rounding_uses_half_up_at_one_decimal():
     assert report._manager_final_score(60, 70, 0.95) == 59.85
 
 
-def test_markdown_table_cell_newlines_use_visible_separator_not_html_breaks():
-    assert report._md_cell("第一条\n第二条") == "第一条；第二条"
-
-
 WeeklyOkrAnalysis = report.WeeklyOkrAnalysis
 PublishedDocument = report.PublishedDocument
 render_group_summary = report.render_group_summary

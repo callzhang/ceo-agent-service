@@ -709,9 +709,9 @@ PR #277 已打开，固定 v75/v76 case、模型/CLI 和 grader 对照及本地�
 
 该轨迹里 `consumer_document_write` 共 62 次：9 次成功、53 次失败。其中 52 次 DWS 返回 `doc_write_verification_failed`，其明示含义是“写入已经执行，但回读验证失败”；另一次把 30 字符文档 node ID 传给 `wiki +node-list --folder`，DWS 拒绝该 ID 格式。多个失败写入后，Consumer 随即读取对应文档；最终主报告和 18 份附录的 provider 正文读回完整，所以实际报告已交付，但这不能证明每次工具写入通过了格式保真校验。
 
-随后把整段轨迹中 52 次失败都确认是 Markdown 写入；41 次已按命令时间和 provider 版本时间对应到精确版本。41 次里有 36 次 Markdown 回读的文字 token 与提交正文相同，但序列化的字符数/格式不同，说明 DWS 的 Markdown 校验会因往返序列化而报错。5 次 token 不同，其中 4 次是同一评分附录的连续更新版本2–5。该附录有一个表格单元格原文含 6 个 `<br>`；精确版本的 provider JSONML 读回只有一个段落、没有换行或 `<br>`，说明这部分确实丢了视觉分隔，不能归为纯评测误报。另1次的创建节点映射尚不确定，另外11次尚未和具体版本对应。
+随后逐项把 52 次失败写入和 provider 版本对应起来：更新操作使用命令中的精确 `--node`，创建操作使用精确标题，再按各文档自己的版本顺序核对；各文档写入数和版本数相符，52/52 均有精确版本。52 个版本均成功读回 JSONML；对源 Markdown 与 JSONML 文本按同一规则规范化后，52/52 的可见文字顺序相同，且都保留了表格结构。这些结果说明失败来自 DWS Markdown 投影与写后校验的序列化不一致，不能据此判定正文丢失；Markdown 回读并非逐字节相同。
 
-对根因的修复已加入 Skill 渲染脚本：表格单元格中的换行现在用全角分号保留句项边界，不再写入 provider 会丢弃的 `<br>` HTML。新增定向回归先按旧行为失败、修复后通过；`tests/test_weekly_okr_report.py` 86项通过，Ruff 和 diff 检查通过。脚本树和发布摘要已同步到候选清单。该修复仍是 PR 候选，未部署；task6 新报告尚未运行验证。DWS 上游也记录过表格 Markdown 回读序列化与 JSONML 结构不一致（[issue #811](https://github.com/DingTalk-Real-AI/dingtalk-workspace-cli/issues/811)），但该 issue 不单独证明本次所有失败的根因。无正文统计和逐项计数见 `okr-production-readback.json` 的 `manual_authorized_run_395969.write_verification_investigation`。
+曾怀疑有一个评分附录单元格丢失了换行，后按正确的文档节点和精确版本重新核对：源单元格的 6 个 `<br>` 在 provider JSONML 中呈现为 7 个段落，源与读回的单元格可见文字一致，分句边界仍在。因此“换行实际丢失”的结论是错误的，先前把其他节点的版本与该写入关联造成误判。已撤回将 `<br>` 改成全角分号的 Skill 修改及对应测试；业务报告格式不应因这次误判而改变。仍独立保留失败诊断中 `--content`/`--content-file` 正文脱敏修复候选。无正文统计见 `okr-production-readback.json` 的 `manual_authorized_run_395969.write_verification_investigation`。
 
 完整 Consumer trajectory 还显示 DWS 将 `--content` 下的文档正文写进了失败诊断；这是独立的诊断隐私问题，PR #294 候选已为 `--content`/`--content-file` 参数增加脱敏回归，尚未合并部署。当前本机 DWS 为 v1.0.65；其他版本上相似验证问题的上游报告不能单独证明本次全部根因。本记录不把本次手动运行算作自然调度验收，也不据此关闭 task14/task13 自然报告及睡眠恢复补跑验收。
 
