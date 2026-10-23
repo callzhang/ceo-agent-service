@@ -719,3 +719,23 @@ run395969 trajectory 中的 `wiki +node-list --folder` 错误可在系统层复�
 候选修复已改为：创建前用 Doc 列表接口完整核对同名目标；创建后只使用成功、完整且 verified 的 provider 回执 nodeId 进行读回。保留同名拦截、显式目标、正文、revision 冲突和版本保存行为。`tests/test_generic_scheduled_work.py`、`tests/test_agent_cli_report_receipt.py` 与 `tests/test_scheduled_okr_agent_eval.py` 共 **77 passed**；相关 Python 文件 Ruff 与 `git diff --check` 通过。第一轮同时运行的 `tests/test_agent_cli_artifacts.py` 有 11 项旧数据库夹具失败（均在工具运行前报 `table tasks has no column named status`），未改动该不相关夹具。
 
 此修复尚未合并或部署，尚未由新 task6 运行验证；它只处理错误的父级目录查询和 create nodeId 解析，不解释 52 次 DWS `doc_write_verification_failed` 的根因。
+
+### 2026-10-23 task14 自然运行 396111：外部发布完成，业务验收未通过
+
+task14 自然运行 **396111**（scheduled_for `2026-10-23T13:00:00Z`，洛杉矶 06:00）派发到 reply task **417179**，终态 `done`；不可变快照 ID **260** 固定 task14 v58、`America/Los_Angeles` 和 managed `ceo-daily-report` revision **224**（SHA-256 `32d24bb5f53b60bcf67b8a91582db258a05cac59c789391c862d3bd95719fc62`）。完整 Consumer/Audit trajectory：Consumer 396123 → Audit 396152（退回）→ Consumer 396154 → Audit 396157（退回）→ Consumer 396159 → Audit 396163（批准）。
+
+Consumer 首轮按脚本输出使用滚动窗口 `[2026-10-22T13:00Z, 2026-10-23T13:00Z)`，对应相邻洛杉矶每日 06:00 触发间隔。完整会话清单有 47 个群；首轮 53 次消息读取覆盖全部 47 个清单群 ID（另有 4 个清单外 ID），所有读取均 `complete=true`、`partial=false`、`truncated=false`、`failedCount=0`。群聊必需读取标准在此轮没有失败，run392889 的“枚举但未尝试读取”问题没有复现。
+
+Audit 两次退回后，要求将窗口改成北京时间零点到零点；Consumer 照做并用 `[2026-10-22T16:00Z, 2026-10-23T16:00Z)` 重新取数。这个结束时刻比本次触发晚三小时，不能作为本次已完成的事实窗口。第三轮 Audit 却批准了这个候选，系统真实更新了文档并投递通知。因此 **run396111 外部发布完成，但业务验收未通过**。最终 provider 文档为《CEO 每日总结 2026-10-23》，节点 `jb9Y4gmKWrEarRzjirlXn44X8GXn6lpz`；Audit 完整读回 12,206 字节 Markdown，SHA-256 `7717bf2d4c524f46f08f9bf5de54a2aba253c4990a86e7f667933f42a4c6164d`。系统执行私聊 1/1，持久回执 `verified`；provider 状态查询为 `sent`，真实 `openMessageId=msgLBUcMEslUpzdonZK98leaw==`。这些证明外部操作真实完成，不代表业务验收通过；不重放、不补发。
+
+根因是脚本与 Skill/Audit 契约冲突：`scripts/window.py` 按批准过的迁移要求提供滚动区间（首次回看24小时，之后从上次成功触发点续接，漏发区间并入下一份，同日重跑保留原起点）；Skill 却称“一个北京时间日”，Audit 因此强制改成午夜边界。不是脚本计算错误。候选修复明确脚本是唯一窗口来源：报告标题按脚本 `report_date`，所有事实与群消息严格使用其 `[start,end)`，正文写出精确北京时间起止时刻；Audit 不再改成午夜区间。群聊覆盖、审核、完整文档读回和投递要求不变。候选 Skill SHA 为 `dd355212ba37f02ace76c1659e6a4449f376fd3045c97ff9f8a662ec5547fafb`；已用定向契约回归确认，日报事实 + 相关摘要门禁 **41 passed**，`tests/test_scheduled_okr_agent_eval.py::test_release_manifest_pins_verified_current_installation` 独立复核、Ruff 和 `git diff --check` 通过。更新 managed revision 并部署后，下一自然日报 **2026-10-24 13:00 UTC** 才可验证修复。
+
+生产只读复核：commit `682c7893ee6393246f7fa3c9d923b31c5aad7c59`、healthz HTTP 200、worker PID 22383；task14 v58/revision224、task13 v51/revision202、task6 v30/revision240 均启用。task13 下次 **2026-10-24 19:00 UTC**，task6 下次 **2026-10-25 10:00 UTC**。睡眠恢复补跑仍未观察。
+
+无正文证据：[task14 自然运行 396111](../evals/scheduled_task_generic/okr-production-readback.json)。
+
+### 发布摘要核对：生产基线已收敛
+
+2026-10-23 13:41 UTC 只读复核 production commit `682c7893ee6393246f7fa3c9d923b31c5aad7c59`、runtime Skill config 370、healthz HTTP 200；task6 当前 v30 / managed OKR Skill revision240。此前候选前置文件仍把 task6 已安装基线记为 revision235 / SHA `d7584ca0…`。已获 Derek 明确授权后，只更新 `okr-release-preconditions.json` 中的基线元数据与 task6 已安装/managed SHA、revision 字段到线上当前值；approved candidate 仍为 SHA `49ba4b0b…`。
+
+逐项重算结果：日报已安装基线/revision224 的 source、installed、manifest old SHA、precondition installed SHA 都是 `32d24bb5…`；OKR revision240 的 source、installed、manifest、precondition SHA 都是 `49ba4b0b…`；OKR Consumer scripts 源码和已安装目录的脚本树 SHA 都是 `7e8fb42e…`，与 `consumer-scripts.json` 一致。因此没有改写 OKR 脚本摘要。日报 Skill 契约澄清后，release manifest 的 `new_sha256` 和 precondition 的 `approved_new_sha256` 已同步为 `dd355212…`，installed/old baseline 保持 `32d24bb5…`。没有更改 OKR 评分规则、群覆盖、审核、完整读回或投递门槛。同步后的无正文读回见 `okr-production-readback.json` 的 `release_artifact_convergence`。该摘要核对与代码候选合并、部署和自然 OKR 结果验收分开记录。

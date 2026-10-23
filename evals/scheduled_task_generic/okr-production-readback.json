@@ -354,6 +354,136 @@
       "root_cause": "The Skill allowed a source that was partly read to be disclosed and published, without distinguishing an actual failed/partial read from a read that was never attempted. Consumer skipped all message reads. Audit checked document and recipient but did not reject the explicitly disclosed unattempted group coverage.",
       "repair": "Skill now requires reading every accessible group conversation, treats only actual attempted provider failures/timeouts/incomplete pages as partial-source exceptions, and requires Audit to return unattempted coverage. Added a focused contract regression; daily-report facts/receipt and coverage tests pass 23/23, consumer-system release tests pass 27/27, changed-test Ruff and diff checks pass. Commit, Skill publication, production readback, and next natural task14 execution remain pending.",
       "replay_or_extra_send": false
+    },
+    {
+      "observed_at": "2026-10-23T13:40:00Z",
+      "scope": "Post-deploy natural CEO daily report; no manual trigger or replay",
+      "production_commit": "682c7893ee6393246f7fa3c9d923b31c5aad7c59",
+      "production_pid": 22383,
+      "healthz_ok": true,
+      "scheduled_task_id": 14,
+      "scheduled_task_run_id": 396111,
+      "reply_task_id": 417179,
+      "trigger_kind": "scheduled",
+      "scheduled_for": "2026-10-23T13:00:00Z",
+      "dispatch_status": "dispatched",
+      "snapshot_id": 260,
+      "terminal_status": "done",
+      "task_config_version": 58,
+      "task_timezone": "America/Los_Angeles",
+      "managed_skill": "ceo-daily-report",
+      "managed_skill_revision_id": 224,
+      "managed_skill_sha256": "32d24bb5f53b60bcf67b8a91582db258a05cac59c789391c862d3bd95719fc62",
+      "consumer_runs": [
+        {
+          "run_id": 396123,
+          "revision": 0,
+          "status": "completed"
+        },
+        {
+          "run_id": 396154,
+          "revision": 1,
+          "status": "completed"
+        },
+        {
+          "run_id": 396159,
+          "revision": 2,
+          "status": "completed"
+        }
+      ],
+      "audit_runs": [
+        {
+          "run_id": 396152,
+          "revision": 0,
+          "status": "completed_return",
+          "reason": "The first candidate used a 24-hour window that did not match the Beijing calendar date and overstated available group-read evidence."
+        },
+        {
+          "run_id": 396157,
+          "revision": 1,
+          "status": "completed_return",
+          "reason": "The corrected report window was verified; the report still claimed group coverage without durable per-group evidence."
+        },
+        {
+          "run_id": 396163,
+          "revision": 2,
+          "status": "completed_approve"
+        }
+      ],
+      "trajectory": {
+        "consumer_session_id": "01a168e6-da04-7a92-883a-54e37b3aefde",
+        "audit_session_id": "01a168ee-038d-7b41-8e9f-f8e70f450f38",
+        "full_consumer_and_audit_trajectory_read": true,
+        "report_revision_count": 2,
+        "first_window_script_output_utc": {
+          "start": "2026-10-22T13:00:00+00:00",
+          "end": "2026-10-23T13:00:00+00:00"
+        },
+        "final_read_service_activity_window_utc": {
+          "start": "2026-10-22T16:00:00Z",
+          "end": "2026-10-23T16:00:00Z"
+        },
+        "final_window_matches_beijing_calendar_day": true,
+        "latent_window_script_bug": "The script output was the intended rolling interval. Audit feedback incorrectly required Beijing-midnight bounds; Consumer changed to a future-ending calendar interval and Audit approved it. The final published result therefore does not satisfy the rolling-window contract.",
+        "first_script_window_utc": {
+          "start": "2026-10-22T13:00:00+00:00",
+          "end": "2026-10-23T13:00:00+00:00"
+        },
+        "first_window_group_coverage": {
+          "inventory_groups": 47,
+          "unique_read_ids": 51,
+          "inventory_group_ids_all_read": true,
+          "read_calls": 53,
+          "all_reads_complete": true,
+          "partial": 0,
+          "truncated": 0,
+          "failed": 0,
+          "extra_read_ids": 4
+        },
+        "final_report_window_extends_past_trigger": true
+      },
+      "group_chat_coverage": {
+        "inventory_conversations": 67,
+        "inventory_complete": true,
+        "inventory_group_count": 47,
+        "message_window_read_calls": 48,
+        "unique_group_ids_read": 47,
+        "unique_read_ids_match_inventory_groups": true,
+        "duplicate_read_calls": 1,
+        "read_pages": 48,
+        "all_reads_complete": true,
+        "all_pagination_known_and_exhausted": true,
+        "partial_reads": 0,
+        "truncated_reads": 0,
+        "failed_message_reads": 0,
+        "report_disclosed_that_saved_per_group_receipts_were_not_present_in_the_report_artifact": true,
+        "trajectory_independently_proves_complete_group_coverage": true,
+        "accepted": false,
+        "comparison_to_run_392889": "Unlike 392889, all 47 accessible groups were actually read in the final report window.",
+        "failure_class": "Actual final publication used a calendar-day window ending three hours after the scheduled trigger, after Audit returned the script-selected rolling window. Complete reads were verified for both intervals, but the final published interval was wrong; not a source-read coverage failure."
+      },
+      "document": {
+        "node_id": "jb9Y4gmKWrEarRzjirlXn44X8GXn6lpz",
+        "title": "CEO 每日总结 2026-10-23",
+        "operation": "created_then_updated_through_two_audit_revisions",
+        "final_provider_readback": "complete_markdown",
+        "provider_readback_bytes": 12206,
+        "provider_readback_sha256": "7717bf2d4c524f46f08f9bf5de54a2aba253c4990a86e7f667933f42a4c6164d",
+        "provider_readback_log_id": "2101eeef17927623155195313e0a21"
+      },
+      "notification": {
+        "system_execution_id": 469,
+        "action_count": 1,
+        "verified_action_count": 1,
+        "persistent_receipt_id": 18811,
+        "persistent_receipt_state": "verified",
+        "provider_status_query": "sent",
+        "provider_open_message_id": "msgLBUcMEslUpzdonZK98leaw==",
+        "provider_open_conversation_id": "cidUfL7JeatD/8+eb118AhukQGnI308z0+dpCJE8TWFoUM="
+      },
+      "classification": "External publication completed, but this natural run fails business acceptance: Audit overrode the window script with a Beijing-midnight interval whose end was after the trigger, and the final published report used that incorrect interval. The 24-hour rolling-window script contract is unchanged; its Skill/Audit wording is clarified in this candidate. No report/message replay or extra send.",
+      "catchup_branch_exercised": false,
+      "report_body_included": false
     }
   ],
   "okr_real_children": {
@@ -1042,5 +1172,33 @@
     },
     "deployment": "not merged or deployed; a new task6 run has not validated this candidate.",
     "scope_limit": "This resolves the invalid Wiki parent-list call and create nodeId lookup only. It does not explain the 52 DWS doc_write_verification_failed results in run 395969."
+  },
+  "release_artifact_convergence": {
+    "observed_at": "2026-10-23T13:41:27Z",
+    "production_commit": "682c7893ee6393246f7fa3c9d923b31c5aad7c59",
+    "production_runtime_skill_config_id": 370,
+    "daily_skill": {
+      "managed_revision_id": 224,
+      "source_sha256": "32d24bb5f53b60bcf67b8a91582db258a05cac59c789391c862d3bd95719fc62",
+      "installed_sha256": "32d24bb5f53b60bcf67b8a91582db258a05cac59c789391c862d3bd95719fc62",
+      "release_manifest_sha256_matches": true,
+      "precondition_sha256_matches": true
+    },
+    "okr_skill": {
+      "managed_revision_id": 240,
+      "source_sha256": "49ba4b0bdafdd2ba54989f6bd1ad6b799417464f2dad2cbeefb721eb85a32f8e",
+      "installed_sha256": "49ba4b0bdafdd2ba54989f6bd1ad6b799417464f2dad2cbeefb721eb85a32f8e",
+      "release_manifest_sha256_matches": true,
+      "precondition_sha256_matches": true
+    },
+    "okr_consumer_script_tree": {
+      "source_sha256": "7e8fb42e3d08d62d9506a1bfbb9187743f00c9ec62903c7de0a71980a203a626",
+      "installed_sha256": "7e8fb42e3d08d62d9506a1bfbb9187743f00c9ec62903c7de0a71980a203a626",
+      "consumer_scripts_manifest_sha256_matches": true
+    },
+    "correction": "Updated stale OKR release precondition from the former installed/managed revision235 digest d7584ca0… to live revision240 digest 49ba4b0b…. Source and installed script tree were already identical, so the consumer-scripts.json digest was verified without changing it; daily release and precondition hashes were already aligned.",
+    "daily_skill_candidate_sha256": "dd355212ba37f02ace76c1659e6a4449f376fd3045c97ff9f8a662ec5547fafb",
+    "daily_skill_installed_baseline_sha256": "32d24bb5f53b60bcf67b8a91582db258a05cac59c789391c862d3bd95719fc62",
+    "daily_skill_candidate_repair": "Clarify the existing rolling-window script contract and Audit check after run396111. The managed revision must be published before a later natural report can validate the repair."
   }
 }

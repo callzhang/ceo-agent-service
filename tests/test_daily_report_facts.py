@@ -249,6 +249,54 @@ def test_same_day_rerun_keeps_the_original_start() -> None:
     )
 
 
+def test_la_0600_report_keeps_the_script_rolling_window_on_audit_revision() -> None:
+    trigger = datetime(2026, 10, 23, 13, tzinfo=UTC)
+    previous_trigger = datetime(2026, 10, 22, 13, tzinfo=UTC)
+    history = [
+        {
+            "run_id": 1,
+            "scheduled_for": previous_trigger.isoformat(),
+            "task_status": "done",
+            "result_status": "completed",
+        }
+    ]
+    first = _window_module.report_window(
+        {"run_id": 2, "scheduled_for": trigger.isoformat(), "history": history}
+    )
+
+    assert first["report_date"] == "2026-10-23"
+    assert first["window_utc"] == {
+        "start": previous_trigger.isoformat(),
+        "end": trigger.isoformat(),
+    }
+
+    rerun_at = trigger + timedelta(hours=2)
+    same_day_rerun = _window_module.report_window(
+        {
+            "run_id": 3,
+            "scheduled_for": rerun_at.isoformat(),
+            "history": [
+                *history,
+                {
+                    "run_id": 2,
+                    "scheduled_for": trigger.isoformat(),
+                    "task_status": "done",
+                    "result_status": "completed",
+                },
+            ],
+        }
+    )
+    assert same_day_rerun["window_utc"] == {
+        "start": previous_trigger.isoformat(),
+        "end": rerun_at.isoformat(),
+    }
+
+    skill = _window_path.parents[1] / "SKILL.md"
+    instructions = " ".join(skill.read_text().split())
+    assert "Do not shift either endpoint to Beijing midnight." in instructions
+    assert "do not require a calendar-midnight window" in instructions
+
+
 def test_empty_store_still_yields_a_complete_fact_document(tmp_path: Path) -> None:
     store = AutoReplyStore(tmp_path / "empty.sqlite3")
     facts = collect_service_activity(store, EmailStore(store.path), DAY.start, DAY.end)

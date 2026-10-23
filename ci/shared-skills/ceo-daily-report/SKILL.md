@@ -1,6 +1,6 @@
 ---
 name: ceo-daily-report
-description: Use when preparing and delivering Derek's end-of-day CEO report of important progress, risks, items needing his intervention, items to watch, and management advice for one Beijing calendar day.
+description: Use when preparing and delivering Derek's daily CEO report of important progress, risks, items needing his intervention, items to watch, and management advice for the reporting window selected by scheduled-run history.
 metadata:
   managed_by: ceo-agent-service
   version: 1
@@ -8,16 +8,23 @@ metadata:
 
 # CEO Daily Report
 
-Write one evidence-backed report of what mattered today, then publish it as a
-DingTalk document and send Derek (磊哥) a short direct message pointing to it.
+Write one evidence-backed report for the reporting window selected below, then
+publish it as a DingTalk document and send Derek (磊哥) a short direct message
+pointing to it.
 
 ## Inputs
 
 - **Service facts**: call `agent_cli.read_scheduled_context`, save its exact JSON
   as `context.json` using `consumer_artifact_write`. Run this Skill's
   `scripts/window.py --context context.json` with `consumer_run_skill_script`.
-  Its report date and window preserve missed days and same-day reruns. Call
-  `read_service_activity(start, end)` using that window. This is the required
+  The script's `report_date` is the Beijing calendar date of the trigger. Its
+  exact `[start, end)` is the reporting interval: by default it spans the
+  preceding 24 hours; after a successful earlier report it starts at that
+  report's scheduled trigger, so missed intervals roll into the next report
+  and a same-day rerun keeps the existing start. Do not shift either endpoint
+  to Beijing midnight. State the exact Beijing-local start and end in the
+  report. Call `read_service_activity(start, end)` using the script's exact
+  window. This is the required
   service input; use `principal_user_id` from scheduled context.
   The activity contains `meetings`, `tasks`, `attention`, `important_emails`,
   `attempts` and `waiting`. Select completed handled items from `attempts`;
@@ -91,7 +98,12 @@ group, change Tasks, or message anyone else.
 
 Before approving the document and direct-message proposal, Audit must check the
 report window and the group-chat coverage statement against the task's source
-evidence. If the inventory contains an accessible conversation with no
+evidence. Derive the expected `[start, end)` from the scheduled context and this
+Skill's `scripts/window.py` history rules; do not require a calendar-midnight
+window. The date in the title follows the script's `report_date`, while the
+coverage section gives the exact rolling interval. Verify that service facts,
+the conversation inventory, and each message read use that same interval. If
+the inventory contains an accessible conversation with no
 `read_dingtalk_messages_in_window` attempt and no provider error, return the
 proposal: this is unattempted required coverage, not an allowed partial-source
 case. If a read was attempted and the provider returned an error, timeout, or
