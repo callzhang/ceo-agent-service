@@ -300,18 +300,38 @@ def native_run_ref(
         ).fetchone()
         if run is None:
             return None
-        attempts = db.execute(
-            "select a.status,a.runtime_kind,a.session_id,a.transcript_start,a.transcript_end "
-            "from runtime_attempts a join runs r on r.id=a.parent_id "
-            "join run_provenance p on p.run_id=r.id and p.source_type='okr_review_runs' "
-            "where a.parent_id=? and a.workload_kind='structured' "
-            "and a.workload_key=cast(r.task_id as text) order by a.id", (run_id,),
+        parent_attempts = db.execute(
+            "select status,runtime_kind,session_id,transcript_start,transcript_end,"
+            "workload_kind,workload_key from runtime_attempts where parent_id=? order by id",
+            (run_id,),
         ).fetchall()
-        if len(attempts) > 1:
-            return None
-        if attempts:
-            attempt = attempts[0]
-            return ref_from_attempt(attempt) if attempt["status"] == "completed" else None
+        if parent_attempts:
+            if len(parent_attempts) != 1:
+                return None
+            attempt = parent_attempts[0]
+            task_key = "" if run["task_id"] is None else str(run["task_id"])
+            if (attempt["status"] != "completed" or attempt["workload_kind"] != "structured"
+                    or not task_key or attempt["workload_key"] != task_key):
+                return None
+            return ref_from_attempt(attempt)
+
+        task_key = "" if run["task_id"] is None else str(run["task_id"])
+        if task_key:
+            exact = db.execute(
+                "select status,runtime_kind,session_id,transcript_start,transcript_end "
+                "from runtime_attempts where parent_id is null and workload_kind='structured' "
+                "and workload_key=? and session_id=? and transcript_start=? and transcript_end=? "
+                "order by (status='completed') desc,id desc limit 1",
+                (task_key, run["session_id"], run["transcript_start"], run["transcript_end"]),
+            ).fetchone()
+            if exact is not None:
+                return ref_from_attempt(exact) if exact["status"] == "completed" else None
+            any_task_attempt = db.execute(
+                "select 1 from runtime_attempts where workload_kind='structured' "
+                "and workload_key=? limit 1", (task_key,),
+            ).fetchone()
+            if any_task_attempt is not None:
+                return None
         session_id = str(run["session_id"] or "")
         start, end = int(run["transcript_start"] or 0), int(run["transcript_end"] or 0)
         return NativeStandaloneRef("codex_cli", session_id, start, end) if session_id and end > start else None
