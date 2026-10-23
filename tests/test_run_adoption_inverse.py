@@ -89,10 +89,10 @@ def test_real_native_owner_facts_plan_retained_and_new_identities_with_run_hando
                 {"source_kind": "agent_runs", "canonical_id": 21, "source_physical_id": 921}]
         source_context = run_handoff_context({"source_objects": []})
         owner_highwaters = {}
-        handoff = {"version": 1, "source_context": source_context,
+        handoff = {"version": 2, "source_context": source_context,
             "identity_edges": [
-                *edges], "owner_highwaters": owner_highwaters}
-        handoff["digest"] = run_handoff_digest(source_context, edges, owner_highwaters)
+                *edges], "runtime_attempt_parent_edges": [], "owner_highwaters": owner_highwaters}
+        handoff["digest"] = run_handoff_digest(source_context, edges, [], owner_highwaters)
         run_inverse = {"source_objects": [], "sequence_rows": [],
                        "run_fk_findings": [], "run_handoff": handoff}
         plan = plan_run_adoption_inverse(db, source, forward, run_inverse_metadata=run_inverse)
@@ -119,9 +119,9 @@ def test_planner_rejects_missing_positive_run_handoff_owner():
         from app.run_entity_schema import run_handoff_context, run_handoff_digest
         context = run_handoff_context({"source_objects": []})
         inverse = {"source_objects": [], "sequence_rows": [], "run_fk_findings": [],
-                   "run_handoff": {"version": 1, "source_context": context,
-                       "identity_edges": [], "owner_highwaters": {}, "digest": ""}}
-        inverse["run_handoff"]["digest"] = run_handoff_digest(context, [], {})
+                   "run_handoff": {"version": 2, "source_context": context,
+                       "identity_edges": [], "runtime_attempt_parent_edges": [], "owner_highwaters": {}, "digest": ""}}
+        inverse["run_handoff"]["digest"] = run_handoff_digest(context, [], [], {})
         db.execute("delete from runs where id in (10,11,20,21,910,911,920,921)")
         with pytest.raises(ValueError, match="missing source Run owner"):
             plan_run_adoption_inverse(db, source, forward,
@@ -257,9 +257,10 @@ def _inverse_for_fixture():
     ]
     context = run_handoff_context({"source_objects": []})
     highwaters = {}
-    handoff = {"version": 1, "source_context": context, "identity_edges": edges,
+    handoff = {"version": 2, "source_context": context, "identity_edges": edges,
+               "runtime_attempt_parent_edges": [],
                "owner_highwaters": highwaters}
-    handoff["digest"] = run_handoff_digest(context, edges, highwaters)
+    handoff["digest"] = run_handoff_digest(context, edges, [], highwaters)
     return {"source_objects": [], "sequence_rows": [], "run_fk_findings": [],
             "run_handoff": handoff}
 

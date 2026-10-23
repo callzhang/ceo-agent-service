@@ -27,9 +27,10 @@ def _run_handoff(db, source_metadata, *, identity_edges=(), owner_highwaters=Non
                   else owner_highwaters)
     edges = sorted(identity_edges, key=lambda edge: (edge["source_kind"], edge["source_physical_id"]))
     context = run_handoff_context(source_metadata)
-    return {"version": 1, "source_context": context, "identity_edges": edges,
+    return {"version": 2, "source_context": context, "identity_edges": edges,
+            "runtime_attempt_parent_edges": [],
             "owner_highwaters": highwaters,
-            "digest": run_handoff_digest(context, edges, highwaters)}
+            "digest": run_handoff_digest(context, edges, [], highwaters)}
 
 
 def test_capture_requires_exact_selected_current_run_oracle():
@@ -448,7 +449,72 @@ def test_professional_attempt_owner_survives_two_json_inverse_reforward_cycles()
         db.close()
 
 
-@pytest.mark.parametrize("attempt_id,parent_id", [(1201, None), (1201, 1102), (1205, 1103)])
+def test_structured_okr_attempt_parent_survives_two_json_inverse_reforward_cycles():
+    db, task_metadata = _run_source()
+    try:
+        source = capture_run_entities(db)
+        edges = [dict(source_kind="agent_runs", source_physical_id=1103, canonical_id=9113),
+                 dict(source_kind="agent_runtime_attempts", source_physical_id=1205,
+                      canonical_id=9113)]
+        handoff = _run_handoff(db, source, identity_edges=edges)
+        handoff["runtime_attempt_parent_edges"] = [
+            {"attempt_source_physical_id": 1205, "run_source_physical_id": 1103}]
+        from app.run_entity_schema import run_handoff_digest
+        handoff["digest"] = run_handoff_digest(
+            handoff["source_context"], handoff["identity_edges"],
+            handoff["runtime_attempt_parent_edges"], handoff["owner_highwaters"])
+        forward = migrate_run_entities(db, source, task_metadata=task_metadata,
+                                       run_handoff=json.loads(json.dumps(handoff)))
+        assert db.execute("select id,parent_id from runtime_attempts where id=9113").fetchone() == (9113, 9113)
+        for _ in range(2):
+            result = restore_run_entities(db, source, forward, task_metadata=task_metadata)
+            assert db.execute("select parent_id from runs where id=1205").fetchone()[0] is None
+            assert result["run_handoff"]["owner_highwaters"]["runtime_attempts"] >= 9113
+            ids = [row[0] for row in db.execute("select id from runs")]
+            assert len(ids) == len(set(ids))
+            assert result["run_handoff"]["runtime_attempt_parent_edges"] == [
+                {"attempt_source_physical_id": 1205, "run_source_physical_id": 1103}]
+            source = capture_run_entities(db)
+            forward = migrate_run_entities(db, source, task_metadata=task_metadata,
+                run_handoff=json.loads(json.dumps(result["run_handoff"])))
+            assert db.execute("select id,parent_id from runtime_attempts where id=9113").fetchone() == (9113, 9113)
+    finally:
+        db.close()
+
+
+@pytest.mark.parametrize("mutation", ["duplicate", "dangling_attempt", "wrong_parent_kind",
+                                      "wrong_provenance", "digest"])
+def test_invalid_structured_parent_handoff_rejects_before_source_replacement(mutation):
+    db, task_metadata = _run_source()
+    try:
+        source = capture_run_entities(db)
+        handoff = _run_handoff(db, source)
+        edge = {"attempt_source_physical_id": 1205, "run_source_physical_id": 1103}
+        handoff["runtime_attempt_parent_edges"] = [edge]
+        if mutation == "duplicate":
+            handoff["runtime_attempt_parent_edges"].append(edge.copy())
+        elif mutation == "dangling_attempt":
+            handoff["runtime_attempt_parent_edges"][0]["attempt_source_physical_id"] = 99999
+        elif mutation == "wrong_parent_kind":
+            handoff["runtime_attempt_parent_edges"][0]["run_source_physical_id"] = 1201
+        elif mutation == "wrong_provenance":
+            handoff["runtime_attempt_parent_edges"][0]["run_source_physical_id"] = 1101
+        from app.run_entity_schema import run_handoff_digest
+        if mutation != "digest":
+            handoff["digest"] = run_handoff_digest(
+                handoff["source_context"], handoff["identity_edges"],
+                handoff["runtime_attempt_parent_edges"], handoff["owner_highwaters"])
+        before = tuple(db.execute("select id,record_type from runs order by id"))
+        with pytest.raises(ValueError):
+            migrate_run_entities(db, source, task_metadata=task_metadata, run_handoff=handoff)
+        assert tuple(db.execute("select id,record_type from runs order by id")) == before
+        assert db.execute("select 1 from sqlite_schema where name='runs'").fetchone()
+        assert not db.execute("select 1 from sqlite_schema where name='runtime_attempts'").fetchone()
+    finally:
+        db.close()
+
+
+@pytest.mark.parametrize("attempt_id,parent_id", [(1201, None), (1201, 1102), (1205, 1101)])
 def test_inverse_rejects_native_attempt_owner_that_source_cannot_represent(attempt_id, parent_id):
     db, task_metadata = _run_source()
     try:
@@ -529,32 +595,37 @@ def test_portable_handoff_rejections_precede_source_replacement(mutation, messag
             handoff["source_context"] = "f" * 64
             from app.run_entity_schema import run_handoff_digest
             handoff["digest"] = run_handoff_digest(
-                handoff["source_context"], handoff["identity_edges"], handoff["owner_highwaters"])
+                handoff["source_context"], handoff["identity_edges"],
+                handoff["runtime_attempt_parent_edges"], handoff["owner_highwaters"])
         elif mutation == "unknown":
             handoff["identity_edges"] = [dict(source_kind="unknown", source_physical_id=1,
                                                 canonical_id=2)]
             from app.run_entity_schema import run_handoff_digest
             handoff["digest"] = run_handoff_digest(
-                handoff["source_context"], handoff["identity_edges"], handoff["owner_highwaters"])
+                handoff["source_context"], handoff["identity_edges"],
+                handoff["runtime_attempt_parent_edges"], handoff["owner_highwaters"])
         elif mutation == "duplicate":
             edge = dict(source_kind="agent_runs", source_physical_id=1001, canonical_id=9101)
             handoff["identity_edges"] = [edge, edge.copy()]
             from app.run_entity_schema import run_handoff_digest
             handoff["digest"] = run_handoff_digest(
-                handoff["source_context"], handoff["identity_edges"], handoff["owner_highwaters"])
+                handoff["source_context"], handoff["identity_edges"],
+                handoff["runtime_attempt_parent_edges"], handoff["owner_highwaters"])
         elif mutation == "collision":
             handoff["identity_edges"] = [
                 dict(source_kind="agent_runs", source_physical_id=1001, canonical_id=9101),
                 dict(source_kind="agent_runs", source_physical_id=1002, canonical_id=9101)]
             from app.run_entity_schema import run_handoff_digest
             handoff["digest"] = run_handoff_digest(
-                handoff["source_context"], handoff["identity_edges"], handoff["owner_highwaters"])
+                handoff["source_context"], handoff["identity_edges"],
+                handoff["runtime_attempt_parent_edges"], handoff["owner_highwaters"])
         else:
             handoff["identity_edges"] = [dict(source_kind="agent_runs", source_physical_id=9999,
                                                 canonical_id=9101)]
             from app.run_entity_schema import run_handoff_digest
             handoff["digest"] = run_handoff_digest(
-                handoff["source_context"], handoff["identity_edges"], handoff["owner_highwaters"])
+                handoff["source_context"], handoff["identity_edges"],
+                handoff["runtime_attempt_parent_edges"], handoff["owner_highwaters"])
         with pytest.raises(ValueError, match=message):
             migrate_run_entities(db, source, task_metadata=task_metadata, run_handoff=handoff)
         assert tuple(db.execute("select * from runs order by id")) == original

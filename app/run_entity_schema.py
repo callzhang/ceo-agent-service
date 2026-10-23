@@ -28,7 +28,7 @@ _SOURCE_TO_OWNER = {
     "email_classifier_runtime_samples": "email_classifier_runtime_samples",
     "setup_wizard_events": "setup_wizard_events",
 }
-_HANDOFF_VERSION = 1
+_HANDOFF_VERSION = 2
 
 
 def _quote(name: str) -> str:
@@ -248,18 +248,21 @@ def run_handoff_context(source_metadata: dict) -> str:
 
 
 def run_handoff_digest(source_context: str, identity_edges: list,
-                       owner_highwaters: dict) -> str:
+                       runtime_attempt_parent_edges: list, owner_highwaters: dict) -> str:
     """Digest the JSON-portable B3 Run identity handoff payload."""
     return hashlib.sha256(_canonical_json({
         "version": _HANDOFF_VERSION, "source_context": source_context,
-        "identity_edges": identity_edges, "owner_highwaters": owner_highwaters,
+        "identity_edges": identity_edges,
+        "runtime_attempt_parent_edges": runtime_attempt_parent_edges,
+        "owner_highwaters": owner_highwaters,
     })).hexdigest()
 
 
-def _run_owner_maps(rows, handoff: dict, source_metadata: dict) -> dict:
+def _run_owner_maps(rows, handoff: dict, source_metadata: dict, db, task_edges) -> dict:
     owners = tuple(dict.fromkeys(_SOURCE_TO_OWNER.values()))
     if type(handoff) is not dict or set(handoff) != {
-            "version", "source_context", "identity_edges", "owner_highwaters", "digest"}:
+            "version", "source_context", "identity_edges", "runtime_attempt_parent_edges",
+            "owner_highwaters", "digest"}:
         raise ValueError("Run conversion requires portable B3 identity handoff")
     if (type(handoff["version"]) is not int or handoff["version"] != _HANDOFF_VERSION
             or type(handoff["source_context"]) is not str
@@ -270,7 +273,8 @@ def _run_owner_maps(rows, handoff: dict, source_metadata: dict) -> dict:
             or type(handoff["digest"]) is not str):
         raise ValueError("invalid or mismatched portable Run handoff")
     if handoff["digest"] != run_handoff_digest(
-            handoff["source_context"], handoff["identity_edges"], handoff["owner_highwaters"]):
+            handoff["source_context"], handoff["identity_edges"],
+            handoff["runtime_attempt_parent_edges"], handoff["owner_highwaters"]):
         raise ValueError("portable Run handoff digest mismatch")
     highwaters = handoff["owner_highwaters"]
     if any(value is not None and (type(value) is not int or value < 0)
@@ -311,7 +315,40 @@ def _run_owner_maps(rows, handoff: dict, source_metadata: dict) -> dict:
             raise ValueError(f"canonical Run ID collision in owner {owner}: {target_id}")
         targets[owner].add(target_id)
         maps[owner][(kind, source_id)] = target_id
-    return maps
+    parent_edges = handoff["runtime_attempt_parent_edges"]
+    if type(parent_edges) is not list:
+        raise ValueError("invalid structured RuntimeAttempt parent edges")
+    source_rows = {(kind, row["id"]): row for kind, row in rows}
+    seen, ordered = set(), []
+    validated = {}
+    identity_targets = {(kind, source): target for owner in maps.values()
+                        for (kind, source), target in owner.items()}
+    for edge in parent_edges:
+        if type(edge) is not dict or set(edge) != {
+                "attempt_source_physical_id", "run_source_physical_id"}:
+            raise ValueError("invalid structured RuntimeAttempt parent edge")
+        attempt_id, run_id = edge["attempt_source_physical_id"], edge["run_source_physical_id"]
+        if type(attempt_id) is not int or attempt_id < 1 or type(run_id) is not int or run_id < 1:
+            raise ValueError("invalid structured RuntimeAttempt parent edge")
+        key = (attempt_id, run_id)
+        ordered.append(key)
+        if key in seen:
+            raise ValueError("duplicate structured RuntimeAttempt parent edge")
+        seen.add(key)
+        attempt = source_rows.get(("agent_runtime_attempts", attempt_id))
+        parent = source_rows.get(("agent_runs", run_id))
+        if (attempt is None or parent is None or attempt["workload_kind"] != "structured"
+                or attempt["parent_id"] is not None or parent["source_type"] != "okr_review_runs"):
+            raise ValueError("wrong-kind structured RuntimeAttempt parent edge")
+        request_task_id = _task_public_owner(
+            db, "okr_review_requests", int(attempt["workload_key"]))
+        parent_task_id = _task_physical_owner(db, task_edges, "okr_review_requests", parent["task_id"])
+        if request_task_id != parent_task_id:
+            raise ValueError("structured RuntimeAttempt parent Task mismatch")
+        validated[attempt_id] = identity_targets[("agent_runs", run_id)]
+    if ordered != sorted(ordered):
+        raise ValueError("structured RuntimeAttempt parent edges are not deterministically sorted")
+    return maps, validated
 
 
 def _run_target_id(owner_maps: dict, source_kind: str, source_id: int) -> int:
@@ -478,7 +515,7 @@ def migrate_run_entities(db: sqlite3.Connection, source_metadata: dict, *,
         _task_workload_key_class(workload_key)
     db.execute(f"create temp table {_quote(_STAGE)} as select * from main.runs")
     rows = list(_source_rows(db))
-    owner_maps = _run_owner_maps(rows, run_handoff, source_metadata)
+    owner_maps, structured_parents = _run_owner_maps(rows, run_handoff, source_metadata, db, task_edges)
     run_physical, run_public, run_public_order = _run_public_maps(db, rows, owner_maps)
     kinds_by_id = {row["id"]: kind for kind, row in rows}
     rows_by_id = {row["id"]: row for _, row in rows}
@@ -558,7 +595,8 @@ def migrate_run_entities(db: sqlite3.Connection, source_metadata: dict, *,
                     fields["parent_id"] = _run_target_id(
                         owner_maps, kinds_by_id[source["parent_id"]], source["parent_id"])
                 else:
-                    fields["parent_id"] = _professional_attempt_parent(source, run_public)
+                    fields["parent_id"] = structured_parents.get(
+                        source["id"], _professional_attempt_parent(source, run_public))
             elif kind == "agent_run_state_events":
                 fields["run_id"] = _run_target_id(owner_maps, "agent_runs", source["parent_id"])
             elif kind == "workbench_events":
@@ -634,7 +672,7 @@ def _inverse_task_ids(db: sqlite3.Connection, task_metadata: dict,
             raise ValueError("Run inverse requires actual Task2B inverse metadata")
         inverse = task_inverse_metadata["inverse_identity"]
         context = task_inverse_metadata["source_context"]
-        if (type(inverse) is not dict or set(inverse) != {"version", "owners"}
+        if (type(inverse) is not dict or set(inverse) != {"version", "owners", "meeting_business_keys"}
                 or inverse["version"] != 1 or type(inverse["owners"]) is not list
                 or type(context) is not dict or context.get("version") != 1):
             raise ValueError("invalid Task2B inverse identity context")
@@ -895,6 +933,8 @@ def restore_run_entities(db: sqlite3.Connection, source_metadata: dict,
     staged = []
     run_identity_by_target = {row["target_id"]: row for row in identities.values()
                               if row["source_kind"] == "agent_runs"}
+    attempt_identity_by_target = {row["target_id"]: row for row in identities.values()
+                                  if row["source_kind"] == "agent_runtime_attempts"}
     run_source_type = {}
     for target, provenance in db.execute(
             "select run_id,source_type from main.run_provenance"):
@@ -918,7 +958,8 @@ def restore_run_entities(db: sqlite3.Connection, source_metadata: dict,
             int(values[key_index]): dict(zip(columns, values, strict=True))
             for values in db.execute(f"select * from main.{_quote(table)}")
         }
-    for attempt in native_rows["runtime_attempts"].values():
+    inverse_parent_edges = []
+    for attempt_id, attempt in native_rows["runtime_attempts"].items():
         if attempt["workload_kind"] == "agent_run":
             continue
         key = attempt["workload_key"]
@@ -930,6 +971,23 @@ def restore_run_entities(db: sqlite3.Connection, source_metadata: dict,
         elif attempt["workload_kind"] == "meeting":
             expected_parent, expected_source = int(key), "meeting_alignment_runs"
         actual_parent = attempt["parent_id"]
+        if attempt["workload_kind"] == "structured" and actual_parent is not None:
+            parent_identity = run_identity_by_target.get(int(actual_parent))
+            request_task = int(attempt["workload_key"])
+            request_kind = db.execute(
+                "select kind from main.tasks where id=?", (request_task,)).fetchone()
+            parent_provenance = run_source_type.get(int(actual_parent))
+            parent_row = native_rows["runs"].get(int(actual_parent))
+            if (parent_identity is None or request_kind is None
+                    or request_kind[0] != _task_kind("okr_review_requests")
+                    or parent_provenance != "okr_review_runs"
+                    or parent_row is None or parent_row["task_id"] != request_task):
+                raise ValueError("native structured RuntimeAttempt Run owner cannot be represented by the selected source")
+            inverse_parent_edges.append({
+                "attempt_source_physical_id": int(attempt_identity_by_target[attempt_id]["physical_id"]),
+                "run_source_physical_id": int(parent_identity["physical_id"]),
+            })
+            continue
         if actual_parent != expected_parent or (expected_parent is not None
                 and run_source_type.get(expected_parent) != expected_source):
             raise ValueError(
@@ -1136,9 +1194,13 @@ def restore_run_entities(db: sqlite3.Connection, source_metadata: dict,
     run_handoff = {"version": _HANDOFF_VERSION,
                    "source_context": run_handoff_context(source_metadata),
                    "identity_edges": identity_edges,
+                   "runtime_attempt_parent_edges": sorted(
+                       inverse_parent_edges, key=lambda edge: (
+                           edge["attempt_source_physical_id"], edge["run_source_physical_id"])),
                    "owner_highwaters": owner_highwaters}
     run_handoff["digest"] = run_handoff_digest(
-        run_handoff["source_context"], identity_edges, owner_highwaters)
+        run_handoff["source_context"], identity_edges,
+        run_handoff["runtime_attempt_parent_edges"], owner_highwaters)
     return {"rows": len(staged), "source_objects": source_metadata["source_objects"],
         "sequence_rows": _sequence_rows(db),
             "run_fk_findings": source_metadata["run_fk_findings"],

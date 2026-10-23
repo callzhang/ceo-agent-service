@@ -65,12 +65,14 @@ def _run_sources(db, run_inverse_metadata):
         raise ValueError("adoption inverse requires actual Run inverse metadata")
     handoff = run_inverse_metadata["run_handoff"]
     if type(handoff) is not dict or set(handoff) != {
-            "version", "source_context", "identity_edges", "owner_highwaters", "digest"} or handoff["version"] != 1:
+            "version", "source_context", "identity_edges", "runtime_attempt_parent_edges",
+            "owner_highwaters", "digest"} or handoff["version"] != 2:
         raise ValueError("invalid Run inverse handoff")
     from app.run_entity_schema import run_handoff_context, run_handoff_digest
     expected_context = run_handoff_context(run_inverse_metadata)
     if handoff["source_context"] != expected_context or handoff["digest"] != run_handoff_digest(
-            handoff["source_context"], handoff["identity_edges"], handoff["owner_highwaters"]):
+            handoff["source_context"], handoff["identity_edges"],
+            handoff["runtime_attempt_parent_edges"], handoff["owner_highwaters"]):
         raise ValueError("Run inverse handoff digest or source context mismatch")
     cursor = db.execute("select id,task_id,role,execution_generation,proposal_revision "
                         "from main.runs where record_type='agent_runs'")
