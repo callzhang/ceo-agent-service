@@ -498,6 +498,8 @@ reverts committed work they did not author.
 
 ## Current claims
 
+| codex-scheduled-release-pr309-sync-20261023 | `docs/agent-claims.md`, `docs/scheduled-okr-agent-acceptance.md`, `evals/scheduled_task_generic/okr-release-preconditions.json`, `evals/scheduled_task_generic/okr-production-readback.json`, and upstream-overlap files changed by normal main merge | Sync PR #294 with PR #309's merged main commit, verify Quality outcomes separately, and reconcile the common release-summary digests only against the merged source, manifest, managed Skill, installed Skill, and live production readback. Preserve all report acceptance requirements and existing external state. No report replay or extra delivery. | started 2026-10-23: PR #309 merged as `ce841e3826b62cddd068eb9eb36d17deb07de156` while Quality `40011245295` remained in progress; work is isolated in PR #294 worktree. |
+
 
 
 
