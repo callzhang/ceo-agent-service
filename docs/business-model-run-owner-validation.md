@@ -264,3 +264,26 @@ runtime代码未变，原dry-run、结果计数、错误代码和历史error断�
 新freeze明确区分45f真实业务源、6a恢复snapshot和本轮修改；原清单不覆盖。
 实现工作结束后已删除本代理claim行，其他代理行不改；本记录承接验收历史。
 当前待fresh SPEC→QUALITY和父级后续副本／native／发布证明，不能据此称为已上线。
+
+## Task3B1 current-owner forward transfer (2026-10-22)
+
+The isolated Task3B1 unit now provides migration-only capture and forward-transfer
+functions in `app/run_entity_schema.py`. Capture accepts only the exact selected
+current Run declaration from `logical_run_current_schema.current_run11_objects()`;
+the historical `runs11_current_schema` declaration is rejected. The transfer
+runs inside the caller's FK-off transaction, stages the source `runs` table,
+and writes the eight source record kinds into the native Run, RuntimeAttempt,
+RunFailure, ScheduleOccurrence, WorkbenchEvent, CodexSessionIndex, EmailSample,
+and SetupWizardEvent owners. Professional Run kind/job and projection facts move
+to the declared provenance/projection owners. It keeps source physical Task
+references separate from namespace-and-type-qualified Task public identities,
+rewrites only the typed runtime/workload references established by the source
+contract, captures the source Run allocator rows, and preserves a caller-supplied
+captured missing physical Task edge without creating a Task.
+
+This is a bounded forward-only unit. It does not yet provide the current-fact
+inverse or preserve native facts across a subsequent legacy handoff; those are
+separate Task3B2/3B3 units. It is not runtime activation or a production
+migration. Parent integration still must run a bounded full frozen-source copy,
+review the inverse and handoff units, verify whole-catalog/allocator/FK parity,
+and complete the separately authorized release and readback.
