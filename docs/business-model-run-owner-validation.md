@@ -58,7 +58,10 @@ Run105／public2298 → absentTask9901／job4908，并验证两向 FK multiset
 保留原公开 `.id` 和 `common_run_id`，没有 `source_key` 字段。三来源和
 Consumer／Audit 同号可以并存；错误 namespace
 不能读到另一个来源。`idx_runs_public_id` 保持源的整数 cast 唯一性语义，
-仅把原专业 namespace 纳入共同 owner 的唯一性键。
+仅把原专业 namespace 纳入共同 owner 的唯一性键。迁移也使用 SQLite 原生
+`CAST(legacy_key AS INTEGER)` 生成 Run public identity 索引值与 workload 查找键；
+例如 `'201suffix'`、`'201.0'` 和 `x'323031'` 均按源查询解析为 201，而原始
+`legacy_key` 的值和 SQLite 存储类型仍保留供逆迁。
 
 原三个专业 INSERT 均使用 `runs` 原生 AUTOINCREMENT，并由原 public-key
 trigger 写入 `legacy_key=new.id`，由既有 `trg_runs8_sequence` 维护真实

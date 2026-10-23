@@ -179,25 +179,27 @@ def _task_public_owner(db: sqlite3.Connection, source_kind: str, public_key):
     return target_id
 
 
-def _run_public_maps(rows):
+def _run_public_maps(db: sqlite3.Connection, rows):
     by_physical = {}
     by_namespace_public = {}
+    public_order_by_physical = {}
+    # Match logical_run_storage's actual source identity expression. In
+    # particular, Python int() rejects values (such as '201suffix') that
+    # SQLite CAST intentionally resolves to the integer public key 201.
+    cast_rows = db.execute(
+        "select id,record_type,coalesce(source_type,'agent_runs'),cast(legacy_key as integer) "
+        f"from temp.{_quote(_STAGE)} where legacy_key is not null"
+    )
+    for physical, kind, namespace, cast_key in cast_rows:
+        public_order_by_physical[physical] = cast_key
+        if kind == "agent_runs":
+            by_namespace_public[(namespace, "int", cast_key)] = physical
     for kind, row in rows:
         if kind != "agent_runs":
             continue
         physical = row["id"]
         by_physical[physical] = physical
-        namespace = row.get("source_type") or "agent_runs"
-        public = row["legacy_key"]
-        # Source legacy keys use SQLite CAST(public AS INTEGER) lookup
-        # semantics, but the map namespace is still source_type-qualified.
-        if public is not None:
-            try:
-                cast_key = int(public)
-            except (TypeError, ValueError):
-                continue
-            by_namespace_public[(namespace, "int", cast_key)] = physical
-    return by_physical, by_namespace_public
+    return by_physical, by_namespace_public, public_order_by_physical
 
 
 def _workload_key(db, row, task_edges, run_physical, run_public):
@@ -302,7 +304,7 @@ def migrate_run_entities(db: sqlite3.Connection, source_metadata: dict, *,
             raise ValueError(f"Run entity target object name already occupied: {name}")
     db.execute(f"create temp table {_quote(_STAGE)} as select * from main.runs")
     rows = list(_source_rows(db))
-    run_physical, run_public = _run_public_maps(rows)
+    run_physical, run_public, run_public_order = _run_public_maps(db, rows)
     kinds_by_id = {row["id"]: kind for kind, row in rows}
     orphan_refs = _captured_task_orphans(db, rows, source_metadata["run_fk_findings"])
     # Resolve all references before writing target rows. A missing old Task FK
@@ -379,10 +381,7 @@ def migrate_run_entities(db: sqlite3.Connection, source_metadata: dict, *,
             int: "integer", str: "text", bytes: "blob", float: "text",
         }.get(type(public), "text")
         public_key = public if isinstance(public, bytes) else None if public is None else str(public)
-        try:
-            public_order = int(public) if public is not None else None
-        except (TypeError, ValueError):
-            public_order = None
+        public_order = run_public_order.get(source["id"])
         _insert(db, "run_entity_identity_map", {
             "source_kind": kind, "physical_id": source["id"], "public_key": public_key,
             "public_key_type": public_type, "public_key_order": public_order,

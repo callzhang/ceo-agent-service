@@ -278,13 +278,18 @@ def test_forward_migrates_all_eight_current_source_kinds_and_typed_facts():
                     assert value is None, (kind, field, value)
                 elif table == "run_entity_identity_map":
                     identity = db.execute(
-                        "select source_kind,public_key,target_id from run_entity_identity_map "
+                        "select source_kind,public_key,target_id,public_key_order "
+                        "from run_entity_identity_map "
                         "where source_kind=? and physical_id=?", (kind, physical_id),
                     ).fetchone()
                     expected = {"source_kind": kind, "public_key":
                                 (None if value is None else str(value)), "target_id": physical_id}
                     assert identity is not None
                     assert identity[("source_kind", "public_key", "target_id").index(target_field)] == expected[target_field]
+                    if field == "legacy_key":
+                        cast_order = (db.execute("select cast(? as integer)", (value,)).fetchone()[0]
+                                      if value is not None else None)
+                        assert identity[3] == cast_order
                 else:
                     key_field = "run_id" if table in {"run_provenance", "run_projections"} else "id"
                     key_value = physical_id
@@ -317,6 +322,39 @@ def test_forward_migrates_all_eight_current_source_kinds_and_typed_facts():
                     assert (stored[1] if stored else None) == value, (kind, field, value, stored)
                     assert (stored[0] if stored else "null") == _sqlite_type(value), (
                         kind, field, _sqlite_type(value), stored)
+    finally:
+        db.close()
+
+
+@pytest.mark.parametrize("public_key", ["201suffix", "201.0", b"201"])
+def test_forward_uses_source_sqlite_cast_for_professional_public_identity(public_key):
+    db, task_metadata = _run_source()
+    try:
+        db.execute("update runs set legacy_key=? where id=1101", (public_key,))
+        stored_type, stored_key = db.execute(
+            "select typeof(legacy_key),legacy_key from runs where id=1101").fetchone()
+        assert stored_key == public_key
+        assert stored_type == ("blob" if isinstance(public_key, bytes) else "text")
+        # Exercise the selected source's actual public lookup expression and
+        # ensure it identifies the intended physical Run before conversion.
+        source_run = db.execute(
+            "select id,cast(legacy_key as integer) from runs where record_type='agent_runs' "
+            "and source_type='task_agent_runs' and cast(legacy_key as integer)=201"
+        ).fetchone()
+        assert source_run == (1101, 201)
+
+        run_metadata = capture_run_entities(db)
+        migrate_run_entities(db, run_metadata, task_metadata=task_metadata)
+
+        identity = db.execute(
+            "select typeof(public_key),public_key,public_key_type,public_key_order "
+            "from run_entity_identity_map where source_kind='agent_runs' and physical_id=1101"
+        ).fetchone()
+        assert identity == (stored_type, stored_key,
+                            "blob" if stored_type == "blob" else "text", 201)
+        assert db.execute(
+            "select workload_key from runtime_attempts where workload_kind='task' "
+            "and id=1201").fetchone()[0] == "1101:decision_repair.2"
     finally:
         db.close()
 
