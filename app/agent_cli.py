@@ -1354,7 +1354,12 @@ def read_skill_tool(
     ),
 )
 def read_text_file_tool(path: str) -> dict[str, object]:
-    """Read bounded text, PDF, workbook, or presentation material from the temp directory."""
+    """Read bounded user-provided text, PDF, workbook, or presentation material.
+
+    For frozen task Skills use read_task_skill. For files in the current task
+    generation use list_task_artifacts and read_task_artifact. Do not use this
+    tool to inspect repository code or local Skill implementation files.
+    """
     return read_text_file(path)
 
 

@@ -444,11 +444,34 @@ def _grade(case, work, output, prior=None):
         )
     if expected.get("summary_contains_actual_member_gaps"):
         checks["specific_gap_reasons_in_summary"] = all(
-            g.evidence in summary_text and g.kind in summary_text
+            g.user_id in summary_text
+            and report._gap_status_label(g.kind) in summary_text
+            and g.kind not in summary_text
+            and (
+                (g.kind == "goals_missing" and "目标列表为空" in summary_text)
+                or (
+                    g.kind == "source_failed"
+                    and "404" not in summary_text
+                    and "OKR 目标记录未能读取" in summary_text
+                    and any(term in summary_text for term in ("无法确认", "不能判断"))
+                    and "同轮名单及其他成员读取成功" in summary_text
+                )
+            )
             for g in analysis.member_gaps
         )
     proposal = wire.to_proposal()
     actions = list(proposal.actions) if proposal else []
+    required_independent = set(expected.get("independent_source_ids", []))
+    if required_independent:
+        searched = any(c["tool"] == "search_dingtalk_documents" for c in trace)
+        read_sources = {
+            c["arguments"].get("node_id")
+            for c in trace
+            if c["tool"] == "read_dingtalk_document"
+        }
+        checks["independent_sources_searched_and_read"] = (
+            searched and required_independent <= read_sources
+        )
     checks["exact_summary_proposal"] = (
         len(actions) == 1
         and actions[0].capability == "dingtalk-chat"
@@ -494,6 +517,7 @@ def native(
     previous=None,
     feedback=None,
     scheduled_run_id=1,
+    previous_review=None,
 ):
     output_dir.mkdir(parents=True, exist_ok=True)
     settings = (
@@ -571,6 +595,7 @@ def native(
             + "\n"
             + system_action_contract_document()
         )
+        prompt = audit_revision_context(previous_review) + prompt
     if role == "consumer":
         prompt += (
             "\nNative transport envelope: purpose_output_json encodes this complete production purpose schema. Its conditional branches are enforced by the real service parser after decoding:\n"
@@ -699,6 +724,17 @@ def native(
     }
 
 
+def audit_revision_context(previous_review):
+    if not previous_review:
+        return ""
+    return (
+        "Previous Audit revision context (not source facts or authorization):\n"
+        + json.dumps(previous_review, ensure_ascii=False)
+        + "\nResolve each carried return point or explain why its requested change is unsupported; "
+        "judge the current candidate independently.\n"
+    )
+
+
 def continue_native_feedback(
     facts_file,
     artifacts,
@@ -737,6 +773,7 @@ def continue_native_feedback(
             flags,
             previous=latest_consumer["output"],
             scheduled_run_id=scheduled_run_id,
+            previous_review=audits[-1]["output"],
         )
         audits.append(audit)
         if audit["output"] is None:
@@ -910,6 +947,7 @@ def main():
                         flags,
                         previous=(correction or consumer)["output"],
                         scheduled_run_id=scheduled_run_id,
+                        previous_review=audit["output"],
                     )
                     if final_audit["output"] is None:
                         result["cases"].append(native_failure_case(

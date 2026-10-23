@@ -813,6 +813,21 @@ def test_skill_roundtrip_renders_complete_report_appendices_and_group_summary(tm
     assert "publishable" not in result
 
 
+def test_member_not_found_gap_hides_internal_http_status():
+    text = report._gap_evidence(
+        {
+            "sourceOutcome": {"kind": "source_failed"},
+            "providerReceipt": {
+                "http_status": 404,
+                "error_code": "member_not_found",
+            },
+        }
+    )
+    assert "404" not in text
+    assert "无法确认该成员是否设有目标" in text
+    assert "同轮名单及其他成员读取成功" in text
+
+
 def test_same_named_members_keep_distinct_scored_appendices(tmp_path):
     members = [
         ManagerIdentity("甲", "总监", "u1", "o1"),
@@ -847,7 +862,11 @@ def test_verified_missing_q4_periods_render_full_roster(tmp_path, all_absent):
     assert len(result["appendices"]) == 2
     assert result["scored_count"] == (0 if all_absent else 1)
     public = Path(result["full_file"]).read_text()
-    assert "个人周期尚未建立" in public
+    assert "低于 60 分：" in public
+    assert "系统回填尚未闭环" not in public
+    assert "当前主要原因是" not in public
+    assert "当前周期暂无已登记目标" in public
+    assert "goals_missing" not in public
     assert "2026-10-01" in public
     assert "暂不形成评分，不按零分处理" in public
     assert "providerCode" not in public
@@ -880,7 +899,9 @@ def test_source_failure_scope_remains_explicit_and_diagnostics_private(tmp_path,
     )
     assert result["scored_count"] == 0
     text = Path(result["full_file"]).read_text()
-    assert "403" in text and "source_failed" in text
+    assert "HTTP 403" not in text
+    assert "当前周期成员目标记录未能读取" in text
+    assert "source_failed" not in text
     assert "PRIVATE_PATH" not in text and "PRIVATE_TOKEN" not in text
     assert "PRIVATE_PATH" in Path(plan["source_file"]).read_text()
 
@@ -1017,6 +1038,7 @@ def test_skill_runs_standalone_without_application_imports(tmp_path):
 
     plan, analyses = _prepared(tmp_path)
     env = dict(os.environ, PYTHONPATH="")
+    output_dir = tmp_path / "standalone"
     completed = subprocess.run(
         [
             sys.executable,
@@ -1027,7 +1049,7 @@ def test_skill_runs_standalone_without_application_imports(tmp_path):
             "--analysis-dir",
             str(analyses),
             "--output-dir",
-            str(tmp_path / "standalone"),
+            str(output_dir),
         ],
         cwd=tmp_path,
         env=env,
@@ -1036,6 +1058,25 @@ def test_skill_runs_standalone_without_application_imports(tmp_path):
         check=True,
     )
     assert json.loads(completed.stdout)["scored_count"] == 2
+    rendered = (output_dir / "main.md").read_text(encoding="utf-8")
+    assert "### 已核实进展" in rendered
+    assert "本周重点进展" not in rendered
+    assert "截至本周" not in rendered
+    assert "goals_missing" not in rendered
+    assert "source_failed" not in rendered
+    import runpy
+
+    gap_status = runpy.run_path(str(SKILL_SCRIPT))["_gap_status_label"]
+    gap_evidence = runpy.run_path(str(SKILL_SCRIPT))["_gap_evidence"]
+    assert gap_status("goals_missing") == "当前周期暂无已登记目标"
+    assert gap_status("source_failed") == "当前周期成员目标记录未能读取"
+    assert gap_evidence({"sourceOutcome": {"kind": "goals_missing"}}) == (
+        "已核查当前周期目标列表为空，当前没有登记该成员的 OKR 目标。"
+    )
+    assert gap_evidence({
+        "sourceOutcome": {"kind": "source_failed"},
+        "providerReceipt": {"http_status": 404, "error_code": "member_not_found"},
+    }) == "当前季度 OKR 目标记录未能读取，无法确认该成员是否设有目标；同轮名单及其他成员读取成功。"
     imports = [
         node.module
         for node in ast.walk(ast.parse(SKILL_SCRIPT.read_text()))
