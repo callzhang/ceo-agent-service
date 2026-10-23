@@ -56,3 +56,36 @@ Architecture and runtime documentation now state that a newly native-created art
 No model/provider, background worker, production, main checkout, runtime constructor activation, push or deploy was used. The predecessor is a pinned historical Workbench proof source, not the latest production predecessor; this does not establish the separate Task5 production/native CLI/UI/packed gates or overall Task2D7B Fix1 acceptance. Parent retains independent composite/spec/quality review.
 
 Implementation commit and final implementation HEAD: `b499b1f4be7c3c9ada84ee9851e3d421b0967916` (`Fix inverse identity for new Workbench artifacts`). It contains the converter correction, hermetic sparse-rowid regression, Workbench contract documentation and operator. The evidence report follows as a separate documentation-only commit; parent will report the resulting branch HEAD.
+
+## Fix1 — predecessor source pin
+
+Review base: `71960baee2acc641fcbbbe628e9dc36f09d73baf`. The operator now requires `--expected-store-sha256` and `--expected-api-sha256`. It hashes the selected predecessor files and compares both values before starting the predecessor constructor or writing into `--output-root`. The root remains caller-selected; no expected checkout path or hash is embedded in the operator or permanent tests.
+
+Focused regression command:
+
+```sh
+pytest -q tests/test_task_2d7j_workbench_artifact_routes.py
+```
+
+Output: `2 passed`. One case accepts exact Store/API pins. The mismatch case uses temporary source files and a temporary empty output directory; the CLI exits with `predecessor source hash pin mismatch`, the output directory remains empty, and both predecessor files remain byte-for-byte unchanged.
+
+The complete actual operator was rerun with the expected pins:
+
+```sh
+out=$(mktemp -d /private/tmp/ceo-task-run-phase2-_ntbufyi/task-2d7j-fix1.XXXXXX)
+python scripts/validate_task_2d7j_workbench_artifact_routes.py \
+  --predecessor-root /private/tmp/ceo-task-run-phase2-_ntbufyi/predecessor-c38ce12cf \
+  --expected-store-sha256 b5c5b92fc0985ef21d865379193a948df171d02a3f8d43186a6023d78f1d4a66 \
+  --expected-api-sha256 9401605ccbad499b6c6dccb110d2c3d0853c493250e492a51f2c9d467760cdf8 \
+  --output-root "$out"
+```
+
+Output root: `/private/tmp/ceo-task-run-phase2-_ntbufyi/task-2d7j-fix1.lQz3gE`. The operator accepted the exact expected hashes and completed all previous proof stages. Source pre-migration route and current original route returned HTTP 200 and SHA `950be2ec9699bb35b4dc6cb12df7af57cd3e237f0b42ee0f526c74c69a04e813`. New artifact native ID `4`/event ID `3` inversed to source UUID `1c2230c0-bb08-49a7-a4a7-91125bb4822d` on Turn `f434e905-f6bd-4905-85ff-a8acff44da6c`; the unchanged predecessor UUID route returned HTTP 200 and exact bytes SHA `baf6b6b9da5e93c5bfeacaddfe0db73805f019079d30d5d1574e8bc04725825a`. Both portable reforward cycles preserved canonical parent/Turn `1`/`2`, native artifact/event `4`/`3`, source artifact/event UUID/ID, ownership, payload and bytes.
+
+Static checks:
+
+- `ruff check scripts/validate_task_2d7j_workbench_artifact_routes.py tests/test_task_2d7j_workbench_artifact_routes.py` — passed.
+- `python -m py_compile scripts/validate_task_2d7j_workbench_artifact_routes.py tests/test_task_2d7j_workbench_artifact_routes.py` — passed.
+- `git diff --check` — passed.
+
+No product runtime/schema/source constructor changes were made in Fix1. This closes the operator provenance finding only; parent retains the scoped rereview and composite acceptance decision.

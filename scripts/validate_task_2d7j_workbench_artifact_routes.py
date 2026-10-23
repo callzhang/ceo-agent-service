@@ -129,9 +129,30 @@ def _identity(db, source_kind: str, public_key: str) -> str:
     return str(row[0])
 
 
+def _verify_predecessor_hashes(
+    actual: dict[str, str], expected_store_sha256: str, expected_api_sha256: str
+) -> None:
+    expected = {
+        "store.py": expected_store_sha256,
+        "api.py": expected_api_sha256,
+    }
+    mismatches = {
+        name: {"expected": expected[name], "actual": actual.get(name)}
+        for name in expected
+        if actual.get(name) != expected[name]
+    }
+    if mismatches:
+        raise ValueError(
+            "predecessor source hash pin mismatch: "
+            + json.dumps(mismatches, sort_keys=True)
+        )
+
+
 def main() -> int:
     parser = argparse.ArgumentParser()
     parser.add_argument("--predecessor-root", required=True, type=Path)
+    parser.add_argument("--expected-store-sha256", required=True)
+    parser.add_argument("--expected-api-sha256", required=True)
     parser.add_argument("--output-root", required=True, type=Path)
     args = parser.parse_args()
     predecessor, root = args.predecessor_root.resolve(), args.output_root.resolve()
@@ -149,6 +170,12 @@ def main() -> int:
         "store.py": hashlib.sha256(old_store_file.read_bytes()).hexdigest(),
         "api.py": hashlib.sha256(old_api_file.read_bytes()).hexdigest(),
     }
+    try:
+        _verify_predecessor_hashes(
+            hashes, args.expected_store_sha256, args.expected_api_sha256
+        )
+    except ValueError as exc:
+        raise SystemExit(str(exc)) from exc
 
     # Genuine predecessor constructor, task/turn/artifact writers, and HTTP download route.
     setup = r"""
