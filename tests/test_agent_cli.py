@@ -76,6 +76,8 @@ def test_agent_cli_mcp_tools_publish_searchable_descriptions():
     }
     assert all(description.strip() for description in descriptions.values())
     assert "PDF" in descriptions["read_text_file"]
+    assert "read_task_skill" in descriptions["read_text_file"]
+    assert "read_task_artifact" in descriptions["read_text_file"]
     assert "task-bound server catalog" in agent_cli.server.instructions
     assert "execute_email_unsubscribe" not in descriptions
 

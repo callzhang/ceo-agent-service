@@ -75,13 +75,31 @@ def validate_audit_candidate_fields(result: AuditAgentResult, candidate: Consume
     document = candidate.model_dump(mode="json")
     for assertion in result.feedback.candidate_field_assertions:
         actual = document
+        parent_path: list[str | int] = []
         for part in assertion.path:
             if isinstance(actual, dict) and isinstance(part, str) and part in actual:
                 actual = actual[part]
+                parent_path.append(part)
             elif isinstance(actual, list) and type(part) is int and 0 <= part < len(actual):
                 actual = actual[part]
+                parent_path.append(part)
             else:
-                raise ResultParseError("Audit candidate field assertion path does not exist in the bound candidate")
+                path_text = json.dumps(assertion.path, ensure_ascii=False)
+                parent_text = json.dumps(parent_path, ensure_ascii=False)
+                if isinstance(actual, dict):
+                    available = json.dumps(sorted(actual), ensure_ascii=False)
+                    available_text = f"available fields at {parent_text}: {available}"
+                elif isinstance(actual, list):
+                    available = json.dumps(list(range(len(actual))), ensure_ascii=False)
+                    available_text = f"available indexes at {parent_text}: {available}"
+                else:
+                    available_text = (
+                        f"parent {parent_text} is {json_value_type(actual)}, not an object or array"
+                    )
+                raise ResultParseError(
+                    "Audit candidate field assertion path "
+                    f"{path_text} does not exist in the bound candidate; {available_text}"
+                )
         if (json_value_type(actual) != assertion.json_type
             or json_value_type(assertion.value) != assertion.json_type
             or json.dumps(actual, sort_keys=True, ensure_ascii=False) != json.dumps(assertion.value, sort_keys=True, ensure_ascii=False)):
