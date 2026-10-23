@@ -758,7 +758,24 @@
         "case_passed": true,
         "root_cause": "Scope clarification and refreshed canonical proposal resolved the review findings; evaluator now grades selected cases against the selected case set."
       }
-    ]
+    ],
+    "post_merge_verification": {
+      "observed_at": "2026-10-23T07:40:00Z",
+      "candidate_git_ref": "67709ed8d0e5d348b9db99382388afbd97bd2685",
+      "skill_sha256": "49ba4b0bdafdd2ba54989f6bd1ad6b799417464f2dad2cbeefb721eb85a32f8e",
+      "temporary_result_artifact": "/tmp/okr-empty-search-merged-main-20261023.json",
+      "temporary_result_sha256": "f150609df704443f9146bc1c4a7c1be3deeaec7586305f1111636c9dcc094615",
+      "status": "passed",
+      "selected_case_count": 1,
+      "final_checks_passed": 32,
+      "final_audit_verdict": "approve",
+      "consumer_corrections": 1,
+      "audit_rounds": 3,
+      "empty_searches_verified": 2,
+      "mock_provider_document_writes_with_complete_readback": 18,
+      "external_effects": false,
+      "live_production_acceptance": false
+    }
   },
   "candidate_targeted_tests": {
     "observed_at": "2026-10-23T07:17:23Z",
@@ -766,6 +783,9 @@
     "pytest_passed": 52,
     "ruff": "passed",
     "git_diff_check": "passed",
-    "consumer_system_release_tests": "32 passed"
+    "consumer_system_release_tests": "32 passed",
+    "post_merge_okreval": "1 case passed; 32 final checks; Audit approve",
+    "post_merge_pytest_file": "tests/test_scheduled_okr_agent_eval.py: 52 passed",
+    "post_merge_consumer_release_and_skill_boundary": "32 passed"
   }
 }

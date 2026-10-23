@@ -24,9 +24,14 @@ run394981 由 task6 正式入口创建，reply task417039；不可变快照绑�
 状态回归修复后，单案例运行状态也为 passed。定向 pytest 52 passed，改动文件 Ruff 和
 `git diff --check` 通过。
 
+合入最新主线后，在提交 `67709ed8` 上再次执行同一原生案例，结果仍为 **1/1 passed**，32项
+最终检查全通过，最终 Audit `approve`；本轮包含1次 Consumer 修订和3轮 Audit 检查。两位成员的
+空检索均有记录，模拟 provider 的全部产物写入均读回通过。此证据对应合并后的代码与 Skill
+摘要，仍是合成验收，不代表真实 OKR 文档或钉钉消息已发布。
+
 该候选尚未部署，也没有再次创建 task6 运行。生产只读复核为 commit `881ea46fe`、PID5478、
 healthz HTTP 200；task6 仍为 v27 / revision235，下次自然触发 **2026-10-25 10:00 UTC**。
-394981 不重放。下一步完成发布清单定向检查、代码评审及正式发布；部署后仅新建一条授权的
+394981 不重放。下一步推送并完成代码评审、正式发布；部署后仅新建一条授权的
 task6 手动验证，严格核验完整 Consumer/Audit、全部报告文档真实读回和通知真实回执。
 
 无正文生产证据：[run394981 与候选验收读回](../evals/scheduled_task_generic/okr-production-readback.json)。
