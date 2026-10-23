@@ -180,6 +180,7 @@ def test_repository_consumer_release_manifest_includes_people_review_skill():
     entry = next(item for item in manifest["files"] if item["source"] == source)
 
     assert entry["target"] == "skills/stardust-oa-people-review/SKILL.md"
+    assert entry["old_sha256"] == "4f71dc707f22f784fb7e0f4d4f43c22ea003262884112081a595a10bb329e651"
     assert entry["new_sha256"] == _digest((root / source).read_bytes())
 
 
