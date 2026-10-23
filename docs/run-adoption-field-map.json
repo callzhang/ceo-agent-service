@@ -42,7 +42,7 @@
       "source_kind": "review_candidates",
       "source_field": "predecessor_review_id",
       "target_table": "run_adopted_results",
-      "target_field_or_expression": "predecessor_audit_run_id"
+      "target_field_or_expression": "predecessor_review_id"
     },
     {
       "source_kind": "review_candidates",
@@ -77,8 +77,8 @@
     {
       "source_kind": "candidate_reviews",
       "source_field": "id",
-      "target_table": "run_adoption_identity_map",
-      "target_field_or_expression": "source_public_id"
+      "target_table": "run_adopted_reviews",
+      "target_field_or_expression": "id and run_adoption_identity_map.target_child_id"
     },
     {
       "source_kind": "candidate_reviews",
@@ -132,7 +132,7 @@
       "source_kind": "candidate_selections",
       "source_field": "review_id",
       "target_table": "run_adopted_selections",
-      "target_field_or_expression": "audit_run_id"
+      "target_field_or_expression": "audit_run_id (via Review owner)"
     },
     {
       "source_kind": "candidate_selections",

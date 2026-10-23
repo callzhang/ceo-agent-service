@@ -1,14 +1,15 @@
 CREATE TABLE run_adopted_results (
  consumer_run_id INTEGER PRIMARY KEY REFERENCES runs(id),
  stage_index INTEGER NOT NULL,
- predecessor_audit_run_id INTEGER REFERENCES runs(id),
+ predecessor_review_id INTEGER REFERENCES run_adopted_reviews(id),
  candidate_digest TEXT NOT NULL, candidate_json TEXT NOT NULL,
  invalidated_at TEXT NOT NULL, invalidation_reason TEXT NOT NULL,
  created_at TEXT NOT NULL,
  UNIQUE(consumer_run_id,candidate_digest));
 
 CREATE TABLE run_adopted_reviews (
- audit_run_id INTEGER PRIMARY KEY REFERENCES runs(id),
+ id INTEGER PRIMARY KEY,
+ audit_run_id INTEGER NOT NULL UNIQUE REFERENCES runs(id),
  consumer_run_id INTEGER NOT NULL,
  candidate_digest TEXT NOT NULL,
  decision TEXT NOT NULL CHECK(decision IN ('approve','return','reject')),
@@ -90,17 +91,19 @@ CREATE TRIGGER trg_run_adopted_reviews_binding_update
    AND audit.proposal_revision=consumer.proposal_revision)
  BEGIN SELECT RAISE(ABORT,'review must bind the matching Audit Run'); END;
 
-CREATE TRIGGER trg_run_adopted_predecessor_audit_insert
+CREATE TRIGGER trg_run_adopted_predecessor_review_insert
  BEFORE INSERT ON run_adopted_results
- WHEN NEW.predecessor_audit_run_id IS NOT NULL AND NOT EXISTS(
-  SELECT 1 FROM runs audit WHERE audit.id=NEW.predecessor_audit_run_id AND audit.role='audit')
- BEGIN SELECT RAISE(ABORT,'predecessor must be Audit Run'); END;
+ WHEN NEW.predecessor_review_id IS NOT NULL AND NOT EXISTS(
+  SELECT 1 FROM run_adopted_reviews review JOIN runs audit ON audit.id=review.audit_run_id
+  WHERE review.id=NEW.predecessor_review_id AND audit.role='audit')
+ BEGIN SELECT RAISE(ABORT,'predecessor must be adopted Audit review'); END;
 
-CREATE TRIGGER trg_run_adopted_predecessor_audit_update
- BEFORE UPDATE OF predecessor_audit_run_id ON run_adopted_results
- WHEN NEW.predecessor_audit_run_id IS NOT NULL AND NOT EXISTS(
-  SELECT 1 FROM runs audit WHERE audit.id=NEW.predecessor_audit_run_id AND audit.role='audit')
- BEGIN SELECT RAISE(ABORT,'predecessor must be Audit Run'); END;
+CREATE TRIGGER trg_run_adopted_predecessor_review_update
+ BEFORE UPDATE OF predecessor_review_id ON run_adopted_results
+ WHEN NEW.predecessor_review_id IS NOT NULL AND NOT EXISTS(
+  SELECT 1 FROM run_adopted_reviews review JOIN runs audit ON audit.id=review.audit_run_id
+  WHERE review.id=NEW.predecessor_review_id AND audit.role='audit')
+ BEGIN SELECT RAISE(ABORT,'predecessor must be adopted Audit review'); END;
 
 create trigger trg_action_receipt_owner_insert before insert on action_receipts when not exists(select 1 from actions where id=new.action_id and record_type='action') begin select raise(abort,'receipt owner must be Action'); end;
 

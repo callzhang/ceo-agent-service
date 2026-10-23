@@ -71,3 +71,8 @@ Cover create/claim/refresh/revision/adoption/selection/effect/receipt, new input
 Production baseline measured in planning: main file 501,170,176 bytes; Task table/indexes 45,899,776/12,451,840 bytes; Run table/indexes approximately 90,775,552/52,867,072 bytes, dynamic counts. Dispatch index 9.31 MiB; candidate binding indexes about3.29 MiB; duplicate reply metadata about1.68 MiB are gross opportunities, not net claims. 69,662 empty rows/65,427 adjacent candidates still require continuity/reference proof.
 
 Update architecture/runtime, total progress, acceptance matrix and changelog with actual release state. Historical production versions/PIDs/backups must be dated observations, not live assertions. Verify newest backup before predecessor retirement. The seven previously authorized temporary roots remain separately policy-blocked; their cleanup is not migration capacity gain.
+
+
+### Review child identity clarification (Task3C1B, 2026-10-22)
+
+The Run-owned Review row retains the existing source Review business/protocol key as `id`, alongside a unique `audit_run_id` foreign key that identifies its Audit Run owner. The approved ownership model does not require these IDs to be equal. Candidate predecessor wire fields and relational FKs refer to Review `id`; selection and progress owner fields continue to refer to Audit Run IDs. This preserves immutable source bodies and source inverse keys. The frozen source read found 23/23 linked predecessor bodies equal their source Review public IDs and differ from Audit Run IDs, with zero unresolved or mismatched IDs. The local native schema/store slice remains unactivated.

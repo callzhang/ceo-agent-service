@@ -97,10 +97,12 @@ def test_native_store_adopts_candidate_review_selection_and_supplement(monkeypat
         })
     monkeypatch.setattr(native_trajectory, "find_codex_session_path", lambda *_args, **_kwargs: native)
     review = store.record_candidate_review(consumer["id"], audit["id"], review_body)
-    assert review["id"] == audit["id"]
+    assert review["id"] != audit["id"]
+    assert review["audit_run_id"] == audit["id"]
     assert store.record_candidate_review(consumer["id"], audit["id"], review_body) == review
     assert store.get_candidate_review_for_audit_run(audit["id"])["candidate_id"] == consumer["id"]
     assert store.reviewed_candidate_for_audit_run(audit["id"])["candidate_id"] == consumer["id"]
+    assert store.current_reviewed_candidate(task["id"], "gen-1")["review_id"] == review["id"]
     assert store.current_reviewed_candidate(task["id"], "gen-1")["audit_run_id"] == audit["id"]
 
     later_reviews = []
@@ -114,7 +116,8 @@ def test_native_store_adopts_candidate_review_selection_and_supplement(monkeypat
             result = {"outcome": decision, "candidate_digest": digest}
             stored = store._adopt_candidate_review_in_connection(db, consumer["id"], another_audit["id"], result)
         later_reviews.append((another_audit, result, stored))
-        assert stored["id"] == another_audit["id"]
+        assert stored["id"] != another_audit["id"]
+        assert stored["audit_run_id"] == another_audit["id"]
         assert stored["candidate_id"] == consumer["id"]
         assert store.get_candidate_review_for_audit_run(another_audit["id"])["decision"] == decision
     with db:
@@ -128,11 +131,15 @@ def test_native_store_adopts_candidate_review_selection_and_supplement(monkeypat
         else:
             raise AssertionError("conflicting Audit review was accepted")
 
-    selected = store.select_candidate_option(consumer["id"], audit["id"], "execute")
+    selected = store.select_candidate_option(consumer["id"], review["id"], "execute")
     assert selected["candidate_id"] == consumer["id"]
-    assert selected["review_id"] == audit["id"]
+    assert selected["review_id"] == review["id"]
+    assert selected["audit_run_id"] == audit["id"]
     assert json.loads(selected["branch_json"])["key"] == "execute"
-    assert store.select_candidate_option(consumer["id"], audit["id"], "execute")["id"] == selected["id"]
+    assert store.select_candidate_option(consumer["id"], review["id"], "execute")["id"] == selected["id"]
+    current_selection = store.get_candidate_selection(consumer["id"])
+    assert current_selection["review_id"] == review["id"]
+    assert current_selection["audit_run_id"] == audit["id"]
     assert store.get_candidate_execution(consumer["id"]) is None
 
     db.execute("""insert into run_execution_progress
@@ -140,15 +147,18 @@ def test_native_store_adopts_candidate_review_selection_and_supplement(monkeypat
          lease_expires_at,result_json,created_at,updated_at)
         values(?,?,?,'done','','','{}','now','now')""", (consumer["id"], audit["id"], audit["id"]))
     db.commit()
+    current_execution = store.get_candidate_execution(consumer["id"])
+    assert current_execution["review_id"] == review["id"]
+    assert current_execution["audit_run_id"] == audit["id"]
     later = run_entity_storage.create_run(db, values={
         "task_id": task["id"], "parent_id": audit["id"], "execution_generation": "gen-1",
         "role": "consumer", "proposal_revision": 1, "turn_attempt": 0, "status": "completed",
         "created_at": "now", "updated_at": "now",
     })
-    later_body = {**body, "stage_index": 1, "predecessor_review_id": audit["id"]}
+    later_body = {**body, "stage_index": 1, "predecessor_review_id": review["id"]}
     with db:
         later_adoption = store._adopt_review_candidate_in_connection(db, later, later_body)
-    assert later_adoption["predecessor_review_id"] == audit["id"]
+    assert later_adoption["predecessor_review_id"] == review["id"]
     later_digest = later_adoption["candidate_digest"]
     with db:
         later_audit = run_entity_storage.create_run(db, values={
@@ -159,7 +169,7 @@ def test_native_store_adopts_candidate_review_selection_and_supplement(monkeypat
         store._adopt_candidate_review_in_connection(db, later["id"], later_audit["id"],
             {"outcome": "return", "candidate_digest": later_digest})
 
-    historical_body = {**body, "stage_index": 1, "predecessor_review_id": 7}
+    historical_body = {**body, "stage_index": 1, "predecessor_review_id": review["id"]}
     historical = run_entity_storage.create_run(db, values={
         "task_id": task["id"], "parent_id": later_audit["id"], "execution_generation": "gen-1",
         "role": "consumer", "proposal_revision": 2, "turn_attempt": 0, "status": "completed",
@@ -168,14 +178,14 @@ def test_native_store_adopts_candidate_review_selection_and_supplement(monkeypat
     historical_json = json.dumps(historical_body, ensure_ascii=False, sort_keys=True, separators=(",", ":"))
     historical_digest = hashlib.sha256(historical_json.encode()).hexdigest()
     db.execute("""insert into run_adopted_results
-        (consumer_run_id,stage_index,predecessor_audit_run_id,candidate_digest,candidate_json,
+        (consumer_run_id,stage_index,predecessor_review_id,candidate_digest,candidate_json,
          invalidated_at,invalidation_reason,created_at)
         values(?,1,?,?,?,'','',current_timestamp)""",
-        (historical["id"], audit["id"], historical_digest, historical_json))
+        (historical["id"], review["id"], historical_digest, historical_json))
     db.commit()
     historical_adoption = store.get_review_candidate(historical["id"])
-    assert historical_adoption["predecessor_review_id"] == audit["id"]
-    assert json.loads(historical_adoption["candidate_json"])["predecessor_review_id"] == 7
+    assert historical_adoption["predecessor_review_id"] == review["id"]
+    assert json.loads(historical_adoption["candidate_json"])["predecessor_review_id"] == review["id"]
     assert historical_adoption["candidate_json"] == historical_json
     assert historical_adoption["candidate_digest"] == historical_digest
 
@@ -195,12 +205,12 @@ def test_native_store_adopts_candidate_review_selection_and_supplement(monkeypat
         "role": "consumer", "proposal_revision": 3, "turn_attempt": 0, "status": "completed",
         "created_at": "now", "updated_at": "now",
     })
-    revised_body = {**body, "stage_index": 1, "predecessor_review_id": audit["id"]}
+    revised_body = {**body, "stage_index": 1, "predecessor_review_id": review["id"]}
     with db:
         revised_adoption = store._adopt_review_candidate_in_connection(db, revised, revised_body)
     assert revised_adoption["stage_index"] == 1
-    assert revised_adoption["predecessor_review_id"] == audit["id"]
-    assert json.loads(revised_adoption["candidate_json"])["predecessor_review_id"] == audit["id"]
+    assert revised_adoption["predecessor_review_id"] == review["id"]
+    assert json.loads(revised_adoption["candidate_json"])["predecessor_review_id"] == review["id"]
 
     bad_revision = run_entity_storage.create_run(db, values={
         "task_id": task["id"], "parent_id": historical_audit["id"], "execution_generation": "gen-1",
@@ -211,7 +221,7 @@ def test_native_store_adopts_candidate_review_selection_and_supplement(monkeypat
     try:
         with db:
             store._adopt_review_candidate_in_connection(
-                db, bad_revision, {**revised_body, "predecessor_review_id": 7})
+                db, bad_revision, {**revised_body, "predecessor_review_id": audit["id"]})
     except ValueError as exc:
         assert str(exc) == "candidate predecessor mismatch"
     else:
@@ -228,10 +238,10 @@ def test_native_store_adopts_candidate_review_selection_and_supplement(monkeypat
         SimpleNamespace(id=historical["id"], proposal_revision=2),
         SimpleNamespace(id=historical_audit["id"]), None, None, historical["id"], historical_audit["id"], 0))
     assert business_revision.stage_index == 1
-    assert business_revision.predecessor_review_id == audit["id"]
+    assert business_revision.predecessor_review_id == review["id"]
     stage_context = orchestrator._stage_for_parent(
         SimpleNamespace(id=historical_audit["id"], parent_agent_run_id=historical["id"]))
-    assert stage_context == {"stage_index": 1, "predecessor_review_id": audit["id"]}
+    assert stage_context == {"stage_index": 1, "predecessor_review_id": review["id"]}
     monkeypatch.setattr(native_trajectory, "find_codex_session_path", lambda *_args, **_kwargs: None)
     assert store.get_review_candidate(historical["id"])["candidate_json"] == historical_json
 

@@ -84,8 +84,8 @@ def _result(db, consumer, digest="digest-a"):
 
 
 def _review(db, consumer, audit, digest="digest-a", decision="approve"):
-    db.execute("insert into run_adopted_reviews values(?,?,?,?,?,?)",
-               (audit, consumer, digest, decision, '{"review":"ok"}', "now"))
+    db.execute("insert into run_adopted_reviews (id,consumer_run_id,audit_run_id,candidate_digest,decision,result_json,created_at) values(?,?,?,?,?,?,?)",
+               (audit + 1000, consumer, audit, digest, decision, '{"review":"ok"}', "now"))
 
 
 def test_field_map_covers_current_source_fields_and_artifacts_are_exact():
@@ -158,8 +158,8 @@ def test_candidate_review_selection_and_progress_reference_closure():
     assert db.execute("select count(*) from run_adopted_reviews where consumer_run_id=10").fetchone() == (2,)
     assert db.execute("select count(*) from run_adopted_supplements where consumer_run_id=10").fetchone() == (2,)
     with pytest.raises(sqlite3.IntegrityError):
-        db.execute("insert into run_adopted_reviews values(?,?,?,?,?,?)",
-                   (22, 20, "wrong-digest", "approve", "{}", "now"))
+        db.execute("insert into run_adopted_reviews values(?,?,?,?,?,?,?)",
+                   (1022, 20, 22, "wrong-digest", "approve", "{}", "now"))
     with pytest.raises(sqlite3.IntegrityError):
         db.execute("insert into run_adopted_selections values(?,?,?,?,?,?)", (2, 10, 12, "yes", "selected", "now"))
     with pytest.raises(sqlite3.IntegrityError):
@@ -186,8 +186,8 @@ def test_consumer_and_audit_role_parent_and_predecessor_run_types_are_exact():
         _review(db, 2, 4)
     _review(db, 2, 3)
     with pytest.raises(sqlite3.IntegrityError):
-        db.execute("update run_adopted_results set predecessor_audit_run_id=5 where consumer_run_id=2")
-    db.execute("update run_adopted_results set predecessor_audit_run_id=3 where consumer_run_id=2")
+        db.execute("update run_adopted_results set predecessor_review_id=1011 where consumer_run_id=2")
+    db.execute("update run_adopted_results set predecessor_review_id=1003 where consumer_run_id=2")
     with pytest.raises(sqlite3.IntegrityError):
         _review(db, 2, 6, digest="wrong-digest")
 
@@ -254,3 +254,24 @@ def test_receipt_patch_replaces_only_candidate_execution_association():
         assert required in patch
     assert "execution_id" not in patch
     assert "candidate_execution_alias" not in patch
+
+
+def test_review_protocol_id_is_distinct_from_audit_owner_and_predecessor_fk():
+    db = _db()
+    _run(db, 9007, 1, "audit")
+    _run(db, 7, 1, "consumer")
+    _run(db, 9008, 1, "audit", parent=7)
+    _result(db, 7)
+    db.execute("""insert into run_adopted_reviews
+        (id,consumer_run_id,audit_run_id,candidate_digest,decision,result_json,created_at)
+        values(7,7,9008,'digest-a','approve','{}','now')""")
+    _run(db, 8, 1, "consumer", parent=7)
+    db.execute("""insert into run_adopted_results
+        (consumer_run_id,stage_index,predecessor_review_id,candidate_digest,candidate_json,
+         invalidated_at,invalidation_reason,created_at)
+        values(8,1,7,'digest-b','{\"predecessor_review_id\":7}','','','now')""")
+    assert db.execute("select id,audit_run_id from run_adopted_reviews").fetchone() == (7, 9008)
+    assert db.execute("select audit_run_id from run_adopted_reviews where id=(select predecessor_review_id from run_adopted_results where consumer_run_id=8)").fetchone() == (9008,)
+    assert db.execute("select count(*) from sqlite_sequence where name='run_adopted_reviews'").fetchone() == (0,)
+    with pytest.raises(sqlite3.IntegrityError):
+        db.execute("update run_adopted_results set predecessor_review_id=9008 where consumer_run_id=8")

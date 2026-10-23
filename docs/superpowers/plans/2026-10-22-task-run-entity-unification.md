@@ -88,3 +88,8 @@
 - [ ] Publish through explicit approved schema migration and normal app.deploy quiet window only after backup verified and net-capacity/acceptance gates pass. Preserve unrelated work, never skip quiet or use launchctl manually.
 - [ ] Read PID/health/schema/queues/Attention/History/details/receipts; distinguish natural production outcomes from substitute tests. Update total matrix/rulings and release docs, commit/push.
 - [ ] Cleanup only exact owned temporary artifacts after evidence durability; policy-blocked deletion reported, never bypassed. Keep newest verified formal backup and native trajectories. No claiming whole program or Phase3 complete.
+
+
+### Task3C1B Review identity correction (2026-10-22)
+
+C1B preserves source Review `id` as the real native Run-owned Review child key and stores the Audit Run separately as unique `audit_run_id`. `run_adopted_results.predecessor_review_id` references Review `id`; selections/progress continue to reference Audit Run owner IDs. Candidate/review body and digest remain unchanged. Frozen source evidence covers 23 linked predecessor bodies, all matching source Review IDs and differing from Audit Run IDs, with no unresolved references. This is an unactivated schema/Store correction; source-copy conversion and runtime activation remain later gates.
