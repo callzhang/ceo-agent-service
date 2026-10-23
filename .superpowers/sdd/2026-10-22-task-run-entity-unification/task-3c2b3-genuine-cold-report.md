@@ -39,4 +39,4 @@ The second cycle starts from the first cycle's fresh-forward database, rather th
 
 ## Commit
 
-Pending the scoped commit of the runner, validation documentation, this report, and this worktree's claim row. The unrelated dirty C2A report is excluded.
+Implementation, validation documentation, this report, and this worktree's claim row were committed together as `338466749` (`Validate Task3C2B3 genuine old DAO cold cycles`). The unrelated dirty C2A report was excluded and remains untouched.
