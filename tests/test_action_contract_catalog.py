@@ -65,7 +65,7 @@ def test_catalog_is_generated_from_every_canonical_capability_and_operation() ->
     for entry in entries:
         assert f"`{entry.capability}`" in catalog
         assert f"`{entry.operation}`" in catalog
-    assert "agent_cli.read_system_action_contract" in catalog
+    assert "`read_system_action_contract`" in catalog
     assert "capability" in catalog and "operation" in catalog
 
 
@@ -195,7 +195,7 @@ def test_contract_lookup_is_in_native_allowlist_and_runtime_context(role: str) -
     )
 
     assert '"read_system_action_contract"' in enabled
-    assert "agent_cli.read_system_action_contract" in context
+    assert "mcp__agent_cli__read_system_action_contract" in context
 
 
 @pytest.mark.parametrize("role", ["consumer", "audit"])
@@ -215,7 +215,12 @@ def test_contract_lookup_is_visible_in_actual_and_preview_contexts(
         preview=preview,
     )
 
-    assert "agent_cli.read_system_action_contract" in context
+    expected_tool_name = (
+        "mcp__agent_cli__read_system_action_contract"
+        if kind is RuntimeKind.CODEX_CLI
+        else "agent_cli.read_system_action_contract"
+    )
+    assert expected_tool_name in context
 
 
 def test_consumer_prompt_uses_short_generated_catalog() -> None:
@@ -223,7 +228,7 @@ def test_consumer_prompt_uses_short_generated_catalog() -> None:
     catalog = system_action_contracts_text()
 
     assert len(catalog) < len(original) // 2
-    assert "agent_cli.read_system_action_contract" in catalog
+    assert "`read_system_action_contract`" in catalog
     assert "| Capability | Operation |" not in catalog
 
 
