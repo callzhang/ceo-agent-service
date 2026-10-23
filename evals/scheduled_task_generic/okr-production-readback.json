@@ -905,5 +905,55 @@
     "contract_files_written": false,
     "new_report_runs_created": false,
     "external_effects": false
+  },
+  "latest_formal_consumer_skill_publication": {
+    "observed_at": "2026-10-23T11:03:24Z",
+    "target_commit": "55b0f9a3b4321a8f14d3e4619984a6fa3a4e50f2",
+    "merged_changes": [
+      "PR #288",
+      "PR #287"
+    ],
+    "operation_id": "deploy-2ee360dd-3441-4496-8698-0b3b46721928",
+    "result": "succeeded",
+    "release_receipt_status": "verified",
+    "release_kind": "consumer_system_contracts_v1",
+    "runtime_config": {
+      "old_id": 368,
+      "new_id": 369
+    },
+    "processes": {
+      "supervisor_pid": 43616,
+      "service_worker_pid": 43623,
+      "audit_web_pid": 43624,
+      "email_worker_pid": 43625
+    },
+    "worker_load_receipt": {
+      "runtime_config_id": 369,
+      "worker_pid": 43623,
+      "error": null,
+      "okr_skill_sha256": "49ba4b0bdafdd2ba54989f6bd1ad6b799417464f2dad2cbeefb721eb85a32f8e"
+    },
+    "task6": {
+      "enabled": true,
+      "version": 28,
+      "managed_skill_revision_id": 240,
+      "managed_skill_sha256": "49ba4b0bdafdd2ba54989f6bd1ad6b799417464f2dad2cbeefb721eb85a32f8e"
+    },
+    "asset_readback": {
+      "manifest_entries": 26,
+      "sha256_mismatches": 0,
+      "scheduled_task_references": "exact readback passed for all affected tasks"
+    },
+    "healthz_http_status": 200,
+    "queue": {
+      "active": 0,
+      "queued": 471
+    },
+    "attention_total": 20,
+    "history_total": 37604,
+    "new_task6_run_created": false,
+    "new_okr_report_created": false,
+    "external_effects": false,
+    "business_acceptance": "Skill publication/load verified only; no post-deploy real OKR report run has occurred."
   }
 }

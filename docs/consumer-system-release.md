@@ -10,10 +10,10 @@ new immutable managed Skill revisions.
 For this contract release, `python -m app.deploy --publish-consumer-system-contracts`
 uses the normal production deploy's quiet wait, launchd stop, database backup,
 fast-forward, import check, restart, and health check. In the stopped interval
-after the backup and import check, it publishes only the nine source and target
-files in `ci/consumer-system-contract-release.json`: six service-managed
-`SKILL.md` files, the generic DingTalk OA Skill, the weekly report's DingTalk
-runbook, and the Audit rules. The manifest pins the previously observed SHA-256
+after the backup and import check, it publishes exactly the source and target
+assets listed in `ci/consumer-system-contract-release.json` (currently 26
+pairs, including managed Skills, supporting scripts and references, and Audit
+rules). The manifest pins the previously observed SHA-256
 of each installed file and the reviewed SHA-256 of each committed replacement.
 An entry may already match its replacement when another release installed the
 same source in advance; exact old-target and source checks still apply, and
@@ -38,8 +38,8 @@ write a load receipt for that active configuration. The wait is only for those
 two startup events; it does not turn mismatched content into a retryable
 condition. Once both are present, the existing checks run immediately: the
 active managed revisions and load receipt must contain the expected Skill
-digests, the nine installed files must match, and each affected task must have
-the exact scheduled reference tuple. A digest, file, or task-reference mismatch
+digests, all manifest-listed installed assets must match, and each affected
+task must have the exact scheduled reference tuple. A digest, file, or task-reference mismatch
 fails at once and uses the existing deploy rollback path. Scheduled reference
 readback includes source, name, order, and each referenced managed revision ID. Removed or
 replaced references fail this readback. Only then is the release
@@ -48,8 +48,8 @@ receipt for rollback review. A live receipt PID alone does not prove that it
 belongs to the replacement worker; the final production readback must compare
 the receipt PID with the launchd supervisor's actual child process. If restart,
 health, or readback fails, the updater stops the replacement service, restores
-the nine prior files and scheduled references, stages an immutable rollback
-configuration, then follows its existing Git rollback and old-service restart
+all prior manifest-listed files and scheduled references, stages an
+immutable rollback configuration, then follows its existing Git rollback and old-service restart
 path. Immutable revision history and additive database schema remain recorded.
 If receipt finalization fails after a healthy, verified restart, deployment
 remains succeeded and the deploy command includes the recorded finalization
