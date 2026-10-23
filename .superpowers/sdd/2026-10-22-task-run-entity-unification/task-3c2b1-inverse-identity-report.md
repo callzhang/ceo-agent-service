@@ -49,3 +49,30 @@ git diff --check
 ```
 
 The result is a local helper and focused test evidence only; native materialization, old-code cold read, reforward, and publication remain unverified and belong to the next C2B slice.
+
+## Independent review fix 1: global physical identity uniqueness
+
+Review found that duplicate source physical IDs were checked as `(source_kind, physical_id)`, even though every kind shares the global `actions.id` namespace. `_map_rows` now rejects any repeated `source_physical_id` across all kinds before producing a plan. This is malformed migration-map validation; it does not reject a valid current Action occupying an adoption ID, since those collisions still take the existing reassignment path.
+
+The regression first gives Review and Selection the same public integer `7` in their distinct per-kind public namespaces and confirms planning succeeds. It then makes the Selection mapping reuse the Review's global physical ID, updates forward metadata consistently, and confirms the planner rejects it without changing Actions or the identity map.
+
+Focused RED/GREEN evidence:
+
+```text
+python -m pytest -q --basetemp=$(mktemp -d /tmp/task3c2b1fix1-red-XXXXXX) tests/test_run_adoption_inverse.py -k cross_kind_duplicate
+FAILED: Failed: DID NOT RAISE ValueError
+1 failed, 6 deselected
+
+python -m pytest -q --basetemp=$(mktemp -d /tmp/task3c2b1fix1-green-XXXXXX) tests/test_run_adoption_inverse.py
+.......                                                                  [100%]
+7 passed in 3.93s
+
+python -m ruff check app/run_adoption_inverse.py tests/test_run_adoption_inverse.py
+All checks passed!
+
+python -m py_compile app/run_adoption_inverse.py tests/test_run_adoption_inverse.py
+# exit 0
+
+git diff --check
+# exit 0
+```

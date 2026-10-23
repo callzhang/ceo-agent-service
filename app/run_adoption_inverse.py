@@ -107,17 +107,17 @@ def _map_rows(db, forward_metadata, canonical_to_source, physical_runs):
                     for r in forward_metadata["identities"]}
     except (IndexError, TypeError, ValueError) as exc:
         raise ValueError("invalid adoption forward identity metadata") from exc
-    seen = set()
+    seen_physical_ids = set()
     actual = set()
     result = {}
     for kind, physical, public, public_type, target_run, target_child in rows:
         if (kind not in _KINDS or type(physical) is not int or type(target_run) is not int
                 or (target_child is not None and type(target_child) is not int)):
             raise ValueError("invalid adoption identity-map owner")
-        key = (kind, physical)
-        if key in seen:
+        if physical in seen_physical_ids:
             raise ValueError("duplicate adoption physical identity")
-        seen.add(key)
+        seen_physical_ids.add(physical)
+        key = (kind, physical)
         actual.add((kind, physical, int(target_run),
                     None if target_child is None else int(target_child)))
         raw = _typed_public(public, public_type)

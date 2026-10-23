@@ -195,6 +195,40 @@ def test_retained_action_collision_reassigns_only_adoption_physical_identity():
         db.close()
 
 
+def test_cross_kind_duplicate_source_physical_identity_is_rejected_without_mutation():
+    db = _db()
+    try:
+        source, forward = _metadata(db)
+        db.execute("update run_adoption_identity_map set source_public_id='7',"
+                   "source_public_id_type='integer' where source_kind='candidate_selections'")
+        valid = plan_run_adoption_inverse(db, source, forward,
+                                          run_inverse_metadata=_inverse_for_fixture())
+        same_public_id = [item for item in valid["adoptions"]
+                          if item["source_kind"] in {"candidate_reviews", "candidate_selections"}
+                          and item["public_id"] == 7]
+        assert {item["source_kind"] for item in same_public_id} == {
+            "candidate_reviews", "candidate_selections"}
+        db.execute("update run_adoption_identity_map set source_physical_id=101 "
+                   "where source_kind='candidate_selections'")
+        forward["identities"] = [
+            [kind, 101 if kind == "candidate_selections" else physical, run_id, child]
+            for kind, physical, run_id, child in forward["identities"]
+        ]
+        # Public integer 7 is valid in both per-kind namespaces; only the
+        # shared physical Action ID is malformed here.
+        before_map = [tuple(row) for row in db.execute(
+            "select * from run_adoption_identity_map order by source_kind,source_physical_id")]
+        before_actions = [tuple(row) for row in db.execute("select * from actions order by id")]
+        with pytest.raises(ValueError, match="duplicate adoption physical identity"):
+            plan_run_adoption_inverse(db, source, forward,
+                                      run_inverse_metadata=_inverse_for_fixture())
+        assert [tuple(row) for row in db.execute(
+            "select * from run_adoption_identity_map order by source_kind,source_physical_id")] == before_map
+        assert [tuple(row) for row in db.execute("select * from actions order by id")] == before_actions
+    finally:
+        db.close()
+
+
 def _inverse_for_fixture():
     from app.run_entity_schema import run_handoff_context, run_handoff_digest
 
