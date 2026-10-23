@@ -191,8 +191,9 @@ class DocumentProvider:
 
 
 class Fixture:
-    def __init__(self, facts, work):
+    def __init__(self, facts, work, scheduled_run_id=1):
         self.facts, self.work = facts, Path(work)
+        self.scheduled_run_id = scheduled_run_id
         self.work.mkdir(parents=True, exist_ok=True)
         self.trace_path = self.work.with_name(self.work.name + "-tool-calls.jsonl")
         self.docs_path = self.work.with_name(self.work.name + "-provider.json")
@@ -219,6 +220,15 @@ class Fixture:
             "path": str(p),
             "sha256": digest(p.read_bytes()),
         }
+
+    def artifact_manifest(self):
+        return [
+            {"name": path.name, "sha256": digest(path.read_bytes())}
+            for path in sorted(self.work.iterdir())
+            if path.is_file()
+            and not path.is_symlink()
+            and not path.name.startswith(".task-artifact-")
+        ]
 
     def documents(self):
         return json.loads(self.docs_path.read_text()) if self.docs_path.exists() else {}
@@ -322,9 +332,10 @@ class Fixture:
                 {
                     "scheduled_for": self.facts["report_date"] + "T10:00:00Z",
                     "timezone_name": "Asia/Shanghai",
-                    "run_id": 1, "scheduled_task_id": 1, "task_version": 1,
+                    "run_id": self.scheduled_run_id, "scheduled_task_id": 1, "task_version": 1,
                     "principal_user_id": "fixture-principal", "history": [],
                     "artifact_directory": str(self.work),
+                    "task_artifacts": self.artifact_manifest(),
                 },
             )
 
@@ -422,5 +433,8 @@ if __name__ == "__main__":
     parser.add_argument("--facts", required=True)
     parser.add_argument("--work", required=True)
     parser.add_argument("--role", choices=("consumer", "audit"), default="consumer")
+    parser.add_argument("--run-id", type=int, default=1)
     args = parser.parse_args()
-    Fixture(json.loads(Path(args.facts).read_text()), args.work).serve(args.role)
+    Fixture(
+        json.loads(Path(args.facts).read_text()), args.work, args.run_id
+    ).serve(args.role)

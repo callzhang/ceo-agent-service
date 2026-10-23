@@ -5,7 +5,7 @@ from pathlib import Path
 from evals.scheduled_task_generic import okr_eval
 from evals.scheduled_task_generic.okr_fixture import Fixture, member_payload
 
-CASES = json.loads((Path(okr_eval.__file__).parent / "okr_cases.v5.json").read_text())[
+CASES = json.loads((Path(okr_eval.__file__).parent / "okr_cases.v6.json").read_text())[
     "cases"
 ]
 
@@ -413,8 +413,11 @@ def test_failed_saved_candidate_cannot_be_reused(tmp_path):
     import pytest
 
     saved = json.loads((Path(okr_eval.__file__).parent / "okr_results.v13.json").read_text())
+    frozen_case = json.loads(
+        (Path(okr_eval.__file__).parent / "okr_cases.v5.json").read_text()
+    )["cases"][2]
     with pytest.raises(ValueError, match="failed candidate"):
-        okr_eval.restore_accepted_candidate(saved, CASES[2], tmp_path)
+        okr_eval.restore_accepted_candidate(saved, frozen_case, tmp_path)
 
 
 def test_manifest_paths_must_belong_to_current_artifact_directory(tmp_path):
@@ -634,6 +637,12 @@ def test_native_transport_keeps_real_purpose_validation_inside_envelope(
             'mcp_servers.okr_acceptance.default_tools_approval_mode="approve"'
             in command
         )
+        fixture_args = next(
+            json.loads(value.split("=", 1)[1])
+            for value in command
+            if value.startswith("mcp_servers.okr_acceptance.args=")
+        )
+        assert fixture_args[-2:] == ["--run-id", "42"]
         assert '"allOf"' in kwargs["input"]
         Path(command[command.index("--output-last-message") + 1]).write_text(
             json.dumps({"purpose_output_json": json.dumps(wire)})
@@ -642,9 +651,108 @@ def test_native_transport_keeps_real_purpose_validation_inside_envelope(
 
     monkeypatch.setattr(okr_eval.subprocess, "run", accepted)
     phase = okr_eval.native(
-        "consumer", facts, tmp_path / "artifacts", tmp_path / "native", []
+        "consumer", facts, tmp_path / "artifacts", tmp_path / "native", [],
+        scheduled_run_id=42,
     )
     assert phase["output"] == wire
+
+
+def test_synthetic_audit_prompt_states_its_offline_execution_boundary(
+    tmp_path, monkeypatch
+):
+    from types import SimpleNamespace
+
+    facts = tmp_path / "facts.json"
+    facts.write_text("{}")
+    inputs = []
+
+    def accepted(command, **kwargs):
+        inputs.append(kwargs["input"])
+        Path(command[command.index("--output-last-message") + 1]).write_text(
+            json.dumps({"verdict": "approve", "feedback": []})
+        )
+        return SimpleNamespace(returncode=0)
+
+    monkeypatch.setattr(okr_eval.subprocess, "run", accepted)
+    okr_eval.native("audit", facts, tmp_path / "artifacts", tmp_path / "audit", [])
+
+    assert "本评测只评估合成 verdict" in inputs[0]
+
+
+def test_native_feedback_continues_after_audit_returns_another_revision(
+    tmp_path, monkeypatch
+):
+    calls = []
+    outputs = iter(
+        [
+            {"output": {"candidate": "second correction"}},
+            {"output": {"verdict": "approve", "feedback": []}},
+        ]
+    )
+
+    def fake_native(role, *args, **kwargs):
+        calls.append((role, args, kwargs))
+        return next(outputs)
+
+    monkeypatch.setattr(okr_eval, "native", fake_native)
+    latest_consumer = {"output": {"candidate": "first correction"}}
+    corrections = [{"output": {"candidate": "first correction"}}]
+    audits = [
+        {"output": {"verdict": "revise", "feedback": ["first finding"]}},
+        {"output": {"verdict": "revise", "feedback": ["second finding"]}},
+    ]
+
+    latest_consumer, corrections, audits = okr_eval.continue_native_feedback(
+        tmp_path / "facts.json",
+        tmp_path / "artifacts",
+        tmp_path,
+        [],
+        latest_consumer,
+        corrections,
+        audits,
+        scheduled_run_id=42,
+    )
+
+    assert latest_consumer["output"]["candidate"] == "second correction"
+    assert len(corrections) == 2
+    assert audits[-1]["output"]["verdict"] == "approve"
+    assert calls[0][2]["feedback"] == audits[1]["output"]
+    assert all(call[2]["scheduled_run_id"] == 42 for call in calls)
+
+
+def test_native_feedback_keeps_the_production_cycle_bound(tmp_path, monkeypatch):
+    calls = []
+    outputs = iter(
+        [
+            {"output": {"candidate": "second correction"}},
+            {"output": {"verdict": "revise", "feedback": ["third finding"]}},
+            {"output": {"candidate": "third correction"}},
+            {"output": {"verdict": "revise", "feedback": ["fourth finding"]}},
+        ]
+    )
+
+    def fake_native(role, *args, **kwargs):
+        calls.append((role, args, kwargs))
+        return next(outputs)
+
+    monkeypatch.setattr(okr_eval, "native", fake_native)
+    _, corrections, audits = okr_eval.continue_native_feedback(
+        tmp_path / "facts.json",
+        tmp_path / "artifacts",
+        tmp_path,
+        [],
+        {"output": {"candidate": "first correction"}},
+        [{"output": {"candidate": "first correction"}}],
+        [
+            {"output": {"verdict": "revise", "feedback": ["first finding"]}},
+            {"output": {"verdict": "revise", "feedback": ["second finding"]}},
+        ],
+        scheduled_run_id=42,
+    )
+
+    assert len(corrections) == 3
+    assert len(audits) == 4
+    assert len(calls) == 4
 
 
 def test_unscored_current_roster_titles_are_not_erased(tmp_path):
@@ -691,6 +799,21 @@ def test_cases_are_versioned_without_rewriting_failed_oracle():
     assert hashlib.sha256(fourth.read_bytes()).hexdigest() == "de85506221508bee7aa4db312d5c566a8f28b96a9ebac87d919ac34dbfe0ca5c"
     fifth = root / "okr_cases.v5.json"
     assert fifth.is_file()
+    assert hashlib.sha256(fifth.read_bytes()).hexdigest() == "ae2cd3caecb562d6efa305f4249a4f39b1cad68e8dbbe02cd7a65a1f0ef3b448"
+    sixth = root / "okr_cases.v6.json"
+    assert sixth.is_file()
+    sixth_cases = json.loads(sixth.read_text())["cases"]
+    assert [case["id"] for case in sixth_cases] == [
+        "composite-coverage",
+        "fresh-source-snapshot",
+        "fresh-date-snapshot",
+        "shared-source-auth-failure",
+    ]
+    old_fifth = json.loads(fifth.read_text())["cases"]
+    for before, after in zip(old_fifth, sixth_cases, strict=True):
+        assert stable_non_behavior_facts(before["facts"]) == stable_non_behavior_facts(after["facts"])
+        if after["id"] in {"fresh-source-snapshot", "fresh-date-snapshot"}:
+            assert "resume_from" not in after
     old_v3 = json.loads((root / "okr_cases.v3.json").read_text())["cases"]
     for before, after in zip(old_v3, CASES, strict=True):
         assert stable_non_behavior_facts(before["facts"]) == stable_non_behavior_facts(after["facts"])
@@ -701,7 +824,7 @@ def test_cases_are_versioned_without_rewriting_failed_oracle():
         assert "林辰 [eval-b]" in behavior["eval-b"]["content"]
         assert "负责人轮流主持并独立跟进跨团队依赖" in behavior["eval-a"]["content"]
         assert "每周带两名工程师复盘定位方法" in behavior["eval-b"]["content"]
-    date_case = next(c for c in CASES if c["id"] == "recover-changed-date")
+    date_case = next(c for c in CASES if c["id"] == "fresh-date-snapshot")
     assert "没有AI使用及工作增益证据" in date_case["facts"]["evidence"]["behavior_by_manager"]["eval-b"]["content"]
     for before, after in zip(first, CASES, strict=True):
         assert stable_non_behavior_facts(before["facts"]) == stable_non_behavior_facts(after["facts"])
@@ -836,3 +959,52 @@ def test_release_manifest_pins_verified_current_installation():
         assert entry["new_sha256"] == row["approved_new_sha256"], row["source"]
         if "managed_sha256" in row:
             assert entry["old_managed_sha256"] == row["managed_sha256"]
+
+
+def test_synthetic_scheduled_context_exposes_current_artifacts_without_contents(tmp_path):
+    fixture = Fixture(CASES[0]["facts"], tmp_path)
+    content = '{"private":"must not be exposed"}'
+    (tmp_path / "analysis.json").write_text(content)
+
+    tool = fixture.build_server("consumer", {})._tool_manager.get_tool(
+        "read_scheduled_context"
+    ).fn
+
+    context = tool()
+
+    assert {
+        "name": "analysis.json",
+        "sha256": okr_eval.digest(content.encode()),
+    } in context["task_artifacts"]
+    assert all("content" not in artifact for artifact in context["task_artifacts"])
+    assert "must not be exposed" not in json.dumps(context)
+
+
+def test_synthetic_scheduled_context_uses_requested_run_id(tmp_path):
+    fixture = Fixture(CASES[0]["facts"], tmp_path, scheduled_run_id=42)
+    tool = fixture.build_server("consumer", {})._tool_manager.get_tool(
+        "read_scheduled_context"
+    ).fn
+
+    assert tool()["run_id"] == 42
+
+
+def test_native_phase_failure_keeps_diagnostic_and_fixture_tool_trace(tmp_path):
+    fixture = Fixture(CASES[0]["facts"], tmp_path)
+    fixture.record("read_scheduled_context", {}, {"task_artifacts": []})
+    audit = {
+        "output": None,
+        "diagnostic": "Native final output failed the production contract",
+    }
+
+    result = okr_eval.native_failure_case(
+        "composite-coverage", tmp_path, "audit", audit=audit
+    )
+
+    assert result["failed_phase"] == "audit"
+    assert result["audit"]["diagnostic"] == audit["diagnostic"]
+    assert result["raw_tool_trace"][0]["tool"] == "read_scheduled_context"
+
+
+def test_okr_eval_pins_scheduled_context_implementation_hash():
+    assert "read_scheduled_context" in okr_eval.application_contract_hashes()
