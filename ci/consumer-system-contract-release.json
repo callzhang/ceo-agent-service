@@ -94,7 +94,7 @@
     {
       "source": "ci/shared-skills/stardust-oa-people-review/SKILL.md",
       "target": "skills/stardust-oa-people-review/SKILL.md",
-      "old_sha256": "4f71dc707f22f784fb7e0f4d4f43c22ea003262884112081a595a10bb329e651",
+      "old_sha256": "4eb05afec2760acff5b4993fd1eb0f9960de2ef202995600316f4773331adbd4",
       "new_sha256": "4eb05afec2760acff5b4993fd1eb0f9960de2ef202995600316f4773331adbd4"
     },
     {
@@ -118,9 +118,9 @@
     {
       "source": "ci/shared-skills/ceo-weekly-okr-report/SKILL.md",
       "target": "skills/ceo-weekly-okr-report/SKILL.md",
-      "old_sha256": "038973933c0e8ff70f9c87b2912107a5d3ae0efcb53aeaf308e9bd3f091c01b9",
+      "old_sha256": "54d3e45e58cdf819d21d9ad4c3973030a5a70de75b0f8d583995a5a496464d5e",
       "new_sha256": "54d3e45e58cdf819d21d9ad4c3973030a5a70de75b0f8d583995a5a496464d5e",
-      "old_managed_sha256": "038973933c0e8ff70f9c87b2912107a5d3ae0efcb53aeaf308e9bd3f091c01b9"
+      "old_managed_sha256": "54d3e45e58cdf819d21d9ad4c3973030a5a70de75b0f8d583995a5a496464d5e"
     },
     {
       "source": "ci/shared-skills/ceo-weekly-okr-report/scripts/analysis.schema.json",
