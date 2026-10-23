@@ -47,6 +47,7 @@ def test_repository_consumer_release_manifest_tracks_oa_skill_digest():
     # The old digest is a release-time precondition. After a successful
     # deployment the installed file has the new digest, so do not compare the
     # old digest with mutable machine state in this repository-level test.
+    assert entry["old_sha256"] == "981e443dcb739bf95cd349db42c1af18c42d900188fb975c2907df8fe550ea54"
     assert len(entry["old_sha256"]) == 64
     assert all(char in "0123456789abcdef" for char in entry["old_sha256"])
     assert entry["new_sha256"] == _digest((root / entry["source"]).read_bytes())
@@ -179,6 +180,7 @@ def test_repository_consumer_release_manifest_includes_people_review_skill():
     entry = next(item for item in manifest["files"] if item["source"] == source)
 
     assert entry["target"] == "skills/stardust-oa-people-review/SKILL.md"
+    assert entry["old_sha256"] == "4f71dc707f22f784fb7e0f4d4f43c22ea003262884112081a595a10bb329e651"
     assert entry["new_sha256"] == _digest((root / source).read_bytes())
 
 
@@ -193,7 +195,7 @@ def test_repository_consumer_release_manifest_includes_current_attendance_review
     assert entry["target"] == "skills/stardust-oa-attendance-travel-review/SKILL.md"
     assert entry["old_sha256"] == "f19093c34db7698577962a8c177836bf74e368f3e66655630d20f503ff5763c9"
     assert entry["new_sha256"] == _digest((root / source).read_bytes())
-    assert entry["old_sha256"] == entry["new_sha256"]
+    assert entry["new_sha256"] != entry["old_sha256"]
 
 
 @pytest.mark.parametrize("script", ("report_contract.py", "validate_run.py"))
