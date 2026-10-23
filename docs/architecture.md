@@ -574,6 +574,11 @@ Consumer 会话兼容键还绑定本轮实际选中的 Skill 正文：冻结 Ski
 的 Consumer 会话仍按原连续会话行为处理。旧会话及历史运行保留，Audit 会话规则、审批权限和动作门槛
 不变。
 
+Codex Consumer 结果校验失败后的重试，只在同一执行代次和 revision、失败明确可重试且 session 可续用、
+并且原生输出 schema 身份与当前 purpose 完全匹配时复用原 session。原生 schema 由 CLI 参数提交，
+Developer 只保存其 SHA-256 指纹；旧会话中完整保存的 Pydantic wire schema 仍可精确核验。身份缺失或
+不匹配时开启新 session；相同无效结果重复失败继续遵守既有新 session 规则和重试上限。
+
 Consumer 收到 Audit 的 return/reject 后，只有原候选、审核、任务代次及 Codex session
 精确匹配，原始完整输入指纹和上一候选的原生完成回答仍在同一 transcript 中，且 session 自上一 Consumer turn 后没有
 新增内容或 compaction 时，才在该 session 里提交精简修订指令：本轮时间、完整 Audit feedback、
