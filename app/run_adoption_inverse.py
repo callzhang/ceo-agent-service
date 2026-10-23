@@ -443,3 +443,154 @@ def retained_action_source_rows(db: sqlite3.Connection, source_metadata: dict, *
             row["action_data"] = data
         result.append(row)
     return result
+
+
+def adopted_action_source_rows(db: sqlite3.Connection, source_metadata: dict,
+                               forward_metadata: dict, *, run_inverse_metadata: dict,
+                               identity_plan: dict | None = None) -> list[dict]:
+    """Build source-shaped Action rows from current adopted native facts.
+
+    This is an in-memory half of the unactivated inverse. It reads current
+    native adoption/progress rows and uses the shared identity planner; it does
+    not write Actions, sequence state, receipts or observers.
+    """
+    if not db.in_transaction or db.execute("pragma foreign_keys").fetchone()[0]:
+        raise ValueError("adopted Action row building requires caller-owned FK-off transaction")
+    from app import action_storage
+    from app.current_action_schema import current_action_payloads
+    from app.execution_owner_definitions import EXECUTION_FIELDS
+    from app.run_adoption_definitions import validate_field_map
+
+    validate_field_map()
+    plan = identity_plan or plan_run_adoption_inverse(
+        db, source_metadata, forward_metadata,
+        run_inverse_metadata=run_inverse_metadata)
+    if type(plan) is not dict or plan.get("version") != 1 or type(plan.get("adoptions")) is not list:
+        raise ValueError("invalid adoption inverse identity plan")
+    payloads = current_action_payloads()
+    layouts = payloads.layouts
+    source_sql = next(item[2] for item in source_metadata["action_catalog"]
+                      if item[0] == "table" and item[1] == "actions")
+    source_columns = _table_stored_columns(source_sql)
+    run_map, physical_runs = _run_sources(db, run_inverse_metadata)
+    plan_by_owner = {}
+    for item in plan["adoptions"]:
+        key = (item["source_kind"], tuple(item["native_owner"]))
+        if key in plan_by_owner:
+            raise ValueError("duplicate adopted Action plan owner")
+        plan_by_owner[key] = item
+
+    candidate_physical = {}
+    review_physical = {}
+    selection_physical = {}
+    # Resolve predecessor and execution references only after every identity
+    # has been planned, so forward references never depend on row order.
+    adopted_reviews = db.execute(
+        "select id,consumer_run_id,audit_run_id,candidate_digest,decision,result_json,created_at from main.run_adopted_reviews order by id").fetchall()
+    for row in adopted_reviews:
+        native_id, consumer, audit, *_ = row
+        item = plan_by_owner[("candidate_reviews", (int(native_id), int(audit)))]
+        review_physical[(int(consumer), int(audit))] = int(item["physical_id"])
+    adopted_selections = db.execute(
+        "select id,consumer_run_id,audit_run_id,option_key,status,created_at from main.run_adopted_selections order by id").fetchall()
+    for row in adopted_selections:
+        native_id, consumer, audit, *_ = row
+        item = plan_by_owner[("candidate_selections", (int(native_id), int(consumer)))]
+        selection_physical[(int(consumer), int(audit))] = int(item["physical_id"])
+    candidate_physical = {
+        int(item["canonical_run_id"]): int(item["physical_id"])
+        for item in plan["adoptions"] if item["source_kind"] == "review_candidates"
+    }
+
+    result = []
+
+    def make_row(kind, plan_item, payload_values, refs):
+        layout = layouts[kind]
+        packed = layout.pack(payload_values, scalar_codec=action_storage._encoded_native_sqlite_value)
+        payload = db.execute("select jsonb(?)", (packed,)).fetchone()[0]
+        row = dict.fromkeys(source_columns)
+        row.update({"id": int(plan_item["physical_id"]), "_kind": payloads.record_types.code(kind),
+                    "legacy_key": plan_item["public_id"], "payload_json": payload})
+        for name, value in refs.items():
+            if name in row:
+                row[name] = value
+        return row
+
+    progress_columns = ("consumer_run_id", "approved_audit_run_id", "selected_audit_run_id",
+                        "status", "lease_owner", "lease_expires_at", "result_json",
+                        "created_at", "updated_at")
+    progress_rows = {int(row[0]): dict(zip(progress_columns, row, strict=True))
+        for row in db.execute("select consumer_run_id,approved_audit_run_id,selected_audit_run_id,status,lease_owner,lease_expires_at,result_json,created_at,updated_at from main.run_execution_progress")}
+
+    for row in db.execute("select consumer_run_id,stage_index,predecessor_review_id,candidate_digest,candidate_json,invalidated_at,invalidation_reason,created_at from main.run_adopted_results"):
+        consumer, stage, predecessor, digest, body, invalidated, reason, created = row
+        consumer = int(consumer)
+        item = plan_by_owner[("review_candidates", (consumer, None))]
+        _, run = _source_run(consumer, run_map, physical_runs)
+        values = {"execution_generation": run["execution_generation"], "stage_index": stage,
+                  "proposal_revision": run["proposal_revision"], "candidate_digest": digest,
+                  "candidate_json": body, "invalidated_at": invalidated,
+                  "invalidation_reason": reason, "created_at": created}
+        refs = {"task_id": run["task_id"], "consumer_run_id": item["source_run_id"],
+                "predecessor_review_id": None}
+        if predecessor is not None:
+            pred = db.execute("select consumer_run_id,audit_run_id from main.run_adopted_reviews where id=?", (predecessor,)).fetchone()
+            if pred is None or (int(pred[0]), int(pred[1])) not in review_physical:
+                raise ValueError("unresolved adopted predecessor Review reference")
+            refs["predecessor_review_id"] = review_physical[(int(pred[0]), int(pred[1]))]
+        progress = progress_rows.get(consumer)
+        if progress is not None:
+            approved = int(progress["approved_audit_run_id"])
+            if (consumer, approved) not in review_physical:
+                raise ValueError("unresolved adopted execution Review reference")
+            selection_ref = None
+            if progress["selected_audit_run_id"] is not None:
+                selected_audit = int(progress["selected_audit_run_id"])
+                selection_ref = selection_physical.get((consumer, selected_audit))
+                if selection_ref is None:
+                    raise ValueError("unresolved adopted execution Selection reference")
+            alias = plan_by_owner[("candidate_execution_alias", (consumer, None))]
+            values.update({"execution_public_id": _cast_public_integer(
+                alias["public_id"], alias["public_id_type"]),
+                "execution_status": progress["status"], "execution_lease_owner": progress["lease_owner"],
+                "execution_lease_expires_at": progress["lease_expires_at"],
+                "execution_result_json": progress["result_json"],
+                "execution_created_at": progress["created_at"],
+                "execution_updated_at": progress["updated_at"]})
+            refs["execution_review_id"] = review_physical[(consumer, approved)]
+            refs["execution_selection_id"] = selection_ref
+        else:
+            values.update(dict.fromkeys(EXECUTION_FIELDS, None))
+            refs.update({"execution_review_id": None, "execution_selection_id": None})
+        result.append(make_row("review_candidates", item, values, refs))
+
+    for row in adopted_reviews:
+        native_id, consumer, audit, digest, decision, body, created = row
+        item = plan_by_owner[("candidate_reviews", (int(native_id), int(audit)))]
+        if int(consumer) not in candidate_physical:
+            raise ValueError("unresolved adopted Review Candidate reference")
+        result.append(make_row("candidate_reviews", item,
+            {"decision": decision, "candidate_digest": digest, "result_json": body, "created_at": created},
+            {"candidate_id": candidate_physical[int(consumer)], "audit_run_id": item["source_run_id"]}))
+    for row in adopted_selections:
+        native_id, consumer, audit, option, status, created = row
+        item = plan_by_owner[("candidate_selections", (int(native_id), int(consumer)))]
+        review_id = review_physical.get((int(consumer), int(audit)))
+        if review_id is None:
+            raise ValueError("unresolved adopted Selection Review reference")
+        result.append(make_row("candidate_selections", item,
+            {"option_key": option, "status": status, "created_at": created},
+            {"candidate_id": candidate_physical[int(consumer)], "review_id": review_id}))
+    for row in db.execute("select id,consumer_run_id,instruction,created_at from main.run_adopted_supplements order by id"):
+        native_id, consumer, instruction, created = row
+        item = plan_by_owner[("candidate_supplements", (int(native_id), int(consumer)))]
+        result.append(make_row("candidate_supplements", item,
+            {"instruction": instruction, "created_at": created},
+            {"candidate_id": candidate_physical[int(consumer)]}))
+    for consumer in progress_rows:
+        item = plan_by_owner[("candidate_execution_alias", (consumer, None))]
+        result.append(make_row("candidate_execution_alias", item, {},
+            {"candidate_id": candidate_physical[consumer]}))
+    if any(set(row) != set(source_columns) for row in result):
+        raise ValueError("adopted Action row differs from source stored columns")
+    return result
