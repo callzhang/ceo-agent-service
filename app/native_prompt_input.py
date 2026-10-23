@@ -27,7 +27,8 @@ def codex_session_wire_schema(session_id: str) -> dict[str, object] | None:
     path = native.find_codex_session_path(session_id)
     if path is None:
         return None
-    marker = "## Pydantic Wire Contract\n"
+    native_marker = "## Native Output Schema SHA-256\n"
+    pydantic_marker = "## Pydantic Wire Contract\n"
     try:
         with path.open(encoding="utf-8") as stream:
             for line in islice(stream, 32):
@@ -39,9 +40,22 @@ def codex_session_wire_schema(session_id: str) -> dict[str, object] | None:
                 )
                 if developer is None:
                     continue
-                if marker not in developer:
+                if native_marker in developer:
+                    source = developer.rsplit(native_marker, 1)[1]
+                    lines = source.splitlines()
+                    if not lines:
+                        return None
+                    fingerprint = lines[0].strip()
+                    if (
+                        len(fingerprint) != 64
+                        or any(character not in "0123456789abcdef" for character in fingerprint)
+                        or any(line.strip() for line in lines[1:])
+                    ):
+                        return None
+                    return {"$native_output_schema_sha256": fingerprint}
+                if pydantic_marker not in developer:
                     continue
-                source = developer.split(marker, 1)[1]
+                source = developer.split(pydantic_marker, 1)[1]
                 schema, end = json.JSONDecoder().raw_decode(source)
                 if not isinstance(schema, dict):
                     return None
