@@ -74,18 +74,31 @@ def test_two_components_exact_multibyte_and_once_per_version():
     reader = RequestSourceReader(provider_reader=fake)
     assert isinstance(reader.resolve(binding, source_ref=REF, quote="会议🙂"), AvailableSource)
     assert isinstance(reader.resolve(binding), AvailableSource)
-    assert [name for name, _ in fake.calls] == ["info", "list", "todos"]
-    assert fake.calls[1][1] == {
-        "scope": "all", "limit": 50, "cursor": "",
-        "start": "2026-10-19T00:00:00+00:00", "end": "2026-10-22T00:00:00+00:00",
-    }
+    assert [name for name, _ in fake.calls] == ["info", "todos"]
     assert reader.resolve(binding, quote="absent").reason is SourceUnavailableReason.QUOTE_MISSING
     assert reader.resolve(binding, source_ref="wrong").reason is SourceUnavailableReason.SOURCE_REF_MISMATCH
     assert reader.resolve(replace(binding, provider_locator_json='{"other":1}')).reason is SourceUnavailableReason.BINDING_CONFLICT
     assert RequestSourceReader().resolve(binding).reason is SourceUnavailableReason.READER_UNAVAILABLE
 
 
-def test_distinct_minutes_sources_reuse_one_complete_list_within_request():
+def test_exact_minutes_metadata_does_not_scan_wide_list_window():
+    body = _canonical_minutes_todos_payload(
+        minutes=MEETING, todos_payload=TODOS, transcript_excerpts=[]
+    )
+    binding = bound(body)
+
+    class ExactInfoDws(FakeDws):
+        def list_minutes_page(self, **kwargs):
+            raise AssertionError("exact UUID read must not scan all minutes")
+
+    fake = ExactInfoDws()
+    result = RequestSourceReader(provider_reader=fake).resolve(binding, source_ref=REF)
+
+    assert isinstance(result, AvailableSource)
+    assert [name for name, _ in fake.calls] == ["info", "todos"]
+
+
+def test_distinct_minutes_sources_are_read_by_their_exact_ids():
     other_uuid = "b46b9c39-36f6-5b8f-9f96-29110fafb882"
     other_ref = f"{other_uuid}#todos-sha256={'b' * 64}"
     other_meeting = {"taskUuid": other_uuid, "title": "另一场会议", "startTime": START_MS, "endTime": START_MS + 3_600_000}
@@ -107,7 +120,7 @@ def test_distinct_minutes_sources_reuse_one_complete_list_within_request():
 
     assert isinstance(reader.resolve(bound(first_body)), AvailableSource)
     assert isinstance(reader.resolve(other_binding), AvailableSource)
-    assert [name for name, _ in fake.calls] == ["info", "list", "list", "todos", "info", "todos"]
+    assert [name for name, _ in fake.calls] == ["info", "todos", "info", "todos"]
 
     changed = FakeDws(pages=[
         {"items": [{**MEETING, "title": "已修改"}, other_meeting],
@@ -116,10 +129,10 @@ def test_distinct_minutes_sources_reuse_one_complete_list_within_request():
     assert RequestSourceReader(provider_reader=changed).resolve(
         bound(first_body)
     ).reason is SourceUnavailableReason.VERSION_MISMATCH
-    assert [name for name, _ in changed.calls] == ["info", "list", "todos"]
+    assert [name for name, _ in changed.calls] == ["info", "todos"]
 
 
-def test_exact_info_bounds_list_and_reuses_pages_for_same_day_sources():
+def test_exact_info_supplies_source_metadata_without_list_pagination():
     other_uuid = "b46b9c39-36f6-5b8f-9f96-29110fafb882"
     start_ms = int(datetime(2026, 10, 20, 20, tzinfo=timezone.utc).timestamp() * 1000)
     meetings = [
@@ -150,35 +163,26 @@ def test_exact_info_bounds_list_and_reuses_pages_for_same_day_sources():
     fake = TimedDws()
     reader = RequestSourceReader(provider_reader=fake)
     assert all(isinstance(reader.resolve(binding), AvailableSource) for binding in bindings)
-    assert [name for name, _ in fake.calls] == ["info", "list", "list", "todos", "info", "todos"]
-    list_calls = [args for name, args in fake.calls if name == "list"]
-    assert [args["cursor"] for args in list_calls] == ["", "next"]
-    assert all(args["start"] == "2026-10-19T00:00:00+00:00" for args in list_calls)
-    assert all(args["end"] == "2026-10-22T00:00:00+00:00" for args in list_calls)
+    assert [name for name, _ in fake.calls] == ["info", "todos", "info", "todos"]
 
 
-def test_exact_info_conflict_or_scoped_duplicate_rejects_source():
+def test_exact_info_identity_mismatch_is_source_unavailable():
     start_ms = int(datetime(2026, 10, 20, 20, tzinfo=timezone.utc).timestamp() * 1000)
     meeting = {**MEETING, "startTime": start_ms, "endTime": start_ms + 3_600_000}
     body = _canonical_minutes_todos_payload(minutes=meeting, todos_payload=TODOS, transcript_excerpts=[])
 
     class TimedDws(FakeDws):
-        def __init__(self, *, wrong_title=False, duplicate=False):
-            items = [meeting, meeting] if duplicate else [meeting]
-            super().__init__(pages=[{"items": items, "has_more": False, "next_token": ""}])
-            self.wrong_title = wrong_title
-
         def get_minutes_info(self, uuid):
             self.calls.append(("info", uuid))
-            return {"result": {"taskUuid": uuid, "title": "不一致" if self.wrong_title else meeting["title"],
+            return {"result": {"taskUuid": "another-meeting", "title": meeting["title"],
                                "startTime": start_ms, "endTime": meeting["endTime"]}}
 
-    for fake in (TimedDws(wrong_title=True), TimedDws(duplicate=True)):
-        assert RequestSourceReader(provider_reader=fake).resolve(bound(body)).reason is SourceUnavailableReason.SOURCE_INCOMPLETE
-        assert [name for name, _ in fake.calls] == ["info", "list"]
+    fake = TimedDws()
+    assert RequestSourceReader(provider_reader=fake).resolve(bound(body)).reason is SourceUnavailableReason.SOURCE_MISSING
+    assert [name for name, _ in fake.calls] == ["info"]
 
 
-def test_exact_info_without_start_time_stops_before_list_read():
+def test_exact_info_without_start_time_is_incomplete_without_list_fallback():
     body = _canonical_minutes_todos_payload(
         minutes=MEETING, todos_payload=TODOS, transcript_excerpts=[]
     )
@@ -195,27 +199,14 @@ def test_exact_info_without_start_time_stops_before_list_read():
     assert [name for name, _ in fake.calls] == ["info"]
 
 
-def test_scoped_absence_is_source_missing_without_unbounded_scan():
+def test_exact_uuid_lookup_does_not_depend_on_scoped_list_visibility():
     start_ms = int(datetime(2026, 10, 20, 20, tzinfo=timezone.utc).timestamp() * 1000)
     meeting = {**MEETING, "startTime": start_ms, "endTime": start_ms + 3_600_000}
     body = _canonical_minutes_todos_payload(minutes=meeting, todos_payload=TODOS, transcript_excerpts=[])
 
-    class DelayedIndexDws(FakeDws):
-        def get_minutes_info(self, uuid):
-            self.calls.append(("info", uuid))
-            return {"result": {"taskUuid": uuid, "title": meeting["title"],
-                               "startTime": start_ms, "endTime": meeting["endTime"]}}
-
-        def list_minutes_page(self, **kwargs):
-            self.calls.append(("list", kwargs))
-            return {"items": [] if kwargs.get("start") else [meeting],
-                    "has_more": False, "next_token": ""}
-
-    fake = DelayedIndexDws()
-    assert RequestSourceReader(provider_reader=fake).resolve(bound(body)).reason is SourceUnavailableReason.SOURCE_MISSING
-    assert [args.get("start", "") for name, args in fake.calls if name == "list"] == [
-        "2026-10-19T00:00:00+00:00",
-    ]
+    fake = FakeDws()
+    assert isinstance(RequestSourceReader(provider_reader=fake).resolve(bound(body)), AvailableSource)
+    assert [name for name, _ in fake.calls] == ["info", "todos"]
 
 
 def test_four_components_and_changed_current_body():
@@ -231,28 +222,9 @@ def test_four_components_and_changed_current_body():
     binding = bound(body)
     assert json.loads(binding.provider_locator_json)["components"] == ["meeting", "todos", "transcript_excerpts", "meeting_summary"]
     assert isinstance(RequestSourceReader(provider_reader=fake).resolve(binding, quote="甲：请办事。"), AvailableSource)
-    assert [name for name, _ in fake.calls] == ["info", "list", "todos", "transcript", "summary"]
+    assert [name for name, _ in fake.calls] == ["info", "todos", "transcript", "summary"]
     changed = FakeDws(todos=timed_todos, transcript={"paragraphs": PARAGRAPHS}, summary={"result": {"fullSummary": "changed"}})
     assert RequestSourceReader(provider_reader=changed).resolve(binding).reason is SourceUnavailableReason.VERSION_MISMATCH
-
-
-@pytest.mark.parametrize("pages,reason", [
-    ([{"items": [], "has_more": False, "next_token": ""}], SourceUnavailableReason.SOURCE_MISSING),
-    ([{"items": [MEETING, MEETING], "has_more": False, "next_token": ""}], SourceUnavailableReason.SOURCE_INCOMPLETE),
-    ([{"items": [MEETING], "has_more": True, "next_token": ""}], SourceUnavailableReason.SOURCE_INCOMPLETE),
-    ([{"items": [MEETING], "has_more": False, "next_token": "extra"}], SourceUnavailableReason.SOURCE_INCOMPLETE),
-    ([{"items": [MEETING], "has_more": None, "next_token": ""}], SourceUnavailableReason.SOURCE_INCOMPLETE),
-    ([{"items": [MEETING], "has_more": True, "next_token": "next"}, {"items": [], "has_more": True, "next_token": "next"}], SourceUnavailableReason.SOURCE_INCOMPLETE),
-])
-def test_exhaustive_list_failures(pages, reason):
-    body = _canonical_minutes_todos_payload(minutes=MEETING, todos_payload=TODOS, transcript_excerpts=[])
-    assert RequestSourceReader(provider_reader=FakeDws(pages=pages)).resolve(bound(body)).reason is reason
-
-
-def test_match_must_be_unambiguous_across_all_pages():
-    pages = [{"items": [MEETING], "has_more": True, "next_token": "next"}, {"items": [MEETING], "has_more": False, "next_token": ""}]
-    body = _canonical_minutes_todos_payload(minutes=MEETING, todos_payload=TODOS, transcript_excerpts=[])
-    assert RequestSourceReader(provider_reader=FakeDws(pages=pages)).resolve(bound(body)).reason is SourceUnavailableReason.SOURCE_INCOMPLETE
 
 
 def test_required_components_cannot_disappear():
@@ -306,15 +278,15 @@ def test_expected_dws_error_is_unavailable_and_programmer_error_surfaces():
     binding = bound(body)
 
     class Unreadable(FakeDws):
-        def list_minutes_page(self, **kwargs):
+        def get_minutes_info(self, uuid):
             raise DwsError("unreadable")
 
     class Broken(FakeDws):
-        def list_minutes_page(self, **kwargs):
+        def get_minutes_info(self, uuid):
             raise ZeroDivisionError
 
     class UnexpectedValueError(FakeDws):
-        def list_minutes_page(self, **kwargs):
+        def get_minutes_info(self, uuid):
             raise ValueError("provider programmer bug")
 
     assert RequestSourceReader(provider_reader=Unreadable()).resolve(binding).reason is SourceUnavailableReason.SOURCE_INCOMPLETE

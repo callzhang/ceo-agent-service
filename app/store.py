@@ -10214,7 +10214,12 @@ class AutoReplyStore(LogicalRunStoreMixin, ReviewedCandidateStoreMixin):
                         "unsubscribe execution requires reconciliation"
                     )
                 retry_count = int(previous.get("retry_count") or 0)
-                if retry_count >= TRANSIENT_BROWSER_UNSUBSCRIBE_RETRIES:
+                # The marker counts retries already granted after a failed
+                # attempt.  A count equal to the retry budget still permits
+                # that final retry (initial attempt + N retries); the next
+                # failed retry advances past the budget and is fenced here
+                # before another browser call.
+                if retry_count > TRANSIENT_BROWSER_UNSUBSCRIBE_RETRIES:
                     raise UnsubscribeOutcomeUnresolvedError(
                         "unsubscribe external retry budget exhausted; reconciliation required"
                     )

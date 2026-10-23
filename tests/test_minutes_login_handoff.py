@@ -30,7 +30,12 @@ def test_expired_console_opens_user_chrome_and_keeps_failure(monkeypatch, tmp_pa
             with browser.signed_in_console(tmp_path):
                 pytest.fail('unauthenticated console must not be yielded')
         open_page.assert_called_once_with(
-            ['/usr/bin/open', '-a', 'Google Chrome', browser.HISTORY_URL], check=True,
+            [
+                '/Applications/Google Chrome.app/Contents/MacOS/Google Chrome',
+                '--new-window',
+                browser.HISTORY_URL,
+            ],
+            check=True,
         )
     else:
         with browser.signed_in_console(tmp_path) as console:

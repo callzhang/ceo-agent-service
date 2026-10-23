@@ -353,12 +353,11 @@ TaskAgent 按实际生成任务的 runtime attempt、session 和记录范围检�
 
 AI Minutes locator 显式选择 sentence_v1 或历史 paragraph_v1 excerpt 格式，保持原有
 前六／后四窗口；没有 excerpts 的 locator 不带该字段。格式／hash 不匹配不换解码器。
-AI Minutes 来源先按 UUID 读取准确基础信息，用其开始时间限定三天的列表范围，
-遍历该范围全部分页并核对 UUID、重复项、分页状态及基础信息；再读取行动项等组件，
-核对原始正文版本。基础信息缺失或指定范围内无目标时，来源不可用，不扩大为全量扫描。
-同一个来源读取请求内，多条同时间范围 Signal 复用已验证的分页；分页仅在该请求
-对象存活期间保留，不写入持久缓存。列表 `all` 是提供方可访问视图，不宣称覆盖
-`mine + shared` 的全部记录。
+AI Minutes 来源通过 UUID 读取准确基础信息，不为重新定位该 UUID 扫描周边日期内的
+全部听记分页。基础信息必须对应请求的 UUID，开始时间有效；缺失或身份不同则来源不可用。
+随后按 locator 读取行动项及其明确选定的 transcript excerpt／摘要组件，并核对原始正文版本。
+听记列表分页只用于发现与同步，不参与已知 UUID 的来源回读。列表 `all` 是提供方可访问视图，
+不宣称覆盖 `mine + shared` 的全部记录。
 Worker、语义服务和 Web 在域写事务之外使用同一准确来源读取机制；Console 的已有
 业务来源可从链接事件事实取得，不建立原文缓存。
 
@@ -570,7 +569,7 @@ Attempt History 仅对当前 `needs_human` 规则候选显示“需要你处理/
 压缩后的输入从任务所绑定的 OA URL/业务键核对 process 与 task 身份，并通过保存的定时扫描 run 恢复 OA Consumer 上下文后重新冻结当前所选 Skill。无法精确核对身份或找回 run/Skill 时拒绝排队；不会尝试把内部触发 ID 当作钉钉消息读取。
 待办扫描的复审指纹包括当前选择的 Skill 正文摘要。Skill 规则更新时，即使外部审批流水未改变，也为仍在本人待办中的流程排入一轮新 Consumer/Audit；相同 Skill 正文继续去重。新一轮仍冻结实际选中的完整 Skill 正文，并使用原有审批身份、Audit、System Executor 和外部回执门禁。
 组织架构变动的业务理由或受影响工作等可补充事实，由 people-review Skill 指示向已核实的发起人/责任人留言询问并保留 OA 待办；审批人拥有普通最终审批节点本身不构成保留给个人的 `needs_human` 特殊裁量。
-组织架构同一事实缺口的证据、DWS 同意和退回记录按来源时间戳排序。只有最近一次已核验退回之后提交、可读且来源已核验的材料，才算该轮退回后的新证据；之后的 `AGREE` 本身及退回前提交的截图/评论/附件不能消除缺口。审批人在没有这类新证据时再次同意，不得当作要求已满足或以 `no_action` 留在 Derek 待办；按通用 OA 未解决问题退回规则，将当前任务正式退回给这次同意的审批人，写明未解决要求与证据时间线。除非新材料带来不同且申请人可补正的缺口，不重复向提交人提出原请求。审阅端读取/OCR 失败不属于申请人材料缺口。具体审查标准见 people-review Skill。
+组织架构同一事实缺口的证据、DWS 同意和退回记录按来源时间戳排序。只有最近一次已核验退回之后提交、可读且来源已核验的材料，才算该轮退回后的新证据；退回前的截图/评论/附件不能因审批人后来引用而算作新提交。责任审批人的再次 `AGREE` 是其审批决定，应按常规标准结合流程中的陈述、审批链和可核验事实判断；不得要求单独确认记录、重复同一退回，或仅因没有新材料自动拒绝。若第三次审核后仍有会改变结论的具体矛盾，保留待办并由审批负责人单独汇报，不再原地退回/评论，也不按次数自动拒绝。除非新材料带来不同且申请人可补正的缺口，不重复向提交人提出原请求。审阅端读取/OCR 失败不属于申请人材料缺口。具体审查标准见 people-review Skill。
 Attention 对最新成功待办扫描仍报告为活动的 OA 流程继续显示 pending；本地 Consumer 已完成评论或退回时，默认详情仅说明扫描仍见流程未终结，不推断“没有退回回执”。具体回执以 History/System Execution 与 DWS 流水读回为准。
 History 可对一条已有 uncertain OA 退回执行专用只读核验：调用方必须提供当前绑定的候选和 Audit review；Attempt 必须关联该 Audit run，Attempt 已保存的 OA 身份字段（若有）也必须与候选匹配；并校验唯一既存 uncertain action journal 及 uncertain execution 后，才进入 `reconciliation_only` 执行模式。此模式只调用已注册 OA handler 的严格 DWS 回读，不调用 dispatch；通过后将匹配回执写入外部动作账本并更新同一执行代际，原始 provider response 继续保留在核验证据中。证据不完整或冲突时维持 uncertain。它不创建 Consumer/Audit 新代际，不改变审批结论，也不重放动作。
 默认 OA Consumer prompt 只负责选择通用审批与业务 Skill、按实时流程分类及提示执行后读回；审批阈值、可补充事实的问询和人工升级条件由所选 Skill 定义。启动迁移只替换与已知旧版内容完全相同的系统 OA prompt，并保留后续自定义改动。
@@ -2195,6 +2194,7 @@ Consumer→Audit 往返——退订在真实世界本来就是幂等的。同理
 恢复更新按不可变动作身份连接终态回执，读取任务持久化字段时限定任务表；回执投影只能收口匹配的失败任务，不发起新的退订操作。
 
 每个邮箱账户有两个独立回溯窗口：Agent 默认 30 天，模型默认 365 天。`email-message-check-once`
+对单账户的 DNS、连接、超时及 IMAP 会话中断先按共享指数退避间隔重试，最多 3 次；同轮其他账户仍独立扫描。仅当失败账户全是这类外部传输故障时，定时任务按短时外部依赖故障处理：保留该轮失败事实，依既有持续故障门槛决定是否写入 Attention，后续定时轮次继续恢复。登录凭据、TLS 配置、扫描结果错误和本地逻辑失败不按传输故障重试或降级；成功轮次仍用既有正式入口消解已恢复的故障记录。
 按当前 runtime 模式只运行其中一条路径：无上线模型时运行 Agent 窗口并遵守账户的“仅未读/全部”
 设置；模型上线后只运行模型窗口，优先覆盖全部尚无稳定记录的已读和未读 Inbox/未绑定来源邮件，不
 按日期把近期邮件留给 Agent，也不在同一轮创建 Agent 分类任务。模型路径以每文件夹固定批量
@@ -2338,9 +2338,9 @@ URL 查询参数。外部反馈页可以收集评分，但不能通过链接、�
 
 邮件退订由独立系统服务执行，不进入 Consumer/Audit。其原有 ActionPlan、浏览器步骤、回执和退避保留，历史 Audit 退订 run 只作历史事实，不是新的执行路径。
 退订入口导航遇到超时时，若同一次导航已离开空白页，执行器直接读取当前页面并检查真实页面回执，不再请求退订 URL；若仍停留在空白页，则保留外部超时失败并沿用有界退避。该读回只恢复已经到达的页面证据，不清除未知执行围栏，也不把页面未读成成功。
-退订浏览器仅把固定的内部失败类别投影到错误码；已识别的导航超时和页面状态缺失必须与兜底 `email_unsubscribe_browser_failed` 区分，错误码、步骤日志和页面原文里不得写入 URL 或凭证。结果的 `error_detail` 记下失败是什么：已识别的 `UnsubscribeBrowserError` 写固定枚举 `category=<名称>`（没有专属错误码的类别共用兜底码 `email_unsubscribe_browser_failed`，这里是唯一说明具体类别的地方，2026-09-25 有 6 次失败只剩这个兜底码）；未预期异常（兜底）会留下异常类名和截断到 240 字符的消息：URL、cookie/token/session 一类字段和 32 位以上的长串都先替换掉，再写入回执 evidence、这次尝试的 `audit_summary` 和任务的错误文本（`<码>: <类名: 消息>`，重试判断只看第一个冒号前的码）。此前该兜底只留下码，任务 384835（2026-09-25）两次失败因此查不出原因。所有结构化 `action_type=unsubscribe` 的失败都保持真实 `failed` 状态并留在 History，不进入管理者 Attention；外部原因的失败（第三方页面拒绝表单或一键请求、页面操作失败或超时、导航目标无效、控件不可用，清单在 `app/external_failures.py`，靠任务错误文本里的 `category=` 判断，不加字段）继续按既有指数退避重试。兼容旧 Attempt 的 `failed_browser: category=<名称>` 格式。若已有执行标记不满足明确 retryable 状态及身份校验，或 retryable 次数已耗尽，服务以 `email_unsubscribe_outcome_unresolved` 记录未决结果；任务仍失败且不进入管理者 Attention，不把围栏误报为内部 `ValueError`，不自动重放，也不清除标记。只有终态 receipt 可收口该动作。
+退订浏览器仅把固定的内部失败类别投影到错误码；已识别的导航超时和页面状态缺失必须与兜底 `email_unsubscribe_browser_failed` 区分，错误码、步骤日志和页面原文里不得写入 URL 或凭证。结果的 `error_detail` 记下失败是什么：已识别的 `UnsubscribeBrowserError` 写固定枚举 `category=<名称>`（没有专属错误码的类别共用兜底码 `email_unsubscribe_browser_failed`，这里是唯一说明具体类别的地方，2026-09-25 有 6 次失败只剩这个兜底码）；未预期异常（兜底）会留下异常类名和截断到 240 字符的消息：URL、cookie/token/session 一类字段和 32 位以上的长串都先替换掉，再写入回执 evidence、这次尝试的 `audit_summary` 和任务的错误文本（`<码>: <类名: 消息>`，重试判断只看第一个冒号前的码）。此前该兜底只留下码，任务 384835（2026-09-25）两次失败因此查不出原因。所有结构化 `action_type=unsubscribe` 的失败都保持真实 `failed` 状态并留在 History，不进入管理者 Attention；外部原因的失败（第三方页面拒绝表单或一键请求、页面操作失败或超时、导航目标无效、控件不可用，清单在 `app/external_failures.py`）继续按既有有界指数退避重试。Attention 分类通过任务错误中的固定 `category=` 校验分类，允许其后出现已脱敏 `detail` 和 `operation` 阶段后缀；浏览器/会话自身类别仍作为内部错误显示。兼容旧 Attempt 的 `failed_browser: category=<名称>` 格式。若已有执行标记不满足明确 retryable 状态及身份校验，或 retryable 次数已耗尽，服务以 `email_unsubscribe_outcome_unresolved` 记录未决结果；任务仍失败且不进入管理者 Attention，不把围栏误报为内部 `ValueError`，不自动重放，也不清除标记。只有终态 receipt 可收口该动作。
 旧失败任务的 effect-free 自动重入队还要求没有 `email_unsubscribe_execution_pending` 标记；即使没有 claim、receipt、effect、浏览器 step 或 Agent run，这个标记仍表示执行需要对账，恢复筛选必须保留失败状态并禁止自动重放。
-执行标记在退订请求前落库。浏览器返回属于瞬时外部失败清单的明确错误时，服务把当前标记原子更新为 `retryable`，只保留错误码、次数和原任务身份；下一次领取仍按本段的固定次数与指数退避执行同一授权动作。没有明确失败结果（例如进程中断）、非瞬时错误或无回执异常仍保留原 pending 标记，阻止自动重放；这与已归类的外部浏览器错误分开处理，不能把未知结果当成可重试失败。
+执行标记在退订请求前落库。浏览器返回属于瞬时外部失败清单的明确错误时，服务把当前标记原子更新为 `retryable`，只保留错误码、次数和原任务身份；下一次领取仍按本段的固定次数与指数退避执行同一授权动作。`retry_count` 记录已授予的重试次数；共享上限为首次操作之后最多 3 次重试，所以 count 为 3 时仍可执行第 4 次浏览器操作；之后的下一次本地领取在浏览器运行前以 `email_unsubscribe_outcome_unresolved` 拒绝。没有明确失败结果（例如进程中断）、非瞬时错误或无回执异常仍保留原 pending 标记，阻止自动重放；这与已归类的外部浏览器错误分开处理，不能把未知结果当成可重试失败。
 
 `email_unsubscribe_browser_timeout`、`email_unsubscribe_browser_session_unavailable`、兜底码 `email_unsubscribe_browser_failed` 这三个瞬时失败会先退避重试；用完固定次数后写终态 `failed` 错误文本时，只有兜底码把 `task_error` 里已经带的 `: category=<名称>`（或未预期异常的类名与消息）一并写入，其余两个专属码保持裸码——`app/external_failures.py` 只登记了这个精确格式。此前用完次数一律只写裸码，2026-09-25 那 6 次失败因此从未真正匹配过外部原因清单：它们的错误文本是裸的 `email_unsubscribe_browser_failed`，本该在 Attention 之外却一直在里面（Derek 2026-09-28 指出后修复）。控制台看到的失败原因同样有这道口子：一个还没读到任何页面、因而没有回执的退订任务（浏览器在读页面前就报错），观测时间线过去只给状态不给原因，2026-09-28 起把任务自己的错误文本一并投影进 `kind=unsubscribe` 的记录（`list_email_classification_observability` 和 `list_unsubscribe_states` 的 `error` 字段），控制台把已知的码译成人话，未知的码原样显示而不是不显示。钉钉 OKR 登录失效（`okr_headless_session_expired…`、`okr_authorization_required…`）同样是外部原因：只有人能重新登录，也保持 `failed`、不进 Attention；只有标准错误码 `authorization_required` 才能承载「需要人工」的授权决定，OKR 自己的错误码不行，所以它记为失败而不是人工决定。唯一例外是 `email_unsubscribe_receipts.entry_url`：该列按 Derek 的明确要求保存这次实际打开的完整私密 URL（含 query 与 token），用于人工复现同一个退订入口。写入前校验它的 sha256 等于 `entry_reference` 的摘要，因此不能与生命周期认定的身份漂移；它不经过 `assert_no_credentials`，因为被保存的正是那类 token。打开该 URL 会真实执行退订，任何能读这张表或这个页面的人都能替当事人退订。该列只在本次变更之后产生的 receipt 上有值，历史行为空且无法补全。退订浏览器不再对页面发出的网络请求做 origin 白名单、跳转或资源家族限制。
 同一 generation、同一 proposal revision 内，Consumer 或 Audit 每个 worker pass 最多跑 2 次 turn（`MAX_ROLE_ATTEMPTS_PER_PROCESS`）；仍是可重试的通用失败时该 pass 以 `failed_retryable` 结束，并给出 `retry_after_seconds`（共享指数退避，封顶 15 分钟，`external_retry.retry_delay_seconds`）。Consumer 与 Audit 的失败次数分别按持久化同角色 run 计算，首次失败后最多重试 3 次；同一角色 4 次连续失败后，在下一次 provider 调用之前结果为 `failed_terminal`。容量、连接、来源刷新和其他可重试技术失败都计数，另一角色的失败不占用本角色预算，同角色成功 turn 会重置连续失败计数。错误码与 Agent 原文 `source_code` 保留在诊断和结果摘要里，任务结束为 `failed`，不再重新入队。尚未实际执行的活动租约等待不产生失败 turn；授权缺失沿用不可重试终态。该角色预算独立于 worker/task attempt；各自最多 3 次 retry（初始调用之外），不会退款或跨角色共用。定时执行与 Email 延期不再把已失败的 Consumer/Audit turn 退款后无限重跑。内容反馈预算是业务修订循环，不属于技术 retry 预算。
@@ -2575,7 +2575,7 @@ OKR 本机 SSO 在点击当前账号后先检查指定组织是否已可见；�
 
 所有任务只通过 `app/service_browser.py` 的 `launch_service_chrome` 启动浏览器：真 Chrome、始终无头、指向调用方自己的资料目录；启动前把最新的副本放进该目录的 `Default/Cookies`，并去掉 Playwright 默认的 `--use-mock-keychain`（否则 Chrome 解不开复制来的 cookie）。这样由真 Chrome 自己读“Chrome Safe Storage”钥匙串项，不会弹授权。副本是快照，会话过期后等下一次同步；不连接你正在用的 Chrome（Chrome 136 起默认资料目录不允许远程调试）。
 
-另有一个每天 `19:30`（`Asia/Shanghai`）运行的“申请读不到的钉钉 AI 听记”服务命令：读取听记管理后台，逐条在听记页面提交访问申请，并以页面读回状态计数；对方批准后，`20:00` 的归档任务会读取内容。该后台由服务的共享无头 Chrome 打开（`app/service_browser.launch_service_chrome`），带的是每天复制的 Derek 本人 Chrome 登录态；这份副本能把他认到「选择你管理的组织」那一步，再由代码选中「北京星尘纪元智能科技有限公司」（`MINUTES_CONSOLE_ORG`）进入控制台。每次启动都会用当天的副本覆盖 profile，控制台自己的 `access_token` 不会留到下一次，所以这里没有自己保存的会话，也没有过期和续期一说；副本里没有钉钉登录态时命令直接失败，补救办法是在 Chrome 里重新登录钉钉并等当天的 `sync-chrome-cookies` 跑过，而不是在这里扫码。申请命令结果摘要同样持久化在 scheduled run，并显示在定时任务运行记录中，包括本次发现、已申请、已可读、申请人未解析和失败数量。
+另有一个每天 `19:30`（`Asia/Shanghai`）运行的“申请读不到的钉钉 AI 听记”服务命令：读取听记管理后台，逐条在听记页面提交访问申请，并以页面读回状态计数；对方批准后，`20:00` 的归档任务会读取内容。该后台由服务的共享无头 Chrome 打开（`app/service_browser.launch_service_chrome`），带的是每天复制的 Derek 本人 Chrome 登录态；这份副本能把他认到「选择你管理的组织」那一步，再由代码选中「北京星尘纪元智能科技有限公司」（`MINUTES_CONSOLE_ORG`）进入控制台。每次启动都会用当天的副本覆盖 profile，控制台自己的 `access_token` 不会留到下一次，因此不会跨运行保存该令牌。若登录页跳转或组织选择未能完成，任务保持失败；服务会直接启动用户的 Google Chrome 并用新窗口前置打开听记后台，供用户完成正常登录或检查组织选择，而不是只在后台留一个标签。登录后仍需让每天的 `sync-chrome-cookies` 将最新登录态复制到服务 profile，后续任务才能继续；没有通过扫码或程序保存凭据来绕过登录。申请命令结果摘要同样持久化在 scheduled run，并显示在定时任务运行记录中，包括本次发现、已申请、已可读、申请人未解析和失败数量。
 
 定时任务共用现有调度、队列、Consumer → Audit → revision 生命周期；14 个默认任务由声明表生成，默认新安装仍暂停。11 项发现/同步任务保留服务命令，CEO 日报、CEO 管理周报和 OKR 管理周报是三项普通 Agent 任务。业务要求由任务 prompt 与 Skill 决定，系统层不按报告名称或 Skill 名称分支，也不以 `publishable` 判断业务质量。通用 `read_scheduled_context` 返回触发时刻、时区、版本及历史完成事实；Consumer 还会收到当前 task generation 中已有产物的文件名和 SHA-256 清单，不包含文件正文，以便重试先复用当前执行已有材料。`read_service_activity` 按调用者明确给出的时间窗口和来源返回服务事实；`read_meeting_archive` 按会议身份读取归档。Codex 与 Claude 均可通过 Consumer 的 `consumer_run_skill_script` 执行所选 Skill 的确定性 Python 脚本。脚本在当前 task generation 的产物目录运行；产物读回分页，完整正文留在本地产物中。
 
@@ -4902,9 +4902,13 @@ are unchanged. Regression and release evidence is in
 
 Dedicated Email classification tasks allow at most three retries after the
 initial call (four processing attempts total) per explicit retry. A retryable
-read/network/model failure returns to pending with the existing capped backoff
-only before the fourth attempt; the fourth failure
-ends failed and retains the actual error. Expired running claims consume the
+failure returns to pending with the existing capped backoff only when its
+exception identifies a transient transport failure (such as DNS resolution,
+connection reset/refusal, timeout, or a runtime error explicitly marked
+retryable by the router). Authentication, TLS, configuration, malformed-input
+and other logic failures end failed without retry. Retryable failures are
+requeued only before the fourth attempt; the fourth failure ends failed and
+retains the actual error. Expired running claims consume the
 same budget and become failed once it is exhausted. Startup recovery and queue
 claiming also close previously exhausted pending records, including ones with a
 future available_at, without incrementing their old count or calling the mail
