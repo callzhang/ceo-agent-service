@@ -42,3 +42,24 @@ git diff --check
 ```
 
 Result: Ruff `All checks passed!`; compileall and diff check exited successfully. The full suite was not run per repository instruction.
+
+## Fix round 1 — make the competing-connection regression observe contention
+
+Reviewer finding: the two claim futures previously started without a synchronization point, so sequential execution could pass without proving contention. Updated only `test_native_feedback_competing_connections_have_one_claim_winner` in `tests/test_store_task_entity_creator.py`. Both calls now meet at a test-local barrier at the native transaction boundary. The test holds an independent real SQLite `BEGIN IMMEDIATE` writer lock and instruments only the test's connection wrapper to record each claim's actual `BEGIN IMMEDIATE` call before delegating to SQLite. While the external lock is still held, it asserts both different threads reached that begin call and neither future completed; then it releases the lock and retains the original one-winner, one-round, and one-transition assertions. No product/runtime code changed and no sleep-based timing was added.
+
+Covering command and output:
+
+```sh
+pytest -q tests/test_store_task_entity_creator.py::test_native_feedback_competing_connections_have_one_claim_winner
+```
+
+`1 passed in 1.59s`
+
+Static verification:
+
+```sh
+ruff check tests/test_store_task_entity_creator.py
+git diff --check
+```
+
+Ruff reported `All checks passed!`; `git diff --check` exited successfully. Self-review confirms the lock is acquired through SQLite itself, both observed begin attempts occur before releasing it, and the same native Store methods and business assertions remain under test.

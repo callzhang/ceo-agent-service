@@ -826,6 +826,9 @@ def _existing_target_store(path):
 
 
 def test_native_feedback_competing_connections_have_one_claim_winner(tmp_path, monkeypatch):
+    from contextlib import contextmanager
+    from threading import Barrier, Condition, current_thread
+
     path = tmp_path / "feedback-native-compete.sqlite3"
     first = _target_store(path)
     second = _existing_target_store(path)
@@ -847,14 +850,82 @@ def test_native_feedback_competing_connections_have_one_claim_winner(tmp_path, m
     def claim(store, batch):
         return store.claim_feedback_processing_items(batch, ["race"])[0].batch_id
 
-    with ThreadPoolExecutor(max_workers=2) as pool:
-        futures = [pool.submit(claim, first, "winner-a"), pool.submit(claim, second, "winner-b")]
-        outcomes = []
-        for future in futures:
-            try:
-                outcomes.append(("won", future.result()))
-            except ValueError:
-                outcomes.append(("lost", None))
+    transaction_boundary = Barrier(2)
+    begin_condition = Condition()
+    begin_attempts = []
+
+    def instrument_claim_boundary(store):
+        original_connect = store._connect
+        original_transaction = store._immediate_write_transaction
+
+        class TracedConnection:
+            def __init__(self, connection):
+                self.connection = connection
+
+            def __getattr__(self, name):
+                return getattr(self.connection, name)
+
+            def execute(self, statement, *parameters):
+                if statement.strip().casefold() == "begin immediate":
+                    with begin_condition:
+                        begin_attempts.append(current_thread().name)
+                        begin_condition.notify_all()
+                return self.connection.execute(statement, *parameters)
+
+        @contextmanager
+        def traced_connect():
+            with original_connect() as db:
+                yield TracedConnection(db)
+
+        @contextmanager
+        def synchronized_transaction():
+            transaction_boundary.wait(timeout=5)
+            with original_transaction() as db:
+                yield db
+
+        monkeypatch.setattr(store, "_connect", traced_connect)
+        monkeypatch.setattr(store, "_immediate_write_transaction", synchronized_transaction)
+
+    instrument_claim_boundary(first)
+    instrument_claim_boundary(second)
+
+    blocker = sqlite3.connect(path, timeout=5, isolation_level=None)
+    blocker.execute("begin immediate")
+    blocker_held = True
+    try:
+        with ThreadPoolExecutor(max_workers=2) as pool:
+            futures = [
+                pool.submit(claim, first, "winner-a"),
+                pool.submit(claim, second, "winner-b"),
+            ]
+            with begin_condition:
+                both_attempted = begin_condition.wait_for(
+                    lambda: len(begin_attempts) == 2, timeout=5,
+                )
+            if both_attempted:
+                # The blocker still owns SQLite's write lock. Both wrappers
+                # observed their actual BEGIN IMMEDIATE call before delegating
+                # to SQLite, so both native claims overlap at the write lock.
+                assert not any(future.done() for future in futures)
+                assert len(set(begin_attempts)) == 2
+            blocker.execute("rollback")
+            blocker.close()
+            blocker_held = False
+    finally:
+        if blocker_held:
+            blocker.execute("rollback")
+            blocker.close()
+
+    assert both_attempted, (
+        f"both claims must attempt BEGIN IMMEDIATE while blocked; attempts={begin_attempts}"
+    )
+
+    outcomes = []
+    for future in futures:
+        try:
+            outcomes.append(("won", future.result()))
+        except ValueError:
+            outcomes.append(("lost", None))
     assert sorted(kind for kind, _ in outcomes) == ["lost", "won"]
     with first._connect() as db:
         winner = db.execute("select batch_id from feedback_processing_items where feedback_key='race'").fetchone()[0]
