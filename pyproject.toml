@@ -31,6 +31,7 @@ dev = [
   "httpx2>=2.9,<3",
   "playwright>=1.50,<2",
   "pytest>=8.3",
+  "pytest-xdist>=3.6,<4",
   "ruff>=0.15,<0.16"
 ]
 reader-build = [
@@ -46,6 +47,7 @@ ceo-agent = "app.cli:main"
 [tool.pytest.ini_options]
 testpaths = ["tests"]
 pythonpath = ["."]
+tmp_path_retention_policy = "failed"
 markers = [
   "browser: real browser integration tests (set WORKBENCH_BROWSER_TESTS=1)",
   "live: explicit opt-in tests that may call real dws, Codex, or DingTalk"
