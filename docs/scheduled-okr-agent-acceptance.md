@@ -688,6 +688,14 @@ v74–v75 发现合成 Audit 没收到生产审核上下文中的上一轮退回
 
 v76 后的定向测试为 `tests/test_weekly_okr_report.py` 与 `tests/test_scheduled_okr_agent_eval.py` **136 passed**，Consumer Skill 脚本边界 **5 passed**，完整 `tests/test_consumer_system_release.py` **27 passed**；改动文件 Ruff 与 `git diff --check` 通过。共享 Skill/脚本摘要已同步到 release manifest、脚本审核清单及匹配的生产安装/managed 旧摘要前置文件。production 尚未部署，也尚未创建 run394267 的替代运行。
 
+### 2026-10-23 生产摘要复核与 task6 手动运行进度
+
+13:15 UTC 只读确认生产提交 `a5616cf9d2196fabacae830e2c53210fcbfd3deb`、healthz HTTP 200、Runtime Skill config 370。task6 当前为 v30 / managed Skill revision240，Skill SHA-256 `49ba4b0bdafdd2ba54989f6bd1ad6b799417464f2dad2cbeefb721eb85a32f8e`；task14 Skill revision224 的 SHA-256 为 `32d24bb5f53b60bcf67b8a91582db258a05cac59c789391c862d3bd95719fc62`。日报 Skill、OKR `scripts/report.py`（SHA-256 `119a249dd9aa3398c5c6e9a49dfb821f06f05ce3e9e668c6de279ba11543af5d`）及其余资产均与线上安装文件一致。
+
+旧前置快照仍记录 Runtime config 368、task6 revision235，以及两项已发布 OA Skill 的旧安装摘要。已按当前生产读回刷新快照到 config370/commit `a5616cf`；并同步更新发布清单中这两项已部署 OA Skill 的 `old_sha256`。候选正文与发布策略未变。完整检查确认26项安装资产都满足清单旧摘要、批准新摘要及线上文件三方一致；`test_release_manifest_pins_verified_current_installation` 与 `tests/test_consumer_system_release.py` 共 **29 passed**，`git diff --check` 通过。这是发布基线证据更新，不代表新报告业务验收或外部发布。
+
+同日授权手动 task6 run **395969**（reply task **417176**）仍在处理中，快照为 task6 v30 / managed revision240。初次 Consumer attempt 395970 失败后，attempt 396024 完成；其后 Audit 396109、第二轮 Consumer 396112、Audit 396125 已完成。13:18:43 UTC，第三轮 Consumer 396135 已完成，第三轮 Audit 396140 开始运行。reply task 417176 仍为 `processing`，尚无终态；不创建第二个运行，不把进行中的报告记为通过。
+
 ### PR #277 的远端检查结果
 
 PR #277 已打开，固定 v75/v76 case、模型/CLI 和 grader 对照及本地回归均附在 PR/无正文证据中。GitHub Quality 在 `npm test` 的首步全仓 Ruff lint 中失败，报 **16 项**、位于 7 个测试文件；逐个确认这 7 个文件与 `origin/main` 字节相同，单独在当前代码和这些原样文件上复现同一 lint 错误。后续 npm、workbench 和浏览器步骤因此未运行。Vercel 预览因账号额度限制失败，平台提示 24 小时后可重试。改动文件 Ruff、OKR 定向测试、Consumer 脚本审核测试及 release-manifest 测试均通过；没有为清绿而改动无关测试、降低门槛或跳过 OKR 验收。production 尚未部署；需先处理或获准接受上述远端基线阻塞，再继续正式合并/部署和新 task6 运行。
