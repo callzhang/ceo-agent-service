@@ -3662,6 +3662,22 @@ current_action_plan_id 指向 email_action_plans 唯一读取；当前写入不�
 Attention 的失败回复任务查询先从 `reply_tasks` 状态覆盖索引筛选 ID，再按主键读取父任务及其 current 输入；筛选阶段不读取正文或连接输入表。现有失败条件、排序、限制和业务展示保持不变。
 
 
+## SQLite connection lifecycle
+
+`AutoReplyStore._connect` keeps one idle SQLite connection per database file
+and thread, because every new connection re-parses the whole schema (about 520
+objects with JSON generated columns; about 45 ms against the live database
+versus 0.02 ms for a warm query), which on 2026-10-20 held the service at
+180-300% CPU. Nested or concurrent use in the same thread still opens its own
+connection, and a connection is discarded rather than kept when the body
+raised, a transaction is still open, `foreign_keys` is no longer on, the
+database file was replaced, or the store's `_open_connection` differs. The
+"close" time in the slow-context diagnostics is therefore the time to return
+the connection to the idle slot. Code that registers functions, handlers or
+pragmas on a `_connect` connection must undo them, because the next call in
+that thread sees the same connection. No query, schema, retry, audit or
+safety-policy change.
+
 ## Unified core run storage (Store 2026-10-11.2)
 
 第四期4A将逻辑 Agent run、provider attempt、服务状态事件存入同一物理 `runs` 表，

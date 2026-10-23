@@ -7,6 +7,7 @@ import pytest
 
 from app.audit_web import _queue_attention_rows, _reply_task_queue_snapshot, _work_summary_input_queue_snapshot
 from app.action_storage import update_action
+import app.store as store_module
 from app.store import AgentRole, AutoReplyStore
 from app.task8_storage import task8_insert_parts, task8_set_parts
 from app.task20_definitions import task20_column, task20_projection
@@ -360,10 +361,14 @@ def test_work_attention_scalar_scan_ignores_unrelated_task_growth(tmp_path, monk
             decoded.append(value)
             return decode_work_summary_payload(value)
 
+        store_module._close_idle_connections()  # measure on a fresh connection both times
         with store._connect() as db:
             db.create_function("decode_work_summary_payload", 1, decode, deterministic=True)
             db.set_progress_handler(progress, 10)
-            selected = db.execute(query).fetchall()
+            try:
+                selected = db.execute(query).fetchall()
+            finally:
+                db.set_progress_handler(None, 0)
         assert [row["id"] for row in selected] == [failed]
         assert decoded == ['{"summary":"exact failed body"}']
         assert steps < 400000

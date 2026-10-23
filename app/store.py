@@ -1324,6 +1324,68 @@ def _meeting_memory_settlement_time(now: datetime | None) -> str:
     return value.isoformat()
 
 
+# Opening a SQLite connection re-parses the whole schema (hundreds of objects
+# with JSON generated columns), which dominated service CPU when every store
+# call opened its own.  Each thread keeps one idle connection per database
+# file; nested or concurrent use in the same thread opens its own, as before.
+_IDLE_CONNECTIONS = threading.local()
+
+
+def _database_file_identity(path: Path) -> tuple[int, int] | None:
+    try:
+        stat = os.stat(path)
+    except OSError:
+        return None
+    return (stat.st_dev, stat.st_ino)
+
+
+def _take_idle_connection(
+    key: tuple[str, int | None, object], path: Path
+) -> tuple[sqlite3.Connection, tuple[int, int], int] | None:
+    pool = getattr(_IDLE_CONNECTIONS, "pool", None)
+    entry = pool.pop(key, None) if pool else None
+    if entry is None:
+        return None
+    connection, identity, _changes = entry
+    if identity != _database_file_identity(path):
+        with suppress(sqlite3.Error):
+            connection.close()
+        return None
+    return entry
+
+
+def _close_idle_connections() -> None:
+    """Close this thread's idle connections (tests, and callers that must be
+    the only connection to a database file)."""
+    pool = getattr(_IDLE_CONNECTIONS, "pool", None) or {}
+    for connection, _identity, _changes in pool.values():
+        with suppress(sqlite3.Error):
+            connection.close()
+    pool.clear()
+
+
+def _return_idle_connection(
+    key: tuple[str, int | None, object],
+    connection: sqlite3.Connection,
+    identity: tuple[int, int] | None,
+) -> None:
+    pool = _IDLE_CONNECTIONS.__dict__.setdefault("pool", {})
+    try:
+        reusable = (
+            identity is not None
+            and key not in pool
+            and not connection.in_transaction
+            and connection.execute("pragma foreign_keys").fetchone()[0] == 1
+        )
+    except sqlite3.Error:
+        reusable = False
+    if reusable:
+        pool[key] = (connection, identity, connection.total_changes)
+    else:
+        with suppress(sqlite3.Error):
+            connection.close()
+
+
 class AutoReplyStore(LogicalRunStoreMixin, ReviewedCandidateStoreMixin):
     def __init__(
         self,
@@ -1567,7 +1629,24 @@ class AutoReplyStore(LogicalRunStoreMixin, ReviewedCandidateStoreMixin):
                     )
             return
         reused = self._reused_connection.get()
-        connection = reused if reused is not None else self._open_connection()
+        pool_key = None
+        identity = None
+        if reused is not None:
+            connection = reused
+        else:
+            opener = self._open_connection
+            pool_key = (
+                str(self.path),
+                getattr(self, "busy_timeout_seconds", None),
+                getattr(opener, "__func__", opener),
+            )
+            idle = _take_idle_connection(pool_key, self.path)
+            if idle is not None:
+                connection, identity, _ = idle
+            else:
+                connection = self._open_connection()
+                identity = _database_file_identity(self.path)
+        completed = False
         started_at = time.monotonic()
         body_finished_at = started_at
         starting_changes = 0
@@ -1575,8 +1654,7 @@ class AutoReplyStore(LogicalRunStoreMixin, ReviewedCandidateStoreMixin):
             try:
                 terminal_event_runs = []
                 with connection:
-                    if reused is not None:
-                        starting_changes = connection.total_changes
+                    starting_changes = connection.total_changes
                     try:
                         yield connection
                     finally:
@@ -1587,10 +1665,15 @@ class AutoReplyStore(LogicalRunStoreMixin, ReviewedCandidateStoreMixin):
                 if terminal_event_runs:
                     from app.native_trajectory import forget_live_events
                     forget_live_events(str(self.path.resolve()), terminal_event_runs)
+                completed = True
             finally:
                 close_started_at = time.monotonic()
                 if reused is None:
-                    connection.close()
+                    if completed:
+                        _return_idle_connection(pool_key, connection, identity)
+                    else:
+                        with suppress(sqlite3.Error):
+                            connection.close()
                 closed_at = time.monotonic()
                 elapsed = closed_at - started_at
                 if elapsed >= 1.0:
