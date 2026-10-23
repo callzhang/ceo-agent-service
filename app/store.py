@@ -24378,7 +24378,8 @@ class AutoReplyStore(LogicalRunStoreMixin, ReviewedCandidateStoreMixin):
             if changed != 1:
                 raise ValueError("WeChat Memory import terminal transition conflict")
             db.execute(
-                "insert into task_results(task_id,result_kind,finished_at) values(?,'wechat_import',?)",
+                "insert into task_results(task_id,result_kind,finished_at) values(?,'wechat_import',?) "
+                "on conflict(task_id,result_kind) do update set finished_at=excluded.finished_at",
                 (task_id, now_text),
             )
 

@@ -22,7 +22,9 @@ Both `CodexMemoryExtractionRunner.extract` and `CodexMemoryRecallMatcher._match_
 
 ## Verification
 
-The actual BASE source writer was executed against the assembled native Task/Run target with valid nonempty attribution and failed with `OperationalError: no such column: legacy_key`:
+The earlier direct `insert_task12` call below is a helper-level diagnostic only; it does not establish the full BASE DAO method failure. The parent recorded the actual unmodified BASE `begin_wechat_memory_import_job` proof—extracted from commit `d6e367d3d` and invoked on the assembled native target—in [`task-2d5-parent-baseline-evidence.md`](task-2d5-parent-baseline-evidence.md). That exact method failed with `OperationalError: no such column: legacy_key`.
+
+The helper-level diagnostic was:
 
 ```text
 python - <<'PY'
@@ -40,6 +42,36 @@ OperationalError: no such column: legacy_key
 ```
 
 The regression now asserts native Task ownership and retained parameters instead. An earlier draft of the red test used empty attribution and failed at the source validator, so that run was discarded as an invalid baseline proof; the test was corrected to preserve the real source validator contract.
+
+### Fix1 — existing migrated TaskResult
+
+Source-to-native migration creates a `task_results(result_kind='wechat_import')` row for a running import, preserving source `finished_at=''`. The initial native finisher used a plain INSERT and raised a unique-key `IntegrityError` for both completion statuses. The fix uses `INSERT ... ON CONFLICT(task_id,result_kind) DO UPDATE SET finished_at=excluded.finished_at`, so only the finish clock changes on the existing row; the status/error Task update and result write remain in one transaction. New native Tasks with no result row still insert normally.
+
+The new regression starts with the real `_source()` current Task20 schema, marks source import 232 running, runs `capture_task_entities` and `migrate_task_entities`, confirms the migrated empty TaskResult, then tests completed and failed terminal transitions. A temporary rejecting trigger proves the Task remains running and the result unchanged after a failed result write; after removing it, each transition updates only `finished_at`, retains other TaskResult columns, preserves one row, and a matching repeated finish changes no facts.
+
+Fix1 fail-first command on the pre-fix candidate:
+
+```text
+pytest -q tests/test_wechat_import_native.py -k migrated_running_wechat_import_finishes_existing_task_result
+2 failed, 7 deselected
+Both failures: sqlite3.IntegrityError: UNIQUE constraint failed: task_results.task_id, task_results.result_kind
+```
+
+Fix1 final scoped verification:
+
+```text
+pytest -q tests/test_wechat_import_native.py
+9 passed
+
+python -m ruff check app/store.py tests/test_wechat_import_native.py
+All checks passed!
+
+python -m compileall -q app/store.py
+git diff --check
+passed
+```
+
+These checks do not rerun the broader WeChat file or other legacy Store suites.
 
 Final focused commands and output:
 
