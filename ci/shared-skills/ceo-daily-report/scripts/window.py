@@ -38,6 +38,10 @@ def report_window(context):
     return {
         "report_date": day.isoformat(),
         "time_zone": str(zone),
+        "source_window_utc": {
+            "start": (catchup_start if catchup is not None else day_start).isoformat(),
+            "end": end.isoformat(),
+        },
         "window_utc": {
             "start": day_start.isoformat(),
             "end": end.isoformat(),

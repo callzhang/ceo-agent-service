@@ -198,6 +198,10 @@ def test_first_report_separates_current_day_from_initial_catchup() -> None:
             "start": (EVENING_24 - timedelta(days=1)).isoformat(),
             "end": DAY.start.isoformat(),
         },
+        "source_window_utc": {
+            "start": (EVENING_24 - timedelta(days=1)).isoformat(),
+            "end": EVENING_24.isoformat(),
+        },
     }
 
 
@@ -220,6 +224,10 @@ def test_missed_days_are_separate_from_the_current_calendar_day() -> None:
     assert window["catchup_window_utc"] == {
         "start": EVENING_22.isoformat(),
         "end": DAY.start.isoformat(),
+    }
+    assert window["source_window_utc"] == {
+        "start": EVENING_22.isoformat(),
+        "end": EVENING_24.isoformat(),
     }
 
 

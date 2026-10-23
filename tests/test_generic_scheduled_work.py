@@ -58,6 +58,10 @@ def test_daily_skill_catchup_window_uses_real_completion_not_done_alone(status, 
     assert datetime.fromisoformat(window["window_utc"]["start"]) == day_start
     assert datetime.fromisoformat(window["catchup_window_utc"]["start"]) == expected
     assert datetime.fromisoformat(window["catchup_window_utc"]["end"]) == day_start
+    assert window["source_window_utc"] == {
+        "start": expected.isoformat(),
+        "end": end.isoformat(),
+    }
     context["history"].append(
         {
             "run_id": 4,
@@ -69,6 +73,7 @@ def test_daily_skill_catchup_window_uses_real_completion_not_done_alone(status, 
     rerun = script("ceo-daily-report", "window").report_window(context)
     assert rerun["window_utc"] == window["window_utc"]
     assert rerun["catchup_window_utc"] is None
+    assert rerun["source_window_utc"] == rerun["window_utc"]
 
 
 def test_daily_skill_first_window_and_beijing_date():
@@ -83,6 +88,10 @@ def test_daily_skill_first_window_and_beijing_date():
     assert result["catchup_window_utc"] == {
         "start": (end - timedelta(days=1)).isoformat(),
         "end": datetime(2026, 10, 19, 16, tzinfo=UTC).isoformat(),
+    }
+    assert result["source_window_utc"] == {
+        "start": (end - timedelta(days=1)).isoformat(),
+        "end": end.isoformat(),
     }
 
 

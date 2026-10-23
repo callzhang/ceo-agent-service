@@ -1811,14 +1811,18 @@ day window from local midnight to `scheduled_for`, plus a separate optional
 catch-up window ending at that day's midnight. Catch-up begins at the last
 successful prior report, or at the previous 24-hour boundary when no successful
 report exists. A successful same-day report removes the catch-up window on a
-same-day rerun. The Skill and its Audit coverage instructions keep the two
-windows separate, require each source window to be read, and label catch-up
-coverage explicitly; the generic scheduled-read cutoff remains unchanged.
+same-day rerun. The script also returns their contiguous union as one source
+read window. The Skill reads each source once over that union, then separates
+facts at midnight and labels catch-up coverage explicitly. Audit checks both
+logical windows and the complete source read; the generic scheduled-read cutoff
+remains unchanged. This preserves source coverage without adding an extra
+service-activity or conversation-inventory call.
 
 Local regression evidence: the changed window tests first failed against the
-old rolling window (8 failures). After the change, `tests/test_generic_scheduled_work.py`
-and `tests/test_daily_report_facts.py` passed (25); `tests/test_consumer_system_release.py`
-passed (28); and `tests/test_consumer_skill_script_boundary.py` passed (5).
-Ruff, `git diff --check`, and daily-report Skill/script release digest checks
-passed. These are local tests; publication and production readback remain
-pending.
+old rolling window (8 failures). The one-read source-union assertions also
+failed before that field was added (6 failures). Final validation passed:
+`tests/test_generic_scheduled_work.py` and `tests/test_daily_report_facts.py`
+(25), `tests/test_consumer_system_release.py` (28), and
+`tests/test_consumer_skill_script_boundary.py` (5). Ruff, `git diff --check`,
+and daily-report Skill/script release digest checks passed. These are local
+tests; publication and production readback remain pending.
