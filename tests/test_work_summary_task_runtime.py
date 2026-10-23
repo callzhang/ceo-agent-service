@@ -73,3 +73,41 @@ def test_work_summary_retry_and_capacity_keep_native_task_lifecycle(tmp_path):
     store.defer_work_summary_input_for_capacity(task_id, "busy", available_at="2099-01-01 00:00:00")
     deferred = store.get_work_summary_input(task_id)
     assert (deferred.status, deferred.attempts, deferred.error) == ("pending", 0, "busy")
+
+
+def test_work_summary_reset_closes_only_native_attempts_without_effects(tmp_path):
+    store = _native_store(tmp_path)
+    task_id = store.enqueue_work_summary_input("local_file", "recovery", "{}")
+    store.claim_work_summary_inputs(1)
+    run_id = store.claim_professional_run(task_id)
+
+    def attempt(workload_key, first_effect_started_at):
+        return {
+            "parent_id": run_id, "workload_kind": "task", "workload_key": workload_key,
+            "attempt_number": 1, "route_name": "fixture", "runtime_kind": "codex",
+            "credential_mode": "native", "model": "fixture", "session_mode": "fresh",
+            "source_session_id": "", "attempt_purpose": "normal",
+            "validation_retry_policy_id": "", "validation_result_schema_id": "",
+            "session_id": "", "transcript_reference": "", "transcript_start": 0,
+            "transcript_end": 0, "status": "running", "failure_class": "",
+            "failure_code": "", "failover_permitted": 0, "lease_owner": "worker",
+            "lease_expires_at": "2099-01-01 00:00:00",
+            "first_effect_started_at": first_effect_started_at, "result_schema_id": "",
+            "started_at": "2026-10-23 00:00:00", "finished_at": "",
+            "created_at": "2026-10-23 00:00:00", "updated_at": "2026-10-23 00:00:00",
+        }
+
+    from app import run_entity_storage
+
+    with store._connect() as db:
+        no_effect = run_entity_storage.create_runtime_attempt(
+            db, values=attempt(f"{run_id}:no-effect", "")
+        )["id"]
+        with_effect = run_entity_storage.create_runtime_attempt(
+            db, values=attempt(f"{run_id}:effect", "2026-10-23 00:00:01")
+        )["id"]
+        store._close_task_runs_leaving_processing(db, [task_id])
+        no_effect_status = run_entity_storage.get_runtime_attempt(db, no_effect)["status"]
+        effect_status = run_entity_storage.get_runtime_attempt(db, with_effect)["status"]
+        run_status = run_entity_storage.get_run(db, run_id)["status"]
+    assert (run_status, no_effect_status, effect_status) == ("failed", "failed", "running")

@@ -38,6 +38,9 @@ source-created time、hash、bytes、compact 标记、状态与错误。WorkSumm
 读取使用原生 Task/Run。通用 dispatcher claim、constructor activation、Meeting/OKR 与其余 family
 reader、CLI/完整副本及发布验证仍未完成。`todo_evidence_candidate.work_summary_input_id` 的
 新写入是 canonical Task ID；历史整数转换仍待最终协调器。
+`app.web_api.dashboard._runtime_metadata` 的共享运行元数据查询仍依赖来源形状的
+RuntimeAttempt/Run SQL 并同时服务 Reply、Meeting 和 WorkSummary；它需要后续全 family 切换，
+当前不能将 dashboard WorkSummary 读路径视为原生或启用完整 runtime。
 
 Task3E1 将 Consumer／Audit Run 的 Store 读取、领取、续租、session 更新、终态与未启动删除
 直接落在原生 `runs` 行；候选与审核从 adopted result／review 读取，CLI transcript 和最终结果

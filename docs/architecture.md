@@ -39,6 +39,8 @@ History、Task Agent 项目修复读取使用原生 Run/Task。此单元未启�
 dispatcher claim，Meetings/OKR History 与 reader、其余 Task API、CLI/完整副本及发布验证仍待后续单元。
 `todo_evidence_candidate.work_summary_input_id` 是存储整数的 typed Task 引用；新写入使用
 canonical Task ID，历史值的正逆向转换尚待最终协调器，不能将历史读取视为已就绪。
+`app.web_api.dashboard._runtime_metadata` 仍以一条包含 Reply、Meeting 与 WorkSummary 的
+来源形状 SQL 读取运行尝试；WorkSummary 分支不能单独切换，需后续按全部 family 一并迁移。
 
 Task3E1 将 Consumer／Audit Run 的 Store 读取、领取、续租、session 更新、终态与未启动删除
 直接落在原生 `runs` 行；候选与审核从 adopted result／review 读取，CLI transcript 和最终结果
