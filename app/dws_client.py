@@ -4660,6 +4660,14 @@ class DwsClient:
                 sanitized.append("<redacted>")
                 redact_next = False
                 continue
+            if token in {"--content", "--content-file"}:
+                sanitized.append(token)
+                redact_next = True
+                continue
+            if token.startswith(("--content=", "--content-file=")):
+                flag = token.partition("=")[0]
+                sanitized.append(f"{flag}=<redacted>")
+                continue
             sanitized.append(token)
             if token in cls.SENSITIVE_COMMAND_FLAGS:
                 redact_next = True
