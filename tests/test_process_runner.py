@@ -288,3 +288,18 @@ def test_process_runner_allows_independent_codex_processes_to_overlap(tmp_path):
     for process_id in process_ids:
         with pytest.raises(ProcessLookupError):
             os.kill(process_id, 0)
+
+
+def test_process_runner_runs_the_child_in_the_requested_directory(tmp_path):
+    seen = []
+    run_process_with_idle_timeout(
+        [sys.executable, "-c", "import os; print(os.getcwd())"],
+        prompt="",
+        env=None,
+        total_timeout_seconds=5,
+        idle_timeout_seconds=5,
+        on_stdout_line=seen.append,
+        cwd=str(tmp_path),
+    )
+
+    assert os.path.realpath(seen[0].strip()) == os.path.realpath(str(tmp_path))

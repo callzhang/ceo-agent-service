@@ -108,6 +108,26 @@ class ClaudeCommandPolicy:
 
 
 CLAUDE_INPUT_MAX_BYTES = 1024 * 1024
+
+# The Consumer's Bash tool, confined like the Codex workspace-write sandbox:
+# writes only in the task directory (the process cwd) and the dws state
+# directory, network only to DingTalk and its file storage, and no way to run a
+# command outside the sandbox or to start without it. `dws` is a Go program and
+# needs the macOS trust service to verify TLS inside the sandbox
+# (`enableWeakerNetworkIsolation`); without it every dws call fails verification.
+def _consumer_shell_sandbox() -> dict[str, object]:
+    return {
+        "enabled": True,
+        "failIfUnavailable": True,
+        "allowUnsandboxedCommands": False,
+        "autoAllowBashIfSandboxed": True,
+        "enableWeakerNetworkIsolation": True,
+        "filesystem": {"allowWrite": [str(Path.home() / ".dws")]},
+        "network": {
+            "strictAllowlist": True,
+            "allowedDomains": ["*.dingtalk.com", "*.aliyuncs.com"],
+        },
+    }
 # Claude requires an explicit turn budget; Codex has none, and the shared
 # total/idle timeouts are what actually bound a turn. One turn cannot finish
 # any work that calls a tool: the run ends on `stop_reason: tool_use` and the
@@ -272,7 +292,10 @@ class ClaudeRuntimeAdapter:
         if not selected_policy.tools_enabled:
             command.extend(["--tools", ""])
         elif selected_policy.role:
-            command.extend(["--restricted", "--tools", "Read,Glob,Grep"])
+            # Derek 2026-10-23: the Consumer has a shell on every route (it runs
+            # `dws` itself); the sandbox in `_invocation_boundary` confines it.
+            tools = "Read,Glob,Grep,Bash" if selected_policy.role == "consumer" else "Read,Glob,Grep"
+            command.extend(["--restricted", "--tools", tools])
         if json_schema is not None:
             command.extend([
                 "--json-schema",
@@ -482,11 +505,14 @@ class ClaudeRuntimeAdapter:
             }}
         else:
             transports = self._mcp_transports() if policy.tools_enabled else {}
+        settings = {
+            "enableAllProjectMcpServers": policy.tools_enabled,
+            "enabledMcpjsonServers": sorted(transports),
+        }
+        if policy.role == "consumer":
+            settings["sandbox"] = _consumer_shell_sandbox()
         settings_json = json.dumps(
-            {
-                "enableAllProjectMcpServers": policy.tools_enabled,
-                "enabledMcpjsonServers": sorted(transports),
-            },
+            settings,
             sort_keys=True,
             separators=(",", ":"),
         )
