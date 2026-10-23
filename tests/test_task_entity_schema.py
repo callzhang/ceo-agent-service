@@ -557,6 +557,10 @@ def test_native_business_key_collision_uses_predecessor_hidden_rowid_allocator()
             "select id,legacy_key from tasks where record_type='business_object_tasks' and legacy_key='225'"
         ).fetchone()
         assert row is not None and row[0] > 416921 and row[1] == "225"
+        first_identity = tuple(db.execute(
+            "select id,legacy_key,typeof(legacy_key) from tasks "
+            "where record_type='business_object_tasks' and legacy_key='225'"
+        ).fetchone())
         handoff_by_owner = {(owner["source_kind"], owner["canonical_id"]): owner["source_physical_id"]
                             for owner in inverse["inverse_identity"]["owners"]}
         assert handoff_by_owner[("business_object_tasks", 225)] == row[0]
@@ -587,6 +591,30 @@ def test_native_business_key_collision_uses_predecessor_hidden_rowid_allocator()
         assert tuple(db.execute("select id,business_key from task_business_keys where id=226").fetchone()) == (
             226, "second-business-object",
         )
+        assert tuple(db.execute(
+            "select physical_id,target_id,public_key from task_run_identity_map "
+            "where source_kind='business_object_tasks'"
+        ).fetchone()) == (first_identity[0], 225, None)
+        # A second inverse with no native fact edits must preserve the hidden
+        # Task12 physical row/key identity used by old point writers.
+        second_inverse = restore_task_entities(db, source_metadata, refoward)
+        second_identity_row = db.execute(
+            "select id,legacy_key,typeof(legacy_key) from tasks "
+            "where record_type='business_object_tasks' and legacy_key='225'"
+        ).fetchone()
+        assert second_identity_row is not None
+        second_identity = tuple(second_identity_row)
+        assert second_identity == first_identity
+        assert update_task12(db, "business_object_tasks", 225,
+                             {"business_object_key": "second-cycle-old-writer"}) == 1
+        second_source_metadata = capture_task_entities(db)
+        migrate_task_entities(
+            db, second_source_metadata, source_context=second_inverse["source_context"],
+            inverse_identity=second_inverse["inverse_identity"],
+        )
+        assert tuple(db.execute(
+            "select id,business_key from task_business_keys where id=225"
+        ).fetchone()) == (225, "second-cycle-old-writer")
         next_task = create_task(db, values={"kind": "reply", "status": "pending",
                                             "created_at": now, "updated_at": now})
         assert next_task["id"] > deleted_task_id

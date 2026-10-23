@@ -526,6 +526,26 @@ def migrate_task_entities(
              _typed_key(identity["public_key"])[0], identity["target_id"]))
         identity_records.append(identity)
 
+    # Hidden source ROWID owners have no public key, but a new native row may
+    # have a canonical ID that differs from its restored source physical ID.
+    # Retain only those sparse physical/canonical edges so the next inverse
+    # can recover the same source ROWID and its raw-key exception.
+    for kind, rows in all_rows.items():
+        for row in rows:
+            if "id" in row or (kind == "email_agent_classification_tasks" and "task_id" in row):
+                continue
+            physical_id = int(row["_physical_id"])
+            target_id = target_ids[(kind, physical_id)]
+            if physical_id == target_id:
+                continue
+            identity = {"source_kind": kind, "physical_id": physical_id,
+                        "public_key": None, "target_id": target_id}
+            db.execute(
+                "insert into task_run_identity_map(source_kind,physical_id,public_key,public_key_type,target_id) "
+                "values(?,?,NULL,'null',?)", (kind, physical_id, target_id),
+            )
+            identity_records.append(identity)
+
     # Rebind Task current/claimed input public IDs after all input identities exist.
     for row in all_rows["reply_tasks"]:
         updates = {}
@@ -608,15 +628,19 @@ def _inverse_indexes(db: sqlite3.Connection, forward_metadata: dict) -> tuple[di
                 "source_kind", "physical_id", "public_key", "target_id"}):
             raise ValueError("invalid Task identity edge")
         exceptional[(row["source_kind"], row["target_id"])] = row
-    physical_target = {
+    physical_by_target = {
         (row[0], int(row[1])): int(row[2])
         for row in db.execute(
-            "select source_kind,physical_id,target_id from main.task_run_identity_map")
+            "select source_kind,target_id,physical_id from main.task_run_identity_map")
     }
+    physical_by_target.update({(kind, target_id): row["physical_id"]
+                               for (kind, target_id), row in exceptional.items()})
+    target_by_physical = {(kind, physical_id): target_id
+                          for (kind, target_id), physical_id in physical_by_target.items()}
     raw_by_target = {}
     for row in raw_exceptions:
         physical_id = row["physical_id"]
-        target_id = physical_target.get((row["source_kind"], physical_id), physical_id)
+        target_id = target_by_physical.get((row["source_kind"], physical_id), physical_id)
         raw_by_target[(row["source_kind"], target_id)] = row
     public_rows = []
     for kind in task20_definitions.TASK20_COLUMNS:
@@ -637,10 +661,12 @@ def _inverse_indexes(db: sqlite3.Connection, forward_metadata: dict) -> tuple[di
             if edge is None and raw is None and target_id > owner_highwaters.get(kind, 0):
                 continue
             physical_id = (edge["physical_id"] if edge is not None else
-                           raw["physical_id"] if raw is not None else target_id)
+                           raw["physical_id"] if raw is not None else
+                           physical_by_target.get((kind, target_id), target_id))
             if has_public:
                 public_rows.append({"source_kind": kind, "physical_id": physical_id,
-                    "public_key": edge["public_key"] if edge is not None else target_id,
+                    "public_key": edge["public_key"] if edge is not None and edge["public_key"] is not None
+                                 else target_id,
                     "target_id": target_id})
     public = {}
     for row in public_rows:
@@ -651,14 +677,14 @@ def _inverse_indexes(db: sqlite3.Connection, forward_metadata: dict) -> tuple[di
             raise ValueError("ambiguous Task public owner metadata")
         public[key] = row
     public_identity = {(row["source_kind"], row["physical_id"]): row["public_key"] for row in public_rows}
-    physical_target = {(row["source_kind"], row["target_id"]): row["physical_id"]
-                       for row in public_rows}
+    physical_by_target.update({(row["source_kind"], row["target_id"]): row["physical_id"]
+                               for row in public_rows})
     edges = {(row["source_kind"], row["physical_id"]): row["public_key"]
-             for row in forward_metadata.get("identity_edges", [])}
+             for row in forward_metadata.get("identity_edges", []) if row["public_key"] is not None}
     public_target = {(row["source_kind"], row["target_id"]): row["public_key"] for row in public_rows}
     public_index = {(row["source_kind"], _typed_key(row["public_key"])): row["target_id"]
                     for row in public_rows}
-    return public, {}, {"public_by_source": public_identity, "physical_target": physical_target,
+    return public, {}, {"public_by_source": public_identity, "physical_target": physical_by_target,
                               "public_target": public_target,
                               "public_index": public_index, "edges": edges}
 
