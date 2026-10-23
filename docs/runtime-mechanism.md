@@ -3382,6 +3382,10 @@ Derek 要求自动重试统一最多三次 retry（首次调用之外），即�
 技术失败分别使用独立的每角色、同执行代、同修订四次尝试预算（每个角色最多三次 retry），调用前检查；
 底层 code/source_code 保留，预算耗尽不伪造 needs_human 或业务完成。
 
+DWS 网关自己的 5xx 失败（stderr 里 `error.code=1`、`error.reason=http_<5xx>`）以 `http_<5xx>` 作为错误码，
+对消息读取命令按上述共享上限自动重试，用尽后仍标记为可重试的外部依赖故障、不进入 Attention；
+消息发送命令没有幂等键时不重试。
+
 ### 原生消息 ledger 读回（2026-10-05）
 
 `chat +chat-messages` 的当前 `im.message-list.v1` 返回顶层 messages，记录字段为
