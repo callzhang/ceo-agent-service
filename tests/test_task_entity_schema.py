@@ -628,6 +628,9 @@ def test_native_business_key_collision_uses_predecessor_hidden_rowid_allocator()
         db.execute("pragma foreign_keys=off")
         db.execute("begin immediate")
         source_metadata = capture_task_entities(db)
+        auxiliary_input_physical_id = db.execute(
+            "select id from tasks where record_type='reply_task_inputs' order by id limit 1"
+        ).fetchone()[0]
         forward = migrate_task_entities(db, source_metadata)
         db.row_factory = sqlite3.Row
         now = db.execute("select current_timestamp").fetchone()[0]
@@ -639,6 +642,12 @@ def test_native_business_key_collision_uses_predecessor_hidden_rowid_allocator()
             "force_new_decision": 0, "manual_rerun_attempt_id": 0,
             "manual_rerun_revision_key": "", "recovery_code": "",
         })
+        # The canonical native Task ID can reuse an old auxiliary source ID.
+        # The inverse allocator must assign a globally safe source Task ID and
+        # use that assigned value for Reply's source public identity.
+        db.execute("update tasks set id=? where id=?",
+                   (auxiliary_input_physical_id, new_task["id"]))
+        new_task["id"] = auxiliary_input_physical_id
         deleted_task = create_task(db, values={"kind": "reply", "status": "pending",
                                                "created_at": now, "updated_at": now})
         deleted_task_id = deleted_task["id"]
@@ -687,8 +696,13 @@ def test_native_business_key_collision_uses_predecessor_hidden_rowid_allocator()
         handoff_by_owner = {(owner["source_kind"], owner["canonical_id"]): owner["source_physical_id"]
                             for owner in inverse["inverse_identity"]["owners"]}
         assert handoff_by_owner[("business_object_tasks", 225)] == row[0]
-        assert db.execute("select id from tasks where record_type='reply_tasks' and legacy_key=?",
-                          (str(new_task["id"]),)).fetchone()[0] == new_task["id"]
+        assigned_reply = handoff_by_owner[("reply_tasks", new_task["id"])]
+        reply_row = db.execute(
+            "select id,legacy_key from tasks where record_type='reply_tasks' and id=?",
+            (assigned_reply,),
+        ).fetchone()
+        assert tuple(reply_row) == (assigned_reply, str(assigned_reply))
+        assert not tuple(db.execute("pragma foreign_key_check"))
         for kind, canonical_id in (("reply_task_inputs", first["id"]),
                                    ("reply_task_inputs", second["id"]),
                                    ("business_object_tasks", second_key["id"])):
@@ -703,6 +717,8 @@ def test_native_business_key_collision_uses_predecessor_hidden_rowid_allocator()
         source_metadata = capture_task_entities(db)
         refoward = migrate_task_entities(db, source_metadata, source_context=inverse["source_context"],
                                         inverse_identity=inverse["inverse_identity"])
+        assert db.execute("select id from tasks where kind='reply' and id=?",
+                          (new_task["id"],)).fetchone()[0] == new_task["id"]
         assert refoward["counts"]["reply_task_inputs"] >= 2
         assert tuple(db.execute("select current_input_id,claimed_input_id,input_version,claimed_input_version "
                                 "from tasks where id=?", (new_task["id"],)).fetchone()) == (

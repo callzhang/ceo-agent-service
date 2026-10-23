@@ -115,8 +115,19 @@ SQLite `CAST(... AS INTEGER)` 语义解析；identity map 分别保留来源物�
 及其 SQLite 类型和 canonical target。native owner 水位至少取 handoff 捕获值和迁入行最大 canonical ID。`runs` 的
 SQLite 序列名同时承载来源 global runs 水位，因此保留来源 global 水位、handoff
 原生水位和 canonical 行最大值的最大值及来源 ROWID；published/per-kind 与其他
-来源 sequence 行保持原 ROWID/name/value，并保留在 capture metadata 供 inverse 使用。该候选不包含
-B3B2 inverse handoff producer、新 native Run 分配或全新事实 inverse，也未激活运行时。
+来源 sequence 行保持原 ROWID/name/value，并保留在 capture metadata 供 inverse 使用。
+B3B2 先调用 Task inverse，再将其 content-free `inverse_identity` 与还原后的 selected
+source Task projection 传给 Run inverse。Run inverse 从八个当前 native owner 的现值重建
+来源字段；新 Run source physical ID 高于原 global water 和已保留 source IDs，Task references
+使用来源实际 public identity（包括 Email message hash 与已分配 Workbench TURN UUID）。Run
+handoff 是版本 1 JSON，包含稀疏 source-kind/source-physical/canonical 边、八个独立 native
+owner high-water、selected source DDL context 与 SHA-256 digest；source sequence 只增不减：
+`runs:published` 按旧触发器追到非 RUN11 新种类的物理 ID，三个 RUN11 新种类各自按
+来源 public legacy key 维护独立水位；新专业 Run 的 public key 与旧 `create_logical_run`
+触发器一致，取新物理 ID 的文本形式，既有专业 public key 原样保留。八个 owner 的缺省值
+不相互推导，insert 后 delete 的 AUTOINCREMENT 水位也随 JSON handoff 保存。未映射 native
+删除事实不会从初始快照复活。Task-first composed inverse
+与 handoff producer仍是 migration-only；没有激活运行时。
 
 Actions 保留五十九种物理类型：五十八种方案、审查、候选、修订、动作、尝试、步骤、业务事件和回执，以及一种只保留旧 execution 身份的技术 alias。
 类型只存 `_kind`，业务值使用声明的 JSONB 槽位及 prepared Action 的三个源限定列；公开字段按其唯一 owner 读取。

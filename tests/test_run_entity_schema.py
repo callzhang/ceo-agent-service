@@ -800,6 +800,274 @@ def test_run_then_task_inverse_allows_source_getter_and_writer_before_immediate_
         db.close()
 
 
+def test_task_first_run_inverse_emits_json_handoff_from_restored_task_source():
+    import json
+    from app.task_entity_schema import restore_task_entities
+
+    db, task_forward, task_source_metadata = _run_source(include_task_source_metadata=True)
+    try:
+        run_source_metadata = capture_run_entities(db)
+        run_forward = migrate_run_entities(
+            db, run_source_metadata, task_metadata=task_forward,
+            run_handoff=_run_handoff(db, run_source_metadata))
+        db.execute(
+            "insert into setup_wizard_events(id,step_id,action_id,status,summary,evidence_json,"
+            "stdout_excerpt,stderr_excerpt,created_at,finished_at) "
+            "values(10999,'new-step','new-action','completed','new native fact','{}','','',"
+            "'2026-10-22T00:00:00Z','2026-10-22T00:00:01Z')")
+        task_inverse = restore_task_entities(db, task_source_metadata, task_forward)
+        result = restore_run_entities(
+            db, run_source_metadata, run_forward, task_metadata=task_forward,
+            task_inverse_metadata=task_inverse)
+        assert not any(row[1] == "runs:setup_wizard_events"
+                       for row in run_source_metadata["sequence_rows"])
+        created_sequence = next(row for row in result["sequence_rows"]
+                                if row[1] == "runs:setup_wizard_events")
+        assert created_sequence[0] is not None
+        assert tuple(db.execute("select rowid,name,seq from sqlite_sequence "
+                                "where name='runs:setup_wizard_events'").fetchone()) == created_sequence
+        handoff = json.loads(json.dumps(result["run_handoff"]))
+        assert handoff["version"] == 1
+        assert handoff["source_context"]
+        assert set(handoff["owner_highwaters"]) == {
+            "runs", "runtime_attempts", "run_failures", "schedule_occurrences",
+            "workbench_events", "codex_session_search_index",
+            "email_classifier_runtime_samples", "setup_wizard_events",
+        }
+        new_row = db.execute(
+            "select id,legacy_key,step_id from runs where record_type='setup_wizard_events' "
+            "and step_id='new-step'").fetchone()
+        assert new_row is not None
+        assert new_row[0] > 8000
+        previous_setup_key = db.execute(
+            "select max(cast(legacy_key as integer)) from runs "
+            "where record_type='setup_wizard_events' and step_id!='new-step'").fetchone()[0]
+        assert new_row[1] == str(previous_setup_key + 1)
+        assert new_row[2] == "new-step"
+        assert any(edge["source_kind"] == "setup_wizard_events"
+                   and edge["canonical_id"] == 10999 for edge in handoff["identity_edges"])
+        assert logical_run_current_schema.current_run11_schema_is_current(db)
+    finally:
+        db.close()
+
+
+def test_task_first_new_run_facts_survive_old_write_and_two_json_cycles():
+    import hashlib
+    import struct
+    from app.task_entity_schema import capture_task_entities, migrate_task_entities, restore_task_entities
+    from app.task20_definitions import task20_projection
+    from app.task_entity_storage import create_task, append_task_input, bind_claimed_input, bind_current_input
+    from app.run_entity_storage import create_run, set_run_provenance, set_run_projection
+    from app.logical_run_storage import create_logical_run, logical_run_projection
+
+    db, task_forward, task_source_metadata = _run_source(include_task_source_metadata=True)
+    owners = ("runs", "runtime_attempts", "run_failures", "schedule_occurrences",
+              "workbench_events", "codex_session_search_index",
+              "email_classifier_runtime_samples", "setup_wizard_events")
+
+    def clone(table, changes):
+        row = dict(db.execute(f'select * from "{table}" limit 1').fetchone())
+        row.update(changes)
+        columns = tuple(row)
+        db.execute(f'insert into "{table}" (' + ",".join(f'"{name}"' for name in columns)
+                   + ") values(" + ",".join("?" for _ in columns) + ")",
+                   tuple(row[name] for name in columns))
+
+    def fingerprints(excluded_run=None):
+        output = {}
+        for table in (*owners, "run_provenance", "run_projections", "tasks", "task_inputs",
+                      "task_business_keys", "task_results"):
+            sql = f'select * from "{table}"'
+            args = ()
+            if excluded_run is not None and table in ("runs", "run_provenance", "run_projections"):
+                sql += " where " + ("id" if table == "runs" else "run_id") + "<>?"
+                args = (excluded_run,)
+            rows = db.execute(sql, args).fetchall()
+            digest_rows = []
+            for row in rows:
+                digest = hashlib.sha256()
+                for value in row:
+                    if value is None:
+                        tag, raw = b"n", b""
+                    elif isinstance(value, bytes):
+                        tag, raw = b"b", value
+                    elif isinstance(value, str):
+                        tag, raw = b"t", value.encode()
+                    elif isinstance(value, int):
+                        tag, raw = b"i", str(value).encode()
+                    elif isinstance(value, float):
+                        tag, raw = b"r", struct.pack(">d", value)
+                    else:
+                        raise TypeError(type(value))
+                    digest.update(tag + str(len(raw)).encode() + b":" + raw)
+                digest_rows.append(digest.digest())
+            output[table] = (len(rows), hashlib.sha256(b"".join(sorted(digest_rows))).hexdigest())
+        return output
+
+    try:
+        run_source_metadata = capture_run_entities(db)
+        run_forward = migrate_run_entities(
+            db, run_source_metadata, task_metadata=task_forward,
+            run_handoff=_run_handoff(db, run_source_metadata))
+        db.row_factory = sqlite3.Row
+        now = "2026-10-22T00:00:00Z"
+        native_task = create_task(db, values={"kind": "reply", "status": "pending",
+            "available_at": now, "attempts": 0, "error": "", "execution_generation": "initial",
+            "claimed_input_version": 0, "created_at": now, "updated_at": now}, parameters={
+                "force_new_decision": 0, "manual_rerun_attempt_id": 0,
+                "manual_rerun_revision_key": "", "recovery_code": ""})
+        task_inputs = []
+        for index in (1, 2):
+            task_input, created = append_task_input(db, task_id=native_task["id"], values={
+                "channel": "dingtalk", "conversation_id": "synthetic-roundtrip",
+                "conversation_title": "synthetic", "single_chat": 1,
+                "trigger_message_id": f"synthetic-input-{index}", "trigger_create_time": now,
+                "trigger_sender": "synthetic", "trigger_text": f"synthetic input {index}",
+                "oa_url": "", "business_object_key": "synthetic-roundtrip",
+                "input_revision_key": "same-revision", "created_at": now})
+            assert created
+            task_inputs.append(task_input)
+        assert bind_claimed_input(db, task_id=native_task["id"], input_id=task_inputs[0]["id"],
+                                  claimed_input_version=1)
+        assert bind_current_input(db, task_id=native_task["id"], input_id=task_inputs[0]["id"],
+                                  expected_input_version=None, input_version=1)
+        assert bind_current_input(db, task_id=native_task["id"], input_id=task_inputs[1]["id"],
+                                  expected_input_version=1, input_version=2)
+        email_task = create_task(db, values={"kind": "email_classification", "status": "pending",
+            "available_at": now, "attempts": 0, "error": "", "owner_pid": None, "generation": 0,
+            "lease_owner": "", "lease_expires_at": "", "created_at": now, "updated_at": now})
+        email_stable_identity = "synthetic:account:folder:uidvalidity:uid"
+        db.execute("insert into email_classification_inputs(task_id,channel,stable_message_identity,input_json) "
+                   "values(?,?,?,?)", (email_task["id"], "email", email_stable_identity, "{}"))
+        db.execute("insert into task_results(task_id,result_kind,result_json) values(?,?,?)",
+                   (email_task["id"], "email_classification", "{}"))
+        db.execute("insert into workbench_tasks(title,runtime_kind,provider_session_ref) values(?,?,?)",
+                   ("Synthetic Workbench", "codex", "opaque:synthetic-session"))
+        workbench_session = db.execute("select id from workbench_tasks where title='Synthetic Workbench'").fetchone()[0]
+        workbench_turn = create_task(db, values={"kind": "workbench_turn", "status": "queued",
+            "created_at": now, "updated_at": now, "lease_owner": "", "lease_expires_at": ""})
+        db.execute("insert into workbench_turns(task_id,workbench_task_id,client_request_id,task_sequence,"
+            "user_text,stop_requested,error_code,error_detail,resume_context,execution_run_id,"
+            "runtime_quiesced_run_id,started_at,completed_at) values(?,?,?,?,?,?,?,?,?,?,?,?,?)",
+            (workbench_turn["id"], workbench_session, "synthetic-client-request", 1,
+             "synthetic workbench input", 0, "", "", "", "", "", "", ""))
+        consumer = create_run(db, values={"task_id": native_task["id"],
+            "execution_generation": "initial", "role": "consumer", "proposal_revision": 1,
+            "turn_attempt": 1, "operation_id": "synthetic-consumer-op", "status": "completed",
+            "session_id": "synthetic-consumer", "transcript_start": 2, "transcript_end": 8,
+            "structured_error_json": b"typed-error", "lease_owner": "synthetic",
+            "lease_expires_at": now, "started_at": now, "completed_at": now,
+            "created_at": now, "updated_at": now})
+        audit = create_run(db, values={"task_id": native_task["id"], "parent_id": consumer["id"],
+            "execution_generation": "initial", "role": "audit", "proposal_revision": 1,
+            "turn_attempt": 1, "operation_id": "synthetic-audit-op", "status": "completed",
+            "session_id": "synthetic-audit", "transcript_start": 9, "transcript_end": 12,
+            "structured_error_json": "{}", "lease_owner": "synthetic", "lease_expires_at": now,
+            "started_at": now, "completed_at": now, "created_at": now, "updated_at": now})
+        assert audit["id"] != consumer["id"]
+        task_agent_task = db.execute("select id from tasks where kind='work_summary' limit 1").fetchone()[0]
+        professional = create_run(db, values={"task_id": task_agent_task, "status": "completed",
+            "session_id": "synthetic-professional", "error": "", "completed_at": now,
+            "updated_at": now, "created_at": now})
+        set_run_provenance(db, run_id=professional["id"], source_type="task_agent_runs")
+        set_run_projection(db, run_id=professional["id"], projection_json=b'{"synthetic":true}')
+        common = consumer["id"]
+        clone("runtime_attempts", {"id": common, "parent_id": common, "workload_kind": "agent_run",
+            "workload_key": str(common), "attempt_number": 1, "route_name": "synthetic",
+            "session_mode": "fresh", "source_session_id": "", "session_id": "synthetic-call",
+            "status": "completed"})
+        clone("runtime_attempts", {"id": common + 1, "parent_id": common, "workload_kind": "agent_run",
+            "workload_key": str(common), "attempt_number": 2, "route_name": "synthetic",
+            "session_mode": "resume", "source_session_id": "synthetic-call",
+            "session_id": "synthetic-call-resume", "status": "completed"})
+        clone("runtime_attempts", {"id": common + 2, "parent_id": None,
+            "workload_kind": "email_classification", "workload_key": str(email_task["id"]),
+            "attempt_number": 1, "route_name": "synthetic", "session_mode": "fresh",
+            "source_session_id": "", "session_id": "synthetic-email-call", "status": "completed"})
+        clone("runtime_attempts", {"id": common + 3, "parent_id": None,
+            "workload_kind": "workbench", "workload_key": str(workbench_turn["id"]),
+            "attempt_number": 1, "route_name": "synthetic", "session_mode": "fresh",
+            "source_session_id": "", "session_id": "synthetic-workbench-call", "status": "completed"})
+        clone("run_failures", {"id": common, "run_id": common, "phase": "synthetic-failure",
+            "structured_error_json": '{"synthetic":true}'})
+        clone("schedule_occurrences", {"id": common, "event_id": "synthetic-event",
+            "trigger_kind": "manual", "dispatch_status": "dispatched", "execution_kind": "reply_task",
+            "execution_id": str(native_task["id"])})
+        clone("workbench_events", {"id": common, "task_id": workbench_turn["id"],
+            "sequence": 1, "event_type": "synthetic", "payload_json": "{}"})
+        meeting = db.execute("select run_id from run_provenance where source_type='meeting_alignment_runs' "
+                             "and job_id is null limit 1").fetchone()[0]
+        clone("codex_session_search_index", {"id": common, "session_id": "synthetic-search",
+            "source_type": "meeting_alignment", "source_id": str(meeting), "title": "synthetic"})
+        clone("email_classifier_runtime_samples", {"id": common, "model_id": "synthetic-no-provider-call"})
+        clone("setup_wizard_events", {"id": common, "step_id": "synthetic", "action_id": "synthetic",
+            "summary": "synthetic"})
+        cursor = db.execute("insert into setup_wizard_events(step_id,action_id,status) "
+                            "values('insert-delete','synthetic','completed')")
+        deleted_setup_id = int(cursor.lastrowid)
+        db.execute("delete from setup_wizard_events where id=?", (deleted_setup_id,))
+        deleted_setup_water = db.execute("select seq from sqlite_sequence where name='setup_wizard_events'").fetchone()[0]
+        assert deleted_setup_water >= deleted_setup_id
+        for owner in owners:
+            value = db.execute("select seq from sqlite_sequence where name=?", (owner,)).fetchone()[0]
+            db.execute("update sqlite_sequence set seq=? where name=?", (value + 20, owner))
+        expected = fingerprints()
+        expected_water = dict(db.execute("select name,seq from sqlite_sequence where name in (" +
+                                        ",".join("?" for _ in owners) + ")", owners))
+
+        old_run = None
+        for cycle in (1, 2):
+            task_inverse = restore_task_entities(db, task_source_metadata, task_forward)
+            run_inverse = restore_run_entities(db, run_source_metadata, run_forward,
+                task_metadata=task_forward, task_inverse_metadata=task_inverse)
+            serialized_run_handoff = json.loads(json.dumps(run_inverse["run_handoff"]))
+            assert len(serialized_run_handoff["identity_edges"]) >= 8
+            if cycle == 1:
+                from hashlib import sha256
+                from app.store import AutoReplyStore
+                email_public = "email-classification:" + sha256(email_stable_identity.encode()).hexdigest()
+                run_owner_ids = {(row["source_kind"], row["canonical_id"]): row["source_physical_id"]
+                                 for row in serialized_run_handoff["identity_edges"]}
+                email_attempt_id = run_owner_ids[("agent_runtime_attempts", common + 2)]
+                assert db.execute("select workload_key from runs where record_type='agent_runtime_attempts' "
+                                  "and id=?", (email_attempt_id,)).fetchone()[0] == email_public
+                assert AutoReplyStore._validate_runtime_operation_workload(
+                    "email_classification", email_public) == ("email_classification", email_public)
+                turn_public = db.execute("select id from (" + task20_projection("workbench_turns")
+                    + ") where client_request_id='synthetic-client-request'").fetchone()[0]
+                from uuid import UUID
+                UUID(turn_public)
+                workbench_attempt_id = run_owner_ids[("agent_runtime_attempts", common + 3)]
+                assert db.execute("select workload_key from runs where record_type='agent_runtime_attempts' "
+                                  "and id=?", (workbench_attempt_id,)).fetchone()[0] == turn_public
+                assert AutoReplyStore._validate_runtime_operation_workload(
+                    "workbench", turn_public) == ("workbench", turn_public)
+            if cycle == 1:
+                parent_public = db.execute("select cast(legacy_key as integer) from tasks "
+                    "where record_type='work_summary_inputs' limit 1").fetchone()
+                old_run = create_logical_run(db, "task_agent_runs", parent_public[0], status="completed",
+                    codex_session_id="genuine-predecessor-write")
+                assert old_run > max(deleted_setup_water, *expected_water.values())
+                assert db.execute("select legacy_key from runs where id=?", (old_run,)).fetchone()[0] == str(old_run)
+                assert db.execute("select id from (" + logical_run_projection("task_agent_runs") +
+                    ") where common_run_id=?", (old_run,)).fetchone()[0] == old_run
+            task_source_metadata = capture_task_entities(db)
+            run_source_metadata = capture_run_entities(db)
+            task_forward = migrate_task_entities(db, task_source_metadata,
+                source_context=task_inverse["source_context"],
+                inverse_identity=json.loads(json.dumps(task_inverse["inverse_identity"])))
+            run_forward = migrate_run_entities(db, run_source_metadata, task_metadata=task_forward,
+                run_handoff=serialized_run_handoff)
+            assert fingerprints(old_run) == expected
+            for owner, highwater in expected_water.items():
+                actual = db.execute("select seq from sqlite_sequence where name=?", (owner,)).fetchone()[0]
+                assert actual >= highwater
+        assert not logical_run_current_schema.current_run11_schema_is_current(db)
+        assert db.execute("select 1 from sqlite_schema where type='table' and name='runtime_attempts'").fetchone()
+    finally:
+        db.close()
+
+
 def _q(identifier):
     return '"' + identifier.replace('"', '""') + '"'
 

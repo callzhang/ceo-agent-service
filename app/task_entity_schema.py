@@ -897,7 +897,9 @@ def restore_task_entities(db: sqlite3.Connection, source_metadata: dict, forward
                     row[0].encode("utf-8")
                 ).hexdigest()
             else:
-                public_key = str(uuid4()) if kind in {"workbench_tasks", "workbench_turns"} else canonical_id
+                public_key = (str(uuid4()) if kind in {"workbench_tasks", "workbench_turns"}
+                              else source_physical_by_native[(kind, canonical_id)]
+                              if kind == "reply_tasks" else canonical_id)
         source_public_by_native[(kind, canonical_id)] = public_key
 
     source_rows = []
