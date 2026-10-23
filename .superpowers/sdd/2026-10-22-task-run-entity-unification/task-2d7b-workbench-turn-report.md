@@ -1,7 +1,7 @@
 # Task2D7B Workbench Turn native execution report
 
 Base: `b63b5f45b6a71a837fd3c97d1222b4875028badc`
-Head: `49acb2c9c` (local commit).
+Implementation head: `2ca7e3877` (local commit before the report-only commit).
 Scope: native Workbench Turn lifecycle, event/artifact readers and writers, exact RuntimeAttempt workload validation, public API identity parsing, and the exact typed `artifact_created.payload.artifact_id` converter handoff. No constructor activation, full-suite/provider execution, production database, push, or deploy.
 
 ## Owner and identity decisions
