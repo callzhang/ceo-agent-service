@@ -1089,3 +1089,197 @@ def test_native_feedback_replay_rejects_malformed_current_round_lineage(tmp_path
             "select count(*) from actions where record_type='feedback_processing_transitions' "
             "and fb_transition_feedback_key='malformed'"
         ).fetchone()[0] == 1
+
+
+@pytest.mark.parametrize("scope", ["skill_only", "runtime_config", "mixed"])
+def test_native_feedback_supported_config_scopes_use_actual_load_receipts(
+    tmp_path, scope,
+):
+    from app.feedback_processing import (
+        FeedbackIterationAcceptance, FeedbackIterationDecision, ResolutionEvidence,
+    )
+
+    store = _target_store(tmp_path / f"feedback-native-{scope}.sqlite3")
+    skill = revision_one = revision_two = None
+    if scope in {"skill_only", "mixed"}:
+        skill = store.create_managed_skill("scope-test", "Scope Test")
+        revision_one = store.create_managed_skill_revision(
+            skill.id,
+            "---\nname: scope-test\ndescription: Test managed Skill\n"
+            "metadata:\n  managed_by: ceo-agent-service\n---\n\n# One\n",
+            source="settings",
+        )
+        revision_two = store.create_managed_skill_revision(
+            skill.id,
+            "---\nname: scope-test\ndescription: Test managed Skill\n"
+            "metadata:\n  managed_by: ceo-agent-service\n---\n\n# Two\n",
+            source="settings",
+        )
+        previous_bindings = {skill.id: revision_one.id}
+        target_bindings = {skill.id: revision_two.id}
+    else:
+        previous_bindings = target_bindings = {}
+    previous_config = store.create_runtime_skill_config(
+        previous_bindings, expected_parent_id=None,
+    )
+    store.record_runtime_skill_load(
+        previous_config.id, pid=201, loaded=(
+            {skill.id: revision_one.sha256} if skill is not None else {}
+        ),
+    )
+    target_config = store.create_runtime_skill_config(
+        target_bindings, expected_parent_id=previous_config.id,
+    )
+    target_load = store.record_runtime_skill_load(
+        target_config.id, pid=202, loaded=(
+            {skill.id: revision_two.sha256} if skill is not None else {}
+        ),
+    )
+
+    key = f"feedback-{scope}"
+    _add_feedback_event(store, key)
+    batch_id = f"batch-{scope}"
+    store.create_feedback_processing_batch([key], batch_id=batch_id)
+    item = store.claim_feedback_processing_items(batch_id, [key])[0]
+    store.associate_feedback_processing_turn(
+        key, expected_batch_id=batch_id,
+        workbench_task_id=f"task-{scope}", workbench_turn_id=f"turn-{scope}",
+        attempt_id=21, agent_run_id=31,
+    )
+    commit_sha = "c" * 40 if scope == "mixed" else ""
+    test_evidence = {"focused": {"exit_code": 0}}
+    restart_evidence = {
+        "launchd_label": "com.ceo-agent-service.main",
+        "before_pid": 10, "after_pid": 11,
+    }
+    health_evidence = {
+        "url": "http://127.0.0.1:8765/healthz", "status_code": 200, "ok": True,
+    }
+    store.patch_feedback_processing_item_evidence(
+        key, commit_sha=commit_sha, test_evidence=test_evidence,
+        restart_evidence=restart_evidence, health_evidence=health_evidence,
+    )
+    target_skill_revisions = (
+        [{"skill_id": skill.id, "from_revision": revision_one.id,
+          "to_revision": revision_two.id}]
+        if skill is not None else []
+    )
+    target_runtime_config_id = (
+        target_config.id if scope in {"runtime_config", "mixed"} else None
+    )
+    decision = FeedbackIterationDecision(
+        scope=scope, root_cause="verified managed configuration change",
+        feedback_keys=[key], source_references=["actual record APIs"],
+        target_skill_revisions=target_skill_revisions,
+        target_runtime_config_id=target_runtime_config_id,
+        why_not_code="The existing application code already supports this behavior.",
+        acceptance=FeedbackIterationAcceptance(
+            scenario="current feedback", expected_behavior="loaded configured state",
+            verification=["native scope receipt"],
+        ),
+    )
+    store.record_feedback_iteration_decision(
+        batch_id, decision, workbench_task_id=f"task-{scope}",
+        workbench_turn_id=f"turn-{scope}",
+    )
+    evidence = ResolutionEvidence(
+        commit_sha=commit_sha, test_evidence=test_evidence,
+        restart_evidence=restart_evidence, health_evidence=health_evidence,
+        backlog_evidence={"processing": 0, "failed": 0, "retryable": 0},
+        runtime_config_id=target_config.id,
+        previous_runtime_config_id=previous_config.id,
+        load_receipt_id=target_load.id,
+        skill_revisions=(
+            [{"skill_id": skill.id, "revision_id": revision_two.id,
+              "sha256": revision_two.sha256}]
+            if skill is not None else []
+        ),
+        associations={key: {
+            "workbench_task_id": f"task-{scope}",
+            "workbench_turn_id": f"turn-{scope}",
+            "attempt_id": 21, "agent_run_id": 31,
+        }},
+    )
+    assert store.resolve_feedback_processing_batch(
+        batch_id, evidence, commit_is_ancestor=(scope == "mixed"),
+    ) is True
+    assert store.resolve_feedback_processing_batch(batch_id, None, commit_is_ancestor=False) is True
+    with store._connect() as db:
+        row = db.execute(
+            "select scope_receipt_json from feedback_processing_rounds where id=?",
+            (item.current_round_id,),
+        ).fetchone()
+        native_receipt = json.loads(row["scope_receipt_json"])
+        assert native_receipt["scope"] == scope
+        assert native_receipt["evidence"]["load_receipt_id"] == target_load.id
+        assert db.execute(
+            "select status from tasks where id=(select task_id from feedback_processing_items "
+            "where feedback_key=?)", (key,),
+        ).fetchone()[0] == "resolved"
+    alternate_load = store.record_runtime_skill_load(
+        target_config.id, pid=203, loaded=(
+            {skill.id: revision_two.sha256} if skill is not None else {}
+        ),
+    )
+    assert alternate_load.id != target_load.id
+    with pytest.raises(ValueError, match="scope receipt"):
+        store.resolve_feedback_processing_batch(
+            batch_id, evidence.model_copy(update={"load_receipt_id": alternate_load.id}),
+            commit_is_ancestor=(scope == "mixed"),
+        )
+    assert store.get_feedback_processing_batch(batch_id).status == "resolved"
+
+
+def test_native_feedback_needs_human_decision_remains_unresolvable(tmp_path):
+    from app.feedback_processing import (
+        FeedbackIterationAcceptance, FeedbackIterationDecision, ResolutionEvidence,
+    )
+
+    store = _target_store(tmp_path / "feedback-native-needs-human.sqlite3")
+    _add_feedback_event(store, "feedback-needs-human")
+    store.create_feedback_processing_batch(
+        ["feedback-needs-human"], batch_id="needs-human-batch",
+    )
+    store.claim_feedback_processing_items(
+        "needs-human-batch", ["feedback-needs-human"],
+    )
+    store.associate_feedback_processing_turn(
+        "feedback-needs-human", expected_batch_id="needs-human-batch",
+        workbench_task_id="task-needs-human", workbench_turn_id="turn-needs-human",
+        attempt_id=22, agent_run_id=32,
+    )
+    store.patch_feedback_processing_item_evidence(
+        "feedback-needs-human", commit_sha="d" * 40,
+        test_evidence={"focused": {"exit_code": 0}},
+        restart_evidence={"launchd_label": "com.ceo-agent-service.main",
+                          "before_pid": 12, "after_pid": 13},
+        health_evidence={"url": "http://127.0.0.1:8765/healthz",
+                         "status_code": 200, "ok": True},
+    )
+    decision = FeedbackIterationDecision(
+        scope="needs_human", root_cause="requires human judgment",
+        feedback_keys=["feedback-needs-human"], source_references=["actual record APIs"],
+        why_not_code="The decision needs a human owner.",
+        acceptance=FeedbackIterationAcceptance(
+            scenario="current feedback", expected_behavior="remain unresolved",
+            verification=["human decision"],
+        ),
+    )
+    store.record_feedback_iteration_decision(
+        "needs-human-batch", decision,
+        workbench_task_id="task-needs-human", workbench_turn_id="turn-needs-human",
+    )
+    evidence = ResolutionEvidence(
+        commit_sha="d" * 40, test_evidence={"focused": {"exit_code": 0}},
+        restart_evidence={"launchd_label": "com.ceo-agent-service.main",
+                          "before_pid": 12, "after_pid": 13},
+        health_evidence={"url": "http://127.0.0.1:8765/healthz",
+                         "status_code": 200, "ok": True},
+        backlog_evidence={"processing": 0, "failed": 0, "retryable": 0},
+    )
+    with pytest.raises(ValueError, match="needs_human feedback iteration decisions cannot resolve"):
+        store.resolve_feedback_processing_batch(
+            "needs-human-batch", evidence, commit_is_ancestor=True,
+        )
+    assert store.get_feedback_processing_batch("needs-human-batch").status == "processing"
+    assert store.get_feedback_processing_item("feedback-needs-human").status == "processing"
