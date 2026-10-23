@@ -28,7 +28,7 @@ from evals.scheduled_task_generic.okr_fixture import (
 )
 
 HERE = Path(__file__).parent
-CASES_PATH = HERE / "okr_cases.v6.json"
+CASES_PATH = HERE / "okr_cases.v7.json"
 MAX_NATIVE_FEEDBACK_CYCLES = 3
 
 
@@ -204,6 +204,12 @@ def approved_saved_case(saved_cases, case_id):
         ),
         None,
     )
+
+
+def evaluation_status(completed_cases, selected_case_ids):
+    if len(completed_cases) != len(selected_case_ids):
+        return "failed"
+    return "passed" if all(case["passed"] for case in completed_cases) else "failed"
 
 
 
@@ -471,6 +477,14 @@ def _grade(case, work, output, prior=None):
         }
         checks["independent_sources_searched_and_read"] = (
             searched and required_independent <= read_sources
+        )
+    for empty_search in expected.get("independent_searches_without_matches", []):
+        query_tokens = (empty_search["display_name"].casefold(), empty_search["user_id"].casefold())
+        checks["empty_independent_search_recorded:" + empty_search["user_id"]] = any(
+            c["tool"] == "search_dingtalk_documents"
+            and all(token in c["arguments"].get("query", "").casefold() for token in query_tokens)
+            and c["result"].get("documents") == []
+            for c in trace
         )
     checks["exact_summary_proposal"] = (
         len(actions) == 1
@@ -786,6 +800,7 @@ def main():
     parser.add_argument("--output", default="okr_results.v1.json", help="Result filename in this evaluation directory")
     parser.add_argument("--recheck-accepted-prefix-from", help="Verify accepted bytes and rerun only Audit under current tools/Skill")
     parser.add_argument("--resume-reviewed-from", help="Rescore unchanged reviewed native outputs after an evaluator-only repair")
+    parser.add_argument("--case-id", help="Run one named frozen case while preserving the full manifest hash")
     args = parser.parse_args()
     destination = HERE / args.output
     if not destination.parent.is_dir():
@@ -795,6 +810,13 @@ def main():
             "Preserve the existing result; use a distinct output name after a diagnosed repair"
         )
     manifest = read_json(CASES_PATH)
+    if args.case_id:
+        selected = [case for case in manifest["cases"] if case["id"] == args.case_id]
+        if len(selected) != 1:
+            raise ValueError(f"Unknown or duplicate OKR case: {args.case_id}")
+        cases = selected
+    else:
+        cases = manifest["cases"]
     settings, flags = run.configuration("production-config")
     # Same configured model/effort; only this fixture server is connected.
     isolated = []
@@ -833,6 +855,7 @@ def main():
         "settings": settings,
         "synthetic_only": True,
         "external_executor_available": False,
+        "selected_case_ids": [case["id"] for case in cases],
         "source_sha256": {
             str(p.relative_to(run.ROOT))
             if p.is_relative_to(run.ROOT)
@@ -857,7 +880,7 @@ def main():
         ) as temp:
             directory = Path(temp)
             completed = {}
-            for scheduled_run_id, case in enumerate(manifest["cases"], start=1):
+            for scheduled_run_id, case in enumerate(cases, start=1):
                 root = directory / case["id"]
                 root.mkdir()
                 artifacts = root / "artifacts"
@@ -1060,12 +1083,7 @@ def main():
         result["temporary_artifacts_cleaned"] = (
             directory is None or not directory.exists()
         )
-        result["status"] = (
-            "passed"
-            if len(result["cases"]) == len(manifest["cases"])
-            and all(c["passed"] for c in result["cases"])
-            else "failed"
-        )
+        result["status"] = evaluation_status(result["cases"], result["selected_case_ids"])
         destination.write_text(json.dumps(result, ensure_ascii=False, indent=2) + "\n")
     print(
         json.dumps(
