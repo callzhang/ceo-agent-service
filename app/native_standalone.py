@@ -280,6 +280,57 @@ def latest_task_ref(db: sqlite3.Connection, run_id: int) -> NativeStandaloneRef 
     return ref_from_attempt(attempt)
 
 
+def native_run_ref(
+    db: sqlite3.Connection, run_id: int, source_type: str,
+) -> NativeStandaloneRef | None:
+    """Resolve native child attempts by their native Run or Task identity."""
+    if source_type in {"task_agent_runs", "meeting_alignment_runs"}:
+        attempt = db.execute(
+            "select status,runtime_kind,session_id,transcript_start,transcript_end "
+            "from runtime_attempts where parent_id=? "
+            "order by (status='completed') desc,id desc limit 1", (run_id,),
+        ).fetchone()
+        if attempt is not None:
+            return ref_from_attempt(attempt) if attempt["status"] == "completed" else None
+    else:
+        run = db.execute(
+            "select task_id,session_id,transcript_start,transcript_end from runs where id=?", (run_id,),
+        ).fetchone()
+        if run is None:
+            return None
+        workload_key = str(run["task_id"]) if run["task_id"] is not None else ""
+        if not workload_key:
+            return None
+        attempt = db.execute(
+            "select status,runtime_kind,session_id,transcript_start,transcript_end "
+            + "from runtime_attempts where workload_kind='structured' "
+            + "and workload_key=? and session_id=? and transcript_start=? and transcript_end=? "
+            + "order by (status='completed') desc,id desc limit 1",
+            (workload_key, run["session_id"], run["transcript_start"], run["transcript_end"]),
+        ).fetchone()
+        if attempt is not None:
+            return ref_from_attempt(attempt) if attempt["status"] == "completed" else None
+        any_attempt = db.execute(
+            "select 1 from runtime_attempts where workload_kind='structured' and workload_key=? limit 1",
+            (workload_key,),
+        ).fetchone()
+        if any_attempt is not None:
+            return None
+        session_id = str(run["session_id"] or "")
+        start, end = int(run["transcript_start"] or 0), int(run["transcript_end"] or 0)
+        return NativeStandaloneRef("codex_cli", session_id, start, end) if session_id and end > start else None
+    if source_type == "task_agent_runs":
+        return None
+    run = db.execute(
+        "select session_id,transcript_start,transcript_end from runs where id=?", (run_id,),
+    ).fetchone()
+    if run is None:
+        return None
+    session_id = str(run["session_id"] or "")
+    start, end = int(run["transcript_start"] or 0), int(run["transcript_end"] or 0)
+    return NativeStandaloneRef("codex_cli", session_id, start, end) if session_id and end > start else None
+
+
 def latest_standalone_ref(
     db: sqlite3.Connection, *, workload_kind: str, workload_key: str,
     legacy_row: sqlite3.Row | None = None,

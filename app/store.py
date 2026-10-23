@@ -24491,12 +24491,14 @@ class AutoReplyStore(LogicalRunStoreMixin, ReviewedCandidateStoreMixin):
         TaskAttentionProjectionReceipt.model_validate_json(projection_json)
 
         def record(db: sqlite3.Connection) -> None:
-            cursor = db.execute(
-                "update runs set projection_json=? where record_type='agent_runs' and source_type='task_agent_runs' and cast(legacy_key as integer)=?",
-                (projection_json, run_id),
+            from app import run_entity_storage
+            run = run_entity_storage.get_run(db, run_id)
+            provenance = run_entity_storage.get_run_provenance(db, run_id)
+            if run is None or provenance is None or provenance["source_type"] != "task_agent_runs":
+                raise ValueError("Task Agent Run does not exist")
+            run_entity_storage.set_run_projection(
+                db, run_id=run_id, projection_json=projection_json,
             )
-            if cursor.rowcount != 1:
-                raise ValueError("task agent run does not exist")
 
         if _db is not None:
             record(_db)
