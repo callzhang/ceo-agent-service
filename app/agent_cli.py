@@ -2403,7 +2403,7 @@ def build_role_server(
         ])
 
     def read_scheduled_context() -> dict[str, object]:
-        """Read trigger, task version and raw historical completion facts."""
+        """Read trigger facts and, for Consumer, the current task artifact manifest."""
         from app.service_activity import scheduled_context
 
         store, run = _bound_scheduled_run(db_path, task_id)
@@ -2413,6 +2413,8 @@ def build_role_server(
                 db_path, task_id, artifact_generation, create=role == "consumer"
             )
         )
+        if role == "consumer":
+            context["task_artifacts"] = list_task_artifacts()["files"]
         return context
 
     def read_service_activity(
