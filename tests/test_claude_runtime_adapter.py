@@ -164,7 +164,8 @@ def test_consumer_native_schema_is_inline_and_not_added_to_audit(adapter, route)
     assert schema["type"] == "object"
     assert "oneOf" not in schema
     assert "allOf" not in schema["$defs"]["ProposedAction"]
-    assert "error_code" in schema["required"]
+    assert "error_code" not in schema["required"]
+    assert schema["properties"]["error_code"]["default"] is None
 
 
 def test_normal_command_delegates_tool_review_to_claude_runtime(
