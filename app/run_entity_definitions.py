@@ -52,12 +52,12 @@ TABLES = {
  CHECK(attempt_number>0),
  CHECK(status IN ('starting','running','completed','failed','superseded')),
  CHECK((workload_kind='agent_run' AND parent_id IS NOT NULL AND workload_key=CAST(parent_id AS TEXT)) OR
-       (workload_kind<>'agent_run' AND parent_id IS NULL)),
+       workload_kind<>'agent_run'),
  CHECK((session_mode='fresh' AND source_session_id='') OR
        (session_mode='resume' AND trim(source_session_id)<>'')),
  CHECK((attempt_purpose='normal' AND validation_retry_policy_id='' AND validation_result_schema_id='') OR
        (attempt_purpose='result_validation_correction' AND trim(validation_retry_policy_id)<>'' AND trim(validation_result_schema_id)<>'')),
- CHECK(parent_id IS NOT NULL OR status NOT IN ('starting','running') OR
+ CHECK(workload_kind='agent_run' OR status NOT IN ('starting','running') OR
        (trim(lease_owner)<>'' AND trim(lease_expires_at)<>'')))""",
     "run_failures": """CREATE TABLE run_failures (
  id INTEGER PRIMARY KEY AUTOINCREMENT, run_id INTEGER NOT NULL REFERENCES runs(id),
@@ -107,7 +107,7 @@ INDEXES = {
     "idx_runs_task": "CREATE INDEX idx_runs_task ON runs(task_id,id)",
     "idx_runs_parent": "CREATE INDEX idx_runs_parent ON runs(parent_id,id)",
     "idx_runtime_attempts_active_route": "CREATE UNIQUE INDEX idx_runtime_attempts_active_route ON runtime_attempts(workload_kind,workload_key,route_name) WHERE status IN ('starting','running')",
-    "idx_runtime_attempts_active_lease": "CREATE INDEX idx_runtime_attempts_active_lease ON runtime_attempts(status,lease_expires_at) WHERE parent_id IS NULL AND status IN ('starting','running')",
+    "idx_runtime_attempts_active_lease": "CREATE INDEX idx_runtime_attempts_active_lease ON runtime_attempts(status,lease_expires_at) WHERE workload_kind<>'agent_run' AND status IN ('starting','running')",
     "idx_runtime_attempts_run_order": "CREATE INDEX idx_runtime_attempts_run_order ON runtime_attempts(parent_id,attempt_number)",
     "idx_run_failures_run": "CREATE INDEX idx_run_failures_run ON run_failures(run_id,id)",
     "idx_schedule_occurrences_claim": "CREATE INDEX idx_schedule_occurrences_claim ON schedule_occurrences(dispatch_status,scheduled_for,id)",
@@ -218,7 +218,10 @@ def run_entity_field_map() -> list[dict]:
             elif field == "legacy_key":
                 owner, target, target_field = "typed public identity and allocator", "run_entity_identity_map", "public_key"
             elif field in owners[source] and field in present:
-                owner, (target, target_field) = "source fact", owners[source][field]
+                owner = ("typed Task/Meeting workload key or source fact"
+                         if source == "agent_runtime_attempts" and field == "parent_id"
+                         else "source fact")
+                target, target_field = owners[source][field]
             elif source == "agent_runs" and field in present:
                 owner, target, target_field = "logical Run", "runs", field
             elif field in present:

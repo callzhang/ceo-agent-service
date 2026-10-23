@@ -1081,7 +1081,7 @@
   {
     "source_kind": "agent_runtime_attempts",
     "source_field": "parent_id",
-    "target_owner": "source fact",
+    "target_owner": "typed Task/Meeting workload key or source fact",
     "target_table": "runtime_attempts",
     "target_field": "parent_id",
     "retirement_reason": null,

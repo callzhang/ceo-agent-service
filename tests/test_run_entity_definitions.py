@@ -51,6 +51,9 @@ def test_contract_is_valid_and_artifacts_are_exact():
     source_columns = {row[1]: row for row in source.execute("PRAGMA table_info(runs)")}
     assert tuple(source_columns) == SOURCE_DECLARED_FIELDS
     expected = run_entity_field_map()
+    assert next(row for row in expected if row["source_kind"] == "agent_runtime_attempts"
+                and row["source_field"] == "parent_id")["target_owner"] == (
+                    "typed Task/Meeting workload key or source fact")
     for row in expected:
         _, name, sql_type, not_null, default, primary_key = source_columns[row["source_field"]]
         null_contract = "PRIMARY KEY" if primary_key else "NOT NULL" if not_null else "NULL allowed"
@@ -109,8 +112,10 @@ def test_one_run_has_many_attempts_and_standalone_invocation_is_valid():
     db.execute("INSERT INTO runs(id,created_at) VALUES (1,'now')")
     insert_attempt(db, valid_attempt(status='running'))
     insert_attempt(db, valid_attempt(attempt=2, status='completed', mode='resume', source_session='session'))
+    insert_attempt(db, valid_attempt(parent_id=1, workload_kind='task', workload_key='professional-run', status='running'))
     insert_attempt(db, valid_attempt(parent_id=None, workload_kind='standalone', workload_key='x', status='running'))
-    assert db.execute("SELECT count(*) FROM runtime_attempts WHERE parent_id=1").fetchone()[0] == 2
+    insert_attempt(db, valid_attempt(parent_id=None, workload_kind='standalone', workload_key='done', status='completed'))
+    assert db.execute("SELECT count(*) FROM runtime_attempts WHERE parent_id=1").fetchone()[0] == 3
     with pytest.raises(sqlite3.IntegrityError):
         insert_attempt(db, valid_attempt())
     db.execute("UPDATE runtime_attempts SET source_session_id='rewritten' WHERE attempt_number=2")
@@ -119,6 +124,11 @@ def test_one_run_has_many_attempts_and_standalone_invocation_is_valid():
         missing_lease = list(valid_attempt(parent_id=None, workload_kind='standalone', workload_key='y', status='running'))
         missing_lease[21:23] = ['', '']
         insert_attempt(db, missing_lease)
+    with pytest.raises(sqlite3.IntegrityError):
+        missing_owned_operation_lease = list(valid_attempt(
+            parent_id=1, workload_kind='task', workload_key='professional-run', status='running'))
+        missing_owned_operation_lease[21:23] = ['', '']
+        insert_attempt(db, missing_owned_operation_lease)
 
 
 def test_schedule_dispatch_state_and_domain_uniqueness_are_preserved():

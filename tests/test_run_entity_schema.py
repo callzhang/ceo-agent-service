@@ -144,13 +144,15 @@ def _run_source(*, orphan_task_id=None, include_task_source_metadata=False):
             values.update(transcript_start=0, transcript_end=0)
         _source_row(db, "agent_runs", values)
     workload_facts = (
-        ("task", "201:decision_repair.2"), ("agent_run", "1001"), ("meeting", "201"),
+        ("task", "201:decision_repair.2"), ("task", "201"),
+        ("agent_run", "1001"), ("meeting", "201"),
         ("structured", "222"), ("weekly_okr", "week:manager:digest"),
         ("weekly_okr", "week:manager:digest:223:owner"),
         ("email_classification", "classification-225"),
         ("workbench", "wb-turn-a"), ("memory", "wechat_memory_import_job:232"),
         ("memory", "meeting_memory_write_event:opaque:3"),
         ("task", "301:memory_backfill"), ("task", "302:deadline_backfill.4"),
+        ("task", "201:decision_repair.3"),
     )
     for index, (workload_kind, workload_key) in enumerate(workload_facts, start=1201):
         _source_row(db, "agent_runtime_attempts", {
@@ -269,16 +271,26 @@ def test_forward_migrates_all_eight_current_source_kinds_and_typed_facts():
         assert db.execute("select typeof(total_ms),total_ms from email_classifier_runtime_samples").fetchone() == ("real", 12.0)
         runtime_keys = dict(db.execute("select workload_kind||':'||id,workload_key from runtime_attempts"))
         assert runtime_keys["task:1201"] == "1101:decision_repair.2"
-        assert runtime_keys["agent_run:1202"] == "1001"
-        assert runtime_keys["meeting:1203"] == "1102"
-        assert runtime_keys["structured:1204"] == "222"
-        assert runtime_keys["weekly_okr:1206"] == "week:manager:digest:223:owner"
-        assert runtime_keys["email_classification:1207"] == "225"
-        assert runtime_keys["workbench:1208"] == "203"
-        assert runtime_keys["memory:1209"] == "wechat_memory_import_job:232"
-        assert runtime_keys["memory:1210"] == "meeting_memory_write_event:opaque:3"
-        assert runtime_keys["task:1211"] == "301:memory_backfill"
-        assert runtime_keys["task:1212"] == "302:deadline_backfill.4"
+        assert runtime_keys["task:1202"] == "1101"
+        assert runtime_keys["agent_run:1203"] == "1001"
+        assert runtime_keys["meeting:1204"] == "1102"
+        assert runtime_keys["structured:1205"] == "222"
+        assert runtime_keys["weekly_okr:1206"] == "week:manager:digest"
+        assert runtime_keys["weekly_okr:1207"] == "week:manager:digest:223:owner"
+        assert runtime_keys["email_classification:1208"] == "225"
+        assert runtime_keys["workbench:1209"] == "203"
+        assert runtime_keys["memory:1210"] == "wechat_memory_import_job:232"
+        assert runtime_keys["memory:1211"] == "meeting_memory_write_event:opaque:3"
+        assert runtime_keys["task:1212"] == "301:memory_backfill"
+        assert runtime_keys["task:1213"] == "302:deadline_backfill.4"
+        assert runtime_keys["task:1214"] == "1101:decision_repair.3"
+        assert dict(db.execute("select id,parent_id from runtime_attempts where id in (1201,1202,1204,1214)")) == {
+            1201: 1101, 1202: 1101, 1204: 1102, 1214: 1101}
+        assert tuple(db.execute("select workload_key,attempt_number,parent_id from runtime_attempts "
+                                "where id in (1201,1214) order by id")) == (
+            ("1101:decision_repair.2", 1, 1101), ("1101:decision_repair.3", 1, 1101))
+        assert db.execute("select parent_id from runtime_attempts where id=1211").fetchone()[0] is None
+        assert db.execute("select parent_id from runtime_attempts where id=1205").fetchone()[0] is None
         assert db.execute("select seq from sqlite_sequence where name='runs'").fetchone()[0] == 8000
         assert db.execute("select seq from sqlite_sequence where name='runs:published'").fetchone()[0] == 8000
         assert set(_TARGET_NAMES) <= {row[0] for row in db.execute(
@@ -326,6 +338,7 @@ def test_forward_migrates_all_eight_current_source_kinds_and_typed_facts():
                         value = "201"
                     if field == "workload_key" and kind == "agent_runtime_attempts":
                         value = {"task:201:decision_repair.2": "1101:decision_repair.2",
+                                 "task:201": "1101", "task:201:decision_repair.3": "1101:decision_repair.3",
                                  "agent_run:1001": "1001", "meeting:201": "1102",
                                  "structured:222": "222", "weekly_okr:week:manager:digest:223:owner":
                                      "week:manager:digest:223:owner",
@@ -337,6 +350,12 @@ def test_forward_migrates_all_eight_current_source_kinds_and_typed_facts():
                                  "task:301:memory_backfill": "301:memory_backfill",
                                  "task:302:deadline_backfill.4": "302:deadline_backfill.4"}[
                                      f"{source['workload_kind']}:{source['workload_key']}"]
+                    if field == "parent_id" and kind == "agent_runtime_attempts":
+                        if source["workload_kind"] == "task" and source["workload_key"] in {
+                                "201", "201:decision_repair.2", "201:decision_repair.3"}:
+                            value = 1101
+                        elif source["workload_kind"] == "meeting":
+                            value = 1102
                     assert (stored[1] if stored else None) == value, (kind, field, value, stored)
                     assert (stored[0] if stored else "null") == _sqlite_type(value), (
                         kind, field, _sqlite_type(value), stored)
@@ -354,7 +373,7 @@ def test_portable_handoff_remaps_all_eight_typed_run_owners_and_references():
         edge_targets = {
             ("agent_runs", 1001): 9101, ("agent_runs", 1002): 9102,
             ("agent_runs", 1101): 9111, ("agent_runs", 1102): 9112,
-            ("agent_runs", 1103): 9113, ("agent_runtime_attempts", 1202): 9101,
+            ("agent_runs", 1103): 9113, ("agent_runtime_attempts", 1203): 9101,
             ("agent_run_state_events", 1302): 9402,
             ("scheduled_task_runs", 1303): 9503,
             ("workbench_events", 1304): 9604,
@@ -379,6 +398,7 @@ def test_portable_handoff_remaps_all_eight_typed_run_owners_and_references():
             9101, "9101")
         assert db.execute("select workload_key from runtime_attempts where id=1201").fetchone()[0] == (
             "9111:decision_repair.2")
+        assert db.execute("select parent_id from runtime_attempts where id=1201").fetchone()[0] == 9111
         assert db.execute("select run_id from run_failures").fetchone()[0] == 9101
         assert db.execute("select id,execution_id from schedule_occurrences "
                            "where execution_kind='reply_task'").fetchone() == (9503, "201")
@@ -391,6 +411,97 @@ def test_portable_handoff_remaps_all_eight_typed_run_owners_and_references():
             "select physical_id,typeof(public_key),public_key,target_id from run_entity_identity_map "
             "where source_kind='agent_runs' and physical_id=1101").fetchone()
         assert identity == (1101, "text", "201", 9111)
+    finally:
+        db.close()
+
+
+def test_professional_attempt_owner_survives_two_json_inverse_reforward_cycles():
+    db, task_metadata = _run_source()
+    try:
+        source = capture_run_entities(db)
+        edges = [
+            dict(source_kind="agent_runs", source_physical_id=1101, canonical_id=9111),
+            dict(source_kind="agent_runs", source_physical_id=1102, canonical_id=9112),
+        ]
+        highwaters = {owner: None for owner in _run_handoff(db, source)["owner_highwaters"]}
+        handoff = json.loads(json.dumps(_run_handoff(
+            db, source, identity_edges=edges, owner_highwaters=highwaters)))
+        forward = migrate_run_entities(db, source, task_metadata=task_metadata, run_handoff=handoff)
+        for _ in range(2):
+            result = restore_run_entities(db, source, forward, task_metadata=task_metadata)
+            assert tuple(db.execute(
+                "select id,parent_id,workload_key from runs where record_type='agent_runtime_attempts' "
+                "and id in (1201,1202,1204,1214) order by id")) == (
+                    (1201, None, "201:decision_repair.2"),
+                    (1202, None, "201"), (1204, None, "201"),
+                    (1214, None, "201:decision_repair.3"))
+            source = capture_run_entities(db)
+            handoff = json.loads(json.dumps(result["run_handoff"]))
+            forward = migrate_run_entities(db, source, task_metadata=task_metadata,
+                                           run_handoff=handoff)
+            assert tuple(db.execute(
+                "select id,parent_id from runtime_attempts where id in (1201,1202,1204,1214) order by id")) == (
+                    (1201, 9111), (1202, 9111), (1204, 9112), (1214, 9111))
+            assert db.execute("select parent_id from runtime_attempts where id=1211").fetchone()[0] is None
+            assert db.execute("select parent_id from runtime_attempts where id=1205").fetchone()[0] is None
+    finally:
+        db.close()
+
+
+@pytest.mark.parametrize("attempt_id,parent_id", [(1201, None), (1201, 1102), (1205, 1103)])
+def test_inverse_rejects_native_attempt_owner_that_source_cannot_represent(attempt_id, parent_id):
+    db, task_metadata = _run_source()
+    try:
+        source = capture_run_entities(db)
+        forward = migrate_run_entities(db, source, task_metadata=task_metadata,
+                                       run_handoff=_run_handoff(db, source))
+        db.execute("update runtime_attempts set parent_id=? where id=?", (parent_id, attempt_id))
+        with pytest.raises(ValueError, match="cannot be represented"):
+            restore_run_entities(db, source, forward, task_metadata=task_metadata)
+        assert db.execute("select parent_id from runtime_attempts where id=?", (attempt_id,)).fetchone()[0] == parent_id
+        assert db.execute("select 1 from sqlite_schema where type='table' and name='runtime_attempts'").fetchone()
+    finally:
+        db.close()
+
+
+def test_new_native_task_run_attempt_gets_source_backed_owner_on_reforward():
+    from app.task_entity_schema import capture_task_entities, migrate_task_entities, restore_task_entities
+    from tests.test_run_entity_definitions import insert_attempt, valid_attempt
+
+    db, task_forward, task_source_metadata = _run_source(include_task_source_metadata=True)
+    try:
+        source = capture_run_entities(db)
+        forward = migrate_run_entities(db, source, task_metadata=task_forward,
+                                       run_handoff=_run_handoff(db, source))
+        db.execute("insert into runs(id,task_id,status,session_id,error,completed_at,created_at,updated_at) "
+                   "values(1800,220,'completed','','','now','now','now')")
+        db.execute("insert into run_provenance values(1800,'task_agent_runs',NULL)")
+        db.execute("insert into run_projections values(1800,'{}')")
+        insert_attempt(db, valid_attempt(parent_id=1800, workload_kind="task",
+                                         workload_key="1800", status="completed"))
+        attempt_id = db.execute("select max(id) from runtime_attempts").fetchone()[0]
+
+        task_inverse = restore_task_entities(db, task_source_metadata, task_forward)
+        run_inverse = restore_run_entities(db, source, forward, task_metadata=task_forward,
+                                           task_inverse_metadata=task_inverse)
+        edges = run_inverse["run_handoff"]["identity_edges"]
+        source_run_id = next(edge["source_physical_id"] for edge in edges
+                             if edge["source_kind"] == "agent_runs" and edge["canonical_id"] == 1800)
+        source_attempt_id = next(edge["source_physical_id"] for edge in edges
+                                 if edge["source_kind"] == "agent_runtime_attempts"
+                                 and edge["canonical_id"] == attempt_id)
+        assert db.execute("select source_type,legacy_key from runs where id=?",
+                          (source_run_id,)).fetchone() == ("task_agent_runs", str(source_run_id))
+        assert db.execute("select parent_id,workload_key from runs where id=?",
+                          (source_attempt_id,)).fetchone() == (None, str(source_run_id))
+
+        new_task_capture = capture_task_entities(db)
+        new_task_forward = migrate_task_entities(db, new_task_capture)
+        new_run_source = capture_run_entities(db)
+        migrate_run_entities(db, new_run_source, task_metadata=new_task_forward,
+                             run_handoff=json.loads(json.dumps(run_inverse["run_handoff"])))
+        assert db.execute("select parent_id,workload_key from runtime_attempts where id=?",
+                          (attempt_id,)).fetchone() == (1800, "1800")
     finally:
         db.close()
 

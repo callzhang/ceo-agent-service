@@ -1349,7 +1349,7 @@
       "source_kind": "agent_runtime_attempts",
       "sql_type": "INTEGER",
       "target_field": "parent_id",
-      "target_owner": "source fact",
+      "target_owner": "typed Task/Meeting workload key or source fact",
       "target_table": "runtime_attempts"
     },
     {

@@ -368,6 +368,19 @@ def _workload_key(db, row, task_edges, run_physical, run_public):
     return key
 
 
+def _professional_attempt_parent(row, run_public):
+    """Return the typed professional Run owner proven by this source key."""
+    kind, key = row["workload_kind"], row["workload_key"]
+    if kind == "task":
+        parts = key.split(":")
+        suffix = parts[1:]
+        if not suffix or suffix[0].startswith("decision_repair."):
+            return run_public[("task_agent_runs", "int", int(parts[0]))]
+    elif kind == "meeting":
+        return run_public[("meeting_alignment_runs", "int", int(key))]
+    return None
+
+
 def _source_reference(db, kind: str, source: dict, field: str, task_edges: dict,
                       run_physical: dict, run_public: dict):
     value = source[field]
@@ -515,10 +528,11 @@ def migrate_run_entities(db: sqlite3.Connection, source_metadata: dict, *,
                         db, kind, source, name, task_edges, run_physical, run_public)
             fields["id"] = _run_target_id(owner_maps, kind, source["id"])
             if kind == "agent_runtime_attempts":
-                fields["parent_id"] = (None if source["parent_id"] is None else
-                                        _run_target_id(owner_maps,
-                                                       kinds_by_id[source["parent_id"]],
-                                                       source["parent_id"]))
+                if source["workload_kind"] == "agent_run":
+                    fields["parent_id"] = _run_target_id(
+                        owner_maps, kinds_by_id[source["parent_id"]], source["parent_id"])
+                else:
+                    fields["parent_id"] = _professional_attempt_parent(source, run_public)
             elif kind == "agent_run_state_events":
                 fields["run_id"] = _run_target_id(owner_maps, "agent_runs", source["parent_id"])
             elif kind == "workbench_events":
@@ -877,6 +891,24 @@ def restore_run_entities(db: sqlite3.Connection, source_metadata: dict,
             int(values[key_index]): dict(zip(columns, values, strict=True))
             for values in db.execute(f"select * from main.{_quote(table)}")
         }
+    for attempt in native_rows["runtime_attempts"].values():
+        if attempt["workload_kind"] == "agent_run":
+            continue
+        key = attempt["workload_key"]
+        expected_parent, expected_source = None, None
+        if attempt["workload_kind"] == "task":
+            parts = key.split(":")
+            suffix = parts[1:]
+            if not suffix or suffix[0].startswith("decision_repair."):
+                expected_parent, expected_source = int(parts[0]), "task_agent_runs"
+        elif attempt["workload_kind"] == "meeting":
+            expected_parent, expected_source = int(key), "meeting_alignment_runs"
+        actual_parent = attempt["parent_id"]
+        if actual_parent != expected_parent or (expected_parent is not None
+                and run_source_type.get(expected_parent) != expected_source):
+            raise ValueError(
+                "native non-Agent RuntimeAttempt Run owner cannot be represented by the selected source"
+            )
     owner_highwaters = {}
     for owner in _SOURCE_TO_OWNER.values():
         sequence = db.execute("select seq from main.sqlite_sequence where name=?", (owner,)).fetchone()
@@ -976,11 +1008,13 @@ def restore_run_entities(db: sqlite3.Connection, source_metadata: dict,
                             source["source_type"] == "meeting_alignment_runs"
                             and identity["physical_id"] in captured_orphan_ids))
             elif kind == "agent_runtime_attempts":
-                if source["parent_id"] is not None:
+                if source["workload_kind"] == "agent_run" and source["parent_id"] is not None:
                     parent = run_source_physical_by_target.get(int(source["parent_id"]))
                     if parent is None:
                         raise ValueError("unresolved runtime attempt parent identity")
                     source["parent_id"] = parent
+                elif source["workload_kind"] != "agent_run":
+                    source["parent_id"] = None
                 source["workload_key"] = _inverse_workload_key(
                     db, source["workload_key"], task_target_to_source,
                     run_source_public_by_target, source["workload_kind"],
