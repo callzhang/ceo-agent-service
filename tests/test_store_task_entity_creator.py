@@ -15,7 +15,7 @@ from app.store import (
     ReplyTaskSpec,
 )
 from app import task_entity_storage
-from app.action_storage import insert_action
+from app.action_storage import insert_action, insert_task_delivery_action
 from app.action_entity_storage import append_action_receipt, create_action, record_action_result
 from app.action_feedback_storage import (
     insert_feedback_action,
@@ -121,6 +121,308 @@ def test_reply_creator_uses_native_owners_and_returns_same_task_for_message_dedu
         assert parameters["manual_rerun_attempt_id"] == 17
         assert db.execute("select count(*) from task_inputs where task_id=?", (first.id,)).fetchone()[0] == 1
         assert db.execute("select count(*) from task_business_keys where task_id=?", (first.id,)).fetchone()[0] == 1
+
+
+def test_failed_reply_run_retry_uses_native_task_and_run_owners(tmp_path):
+    store = _target_store(tmp_path / "native-retry.sqlite3")
+    task = store.ensure_reply_task(**_creator_kwargs(_spec("retry-message", business_key="business:one")))
+    with store._connect() as db:
+        native = task_entity_storage.get_task(db, task.id)
+        db.execute(
+            "update tasks set status='failed',attempts=3,locked_at='prior-lock',"
+            "error='prior failure' where id=?",
+            (task.id,),
+        )
+        run_id = db.execute(
+            "insert into runs(task_id,execution_generation,role,proposal_revision,"
+            "turn_attempt,operation_id,status,session_id,transcript_start,transcript_end,"
+            "structured_error_json,lease_owner,lease_expires_at,started_at,completed_at,updated_at) "
+            "values(?,?,'consumer',0,0,'','failed','session',0,0,'{}','','','','','') "
+            "returning id",
+            (task.id, native["execution_generation"]),
+        ).fetchone()[0]
+        db.execute(
+            "update tasks set claimed_input_id=current_input_id,claimed_input_version=input_version "
+            "where id=?",
+            (task.id,),
+        )
+
+    recovered = store.retry_failed_reply_task(
+        task.id, int(run_id), reason="  retry after repair  ", recovery_code="  "
+    )
+
+    assert recovered.status == "pending"
+    assert recovered.attempts == 0
+    assert recovered.error == "retry after repair"
+    assert recovered.execution_generation != task.execution_generation
+    assert recovered.current_input_id == task.current_input_id
+    assert recovered.claimed_input_id == task.current_input_id
+    with pytest.raises(ValueError, match="not retryable"):
+        store.retry_failed_reply_task(task.id, int(run_id), reason="second retry")
+    with store._connect() as db:
+        owner = task_entity_storage.get_task(db, task.id)
+        assert owner["parameters"]["force_new_decision"] == 1
+        assert owner["parameters"]["recovery_code"] == ""
+        assert db.execute("select count(*) from runs where task_id=?", (task.id,)).fetchone()[0] == 1
+        assert db.execute("select count(*) from task_business_keys where task_id=?", (task.id,)).fetchone()[0] == 1
+
+
+def test_failed_reply_run_retry_refuses_stale_run_and_accepts_latest_audit(tmp_path):
+    store = _target_store(tmp_path / "native-stale-run.sqlite3")
+    task = store.ensure_reply_task(**_creator_kwargs(_spec("stale-run-message")))
+    with store._connect() as db:
+        owner = task_entity_storage.get_task(db, task.id)
+        db.execute("update tasks set status='failed' where id=?", (task.id,))
+        run_ids = []
+        stale_generation_run = db.execute(
+            "insert into runs(task_id,execution_generation,role,proposal_revision,turn_attempt,"
+            "operation_id,status,session_id,transcript_start,transcript_end,structured_error_json,"
+            "lease_owner,lease_expires_at,started_at,completed_at,updated_at) "
+            "values(?,?,'consumer',0,0,'','failed','old-session',0,0,'{}','','','','','') returning id",
+            (task.id, "old-generation"),
+        ).fetchone()[0]
+        for role in ("consumer", "audit"):
+            run_ids.append(db.execute(
+                "insert into runs(task_id,execution_generation,role,proposal_revision,turn_attempt,"
+                "operation_id,status,session_id,transcript_start,transcript_end,structured_error_json,"
+                "lease_owner,lease_expires_at,started_at,completed_at,updated_at) "
+                "values(?,?,?,0,0,'','failed','session',0,0,'{}','','','','','') returning id",
+                (task.id, owner["execution_generation"], role),
+            ).fetchone()[0])
+
+    with pytest.raises(ValueError, match="not retryable"):
+        store.retry_failed_reply_task(task.id, int(stale_generation_run), reason="stale generation")
+    with pytest.raises(ValueError, match="not retryable"):
+        store.retry_failed_reply_task(task.id, int(run_ids[0]), reason="stale run")
+    recovered = store.retry_failed_reply_task(task.id, int(run_ids[1]), reason="latest audit")
+    assert recovered.status == "pending"
+    assert recovered.execution_generation != task.execution_generation
+
+
+
+def test_pre_agent_retry_refuses_sent_reply_and_cas_loss_is_atomic(tmp_path, monkeypatch):
+    store = _target_store(tmp_path / "native-pre-agent-fences.sqlite3")
+    task = store.ensure_reply_task(**_creator_kwargs(_spec("pre-agent-sent")))
+    with store._connect() as db:
+        db.execute("update tasks set status='failed' where id=?", (task.id,))
+        sent = create_action(db, values={
+            "operation": "send_reply_to_trigger", "status": "verified",
+            "delivery_channel": "dingtalk", "conversation_id": "conversation",
+            "trigger_message_id": "pre-agent-sent",
+        })
+        receipt_id = append_action_receipt(db, int(sent["id"]), values={
+            "operation": "send_reply_to_trigger", "status": "verified", "target": "conversation",
+            "observed_at": "2026-10-23T00:00:00Z",
+        })
+        record_action_result(db, int(sent["id"]), expected={"delivery_receipt_id": None},
+                             changes={"delivery_receipt_id": receipt_id})
+    with pytest.raises(ValueError, match="already has a sent reply"):
+        store.retry_failed_pre_agent_reply_task(task.id, reason="must not replay sent reply")
+
+    no_effect = store.ensure_reply_task(**_creator_kwargs(_spec("pre-agent-cas-loss")))
+    with store._connect() as db:
+        db.execute("update tasks set status='failed' where id=?", (no_effect.id,))
+    monkeypatch.setattr(task_entity_storage, "update_task_cas", lambda *args, **kwargs: None)
+    with pytest.raises(AgentRunLeaseLostError, match="superseded"):
+        store.retry_failed_pre_agent_reply_task(no_effect.id, reason="lost CAS")
+    with store._connect() as db:
+        owner = task_entity_storage.get_task(db, no_effect.id)
+        assert (owner["status"], owner["attempts"], owner["error"]) == ("failed", 0, "")
+
+
+def test_reply_deferrals_update_native_task_without_touching_input_owners(tmp_path):
+    store = _target_store(tmp_path / "native-defer.sqlite3")
+    task = store.ensure_reply_task(**_creator_kwargs(_spec("defer-message")))
+    with store._connect() as db:
+        db.execute("update tasks set status='processing',attempts=2,locked_at='lease' where id=?", (task.id,))
+
+    store.defer_reply_task(task.id, "wait", expected_execution_generation=task.execution_generation)
+
+    with store._connect() as db:
+        owner = task_entity_storage.get_task(db, task.id)
+        assert (owner["status"], owner["attempts"], owner["locked_at"], owner["error"]) == (
+            "pending", 1, None, "wait",
+        )
+        assert owner["current_input_id"] == task.current_input_id
+
+    with store._connect() as db:
+        db.execute("update tasks set status='processing',attempts=2,locked_at='lease' where id=?", (task.id,))
+    with pytest.raises(AgentRunLeaseLostError, match="superseded"):
+        store.defer_reply_task(
+            task.id, "stale", expected_execution_generation="stale-generation",
+        )
+    with store._connect() as db:
+        owner = task_entity_storage.get_task(db, task.id)
+        assert (owner["status"], owner["attempts"], owner["locked_at"]) == (
+            "processing", 2, "lease",
+        )
+    store.defer_reply_task_for_authorization(
+        task.id, "reauth", expected_execution_generation=task.execution_generation,
+        available_at="2030-01-01 00:00:00",
+    )
+    with store._connect() as db:
+        owner = task_entity_storage.get_task(db, task.id)
+        assert (owner["status"], owner["attempts"], owner["available_at"], owner["error"]) == (
+            "pending", 2, "2030-01-01 00:00:00", "reauth",
+        )
+
+
+def test_native_codex_auth_recovery_clears_only_eligible_failed_task(tmp_path):
+    store = _target_store(tmp_path / "native-auth-recovery.sqlite3")
+    task = store.ensure_reply_task(**_creator_kwargs(_spec("auth-message")))
+    with store._connect() as db:
+        owner = task_entity_storage.get_task(db, task.id)
+        parameters = dict(owner["parameters"])
+        parameters["recovery_code"] = "codex_provider_auth_failed"
+        assert task_entity_storage.update_task_cas(
+            db, task_id=task.id, expected={"kind": "reply", "status": "pending"},
+            changes={"status": "failed", "error": "auth failure"},
+            parameters=parameters,
+        )
+
+    assert store.has_failed_native_codex_auth_tasks(channel="dingtalk")
+    recovered = store.recover_failed_native_codex_auth_tasks(
+        channel="dingtalk", reason="native login restored"
+    )
+
+    assert recovered == [task.id]
+    with store._connect() as db:
+        owner = task_entity_storage.get_task(db, task.id)
+        assert owner["status"] == "pending"
+        assert owner["error"] == "native login restored"
+        assert owner["execution_generation"] != task.execution_generation
+        assert owner["parameters"]["recovery_code"] == ""
+        assert owner["current_input_id"] == task.current_input_id
+
+
+def test_native_auth_recovery_preserves_latest_attempt_channel_and_effect_fences(tmp_path):
+    store = _target_store(tmp_path / "native-auth-fences.sqlite3")
+
+    def failed_auth(message_id):
+        task = store.ensure_reply_task(**_creator_kwargs(_spec(message_id)))
+        with store._connect() as db:
+            native = task_entity_storage.get_task(db, task.id)
+            params = dict(native["parameters"])
+            params["recovery_code"] = "codex_provider_auth_failed"
+            task_entity_storage.update_task_cas(
+                db, task_id=task.id, expected={"kind": "reply", "status": "pending"},
+                changes={"status": "failed", "error": "auth failure"}, parameters=params,
+            )
+        return task
+
+    eligible = failed_auth("bulk-eligible")
+    preaction = failed_auth("bulk-preaction")
+    running = failed_auth("blocked-running-run")
+    unknown = failed_auth("blocked-wechat-unknown")
+    latest_attempt = failed_auth("blocked-latest-attempt")
+    sent_task = failed_auth("blocked-sent")
+    stale = store.ensure_reply_task(**_creator_kwargs(_spec("stale-auth", channel="dingtalk")))
+    fresh = store.ensure_reply_task(**_creator_kwargs(_spec("fresh-auth", channel="dingtalk")))
+    wrong_channel = failed_auth("wrong-current-channel")
+
+    with store._connect() as db:
+        latest_owner = task_entity_storage.get_task(db, latest_attempt.id)
+        latest_parameters = dict(latest_owner["parameters"])
+        latest_parameters["recovery_code"] = ""
+        task_entity_storage.update_task_cas(
+            db, task_id=latest_attempt.id,
+            expected={"kind": "reply", "status": "failed"},
+            changes={"error": ""}, parameters=latest_parameters,
+        )
+        db.execute("update tasks set status='processing',error='codex_auth_recovered',"
+                   "locked_at=datetime('now','-91 seconds') where id=?", (stale.id,))
+        db.execute("update tasks set status='processing',error='codex_auth_recovered',"
+                   "locked_at=datetime('now','-30 seconds') where id=?", (fresh.id,))
+        run_id = db.execute(
+            "insert into runs(task_id,execution_generation,role,proposal_revision,turn_attempt,"
+            "operation_id,status,session_id,transcript_start,transcript_end,structured_error_json,"
+            "lease_owner,lease_expires_at,started_at,completed_at,updated_at) "
+            "values(?,?,'consumer',0,0,'','running','session',0,0,'{}','','','','','') returning id",
+            (running.id, running.execution_generation),
+        ).fetchone()[0]
+        insert_task_delivery_action(db, "wechat_deliveries", {
+            "reply_task_id": preaction.id, "account_id": "acct", "target_type": "direct",
+            "target_id": "friend", "conversation_id": "conversation", "reply_text": "hi",
+            "status": "failed", "pre_action_failure": 1,
+        })
+        insert_task_delivery_action(db, "wechat_deliveries", {
+            "reply_task_id": unknown.id, "account_id": "acct", "target_type": "direct",
+            "target_id": "friend", "conversation_id": "conversation", "reply_text": "hi",
+            "status": "send_unknown", "pre_action_failure": 0,
+        })
+        for send_error in ("codex_provider_auth_failed: old", "other failure"):
+            insert_action(db, "reply_attempts", {
+                "conversation_id": "conversation", "conversation_title": "Conversation",
+                "trigger_message_id": "blocked-latest-attempt", "trigger_sender": "sender",
+                "trigger_text": "body", "action": "failed", "sensitivity_kind": "general",
+                "send_status": "failed", "send_error": send_error, "channel": "dingtalk",
+            })
+        native = task_entity_storage.get_task_with_inputs(db, wrong_channel.id)
+        changed = {key: native["current_input"][key] for key in (
+            "channel", "conversation_id", "conversation_title", "single_chat",
+            "trigger_message_id", "trigger_create_time", "trigger_sender", "trigger_text",
+            "trigger_message_json", "oa_url", "business_object_key", "input_revision_key",
+            "input_provenance_json", "input_compacted",
+        )}
+        changed.update(channel="wechat", input_revision_key="channel-revision")
+        next_input, _ = task_entity_storage.append_task_input(db, task_id=wrong_channel.id, values=changed)
+        task_entity_storage.bind_current_input(
+            db, task_id=wrong_channel.id, input_id=int(next_input["id"]),
+            expected_input_version=int(native["input_version"]),
+            input_version=int(native["input_version"]) + 1,
+        )
+        # A provider receipt is a durable Sent effect even when its body is opaque.
+        sent = create_action(db, values={
+            "operation": "send_reply_to_trigger", "status": "verified", "delivery_channel": "dingtalk",
+            "conversation_id": "conversation", "trigger_message_id": "blocked-sent",
+        })
+        receipt_id = append_action_receipt(db, int(sent["id"]), values={
+            "operation": "send_reply_to_trigger", "status": "verified", "target": "conversation",
+            "observed_at": "2026-10-23T00:00:00Z",
+        })
+        record_action_result(db, int(sent["id"]), expected={"delivery_receipt_id": None},
+                             changes={"delivery_receipt_id": receipt_id})
+
+    assert store.has_failed_native_codex_auth_tasks(channel="dingtalk")
+    assert store.has_failed_native_codex_auth_tasks(channel="wechat")
+    recovered = store.recover_failed_native_codex_auth_tasks(
+        channel="dingtalk", reason="verified auth recovery"
+    )
+    assert recovered == [eligible.id, preaction.id, stale.id]
+    assert running.id not in recovered
+    assert unknown.id not in recovered
+    assert latest_attempt.id not in recovered
+    assert fresh.id not in recovered
+    assert wrong_channel.id not in recovered
+    assert sent_task.id not in recovered
+    with store._connect() as db:
+        assert db.execute("select status from runs where id=?", (run_id,)).fetchone()[0] == "running"
+
+
+def test_native_pre_agent_retry_keeps_generation_and_requires_no_run(tmp_path):
+    store = _target_store(tmp_path / "native-pre-agent-retry.sqlite3")
+    task = store.ensure_reply_task(**_creator_kwargs(_spec("pre-agent-message")))
+    with store._connect() as db:
+        db.execute("update tasks set status='failed',attempts=2,error='lock failure' where id=?", (task.id,))
+
+    recovered = store.retry_failed_pre_agent_reply_task(task.id, reason="  lock cleared  ")
+
+    assert recovered.status == "pending"
+    assert recovered.error == "lock cleared"
+    assert recovered.execution_generation == task.execution_generation
+    with store._connect() as db:
+        owner = task_entity_storage.get_task(db, task.id)
+        assert owner["attempts"] == 0
+        db.execute("update tasks set status='failed' where id=?", (task.id,))
+        db.execute(
+            "insert into runs(task_id,execution_generation,role,proposal_revision,turn_attempt,"
+            "operation_id,status,session_id,transcript_start,transcript_end,structured_error_json,"
+            "lease_owner,lease_expires_at,started_at,completed_at,updated_at) "
+            "values(?,?,'consumer',0,0,'','failed','session',0,0,'{}','','','','','')",
+            (task.id, task.execution_generation),
+        )
+    with pytest.raises(ValueError, match="already has an agent run"):
+        store.retry_failed_pre_agent_reply_task(task.id, reason="must not reopen")
 
 
 def test_feedback_event_upsert_creates_one_native_task_and_preserves_processing_state(tmp_path):

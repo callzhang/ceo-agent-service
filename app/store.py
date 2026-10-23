@@ -10802,56 +10802,34 @@ class AutoReplyStore(LogicalRunStoreMixin, ReviewedCandidateStoreMixin):
         if not reason:
             raise ValueError("retry reason must be non-empty")
         with self._agent_run_write_transaction(None) as (db, (_, now_text)):
+            task = task_entity_storage.get_task(db, task_id)
             row = db.execute(
-                f"""
-                select tasks.execution_generation, tasks.status as task_status,
-                       runs.role as run_role, runs.status as run_status
-                from ({REPLY_TASK_SQL}) as tasks
-                join ({AGENT_RUN_SQL}) as runs on runs.reply_task_id=tasks.id
-                where tasks.id=? and runs.id=?
-                  and runs.execution_generation=tasks.execution_generation
-                  and runs.id=(
-                      select max(latest.id)
-                      from ({AGENT_RUN_SQL}) as latest
-                      where latest.reply_task_id=tasks.id
-                        and latest.execution_generation=tasks.execution_generation
-                  )
-                """,
-                (task_id, run_id),
+                "select id,execution_generation,role,status from runs where task_id=? and execution_generation=? "
+                "and not exists (select 1 from run_provenance where run_provenance.run_id=runs.id) "
+                "order by id desc limit 1",
+                (task_id, task["execution_generation"] if task else None),
             ).fetchone()
-            retryable = False
-            if row is not None:
-                retryable = (
-                    row["task_status"] == "failed"
-                    and row["run_role"]
-                    in {AgentRole.CONSUMER.value, AgentRole.AUDIT.value}
-                    and row["run_status"] == "failed"
-                )
-            if not retryable:
+            if not task or task["kind"] != "reply" or task["status"] != "failed" or not row \
+                    or int(row["id"]) != run_id or row["status"] != "failed" \
+                    or row["role"] not in {AgentRole.CONSUMER.value, AgentRole.AUDIT.value}:
                 raise ValueError("failed reply task is not retryable")
             next_generation = uuid4().hex
-            cursor = db.execute(
-                f"""
-                update tasks as reply_tasks
-                set {task8_set_parts('reply_tasks', {}, update_sql={'status': "'pending'", 'attempts': '0', 'locked_at': 'null', 'available_at': "''", 'error': '?', 'recovery_code': '?', 'force_new_decision': '1', 'execution_generation': '?', 'updated_at': '?'}, payload_source='reply_tasks.payload_json').sql}  where reply_tasks.record_type='reply_tasks' and id=? and {task20_column('reply_tasks', 'status')}='failed' and {task20_column('reply_tasks', 'execution_generation')}=?
-                """,
-                (
-                    reason,
-                    recovery_code.strip(),
-                    next_generation,
-                    now_text,
-                    task_id,
-                    row["execution_generation"],
-                ),
+            parameters = dict(task["parameters"])
+            parameters.update(force_new_decision=1, recovery_code=recovery_code.strip())
+            updated = task_entity_storage.update_task_cas(
+                db, task_id=task_id,
+                expected={"kind": "reply", "status": "failed", "execution_generation": row["execution_generation"]},
+                changes={"status": "pending", "attempts": 0, "locked_at": None,
+                         "available_at": "", "error": reason,
+                         "execution_generation": next_generation, "updated_at": now_text},
+                parameters=parameters,
             )
-            if cursor.rowcount != 1:
-                raise AgentRunLeaseLostError(f"reply task superseded: {task_id}")
-            updated = db.execute(
-                f"select * from ({REPLY_TASK_CURRENT_SQL}) as reply_tasks where id=?", (task_id,)
-            ).fetchone()
             if updated is None:
+                raise AgentRunLeaseLostError(f"reply task superseded: {task_id}")
+            owner = task_entity_storage.get_task_with_inputs(db, task_id)
+            if owner is None:
                 raise RuntimeError("recovered reply task was not persisted")
-            return self._reply_task_from_row(updated)
+            return self._reply_task_from_native(owner)
 
     @staticmethod
     def _sessionless_replay_result_json(
@@ -10911,73 +10889,59 @@ class AutoReplyStore(LogicalRunStoreMixin, ReviewedCandidateStoreMixin):
         if not reason:
             raise ValueError("retry reason must be non-empty")
         with self._agent_run_write_transaction(None) as (db, (_, now_text)):
-            task = db.execute(
-                f"""
-                select id, execution_generation, conversation_id, trigger_message_id
-                from ({REPLY_TASK_SQL}) as reply_tasks
-                where id=? and status='failed'
-                """,
-                (task_id,),
-            ).fetchone()
-            if task is None:
+            task = task_entity_storage.get_task_with_inputs(db, task_id)
+            source = task.get("current_input") if task else None
+            if task is None or task["kind"] != "reply" or task["status"] != "failed" or not source:
                 raise ValueError("failed reply task was not found")
             agent_run = db.execute(
-                f"""
-                select 1 from ({AGENT_RUN_SQL}) as agent_runs
-                where reply_task_id=? and execution_generation=?
-                limit 1
-                """,
+                "select 1 from runs where task_id=? and execution_generation=? "
+                "and not exists (select 1 from run_provenance where run_provenance.run_id=runs.id) limit 1",
                 (task_id, task["execution_generation"]),
             ).fetchone()
             if agent_run is not None:
                 raise ValueError("failed reply task already has an agent run")
             sent_reply = db.execute(
-                f"""
-                select 1 from ({SENT_REPLY_SQL})
-                where conversation_id=? and trigger_message_id=?
-                limit 1
-                """,
-                (task["conversation_id"], task["trigger_message_id"]),
+                "select 1 from actions a join action_receipts r on r.id=a.action_delivery_receipt_id "
+                "where a.record_type='action' and a.action_conversation_id=? "
+                "and a.action_trigger_message_id=? and a.action_delivery_receipt_id is not null limit 1",
+                (source["conversation_id"], source["trigger_message_id"]),
             ).fetchone()
             if sent_reply is not None:
                 raise ValueError("failed reply task already has a sent reply")
-            cursor = db.execute(
-                f"""
-                update tasks as reply_tasks
-                set {task8_set_parts('reply_tasks', {}, update_sql={'status': "'pending'", 'attempts': '0', 'locked_at': 'null', 'available_at': "''", 'error': '?', 'updated_at': '?'}, payload_source='reply_tasks.payload_json').sql}  where reply_tasks.record_type='reply_tasks' and id=? and {task20_column('reply_tasks', 'status')}='failed' and {task20_column('reply_tasks', 'execution_generation')}=?
-                """,
-                (reason, now_text, task_id, task["execution_generation"]),
+            updated = task_entity_storage.update_task_cas(
+                db, task_id=task_id,
+                expected={"kind": "reply", "status": "failed", "execution_generation": task["execution_generation"]},
+                changes={"status": "pending", "attempts": 0, "locked_at": None,
+                         "available_at": "", "error": reason, "updated_at": now_text},
             )
-            if cursor.rowcount != 1:
-                raise AgentRunLeaseLostError(f"reply task superseded: {task_id}")
-            updated = db.execute(
-                f"select * from ({REPLY_TASK_CURRENT_SQL}) as reply_tasks where id=?", (task_id,)
-            ).fetchone()
             if updated is None:
+                raise AgentRunLeaseLostError(f"reply task superseded: {task_id}")
+            owner = task_entity_storage.get_task_with_inputs(db, task_id)
+            if owner is None:
                 raise RuntimeError("recovered pre-agent reply task was not persisted")
-            return self._reply_task_from_row(updated)
+            return self._reply_task_from_native(owner)
 
     def has_failed_native_codex_auth_tasks(self, *, channel: str) -> bool:
         with self._connect() as db:
             rows = db.execute(
-                f"""
-                select tasks.error, tasks.recovery_code, attempts.send_error
-                from ({REPLY_TASK_SQL}) as tasks
-                left join ({REPLY_ATTEMPT_COMMON_SQL}) as attempts
-                  on attempts.id=(
-                      select latest.id from ({REPLY_ATTEMPT_COMMON_SQL}) as latest
-                      where latest.channel=tasks.channel
-                        and latest.conversation_id=tasks.conversation_id
-                        and latest.trigger_message_id=tasks.trigger_message_id
-                      order by latest.id desc limit 1
-                  )
-                where tasks.channel=? and (
-                    tasks.status='failed'
+                """
+                select task.error, json_extract(json(task.parameters_json),'$.recovery_code') as recovery_code,
+                       latest.attempt_send_error as send_error
+                from tasks task join task_inputs input on input.id=task.current_input_id and input.task_id=task.id
+                left join actions latest on latest.id=(
+                    select newest.id from actions newest
+                    where newest.record_type='reply_attempts' and newest.attempt_channel=input.channel
+                      and newest.attempt_conversation_id=input.conversation_id
+                      and newest.attempt_trigger_message_id=input.trigger_message_id
+                    order by cast(newest.legacy_key as integer) desc limit 1
+                )
+                where task.kind='reply' and input.channel=? and (
+                    task.status='failed'
                     or (
-                        tasks.status='processing'
-                        and tasks.error='codex_auth_recovered'
-                        and tasks.locked_at<>''
-                        and tasks.locked_at<=datetime('now', '-90 seconds')
+                        task.status='processing'
+                        and task.error='codex_auth_recovered'
+                        and task.locked_at<>''
+                        and task.locked_at<=datetime('now', '-90 seconds')
                     )
                 )
                 """,
@@ -10998,47 +10962,52 @@ class AutoReplyStore(LogicalRunStoreMixin, ReviewedCandidateStoreMixin):
             raise ValueError("native Codex auth recovery reason must be non-empty")
         with self._agent_run_write_transaction(None) as (db, (_, now_text)):
             rows = db.execute(
-                f"""
-                select tasks.id, tasks.status, tasks.locked_at,
-                       tasks.execution_generation, tasks.error,
-                       tasks.recovery_code, attempts.send_error
-                from ({REPLY_TASK_SQL}) as tasks
-                left join ({REPLY_ATTEMPT_COMMON_SQL}) as attempts
-                  on attempts.id=(
-                      select latest.id from ({REPLY_ATTEMPT_COMMON_SQL}) as latest
-                      where latest.channel=tasks.channel
-                        and latest.conversation_id=tasks.conversation_id
-                        and latest.trigger_message_id=tasks.trigger_message_id
-                      order by latest.id desc limit 1
-                  )
-                where tasks.channel=? and (
-                    tasks.status='failed'
+                """
+                select task.id,task.status,task.locked_at,task.execution_generation,task.error,
+                       json_extract(json(task.parameters_json),'$.recovery_code') as recovery_code,
+                       latest.attempt_send_error as send_error
+                from tasks task join task_inputs input on input.id=task.current_input_id and input.task_id=task.id
+                left join actions latest on latest.id=(
+                    select newest.id from actions newest
+                    where newest.record_type='reply_attempts' and newest.attempt_channel=input.channel
+                      and newest.attempt_conversation_id=input.conversation_id
+                      and newest.attempt_trigger_message_id=input.trigger_message_id
+                    order by cast(newest.legacy_key as integer) desc limit 1
+                )
+                where task.kind='reply' and input.channel=? and (
+                    task.status='failed'
                     or (
-                        tasks.status='processing'
-                        and tasks.error='codex_auth_recovered'
-                        and tasks.locked_at<>''
-                        and tasks.locked_at<=datetime('now', '-90 seconds')
+                        task.status='processing'
+                        and task.error='codex_auth_recovered'
+                        and task.locked_at<>''
+                        and task.locked_at<=datetime('now', '-90 seconds')
                     )
                 )
                   and not exists (
-                      select 1 from ({SENT_REPLY_SQL}) as sent
-                      where sent.channel=tasks.channel
-                        and sent.conversation_id=tasks.conversation_id
-                        and sent.trigger_message_id=tasks.trigger_message_id
+                      select 1 from actions sent join action_receipts receipt
+                        on receipt.id=sent.action_delivery_receipt_id
+                      where sent.record_type='action'
+                        and coalesce(sent.action_delivery_channel,'dingtalk')=input.channel
+                        and sent.action_conversation_id=input.conversation_id
+                        and sent.action_trigger_message_id=input.trigger_message_id
                   )
                   and not exists (
-                      select 1 from ({AGENT_RUN_SQL}) as runs
-                      where runs.reply_task_id=tasks.id
-                        and runs.execution_generation=tasks.execution_generation
+                      select 1 from runs
+                      where runs.task_id=task.id
+                        and runs.execution_generation=task.execution_generation
                         and runs.status='running'
+                        and not exists (
+                            select 1 from run_provenance where run_provenance.run_id=runs.id
+                        )
                   )
                   and not exists (
-                      select 1 from ({WECHAT_DELIVERY_SQL}) as deliveries
-                      where deliveries.reply_task_id=tasks.id
-                        and deliveries.execution_generation=tasks.execution_generation
+                      select 1 from actions deliveries
+                      where deliveries.record_type='wechat_deliveries'
+                        and deliveries.td_reply_task_id=task.id
+                        and deliveries.td_execution_generation=task.execution_generation
                         and not (
-                            deliveries.status='failed'
-                            and deliveries.pre_action_failure=1
+                            deliveries.td_status='failed'
+                            and deliveries.td_pre_action_failure=1
                         )
                   )
                 """,
@@ -11050,25 +11019,20 @@ class AutoReplyStore(LogicalRunStoreMixin, ReviewedCandidateStoreMixin):
                     continue
                 next_generation = uuid4().hex
                 cursor = db.execute(
-                    f"""
-                    update tasks as reply_tasks
-                    set {task8_set_parts('reply_tasks', {}, update_sql={'status': "'pending'", 'attempts': '0', 'locked_at': 'null', 'available_at': "''", 'execution_generation': '?', 'error': '?', 'recovery_code': "''", 'updated_at': '?'}, payload_source='reply_tasks.payload_json').sql}  where reply_tasks.record_type='reply_tasks' and id=? and {task20_column('reply_tasks', 'execution_generation')}=? and (
-                        {task20_column('reply_tasks', 'status')}='failed'
-                        or (
-                            {task20_column('reply_tasks', 'status')}='processing' and {task20_column('reply_tasks', 'error')}='codex_auth_recovered'
-                            and {task20_column('reply_tasks', 'locked_at')}<>''
-                            and {task20_column('reply_tasks', 'locked_at')}<=datetime(?, '-90 seconds')
+                    """
+                    update tasks set status='pending',attempts=0,locked_at=null,available_at='',
+                        execution_generation=?,error=?,parameters_json=jsonb_set(
+                            parameters_json,'$.recovery_code',json('""')
+                        ),updated_at=?
+                    where kind='reply' and id=? and execution_generation=? and (
+                        status='failed' or (
+                            status='processing' and error='codex_auth_recovered'
+                            and locked_at<>'' and locked_at<=datetime(?, '-90 seconds')
                         )
                     )
                     """,
-                    (
-                        next_generation,
-                        reason,
-                        now_text,
-                        row["id"],
-                        row["execution_generation"],
-                        now_text,
-                    ),
+                    (next_generation, reason, now_text, row["id"],
+                     row["execution_generation"], now_text),
                 )
                 if cursor.rowcount == 1:
                     recovered.append(int(row["id"]))
@@ -11149,10 +11113,9 @@ class AutoReplyStore(LogicalRunStoreMixin, ReviewedCandidateStoreMixin):
             raise ValueError("expected_execution_generation must be non-empty")
         with self._connect() as db:
             cursor = db.execute(
-                f"""
-                update tasks as reply_tasks
-                set {task8_set_parts('reply_tasks', {}, update_sql={'status': "'pending'", 'attempts': f"""max({task20_column('reply_tasks', 'attempts')} - ?, 0)""", 'locked_at': 'null', 'available_at': '?', 'error': '?', 'updated_at': 'current_timestamp'}, payload_source='reply_tasks.payload_json').sql}  where record_type='reply_tasks' and id=? and {task20_column('reply_tasks', 'status')}='processing' and {task20_column('reply_tasks', 'execution_generation')}=?
-                """,
+                "update tasks set status='pending',attempts=max(attempts-?,0),locked_at=null,"
+                "available_at=?,error=?,updated_at=current_timestamp where kind='reply' and id=? "
+                "and status='processing' and execution_generation=?",
                 (int(refund_attempt), available_at, error, task_id, expected_execution_generation),
             )
             if cursor.rowcount != 1:
@@ -11232,10 +11195,9 @@ class AutoReplyStore(LogicalRunStoreMixin, ReviewedCandidateStoreMixin):
             raise ValueError("expected_execution_generation must be non-empty")
         with self._connect() as db:
             cursor = db.execute(
-                f"""
-                update tasks as reply_tasks
-                set {task8_set_parts('reply_tasks', {}, update_sql={'status': "'pending'", 'locked_at': 'null', 'available_at': '?', 'error': '?', 'updated_at': 'current_timestamp'}, payload_source='reply_tasks.payload_json').sql}  where reply_tasks.record_type='reply_tasks' and id=? and {task20_column('reply_tasks', 'status')}='processing' and {task20_column('reply_tasks', 'execution_generation')}=?
-                """,
+                "update tasks set status='pending',locked_at=null,available_at=?,error=?,"
+                "updated_at=current_timestamp where kind='reply' and id=? and status='processing' "
+                "and execution_generation=?",
                 (available_at, error, task_id, expected_execution_generation),
             )
             if cursor.rowcount != 1:

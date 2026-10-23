@@ -24,6 +24,7 @@ from app.task_lifecycle_definitions import (
 )
 from app.storage_payload import TASK_RECORD_TYPES
 from app.task12_storage import task12_projection, update_task12
+from app.task20_definitions import task20_projection
 
 
 def _source():
@@ -1774,6 +1775,160 @@ def test_feedback_intake_task_survives_source_inverse_and_reforward(tmp_path):
             "feedback:new-native", "edited", "blob", b"2026-10-23 10:00:00",
         )
         restore_task_entities(db, source_metadata, reforward)
+
+
+def test_reply_retry_auth_and_defer_facts_survive_native_inverse_reforward(tmp_path):
+    from app import task_entity_storage
+    from app.store import AutoReplyStore
+    from app.task_run_entity_assembly import task_run_entity_assembly_objects
+
+    source = _source()
+    source.row_factory = sqlite3.Row
+    source.execute("pragma foreign_keys=off")
+    source.execute("delete from tasks where id in (228,229)")
+    source.commit()
+    source.execute("begin immediate")
+    second_key = payload(source, "business_object_tasks")
+    second_key["business_object_key"] = "second-source-business-key"
+    columns, expressions, parameters = source_insert("business_object_tasks", second_key, {})
+    source.execute(
+        'insert into tasks("_kind","id","legacy_key","parent_id",'
+        + ",".join('"' + column + '"' for column in columns) + ") values(?,?,?, ?,"
+        + ",".join(expressions) + ")",
+        (TASK_RECORD_TYPES.code("business_object_tasks"), 300, "300", 201, *parameters),
+    )
+    metadata = capture_task_entities(source)
+    forward = migrate_task_entities(source, metadata)
+    present = {row[0] for row in source.execute("select name from sqlite_schema")}
+    for name, ddl in task_run_entity_assembly_objects().items():
+        if ddl.lstrip().lower().startswith("create table") and name not in present:
+            source.execute(ddl)
+            present.add(name)
+    for name, ddl in task_run_entity_assembly_objects().items():
+        if not ddl.lstrip().lower().startswith("create table") and name not in present:
+            source.execute(ddl)
+            present.add(name)
+    source.commit()
+
+    path = tmp_path / "reply-recovery-reforward.sqlite3"
+    target = sqlite3.connect(path)
+    source.backup(target)
+    target.close()
+    source.close()
+
+    store = AutoReplyStore.__new__(AutoReplyStore)
+    store.path = path
+    store.busy_timeout_seconds = 5
+    store.busy_timeout_milliseconds = 5000
+    store._read_snapshot_connection = ContextVar("reply_recovery_snapshot", default=None)
+    store._reused_connection = ContextVar("reply_recovery_reused", default=None)
+
+    with store._connect() as db:
+        task = task_entity_storage.get_task_with_inputs(db, 201)
+        db.execute("update tasks set status='failed',attempts=2,error='turn failed' where id=201")
+        run_id = db.execute(
+            "insert into runs(task_id,execution_generation,role,proposal_revision,turn_attempt,"
+            "operation_id,status,session_id,transcript_start,transcript_end,structured_error_json,"
+            "lease_owner,lease_expires_at,started_at,completed_at,updated_at) "
+            "values(?,?,'consumer',0,0,'','failed','session',0,0,'{}','','','','','') returning id",
+            (201, task["execution_generation"]),
+        ).fetchone()[0]
+
+    retried = store.retry_failed_reply_task(201, int(run_id), reason="operator retry")
+    assert retried.execution_generation != task["execution_generation"]
+    assert retried.current_input_id == 205 and retried.claimed_input_id == 206
+    with store._connect() as db:
+        db.execute("update tasks set status='failed' where id=201")
+    preagent = store.retry_failed_pre_agent_reply_task(201, reason="pre-agent retry")
+    assert preagent.execution_generation == retried.execution_generation
+    with store._connect() as db:
+        db.execute("update tasks set status='processing',attempts=1,locked_at='lease' where id=201")
+    store.defer_reply_task(
+        201, "capacity wait", expected_execution_generation=preagent.execution_generation,
+        available_at="2030-01-01 00:00:00",
+    )
+    with store._connect() as db:
+        current = task_entity_storage.get_task(db, 201)
+        parameters = dict(current["parameters"])
+        parameters["recovery_code"] = "codex_provider_auth_failed"
+        task_entity_storage.update_task_cas(
+            db, task_id=201, expected={"kind": "reply", "status": "pending"},
+            changes={"status": "failed", "error": "codex_provider_auth_failed"},
+            parameters=parameters,
+        )
+    assert store.recover_failed_native_codex_auth_tasks(
+        channel="dingtalk", reason="verified native login"
+    ) == [201]
+
+    with store._connect() as db:
+        owner = task_entity_storage.get_task_with_inputs(db, 201)
+        run_history = db.execute(
+            "select task_id,execution_generation,role,status from runs order by id"
+        ).fetchall()
+        input_facts = db.execute(
+            "select channel,conversation_id,conversation_title,single_chat,trigger_message_id,"
+            "trigger_create_time,trigger_sender,trigger_text,trigger_message_json,oa_url,"
+            "business_object_key,input_revision_key,created_at,input_provenance_json,input_compacted "
+            "from task_inputs where task_id=201 order by id"
+        ).fetchall()
+        business_keys = [row[0] for row in db.execute(
+            "select business_key from task_business_keys where task_id=201 order by id"
+        ).fetchall()]
+        assert "second-source-business-key" in business_keys and len(business_keys) == 2
+        current_id, claimed_id = owner["current_input_id"], owner["claimed_input_id"]
+    db = sqlite3.connect(path)
+    db.row_factory = sqlite3.Row
+    db.execute("pragma foreign_keys=off")
+    db.execute("begin immediate")
+    inverse = restore_task_entities(db, metadata, forward)
+    source_reply = db.execute(
+        "select status,attempts,error,execution_generation,current_input_id,claimed_input_id,"
+        "recovery_code from (" + task20_projection("reply_tasks") + ") where id=201"
+    ).fetchone()
+    assert tuple(source_reply) == (
+        "pending", 0, "verified native login", owner["execution_generation"],
+        5, 6, "",
+    )
+    source_inputs = db.execute(
+        "select channel,conversation_id,conversation_title,single_chat,trigger_message_id,"
+        "trigger_create_time,trigger_sender,trigger_text,trigger_message_json,oa_url,"
+        "business_object_key,input_revision_key,created_at,input_provenance_json,input_compacted "
+        "from (" + task20_projection("reply_task_inputs") + ") where reply_task_id=201 order by id"
+    ).fetchall()
+    assert [tuple(row) for row in source_inputs] == [tuple(row) for row in input_facts]
+    source_keys = [row[0] for row in db.execute(
+        "select business_object_key from (" + task20_projection("business_object_tasks")
+        + ") where reply_task_id=201 order by business_object_key"
+    ).fetchall()]
+    assert source_keys == sorted(business_keys)
+    source_context = json.loads(json.dumps(inverse["source_context"]))
+    identity = json.loads(json.dumps(inverse["inverse_identity"]))
+    source_metadata = capture_task_entities(db)
+    reforward = migrate_task_entities(
+        db, source_metadata, source_context=source_context, inverse_identity=identity,
+    )
+    native_reply = db.execute(
+        "select status,attempts,error,execution_generation,current_input_id,claimed_input_id,"
+        "json_extract(json(parameters_json),'$.recovery_code') from tasks where kind='reply' and id=201"
+    ).fetchone()
+    assert tuple(native_reply) == (
+        "pending", 0, "verified native login", owner["execution_generation"],
+        current_id, claimed_id, "",
+    )
+    assert [tuple(row) for row in db.execute(
+        "select channel,conversation_id,conversation_title,single_chat,trigger_message_id,"
+        "trigger_create_time,trigger_sender,trigger_text,trigger_message_json,oa_url,"
+        "business_object_key,input_revision_key,created_at,input_provenance_json,input_compacted "
+        "from task_inputs where task_id=201 order by id"
+    ).fetchall()] == [tuple(row) for row in input_facts]
+    assert [row[0] for row in db.execute(
+        "select business_key from task_business_keys where task_id=201 order by id"
+    ).fetchall()] == business_keys
+    assert [tuple(row) for row in db.execute(
+        "select task_id,execution_generation,role,status from runs order by id"
+    ).fetchall()] == [tuple(row) for row in run_history]
+    restore_task_entities(db, source_metadata, reforward)
+    db.close()
 
 
 def test_new_native_feedback_resolution_receipt_survives_inverse_reforward_cycles(

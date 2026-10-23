@@ -30,6 +30,14 @@ trigger refresh 改为直接读写 `tasks`／`task_inputs` 原生 owner。claim 
 claimed 指针。范围仅是这些既有 Store API，Reply 其余生命周期、recover、terminal、
 dispatcher lease、构造器和 schema 选择仍待后续验收，当前不代表完整 Task runtime 已启用。
 
+Task2D10A 将失败 Consumer/Audit turn retry、pre-Agent retry、native Codex auth failure
+查询/恢复及普通/授权 defer 切到原生 Task、TaskInput、Run、Reply Action 与 WeChat
+delivery owner。turn retry 要求当前 generation 的最新 Consumer/Audit Run 失败并旋转
+generation；无 Run 的 pre-Agent retry 保留 generation。auth recovery 保留原认证分类、
+90 秒锁时限及 Sent、运行 Run、WeChat effect fences。普通 defer 最多按原规则退款一次
+attempt，授权 defer 不退款；二者只更新原 lifecycle 字段。此单元不启用 constructor，
+也不完成 Reply 的其他生命周期、dispatcher 或全局读取。
+
 Task2D1 将 WorkSummary 输入创建、去重更新、读取、领取、终态压缩、失败重试、容量延期及
 处理中恢复改为原生 `tasks.id` 与 `work_summary_inputs.task_id`；并发重复来源在取得立即写事务后
 读取唯一 child 并返回同一个 canonical Task ID。`WorkSummaryInput.id` 是 Task ID。Task Agent
