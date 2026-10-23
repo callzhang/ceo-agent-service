@@ -406,6 +406,310 @@ def migrate_run_entities(db: sqlite3.Connection, source_metadata: dict, *,
     if actual_orphans != expected_orphans:
         raise ValueError("Run forward changed captured missing physical Task edges")
     db.execute(f"drop table temp.{_quote(_STAGE)}")
+    identity_edges = [dict(zip(("source_kind", "physical_id", "public_key", "public_key_type",
+                                "public_key_order", "target_id"), row, strict=True))
+                      for row in db.execute(
+                          "select source_kind,physical_id,public_key,public_key_type,public_key_order,target_id "
+                          "from main.run_entity_identity_map order by source_kind,physical_id")]
     return {"source_objects": source_metadata["source_objects"],
+            "sequence_rows": source_metadata["sequence_rows"],
+            "run_fk_findings": source_metadata["run_fk_findings"],
+            "identity_edges": identity_edges}
+
+
+def _run_identity_rows(db: sqlite3.Connection) -> dict:
+    rows = [tuple(row) for row in db.execute(
+        "select source_kind,physical_id,public_key,public_key_type,public_key_order,target_id "
+        "from main.run_entity_identity_map order by source_kind,physical_id")]
+    expected_kinds = set(run_entity_definitions.SOURCE_FIELDS)
+    if any(row[0] not in expected_kinds for row in rows):
+        raise ValueError("unsupported new Run identity; B3 allocation/handoff is required")
+    return {(row[0], int(row[1])): {
+        "source_kind": row[0], "physical_id": int(row[1]), "public_key": row[2],
+        "public_key_type": row[3], "public_key_order": row[4], "target_id": int(row[5]),
+    } for row in rows}
+
+
+def _inverse_task_ids(db: sqlite3.Connection, task_metadata: dict) -> tuple[dict, dict]:
+    task_edges = _task_forward_edges(db, task_metadata)
+    source_to_target = dict(task_edges)
+    target_to_source = {(kind, target): physical
+                        for (kind, physical), target in task_edges.items()}
+    return source_to_target, target_to_source
+
+
+def _task_source_physical(db: sqlite3.Connection, target_to_source: dict,
+                          source_kind: str, target_id, *, allow_captured_orphan: bool = False):
+    if target_id is None:
+        return None
+    physical = target_to_source.get((source_kind, int(target_id)), int(target_id))
+    expected_kind = _task_kind(source_kind)
+    row = db.execute("select kind from main.tasks where id=?", (target_id,)).fetchone()
+    if row is None or row[0] != expected_kind:
+        if allow_captured_orphan and row is None:
+            return int(target_id)
+        raise ValueError(f"native Task reference has wrong or missing owner: {source_kind}:{target_id}")
+    return physical
+
+
+def _task_public_from_target(db: sqlite3.Connection, target_to_source: dict,
+                             source_kind: str, target_id):
+    if target_id is None:
+        return None
+    _task_source_physical(db, target_to_source, source_kind, target_id)
+    edge = db.execute(
+        "select public_key,public_key_type from main.task_run_identity_map "
+        "where source_kind=? and target_id=?", (source_kind, target_id)).fetchone()
+    if edge is None:
+        return str(target_id)
+    public, typ = edge
+    if typ == "integer":
+        return str(target_id if public is None else public)
+    if typ == "blob":
+        return str(db.execute("select cast(? as integer)", (public,)).fetchone()[0])
+    return str(public)
+
+
+def _inverse_workload_key(db: sqlite3.Connection, value: str, task_targets: dict,
+                          run_ids: dict, workload_kind: str) -> str:
+    parts = value.split(":")
+    kind = workload_kind
+    if kind == "agent_run":
+        return value
+    if kind == "task":
+        suffix = parts[1:]
+        if suffix and not suffix[0].startswith("decision_repair."):
+            return value
+        run = run_ids.get(int(parts[0]))
+        if run is None or run[0] != "task_agent_runs":
+            raise ValueError(f"unresolved native Task Run workload identity: {value!r}")
+        return str(run[1]) + ((":" + ":".join(suffix)) if suffix else "")
+    if kind == "meeting":
+        run = run_ids.get(int(value))
+        if run is None or run[0] != "meeting_alignment_runs":
+            raise ValueError(f"unresolved native Meeting Run workload identity: {value!r}")
+        return str(run[1])
+    if kind in {"structured", "email_classification", "workbench"}:
+        source_kind = {"structured": "okr_review_requests",
+                       "email_classification": "email_agent_classification_tasks",
+                       "workbench": "workbench_turns"}[kind]
+        return _task_public_from_target(db, task_targets, source_kind, value)
+    if kind == "weekly_okr" and len(parts) == 5:
+        parts[3] = _task_public_from_target(db, task_targets,
+                                            "weekly_okr_analysis_jobs", parts[3])
+        return ":".join(parts)
+    if kind == "memory" and len(parts) > 1 and parts[0] == "wechat_memory_import_job":
+        task = _task_public_from_target(db, task_targets, "wechat_memory_import_jobs", parts[-1])
+        parts[-1] = task
+        return ":".join(parts)
+    return value
+
+
+def restore_run_entities(db: sqlite3.Connection, source_metadata: dict,
+                         forward_metadata: dict, *, task_metadata: dict) -> dict:
+    """Restore the selected-current Run source from current native owner facts.
+
+    Caller owns an FK-off transaction. Compose before ``restore_task_entities``:
+    this inverse resolves current Run references while native Tasks still exist.
+    Only identities recorded by this forward are supported; new native Run rows
+    require the separate B3 allocator and portable-handoff contract.
+    """
+    _require_transaction(db)
+    if not isinstance(source_metadata, dict) or set(source_metadata) != {
+            "source_objects", "sequence_rows", "run_fk_findings"}:
+        raise ValueError("unsupported Run inverse capture metadata")
+    required = {"source_objects", "sequence_rows", "run_fk_findings"}
+    if (not isinstance(forward_metadata, dict)
+            or not required.union({"identity_edges"}).issubset(forward_metadata)):
+        raise ValueError("incomplete Run forward metadata")
+    if any(source_metadata[key] != forward_metadata[key] for key in required):
+        raise ValueError("Run inverse metadata differs from forward capture")
+    if source_metadata["source_objects"] != logical_run_current_schema.current_run11_objects():
+        raise ValueError("unsupported selected-current Run source declaration")
+    identities = _run_identity_rows(db)
+    expected_identity_edges = {
+        (row["source_kind"], int(row["physical_id"]), row["public_key"],
+         row["public_key_type"], row["public_key_order"], int(row["target_id"]))
+        for row in forward_metadata["identity_edges"]
+    }
+    actual_identity_edges = {
+        (row["source_kind"], row["physical_id"], row["public_key"],
+         row["public_key_type"], row["public_key_order"], row["target_id"])
+        for row in identities.values()
+    }
+    if len(expected_identity_edges) != len(forward_metadata["identity_edges"]) \
+            or actual_identity_edges != expected_identity_edges:
+        raise ValueError("Run inverse identities differ from the reviewed forward identity map")
+    _, task_target_to_source = _inverse_task_ids(db, task_metadata)
+    source_kinds = set(run_entity_definitions.SOURCE_FIELDS)
+    by_kind = {kind: [] for kind in source_kinds}
+    for (kind, physical), identity in identities.items():
+        by_kind[kind].append(identity)
+    expected_target = {(kind, row["target_id"]) for kind, rows in by_kind.items() for row in rows}
+    field_map = {(row["source_kind"], row["source_field"]): row
+                 for row in run_entity_definitions.run_entity_field_map()}
+    from app.task_run_entity_definitions import task_run_entity_objects
+    target_declarations = {**task_run_entity_objects(), **_TARGETS}
+    from app.configs_storage import create_configs_schema
+    from app.schedules_storage import create_schedules_schema
+    with sqlite3.connect(":memory:") as expected_db:
+        declarations = list(target_declarations.values())
+        for sql in declarations:
+            if sql.lstrip().lower().startswith("create table "):
+                expected_db.execute(sql)
+        create_schedules_schema(expected_db)
+        create_configs_schema(expected_db)
+        for sql in declarations:
+            if not sql.lstrip().lower().startswith("create table "):
+                expected_db.execute(sql)
+        for table in _OWNED_TABLES:
+            if _objects(db, table) != _objects(expected_db, table):
+                raise ValueError(f"Run native target declaration changed: {table}")
+    captured_orphan_ids = {
+        int(rowid) for table, rowid, parent, _ in source_metadata["run_fk_findings"]
+        if table == "runs" and parent == "tasks"
+    }
+    for table in _OWNED_TABLES:
+        if not db.execute("select 1 from main.sqlite_schema where name=?", (table,)).fetchone():
+            raise ValueError(f"missing current native Run owner: {table}")
+    target_ids = {}
+    for table in _OWNED_TABLES:
+        if table == "run_entity_identity_map":
+            continue
+        columns = {info[1] for info in db.execute(f"pragma main.table_info({_quote(table)})")}
+        key_column = "id" if "id" in columns else "run_id" if "run_id" in columns else None
+        if key_column is None:
+            raise ValueError(f"native Run owner has no identity column: {table}")
+        target_ids[table] = {int(row[0]) for row in db.execute(
+            f"select {_quote(key_column)} from main.{_quote(table)}")}
+    actual_ids = set()
+    for kind, rows in by_kind.items():
+        owner = _SOURCE_TO_OWNER[kind]
+        for identity in rows:
+            target = identity["target_id"]
+            if target not in target_ids[owner]:
+                raise ValueError(f"missing native Run identity: {kind}:{target}")
+            actual_ids.add((kind, target))
+    for kind, owner in _SOURCE_TO_OWNER.items():
+        actual = target_ids[owner]
+        expected = {target for source, target in expected_target if source == kind}
+        if actual != expected:
+            raise ValueError(f"unsupported new or missing native Run identities in {owner}")
+
+    staged = []
+    run_identity_by_target = {row["target_id"]: row for row in identities.values()
+                              if row["source_kind"] == "agent_runs"}
+    run_source_type = {}
+    for target, provenance in db.execute(
+            "select run_id,source_type from main.run_provenance"):
+        run_source_type[int(target)] = provenance
+    run_public_by_physical = {
+        row["physical_id"]: (run_source_type.get(row["target_id"]), row["public_key_order"])
+        for row in run_identity_by_target.values()
+    }
+    run_source_public_by_target = {
+        row["target_id"]: (run_source_type.get(row["target_id"]), row["public_key_order"])
+        for row in run_identity_by_target.values()
+    }
+    native_rows = {}
+    for table in _OWNED_TABLES:
+        if table == "run_entity_identity_map":
+            continue
+        columns = [info[1] for info in db.execute(f"pragma main.table_info({_quote(table)})")]
+        key_column = "id" if "id" in columns else "run_id"
+        key_index = columns.index(key_column)
+        native_rows[table] = {
+            int(values[key_index]): dict(zip(columns, values, strict=True))
+            for values in db.execute(f"select * from main.{_quote(table)}")
+        }
+    for kind, rows in by_kind.items():
+        owner = _SOURCE_TO_OWNER[kind]
+        for identity in rows:
+            target = identity["target_id"]
+            source = {row["source_field"]: None for row in field_map.values()
+                      if row["source_kind"] == kind}
+            source["id"] = identity["physical_id"]
+            source["record_type"] = kind
+            typ, public = identity["public_key_type"], identity["public_key"]
+            source["legacy_key"] = (None if typ == "null" else bytes(public) if typ == "blob"
+                                     else int(public) if typ == "integer" else public)
+            for (source_kind, source_field), mapping in field_map.items():
+                if source_kind != kind or mapping["target_table"] is None:
+                    continue
+                table, target_field = mapping["target_table"], mapping["target_field"]
+                if table == "run_entity_identity_map" or target_field in {"id", "source_kind"}:
+                    continue
+                key = target
+                native = native_rows[table].get(key)
+                if native is not None:
+                    source[source_field] = native.get(target_field)
+            if kind == "agent_runs":
+                provenance = db.execute("select source_type,job_id from main.run_provenance where run_id=?",
+                                        (target,)).fetchone()
+                if provenance:
+                    source["source_type"], source["job_id"] = provenance
+                projection = db.execute("select projection_json from main.run_projections where run_id=?",
+                                        (target,)).fetchone()
+                if projection:
+                    source["projection_json"] = projection[0]
+                if source["task_id"] is not None:
+                    task_kind = _PROFESSIONAL_TASK_KINDS.get(source["source_type"], "reply_tasks")
+                    source["task_id"] = _task_source_physical(db, task_target_to_source,
+                        task_kind, source["task_id"], allow_captured_orphan=(
+                            source["source_type"] == "meeting_alignment_runs"
+                            and identity["physical_id"] in captured_orphan_ids))
+            elif kind == "agent_runtime_attempts":
+                source["workload_key"] = _inverse_workload_key(
+                    db, source["workload_key"], task_target_to_source,
+                    run_source_public_by_target, source["workload_kind"])
+            elif kind == "workbench_events" and source["task_id"] is not None:
+                source["task_id"] = _task_source_physical(
+                    db, task_target_to_source, "workbench_turns", source["task_id"])
+            elif kind == "scheduled_task_runs" and source["execution_kind"] == "reply_task":
+                source["execution_id"] = _task_public_from_target(
+                    db, task_target_to_source, "reply_tasks", source["execution_id"])
+            elif kind == "codex_session_search_index" and source["source_type"] == "meeting_alignment":
+                search_identity = run_public_by_physical.get(int(source["source_id"]))
+                if search_identity is None or search_identity[0] != "meeting_alignment_runs":
+                    raise ValueError("unresolved Meeting Run search identity")
+                source["source_id"] = search_identity[1]
+            staged.append((kind, identity["physical_id"], source))
+
+    # Every source slot is explicit: structural NULLs are restored from the
+    # selected source CHECK contract, while every mapped field came from the
+    # current native row above.
+    for kind, _, source in staged:
+        for field, value in source.items():
+            mapping = field_map[(kind, field)]
+            if mapping["target_table"] is None and value is not None:
+                raise ValueError(f"native facts cannot populate structural Run slot {kind}.{field}")
+    for name, sql in _TARGETS.items():
+        if sql.lstrip().lower().startswith(("create index", "create unique index", "create trigger")):
+            db.execute(f"drop {('trigger' if 'trigger' in sql.lower() else 'index')} "
+                       f"if exists main.{_quote(_declared_name(sql))}")
+    for table in reversed(_OWNED_TABLES):
+        db.execute(f"drop table main.{_quote(table)}")
+    for name, sql in source_metadata["source_objects"].items():
+        if name == "runs":
+            db.execute(sql)
+    source_columns = tuple(row[1] for row in db.execute("pragma main.table_info(runs)"))
+    for kind, _, source in staged:
+        fields = {name: source[name] for name in source_columns}
+        columns = ",".join(_quote(name) for name in fields)
+        values = ",".join("?" for _ in fields)
+        try:
+            db.execute(f"insert into main.runs ({columns}) values ({values})", tuple(fields.values()))
+        except sqlite3.IntegrityError as exc:
+            raise ValueError(f"restored source row rejected for {kind}:{source['id']}: {exc}") from exc
+    for name, sql in source_metadata["source_objects"].items():
+        if name != "runs":
+            db.execute(sql)
+    for name in _SOURCE_SEQUENCE_NAMES:
+        db.execute("delete from main.sqlite_sequence where name=?", (name,))
+    for row in source_metadata["sequence_rows"]:
+        db.execute("insert into main.sqlite_sequence(rowid,name,seq) values(?,?,?)", row)
+    if not logical_run_current_schema.current_run11_schema_is_current(db):
+        raise ValueError("restored Run declaration differs from selected-current source")
+    return {"rows": len(staged), "source_objects": source_metadata["source_objects"],
             "sequence_rows": source_metadata["sequence_rows"],
             "run_fk_findings": source_metadata["run_fk_findings"]}

@@ -3,9 +3,11 @@ import sqlite3
 import pytest
 
 from app import logical_run_current_schema, run_entity_definitions, runs11_current_schema
-from app.run_entity_schema import capture_run_entities, migrate_run_entities
+from app.run_entity_schema import capture_run_entities, migrate_run_entities, restore_run_entities
 
 _TARGET_NAMES = set(run_entity_definitions.run_entity_objects())
+_TARGET_TABLES = {name for name, sql in run_entity_definitions.run_entity_objects().items()
+                  if sql.lstrip().lower().startswith("create table ")}
 
 
 def _create(objects, db):
@@ -75,13 +77,14 @@ def _source_row(db, kind, values):
                ",".join("?" for _ in columns) + ")", tuple(row[c] for c in columns))
 
 
-def _run_source(*, orphan_task_id=None):
+def _run_source(*, orphan_task_id=None, include_task_source_metadata=False):
     from app.task_entity_schema import capture_task_entities, migrate_task_entities
     from tests.test_task_entity_schema import _source as task_source
 
     db = task_source()
     db.execute("pragma foreign_keys=off")
     db.execute("begin immediate")
+    task_source_metadata = capture_task_entities(db) if include_task_source_metadata else None
     task_metadata = capture_task_entities(db)
     task_forward = migrate_task_entities(db, task_metadata)
     db.commit()
@@ -196,14 +199,11 @@ def _run_source(*, orphan_task_id=None):
     })
     if orphan_task_id is not None:
         _source_row(db, "agent_runs", {
-            "id": 1400, "legacy_key": "1400", "task_id": orphan_task_id,
-            "execution_generation": "consumer-anomaly", "role": "consumer",
-            "proposal_revision": 0, "turn_attempt": 0, "operation_id": "anomaly-op",
-            "status": "completed",
-            "session_id": "anomaly-session", "transcript_start": 0, "transcript_end": 0,
-            "structured_error_json": "{}", "lease_owner": "", "lease_expires_at": "",
-            "started_at": "start", "completed_at": "done", "created_at": "created",
-            "updated_at": "updated",
+            "id": 1400, "legacy_key": "2298", "task_id": orphan_task_id,
+            "source_type": "meeting_alignment_runs", "job_id": 4908,
+            "status": "no_action", "session_id": "anomaly-session",
+            "transcript_start": 0, "transcript_end": 0, "error": "",
+            "completed_at": "done", "created_at": "created", "updated_at": "updated",
         })
     for name, sql in objects.items():
         if name != "runs":
@@ -214,7 +214,8 @@ def _run_source(*, orphan_task_id=None):
     db.execute("insert into sqlite_sequence(name,seq) values('runs:published',8000)")
     db.commit()
     db.execute("begin")
-    return db, task_forward
+    return ((db, task_forward, task_source_metadata) if include_task_source_metadata
+            else (db, task_forward))
 
 
 def test_forward_migrates_all_eight_current_source_kinds_and_typed_facts():
@@ -362,6 +363,7 @@ def test_forward_uses_source_sqlite_cast_for_professional_public_identity(public
 def test_forward_is_rollbackable_by_caller_and_preserves_all_source_allocators():
     db, task_metadata = _run_source()
     try:
+        db.execute("insert into sqlite_sequence(name,seq) values('runs:codex_session_search_index',776)")
         source_objects = logical_run_current_schema.current_run11_objects()
         before_rows = tuple(db.execute("select * from runs order by id"))
         db.execute("insert into sqlite_sequence(name,seq) values('runs:codex_session_search_index',776)")
@@ -427,6 +429,190 @@ def test_forward_preserves_a_captured_missing_physical_task_edge_without_fabrica
         assert db.execute("select task_id from runs where id=1400").fetchone()[0] == 999
         assert not db.execute("select 1 from tasks where id=999").fetchone()
         assert tuple(db.execute("pragma foreign_key_check(runs)")) == (("runs", 1400, "tasks", 1),)
+    finally:
+        db.close()
+
+
+def test_existing_identity_inverse_restores_all_eight_current_source_kinds():
+    db, task_metadata = _run_source()
+    try:
+        source_objects = logical_run_current_schema.current_run11_objects()
+        source_rows = tuple(db.execute("select * from runs order by id"))
+        run_metadata = capture_run_entities(db)
+        forward_metadata = migrate_run_entities(db, run_metadata, task_metadata=task_metadata)
+        # Current native owner values are the inverse source of truth.
+        db.execute("update runs set status='failed' where id=1001")
+        db.execute("update runs set session_id='edited-session',transcript_start=3,"
+                   "transcript_end=9 where id=1001")
+        db.execute("update runs set error=? where id=1101", (b"edited\x00error",))
+        db.execute("update run_projections set projection_json=? where run_id=1101",
+                   (' { "edited": true } ',))
+        db.execute("update runtime_attempts set session_id='attempt-session',transcript_start=4,"
+                   "transcript_end=10 where id=1201")
+        result = restore_run_entities(db, run_metadata, forward_metadata,
+                                      task_metadata=task_metadata)
+        assert result["rows"] == len(source_rows)
+        assert logical_run_current_schema.current_run11_schema_is_current(db)
+        expected_rows = []
+        columns = tuple(row[1] for row in db.execute("pragma table_info(runs)"))
+        for row in source_rows:
+            values = list(row)
+            if values[columns.index("id")] == 1001:
+                values[columns.index("status")] = "failed"
+                values[columns.index("session_id")] = "edited-session"
+                values[columns.index("transcript_start")] = 3
+                values[columns.index("transcript_end")] = 9
+            if values[columns.index("id")] == 1101:
+                values[columns.index("error")] = b"edited\x00error"
+                values[columns.index("projection_json")] = ' { "edited": true } '
+            if values[columns.index("id")] == 1201:
+                values[columns.index("session_id")] = "attempt-session"
+                values[columns.index("transcript_start")] = 4
+                values[columns.index("transcript_end")] = 10
+            expected_rows.append(tuple(values))
+        assert tuple(db.execute("select * from runs order by id")) == tuple(expected_rows)
+        assert db.execute("select status from runs where id=1001").fetchone() == ("failed",)
+        assert db.execute("select session_id,transcript_start,transcript_end from runs where id=1001").fetchone() == (
+            "edited-session", 3, 9)
+        assert db.execute("select projection_json from runs where id=1101").fetchone() == (
+            ' { "edited": true } ',)
+        assert db.execute("select typeof(error),error from runs where id=1101").fetchone() == (
+            "blob", b"edited\x00error")
+        assert tuple(db.execute(
+            "select rowid,name,seq from sqlite_sequence where name in "
+            "('runs','runs:published','runs:codex_session_search_index') order by rowid")) == tuple(
+                run_metadata["sequence_rows"])
+        actual_objects = {row[0]: row[1] for row in db.execute(
+            "select name,sql from sqlite_schema where name in (" +
+            ",".join("?" for _ in source_objects) + ")", tuple(source_objects))}
+        assert actual_objects == source_objects
+        db.execute("update runs set status='completed' where id=1001")
+        refoward = migrate_run_entities(db, run_metadata, task_metadata=task_metadata)
+        assert refoward["source_objects"] == source_objects
+        assert db.execute("select status from runs where id=1001").fetchone() == ("completed",)
+        assert db.execute("select session_id,transcript_start,transcript_end from runs where id=1001").fetchone() == (
+            "edited-session", 3, 9)
+        assert db.execute("select typeof(error),error from runs where id=1101").fetchone() == (
+            "blob", b"edited\x00error")
+        assert db.execute("select projection_json from run_projections where run_id=1101").fetchone() == (
+            ' { "edited": true } ',)
+        assert tuple(db.execute(
+            "select rowid,name,seq from sqlite_sequence where name in "
+            "('runs','runs:published','runs:codex_session_search_index') order by rowid")) == tuple(
+                run_metadata["sequence_rows"])
+        assert db.execute("select 1 from sqlite_schema where name='run_entity_identity_map'").fetchone()
+    finally:
+        db.close()
+
+
+def test_existing_identity_inverse_rejects_new_native_run_identity_without_mutation():
+    db, task_metadata = _run_source()
+    try:
+        run_metadata = capture_run_entities(db)
+        forward_metadata = migrate_run_entities(db, run_metadata, task_metadata=task_metadata)
+        before = tuple(db.execute("select * from runs order by id"))
+        db.execute("insert into runs(id,created_at) values(90000,'new native')")
+        db.execute("insert into run_entity_identity_map(source_kind,physical_id,public_key,public_key_type,target_id) "
+                   "values('agent_runs',90000,'90000','text',90000)")
+        with pytest.raises(ValueError, match="Run inverse identities differ"):
+            restore_run_entities(db, run_metadata, forward_metadata, task_metadata=task_metadata)
+        assert tuple(db.execute("select * from runs where id<90000 order by id")) == before
+        assert db.execute("select 1 from sqlite_schema where name='run_entity_identity_map'").fetchone()
+    finally:
+        db.close()
+
+
+def test_existing_identity_inverse_rejects_native_owned_catalog_drift_before_retirement():
+    db, task_metadata = _run_source()
+    try:
+        run_metadata = capture_run_entities(db)
+        forward_metadata = migrate_run_entities(db, run_metadata, task_metadata=task_metadata)
+        before = tuple(db.execute("select * from runs order by id"))
+        db.execute("create index idx_unexpected_run_inverse on runs(status)")
+        with pytest.raises(ValueError, match="Run native target declaration changed: runs"):
+            restore_run_entities(db, run_metadata, forward_metadata, task_metadata=task_metadata)
+        assert tuple(db.execute("select * from runs order by id")) == before
+        assert db.execute("select 1 from sqlite_schema where name='run_entity_identity_map'").fetchone()
+        assert db.execute("select 1 from sqlite_schema where name='idx_unexpected_run_inverse'").fetchone()
+    finally:
+        db.close()
+
+
+def test_inverse_caller_rollback_preserves_native_facts_and_unrelated_schema_allocators():
+    db, task_metadata = _run_source()
+    try:
+        db.execute("create table unrelated_run_inverse(id integer primary key autoincrement,value blob)")
+        db.execute("create index unrelated_run_inverse_value on unrelated_run_inverse(value)")
+        db.execute("insert into unrelated_run_inverse(value) values(x'00ff')")
+        run_metadata = capture_run_entities(db)
+        forward_metadata = migrate_run_entities(db, run_metadata, task_metadata=task_metadata)
+        db.commit()
+        native_catalog = tuple(db.execute(
+            "select type,name,tbl_name,sql from sqlite_schema where name not like 'sqlite_%' order by name"))
+        native_sequences = tuple(db.execute(
+            "select rowid,name,seq from sqlite_sequence order by rowid"))
+        native_rows = {table: tuple(db.execute(f"select * from \"{table}\" order by 1"))
+                       for table in _TARGET_TABLES if db.execute(
+                           "select 1 from sqlite_schema where name=?", (table,)).fetchone()}
+        db.execute("begin immediate")
+        restore_run_entities(db, run_metadata, forward_metadata, task_metadata=task_metadata)
+        db.rollback()
+        assert tuple(db.execute(
+            "select type,name,tbl_name,sql from sqlite_schema where name not like 'sqlite_%' order by name")) == native_catalog
+        assert tuple(db.execute("select rowid,name,seq from sqlite_sequence order by rowid")) == native_sequences
+        assert {table: tuple(db.execute(f"select * from \"{table}\" order by 1"))
+                for table in native_rows} == native_rows
+        assert db.execute("select value from unrelated_run_inverse").fetchone() == (b"\x00\xff",)
+    finally:
+        db.close()
+
+
+def test_existing_identity_inverse_keeps_only_captured_missing_task_reference():
+    db, task_metadata = _run_source(orphan_task_id=999)
+    try:
+        run_metadata = capture_run_entities(db)
+        forward_metadata = migrate_run_entities(db, run_metadata, task_metadata=task_metadata)
+        assert ("runs", 1400, "tasks", 1) in run_metadata["run_fk_findings"]
+        restore_run_entities(db, run_metadata, forward_metadata, task_metadata=task_metadata)
+        assert db.execute("select task_id from runs where id=1400").fetchone() == (999,)
+        assert db.execute("select 1 from tasks where id=999").fetchone() is None
+        assert tuple(db.execute("pragma foreign_key_check(runs)")) == (("runs", 1400, "tasks", 1),)
+    finally:
+        db.close()
+
+
+def test_run_then_task_inverse_allows_source_getter_and_writer_before_immediate_reforward():
+    from app.task_entity_schema import capture_task_entities, migrate_task_entities, restore_task_entities
+    from app.logical_run_storage import finish_logical_run, logical_run_projection
+
+    db, task_forward, task_source_metadata = _run_source(include_task_source_metadata=True)
+    try:
+        db.execute("update runs set status='running' where id=1101")
+        run_source_metadata = capture_run_entities(db)
+        run_forward = migrate_run_entities(db, run_source_metadata, task_metadata=task_forward)
+        restore_run_entities(db, run_source_metadata, run_forward, task_metadata=task_forward)
+        restore_task_entities(db, task_source_metadata, task_forward)
+
+        db.row_factory = sqlite3.Row
+        task_run_sql = logical_run_projection("task_agent_runs")
+        before_cursor = db.execute(f"select * from ({task_run_sql}) where id=201")
+        before_row = before_cursor.fetchone()
+        before = dict(zip((column[0] for column in before_cursor.description), before_row, strict=True))
+        assert before is not None
+        assert before["status"] == "running"
+        finish_logical_run(db, "task_agent_runs", 201, status="failed",
+                           error="updated by predecessor Run writer")
+        after_cursor = db.execute(f"select * from ({task_run_sql}) where id=201")
+        after_row = after_cursor.fetchone()
+        after = dict(zip((column[0] for column in after_cursor.description), after_row, strict=True))
+        assert after["status"] == "failed"
+        assert after["error"] == "updated by predecessor Run writer"
+
+        new_task_capture = capture_task_entities(db)
+        new_task_forward = migrate_task_entities(db, new_task_capture)
+        migrate_run_entities(db, run_source_metadata, task_metadata=new_task_forward)
+        assert tuple(db.execute("select status,error from runs where id=1101").fetchone()) == (
+            "failed", "updated by predecessor Run writer")
     finally:
         db.close()
 
