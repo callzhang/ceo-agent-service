@@ -669,6 +669,7 @@ def test_actual_audit_runner_uses_production_review_instructions(setup, monkeypa
     assert actual == snapshot["developer_instructions"]
     assert (actual + executor.prompts[0]).count(_AUDIT_AGENT_RULES) == 1
     assert f"## Audit Rules\n{rendered_rules}" in actual
+    assert "For every proposed message, email, or other externally visible action" in actual
     assert "reusable rule should govern this task class" in rendered_rules
     assert "not ask " in rendered_rules
     assert "to choose the outcome or action for this individual OA" in rendered_rules

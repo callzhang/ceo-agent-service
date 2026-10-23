@@ -60,6 +60,20 @@ def test_same_saved_rules_render_under_fixed_role_wrappers(
     assert "do not rewrite the candidate" in audit
 
 
+def test_outbound_action_review_contract_is_explicit_and_audit_only(tmp_path):
+    path = tmp_path / "rules.md"
+    path.write_text("", encoding="utf-8")
+
+    consumer = render_audit_rules(AgentRole.CONSUMER, path)
+    audit = render_audit_rules(AgentRole.AUDIT, path)
+
+    assert "For every proposed message, email, or other externally visible action" in audit
+    assert "review the exact recipient or target, content, evidence, and task scope" in audit
+    assert "never send it or perform the external action" in audit
+    assert "only the System Executor executes the exact persisted approved plan" in audit
+    assert "For every proposed message, email, or other externally visible action" not in consumer
+
+
 def test_default_oa_rules_keep_material_and_policy_gaps_separate():
     rules = SEED_AUDIT_RULES_TEMPLATE.read_text(encoding="utf-8")
 
