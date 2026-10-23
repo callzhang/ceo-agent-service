@@ -271,7 +271,7 @@ class ReviewedCandidateStoreMixin:
                 and owner.id=(select run.id from runs run join run_adopted_results ar on ar.consumer_run_id=run.id
                   where run.task_id=? and run.execution_generation=? and run.role='consumer'
                   and run.status='completed' order by run.proposal_revision desc,run.turn_attempt desc,run.id desc limit 1)
-                order by r.audit_run_id desc limit 1""", (task_id, generation, generation, task_id, generation)).fetchone()
+                order by r.id desc limit 1""", (task_id, generation, generation, task_id, generation)).fetchone()
             return _derived_selection(db, row)
 
     def get_candidate_selection(self, candidate_id: int) -> dict[str, Any] | None:

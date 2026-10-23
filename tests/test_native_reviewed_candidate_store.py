@@ -305,3 +305,33 @@ def test_native_run_result_reader_uses_native_fields_without_attempt(monkeypatch
     assert json.loads(native_trajectory.read_native_result_json(db, run)) == body
     monkeypatch.setattr(native_trajectory, "find_codex_session_path", lambda *_args, **_kwargs: None)
     assert native_trajectory.read_native_result_json(db, run) == ""
+
+
+def test_current_review_projection_follows_review_id_when_audit_adoption_is_reversed(monkeypatch):
+    store, db, task, consumer = _native_store(monkeypatch)
+    body = {"outcome": "proposal", "summary": "review order",
+            "stage_index": 0, "predecessor_review_id": None,
+            "decision_options": [{"key": "stop", "terminal_outcome": "skipped", "reason": "stop"}]}
+    with db:
+        store._adopt_review_candidate_in_connection(db, consumer, body)
+        first_audit = run_entity_storage.create_run(db, values={
+            "task_id": task["id"], "parent_id": consumer["id"], "execution_generation": "gen-1",
+            "role": "audit", "proposal_revision": 0, "turn_attempt": 0, "status": "completed",
+            "created_at": "now", "updated_at": "now",
+        })
+        last_audit = run_entity_storage.create_run(db, values={
+            "task_id": task["id"], "parent_id": consumer["id"], "execution_generation": "gen-1",
+            "role": "audit", "proposal_revision": 0, "turn_attempt": 1, "status": "completed",
+            "created_at": "now", "updated_at": "now",
+        })
+        digest = store.get_review_candidate(consumer["id"])["candidate_digest"]
+        last_review = store._adopt_candidate_review_in_connection(db, consumer["id"], last_audit["id"],
+            {"outcome": "approve", "candidate_digest": digest})
+        first_review = store._adopt_candidate_review_in_connection(db, consumer["id"], first_audit["id"],
+            {"outcome": "approve", "candidate_digest": digest})
+
+    assert first_audit["id"] < last_audit["id"]
+    assert last_review["id"] < first_review["id"]
+    current = store.current_reviewed_candidate(task["id"], "gen-1")
+    assert current["review_id"] == first_review["id"]
+    assert current["audit_run_id"] == first_audit["id"]
