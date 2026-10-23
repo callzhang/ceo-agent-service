@@ -14,8 +14,6 @@ from app.codex_history import (
     _mcp_tool_result_from_event_msg, _content_text,
 )
 from app.codex_runner import _codex_home
-from app.logical_run_storage import AGENT_RUN_SQL
-from app.run_storage import RUNTIME_ATTEMPT_SQL
 
 
 # Stream payloads exist only for active invocations; terminal reads use native
@@ -140,7 +138,7 @@ def terminal_cached_run_ids(db, db_path: str) -> list[int]:
     if not ids:
         return []
     active = {row[0] for row in db.execute(
-        f"select id from ({AGENT_RUN_SQL}) as agent_runs where status='running' and id in ("
+        "select id from runs where role in ('consumer','audit') and status='running' and id in ("
         + ','.join('?' for _ in ids) + ')', ids)}
     return [run_id for run_id in ids if run_id not in active]
 
@@ -521,7 +519,7 @@ def codex_session_has_final_user_marker_without_compaction(
 
 def read_run_events(db, row) -> list[dict]:
     attempts = db.execute(
-        f"select runtime_kind, session_id, transcript_reference, transcript_start, transcript_end, started_at, finished_at from ({RUNTIME_ATTEMPT_SQL}) as agent_runtime_attempts where agent_run_id=? and session_id<>'' order by id",
+        "select runtime_kind, session_id, transcript_reference, transcript_start, transcript_end, started_at, finished_at from runtime_attempts where parent_id=? and session_id<>'' order by id",
         (row["id"],),
     ).fetchall()
     return read_run_events_from_attempts(row, attempts)
@@ -538,8 +536,8 @@ def read_run_events_from_attempts(row, attempts) -> list[dict]:
         elif attempt["runtime_kind"] == "claude_cli" and attempt["transcript_reference"].startswith("claude_session:"):
             events.extend(read_claude_events(attempt["session_id"], start_line=attempt["transcript_start"], end_line=attempt["transcript_end"]))
         # Friday retains its Artifact remotely; there is no local tool history.
-    if not attempts and row["codex_session_id"] and row["transcript_end_line"] > row["transcript_start_line"]:
-        events.extend(read_codex_events(row["codex_session_id"], start_line=row["transcript_start_line"], end_line=row["transcript_end_line"]))
+    if not attempts and row["session_id"] and row["transcript_end"] > row["transcript_start"]:
+        events.extend(read_codex_events(row["session_id"], start_line=row["transcript_start"], end_line=row["transcript_end"]))
     return events
 
 
@@ -553,15 +551,16 @@ def read_run_event_evidence(db, row) -> tuple[list[dict], bool]:
     the caller's existing event predicate.
     """
     attempts = db.execute(
-        f'select runtime_kind,session_id,transcript_start,transcript_end,status,transcript_reference,source_session_id,first_effect_started_at from ({RUNTIME_ATTEMPT_SQL}) as agent_runtime_attempts where agent_run_id=? order by id', (row['id'],),
+        "select runtime_kind,session_id,transcript_start,transcript_end,status,transcript_reference,source_session_id,first_effect_started_at from runtime_attempts where parent_id=? order by id",
+        (row['id'],),
     ).fetchall()
     database_path = next(record[2] for record in db.execute('pragma database_list') if record[1] == 'main')
     events = live_events(str(Path(database_path).resolve()), row['id']) or []
     if not attempts:
-        if not row['codex_session_id'] and row['transcript_end_line'] == row['transcript_start_line'] == 0:
+        if not row['session_id'] and row['transcript_end'] == row['transcript_start'] == 0:
             return events, not events  # A claim that never reached invocation.
-        attempts = [dict(runtime_kind='codex_cli', session_id=row['codex_session_id'],
-                         transcript_start=row['transcript_start_line'], transcript_end=row['transcript_end_line'],
+        attempts = [dict(runtime_kind='codex_cli', session_id=row['session_id'],
+                         transcript_start=row['transcript_start'], transcript_end=row['transcript_end'],
                          status=row['status'], transcript_reference='', source_session_id='', first_effect_started_at='')]
     available = True
     for attempt in attempts:
@@ -570,7 +569,7 @@ def read_run_event_evidence(db, row) -> tuple[list[dict], bool]:
         if (attempt['status'] in ('failed', 'superseded') and not session_id
             and not attempt['transcript_reference'] and not attempt['source_session_id']
             and not attempt['first_effect_started_at'] and start == end == 0
-            and row['transcript_start_line'] == row['transcript_end_line'] == 0 and not events):
+            and row['transcript_start'] == row['transcript_end'] == 0 and not events):
             continue  # A failed route before any native session/stream existed.
         if kind == 'codex_cli' and session_id:
             records = _codex_turn_records(find_codex_session_path(session_id), start, end)
@@ -619,7 +618,7 @@ def read_run_event_evidence(db, row) -> tuple[list[dict], bool]:
 
 def hydrate_run_events(db, row, db_path: str) -> list[dict]:
     attempts = db.execute(
-        f"select runtime_kind, session_id, transcript_reference, transcript_start, transcript_end, started_at, finished_at from ({RUNTIME_ATTEMPT_SQL}) as agent_runtime_attempts where agent_run_id=? and session_id<>'' order by id",
+        "select runtime_kind, session_id, transcript_reference, transcript_start, transcript_end, started_at, finished_at from runtime_attempts where parent_id=? and session_id<>'' order by id",
         (row["id"],),
     ).fetchall()
     return hydrate_run_events_from_attempts(row, attempts, db_path)

@@ -1,5 +1,6 @@
 from contextvars import ContextVar
 import hashlib
+import json
 import sqlite3
 
 import pytest
@@ -461,3 +462,97 @@ def test_authorized_email_creator_checks_current_persisted_plan_on_target_owners
         )
     with store._connect() as db:
         assert db.execute("select count(*) from tasks where kind='reply'").fetchone()[0] == 2
+
+
+def test_native_consumer_run_claim_lease_session_and_failure_use_run_owner(tmp_path):
+    store = _target_store(tmp_path / "target.sqlite3")
+    task = store.ensure_reply_task(**_creator_kwargs(_spec("native-run-message")))
+    now = "2026-10-23T12:00:00Z"
+
+    claimed = store.claim_agent_run(
+        task.id, task.execution_generation,
+        role="consumer", proposal_revision=0, turn_attempt=0,
+        parent_agent_run_id=None, operation_id="", owner="worker-a",
+        now=now,
+    )
+
+    assert claimed.claimed is True
+    assert claimed.run.id > 0
+    assert claimed.run.reply_task_id == task.id
+    assert store.get_agent_run(claimed.run.id, load_events=False).role.value == "consumer"
+    assert store.renew_agent_run_lease(
+        claimed.run.id, owner="worker-a", now="2026-10-23T12:00:30Z",
+    ).lease_owner == "worker-a"
+    assert store.set_agent_run_session(
+        claimed.run.id, "session-native", owner="worker-a",
+        now="2026-10-23T12:00:45Z",
+    ).codex_session_id == "session-native"
+
+    failed = store.fail_agent_run(
+        claimed.run.id, {"code": "runtime_failed", "retryable": False},
+        owner="worker-a", now="2026-10-23T12:01:00Z",
+    )
+
+    assert failed.status == "failed"
+    with store._connect() as db:
+        row = db.execute(
+            "select role, status, session_id from runs where id=?",
+            (claimed.run.id,),
+        ).fetchone()
+        assert tuple(row) == ("consumer", "failed", "session-native")
+        assert db.execute(
+            "select count(*) from run_failures where run_id=?",
+            (claimed.run.id,),
+        ).fetchone()[0] == 0
+
+
+def test_native_audit_adoption_keeps_review_identity_separate_and_terminal_write_idempotent(tmp_path):
+    store = _target_store(tmp_path / "target.sqlite3")
+    task = store.ensure_reply_task(**_creator_kwargs(_spec("native-audit-message")))
+    now = "2026-10-23T13:00:00Z"
+    consumer = store.claim_agent_run(
+        task.id, task.execution_generation, role="consumer",
+        proposal_revision=0, turn_attempt=0, parent_agent_run_id=None,
+        operation_id="", owner="consumer-worker", now=now,
+    ).run
+    candidate_result = {"outcome": "proposal", "stage_index": 0}
+    consumer = store.complete_agent_run(
+        consumer.id, candidate_result, owner="consumer-worker",
+        now="2026-10-23T13:00:10Z",
+    )
+    candidate = store.adopted_candidate_for_consumer_run(consumer.id)
+    assert candidate is not None
+
+    audit = store.claim_agent_run(
+        task.id, task.execution_generation, role="audit",
+        proposal_revision=0, turn_attempt=0, parent_agent_run_id=consumer.id,
+        operation_id="audit-op-1", owner="audit-worker",
+        now="2026-10-23T13:00:20Z",
+    ).run
+    audit_result = {
+        "outcome": "reject", "candidate_digest": candidate["candidate_digest"],
+    }
+    completed = store.complete_agent_run(
+        audit.id, audit_result, owner="audit-worker",
+        now="2026-10-23T13:00:30Z",
+    )
+    repeated = store.complete_agent_run(
+        audit.id, audit_result, owner="audit-worker",
+        now="2026-10-23T13:00:40Z",
+    )
+    assert completed.status == repeated.status == "completed"
+    review = store.reviewed_candidate_for_audit_run(audit.id)
+    assert review is not None
+    assert review["audit_run_id"] == audit.id
+    assert review["review_id"] != audit.id
+    # The adopted value remains readable without a native CLI invocation;
+    # no trajectory event is fabricated to stand in for missing runtime data.
+    read_back = store.get_agent_run(audit.id)
+    assert json.loads(read_back.adopted_result_json) == audit_result
+    assert read_back.tool_events == []
+    assert read_back.final_result_json == ""
+    with pytest.raises(ValueError, match="conflicting terminal rewrite"):
+        store.complete_agent_run(
+            audit.id, {**audit_result, "feedback": "changed"},
+            owner="audit-worker", now="2026-10-23T13:00:50Z",
+        )

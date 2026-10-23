@@ -30,6 +30,12 @@ trigger refresh 改为直接读写 `tasks`／`task_inputs` 原生 owner。claim 
 claimed 指针。范围仅是这些既有 Store API，Reply 其余生命周期、recover、terminal、
 dispatcher lease、构造器和 schema 选择仍待后续验收，当前不代表完整 Task runtime 已启用。
 
+Task3E1 将 Consumer／Audit Run 的 Store 读取、领取、续租、session 更新、终态与未启动删除
+直接落在原生 `runs` 行；候选与审核从 adopted result／review 读取，CLI transcript 和最终结果
+仍按实际 `runtime_attempts.parent_id` 引用读取。终态完成与业务采用沿用同一 SQLite 事务，
+Review business ID 与 Audit Run ID 分开。此孤立单元未启用 constructor 或 RuntimeAttempt writer，
+不代表完整 runtime cutover。
+
 Store19.8 的 C1 将九种实际可执行 Task 的源 status、due、attempt、error、时间与
 既有 owner／PID／generation／expiry 事实移到单一物理列；不存在的源字段保持
 SQL NULL，另外十一种记录保持原业务状态且没有通用生命周期。物理列保存一个
