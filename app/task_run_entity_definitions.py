@@ -184,6 +184,18 @@ def task_run_field_map() -> tuple[dict, ...]:
     return _field_map()
 
 
+def task_run_identity_associations() -> tuple[dict, ...]:
+    """Non-field-map owner edges required by generic native identity tables."""
+    return (
+        {"source_kind": "business_object_tasks", "target_table": "task_business_keys",
+         "target_owner": "Reply Task", "identity": "source business_object_key",
+         "inverse": "restore only when parent Task kind is reply"},
+        {"source_kind": "meeting_alignment_jobs", "target_table": "task_business_keys",
+         "target_owner": "Meeting Task", "identity": "meeting-alignment:{source public id}:{meeting_id}",
+         "inverse": "native-only association; portable edge preserves key-row ID, text rederived from source facts"},
+    )
+
+
 def validate_task_run_field_map(mapping=None) -> None:
     from app import task20_definitions as task20
 

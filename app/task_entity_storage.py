@@ -231,3 +231,19 @@ def list_task_business_keys(db: sqlite3.Connection, task_id: int) -> list[dict[s
     return [dict(row) for row in db.execute(
         "select * from task_business_keys where task_id=? order by id", (task_id,)
     )]
+
+
+def get_meeting_delivery_key(db: sqlite3.Connection, task_id: int) -> str:
+    """Return the exact persisted delivery identity for a native Meeting Task."""
+    owner = db.execute(
+        "select kind from tasks where id=?", (task_id,),
+    ).fetchone()
+    if owner is None or owner[0] != "meeting_alignment":
+        raise ValueError("Meeting delivery identity requires a Meeting Task")
+    rows = db.execute(
+        "select business_key from task_business_keys where task_id=? order by id",
+        (task_id,),
+    ).fetchall()
+    if len(rows) != 1 or not isinstance(rows[0][0], str) or not rows[0][0]:
+        raise ValueError("Meeting Task must own exactly one delivery identity")
+    return rows[0][0]

@@ -93,3 +93,7 @@
 ### Task3C1B Review identity correction (2026-10-22)
 
 C1B preserves source Review `id` as the real native Run-owned Review child key and stores the Audit Run separately as unique `audit_run_id`. `run_adopted_results.predecessor_review_id` references Review `id`; selections/progress continue to reference Audit Run owner IDs. Candidate/review body and digest remain unchanged. Frozen source evidence covers 23 linked predecessor bodies, all matching source Review IDs and differing from Audit Run IDs, with no unresolved references. This is an unactivated schema/Store correction; source-copy conversion and runtime activation remain later gates.
+
+### Task2D2A Meeting delivery identity prerequisite
+
+Before changing the Meeting creator, store the exact pre-existing delivery key in `task_business_keys` against the canonical Task. Add an exact Task-kind-gated reader and the explicit forward/inverse identity handoff; keep the `business_object_tasks` field-map source semantics Reply-only. Verify that key row IDs survive two JSON inverse/reforward cycles and an intervening authentic old-source key insert, and that the shared old Tasks allocator reserves those IDs. The source public ID embedded in the external identity remains provenance, and the sender continues receiving the unchanged key. This task leaves the Meeting writer, Action creation and service constructor unchanged; Task2D2B performs that cutover.

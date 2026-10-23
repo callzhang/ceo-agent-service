@@ -346,6 +346,23 @@ def migrate_task_entities(
             logical[item["source_kind"]].append(item)
 
     all_rows = {kind: list(_source_rows(db, kind, stage)) for kind, stage in staged.items()}
+    meeting_rows = all_rows["meeting_alignment_jobs"]
+    meeting_key_edges = handoff["meeting_business_keys"]
+    reply_key_rowids = {int(row["_physical_id"]) for row in all_rows["business_object_tasks"]}
+    if reply_key_rowids & set(meeting_key_edges.values()):
+        raise ValueError("Meeting delivery-key row ID collides with a source Reply business key")
+    source_owner_kind_by_physical = {
+        int(row["_physical_id"]): kind
+        for kind, rows in all_rows.items() for row in rows
+    }
+    for source_id in meeting_key_edges:
+        actual_kind = source_owner_kind_by_physical.get(source_id)
+        if actual_kind is not None and actual_kind != "meeting_alignment_jobs":
+            raise ValueError("Meeting delivery-key handoff points to a different source owner kind")
+    # A missing source Meeting is a retired owner after the old-code inverse
+    # interval. Its edge is intentionally not replayed; current owners alone
+    # drive reforward, while the inverse still reserved its row ID in the old
+    # shared Tasks allocator.
     input_fields = ("channel", "conversation_id", "conversation_title", "single_chat",
                     "trigger_message_id", "trigger_create_time", "trigger_sender",
                     "oa_url", "business_object_key")
@@ -369,7 +386,7 @@ def migrate_task_entities(
         target = _target_table(kind)
         for row in rows:
             physical_id = int(row["_physical_id"])
-            target_id = handoff.get((kind, physical_id), physical_id)
+            target_id = handoff["owners"].get((kind, physical_id), physical_id)
             if target_id != _target_id(db, target, target_id):
                 raise ValueError("inverse identity handoff does not match the native owner")
             target_ids[(kind, int(row["_physical_id"]))] = target_id
@@ -580,6 +597,21 @@ def migrate_task_entities(
             db.execute(f"update tasks set {assignments} where id=?",
                        (*updates.values(), target_ids[("reply_tasks", int(row["_physical_id"]))]))
 
+    # Meeting delivery identity is an exact Task-owned association. The key
+    # text is rederived from source facts; only its native row ID crosses an
+    # inverse/forward boundary.
+    for row in meeting_rows:
+        physical_id = int(row["_physical_id"])
+        meeting_task_id = target_ids[("meeting_alignment_jobs", physical_id)]
+        delivery_key = f"meeting-alignment:{row['id']}:{row['meeting_id']}"
+        key_row_id = meeting_key_edges.get(physical_id)
+        if key_row_id is None:
+            db.execute("insert into task_business_keys(task_id,business_key) values(?,?)",
+                       (meeting_task_id, delivery_key))
+        else:
+            db.execute("insert into task_business_keys(id,task_id,business_key) values(?,?,?)",
+                       (key_row_id, meeting_task_id, delivery_key))
+
     # Install exact target indexes and triggers only after bulk data insertion.
     for name, sql in objects.items():
         if name in target_tables or name.startswith(("idx_", "trg_")):
@@ -606,11 +638,13 @@ def migrate_task_entities(
     }
 
 
-def _validate_inverse_identity(value: dict | None) -> dict[tuple[str, int], int]:
+def _validate_inverse_identity(value: dict | None) -> dict:
     """Validate the content-free identity handoff returned by the inverse."""
     if value is None:
-        return {}
-    if not isinstance(value, dict) or set(value) != {"version", "owners"} or value["version"] != 1:
+        return {"owners": {}, "meeting_business_keys": {}}
+    if (not isinstance(value, dict) or set(value) not in (
+            {"version", "owners"}, {"version", "owners", "meeting_business_keys"})
+            or value["version"] != 1):
         raise ValueError("unsupported inverse Task identity handoff")
     if not isinstance(value["owners"], list):
         raise ValueError("invalid inverse Task identity handoff owners")
@@ -627,7 +661,25 @@ def _validate_inverse_identity(value: dict | None) -> dict[tuple[str, int], int]
             raise ValueError("duplicate inverse Task identity handoff owner")
         result[key] = target
         canonical.add((row["source_kind"], target))
-    return result
+    key_edges = {}
+    key_ids = set()
+    raw_key_edges = value.get("meeting_business_keys", [])
+    if not isinstance(raw_key_edges, list):
+        raise ValueError("invalid Meeting delivery-key identity handoff")
+    for row in raw_key_edges:
+        if (not isinstance(row, dict) or set(row) != {
+                "source_meeting_physical_id", "task_business_key_row_id"}
+                or type(row["source_meeting_physical_id"]) is not int
+                or type(row["task_business_key_row_id"]) is not int
+                or row["source_meeting_physical_id"] < 1
+                or row["task_business_key_row_id"] < 1):
+            raise ValueError("invalid Meeting delivery-key identity handoff")
+        source_id, key_id = row["source_meeting_physical_id"], row["task_business_key_row_id"]
+        if source_id in key_edges or key_id in key_ids:
+            raise ValueError("duplicate Meeting delivery-key identity handoff")
+        key_edges[source_id] = key_id
+        key_ids.add(key_id)
+    return {"owners": result, "meeting_business_keys": key_edges}
 
 
 def _inverse_identity_digest(value: dict) -> str:
@@ -682,6 +734,11 @@ def _inverse_indexes(db: sqlite3.Connection, forward_metadata: dict) -> tuple[di
         if table == "tasks":
             owner_ids = [int(row[0]) for row in db.execute(
                 "select id from main.tasks where kind=?", (_TASK_TABLES.get(kind, "domain"),))]
+        elif kind == "business_object_tasks":
+            owner_ids = [int(row[0]) for row in db.execute(
+                "select business.id from main.task_business_keys business "
+                "join main.tasks task on task.id=business.task_id "
+                "where task.kind='reply' order by business.id")]
         else:
             key_column = "id" if "id" in columns else "task_id"
             owner_ids = [int(row[0]) for row in db.execute(
@@ -779,6 +836,13 @@ def restore_task_entities(db: sqlite3.Connection, source_metadata: dict, forward
     if source_metadata["source_objects"] != forward_metadata["source_objects"]:
         raise ValueError("Task source declaration metadata differs from forward capture")
     _, _, identities = _inverse_indexes(db, forward_metadata)
+    unsupported_key_owner = db.execute(
+        "select task.kind from main.task_business_keys business "
+        "join main.tasks task on task.id=business.task_id "
+        "where task.kind not in ('reply','meeting_alignment') limit 1"
+    ).fetchone()
+    if unsupported_key_owner is not None:
+        raise ValueError("TaskBusinessKey owner kind has no current-source inverse")
     from app import task20_definitions
     from app.task_run_entity_definitions import task_run_field_map, task_run_entity_objects
     from app.task_entity_migration import restore_feedback_workbench_ref
@@ -817,6 +881,11 @@ def restore_task_entities(db: sqlite3.Connection, source_metadata: dict, forward
         if table == "tasks":
             selector = {"reply_tasks": "reply"}.get(kind, _TASK_TABLES.get(kind, "domain"))
             rows = db.execute("select id from main.tasks where kind=? order by id", (selector,)).fetchall()
+        elif kind == "business_object_tasks":
+            rows = db.execute(
+                "select business.id from main.task_business_keys business "
+                "join main.tasks task on task.id=business.task_id "
+                "where task.kind='reply' order by business.id").fetchall()
         else:
             columns = {row[1] for row in db.execute(f"pragma main.table_info({_quote(table)})")}
             key_column = "id" if "id" in columns else "task_id" if "task_id" in columns else None
@@ -848,9 +917,15 @@ def restore_task_entities(db: sqlite3.Connection, source_metadata: dict, forward
     reserved_physical.update(
         row["physical_id"] for row in forward_metadata["raw_key_exceptions"]
     )
+    meeting_key_rows = [tuple(row) for row in db.execute(
+        "select business.id,business.task_id from main.task_business_keys business "
+        "join main.tasks task on task.id=business.task_id "
+        "where task.kind='meeting_alignment' order by business.id")]
+    meeting_key_reservation_water = max((int(row[0]) for row in meeting_key_rows), default=0)
     allocation_water = max(
         source_metadata["task_sequence"][1] if source_metadata["task_sequence"] else 0,
         max(reserved_physical, default=0),
+        meeting_key_reservation_water,
     )
     native_sequence = _sequence(db, "tasks")
     original_water = allocation_water
@@ -1005,6 +1080,23 @@ def restore_task_entities(db: sqlite3.Connection, source_metadata: dict, forward
         source_physical_id = source_physical_by_native[(kind, target_id)]
         source_rows.append((kind, source_physical_id, target_id, public_key, values, parent_id))
 
+    meeting_ids = {target_id: values.get("meeting_id")
+                   for kind, _, target_id, _, values, _ in source_rows
+                   if kind == "meeting_alignment_jobs"}
+    key_by_task = defaultdict(list)
+    for key_id, task_id in meeting_key_rows:
+        key_by_task[int(task_id)].append(int(key_id))
+    if set(key_by_task) != set(meeting_ids):
+        raise ValueError("Meeting Task must own exactly one delivery identity association")
+    for task_id, meeting_id in meeting_ids.items():
+        key_ids = key_by_task[task_id]
+        public_id = source_public_by_native[("meeting_alignment_jobs", task_id)]
+        key_row = db.execute("select business_key from main.task_business_keys where id=?",
+                             (key_ids[0],)).fetchone() if len(key_ids) == 1 else None
+        expected_key = f"meeting-alignment:{public_id}:{meeting_id}"
+        if key_row is None or key_row[0] != expected_key:
+            raise ValueError("Meeting delivery identity does not match its source facts")
+
     physical_owners = {}
     for kind, physical_id, _, _, _, _ in source_rows:
         if physical_id in physical_owners:
@@ -1069,9 +1161,20 @@ def restore_task_entities(db: sqlite3.Connection, source_metadata: dict, forward
             sequence[1] if sequence is not None else 0,
             native_sequence[1] if native_sequence is not None else 0,
             allocation_water if allocated_above_water else 0,
+            meeting_key_reservation_water,
         )
         db.execute("insert into main.sqlite_sequence(rowid,name,seq) values(?, 'tasks', ?)",
                    (rowid, water))
+    meeting_business_keys = []
+    for row in meeting_key_rows:
+        source_meeting_physical_id = source_physical_by_native.get(
+            ("meeting_alignment_jobs", int(row[1])))
+        if source_meeting_physical_id is None:
+            raise ValueError("Meeting delivery-key owner has no inverse Task identity")
+        meeting_business_keys.append({
+            "source_meeting_physical_id": source_meeting_physical_id,
+            "task_business_key_row_id": int(row[0]),
+        })
     inverse_identity = {
         "version": 1,
         "owners": [
@@ -1079,10 +1182,11 @@ def restore_task_entities(db: sqlite3.Connection, source_metadata: dict, forward
             for (kind, target_id), source_id in source_physical_by_native.items()
             if source_id != target_id
         ],
+        "meeting_business_keys": meeting_business_keys,
     }
     source_context = {
         "version": 1,
-        "handoff_required": bool(inverse_identity["owners"]),
+        "handoff_required": bool(inverse_identity["owners"] or meeting_business_keys),
         "handoff_sha256": _inverse_identity_digest(inverse_identity),
     }
     return {

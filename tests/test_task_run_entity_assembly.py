@@ -97,7 +97,7 @@ def test_complete_assembly_sql_artifact_is_deterministic():
     from app.run_adoption_definitions import field_map as adoption_field_map
     from app.run_entity_definitions import run_entity_field_map
     from app.schema_sql import serialize_schema_sql
-    from app.task_run_entity_definitions import task_run_field_map
+    from app.task_run_entity_definitions import task_run_field_map, task_run_identity_associations
 
     objects = task_run_entity_assembly_objects()
     expected = serialize_schema_sql(objects)
@@ -109,6 +109,7 @@ def test_complete_assembly_sql_artifact_is_deterministic():
         for kind, fields in adoption_field_map().items() for field, destination in fields.items()
     ]
     assert field_map == {"task_fields": list(task_run_field_map()),
+                         "task_identity_associations": list(task_run_identity_associations()),
                          "run_fields": run_entity_field_map(), "adoption_fields": adoption_rows}
     assert len(field_map["task_fields"]) == 287
     assert len(field_map["run_fields"]) == 8 * 79

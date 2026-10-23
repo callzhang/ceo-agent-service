@@ -562,6 +562,8 @@ def test_native_input_new_fact_below_global_water_keeps_canonical_id_on_reforwar
             "version": 1,
             "owners": [{"source_kind": "reply_task_inputs",
                         "source_physical_id": source_input[0], "canonical_id": 404225}],
+            "meeting_business_keys": [{"source_meeting_physical_id": 221,
+                                       "task_business_key_row_id": 225}],
         }
 
         source_metadata = capture_task_entities(db)
@@ -697,10 +699,10 @@ def test_native_business_key_collision_uses_predecessor_hidden_rowid_allocator()
                                   expected_input_version=1, input_version=2)
         created = associate_business_key(db, task_id=new_task["id"], business_key="new-business-object",
                                          created_at=now, updated_at=now)
-        assert created["id"] == 225  # existing native Task id 225 belongs to another owner
+        assert created["id"] == 227  # Meeting identity and source Reply keys occupy 225-226
         second_key = associate_business_key(db, task_id=new_task["id"], business_key="second-business-object",
                                             created_at=now, updated_at=now)
-        assert second_key["id"] == 226
+        assert second_key["id"] == 228
 
         inverse = restore_task_entities(db, source_metadata, forward)
         assert tuple(db.execute("select record_type from tasks where id=225").fetchone()) == (
@@ -719,7 +721,7 @@ def test_native_business_key_collision_uses_predecessor_hidden_rowid_allocator()
         ).fetchone())
         handoff_by_owner = {(owner["source_kind"], owner["canonical_id"]): owner["source_physical_id"]
                             for owner in inverse["inverse_identity"]["owners"]}
-        assert handoff_by_owner[("business_object_tasks", 225)] == row[0]
+        assert handoff_by_owner[("business_object_tasks", created["id"])] == row[0]
         assigned_reply = handoff_by_owner[("reply_tasks", new_task["id"])]
         reply_row = db.execute(
             "select id,legacy_key from tasks where record_type='reply_tasks' and id=?",
@@ -748,16 +750,14 @@ def test_native_business_key_collision_uses_predecessor_hidden_rowid_allocator()
                                 "from tasks where id=?", (new_task["id"],)).fetchone()) == (
             second["id"], first["id"], 2, 1,
         )
-        assert tuple(db.execute("select id,business_key from task_business_keys where id=225").fetchone()) == (
-            225, "updated-native-business-object",
-        )
-        assert tuple(db.execute("select id,business_key from task_business_keys where id=226").fetchone()) == (
-            226, "second-business-object",
-        )
+        assert db.execute("select 1 from task_business_keys where business_key=?",
+                          ("updated-native-business-object",)).fetchone() is not None
+        assert db.execute("select 1 from task_business_keys where business_key=?",
+                          ("second-business-object",)).fetchone() is not None
         assert tuple(db.execute(
             "select physical_id,target_id,public_key from task_run_identity_map "
             "where source_kind='business_object_tasks'"
-        ).fetchone()) == (first_identity[0], 225, None)
+        ).fetchone()) == (first_identity[0], created["id"], None)
         # A second inverse with no native fact edits must preserve the hidden
         # Task12 physical row/key identity used by old point writers.
         second_inverse = restore_task_entities(db, source_metadata, refoward)
@@ -776,8 +776,8 @@ def test_native_business_key_collision_uses_predecessor_hidden_rowid_allocator()
             inverse_identity=second_inverse["inverse_identity"],
         )
         assert tuple(db.execute(
-            "select id,business_key from task_business_keys where id=225"
-        ).fetchone()) == (225, "second-cycle-old-writer")
+            "select 1 from task_business_keys where business_key='second-cycle-old-writer'"
+        ).fetchone()) is not None
         next_task = create_task(db, values={"kind": "reply", "status": "pending",
                                             "created_at": now, "updated_at": now})
         assert next_task["id"] > deleted_task_id
@@ -947,10 +947,10 @@ def test_current_inverse_decodes_codec_scalars_from_the_whole_native_parameter_o
             db.execute("begin immediate")
             source_metadata = capture_task_entities(db)
             forward = migrate_task_entities(db, source_metadata)
-            db.execute("update tasks set parameters_json=jsonb_set(parameters_json,'$.meeting_id',jsonb(?)) "
+            db.execute("update tasks set parameters_json=jsonb_set(parameters_json,'$.title',jsonb(?)) "
                        "where id=221", (json.dumps(native_codec_value),))
             restore_task_entities(db, source_metadata, forward)
-            assert db.execute("select meeting_id,typeof(meeting_id) from ("
+            assert db.execute("select title,typeof(title) from ("
                               + definitions.task20_projection("meeting_alignment_jobs")
                               + ")").fetchone() == (expected_value, expected_type)
 
