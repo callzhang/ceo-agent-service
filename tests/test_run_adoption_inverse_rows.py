@@ -165,8 +165,10 @@ def test_adopted_feedback_transition_workbench_refs_roundtrip_with_typed_task_ha
             "where feedback_key='feedback-native-new'")) == (
             (500001, "feedback-native-new", "16002", "500002", 44, 13003, 15001),)
         assert tuple(db.execute(
-            "select id,workbench_task_id,workbench_turn_id from feedback_processing_rounds "
-            "where feedback_key='feedback-native-new'")) == ((15001, "16002", "500002"),)
+            "select id,workbench_task_id,workbench_turn_id,attempt_id,agent_run_id "
+            "from feedback_processing_rounds "
+            "where feedback_key='feedback-native-new'")) == (
+            (15001, "16002", "500002", 44, 13003),)
         assert tuple(db.execute(
             "select id,workbench_task_id,workbench_turn_id from feedback_iteration_decisions "
             "where id=15002")) == ((15002, "16002", "500002"),)
@@ -210,10 +212,10 @@ def test_adopted_feedback_transition_workbench_refs_roundtrip_with_typed_task_ha
         assert transition_rows()[-1] == (
             "15004", 15001, first_inverse_transition[0], "text", first_inverse_transition[1])
         assert tuple(db.execute(
-            "select rowid,workbench_task_id,workbench_turn_id from (" +
+            "select rowid,workbench_task_id,workbench_turn_id,attempt_id,agent_run_id from (" +
             task12_projection("feedback_processing_rounds", include_rowid=True) + ") "
             "where feedback_key='feedback-native-new'")) == (
-            (15001, first_inverse_transition[0], first_inverse_transition[1]),)
+            (15001, first_inverse_transition[0], first_inverse_transition[1], 44, 13003),)
         assert tuple(db.execute(
             "select rowid,workbench_task_id,workbench_turn_id from (" +
             task12_projection("feedback_iteration_decisions", include_rowid=True) + ") "
@@ -239,6 +241,10 @@ def test_adopted_feedback_transition_workbench_refs_roundtrip_with_typed_task_ha
         new_decision_id = db.execute(
             "select id from feedback_iteration_decisions where id=15002").fetchone()[0]
         assert (new_item_task_id, new_round_id, new_decision_id) == (500001, 15001, 15002)
+        assert tuple(db.execute(
+            "select id,workbench_task_id,workbench_turn_id,attempt_id,agent_run_id "
+            "from feedback_processing_rounds where feedback_key='feedback-native-new'")) == (
+            (15001, "16002", "500002", 44, 13003),)
         assert item_native == ((228, "feedback-a", "202", "203", 0, 0, 0),
                                (500001, "feedback-native-new", "16002", "500002", 44, 13003, 15001))
         assert decision_member_rows() == (
@@ -263,10 +269,10 @@ def test_adopted_feedback_transition_workbench_refs_roundtrip_with_typed_task_ha
             (7, "202", "203"), (227, "public-task", "public-turn"),
             (15002, first_inverse_transition[0], first_inverse_transition[1]))
         assert tuple(db.execute(
-            "select rowid,workbench_task_id,workbench_turn_id from (" +
+            "select rowid,workbench_task_id,workbench_turn_id,attempt_id,agent_run_id from (" +
             task12_projection("feedback_processing_rounds", include_rowid=True) + ") "
             "where feedback_key='feedback-native-new'")) == (
-            (15001, first_inverse_transition[0], first_inverse_transition[1]),)
+            (15001, first_inverse_transition[0], first_inverse_transition[1], 44, 13003),)
         assert decision_member_rows()[-1] == ("15003", 15002, "feedback-native-new", 15001)
         assert transition_rows()[-1] == (
             "15004", 15001, first_inverse_transition[0], "text", first_inverse_transition[1])

@@ -59,3 +59,14 @@ Verification on the fix:
 - `git diff --check` — passed.
 
 This fix does not activate constructors or runtime Feedback writers, invoke providers or a real CLI, run the full suite, or touch production/main/push/deploy state. The earlier known email selection failure and remaining whole-branch independent review are unchanged gates.
+
+## FIX2 — round association facts at all composed-cycle checkpoints (round 2/5)
+
+Review base: `56af70713b9cd8f49a673f96b302741713b96b3a`.
+
+The composed current-graph regression now reads back the round’s exact `attempt_id=44` and `agent_run_id=13003` alongside its ID and Workbench refs at all four required checkpoints: directly in the native target after creation, after the first inverse, after the second forward, and after the second inverse. No converter code, fixture shape, or other fields changed in this round.
+
+Verification:
+
+- `pytest -q tests/test_run_adoption_inverse_rows.py::test_adopted_feedback_transition_workbench_refs_roundtrip_with_typed_task_handoff --disable-warnings --maxfail=1` — 1 passed.
+- `git diff --check` — passed.
