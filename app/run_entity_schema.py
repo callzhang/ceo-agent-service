@@ -4,6 +4,7 @@ from __future__ import annotations
 import sqlite3
 import hashlib
 import json
+import re
 
 from app import logical_run_current_schema, run_entity_definitions, task20_definitions
 from app.runs11_definitions import RUN11_NEW_KINDS
@@ -28,7 +29,7 @@ _SOURCE_TO_OWNER = {
     "email_classifier_runtime_samples": "email_classifier_runtime_samples",
     "setup_wizard_events": "setup_wizard_events",
 }
-_HANDOFF_VERSION = 2
+_HANDOFF_VERSION = 3
 
 
 def _quote(name: str) -> str:
@@ -248,12 +249,15 @@ def run_handoff_context(source_metadata: dict) -> str:
 
 
 def run_handoff_digest(source_context: str, identity_edges: list,
-                       runtime_attempt_parent_edges: list, owner_highwaters: dict) -> str:
+                       runtime_attempt_parent_edges: list,
+                       runtime_attempt_orphan_workload_edges: list,
+                       owner_highwaters: dict) -> str:
     """Digest the JSON-portable B3 Run identity handoff payload."""
     return hashlib.sha256(_canonical_json({
         "version": _HANDOFF_VERSION, "source_context": source_context,
         "identity_edges": identity_edges,
         "runtime_attempt_parent_edges": runtime_attempt_parent_edges,
+        "runtime_attempt_orphan_workload_edges": runtime_attempt_orphan_workload_edges,
         "owner_highwaters": owner_highwaters,
     })).hexdigest()
 
@@ -262,6 +266,7 @@ def _run_owner_maps(rows, handoff: dict, source_metadata: dict, db, task_edges) 
     owners = tuple(dict.fromkeys(_SOURCE_TO_OWNER.values()))
     if type(handoff) is not dict or set(handoff) != {
             "version", "source_context", "identity_edges", "runtime_attempt_parent_edges",
+            "runtime_attempt_orphan_workload_edges",
             "owner_highwaters", "digest"}:
         raise ValueError("Run conversion requires portable B3 identity handoff")
     if (type(handoff["version"]) is not int or handoff["version"] != _HANDOFF_VERSION
@@ -274,7 +279,8 @@ def _run_owner_maps(rows, handoff: dict, source_metadata: dict, db, task_edges) 
         raise ValueError("invalid or mismatched portable Run handoff")
     if handoff["digest"] != run_handoff_digest(
             handoff["source_context"], handoff["identity_edges"],
-            handoff["runtime_attempt_parent_edges"], handoff["owner_highwaters"]):
+            handoff["runtime_attempt_parent_edges"],
+            handoff["runtime_attempt_orphan_workload_edges"], handoff["owner_highwaters"]):
         raise ValueError("portable Run handoff digest mismatch")
     highwaters = handoff["owner_highwaters"]
     if any(value is not None and (type(value) is not int or value < 0)
@@ -348,7 +354,46 @@ def _run_owner_maps(rows, handoff: dict, source_metadata: dict, db, task_edges) 
         validated[attempt_id] = identity_targets[("agent_runs", run_id)]
     if ordered != sorted(ordered):
         raise ValueError("structured RuntimeAttempt parent edges are not deterministically sorted")
-    return maps, validated
+    orphan_edges = handoff["runtime_attempt_orphan_workload_edges"]
+    if type(orphan_edges) is not list:
+        raise ValueError("invalid orphan RuntimeAttempt workload edges")
+    orphan_seen, orphan_order, orphan_validated = set(), [], {}
+    for edge in orphan_edges:
+        if type(edge) is not dict or set(edge) != {
+                "attempt_source_physical_id", "workload_kind", "source_operation_key",
+                "native_workload_key"}:
+            raise ValueError("invalid orphan RuntimeAttempt workload edge")
+        attempt_id, workload_kind = edge["attempt_source_physical_id"], edge["workload_kind"]
+        source_key, native_key = edge["source_operation_key"], edge["native_workload_key"]
+        if (type(attempt_id) is not int or attempt_id < 1 or workload_kind != "email_classification"
+                or type(source_key) is not str
+                or not re.fullmatch(r"email-classification:[0-9a-f]{64}", source_key)
+                or type(native_key) is not str or not native_key.isdecimal()
+                or str(int(native_key)) != native_key or int(native_key) < 1):
+            raise ValueError("malformed orphan RuntimeAttempt workload edge")
+        key = (attempt_id, workload_kind, source_key, native_key)
+        orphan_order.append(key)
+        if attempt_id in orphan_seen:
+            raise ValueError("duplicate orphan RuntimeAttempt workload edge")
+        orphan_seen.add(attempt_id)
+        attempt = source_rows.get(("agent_runtime_attempts", attempt_id))
+        if (attempt is None or attempt["workload_kind"] != workload_kind
+                or str(attempt["workload_key"]) != source_key or attempt["parent_id"] is not None):
+            raise ValueError("orphan RuntimeAttempt edge differs from source attempt")
+        from app.task_entity_schema import resolve_source_public_owner
+        if resolve_source_public_owner(
+                db, source_kind="email_agent_classification_tasks",
+                public_key=source_key) is not None:
+            raise ValueError("orphan RuntimeAttempt source key collides with a live Email Task")
+        live_task = db.execute("select kind from main.tasks where id=?", (int(native_key),)).fetchone()
+        if live_task is not None:
+            if live_task[0] != "email_classification":
+                raise ValueError("orphan RuntimeAttempt edge collides with a wrong-kind live Task")
+            raise ValueError("orphan RuntimeAttempt edge names a live Email Task")
+        orphan_validated[attempt_id] = native_key
+    if orphan_order != sorted(orphan_order):
+        raise ValueError("orphan RuntimeAttempt workload edges are not deterministically sorted")
+    return maps, validated, orphan_validated
 
 
 def _run_target_id(owner_maps: dict, source_kind: str, source_id: int) -> int:
@@ -439,7 +484,7 @@ def _professional_attempt_parent(row, run_public):
 
 
 def _source_reference(db, kind: str, source: dict, field: str, task_edges: dict,
-                      run_physical: dict, run_public: dict):
+                      run_physical: dict, run_public: dict, orphan_workloads=None):
     value = source[field]
     if value is None:
         return None
@@ -450,6 +495,9 @@ def _source_reference(db, kind: str, source: dict, field: str, task_edges: dict,
             and source["execution_kind"] == "reply_task":
         return str(_task_public_owner(db, "reply_tasks", int(value)))
     if kind == "agent_runtime_attempts" and field == "workload_key":
+        orphan_key = (orphan_workloads or {}).get(int(source["id"]))
+        if orphan_key is not None:
+            return orphan_key
         return _workload_key(db, source, task_edges, run_physical, run_public)
     return value
 
@@ -515,7 +563,8 @@ def migrate_run_entities(db: sqlite3.Connection, source_metadata: dict, *,
         _task_workload_key_class(workload_key)
     db.execute(f"create temp table {_quote(_STAGE)} as select * from main.runs")
     rows = list(_source_rows(db))
-    owner_maps, structured_parents = _run_owner_maps(rows, run_handoff, source_metadata, db, task_edges)
+    owner_maps, structured_parents, orphan_workloads = _run_owner_maps(
+        rows, run_handoff, source_metadata, db, task_edges)
     run_physical, run_public, run_public_order = _run_public_maps(db, rows, owner_maps)
     kinds_by_id = {row["id"]: kind for kind, row in rows}
     rows_by_id = {row["id"]: row for _, row in rows}
@@ -538,10 +587,12 @@ def migrate_run_entities(db: sqlite3.Connection, source_metadata: dict, *,
             parent = row["parent_id"]
             if parent is not None and parent not in kinds_by_id:
                 raise ValueError(f"unresolved physical Run parent: {parent!r}")
-            _workload_key(db, row, task_edges, run_physical, run_public)
+            if row["id"] not in orphan_workloads:
+                _workload_key(db, row, task_edges, run_physical, run_public)
         for field in ("source_id", "execution_id"):
             if field in row and row[field] is not None:
-                _source_reference(db, kind, row, field, task_edges, run_physical, run_public)
+                _source_reference(db, kind, row, field, task_edges, run_physical, run_public,
+                                  orphan_workloads)
     field_map = {(entry["source_kind"], entry["source_field"]): entry
                  for entry in run_entity_definitions.run_entity_field_map()}
     db.execute("drop table main.runs")
@@ -588,7 +639,8 @@ def migrate_run_entities(db: sqlite3.Connection, source_metadata: dict, *,
             for name in ("source_id", "execution_id", "workload_key"):
                 if name in fields:
                     fields[name] = _source_reference(
-                        db, kind, source, name, task_edges, run_physical, run_public)
+                        db, kind, source, name, task_edges, run_physical, run_public,
+                        orphan_workloads)
             fields["id"] = _run_target_id(owner_maps, kind, source["id"])
             if kind == "agent_runtime_attempts":
                 if source["workload_kind"] == "agent_run":
@@ -947,6 +999,53 @@ def restore_run_entities(db: sqlite3.Connection, source_metadata: dict,
             for values in db.execute(f"select * from main.{_quote(table)}")
         }
     pending_structured_parent_edges = []
+    pending_orphan_workload_edges = []
+    orphan_operation_by_attempt = {}
+    task_owner_kinds_by_target = {}
+    for identity_key in task_target_to_source:
+        if type(identity_key) is tuple:
+            source_kind, canonical_id = identity_key
+            task_owner_kinds_by_target.setdefault(canonical_id, set()).add(source_kind)
+    for attempt_id, attempt in native_rows["runtime_attempts"].items():
+        if attempt["workload_kind"] != "email_classification":
+            continue
+        native_key = str(attempt["workload_key"])
+        if (not native_key.isdecimal() or str(int(native_key)) != native_key
+                or int(native_key) < 1):
+            raise ValueError("invalid native Email Task workload identity")
+        restored_source = bool(task_target_to_source.get("_restored_source"))
+        if restored_source:
+            owner_kinds = task_owner_kinds_by_target.get(int(native_key), set())
+            if ("email_agent_classification_tasks", int(native_key)) in task_public_by_target:
+                owner_kinds = owner_kinds | {"email_agent_classification_tasks"}
+        else:
+            # Captured Task maps are sparse: a Task created after Task forward
+            # migration is absent from them, but remains a real native owner.
+            live_task = db.execute(
+                "select kind from main.tasks where id=?", (int(native_key),)
+            ).fetchone()
+            if live_task is not None:
+                if live_task[0] != "email_classification":
+                    raise ValueError("Email RuntimeAttempt workload key has a wrong-kind live Task owner")
+                owner_kinds = {"email_agent_classification_tasks"}
+            else:
+                owner_kinds = task_owner_kinds_by_target.get(int(native_key), set())
+        if len(owner_kinds) > 1:
+            raise ValueError("ambiguous Email RuntimeAttempt Task identity")
+        owner_kind = next(iter(owner_kinds), None)
+        if owner_kind is not None and owner_kind != "email_agent_classification_tasks":
+            raise ValueError("Email RuntimeAttempt workload key has a wrong-kind live Task owner")
+        if owner_kind is None:
+            if not restored_source:
+                raise ValueError("Email RuntimeAttempt Task absence requires the exact Task inverse owner map")
+            if attempt["parent_id"] is not None:
+                raise ValueError("orphan Email RuntimeAttempt must have a NULL parent")
+            digest = hashlib.sha256(_canonical_json({
+                "kind": "email_classification", "native_workload_key": native_key,
+            })).hexdigest()
+            operation_key = "email-classification:" + digest
+            orphan_operation_by_attempt[attempt_id] = (native_key, operation_key)
+            pending_orphan_workload_edges.append((attempt_id, native_key, operation_key))
     for attempt_id, attempt in native_rows["runtime_attempts"].items():
         if attempt["workload_kind"] == "agent_run":
             continue
@@ -1044,6 +1143,17 @@ def restore_run_entities(db: sqlite3.Connection, source_metadata: dict,
             "attempt_source_physical_id": int(attempt_identity["physical_id"]),
             "run_source_physical_id": int(parent_identity["physical_id"]),
         })
+    inverse_orphan_workload_edges = []
+    for attempt_id, native_key, source_key in pending_orphan_workload_edges:
+        attempt_identity = attempt_identity_by_target.get(attempt_id)
+        if attempt_identity is None:
+            raise ValueError("orphan RuntimeAttempt has no allocated source identity")
+        inverse_orphan_workload_edges.append({
+            "attempt_source_physical_id": int(attempt_identity["physical_id"]),
+            "workload_kind": "email_classification",
+            "source_operation_key": source_key,
+            "native_workload_key": native_key,
+        })
     for kind, rows in by_kind.items():
         owner = _SOURCE_TO_OWNER[kind]
         for identity in rows:
@@ -1093,11 +1203,26 @@ def restore_run_entities(db: sqlite3.Connection, source_metadata: dict,
                     source["parent_id"] = parent
                 elif source["workload_kind"] != "agent_run":
                     source["parent_id"] = None
-                source["workload_key"] = _inverse_workload_key(
-                    db, source["workload_key"], task_target_to_source,
-                    run_source_public_by_target, source["workload_kind"],
-                    task_public_by_target or None,
-                    run_source_physical_by_target if task_inverse_metadata is not None else None)
+                if source["workload_kind"] == "email_classification":
+                    native_key = str(source["workload_key"])
+                    if (not native_key.isdecimal() or str(int(native_key)) != native_key
+                            or int(native_key) < 1):
+                        raise ValueError("invalid native Email Task workload identity")
+                    orphan = orphan_operation_by_attempt.get(target)
+                    if orphan is not None:
+                        source["workload_key"] = orphan[1]
+                    else:
+                        source["workload_key"] = _inverse_workload_key(
+                            db, source["workload_key"], task_target_to_source,
+                            run_source_public_by_target, source["workload_kind"],
+                            task_public_by_target or None,
+                            run_source_physical_by_target if task_inverse_metadata is not None else None)
+                else:
+                    source["workload_key"] = _inverse_workload_key(
+                        db, source["workload_key"], task_target_to_source,
+                        run_source_public_by_target, source["workload_kind"],
+                        task_public_by_target or None,
+                        run_source_physical_by_target if task_inverse_metadata is not None else None)
             elif kind == "agent_run_state_events":
                 parent = run_source_physical_by_target.get(int(source["parent_id"]))
                 if parent is None:
@@ -1191,10 +1316,16 @@ def restore_run_entities(db: sqlite3.Connection, source_metadata: dict,
                    "runtime_attempt_parent_edges": sorted(
                        inverse_parent_edges, key=lambda edge: (
                            edge["attempt_source_physical_id"], edge["run_source_physical_id"])),
+                   "runtime_attempt_orphan_workload_edges": sorted(
+                       inverse_orphan_workload_edges,
+                       key=lambda edge: (edge["attempt_source_physical_id"],
+                                         edge["workload_kind"], edge["source_operation_key"],
+                                         edge["native_workload_key"])),
                    "owner_highwaters": owner_highwaters}
     run_handoff["digest"] = run_handoff_digest(
         run_handoff["source_context"], identity_edges,
-        run_handoff["runtime_attempt_parent_edges"], owner_highwaters)
+        run_handoff["runtime_attempt_parent_edges"],
+        run_handoff["runtime_attempt_orphan_workload_edges"], owner_highwaters)
     return {"rows": len(staged), "source_objects": source_metadata["source_objects"],
         "sequence_rows": _sequence_rows(db),
             "run_fk_findings": source_metadata["run_fk_findings"],

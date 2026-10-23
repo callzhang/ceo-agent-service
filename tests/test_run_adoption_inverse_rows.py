@@ -124,6 +124,7 @@ def test_positive_missing_run_reference_rejects_without_mutating_native_actions(
         run_inverse["run_handoff"]["digest"] = run_handoff_digest(
             run_inverse["run_handoff"]["source_context"], edges,
             run_inverse["run_handoff"]["runtime_attempt_parent_edges"],
+            run_inverse["run_handoff"]["runtime_attempt_orphan_workload_edges"],
             run_inverse["run_handoff"]["owner_highwaters"])
         with pytest.raises(ValueError, match="missing source Run owner"):
             from app.run_adoption_inverse import restore_run_adoptions

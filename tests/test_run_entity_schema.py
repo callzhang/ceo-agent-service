@@ -1,5 +1,9 @@
 import sqlite3
 import json
+import re
+import os
+import subprocess
+import sys
 
 import pytest
 
@@ -9,6 +13,33 @@ from app.run_entity_schema import capture_run_entities, migrate_run_entities, re
 _TARGET_NAMES = set(run_entity_definitions.run_entity_objects())
 _TARGET_TABLES = {name for name, sql in run_entity_definitions.run_entity_objects().items()
                   if sql.lstrip().lower().startswith("create table ")}
+
+
+def _read_predecessor_email_attempts(path, operation_key):
+    predecessor = "/private/tmp/ceo-task-run-phase2-_ntbufyi/predecessor-c38ce12cf"
+    program = r'''import json, sys
+from contextvars import ContextVar
+from pathlib import Path
+from app.store import AutoReplyStore
+store = AutoReplyStore.__new__(AutoReplyStore)
+store.path = Path(sys.argv[1])
+store.busy_timeout_seconds = 10
+store.busy_timeout_milliseconds = 10000
+store._read_snapshot_connection = ContextVar("read_snapshot", default=None)
+store._reused_connection = ContextVar("reused_connection", default=None)
+rows = store.list_runtime_operation_attempts("email_classification", sys.argv[2])
+parent_runnable = store.runtime_operation_parent_is_runnable(
+    "email_classification", sys.argv[2])
+print(json.dumps({"attempts": [row.model_dump(mode="json") for row in rows],
+                  "parent_runnable": parent_runnable}, sort_keys=True))
+'''
+    env = {**os.environ, "PYTHONPATH": predecessor}
+    result = subprocess.run(
+        [sys.executable, "-c", program, str(path), operation_key], cwd=predecessor,
+        env=env, check=True, text=True, capture_output=True,
+    )
+    assert result.stderr == ""
+    return json.loads(result.stdout)
 
 
 def _create(objects, db):
@@ -27,10 +58,10 @@ def _run_handoff(db, source_metadata, *, identity_edges=(), owner_highwaters=Non
                   else owner_highwaters)
     edges = sorted(identity_edges, key=lambda edge: (edge["source_kind"], edge["source_physical_id"]))
     context = run_handoff_context(source_metadata)
-    return {"version": 2, "source_context": context, "identity_edges": edges,
-            "runtime_attempt_parent_edges": [],
+    return {"version": 3, "source_context": context, "identity_edges": edges,
+            "runtime_attempt_parent_edges": [], "runtime_attempt_orphan_workload_edges": [],
             "owner_highwaters": highwaters,
-            "digest": run_handoff_digest(context, edges, [], highwaters)}
+            "digest": run_handoff_digest(context, edges, [], [], highwaters)}
 
 
 def test_capture_requires_exact_selected_current_run_oracle():
@@ -462,7 +493,8 @@ def test_structured_okr_attempt_parent_survives_two_json_inverse_reforward_cycle
         from app.run_entity_schema import run_handoff_digest
         handoff["digest"] = run_handoff_digest(
             handoff["source_context"], handoff["identity_edges"],
-            handoff["runtime_attempt_parent_edges"], handoff["owner_highwaters"])
+            handoff["runtime_attempt_parent_edges"],
+            handoff["runtime_attempt_orphan_workload_edges"], handoff["owner_highwaters"])
         forward = migrate_run_entities(db, source, task_metadata=task_metadata,
                                        run_handoff=json.loads(json.dumps(handoff)))
         assert db.execute("select id,parent_id from runtime_attempts where id=9113").fetchone() == (9113, 9113)
@@ -618,7 +650,8 @@ def test_invalid_structured_parent_handoff_rejects_before_source_replacement(mut
         if mutation != "digest":
             handoff["digest"] = run_handoff_digest(
                 handoff["source_context"], handoff["identity_edges"],
-                handoff["runtime_attempt_parent_edges"], handoff["owner_highwaters"])
+                handoff["runtime_attempt_parent_edges"],
+            handoff["runtime_attempt_orphan_workload_edges"], handoff["owner_highwaters"])
         before = tuple(db.execute("select id,record_type from runs order by id"))
         with pytest.raises(ValueError):
             migrate_run_entities(db, source, task_metadata=task_metadata, run_handoff=handoff)
@@ -717,7 +750,7 @@ def test_closed_offline_email_task_attempt_survives_current_task_run_inverse(tmp
             task_id="email-classification:" + "a" * 64, owner="email-training-labeler"
         )
         with email_store._connect() as native:
-            attempt = create_runtime_attempt(native, values={
+            attempt_values = {
                 "parent_id": None, "workload_kind": "email_classification",
                 "workload_key": canonical_id, "attempt_number": 1,
                 "route_name": "codex_oauth", "runtime_kind": "codex_cli",
@@ -731,7 +764,16 @@ def test_closed_offline_email_task_attempt_survives_current_task_run_inverse(tmp
                 "lease_expires_at": "", "first_effect_started_at": "",
                 "result_schema_id": "", "started_at": "start", "finished_at": "finish",
                 "created_at": "created", "updated_at": "updated",
-            })
+            }
+            attempt = create_runtime_attempt(native, values=attempt_values)
+            second_attempt_values = {**attempt_values, "attempt_number": 2,
+                                     "session_id": "session-offline-2",
+                                     "transcript_reference": "trace-offline-2"}
+            second_attempt = create_runtime_attempt(native, values=second_attempt_values)
+            attempt_facts = tuple(native.execute(
+                "select * from runtime_attempts where id=?", (attempt["id"],)).fetchone())
+            second_attempt_facts = tuple(native.execute(
+                "select * from runtime_attempts where id=?", (second_attempt["id"],)).fetchone())
         adapter.close_offline_task(canonical_id)
 
         with sqlite3.connect(path) as native:
@@ -743,29 +785,235 @@ def test_closed_offline_email_task_attempt_survives_current_task_run_inverse(tmp
                 native, source, forward, task_metadata=task_forward,
                 task_inverse_metadata=task_inverse,
             )
+            assert native.execute(
+                "select count(*) from tasks where record_type='email_agent_classification_tasks' "
+                "and legacy_key=?", (str(canonical_id),)
+            ).fetchone()[0] == 0
+            task_water = native.execute(
+                "select seq from sqlite_sequence where name='tasks'"
+            ).fetchone()
+            assert task_water is not None and task_water[0] >= int(canonical_id)
             portable_handoff = json.loads(json.dumps(run_inverse["run_handoff"]))
+            orphan_edges = portable_handoff["runtime_attempt_orphan_workload_edges"]
+            assert len(orphan_edges) == 2
+            assert len({edge["source_operation_key"] for edge in orphan_edges}) == 1
+            assert all(edge["native_workload_key"] == str(canonical_id) for edge in orphan_edges)
+            assert re.fullmatch(r"email-classification:[0-9a-f]{64}",
+                                orphan_edges[0]["source_operation_key"])
+            native.commit()
+            predecessor_source_before_read = tuple(native.execute(
+                "select * from runs order by id"))
+            old_read = _read_predecessor_email_attempts(
+                path, orphan_edges[0]["source_operation_key"])
+            old_attempts = old_read["attempts"]
+            assert old_read["parent_runnable"] is False
+            assert [row["id"] for row in old_attempts] == [
+                edge["attempt_source_physical_id"] for edge in orphan_edges]
+            assert all(row["agent_run_id"] is None and row["status"] == "completed"
+                       for row in old_attempts)
+            assert [row["session_id"] for row in old_attempts] == [
+                "session-offline", "session-offline-2"]
+            assert tuple(native.execute("select * from runs order by id")) == \
+                predecessor_source_before_read
+            native.execute("begin immediate")
             fresh_task_capture = capture_task_entities(native)
             fresh_task_forward = migrate_task_entities(
                 native, fresh_task_capture,
                 source_context=task_inverse["source_context"],
-                inverse_identity=task_inverse["inverse_identity"],
+                inverse_identity=json.loads(json.dumps(task_inverse["inverse_identity"])),
             )
             fresh_run_capture = capture_run_entities(native)
-            migrate_run_entities(
+            fresh_run_forward = migrate_run_entities(
                 native, fresh_run_capture, task_metadata=fresh_task_forward,
                 run_handoff=portable_handoff,
             )
             persisted = native.execute(
-                "select workload_key,workload_kind,status from runs "
-                "where record_type='agent_runtime_attempts' and id=?", (attempt["id"],)
+                "select workload_key,workload_kind,status,parent_id,route_name,session_id,"
+                "transcript_reference,transcript_start,transcript_end,failure_code,started_at,finished_at "
+                "from runtime_attempts where id=?", (attempt["id"],)
             ).fetchone()
-            assert persisted is not None
+            assert tuple(persisted) == (
+                str(canonical_id), "email_classification", "completed", None,
+                "codex_oauth", "session-offline", "trace-offline", 0, 1, "", "start", "finish",
+            )
+            persisted_second = native.execute(
+                "select workload_key,workload_kind,status,parent_id,route_name,session_id,"
+                "transcript_reference,transcript_start,transcript_end,failure_code,started_at,finished_at "
+                "from runtime_attempts where id=?", (second_attempt["id"],)
+            ).fetchone()
+            assert tuple(persisted_second) == (
+                str(canonical_id), "email_classification", "completed", None,
+                "codex_oauth", "session-offline-2", "trace-offline-2", 0, 1, "", "start", "finish",
+            )
+            task_inverse_2 = restore_task_entities(
+                native, fresh_task_capture, fresh_task_forward)
+            run_inverse_2 = restore_run_entities(
+                native, fresh_run_capture, fresh_run_forward,
+                task_metadata=fresh_task_forward,
+                task_inverse_metadata=task_inverse_2,
+            )
+            handoff_2 = json.loads(json.dumps(run_inverse_2["run_handoff"]))
+            assert handoff_2["runtime_attempt_orphan_workload_edges"] == \
+                portable_handoff["runtime_attempt_orphan_workload_edges"]
+            assert handoff_2["runtime_attempt_orphan_workload_edges"][0]["native_workload_key"] == \
+                str(canonical_id)
+            assert {edge["source_operation_key"] for edge in
+                    handoff_2["runtime_attempt_orphan_workload_edges"]} == {
+                orphan_edges[0]["source_operation_key"]}
+            native.commit()
+            old_read_2 = _read_predecessor_email_attempts(
+                path, orphan_edges[0]["source_operation_key"])
+            old_attempts_2 = old_read_2["attempts"]
+            assert old_read_2["parent_runnable"] is False
+            assert [row["id"] for row in old_attempts_2] == [
+                edge["attempt_source_physical_id"]
+                for edge in handoff_2["runtime_attempt_orphan_workload_edges"]]
+            assert all(row["agent_run_id"] is None and row["status"] == "completed"
+                       for row in old_attempts_2)
+            native.execute("begin immediate")
+            task_capture_2 = capture_task_entities(native)
+            task_forward_2 = migrate_task_entities(
+                native, task_capture_2,
+                source_context=task_inverse_2["source_context"],
+                inverse_identity=json.loads(json.dumps(task_inverse_2["inverse_identity"])),
+            )
+            run_capture_2 = capture_run_entities(native)
+            migrate_run_entities(
+                native, run_capture_2, task_metadata=task_forward_2,
+                run_handoff=handoff_2,
+            )
+            persisted_again = native.execute(
+                "select workload_key,workload_kind,status,parent_id,route_name,session_id,"
+                "transcript_reference,transcript_start,transcript_end,failure_code,started_at,finished_at "
+                "from runtime_attempts where id=?", (attempt["id"],)
+            ).fetchone()
+            assert tuple(persisted_again) == tuple(persisted)
+            persisted_second_again = native.execute(
+                "select workload_key,workload_kind,status,parent_id,route_name,session_id,"
+                "transcript_reference,transcript_start,transcript_end,failure_code,started_at,finished_at "
+                "from runtime_attempts where id=?", (second_attempt["id"],)
+            ).fetchone()
+            assert tuple(persisted_second_again) == tuple(persisted_second)
+            assert tuple(native.execute(
+                "select * from runtime_attempts where id=?", (attempt["id"],)).fetchone()) == \
+                attempt_facts
+            assert tuple(native.execute(
+                "select * from runtime_attempts where id=?", (second_attempt["id"],)).fetchone()) == \
+                second_attempt_facts
     finally:
         try:
             db.close()
         except Exception:
             pass
         path.unlink(missing_ok=True)
+
+
+def test_run_inverse_keeps_new_live_email_task_owner_without_task_inverse():
+    from app.task_entity_storage import create_task
+
+    db, task_metadata = _run_source()
+    try:
+        db.row_factory = sqlite3.Row
+        now = "now"
+        task = create_task(db, values={
+            "kind": "email_classification", "status": "pending", "available_at": now,
+            "attempts": 0, "error": "", "owner_pid": None, "generation": 0,
+            "lease_owner": "", "lease_expires_at": "", "created_at": now,
+            "updated_at": now,
+        })
+        source = capture_run_entities(db)
+        forward = migrate_run_entities(
+            db, source, task_metadata=task_metadata, run_handoff=_run_handoff(db, source)
+        )
+        email_attempt = db.execute(
+            "select id from runtime_attempts where workload_kind='email_classification'"
+        ).fetchone()
+        db.execute(
+            "update runtime_attempts set workload_key=? where id=?",
+            (str(task["id"]), email_attempt[0]),
+        )
+        inverse = restore_run_entities(
+            db, source, forward, task_metadata=task_metadata
+        )
+        attempt = db.execute(
+            "select workload_key from runs where record_type='agent_runtime_attempts' "
+            "and id=?", (email_attempt[0],)
+        ).fetchone()
+        assert tuple(attempt) == (str(task["id"]),)
+        assert inverse["run_handoff"]["runtime_attempt_orphan_workload_edges"] == []
+    finally:
+        db.close()
+
+
+@pytest.mark.parametrize("mutation, message", [
+    ("malformed", "malformed orphan"),
+    ("duplicate", "duplicate orphan"),
+    ("wrongkind", "wrong-kind live Task"),
+    ("sourcecollision", "source key collides"),
+    ("wrongparent", "edge differs from source attempt"),
+    ("wrongworkload", "edge differs from source attempt"),
+    ("digest", "handoff digest"),
+])
+def test_email_orphan_handoff_rejections_precede_run_schema_replacement(mutation, message):
+    import hashlib
+    from app.run_entity_schema import run_handoff_digest
+
+    db, task_metadata = _run_source()
+    try:
+        attempt_id = db.execute(
+            "select id from runs where record_type='agent_runtime_attempts' "
+            "and workload_kind='email_classification' limit 1"
+        ).fetchone()[0]
+        native_key = "416922"
+        source_key = "email-classification:" + hashlib.sha256(
+            json.dumps({"kind": "email_classification", "native_workload_key": native_key},
+                       sort_keys=True, separators=(",", ":")).encode()
+        ).hexdigest()
+        db.execute("update runs set workload_key=? where id=?", (source_key, attempt_id))
+        source = capture_run_entities(db)
+        if mutation == "wrongparent":
+            db.execute("pragma ignore_check_constraints=on")
+            db.execute("update runs set parent_id=1001 where id=?", (attempt_id,))
+            source = capture_run_entities(db)
+        elif mutation == "wrongworkload":
+            db.execute("update runs set workload_kind='email_unsubscribe_page' where id=?",
+                       (attempt_id,))
+            source = capture_run_entities(db)
+        handoff = _run_handoff(db, source)
+        edge = {"attempt_source_physical_id": attempt_id,
+                "workload_kind": "email_classification",
+                "source_operation_key": source_key,
+                "native_workload_key": native_key}
+        handoff["runtime_attempt_orphan_workload_edges"] = [edge]
+        if mutation == "malformed":
+            edge["native_workload_key"] = "0416922"
+        elif mutation == "duplicate":
+            handoff["runtime_attempt_orphan_workload_edges"].append(edge.copy())
+        elif mutation == "wrongkind":
+            edge["native_workload_key"] = "201"  # live reply Task
+        elif mutation == "sourcecollision":
+            db.execute("update task_run_identity_map set public_key=?,public_key_type='text' "
+                       "where source_kind='email_agent_classification_tasks'",
+                       (source_key,))
+            for identity in task_metadata["identity_edges"]:
+                if identity["source_kind"] == "email_agent_classification_tasks":
+                    identity["public_key"] = source_key
+        elif mutation == "digest":
+            handoff["digest"] = "0" * 64
+        if mutation != "digest":
+            handoff["digest"] = run_handoff_digest(
+                handoff["source_context"], handoff["identity_edges"],
+                handoff["runtime_attempt_parent_edges"],
+                handoff["runtime_attempt_orphan_workload_edges"],
+                handoff["owner_highwaters"],
+            )
+        before_rows = tuple(db.execute("select * from runs order by id"))
+        with pytest.raises(ValueError, match=message):
+            migrate_run_entities(db, source, task_metadata=task_metadata, run_handoff=handoff)
+        assert tuple(db.execute("select * from runs order by id")) == before_rows
+        assert logical_run_current_schema.current_run11_schema_is_current(db)
+    finally:
+        db.close()
 
 
 @pytest.mark.parametrize("mutation, message", [
@@ -792,21 +1040,24 @@ def test_portable_handoff_rejections_precede_source_replacement(mutation, messag
             from app.run_entity_schema import run_handoff_digest
             handoff["digest"] = run_handoff_digest(
                 handoff["source_context"], handoff["identity_edges"],
-                handoff["runtime_attempt_parent_edges"], handoff["owner_highwaters"])
+                handoff["runtime_attempt_parent_edges"],
+            handoff["runtime_attempt_orphan_workload_edges"], handoff["owner_highwaters"])
         elif mutation == "unknown":
             handoff["identity_edges"] = [dict(source_kind="unknown", source_physical_id=1,
                                                 canonical_id=2)]
             from app.run_entity_schema import run_handoff_digest
             handoff["digest"] = run_handoff_digest(
                 handoff["source_context"], handoff["identity_edges"],
-                handoff["runtime_attempt_parent_edges"], handoff["owner_highwaters"])
+                handoff["runtime_attempt_parent_edges"],
+            handoff["runtime_attempt_orphan_workload_edges"], handoff["owner_highwaters"])
         elif mutation == "duplicate":
             edge = dict(source_kind="agent_runs", source_physical_id=1001, canonical_id=9101)
             handoff["identity_edges"] = [edge, edge.copy()]
             from app.run_entity_schema import run_handoff_digest
             handoff["digest"] = run_handoff_digest(
                 handoff["source_context"], handoff["identity_edges"],
-                handoff["runtime_attempt_parent_edges"], handoff["owner_highwaters"])
+                handoff["runtime_attempt_parent_edges"],
+            handoff["runtime_attempt_orphan_workload_edges"], handoff["owner_highwaters"])
         elif mutation == "collision":
             handoff["identity_edges"] = [
                 dict(source_kind="agent_runs", source_physical_id=1001, canonical_id=9101),
@@ -814,14 +1065,16 @@ def test_portable_handoff_rejections_precede_source_replacement(mutation, messag
             from app.run_entity_schema import run_handoff_digest
             handoff["digest"] = run_handoff_digest(
                 handoff["source_context"], handoff["identity_edges"],
-                handoff["runtime_attempt_parent_edges"], handoff["owner_highwaters"])
+                handoff["runtime_attempt_parent_edges"],
+            handoff["runtime_attempt_orphan_workload_edges"], handoff["owner_highwaters"])
         else:
             handoff["identity_edges"] = [dict(source_kind="agent_runs", source_physical_id=9999,
                                                 canonical_id=9101)]
             from app.run_entity_schema import run_handoff_digest
             handoff["digest"] = run_handoff_digest(
                 handoff["source_context"], handoff["identity_edges"],
-                handoff["runtime_attempt_parent_edges"], handoff["owner_highwaters"])
+                handoff["runtime_attempt_parent_edges"],
+            handoff["runtime_attempt_orphan_workload_edges"], handoff["owner_highwaters"])
         with pytest.raises(ValueError, match=message):
             migrate_run_entities(db, source, task_metadata=task_metadata, run_handoff=handoff)
         assert tuple(db.execute("select * from runs order by id")) == original
@@ -1205,7 +1458,7 @@ def test_task_first_run_inverse_emits_json_handoff_from_restored_task_source():
         assert tuple(db.execute("select rowid,name,seq from sqlite_sequence "
                                 "where name='runs:setup_wizard_events'").fetchone()) == created_sequence
         handoff = json.loads(json.dumps(result["run_handoff"]))
-        assert handoff["version"] == 2
+        assert handoff["version"] == 3
         assert handoff["runtime_attempt_parent_edges"] == []
         assert handoff["source_context"]
         assert set(handoff["owner_highwaters"]) == {
@@ -1410,8 +1663,7 @@ def test_task_first_new_run_facts_survive_old_write_and_two_json_cycles():
                 email_attempt_id = run_owner_ids[("agent_runtime_attempts", common + 2)]
                 assert db.execute("select workload_key from runs where record_type='agent_runtime_attempts' "
                                   "and id=?", (email_attempt_id,)).fetchone()[0] == email_public
-                assert AutoReplyStore._validate_runtime_operation_workload(
-                    "email_classification", email_public) == ("email_classification", email_public)
+                assert re.fullmatch(r"email-classification:[0-9a-f]{64}", email_public)
                 turn_public = db.execute("select id from (" + task20_projection("workbench_turns")
                     + ") where client_request_id='synthetic-client-request'").fetchone()[0]
                 from uuid import UUID

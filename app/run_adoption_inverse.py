@@ -7,6 +7,7 @@ owns writes inside the caller's FK-off transaction.
 from __future__ import annotations
 
 import sqlite3
+import re
 
 
 _KINDS = (
@@ -66,14 +67,50 @@ def _run_sources(db, run_inverse_metadata):
     handoff = run_inverse_metadata["run_handoff"]
     if type(handoff) is not dict or set(handoff) != {
             "version", "source_context", "identity_edges", "runtime_attempt_parent_edges",
-            "owner_highwaters", "digest"} or handoff["version"] != 2:
+            "runtime_attempt_orphan_workload_edges", "owner_highwaters", "digest"} \
+            or handoff["version"] != 3:
         raise ValueError("invalid Run inverse handoff")
     from app.run_entity_schema import run_handoff_context, run_handoff_digest
     expected_context = run_handoff_context(run_inverse_metadata)
     if handoff["source_context"] != expected_context or handoff["digest"] != run_handoff_digest(
             handoff["source_context"], handoff["identity_edges"],
-            handoff["runtime_attempt_parent_edges"], handoff["owner_highwaters"]):
+            handoff["runtime_attempt_parent_edges"],
+            handoff["runtime_attempt_orphan_workload_edges"], handoff["owner_highwaters"]):
         raise ValueError("Run inverse handoff digest or source context mismatch")
+    orphan_edges = handoff["runtime_attempt_orphan_workload_edges"]
+    if type(orphan_edges) is not list:
+        raise ValueError("invalid orphan RuntimeAttempt workload edges")
+    seen_orphans, ordered_orphans = set(), []
+    for edge in orphan_edges:
+        if type(edge) is not dict or set(edge) != {
+                "attempt_source_physical_id", "workload_kind", "source_operation_key",
+                "native_workload_key"}:
+            raise ValueError("invalid orphan RuntimeAttempt workload edge")
+        attempt_id, kind = edge["attempt_source_physical_id"], edge["workload_kind"]
+        source_key, native_key = edge["source_operation_key"], edge["native_workload_key"]
+        if (type(attempt_id) is not int or attempt_id < 1 or kind != "email_classification"
+                or type(source_key) is not str
+                or re.fullmatch(r"email-classification:[0-9a-f]{64}", source_key) is None
+                or type(native_key) is not str or not native_key.isdecimal()
+                or str(int(native_key)) != native_key or int(native_key) < 1):
+            raise ValueError("malformed orphan RuntimeAttempt workload edge")
+        if attempt_id in seen_orphans:
+            raise ValueError("duplicate orphan RuntimeAttempt workload edge")
+        seen_orphans.add(attempt_id)
+        ordered_orphans.append((attempt_id, kind, source_key, native_key))
+        row = db.execute(
+            "select workload_kind,workload_key,parent_id from main.runs "
+            "where id=? and record_type='agent_runtime_attempts'", (attempt_id,)
+        ).fetchone()
+        if row is None or tuple(row) != (kind, source_key, None):
+            raise ValueError("orphan RuntimeAttempt edge differs from restored source attempt")
+        from app.task_entity_schema import resolve_source_public_owner
+        if resolve_source_public_owner(
+                db, source_kind="email_agent_classification_tasks",
+                public_key=source_key) is not None:
+            raise ValueError("orphan RuntimeAttempt source key collides with a live Email Task")
+    if ordered_orphans != sorted(ordered_orphans):
+        raise ValueError("orphan RuntimeAttempt workload edges are not deterministically sorted")
     cursor = db.execute("select id,task_id,role,execution_generation,proposal_revision "
                         "from main.runs where record_type='agent_runs'")
     names = [item[0] for item in cursor.description]
