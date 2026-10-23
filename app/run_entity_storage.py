@@ -115,7 +115,7 @@ def get_run_provenance(db: sqlite3.Connection, run_id: int) -> dict[str, object]
 
 
 def set_run_projection(db: sqlite3.Connection, *, run_id: int,
-                       projection_json: str) -> dict[str, object]:
+                       projection_json: object) -> dict[str, object]:
     """Store the Task Agent projection, separately from adopted candidate data."""
     row = db.execute(
         "insert into run_projections(run_id,projection_json) values(?,?) "
@@ -125,9 +125,9 @@ def set_run_projection(db: sqlite3.Connection, *, run_id: int,
     return _row(row)  # type: ignore[return-value]
 
 
-def get_run_projection(db: sqlite3.Connection, run_id: int) -> str | None:
+def get_run_projection(db: sqlite3.Connection, run_id: int) -> object | None:
     row = db.execute("select projection_json from run_projections where run_id=?", (run_id,)).fetchone()
-    return None if row is None else str(row[0])
+    return None if row is None else row[0]
 
 
 def append_run_failure(db: sqlite3.Connection, *, run_id: int, phase: str,

@@ -83,6 +83,25 @@ def test_runtime_attempt_native_parent_observation_lineage_and_cas(db):
             storage.update_runtime_attempt_cas(
                 db, attempt_id=attempt["id"], expected={"status": "running"}, changes={field: "changed"}
             )
+    resume = storage.create_runtime_attempt(db, values={
+        **attempt_values, "attempt_number": 2, "route_name": "codex_resume", "session_mode": "resume",
+        "source_session_id": "session-1", "session_id": "session-1-resumed",
+        "attempt_purpose": "result_validation_correction", "validation_retry_policy_id": "policy-1",
+        "validation_result_schema_id": "schema-1", "transcript_start": 2, "transcript_end": 3,
+    })
+    observed = storage.update_runtime_attempt_cas(
+        db, attempt_id=resume["id"], expected={"status": "running"},
+        changes={"session_id": "session-1-resumed-observed", "transcript_end": 8,
+                 "status": "completed", "finished_at": "finished", "updated_at": "observed"},
+    )
+    assert observed["session_mode"] == "resume"
+    assert observed["source_session_id"] == "session-1"
+    assert observed["session_id"] == "session-1-resumed-observed"
+    assert (observed["transcript_start"], observed["transcript_end"]) == (2, 8)
+    for field, value in (("attempt_purpose", "result_validation_correction"),
+                         ("validation_retry_policy_id", "policy-1"),
+                         ("validation_result_schema_id", "schema-1")):
+        assert observed[field] == value
 
 
 def test_typed_children_failure_projection_and_caller_rollback(db):
@@ -90,14 +109,39 @@ def test_typed_children_failure_projection_and_caller_rollback(db):
     from app.task_entity_storage import create_task
 
     task = create_task(db, values={"kind": "work_summary", "status": "pending", "created_at": "now", "updated_at": "now"})
+    db.commit()
+    sequences_before = [tuple(row) for row in db.execute("select name,seq from sqlite_sequence order by name")]
     run = storage.create_run(db, values={"task_id": task["id"], "status": "failed"})
     storage.set_run_provenance(db, run_id=run["id"], source_type="task_agent_runs")
     storage.set_run_projection(db, run_id=run["id"], projection_json='{"summary":"brief"}')
     assert storage.get_run_projection(db, run["id"]) == '{"summary":"brief"}'
-    failure = storage.append_run_failure(db, run_id=run["id"], phase="execute", structured_error_json='{"code":"x"}', created_at="now")
-    assert storage.get_run_failures(db, run["id"]) == [failure]
+    storage.append_run_failure(db, run_id=run["id"], phase="execute", structured_error_json='{"code":"x"}', created_at="now")
+    attempt_values = {
+        "parent_id": run["id"], "workload_kind": "agent_run", "workload_key": str(run["id"]),
+        "attempt_number": 1, "route_name": "route", "runtime_kind": "codex", "credential_mode": "oauth",
+        "model": "model", "session_mode": "fresh", "source_session_id": "", "attempt_purpose": "normal",
+        "validation_retry_policy_id": "", "validation_result_schema_id": "", "session_id": "session",
+        "transcript_reference": "trace", "transcript_start": 0, "transcript_end": 1, "status": "completed",
+        "failure_class": "", "failure_code": "", "failover_permitted": 0, "lease_owner": "",
+        "lease_expires_at": "", "first_effect_started_at": "", "result_schema_id": "",
+        "started_at": "start", "finished_at": "finish", "created_at": "now", "updated_at": "now",
+    }
+    attempt = storage.create_runtime_attempt(db, values=attempt_values)
+    counts_before = {
+        table: db.execute(f"select count(*) from {table}").fetchone()[0]
+        for table in ("runs", "runtime_attempts", "run_provenance", "run_projections", "run_failures")
+    }
+    assert counts_before == {"runs": 1, "runtime_attempts": 1, "run_provenance": 1,
+                             "run_projections": 1, "run_failures": 1}
+    assert storage.get_runtime_attempt(db, attempt["id"]) == attempt
     db.rollback()
-    assert db.execute("select count(*) from runs").fetchone()[0] == 0
+    counts_after = {
+        table: db.execute(f"select count(*) from {table}").fetchone()[0]
+        for table in ("runs", "runtime_attempts", "run_provenance", "run_projections", "run_failures")
+    }
+    sequences_after = [tuple(row) for row in db.execute("select name,seq from sqlite_sequence order by name")]
+    assert counts_after == {table: 0 for table in counts_before}
+    assert sequences_after == sequences_before
 
 
 def test_all_task_kinds_accept_uninvented_run_facts_and_professional_provenance(db):
@@ -178,3 +222,39 @@ def test_runtime_attempt_ordinals_routes_and_standalone_parent_contract(db):
         "attempt_number": 1, "route_name": "route-a",
     })
     assert standalone["parent_id"] is None
+
+
+def test_projection_getter_preserves_source_sqlite_storage_class_and_value(db):
+    from app import run_entity_storage as storage
+    from app.logical_run_definitions import logical_run_objects
+    from app.task_entity_storage import create_task
+
+    source = sqlite3.connect(":memory:")
+    source.execute(logical_run_objects()["runs"])
+    source.execute(
+        "insert into runs(id,record_type,legacy_key,task_id,source_type,status,error,projection_json,"
+        "completed_at,session_id,updated_at) values(1,'agent_runs','1',7,'task_agent_runs','completed',"
+        "'',?,?, '', 'now')", (sqlite3.Binary(b'{"adopted":1}'), "now"),
+    )
+    source_projection, source_type = source.execute(
+        "select projection_json,typeof(projection_json) from runs where id=1"
+    ).fetchone()
+
+    task = create_task(db, values={
+        "kind": "work_summary", "status": "pending", "created_at": "now", "updated_at": "now",
+    })
+    run = storage.create_run(db, values={"task_id": task["id"], "status": "completed"})
+    storage.set_run_provenance(db, run_id=run["id"], source_type="task_agent_runs")
+    storage.set_run_projection(db, run_id=run["id"], projection_json=source_projection)
+    native_projection, native_type = db.execute(
+        "select projection_json,typeof(projection_json) from run_projections where run_id=?", (run["id"],)
+    ).fetchone()
+    assert (native_projection, native_type) == (source_projection, source_type)
+    assert storage.get_run_projection(db, run["id"]) == source_projection
+    assert storage.get_run_projection(db, run["id"]) == b'{"adopted":1}'
+
+    text_run = storage.create_run(db, values={"task_id": task["id"], "status": "completed"})
+    text_projection = '{"summary":"brief"}'
+    storage.set_run_projection(db, run_id=text_run["id"], projection_json=text_projection)
+    assert storage.get_run_projection(db, text_run["id"]) == text_projection
+    source.close()
