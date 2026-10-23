@@ -1,4 +1,5 @@
 from contextlib import closing
+from contextvars import ContextVar
 import json
 import sqlite3
 from uuid import UUID
@@ -318,6 +319,28 @@ def test_feedback_workbench_and_current_round_refs_follow_typed_handoff_two_cycl
         restore_task_entities(db, source_metadata, second)
         assert db.execute("select current_round_id from (" + item_projection + ") where rowid=228").fetchone() == (229,)
         assert db.execute("pragma foreign_key_check").fetchall() == []
+
+
+def test_feedback_current_reference_clears_survive_inverse_despite_captured_markers():
+    with closing(_source()) as db:
+        db.execute("begin immediate")
+        source_metadata = capture_task_entities(db)
+        forward = migrate_task_entities(db, source_metadata)
+        # Source item 228 has unresolved numeric-looking Workbench refs and an
+        # unresolved current-round pointer. Claim resets these exact projections.
+        db.execute(
+            "update feedback_processing_items set workbench_task_id='', "
+            "workbench_turn_id='', current_round_id=0 where task_id=228"
+        )
+
+        restore_task_entities(db, source_metadata, forward)
+
+        item = db.execute(
+            "select workbench_task_id,workbench_turn_id,current_round_id from ("
+            + task12_projection("feedback_processing_items", include_rowid=True)
+            + ") where rowid=228"
+        ).fetchone()
+        assert item == ("", "", 0)
 
 
 def test_feedback_reference_helpers_preserve_null_and_noninteger_pointer_facts():
@@ -1468,3 +1491,107 @@ def test_feedback_item_batch_id_matches_source_through_forward_inverse_reforward
         assert db.execute(
             "select batch_id from feedback_processing_items where feedback_key='feedback-a'"
         ).fetchone() == (batch_id,)
+
+
+def test_native_feedback_claim_after_converted_reopen_clears_captured_unresolved_refs(tmp_path, monkeypatch):
+    from app.action_feedback_storage import insert_feedback_action
+    from app.store import AutoReplyStore
+
+    source = _source()
+    source.row_factory = sqlite3.Row
+    update_task12(source, "feedback_processing_items", 228, {
+        "status": "pending", "batch_id": "", "current_round_id": 0,
+        "workbench_task_id": "202", "workbench_turn_id": "203",
+    })
+    update_task12(source, "feedback_processing_rounds", 229, {
+        "status": "resolved", "batch_id": "old-batch",
+        "resolved_at": "resolve-clock", "reopened_at": "reopen-clock",
+        "reopen_reason": "confirmed reopen",
+    })
+    metadata = capture_task_entities(source)
+    handoff = {"version": 1, "owners": [
+        {"source_kind": "workbench_tasks", "source_physical_id": 202, "canonical_id": 91202},
+        {"source_kind": "workbench_turns", "source_physical_id": 203, "canonical_id": 91203},
+        {"source_kind": "feedback_processing_rounds", "source_physical_id": 229, "canonical_id": 91229},
+    ]}
+    forward = migrate_task_entities(source, metadata, inverse_identity=handoff)
+    from app.task_run_entity_assembly import task_run_entity_assembly_objects
+    assembled_objects = task_run_entity_assembly_objects()
+    present = {row[0] for row in source.execute(
+        "select name from sqlite_schema"
+    )}
+    for name, ddl in assembled_objects.items():
+        if ddl.lstrip().lower().startswith("create table") and name not in present:
+            source.execute(ddl)
+            present.add(name)
+    for name, ddl in assembled_objects.items():
+        if not ddl.lstrip().lower().startswith("create table") and name not in present:
+            source.execute(ddl)
+            present.add(name)
+    source.commit()
+    target_path = tmp_path / "converted-feedback.sqlite3"
+    target = sqlite3.connect(target_path)
+    source.backup(target)
+    target.close()
+    source.close()
+
+    store = AutoReplyStore.__new__(AutoReplyStore)
+    store.path = target_path
+    store.busy_timeout_seconds = 5
+    store.busy_timeout_milliseconds = 5000
+    store._read_snapshot_connection = ContextVar("converted_feedback_snapshot", default=None)
+    store._reused_connection = ContextVar("converted_feedback_reused", default=None)
+    monkeypatch.setattr(store, "feedback_iteration_enabled", lambda: True)
+    with store._immediate_write_transaction() as db:
+        insert_feedback_action(db, "feedback_events", {
+            "key": "feedback-a", "feedback_token": "token-a",
+        })
+
+    claimed = store.claim_feedback_processing_items("new-batch", ["feedback-a"])
+    assert claimed[0].status == "processing"
+    assert claimed[0].workbench_task_id == ""
+    assert claimed[0].workbench_turn_id == ""
+    with store._connect() as db:
+        db.execute("pragma foreign_keys=off")
+        db.execute("begin immediate")
+        inverse = restore_task_entities(db, metadata, forward)
+        restored = db.execute(
+            "select workbench_task_id,workbench_turn_id,current_round_id,status "
+            "from (" + task12_projection("feedback_processing_items") + ") "
+            "where feedback_key='feedback-a'"
+        ).fetchone()
+        assert tuple(restored) == ("", "", claimed[0].current_round_id, "processing")
+        rounds = db.execute(
+            "select round_number,status,reopened_at,reopen_reason from ("
+            + task12_projection("feedback_processing_rounds")
+            + ") where feedback_key='feedback-a' order by round_number"
+        ).fetchall()
+        assert [tuple(row) for row in rounds] == [
+            (1, "resolved", "reopen-clock", "confirmed reopen"),
+            (2, "processing", "", ""),
+        ]
+        portable_handoff = json.loads(json.dumps(inverse["inverse_identity"]))
+        source_metadata = capture_task_entities(db)
+        reforward = migrate_task_entities(
+            db, source_metadata, source_context=inverse["source_context"],
+            inverse_identity=portable_handoff,
+        )
+        native_item = db.execute(
+            "select workbench_task_id,workbench_turn_id,current_round_id,"
+            "(select status from tasks where id=task_id) "
+            "from feedback_processing_items where feedback_key='feedback-a'"
+        ).fetchone()
+        assert native_item[0:2] == ("", "")
+        assert native_item[2] != 0
+        assert native_item[3] == "processing"
+        assert [tuple(row) for row in db.execute(
+            "select round_number,status from feedback_processing_rounds "
+            "where feedback_key='feedback-a' order by round_number"
+        ).fetchall()] == [(1, "resolved"), (2, "processing")]
+        restore_task_entities(db, metadata, reforward)
+        source_item = db.execute(
+            "select workbench_task_id,workbench_turn_id,current_round_id,status "
+            "from (" + task12_projection("feedback_processing_items") + ") "
+            "where feedback_key='feedback-a'"
+        ).fetchone()
+        assert tuple(source_item) == ("", "", native_item[2], "processing")

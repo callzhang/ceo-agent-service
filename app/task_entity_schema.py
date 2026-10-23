@@ -1249,6 +1249,8 @@ def restore_task_entities(db: sqlite3.Connection, source_metadata: dict, forward
                 marker = None if raw_marker is None else {
                     key: raw_marker[key] for key in ("field", "value", "type")
                 }
+                if marker is not None and value != marker["value"]:
+                    marker = None
                 value = restore_feedback_workbench_ref(field=field, current_value=value,
                     indexes={"public": inverse_public_index}, unresolved_marker=marker)
             if kind == "feedback_processing_items" and field == "current_round_id":
@@ -1256,6 +1258,8 @@ def restore_task_entities(db: sqlite3.Connection, source_metadata: dict, forward
                 marker = None if raw_marker is None else {
                     key: raw_marker[key] for key in ("field", "value", "type")
                 }
+                if marker is not None and value != marker["value"]:
+                    marker = None
                 value = restore_feedback_round_pointer(
                     value, {"public": identities["public_index"]}, marker)
             if dest and dest.startswith("parameters_json.$."):

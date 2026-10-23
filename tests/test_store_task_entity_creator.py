@@ -1,3 +1,4 @@
+from concurrent.futures import ThreadPoolExecutor
 from contextvars import ContextVar
 import hashlib
 import json
@@ -13,6 +14,7 @@ from app.store import (
     ReplyTaskSpec,
 )
 from app import task_entity_storage
+from app.action_feedback_storage import insert_feedback_action
 from app.task8_storage import register_task8_functions
 from app.task_run_entity_assembly import task_run_entity_assembly_objects
 
@@ -724,3 +726,188 @@ def test_new_task_generation_blocks_old_run_writes_without_rewriting_old_run(tmp
         old_run = db.execute("select status, execution_generation, lease_owner from runs where id=?", (run.id,)).fetchone()
     assert current_task == "next-generation"
     assert tuple(old_run) == ("running", task.execution_generation, "worker-a")
+
+
+def _add_feedback_event(store, key, *, resolved_at=""):
+    with store._immediate_write_transaction() as db:
+        insert_feedback_action(db, "feedback_events", {
+            "key": key, "feedback_token": "token-" + key,
+            "resolved_at": resolved_at,
+        })
+
+
+def test_native_feedback_batch_claim_replay_and_public_reads(tmp_path, monkeypatch):
+    store = _target_store(tmp_path / "feedback-native.sqlite3")
+    monkeypatch.setattr(store, "feedback_iteration_enabled", lambda: True)
+    _add_feedback_event(store, "feedback-b")
+    _add_feedback_event(store, "feedback-a")
+
+    batch = store.create_feedback_processing_batch(
+        [" feedback-b ", "feedback-a", "feedback-b"], batch_id=" batch-native "
+    )
+    assert batch.batch_id == "batch-native"
+    assert batch.requested_count == 2
+    assert store.create_feedback_processing_batch(
+        ["feedback-a", "feedback-b"], batch_id="batch-native"
+    ) == batch
+
+    claimed = store.claim_feedback_processing_items(
+        "batch-native", ["feedback-b", "feedback-a", "feedback-b"]
+    )
+    assert [item.feedback_key for item in claimed] == ["feedback-a", "feedback-b"]
+    assert all(item.status == "processing" and item.current_round_id > 0 for item in claimed)
+    replay = store.claim_feedback_processing_items(
+        "batch-native", ["feedback-a", "feedback-b"]
+    )
+    assert replay == claimed
+    assert store.get_feedback_processing_batch("batch-native").status == "processing"
+    assert store.get_feedback_processing_item("feedback-a") == claimed[0]
+    assert len(store.list_feedback_processing_rounds("feedback-a")) == 1
+    assert len(store.list_feedback_processing_rounds_for_batch("batch-native")) == 2
+    with store._connect() as db:
+        assert db.execute("select count(*) from tasks where kind='feedback_processing'").fetchone()[0] == 2
+        assert db.execute("select count(*) from feedback_processing_rounds").fetchone()[0] == 2
+        assert db.execute("select count(*) from actions where record_type='feedback_processing_transitions'").fetchone()[0] == 2
+        ownership = db.execute(
+            "select task.kind,task.status,typeof(task.parameters_json),json(task.parameters_json), "
+            "item.feedback_key,item.batch_id from tasks task join feedback_processing_items item "
+            "on item.task_id=task.id order by item.feedback_key"
+        ).fetchall()
+        assert [tuple(row) for row in ownership] == [
+            ("feedback_processing", "processing", "blob", "{}", "feedback-a", "batch-native"),
+            ("feedback_processing", "processing", "blob", "{}", "feedback-b", "batch-native"),
+        ]
+
+
+def test_native_feedback_create_and_capability_refusals_are_atomic(tmp_path, monkeypatch):
+    store = _target_store(tmp_path / "feedback-native-refusal.sqlite3")
+    monkeypatch.setattr(store, "feedback_iteration_enabled", lambda: True)
+    _add_feedback_event(store, "open")
+    _add_feedback_event(store, "other")
+    _add_feedback_event(store, "resolved", resolved_at="resolved-clock")
+
+    with pytest.raises(ValueError, match="feedback processing batch"):
+        store.create_feedback_processing_batch(["open", "missing"], batch_id="missing")
+    with pytest.raises(ValueError, match="feedback processing batch"):
+        store.create_feedback_processing_batch(["resolved"], batch_id="resolved")
+    with store._connect() as db:
+        assert db.execute("select count(*) from feedback_processing_batches").fetchone()[0] == 0
+        assert db.execute("select count(*) from tasks where kind='feedback_processing'").fetchone()[0] == 0
+
+    store.create_feedback_processing_batch(["open"], batch_id="disabled")
+    with pytest.raises(ValueError, match="feedback processing batch"):
+        store.create_feedback_processing_batch(["other"], batch_id="disabled")
+    with pytest.raises(ValueError, match="feedback processing claim"):
+        store.claim_feedback_processing_items("other-batch", ["open"])
+    with store._connect() as db:
+        assert db.execute(
+            "select count(*) from feedback_processing_batches where batch_id='other-batch'"
+        ).fetchone()[0] == 0
+        assert db.execute(
+            "select batch_id from feedback_processing_items where feedback_key='open'"
+        ).fetchone()[0] == "disabled"
+    monkeypatch.setattr(store, "feedback_iteration_enabled", lambda: False)
+    with pytest.raises(Exception, match="feedback iteration is disabled"):
+        store.claim_feedback_processing_items("disabled", ["open"])
+    with store._connect() as db:
+        assert db.execute("select status from feedback_processing_batches where batch_id='disabled'").fetchone()[0] == "pending"
+        assert db.execute("select status from tasks where kind='feedback_processing'").fetchone()[0] == "pending"
+        assert db.execute("select count(*) from feedback_processing_rounds").fetchone()[0] == 0
+
+
+def _existing_target_store(path):
+    store = AutoReplyStore.__new__(AutoReplyStore)
+    store.path = path
+    store.busy_timeout_seconds = 5
+    store.busy_timeout_milliseconds = 5000
+    store._read_snapshot_connection = ContextVar(f"existing_read_snapshot_{id(store)}", default=None)
+    store._reused_connection = ContextVar(f"existing_reused_connection_{id(store)}", default=None)
+    return store
+
+
+def test_native_feedback_competing_connections_have_one_claim_winner(tmp_path, monkeypatch):
+    path = tmp_path / "feedback-native-compete.sqlite3"
+    first = _target_store(path)
+    second = _existing_target_store(path)
+    monkeypatch.setattr(first, "feedback_iteration_enabled", lambda: True)
+    monkeypatch.setattr(second, "feedback_iteration_enabled", lambda: True)
+    _add_feedback_event(first, "race")
+    with first._immediate_write_transaction() as db:
+        task = task_entity_storage.create_task(
+            db, values={"kind": "feedback_processing", "status": "pending",
+                        "created_at": "2026-10-23 12:00:00",
+                        "updated_at": "2026-10-23 12:00:00"},
+        )
+        db.execute(
+            "insert into feedback_processing_items(task_id,feedback_key,batch_id,workbench_task_id,workbench_turn_id,attempt_id,agent_run_id,commit_sha,test_evidence_json,restart_evidence_json,health_evidence_json,note,resolved_at,current_round_id) "
+            "values(?,'race','', '', '',0,0,'','{}','{}','{}','','',0)",
+            (task["id"],),
+        )
+
+    def claim(store, batch):
+        return store.claim_feedback_processing_items(batch, ["race"])[0].batch_id
+
+    with ThreadPoolExecutor(max_workers=2) as pool:
+        futures = [pool.submit(claim, first, "winner-a"), pool.submit(claim, second, "winner-b")]
+        outcomes = []
+        for future in futures:
+            try:
+                outcomes.append(("won", future.result()))
+            except ValueError:
+                outcomes.append(("lost", None))
+    assert sorted(kind for kind, _ in outcomes) == ["lost", "won"]
+    with first._connect() as db:
+        winner = db.execute("select batch_id from feedback_processing_items where feedback_key='race'").fetchone()[0]
+        assert winner in {"winner-a", "winner-b"}
+        assert db.execute("select count(*) from feedback_processing_rounds where feedback_key='race'").fetchone()[0] == 1
+        assert db.execute("select count(*) from actions where record_type='feedback_processing_transitions' and fb_transition_feedback_key='race'").fetchone()[0] == 1
+
+
+def test_native_feedback_reopened_history_claims_next_round(tmp_path, monkeypatch):
+    store = _target_store(tmp_path / "feedback-native-reopen.sqlite3")
+    monkeypatch.setattr(store, "feedback_iteration_enabled", lambda: True)
+    _add_feedback_event(store, "reopened")
+    with store._immediate_write_transaction() as db:
+        task = task_entity_storage.create_task(
+            db, values={"kind": "feedback_processing", "status": "pending",
+                        "created_at": "2026-10-23 12:00:00",
+                        "updated_at": "2026-10-23 12:00:00"},
+        )
+        db.execute(
+            "insert into feedback_processing_items(task_id,feedback_key,batch_id,workbench_task_id,workbench_turn_id,attempt_id,agent_run_id,commit_sha,test_evidence_json,restart_evidence_json,health_evidence_json,note,resolved_at,current_round_id) "
+            "values(?,'reopened','', '', '',0,0,'','{}','{}','{}','','',0)",
+            (task["id"],),
+        )
+        db.execute(
+            "insert into feedback_processing_rounds(feedback_key,round_number,batch_id,status,receipt_version,started_at,resolved_at,reopened_at,reopen_reason) "
+            "values('reopened',1,'old-batch','resolved',2,'start','resolve','reopen','confirmed reopen')"
+        )
+
+    item = store.claim_feedback_processing_items("next-batch", ["reopened"])[0]
+    rounds = store.list_feedback_processing_rounds("reopened")
+    assert item.status == "processing"
+    assert item.current_round_id == rounds[0].id
+    assert rounds[0].round_number == 2
+    assert rounds[1].reopened_at == "reopen"
+    assert rounds[1].reopen_reason == "confirmed reopen"
+
+
+def test_native_feedback_replay_rejects_malformed_current_round_lineage(tmp_path, monkeypatch):
+    store = _target_store(tmp_path / "feedback-native-malformed.sqlite3")
+    monkeypatch.setattr(store, "feedback_iteration_enabled", lambda: True)
+    _add_feedback_event(store, "malformed")
+    store.create_feedback_processing_batch(["malformed"], batch_id="malformed-batch")
+    store.claim_feedback_processing_items("malformed-batch", ["malformed"])
+    with store._immediate_write_transaction() as db:
+        db.execute(
+            "update feedback_processing_rounds set status='resolved' "
+            "where feedback_key='malformed'"
+        )
+    with pytest.raises(ValueError, match="feedback processing claim"):
+        store.claim_feedback_processing_items("malformed-batch", ["malformed"])
+    with store._connect() as db:
+        assert db.execute("select count(*) from feedback_processing_rounds").fetchone()[0] == 1
+        assert db.execute(
+            "select count(*) from actions where record_type='feedback_processing_transitions' "
+            "and fb_transition_feedback_key='malformed'"
+        ).fetchone()[0] == 1
