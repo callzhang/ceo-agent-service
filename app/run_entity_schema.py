@@ -3,9 +3,13 @@ from __future__ import annotations
 
 import sqlite3
 
-from app import logical_run_current_schema, run_entity_definitions
+from app import logical_run_current_schema, run_entity_definitions, task20_definitions
+from app.runs11_definitions import RUN11_NEW_KINDS
 
 _STAGE = "_run_entity_forward_rows"
+_SOURCE_SEQUENCE_NAMES = (
+    "runs", "runs:published", *("runs:" + kind for kind in RUN11_NEW_KINDS),
+)
 _PROFESSIONAL_TASK_KINDS = {
     "task_agent_runs": "work_summary_inputs",
     "meeting_alignment_runs": "meeting_alignment_jobs",
@@ -39,8 +43,10 @@ def _require_transaction(db: sqlite3.Connection) -> None:
 
 
 def _sequence_rows(db: sqlite3.Connection) -> list[tuple]:
+    placeholders = ",".join("?" for _ in _SOURCE_SEQUENCE_NAMES)
     return [tuple(row) for row in db.execute(
-        "select rowid,name,seq from main.sqlite_sequence where name like 'runs%' order by rowid")]
+        f"select rowid,name,seq from main.sqlite_sequence where name in ({placeholders}) order by rowid",
+        _SOURCE_SEQUENCE_NAMES)]
 
 
 def _run_fk_findings(db: sqlite3.Connection) -> tuple[tuple, ...]:
@@ -97,11 +103,80 @@ def _insert(db: sqlite3.Connection, table: str, row: dict) -> None:
                f"values ({','.join('?' for _ in fields)})", tuple(row[field] for field in fields))
 
 
-def _typed_lookup(mapping: dict, namespace: str, key):
-    entry = (namespace, type(key).__name__, key)
-    if entry not in mapping:
-        raise ValueError(f"unresolved typed {namespace} identity: {key!r}")
-    return mapping[entry]
+def _task_kind(source_kind: str) -> str:
+    from app.task_run_entity_definitions import _TASK_TABLES
+    return _TASK_TABLES.get(source_kind)
+
+
+def _task_forward_edges(db: sqlite3.Connection, task_metadata: dict) -> dict:
+    required = {"counts", "identity_rows", "identity_edges", "owner_highwaters",
+                "raw_key_exceptions", "reference_exceptions", "task_sequence", "source_objects"}
+    if type(task_metadata) is not dict or set(task_metadata) != required:
+        raise ValueError("Run conversion requires actual Task2B forward metadata")
+    kinds = set(task20_definitions.TASK20_COLUMNS)
+    if (type(task_metadata["identity_edges"]) is not list
+            or type(task_metadata["owner_highwaters"]) is not dict
+            or set(task_metadata["owner_highwaters"]) != kinds
+            or type(task_metadata["counts"]) is not dict
+            or set(task_metadata["counts"]) != kinds):
+        raise ValueError("invalid Task2B sparse identity metadata")
+    if (type(task_metadata["identity_rows"]) is not int
+            or task_metadata["identity_rows"] != len(task_metadata["identity_edges"])
+            or any(type(value) is not int or value < 0
+                   for value in (*task_metadata["counts"].values(),
+                                 *task_metadata["owner_highwaters"].values()))
+            or type(task_metadata["raw_key_exceptions"]) is not list
+            or type(task_metadata["reference_exceptions"]) is not list
+            or type(task_metadata["source_objects"]) is not list):
+        raise ValueError("invalid Task2B forward metadata values")
+    actual = {
+        (row[0], int(row[1]), row[2], row[3], int(row[4]))
+        for row in db.execute(
+            "select source_kind,physical_id,public_key,public_key_type,target_id "
+            "from main.task_run_identity_map")
+    }
+    expected = set()
+    for edge in task_metadata["identity_edges"]:
+        if type(edge) is not dict or set(edge) != {
+                "source_kind", "physical_id", "public_key", "target_id"}:
+            raise ValueError("invalid Task2B identity edge")
+        kind, physical_id, public_key, target_id = (
+            edge["source_kind"], edge["physical_id"], edge["public_key"], edge["target_id"])
+        if (kind not in kinds or type(physical_id) is not int or type(target_id) is not int):
+            raise ValueError("invalid Task2B identity edge")
+        from app.task_entity_schema import _stored_public_key
+        from app.task_entity_migration import _typed_key
+        expected.add((kind, physical_id, _stored_public_key(public_key),
+                      _typed_key(public_key)[0], target_id))
+    if len(expected) != len(task_metadata["identity_edges"]) or expected != actual:
+        raise ValueError("Task2B sparse identity edges do not match native owners")
+    return {(kind, physical_id): target_id for kind, physical_id, _, _, target_id in expected}
+
+
+def _task_physical_owner(db: sqlite3.Connection, task_edges: dict,
+                         source_kind: str, physical_id: int) -> int:
+    expected_kind = _task_kind(source_kind)
+    if expected_kind is None:
+        raise ValueError(f"unsupported physical Task source kind: {source_kind!r}")
+    target_id = task_edges.get((source_kind, physical_id), physical_id)
+    row = db.execute("select kind from main.tasks where id=?", (target_id,)).fetchone()
+    if row is None or row[0] != expected_kind:
+        raise ValueError(f"physical Task owner kind mismatch for {source_kind}:{physical_id}")
+    return target_id
+
+
+def _task_public_owner(db: sqlite3.Connection, source_kind: str, public_key):
+    expected_kind = _task_kind(source_kind)
+    if expected_kind is None:
+        raise ValueError(f"unsupported public Task source kind: {source_kind!r}")
+    from app.task_entity_schema import resolve_source_public_owner
+    target_id = resolve_source_public_owner(db, source_kind=source_kind, public_key=public_key)
+    if target_id is None:
+        raise ValueError(f"unresolved typed {source_kind} identity: {public_key!r}")
+    row = db.execute("select kind from main.tasks where id=?", (target_id,)).fetchone()
+    if row is None or row[0] != expected_kind:
+        raise ValueError(f"typed Task owner kind mismatch for {source_kind}:{public_key!r}")
+    return target_id
 
 
 def _run_public_maps(rows):
@@ -125,7 +200,7 @@ def _run_public_maps(rows):
     return by_physical, by_namespace_public
 
 
-def _workload_key(row, task_public, run_physical, run_public):
+def _workload_key(db, row, task_edges, run_physical, run_public):
     kind, key = row["workload_kind"], row["workload_key"]
     parts = key.split(":")
     if kind == "agent_run":
@@ -141,22 +216,22 @@ def _workload_key(row, task_public, run_physical, run_public):
     if kind == "meeting":
         return str(run_public[("meeting_alignment_runs", "int", int(key))])
     if kind == "structured":
-        return str(_typed_lookup(task_public, "okr_review_requests", int(key)))
+        return str(_task_public_owner(db, "okr_review_requests", int(key)))
     if kind == "weekly_okr" and len(parts) == 5:
-        parts[3] = str(_typed_lookup(task_public, "weekly_okr_analysis_jobs", int(parts[3])))
+        parts[3] = str(_task_public_owner(db, "weekly_okr_analysis_jobs", int(parts[3])))
         return ":".join(parts)
     if kind == "email_classification":
-        return str(_typed_lookup(task_public, "email_agent_classification_tasks", key))
+        return str(_task_public_owner(db, "email_agent_classification_tasks", key))
     if kind == "workbench":
-        return str(_typed_lookup(task_public, "workbench_turns", key))
+        return str(_task_public_owner(db, "workbench_turns", key))
     if kind == "memory" and key.startswith("wechat_memory_import_job:"):
         source_key = int(key.rsplit(":", 1)[1])
         return "wechat_memory_import_job:" + str(
-            _typed_lookup(task_public, "wechat_memory_import_jobs", source_key))
+            _task_public_owner(db, "wechat_memory_import_jobs", source_key))
     return key
 
 
-def _source_reference(kind: str, source: dict, field: str, task_public: dict,
+def _source_reference(db, kind: str, source: dict, field: str, task_edges: dict,
                       run_physical: dict, run_public: dict):
     value = source[field]
     if value is None:
@@ -166,24 +241,25 @@ def _source_reference(kind: str, source: dict, field: str, task_public: dict,
         return str(run_public[("meeting_alignment_runs", "int", int(value))])
     if kind == "scheduled_task_runs" and field == "execution_id" \
             and source["execution_kind"] == "reply_task":
-        return str(_typed_lookup(task_public, "reply_tasks", int(value)))
+        return str(_task_public_owner(db, "reply_tasks", int(value)))
     if kind == "agent_runtime_attempts" and field == "workload_key":
-        return _workload_key(source, task_public, run_physical, run_public)
+        return _workload_key(db, source, task_edges, run_physical, run_public)
     return value
 
 
-def _context_maps(context: dict):
-    if not isinstance(context, dict) or set(context) != {
-            "task_physical", "task_public", "orphan_task_refs"}:
-        raise ValueError("Run conversion requires separate Task physical/public identity maps")
-    physical = context["task_physical"]
-    public = context["task_public"]
-    if not isinstance(physical, dict) or not isinstance(public, dict):
-        raise ValueError("invalid typed Task identity maps")
-    orphan_refs = context["orphan_task_refs"]
-    if not isinstance(orphan_refs, (set, frozenset, tuple, list)):
-        raise ValueError("invalid captured Task FK anomaly set")
-    return physical, public, frozenset(orphan_refs)
+def _captured_task_orphans(db: sqlite3.Connection, rows, findings) -> set[tuple]:
+    task_fk_ids = {int(row[0]) for row in db.execute(
+        "pragma main.foreign_key_list(runs)") if row[2] == "tasks" and row[3] == "task_id"}
+    edges = {(table, rowid, parent, fk_id) for table, rowid, parent, fk_id in findings}
+    missing = set()
+    for _, row in rows:
+        value = row["task_id"]
+        if value is None:
+            continue
+        for fk_id in task_fk_ids:
+            if ("runs", row["id"], "tasks", fk_id) in edges:
+                missing.add((row["id"], "task_id", value))
+    return missing
 
 
 def _declared_name(sql: str) -> str:
@@ -198,15 +274,17 @@ def _declared_name(sql: str) -> str:
     raise ValueError("unsupported Run target declaration")
 
 
-def migrate_run_entities(db: sqlite3.Connection, source_metadata: dict, *, task_context: dict) -> dict:
+def migrate_run_entities(db: sqlite3.Connection, source_metadata: dict, *,
+                         task_metadata: dict) -> dict:
     """Forward all eight source families into their declared native owners.
 
-    ``task_context`` keeps physical Task FKs separate from public workload keys:
-    ``task_physical`` is keyed by source physical Task ID; ``task_public`` is
-    keyed by (source Task kind, Python type name, exact source public key).
+    ``task_metadata`` is the result of Task2B's forward migration in this same
+    database/transaction. Sparse public/physical identity edges are verified
+    against the native identity map; identity fallback is checked against the
+    exact native Task kind before a reference is accepted.
     """
     _validate_source(db, source_metadata)
-    task_physical, task_public, orphan_refs = _context_maps(task_context)
+    task_edges = _task_forward_edges(db, task_metadata)
     if db.execute("select 1 from temp.sqlite_schema where name=?", (_STAGE,)).fetchone():
         raise ValueError("Run migration staging table already exists")
     # runs is the sole same-name source/target table; all other owner names are
@@ -226,26 +304,23 @@ def migrate_run_entities(db: sqlite3.Connection, source_metadata: dict, *, task_
     rows = list(_source_rows(db))
     run_physical, run_public = _run_public_maps(rows)
     kinds_by_id = {row["id"]: kind for kind, row in rows}
+    orphan_refs = _captured_task_orphans(db, rows, source_metadata["run_fk_findings"])
     # Resolve all references before writing target rows. A missing old Task FK
     # is retained only when it was already a captured source finding.
     for kind, row in rows:
-        fields = (("task_id",) if kind == "agent_runs" else
-                  ("task_id",) if kind == "workbench_events" else ())
-        for field in fields:
-            value = row[field]
-            if value is not None and value not in task_physical and (row["id"], field, value) not in orphan_refs:
-                raise ValueError(f"physical Task mapping missing for source id {value!r}")
-            if value is not None and value in task_physical:
-                if not db.execute("select 1 from main.tasks where id=?", (task_physical[value],)).fetchone():
-                    raise ValueError(f"canonical Task target missing for source id {value!r}")
+        if kind in {"agent_runs", "workbench_events"} and row["task_id"] is not None:
+            source_kind = ("workbench_turns" if kind == "workbench_events" else
+                           _PROFESSIONAL_TASK_KINDS.get(row.get("source_type"), "reply_tasks"))
+            if (row["id"], "task_id", row["task_id"]) not in orphan_refs:
+                _task_physical_owner(db, task_edges, source_kind, row["task_id"])
         if kind == "agent_runtime_attempts":
             parent = row["parent_id"]
             if parent is not None and parent not in kinds_by_id:
                 raise ValueError(f"unresolved physical Run parent: {parent!r}")
-            _workload_key(row, task_public, run_physical, run_public)
+            _workload_key(db, row, task_edges, run_physical, run_public)
         for field in ("source_id", "execution_id"):
             if field in row and row[field] is not None:
-                _source_reference(kind, row, field, task_public, run_physical, run_public)
+                _source_reference(db, kind, row, field, task_edges, run_physical, run_public)
     field_map = {(entry["source_kind"], entry["source_field"]): entry
                  for entry in run_entity_definitions.run_entity_field_map()}
     db.execute("drop table main.runs")
@@ -271,7 +346,11 @@ def migrate_run_entities(db: sqlite3.Connection, source_metadata: dict, *, task_
             fields.pop("source_type", None)
             fields.pop("job_id", None)
             fields.pop("projection_json", None)
-            fields["task_id"] = task_physical.get(source["task_id"], source["task_id"])
+            if source["task_id"] is not None:
+                task_kind = (_PROFESSIONAL_TASK_KINDS.get(source.get("source_type"), "reply_tasks"))
+                fields["task_id"] = (source["task_id"] if
+                                     (source["id"], "task_id", source["task_id"]) in orphan_refs else
+                                     _task_physical_owner(db, task_edges, task_kind, source["task_id"]))
             _insert(db, "runs", fields)
             source_type = source["source_type"]
             if source_type in _PROFESSIONAL:
@@ -284,14 +363,16 @@ def migrate_run_entities(db: sqlite3.Connection, source_metadata: dict, *, task_
             for name in ("source_id", "execution_id", "workload_key"):
                 if name in fields:
                     fields[name] = _source_reference(
-                        kind, source, name, task_public, run_physical, run_public)
+                        db, kind, source, name, task_edges, run_physical, run_public)
             fields["id"] = source["id"]
             if kind == "agent_runtime_attempts":
                 fields["parent_id"] = source["parent_id"]
             elif kind == "agent_run_state_events":
                 fields["run_id"] = source["parent_id"]
             elif kind == "workbench_events":
-                fields["task_id"] = task_physical.get(source["task_id"], source["task_id"])
+                if source["task_id"] is not None:
+                    fields["task_id"] = _task_physical_owner(
+                        db, task_edges, "workbench_turns", source["task_id"])
             _insert(db, owner, fields)
         public = source["legacy_key"]
         public_type = "null" if public is None else {

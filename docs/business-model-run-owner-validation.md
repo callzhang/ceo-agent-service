@@ -278,8 +278,13 @@ and SetupWizardEvent owners. Professional Run kind/job and projection facts move
 to the declared provenance/projection owners. It keeps source physical Task
 references separate from namespace-and-type-qualified Task public identities,
 rewrites only the typed runtime/workload references established by the source
-contract, captures the source Run allocator rows, and preserves a caller-supplied
-captured missing physical Task edge without creating a Task.
+contract, captures only the five source-owned Run allocator names, and preserves
+a missing physical Task edge only when the current Run FK capture records that
+exact missing edge. Task conversion metadata must be the actual Task2B forward
+result; its sparse identity rows are checked against the native identity map,
+and every physical/public Task resolution is checked against the expected
+native Task kind. The composed migration captures and forwards Task2B before it
+captures and forwards Run, with the caller keeping one FK-off transaction.
 
 This is a bounded forward-only unit. It does not yet provide the current-fact
 inverse or preserve native facts across a subsequent legacy handoff; those are

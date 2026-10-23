@@ -36,20 +36,20 @@ def test_capture_rejects_historical_runs11_factory():
         capture_run_entities(db)
 
 
-def test_forward_requires_caller_transaction_and_explicit_task_mapping():
+def test_forward_requires_caller_transaction():
     db = sqlite3.connect(":memory:")
     with pytest.raises(ValueError, match="caller-owned"):
         capture_run_entities(db)
 
 
 def test_forward_source_catalog_change_rejects_before_mutation():
-    db = _run_source()
+    db, task_metadata = _run_source()
     try:
         metadata = capture_run_entities(db)
         db.execute("drop index idx_agent_runs_status")
         original = tuple(db.execute("select id,record_type from runs order by id"))
         with pytest.raises(ValueError, match="selected-current"):
-            migrate_run_entities(db, metadata, task_context=_task_context())
+            migrate_run_entities(db, metadata, task_metadata=task_metadata)
         assert tuple(db.execute("select id,record_type from runs order by id")) == original
         assert db.execute("select 1 from sqlite_schema where name='runs'").fetchone()
     finally:
@@ -59,24 +59,12 @@ def test_forward_source_catalog_change_rejects_before_mutation():
 def _target_prerequisites(db):
     from app.configs_storage import create_configs_schema
     from app.schedules_storage import create_schedules_schema
-    from app.task8_storage import register_task8_functions
-    from app.task_run_entity_definitions import task_run_entity_objects
 
-    register_task8_functions(db)
     create_schedules_schema(db)
     create_configs_schema(db)
-    db.execute(task_run_entity_objects()["tasks"])
-    db.executemany(
-        "insert into tasks(id,kind,status,parameters_json,created_at,updated_at) "
-        "values(?,?,?,jsonb('{}'),'created','updated')",
-        ((401, "reply", "completed"), (402, "work_summary", "completed"),
-         (403, "meeting_alignment", "completed"), (404, "okr_review", "completed"),
-         (405, "workbench_turn", "completed"), (406, "okr_analysis", "completed"),
-         (407, "email_classification", "completed"), (408, "wechat_import", "completed")),
-    )
     db.execute(
-        "insert into schedules(id,name,prompt,cron_expression,timezone,runtime_id,"
-        "enabled) values(55,'fixture','prompt','* * * * *','UTC','codex',1)"
+        "insert into schedules(id,name,prompt,cron_expression,timezone,runtime_id,enabled) "
+        "values(55,'fixture','prompt','* * * * *','UTC','codex',1)"
     )
 
 
@@ -88,8 +76,16 @@ def _source_row(db, kind, values):
 
 
 def _run_source(*, orphan_task_id=None):
-    db = sqlite3.connect(":memory:")
+    from app.task_entity_schema import capture_task_entities, migrate_task_entities
+    from tests.test_task_entity_schema import _source as task_source
+
+    db = task_source()
     db.execute("pragma foreign_keys=off")
+    db.execute("begin immediate")
+    task_metadata = capture_task_entities(db)
+    task_forward = migrate_task_entities(db, task_metadata)
+    db.commit()
+    db.execute("begin immediate")
     _target_prerequisites(db)
     objects = logical_run_current_schema.current_run11_objects()
     db.execute(objects["runs"])
@@ -112,8 +108,8 @@ def _run_source(*, orphan_task_id=None):
         "updated_at": "updated",
     })
     for physical, source_type, task_id in (
-        (1101, "task_agent_runs", 202), (1102, "meeting_alignment_runs", 203),
-        (1103, "okr_review_runs", 204),
+        (1101, "task_agent_runs", 220), (1102, "meeting_alignment_runs", 221),
+        (1103, "okr_review_runs", 222),
     ):
         values = {"id": physical, "record_type": "agent_runs", "source_type": source_type,
                   "legacy_key": "201", "task_id": task_id, "session_id": f"session-{physical}",
@@ -129,10 +125,10 @@ def _run_source(*, orphan_task_id=None):
         _source_row(db, "agent_runs", values)
     workload_facts = (
         ("task", "201:decision_repair.2"), ("agent_run", "1001"), ("meeting", "201"),
-        ("structured", "9"), ("weekly_okr", "week:manager:digest"),
-        ("weekly_okr", "week:manager:digest:207:owner"),
-        ("email_classification", "email-classification:hash"),
-        ("workbench", "turn-uuid"), ("memory", "wechat_memory_import_job:208"),
+        ("structured", "222"), ("weekly_okr", "week:manager:digest"),
+        ("weekly_okr", "week:manager:digest:223:owner"),
+        ("email_classification", "classification-225"),
+        ("workbench", "wb-turn-a"), ("memory", "wechat_memory_import_job:232"),
         ("memory", "meeting_memory_write_event:opaque:3"),
         ("task", "301:memory_backfill"), ("task", "302:deadline_backfill.4"),
     )
@@ -164,7 +160,7 @@ def _run_source(*, orphan_task_id=None):
         "lease_expires_at": None, "created_at": "created",
     })
     _source_row(db, "workbench_events", {
-        "id": 1304, "legacy_key": "1304", "task_id": 205, "sequence": 1,
+        "id": 1304, "legacy_key": "1304", "task_id": 203, "sequence": 1,
         "event_type": "started", "payload_json": b"{\x00}", "created_at": "created",
     })
     _source_row(db, "codex_session_search_index", {
@@ -212,55 +208,43 @@ def _run_source(*, orphan_task_id=None):
     for name, sql in objects.items():
         if name != "runs":
             db.execute(sql)
+    db.execute("create table runs_other(id integer primary key autoincrement)")
+    db.execute("insert into runs_other(id) values(77)")
     db.execute("update sqlite_sequence set seq=8000 where name='runs'")
     db.execute("insert into sqlite_sequence(name,seq) values('runs:published',8000)")
     db.commit()
     db.execute("begin")
-    return db
-
-
-def _task_context():
-    return {
-        "task_physical": {201: 401, 202: 402, 203: 403, 204: 404, 205: 405,
-                          206: 406, 207: 407, 208: 408},
-        "task_public": {
-            ("task_agent_runs", "str", "9"): 402,
-            ("meeting_alignment_runs", "str", "9"): 403,
-            ("okr_review_requests", "int", 9): 404,
-            ("reply_tasks", "int", 201): 401,
-            ("workbench_turns", "str", "turn-uuid"): 405,
-            ("weekly_okr_analysis_jobs", "int", 207): 406,
-            ("email_agent_classification_tasks", "str", "email-classification:hash"): 407,
-            ("wechat_memory_import_jobs", "int", 208): 408,
-        },
-        "orphan_task_refs": set(),
-    }
+    return db, task_forward
 
 
 def test_forward_migrates_all_eight_current_source_kinds_and_typed_facts():
-    db = _run_source()
+    db, task_metadata = _run_source()
     try:
         source_columns = tuple(row[1] for row in db.execute("pragma table_info(runs)"))
         source_rows = [dict(zip(source_columns, row, strict=True))
                        for row in db.execute("select * from runs order by id")]
         before = {name: tuple(db.execute("select * from runs where record_type=? order by id", (name,)))
                   for name in {r[0] for r in db.execute("select distinct record_type from runs")}}
+        unrelated_sequence = tuple(db.execute(
+            "select rowid,name,seq from sqlite_sequence where name='runs_other'"))
         metadata = capture_run_entities(db)
-        result = migrate_run_entities(db, metadata, task_context=_task_context())
+        result = migrate_run_entities(db, metadata, task_metadata=task_metadata)
+        assert tuple(db.execute(
+            "select rowid,name,seq from sqlite_sequence where name='runs_other'")) == unrelated_sequence
         assert set(before) == set(run_entity_definitions.SOURCE_FIELDS)
         assert result["sequence_rows"] == metadata["sequence_rows"]
         assert db.execute("select count(*) from runs").fetchone()[0] == 5
         assert tuple(db.execute("select source_type,job_id from run_provenance order by run_id")) == (
             ("task_agent_runs", None), ("meeting_alignment_runs", None), ("okr_review_runs", None))
         assert tuple(db.execute("select id,task_id from runs order by id")) == (
-            (1001, 401), (1002, 401), (1101, 402), (1102, 403), (1103, 404))
+            (1001, 201), (1002, 201), (1101, 220), (1102, 221), (1103, 222))
         assert db.execute("select projection_json from run_projections where run_id=1101").fetchone()[0] == ' {"x":1} '
         assert tuple(db.execute("select typeof(error),error from runs where id=1101")) == (
             ("blob", b"error\x00\xff"),)
         assert db.execute("select typeof(structured_error_json) from run_failures").fetchone()[0] == "blob"
         assert db.execute("select typeof(payload_json) from workbench_events").fetchone()[0] == "blob"
-        assert db.execute("select task_id from workbench_events").fetchone()[0] == 405
-        assert db.execute("select execution_id from schedule_occurrences").fetchone()[0] == "401"
+        assert db.execute("select task_id from workbench_events").fetchone()[0] == 203
+        assert db.execute("select execution_id from schedule_occurrences").fetchone()[0] == "201"
         assert db.execute("select source_id from codex_session_search_index").fetchone()[0] == "1102"
         assert db.execute("select execution_id from schedule_occurrences where id=1308").fetchone()[0] == "201"
         assert db.execute("select source_id from codex_session_search_index where id=1309").fetchone()[0] == "201"
@@ -269,11 +253,11 @@ def test_forward_migrates_all_eight_current_source_kinds_and_typed_facts():
         assert runtime_keys["task:1201"] == "1101:decision_repair.2"
         assert runtime_keys["agent_run:1202"] == "1001"
         assert runtime_keys["meeting:1203"] == "1102"
-        assert runtime_keys["structured:1204"] == "404"
-        assert runtime_keys["weekly_okr:1206"] == "week:manager:digest:406:owner"
-        assert runtime_keys["email_classification:1207"] == "407"
-        assert runtime_keys["workbench:1208"] == "405"
-        assert runtime_keys["memory:1209"] == "wechat_memory_import_job:408"
+        assert runtime_keys["structured:1204"] == "222"
+        assert runtime_keys["weekly_okr:1206"] == "week:manager:digest:223:owner"
+        assert runtime_keys["email_classification:1207"] == "225"
+        assert runtime_keys["workbench:1208"] == "203"
+        assert runtime_keys["memory:1209"] == "wechat_memory_import_job:232"
         assert runtime_keys["memory:1210"] == "meeting_memory_write_event:opaque:3"
         assert runtime_keys["task:1211"] == "301:memory_backfill"
         assert runtime_keys["task:1212"] == "302:deadline_backfill.4"
@@ -310,22 +294,22 @@ def test_forward_migrates_all_eight_current_source_kinds_and_typed_facts():
                         (key_value,),
                     ).fetchone()
                     if field == "task_id" and kind in {"agent_runs", "workbench_events"} and value is not None:
-                        value = _task_context()["task_physical"][value]
+                        pass
                     if field == "source_id" and kind == "codex_session_search_index" \
                             and source["source_type"] == "meeting_alignment":
                         value = "1102"
                     if field == "execution_id" and kind == "scheduled_task_runs" \
                             and source["execution_kind"] == "reply_task":
-                        value = "401"
+                        value = "201"
                     if field == "workload_key" and kind == "agent_runtime_attempts":
                         value = {"task:201:decision_repair.2": "1101:decision_repair.2",
                                  "agent_run:1001": "1001", "meeting:201": "1102",
-                                 "structured:9": "404", "weekly_okr:week:manager:digest:207:owner":
-                                     "week:manager:digest:406:owner",
+                                 "structured:222": "222", "weekly_okr:week:manager:digest:223:owner":
+                                     "week:manager:digest:223:owner",
                                  "weekly_okr:week:manager:digest": "week:manager:digest",
-                                 "email_classification:email-classification:hash": "407",
-                                 "workbench:turn-uuid": "405",
-                                 "memory:wechat_memory_import_job:208": "wechat_memory_import_job:408",
+                                 "email_classification:classification-225": "225",
+                                 "workbench:wb-turn-a": "203",
+                                 "memory:wechat_memory_import_job:232": "wechat_memory_import_job:232",
                                  "memory:meeting_memory_write_event:opaque:3": "meeting_memory_write_event:opaque:3",
                                  "task:301:memory_backfill": "301:memory_backfill",
                                  "task:302:deadline_backfill.4": "302:deadline_backfill.4"}[
@@ -338,7 +322,7 @@ def test_forward_migrates_all_eight_current_source_kinds_and_typed_facts():
 
 
 def test_forward_is_rollbackable_by_caller_and_preserves_all_source_allocators():
-    db = _run_source()
+    db, task_metadata = _run_source()
     try:
         source_objects = logical_run_current_schema.current_run11_objects()
         before_rows = tuple(db.execute("select * from runs order by id"))
@@ -347,6 +331,8 @@ def test_forward_is_rollbackable_by_caller_and_preserves_all_source_allocators()
         db.execute("insert into sqlite_sequence(name,seq) values('runs:setup_wizard_events',22)")
         db.commit()
         db.execute("begin")
+        unrelated = tuple(db.execute(
+            "select rowid,name,seq from sqlite_sequence where name='runs_other'"))
         captured = capture_run_entities(db)
         assert {row[1:] for row in captured["sequence_rows"]} == {
             ("runs", 8000), ("runs:published", 8000),
@@ -354,27 +340,52 @@ def test_forward_is_rollbackable_by_caller_and_preserves_all_source_allocators()
             ("runs:email_classifier_runtime_samples", 6863),
             ("runs:setup_wizard_events", 22),
         }
-        migrate_run_entities(db, captured, task_context=_task_context())
+        assert all(row[1] != "runs_other" for row in captured["sequence_rows"])
+        migrate_run_entities(db, captured, task_metadata=task_metadata)
         assert db.execute("select count(*) from run_provenance").fetchone()[0] == 3
         db.rollback()
         assert tuple(db.execute("select * from runs order by id")) == before_rows
         assert logical_run_current_schema.current_run11_schema_is_current(db)
         assert tuple(db.execute(
-            "select rowid,name,seq from sqlite_sequence where name like 'runs%' order by rowid")) \
+            "select rowid,name,seq from sqlite_sequence where name in "
+            "('runs','runs:published','runs:codex_session_search_index',"
+            "'runs:email_classifier_runtime_samples','runs:setup_wizard_events') order by rowid")) \
             == tuple(captured["sequence_rows"])
+        assert tuple(db.execute(
+            "select rowid,name,seq from sqlite_sequence where name='runs_other'")) == unrelated
         assert set(source_objects) == set(logical_run_current_schema.current_run11_objects())
     finally:
         db.close()
 
 
+def test_wrong_existing_native_task_kind_mapping_is_rejected_before_run_writes():
+    db, task_metadata = _run_source()
+    try:
+        run_metadata = capture_run_entities(db)
+        wrong = next(edge for edge in task_metadata["identity_edges"]
+                     if edge["source_kind"] == "email_agent_classification_tasks")
+        wrong["target_id"] = 220  # existing Work Summary Task, not the Email Task
+        db.execute(
+            "update task_run_identity_map set target_id=220 "
+            "where source_kind='email_agent_classification_tasks' and physical_id=?",
+            (wrong["physical_id"],),
+        )
+        assert db.execute("select kind from tasks where id=220").fetchone()[0] == "work_summary"
+        before = tuple(db.execute("select id,record_type,task_id from runs order by id"))
+        with pytest.raises(ValueError, match="typed Task owner kind mismatch"):
+            migrate_run_entities(db, run_metadata, task_metadata=task_metadata)
+        assert tuple(db.execute("select id,record_type,task_id from runs order by id")) == before
+        assert db.execute("select 1 from sqlite_schema where name='run_provenance'").fetchone() is None
+    finally:
+        db.close()
+
+
 def test_forward_preserves_a_captured_missing_physical_task_edge_without_fabrication():
-    db = _run_source(orphan_task_id=999)
+    db, task_metadata = _run_source(orphan_task_id=999)
     try:
         metadata = capture_run_entities(db)
         assert ("runs", 1400, "tasks", 1) in metadata["run_fk_findings"]
-        context = _task_context()
-        context["orphan_task_refs"] = {(1400, "task_id", 999)}
-        migrate_run_entities(db, metadata, task_context=context)
+        migrate_run_entities(db, metadata, task_metadata=task_metadata)
         assert db.execute("select task_id from runs where id=1400").fetchone()[0] == 999
         assert not db.execute("select 1 from tasks where id=999").fetchone()
         assert tuple(db.execute("pragma foreign_key_check(runs)")) == (("runs", 1400, "tasks", 1),)
