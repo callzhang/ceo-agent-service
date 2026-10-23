@@ -38,14 +38,24 @@ def annotate_task_identity(store: Any, items: list[dict[str, Any]]) -> None:
     with store._connect() as db:
         for chunk in _chunks(list(reply_items)):
             marks = ",".join("?" for _ in chunk)
+            # An attempt with no run link (most stored ones) belongs to the task
+            # of the same message, as the Attempt detail page resolves it.
             for row in db.execute(
-                f"""select attempts.id as attempt_id, runs.reply_task_id as task_id
+                f"""select attempts.id as attempt_id,
+                           coalesce(runs.reply_task_id, (
+                               select max(tasks.id)
+                               from ({REPLY_TASK_CURRENT_SQL}) as tasks
+                               where tasks.channel=attempts.channel
+                                 and tasks.conversation_id=attempts.conversation_id
+                                 and tasks.trigger_message_id=attempts.trigger_message_id
+                           )) as task_id
                     from ({REPLY_ATTEMPT_COMMON_SQL}) as attempts
-                    join ({AGENT_RUN_SQL}) as runs on runs.id=attempts.agent_run_id
+                    left join ({AGENT_RUN_SQL}) as runs on runs.id=attempts.agent_run_id
                     where attempts.id in ({marks})""",
                 chunk,
             ).fetchall():
-                attempt_task[int(row["attempt_id"])] = int(row["task_id"])
+                if row["task_id"] is not None:
+                    attempt_task[int(row["attempt_id"])] = int(row["task_id"])
         for chunk in _chunks(sorted(set(attempt_task.values()))):
             marks = ",".join("?" for _ in chunk)
             for row in db.execute(
@@ -79,17 +89,23 @@ def build_task_history(store: Any, task_id: int) -> dict[str, Any] | None:
                 where reply_task_id=? order by id""",
             (task_id,),
         ).fetchall()
-        run_ids = [int(run["id"]) for run in runs]
-        attempts = []
-        for chunk in _chunks(run_ids):
-            marks = ",".join("?" for _ in chunk)
-            attempts.extend(db.execute(
+        attempts = db.execute(
+            f"""select id, agent_run_id, action, send_status, updated_at,
+                       final_reply_text, audit_summary, send_error
+                from ({REPLY_ATTEMPT_COMMON_SQL}) as attempts
+                where channel=? and conversation_id=? and trigger_message_id=?""",
+            (task["channel"], task["conversation_id"], task["trigger_message_id"]),
+        ).fetchall()
+        attempts += [
+            row for row in db.execute(
                 f"""select id, agent_run_id, action, send_status, updated_at,
                            final_reply_text, audit_summary, send_error
                     from ({REPLY_ATTEMPT_COMMON_SQL}) as attempts
-                    where agent_run_id in ({marks})""",
-                chunk,
-            ).fetchall())
+                    where agent_run_id in (select id from ({AGENT_RUN_SQL}) where reply_task_id=?)""",
+                (task_id,),
+            ).fetchall()
+            if int(row["id"]) not in {int(a["id"]) for a in attempts}
+        ]
     attempts.sort(key=lambda row: int(row["id"]))
     current_generation = str(task["execution_generation"] or "")
     return {
@@ -122,7 +138,7 @@ def build_task_history(store: Any, task_id: int) -> dict[str, Any] | None:
         "attempts": [
             {
                 "id": int(attempt["id"]),
-                "agent_run_id": int(attempt["agent_run_id"]),
+                "agent_run_id": int(attempt["agent_run_id"] or 0),
                 "action": str(attempt["action"] or ""),
                 "status": str(attempt["send_status"] or ""),
                 "updated_at": str(attempt["updated_at"] or ""),
