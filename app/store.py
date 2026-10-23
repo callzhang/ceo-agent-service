@@ -14541,15 +14541,18 @@ class AutoReplyStore(LogicalRunStoreMixin, ReviewedCandidateStoreMixin):
 
     def requeue_failed_meeting_delivery(self, job_id: int) -> MeetingAlignmentJob | None:
         """Resume a reviewed unsent delivery after independent provider readback."""
+        from app.meeting_alignment_models import meeting_decision_audit_is_approved
         from app.task_entity_storage import get_meeting_delivery_key, get_task, update_task_cas
+
         with self._immediate_write_transaction() as db:
             task = get_task(db, job_id)
             if task is None or task["kind"] != "meeting_alignment" or task["status"] != "failed" or task["locked_at"] is not None:
                 return None
             key = get_meeting_delivery_key(db, job_id)
             job = self._native_meeting_alignment_job(db, job_id)
-            assert job is not None
-            if job.decision_json == "{}" or not job.target_id or job.send_result_json != "{}":
+            if (job is None or not meeting_decision_audit_is_approved(job.decision_json)
+                    or job.decision_json == "{}" or not job.target_id
+                    or job.send_result_json != "{}"):
                 return None
             if db.execute(f"select 1 from ({OUTBOUND_POSTFIX_RECEIPT_SQL}) where channel='dingtalk' and delivery_key=?",
                           (key,)).fetchone():

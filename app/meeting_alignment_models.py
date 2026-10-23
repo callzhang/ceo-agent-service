@@ -1,4 +1,5 @@
 import json
+import hashlib
 from typing import Any, Literal, NamedTuple, Self
 
 from pydantic import BaseModel, ConfigDict, Field, model_validator
@@ -538,6 +539,76 @@ class MeetingAlignmentDecision(StrictModel):
         return self
 
 
+class MeetingAlignmentAuditResult(StrictModel):
+    """Independent, read-only review of one exact meeting outbound candidate."""
+
+    outcome: Literal["approve", "return", "reject"]
+    candidate_sha256: str = Field(pattern=r"^[0-9a-f]{64}$")
+    summary: str = Field(min_length=1)
+
+
+def meeting_alignment_decision_digest(decision: MeetingAlignmentDecision) -> str:
+    canonical = json.dumps(
+        decision.model_dump(mode="json"),
+        ensure_ascii=False,
+        sort_keys=True,
+        separators=(",", ":"),
+    )
+    return hashlib.sha256(canonical.encode("utf-8")).hexdigest()
+
+
+def persist_audited_meeting_decision(
+    decision: MeetingAlignmentDecision,
+    audit: MeetingAlignmentAuditResult,
+    *,
+    audit_session_id: str = "",
+    audit_transcript_start_line: int = 0,
+    audit_transcript_end_line: int = 0,
+) -> str:
+    digest = meeting_alignment_decision_digest(decision)
+    if audit.candidate_sha256 != digest:
+        raise ValueError("meeting Audit result is not bound to this candidate")
+    payload = decision.model_dump(mode="json")
+    payload["_service_audit"] = {
+        "version": 1,
+        "candidate_sha256": digest,
+        "result": audit.model_dump(mode="json"),
+        "session_id": audit_session_id,
+        "transcript_start_line": audit_transcript_start_line,
+        "transcript_end_line": audit_transcript_end_line,
+    }
+    return json.dumps(payload, ensure_ascii=False, separators=(",", ":"))
+
+
+def meeting_decision_audit_is_approved(raw: str) -> bool:
+    try:
+        payload = json.loads(raw)
+        if not isinstance(payload, dict):
+            return False
+        audit = payload.get("_service_audit")
+        if not isinstance(audit, dict) or audit.get("version") != 1:
+            return False
+        decision_payload = {key: value for key, value in payload.items() if key != "_service_audit"}
+        if "audience_scope" not in decision_payload and decision_payload.get("action") == "send":
+            target = decision_payload.get("target")
+            if isinstance(target, dict):
+                target_kind = target.get("kind")
+                if target_kind == "group":
+                    decision_payload["audience_scope"] = "business"
+                elif target_kind == "direct":
+                    decision_payload["audience_scope"] = "personal"
+        decision = MeetingAlignmentDecision.model_validate(decision_payload)
+        result = MeetingAlignmentAuditResult.model_validate(audit.get("result"))
+        digest = meeting_alignment_decision_digest(decision)
+        return (
+            audit.get("candidate_sha256") == digest
+            and result.candidate_sha256 == digest
+            and result.outcome == "approve"
+        )
+    except (TypeError, ValueError, json.JSONDecodeError):
+        return False
+
+
 def load_persisted_meeting_alignment_decision(
     raw: str,
 ) -> tuple[MeetingAlignmentDecision, str]:
@@ -559,8 +630,12 @@ def load_persisted_meeting_alignment_decision(
                 payload["audience_scope"] = "business"
             elif target_kind == "direct":
                 payload["audience_scope"] = "personal"
+    audit = payload.pop("_service_audit", None)
     decision = MeetingAlignmentDecision.model_validate(payload)
-    return decision, decision.model_dump_json()
+    canonical_payload = decision.model_dump(mode="json")
+    if audit is not None:
+        canonical_payload["_service_audit"] = audit
+    return decision, json.dumps(canonical_payload, ensure_ascii=False, separators=(",", ":"))
 
 
 MeetingAlignmentQueueStatus = Literal[
