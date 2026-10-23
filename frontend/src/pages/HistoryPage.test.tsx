@@ -131,6 +131,21 @@ describe("HistoryPage", () => {
     expect(listAttention).toHaveBeenCalled();
   });
 
+  it("opens a reply row at its task and says how many runs the task has had", async () => {
+    listHistory.mockResolvedValue({
+      items: [{
+        id: "9", occurred_at: "2026-08-29T00:00:00Z", title: "采购审批", type: "approval", status: "done",
+        summary: "已处理", actor: "Avery", detail_url: "/history/tasks/7", kind: "reply", task_id: 7, run_count: 3,
+      }],
+      meta: { page: 1, page_size: 20, total: 1, next_cursor: "", has_more: false, snapshot_at: "2026-08-29T00:00:00Z" },
+    });
+    render(<MemoryRouter><HistoryPage /></MemoryRouter>);
+
+    const row = await screen.findByRole("link", { name: /采购审批/ });
+    expect(row).toHaveAttribute("href", "/history/tasks/7");
+    expect(row).toHaveTextContent("3 次执行");
+  });
+
   it("changes the event chart time range through the history query", async () => {
     const user = (await import("@testing-library/user-event")).default.setup();
     render(<MemoryRouter><HistoryPage /></MemoryRouter>);

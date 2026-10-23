@@ -1470,6 +1470,12 @@ History 是任务和执行记录的单一展示入口。同一个任务不得被
   `/scheduled-tasks?id=<任务>`（映射来自 `scheduled_task_runs` 里 `execution_kind='reply_task'`
   且 `execution_id` 等于该 reply task id 的那一行，`AutoReplyStore.scheduled_task_ids_for_reply_tasks`），
   其余渠道链到 `/workers`（Derek 2026-09-27：点开原来一律落到 Status 页，看起来像详情坏了）。
+- History 以 task 为核心（Derek 2026-10-23）：回复类记录的每一行带它所属的 `task_id` 和该 task 的
+  `run_count`（Agent run 总数），行内链接指向 `/history/tasks/<task_id>`，而不是直接指向某个
+  Attempt。task 页（`GET /api/console/history/tasks/<task_id>`，`app/web_api/history_tasks.py`）
+  展示 task 的当前状态，并列出它的全部 Attempt（各自链到 `/attempts/<id>`）和全部 Agent run
+  （按执行代标明「当前代」或「历史代」）。Attempt 详情页不变；这是对已存行的只读投影，不改状态、
+  不改任务生命周期。队列行、会议、定时和邮件动作行没有 task 页，仍按各自规则链接。
 - History 在页面可见时每十秒读取当前快照；已经进入终态的队列任务不得因页面保持打开而继续
   显示为 `processing`。
 - 微信候选任务的 `done` 不证明消息已投递。同一任务、会话和当前执行代的最新投递为
