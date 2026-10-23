@@ -1,9 +1,10 @@
 from contextvars import ContextVar
 import base64
 import hashlib
+import json
 import sqlite3
 from pathlib import Path
-from uuid import uuid4
+from uuid import UUID, uuid4
 
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
@@ -11,9 +12,21 @@ import pytest
 
 from app.task_entity_storage import create_task
 from app.task_run_entity_assembly import task_run_entity_assembly_objects
+from app.task_entity_inverse_files import (
+    capture_workbench_attachment_files, finalize_workbench_attachment_inverse_files,
+    finalize_workbench_attachment_forward_files, rollback_staged_workbench_attachment_files,
+    stage_workbench_attachment_forward_files,
+    stage_workbench_attachment_inverse_files,
+)
+from app.task_entity_schema import (
+    capture_task_entities, migrate_task_entities, restore_task_entities,
+)
 from app.task8_storage import register_task8_functions
 from app.workbench.api import register_workbench_routes
 from app.workbench.store import WorkbenchConflictError, WorkbenchStore
+from app.task_lifecycle_storage import source_assignments
+from app.storage_payload import TASK_RECORD_TYPES
+from tests.test_task_entity_schema import _source
 
 
 def _target_store(tmp_path: Path) -> WorkbenchStore:
@@ -304,3 +317,187 @@ def test_native_attachment_commit_failure_removes_file_and_metadata(tmp_path: Pa
     attachment_root = tmp_path / "workbench" / "attachments"
     assert not list(attachment_root.rglob("*.tmp"))
     assert not [path for path in attachment_root.rglob("*") if path.is_file()]
+
+
+def test_native_attachment_inverse_stages_source_locator_and_preserves_bytes(tmp_path: Path, monkeypatch):
+    from app.task20_definitions import task20_projection
+
+    path = tmp_path / "candidate.sqlite3"
+    source = _source()
+    parent_uuid = str(uuid4())
+    control_uuid = str(uuid4())
+    source.execute("update tasks set legacy_key=? where id=202", (parent_uuid,))
+    source_attachment = source.execute(
+        "select id from tasks where _kind=?", (TASK_RECORD_TYPES.code("workbench_attachments"),)
+    ).fetchone()[0]
+    control_path = tmp_path / "workbench" / "attachments" / parent_uuid / control_uuid
+    control_path.parent.mkdir(parents=True)
+    control_bytes = b"captured control\x00"
+    control_path.write_bytes(control_bytes)
+    values = source_assignments("workbench_attachments", {
+        "id": control_uuid,
+        "size_bytes": len(control_bytes),
+        "content_sha256": hashlib.sha256(control_bytes).hexdigest(),
+        "storage_path": str(control_path),
+    }, {}, payload_source="tasks.payload_json", source_alias="tasks")
+    source.execute(
+        f"update tasks set {values.sql} where _kind=? and id=?",
+        (*values.parameters, TASK_RECORD_TYPES.code("workbench_attachments"), source_attachment),
+    )
+    source.commit()
+    disk = sqlite3.connect(path)
+    source.backup(disk)
+    disk.close()
+    source.close()
+
+    with sqlite3.connect(path) as db:
+        register_task8_functions(db)
+        db.execute("pragma foreign_keys=off")
+        db.execute("begin immediate")
+        metadata = capture_task_entities(db)
+        forward = migrate_task_entities(db, metadata)
+        db.commit()
+
+    store = object.__new__(WorkbenchStore)
+    store.path = path
+    store.busy_timeout_seconds = 30
+    store.busy_timeout_milliseconds = 30_000
+    store._read_snapshot_connection = ContextVar("workbench_inverse_snapshot", default=None)
+    store._reused_connection = ContextVar("workbench_inverse_reused", default=None)
+    empty_parent = store.get_task("202")
+    new_parent = store.create_task(title="new inverse parent", runtime_kind="codex")
+    empty_attachment = store.save_attachment(
+        empty_parent.id, client_request_id=str(uuid4()), filename="empty-parent.bin",
+        media_type="application/octet-stream", content=b"empty parent native file",
+    )
+    new_attachment = store.save_attachment(
+        new_parent.id, client_request_id=str(uuid4()), filename="new-parent.bin",
+        media_type="application/octet-stream", content=b"new parent native file",
+    )
+    managed_root = tmp_path / "workbench" / "attachments"
+    with store._connect() as db:
+        snapshot = capture_workbench_attachment_files(db, managed_root)
+        original_paths = {Path(row["native_path"]) for row in snapshot["attachments"]}
+        import app.task_entity_inverse_files as inverse_files
+        real_link = inverse_files.os.link
+        attempts = 0
+
+        def fail_second_link(*args, **kwargs):
+            nonlocal attempts
+            attempts += 1
+            if attempts == 2:
+                raise OSError("injected second hardlink failure")
+            return real_link(*args, **kwargs)
+
+        db.execute("pragma foreign_keys=off")
+        db.execute("begin immediate")
+        failed_inverse = restore_task_entities(db, metadata, forward)
+        monkeypatch.setattr(inverse_files.os, "link", fail_second_link)
+        try:
+            stage_workbench_attachment_inverse_files(
+                db, managed_root, snapshot, failed_inverse,
+            )
+        except OSError as exc:
+            assert "injected second hardlink failure" in str(exc)
+        else:
+            raise AssertionError("injected Workbench hardlink failure was not raised")
+        db.rollback()
+        monkeypatch.setattr(inverse_files.os, "link", real_link)
+        assert all(path.exists() for path in original_paths)
+        assert attempts == 2
+        assert all(path.is_file() for path in original_paths)
+
+    with store._connect() as db:
+        snapshot = capture_workbench_attachment_files(db, managed_root)
+        db.execute("pragma foreign_keys=off")
+        db.execute("begin immediate")
+        interrupted_inverse = restore_task_entities(db, metadata, forward)
+        interrupted_plan = stage_workbench_attachment_inverse_files(
+            db, managed_root, snapshot, interrupted_inverse,
+        )
+        db.rollback()
+        rollback_staged_workbench_attachment_files(
+            interrupted_plan, interrupted_inverse["inverse_identity"], managed_root,
+        )
+        for item in interrupted_plan["attachments"]:
+            assert Path(item["native_path"]).exists()
+            if item["staged"]:
+                assert not Path(item["source_path"]).exists()
+
+    with store._connect() as db:
+        snapshot = capture_workbench_attachment_files(db, managed_root)
+        db.execute("pragma foreign_keys=off")
+        db.execute("begin immediate")
+        inverse = restore_task_entities(db, metadata, forward)
+        plan = stage_workbench_attachment_inverse_files(db, managed_root, snapshot, inverse)
+        try:
+            finalize_workbench_attachment_inverse_files(
+                db, plan, inverse["inverse_identity"], managed_root,
+            )
+        except ValueError as exc:
+            assert "committed database state" in str(exc)
+        else:
+            raise AssertionError("inverse files finalized before the caller committed")
+        assert all(path.exists() for path in original_paths)
+        db.commit()
+        finalize_workbench_attachment_inverse_files(
+            db, plan, inverse["inverse_identity"], managed_root,
+        )
+
+    identities = inverse["inverse_identity"]["workbench_attachment_identities"]
+    identity_by_canonical = {row["canonical_id"]: row for row in identities}
+    with store._connect() as db:
+        for saved in (empty_attachment, new_attachment):
+            identity = identity_by_canonical[int(saved.id)]
+            assert str(UUID(identity["source_public_id"])) == identity["source_public_id"]
+            attachment = db.execute(
+                "select storage_path from (" + task20_projection("workbench_attachments") + ") where id=?",
+                (identity["source_public_id"],),
+            ).fetchone()
+            assert Path(attachment[0]).read_bytes() == (
+                b"empty parent native file" if saved == empty_attachment else b"new parent native file"
+            )
+        control = db.execute(
+            "select storage_path from (" + task20_projection("workbench_attachments") + ") where id=?",
+            (control_uuid,),
+        ).fetchone()
+        assert control[0] == str(control_path)
+        assert control_path.read_bytes() == control_bytes
+
+    portable_identity = json.loads(json.dumps(inverse["inverse_identity"]))
+    with store._connect() as db:
+        db.execute("pragma foreign_keys=off")
+        db.execute("begin immediate")
+        inverse_metadata = capture_task_entities(db)
+        forward_plan = stage_workbench_attachment_forward_files(
+            db, managed_root, portable_identity,
+        )
+        forward_again = migrate_task_entities(
+            db, inverse_metadata, source_context=inverse["source_context"],
+            inverse_identity=portable_identity,
+        )
+        db.commit()
+    with store._connect() as db:
+        finalize_workbench_attachment_forward_files(
+            db, forward_plan, portable_identity, managed_root,
+        )
+        for saved in (empty_attachment, new_attachment):
+            row = db.execute(
+                "select storage_path from workbench_attachments where id=?", (int(saved.id),)
+            ).fetchone()
+            assert Path(row[0]).read_bytes() in {
+                b"empty parent native file", b"new parent native file",
+            }
+
+        snapshot = capture_workbench_attachment_files(db, managed_root)
+        db.execute("pragma foreign_keys=off")
+        db.execute("begin immediate")
+        inverse_again = restore_task_entities(db, inverse_metadata, forward_again)
+        plan_again = stage_workbench_attachment_inverse_files(
+            db, managed_root, snapshot, inverse_again,
+        )
+        db.commit()
+        finalize_workbench_attachment_inverse_files(
+            db, plan_again, inverse_again["inverse_identity"], managed_root,
+        )
+    assert len(inverse_again["inverse_identity"]["workbench_attachment_files"]) == 2

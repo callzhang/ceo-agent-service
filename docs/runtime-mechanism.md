@@ -3892,6 +3892,15 @@ Task2D7A 的 Workbench parent 候选以 `workbench_tasks.id` 原生 INTEGER 为�
 数据库 owner，也不移动迁移后的现有文件。真实旧 Workbench constructor 的逆迁新附件保留
 由单独的文件协调验收负责；Turn 生命周期、constructor 启用、部署及线上读回仍未完成。
 
+Task2D7I 的显式逆迁文件协调器在 caller-owned FK-off transaction 中，把新建或
+locator 已变化的 native attachment 通过硬链接暂存到恢复后的来源 parent UUID / attachment
+UUID 路径，并同步更新来源 payload。它在数据库提交并验证来源行 locator、文件 hash 和
+size 后才删除旧 native locator；事务失败时来源字节保留，caller 可用 JSON handoff 清理
+已暂存链接。正向重迁同样先暂存 native locator，提交后验证 native 行和文件，再删除来源
+locator。该工具只使用准确 owner edge、来源 ID、managed root 和文件事实，不从路径推断
+owner；它是显式迁移工具，不接入普通 Workbench 读写或启动 reconciliation，也未启用
+旧 constructor。完整边界和 predecessor acceptance 记录在 `task-2d7i-workbench-file-inverse-report.md`。
+
 
 Phase4C Attention 定时错误读取以原event_id或规范scheduled-task-run:<公共整数ID>
 分别定位候选，再应用原同日程较新dispatched且回复done/skipped的恢复谓词。

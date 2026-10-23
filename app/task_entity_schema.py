@@ -5,7 +5,7 @@ import json
 import hashlib
 import sqlite3
 from collections import defaultdict
-from uuid import uuid4
+from uuid import UUID, uuid4
 
 from app import task20_definitions, task_run_entity_definitions
 from app.task_lifecycle_current_schema import task_lifecycle_objects
@@ -346,6 +346,22 @@ def migrate_task_entities(
             logical[item["source_kind"]].append(item)
 
     all_rows = {kind: list(_source_rows(db, kind, stage)) for kind, stage in staged.items()}
+    attachment_identity_handoff = handoff["workbench_attachment_identities"]
+    attachment_file_handoff = handoff["workbench_attachment_files"]
+    attachments_by_physical = {
+        int(row["_physical_id"]): row for row in all_rows["workbench_attachments"]
+    }
+    if set(attachment_identity_handoff) - set(attachments_by_physical):
+        raise ValueError("Workbench attachment identity handoff names a missing source row")
+    for source_id, identity in attachment_identity_handoff.items():
+        row = attachments_by_physical[source_id]
+        if (row["id"] != identity["source_public_id"]
+                or handoff["owners"].get(("workbench_attachments", source_id), source_id)
+                != identity["canonical_id"]):
+            raise ValueError("Workbench attachment identity handoff differs from source row")
+    for source_id, file_handoff in attachment_file_handoff.items():
+        if attachments_by_physical[source_id]["storage_path"] != file_handoff["source_path"]:
+            raise ValueError("Workbench attachment source locator differs from handoff")
     meeting_rows = all_rows["meeting_alignment_jobs"]
     meeting_key_edges = handoff["meeting_business_keys"]
     reply_key_rowids = {int(row["_physical_id"]) for row in all_rows["business_object_tasks"]}
@@ -501,6 +517,9 @@ def migrate_task_entities(
                     lifecycle_field = SOURCE_FIELDS.get(kind, {}).get(source_field)
                     value = (row["_lifecycle_" + lifecycle_field] if lifecycle_field is not None
                              else row[source_field])
+                    if (kind == "workbench_attachments" and source_field == "storage_path"
+                            and int(row["_physical_id"]) in attachment_file_handoff):
+                        value = attachment_file_handoff[int(row["_physical_id"])]["native_path"]
                     if (kind, source_field) in {
                         ("reply_task_inputs", "reply_task_id"), ("business_object_tasks", "reply_task_id"),
                         ("okr_review_items", "request_id"), ("workbench_turns", "task_id"),
@@ -641,9 +660,13 @@ def migrate_task_entities(
 def _validate_inverse_identity(value: dict | None) -> dict:
     """Validate the content-free identity handoff returned by the inverse."""
     if value is None:
-        return {"owners": {}, "meeting_business_keys": {}}
-    if (not isinstance(value, dict) or set(value) not in (
-            {"version", "owners"}, {"version", "owners", "meeting_business_keys"})
+        return {"owners": {}, "meeting_business_keys": {},
+                "workbench_attachment_identities": {},
+                "workbench_attachment_files": {}}
+    if (not isinstance(value, dict) or not {"version", "owners"}.issubset(value)
+            or not set(value).issubset({"version", "owners", "meeting_business_keys",
+                                        "workbench_attachment_identities",
+                                        "workbench_attachment_files"})
             or value["version"] != 1):
         raise ValueError("unsupported inverse Task identity handoff")
     if not isinstance(value["owners"], list):
@@ -679,12 +702,88 @@ def _validate_inverse_identity(value: dict | None) -> dict:
             raise ValueError("duplicate Meeting delivery-key identity handoff")
         key_edges[source_id] = key_id
         key_ids.add(key_id)
-    return {"owners": result, "meeting_business_keys": key_edges}
+    attachment_identities = {}
+    attachment_public_ids = set()
+    for row in value.get("workbench_attachment_identities", []):
+        if (not isinstance(row, dict) or set(row) != {
+                    "source_physical_id", "canonical_id", "source_public_id",
+                    "is_new_native"}
+                or type(row["source_physical_id"]) is not int
+                or type(row["canonical_id"]) is not int
+                or not isinstance(row["source_public_id"], str)
+                or type(row["is_new_native"]) is not bool):
+            raise ValueError("invalid Workbench attachment identity handoff")
+        if (row["is_new_native"] and
+                str(UUID(row["source_public_id"])) != row["source_public_id"]):
+            raise ValueError("invalid Workbench attachment UUID identity")
+        if row["source_physical_id"] in attachment_identities or row["source_public_id"] in attachment_public_ids:
+            raise ValueError("duplicate Workbench attachment identity handoff")
+        attachment_identities[row["source_physical_id"]] = row
+        attachment_public_ids.add(row["source_public_id"])
+    files = {}
+    for row in value.get("workbench_attachment_files", []):
+        if (not isinstance(row, dict) or set(row) != {
+                "source_physical_id", "canonical_id", "parent_canonical_id",
+                "source_parent_physical_id", "source_parent_public_id",
+                "source_path", "native_path",
+                "source_public_id", "content_sha256", "size_bytes"}
+                or type(row["source_physical_id"]) is not int
+                or type(row["canonical_id"]) is not int
+                or type(row["parent_canonical_id"]) is not int
+                or type(row["source_parent_physical_id"]) is not int
+                or not isinstance(row["source_parent_public_id"], str)
+                or str(UUID(row["source_parent_public_id"])) != row["source_parent_public_id"]
+                or not isinstance(row["source_public_id"], str)
+                or not all(isinstance(row[key], str) and row[key] for key in
+                           ("source_path", "native_path", "content_sha256"))
+                or type(row["size_bytes"]) is not int or row["size_bytes"] < 0):
+            raise ValueError("invalid Workbench attachment file handoff")
+        key = row["source_physical_id"]
+        if key in files or key not in attachment_identities:
+            raise ValueError(
+                "unmatched Workbench attachment file handoff: "
+                f"source={key}, identities={sorted(attachment_identities)}"
+            )
+        if (row["canonical_id"] != attachment_identities[key]["canonical_id"]
+                or len(row["content_sha256"]) != 64):
+            raise ValueError("WorkBench attachment file identity mismatch")
+        files[key] = row
+    return {"owners": result, "meeting_business_keys": key_edges,
+            "workbench_attachment_identities": attachment_identities,
+            "workbench_attachment_files": files}
 
 
 def _inverse_identity_digest(value: dict) -> str:
     encoded = json.dumps(value, ensure_ascii=False, sort_keys=True, separators=(",", ":"))
     return hashlib.sha256(encoded.encode("utf-8")).hexdigest()
+
+
+def _restore_raw_physical_edges(
+        physical_target: dict, raw_exceptions: list[dict],
+        native_targets: set[tuple[str, int]]) -> dict:
+    """Translate source physical exceptions back through native owner IDs."""
+    result = dict(physical_target)
+    target_by_source = {}
+    for (kind, target_id), source_id in result.items():
+        key = (kind, source_id)
+        previous = target_by_source.setdefault(key, target_id)
+        if previous != target_id:
+            raise ValueError("ambiguous inverse Task physical identity edge")
+    for row in raw_exceptions:
+        kind, source_id = row["source_kind"], row["physical_id"]
+        target_id = target_by_source.get((kind, source_id))
+        if target_id is None:
+            # Only an already indexed identity edge proves the source ID is
+            # also the native target ID; never infer it from the raw key.
+            if ((kind, source_id) not in native_targets
+                    or result.get((kind, source_id)) not in (None, source_id)):
+                raise ValueError("raw Task identity exception has no inverse owner edge")
+            target_id = source_id
+        existing = result.get((kind, target_id))
+        if existing is not None and existing != source_id:
+            raise ValueError("raw Task identity exception conflicts with inverse owner edge")
+        result.setdefault((kind, target_id), source_id)
+    return result
 
 
 def _inverse_indexes(db: sqlite3.Connection, forward_metadata: dict) -> tuple[dict, dict, dict]:
@@ -904,11 +1003,10 @@ def restore_task_entities(db: sqlite3.Connection, source_metadata: dict, forward
             rows = db.execute(f"select {_quote(key_column)} from main.{_quote(table)} order by {_quote(key_column)}").fetchall()
         for (target_id,) in rows:
             physical_rows.append({"source_kind": kind, "physical_id": int(target_id), "target_id": int(target_id)})
-    old_physical = identities["physical_target"]
-    old_physical.update({
-        (row["source_kind"], row["physical_id"]): row["physical_id"]
-        for row in forward_metadata["raw_key_exceptions"]
-    })
+    old_physical = _restore_raw_physical_edges(
+        identities["physical_target"], forward_metadata["raw_key_exceptions"],
+        {(row["source_kind"], row["target_id"]) for row in physical_rows},
+    )
     old_public = identities["public_target"]
     source_key_values = defaultdict(list)
     for (kind, _), value in old_public.items():
@@ -959,6 +1057,10 @@ def restore_task_entities(db: sqlite3.Connection, source_metadata: dict, forward
         source_physical_by_native[(kind, canonical_id)] = original
 
     source_public_by_native = {}
+    attachment_public_ids = {
+        str(value) for (kind, _), value in old_public.items()
+        if kind == "workbench_attachments" and isinstance(value, str)
+    }
     for identity in physical_rows:
         kind, canonical_id = identity["source_kind"], identity["target_id"]
         if (kind, canonical_id) in old_public:
@@ -983,7 +1085,13 @@ def restore_task_entities(db: sqlite3.Connection, source_metadata: dict, forward
                     row[0].encode("utf-8")
                 ).hexdigest()
             else:
-                public_key = (str(uuid4()) if kind in {"workbench_tasks", "workbench_turns"}
+                if kind == "workbench_attachments":
+                    public_key = str(uuid4())
+                    while public_key in attachment_public_ids:
+                        public_key = str(uuid4())
+                    attachment_public_ids.add(public_key)
+                else:
+                    public_key = (str(uuid4()) if kind in {"workbench_tasks", "workbench_turns"}
                               else source_physical_by_native[(kind, canonical_id)]
                               if kind == "reply_tasks" else canonical_id)
         source_public_by_native[(kind, canonical_id)] = public_key
@@ -1108,12 +1216,13 @@ def restore_task_entities(db: sqlite3.Connection, source_metadata: dict, forward
             raise ValueError("Meeting delivery identity does not match its source facts")
 
     physical_owners = {}
-    for kind, physical_id, _, _, _, _ in source_rows:
+    for kind, physical_id, target_id, _, _, _ in source_rows:
         if physical_id in physical_owners:
             raise ValueError(
                 f"inverse source physical ID {physical_id} is claimed by "
-                f"{physical_owners[physical_id]} and {kind}")
-        physical_owners[physical_id] = kind
+                f"{physical_owners[physical_id][0]} target {physical_owners[physical_id][1]} "
+                f"and {kind} target {target_id}")
+        physical_owners[physical_id] = (kind, target_id)
 
     # Retire exactly the native owner relations created by this converter.
     # Their attached indexes and triggers are removed by SQLite with each
@@ -1133,6 +1242,8 @@ def restore_task_entities(db: sqlite3.Connection, source_metadata: dict, forward
                 source_key_next[kind] = raw_value + 1
             elif kind == "email_agent_classification_tasks" and (kind, target_id) not in old_public:
                 raw_value = target_id
+            elif kind == "workbench_attachments":
+                raw_value = physical_id
             else:
                 raw_value = public_key
             raw_type = "text" if isinstance(raw_value, str) else "integer"
@@ -1185,6 +1296,23 @@ def restore_task_entities(db: sqlite3.Connection, source_metadata: dict, forward
             "source_meeting_physical_id": source_meeting_physical_id,
             "task_business_key_row_id": int(row[0]),
         })
+    attachment_identities = []
+    parent_target_by_source = {
+        source_id: native_id for (kind, native_id), source_id in source_physical_by_native.items()
+        if kind == "workbench_tasks"
+    }
+    for kind, physical_id, target_id, public_key, _, parent_physical in source_rows:
+        if kind != "workbench_attachments" or (kind, target_id) in old_public:
+            continue
+        parent_target = parent_target_by_source.get(parent_physical)
+        if parent_target is None:
+            raise ValueError("restored Workbench attachment parent identity is missing")
+        attachment_identities.append({
+            "source_physical_id": physical_id,
+            "canonical_id": target_id,
+            "source_public_id": public_key,
+            "is_new_native": (kind, target_id) not in old_public,
+        })
     inverse_identity = {
         "version": 1,
         "owners": [
@@ -1194,9 +1322,12 @@ def restore_task_entities(db: sqlite3.Connection, source_metadata: dict, forward
         ],
         "meeting_business_keys": meeting_business_keys,
     }
+    if attachment_identities:
+        inverse_identity["workbench_attachment_identities"] = attachment_identities
     source_context = {
         "version": 1,
-        "handoff_required": bool(inverse_identity["owners"] or meeting_business_keys),
+        "handoff_required": bool(inverse_identity["owners"] or meeting_business_keys
+                                  or attachment_identities),
         "handoff_sha256": _inverse_identity_digest(inverse_identity),
     }
     return {

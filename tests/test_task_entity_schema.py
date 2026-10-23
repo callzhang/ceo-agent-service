@@ -299,6 +299,29 @@ def test_forward_and_public_owner_resolver_preserve_blob_typed_public_identity()
                                           public_key=b"\x00\xff") == 202
 
 
+def test_inverse_handoff_json_keeps_captured_blob_parent_out_of_uuid_file_map():
+    with closing(_source()) as db:
+        db.execute("update tasks set legacy_key=? where id=202", (b"\x00\xff",))
+        db.commit()
+        db.execute("pragma foreign_keys=off")
+        db.execute("begin immediate")
+        metadata = capture_task_entities(db)
+        forward = migrate_task_entities(db, metadata)
+        inverse = restore_task_entities(db, metadata, forward)
+        portable = json.loads(json.dumps(inverse["inverse_identity"]))
+        assert portable.get("workbench_attachment_files", []) == []
+        assert db.execute("select legacy_key,typeof(legacy_key) from tasks where id=202").fetchone() == (
+            b"\x00\xff", "blob",
+        )
+        migrate_task_entities(
+            db, metadata, source_context=inverse["source_context"],
+            inverse_identity=portable,
+        )
+        assert resolve_source_public_owner(
+            db, source_kind="workbench_tasks", public_key=b"\x00\xff",
+        ) == 202
+
+
 def test_historical_task20_source_declaration_is_rejected_without_mutation():
     with closing(sqlite3.connect(":memory:")) as db:
         db.execute("pragma foreign_keys=off")
@@ -1119,6 +1142,26 @@ def test_inverse_preserves_hidden_task12_rowid_legacy_key_for_natural_key_owner(
                    and row["physical_id"] == physical_id
                    and row["value"] == "7" and row["type"] == "text"
                    for row in refoward["raw_key_exceptions"])
+
+
+def test_inverse_translates_raw_source_physical_ids_through_native_owner_edges():
+    from app.task_entity_schema import _restore_raw_physical_edges
+
+    kind = "workbench_attachments"
+    # Source 5 belongs to native 4; source 6 belongs to native 5. A newly
+    # created native row can also occupy source physical ID 5, so raw IDs
+    # cannot be copied into the native-target keyed identity map.
+    actual = _restore_raw_physical_edges(
+        {(kind, 4): 5, (kind, 5): 6, (kind, 8): 8},
+        [
+            {"source_kind": kind, "physical_id": 5},
+            {"source_kind": kind, "physical_id": 6},
+            {"source_kind": kind, "physical_id": 8},
+        ],
+        {(kind, 4), (kind, 5), (kind, 8)},
+    )
+
+    assert actual == {(kind, 4): 5, (kind, 5): 6, (kind, 8): 8}
 
 
 def test_mid_inverse_failure_rolls_back_when_caller_rolls_back():
