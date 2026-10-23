@@ -26,4 +26,4 @@ No runtime/constructor activation, provider send, main push, deployment or produ
 
 - Claim setup: `715ed6d41 claim Meeting upstream native integration`.
 - Pinned upstream merge: `878c774620cf27cfc57293d383e1f4d7c625d0d4`.
-- Meeting behavior adaptation and regression evidence are committed separately after the merge and before independent review. The independent Task2B inverse metadata incompatibility still requires the separately scoped reconciliation before composed migration can be considered release-ready.
+- Meeting behavior adaptation and regression evidence: `6754ff0d8 Integrate Meeting Audit with native Run ownership`. It is committed after the merge and before independent review. The independent Task2B inverse metadata incompatibility still requires the separately scoped reconciliation before composed migration can be considered release-ready.
