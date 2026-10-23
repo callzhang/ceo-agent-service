@@ -691,3 +691,9 @@ v76 后的定向测试为 `tests/test_weekly_okr_report.py` 与 `tests/test_sche
 ### PR #277 的远端检查结果
 
 PR #277 已打开，固定 v75/v76 case、模型/CLI 和 grader 对照及本地回归均附在 PR/无正文证据中。GitHub Quality 在 `npm test` 的首步全仓 Ruff lint 中失败，报 **16 项**、位于 7 个测试文件；逐个确认这 7 个文件与 `origin/main` 字节相同，单独在当前代码和这些原样文件上复现同一 lint 错误。后续 npm、workbench 和浏览器步骤因此未运行。Vercel 预览因账号额度限制失败，平台提示 24 小时后可重试。改动文件 Ruff、OKR 定向测试、Consumer 脚本审核测试及 release-manifest 测试均通过；没有为清绿而改动无关测试、降低门槛或跳过 OKR 验收。production 尚未部署；需先处理或获准接受上述远端基线阻塞，再继续正式合并/部署和新 task6 运行。
+
+### 2026-10-23 18 人空搜索验收复核
+
+匿名冻结案例 `empty-search-18-managers-incremental-analysis`：18 人中 15 人有 live OKR、3 人成功读取但目标列表为空；15 次独立文档搜索均无匹配。v82 完整轨迹发现，Consumer 写入第 1 位成员分析后先读取了第 2 位成员 source/schema，之后才读回第 1 位；Audit 仍批准候选。根因是 Skill 同时要求逐人读回和 prepare 后预读所有成员材料。现已改为按名册逐人延迟读取，grader 也会拦查下一位的 source/schema、搜索是否早于当前分析读回。
+
+修订后 [v83 合成验收](../evals/scheduled_task_generic/okr_results.v83.json) 通过：15/15 成员顺序断言通过、3 位无目标成员保持未评分；最终 Audit approve，2 轮修订后完整报告、provider 读回和摘要候选均通过。全部使用隔离合成数据和工具，没有真实报告重放或外发。`tests/test_scheduled_okr_agent_eval.py tests/test_consumer_system_release.py` 为 **81 passed**，Ruff 与差异检查通过。Skill 发布摘要和候选摘要前置条件已同步；生产发布待 PR 合并后按流程执行。
