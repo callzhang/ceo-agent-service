@@ -380,6 +380,46 @@ def test_review_only_run_preserves_session_and_uses_bound_read_cli(setup):
     assert snapshot["invocation_facts"]["skill_names"] == []
 
 
+def test_audit_revision_resumes_audit_owned_session_without_replacing_consumer_session(setup):
+    store, task, consumer_0, context_0, _config, _router = setup
+    store.upsert_conversation_runtime_session(
+        task.conversation_id, "codex_oauth", "consumer-owned-session", "consumer-contract"
+    )
+    audit_0 = _runner(setup, CapturingExecutor(_wire(outcome="return"))).run(
+        task, context_0, turn_attempt=0, parent_agent_run_id=consumer_0.id,
+    )
+
+    candidate = context_0.candidate
+    consumer_1 = store.claim_agent_run(
+        task.id,
+        task.execution_generation,
+        role=AgentRole.CONSUMER,
+        proposal_revision=1,
+        turn_attempt=0,
+        parent_agent_run_id=audit_0.run_id,
+        operation_id="",
+        owner="consumer-revision-1",
+    ).run
+    store.complete_agent_run(
+        consumer_1.id, candidate.model_dump(mode="json"), owner="consumer-revision-1"
+    )
+    context_1 = replace(
+        context_0, proposal_revision=1, operation_id="audit-operation-1"
+    )
+    executor_1 = CapturingExecutor(_wire(outcome="approve"))
+    audit_1 = _runner(setup, executor_1).run(
+        task, context_1, turn_attempt=0, parent_agent_run_id=consumer_1.id,
+    )
+
+    assert audit_1.result.outcome is AuditOutcome.APPROVE
+    assert store.get_agent_run(audit_1.run_id).codex_session_id == "audit-session"
+    assert "resume" in executor_1.commands[0]
+    assert "audit-session" in executor_1.commands[0]
+    assert store.get_conversation_runtime_session(
+        task.conversation_id, "codex_oauth"
+    ) == "consumer-owned-session"
+
+
 @pytest.mark.parametrize("outcome", ["return", "reject"])
 def test_audit_feedback_is_business_review_without_external_result(setup, outcome):
     _store, task, parent, context, _config, _router = setup
