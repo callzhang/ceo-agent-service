@@ -5539,6 +5539,8 @@ class AutoReplyStore(LogicalRunStoreMixin, ReviewedCandidateStoreMixin):
         *,
         revision_key: str,
     ) -> int:
+        from app import task_entity_storage
+
         fields = (
             "channel",
             "conversation_id",
@@ -5552,24 +5554,28 @@ class AutoReplyStore(LogicalRunStoreMixin, ReviewedCandidateStoreMixin):
             "oa_url",
             "business_object_key",
         )
-        _task8_insert = task8_insert_parts('reply_task_inputs', {
-            "parent_id": task_id, "input_revision_key": revision_key,
+        values = {
             **{field: snapshot[field] for field in fields},
-        })
-        db.execute(f"insert or ignore into tasks ({_task8_insert.columns}) values ({_task8_insert.values})", _task8_insert.parameters)
-        row = db.execute(
-            f'select * from ({REPLY_TASK_INPUT_SQL}) where channel=? and conversation_id=? and trigger_message_id=? and input_revision_key=?',
-            (
-                snapshot["channel"],
-                snapshot["conversation_id"],
-                snapshot["trigger_message_id"],
-                revision_key,
-            ),
+            "input_revision_key": revision_key,
+        }
+        existing = db.execute(
+            "select * from task_inputs where channel=? and conversation_id=? and trigger_message_id=? and input_revision_key=?",
+            (snapshot["channel"], snapshot["conversation_id"],
+             snapshot["trigger_message_id"], revision_key),
         ).fetchone()
-        if row is None or row["reply_task_id"] != task_id:
+        if existing is not None and int(existing["task_id"]) != task_id:
             raise ReplyTaskIdentityConflict(
                 "canonical reply input identity belongs to another task"
             )
+        if existing is not None and any(
+            existing[field] != snapshot[field] for field in fields
+        ):
+            raise ReplyTaskIdentityConflict(
+                "canonical reply input revision has different bytes"
+            )
+        row, _inserted = task_entity_storage.append_task_input(
+            db, task_id=task_id, values=values,
+        )
         if any(row[field] != snapshot[field] for field in fields):
             raise ReplyTaskIdentityConflict(
                 "canonical reply input revision has different bytes"
@@ -6066,6 +6072,8 @@ class AutoReplyStore(LogicalRunStoreMixin, ReviewedCandidateStoreMixin):
         db: sqlite3.Connection,
         spec: ReplyTaskSpec,
     ) -> tuple[ReplyTask, bool]:
+        from app import task_entity_storage
+
         key = reply_business_object_key(
             channel=spec.channel,
             conversation_id=spec.conversation_id,
@@ -6075,109 +6083,218 @@ class AutoReplyStore(LogicalRunStoreMixin, ReviewedCandidateStoreMixin):
             trigger_text=spec.trigger_text,
         )
         existing_input = db.execute(
-            f"""
-            select reply_task_id from ({REPLY_TASK_INPUT_SQL})
-            where channel=? and conversation_id=? and trigger_message_id=?
-            """,
+            "select task_id from task_inputs where channel=? and conversation_id=? and trigger_message_id=? order by id limit 1",
             (spec.channel, spec.conversation_id, spec.trigger_message_id),
         ).fetchone()
         if existing_input is not None:
-            row = db.execute(
-                f"select * from ({REPLY_TASK_CURRENT_SQL}) as reply_tasks where id=?",
-                (int(existing_input["reply_task_id"]),),
-            ).fetchone()
-            if row is None:
+            owner = task_entity_storage.get_task_with_inputs(
+                db, int(existing_input["task_id"]),
+            )
+            if owner is None:
                 raise RuntimeError("reply task input references a missing task")
-            return cls._reply_task_from_row(row), False
+            return cls._reply_task_from_native(owner), False
 
         mapping = db.execute(
-            f"select reply_task_id from ({task12_projection('business_object_tasks')}) where business_object_key=?",
+            "select task_id from task_business_keys where business_key=?",
             (key,),
         ).fetchone()
         if mapping is None and key.startswith("oa:"):
             if key.endswith(":"):
                 matches = db.execute(
-                    f"select business_object_key, reply_task_id from ({task12_projection('business_object_tasks')}) where business_object_key like ?",
+                    "select business_key, task_id from task_business_keys where business_key like ?",
                     (f"{key}%",),
                 ).fetchall()
                 if len(matches) == 1:
-                    key = str(matches[0]["business_object_key"])
+                    key = str(matches[0]["business_key"])
                     mapping = matches[0]
             else:
                 process_id, _ = key[3:].rsplit(":", 1)
                 provisional_key = f"oa:{process_id}:"
                 provisional = db.execute(
-                    f"select reply_task_id from ({task12_projection('business_object_tasks')}) where business_object_key=?",
+                    "select task_id from task_business_keys where business_key=?",
                     (provisional_key,),
                 ).fetchone()
                 if provisional is not None:
-                    task_id = int(provisional["reply_task_id"])
+                    task_id = int(provisional["task_id"])
                     db.execute(
-                        f"""update tasks set {task8_set_parts('reply_tasks', {}, update_sql={'business_object_key': '?'}, payload_source='tasks.payload_json').sql}  where record_type='reply_tasks' and id=?""",
-                        (key, task_id),
+                        "delete from task_business_keys where task_id=? and business_key=?",
+                        (task_id, provisional_key),
                     )
-                    db.execute(
-                        f"""update tasks set {task8_set_parts('reply_task_inputs', {}, update_sql={'business_object_key': '?'}, payload_source='tasks.payload_json').sql}  where record_type='reply_task_inputs' and parent_id=?""",
-                        (key, task_id),
+                    task_entity_storage.associate_business_key(
+                        db, task_id=task_id, business_key=key,
                     )
-                    db.execute(
-                        'delete from tasks where record_type=\'business_object_tasks\' and "business_object_tasks__business_object_key"=?',
-                        (provisional_key,),
-                    )
-                    insert_task12(db, 'business_object_tasks', {'business_object_key': key, 'reply_task_id': task_id})
                     mapping = provisional
         if mapping is None:
-            _task8_insert = task8_insert_parts('reply_tasks', {'channel': spec.channel, 'conversation_id': spec.conversation_id, 'conversation_title': spec.conversation_title, 'single_chat': int(spec.single_chat), 'trigger_message_id': spec.trigger_message_id, 'trigger_create_time': spec.trigger_create_time, 'trigger_sender': spec.trigger_sender, 'available_at': spec.available_at, 'force_new_decision': int(spec.force_new_decision), 'oa_url': spec.oa_url, 'manual_rerun_attempt_id': spec.manual_rerun_attempt_id, 'execution_generation': spec.execution_generation, 'error': spec.error, 'business_object_key': key}, insert_sql={'input_version': '1', 'claimed_input_version': '0', 'status': "'pending'", 'attempts': '0', 'created_at': 'current_timestamp', 'updated_at': 'current_timestamp', 'manual_rerun_revision_key': "''", 'recovery_code': "''"})
-            cursor = db.execute(
-                f"""
-                insert into tasks ({_task8_insert.columns}) values ({_task8_insert.values})
-                """,
-                _task8_insert.parameters,
+            now = str(db.execute("select current_timestamp").fetchone()[0])
+            task = task_entity_storage.create_task(
+                db,
+                values={
+                    "kind": "reply",
+                    "status": "pending",
+                    "available_at": spec.available_at,
+                    "attempts": 0,
+                    "error": spec.error,
+                    "execution_generation": spec.execution_generation,
+                    "input_version": 1,
+                    "claimed_input_version": 0,
+                    "created_at": now,
+                    "updated_at": now,
+                },
+                parameters={
+                    "force_new_decision": spec.force_new_decision,
+                    "manual_rerun_attempt_id": spec.manual_rerun_attempt_id,
+                    "manual_rerun_revision_key": "",
+                    "recovery_code": "",
+                },
             )
-            task_id = int(cursor.lastrowid)
-            insert_task12(db, 'business_object_tasks', {'business_object_key': key, 'reply_task_id': task_id})
+            task_id = int(task["id"])
+            task_entity_storage.associate_business_key(
+                db, task_id=task_id, business_key=key,
+            )
         else:
-            task_id = int(mapping["reply_task_id"])
+            task_id = int(mapping["task_id"])
 
-        _task8_insert = task8_insert_parts('reply_task_inputs', {'parent_id': task_id, 'channel': spec.channel, 'conversation_id': spec.conversation_id, 'conversation_title': spec.conversation_title, 'single_chat': int(spec.single_chat), 'trigger_message_id': spec.trigger_message_id, 'trigger_create_time': spec.trigger_create_time, 'trigger_sender': spec.trigger_sender, 'trigger_text': spec.trigger_text, 'trigger_message_json': spec.trigger_message_json, 'oa_url': spec.oa_url, 'business_object_key': key}, insert_sql={'input_revision_key': "''", 'created_at': 'current_timestamp', 'input_provenance_json': "'{}'", 'input_compacted': '0'})
-        inserted = db.execute(
-            f"""
-            insert or ignore into tasks ({_task8_insert.columns}) values ({_task8_insert.values})
-            """,
-            _task8_insert.parameters,
-        ).rowcount == 1
-        if inserted:
-            current = db.execute(
-                f'select * from ({REPLY_TASK_SQL}) where id=?', (task_id,)
-            ).fetchone()
-            if current is None:
-                raise RuntimeError("business reply task was not persisted")
-            if str(current["trigger_message_id"]) != spec.trigger_message_id:
-                terminal = str(current["status"]) in {"done", "failed"}
-                generation = uuid4().hex if terminal else str(current["execution_generation"])
-                db.execute(
-                    f"""
-                    update tasks set {task8_set_parts('reply_tasks', {}, update_sql={'channel': '?', 'conversation_id': '?', 'conversation_title': '?', 'single_chat': '?', 'trigger_message_id': '?', 'trigger_create_time': '?', 'trigger_sender': '?', 'oa_url': '?', 'business_object_key': '?', 'input_version': f"""{task20_column('reply_tasks', 'input_version')}+1""", 'status': f"""case when {task20_column('reply_tasks', 'status')} in ('done','failed') then 'pending' else {task20_column('reply_tasks', 'status')} end""", 'attempts': f"""case when {task20_column('reply_tasks', 'status')} in ('done','failed') then 0 else {task20_column('reply_tasks', 'attempts')} end""", 'execution_generation': '?', 'locked_at': f"""case when {task20_column('reply_tasks', 'status')} in ('done','failed') then null else {task20_column('reply_tasks', 'locked_at')} end""", 'error': f"""case when {task20_column('reply_tasks', 'status')} in ('done','failed') then '' else {task20_column('reply_tasks', 'error')} end""", 'available_at': f"""case when {task20_column('reply_tasks', 'status')} in ('done','failed') then '' else {task20_column('reply_tasks', 'available_at')} end""", 'updated_at': 'current_timestamp'}, payload_source='tasks.payload_json').sql}  where record_type='reply_tasks' and id=?
-                    """,
-                    (
-                        spec.channel, spec.conversation_id, spec.conversation_title,
-                        int(spec.single_chat), spec.trigger_message_id,
-                        spec.trigger_create_time, spec.trigger_sender,
-                        spec.oa_url,
-                        key, generation, task_id,
-                    ),
-                )
-        input_row = db.execute(
-            f"select id from ({REPLY_TASK_INPUT_SQL}) where reply_task_id=? and channel=? and conversation_id=? and trigger_message_id=? and input_revision_key=''",
-            (task_id, spec.channel, spec.conversation_id, spec.trigger_message_id),
-        ).fetchone()
-        if input_row is None:
-            raise RuntimeError("canonical reply input was not persisted")
-        db.execute(f"""update tasks set {task8_set_parts('reply_tasks', {}, update_sql={}, structural_sql={'current_input_id': "(select id from tasks where record_type='reply_task_inputs' and cast(legacy_key as integer)=?)"}, payload_source='tasks.payload_json').sql}  where record_type='reply_tasks' and id=?""", (input_row["id"], task_id))
-        row = db.execute(f"select * from ({REPLY_TASK_CURRENT_SQL}) as reply_tasks where id=?", (task_id,)).fetchone()
-        if row is None:
+        existing_owner = task_entity_storage.get_task_with_inputs(db, task_id)
+        if existing_owner is None:
             raise RuntimeError("reply task was not persisted")
-        return cls._reply_task_from_row(row), inserted
+        snapshot = {
+            "channel": spec.channel,
+            "conversation_id": spec.conversation_id,
+            "conversation_title": spec.conversation_title,
+            "single_chat": int(spec.single_chat),
+            "trigger_message_id": spec.trigger_message_id,
+            "trigger_create_time": spec.trigger_create_time,
+            "trigger_sender": spec.trigger_sender,
+            "trigger_text": spec.trigger_text,
+            "trigger_message_json": spec.trigger_message_json,
+            "oa_url": spec.oa_url,
+            "business_object_key": key,
+        }
+        existing_identity = db.execute(
+            "select id from task_inputs where channel=? and conversation_id=? and trigger_message_id=? and input_revision_key=''",
+            (spec.channel, spec.conversation_id, spec.trigger_message_id),
+        ).fetchone()
+        input_id = cls._append_reply_input_snapshot(
+            db, task_id, snapshot, revision_key="",
+        )
+        task_row = task_entity_storage.get_task_with_inputs(db, task_id)
+        if task_row is None:
+            raise RuntimeError("reply task was not persisted")
+        inserted = existing_identity is None
+        if task_row["current_input_id"] is None:
+            if task_entity_storage.bind_current_input(
+                db, task_id=task_id, input_id=input_id,
+                expected_input_version=1, input_version=1,
+            ) is None:
+                raise RuntimeError("reply current input binding failed")
+        current = task_entity_storage.get_task_with_inputs(db, task_id)
+        if current is None:
+            raise RuntimeError("reply task disappeared after input binding")
+        current_input = current["current_input"]
+        if current_input is None:
+            raise RuntimeError("reply task has no current input")
+        if int(current_input["id"]) != input_id:
+            # A business-key owner receives a new immutable input. The task's
+            # current binding advances while any claimed execution stays pinned.
+            advanced = task_entity_storage.bind_current_input(
+                db, task_id=task_id, input_id=input_id,
+                expected_input_version=int(current["input_version"]),
+                input_version=int(current["input_version"]) + 1,
+            )
+            if advanced is None:
+                raise RuntimeError("reply current input binding lost its version")
+            expected = {
+                "current_input_id": input_id,
+                "input_version": int(current["input_version"]) + 1,
+            }
+            if str(current["status"]) in {"done", "failed"}:
+                reset = task_entity_storage.update_task_cas(
+                    db,
+                    task_id=task_id,
+                    expected={
+                        **expected,
+                        "status": current["status"],
+                        "execution_generation": current["execution_generation"],
+                    },
+                    changes={
+                        "status": "pending",
+                        "attempts": 0,
+                        "execution_generation": uuid4().hex,
+                        "locked_at": None,
+                        "error": "",
+                        "available_at": "",
+                        "updated_at": str(db.execute(
+                            "select current_timestamp"
+                        ).fetchone()[0]),
+                    },
+                )
+                if reset is None:
+                    raise RuntimeError("terminal reply task reset lost its owner")
+            elif task_entity_storage.update_task_cas(
+                db,
+                task_id=task_id,
+                expected=expected,
+                changes={"updated_at": str(db.execute(
+                    "select current_timestamp"
+                ).fetchone()[0])},
+            ) is None:
+                raise RuntimeError("reply task timestamp update lost its owner")
+            current = task_entity_storage.get_task_with_inputs(db, task_id)
+            if current is None:
+                raise RuntimeError("reply task disappeared after input advance")
+        return cls._reply_task_from_native(current), inserted
+
+    @classmethod
+    def _reply_task_from_native(
+        cls, task: Mapping[str, object],
+    ) -> ReplyTask:
+        current_input = task["current_input"]
+        if not isinstance(current_input, Mapping):
+            raise RuntimeError("reply task has no bound current input")
+        parameters = task["parameters"]
+        if not isinstance(parameters, Mapping):
+            raise RuntimeError("reply task parameters are unavailable")
+        return ReplyTask(
+            id=int(task["id"]),
+            channel=str(current_input["channel"]),
+            conversation_id=str(current_input["conversation_id"]),
+            conversation_title=str(current_input["conversation_title"]),
+            single_chat=bool(current_input["single_chat"]),
+            trigger_message_id=str(current_input["trigger_message_id"]),
+            trigger_create_time=str(current_input["trigger_create_time"]),
+            trigger_sender=str(current_input["trigger_sender"]),
+            trigger_text=str(current_input["trigger_text"]),
+            trigger_message_json=(
+                cls._compact_reply_input_json(
+                    str(current_input["input_provenance_json"])
+                )
+                if current_input["input_compacted"]
+                else str(current_input["trigger_message_json"])
+            ),
+            available_at=str(task["available_at"] or ""),
+            force_new_decision=bool(parameters["force_new_decision"]),
+            oa_url=str(current_input["oa_url"]),
+            manual_rerun_attempt_id=parameters["manual_rerun_attempt_id"],
+            manual_rerun_revision_key=str(parameters["manual_rerun_revision_key"]),
+            execution_generation=str(task["execution_generation"]),
+            recovery_code=str(parameters["recovery_code"]),
+            business_object_key=str(current_input["business_object_key"]),
+            input_version=int(task["input_version"]),
+            claimed_input_version=int(task["claimed_input_version"] or 0),
+            current_input_id=int(task["current_input_id"]),
+            claimed_input_id=(
+                int(task["claimed_input_id"])
+                if task["claimed_input_id"] is not None else None
+            ),
+            input_provenance_json=str(current_input["input_provenance_json"]),
+            input_compacted=bool(current_input["input_compacted"]),
+            status=str(task["status"]),
+            attempts=int(task["attempts"] or 0),
+            locked_at=task["locked_at"],
+            error=str(task["error"] or ""),
+            created_at=str(task["created_at"]),
+            updated_at=str(task["updated_at"]),
+        )
 
     def list_reply_task_inputs(self, task_id: int) -> list[dict[str, object]]:
         with self._connect() as db:
@@ -6373,15 +6490,15 @@ class AutoReplyStore(LogicalRunStoreMixin, ReviewedCandidateStoreMixin):
         specs: Sequence[ReplyTaskSpec],
     ) -> tuple[ReplyTask, ...]:
         tasks: list[ReplyTask] = []
+        from app import task_entity_storage
+
         for spec in specs:
             task, _ = self._ensure_business_reply_task(db, spec)
             input_row = db.execute(
-                f"""
-                select * from ({REPLY_TASK_INPUT_SQL})
-                where channel=? and conversation_id=? and trigger_message_id=?
-                """,
+                "select * from task_inputs where channel=? and conversation_id=? and trigger_message_id=? order by id limit 1",
                 (spec.channel, spec.conversation_id, spec.trigger_message_id),
             ).fetchone()
+            owner = task_entity_storage.get_task_with_inputs(db, task.id)
             expected_input = {
                 "channel": spec.channel,
                 "conversation_id": spec.conversation_id,
@@ -6394,7 +6511,7 @@ class AutoReplyStore(LogicalRunStoreMixin, ReviewedCandidateStoreMixin):
                 "trigger_message_json": spec.trigger_message_json,
                 "oa_url": spec.oa_url,
             }
-            if input_row is None or any(
+            if input_row is None or owner is None or any(
                 (
                     json.loads(str(input_row["input_provenance_json"]))[field_name]["sha256"]
                     != hashlib.sha256(expected.encode("utf-8")).hexdigest()
@@ -6407,7 +6524,7 @@ class AutoReplyStore(LogicalRunStoreMixin, ReviewedCandidateStoreMixin):
                 raise ReplyTaskIdentityConflict(
                     "reply task identity is bound to different immutable input"
                 )
-            tasks.append(task)
+            tasks.append(self._reply_task_from_native(owner))
         return tuple(tasks)
 
     def enqueue_manual_rerun_reply_task(

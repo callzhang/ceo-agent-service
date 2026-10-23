@@ -24,6 +24,16 @@ The unactivated `app/task_entity_migration.py` utility builds kind-qualified phy
 
 Focused evidence: `pytest -q tests/test_task_entity_migration.py` — 3 passed; Ruff and `git diff --check` passed. The Task2B forward/inverse converter and source/target round-trip remain outstanding.
 
+## Task2C Reply Store creator unit (2026-10-22)
+
+The genuine `AutoReplyStore` reply creator path now uses the assembled target's native Task, TaskInput, and TaskBusinessKey owners: `_ensure_business_reply_task`, `_append_reply_input_snapshot`, the single and batch enqueue/ensure methods, and a creator-only Task/current-input to `ReplyTask` projection. The existing caller-owned `BEGIN IMMEDIATE` transaction remains in place. Input identity still includes the full revision key, exact source bytes are checked before returning an existing input, triple-message dedupe returns its original Task, OA provisional business keys refine through the relation table, and terminal Tasks reset only when a new input is appended. A newer input advances the current pointer/version while a claimed pointer and nonterminal execution generation stay fixed. The current authorized-email plan is read from the actual assembled Email owners before batch creation.
+
+The Task parameters contain exactly the four existing request values (`force_new_decision`, `manual_rerun_attempt_id`, `manual_rerun_revision_key`, and `recovery_code`); Task metadata is read from the bound current TaskInput. No source-schema dual decoder or Task singleton business-key field was added. `REPLY_TASK_*` declarations remain for the lifecycle methods that have not yet moved.
+
+Focused genuine-Store tests use `task_run_entity_assembly_objects()`, foreign keys enabled, and `AutoReplyStore._connect` / `_immediate_write_transaction`. The creator regression was RED on base `456549add`: it failed against the assembled target with `no such column: legacy_key` from the prior source projection. GREEN on this unit: `pytest -q tests/test_store_task_entity_creator.py` — 7 passed, including message dedupe, immutable append byte/owner conflicts, multi-key retention, separate channel/key ownership, OA refinement, current/claimed advance, terminal reset, batch rollback, and real Email plan authorization. `tests/test_task_entity_storage.py`, Ruff, compileall, and `git diff --check` are recorded in the Task2C report.
+
+This is a partial, unpublished caller closure. Eleven named downstream methods remain on the source projection path: scheduled execution dispatch; manual rerun; input refresh; trigger update; pending-trigger update; revised-trigger requeue; single-chat coalescing; current task read; claimed execution read; single claim; and batch claim. The broader reply lifecycle, delivery, attempt, History, reconciliation, and constructor readers also remain. Constructor activation, migration/publication, provider/CLI/production access, and release are outside this unit; the source projection constants stay until those callers move in the final cutover.
+
 ## Verification
 
 - Focused GREEN: `pytest -q tests/test_task_run_entity_assembly.py tests/test_run_adoption_definitions.py tests/test_task_run_entity_definitions.py tests/test_run_entity_definitions.py` — 42 passed.
