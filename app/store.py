@@ -13144,6 +13144,12 @@ class AutoReplyStore(LogicalRunStoreMixin, ReviewedCandidateStoreMixin):
                 task_id = int(task["id"])
                 associate_business_key(db, task_id=task_id,
                     business_key=f"meeting-alignment:{task_id}:{meeting_id}")
+                db.execute(
+                    "insert into task_results(task_id,result_kind,decision_json,target_kind,target_id,target_title,"
+                    "mentions_json,final_message,send_result_json,calendar_summary_status,calendar_summary_result_json) "
+                    "values(?,'meeting_alignment','{}','','','','[]','','{}','not_started','{}')",
+                    (task_id,),
+                )
                 return task_id
             task_id = int(existing["id"])
             task = get_task(db, task_id)
@@ -14048,6 +14054,12 @@ class AutoReplyStore(LogicalRunStoreMixin, ReviewedCandidateStoreMixin):
                     expected={"status": task["status"]}, changes={"updated_at": db.execute("select current_timestamp").fetchone()[0]},
                     parameters={**task["parameters"], **parameters})
             if results:
+                db.execute(
+                    "insert into task_results(task_id,result_kind,decision_json,target_kind,target_id,target_title,"
+                    "mentions_json,final_message,send_result_json,calendar_summary_status,calendar_summary_result_json) "
+                    "values(?,'meeting_alignment','{}','','','','[]','','{}','not_started','{}') on conflict do nothing",
+                    (job_id,),
+                )
                 columns = ["task_id", "result_kind", *results]
                 db.execute(
                     f"insert into task_results({','.join(columns)}) values({','.join('?' for _ in columns)}) "
@@ -14070,27 +14082,29 @@ class AutoReplyStore(LogicalRunStoreMixin, ReviewedCandidateStoreMixin):
             return False
         with self._connect() as db:
             attempts = db.execute(
-                f"select a.runtime_kind,a.session_id,a.transcript_start,a.transcript_end "
-                f"from ({RUNTIME_ATTEMPT_SQL}) a join runs r "
-                "on a.workload_kind='meeting' and a.workload_key=r.legacy_key "
-                "where r.record_type='agent_runs' and r.source_type='meeting_alignment_runs' and r.task_id="
-                + task_id_expression("meeting_alignment_jobs", "?")
-                + " and a.status not in ('starting','running') order by a.id desc",
+                "select a.runtime_kind,a.session_id,a.transcript_start,a.transcript_end "
+                "from runtime_attempts a join runs r on a.parent_id=r.id "
+                "join run_provenance p on p.run_id=r.id and p.source_type='meeting_alignment_runs' "
+                "where r.task_id=? and a.status not in ('starting','running') order by a.id desc",
                 (job_id,),
             ).fetchall()
         compact = compact_meeting_consumer(job.source_json, attempts,
             source_reader=lambda context: scheduled_consumer_source_fields(self, context))
         if compact is None:
             return False
-        with self._connect() as db:
-            cursor = db.execute(
-                f"update tasks set {task8_set_parts('meeting_alignment_jobs', {}, update_sql={'source_json': '?'}, payload_source='tasks.payload_json').sql} "
-                "where record_type='meeting_alignment_jobs' and cast(legacy_key as integer)=? "
-                f"and {task20_column('meeting_alignment_jobs', 'status')} in ('sent','skipped') "
-                f"and {task20_column('meeting_alignment_jobs', 'source_json')}=?",
-                (compact, job_id, job.source_json),
-            )
-            return cursor.rowcount == 1
+        from app.task_entity_storage import get_task, update_task_cas
+        with self._immediate_write_transaction() as db:
+            task = get_task(db, job_id)
+            if task is None or task["kind"] != "meeting_alignment" or task["status"] not in {"sent", "skipped"}:
+                return False
+            if task["parameters"].get("source_json", "{}") != job.source_json:
+                return False
+            parameters = {**task["parameters"], "source_json": compact}
+            changed = update_task_cas(db, task_id=job_id,
+                expected={"status": task["status"], "updated_at": task["updated_at"]},
+                changes={"updated_at": db.execute("select current_timestamp").fetchone()[0]},
+                parameters=parameters)
+            return changed is not None
 
     def compact_terminal_meeting_consumer_inputs(self) -> dict[str, int]:
         """One explicit migration batch; normal writes compact their own job."""
@@ -14125,15 +14139,13 @@ class AutoReplyStore(LogicalRunStoreMixin, ReviewedCandidateStoreMixin):
     ) -> list[MeetingAlignmentJob]:
         if limit <= 0:
             return []
-        # An idle poll needs no writer lock. This read is not a reservation;
-        # the transactional claim below rechecks the same eligibility.
+        token = uuid4().hex
+        from app.task_entity_storage import update_task_cas
         with self._connect() as db:
             candidate = db.execute(
-                f"""select 1 from tasks
-                   where record_type='meeting_alignment_jobs'
-                     and {task20_column('meeting_alignment_jobs', 'status')}='ready_to_send' and {task20_column('meeting_alignment_jobs', 'locked_at')} is null
-                     and ({task20_column('meeting_alignment_jobs', 'available_at')}='' or datetime({task20_column('meeting_alignment_jobs', 'available_at')})<=datetime(?))
-                   limit 1""",
+                "select 1 from tasks where kind='meeting_alignment' and status='ready_to_send' and locked_at is null "
+                "and (coalesce(available_at,'')='' or datetime(available_at)<=datetime(?)) "
+                "limit 1",
                 (now,),
             ).fetchone()
             if candidate is None:
@@ -14141,98 +14153,72 @@ class AutoReplyStore(LogicalRunStoreMixin, ReviewedCandidateStoreMixin):
         with claim_connection(self, immediate=True) as db:
             if db is None:
                 return []
-            rows = db.execute(
-                """
-                with candidates as (
-                    select id
-                    from tasks
-                    where record_type='meeting_alignment_jobs' and {task20_column('meeting_alignment_jobs', 'status')}='ready_to_send'
-                      and {task20_column('meeting_alignment_jobs', 'locked_at')} is null
-                      and (
-                          {task20_column('meeting_alignment_jobs', 'available_at')}=''
-                          or datetime({task20_column('meeting_alignment_jobs', 'available_at')}) <= datetime(?)
-                      )
-                    order by cast(legacy_key as integer)
-                    limit ?
-                )
-                update tasks
-                set {task8_set_parts('meeting_alignment_jobs', {}, update_sql={'locked_at': 'current_timestamp', 'updated_at': 'current_timestamp'}, payload_source='tasks.payload_json').sql}  where record_type='meeting_alignment_jobs' and id in (select id from candidates)
-                  and {task20_column('meeting_alignment_jobs', 'status')}='ready_to_send'
-                  and {task20_column('meeting_alignment_jobs', 'locked_at')} is null
-                returning {task8_meeting_returning()}
-                """,
-                (now, limit),
-            ).fetchall()
-            token = uuid4().hex
-            jobs = [
-                self._meeting_alignment_job_from_row(row).model_copy(
-                    update={"delivery_claim_token": token}
-                ) for row in rows
-            ]
-            db.executemany(
-                "insert into actions(_kind,legacy_key,payload_json,td_claim_job_id) "
-                "values(?,?,?,?) on conflict do update set payload_json=excluded.payload_json",
-                [task_delivery_insert_parts(db, "meeting_alignment_delivery_claims",
-                    {"job_id": row["id"], "claim_token": token})[1] for row in rows],
-            )
-            return sorted(jobs, key=lambda job: job.id)
+            ids = [int(row[0]) for row in db.execute(
+                "select id from tasks where kind='meeting_alignment' and status='ready_to_send' "
+                "and locked_at is null and (coalesce(available_at,'')='' or datetime(available_at)<=datetime(?)) "
+                "order by id limit ?", (now, limit))]
+            jobs = []
+            stamp = db.execute("select current_timestamp").fetchone()[0]
+            for task_id in ids:
+                changed = update_task_cas(db, task_id=task_id,
+                    expected={"status": "ready_to_send", "locked_at": None},
+                    changes={"locked_at": stamp, "updated_at": stamp})
+                if changed is None:
+                    continue
+                columns, args = task_delivery_insert_parts(db, "meeting_alignment_delivery_claims",
+                    {"job_id": task_id, "claim_token": token})
+                db.execute(f"insert into actions({','.join(columns)}) values(?,?,?,?) "
+                           "on conflict do update set payload_json=excluded.payload_json", args)
+                job = self._native_meeting_alignment_job(db, task_id)
+                if job is not None:
+                    jobs.append(job.model_copy(update={"delivery_claim_token": token}))
+            return jobs
 
     def claim_ready_to_send_meeting_alignment_job(
         self, job_id: int, *, now: str
     ) -> MeetingAlignmentJob | None:
         if job_id <= 0:
             raise ValueError("meeting alignment job id must be positive")
+        from app.task_entity_storage import update_task_cas
         with claim_connection(self, immediate=True) as db:
             if db is None:
                 return None
-            row = db.execute(
-                f"""update tasks
-                   set {task8_set_parts('meeting_alignment_jobs', {}, update_sql={'locked_at': 'current_timestamp', 'updated_at': 'current_timestamp'}, payload_source='tasks.payload_json').sql}  where record_type='meeting_alignment_jobs'
-                     and cast(legacy_key as integer)=?
-                     and {task20_column('meeting_alignment_jobs', 'status')}='ready_to_send' and {task20_column('meeting_alignment_jobs', 'locked_at')} is null
-                     and ({task20_column('meeting_alignment_jobs', 'available_at')}='' or datetime({task20_column('meeting_alignment_jobs', 'available_at')})<=datetime(?))
-                   returning {task8_meeting_returning()}""",
-                (job_id, now),
-            ).fetchone()
-            if row is None:
+            row = db.execute("select status,locked_at,available_at from tasks "
+                "where id=? and kind='meeting_alignment'", (job_id,)).fetchone()
+            if row is None or row["status"] != "ready_to_send" or row["locked_at"] is not None or (
+                row["available_at"] and db.execute("select datetime(?)<=datetime(?)", (row["available_at"], now)).fetchone()[0] != 1
+            ):
+                return None
+            stamp = db.execute("select current_timestamp").fetchone()[0]
+            if update_task_cas(db, task_id=job_id, expected={"status": "ready_to_send", "locked_at": None},
+                               changes={"locked_at": stamp, "updated_at": stamp}) is None:
                 return None
             token = uuid4().hex
-            db.execute(
-                "insert into actions(_kind,legacy_key,payload_json,td_claim_job_id) "
-                "values(?,?,?,?) on conflict do update set payload_json=excluded.payload_json",
-                task_delivery_insert_parts(db, "meeting_alignment_delivery_claims",
-                    {"job_id": row["id"], "claim_token": token})[1],
-            )
-            return self._meeting_alignment_job_from_row(row).model_copy(
-                update={"delivery_claim_token": token}
-            )
+            columns, args = task_delivery_insert_parts(db, "meeting_alignment_delivery_claims",
+                {"job_id": job_id, "claim_token": token})
+            db.execute(f"insert into actions({','.join(columns)}) values(?,?,?,?) "
+                       "on conflict do update set payload_json=excluded.payload_json", args)
+            job = self._native_meeting_alignment_job(db, job_id)
+            return None if job is None else job.model_copy(update={"delivery_claim_token": token})
 
     def release_ready_to_send_meeting_alignment_claims(
         self, jobs: list[MeetingAlignmentJob]
     ) -> None:
         if not jobs:
             return
+        from app.task_entity_storage import update_task_cas
         with self._immediate_write_transaction() as db:
-            db.executemany(
-                f"""update tasks
-                   set {task8_set_parts('meeting_alignment_jobs', {}, update_sql={'locked_at': 'null'}, payload_source='tasks.payload_json').sql}  where record_type='meeting_alignment_jobs'
-                     and cast(legacy_key as integer)=?
-                     and {task20_column('meeting_alignment_jobs', 'status')}='ready_to_send' and {task20_column('meeting_alignment_jobs', 'locked_at')}=?
-                     and exists (
-                         select 1 from actions claim
-                         where claim.record_type='meeting_alignment_delivery_claims'
-                           and claim.td_claim_job_id=tasks.id
-                           and claim.td_claim_token=? and claim.td_claim_token!=''
-                     )""",
-                [(job.id, job.locked_at, job.delivery_claim_token) for job in jobs],
-            )
-            db.executemany(
-                "delete from actions where record_type='meeting_alignment_delivery_claims' "
-                "and td_claim_job_id="
-                + task_id_expression("meeting_alignment_jobs", "?")
-                + " and td_claim_token=?",
-                [(job.id, job.delivery_claim_token) for job in jobs],
-            )
+            stamp = db.execute("select current_timestamp").fetchone()[0]
+            for job in jobs:
+                claim = db.execute("select td_claim_token from actions where record_type='meeting_alignment_delivery_claims' "
+                    "and td_claim_job_id=?", (job.id,)).fetchone()
+                if claim is None or claim[0] != job.delivery_claim_token or not job.delivery_claim_token:
+                    continue
+                update_task_cas(db, task_id=job.id,
+                    expected={"status": "ready_to_send", "locked_at": job.locked_at},
+                    changes={"locked_at": None, "updated_at": stamp})
+                db.execute("delete from actions where record_type='meeting_alignment_delivery_claims' "
+                           "and td_claim_job_id=? and td_claim_token=?", (job.id, job.delivery_claim_token))
 
     def schedule_ready_to_send_meeting_alignment_retry(
         self,
@@ -14241,37 +14227,38 @@ class AutoReplyStore(LogicalRunStoreMixin, ReviewedCandidateStoreMixin):
         error: str,
         available_at: str,
     ) -> MeetingAlignmentJob:
-        with self._connect() as db:
-            row = db.execute(
-                f"""
-                update tasks
-                set {task8_set_parts('meeting_alignment_jobs', {}, update_sql={'attempts': f"""{task20_column('meeting_alignment_jobs', 'attempts')} + 1""", 'available_at': '?', 'error': '?', 'locked_at': 'null', 'updated_at': 'current_timestamp'}, payload_source='tasks.payload_json').sql}  where record_type='meeting_alignment_jobs' and cast(legacy_key as integer)=?
-                  and {task20_column('meeting_alignment_jobs', 'status')}='ready_to_send'
-                  and {task20_column('meeting_alignment_jobs', 'locked_at')} is not null
-                returning {task8_meeting_returning()}
-                """,
-                (available_at, error, job_id),
-            ).fetchone()
-            if row is None:
+        from app.task_entity_storage import get_task, update_task_cas
+        with self._immediate_write_transaction() as db:
+            task = get_task(db, job_id)
+            if task is None or task["kind"] != "meeting_alignment" or task["status"] != "ready_to_send" or task["locked_at"] is None:
                 raise ValueError(
                     "ready meeting retry requires an exclusive claim"
                 )
-            return self._meeting_alignment_job_from_row(row)
+            updated = update_task_cas(db, task_id=job_id,
+                expected={"status": "ready_to_send", "locked_at": task["locked_at"]},
+                changes={"attempts": (task["attempts"] or 0) + 1, "available_at": available_at,
+                         "error": error, "locked_at": None,
+                         "updated_at": db.execute("select current_timestamp").fetchone()[0]})
+            assert updated is not None
+            return self._native_meeting_alignment_job(db, job_id)
 
     def reset_ready_to_send_meeting_alignment_jobs(
         self,
     ) -> list[MeetingAlignmentJob]:
-        with self._connect() as db:
-            rows = db.execute(
-                f"""
-                update tasks
-                set {task8_set_parts('meeting_alignment_jobs', {}, update_sql={'locked_at': 'null', 'updated_at': 'current_timestamp'}, payload_source='tasks.payload_json').sql}  where record_type='meeting_alignment_jobs' and {task20_column('meeting_alignment_jobs', 'status')}='ready_to_send'
-                  and {task20_column('meeting_alignment_jobs', 'locked_at')} is not null
-                returning {task8_meeting_returning()}
-                """
-            ).fetchall()
+        from app.task_entity_storage import update_task_cas
+        with self._immediate_write_transaction() as db:
+            rows = db.execute("select id,locked_at from tasks where kind='meeting_alignment' "
+                              "and status='ready_to_send' and locked_at is not null").fetchall()
+            updated_ids = []
+            stamp = db.execute("select current_timestamp").fetchone()[0]
+            for row in rows:
+                changed = update_task_cas(db, task_id=int(row["id"]),
+                    expected={"status": "ready_to_send", "locked_at": row["locked_at"]},
+                    changes={"locked_at": None, "updated_at": stamp})
+                if changed is not None:
+                    updated_ids.append(int(row["id"]))
             db.execute("delete from actions where record_type='meeting_alignment_delivery_claims'")
-            jobs = [self._meeting_alignment_job_from_row(row) for row in rows]
+            jobs = [job for task_id in updated_ids if (job := self._native_meeting_alignment_job(db, task_id)) is not None]
             return sorted(jobs, key=lambda job: job.id)
 
     def reset_processing_meeting_alignment_jobs(
@@ -14542,7 +14529,10 @@ class AutoReplyStore(LogicalRunStoreMixin, ReviewedCandidateStoreMixin):
                 or result.target_kind != job.target_kind or result.target_id != job.target_id
                 or result.sensitive_private_delivery is not None or result.sensitive_private_merged):
             return False
+        from app.task_entity_storage import get_meeting_delivery_key, get_task, update_task_cas
         with self._immediate_write_transaction() as db:
+            if get_meeting_delivery_key(db, job.id) != key:
+                return False
             body = db.execute(f"select final_body from ({OUTBOUND_POSTFIX_SQL}) where channel='dingtalk' and delivery_key=?", (key,)).fetchone()
             saved = db.execute(f"select provider_result_json from ({OUTBOUND_POSTFIX_RECEIPT_SQL}) where channel='dingtalk' and delivery_key=?", (key,)).fetchone()
             if body is None or saved is None or body["final_body"] != prepared.final_body or json.loads(saved["provider_result_json"]) != receipt:
@@ -14554,36 +14544,60 @@ class AutoReplyStore(LogicalRunStoreMixin, ReviewedCandidateStoreMixin):
                 return False
             if db.execute(f"select 1 from ({OUTBOUND_POSTFIX_SQL}) where channel='dingtalk' and delivery_key=?", (f"{key}:sensitive",)).fetchone():
                 return False
-            if db.execute(f"select 1 from ({task_claims.claim_projection()}) where adapter_name='meeting' and source_id=? "
-                "and julianday(lease_expires_at)>julianday('now')",
-                (str(job.id),)).fetchone():
+            task = get_task(db, job.id)
+            if task is None or task["kind"] != "meeting_alignment" or task["lease_owner"] and db.execute(
+                "select julianday(?)>julianday('now')", (task["lease_expires_at"],)).fetchone()[0]:
                 return False
-            updated = db.execute(
-                f"""update tasks set {task8_set_parts('meeting_alignment_jobs', {}, update_sql={'status': "'ready_to_send'", 'available_at': "''", 'error': "''", 'send_result_json': '?', 'final_message': '?', 'updated_at': 'current_timestamp'}, payload_source='tasks.payload_json').sql}  where record_type='meeting_alignment_jobs' and cast(legacy_key as integer)=? and {task20_column('meeting_alignment_jobs', 'status')}='failed' and {task20_column('meeting_alignment_jobs', 'locked_at')} is null and {task20_column('meeting_alignment_jobs', 'send_result_json')}='{{}}' and {task20_column('meeting_alignment_jobs', 'decision_json')}=? and {task20_column('meeting_alignment_jobs', 'target_kind')}=? and {task20_column('meeting_alignment_jobs', 'target_id')}=? and {task20_column('meeting_alignment_jobs', 'updated_at')}=? and {task20_column('meeting_alignment_jobs', 'source_json')}=?""",
-                (result_json, prepared.final_body, job.id, job.decision_json,
-                 job.target_kind, job.target_id, job.updated_at, job.source_json),
+            current = self._native_meeting_alignment_job(db, job.id)
+            if (current is None or current.status != "failed" or current.locked_at is not None
+                    or current.send_result_json != "{}" or current.decision_json != job.decision_json
+                    or current.target_kind != job.target_kind or current.target_id != job.target_id
+                    or current.updated_at != job.updated_at or current.source_json != job.source_json):
+                return False
+            result_update = db.execute(
+                "update task_results set send_result_json=?,final_message=? where task_id=? "
+                "and result_kind='meeting_alignment' and decision_json=? and target_kind=? and target_id=? "
+                "and send_result_json='{}' and final_message=?",
+                (result_json, prepared.final_body, job.id, job.decision_json, job.target_kind,
+                 job.target_id, job.final_message),
             )
-            return updated.rowcount == 1
+            if result_update.rowcount != 1:
+                return False
+            changed = update_task_cas(db, task_id=job.id,
+                expected={"status": "failed", "locked_at": None, "updated_at": job.updated_at,
+                          "lease_owner": task["lease_owner"], "lease_expires_at": task["lease_expires_at"]},
+                changes={"status": "ready_to_send", "available_at": "", "error": "",
+                         "updated_at": db.execute("select current_timestamp").fetchone()[0]})
+            if changed is None:
+                raise RuntimeError("Meeting Task changed while restoring the confirmed delivery")
+            return True
 
     def requeue_failed_meeting_delivery(self, job_id: int) -> MeetingAlignmentJob | None:
         """Resume a reviewed unsent delivery after independent provider readback."""
-        with self._connect() as db:
-            row = db.execute(
-                f"""update tasks as meeting_alignment_jobs
-                   set {task8_set_parts('meeting_alignment_jobs', {}, update_sql={'status': "'ready_to_send'", 'locked_at': 'null', 'available_at': "''", 'error': "''", 'updated_at': 'current_timestamp'}, payload_source='meeting_alignment_jobs.payload_json').sql}  where meeting_alignment_jobs.record_type='meeting_alignment_jobs'
-                     and cast(meeting_alignment_jobs.legacy_key as integer)=?
-                     and {task20_column('meeting_alignment_jobs', 'status')}='failed' and {task20_column('meeting_alignment_jobs', 'locked_at')} is null
-                     and {task20_column('meeting_alignment_jobs', 'decision_json')}!='{{}}' and {task20_column('meeting_alignment_jobs', 'target_id')}!=''
-                     and {task20_column('meeting_alignment_jobs', 'send_result_json')}='{{}}'
-                     and not exists (
-                       select 1 from ({OUTBOUND_POSTFIX_RECEIPT_SQL})
-                       where channel='dingtalk'
-                         and delivery_key=(select business_key from task_business_keys where task_id=meeting_alignment_jobs.id)
-                     )
-                   returning {task8_meeting_returning()}""",
-                (job_id,),
-            ).fetchone()
-            return self._meeting_alignment_job_from_row(row) if row else None
+        from app.task_entity_storage import get_meeting_delivery_key, get_task, update_task_cas
+        with self._immediate_write_transaction() as db:
+            task = get_task(db, job_id)
+            if task is None or task["kind"] != "meeting_alignment" or task["status"] != "failed" or task["locked_at"] is not None:
+                return None
+            key = get_meeting_delivery_key(db, job_id)
+            job = self._native_meeting_alignment_job(db, job_id)
+            assert job is not None
+            if job.decision_json == "{}" or not job.target_id or job.send_result_json != "{}":
+                return None
+            if db.execute(f"select 1 from ({OUTBOUND_POSTFIX_RECEIPT_SQL}) where channel='dingtalk' and delivery_key=?",
+                          (key,)).fetchone():
+                return None
+            # Match the source Meeting lease fence on the native Task owner.
+            if task["lease_owner"] and db.execute("select julianday(?)>julianday('now')",
+                                                   (task["lease_expires_at"],)).fetchone()[0]:
+                return None
+            changed = update_task_cas(db, task_id=job_id,
+                expected={"status": "failed", "locked_at": None, "updated_at": task["updated_at"]},
+                changes={"status": "ready_to_send", "available_at": "", "error": "",
+                         "updated_at": db.execute("select current_timestamp").fetchone()[0]})
+            if changed is None:
+                return None
+            return self._native_meeting_alignment_job(db, job_id)
 
 
 
