@@ -171,6 +171,7 @@ def test_consumer_native_schema_is_inline_and_not_added_to_audit(adapter, route)
         {"error_code", "error_retryable", "error_authorization_required"}
         & set(schema["required"])
     )
+    assert schema["properties"]["error_code"]["default"] is None
 
 
 def test_normal_command_delegates_tool_review_to_claude_runtime(
