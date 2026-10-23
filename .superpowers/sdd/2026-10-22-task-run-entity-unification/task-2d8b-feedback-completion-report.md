@@ -2,7 +2,7 @@
 
 Base: `770cac667f0f751c69e54306df387bdf669302e4`.
 
-Final implementation HEAD: `9251a0205263d9b9c84a93c96b01bc295bbf7e17` (`Complete native Feedback lifecycle writers`). This commit contains the implementation, focused tests, and behavior-doc updates. The report is committed in a report-only follow-up commit. No push, upstream merge, constructor activation, provider/native CLI use, production write, or deploy.
+Base-to-final implementation range: `770cac667f0f751c69e54306df387bdf669302e4`..`cf304daba5e9d5fc00a8b44f62845bc5a95408a2`. Writer/docs commit: `9251a0205263d9b9c84a93c96b01bc295bbf7e17`; native scope coverage commit: `cf304daba5e9d5fc00a8b44f62845bc5a95408a2`. This report is committed in a report-only follow-up commit. No push, upstream merge, constructor activation, provider/native CLI use, production write, or deploy.
 
 ## Native ownership implemented
 
@@ -16,7 +16,7 @@ The receipt converter maps only `decision_id` and `evidence.associations[*].work
 
 Passing focused commands:
 
-- `pytest -q tests/test_store_task_entity_creator.py -k native_feedback` — 6 passed, 17 deselected. Covers two-item native claim/association/evidence/typed decision/resolve/idempotent repeat/reopen/new batch and round; also capability/create refusal and competing claim behavior.
+- `pytest -q tests/test_store_task_entity_creator.py -k native_feedback` — 10 passed, 17 deselected. Covers native claim/association/evidence/typed decision/resolve/idempotent repeat/reopen/new batch and round; capability/create refusal and competing claim behavior; actual Skill-only, runtime-config, mixed and needs-human scope behavior.
 - `pytest -q tests/test_task_entity_schema.py -k 'feedback_'` — 8 passed, 27 deselected.
 - `pytest -q tests/test_task_entity_schema.py -k 'feedback_workbench_and_current_round_refs or native_feedback_claim_after_converted_reopen or new_native_feedback_resolution_receipt'` — 3 passed, 32 deselected. This includes historical source decision 227→native 1227 mapping, source BLOB preservation, inverse/reforward, current edits, and a converted-reopen/native-claim cycle.
 - `pytest -q tests/test_task_entity_schema.py -k new_native_feedback_resolution_receipt_survives_inverse_reforward_cycles` — 1 passed, 34 deselected. It writes a new complete native resolution receipt, inverses to the source projection, calls the existing `_scope_resolution_receipt` parser, verifies the restored source decision row and Workbench public references plus independent attempt/run numbers, then forwards and inverses a second time.
@@ -27,12 +27,11 @@ The new current-receipt integration fixture initially blocked because SQLite `ba
 
 An accidental broader command, `pytest -q tests/test_feedback_processing.py`, was started as PID 58090. Its first captured output was `F`; its final pytest summary was not captured, so that run is unclassified and is not counted as verification. A SIGINT request targeting PID 58090 was rejected by the execution tool with `approval required by policy, but AskForApproval is set to Never`. The process was absent on the later read-only `ps` check. No retry or alternate process-control path was used.
 
-The tested native end-to-end resolution scope is code. Existing Skill/runtime-config decision and runtime-load-receipt validators were left unchanged and no synthetic receipt was created for them. Their actual native receipt paths are not established by this bounded evidence and remain an explicit follow-up dependency before claiming those scope variants on the assembled target.
+Native scope resolution is now exercised for `skill_only`, `runtime_config`, and `mixed` using the existing managed Skill/revision, runtime config, and `record_runtime_skill_load` APIs against the assembled native Task/Feedback owners. The successful receipts pass the unchanged `_validate_runtime_load_receipt` and `_validate_decision_resolution_receipt` paths; alternately recorded load receipts remain rejected on resolved-batch replay. A native `needs_human` decision remains processing after the unchanged refusal. Test-local PIDs and SHA values exercise the persisted DB binding contract only; they do not prove an external daemon reload or Skill installation.
 
 ## Remaining cutover
 
 - Feedback UI/backlog projections remain on the source mixed-Task projection: `list_user_feedback_items`, `list_user_feedback_items_by_keys`, and `count_pending_user_feedback_items` in `app/store.py` (their joins to `feedback_processing_items`). These were not needed by the new write validators and remain the next bounded reader unit.
 - `upsert_feedback_event` at `app/store.py` still maintains the legacy Task-style Feedback item projection. It was outside the requested association/evidence/decision/resolve/reopen writer slice and was not converted here.
 - `_feedback_processing_round_storage_is_valid` remains on the source Task projection for schema-manifest checks; the Store constructor/migration activation path is intentionally not enabled by this work. Reaching it on the assembled target requires a separately scoped constructor/manifest cutover.
-- Skill/runtime-config receipt variants require real source-supported records and native current-owner coverage; no claim of successful target behavior is made here.
 - Complete Task2/Task3 caller cutover, backlog/UI readers, constructor activation, whole-service behavior and production release remain open. Nothing in this commit is a release or production-readback claim.
