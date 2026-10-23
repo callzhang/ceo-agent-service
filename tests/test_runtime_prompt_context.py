@@ -38,7 +38,8 @@ def test_context_uses_final_role_directory_and_declared_tools(monkeypatch):
 def test_claude_context_does_not_inherit_codex_native_or_third_party_tools():
     text = render_runtime_context(role="consumer", route=route(RuntimeKind.CLAUDE_CLI), command=["claude", "--restricted", "--tools", "Read,Glob,Grep"], task=None, current_time="2026-10-05T18:00:00-07:00")
     assert "Read/Glob/Grep" in text
-    assert "shell 执行：本轮未声明" in text
+    assert "本轮 Bash" in text
+    assert "命令网络开启（可运行 dws）" in text
     assert "exa.web_search_exa" not in text
     assert "agent_cli.consumer_artifact_write" in text
     assert "认证状态：本轮未验证" in text

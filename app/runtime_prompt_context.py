@@ -105,7 +105,7 @@ def render_runtime_context(
     if role == "audit":
         lines.append("- 普通工作：只读审核；不执行命令、不写工件、不调度受控动作。")
     elif route.runtime_kind is RuntimeKind.CLAUDE_CLI:
-        lines.append("- 普通工作：Read/Glob/Grep 与角色 MCP 工件/绑定报告工具；shell 执行：本轮未声明。")
+        lines.append("- 普通工作：Read/Glob/Grep 与角色 MCP 工件/绑定报告工具；本轮 Bash（沙箱：写入限任务目录与 ~/.dws），命令网络开启（可运行 dws）。")
     else:
         configs = _command_configs(command)
         shell = configs.get("features.shell_tool") == "true"
