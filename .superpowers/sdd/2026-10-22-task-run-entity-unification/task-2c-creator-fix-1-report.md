@@ -1,6 +1,6 @@
 # Task2C creator Fix 1 report
 
-Status: implemented and locally verified; awaiting the controller's independent SPEC and QUALITY re-review. Commit: pending.
+Status: implemented and locally verified; awaiting the controller's independent SPEC and QUALITY re-review. Implementation commit: `66e9911f2`. Report commit: `a857f59a7`.
 
 ## Source-parity correction
 
