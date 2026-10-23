@@ -5,9 +5,8 @@ from pathlib import Path
 from evals.scheduled_task_generic import okr_eval
 from evals.scheduled_task_generic.okr_fixture import Fixture, member_payload
 
-CASES = json.loads((Path(okr_eval.__file__).parent / "okr_cases.v6.json").read_text())[
-    "cases"
-]
+CASES = json.loads((Path(okr_eval.__file__).parent / "okr_cases.v7.json").read_text())["cases"]
+BASE_CASES = CASES[:4]
 
 
 def test_okr_skill_resumes_saved_inputs_and_does_not_use_failure_for_missing_evidence():
@@ -19,6 +18,12 @@ def test_okr_skill_resumes_saved_inputs_and_does_not_use_failure_for_missing_evi
     )
     assert "Do not invent or require a separate local performance-policy" in skill
     assert "the missing document does not block member analysis or publication" in skill
+    assert "An empty independent-document search is an evidence gap, not a reason to stop analysis" in skill
+    assert "continue with the next live-OKR manager" in skill
+    assert "write a complete schema-valid analysis for every manager" in skill
+    assert "The discrete bands above apply only to each KR's `base_score`" in skill
+    assert "70–79 is the valid role-standard band" in skill
+    assert "replace the proposal content with those exact bytes" in skill
     assert "Do not copy provider status codes, machine error labels or raw diagnostics into analyses, report text or the message proposal" in skill
     assert "an unreadable current-quarter record does not establish that the member has no goal" in skill
     assert "`read_scheduled_context.run_id` is this execution's scheduled run ID" in skill
@@ -34,6 +39,7 @@ def test_okr_skill_resumes_saved_inputs_and_does_not_use_failure_for_missing_evi
     assert "A score below `50` requires repeated or high-impact" in skill
     assert "A Consumer retry, resumed turn or Audit correction for the same `read_scheduled_context.run_id`" in skill
     assert "reuse its verified roster and member source receipts instead of rereading all members" in skill
+    assert "do not call `read_okr_roster` again" in skill
     assert "Never infer that a member source is unchanged from an earlier scheduled execution" in skill
     assert "A request to fix a shared report, appendix set, notification summary" in skill
     assert "preserve those bytes through the correction" in skill
@@ -869,7 +875,7 @@ def test_cases_are_versioned_without_rewriting_failed_oracle():
     second = root / "okr_cases.v2.json"
     assert hashlib.sha256(second.read_bytes()).hexdigest() == "646a1857f50fd16a45d2f9520df906ee9dafbf0bb7864f4cd1226c961469bf04"
     old_v2 = json.loads(second.read_text())["cases"]
-    for before, after in zip(old_v2, CASES, strict=True):
+    for before, after in zip(old_v2, BASE_CASES, strict=True):
         assert stable_non_behavior_facts(before["facts"]) == stable_non_behavior_facts(after["facts"])
     assert hashlib.sha256((root / "okr_cases.v3.json").read_bytes()).hexdigest() == "c8ed2093242a7cef57f3025a2f062a7aa4a82da3b67901fcb92a7843b8569438"
     fourth = root / "okr_cases.v4.json"
@@ -886,13 +892,24 @@ def test_cases_are_versioned_without_rewriting_failed_oracle():
         "fresh-date-snapshot",
         "shared-source-auth-failure",
     ]
+    seventh = root / "okr_cases.v7.json"
+    seventh_cases = json.loads(seventh.read_text())["cases"]
+    assert [case["id"] for case in seventh_cases[:4]] == [case["id"] for case in sixth_cases]
+    empty_search = seventh_cases[4]
+    assert empty_search["id"] == "empty-independent-search-continues-analysis"
+    assert empty_search["facts"]["no_independent_document_ids"] == ["eval-a", "eval-b"]
+    assert empty_search["expected"]["independent_searches_without_matches"] == [
+        {"user_id": "eval-a", "display_name": "林辰"},
+        {"user_id": "eval-b", "display_name": "林辰"},
+    ]
+    assert empty_search["expected"]["behavioral_score_ranges"] == CASES[0]["expected"]["behavioral_score_ranges"]
     old_fifth = json.loads(fifth.read_text())["cases"]
     for before, after in zip(old_fifth, sixth_cases, strict=True):
         assert stable_non_behavior_facts(before["facts"]) == stable_non_behavior_facts(after["facts"])
         if after["id"] in {"fresh-source-snapshot", "fresh-date-snapshot"}:
             assert "resume_from" not in after
     old_v3 = json.loads((root / "okr_cases.v3.json").read_text())["cases"]
-    for before, after in zip(old_v3, CASES, strict=True):
+    for before, after in zip(old_v3, BASE_CASES, strict=True):
         assert stable_non_behavior_facts(before["facts"]) == stable_non_behavior_facts(after["facts"])
         behavior = after["facts"]["evidence"]["behavior_by_manager"]
         assert set(behavior) == {"eval-a", "eval-b"}
@@ -903,7 +920,7 @@ def test_cases_are_versioned_without_rewriting_failed_oracle():
         assert "每周带两名工程师复盘定位方法" in behavior["eval-b"]["content"]
     date_case = next(c for c in CASES if c["id"] == "fresh-date-snapshot")
     assert "没有AI使用及工作增益证据" in date_case["facts"]["evidence"]["behavior_by_manager"]["eval-b"]["content"]
-    for before, after in zip(first, CASES, strict=True):
+    for before, after in zip(first, BASE_CASES, strict=True):
         assert stable_non_behavior_facts(before["facts"]) == stable_non_behavior_facts(after["facts"])
         if "base_score_ranges" in before["expected"]:
             assert before["expected"]["base_score_ranges"]["eval-a"] == [60, 80]
@@ -943,7 +960,7 @@ def test_actual_summary_body_cannot_be_substituted(tmp_path):
 
 
 def test_shared_failure_cannot_be_an_unscored_success_or_publish(tmp_path):
-    case = CASES[-1]
+    case = next(c for c in CASES if c["id"] == "shared-source-auth-failure")
     f = Fixture(case["facts"], tmp_path)
     f.record("read_okr_member", {"user_id": "eval-a"}, {"source_outcome": {"scope": "shared"}})
     wire = {
@@ -959,6 +976,13 @@ def test_shared_failure_cannot_be_an_unscored_success_or_publish(tmp_path):
     wire["action"] = "failed"
     f.record("consumer_document_write", {}, {})
     assert not okr_eval.grade(case, tmp_path, wire)["passed"]
+
+
+def test_filtered_native_evaluation_status_uses_the_selected_case_set():
+    assert okr_eval.evaluation_status([{"passed": True}], ["one-selected-case"]) == "passed"
+    assert okr_eval.evaluation_status([], ["one-selected-case"]) == "failed"
+    assert okr_eval.evaluation_status([{"passed": True}], ["a", "b"]) == "failed"
+    assert okr_eval.evaluation_status([{"passed": False}], ["one-selected-case"]) == "failed"
 
 
 def test_builtin_resource_inventory_is_distinct_from_provider_access(

@@ -200,6 +200,20 @@ including a changed report date. On a same-run retry, reuse the exact source
 readbacks already recorded for that generation and search only for an
 Audit-identified missing or mismatched source.
 
+An empty independent-document search is an evidence gap, not a reason to stop
+analysis. Record that no matching independent document was found, do not invent
+or imply corroboration, and continue with the next live-OKR manager. After the
+required searches, write a complete schema-valid analysis for every manager
+whose live OKR receipt is usable, using only admissible evidence already
+available. Score KR progress and outcomes from the live source and any other
+verified material; for behavioral dimensions, use only evidence that actually
+supports that dimension and apply the existing rubric conservatively when it
+does not. Save each completed manager analysis immediately. Then finish report
+preparation, rendering, review and delivery through the normal workflow. A
+missing independent document must remain visible in `source_coverage`, but it
+does not make an otherwise analyzable report incomplete or justify ending the
+turn after the first empty search.
+
 For each collected manager, read the plan's `schema_file` by its file name.
 Use `consumer_artifact_write` with `name` equal to the plan's `analysis_file`
 and `content` equal to the complete analysis JSON. It has the original
@@ -228,6 +242,10 @@ unresolved roles remain 职级待确认. Use the formal dimensions from
 `dingtang-okr-review`: leadership is 战略能力、团队赋能能力、组织协同能力、创新能力;
 culture is AI时代原生能力、I Can I Up、简单可信赖. Map observed behaviors to these
 dimensions with evidence; observation labels do not replace the policy dimensions.
+The discrete bands above apply only to each KR's `base_score`; they do not apply
+to the separate leadership or culture dimension scores. For those dimensions,
+70–79 is the valid role-standard band, as defined below. Do not round a supported
+role-standard score down to 60 or up to 80 to fit the KR bands.
 For individual contributors,
 leadership candidate scores apply only when explicitly assigned and never
 enter their final formula. Business KRs use the completion bands in
@@ -403,6 +421,9 @@ canonical notification artifact: preserve its text and Markdown verbatim in the
 proposal content. Audit compares the proposal directly with that artifact, not
 with a separately rewritten message draft. Correct analysis inputs and rerender
 to change generated reports; do not hand-edit the generated canonical files.
+After any correction rerenders `summary.md`, read that current artifact and
+replace the proposal content with those exact bytes. Never retain an earlier
+summary in the proposal after the canonical summary changes.
 For every Audit correction, change only the affected member analysis or
 `appendix-links.json`, then rerun the appropriate `render` command. Never write
 `main.md`, `full.md`, `summary.md` or an appendix file with
