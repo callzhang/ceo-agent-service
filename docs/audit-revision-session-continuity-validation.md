@@ -12,3 +12,5 @@ Validation:
 - An anonymous read-only native Codex OAuth replay used a synthetic direct-chat fixture and a read-only fake MCP tool. The cold Audit and same-session revised Audit both rejected a duplicate broad agenda question and cited the explicit agenda. The native thread ID was preserved across `exec resume`; each turn reread the synthetic current messages. The fixture exposes no send or write tool, and no production record or external action was used.
 
 The native replay verifies actual CLI continuation and the expected decision on this fixed synthetic case. It does not prove a natural task outcome or a reduction in current-source reads; rereading current evidence remains permitted and occurred in both turns.
+
+Release: PR #279 merged on 2026-10-23 as `b07bd9877b78a8d0ab1cc616485671d44918ae37`. The standard `python -m app.deploy` completed from `036b7f79` to `b07bd987`. Production readback confirmed the exact target HEAD and a clean working tree, launchd supervisor PID 50635 with service child PID 50639, `/healthz` status `ok`, active queue count 0, queued count 420, Attention total 21, and History total 37,534.
