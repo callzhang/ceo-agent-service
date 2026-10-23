@@ -7,13 +7,13 @@ from app.storage_payload import ACTION_RECORD_TYPES
 
 
 def _inverse_fixture(*, feedback=False, generic_new=False, task_delivery=False,
-                     unresolved_task=False, before_inverse=None):
+                     unresolved_task=False, before_inverse=None, remap_tasks=True):
     from app.run_adoption_schema import migrate_run_adoptions
     from app.run_entity_schema import restore_run_entities
     from app.task_entity_schema import restore_task_entities
     from tests.test_run_adoption_schema import _populated_source
 
-    db, context = _populated_source(remap_tasks=True, remap_runs=True,
+    db, context = _populated_source(remap_tasks=remap_tasks, remap_runs=True,
                                     feedback=feedback, stop_before_adoption=True)
     db.row_factory = sqlite3.Row
     forward = migrate_run_adoptions(db, context["adoption_source"],
@@ -87,6 +87,28 @@ def test_actual_retained_rows_roundtrip_typed_run_task_feedback_and_payload_fact
         assert [tuple(row) for row in db.execute("select * from actions order by id")] == before_actions
         assert [tuple(row) for row in db.execute(
             "select rowid,name,seq from sqlite_sequence order by rowid")] == before_sequences
+    finally:
+        db.close()
+
+
+@pytest.mark.parametrize("remap_tasks", [False, True], ids=["meeting-key-only", "task-owner-and-meeting-key"])
+def test_adoption_inverse_consumes_real_current_task_inverse_handoff(remap_tasks):
+    from copy import deepcopy
+    from app.run_adoption_inverse import _task_inverse_owners
+    from app.task_entity_schema import _validate_inverse_identity
+
+    db, context, forward, task_inverse, run_inverse = _inverse_fixture(remap_tasks=remap_tasks)
+    try:
+        raw = task_inverse["inverse_identity"]
+        owners = _task_inverse_owners(task_inverse)
+        assert owners == _validate_inverse_identity(raw)["owners"]
+        assert set(owners) == {("reply_tasks", 201)} if remap_tasks else owners == {}
+        assert len(raw["meeting_business_keys"]) >= 1
+        assert task_inverse["source_context"]["handoff_required"] is True
+        tampered = deepcopy(task_inverse)
+        tampered["inverse_identity"]["meeting_business_keys"][0]["task_business_key_row_id"] += 1
+        with pytest.raises(ValueError, match="digest mismatch"):
+            _task_inverse_owners(tampered)
     finally:
         db.close()
 

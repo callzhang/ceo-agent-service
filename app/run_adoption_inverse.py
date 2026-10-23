@@ -310,7 +310,9 @@ def _table_stored_columns(sql, table="actions"):
 
 
 def _task_inverse_owners(task_inverse_metadata):
-    if type(task_inverse_metadata) is not dict:
+    if type(task_inverse_metadata) is not dict or set(task_inverse_metadata) != {
+            "rows", "source_objects", "sparse_identity_metadata",
+            "inverse_identity", "source_context"}:
         raise ValueError("invalid Task inverse identity handoff")
     from app import task_entity_schema
     identity = task_inverse_metadata.get("inverse_identity")
@@ -319,10 +321,11 @@ def _task_inverse_owners(task_inverse_metadata):
     if (type(context) is not dict or set(context) != {
             "version", "handoff_required", "handoff_sha256"}
             or context["version"] != 1
-            or context["handoff_required"] != bool(identity["owners"])
+            or context["handoff_required"] != bool(
+                identity["owners"] or identity.get("meeting_business_keys", []))
             or context["handoff_sha256"] != task_entity_schema._inverse_identity_digest(identity)):
         raise ValueError("Task inverse identity handoff digest mismatch")
-    return mapped
+    return mapped["owners"]
 
 
 def _task_source_physical(db, inverse_owners, source_kind, canonical_id):

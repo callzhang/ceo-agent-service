@@ -1009,7 +1009,8 @@ def test_task_first_run_inverse_emits_json_handoff_from_restored_task_source():
         assert tuple(db.execute("select rowid,name,seq from sqlite_sequence "
                                 "where name='runs:setup_wizard_events'").fetchone()) == created_sequence
         handoff = json.loads(json.dumps(result["run_handoff"]))
-        assert handoff["version"] == 1
+        assert handoff["version"] == 2
+        assert handoff["runtime_attempt_parent_edges"] == []
         assert handoff["source_context"]
         assert set(handoff["owner_highwaters"]) == {
             "runs", "runtime_attempts", "run_failures", "schedule_occurrences",

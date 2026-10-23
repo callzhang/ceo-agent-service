@@ -17,3 +17,30 @@ Focused acceptance: 10 tests passed for the new structured cycle, malformed port
 ## Evidence boundary and remaining work
 
 Before this change, `restore_run_entities` checked every non-Agent parent against only `_professional_attempt_parent`'s Task/Meeting derivations and refused a structured parent as unrepresentable. The focused test now exercises that exact native OKR parent and confirms the portable inverse/forward path. No producer or runtime cutover was attempted. Independent SPEC/QUALITY review over the full assigned BASE..final range remains pending.
+
+## Task inverse direct-consumer integration follow-up
+
+The first broader selection exposed that `task_entity_schema._validate_inverse_identity` returns `{owners: ..., meeting_business_keys: ...}`. The adoption inverse had returned that wrapper as if it were the typed owner map, and it treated a Meeting-key-only inverse as `handoff_required=false`. `_task_inverse_owners` now validates the actual inverse metadata shape and full digest, computes `handoff_required` from both owner and Meeting key edge collections, then returns only the `owners` submap to typed Task reference resolvers. No Meeting key rewrite or Task inverse behavior changed.
+
+Direct regressions use real `restore_task_entities` results from the complete assembled fixture in both modes: Meeting-key edges only (`remap_tasks=False`) and Task owner plus Meeting-key edges (`remap_tasks=True`). Both call the adoption inverse consumer and compare its result with the canonical validator. Each also mutates a Meeting key edge without updating the digest and confirms rejection.
+
+Pinned BASE RED was executed by loading `app/run_entity_schema.py` directly from commit `7a87a36dfe78dedfebb9982a08d725191f5c1ae6` with `git show`, creating the real `_run_source()` fixture from `tests/test_run_entity_schema.py`, migrating source Run 1103 to native Run 9113 with the BASE version-1 identity handoff, setting structured attempt 1205's real native parent to 9113, then calling the BASE `restore_run_entities`. Exact stdout:
+
+```text
+BASE 7a87a36dfe78dedfebb9982a08d725191f5c1ae6 RED: ValueError: native non-Agent RuntimeAttempt Run owner cannot be represented by the selected source
+```
+
+Exact GREEN and static commands/results:
+
+```text
+pytest -q tests/test_run_entity_schema.py tests/test_run_adoption_inverse.py tests/test_run_adoption_inverse_rows.py
+73 passed in 47.30s
+
+ruff check app/run_entity_schema.py app/run_adoption_inverse.py tests/test_run_entity_schema.py tests/test_run_adoption_inverse.py tests/test_run_adoption_inverse_rows.py
+All checks passed!
+
+python -m compileall -q app/run_entity_schema.py app/run_adoption_inverse.py
+git diff --check
+```
+
+The earlier 56-pass/5-failure result is superseded: all 73 tests in that same scoped selection now pass. This remains conversion-only evidence; independent SPEC/QUALITY review is still pending.
