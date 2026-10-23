@@ -6266,29 +6266,29 @@ class AutoReplyStore(LogicalRunStoreMixin, ReviewedCandidateStoreMixin):
             raise RuntimeError("reply task parameters are unavailable")
         return ReplyTask(
             id=int(task["id"]),
-            channel=str(selected_input["channel"]),
-            conversation_id=str(selected_input["conversation_id"]),
-            conversation_title=str(selected_input["conversation_title"]),
+            channel=selected_input["channel"],
+            conversation_id=selected_input["conversation_id"],
+            conversation_title=selected_input["conversation_title"],
             single_chat=bool(selected_input["single_chat"]),
-            trigger_message_id=str(selected_input["trigger_message_id"]),
-            trigger_create_time=str(selected_input["trigger_create_time"]),
-            trigger_sender=str(selected_input["trigger_sender"]),
-            trigger_text=str(selected_input["trigger_text"]),
+            trigger_message_id=selected_input["trigger_message_id"],
+            trigger_create_time=selected_input["trigger_create_time"],
+            trigger_sender=selected_input["trigger_sender"],
+            trigger_text=selected_input["trigger_text"],
             trigger_message_json=(
                 cls._compact_reply_input_json(
                     str(selected_input["input_provenance_json"])
                 )
                 if selected_input["input_compacted"]
-                else str(selected_input["trigger_message_json"])
+                else selected_input["trigger_message_json"]
             ),
-            available_at=str(task["available_at"] or ""),
+            available_at=task["available_at"],
             force_new_decision=bool(parameters["force_new_decision"]),
-            oa_url=str(selected_input["oa_url"]),
+            oa_url=selected_input["oa_url"],
             manual_rerun_attempt_id=parameters["manual_rerun_attempt_id"],
-            manual_rerun_revision_key=str(parameters["manual_rerun_revision_key"]),
-            execution_generation=str(task["execution_generation"]),
-            recovery_code=str(parameters["recovery_code"]),
-            business_object_key=str(selected_input["business_object_key"]),
+            manual_rerun_revision_key=parameters["manual_rerun_revision_key"],
+            execution_generation=task["execution_generation"],
+            recovery_code=parameters["recovery_code"],
+            business_object_key=selected_input["business_object_key"],
             input_version=int(task["input_version"]),
             claimed_input_version=int(task["claimed_input_version"] or 0),
             current_input_id=int(task["current_input_id"]),
@@ -6298,12 +6298,12 @@ class AutoReplyStore(LogicalRunStoreMixin, ReviewedCandidateStoreMixin):
             ),
             input_provenance_json=str(selected_input["input_provenance_json"]),
             input_compacted=bool(selected_input["input_compacted"]),
-            status=str(task["status"]),
-            attempts=int(task["attempts"] or 0),
+            status=task["status"],
+            attempts=task["attempts"],
             locked_at=task["locked_at"],
-            error=str(task["error"] or ""),
-            created_at=str(task["created_at"]),
-            updated_at=str(task["updated_at"]),
+            error=task["error"],
+            created_at=task["created_at"],
+            updated_at=task["updated_at"],
         )
 
     def list_reply_task_inputs(self, task_id: int) -> list[dict[str, object]]:
