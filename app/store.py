@@ -14683,62 +14683,71 @@ class AutoReplyStore(LogicalRunStoreMixin, ReviewedCandidateStoreMixin):
         period_end: str,
         okr_source_json: str,
     ) -> int:
-        with self._connect() as db:
-            _task8_insert = task8_insert_parts('okr_review_requests', {'conversation_id': conversation_id, 'conversation_title': conversation_title, 'trigger_message_id': trigger_message_id, 'trigger_sender': trigger_sender, 'trigger_sender_user_id': trigger_sender_user_id, 'trigger_text': trigger_text, 'period_label': period_label, 'period_start': period_start, 'period_end': period_end, 'okr_source_json': okr_source_json}, insert_sql={'status': "'pending'", 'error': "''", 'codex_session_id': "''", 'created_at': 'current_timestamp', 'updated_at': 'current_timestamp'})
-            db.execute(
-                f"""
-                insert into tasks ({_task8_insert.columns}) values ({_task8_insert.values})
-                on conflict({task20_column('okr_review_requests', 'conversation_id')}, {task20_column('okr_review_requests', 'trigger_message_id')})
-                    where record_type='okr_review_requests' do update set {task8_set_parts('okr_review_requests', {}, update_sql={'okr_source_json': f"""excluded.{task20_column('okr_review_requests', 'okr_source_json')}""", 'status': "'pending'", 'error': "''", 'codex_session_id': "''", 'updated_at': 'current_timestamp'}, payload_source='tasks.payload_json').sql} where tasks.{task20_column('okr_review_requests', 'status')}='failed'
-                """,
-                _task8_insert.parameters,
-            )
+        from app.task_entity_storage import create_task, get_task, update_task_cas
+
+        with self._immediate_write_transaction() as db:
             row = db.execute(
-                f"""
-                select cast(legacy_key as integer) as id from tasks
-                where record_type='okr_review_requests'
-                  and {task20_column('okr_review_requests', 'conversation_id')}=? and {task20_column('okr_review_requests', 'trigger_message_id')}=?
-                """,
+                "select id from tasks where kind='okr_review' "
+                "and json_extract(parameters_json,'$.conversation_id')=? "
+                "and json_extract(parameters_json,'$.trigger_message_id')=?",
                 (conversation_id, trigger_message_id),
             ).fetchone()
-            return int(row["id"])
+            if row is not None:
+                task_id = int(row["id"])
+                task = get_task(db, task_id)
+                assert task is not None
+                if task["status"] == "failed":
+                    parameters = {**task["parameters"], "okr_source_json": okr_source_json}
+                    update_task_cas(
+                        db, task_id=task_id, expected={"status": "failed"},
+                        changes={"status": "pending", "error": "", "updated_at": db.execute("select current_timestamp").fetchone()[0]},
+                        parameters=parameters,
+                    )
+                return task_id
+            now = db.execute("select current_timestamp").fetchone()[0]
+            task = create_task(db, values={
+                "kind": "okr_review", "status": "pending", "available_at": "",
+                "attempts": 0, "error": "", "locked_at": None,
+                "created_at": now, "updated_at": now,
+            }, parameters={
+                "conversation_id": conversation_id, "conversation_title": conversation_title,
+                "trigger_message_id": trigger_message_id, "trigger_sender": trigger_sender,
+                "trigger_sender_user_id": trigger_sender_user_id, "trigger_text": trigger_text,
+                "period_label": period_label, "period_start": period_start,
+                "period_end": period_end, "okr_source_json": okr_source_json,
+                "codex_session_id": "",
+            })
+            return int(task["id"])
+
+    @staticmethod
+    def _okr_review_request_from_task(task: Mapping[str, object]) -> OkrReviewRequest:
+        parameters = task["parameters"]
+        return OkrReviewRequest.model_validate({
+            "id": task["id"], **parameters, "status": task["status"],
+            "error": task["error"] or "", "created_at": task["created_at"],
+            "updated_at": task["updated_at"],
+        })
 
     def claim_okr_review_requests(self, limit: int) -> list[OkrReviewRequest]:
         if limit <= 0:
             return []
+        from app.task_entity_storage import get_task, update_task_cas
+
         with self._immediate_write_transaction() as db:
             rows = db.execute(
-                f"""
-                select *
-                from ({OKR_REQUEST_SQL})
-                where status='pending'
-                order by id
-                limit ?
-                """,
-                (limit,),
+                "select id,status,error from tasks where kind='okr_review' "
+                "and status='pending' order by id limit ?", (limit,),
             ).fetchall()
-            ids = [row["id"] for row in rows]
-            if not ids:
-                return []
-            placeholders = ",".join("?" for _ in ids)
-            db.execute(
-                f"""
-                update tasks
-                set {task8_set_parts('okr_review_requests', {}, update_sql={'status': "'processing'", 'error': "''", 'updated_at': 'current_timestamp'}, payload_source='tasks.payload_json').sql}  where record_type='okr_review_requests'
-                  and cast(legacy_key as integer) in ({placeholders})
-                """,
-                ids,
-            )
-            claimed = db.execute(
-                f"""
-                select *
-                from ({OKR_REQUEST_SQL})
-                where id in ({placeholders})
-                order by id
-                """,
-                ids,
-            ).fetchall()
-            return [self._okr_review_request_from_row(row) for row in claimed]
+            claimed = []
+            stamp = db.execute("select current_timestamp").fetchone()[0]
+            for row in rows:
+                task_id = int(row["id"])
+                updated = update_task_cas(db, task_id=task_id,
+                    expected={"status": row["status"]},
+                    changes={"status": "processing", "error": "", "updated_at": stamp})
+                if updated is not None:
+                    claimed.append(self._okr_review_request_from_task(updated))
+            return claimed
 
     def reset_recoverable_okr_review_requests(
         self, *, processing_max_age_seconds: int | None = None
@@ -14808,18 +14817,13 @@ class AutoReplyStore(LogicalRunStoreMixin, ReviewedCandidateStoreMixin):
             return [self._okr_review_request_from_row(row) for row in rows]
 
     def get_okr_review_request(self, request_id: int) -> OkrReviewRequest:
+        from app.task_entity_storage import get_task
+
         with self._connect() as db:
-            row = db.execute(
-                f"""
-                select *
-                from ({OKR_REQUEST_SQL})
-                where id=?
-                """,
-                (request_id,),
-            ).fetchone()
-            if row is None:
+            task = get_task(db, request_id)
+            if task is None or task["kind"] != "okr_review":
                 raise ValueError(f"okr review request not found: {request_id}")
-            return self._okr_review_request_from_row(row)
+            return self._okr_review_request_from_task(task)
 
     def mark_okr_review_request_done(
         self, request_id: int, *, codex_session_id: str
