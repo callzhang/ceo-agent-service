@@ -1654,6 +1654,7 @@ def test_native_feedback_claim_after_converted_reopen_clears_captured_unresolved
 
 
 def test_feedback_intake_task_survives_source_inverse_and_reforward(tmp_path):
+    from app.action_feedback_storage import set_feedback_action
     from app.store import AutoReplyStore, FEEDBACK_EVENT_SQL
 
     source = _source()
@@ -1712,28 +1713,42 @@ def test_feedback_intake_task_survives_source_inverse_and_reforward(tmp_path):
             "test_evidence_json=? where task_id=?",
             ('{"native":true}', task_id),
         )
+        source_rowid = db.execute(
+            "select cast(legacy_key as integer) from actions "
+            "where record_type='feedback_events' and fb_event_key=?",
+            ("feedback:new-native",),
+        ).fetchone()[0]
+        assert set_feedback_action(
+            db, "feedback_events", source_rowid,
+            {"resolved_at": sqlite3.Binary(b"2026-10-23 10:00:00")},
+        ) == 1
     store.upsert_feedback_event(
         key="feedback:new-native", feedback_token="token-new-native", comment="edited",
     )
     public_item = store.list_user_feedback_items_by_keys(["feedback:new-native"])[0]
-    assert public_item.processing_status == "processing"
+    assert public_item.processing_status == "resolved"
     with store._connect() as db:
         event = db.execute(
-            f"select key,comment from ({FEEDBACK_EVENT_SQL}) where key=?",
+            f"select key,comment,typeof(resolved_at),resolved_at "
+            f"from ({FEEDBACK_EVENT_SQL}) where key=?",
             ("feedback:new-native",),
         ).fetchone()
-        assert tuple(event) == ("feedback:new-native", "edited")
+        assert tuple(event) == (
+            "feedback:new-native", "edited", "blob", b"2026-10-23 10:00:00",
+        )
 
         db.execute("pragma foreign_keys=off")
         db.execute("begin immediate")
         inverse = restore_task_entities(db, metadata, forward)
         restored = db.execute(
-            "select feedback_key,attempt_id,agent_run_id,test_evidence_json,note,status "
+            "select feedback_key,attempt_id,agent_run_id,test_evidence_json,note,status,"
+            "typeof(resolved_at),resolved_at "
             "from (" + task12_projection("feedback_processing_items") + ") "
             "where feedback_key='feedback:new-native'"
         ).fetchone()
         assert tuple(restored) == (
-            "feedback:new-native", 41, 42, '{"native":true}', "native edit", "processing",
+            "feedback:new-native", 41, 42, '{"native":true}', "native edit", "resolved",
+            "blob", b"2026-10-23 10:00:00",
         )
         source_metadata = capture_task_entities(db)
         reforward = migrate_task_entities(
@@ -1742,17 +1757,22 @@ def test_feedback_intake_task_survives_source_inverse_and_reforward(tmp_path):
         )
         native = db.execute(
             "select item.feedback_key,item.attempt_id,item.agent_run_id,item.test_evidence_json,"
-            "item.note,task.status from feedback_processing_items item "
+            "item.note,task.status,typeof(item.resolved_at),item.resolved_at "
+            "from feedback_processing_items item "
             "join tasks task on task.id=item.task_id where item.feedback_key='feedback:new-native'"
         ).fetchone()
         assert tuple(native) == (
-            "feedback:new-native", 41, 42, '{"native":true}', "native edit", "processing",
+            "feedback:new-native", 41, 42, '{"native":true}', "native edit", "resolved",
+            "blob", b"2026-10-23 10:00:00",
         )
         event = db.execute(
-            f"select key,comment from ({FEEDBACK_EVENT_SQL}) where key=?",
+            f"select key,comment,typeof(resolved_at),resolved_at "
+            f"from ({FEEDBACK_EVENT_SQL}) where key=?",
             ("feedback:new-native",),
         ).fetchone()
-        assert tuple(event) == ("feedback:new-native", "edited")
+        assert tuple(event) == (
+            "feedback:new-native", "edited", "blob", b"2026-10-23 10:00:00",
+        )
         restore_task_entities(db, source_metadata, reforward)
 
 

@@ -21,6 +21,7 @@ from app.action_feedback_storage import (
     insert_feedback_action,
     reopen_feedback_event,
     resolve_feedback_events,
+    set_feedback_action,
 )
 from app.task8_storage import register_task8_functions
 from app.task_run_entity_assembly import task_run_entity_assembly_objects
@@ -242,6 +243,76 @@ def test_feedback_event_repeat_projects_resolved_source_and_preserves_blank_sour
             "keep note", '{"passed":true}',
         )
     assert store.list_user_feedback_items_by_keys([key])[0].processing_status == "processing"
+
+
+@pytest.mark.parametrize(
+    ("resolved_at", "source_type", "source_value"),
+    [
+        (sqlite3.Binary(b"2026-10-23 10:00:00"), "blob", b"2026-10-23 10:00:00"),
+        (sqlite3.Binary(b""), "blob", b""),
+        ("2026-10-23 10:00:00", "text", "2026-10-23 10:00:00"),
+        ("", "text", ""),
+        ("\t", "text", "\t"),
+    ],
+)
+@pytest.mark.parametrize("existing", [False, True])
+def test_feedback_event_intake_preserves_source_resolved_value_and_sqlite_classification(
+    tmp_path, resolved_at, source_type, source_value, existing,
+):
+    store = _target_store(tmp_path / f"feedback-raw-{existing}-{source_type}-{len(source_value)}.sqlite3")
+    key = "feedback:raw-value"
+    if existing:
+        store.upsert_feedback_event(key=key, feedback_token="token-raw")
+        with store._connect() as db:
+            task_id = db.execute(
+                "select task_id from feedback_processing_items where feedback_key=?", (key,),
+            ).fetchone()[0]
+            db.execute("update tasks set status='processing' where id=?", (task_id,))
+            db.execute(
+                "update feedback_processing_items set resolved_at='native-resolution' where task_id=?",
+                (task_id,),
+            )
+            source_rowid = db.execute(
+                "select cast(legacy_key as integer) from actions where fb_event_key=?", (key,),
+            ).fetchone()[0]
+            assert set_feedback_action(
+                db, "feedback_events", source_rowid, {"resolved_at": resolved_at},
+            ) == 1
+    else:
+        _add_feedback_event(store, key, resolved_at=resolved_at)
+    with store._connect() as db:
+        source = db.execute(
+            f"select typeof(resolved_at),resolved_at from ({FEEDBACK_EVENT_SQL}) where key=?",
+            (key,),
+        ).fetchone()
+        should_resolve = db.execute(
+            "select trim(?) <> ''", (source_value,),
+        ).fetchone()[0]
+        assert tuple(source) == (source_type, source_value)
+
+    store.upsert_feedback_event(key=key, feedback_token="token-raw", comment="updated")
+    with store._connect() as db:
+        projected = db.execute(
+            "select task.status,typeof(item.resolved_at),item.resolved_at "
+            "from tasks task join feedback_processing_items item on item.task_id=task.id "
+            "where item.feedback_key=?",
+            (key,),
+        ).fetchone()
+        if existing and not should_resolve:
+            expected = ("processing", "text", "native-resolution")
+        else:
+            expected_status = "resolved" if should_resolve else "pending"
+            expected = (
+                expected_status,
+                source_type if should_resolve else "text",
+                source_value if should_resolve else "",
+            )
+        assert tuple(projected) == expected
+        source_after = db.execute(
+            f"select typeof(resolved_at),resolved_at from ({FEEDBACK_EVENT_SQL}) where key=?",
+            (key,),
+        ).fetchone()
+        assert tuple(source_after) == (source_type, source_value)
 
 
 def test_feedback_backlog_keeps_latest_token_and_manual_attempt_context(tmp_path):

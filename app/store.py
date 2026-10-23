@@ -17075,11 +17075,14 @@ class AutoReplyStore(LogicalRunStoreMixin, ReviewedCandidateStoreMixin):
             ).fetchone()
             if existing is None:
                 event = db.execute(
-                    f"select resolved_at from ({FEEDBACK_EVENT_SQL}) where key=?",
+                    f"select resolved_at,trim(resolved_at)<>'' as is_resolved "
+                    f"from ({FEEDBACK_EVENT_SQL}) where key=?",
                     (key,),
                 ).fetchone()
-                resolved_at = str(event["resolved_at"] or "") if event else ""
-                status = "resolved" if resolved_at.strip() else "pending"
+                status = "resolved" if event and event["is_resolved"] else "pending"
+                resolved_at = (
+                    event["resolved_at"] if event and event["is_resolved"] else ""
+                )
                 task_timestamp = str(db.execute("select current_timestamp").fetchone()[0])
                 task = task_entity_storage.create_task(
                     db,
@@ -17099,11 +17102,12 @@ class AutoReplyStore(LogicalRunStoreMixin, ReviewedCandidateStoreMixin):
                 )
             else:
                 event = db.execute(
-                    f"select resolved_at from ({FEEDBACK_EVENT_SQL}) where key=?",
+                    f"select resolved_at,trim(resolved_at)<>'' as is_resolved "
+                    f"from ({FEEDBACK_EVENT_SQL}) where key=?",
                     (key,),
                 ).fetchone()
-                resolved_at = str(event["resolved_at"] or "") if event else ""
-                if resolved_at.strip():
+                resolved_at = event["resolved_at"] if event else ""
+                if event and event["is_resolved"]:
                     db.execute(
                         "update tasks set status='resolved',updated_at=current_timestamp "
                         "where id=? and kind='feedback_processing'",
