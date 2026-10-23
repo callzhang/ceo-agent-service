@@ -826,14 +826,17 @@ size checks. Generic Drive access denial does not prove that this OA-scoped read
 is unavailable. This path does not call `authorize-preview` or modify access.
 
 When the premium comment download is unavailable (for example the tenant's OA
-Premium benefit has expired) or the form download is refused, both roles may call
-`authorize_dingtalk_oa_attachment_preview(process_instance_id, file_id)`. It runs
-`dws oa approval attachment authorize-preview --with-comment-attachment` for that
-one instance and file with the service account (the same preview access opening the
-attachment in DingTalk grants), and returns the Drive `space_id`; the role then reads
-the body with `read_dingtalk_drive_file(node_id=file_id, space_id, file_name)`. It is
-the only role tool that changes DingTalk access: it is idempotent, takes no other
-arguments and grants nothing beyond preview of that file. (Derek, 2026-10-22.)
+Premium benefit has expired) or the form download is refused, the Consumer runs
+`dws oa approval attachment authorize-preview --instance-id ... --file-ids ...
+--with-comment-attachment` in its own shell for that one instance and file (the same
+preview access opening the attachment in DingTalk grants), then reads the body with
+`read_dingtalk_drive_file(node_id=file_id, space_id, file_name)` or
+`dws drive +download`. The Skill limits that shell to reads and this preview
+authorization; the Consumer sandbox therefore has network access and the dws state
+directory (`~/.dws`) as its only writable root (`sandbox_workspace_write.network_access=true`,
+`writable_roots=[~/.dws]`). Audit has no shell and no preview tool; the Claude-route
+Consumer has no shell either, so it cannot open preview access. There is no service
+tool for preview authorization any more. (Derek, 2026-10-22/23.)
 
 `retry-source-verified-email-action --account ... --action-id ...` examines one
 current failed move/trash action through the existing read-only IMAP wrapper.

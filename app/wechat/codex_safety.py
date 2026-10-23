@@ -7,6 +7,7 @@ import re
 import tomllib
 from collections.abc import Iterator
 from dataclasses import dataclass
+from pathlib import Path
 
 from app.business_skills import codex_skill_config_override
 from app.codex_runner import (
@@ -296,8 +297,13 @@ def make_role_agent_command(
             "--skip-git-repo-check",
             "-c", "features.shell_tool=true",
             "-c", "features.unified_exec=true",
-            "-c", "sandbox_workspace_write.network_access=false",
-            "-c", "sandbox_workspace_write.writable_roots=[]",
+            # Derek 2026-10-23: the Consumer shell runs `dws` itself (for
+            # example to open preview access to one OA attachment), so shell
+            # commands get network access and the dws state directory (token
+            # cache, file lock) is writable.
+            "-c", "sandbox_workspace_write.network_access=true",
+            "-c", "sandbox_workspace_write.writable_roots="
+            + json.dumps([str(Path.home() / ".dws")]),
         ])
         for flag in ("--cd", "-C"):
             while flag in command:
