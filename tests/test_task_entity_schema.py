@@ -1,6 +1,7 @@
 from contextlib import closing
 import json
 import sqlite3
+from uuid import UUID
 
 from app import task20_current_schema, task20_definitions
 from app.task_lifecycle_current_schema import (
@@ -383,6 +384,279 @@ def test_current_fact_inverse_reads_mutated_native_owners_and_reforwards_them():
             "new current result",
         )
         assert second_forward["identity_edges"] == forward["identity_edges"]
+
+
+def test_native_input_new_fact_below_global_water_keeps_canonical_id_on_reforward():
+    from app.task_entity_storage import append_task_input, bind_claimed_input, bind_current_input
+
+    with closing(_source()) as db:
+        # This is a valid predecessor TaskInput with a high per-kind ID below
+        # the unrelated global Tasks allocator water.
+        values = {
+            "id": 404224, "reply_task_id": 201, "channel": "dingtalk",
+            "conversation_id": "chat", "conversation_title": "Chat", "single_chat": 1,
+            "trigger_message_id": "trigger-404224", "trigger_create_time": "time",
+            "trigger_sender": "Sender", "trigger_text": "old input", "oa_url": "",
+            "business_object_key": "object", "input_revision_key": "r1",
+        }
+        columns, expressions, parameters = source_insert("reply_task_inputs", values, {})
+        db.execute(
+            'insert into tasks("_kind","id","legacy_key","parent_id",'
+            + ",".join('"' + field + '"' for field in columns) + ") values(?,?,?, ?,"
+            + ",".join(expressions) + ")",
+            (TASK_RECORD_TYPES.code("reply_task_inputs"), 404224, "404224", 201, *parameters),
+        )
+        db.commit()
+        db.execute("pragma foreign_keys=off")
+        db.execute("begin immediate")
+        source_metadata = capture_task_entities(db)
+        forward = migrate_task_entities(db, source_metadata)
+        db.row_factory = sqlite3.Row
+        appended, created = append_task_input(db, task_id=201, values={
+            "channel": "dingtalk", "conversation_id": "chat",
+            "conversation_title": "Chat", "single_chat": 1,
+            "trigger_message_id": "trigger-404225", "trigger_create_time": "time",
+            "trigger_sender": "Sender", "trigger_text": "new input",
+            "oa_url": "", "business_object_key": "object",
+            "input_revision_key": "r1",
+        })
+        assert created is True
+        assert appended["id"] == 404225
+        assert bind_current_input(db, task_id=201, input_id=404225,
+                                  expected_input_version=1, input_version=2) is not None
+        assert bind_claimed_input(db, task_id=201, input_id=404225,
+                                  claimed_input_version=1) is not None
+
+        inverse = restore_task_entities(db, source_metadata, forward)
+        assert db.execute("select 1 from tasks where id=404225").fetchone() is None
+        source_input = db.execute(
+            "select id,legacy_key from tasks where record_type='reply_task_inputs' "
+            "and cast(legacy_key as integer)=404225"
+        ).fetchone()
+        assert source_input is not None and source_input[0] > 416921
+        pointers = db.execute("select current_input_id,claimed_input_id from tasks where id=201").fetchone()
+        assert tuple(pointers) == (source_input[0], source_input[0])
+        assert inverse["inverse_identity"] == {
+            "version": 1,
+            "owners": [{"source_kind": "reply_task_inputs",
+                        "source_physical_id": source_input[0], "canonical_id": 404225}],
+        }
+
+        source_metadata = capture_task_entities(db)
+        identity = json.loads(json.dumps(inverse["inverse_identity"]))
+        context = json.loads(json.dumps(inverse["source_context"]))
+        before_rows = db.execute("select * from tasks order by id").fetchall()
+        try:
+            migrate_task_entities(db, source_metadata, source_context=context)
+        except ValueError as exc:
+            assert "requires its inverse identity handoff" in str(exc)
+        else:
+            raise AssertionError("restored-source migration accepted a missing identity handoff")
+        wrong = {"version": 1, "owners": []}
+        try:
+            migrate_task_entities(db, source_metadata, source_context=context,
+                                  inverse_identity=wrong)
+        except ValueError as exc:
+            assert "does not match its context" in str(exc)
+        else:
+            raise AssertionError("restored-source migration accepted the wrong identity handoff")
+        assert db.execute("select * from tasks order by id").fetchall() == before_rows
+        refoward = migrate_task_entities(db, source_metadata, source_context=context,
+                                         inverse_identity=identity)
+        assert tuple(db.execute(
+            "select id,trigger_text from task_inputs where id=404225"
+        ).fetchone()) == (404225, "new input")
+        assert tuple(db.execute("select physical_id,target_id from task_run_identity_map where source_kind=? "
+                                "and public_key='404225' and public_key_type='integer'",
+                                ("reply_task_inputs",)).fetchone()) == (source_input[0], 404225)
+        second_inverse = restore_task_entities(db, source_metadata, refoward)
+        assert second_inverse["inverse_identity"] == inverse["inverse_identity"]
+        second_source = capture_task_entities(db)
+        migrate_task_entities(db, second_source, source_context=second_inverse["source_context"],
+                              inverse_identity=json.loads(json.dumps(second_inverse["inverse_identity"])))
+        assert tuple(db.execute("select id,trigger_text from task_inputs where id=404225").fetchone()) == (
+            404225, "new input",
+        )
+
+
+def test_native_business_key_collision_uses_predecessor_hidden_rowid_allocator():
+    from app.task_entity_storage import (
+        append_task_input, associate_business_key, bind_claimed_input,
+        bind_current_input, create_task,
+    )
+    from app.task12_storage import insert_task12, update_task12
+
+    with closing(_source()) as db:
+        # Seed an authentic source Task at the next per-input ID.
+        source_reply = db.execute("select * from ("
+                                  + task20_definitions.task20_projection("meeting_alignment_jobs")
+                                  + ") where id=221").fetchone()
+        source_fields = [field[0] for field in task20_definitions.TASK20_COLUMNS["meeting_alignment_jobs"]]
+        source_values = dict(zip(source_fields, source_reply))
+        source_values.update(id=207, meeting_id="seeded-meeting-207")
+        columns, expressions, parameters = source_insert("meeting_alignment_jobs", source_values, {})
+        db.execute(
+            'insert into tasks("_kind","id","legacy_key","parent_id",'
+            + ",".join('"' + field + '"' for field in columns) + ") values(?,?,?, ?,"
+            + ",".join(expressions) + ")",
+            (TASK_RECORD_TYPES.code("meeting_alignment_jobs"), 207, "207", None, *parameters),
+        )
+        db.commit()
+        db.execute("pragma foreign_keys=off")
+        db.execute("begin immediate")
+        source_metadata = capture_task_entities(db)
+        forward = migrate_task_entities(db, source_metadata)
+        db.row_factory = sqlite3.Row
+        now = db.execute("select current_timestamp").fetchone()[0]
+        new_task = create_task(db, values={"kind": "reply", "status": "pending",
+                                           "available_at": now, "attempts": 0, "error": "",
+                                           "execution_generation": "initial",
+                                           "claimed_input_version": 0,
+                                           "created_at": now, "updated_at": now}, parameters={
+            "force_new_decision": 0, "manual_rerun_attempt_id": 0,
+            "manual_rerun_revision_key": "", "recovery_code": "",
+        })
+        deleted_task = create_task(db, values={"kind": "reply", "status": "pending",
+                                               "created_at": now, "updated_at": now})
+        deleted_task_id = deleted_task["id"]
+        db.execute("delete from tasks where id=?", (deleted_task_id,))
+        first, first_created = append_task_input(db, task_id=new_task["id"], values={
+            "channel": "dingtalk", "conversation_id": "new-chat", "conversation_title": "New",
+            "single_chat": 1, "trigger_message_id": "new-trigger-1", "trigger_create_time": now,
+            "trigger_sender": "Sender", "trigger_text": "older claimed input",
+            "oa_url": "", "business_object_key": "new-object", "input_revision_key": "same-revision",
+        })
+        second, second_created = append_task_input(db, task_id=new_task["id"], values={
+            "channel": "dingtalk", "conversation_id": "new-chat", "conversation_title": "New",
+            "single_chat": 1, "trigger_message_id": "new-trigger-2", "trigger_create_time": now,
+            "trigger_sender": "Sender", "trigger_text": "new current input",
+            "oa_url": "", "business_object_key": "new-object", "input_revision_key": "same-revision",
+        })
+        assert first_created and second_created and (first["id"], second["id"]) == (207, 208)
+        assert bind_claimed_input(db, task_id=new_task["id"], input_id=first["id"],
+                                  claimed_input_version=1)
+        assert bind_current_input(db, task_id=new_task["id"], input_id=first["id"],
+                                  expected_input_version=None, input_version=1)
+        assert bind_current_input(db, task_id=new_task["id"], input_id=second["id"],
+                                  expected_input_version=1, input_version=2)
+        created = associate_business_key(db, task_id=new_task["id"], business_key="new-business-object",
+                                         created_at=now, updated_at=now)
+        assert created["id"] == 225  # existing native Task id 225 belongs to another owner
+        second_key = associate_business_key(db, task_id=new_task["id"], business_key="second-business-object",
+                                            created_at=now, updated_at=now)
+        assert second_key["id"] == 226
+
+        inverse = restore_task_entities(db, source_metadata, forward)
+        assert tuple(db.execute("select record_type from tasks where id=225").fetchone()) == (
+            "email_agent_classification_tasks",
+        )
+        assert tuple(db.execute("select record_type from tasks where id=207").fetchone()) == (
+            "meeting_alignment_jobs",
+        )
+        row = db.execute(
+            "select id,legacy_key from tasks where record_type='business_object_tasks' and legacy_key='225'"
+        ).fetchone()
+        assert row is not None and row[0] > 416921 and row[1] == "225"
+        handoff_by_owner = {(owner["source_kind"], owner["canonical_id"]): owner["source_physical_id"]
+                            for owner in inverse["inverse_identity"]["owners"]}
+        assert handoff_by_owner[("business_object_tasks", 225)] == row[0]
+        assert db.execute("select id from tasks where record_type='reply_tasks' and legacy_key=?",
+                          (str(new_task["id"]),)).fetchone()[0] == new_task["id"]
+        for kind, canonical_id in (("reply_task_inputs", first["id"]),
+                                   ("reply_task_inputs", second["id"]),
+                                   ("business_object_tasks", second_key["id"])):
+            assert handoff_by_owner[(kind, canonical_id)] > 416921
+        assert update_task12(db, "business_object_tasks", 225,
+                             {"business_object_key": "updated-native-business-object"}) == 1
+        old_write = insert_task12(db, "business_object_tasks", {
+            "business_object_key": "cold-old-business-object", "reply_task_id": 201,
+        })
+        assert old_write.rowcount == 1 and old_write.physical_id > 416921
+
+        source_metadata = capture_task_entities(db)
+        refoward = migrate_task_entities(db, source_metadata, source_context=inverse["source_context"],
+                                        inverse_identity=inverse["inverse_identity"])
+        assert refoward["counts"]["reply_task_inputs"] >= 2
+        assert tuple(db.execute("select current_input_id,claimed_input_id,input_version,claimed_input_version "
+                                "from tasks where id=?", (new_task["id"],)).fetchone()) == (
+            second["id"], first["id"], 2, 1,
+        )
+        assert tuple(db.execute("select id,business_key from task_business_keys where id=225").fetchone()) == (
+            225, "updated-native-business-object",
+        )
+        assert tuple(db.execute("select id,business_key from task_business_keys where id=226").fetchone()) == (
+            226, "second-business-object",
+        )
+        next_task = create_task(db, values={"kind": "reply", "status": "pending",
+                                            "created_at": now, "updated_at": now})
+        assert next_task["id"] > deleted_task_id
+        assert db.execute("select business_key from task_business_keys where id=?",
+                          (old_write.physical_id,)).fetchone()[0] == "cold-old-business-object"
+
+
+def test_native_workbench_session_collision_and_turn_preserve_source_uuid_and_opaque_session_ref():
+    from app.task_entity_storage import create_task
+
+    with closing(_source()) as db:
+        db.execute("pragma foreign_keys=off")
+        db.execute("begin immediate")
+        source_metadata = capture_task_entities(db)
+        forward = migrate_task_entities(db, source_metadata)
+        db.row_factory = sqlite3.Row
+        # Native Workbench session IDs and Task IDs are independent namespaces.
+        # Session 203 collides with the existing native workbench-turn Task 203.
+        db.execute(
+            "insert into workbench_tasks(title,runtime_kind,provider_session_ref) values(?,?,?)",
+            ("New Workbench", "codex", "opaque:provider-session/ref"),
+        )
+        session_id = db.execute("select id from workbench_tasks where title='New Workbench'").fetchone()[0]
+        assert session_id == 203
+        now = db.execute("select current_timestamp").fetchone()[0]
+        turn_task = create_task(db, values={"kind": "workbench_turn", "status": "queued",
+                                            "created_at": now, "updated_at": now,
+                                            "lease_owner": "", "lease_expires_at": ""})
+        db.execute(
+            "insert into workbench_turns(task_id,workbench_task_id,client_request_id,task_sequence,"
+            "user_text,stop_requested,error_code,error_detail,resume_context,execution_run_id,"
+            "runtime_quiesced_run_id,started_at,completed_at) values(?,?,?,?,?,?,?,?,?,?,?,?,?)",
+            (turn_task["id"], session_id, "client-request-uuid", 1, "real user input", 0,
+             "", "", "", "", "", "", ""),
+        )
+
+        inverse = restore_task_entities(db, source_metadata, forward)
+        session = db.execute(
+            "select id,legacy_key,payload_json from tasks where record_type='workbench_tasks' "
+            "and json_extract(payload_json,'$[0]')='New Workbench'"
+        ).fetchone()
+        assert session is not None and session[0] > 416921
+        session_public_id = db.execute(
+            "select id from (" + task20_definitions.task20_projection("workbench_tasks")
+            + ") where title='New Workbench'"
+        ).fetchone()[0]
+        UUID(session_public_id)
+        session_row = db.execute(
+            "select provider_session_ref from (" + task20_definitions.task20_projection("workbench_tasks")
+            + ") where id=?", (session_public_id,),
+        ).fetchone()
+        assert tuple(session_row) == ("opaque:provider-session/ref",)
+        turn = db.execute("select id,task_id,client_request_id from ("
+                          + task20_definitions.task20_projection("workbench_turns")
+                          + ") where client_request_id='client-request-uuid'").fetchone()
+        UUID(turn[0])
+        assert tuple(turn)[1:] == (session_public_id, "client-request-uuid")
+        assert any(row["source_kind"] == "workbench_tasks"
+                   and row["canonical_id"] == 203 for row in inverse["inverse_identity"]["owners"])
+
+        source_metadata = capture_task_entities(db)
+        migrate_task_entities(db, source_metadata, source_context=inverse["source_context"],
+                              inverse_identity=inverse["inverse_identity"])
+        assert db.execute("select provider_session_ref from workbench_tasks where id=203").fetchone()[0] == "opaque:provider-session/ref"
+        turn = db.execute("select identity.public_key,owner.workbench_task_id,owner.client_request_id "
+                          "from workbench_turns owner join task_run_identity_map identity "
+                          "on identity.source_kind='workbench_turns' and identity.target_id=owner.task_id "
+                          "where owner.client_request_id='client-request-uuid'").fetchone()
+        assert tuple(turn)[1:] == (203, "client-request-uuid")
+        UUID(turn[0])
 
 
 def test_current_inverse_keeps_marker_shaped_text_parameter_as_text():

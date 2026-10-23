@@ -2,8 +2,10 @@
 from __future__ import annotations
 
 import json
+import hashlib
 import sqlite3
 from collections import defaultdict
+from uuid import uuid4
 
 from app import task20_definitions, task_run_entity_definitions
 from app.task_lifecycle_current_schema import task_lifecycle_objects
@@ -293,7 +295,10 @@ def resolve_dispatcher_claim_source_id(
     return None if row is None else int(row[0])
 
 
-def migrate_task_entities(db: sqlite3.Connection, metadata: dict) -> dict:
+def migrate_task_entities(
+    db: sqlite3.Connection, metadata: dict, *, source_context: dict | None = None,
+    inverse_identity: dict | None = None,
+) -> dict:
     """Replace current Task projections with native Task/domain facts.
 
     The caller retains transaction and foreign-key-check ownership because
@@ -301,6 +306,19 @@ def migrate_task_entities(db: sqlite3.Connection, metadata: dict) -> dict:
     """
     _transaction(db)
     _validate_metadata(db, metadata)
+    handoff = _validate_inverse_identity(inverse_identity)
+    if source_context is not None:
+        if (not isinstance(source_context, dict)
+                or set(source_context) != {"version", "handoff_required", "handoff_sha256"}
+                or source_context["version"] != 1
+                or type(source_context["handoff_required"]) is not bool
+                or not isinstance(source_context["handoff_sha256"], str)):
+            raise ValueError("unsupported restored-source Task context")
+        if source_context["handoff_required"] and inverse_identity is None:
+            raise ValueError("restored-source Task migration requires its inverse identity handoff")
+        digest = _inverse_identity_digest(inverse_identity or {"version": 1, "owners": []})
+        if digest != source_context["handoff_sha256"]:
+            raise ValueError("restored-source Task identity handoff does not match its context")
     staged = _stage(db)
     field_map = task_run_entity_definitions.task_run_field_map()
     logical = defaultdict(list)
@@ -331,7 +349,10 @@ def migrate_task_entities(db: sqlite3.Connection, metadata: dict) -> dict:
     for kind, rows in all_rows.items():
         target = _target_table(kind)
         for row in rows:
-            target_id = _target_id(db, target, int(row["_physical_id"]))
+            physical_id = int(row["_physical_id"])
+            target_id = handoff.get((kind, physical_id), physical_id)
+            if target_id != _target_id(db, target, target_id):
+                raise ValueError("inverse identity handoff does not match the native owner")
             target_ids[(kind, int(row["_physical_id"]))] = target_id
             id_field = "id" if "id" in row else "task_id" if kind == "email_agent_classification_tasks" else None
             if id_field:
@@ -389,7 +410,7 @@ def migrate_task_entities(db: sqlite3.Connection, metadata: dict) -> dict:
         if kind not in _TASK_TABLES:
             continue
         for row in rows:
-            values = {"id": int(row["_physical_id"]), "kind": _task_kind(kind)}
+            values = {"id": target_ids[(kind, int(row["_physical_id"]))], "kind": _task_kind(kind)}
             parameters = {}
             for item in logical[kind]:
                 dest = item["target_field_or_expression"]
@@ -433,7 +454,7 @@ def migrate_task_entities(db: sqlite3.Connection, metadata: dict) -> dict:
                 values = {}
                 columns = {item[1] for item in db.execute(f"pragma table_info({_quote(target)})")}
                 if "id" in columns:
-                    values["id"] = int(row["_physical_id"])
+                    values["id"] = target_ids[(kind, int(row["_physical_id"]))]
                 for item in logical[kind]:
                     dest, owner = item["target_field_or_expression"], item["target_table"]
                     source_field = item["source_field"]
@@ -481,22 +502,23 @@ def migrate_task_entities(db: sqlite3.Connection, metadata: dict) -> dict:
                                     "physical_id": row["_physical_id"], **marker})
                     values[dest] = value
                 if target == "task_inputs":
-                    values["id"] = int(row["_physical_id"])
-                    values["task_id"] = int(row["_physical_id"]) if kind == "reply_tasks" else values.get("task_id")
+                    values["id"] = target_ids[(kind, int(row["_physical_id"]))]
+                    values["task_id"] = target_ids[(kind, int(row["_physical_id"]))] if kind == "reply_tasks" else values.get("task_id")
                 if target in {"workbench_turns", "feedback_processing_items", "email_classification_inputs"}:
-                    values["task_id"] = int(row["_physical_id"])
+                    values["task_id"] = target_ids[(kind, int(row["_physical_id"]))]
                 if target == "task_results":
-                    values["task_id"] = int(row["_physical_id"])
+                    values["task_id"] = target_ids[(kind, int(row["_physical_id"]))]
                     values["result_kind"] = _result_kind(kind)
                 if target == "work_summary_inputs":
-                    values["task_id"] = int(row["_physical_id"])
+                    values["task_id"] = target_ids[(kind, int(row["_physical_id"]))]
                 if target == "feedback_processing_items" and values.get("batch_id") is not None:
                     pass
                 _insert(db, target, values)
 
     # Store only identity edges that cannot be reconstructed from native IDs.
     for identity in public_rows:
-        if _typed_key(identity["public_key"]) == ("integer", identity["target_id"]):
+        if (_typed_key(identity["public_key"]) == ("integer", identity["target_id"])
+                and identity["physical_id"] == identity["target_id"]):
             continue
         db.execute("insert into task_run_identity_map(source_kind,physical_id,public_key,public_key_type,target_id) values(?,?,?,?,?)",
             (identity["source_kind"], identity["physical_id"],
@@ -534,7 +556,8 @@ def migrate_task_entities(db: sqlite3.Connection, metadata: dict) -> dict:
         "counts": {kind: len(rows) for kind, rows in all_rows.items()},
         "identity_rows": len(identity_records),
         "identity_edges": identity_records,
-        "public_owner_rows": public_rows,
+        "owner_highwaters": {kind: max((int(row["_physical_id"]) for row in rows), default=0)
+                             for kind, rows in all_rows.items()},
         "raw_key_exceptions": raw_key_exceptions,
         "reference_exceptions": reference_exceptions,
         "task_sequence": metadata["task_sequence"],
@@ -542,10 +565,83 @@ def migrate_task_entities(db: sqlite3.Connection, metadata: dict) -> dict:
     }
 
 
-def _inverse_indexes(forward_metadata: dict) -> tuple[dict, dict, dict]:
-    public_rows = forward_metadata.get("public_owner_rows")
-    if not isinstance(public_rows, list):
-        raise ValueError("Task inverse requires exact forward identity metadata")
+def _validate_inverse_identity(value: dict | None) -> dict[tuple[str, int], int]:
+    """Validate the content-free identity handoff returned by the inverse."""
+    if value is None:
+        return {}
+    if not isinstance(value, dict) or set(value) != {"version", "owners"} or value["version"] != 1:
+        raise ValueError("unsupported inverse Task identity handoff")
+    if not isinstance(value["owners"], list):
+        raise ValueError("invalid inverse Task identity handoff owners")
+    result = {}
+    canonical = set()
+    for row in value["owners"]:
+        if (not isinstance(row, dict) or set(row) != {"source_kind", "source_physical_id", "canonical_id"}
+                or row["source_kind"] not in task20_definitions.TASK20_COLUMNS
+                or type(row["source_physical_id"]) is not int or type(row["canonical_id"]) is not int):
+            raise ValueError("invalid inverse Task identity handoff owner")
+        key = (row["source_kind"], row["source_physical_id"])
+        target = row["canonical_id"]
+        if key in result or (row["source_kind"], target) in canonical:
+            raise ValueError("duplicate inverse Task identity handoff owner")
+        result[key] = target
+        canonical.add((row["source_kind"], target))
+    return result
+
+
+def _inverse_identity_digest(value: dict) -> str:
+    encoded = json.dumps(value, ensure_ascii=False, sort_keys=True, separators=(",", ":"))
+    return hashlib.sha256(encoded.encode("utf-8")).hexdigest()
+
+
+def _inverse_indexes(db: sqlite3.Connection, forward_metadata: dict) -> tuple[dict, dict, dict]:
+    """Rebuild the typed owner index from native owners and sparse exceptions."""
+    edges = forward_metadata.get("identity_edges")
+    raw_exceptions = forward_metadata.get("raw_key_exceptions")
+    owner_highwaters = forward_metadata.get("owner_highwaters")
+    if (not isinstance(edges, list) or not isinstance(raw_exceptions, list)
+            or not isinstance(owner_highwaters, dict)):
+        raise ValueError("Task inverse requires sparse identity metadata")
+    exceptional = {}
+    for row in edges:
+        if (not isinstance(row, dict) or set(row) != {
+                "source_kind", "physical_id", "public_key", "target_id"}):
+            raise ValueError("invalid Task identity edge")
+        exceptional[(row["source_kind"], row["target_id"])] = row
+    physical_target = {
+        (row[0], int(row[1])): int(row[2])
+        for row in db.execute(
+            "select source_kind,physical_id,target_id from main.task_run_identity_map")
+    }
+    raw_by_target = {}
+    for row in raw_exceptions:
+        physical_id = row["physical_id"]
+        target_id = physical_target.get((row["source_kind"], physical_id), physical_id)
+        raw_by_target[(row["source_kind"], target_id)] = row
+    public_rows = []
+    for kind in task20_definitions.TASK20_COLUMNS:
+        table = _target_table(kind)
+        columns = {row[1] for row in db.execute(f"pragma main.table_info({_quote(table)})")}
+        if table == "tasks":
+            owner_ids = [int(row[0]) for row in db.execute(
+                "select id from main.tasks where kind=?", (_TASK_TABLES.get(kind, "domain"),))]
+        else:
+            key_column = "id" if "id" in columns else "task_id"
+            owner_ids = [int(row[0]) for row in db.execute(
+                f"select {_quote(key_column)} from main.{_quote(table)}")]
+        has_public = any(name in {field[0] for field in task20_definitions.TASK20_COLUMNS[kind]}
+                         for name in ("id", "task_id"))
+        for target_id in owner_ids:
+            edge = exceptional.get((kind, target_id))
+            raw = raw_by_target.get((kind, target_id))
+            if edge is None and raw is None and target_id > owner_highwaters.get(kind, 0):
+                continue
+            physical_id = (edge["physical_id"] if edge is not None else
+                           raw["physical_id"] if raw is not None else target_id)
+            if has_public:
+                public_rows.append({"source_kind": kind, "physical_id": physical_id,
+                    "public_key": edge["public_key"] if edge is not None else target_id,
+                    "target_id": target_id})
     public = {}
     for row in public_rows:
         if not isinstance(row, dict) or set(row) != {"source_kind", "physical_id", "public_key", "target_id"}:
@@ -555,12 +651,15 @@ def _inverse_indexes(forward_metadata: dict) -> tuple[dict, dict, dict]:
             raise ValueError("ambiguous Task public owner metadata")
         public[key] = row
     public_identity = {(row["source_kind"], row["physical_id"]): row["public_key"] for row in public_rows}
+    physical_target = {(row["source_kind"], row["target_id"]): row["physical_id"]
+                       for row in public_rows}
     edges = {(row["source_kind"], row["physical_id"]): row["public_key"]
              for row in forward_metadata.get("identity_edges", [])}
     public_target = {(row["source_kind"], row["target_id"]): row["public_key"] for row in public_rows}
     public_index = {(row["source_kind"], _typed_key(row["public_key"])): row["target_id"]
                     for row in public_rows}
-    return public, {}, {"public_by_source": public_identity, "public_target": public_target,
+    return public, {}, {"public_by_source": public_identity, "physical_target": physical_target,
+                              "public_target": public_target,
                               "public_index": public_index, "edges": edges}
 
 
@@ -613,13 +712,13 @@ def restore_task_entities(db: sqlite3.Connection, source_metadata: dict, forward
         raise ValueError("unsupported current Task source declaration metadata")
     if not isinstance(forward_metadata, dict):
         raise ValueError("invalid Task forward metadata")
-    required = {"source_objects", "task_sequence", "identity_edges", "public_owner_rows",
+    required = {"source_objects", "task_sequence", "identity_edges", "owner_highwaters",
                 "raw_key_exceptions", "reference_exceptions"}
     if not required.issubset(forward_metadata):
         raise ValueError("incomplete Task inverse metadata")
     if source_metadata["source_objects"] != forward_metadata["source_objects"]:
         raise ValueError("Task source declaration metadata differs from forward capture")
-    _, _, identities = _inverse_indexes(forward_metadata)
+    _, _, identities = _inverse_indexes(db, forward_metadata)
     from app import task20_definitions
     from app.task_run_entity_definitions import task_run_field_map, task_run_entity_objects
     from app.task_entity_migration import restore_feedback_workbench_ref
@@ -666,13 +765,73 @@ def restore_task_entities(db: sqlite3.Connection, source_metadata: dict, forward
             rows = db.execute(f"select {_quote(key_column)} from main.{_quote(table)} order by {_quote(key_column)}").fetchall()
         for (target_id,) in rows:
             physical_rows.append({"source_kind": kind, "physical_id": int(target_id), "target_id": int(target_id)})
+    old_physical = identities["physical_target"]
+    old_physical.update({
+        (row["source_kind"], row["physical_id"]): row["physical_id"]
+        for row in forward_metadata["raw_key_exceptions"]
+    })
+    old_public = identities["public_target"]
+    source_key_values = defaultdict(list)
+    for (kind, _), value in old_public.items():
+        source_key_values[kind].append(value)
+    for item in forward_metadata["raw_key_exceptions"]:
+        source_key_values[item["source_kind"]].append(item["value"])
+    source_key_next = {}
+    from app.task20_definitions import TASK12_AUTOINCREMENT_KINDS
+    for kind, values in source_key_values.items():
+        numeric = [int(value) for value in values if type(value) is int or
+                   isinstance(value, str) and value.isdecimal()]
+        sequence_row = _sequence(db, "tasks:" + kind) if kind in TASK12_AUTOINCREMENT_KINDS else None
+        water = max([*numeric, sequence_row[1] if sequence_row else 0], default=0)
+        source_key_next[kind] = water + 1
+    reserved_physical = set(old_physical.values())
+    reserved_physical.update(
+        row["physical_id"] for row in forward_metadata["raw_key_exceptions"]
+    )
+    allocation_water = max(
+        source_metadata["task_sequence"][1] if source_metadata["task_sequence"] else 0,
+        max(reserved_physical, default=0),
+    )
+    native_sequence = _sequence(db, "tasks")
+    original_water = allocation_water
+    source_physical_by_native = {}
+    next_physical = allocation_water + 1
+    allocated_above_water = False
+    for identity in physical_rows:
+        kind, canonical_id = identity["source_kind"], identity["target_id"]
+        original = old_physical.get((kind, canonical_id))
+        if original is None:
+            candidate = canonical_id
+            if candidate <= original_water or candidate in reserved_physical:
+                while next_physical in reserved_physical:
+                    next_physical += 1
+                candidate = next_physical
+                next_physical += 1
+                allocated_above_water = True
+            original = candidate
+            reserved_physical.add(original)
+            allocation_water = max(allocation_water, original)
+        source_physical_by_native[(kind, canonical_id)] = original
+
+    source_public_by_native = {}
+    for identity in physical_rows:
+        kind, canonical_id = identity["source_kind"], identity["target_id"]
+        if (kind, canonical_id) in old_public:
+            public_key = old_public[(kind, canonical_id)]
+        else:
+            source_identity_fields = {field[0] for field in task20_definitions.TASK20_COLUMNS[kind]}
+            identity_field = "id" if "id" in source_identity_fields else (
+                "task_id" if "task_id" in source_identity_fields else None
+            )
+            if identity_field is None:
+                continue
+            public_key = str(uuid4()) if kind in {"workbench_tasks", "workbench_turns"} else canonical_id
+        source_public_by_native[(kind, canonical_id)] = public_key
+
     source_rows = []
     for identity in physical_rows:
         kind, physical_id, target_id = identity["source_kind"], identity["physical_id"], identity["target_id"]
-        public_key = identities["public_by_source"].get((kind, physical_id))
-        if public_key is None:
-            public_key = next((row["public_key"] for row in forward_metadata["public_owner_rows"]
-                               if row["source_kind"] == kind and row["physical_id"] == physical_id), None)
+        public_key = source_public_by_native.get((kind, target_id))
         values = {}
         if public_key is not None:
             for identity_field in ("id", "task_id"):
@@ -692,7 +851,10 @@ def restore_task_entities(db: sqlite3.Connection, source_metadata: dict, forward
                                "task_id": "workbench_tasks", "turn_id": "workbench_turns"}.get(field)
                 if parent_kind and value is not None:
                     if type(value) is int:
-                        value = identities["public_target"].get((parent_kind, value), value)
+                        value = source_public_by_native.get(
+                            (parent_kind, value),
+                            identities["public_target"].get((parent_kind, value), value),
+                        )
             if kind in {"feedback_processing_items", "feedback_processing_rounds"} and field in {
                     "workbench_task_id", "workbench_turn_id"}:
                 raw_marker = reference_exceptions.get((kind, physical_id, field))
@@ -715,7 +877,9 @@ def restore_task_entities(db: sqlite3.Connection, source_metadata: dict, forward
         if kind == "reply_tasks":
             for field in ("current_input_id", "claimed_input_id"):
                 row = db.execute(f"select {_quote(field)} from main.tasks where id=?", (target_id,)).fetchone()
-                values["__" + field] = None if row is None else row[0]
+                value = None if row is None else row[0]
+                values["__" + field] = (None if value is None else
+                    source_physical_by_native.get(("reply_task_inputs", int(value)), value))
         if kind in task20_definitions.TASK20_COLUMNS:
             task_row = db.execute("select id from main.tasks where id=? and kind=?",
                                   (target_id, {"reply_tasks": "reply"}.get(kind, _TASK_TABLES.get(kind, kind)))).fetchone()
@@ -739,7 +903,14 @@ def restore_task_entities(db: sqlite3.Connection, source_metadata: dict, forward
                              f"where {_quote(parent_key)}=?",
                              (target_id,)).fetchone()
             if row is not None and row[0] is not None:
-                parent_id = int(row[0])
+                parent_kind = {
+                    "reply_task_inputs": "reply_tasks", "business_object_tasks": "reply_tasks",
+                    "workbench_turns": "workbench_tasks", "workbench_artifacts": "workbench_turns",
+                    "workbench_attachments": "workbench_tasks",
+                }[kind]
+                parent_id = source_physical_by_native.get((parent_kind, int(row[0])))
+                if parent_id is None:
+                    raise ValueError(f"unresolved native {kind} parent identity")
         elif kind == "feedback_iteration_decisions":
             row = db.execute(
                 "select batch.id from main.feedback_iteration_decisions decision "
@@ -747,7 +918,16 @@ def restore_task_entities(db: sqlite3.Connection, source_metadata: dict, forward
                 (target_id,),
             ).fetchone()
             parent_id = None if row is None else int(row[0])
-        source_rows.append((kind, physical_id, target_id, public_key, values, parent_id))
+        source_physical_id = source_physical_by_native[(kind, target_id)]
+        source_rows.append((kind, source_physical_id, target_id, public_key, values, parent_id))
+
+    physical_owners = {}
+    for kind, physical_id, _, _, _, _ in source_rows:
+        if physical_id in physical_owners:
+            raise ValueError(
+                f"inverse source physical ID {physical_id} is claimed by "
+                f"{physical_owners[physical_id]} and {kind}")
+        physical_owners[physical_id] = kind
 
     # Retire exactly the native owner relations created by this converter.
     # Their attached indexes and triggers are removed by SQLite with each
@@ -762,7 +942,11 @@ def restore_task_entities(db: sqlite3.Connection, source_metadata: dict, forward
     for kind, physical_id, target_id, public_key, values, parent_id in source_rows:
         raw, raw_type = raw_exceptions.get((kind, physical_id), (None, None))
         if (kind, physical_id) not in raw_exceptions:
-            raw_value = physical_id if public_key is None else public_key
+            if public_key is None:
+                raw_value = source_key_next.get(kind, 1)
+                source_key_next[kind] = raw_value + 1
+            else:
+                raw_value = public_key
             raw_type = "text" if isinstance(raw_value, str) else "integer"
             raw = str(raw_value) if raw_type == "text" else raw_value
         source_values = {field: value for field, value in values.items()
@@ -793,8 +977,28 @@ def restore_task_entities(db: sqlite3.Connection, source_metadata: dict, forward
             db.execute(sql)
     db.execute("delete from main.sqlite_sequence where name='tasks'")
     sequence = source_metadata["task_sequence"]
-    if sequence is not None:
-        db.execute("insert into main.sqlite_sequence(rowid,name,seq) values(?, 'tasks', ?)", sequence)
+    if sequence is not None or native_sequence is not None:
+        rowid = sequence[0] if sequence is not None else native_sequence[0]
+        water = max(
+            sequence[1] if sequence is not None else 0,
+            native_sequence[1] if native_sequence is not None else 0,
+            allocation_water if allocated_above_water else 0,
+        )
+        db.execute("insert into main.sqlite_sequence(rowid,name,seq) values(?, 'tasks', ?)",
+                   (rowid, water))
+    inverse_identity = {
+        "version": 1,
+        "owners": [
+            {"source_kind": kind, "source_physical_id": source_id, "canonical_id": target_id}
+            for (kind, target_id), source_id in source_physical_by_native.items()
+            if source_id != target_id
+        ],
+    }
+    source_context = {
+        "version": 1,
+        "handoff_required": bool(inverse_identity["owners"]),
+        "handoff_sha256": _inverse_identity_digest(inverse_identity),
+    }
     return {
         "rows": len(source_rows),
         "source_objects": forward_metadata["source_objects"],
@@ -803,4 +1007,6 @@ def restore_task_entities(db: sqlite3.Connection, source_metadata: dict, forward
             "raw_key_exceptions": forward_metadata["raw_key_exceptions"],
             "reference_exceptions": forward_metadata["reference_exceptions"],
         },
+        "inverse_identity": inverse_identity,
+        "source_context": source_context,
     }
