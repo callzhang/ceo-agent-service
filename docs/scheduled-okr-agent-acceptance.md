@@ -710,3 +710,12 @@ PR #277 已打开，固定 v75/v76 case、模型/CLI 和 grader 对照及本地�
 该轨迹里 `consumer_document_write` 共 62 次：9 次成功、53 次失败。其中 52 次 DWS 返回 `doc_write_verification_failed`，其明示含义是“写入已经执行，但回读验证失败”；另有一次把 30 字符文档 node ID 传给 `wiki +node-list --folder`，DWS 拒绝该 ID 格式。多个失败写入后，Consumer 随即读取对应文档；最终主报告和 18 份附录的 provider 正文读回完整。故实际交付已完成，但不能把这些写入工具错误说成评测误报或工具全程成功。已查明错误来自 DWS 写入验证及一次目录列表参数类型不匹配；`doc_write_verification_failed` 更深层的比较失败原因（例如 provider 内容归一化与校验差异）没有从现有回执中解释，仍未查实。本记录不把本次手动运行算作自然调度验收，也不据此关闭 task14/task13 自然报告及睡眠恢复补跑验收。
 
 无正文证据：[okr-production-readback.json](../evals/scheduled_task_generic/okr-production-readback.json) 中 `manual_authorized_run_395969`。
+
+
+### task6 文档创建父级核对修复候选（2026-10-23）
+
+run395969 trajectory 中的 `wiki +node-list --folder` 错误可在系统层复现：文档父级是 30 字符文档 nodeId，Wiki 节点列表接口只接受 dentryUuid。对同一个真实父级执行只读 `dws doc +list --folder <parent_id> --page-all --format json` 返回 `status=success`、`complete=true`、`hasMore=false`、18 个附录节点；真实成功的 `doc +create` 回执也提供 `data.nodeId` 和 `data.verified=true`。因此服务原实现调用了错误列表接口，并忽略创建回执中已有的节点 ID。
+
+候选修复已改为：创建前用 Doc 列表接口完整核对同名目标；创建后只使用成功、完整且 verified 的 provider 回执 nodeId 进行读回。保留同名拦截、显式目标、正文、revision 冲突和版本保存行为。`tests/test_generic_scheduled_work.py`、`tests/test_agent_cli_report_receipt.py` 与 `tests/test_scheduled_okr_agent_eval.py` 共 **77 passed**；相关 Python 文件 Ruff 与 `git diff --check` 通过。第一轮同时运行的 `tests/test_agent_cli_artifacts.py` 有 11 项旧数据库夹具失败（均在工具运行前报 `table tasks has no column named status`），未改动该不相关夹具。
+
+此修复尚未合并或部署，尚未由新 task6 运行验证；它只处理错误的父级目录查询和 create nodeId 解析，不解释 52 次 DWS `doc_write_verification_failed` 的根因。

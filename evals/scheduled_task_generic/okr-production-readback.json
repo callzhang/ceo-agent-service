@@ -1010,5 +1010,37 @@
       "final_provider_readback_complete": true
     },
     "classification": "Manual business publication completed and fully read back. The DWS tool reported write-verification failures and one invalid folder-ID call; final provider content and notification receipt were independently confirmed. The deeper cause of DWS verification mismatch is not established. This is not a natural scheduled-run acceptance result."
+  },
+  "follow_up_document_parent_listing_fix": {
+    "status": "candidate_tested_not_deployed",
+    "root_cause": "consumer_document_write used wiki +node-list for a document parent nodeId; that endpoint requires a dentryUuid. The successful doc +create provider receipt already contains a verified data.nodeId.",
+    "live_read_only_confirmation": {
+      "command": "dws doc +list --folder <parent_id> --page-all --format json",
+      "status": "success",
+      "complete": true,
+      "hasMore": false,
+      "child_count": 18,
+      "provider_create_receipt_fields": [
+        "status=success",
+        "complete=true",
+        "data.nodeId",
+        "data.verified=true"
+      ]
+    },
+    "candidate_behavior": "Use Doc +list for complete same-title precheck, then use the successful verified create receipt nodeId for readback.",
+    "verification": {
+      "tests": [
+        "tests/test_generic_scheduled_work.py",
+        "tests/test_agent_cli_report_receipt.py",
+        "tests/test_scheduled_okr_agent_eval.py"
+      ],
+      "passed": 77,
+      "ruff": "passed",
+      "diff_check": "passed",
+      "unrelated_stale_fixture_failures": 11,
+      "stale_fixture_error": "table tasks has no column named status"
+    },
+    "deployment": "not merged or deployed; a new task6 run has not validated this candidate.",
+    "scope_limit": "This resolves the invalid Wiki parent-list call and create nodeId lookup only. It does not explain the 52 DWS doc_write_verification_failed results in run 395969."
   }
 }

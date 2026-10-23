@@ -1336,7 +1336,9 @@ Consumer 与 Audit 可用 `read_task_artifact`、`list_task_artifacts` 读取当
 作为耐久参考区、禁止把临时代码、测试、数据库、日志、下载、截图、缓存、草稿、中间结果或单次运行
 工件存入 memory，临时文件只使用 task-bound `/tmp` 工作区；有价值的最终材料仅在已有授权目的地按主题
 归档。部署前遗留的 workspace 工件会在任务下次读写时迁入 `/tmp`，终态清理也会清除尚未访问的旧位置。
-`consumer_document_write` 处理当前 scheduled 任务产物和显式文档目标。工具返回的实际内容读回及 SHA
+`consumer_document_write` 处理当前 scheduled 任务产物和显式文档目标。创建前通过
+`dws doc +list --folder <parent_id> --page-all` 完整核对同名目标；创建后使用成功且已验证的
+provider 回执 nodeId 进行正文读回，不把文档 ID 交给 Wiki 节点列表接口。工具返回的实际内容读回及 SHA
 证明普通材料写入，不是已审核消息或 OA 动作的 System 回执。原生 V8 可调用具名工具和计算，
 Codex Consumer 可在 task-bound `/tmp` 工作区进行原生代码执行；Audit 只读。实际不可用的工具应如实报告，不能伪造执行。
 系统注册且需要审核的动作仍只由 SystemExecutor 执行。Consumer 的结果解析只验证严格 wire，

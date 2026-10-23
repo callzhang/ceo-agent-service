@@ -1679,10 +1679,8 @@ def _write_document_artifact(
             payload = dws.run_json(
                 [
                     dws.dws_bin,
-                    "wiki",
-                    "+node-list",
-                    "--workspace",
-                    workspace_id,
+                    "doc",
+                    "+list",
                     "--folder",
                     parent_id,
                     "--page-all",
@@ -1690,24 +1688,32 @@ def _write_document_artifact(
                     "json",
                 ]
             )
-            data = payload.get("data")
             if (
-                not isinstance(data, dict)
-                or not isinstance(data.get("nodes"), list)
-                or data.get("hasMore")
+                payload.get("status") != "success"
+                or payload.get("complete") is not True
+                or payload.get("hasMore") is not False
+                or payload.get("failures") != []
+                or not isinstance(payload.get("documents"), list)
             ):
                 raise ValueError("document parent listing is incomplete")
-            return [item for item in data["nodes"] if item.get("name") == title]
+            return [item for item in payload["documents"] if item.get("name") == title]
 
         if matching_nodes():
             raise ValueError("document target appeared before creation; reread target")
         result = dws.create_report_document(
             name=title, content=content, doc_format=doc_format, folder_id=parent_id
         )
-        found = matching_nodes()
-        if len(found) != 1:
-            raise ValueError("created document target is ambiguous")
-        node_id = found[0]["nodeId"]
+        result_data = result.get("data")
+        if (
+            result.get("status") != "success"
+            or result.get("complete") is not True
+            or not isinstance(result_data, dict)
+            or result_data.get("verified") is not True
+            or not isinstance(result_data.get("nodeId"), str)
+            or not result_data["nodeId"].strip()
+        ):
+            raise ValueError("document create receipt is incomplete or unverified")
+        node_id = result_data["nodeId"]
         operation = "created"
     readback = (
         dws.fetch_report_document_full(node_id)
