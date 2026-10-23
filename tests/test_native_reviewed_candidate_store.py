@@ -3,6 +3,7 @@ import hashlib
 import json
 import sqlite3
 from types import SimpleNamespace
+import pytest
 
 from app.task_run_entity_assembly import task_run_entity_assembly_objects
 from app import run_entity_storage, task_entity_storage
@@ -49,6 +50,177 @@ def _native_store(monkeypatch):
     db.execute("insert into task_business_keys(task_id,business_key) values(?,?)", (task["id"], "bk-1-alternate"))
     db.commit()
     return store, db, task, consumer
+
+
+def test_system_executor_uses_native_run_progress_and_receipt_owner(monkeypatch):
+    from app.agent_contracts import ConsumerAgentResult
+    from app.system_executor import ActionOutcome, SystemExecutor
+
+    store, db, task, consumer = _native_store(monkeypatch)
+    candidate_result = ConsumerAgentResult.model_validate({
+        "outcome": "proposal", "summary": "Do work",
+        "proposal": {"objective": "Do work", "actions": [{
+            "description": "Act", "action_identity": "first", "capability": "test",
+            "operation": "act", "target": {"id": "1"}, "payload": {"value": "x"},
+        }], "sourced_facts": [], "authored_judgment": "Supported"},
+        "decision_options": [], "needs_human_reason": None, "decision_basis": None,
+        "error": {"code": "", "retryable": False, "authorization_required": False},
+        "risk": "low", "confidence": 1.0, "rule_coverage": 1.0,
+        "information_completeness": 1.0,
+    })
+    with db:
+        adopted = store._adopt_review_candidate_in_connection(
+            db, consumer, candidate_result.model_dump(mode="json"))
+        audit = run_entity_storage.create_run(db, values={
+            "task_id": task["id"], "parent_id": consumer["id"],
+            "execution_generation": "gen-1", "role": "audit",
+            "proposal_revision": 0, "turn_attempt": 0, "status": "completed",
+            "created_at": "now", "updated_at": "now",
+        })
+        review = store._adopt_candidate_review_in_connection(db, consumer["id"], audit["id"], {
+            "outcome": "approve", "candidate_digest": adopted["candidate_digest"],
+        })
+    store.get_reply_task = lambda _task_id: SimpleNamespace(
+        id=task["id"], execution_generation="gen-1", business_object_key="bk-1",
+        conversation_id="native", trigger_message_id="m1")
+
+    class FakeEffect:
+        calls = 0
+
+        def dispatch(self, _action, *, action_key, candidate):
+            self.calls += 1
+            store.invalidate_review_candidate(consumer["id"], "fixture_invalidation_during_dispatch")
+            return ActionOutcome("verified", {
+                "verification": {"state": "sent"},
+                "provider_result": {"id": "provider-1"},
+            })
+
+        def reconcile(self, *_args, **_kwargs):
+            raise AssertionError("unexpected reconciliation")
+
+    effect = FakeEffect()
+    result = SystemExecutor(store, {("test", "act"): effect}, owner="native-worker").execute(
+        SimpleNamespace(id=task["id"], execution_generation="gen-1"),
+        consumer["id"], review["id"])
+    assert result.outcome == "executed"
+    assert effect.calls == 1
+    progress = store.get_candidate_execution(consumer["id"])
+    assert progress["id"] == consumer["id"]
+    assert progress["status"] == "done"
+    assert store.get_review_candidate(consumer["id"])["invalidated_at"]
+    receipt = db.execute("select execution_run_id,status,provider_receipt_id from action_receipts "
+                         "where execution_run_id=? and action_index=0", (consumer["id"],)).fetchone()
+    assert tuple(receipt[:2]) == (consumer["id"], "verified")
+    assert receipt["provider_receipt_id"] is not None
+    assert db.execute("select count(*) from actions where record_type='candidate_execution_alias'").fetchone()[0] == 0
+    attempts = store.list_candidate_action_attempts(consumer["id"])
+    assert len(attempts) == 1
+    assert attempts[0]["execution_id"] == consumer["id"]
+    assert attempts[0]["status"] == "verified"
+    external = store.get_candidate_external_action(attempts[0]["external_action_key"])
+    assert external["provider_receipt_id"] == receipt["provider_receipt_id"]
+    verified_source = store.get_verified_action_source(attempts[0]["external_action_key"])
+    assert verified_source["candidate_id"] == consumer["id"]
+    assert store.list_verified_candidate_actions(task["id"])[0]["execution_id"] == consumer["id"]
+
+
+def test_historical_refusal_uses_each_tasks_current_input_only(monkeypatch):
+    store, db, _task, _consumer = _native_store(monkeypatch)
+    old_task = task_entity_storage.create_task(db, values={
+        "kind": "reply", "status": "failed", "execution_generation": "old-gen",
+        "created_at": "now", "updated_at": "now",
+    }, parameters={})
+    task_entity_storage.append_task_input(db, task_id=old_task["id"], values={
+        "channel": "dingtalk", "conversation_id": "old", "conversation_title": "Old", "single_chat": 1,
+        "trigger_message_id": "a", "trigger_create_time": "now", "trigger_sender": "Derek",
+        "trigger_text": "old request", "business_object_key": "business-A",
+        "input_revision_key": "old-A",
+    })
+    input_b, _ = task_entity_storage.append_task_input(db, task_id=old_task["id"], values={
+        "channel": "dingtalk", "conversation_id": "old", "conversation_title": "Old", "single_chat": 1,
+        "trigger_message_id": "b", "trigger_create_time": "now", "trigger_sender": "Derek",
+        "trigger_text": "current request", "business_object_key": "business-B",
+        "input_revision_key": "new-B",
+    })
+    task_entity_storage.update_task_cas(db, task_id=old_task["id"],
+        expected={"current_input_id": None}, changes={"current_input_id": input_b["id"]})
+    refusal_run = run_entity_storage.create_run(db, values={
+        "task_id": old_task["id"], "execution_generation": "old-gen", "role": "consumer",
+        "proposal_revision": 0, "turn_attempt": 0, "status": "failed",
+        "created_at": "now", "updated_at": "now",
+    })
+    db.execute("update runs set structured_error_json=? where id=?",
+        (json.dumps({"code": "provider_risk_rejected"}), refusal_run["id"]))
+    db.commit()
+
+    store._check_historical_runtime_refusal(db, "business-A")
+    with pytest.raises(ValueError, match="historical_runtime_risk_refusal"):
+        store._check_historical_runtime_refusal(db, "business-B")
+
+
+def test_native_execution_claim_reclaims_expired_lease_and_finishes_selected_stop(monkeypatch):
+    store, db, task, consumer = _native_store(monkeypatch)
+    body = {"outcome": "needs_human", "stage_index": 0, "predecessor_review_id": None,
+        "decision_options": [{"key": "stop", "terminal_outcome": "skipped", "reason": "stop"}]}
+    with db:
+        adopted = store._adopt_review_candidate_in_connection(db, consumer, body)
+        audit = run_entity_storage.create_run(db, values={
+            "task_id": task["id"], "parent_id": consumer["id"], "execution_generation": "gen-1",
+            "role": "audit", "proposal_revision": 0, "turn_attempt": 0, "status": "completed",
+            "created_at": "now", "updated_at": "now",
+        })
+        review = store._adopt_candidate_review_in_connection(db, consumer["id"], audit["id"], {
+            "outcome": "approve", "candidate_digest": adopted["candidate_digest"],
+        })
+        refusal = run_entity_storage.create_run(db, values={
+            "task_id": task["id"], "execution_generation": "gen-1", "role": "consumer",
+            "proposal_revision": 1, "turn_attempt": 0, "status": "failed",
+            "created_at": "now", "updated_at": "now",
+        })
+        db.execute("update runs set structured_error_json=? where id=?",
+            (json.dumps({"code": "provider_risk_rejected"}), refusal["id"]))
+    selection = store.select_candidate_option(consumer["id"], review["id"], "stop")
+    first = store.claim_candidate_execution(consumer["id"], review["id"], "worker-a", 60)
+    assert first["id"] == consumer["id"]
+    assert first["selection_id"] == selection["id"]
+    with pytest.raises(ValueError, match="execution lease lost"):
+        store.renew_candidate_execution_claim(consumer["id"], "worker-b", 60)
+    db.execute("update run_execution_progress set lease_expires_at='2000-01-01 00:00:00' where consumer_run_id=?",
+        (consumer["id"],))
+    db.commit()
+    reclaimed = store.claim_candidate_execution(consumer["id"], review["id"], "worker-b", 60)
+    assert reclaimed["id"] == consumer["id"]
+    assert reclaimed["lease_owner"] == "worker-b"
+    finished = store.finish_candidate_execution(consumer["id"], "worker-b", "skipped", {"outcome": "skipped"})
+    assert finished["status"] == "skipped"
+    assert finished["result_json"] == '{"outcome":"skipped"}'
+
+
+def test_native_no_action_can_finish_as_skipped_without_selection(monkeypatch):
+    store, db, task, consumer = _native_store(monkeypatch)
+    body = {"outcome": "no_action", "summary": "Nothing to do", "stage_index": 0,
+        "predecessor_review_id": None, "decision_options": []}
+    with db:
+        adopted = store._adopt_review_candidate_in_connection(db, consumer, body)
+        audit = run_entity_storage.create_run(db, values={
+            "task_id": task["id"], "parent_id": consumer["id"], "execution_generation": "gen-1",
+            "role": "audit", "proposal_revision": 0, "turn_attempt": 0, "status": "completed",
+            "created_at": "now", "updated_at": "now",
+        })
+        review = store._adopt_candidate_review_in_connection(db, consumer["id"], audit["id"], {
+            "outcome": "approve", "candidate_digest": adopted["candidate_digest"],
+        })
+        refusal = run_entity_storage.create_run(db, values={
+            "task_id": task["id"], "execution_generation": "gen-1", "role": "consumer",
+            "proposal_revision": 1, "turn_attempt": 0, "status": "failed",
+            "created_at": "now", "updated_at": "now",
+        })
+        db.execute("update runs set structured_error_json=? where id=?",
+            (json.dumps({"code": "provider_risk_rejected"}), refusal["id"]))
+    execution = store.claim_candidate_execution(consumer["id"], review["id"], "worker", 60)
+    assert execution["selection_id"] is None
+    finished = store.finish_candidate_execution(consumer["id"], "worker", "skipped", {"outcome": "no_action"})
+    assert finished["status"] == "skipped"
 
 
 def test_native_store_adopts_candidate_review_selection_and_supplement(monkeypatch, tmp_path):
@@ -142,10 +314,18 @@ def test_native_store_adopts_candidate_review_selection_and_supplement(monkeypat
     assert current_selection["audit_run_id"] == audit["id"]
     assert store.get_candidate_execution(consumer["id"]) is None
 
-    db.execute("""insert into run_execution_progress
-        (consumer_run_id,approved_audit_run_id,selection_id,status,lease_owner,
-         lease_expires_at,result_json,created_at,updated_at)
-        values(?,?,?,'done','','','{}','now','now')""", (consumer["id"], audit["id"], current_selection["id"]))
+    claimed = store.claim_candidate_execution(consumer["id"], review["id"], "native-worker", 300)
+    assert claimed["id"] == consumer["id"]
+    assert claimed["review_id"] == review["id"]
+    assert claimed["audit_run_id"] == audit["id"]
+    assert claimed["selection_id"] == current_selection["id"]
+    assert db.execute("select count(*) from run_execution_progress where consumer_run_id=?",
+                      (consumer["id"],)).fetchone()[0] == 1
+    assert db.execute("select count(*) from actions where record_type='candidate_execution_alias'").fetchone()[0] == 0
+    renewed = store.renew_candidate_execution_claim(claimed["id"], "native-worker", 300)
+    assert renewed["id"] == consumer["id"]
+    db.execute("update run_execution_progress set status='done',lease_owner='',lease_expires_at='' where consumer_run_id=?",
+               (consumer["id"],))
     db.commit()
     current_execution = store.get_candidate_execution(consumer["id"])
     assert current_execution["review_id"] == review["id"]

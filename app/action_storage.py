@@ -990,6 +990,19 @@ where a.record_type='action' and a.action_external_action_key is not null
   and r.id=(select max(latest.id) from action_receipts latest
             where latest.action_id=r.action_id and latest.execution_id=r.execution_id
               and latest.action_index=r.action_index)"""
+NATIVE_CANDIDATE_ACTION_ATTEMPT_SQL = """select r.id,a.id as action_owner_id,
+       r.execution_run_id as execution_id,r.action_index,
+       a.action_external_action_key as external_action_key,r.status,
+       coalesce(r.outcome_json,p.provider_result_json,'{}') as result_json,
+       r.agent_run_id,r.provider_receipt_id,r.target,r.created_at,r.updated_at
+from action_receipts r join actions a on a.id=r.action_id
+left join action_receipts p on p.id=r.provider_receipt_id and p.action_id=r.action_id
+where a.record_type='action' and a.action_external_action_key is not null
+  and r.execution_run_id is not null and r.action_index is not null
+  and r.id=(select max(latest.id) from action_receipts latest
+            where latest.action_id=r.action_id
+              and latest.execution_run_id=r.execution_run_id
+              and latest.action_index=r.action_index)"""
 
 
 class CandidateResultReferenceError(sqlite3.IntegrityError):
@@ -1042,6 +1055,10 @@ where a.record_type='action' and a.action_external_action_key is not null
   and coalesce(r.result_digest,canonical.result_digest) is not null
   and canonical.agent_run_id is not null
   and r.provider_result_json is not null"""
+NATIVE_EXTERNAL_ACTION_RESULT_SQL = EXTERNAL_ACTION_RESULT_SQL.replace(
+    CANONICAL_PROVIDER_RECEIPT_SQL,
+    CANONICAL_PROVIDER_RECEIPT_SQL.replace("metadata.execution_id", "metadata.execution_run_id"),
+)
 AGENT_EFFECT_INTENT_SQL = ACTION_PROJECTIONS["agent_effect_intents"]
 AGENT_EXECUTION_RECEIPT_SQL = ACTION_PROJECTIONS["agent_execution_receipts"]
 # Task 3 runtime projection: prepared message data and its dispatch/accepted

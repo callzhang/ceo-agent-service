@@ -1604,7 +1604,7 @@ OA 权限预算耗尽后停止文件重读，由 Consumer 再运行一次提出�
 
 OA 退回回执按钉钉实际响应字段 `dingOpenErrcode=0`、`result=true`、`success=true` 识别成功；流程操作记录的数字时间按 Unix 毫秒解析，字符串时间按带时区 ISO 或钉钉本地时间解析。若 OpenAPI 操作记录只有秒级时间，读回同一实例的 DWS 结构化审批流水，并按操作类型、操作人及同一秒唯一关联其毫秒 `operationTime`；有多条匹配或来源不完整时仍保留 uncertain，不能放宽派发时间边界。成功响应只允许进入只读对账；旧回执若没有 `accepted_at`，只有在上述成功字段通过校验时才以持久化的 `response_received_at` 作为接受边界。完成仍要求原任务已取消、同一审批人唯一写入精确备注的 `REDIRECT_PROCESS`、目标节点出现对应新任务，且全部时间落在派发和接受边界内。若目标任务创建时间被钉钉截断到秒级，只有当时间桶从退回事件之后开始且完整早于下一操作，或该桶与唯一退回流水落在同一秒、OpenAPI 与 DWS 流水在该秒内均无其他操作且该桶与派发/接受区间相交时，才可将其作为目标节点读回；仍须匹配精确目标 activity 与实例。精确到毫秒的目标创建时间继续按精确事件区间判断，桶与操作边界相交时保持 uncertain。证据不完整时保留 uncertain，恢复不重发退回。
 
-`review_candidates` 的执行块保存租约；`candidate_execution_alias` 仅保留原执行物理 ID、公开 ID 和候选 FK，旧形状执行投影连接别名与计划读取当前状态。`candidate_action_attempts` 的 `execution_id` 继续指向别名，在 provider 调用之前保存 dispatch 边界；已验证回执复用。进程中断或超时没有回执不能证明未发生效果：先读取原外部对象。确认成功继续，确认没有效果才可重试同一计划，无法消除的歧义保存 uncertain/failed，不伪造完成或人工问题。技术恢复不重新审核不变业务方案；业务事实改变则使候选失效，重新形成并审核方案。没有通用 shell 或 Agent 执行兜底；未支持的动作明确失败。
+`run_execution_progress` 以 Consumer Run ID 保存租约、状态、结果及 approved Audit Run 和 Selection 所有权；对外既有 execution DTO 的 `id` 仍返回该 Consumer Run ID，Review business ID 与 Audit Run ID 保持分开。每次 action attempt 在 `action_receipts.execution_run_id` 关联到同一 Consumer Run，并以 `action_index` 及 provider receipt 记录派发与验证。`candidate_execution_alias` 和旧 `execution_id` receipt 形状只供明确的迁移与 source-inverse oracle 使用，运行时 claim、renew、reclaim、finish、attempt 和 receipt 路径直接读写 native 表。进程中断或超时没有回执不能证明未发生效果：先读取原外部对象。确认成功继续，确认没有效果才可重试同一计划，无法消除的歧义保存 uncertain/failed，不伪造完成或人工问题。技术恢复不重新审核不变业务方案；业务事实改变则使候选失效，重新形成并审核方案。历史 provider refusal 按每个 Task 当前 `current_input_id` 的 business key 匹配。没有通用 shell 或 Agent 执行兜底；未支持的动作明确失败。
 
 历史 code 或 source_code 为 provider_risk_rejected 的同一业务对象不能通过换工具、渠道或执行代自动重放。保留拒绝来源和原始历史记录。native 引用回复仍使用原目标消息和准备正文的正向回读；空的有限消息列表不证明未发送。
 
@@ -2283,7 +2283,7 @@ Friday 会把它当成自己的结构化信封解析，找不到回复正文时�
 
 系统执行器使用现有 provider client、ServiceMessageSender、external_action_key 和成功回执库。消息加载审核后的精确正文、目标及服务预先准备的后缀；不要求运行中的 Audit，也不向 Agent 暴露发送工具。OA 使用精确实例、节点、动作和参数，保存并回读节点结果。已完成动作不因后续通知失败而重跑。
 
-`review_candidates` 的执行块保存租约；`candidate_execution_alias` 仅保留原执行物理 ID、公开 ID 和候选 FK，旧形状执行投影连接别名与计划读取当前状态。`candidate_action_attempts` 的 `execution_id` 继续指向别名，在 provider 调用之前保存 dispatch 边界；已验证回执复用。进程中断或超时没有回执不能证明未发生效果：先读取原外部对象。确认成功继续，确认没有效果才可重试同一计划，无法消除的歧义保存 uncertain/failed，不伪造完成或人工问题。技术恢复不重新审核不变业务方案；业务事实改变则使候选失效，重新形成并审核方案。没有通用 shell 或 Agent 执行兜底；未支持的动作明确失败。
+`run_execution_progress` 以 Consumer Run ID 保存租约、状态、结果及 approved Audit Run 和 Selection 所有权；对外既有 execution DTO 的 `id` 仍返回该 Consumer Run ID，Review business ID 与 Audit Run ID 保持分开。每次 action attempt 在 `action_receipts.execution_run_id` 关联到同一 Consumer Run，并以 `action_index` 及 provider receipt 记录派发与验证。`candidate_execution_alias` 和旧 `execution_id` receipt 形状只供明确的迁移与 source-inverse oracle 使用，运行时 claim、renew、reclaim、finish、attempt 和 receipt 路径直接读写 native 表。进程中断或超时没有回执不能证明未发生效果：先读取原外部对象。确认成功继续，确认没有效果才可重试同一计划，无法消除的歧义保存 uncertain/failed，不伪造完成或人工问题。技术恢复不重新审核不变业务方案；业务事实改变则使候选失效，重新形成并审核方案。历史 provider refusal 按每个 Task 当前 `current_input_id` 的 business key 匹配。没有通用 shell 或 Agent 执行兜底；未支持的动作明确失败。
 
 历史 code 或 source_code 为 provider_risk_rejected 的同一业务对象不能通过换工具、渠道或执行代自动重放。保留拒绝来源和原始历史记录。native 引用回复仍使用原目标消息和准备正文的正向回读；空的有限消息列表不证明未发送。
 
