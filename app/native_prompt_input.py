@@ -42,14 +42,12 @@ def codex_session_wire_schema(session_id: str) -> dict[str, object] | None:
                     continue
                 if native_marker in developer:
                     source = developer.rsplit(native_marker, 1)[1]
-                    lines = source.splitlines()
-                    if not lines:
-                        return None
-                    fingerprint = lines[0].strip()
+                    fingerprint, separator, tail = source.partition("\n")
+                    fingerprint = fingerprint.strip()
                     if (
                         len(fingerprint) != 64
                         or any(character not in "0123456789abcdef" for character in fingerprint)
-                        or any(line.strip() for line in lines[1:])
+                        or (separator and tail and not tail.startswith("\n## "))
                     ):
                         return None
                     return {"$native_output_schema_sha256": fingerprint}
