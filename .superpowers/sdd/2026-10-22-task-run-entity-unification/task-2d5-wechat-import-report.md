@@ -22,7 +22,24 @@ Both `CodexMemoryExtractionRunner.extract` and `CodexMemoryRecallMatcher._match_
 
 ## Verification
 
-The actual BASE source writer was executed against the assembled native Task/Run target with valid nonempty attribution and failed with `OperationalError: no such column: legacy_key`. The regression now asserts native Task ownership and retained parameters instead. An earlier draft of the red test used empty attribution and failed at the source validator, so that run was discarded as an invalid baseline proof; the test was corrected to preserve the real source validator contract.
+The actual BASE source writer was executed against the assembled native Task/Run target with valid nonempty attribution and failed with `OperationalError: no such column: legacy_key`:
+
+```text
+python - <<'PY'
+from pathlib import Path
+from tempfile import TemporaryDirectory
+from tests.test_wechat_import_native import AssembledTaskStore
+from app.task12_storage import insert_task12
+with TemporaryDirectory() as tmp:
+    store = AssembledTaskStore(Path(tmp) / 'native.sqlite3')
+    insert_task12(store.db, 'wechat_memory_import_jobs', {
+        'import_run_id': 'scope', 'account_id': 'acct', 'status': 'running'
+    })
+PY
+OperationalError: no such column: legacy_key
+```
+
+The regression now asserts native Task ownership and retained parameters instead. An earlier draft of the red test used empty attribution and failed at the source validator, so that run was discarded as an invalid baseline proof; the test was corrected to preserve the real source validator contract.
 
 Final focused commands and output:
 
