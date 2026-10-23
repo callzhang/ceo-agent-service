@@ -1018,3 +1018,169 @@ def test_native_turn_sse_serves_database_snapshot_and_terminal_event(tmp_path: P
         assert '"status":"stopped"' in response.text
     finally:
         scheduler.close()
+
+
+def test_actual_workbench_executor_routes_to_native_runtime_attempt_with_fake_cli(tmp_path: Path):
+    from datetime import UTC, datetime, timedelta
+
+    from app.agent_runtime_config import load_runtime_config
+    from app.agent_runtime_contracts import RuntimeCapabilitySnapshot
+    from app.agent_runtime_router import AgentRuntimeRouter, RoutedCodexExecution
+    from app.codex_runtime_adapter import CodexRuntimeAdapter
+    from app.process_runner import ProcessRunResult
+    from app.workbench.executor import WorkbenchExecutor
+    from app.workbench.runtime import RuntimeRegistry
+    from app.workbench.service_runtime import ServiceWorkbenchRuntime
+
+    store = _target_store(tmp_path)
+    parent = store.create_task(title="Producer integration", runtime_kind="codex")
+    turn = store.create_turn(parent.id, user_text="native answer", client_request_id=str(uuid4()))
+    config = load_runtime_config({"CEO_AGENT_RUNTIME_ROUTES": "codex_oauth"})
+    now = datetime.now(UTC)
+    router = AgentRuntimeRouter(
+        routes=config.routes,
+        store=store,
+        snapshots={
+            route.name: RuntimeCapabilitySnapshot(
+                route_name=route.name, healthy=True, checked_at=now.isoformat(),
+                expires_at=(now + timedelta(minutes=5)).isoformat(),
+            )
+            for route in config.routes
+        },
+        now=lambda: now,
+    )
+
+    def fake_cli(_command, **_kwargs):
+        stream = "\n".join((
+            json.dumps({"type": "thread.started", "thread_id": "fake-session"}),
+            json.dumps({"type": "turn.started"}),
+            json.dumps({
+                "type": "item.completed",
+                "item": {"type": "agent_message", "text": "done"},
+            }),
+            json.dumps({"type": "turn.completed"}),
+        ))
+        return ProcessRunResult(returncode=0, stdout=stream, stderr="")
+
+    def routed_factory(**kwargs):
+        return RoutedCodexExecution(
+            store=store,
+            config=config,
+            router=router,
+            adapter=CodexRuntimeAdapter(kwargs["workspace"], config, codex_bin="fake-codex"),
+            executor=fake_cli,
+            session_line_counter=lambda _session_id: 0,
+        )
+
+    runtime = ServiceWorkbenchRuntime(
+        workspace=tmp_path, routed_execution_factory=routed_factory,
+    )
+    executor = WorkbenchExecutor(
+        store, RuntimeRegistry((runtime,)), workspace=tmp_path,
+        heartbeat_interval_seconds=10,
+    )
+    try:
+        assert executor.run_once() == [turn.id]
+        completed = store.get_turn(turn.id)
+        assert completed is not None and completed.status.value == "completed"
+        attempts = store.list_runtime_operation_attempts("workbench", turn.id)
+        assert len(attempts) == 1
+        assert attempts[0].workload_kind == "workbench"
+        assert attempts[0].workload_key == turn.id
+        assert attempts[0].session_id == "fake-session"
+    finally:
+        executor.close()
+
+
+def test_native_event_hydration_selects_attempt_transcript_ranges_and_handles_missing_source(
+    tmp_path: Path, monkeypatch,
+):
+    from app.workbench import native_events
+
+    store = _target_store(tmp_path)
+    parent = store.create_task(title="Attempt transcript history", runtime_kind="codex")
+    turn = store.create_turn(
+        parent.id, user_text="history", client_request_id=str(uuid4())
+    )
+    running = store.claim_next_turn(owner="worker", now="2026-10-23T12:00:00+00:00")
+    assert running is not None
+    store.append_event(
+        turn.id, sequence=2, event_type="text_delta", payload={"native_ordinal": 2},
+        owner="worker", now="2026-10-23T12:00:01+00:00",
+    )
+    store.complete_turn(
+        turn.id, status="completed", owner="worker", now="2026-10-23T12:00:02+00:00"
+    )
+
+    codex_home = tmp_path / "codex-home"
+    session_dir = codex_home / "sessions"
+    session_dir.mkdir(parents=True)
+
+    def session_file(session_id: str, before: str, selected: str, after: str) -> None:
+        records = [
+            {"type": "session_meta", "payload": {"id": session_id}},
+            {"type": "event_msg", "payload": {"type": "task_started"}},
+            {"type": "response_item", "payload": {
+                "type": "message", "role": "assistant",
+                "content": [{"type": "output_text", "text": before}],
+            }},
+            {"type": "event_msg", "payload": {"type": "task_complete"}},
+            {"type": "event_msg", "payload": {"type": "task_started"}},
+            {"type": "response_item", "payload": {
+                "type": "message", "role": "assistant",
+                "content": [{"type": "output_text", "text": selected}],
+            }},
+            {"type": "event_msg", "payload": {"type": "task_complete"}},
+            {"type": "response_item", "payload": {
+                "type": "message", "role": "assistant",
+                "content": [{"type": "output_text", "text": after}],
+            }},
+        ]
+        (session_dir / f"{session_id}.jsonl").write_text(
+            "\n".join(json.dumps(record) for record in records) + "\n",
+            encoding="utf-8",
+        )
+
+    session_file("attempt-one", "outside-one", "first-attempt", "outside-two")
+    session_file("attempt-two", "outside-three", "second-attempt", "outside-four")
+    monkeypatch.setattr(native_events, "_codex_home", lambda: codex_home)
+
+    with store._connect() as db:
+        base = (
+            "workload_kind,workload_key,attempt_number,route_name,runtime_kind,"
+            "credential_mode,model,session_mode,source_session_id,attempt_purpose,"
+            "validation_retry_policy_id,validation_result_schema_id,session_id,"
+            "transcript_reference,transcript_start,transcript_end,status,failure_class,"
+            "failure_code,failover_permitted,lease_owner,lease_expires_at,"
+            "first_effect_started_at,result_schema_id,started_at,finished_at,created_at,updated_at"
+        )
+        for number, session_id, start, end in (
+            (1, "attempt-one", 1, 4), (2, "attempt-two", 4, 7),
+        ):
+            values = (
+                "workbench", turn.id, number, "codex_oauth", "codex_cli", "local_oauth",
+                "gpt-test", "fresh", "", "normal", "", "", session_id,
+                f"codex_session:{session_id}", start, end, "completed", "", "", 0,
+                "", "", "", "workbench.result.v1", "", "", "", "",
+            )
+            db.execute(
+                f"insert into runtime_attempts({base}) values({','.join('?' for _ in values)})",
+                values,
+            )
+
+    selected_event = next(
+        event for event in store.events_after(turn.id) if event.event_type == "text_delta"
+    )
+    assert selected_event.payload == {"text": "second-attempt"}
+
+    with store._connect() as db:
+        db.execute(
+            "update runtime_attempts set session_id='missing-session',"
+            "transcript_reference='codex_session:missing-session' "
+            "where workload_kind='workbench' and workload_key=? and attempt_number=2",
+            (turn.id,),
+        )
+    unavailable_event = next(
+        event for event in store.events_after(turn.id) if event.event_type == "text_delta"
+    )
+    assert unavailable_event.payload == {"text": native_events.UNAVAILABLE}
