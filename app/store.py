@@ -2167,7 +2167,7 @@ class AutoReplyStore(LogicalRunStoreMixin, ReviewedCandidateStoreMixin):
                 if ref.managed_skill_id is None or ref.managed_revision_id is None:
                     raise ValueError("managed Skill ref requires an exact revision")
                 row = db.execute(
-                    """
+                    f"""
                     select skill.name
                       from ({config_projection('managed_skills')}) skill
                       join ({config_projection('managed_skill_revisions')}) revision
@@ -10666,7 +10666,7 @@ class AutoReplyStore(LogicalRunStoreMixin, ReviewedCandidateStoreMixin):
             stale_run_ids = [
                 int(row["id"])
                 for row in db.execute(
-                    """
+                    f"""
                     select id from ({AGENT_RUN_SQL}) as agent_runs
                     where reply_task_id=? and execution_generation=?
                       and status='running'

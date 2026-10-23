@@ -12952,3 +12952,63 @@ def test_manual_rerun_can_reopen_only_feedback_backed_skipped_pending_oa_review(
     assert rerun.status == "pending"
     assert rerun.execution_generation != task.execution_generation
     assert rerun.manual_rerun_attempt_id == attempt_id
+
+
+def test_requeue_reply_task_fails_stale_run_and_records_terminal_event(tmp_path):
+    from tests.test_task20_definitions import payload
+
+    store = AutoReplyStore(tmp_path / "requeue-source.sqlite3")
+    with store._connect() as db:
+        task_parts = task8_insert_parts("reply_tasks", payload(
+            db, "reply_tasks", status="processing",
+            execution_generation="generation-1", available_at="",
+            error="", force_new_decision=0,
+        ))
+        task_id = db.execute(
+            f"insert into tasks ({task_parts.columns}) values ({task_parts.values})",
+            task_parts.parameters,
+        ).lastrowid
+        run_id = insert_run(db, "agent_runs", {
+            "task_id": task_id,
+            "execution_generation": "generation-1",
+            "role": "consumer",
+            "status": "running",
+            "lease_expires_at": "2000-01-01 00:00:00",
+            "updated_at": "2000-01-01 00:00:00",
+        }).lastrowid
+
+    store.requeue_reply_task(
+        task_id, "stale_agent_turn_recovery",
+        expected_execution_generation="generation-1",
+        available_at="2026-10-23 17:00:00",
+    )
+
+    with store._connect() as db:
+        task_row = db.execute(
+            f"select status,available_at,error,force_new_decision from ({task20_projection('reply_tasks')}) where id=?",
+            (task_id,),
+        ).fetchone()
+        run = db.execute(
+            f"select status,structured_error_json,lease_owner,lease_expires_at from ({AGENT_RUN_SQL}) where id=?",
+            (run_id,),
+        ).fetchone()
+        events = db.execute(
+            f"select phase,structured_error_json from ({RUN_STATE_EVENT_SQL}) where agent_run_id=? order by id",
+            (run_id,),
+        ).fetchall()
+    assert tuple(task_row) == ("pending", "2026-10-23 17:00:00", "stale_agent_turn_recovery", 1)
+    assert tuple(run[:1]) == ("failed",)
+    assert json.loads(run["structured_error_json"]) == {
+        "authorization_required": False,
+        "code": "stale_agent_turn_recovery",
+        "retryable": True,
+    }
+    assert run["lease_owner"] == ""
+    assert run["lease_expires_at"] == ""
+    assert [(row["phase"], json.loads(row["structured_error_json"])) for row in events] == [
+        ("terminal_failure", {
+            "authorization_required": False,
+            "code": "stale_agent_turn_recovery",
+            "retryable": True,
+        })
+    ]
