@@ -71,4 +71,4 @@ Fix 1 verification:
 - `python -m compileall -q tests/test_store_task_entity_creator.py` — passed.
 - `git diff --check` — passed.
 
-Review Fix 1 commit: recorded in the follow-up handoff after commit.
+Review Fix 1 commit: `3c7bf9b24c4b501aa580767446ad6f2281a85436`.
