@@ -49,3 +49,28 @@ git diff --check
 ## Remaining gates and release claim
 
 This closes the bounded runtime writer/receipt unit only. It does not activate constructors or select the new schema in a running Store. The later Task Run constructor/activation unit must exercise the complete initialized Store and retire the constructor-dependent legacy fixture failures before this representation can be claimed as end-to-end active. Independent SPEC/QUALITY review is also still required before the next unit. No provider, production, main, push, or deploy action was performed; this commit is local worktree evidence, not a release claim.
+
+## Fix1 — native retry, ACK and completion acceptance evidence
+
+The missing acceptance coverage was added using `_native_store` and `_approved_native_execution`, which install the actual assembled Task Run schema and invoke public Store claim, begin, receipt, outcome, and finish methods. No product behavior changed; the three source-parity branches already behaved correctly, and the gap was test evidence only.
+
+The retry/uncertain test is parameterized over both statuses. It actually finishes a leased native execution as `retry` or `uncertain`, then claims again and checks the same Consumer Run ID, same single `run_execution_progress` row, no alias row, new owner/lease, `running` state, and retention of the previous result JSON. The ACK test begins a native action, records the same provider ACK twice, and asserts receipt row IDs, provider receipt reference, provider body, digest, lineage (`agent_run_id`), `execution_run_id`, and `action_index` remain stable. It then supplies a different ACK under that action key and asserts the existing exact `conflicting external action result` error and unchanged receipt rows. The completion test uses a two-action plan: `done` is refused with the first action missing, refused again with the second action only dispatched, and accepted only after both native provider receipts/outcomes verify both steps.
+
+Paired focused command:
+
+```sh
+pytest -q tests/test_native_reviewed_candidate_store.py -k 'retry_and_uncertain or repeated_provider_ack or done_requires_every_action'
+```
+
+At pinned `d1b76cfbb7276c13e92d9f9f13454f8438bd1e06`, I copied the new native test module into a detached temporary worktree and ran the same selection: `4 passed, 8 deselected in 1.47s`. This shows the acceptance cases pass against the already-implemented source-parity behavior; the acceptance gap was absence of these assertions, not a discovered product regression. On the working branch the same selection returned `4 passed, 8 deselected in 1.22s`.
+
+Final changed-file checks:
+
+```sh
+pytest -q tests/test_native_reviewed_candidate_store.py
+ruff check tests/test_native_reviewed_candidate_store.py
+python -m py_compile tests/test_native_reviewed_candidate_store.py
+git diff --check
+```
+
+Output: `12 passed in 2.81s`; Ruff, compile, and diff checks passed. The original constructor activation, native Store construction, native CLI/UI/full-source regression, and independent scoped SPEC/QUALITY gates remain pending. This evidence commit does not change the no-release claim.

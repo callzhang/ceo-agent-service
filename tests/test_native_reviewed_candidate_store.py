@@ -52,6 +52,36 @@ def _native_store(monkeypatch):
     return store, db, task, consumer
 
 
+def _approved_native_execution(store, db, task, consumer, actions):
+    body = {
+        "outcome": "proposal", "summary": "Native execution fixture",
+        "stage_index": 0, "predecessor_review_id": None,
+        "proposal": {"objective": "Native execution", "actions": actions,
+            "sourced_facts": [], "authored_judgment": "Supported"},
+        "decision_options": [],
+    }
+    with db:
+        candidate = store._adopt_review_candidate_in_connection(db, consumer, body)
+        audit = run_entity_storage.create_run(db, values={
+            "task_id": task["id"], "parent_id": consumer["id"],
+            "execution_generation": "gen-1", "role": "audit",
+            "proposal_revision": 0, "turn_attempt": 0, "status": "completed",
+            "created_at": "now", "updated_at": "now",
+        })
+        review = store._adopt_candidate_review_in_connection(db, consumer["id"], audit["id"], {
+            "outcome": "approve", "candidate_digest": candidate["candidate_digest"],
+        })
+    return review
+
+
+def _native_actions(count):
+    return [{
+        "description": f"Action {index}", "action_identity": f"native-{index}",
+        "capability": "test", "operation": "act",
+        "target": {"id": str(index)}, "payload": {"value": str(index)},
+    } for index in range(count)]
+
+
 def test_system_executor_uses_native_run_progress_and_receipt_owner(monkeypatch):
     from app.agent_contracts import ConsumerAgentResult
     from app.system_executor import ActionOutcome, SystemExecutor
@@ -221,6 +251,95 @@ def test_native_no_action_can_finish_as_skipped_without_selection(monkeypatch):
     assert execution["selection_id"] is None
     finished = store.finish_candidate_execution(consumer["id"], "worker", "skipped", {"outcome": "no_action"})
     assert finished["status"] == "skipped"
+
+
+@pytest.mark.parametrize("retry_status", ["retry", "uncertain"])
+def test_native_retry_and_uncertain_reclaim_same_progress_owner(monkeypatch, retry_status):
+    store, db, task, consumer = _native_store(monkeypatch)
+    review = _approved_native_execution(store, db, task, consumer, _native_actions(1))
+    first = store.claim_candidate_execution(consumer["id"], review["id"], "worker-a", 60)
+    prior_result = {"status": retry_status, "reason": "fixture recovery"}
+    finished = store.finish_candidate_execution(consumer["id"], "worker-a", retry_status, prior_result)
+    assert finished["status"] == retry_status
+    assert json.loads(finished["result_json"]) == prior_result
+
+    reclaimed = store.claim_candidate_execution(consumer["id"], review["id"], "worker-b", 60)
+    assert reclaimed["id"] == consumer["id"] == first["id"]
+    assert reclaimed["status"] == "running"
+    assert reclaimed["lease_owner"] == "worker-b"
+    assert json.loads(reclaimed["result_json"]) == prior_result
+    assert db.execute("select count(*) from run_execution_progress where consumer_run_id=?",
+        (consumer["id"],)).fetchone()[0] == 1
+    assert db.execute("select count(*) from actions where record_type='candidate_execution_alias'").fetchone()[0] == 0
+
+
+def test_native_repeated_provider_ack_is_idempotent_and_conflict_is_preserved(monkeypatch):
+    store, db, task, consumer = _native_store(monkeypatch)
+    review = _approved_native_execution(store, db, task, consumer, _native_actions(1))
+    execution = store.claim_candidate_execution(consumer["id"], review["id"], "worker", 60)
+    action_key = "native-ack-idempotency"
+    attempt = store.begin_candidate_action(execution["id"], "worker", 0, action_key)
+    provider_result = {"verification": {"state": "sent"}, "provider_result": {"id": "receipt-1"}}
+    first = store.record_candidate_external_action(
+        execution["id"], "worker", 0, action_key, "act", {"id": "0"}, provider_result)
+    with db:
+        first_attempt = db.execute("select id,execution_run_id,action_index,status,provider_receipt_id "
+            "from action_receipts where id=?", (attempt["id"],)).fetchone()
+        provider_rows = [tuple(row) for row in db.execute(
+            "select id,provider_receipt_id,provider_result_json,result_digest,agent_run_id "
+            "from action_receipts where action_id=? and provider_result_json is not null order by id",
+            (attempt["action_owner_id"],))]
+    assert tuple(first_attempt[:4]) == (attempt["id"], consumer["id"], 0, "verified")
+    assert first_attempt["provider_receipt_id"] == first["provider_receipt_id"]
+    assert len(provider_rows) == 1
+    assert provider_rows[0][2] == json.dumps(provider_result, sort_keys=True, separators=(",", ":"))
+    assert provider_rows[0][4] == consumer["id"]
+
+    repeated = store.record_candidate_external_action(
+        execution["id"], "worker", 0, action_key, "act", {"id": "0"}, provider_result)
+    assert repeated["provider_receipt_id"] == first["provider_receipt_id"]
+    with db:
+        assert [tuple(row) for row in db.execute(
+            "select id,provider_receipt_id,provider_result_json,result_digest,agent_run_id "
+            "from action_receipts where action_id=? and provider_result_json is not null order by id",
+            (attempt["action_owner_id"],))] == provider_rows
+
+    conflicting_ack = {"verification": {"state": "sent"}, "provider_result": {"id": "receipt-2"}}
+    with pytest.raises(ValueError, match="conflicting external action result"):
+        store.record_candidate_external_action(
+            execution["id"], "worker", 0, action_key, "act", {"id": "0"}, conflicting_ack)
+    with db:
+        assert [tuple(row) for row in db.execute(
+            "select id,provider_receipt_id,provider_result_json,result_digest,agent_run_id "
+            "from action_receipts where action_id=? and provider_result_json is not null order by id",
+            (attempt["action_owner_id"],))] == provider_rows
+    assert store.get_candidate_external_action(action_key)["provider_receipt_id"] == first["provider_receipt_id"]
+
+
+def test_native_done_requires_every_action_verified(monkeypatch):
+    store, db, task, consumer = _native_store(monkeypatch)
+    review = _approved_native_execution(store, db, task, consumer, _native_actions(2))
+    execution = store.claim_candidate_execution(consumer["id"], review["id"], "worker", 60)
+    first_key, second_key = "native-done-0", "native-done-1"
+    first_attempt = store.begin_candidate_action(execution["id"], "worker", 0, first_key)
+    store.record_candidate_external_action(
+        execution["id"], "worker", 0, first_key, "act", {"id": "0"},
+        {"verification": {"state": "sent"}, "provider_result": {"id": "done-0"}})
+    with pytest.raises(ValueError, match="execution actions are not verified"):
+        store.finish_candidate_execution(execution["id"], "worker", "done", {"outcome": "done"})
+
+    second_attempt = store.begin_candidate_action(execution["id"], "worker", 1, second_key)
+    assert second_attempt["status"] == "dispatched"
+    with pytest.raises(ValueError, match="execution actions are not verified"):
+        store.finish_candidate_execution(execution["id"], "worker", "done", {"outcome": "done"})
+    store.record_candidate_external_action(
+        execution["id"], "worker", 1, second_key, "act", {"id": "1"},
+        {"verification": {"state": "sent"}, "provider_result": {"id": "done-1"}})
+    finished = store.finish_candidate_execution(execution["id"], "worker", "done", {"outcome": "done"})
+    assert finished["status"] == "done"
+    attempts = store.list_candidate_action_attempts(consumer["id"])
+    assert [row["id"] for row in attempts] == [first_attempt["id"], second_attempt["id"]]
+    assert [row["status"] for row in attempts] == ["verified", "verified"]
 
 
 def test_native_store_adopts_candidate_review_selection_and_supplement(monkeypatch, tmp_path):
