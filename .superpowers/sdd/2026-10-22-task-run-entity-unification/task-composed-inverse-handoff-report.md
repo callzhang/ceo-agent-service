@@ -2,7 +2,7 @@
 
 ## Result
 
-Run inverse now accepts the current portable Task inverse identity envelope by calling Task's `_validate_inverse_identity` and using its validated typed owner map. Run still checks the exact Task inverse metadata envelope and source-context shape, verifies the digest over the complete identity object, reconstructs public identities from the restored source rows, and preserves its existing wrong-kind, unresolved-owner, collision, and pre-mutation refusal checks. No compatibility branch or source-schema fallback was added.
+Run inverse now accepts the current portable Task inverse identity envelope by calling Task's `_validate_inverse_identity` and using its validated typed owner map. Run still checks the exact Task inverse metadata envelope and source-context shape, verifies the digest over the complete identity object, retains its sparse/nonredundant owner-edge requirement, reconstructs public identities from the restored source rows, and preserves its existing wrong-kind, unresolved-owner, collision, and pre-mutation refusal checks. No compatibility branch or source-schema fallback was added.
 
 ## RED and root cause
 
@@ -26,7 +26,7 @@ Each failed at `app/run_entity_schema.py::_inverse_task_ids` before Run inverse 
 
 ## Change and regression coverage
 
-`_inverse_task_ids` now checks the exact outer Task inverse metadata and context envelope, calls `_validate_inverse_identity` on the complete identity payload, verifies the Task digest, and consumes the validator's `owners` mapping. All Task source projections and existing Run inverse validation remain in place. The regression `test_run_inverse_rejects_unknown_current_task_identity_metadata_before_mutation` adds an unknown field to genuine Task converter output, recomputes its digest, and proves the shared validator rejects it without changing native rows or schema.
+`_inverse_task_ids` now checks the exact outer Task inverse metadata and context envelope, calls `_validate_inverse_identity` on the complete identity payload, verifies the Task digest, and consumes the validator's `owners` mapping. A narrow Run check retains the former nonredundant-edge requirement because Task's validator allows an explicit identity mapping whose source and canonical IDs are equal. All Task source projections and existing Run inverse validation remain in place. The regressions reject an unknown field even after it has been re-digested, and reject a redundant owner edge; both fail before Run schema mutation.
 
 The existing `test_task_first_new_run_facts_survive_old_write_and_two_json_cycles` exercises actual Task and Run converters, current new Task/Run/Attempt facts, a Workbench Task/Turn, portable JSON handoffs across two cycles, a predecessor logical Run write, identity/highwater preservation, and source-row fingerprints. It has no attachment bytes; the separate Workbench file coordinator is not exercised here. Existing `test_inverse_retires_deleted_mapped_occurrence_and_cache_without_resurrection` preserves its captured historical FK anomaly `('runs', 1400, 'tasks', 1)` and does not fabricate a Task repair. The native Meeting `:audit` parent cycle remains independently covered.
 
@@ -55,7 +55,7 @@ Complete focused Run schema file:
 
 ```text
 /Users/derek/miniforge3/bin/python -m pytest -q tests/test_run_entity_schema.py
-70 passed in 45.78s
+71 passed in 38.71s
 ```
 
 Meeting converter and native `:audit` parent checks:
@@ -75,4 +75,4 @@ Meeting converter and native `:audit` parent checks:
 The implementation remains an offline converter repair. No constructor activation, provider action, production database operation, CLI/UI acceptance, main push, or deploy was performed. The two pre-existing modified reports `task-2d0-reply-claim-input-report.md` and `task-3c2a-adoption-forward-report.md` were preserved and not included in the owned change. Parent review owns independent whole `BASE..HEAD` SPEC and QUALITY review, full-copy/native CLI/UI/packed acceptance, and any later publication decision.
 
 Base: `d2160ba204bb11f903cd3f89e5fc49a74e989697`.
-Implementation head: `204aa7e0772e5011fcca40962e41a1460c886c21`.
+Implementation head: `1cadcc757269b90282f659d291745be8a26ea944`.
