@@ -20,7 +20,7 @@ Fail-first and green checks used real SQLite execution:
 
 Focused validation:
 
-- `pytest -q tests/test_consumer_system_release.py`: **28 passed**.
+- `pytest -q tests/test_scheduled_task_store.py::test_managed_skill_ref_requires_exact_revision_belonging_to_skill tests/test_store.py::test_requeue_reply_task_fails_stale_run_and_records_terminal_event`: **2 passed**. This is the final focused pair; output: `.. [100%]`, `2 passed in 1.74s`.
 - `pytest -q tests/test_consumer_system_release.py`: **28 passed**.
 - An exploratory combined selection of `tests/test_scheduled_task_store.py`, `tests/test_consumer_system_release.py`, and Reply requeue checks reported **85 passed, 3 failed**. Its failures stopped at fixture seams outside the corrected methods: `test_scheduled_run_attempt_lineage_reads_only_three_canonical_paths` (`task_inputs` absent), `test_current_schema_refuses_missing_schedule_command_column` (`service_state` absent), and the older `test_requeue_reply_task_records_stale_run_terminal_failure_event` (its `_enqueue_universal_reply_task` helper stops because `task_inputs` is absent). The actual-method regression passes independently in the final focused run. This exploratory selection included an earlier query-only check that was replaced by the actual-method regression; the query-only check is not counted as acceptance evidence. These failures were not compared against BASE, so they are recorded as observed fixture blockers rather than baseline failures.
 - `ruff check app/store.py tests/test_store.py`: passed.
