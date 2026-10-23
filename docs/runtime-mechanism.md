@@ -577,6 +577,8 @@ Attempt History 仅对当前 `needs_human` 规则候选显示“需要你处理/
 待办扫描的复审指纹包括当前选择的 Skill 正文摘要。Skill 规则更新时，即使外部审批流水未改变，也为仍在本人待办中的流程排入一轮新 Consumer/Audit；相同 Skill 正文继续去重。新一轮仍冻结实际选中的完整 Skill 正文，并使用原有审批身份、Audit、System Executor 和外部回执门禁。
 组织架构变动的业务理由或受影响工作等可补充事实，由 people-review Skill 指示向已核实的发起人/责任人留言询问并保留 OA 待办；审批人拥有普通最终审批节点本身不构成保留给个人的 `needs_human` 特殊裁量。
 组织架构同一实质、可补正事实缺口的证据、DWS 同意和退回记录按来源时间戳排序。仅将有当时可读且来源核验的证据支持、指出会改变结论的具体缺口、提供可执行补正要求并给予公平机会的退回计为有效轮次；随后必须核实同一缺口仍未解决。三次有效退回后，第四次到达 Derek 授权节点时，若当前可读且来源核验的证据仍证明同一缺口未解决，应拒绝并说明缺口及三轮有效补正机会，不得只按次数拒绝。读取/OCR/解析失败、无依据或不可执行的要求、不同缺口，以及被退回后材料已补正的缺口均不计数。审批评论中的具体可核实陈述是证据，必须审阅；不要求另行确认文件。只退回未解决或新出现的实质缺口，不重复已解决请求。具体审查标准见 people-review Skill。
+
+若 Audit 批准的 OA 拒绝理由使用“三次同一缺口有效退回”阈值，Audit 结构化结果必须附三轮证据台账：每轮包括按来源时间排序的退回及可执行要求、同一实质缺口、退回后申请人回复/附件/审批评论及补正判断；没有回复时须提供完整读取的负向回执。台账还须引用第三次退回之后证明缺口仍未解决的当前证据。服务端校验三轮时间顺序、缺口一致性、是否已补正，以及台账全部来源是否列入 Audit `evidence_refs`；缺失或矛盾时 Audit 结果校验失败，不能进入 System 执行。该校验落实现有 Skill 规则，不改变三次阈值或普通审批判断。
 Attention 对最新成功待办扫描仍报告为活动的 OA 流程继续显示 pending；本地 Consumer 已完成评论或退回时，默认详情仅说明扫描仍见流程未终结，不推断“没有退回回执”。具体回执以 History/System Execution 与 DWS 流水读回为准。
 History 可对一条已有 uncertain OA 退回执行专用只读核验：调用方必须提供当前绑定的候选和 Audit review；Attempt 必须关联该 Audit run，Attempt 已保存的 OA 身份字段（若有）也必须与候选匹配；并校验唯一既存 uncertain action journal 及 uncertain execution 后，才进入 `reconciliation_only` 执行模式。此模式只调用已注册 OA handler 的严格 DWS 回读，不调用 dispatch；通过后将匹配回执写入外部动作账本并更新同一执行代际，原始 provider response 继续保留在核验证据中。证据不完整或冲突时维持 uncertain。它不创建 Consumer/Audit 新代际，不改变审批结论，也不重放动作。
 默认 OA Consumer prompt 只负责选择通用审批与业务 Skill、按实时流程分类及提示执行后读回；审批阈值、可补充事实的问询和人工升级条件由所选 Skill 定义。启动迁移只替换与已知旧版内容完全相同的系统 OA prompt，并保留后续自定义改动。
@@ -3249,8 +3251,11 @@ the existing explicit calendar-skip receipt because no original event exists.
 Meeting discovery may refresh a waiting recording, but once a job is queued,
 claimed, retrying, ready for delivery or terminal, discovery cannot replace its
 persisted source snapshot or participant evidence. Recovery refreshes failed
-unsent jobs through the explicit replay lifecycle. A failed roster lookup during
-rediscovery must not remove `calendar_evidence` from an already queued job.
+unsent jobs through the explicit replay lifecycle only when no standard or
+sensitive DingTalk outbound is already prepared. A prepared outbound remains
+owned by its existing delivery recovery path and cannot be cleared by scheduled
+replay. A failed roster lookup during rediscovery must not remove
+`calendar_evidence` from an already queued job.
 Recent-meeting replay uses the same ended-recording metadata contract as
 discovery, without requiring the provider status to equal the literal `ended`.
 

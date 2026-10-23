@@ -1364,6 +1364,45 @@ def test_replay_requeues_recent_failed_unsent_meeting_and_refreshes_source(tmp_p
     assert results[1]["job_id"] == old_id
 
 
+def test_replay_keeps_failed_job_with_prepared_delivery_on_recovery_path(tmp_path):
+    store = AutoReplyStore(tmp_path / "worker.sqlite3")
+    meeting = ended_meeting(meeting_id="minutes-prepared")
+    dws = FakeDws(
+        minutes_pages={"": {"items": [meeting], "has_more": False, "next_token": ""}},
+        info={meeting["taskUuid"]: meeting},
+    )
+    job_id = store.upsert_meeting_alignment_job(
+        meeting_id=meeting["taskUuid"],
+        title="Original title",
+        source_json="{\"original\":true}",
+        participants_json="[]",
+        ended_at=meeting["endTimeISO"],
+        eligible_at=NOW.isoformat(),
+        status="failed",
+    )
+    delivery_key = f"meeting-alignment:{job_id}:{meeting['taskUuid']}"
+    store.prepare_meeting_alignment_message(
+        delivery_key=delivery_key,
+        body="Prepared message",
+        original_text="Meeting source",
+        target_kind="group",
+        target_id="cid-meeting",
+        feedback_base_url="",
+    )
+
+    results = queue_recent_meeting_alignment_replay(store, dws, now=NOW, limit=50)
+
+    assert results[0]["outcome"] == "failed"
+    assert results[0]["job_id"] == job_id
+    replayed = store.get_meeting_alignment_job(job_id)
+    assert replayed.status == "failed"
+    assert replayed.title == "Original title"
+    assert replayed.source_json == "{\"original\":true}"
+    assert store.get_outbound_postfix("dingtalk", delivery_key).final_body.startswith(
+        "Prepared message"
+    )
+
+
 def test_replay_item_failure_does_not_block_later_meeting(tmp_path):
     store = AutoReplyStore(tmp_path / "worker.sqlite3")
     first = ended_meeting(meeting_id="minutes-fails", title="失败会议")
