@@ -2,6 +2,21 @@
 
 ## 状态与证据边界
 
+### 2026-10-23 授权手动 OKR run 394267：登录恢复后仍未完成分析
+
+run394267 使用不可变 task6 v23 / managed `ceo-weekly-okr-report` revision223，执行任务
+416922；最终 History attempt15921 为 `failed`，Consumer 连续四次 `analysis_incomplete`
+后停止。登录恢复后，Consumer 成功读取18名管理者的名单及来源，取得15份Q4 OKR，另有3人
+确无Q4目标。随后第一轮要求读取一个不存在的本地绩效制度文件，未继续按已声明的 OKR
+评分口径分析；其余重试也未进入评分。原因是实际 Consumer 行为，不是评测误判或认证失败。
+本次没有 Audit、评分、文档写入或通知回执，也没有外部动作；旧运行保持失败且未重放。
+
+当前生产 commit `4441aada0d36cde843eccd89f4d5f0a58c4aa268`，healthz 正常；task6仍为 v26 /
+managed revision223，下次自然触发为 **2026-10-25 10:00 UTC**。候选修复明确让 Agent 使用
+Skill 已声明的评分口径，并将额外材料缺失记录为限制，正在通过发布门禁；发布并读回新 revision
+后，按 Derek 已授权的范围新建一次手动验证运行。该手动结果与自然运行分开统计。
+无正文证据：[run394267 readback](../evals/scheduled_task_generic/okr-manual-394267-post-login-readback.json)。
+
 截至 2026-10-22 17:50 UTC：task14 的自然运行 392889 已完成并产生真实文档更新和通知回执；
 但业务验收未通过。Consumer 读取了完整的 65 个群会话目录（6 页），却没有调用任何逐会话消息
 读取工具，最终报告也明确写出群聊未逐条读取。Audit 因消息最初缺少今日要点而退回一次，修订后
