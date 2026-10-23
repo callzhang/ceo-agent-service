@@ -14412,6 +14412,11 @@ class AutoReplyStore(LogicalRunStoreMixin, ReviewedCandidateStoreMixin):
 
     def requeue_failed_meeting_delivery(self, job_id: int) -> MeetingAlignmentJob | None:
         """Resume a reviewed unsent delivery after independent provider readback."""
+        from app.meeting_alignment_models import meeting_decision_audit_is_approved
+
+        current = self.get_meeting_alignment_job(job_id)
+        if current is None or not meeting_decision_audit_is_approved(current.decision_json):
+            return None
         with self._connect() as db:
             row = db.execute(
                 f"""update tasks as meeting_alignment_jobs
@@ -14419,6 +14424,9 @@ class AutoReplyStore(LogicalRunStoreMixin, ReviewedCandidateStoreMixin):
                      and cast(meeting_alignment_jobs.legacy_key as integer)=?
                      and {task20_column('meeting_alignment_jobs', 'status')}='failed' and {task20_column('meeting_alignment_jobs', 'locked_at')} is null
                      and {task20_column('meeting_alignment_jobs', 'decision_json')}!='{{}}' and {task20_column('meeting_alignment_jobs', 'target_id')}!=''
+                     and {task20_column('meeting_alignment_jobs', 'decision_json')}=?
+                     and {task20_column('meeting_alignment_jobs', 'updated_at')}=?
+                     and {task20_column('meeting_alignment_jobs', 'source_json')}=?
                      and {task20_column('meeting_alignment_jobs', 'send_result_json')}='{{}}'
                      and not exists (
                        select 1 from ({OUTBOUND_POSTFIX_RECEIPT_SQL})
@@ -14428,7 +14436,7 @@ class AutoReplyStore(LogicalRunStoreMixin, ReviewedCandidateStoreMixin):
                            meeting_alignment_jobs.{task20_column('meeting_alignment_jobs', 'meeting_id')})
                      )
                    returning {task8_meeting_returning()}""",
-                (job_id,),
+                (job_id, current.decision_json, current.updated_at, current.source_json),
             ).fetchone()
             return self._meeting_alignment_job_from_row(row) if row else None
 

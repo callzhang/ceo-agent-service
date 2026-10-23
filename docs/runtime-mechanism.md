@@ -3496,6 +3496,8 @@ ProcessingReaction 在现有 service_state 保存文字表情模板与每条源�
 重启后继续未确认的表情操作。只操作本功能记录的源消息与服务账号的「处理中」表情。
 该进度展示不改变 Consumer/Audit 生命周期、发送授权或现有业务效果检查。
 
+Meeting planner 的 `audit_summary` 不是审核回执。分析成功后，服务以独立 model-only Audit（无原生工具或 MCP）调用复核会议来源、群候选、准确收件人、正文与披露范围；输出绑定候选 SHA-256，并和候选及 Audit session 引用一并保存。只有通过该摘要绑定校验且 `outcome=approve` 的候选可转为 `ready_to_send`。`return`／`reject` 转入 `needs_human`；格式或结果验证失败按原 Meeting 失败规则处理，外部依赖不可用沿用原退避重试。新投递和人工重排都会检查审核绑定，旧的未审核候选、缺失审核、修改后的候选或错误摘要均不得产生新发送。已经有 provider 回执时的只读效果核实与状态恢复沿用原有回执、正文、收件目标验证，不要求为既成外部效果补造审核。不可变收件人准备绑定、同一投递键、provider 回执和原目标冲突保护保持原样。
+
 ## Meeting Audience Recovery
 
 独立会议路径复用共享消息受众合同。候选级保密历史拒绝保留为明确未知证据，继续读取其他
