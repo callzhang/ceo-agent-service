@@ -1597,6 +1597,30 @@ def test_run_inverse_rejects_unknown_current_task_identity_metadata_before_mutat
         db.close()
 
 
+def test_run_inverse_preserves_sparse_task_owner_identity_edges():
+    from app.task_entity_schema import restore_task_entities, _inverse_identity_digest
+
+    db, task_forward, task_source_metadata = _run_source(include_task_source_metadata=True)
+    try:
+        run_source_metadata = capture_run_entities(db)
+        run_forward = migrate_run_entities(
+            db, run_source_metadata, task_metadata=task_forward,
+            run_handoff=_run_handoff(db, run_source_metadata))
+        task_inverse = restore_task_entities(db, task_source_metadata, task_forward)
+        task_inverse["inverse_identity"]["owners"].append({
+            "source_kind": "reply_tasks", "source_physical_id": 987654,
+            "canonical_id": 987654,
+        })
+        task_inverse["source_context"]["handoff_sha256"] = _inverse_identity_digest(
+            task_inverse["inverse_identity"])
+        with pytest.raises(ValueError, match="duplicate or redundant Task2B inverse identity edge"):
+            restore_run_entities(db, run_source_metadata, run_forward,
+                                 task_metadata=task_forward,
+                                 task_inverse_metadata=task_inverse)
+    finally:
+        db.close()
+
+
 def test_task_first_new_run_facts_survive_old_write_and_two_json_cycles():
     import hashlib
     import struct

@@ -743,6 +743,9 @@ def _inverse_task_ids(db: sqlite3.Connection, task_metadata: dict,
             raise ValueError("invalid Task2B inverse identity context")
         from app.task_entity_schema import _inverse_identity_digest, _validate_inverse_identity
         source_physical = _validate_inverse_identity(inverse)["owners"]
+        if any(edge["source_physical_id"] == edge["canonical_id"]
+               for edge in inverse["owners"]):
+            raise ValueError("duplicate or redundant Task2B inverse identity edge")
         if context.get("handoff_sha256") != _inverse_identity_digest(inverse):
             raise ValueError("Task2B inverse identity context digest mismatch")
         source_to_target, target_to_source = {}, {}
