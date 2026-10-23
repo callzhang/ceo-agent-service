@@ -14,6 +14,21 @@ _TEXT_LIMIT = 600
 SOURCES = ("meetings", "tasks", "attention", "emails", "attempts", "waiting")
 
 
+def validate_scheduled_read_window(
+    start: datetime, end: datetime, scheduled_for: datetime
+) -> None:
+    """Keep historical reads from claiming coverage after their trigger time."""
+    if (
+        start.tzinfo is None
+        or end.tzinfo is None
+        or scheduled_for.tzinfo is None
+        or start >= end
+    ):
+        raise ValueError("scheduled read interval requires aware start < end")
+    if end.astimezone(UTC) > scheduled_for.astimezone(UTC):
+        raise ValueError("scheduled read window cannot end after scheduled_for")
+
+
 def meeting_activity(
     store: AutoReplyStore, start: datetime, end: datetime
 ) -> list[dict]:

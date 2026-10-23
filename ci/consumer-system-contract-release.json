@@ -100,8 +100,8 @@
     {
       "source": "ci/shared-skills/stardust-oa-attendance-travel-review/SKILL.md",
       "target": "skills/stardust-oa-attendance-travel-review/SKILL.md",
-      "old_sha256": "f19093c34db7698577962a8c177836bf74e368f3e66655630d20f503ff5763c9",
-      "new_sha256": "f19093c34db7698577962a8c177836bf74e368f3e66655630d20f503ff5763c9"
+      "old_sha256": "12fe5ae6a03b2903ffe92df32c18ea25e0330f20d9e202f23fdbee6ee8ded375",
+      "new_sha256": "12fe5ae6a03b2903ffe92df32c18ea25e0330f20d9e202f23fdbee6ee8ded375"
     },
     {
       "source": "ci/shared-skills/ceo-daily-report/scripts/destination.py",
