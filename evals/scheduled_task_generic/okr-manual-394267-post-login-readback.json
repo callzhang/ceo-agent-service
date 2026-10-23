@@ -1,0 +1,40 @@
+{
+  "observed_at": "2026-10-23T04:06:00Z",
+  "kind": "authorized_manual_run",
+  "scheduled_run_id": 394267,
+  "task_id": 6,
+  "execution_task_id": 416922,
+  "immutable_snapshot": {
+    "task_version": 23,
+    "managed_skill": "ceo-weekly-okr-report",
+    "managed_revision_id": 223,
+    "managed_skill_sha256": "18b23c5c6762ce0fa6cceedf8f1a7a14591327269897fcc56ba4ea32e9c78744"
+  },
+  "production_readback": {
+    "commit": "4441aada0d36cde843eccd89f4d5f0a58c4aa268",
+    "healthz": "ok",
+    "task_version": 26,
+    "enabled": true,
+    "timezone": "America/Los_Angeles",
+    "next_natural_run_at": "2026-10-25T10:00:00Z",
+    "managed_skill_revision_id": 223,
+    "managed_skill_sha256": "18b23c5c6762ce0fa6cceedf8f1a7a14591327269897fcc56ba4ea32e9c78744"
+  },
+  "history_attempt_id": 15921,
+  "terminal_status": "failed",
+  "failure": "analysis_incomplete after four Consumer runtime attempts",
+  "consumer_attempts": [394476, 394493, 394496, 394499],
+  "source_collection": {
+    "roster_size": 18,
+    "q4_sources_collected": 15,
+    "members_without_q4_goals": 3,
+    "first_live_read_after_successful_login": "successful"
+  },
+  "root_cause": "The Consumer completed source preparation, then tried to read an absent optional local performance-policy file and did not continue its analysis from the declared OKR rubric. Subsequent retries also stopped before scoring.",
+  "audit_attempts": 0,
+  "document_writes": 0,
+  "notification_receipts": 0,
+  "provider_actions": 0,
+  "acceptance": "failed_actual_consumer_behavior",
+  "replay": "not_replayed"
+}

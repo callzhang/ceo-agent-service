@@ -28,7 +28,7 @@ from evals.scheduled_task_generic.okr_fixture import (
 )
 
 HERE = Path(__file__).parent
-CASES_PATH = HERE / "okr_cases.v6.json"
+CASES_PATH = HERE / "okr_cases.v7.json"
 MAX_NATIVE_FEEDBACK_CYCLES = 3
 
 
@@ -204,6 +204,12 @@ def approved_saved_case(saved_cases, case_id):
         ),
         None,
     )
+
+
+def evaluation_status(completed_cases, selected_case_ids):
+    if len(completed_cases) != len(selected_case_ids):
+        return "failed"
+    return "passed" if all(case["passed"] for case in completed_cases) else "failed"
 
 
 
@@ -444,11 +450,42 @@ def _grade(case, work, output, prior=None):
         )
     if expected.get("summary_contains_actual_member_gaps"):
         checks["specific_gap_reasons_in_summary"] = all(
-            g.evidence in summary_text and g.kind in summary_text
+            g.user_id in summary_text
+            and report._gap_status_label(g.kind) in summary_text
+            and g.kind not in summary_text
+            and (
+                (g.kind == "goals_missing" and "目标列表为空" in summary_text)
+                or (
+                    g.kind == "source_failed"
+                    and "404" not in summary_text
+                    and "OKR 目标记录未能读取" in summary_text
+                    and any(term in summary_text for term in ("无法确认", "不能判断"))
+                    and "同轮名单及其他成员读取成功" in summary_text
+                )
+            )
             for g in analysis.member_gaps
         )
     proposal = wire.to_proposal()
     actions = list(proposal.actions) if proposal else []
+    required_independent = set(expected.get("independent_source_ids", []))
+    if required_independent:
+        searched = any(c["tool"] == "search_dingtalk_documents" for c in trace)
+        read_sources = {
+            c["arguments"].get("node_id")
+            for c in trace
+            if c["tool"] == "read_dingtalk_document"
+        }
+        checks["independent_sources_searched_and_read"] = (
+            searched and required_independent <= read_sources
+        )
+    for empty_search in expected.get("independent_searches_without_matches", []):
+        query_tokens = (empty_search["display_name"].casefold(), empty_search["user_id"].casefold())
+        checks["empty_independent_search_recorded:" + empty_search["user_id"]] = any(
+            c["tool"] == "search_dingtalk_documents"
+            and all(token in c["arguments"].get("query", "").casefold() for token in query_tokens)
+            and c["result"].get("documents") == []
+            for c in trace
+        )
     checks["exact_summary_proposal"] = (
         len(actions) == 1
         and actions[0].capability == "dingtalk-chat"
@@ -494,6 +531,7 @@ def native(
     previous=None,
     feedback=None,
     scheduled_run_id=1,
+    previous_review=None,
 ):
     output_dir.mkdir(parents=True, exist_ok=True)
     settings = (
@@ -571,6 +609,7 @@ def native(
             + "\n"
             + system_action_contract_document()
         )
+        prompt = audit_revision_context(previous_review) + prompt
     if role == "consumer":
         prompt += (
             "\nNative transport envelope: purpose_output_json encodes this complete production purpose schema. Its conditional branches are enforced by the real service parser after decoding:\n"
@@ -699,6 +738,17 @@ def native(
     }
 
 
+def audit_revision_context(previous_review):
+    if not previous_review:
+        return ""
+    return (
+        "Previous Audit revision context (not source facts or authorization):\n"
+        + json.dumps(previous_review, ensure_ascii=False)
+        + "\nResolve each carried return point or explain why its requested change is unsupported; "
+        "judge the current candidate independently.\n"
+    )
+
+
 def continue_native_feedback(
     facts_file,
     artifacts,
@@ -737,6 +787,7 @@ def continue_native_feedback(
             flags,
             previous=latest_consumer["output"],
             scheduled_run_id=scheduled_run_id,
+            previous_review=audits[-1]["output"],
         )
         audits.append(audit)
         if audit["output"] is None:
@@ -749,6 +800,7 @@ def main():
     parser.add_argument("--output", default="okr_results.v1.json", help="Result filename in this evaluation directory")
     parser.add_argument("--recheck-accepted-prefix-from", help="Verify accepted bytes and rerun only Audit under current tools/Skill")
     parser.add_argument("--resume-reviewed-from", help="Rescore unchanged reviewed native outputs after an evaluator-only repair")
+    parser.add_argument("--case-id", help="Run one named frozen case while preserving the full manifest hash")
     args = parser.parse_args()
     destination = HERE / args.output
     if not destination.parent.is_dir():
@@ -758,6 +810,13 @@ def main():
             "Preserve the existing result; use a distinct output name after a diagnosed repair"
         )
     manifest = read_json(CASES_PATH)
+    if args.case_id:
+        selected = [case for case in manifest["cases"] if case["id"] == args.case_id]
+        if len(selected) != 1:
+            raise ValueError(f"Unknown or duplicate OKR case: {args.case_id}")
+        cases = selected
+    else:
+        cases = manifest["cases"]
     settings, flags = run.configuration("production-config")
     # Same configured model/effort; only this fixture server is connected.
     isolated = []
@@ -796,6 +855,7 @@ def main():
         "settings": settings,
         "synthetic_only": True,
         "external_executor_available": False,
+        "selected_case_ids": [case["id"] for case in cases],
         "source_sha256": {
             str(p.relative_to(run.ROOT))
             if p.is_relative_to(run.ROOT)
@@ -820,7 +880,7 @@ def main():
         ) as temp:
             directory = Path(temp)
             completed = {}
-            for scheduled_run_id, case in enumerate(manifest["cases"], start=1):
+            for scheduled_run_id, case in enumerate(cases, start=1):
                 root = directory / case["id"]
                 root.mkdir()
                 artifacts = root / "artifacts"
@@ -910,6 +970,7 @@ def main():
                         flags,
                         previous=(correction or consumer)["output"],
                         scheduled_run_id=scheduled_run_id,
+                        previous_review=audit["output"],
                     )
                     if final_audit["output"] is None:
                         result["cases"].append(native_failure_case(
@@ -1022,12 +1083,7 @@ def main():
         result["temporary_artifacts_cleaned"] = (
             directory is None or not directory.exists()
         )
-        result["status"] = (
-            "passed"
-            if len(result["cases"]) == len(manifest["cases"])
-            and all(c["passed"] for c in result["cases"])
-            else "failed"
-        )
+        result["status"] = evaluation_status(result["cases"], result["selected_case_ids"])
         destination.write_text(json.dumps(result, ensure_ascii=False, indent=2) + "\n")
     print(
         json.dumps(

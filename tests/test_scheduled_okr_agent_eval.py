@@ -5,9 +5,8 @@ from pathlib import Path
 from evals.scheduled_task_generic import okr_eval
 from evals.scheduled_task_generic.okr_fixture import Fixture, member_payload
 
-CASES = json.loads((Path(okr_eval.__file__).parent / "okr_cases.v6.json").read_text())[
-    "cases"
-]
+CASES = json.loads((Path(okr_eval.__file__).parent / "okr_cases.v7.json").read_text())["cases"]
+BASE_CASES = CASES[:4]
 
 
 def test_okr_skill_resumes_saved_inputs_and_does_not_use_failure_for_missing_evidence():
@@ -17,9 +16,30 @@ def test_okr_skill_resumes_saved_inputs_and_does_not_use_failure_for_missing_evi
         .read_text()
         .split()
     )
-    assert "Every new scheduled execution (a new `scheduled_run_id`) must establish a fresh" in skill
-    assert "A Consumer retry, resumed turn or Audit correction for the same `scheduled_run_id`" in skill
+    assert "Do not invent or require a separate local performance-policy" in skill
+    assert "the missing document does not block member analysis or publication" in skill
+    assert "An empty independent-document search is an evidence gap, not a reason to stop analysis" in skill
+    assert "continue with the next live-OKR manager" in skill
+    assert "write a complete schema-valid analysis for every manager" in skill
+    assert "The discrete bands above apply only to each KR's `base_score`" in skill
+    assert "70–79 is the valid role-standard band" in skill
+    assert "replace the proposal content with those exact bytes" in skill
+    assert "Do not copy provider status codes, machine error labels or raw diagnostics into analyses, report text or the message proposal" in skill
+    assert "an unreadable current-quarter record does not establish that the member has no goal" in skill
+    assert "`read_scheduled_context.run_id` is this execution's scheduled run ID" in skill
+    assert "call `read_okr_roster` plus `read_okr_member` once for every current roster member" in skill
+    assert "search independent DingTalk documents using the" in skill
+    assert "`search_dingtalk_documents`" in skill
+    assert "A concrete current-quarter `member_not_found`/404 receipt is member-specific" in skill
+    assert "Use `reply_to_message` only when the trigger is an actual message" in skill
+    assert "compare each summary bullet and risk item by manager and KR" in skill
+    assert "Call a result a \"this-week\" change only when a source includes a date" in skill
+    assert "in `ceo_attention_items` when it needs a specific CEO decision or in that manager's `risks`, not in both" in skill
+    assert "missing positive evidence with no concrete" in skill
+    assert "A score below `50` requires repeated or high-impact" in skill
+    assert "A Consumer retry, resumed turn or Audit correction for the same `read_scheduled_context.run_id`" in skill
     assert "reuse its verified roster and member source receipts instead of rereading all members" in skill
+    assert "do not call `read_okr_roster` again" in skill
     assert "Never infer that a member source is unchanged from an earlier scheduled execution" in skill
     assert "A request to fix a shared report, appendix set, notification summary" in skill
     assert "preserve those bytes through the correction" in skill
@@ -32,6 +52,11 @@ def test_okr_skill_resumes_saved_inputs_and_does_not_use_failure_for_missing_evi
     assert "state each coverage boundary once" in skill
     assert "On a retry of the same scheduled execution, read only missing/failed member receipts" in skill
     assert "Never repeat a successful member read within the same scheduled execution" in skill
+    assert "call `list_task_artifacts`" in skill
+    assert "reuse listed roster and member receipt artifacts" in skill
+    assert "`prepare` validates their userId, period, outcome and source digest" in skill
+    assert "read `plan.json`, each schema" in skill
+    assert "Do not try to open the Python script source or task artifacts with `read_text_file`" in skill
     assert "resume at the first missing, changed or Audit-identified analysis" in skill
     assert "Zero reported progress is not evidence that no outcome occurred" in skill
     assert "It is not a shortcut for unfinished analysis" in skill
@@ -40,12 +65,21 @@ def test_okr_skill_resumes_saved_inputs_and_does_not_use_failure_for_missing_evi
     assert "Score each dimension independently" in skill
     assert "Do not transfer evidence between dimensions" in skill
     assert "Audit must independently check all seven dimension/evidence/score" in skill
+    assert "A missed or incomplete business KR does not lower a leadership or culture dimension" in skill
+    assert "a below-standard score requires dimension-specific evidence of an unmet behavior or contrary pattern" in skill
     assert "Innovation requires a specific improvement, validation and observed effect" in skill
     assert "A `scope: member` label or a diagnostic containing “member-bound” is not proof" in skill
     assert "Independently inspect every score of 80 or more" in skill
     assert "routine same-team adoption" in skill
     assert "publish or update and fully read back every appendix" in skill
     assert "an old appendix or its previous readback does not satisfy this run's manifest" in skill
+    correction = skill.split("### Correct an Audit return before publication", 1)[1].split(
+        "## Collect and prepare", 1
+    )[0]
+    assert "Audit correction is not a prose-only edit" in correction
+    assert "Update the affected `analysis-<userId>.json` or `appendix-links.json`" in correction
+    assert "rerun `scripts/report.py render`" in correction
+    assert "Never write generated report outputs with `consumer_artifact_write`" in correction
 
 
 def complete_fixture(tmp_path, case=None):
@@ -62,6 +96,21 @@ def complete_fixture(tmp_path, case=None):
                 "arguments": {"user_id": m["user_id"]},
                 "result": {},
             }
+        )
+    for node_id, document in f.independent_documents().items():
+        trace.extend(
+            [
+                {
+                    "tool": "search_dingtalk_documents",
+                    "arguments": {"query": document["title"]},
+                    "result": {"documents": [{"nodeId": node_id, "name": document["title"]}]},
+                },
+                {
+                    "tool": "read_dingtalk_document",
+                    "arguments": {"node_id": node_id},
+                    "result": {"content": document["content"]},
+                },
+            ]
         )
     report = okr_eval.load_script("report")
     plan = report.prepare(
@@ -354,6 +403,36 @@ def test_native_document_tools_use_actual_service_receipt_contract(tmp_path):
         receipt = tools["read_task_artifact"](result["readback"]["artifact_name"])
         assert json.loads(receipt["content"])["content"]["markdown"] == body
         assert result["readback"]["artifact_name"].endswith(".readback.json")
+
+
+def test_native_fixture_exposes_searchable_independent_evidence(tmp_path):
+    f = Fixture(CASES[0]["facts"], tmp_path)
+    with f.production_tools("consumer") as tools:
+        matches = tools["search_dingtalk_documents"]("林辰 eval-a")
+        nodes = {item["node_id"] for item in matches["documents"]}
+        assert "eval-evidence-2b0652a9fd02acfb" in nodes
+        assert "eval-behavior-2b0652a9fd02acfb" in nodes
+        evidence = tools["read_dingtalk_document"]("eval-evidence-2b0652a9fd02acfb")
+        assert evidence["content"]["markdown"] == f.facts["evidence"]["eval-a"]["content"]
+
+
+def test_native_fixture_exposes_previous_scheduled_run_id(tmp_path):
+    f = Fixture(CASES[1]["facts"], tmp_path)
+    context = f.scheduled_context()
+    assert context["run_id"] == 2
+    assert context["history"] == [{"run_id": 1, "status": "completed"}]
+
+
+def test_native_audit_revision_receives_previous_review_context():
+    prior = {
+        "verdict": "revise",
+        "feedback": ["Keep the customer-acceptance risk in one report section."],
+    }
+    context = okr_eval.audit_revision_context(prior)
+    assert "Previous Audit revision context" in context
+    assert "not source facts or authorization" in context
+    assert "Keep the customer-acceptance risk in one report section." in context
+    assert "judge the current candidate independently" in context
 
 
 def test_actual_artifact_reader_reports_zero_based_ranges_on_full_reads(tmp_path):
@@ -771,6 +850,8 @@ def test_group_summary_keeps_exact_member_gap_evidence(tmp_path):
     summary = (tmp_path / "summary.md").read_text()
     for gap in analysis.member_gaps:
         assert gap.evidence in summary
+    assert "404" not in summary
+    assert "OKR 目标记录未能读取" in summary
 
 
 def test_cases_are_versioned_without_rewriting_failed_oracle():
@@ -780,6 +861,8 @@ def test_cases_are_versioned_without_rewriting_failed_oracle():
         stable = copy.deepcopy(facts)
         stable["evidence"].pop("behavior", None)
         stable["evidence"].pop("behavior_by_manager", None)
+        stable.pop("run_id", None)
+        stable.pop("previous_run_id", None)
         return stable
 
     root = Path(okr_eval.__file__).parent
@@ -792,7 +875,7 @@ def test_cases_are_versioned_without_rewriting_failed_oracle():
     second = root / "okr_cases.v2.json"
     assert hashlib.sha256(second.read_bytes()).hexdigest() == "646a1857f50fd16a45d2f9520df906ee9dafbf0bb7864f4cd1226c961469bf04"
     old_v2 = json.loads(second.read_text())["cases"]
-    for before, after in zip(old_v2, CASES, strict=True):
+    for before, after in zip(old_v2, BASE_CASES, strict=True):
         assert stable_non_behavior_facts(before["facts"]) == stable_non_behavior_facts(after["facts"])
     assert hashlib.sha256((root / "okr_cases.v3.json").read_bytes()).hexdigest() == "c8ed2093242a7cef57f3025a2f062a7aa4a82da3b67901fcb92a7843b8569438"
     fourth = root / "okr_cases.v4.json"
@@ -809,13 +892,24 @@ def test_cases_are_versioned_without_rewriting_failed_oracle():
         "fresh-date-snapshot",
         "shared-source-auth-failure",
     ]
+    seventh = root / "okr_cases.v7.json"
+    seventh_cases = json.loads(seventh.read_text())["cases"]
+    assert [case["id"] for case in seventh_cases[:4]] == [case["id"] for case in sixth_cases]
+    empty_search = seventh_cases[4]
+    assert empty_search["id"] == "empty-independent-search-continues-analysis"
+    assert empty_search["facts"]["no_independent_document_ids"] == ["eval-a", "eval-b"]
+    assert empty_search["expected"]["independent_searches_without_matches"] == [
+        {"user_id": "eval-a", "display_name": "林辰"},
+        {"user_id": "eval-b", "display_name": "林辰"},
+    ]
+    assert empty_search["expected"]["behavioral_score_ranges"] == CASES[0]["expected"]["behavioral_score_ranges"]
     old_fifth = json.loads(fifth.read_text())["cases"]
     for before, after in zip(old_fifth, sixth_cases, strict=True):
         assert stable_non_behavior_facts(before["facts"]) == stable_non_behavior_facts(after["facts"])
         if after["id"] in {"fresh-source-snapshot", "fresh-date-snapshot"}:
             assert "resume_from" not in after
     old_v3 = json.loads((root / "okr_cases.v3.json").read_text())["cases"]
-    for before, after in zip(old_v3, CASES, strict=True):
+    for before, after in zip(old_v3, BASE_CASES, strict=True):
         assert stable_non_behavior_facts(before["facts"]) == stable_non_behavior_facts(after["facts"])
         behavior = after["facts"]["evidence"]["behavior_by_manager"]
         assert set(behavior) == {"eval-a", "eval-b"}
@@ -826,7 +920,7 @@ def test_cases_are_versioned_without_rewriting_failed_oracle():
         assert "每周带两名工程师复盘定位方法" in behavior["eval-b"]["content"]
     date_case = next(c for c in CASES if c["id"] == "fresh-date-snapshot")
     assert "没有AI使用及工作增益证据" in date_case["facts"]["evidence"]["behavior_by_manager"]["eval-b"]["content"]
-    for before, after in zip(first, CASES, strict=True):
+    for before, after in zip(first, BASE_CASES, strict=True):
         assert stable_non_behavior_facts(before["facts"]) == stable_non_behavior_facts(after["facts"])
         if "base_score_ranges" in before["expected"]:
             assert before["expected"]["base_score_ranges"]["eval-a"] == [60, 80]
@@ -866,7 +960,7 @@ def test_actual_summary_body_cannot_be_substituted(tmp_path):
 
 
 def test_shared_failure_cannot_be_an_unscored_success_or_publish(tmp_path):
-    case = CASES[-1]
+    case = next(c for c in CASES if c["id"] == "shared-source-auth-failure")
     f = Fixture(case["facts"], tmp_path)
     f.record("read_okr_member", {"user_id": "eval-a"}, {"source_outcome": {"scope": "shared"}})
     wire = {
@@ -882,6 +976,13 @@ def test_shared_failure_cannot_be_an_unscored_success_or_publish(tmp_path):
     wire["action"] = "failed"
     f.record("consumer_document_write", {}, {})
     assert not okr_eval.grade(case, tmp_path, wire)["passed"]
+
+
+def test_filtered_native_evaluation_status_uses_the_selected_case_set():
+    assert okr_eval.evaluation_status([{"passed": True}], ["one-selected-case"]) == "passed"
+    assert okr_eval.evaluation_status([], ["one-selected-case"]) == "failed"
+    assert okr_eval.evaluation_status([{"passed": True}], ["a", "b"]) == "failed"
+    assert okr_eval.evaluation_status([{"passed": False}], ["one-selected-case"]) == "failed"
 
 
 def test_builtin_resource_inventory_is_distinct_from_provider_access(

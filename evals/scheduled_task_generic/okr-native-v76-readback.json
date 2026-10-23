@@ -1,0 +1,105 @@
+{
+  "version": 1,
+  "observed_at": "2026-10-23T05:55:01.061193+00:00",
+  "native_result": "evals/scheduled_task_generic/okr_results.v76.json",
+  "native_result_sha256": "b5ed6c26a7d6e48b654f9b1d9aa1f047fd960a4b882fd363c3b3304ae9d3461d",
+  "candidate_git_ref": "6359c32998aa75a38ce3de91e04261e7d7fbc62a",
+  "cli_version": "codex-cli 0.163.0",
+  "synthetic_only": true,
+  "external_executor_available": false,
+  "temporary_artifacts_cleaned": true,
+  "status": "passed",
+  "cases": [
+    {
+      "case_id": "composite-coverage",
+      "passed": true,
+      "final_audit_verdict": "approve",
+      "audit_round_count": 3,
+      "failed_checks": [],
+      "canonical_render_artifacts": true,
+      "full_readbacks_consumed": true,
+      "exact_summary_proposal": true
+    },
+    {
+      "case_id": "fresh-source-snapshot",
+      "passed": true,
+      "final_audit_verdict": "approve",
+      "audit_round_count": 1,
+      "failed_checks": [],
+      "canonical_render_artifacts": true,
+      "full_readbacks_consumed": true,
+      "exact_summary_proposal": true
+    },
+    {
+      "case_id": "fresh-date-snapshot",
+      "passed": true,
+      "final_audit_verdict": "approve",
+      "audit_round_count": 1,
+      "failed_checks": [],
+      "canonical_render_artifacts": true,
+      "full_readbacks_consumed": true,
+      "exact_summary_proposal": true
+    },
+    {
+      "case_id": "shared-source-auth-failure",
+      "passed": true,
+      "final_audit_verdict": "approve",
+      "audit_round_count": 1,
+      "failed_checks": [],
+      "canonical_render_artifacts": null,
+      "full_readbacks_consumed": null,
+      "exact_summary_proposal": null
+    }
+  ],
+  "source_sha256": {
+    "ci/shared-skills/ceo-weekly-okr-report/SKILL.md": "d7584ca089596f09f943d659b67943d04d9bc2c47d8fb15831a1109b94229d9a",
+    "ci/shared-skills/ceo-weekly-okr-report/scripts/report.py": "119a249dd9aa3398c5c6e9a49dfb821f06f05ce3e9e668c6de279ba11543af5d",
+    "ci/shared-skills/ceo-weekly-okr-report/scripts/analysis.schema.json": "2893dd0b0c0f20da0a097194ad97a6ff7605f68b061194c45a7b9660474aa52b",
+    "ci/shared-skills/ceo-weekly-okr-report/scripts/destination.py": "9d2fad8841dfdab69d6da94b34eb04acb3cfcdbfab8e793f640b8395d2cc5a0a",
+    "operation/dingtang-okr-review/SKILL.md": "f5a706c34605682b7cef47c48d11d41afda56ddd84b4cf339bd20c1c984c3ece"
+  },
+  "artifact_sha256": {
+    "ceo_weekly_okr_skill": "d7584ca089596f09f943d659b67943d04d9bc2c47d8fb15831a1109b94229d9a",
+    "report_script": "119a249dd9aa3398c5c6e9a49dfb821f06f05ce3e9e668c6de279ba11543af5d",
+    "consumer_script_tree": "7e8fb42e3d08d62d9506a1bfbb9187743f00c9ec62903c7de0a71980a203a626"
+  },
+  "prior_failures": [
+    {
+      "run": "v71",
+      "root_cause": "Consumer overwrote generated canonical report artifacts after Audit feedback; Audit approved, but renderer byte comparison correctly failed."
+    },
+    {
+      "run": "v72-v73",
+      "root_cause": "Member source failure wording exposed a provider status code; initial grader required that code despite the Skill prohibition."
+    },
+    {
+      "run": "v74-v75",
+      "root_cause": "Native Audit omitted its previous review context, and one Consumer analysis let an incomplete business KR lower a behavior score despite explicit role-standard evidence."
+    }
+  ],
+  "fixed_comparison": {
+    "baseline_result": "evals/scheduled_task_generic/okr_results.v75.json",
+    "baseline_sha256": "d0e93aa63358e35f786012e11e2eb8e4a78a59dcbd520b3794ef6b38770e105a",
+    "candidate_result": "evals/scheduled_task_generic/okr_results.v76.json",
+    "same_model_cli": true,
+    "same_cases_sha256": true,
+    "same_grader_sha256": true,
+    "case_id": "fresh-source-snapshot",
+    "baseline": {
+      "result_status": "failed",
+      "case_passed": false,
+      "audit": "approve",
+      "failed_checks": [
+        "behavioral_scores_match_evidence"
+      ],
+      "eval_b_strategy_score": 60
+    },
+    "candidate": {
+      "result_status": "passed",
+      "case_passed": true,
+      "audit": "approve",
+      "failed_checks": [],
+      "eval_b_strategy_score": 70
+    }
+  }
+}

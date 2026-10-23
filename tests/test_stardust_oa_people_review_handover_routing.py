@@ -96,16 +96,17 @@ def test_ordinary_approval_is_not_a_reserved_personal_decision_and_wrong_recipie
         assert "Only an explicit discretionary choice outside the normal approval decision" in text
 
 
-def test_org_change_orders_evidence_by_timestamp_and_does_not_repeat_a_verified_return() -> None:
+def test_org_change_orders_evidence_and_applies_three_valid_return_threshold() -> None:
     path = Path("ci/shared-skills/stardust-oa-people-review/SKILL.md")
     text = path.read_text(encoding="utf-8")
-    assert "source-timestamp order using the DWS operation records" in text
-    assert "Only material submitted after the latest verified return for the same gap can count as post-return new evidence" in text
-    assert "timestamped before that return is not new evidence" in text
-    assert "an approver's `AGREE` alone does not resolve the gap" in text
-    assert "preserve the current OA task as pending with `no_action`" in text
-    assert "do not issue another return or duplicate comment" in text
-    assert "Reviewer-side read or OCR failures are not applicant-resolvable gaps" in text
+    assert "source-timestamp order using DWS operation records" in text
+    assert "Only evidence submitted after a verified return" in text
+    assert "three such effective returns" in text
+    assert "At Derek's authorized review node" in text
+    assert "A responsible approver's renewed approval" in text
+    assert "it neither automatically cures the gap" in text
+    assert "reviewer-side permission, parsing, OCR, or client read failure" in text
+    assert "Use `no_action` when the task is not assigned to the authorized reviewer or the process is terminal" in text
 
 
 def test_algorithm_department_compensation_authority_is_documented_in_the_people_skill() -> None:

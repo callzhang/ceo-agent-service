@@ -105,11 +105,13 @@ def test_finance_rule_card_counts_only_valid_applicant_resolvable_returns():
         root / "ci/shared-skills/stardust-oa-finance-review/references/finance-rule-cards.md"
     ).read_text(encoding="utf-8")
 
-    assert "Prior return count is history, not an action rule" in card
+    assert "Prior return count is history, not proof by itself" in card
     assert (
-        "Count only returns that independently established the same material gap from readable, "
-        "source-verified evidence and gave the applicant a fair chance to resolve it."
+        "Count only actionable returns that independently established the same material gap from then-readable, "
+        "source-verified evidence, gave a fair chance to resolve it, and were followed by evidence that the gap remained unresolved."
     ) in card
+    assert "At Derek's fourth review" in card
+    assert "count alone is insufficient" in card
     assert "不能把审核方无法读取归为申请人未提交" in card
     assert "不等于客户验收，也不代表客户未验收" in card
 
