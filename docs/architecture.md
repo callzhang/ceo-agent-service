@@ -702,7 +702,7 @@ userId；身份关联必须由同一账号返回的稳定 ID 证明，空资料�
 
 本节描述实际进入 AgentOrchestrator 的运行契约。进入 AgentOrchestrator 的业务任务遵循“执行 Agent → 审核 Agent → 反馈/修正 → 再审核”的生命周期；领域任务替换输入和工具能力。WeChat task 3 保留 DecisionRunner/persistent Sender，Email 退订和确定性技术命令沿用独立系统直接路径。Consumer 可按业务 Skill 读取事实、准备材料并执行普通工具工作；系统注册的受控外部动作由 System Executor 根据持久化且审核通过的精确方案执行和回读。服务保存候选、审核、选择、执行及回执事实。
 
-Codex Consumer 使用按当前 purpose 选择的原生输出 Schema（general 或 OA）；Codex 本地 OAuth Audit 使用从现有 Audit wire contract 生成的原生 Schema。服务 API 提供商没有证实原生 Schema 兼容性时，Audit 保留现有无原生 Schema 路径。两者的动态 JSON 对象通过键值条目表示，并在原有严格 Pydantic 校验前无损还原。Audit Schema 保留 outcome 与 feedback 的现有条件关系；候选 revision/digest 仍由服务从本轮 AuditTurnContext 绑定，候选字段断言仍执行原校验。该传输层不改变结果字段、业务判断、SystemExecutor 外部动作流程或 Consumer 直发消息/邮件禁令；Claude 与 Friday 输出路径保持原样。
+Codex Consumer 使用按当前 purpose 选择的原生输出 Schema（general 或 OA）；Codex 本地 OAuth Audit 使用从现有 Audit wire contract 生成的原生 Schema。服务 API 提供商没有证实原生 Schema 兼容性时，Audit 保留现有无原生 Schema 路径。两者的动态 JSON 对象通过键值条目表示，并在原有严格 Pydantic 校验前无损还原。Audit Schema 保留 outcome 与 feedback 的现有条件关系；候选 revision/digest 仍由服务从本轮 AuditTurnContext 绑定，候选字段断言仍执行原校验。字段断言路径不存在时，修正反馈会指出准确路径和该父对象可用的字段名或数组索引，不回显候选字段值；候选绑定、断言校验和审核决定不变。该传输层不改变结果字段、业务判断、SystemExecutor 外部动作流程或 Consumer 直发消息/邮件禁令；Claude 与 Friday 输出路径保持原样。
 
 微信单聊 producer 只把有可读正文的入站文本作为回复候选。每次 Reader 扫描按消息时间把相隔不超过五分钟的候选合成一段；只有该段最后一条消息已安静满五分钟，才以它的原始消息 ID 创建一条回复任务。未结束的段不推进读取水位，因此跨定时扫描到达的后续文字仍可合并；相隔超过五分钟的段分别处理。群聊仍只按精确的当前账号 @ 入队，手动重跑和 Sender 投递不经过这一步重新合并。
 
@@ -851,6 +851,7 @@ Runtime、Skill 或工作目录。判断标准是这次执行本身有没有判�
 “工作来源”扫描还会只读发现管理周报、项目管理部周报和部门产研周报，按文档 ID、链接、统计周期和内容 digest
 建立 Task-first `work_summary` 输入；同一文档版本重复扫描保持幂等，报告内容仍由 Task Agent 提取 Project 和 Task。
 这些输入的逻辑 `payload_json` 对较大内容使用带版本标记的 zlib BLOB，小内容仍用 JSON 文本；最终 Tasks 向量按原 SQLite 值类型编码该字段，应用模型和离线导入/修复入口统一还原为原始 JSON 文本。Attention 的 JSON 字段投影在该查询连接上使用同一解码器；副本回放比较准确解码正文后，CAS 绑定当前投影返回的精确 TEXT/BLOB 值，通过当前 Tasks 写入器沿用原编码器。迁移命令 `python -m app.work_summary_payload --db <database>` 按小批事务压缩仍需保留正文的非终态行；`done` 和 `skipped` 行继续使用终态精简，命令可重复运行、不删除记录且不执行 VACUUM，必须在维护窗口及已验证备份后单独执行。
+DingTalk 消息增量扫描与近期恢复扫描共享 producer 锁以避免并发读取；若恢复扫描仍占锁，分钟级消息或日历扫描立即以 `deferred=producer_busy` 返回，并由下一次定时触发补扫，不排队等待长恢复任务结束。恢复扫描仍等待已开始的短增量扫描完成后再运行，队列按原消息身份保持幂等。
 scheduled adapter 领取 trigger 后，Dispatcher 在本进程内直接运行该命令；成功时把
 `service_command + 命令名` 记为 trigger 的 execution link、保存命令返回的单行结果摘要并标记 `dispatched`，失败时 trigger
 以 `failed` 结束并进入 Attention。服务命令任务不创建 synthetic scheduled reply task、agent run

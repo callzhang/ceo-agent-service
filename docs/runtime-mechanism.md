@@ -2517,6 +2517,11 @@ trigger 记录里，一次外部抖动不会在每分钟的命令上刷出成串
 `scheduled_task_service_command_unavailable` 跳过。服务命令任务不经过 Runtime、Skill、
 Consumer 或 Audit，也不产生 reply task、agent run 或 reply_attempt。
 
+DingTalk 的分钟级 `produce-once` / `calendar-invites-once` 与 `recover-recent-messages`
+共用锁，避免同一 producer 并发读取。若恢复扫描正在进行，分钟级命令不等待锁，而是返回
+`deferred=producer_busy` 并结束本次 trigger；下一个分钟级定时触发会补做增量扫描。恢复扫描仍会
+等待已经开始的短增量扫描结束。任务入队继续按原会话和触发消息身份去重，不创建重复任务。
+
 `wechat-produce-once` 默认每五分钟对唯一就绪的微信账号跑一次 producer。Reader 的可用性是
 `wechat.reader` 健康事实而不是 trigger 失败：没有就绪账号时命令返回跳过摘要；Reader IPC 连续
 失败 3 次时请求一次 Reader 重启、把健康标为 degraded 并只记录一条
@@ -3437,7 +3442,7 @@ Consumer 的代码生成「Capability Instructions」只说明当前角色的工
 
 Codex Consumer/Audit 对 `read_task_skill` 与 `read_skill` 均使用原生单工具 `output_token_limit=30000`，让冻结与已安装 Skill 的正文在 MCP 完整返回后完整进入模型历史。`read_task_skill` 的 MCP 回执只提交一份含 name、完整 content 和 sha256 的 JSON 文本，不再同时附上内容相同的 structuredContent；冻结来源、角色权限和业务结果不变。其他工具输出预算、角色、sandbox、审批方式和 session 绑定保持现有行为。该设置保障来源交付，不替代 Skill 精简或证明业务判断正确；验证及发布记录见 `docs/task-skill-native-output-validation.md`。
 
-System Action Contracts 在 Developer 中提供由 docs/system-action-contracts.md 自动生成的 capability/operation 目录；agent_cli.read_system_action_contract(capability, operation) 保留动作表外的全部原规范正文，只返回选定能力／操作的动作表行；只给 capability 时返回该能力的全部操作。原有角色、identity、payload、target、回执和完成条件保持完整，不返回其他操作的表行。Consumer 提出及 Audit 审查相应操作前必须读取规范；契约指纹仍包含全文。结果 schema 在 prompt 中只去除 title/default 注释，保留字段名、描述、枚举、约束及原有 Pydantic 校验。Codex Consumer 使用当前 Consumer wire model 生成的 general/OA 原生 Schema；Codex 本地 OAuth Audit 使用当前 Audit wire model 生成的原生 Schema。未验证 schema 兼容性的服务 API Audit 路线保留无原生 Schema 的既有解析路径。动态 JSON 对象以键值条目传输，并在严格 Pydantic 校验前无损还原；Audit 的 outcome/feedback 条件与 Consumer wire 分支约束保持不变，revision、digest 和候选字段断言仍由当前 Audit 上下文及既有校验负责。Claude、Friday 及其他运行时路径不变。配置路线验证状态见 `docs/native-consumer-output-validation.md`。
+System Action Contracts 在 Developer 中提供由 docs/system-action-contracts.md 自动生成的 capability/operation 目录；agent_cli.read_system_action_contract(capability, operation) 保留动作表外的全部原规范正文，只返回选定能力／操作的动作表行；只给 capability 时返回该能力的全部操作。原有角色、identity、payload、target、回执和完成条件保持完整，不返回其他操作的表行。Consumer 提出及 Audit 审查相应操作前必须读取规范；契约指纹仍包含全文。结果 schema 在 prompt 中只去除 title/default 注释，保留字段名、描述、枚举、约束及原有 Pydantic 校验。Codex Consumer 使用当前 Consumer wire model 生成的 general/OA 原生 Schema；Codex 本地 OAuth Audit 使用当前 Audit wire model 生成的原生 Schema。未验证 schema 兼容性的服务 API Audit 路线保留无原生 Schema 的既有解析路径。动态 JSON 对象以键值条目传输，并在严格 Pydantic 校验前无损还原；Audit 的 outcome/feedback 条件与 Consumer wire 分支约束保持不变，revision、digest 和候选字段断言仍由当前 Audit 上下文及既有校验负责。候选字段断言路径不存在时，修正反馈会指出准确路径和该父对象可用的字段名或数组索引，不回显候选字段值；校验和审核标准不变。Claude、Friday 及其他运行时路径不变。配置路线验证状态见 `docs/native-consumer-output-validation.md`。
 
 Audit 传输结果的 `feedback` 在 `approve` 或 `failed` 时可省略，解析为 `None`；在 `return` 或 `reject` 时仍必须提供完整反馈。批准结果若携带非空反馈仍拒绝。服务绑定的候选、审查业务模型、结果校验、审核决策和外部动作权限不变。这个字段语义对齐针对两次完整轨迹中唯一的格式错误，验证见 `docs/audit-null-feedback-validation.md`。
 
