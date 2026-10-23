@@ -1,57 +1,52 @@
 # Task 2D7J Workbench artifact route proof report
 
-Status: **PARTIAL — blocked by a valid-source Task/Run allocator composition collision.** The pinned predecessor's real constructor, artifact writer, and UUID HTTP download route passed before migration. The required current native artifact creation, inverse, source UUID download, and two reforward cycles could not run because the existing composed converters fail first on the constructor-created database. This report records the failure without changing source sequence facts.
+Status: **COMPLETE for this bounded proof.** A genuine artifact created by the pinned predecessor's constructor/writer resolves through its original UUID download route before migration and through the current route after migration. A new native artifact/event inverses to a distinct source UUID and resolves through the unchanged predecessor route. JSON-portable Task and Run handoffs preserve its bytes, owners, IDs, event payload and native identity across two forward cycles.
 
-Base: `79ffb86f23382af2c3e4ca9411cc1eacaa98de92`.
+Base: `aca557a6984aec12dc799bbb815d8b7a807ba265` (accepted allocator-composition prerequisite). Worktree: `/Users/derek/.codex/worktrees/task-run-entity-phase2/ceo-agent-service`.
 
-Pinned predecessor: `/private/tmp/ceo-task-run-phase2-_ntbufyi/predecessor-c38ce12cf`, exact revision `c38ce12cf1b2b18c147ea687bccdce11973827eb`.
+Pinned predecessor: `/private/tmp/ceo-task-run-phase2-_ntbufyi/predecessor-c38ce12cf`, exact revision `c38ce12cf1b2b18c147ea687bccdce11973827eb`. The operator verifies exact source code by the recorded file hashes and does not modify the predecessor.
 
-## Actual route evidence
+## Operator evidence
 
 Command:
 
 ```sh
-work=$(mktemp -d /private/tmp/ceo-task-run-phase2-_ntbufyi/task-2d7j.XXXXXX)
+out=$(mktemp -d /private/tmp/ceo-task-run-phase2-_ntbufyi/task-2d7j.final.XXXXXX)
 python scripts/validate_task_2d7j_workbench_artifact_routes.py \
   --predecessor-root /private/tmp/ceo-task-run-phase2-_ntbufyi/predecessor-c38ce12cf \
-  --output-root "$work"
+  --output-root "$out"
 ```
 
-The retained failing fixture is `/private/tmp/ceo-task-run-phase2-_ntbufyi/task-2d7j.FTjgnp`. The source WorkbenchStore constructor created a UUID parent, UUID Turn, and UUID artifact through `append_artifact_event`; the registered predecessor HTTP endpoint returned status 200 and exact bytes `67656e75696e6520776f726b62656e636820617274696661637420726f7574652070726f6f66006279746573`, SHA-256 `950be2ec9699bb35b4dc6cb12df7af57cd3e237f0b42ee0f526c74c69a04e813`. The cold-start response identified the actual pinned files:
+Successful output roots were `/private/tmp/ceo-task-run-phase2-_ntbufyi/task-2d7j.final.icg0mN` and the post-commit final verification `/private/tmp/ceo-task-run-phase2-_ntbufyi/task-2d7j.finalverify.FnFqbH`.
+
+Pinned source code hashes:
 
 - `app/workbench/store.py`: `b5c5b92fc0985ef21d865379193a948df171d02a3f8d43186a6023d78f1d4a66`
 - `app/workbench/api.py`: `9401605ccbad499b6c6dccb110d2c3d0853c493250e492a51f2c9d467760cdf8`
 
-## Blocking converter evidence
+The pinned constructor created source Task `b80fd868-7a53-4bf7-a839-26f06508ffba`, Turn `c69b3775-4b6d-46fc-95e7-a1e32423f77f`, and artifact UUID `e03babf3-69e0-466f-bcdc-3be52c45b7a7` by calling its real `append_artifact_event`. Its actual registered UUID download endpoint returned HTTP 200, exact bytes `67656e75696e6520776f726b62656e636820617274696661637420726f7574652070726f6f66006279746573`, and SHA-256 `950be2ec9699bb35b4dc6cb12df7af57cd3e237f0b42ee0f526c74c69a04e813`. The source Store event payload retained the source UUID and the artifact owner was the source Turn.
 
-On the untouched constructor-created source database, the operator captures Task and Run metadata before either conversion, converts Task first, and then invokes `migrate_run_entities` with its captured Run metadata. Exact sequence rows `(rowid,name,seq)` before Task conversion were:
+After capturing source Task/Run facts, both converters ran on that constructor-created database. The current route returned the same source artifact bytes and SHA. The current native Store's real `append_artifact_event` then created artifact `4` and event `3` on canonical Turn `2`, with bytes `6e6577206e6174697665206172746966616374206279746573` and SHA-256 `baf6b6b9da5e93c5bfeacaddfe0db73805f019079d30d5d1574e8bc04725825a`. Its stored typed event payload was `{"artifact_id":"4","label":"native-proof.bin","filename":"native-proof.bin","media_type":"application/octet-stream"}` and the current download route returned those exact bytes.
 
-```text
-[(1, 'tasks:published', 2), (2, 'tasks', 3),
- (3, 'runs:published', 2), (4, 'runs', 2)]
-```
+The first Task/Run inverse reconstructed a source UUID artifact on the same source Turn and preserved event ID `4`, the full event payload, file path and bytes. The unchanged pinned predecessor route returned HTTP 200 and the same SHA for that new UUID. The final post-commit run allocated source UUID `3233034a-3d25-4d8a-b6a5-875c7067c3fd`; the earlier successful pre-commit run allocated `28400824-783b-484a-b344-502f02369797`. Each of two cycles serialized Task inverse identity and Run handoff through JSON, recaptured source metadata while source schema was active, and reforwarded both converters. After each cycle, canonical parent/Turn IDs remained `1`/`2`, native artifact/event IDs remained `4`/`3`, owner and file bytes matched, the full event payload was unchanged, and the current download route returned SHA `baf6b6b9da5e93c5bfeacaddfe0db73805f019079d30d5d1574e8bc04725825a`. After the first cycle's inverse, the source UUID and event IDs still matched and the old UUID download route again returned the same bytes.
 
-After Task conversion and immediately before Run conversion they were still exactly:
+## Product correction and focused regression
 
-```text
-[(1, 'tasks:published', 2), (2, 'tasks', 3),
- (3, 'runs:published', 2), (4, 'runs', 2)]
-```
+The valid-source inverse exposed a source-contract defect for an artifact created after forward migration: the inverse used the artifact's public UUID as `tasks.legacy_key`, which violates the frozen source Tasks CHECK. A Workbench artifact's source public UUID, source numeric rowid and global physical Tasks ID are separate identities. The inverse now obtains the new source rowid from `source_key_next['workbench_artifacts']`; captured raw exceptions remain unchanged. This uses the existing per-kind source allocator and does not rewrite the source fixture, weaken validation, or introduce aliases.
 
-Captured `run_source['sequence_rows']` was:
+`tests/test_task_entity_schema.py::test_new_native_workbench_artifact_inverse_allocates_numeric_source_legacy_key` is hermetic. It seeds a sparse captured source rowid `900000`, verifies that capture remains unchanged, creates a native artifact, inverses it, asserts that the new numeric source rowid exceeds `900000` and differs from global physical/canonical IDs, verifies the distinct source public UUID and Turn projection, and checks portable reforward identity. Before the correction, inverse construction reached and failed the frozen Tasks CHECK; with the correction, it passes. The end-to-end operator independently covers genuine Workbench writer/event APIs and the unchanged old download route.
 
-```text
-[(3, 'runs:published', 2), (4, 'runs', 2)]
-```
+Architecture and runtime documentation now state that a newly native-created artifact receives a source numeric rowid from its artifact-kind allocator while its public UUID remains separate.
 
-Run conversion had replaced source `runs` with the target event table, which allocated `sqlite_sequence` row `(4, 'workbench_events', 2)`. At `app/run_entity_schema.py:747`, restoring the captured source row `(4, 'runs', 2)` failed with `sqlite3.IntegrityError: UNIQUE constraint failed: sqlite_sequence.rowid`. The operator deliberately does not renumber or delete sequence rows to get past this collision; those values are converter input and altering them would hide the allocator interaction that this proof must establish.
+## Verification and boundaries
 
-The source artifact identity was `7c8a6168-4d81-43f4-81f3-af45a0234ac1`, parent `5f4ec34d-703d-4fa5-a34a-8d2e3212d7bd`, and Turn `79d3d0d8-6759-4825-98b6-0d8d688daa72`. No current artifact or event was created. No inverse, newly allocated source UUID route, or reforward cycle was reached.
+- Full required operator command above: passed; output recorded all stages, hashes, route statuses, byte hashes, IDs, owners and payloads.
+- Focused Task artifact inverse regression plus existing artifact event reference/cycle test: `2 passed`.
+- `ruff check app/task_entity_schema.py tests/test_task_entity_schema.py scripts/validate_task_2d7j_workbench_artifact_routes.py`: passed.
+- `python -m py_compile app/task_entity_schema.py tests/test_task_entity_schema.py scripts/validate_task_2d7j_workbench_artifact_routes.py`: passed.
+- `git diff --check`: passed.
+- Broader `pytest -q tests/test_task_entity_schema.py tests/test_run_entity_schema.py`: `103 passed, 1 failed`; the sole failure is unchanged `test_new_native_email_task_inverse_uses_predecessor_runtime_identity`, whose existing assertion supplies the hashed `email-classification:<sha256>` key to `_validate_runtime_operation_workload`, which rejects it because this runtime contract requires a persisted numeric task ID. The Workbench artifact changes do not touch that code or assertion.
 
-## Verification and limits
+No model/provider, background worker, production, main checkout, runtime constructor activation, push or deploy was used. The predecessor is a pinned historical Workbench proof source, not the latest production predecessor; this does not establish the separate Task5 production/native CLI/UI/packed gates or overall Task2D7B Fix1 acceptance. Parent retains independent composite/spec/quality review.
 
-`ruff check scripts/validate_task_2d7j_workbench_artifact_routes.py`, `python -m py_compile scripts/validate_task_2d7j_workbench_artifact_routes.py`, and scoped `git diff --check` pass. The operator remains explicit: it requires `--predecessor-root` and an existing empty `--output-root`; there is no hardcoded predecessor or task-temp path in permanent pytest.
-
-No provider, model, main checkout, production service, runtime constructor activation, push, or deploy was used. The failure occurs in the existing Task/Run conversion composition before the native Workbench writer stage. A separate bounded allocator-composition repair/proof is required before this route acceptance can continue. The original source Route 200 is not evidence that the required inverse/reforward acceptance passed.
-
-Operator/report commit: `796cd352c` (full commit `796cd352cfd9381cd1b51aaf736795820dd85edb`). Final HEAD for this partial checkpoint: `031bb917679aa6ad38097332dfcf071a2f61bdd3`. The open Task2D7B Fix1 is not accepted by this partial proof.
+Implementation commit and final implementation HEAD: `b499b1f4be7c3c9ada84ee9851e3d421b0967916` (`Fix inverse identity for new Workbench artifacts`). It contains the converter correction, hermetic sparse-rowid regression, Workbench contract documentation and operator. The evidence report follows as a separate documentation-only commit; parent will report the resulting branch HEAD.
