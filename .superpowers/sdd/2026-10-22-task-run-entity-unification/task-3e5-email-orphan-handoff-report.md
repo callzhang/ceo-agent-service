@@ -38,24 +38,36 @@ owners.
   against current source Attempt and Email Task facts.
 - `tests/test_run_entity_schema.py`: two orphan Attempts from the real offline
   Email adapter, repeated portable Task/Run inverse and forward cycles, current
-  field preservation, no Task replay, Task sequence high-water, predecessor
-  DAO read, sparse-map/new-live-Task regression, and malformed/duplicate/
+  field preservation, no Task replay, Task sequence high-water, hermetic source
+  row readback, sparse-map/new-live-Task regression, and malformed/duplicate/
   wrong-kind/source-collision/parent/workload/digest rejections before Run
   schema replacement.
+- `tools/validate_email_orphan_old_dao.py`: explicit operator acceptance that
+  invokes the actual predecessor DAO against the same two-cycle fixture.
 - `tests/test_run_adoption_inverse.py`: adoption-inverse source-key collision
   rejection.
 - `docs/architecture.md` and `docs/runtime-mechanism.md`: current v3 converter
   contract and unactivated boundary.
 
-The actual old DAO proof uses the active predecessor checkout at
-`/private/tmp/ceo-task-run-phase2-_ntbufyi/predecessor-c38ce12cf` and calls its
-real `AutoReplyStore.list_runtime_operation_attempts` and
+The standard pytest regression is hermetic. It checks the restored source rows
+directly and does not require or resolve any predecessor checkout. The actual
+old DAO read remains a separate operator acceptance check, run against the
+same shared two-cycle fixture by passing an explicit predecessor root:
+
+```sh
+python tools/validate_email_orphan_old_dao.py \
+  --predecessor-root /path/to/active-predecessor \
+  --work-dir /private/tmp/ceo-task-run-phase2-_ntbufyi/task3e5-old-dao-fix1
+```
+
+The acceptance script calls the actual predecessor
+`AutoReplyStore.list_runtime_operation_attempts` and
 `runtime_operation_parent_is_runnable` methods against the restored source
 SQLite database. It reads both terminal Attempts at their allocated source
-physical IDs (8001 and 8002), verifies no Agent Run parent, and confirms the
-parent is not runnable without changing source rows. The earlier `f141b8a^`
-checkout is Phase2/3E4 unactivated code, not the deployed predecessor used for
-this proof.
+physical IDs, verifies no Agent Run parent, and confirms the parent is not
+runnable. It preserves the SQLite database in the supplied work directory for
+readback. The earlier `f141b8a^` checkout is Phase2/3E4 unactivated code, not
+the deployed predecessor for this proof.
 
 ## Verification
 
@@ -71,6 +83,26 @@ this proof.
   with the final suite and passed there as well).
 - `ruff check app/run_entity_schema.py app/run_adoption_inverse.py tests/test_run_entity_schema.py tests/test_run_adoption_inverse.py tests/test_run_adoption_inverse_rows.py` — passed.
 - `python -m py_compile app/run_entity_schema.py app/run_adoption_inverse.py` — passed.
+
+## Portability repair (Fix1)
+
+The predecessor source path is no longer referenced by the pytest module. The
+same two-cycle fixture now has a normal hermetic test that checks source rows
+directly. The separate `tools/validate_email_orphan_old_dao.py` acceptance
+script requires `--predecessor-root`, runs the same fixture with the actual old
+DAO reader, and preserves the resulting database under `--work-dir`.
+
+- Hermetic check:
+  `pytest -q --basetemp=/private/tmp/ceo-task-run-phase2-_ntbufyi/task3e5-fix1-hermetic tests/test_run_entity_schema.py::test_closed_offline_email_task_attempt_survives_current_task_run_inverse`
+  — **1 passed in 1.59s**, with no predecessor path configured.
+- Explicit old-DAO acceptance:
+  `python tools/validate_email_orphan_old_dao.py --predecessor-root /private/tmp/ceo-task-run-phase2-_ntbufyi/predecessor-c38ce12cf --work-dir /private/tmp/ceo-task-run-phase2-_ntbufyi/task3e5-old-dao-fix1`
+  — passed; **2 old DAO reads**, 2 Attempts per read, `parent_runnable=false`;
+  database preserved at `/private/tmp/ceo-task-run-phase2-_ntbufyi/task3e5-old-dao-fix1/task2d6-offline-inverse.sqlite3`.
+- Re-run scoped suite:
+  `pytest -q -x --basetemp=/private/tmp/ceo-task-run-phase2-_ntbufyi/task3e5-fix1-suite tests/test_run_entity_schema.py tests/test_run_adoption_inverse.py tests/test_run_adoption_inverse_rows.py`
+  — **85 passed in 63.30s**.
+- Portability-fix Ruff/compile/diff checks passed.
 
 ## Boundary
 

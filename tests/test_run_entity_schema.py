@@ -1,9 +1,6 @@
 import sqlite3
 import json
 import re
-import os
-import subprocess
-import sys
 
 import pytest
 
@@ -13,33 +10,6 @@ from app.run_entity_schema import capture_run_entities, migrate_run_entities, re
 _TARGET_NAMES = set(run_entity_definitions.run_entity_objects())
 _TARGET_TABLES = {name for name, sql in run_entity_definitions.run_entity_objects().items()
                   if sql.lstrip().lower().startswith("create table ")}
-
-
-def _read_predecessor_email_attempts(path, operation_key):
-    predecessor = "/private/tmp/ceo-task-run-phase2-_ntbufyi/predecessor-c38ce12cf"
-    program = r'''import json, sys
-from contextvars import ContextVar
-from pathlib import Path
-from app.store import AutoReplyStore
-store = AutoReplyStore.__new__(AutoReplyStore)
-store.path = Path(sys.argv[1])
-store.busy_timeout_seconds = 10
-store.busy_timeout_milliseconds = 10000
-store._read_snapshot_connection = ContextVar("read_snapshot", default=None)
-store._reused_connection = ContextVar("reused_connection", default=None)
-rows = store.list_runtime_operation_attempts("email_classification", sys.argv[2])
-parent_runnable = store.runtime_operation_parent_is_runnable(
-    "email_classification", sys.argv[2])
-print(json.dumps({"attempts": [row.model_dump(mode="json") for row in rows],
-                  "parent_runnable": parent_runnable}, sort_keys=True))
-'''
-    env = {**os.environ, "PYTHONPATH": predecessor}
-    result = subprocess.run(
-        [sys.executable, "-c", program, str(path), operation_key], cwd=predecessor,
-        env=env, check=True, text=True, capture_output=True,
-    )
-    assert result.stderr == ""
-    return json.loads(result.stdout)
 
 
 def _create(objects, db):
@@ -720,7 +690,8 @@ def test_new_native_task_run_attempt_gets_source_backed_owner_on_reforward():
         db.close()
 
 
-def test_closed_offline_email_task_attempt_survives_current_task_run_inverse(tmp_path):
+def _closed_offline_email_task_attempt_roundtrip(
+        tmp_path, *, predecessor_reader=None, preserve_database=False):
 
     from app.email_store import EmailStore
     from app.email_task_adapter import EmailClassificationTaskAdapter
@@ -803,16 +774,29 @@ def test_closed_offline_email_task_attempt_survives_current_task_run_inverse(tmp
             native.commit()
             predecessor_source_before_read = tuple(native.execute(
                 "select * from runs order by id"))
-            old_read = _read_predecessor_email_attempts(
-                path, orphan_edges[0]["source_operation_key"])
-            old_attempts = old_read["attempts"]
-            assert old_read["parent_runnable"] is False
-            assert [row["id"] for row in old_attempts] == [
-                edge["attempt_source_physical_id"] for edge in orphan_edges]
-            assert all(row["agent_run_id"] is None and row["status"] == "completed"
-                       for row in old_attempts)
-            assert [row["session_id"] for row in old_attempts] == [
-                "session-offline", "session-offline-2"]
+            if predecessor_reader is None:
+                old_attempts = native.execute(
+                    "select cast(legacy_key as integer) as id,parent_id as agent_run_id,status,session_id "
+                    "from runs where record_type='agent_runtime_attempts' and workload_key=? "
+                    "order by cast(attempt_number as integer)",
+                    (orphan_edges[0]["source_operation_key"],),
+                ).fetchall()
+                assert [row["id"] for row in old_attempts] == [
+                    edge["attempt_source_physical_id"] for edge in orphan_edges]
+                assert all(row["agent_run_id"] is None and row["status"] == "completed"
+                           for row in old_attempts)
+                assert [row["session_id"] for row in old_attempts] == [
+                    "session-offline", "session-offline-2"]
+            else:
+                old_read = predecessor_reader(path, orphan_edges[0]["source_operation_key"])
+                old_attempts = old_read["attempts"]
+                assert old_read["parent_runnable"] is False
+                assert [row["id"] for row in old_attempts] == [
+                    edge["attempt_source_physical_id"] for edge in orphan_edges]
+                assert all(row["agent_run_id"] is None and row["status"] == "completed"
+                           for row in old_attempts)
+                assert [row["session_id"] for row in old_attempts] == [
+                    "session-offline", "session-offline-2"]
             assert tuple(native.execute("select * from runs order by id")) == \
                 predecessor_source_before_read
             native.execute("begin immediate")
@@ -861,15 +845,27 @@ def test_closed_offline_email_task_attempt_survives_current_task_run_inverse(tmp
                     handoff_2["runtime_attempt_orphan_workload_edges"]} == {
                 orphan_edges[0]["source_operation_key"]}
             native.commit()
-            old_read_2 = _read_predecessor_email_attempts(
-                path, orphan_edges[0]["source_operation_key"])
-            old_attempts_2 = old_read_2["attempts"]
-            assert old_read_2["parent_runnable"] is False
-            assert [row["id"] for row in old_attempts_2] == [
-                edge["attempt_source_physical_id"]
-                for edge in handoff_2["runtime_attempt_orphan_workload_edges"]]
-            assert all(row["agent_run_id"] is None and row["status"] == "completed"
-                       for row in old_attempts_2)
+            if predecessor_reader is None:
+                old_attempts_2 = native.execute(
+                    "select cast(legacy_key as integer) as id,parent_id as agent_run_id,status "
+                    "from runs where record_type='agent_runtime_attempts' and workload_key=? "
+                    "order by cast(attempt_number as integer)",
+                    (orphan_edges[0]["source_operation_key"],),
+                ).fetchall()
+                assert [row["id"] for row in old_attempts_2] == [
+                    edge["attempt_source_physical_id"]
+                    for edge in handoff_2["runtime_attempt_orphan_workload_edges"]]
+                assert all(row["agent_run_id"] is None and row["status"] == "completed"
+                           for row in old_attempts_2)
+            else:
+                old_read_2 = predecessor_reader(path, orphan_edges[0]["source_operation_key"])
+                old_attempts_2 = old_read_2["attempts"]
+                assert old_read_2["parent_runnable"] is False
+                assert [row["id"] for row in old_attempts_2] == [
+                    edge["attempt_source_physical_id"]
+                    for edge in handoff_2["runtime_attempt_orphan_workload_edges"]]
+                assert all(row["agent_run_id"] is None and row["status"] == "completed"
+                           for row in old_attempts_2)
             native.execute("begin immediate")
             task_capture_2 = capture_task_entities(native)
             task_forward_2 = migrate_task_entities(
@@ -905,7 +901,12 @@ def test_closed_offline_email_task_attempt_survives_current_task_run_inverse(tmp
             db.close()
         except Exception:
             pass
-        path.unlink(missing_ok=True)
+        if not preserve_database:
+            path.unlink(missing_ok=True)
+
+
+def test_closed_offline_email_task_attempt_survives_current_task_run_inverse(tmp_path):
+    _closed_offline_email_task_attempt_roundtrip(tmp_path)
 
 
 def test_run_inverse_keeps_new_live_email_task_owner_without_task_inverse():
