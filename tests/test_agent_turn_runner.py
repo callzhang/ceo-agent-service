@@ -164,10 +164,9 @@ def test_explicit_noncontinuable_failure_requires_fresh_session(role, session_id
     )
 
 
-@pytest.mark.parametrize("role", [AgentRole.CONSUMER, AgentRole.AUDIT])
-def test_retryable_agent_reported_failure_does_not_treat_default_flag_as_session_loss(role):
+def test_retryable_consumer_failure_does_not_treat_default_flag_as_session_loss():
     run = SimpleNamespace(
-        role=role, proposal_revision=0, status="failed",
+        role=AgentRole.CONSUMER, proposal_revision=0, status="failed",
         codex_session_id="existing-session", turn_attempt=1, id=1,
         structured_error_json=json.dumps({
             "code": "agent_reported_failure", "retryable": True,
@@ -180,7 +179,26 @@ def test_retryable_agent_reported_failure_does_not_treat_default_flag_as_session
     task = SimpleNamespace(id=9, execution_generation="current")
 
     assert not agent_turn_runner.repeated_result_failure_requires_fresh_session(
-        store, task, role=role, proposal_revision=0,
+        store, task, role=AgentRole.CONSUMER, proposal_revision=0,
+    )
+
+
+def test_retryable_audit_failure_keeps_existing_fresh_session_behavior():
+    run = SimpleNamespace(
+        role=AgentRole.AUDIT, proposal_revision=0, status="failed",
+        codex_session_id="existing-session", turn_attempt=1, id=1,
+        structured_error_json=json.dumps({
+            "code": "agent_reported_failure", "retryable": True,
+            "source": "agent", "session_continuable": False,
+        }),
+    )
+    store = SimpleNamespace(
+        list_agent_runs_for_task_generation=lambda *_args, **_kwargs: [run]
+    )
+    task = SimpleNamespace(id=9, execution_generation="current")
+
+    assert agent_turn_runner.repeated_result_failure_requires_fresh_session(
+        store, task, role=AgentRole.AUDIT, proposal_revision=0,
     )
 
 

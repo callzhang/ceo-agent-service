@@ -2066,7 +2066,7 @@ Router 取下一条已配置且健康的路由。列表里出现的名字分两�
 - **按种类、不按名字**：依赖认证方式的规则看 `RuntimeRoute.is_cli_api_route`（凭自己 API Key
   登录的 Codex/Claude CLI 路由）。「临时失败后在同一路由换新会话重试一次」适用于所有这类路由；
   Consumer 连续两次结果不可用时强制换新会话，对所有路由一视同仁，没有例外。有效且可重试的
-  Agent 来源失败继续使用当前 route session；`AgentError` 的默认 `session_continuable=false`
+  Consumer 的可重试 Agent 来源失败继续使用当前 conversation 的 route session；`AgentError` 的默认 `session_continuable=false`
   不代表运行时已确认会话不可用。服务来源明确标记不可续的失败仍新建会话（Derek 2026-09-25；
   此前凭 Key 的 Codex CLI 路由沿用 `codex_api` 的例外，已去掉）。安装向导按配置顺序列出全部路由，`probe-agent-runtimes` 在配置无效时对
   任何缺 Key 的 API 种类路由报 `missing_secret`。

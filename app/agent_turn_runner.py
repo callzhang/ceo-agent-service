@@ -636,11 +636,12 @@ def repeated_result_failure_requires_fresh_session(
     if isinstance(latest_error, dict) and latest_error.get("session_continuable") is False:
         # A typed Agent-reported failure is validated into AgentError, whose
         # session_continuable field defaults to False because it is not part
-        # of the wire contract. The service already decided whether that
-        # failure is retryable; for retryable Agent errors, this default is
-        # not evidence that the native session itself is unusable.
+        # of the wire contract. For Consumer, the service's route-session
+        # registry still owns the native conversation; a retryable typed
+        # failure's default is not evidence that this session is unusable.
         if not (
-            latest_error.get("source") == "agent"
+            role is AgentRole.CONSUMER
+            and latest_error.get("source") == "agent"
             and latest_error.get("retryable") is True
         ):
             return True
