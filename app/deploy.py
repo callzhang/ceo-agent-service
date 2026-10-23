@@ -185,7 +185,22 @@ def _target_matching_doc_changes(
     return paths
 
 
-def deploy(
+class _ProductionMoved(Exception):
+    """Another session deployed first, but this run still has a publication to make."""
+
+
+def deploy(root: Path, database_path: Path, **options) -> str:
+    """Deploy once; if another session moved production first, redo it when a
+    publication was requested, because the winner did not publish it."""
+    for _ in range(3):
+        try:
+            return _deploy_once(root, database_path, **options)
+        except _ProductionMoved:
+            continue
+    raise SystemExit("production kept moving; nothing was published")
+
+
+def _deploy_once(
     root: Path, database_path: Path, *, publish_contracts: bool = False,
     publish_prompt_templates: bool = False,
     maintenance_tasks: tuple[int, ...] = (),
@@ -375,6 +390,8 @@ def deploy(
                 moved = repository.resolve_ref(f"refs/heads/{BRANCH}")
                 if moved != current:
                     # Another session deployed while this one waited for the lock.
+                    if publish_contracts or publish_prompt_templates:
+                        raise _ProductionMoved(moved)
                     return f"another deploy got there first; production is at {moved[:8]}"
                 raise SystemExit(f"nothing was deployed: {exc}") from None
         finally:

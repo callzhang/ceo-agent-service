@@ -812,6 +812,35 @@ def test_deploy_that_loses_the_race_reports_the_winner(tmp_path: Path, monkeypat
     assert message == f"another deploy got there first; production is at {moved_to[0][:8]}"
 
 
+def test_publish_is_redone_when_another_deploy_wins_the_race(tmp_path: Path, monkeypatch):
+    # 2026-10-22: a deploy with --publish-consumer-system-contracts lost the
+    # race, printed "another deploy got there first" and published nothing.
+    import app.deploy as deploy_module
+    from types import SimpleNamespace
+
+    local, _ = fixture_repo(tmp_path)
+    executes: list[int] = []
+
+    class RacingUpdater:
+        def __init__(self, *args, **kwargs):
+            pass
+
+        def execute(self, operation):
+            executes.append(1)
+            if len(executes) == 1:
+                git(local, "merge", "--ff-only", "origin/main")
+                raise UpgradePreconditionError("repository revision changed")
+            return SimpleNamespace(installed_commit=git(local, "rev-parse", "HEAD"), error="")
+
+    monkeypatch.setattr(deploy_module, "RepositoryUpdater", RacingUpdater)
+    monkeypatch.setattr("app.store.AutoReplyStore", lambda _path: StateStore())
+
+    message = deploy_module.deploy(local, tmp_path / "db.sqlite3", publish_contracts=True)
+
+    assert len(executes) == 2
+    assert not message.startswith("another deploy got there first")
+
+
 def test_deploy_target_commit_rejects_commit_outside_main_before_wait_or_stop(tmp_path: Path, monkeypatch):
     import app.deploy as deploy_module
 
