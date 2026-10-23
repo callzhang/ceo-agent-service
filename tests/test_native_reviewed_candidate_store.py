@@ -140,24 +140,144 @@ def test_native_store_adopts_candidate_review_selection_and_supplement(monkeypat
          lease_expires_at,result_json,created_at,updated_at)
         values(?,?,?,'done','','','{}','now','now')""", (consumer["id"], audit["id"], audit["id"]))
     db.commit()
-    historical_body = {**body, "stage_index": 1, "predecessor_review_id": 7}
     later = run_entity_storage.create_run(db, values={
         "task_id": task["id"], "parent_id": audit["id"], "execution_generation": "gen-1",
         "role": "consumer", "proposal_revision": 1, "turn_attempt": 0, "status": "completed",
         "created_at": "now", "updated_at": "now",
     })
-    db.commit()
+    later_body = {**body, "stage_index": 1, "predecessor_review_id": audit["id"]}
     with db:
-        later_adoption = store._adopt_review_candidate_in_connection(db, later, historical_body)
+        later_adoption = store._adopt_review_candidate_in_connection(db, later, later_body)
     assert later_adoption["predecessor_review_id"] == audit["id"]
-    assert later_adoption["candidate_json"] == json.dumps(historical_body, ensure_ascii=False, sort_keys=True, separators=(",", ":"))
-    assert later_adoption["candidate_digest"] == hashlib.sha256(later_adoption["candidate_json"].encode()).hexdigest()
+    later_digest = later_adoption["candidate_digest"]
+    with db:
+        later_audit = run_entity_storage.create_run(db, values={
+            "task_id": task["id"], "parent_id": later["id"], "execution_generation": "gen-1",
+            "role": "audit", "proposal_revision": 1, "turn_attempt": 0, "status": "completed",
+            "created_at": "now", "updated_at": "now",
+        })
+        store._adopt_candidate_review_in_connection(db, later["id"], later_audit["id"],
+            {"outcome": "return", "candidate_digest": later_digest})
+
+    historical_body = {**body, "stage_index": 1, "predecessor_review_id": 7}
+    historical = run_entity_storage.create_run(db, values={
+        "task_id": task["id"], "parent_id": later_audit["id"], "execution_generation": "gen-1",
+        "role": "consumer", "proposal_revision": 2, "turn_attempt": 0, "status": "completed",
+        "created_at": "now", "updated_at": "now",
+    })
+    historical_json = json.dumps(historical_body, ensure_ascii=False, sort_keys=True, separators=(",", ":"))
+    historical_digest = hashlib.sha256(historical_json.encode()).hexdigest()
+    db.execute("""insert into run_adopted_results
+        (consumer_run_id,stage_index,predecessor_audit_run_id,candidate_digest,candidate_json,
+         invalidated_at,invalidation_reason,created_at)
+        values(?,1,?,?,?,'','',current_timestamp)""",
+        (historical["id"], audit["id"], historical_digest, historical_json))
+    db.commit()
+    historical_adoption = store.get_review_candidate(historical["id"])
+    assert historical_adoption["predecessor_review_id"] == audit["id"]
+    assert json.loads(historical_adoption["candidate_json"])["predecessor_review_id"] == 7
+    assert historical_adoption["candidate_json"] == historical_json
+    assert historical_adoption["candidate_digest"] == historical_digest
+
+    with db:
+        historical_audit = run_entity_storage.create_run(db, values={
+            "task_id": task["id"], "parent_id": historical["id"], "execution_generation": "gen-1",
+            "role": "audit", "proposal_revision": 2, "turn_attempt": 0, "status": "completed",
+            "created_at": "now", "updated_at": "now",
+        })
+        store._adopt_candidate_review_in_connection(db, historical["id"], historical_audit["id"],
+            {"outcome": "return", "candidate_digest": historical_digest})
+
+    # New same-stage revisions name the current relational predecessor, even
+    # when an immutable migrated candidate body still contains the old ID.
+    revised = run_entity_storage.create_run(db, values={
+        "task_id": task["id"], "parent_id": historical_audit["id"], "execution_generation": "gen-1",
+        "role": "consumer", "proposal_revision": 3, "turn_attempt": 0, "status": "completed",
+        "created_at": "now", "updated_at": "now",
+    })
+    revised_body = {**body, "stage_index": 1, "predecessor_review_id": audit["id"]}
+    with db:
+        revised_adoption = store._adopt_review_candidate_in_connection(db, revised, revised_body)
+    assert revised_adoption["stage_index"] == 1
+    assert revised_adoption["predecessor_review_id"] == audit["id"]
+    assert json.loads(revised_adoption["candidate_json"])["predecessor_review_id"] == audit["id"]
+
+    bad_revision = run_entity_storage.create_run(db, values={
+        "task_id": task["id"], "parent_id": historical_audit["id"], "execution_generation": "gen-1",
+        "role": "consumer", "proposal_revision": 4, "turn_attempt": 0, "status": "completed",
+        "created_at": "now", "updated_at": "now",
+    })
+    db.commit()
+    try:
+        with db:
+            store._adopt_review_candidate_in_connection(
+                db, bad_revision, {**revised_body, "predecessor_review_id": 7})
+    except ValueError as exc:
+        assert str(exc) == "candidate predecessor mismatch"
+    else:
+        raise AssertionError("new revision accepted a migrated predecessor ID")
+
+    from app.agent_orchestrator import AgentOrchestrator, _NextExecution
+    from app.agent_contracts import AuditOutcome
+    orchestrator = AgentOrchestrator.__new__(AgentOrchestrator)
+    orchestrator.store = store
+    orchestrator._consumer_result = lambda _run: SimpleNamespace(continue_after_execution=False, purpose_output=None)
+    orchestrator._audit_result = lambda _run: SimpleNamespace(outcome=AuditOutcome.RETURN)
+    store.get_agent_run = lambda run_id, load_events=False: SimpleNamespace(id=run_id)
+    business_revision = orchestrator._business_revision(_NextExecution(
+        SimpleNamespace(id=historical["id"], proposal_revision=2),
+        SimpleNamespace(id=historical_audit["id"]), None, None, historical["id"], historical_audit["id"], 0))
+    assert business_revision.stage_index == 1
+    assert business_revision.predecessor_review_id == audit["id"]
+    stage_context = orchestrator._stage_for_parent(
+        SimpleNamespace(id=historical_audit["id"], parent_agent_run_id=historical["id"]))
+    assert stage_context == {"stage_index": 1, "predecessor_review_id": audit["id"]}
+    monkeypatch.setattr(native_trajectory, "find_codex_session_path", lambda *_args, **_kwargs: None)
+    assert store.get_review_candidate(historical["id"])["candidate_json"] == historical_json
 
     supplement = store.record_candidate_supplement(consumer["id"], "new fact")
     assert supplement["candidate_id"] == consumer["id"]
     assert store.get_review_candidate(consumer["id"])["invalidation_reason"] == "supplement"
     assert db.execute("select count(*) from actions where record_type in ('review_candidates','candidate_reviews','candidate_selections','candidate_supplements')").fetchone()[0] == 0
-    assert [row[0] for row in db.execute("select consumer_run_id from run_adopted_results order by consumer_run_id")] == [consumer["id"], later["id"]]
+    assert [row[0] for row in db.execute("select consumer_run_id from run_adopted_results order by consumer_run_id")] == [consumer["id"], later["id"], historical["id"], revised["id"]]
+
+
+def test_native_store_rejects_stale_generation_and_rolls_back_child_rowids(monkeypatch):
+    store, db, task, consumer = _native_store(monkeypatch)
+    body = {"outcome": "needs_human", "stage_index": 0, "predecessor_review_id": None,
+        "decision_options": [{"key": "stop", "terminal_outcome": "skipped", "reason": "stop"}]}
+    with db:
+        store._adopt_review_candidate_in_connection(db, consumer, body)
+    db.commit()
+    task_entity_storage.update_task_cas(db, task_id=task["id"],
+        expected={"execution_generation": "gen-1"}, changes={"execution_generation": "gen-2"})
+    db.commit()
+    try:
+        store.get_review_candidate(consumer["id"])
+    except ValueError as exc:
+        assert str(exc) == "candidate generation mismatch"
+    else:
+        raise AssertionError("stale generation candidate remained actionable")
+    assert store.current_reviewed_candidate(task["id"], "gen-1") is None
+
+    # The Store's in-transaction adoption write and child rows share the
+    # caller's transaction; rollback leaves neither rows nor consumed ROWIDs.
+    db.execute("begin")
+    revision = run_entity_storage.create_run(db, values={
+        "task_id": task["id"], "execution_generation": "gen-2", "role": "consumer",
+        "proposal_revision": 1, "turn_attempt": 0, "status": "completed",
+        "created_at": "now", "updated_at": "now",
+    })
+    store._adopt_review_candidate_in_connection(db, revision, body)
+    db.execute("insert into run_adopted_supplements(consumer_run_id,instruction,created_at) values(?,?,?)",
+        (consumer["id"], "rolled back", "now"))
+    db.rollback()
+    assert db.execute("select count(*) from run_adopted_results where consumer_run_id=?", (revision["id"],)).fetchone()[0] == 0
+    assert db.execute("select count(*) from run_adopted_supplements").fetchone()[0] == 0
+    db.execute("insert into run_adopted_supplements(consumer_run_id,instruction,created_at) values(?,?,?)",
+        (consumer["id"], "kept", "now"))
+    assert db.execute("select id from run_adopted_supplements").fetchone()[0] == 1
+    assert db.execute("select count(*) from sqlite_sequence where name like 'run_adopted_%'").fetchone()[0] == 0
 
 
 def test_native_run_result_reader_uses_native_fields_without_attempt(monkeypatch, tmp_path):

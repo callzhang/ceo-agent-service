@@ -139,15 +139,14 @@ class ReviewedCandidateStoreMixin:
         if latest is None or latest["id"] != run["id"]:
             raise ValueError("stale Consumer candidate")
         stage = data.get("stage_index", 0)
-        predecessor = None
+        predecessor = data.get("predecessor_review_id")
         if not isinstance(stage, int) or stage < 0:
             raise ValueError("invalid candidate stage")
-        if stage > 0:
-            predecessor = run["parent_id"]
+        if predecessor is not None:
             prior = db.execute("""select c.stage_index, r.decision, p.status as execution_status,
-                r.consumer_run_id, rr.task_id, rr.execution_generation,
+                rr.task_id, rr.execution_generation,
                 ar.role as audit_role, ar.task_id as audit_task_id,
-                ar.execution_generation as audit_generation, ar.parent_id as audit_parent_id
+                ar.execution_generation as audit_generation
                 from run_adopted_reviews r join run_adopted_results c
                   on c.consumer_run_id=r.consumer_run_id
                 join runs rr on rr.id=r.consumer_run_id
@@ -158,7 +157,6 @@ class ReviewedCandidateStoreMixin:
                 or prior["execution_generation"] != run["execution_generation"]
                 or prior["audit_role"] != "audit" or prior["audit_task_id"] != run["task_id"]
                 or prior["audit_generation"] != run["execution_generation"]
-                or prior["audit_parent_id"] != prior["consumer_run_id"]
                 or prior["stage_index"] != stage - 1 or prior["decision"] != "approve"
                 or prior["execution_status"] not in ("done", "skipped")):
                 raise ValueError("candidate predecessor mismatch")
