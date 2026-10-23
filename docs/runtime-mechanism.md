@@ -62,8 +62,16 @@ CLI 前的 RuntimeAttempt 保持 parent NULL；后续 producer 必须将确切�
 验证成功后创建的 professional Run。Task/decision-repair 和 Meeting 操作即使绑定 professional
 Run，也保留自己的调用 lease、ordinal、session 与失败状态，不终结父 Run。Meeting 按精确 Run ID
 和自身 provenance 解析。Reply、全局 dashboard/History 及其他来源型生命周期读取仍有后续切换。
-此本地候选未启用 constructor 或全 family runtime，Email、Workbench、WeChat Task 生产者仍需
-各自完成原子 Task/DTO/workload-reader 转换。
+此本地候选未启用 constructor 或全 family runtime，Email、Workbench 生产者仍需各自完成原子
+Task/DTO/workload-reader 转换。Task2D5 已切换 WeChat Memory import 的真实 Task creator、finish
+writer 与两个 routed producer：`begin_wechat_memory_import_job` 返回 canonical `tasks.id`，并仅以
+TEXT `import_run_id`、`account_id` 保存请求归因；原 `running/completed/failed` 状态及错误和时间
+事实写入 `tasks`，完成时间写入 `task_results(result_kind='wechat_import').finished_at`。同一终态
+重复完成不改时间，冲突终态拒绝。两个 producer 将该 Task ID 用作
+`memory:wechat_memory_import_job:{task_id}` key；RuntimeAttempt 仍是 parent NULL 的独立 operation，
+保留自己的 lease、ordinal、session 与终态，不创建 professional Run 或保存原始结果正文。此为
+组装目标上的本地切片，不代表 constructor、完整读者、CLI/UI 或生产运行时已启用；其他 Memory
+workload 分支保持原 owner，Email、Workbench 与共享 History/Dashboard 仍待后续协调。
 
 Task2D3 将 OKR review 的原有 request creator/dedupe、claim、stale recovery、done/failed、item 写入与 Run history/detail 读改为 canonical Task、Run、RuntimeAttempt owner。顺序仍是 routed CLI result → normalization/validation → professional Run create → 精确绑定该次 result 返回的 `attempt_id` → domain items → Task done/render。无效结果不创建 Run；已完成的 CLI attempt 留在 parent NULL。绑定校验同一 OKR Task、`structured` workload key、completed attempt 和该 Task 所属的 `okr_review_runs` Run，只 CAS 写入 NULL parent，不按 session、最新 attempt 或旧 source key 猜测。Task 不存在的 attempts/due/locks/lease/generation 和 OKR Run 不存在的 status/error/role/generation 均保持 SQL NULL。Run detail 从 native Run ID/provenance 检索，尝试只从实际 `parent_id` 关系读取；孤立 Run 不推断旧 request ID 或补 Task。weekly OKR analysis 是独立 Task family。Task2D4 退休没有生产调用方的 begin/finish/cache-miss writer 和 DTO，保留 historical `okr_analysis` Task、TaskResult、`weekly_okr` workload facts；native parent-runnable 查询与 startup 两项 supersession cleanup 使用 Task 参数、lifecycle 和 TaskResult.finished_at，保持原过期租约、同经理替代周、技术错误类别及 created_at 条件。只读生产读数为183个 completed weekly Task、353个 terminal attempt、无 active weekly chain。全 family Dashboard queue/detail 仍由共享 Task20 source projection 驱动，属于未完成的共用 reader 依赖；本次不添加 partial projection 或 detail route。constructor、provider 与生产仍未启用。Task2D3 基于原 review BASE `360dfa1`，与已独立复核的 Task3E4 Fix2 `30426e7` 交错；具体命令、测试和依赖见 `task-2d3-okr-review-report.md`。
 

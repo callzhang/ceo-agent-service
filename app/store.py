@@ -7327,6 +7327,10 @@ class AutoReplyStore(LogicalRunStoreMixin, ReviewedCandidateStoreMixin):
                 raise ValueError(
                     "workbench workload key must name a persisted turn"
                 ) from exc
+        elif workload_kind == "memory" and workload_key.startswith("wechat_memory_import_job:"):
+            task_id = workload_key.removeprefix("wechat_memory_import_job:")
+            if not task_id.isdecimal() or int(task_id) <= 0 or str(int(task_id)) != task_id:
+                raise ValueError("WeChat Memory import workload key must name a native Task")
         else:
             source, separator, source_key = workload_key.partition(":")
             source_id, generation_separator, execution_generation = source_key.partition(":")
@@ -7367,6 +7371,12 @@ class AutoReplyStore(LogicalRunStoreMixin, ReviewedCandidateStoreMixin):
                 "select 1 from tasks where id=? and kind='okr_review' "
                 "and status='processing'",
                 (int(workload_key),),
+            ).fetchone() is not None
+        if workload_kind == "memory" and workload_key.startswith("wechat_memory_import_job:"):
+            task_id = workload_key.removeprefix("wechat_memory_import_job:")
+            return db.execute(
+                "select 1 from tasks where id=? and kind='wechat_import' and status='running'",
+                (int(task_id),),
             ).fetchone() is not None
         if workload_kind == "task":
             run_id, separator, suffix = workload_key.partition(":")
@@ -24331,29 +24341,45 @@ class AutoReplyStore(LogicalRunStoreMixin, ReviewedCandidateStoreMixin):
         account_id = self._require_runtime_attempt_text(
             account_id, field="account_id"
         )
+        from app.task_entity_storage import create_task
+
         with self._agent_run_write_transaction(None) as (db, _):
-            cursor = insert_task12(db, 'wechat_memory_import_jobs', {'import_run_id': import_run_id, 'account_id': account_id, 'status': 'running'})
-            return int(cursor.lastrowid)
+            now_text = db.execute("select current_timestamp").fetchone()[0]
+            task = create_task(
+                db,
+                values={"kind": "wechat_import", "status": "running", "error": "",
+                        "created_at": now_text, "updated_at": now_text},
+                parameters={"import_run_id": import_run_id, "account_id": account_id},
+            )
+            return int(task["id"])
 
     def finish_wechat_memory_import_job(
-        self, job_id: int, *, status: str, error: str = ""
+        self, task_id: int, *, status: str, error: str = ""
     ) -> None:
         if status not in {"completed", "failed"}:
             raise ValueError("WeChat Memory import terminal status is invalid")
         with self._agent_run_write_transaction(None) as (db, _):
             row = db.execute(
-                f"select status, error from ({task12_projection('wechat_memory_import_jobs')}) where id=?",
-                (job_id,),
+                "select kind,status,error from tasks where id=?", (task_id,)
             ).fetchone()
             if row is None:
                 raise ValueError("WeChat Memory import job does not exist")
+            if row["kind"] != "wechat_import":
+                raise ValueError("Task is not a WeChat Memory import job")
             if row["status"] != "running":
                 if (row["status"], row["error"]) == (status, error):
                     return
                 raise ValueError("conflicting WeChat Memory import terminal rewrite")
+            now_text = db.execute("select current_timestamp").fetchone()[0]
+            changed = db.execute(
+                "update tasks set status=?,error=?,updated_at=? where id=? and kind='wechat_import' and status='running'",
+                (status, error, now_text, task_id),
+            ).rowcount
+            if changed != 1:
+                raise ValueError("WeChat Memory import terminal transition conflict")
             db.execute(
-                f"""update tasks set {task12_set_parts('wechat_memory_import_jobs', {}, update_sql={'status': '?', 'error': '?', 'finished_at': 'current_timestamp', 'updated_at': 'current_timestamp'}).sql} where record_type='wechat_memory_import_jobs' and "wechat_memory_import_jobs__id"=? and "wechat_memory_import_jobs__status"='running'""",
-                (status, error, job_id),
+                "insert into task_results(task_id,result_kind,finished_at) values(?,'wechat_import',?)",
+                (task_id, now_text),
             )
 
 

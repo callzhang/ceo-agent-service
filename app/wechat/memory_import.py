@@ -218,7 +218,7 @@ class CodexMemoryExtractionRunner:
         )
 
         prompt = self._prompt(messages)
-        job_id = self.store.begin_wechat_memory_import_job(
+        task_id = self.store.begin_wechat_memory_import_job(
             import_run_id=import_run_id,
             account_id=account_id,
         )
@@ -234,7 +234,7 @@ class CodexMemoryExtractionRunner:
         try:
             routed = self.routed_execution.execute(
                 workload_kind="memory",
-                workload_key=f"wechat_memory_import_job:{job_id}",
+                workload_key=f"wechat_memory_import_job:{task_id}",
                 prompt=prompt,
                 command_factory=CodexCommandFactory.standard(
                     developer_instructions=(
@@ -252,11 +252,11 @@ class CodexMemoryExtractionRunner:
                 required_capabilities=frozenset({"structured_output"}),
             )
             candidates = _parse_output(routed.value)
-            self.store.finish_wechat_memory_import_job(job_id, status="completed")
+            self.store.finish_wechat_memory_import_job(task_id, status="completed")
             return candidates
         except Exception as exc:
             self.store.finish_wechat_memory_import_job(
-                job_id,
+                task_id,
                 status="failed",
                 error=str(exc),
             )
@@ -350,7 +350,7 @@ class CodexMemoryRecallMatcher:
             "relation=none 时 memory_id、evidence、merged_statement 必须全部为空字符串；"
             "compatible 还必须给非空 merged_statement。"
         )
-        job_id = self.store.begin_wechat_memory_import_job(
+        task_id = self.store.begin_wechat_memory_import_job(
             import_run_id=import_run_id,
             account_id=account_id,
         )
@@ -365,7 +365,7 @@ class CodexMemoryRecallMatcher:
         try:
             routed = self.routed_execution.execute(
                 workload_kind="memory",
-                workload_key=f"wechat_memory_import_job:{job_id}",
+                workload_key=f"wechat_memory_import_job:{task_id}",
                 prompt=prompt,
                 command_factory=CodexCommandFactory.standard(
                     developer_instructions=(
@@ -385,11 +385,11 @@ class CodexMemoryRecallMatcher:
                 ),
             )
             result = DurableMemoryMatch.model_validate_json(routed.value)
-            self.store.finish_wechat_memory_import_job(job_id, status="completed")
+            self.store.finish_wechat_memory_import_job(task_id, status="completed")
             return result
         except Exception as exc:
             self.store.finish_wechat_memory_import_job(
-                job_id,
+                task_id,
                 status="failed",
                 error=str(exc),
             )

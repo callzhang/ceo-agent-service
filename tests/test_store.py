@@ -1728,7 +1728,9 @@ def test_meeting_run_finish_accepts_production_terminal_statuses(
 
 
 def test_wechat_import_jobs_are_distinct_per_invocation(tmp_path: Path):
-    store = AutoReplyStore(tmp_path / "wechat-import-job.sqlite3")
+    from tests.test_wechat_import_native import AssembledTaskStore
+
+    store = AssembledTaskStore(tmp_path / "wechat-import-job.sqlite3")
     first = store.begin_wechat_memory_import_job(
         import_run_id="wechat-scope", account_id="account-1"
     )
