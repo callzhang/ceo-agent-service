@@ -45,7 +45,10 @@ def test_service_activity_tool_uses_schema_only_email_validation(
     monkeypatch.setattr(email_store_module, "EmailStore", track_email_store)
     monkeypatch.setattr(
         "app.agent_cli._bound_scheduled_run",
-        lambda *args: (store, SimpleNamespace(id=42)),
+        lambda *args: (
+            store,
+            SimpleNamespace(id=42, scheduled_for=datetime(2026, 10, 7, tzinfo=UTC)),
+        ),
     )
     calls = []
 
@@ -94,7 +97,10 @@ def test_generic_activity_tool_rejects_invalid_interval_or_source(
 ):
     monkeypatch.setattr(
         "app.agent_cli._bound_scheduled_run",
-        lambda *args: (object(), SimpleNamespace(id=42)),
+        lambda *args: (
+            object(),
+            SimpleNamespace(id=42, scheduled_for=datetime(2026, 10, 7, tzinfo=UTC)),
+        ),
     )
     monkeypatch.setattr("app.email_store.EmailStore", lambda *args, **kwargs: object())
     tool = (
@@ -104,6 +110,32 @@ def test_generic_activity_tool_rejects_invalid_interval_or_source(
     )
     with pytest.raises(ValueError, match=error):
         tool(start, end, sources)
+
+
+def test_scheduled_activity_rejects_window_after_trigger_before_read(
+    tmp_path, monkeypatch
+):
+    scheduled_for = datetime(2026, 10, 7, 13, tzinfo=UTC)
+    monkeypatch.setattr(
+        "app.agent_cli._bound_scheduled_run",
+        lambda *args: (object(), SimpleNamespace(id=42, scheduled_for=scheduled_for)),
+    )
+    monkeypatch.setattr(
+        "app.email_store.EmailStore",
+        lambda *args, **kwargs: pytest.fail("provider access must not begin"),
+    )
+    tool = (
+        build_role_server("consumer", db_path=tmp_path / "activity.sqlite3")
+        ._tool_manager.get_tool("read_service_activity")
+        .fn
+    )
+
+    with pytest.raises(ValueError, match="cannot end after scheduled_for"):
+        tool(
+            "2026-10-06T13:00:00+00:00",
+            "2026-10-07T16:00:00+00:00",
+            ["meetings"],
+        )
 
 
 @pytest.mark.parametrize("document_exists", [False, True])
