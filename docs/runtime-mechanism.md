@@ -1100,14 +1100,18 @@ original failed run and failed Attempt remain evidence, not `needs_human` or
 a successful business result. Existing authorization/provider wait paths are
 unchanged.
 
-Retry session selection honors an explicit JSON boolean
-`session_continuable=false` on the latest failed run for the current generation,
-role and revision. A new run does not inherit that session, and Consumer/Audit
-start a fresh runtime rather than restoring it through conversation routing.
-Missing flags and string values are not treated as false. A later completed
-session covers an older failure. Existing candidate digest, revision, source,
-approval and external-receipt checks remain unchanged; fresh transport is not
-permission to replay an external action. Old run/session history is preserved.
+Retry session selection honors `session_continuable=false` on the latest failed
+run for the current generation, role and revision, except when the failure is
+an Agent-sourced typed error that the service has marked retryable. That wire
+result's `AgentError.session_continuable` default is not evidence that the
+native session is unusable, so retrying it continues the same route session.
+Service-sourced noncontinuable failures still start a fresh runtime. Repeated
+identical invalid/missing result failures retain their existing fresh-session
+behavior. Missing flags and string values are not treated as false. A later
+completed session covers an older failure. Existing candidate digest,
+revision, source, approval and external-receipt checks remain unchanged; fresh
+transport is not permission to replay an external action. Old run/session
+history is preserved.
 This decision uses the latest terminal run even when its legacy
 `codex_session_id` is empty: API/Claude sessions may exist only in route/runtime
 records. The runner computes fresh selection before claiming, and the same
