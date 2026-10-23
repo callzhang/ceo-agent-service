@@ -3249,8 +3249,11 @@ the existing explicit calendar-skip receipt because no original event exists.
 Meeting discovery may refresh a waiting recording, but once a job is queued,
 claimed, retrying, ready for delivery or terminal, discovery cannot replace its
 persisted source snapshot or participant evidence. Recovery refreshes failed
-unsent jobs through the explicit replay lifecycle. A failed roster lookup during
-rediscovery must not remove `calendar_evidence` from an already queued job.
+unsent jobs through the explicit replay lifecycle only when no standard or
+sensitive DingTalk outbound is already prepared. A prepared outbound remains
+owned by its existing delivery recovery path and cannot be cleared by scheduled
+replay. A failed roster lookup during rediscovery must not remove
+`calendar_evidence` from an already queued job.
 Recent-meeting replay uses the same ended-recording metadata contract as
 discovery, without requiring the provider status to equal the literal `ended`.
 
