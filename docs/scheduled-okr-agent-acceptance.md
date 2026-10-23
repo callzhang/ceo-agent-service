@@ -13,8 +13,11 @@ run394267 使用不可变 task6 v23 / managed `ceo-weekly-okr-report` revision22
 
 当前生产 commit `4441aada0d36cde843eccd89f4d5f0a58c4aa268`，healthz 正常；task6仍为 v26 /
 managed revision223，下次自然触发为 **2026-10-25 10:00 UTC**。候选修复明确让 Agent 使用
-Skill 已声明的评分口径，并将额外材料缺失记录为限制，正在通过发布门禁；发布并读回新 revision
-后，按 Derek 已授权的范围新建一次手动验证运行。该手动结果与自然运行分开统计。
+Skill 已声明的评分口径，并将额外材料缺失记录为限制。日报、message-triage、OA 审批、People
+Skill 的安装摘要和 repository 摘要已按只读读回收敛；message-triage 当前 managed revision225
+摘要也已核实。发布锁定测试 27 项、脚本边界和 precondition 检查 6 项、OKR/report 定向回归
+134 项通过。代码和 Skill 仍仅在隔离分支，尚未正式发布或部署；发布后按 Derek 已授权范围新建
+一次手动验证运行，并与自然运行分开统计。
 无正文证据：[run394267 readback](../evals/scheduled_task_generic/okr-manual-394267-post-login-readback.json)。
 
 截至 2026-10-22 17:50 UTC：task14 的自然运行 392889 已完成并产生真实文档更新和通知回执；

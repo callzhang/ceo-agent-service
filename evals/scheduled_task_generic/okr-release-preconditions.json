@@ -60,10 +60,10 @@
     },
     {
       "source": "ci/shared-skills/ceo-message-triage/SKILL.md",
-      "installed_sha256": "35070baeda959d85b5e1188bb89e003778331880252abf7143e889d476b11d36",
-      "approved_new_sha256": "35070baeda959d85b5e1188bb89e003778331880252abf7143e889d476b11d36",
-      "managed_revision_id": 173,
-      "managed_sha256": "35070baeda959d85b5e1188bb89e003778331880252abf7143e889d476b11d36"
+      "installed_sha256": "507c611982e259cd66d96a68fe012e9658bef762294065f95b0efa30d8dc004f",
+      "approved_new_sha256": "507c611982e259cd66d96a68fe012e9658bef762294065f95b0efa30d8dc004f",
+      "managed_revision_id": 225,
+      "managed_sha256": "507c611982e259cd66d96a68fe012e9658bef762294065f95b0efa30d8dc004f"
     },
     {
       "source": "ci/shared-skills/ceo-wechat/SKILL.md",
@@ -72,8 +72,8 @@
     },
     {
       "source": "ci/shared-skills/dingtalk-oa-approval/SKILL.md",
-      "installed_sha256": "fc9a16dce789e1f2640c2896758b6cb5adfadeb1e343efec5b1d56efe2698f52",
-      "approved_new_sha256": "fc9a16dce789e1f2640c2896758b6cb5adfadeb1e343efec5b1d56efe2698f52"
+      "installed_sha256": "b58fb9bbfed06503c2326be27596f68e641e4188f4ba81c9c0d7a649be80a660",
+      "approved_new_sha256": "b58fb9bbfed06503c2326be27596f68e641e4188f4ba81c9c0d7a649be80a660"
     },
     {
       "source": "ci/shared-skills/stardust-oa-finance-review/SKILL.md",
@@ -87,8 +87,8 @@
     },
     {
       "source": "ci/shared-skills/stardust-oa-people-review/SKILL.md",
-      "installed_sha256": "888516678b5f4118acf18d972d1ad6227b22022924eb2c36f7cdc57d6f229fc6",
-      "approved_new_sha256": "888516678b5f4118acf18d972d1ad6227b22022924eb2c36f7cdc57d6f229fc6"
+      "installed_sha256": "f0a1a4f7a4bc1cd5ffc20db30fbee70005115f06457c0c11a6a646c5e5f50ead",
+      "approved_new_sha256": "f0a1a4f7a4bc1cd5ffc20db30fbee70005115f06457c0c11a6a646c5e5f50ead"
     },
     {
       "source": "ci/shared-skills/stardust-oa-attendance-travel-review/SKILL.md",

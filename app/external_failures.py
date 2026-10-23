@@ -49,10 +49,16 @@ def is_external_task_error(error: str) -> bool:
         return True
     if any(value.startswith(prefix) for prefix in EXTERNAL_TASK_ERROR_PREFIXES):
         return True
-    for category in EXTERNAL_UNSUBSCRIBE_CATEGORIES:
-        prefix = f"failed_browser: category={category.value}"
-        if value == prefix or value.startswith(prefix + ";"):
-            return True
+    category_prefixes = (
+        f"{code}: category={category.value}"
+        for code in ("email_unsubscribe_browser_failed", "failed_browser")
+        for category in EXTERNAL_UNSUBSCRIBE_CATEGORIES
+    )
+    if any(
+        value == prefix or value.startswith(prefix + ";")
+        for prefix in category_prefixes
+    ):
+        return True
     operation_marker = ";operation="
     if operation_marker in value:
         base, _, _operation = value.partition(operation_marker)
@@ -81,16 +87,19 @@ def external_task_error_sql(column: str = "reply_tasks.error") -> str:
         f"{column} like '{prefix.replace(chr(39), chr(39) * 2)}%'"
         for prefix in EXTERNAL_TASK_ERROR_PREFIXES
     )
-    legacy_categories = " or ".join(
+    category_texts = " or ".join(
         (
             f"(substr({column}, 1, {len(prefix)}) = '{prefix}' and "
             f"(length({column}) = {len(prefix)} or "
             f"substr({column}, {len(prefix) + 1}, 1) = ';'))"
         )
-        for category in EXTERNAL_UNSUBSCRIBE_CATEGORIES
-        for prefix in (f"failed_browser: category={category.value}",)
+        for prefix in (
+            f"{code}: category={category.value}"
+            for code in ("email_unsubscribe_browser_failed", "failed_browser")
+            for category in EXTERNAL_UNSUBSCRIBE_CATEGORIES
+        )
     )
     return (
         f"({column} in ({quoted}) or {operation_context} or {prefixes} "
-        f"or {legacy_categories})"
+        f"or {category_texts})"
     )

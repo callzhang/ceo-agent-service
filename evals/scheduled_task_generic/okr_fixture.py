@@ -153,19 +153,14 @@ class DocumentProvider:
     def run_json(self, command):
         if command[1:3] == ["doc", "search"]:
             query = command[command.index("--query") + 1].casefold()
-            matches = []
-            for node, doc in self.fixture.independent_documents().items():
-                haystack = (doc["title"] + " " + doc["content"]).casefold()
-                if any(token in haystack for token in query.split()):
-                    matches.append({
-                        "nodeId": node,
-                        "name": doc["title"],
-                        "nodeType": "doc",
-                        "contentType": "text/markdown",
-                        "docUrl": "https://docs.example.invalid/" + node,
-                    })
-            limit = int(command[command.index("--page-size") + 1])
-            return {"documents": matches[:limit]}
+            matches = [
+                {"nodeId": node, "name": doc["title"], "extension": "md",
+                 "contentType": "text/markdown", "nodeType": "document",
+                 "docUrl": "https://docs.example.invalid/" + node}
+                for node, doc in self.fixture.independent_documents().items()
+                if query in doc["title"].casefold()
+            ]
+            return {"documents": matches}
         if command[1:3] != ["wiki", "+node-list"]:
             raise ValueError("Unconfigured synthetic provider operation")
         parent = command[command.index("--folder") + 1]
@@ -175,18 +170,21 @@ class DocumentProvider:
 
     def search_documents(self, query, page_size=5):
         from app.dws_client import DwsDocumentSearchResult
-        payload = self.run_json([
-            self.dws_bin, "doc", "search", "--query", query,
-            "--page-size", str(page_size), "--format", "json",
-        ])
-        return [
+
+        tokens = query.casefold().replace("[", " ").replace("]", " ").split()
+        matches = [
             DwsDocumentSearchResult(
-                node_id=item["nodeId"], name=item["name"],
-                content_type=item["contentType"], node_type=item["nodeType"],
-                doc_url=item["docUrl"],
+                node_id=node,
+                name=document["title"],
+                extension="md",
+                content_type="text/markdown",
+                node_type="document",
+                doc_url="https://docs.example.invalid/" + node,
             )
-            for item in payload["documents"]
+            for node, document in self.fixture.independent_documents().items()
+            if all(token in document["title"].casefold() for token in tokens)
         ]
+        return matches[:page_size]
 
     def create_report_document(self, *, name, content, doc_format, folder_id):
         if doc_format != "markdown":
@@ -206,51 +204,36 @@ class DocumentProvider:
         return {"ok": True, "data": {"nodeId": node_id, "success": True}}
 
     def read_doc(self, node_id):
-        doc = self.fixture.documents().get(node_id)
-        if doc is None:
+        if node_id in self.fixture.independent_documents():
             doc = self.fixture.independent_documents()[node_id]
+            return {"complete": True, "status": "success", "content": {
+                "markdown": doc["content"], "nodeId": node_id,
+                "title": doc["title"], "revision": doc["revision"],
+                "success": True, "docUrl": "https://docs.example.invalid/" + node_id}}
+        doc = self.fixture.documents()[node_id]
         return {"complete": True, "status": "success", "content": {
             "markdown": doc["content"], "nodeId": node_id, "title": doc["title"],
             "revision": doc["revision"], "success": True,
             "docUrl": "https://docs.example.invalid/" + node_id}}
 
     def doc_info(self, node_id):
-        doc = self.fixture.documents().get(node_id)
-        if doc is None:
-            doc = self.fixture.independent_documents()[node_id]
+        doc = self.fixture.documents()[node_id]
         return {"complete": True, "ok": True, "status": "success", "data": {"document": {
-            "nodeId": node_id, "name": doc["title"], "folderId": doc.get("parent_id", ""),
+            "nodeId": node_id, "name": doc["title"], "folderId": doc["parent_id"],
             "workspaceId": "eval-workspace", "success": True,
             "docUrl": "https://docs.example.invalid/" + node_id}}}
 
 
 class Fixture:
-    def __init__(self, facts, work):
+    def __init__(self, facts, work, scheduled_run_id=1):
         self.facts, self.work = facts, Path(work)
+        self.scheduled_run_id = scheduled_run_id
         self.work.mkdir(parents=True, exist_ok=True)
         self.trace_path = self.work.with_name(self.work.name + "-tool-calls.jsonl")
         self.docs_path = self.work.with_name(self.work.name + "-provider.json")
 
     def write_json(self, name, payload):
         (self.work / name).write_text(json.dumps(payload, ensure_ascii=False, indent=2))
-
-    def scheduled_context(self):
-        previous_run_id = self.facts.get("previous_run_id")
-        history = (
-            [{"run_id": previous_run_id, "status": "completed"}]
-            if previous_run_id is not None
-            else []
-        )
-        return {
-            "scheduled_for": self.facts["report_date"] + "T10:00:00Z",
-            "timezone_name": "Asia/Shanghai",
-            "run_id": self.facts.get("run_id", 1),
-            "scheduled_task_id": 1,
-            "task_version": 1,
-            "principal_user_id": "fixture-principal",
-            "history": history,
-            "artifact_directory": str(self.work),
-        }
 
     def record(self, name, arguments, result):
         with self.trace_path.open("a") as stream:
@@ -272,11 +255,39 @@ class Fixture:
             "sha256": digest(p.read_bytes()),
         }
 
+    def artifact_manifest(self):
+        return [
+            {"name": path.name, "sha256": digest(path.read_bytes())}
+            for path in sorted(self.work.iterdir())
+            if path.is_file()
+            and not path.is_symlink()
+            and not path.name.startswith(".task-artifact-")
+        ]
+
+    def scheduled_context(self):
+        previous_run_id = self.facts.get("previous_run_id")
+        history = (
+            [{"run_id": previous_run_id, "status": "completed"}]
+            if previous_run_id is not None
+            else []
+        )
+        return {
+            "scheduled_for": self.facts["report_date"] + "T10:00:00Z",
+            "timezone_name": "Asia/Shanghai",
+            "run_id": self.facts.get("run_id", self.scheduled_run_id),
+            "scheduled_task_id": 1,
+            "task_version": 1,
+            "principal_user_id": "fixture-principal",
+            "history": history,
+            "artifact_directory": str(self.work),
+            "task_artifacts": self.artifact_manifest(),
+        }
+
     def documents(self):
         return json.loads(self.docs_path.read_text()) if self.docs_path.exists() else {}
 
     def independent_documents(self):
-        """Synthetic searchable evidence, separate from the OKR endpoint payload."""
+        """Synthetic searchable evidence, separate from each live OKR payload."""
         result = {}
         roster = self.facts["roster"]["managers"]
         evidence = self.facts["evidence"]
@@ -292,10 +303,9 @@ class Fixture:
                 }
             behavior = behavior_by_manager.get(uid, evidence.get("behavior"))
             if behavior:
-                material = behavior
                 result["eval-behavior-" + key(uid)] = {
                     "title": f"独立行为记录｜{manager['name']} [{uid}]",
-                    "content": material.get("content", material) if isinstance(material, dict) else material,
+                    "content": behavior.get("content", behavior) if isinstance(behavior, dict) else behavior,
                     "revision": 1,
                 }
         return result
@@ -493,5 +503,8 @@ if __name__ == "__main__":
     parser.add_argument("--facts", required=True)
     parser.add_argument("--work", required=True)
     parser.add_argument("--role", choices=("consumer", "audit"), default="consumer")
+    parser.add_argument("--run-id", type=int, default=1)
     args = parser.parse_args()
-    Fixture(json.loads(Path(args.facts).read_text()), args.work).serve(args.role)
+    Fixture(
+        json.loads(Path(args.facts).read_text()), args.work, args.run_id
+    ).serve(args.role)
