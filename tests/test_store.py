@@ -704,7 +704,7 @@ def _seed_runtime_operation_parent(
         assert db.execute("pragma foreign_keys").fetchone()[0] == 1
         if workload_kind == "structured":
             _insert_current_task8(db, 'okr_review_requests', {'legacy_key': int(workload_key), 'conversation_id': 'cid', 'conversation_title': 'title', 'trigger_message_id': 'msg', 'trigger_sender': 'sender', 'trigger_text': 'text', 'period_label': 'period', 'period_start': 'start', 'period_end': 'end', 'status': 'processing'})
-        elif workload_kind == "meeting":
+        elif workload_kind in {"meeting", "meeting_audit"}:
             job_id = _insert_current_task8(db, 'meeting_alignment_jobs', {'legacy_key': 1, 'meeting_id': 'meeting-1'}).lastrowid
             db.execute("insert into runs(record_type,source_type,legacy_key,task_id,status,session_id,transcript_start,transcript_end,error,completed_at,updated_at) values('agent_runs','meeting_alignment_runs',?,?, 'running','',0,0,'','','')", (int(workload_key),job_id))
         elif workload_kind == "task":
@@ -1203,6 +1203,21 @@ def test_runtime_operation_attempts_are_listed_only_for_exact_workload(tmp_path:
 
     assert [attempt.id for attempt in attempts] == [first.id, second.id]
     assert [attempt.attempt_number for attempt in attempts] == [1, 2]
+
+
+def test_meeting_audit_runtime_has_an_independent_valid_workload_identity(
+    tmp_path: Path,
+):
+    store = AutoReplyStore(tmp_path / "meeting-audit-runtime.sqlite3")
+    _seed_runtime_operation_parent(store, "meeting", "13")
+
+    attempt = store.claim_runtime_operation_attempt(
+        "meeting_audit", "13", "codex_oauth", "codex_cli", "local_oauth", "gpt-5.5"
+    )
+
+    assert attempt.workload_kind == "meeting_audit"
+    assert attempt.workload_key == "13"
+    assert attempt.agent_run_id is None
 
 
 @pytest.mark.parametrize(

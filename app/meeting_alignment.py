@@ -12,6 +12,7 @@ from app.agent_cron.commands import (
 )
 from app.agent_runtime_contracts import RuntimeFailureClass
 from app.agent_runtime_router import RoutedCodexExecutionError
+from app.agent_orchestrator import MAX_CONTENT_FEEDBACK_CYCLES
 from app.codex_capacity import (
     CODEX_CAPACITY_EXHAUSTED_MESSAGE,
     is_codex_capacity_exhausted,
@@ -53,6 +54,7 @@ from app.meeting_alignment_delivery import (
 )
 from app.meeting_alignment_models import (
     MeetingAlignmentDecision,
+    previous_meeting_audit_feedback,
     persist_audited_meeting_decision,
     meeting_decision_audit_is_approved,
     MeetingAlignmentRun,
@@ -1180,6 +1182,9 @@ def _analyze_meeting_job(
     except ValueError as exc:
         _fail_job(store, job.id, "meeting_source", exc)
         return
+    audit_feedback, feedback_cycles = previous_meeting_audit_feedback(
+        job.decision_json
+    )
     run_id = store.claim_logical_run(
         'meeting_alignment_runs',
         job.id,
@@ -1203,6 +1208,7 @@ def _analyze_meeting_job(
                 if scheduled_consumer is not None
                 else ()
             ),
+            audit_feedback=audit_feedback,
         )
     except MeetingOrganizerIdentityError as exc:
         if exc.decision is not None:
@@ -1474,6 +1480,10 @@ def _analyze_meeting_job(
             audit_transcript_end_line=int(
                 getattr(runner, "last_audit_transcript_end_line", 0) or 0
             ),
+            feedback_cycles=(
+                feedback_cycles + 1 if audit_result.outcome == "return"
+                else feedback_cycles
+            ),
         )
     except Exception as exc:
         retryable_external = is_external_dependency_error(exc)
@@ -1508,6 +1518,35 @@ def _analyze_meeting_job(
             decision_json=decision.model_dump_json(),
         )
         return
+
+    if audit_result.outcome == "return":
+        assert audit_result.feedback is not None
+        feedback_error = _error_json(
+            "meeting_audit_feedback",
+            json.dumps(audit_result.feedback.model_dump(mode="json"), ensure_ascii=False),
+        )
+        if feedback_cycles + 1 <= MAX_CONTENT_FEEDBACK_CYCLES:
+            _record_agent_run(
+                store, runner, run_id, status="retry", error=feedback_error
+            )
+            store.update_meeting_alignment_job(
+                job.id,
+                status="retry",
+                available_at=(now + retry_delay).isoformat(),
+                decision_json=audited_decision_json,
+                target_kind=decision.target.kind if decision.target else "",
+                target_id=(
+                    decision.target.conversation_id
+                    if decision.target and decision.target.kind == "group"
+                    else decision.target.direct_user_id if decision.target else ""
+                ),
+                target_title=decision.target.title if decision.target else "",
+                mentions_json=json.dumps(decision.mention_names, ensure_ascii=False),
+                final_message=decision.final_message,
+                error=feedback_error,
+                send_result_json="{}",
+            )
+            return
 
     if audit_result.outcome != "approve":
         error = _error_json(
@@ -1601,7 +1640,15 @@ def _deliver_meeting_job(
     except (ValidationError, ValueError) as exc:
         _fail_job(store, job.id, "meeting_target", exc)
         return
-    if not meeting_decision_audit_is_approved(job.decision_json):
+    if canonical_decision_json != job.decision_json:
+        store.update_meeting_alignment_job(
+            job.id,
+            decision_json=canonical_decision_json,
+        )
+    if (
+        (previous is None or previous.status != "sent")
+        and not meeting_decision_audit_is_approved(job.decision_json)
+    ):
         _fail_job(
             store,
             job.id,
@@ -1609,11 +1656,6 @@ def _deliver_meeting_job(
             ValueError("missing or mismatched independent Audit approval"),
         )
         return
-    if canonical_decision_json != job.decision_json:
-        store.update_meeting_alignment_job(
-            job.id,
-            decision_json=canonical_decision_json,
-        )
     try:
         source_payload = json.loads(job.source_json)
         evidence = CalendarMeetingEvidence.model_validate(
