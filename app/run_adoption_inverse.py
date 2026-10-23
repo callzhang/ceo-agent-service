@@ -286,3 +286,160 @@ def plan_run_adoption_inverse(db: sqlite3.Connection, source_metadata: dict,
             "retired_identity_count": len(retired),
             "allocator_reserved_ids": sorted(reserved_ids),
             "reassigned_identity_count": sum(item["reassigned"] for item in plans)}
+
+
+_RETIRED_ACTION_COLUMNS = frozenset({
+    "task_id", "consumer_run_id", "audit_run_id", "predecessor_review_id",
+    "candidate_id", "review_id", "execution_review_id", "execution_selection_id",
+})
+
+
+def _table_stored_columns(sql):
+    scratch = sqlite3.connect(":memory:")
+    try:
+        scratch.execute(sql)
+        return tuple(row[1] for row in scratch.execute("pragma table_xinfo(actions)")
+                     if row[6] == 0)
+    finally:
+        scratch.close()
+
+
+def _task_inverse_owners(task_inverse_metadata):
+    if type(task_inverse_metadata) is not dict:
+        raise ValueError("invalid Task inverse identity handoff")
+    from app import task_entity_schema
+    identity = task_inverse_metadata.get("inverse_identity")
+    mapped = task_entity_schema._validate_inverse_identity(identity)
+    context = task_inverse_metadata.get("source_context")
+    if (type(context) is not dict or set(context) != {
+            "version", "handoff_required", "handoff_sha256"}
+            or context["version"] != 1
+            or context["handoff_required"] != bool(identity["owners"])
+            or context["handoff_sha256"] != task_entity_schema._inverse_identity_digest(identity)):
+        raise ValueError("Task inverse identity handoff digest mismatch")
+    return mapped
+
+
+def _task_source_physical(db, inverse_owners, source_kind, canonical_id):
+    """Resolve a canonical Task ID only through its typed inverse owner."""
+    if type(canonical_id) is not int or canonical_id <= 0:
+        raise ValueError(f"invalid positive Task reference: {canonical_id!r}")
+    mapped = {target: source for (kind, source), target in inverse_owners.items()
+              if kind == source_kind}
+    physical = mapped.get(canonical_id, canonical_id)
+    row = db.execute(
+        "select 1 from main.tasks where id=? and record_type=?",
+        (physical, source_kind)).fetchone()
+    if row is None:
+        raise ValueError(f"missing typed source Task owner: {source_kind}:{physical}")
+    return physical
+
+
+def _feedback_source_public(db, inverse_owners, kind, canonical_id):
+    physical = _task_source_physical(db, inverse_owners, kind, canonical_id)
+    column = kind + "__id"
+    columns = {row[1] for row in db.execute("pragma main.table_xinfo(tasks)")}
+    if column not in columns:
+        raise ValueError(f"source Task public identity column is absent: {column}")
+    row = db.execute(f'select "{column}" from main.tasks where id=?', (physical,)).fetchone()
+    if row is None or row[0] is None:
+        raise ValueError(f"missing source Task public identity: {kind}:{physical}")
+    return row[0]
+
+
+def retained_action_source_rows(db: sqlite3.Connection, source_metadata: dict, *,
+                                task_inverse_metadata: dict,
+                                run_inverse_metadata: dict) -> list[dict]:
+    """Translate current retained Actions rows to old-source stored columns.
+
+    This is a pure row translator for the caller-owned FK-off inverse path. It
+    reads only current native rows and the actual Task/Run inverse handoffs;
+    source-only retired Action columns are reconstructed as NULL.
+    """
+    if not db.in_transaction or db.execute("pragma foreign_keys").fetchone()[0]:
+        raise ValueError("retained Action translation requires caller-owned FK-off transaction")
+    if type(source_metadata) is not dict or type(source_metadata.get("action_catalog")) is not list:
+        raise ValueError("retained Action translation requires source Action catalog")
+    from app.current_action_schema import current_action_objects
+    from app.task_run_entity_assembly import _action_objects
+    source_objects = current_action_objects()
+    source_catalog = sorted((item["type"], item["name"], item["sql"])
+                            for item in source_objects)
+    if source_catalog != sorted(tuple(item) for item in source_metadata["action_catalog"]):
+        raise ValueError("unsupported source Action catalog")
+    target_objects = _action_objects()
+    scratch = sqlite3.connect(":memory:")
+    try:
+        for name, sql in target_objects.items():
+            if sql.lstrip().lower().startswith("create table"):
+                scratch.execute(sql)
+        for name, sql in target_objects.items():
+            if not sql.lstrip().lower().startswith("create table"):
+                scratch.execute(sql)
+        target_catalog = sorted(tuple(row) for row in scratch.execute(
+            "select type,name,sql from sqlite_schema where tbl_name='actions' "
+            "and type in ('table','index','trigger') and name not like 'sqlite_%'"))
+    finally:
+        scratch.close()
+    actual_target_catalog = sorted(tuple(row) for row in db.execute(
+        "select type,name,sql from main.sqlite_schema where tbl_name='actions' "
+        "and type in ('table','index','trigger') and name not like 'sqlite_%'"))
+    if actual_target_catalog != target_catalog:
+        raise ValueError("unsupported current native Action catalog")
+    source_sql = next(sql for name, sql in target_objects.items()
+                      if name == "actions")
+    source_actions_sql = next(item["sql"] for item in source_objects if item["name"] == "actions")
+    source_columns = _table_stored_columns(source_actions_sql)
+    target_columns = _table_stored_columns(source_sql)
+    unexpected_missing = set(source_columns) - set(target_columns) - _RETIRED_ACTION_COLUMNS
+    if unexpected_missing:
+        raise ValueError("source Action stored columns lack native representation: "
+                         + ",".join(sorted(unexpected_missing)))
+    run_map, physical_runs = _run_sources(db, run_inverse_metadata)
+    task_owners = _task_inverse_owners(task_inverse_metadata)
+    result = []
+    cursor = db.execute('select * from main.actions order by id')
+    native_columns = tuple(item[0] for item in cursor.description)
+    for values in cursor.fetchall():
+        native = dict(zip(native_columns, values, strict=True))
+        row = {column: native[column] if column in native else None for column in source_columns}
+        for field in ("agent_run_id",):
+            if field in native and field in row:
+                value = native[field]
+                if value is None:
+                    row[field] = None
+                elif type(value) is not int:
+                    raise ValueError(f"invalid stored Run reference type: {field}")
+                elif value == 0:
+                    row[field] = value
+                else:
+                    row[field] = _source_run(value, run_map, physical_runs)[0]
+        for field, kind in (("td_reply_task_id", "reply_tasks"),
+                            ("td_meeting_job_id", "meeting_alignment_jobs"),
+                            ("td_claim_job_id", "meeting_alignment_jobs")):
+            if field in native and field in row and native[field] is not None:
+                if type(native[field]) is not int:
+                    raise ValueError(f"invalid stored Task reference type: {field}")
+                row[field] = _task_source_physical(
+                    db, task_owners, kind, native[field])
+        for field, kind in (("fb_decision_id", "feedback_iteration_decisions"),
+                            ("fb_round_id", "feedback_processing_rounds")):
+            if field in native and field in row and native[field] is not None:
+                if type(native[field]) is not int:
+                    raise ValueError(f"invalid stored Feedback reference type: {field}")
+                row[field] = _feedback_source_public(
+                    db, task_owners, kind, native[field])
+        if "action_data" in native and "action_data" in row and native["action_data"] is not None:
+            data = native["action_data"]
+            value, json_type = db.execute(
+                "select json_extract(?, '$.agent_run_id'), json_type(?, '$.agent_run_id')",
+                (data, data)).fetchone()
+            if json_type not in (None, "null", "integer"):
+                raise ValueError("Action JSON agent_run_id is not an integer reference")
+            if json_type == "integer" and value != 0:
+                value = _source_run(int(value), run_map, physical_runs)[0]
+                data = db.execute("select jsonb_set(?, '$.agent_run_id', jsonb(?))",
+                                  (data, str(value))).fetchone()[0]
+            row["action_data"] = data
+        result.append(row)
+    return result
