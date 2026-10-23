@@ -1139,6 +1139,48 @@
       "invalid_wiki_node_list_folder_id": 1,
       "final_provider_readback_complete": true
     },
+    "write_verification_investigation": {
+      "observed_at": "2026-10-23",
+      "method": "Read exact provider document versions corresponding to failed DWS create/update calls, then compare source and provider Markdown without retaining report bodies in this evidence file.",
+      "samples": [
+        {
+          "operation": "create main report",
+          "document_id": "EpGBa2Lm8a7NA9YlURBxLPkBVgN7R35y",
+          "provider_version": 1,
+          "source_characters": 5138,
+          "readback_characters": 5207,
+          "source_lines": 96,
+          "readback_lines": 91,
+          "ordered_text_tokens": 656,
+          "ordered_text_tokens_equal": true,
+          "format_differences": [
+            "five blank lines were removed",
+            "a list marker containing plus was escaped as backslash-plus",
+            "two table delimiter rows were reserialized with wider dash runs",
+            "one table right-alignment marker was absent from readback; parsed table alignment differed"
+          ]
+        },
+        {
+          "operation": "create appendix",
+          "provider_version": 1,
+          "source_characters": 7147,
+          "readback_characters": 7233,
+          "ordered_text_tokens_equal": true,
+          "format_differences": ["two blank lines were removed"]
+        },
+        {
+          "operation": "update same appendix",
+          "provider_version": 2,
+          "source_characters": 7175,
+          "readback_characters": 7261,
+          "ordered_text_tokens_equal": true,
+          "source_lines": 65,
+          "readback_lines": 63
+        }
+      ],
+      "conclusion": "The samples prove DWS Markdown serialization differences explain verification mismatches for these sampled versions, but do not establish the cause of all 52 failures. Token equality alone is insufficient for acceptance: the main report sample lost a table alignment attribute, so provider formatting fidelity still needs resolution.",
+      "classification": "actual provider formatting/readback mismatch in sampled writes; full set of 52 not yet explained; not a pure evaluator false positive"
+    },
     "classification": "Manual business publication completed and fully read back. The DWS tool reported write-verification failures and one invalid folder-ID call; final provider content and notification receipt were independently confirmed. The deeper cause of DWS verification mismatch is not established. This is not a natural scheduled-run acceptance result."
   },
   "follow_up_document_parent_listing_fix": {
