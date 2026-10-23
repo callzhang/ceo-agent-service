@@ -8,7 +8,7 @@ Workbench parent and attachment reads/writes use assembled native `workbench_tas
 
 The actual API regression confirmed native attachment ID reuse: migrate two real source attachments with sparse source identity, reconcile away the highest file/row, then POST a replacement through the registered API. Before the fix, SQLite reused the retired canonical ID (`replacement_id == retired_canonical_id == 235`), and the fail-first regression stopped at `assert int(replacement_id) > retired_canonical_id`; this allowed its sparse inverse identity to refer to a different upload. The target attachment PK is now `INTEGER PRIMARY KEY AUTOINCREMENT`; explicit inverse identity carries the current attachment allocator high-water, and reforward restores it. The regression verifies replacement request ID, filename, media type, content size/hash, new source UUID identity, exact bytes and parent ownership; it performs a second portable inverse/reforward and proves the next API upload receives a greater canonical ID while retaining its own request/hash.
 
-The deterministic target DDL is emitted by `app/task_run_entity_definitions.py::task_run_entity_objects()`; no static generated artifact exists to update. The regenerated `workbench_attachments` SQL is exactly `CREATE TABLE workbench_attachments (id INTEGER PRIMARY KEY AUTOINCREMENT,"workbench_task_id" INTEGER NOT NULL REFERENCES workbench_tasks(id),"client_request_id" TEXT NOT NULL,"filename" TEXT NOT NULL,"media_type" TEXT NOT NULL,"size_bytes" INTEGER NOT NULL,"content_sha256" TEXT NOT NULL,"storage_path" TEXT NOT NULL,"created_at" TEXT NOT NULL DEFAULT current_timestamp)`. Its SHA-256 is `528e7a6467dcc81030cf11356e6c2b9adfb6eb1151024d490b684432272130a2`; deterministic `task_run_field_map()` SHA-256 remains `48597a8ff5c98265172e0f7c59bd620a55aa41d022e4c04b77722171268e83b5`.
+The deterministic target DDL is emitted by `app/task_run_entity_definitions.py::task_run_entity_objects()` and checked in as `docs/task-run-entity-target.sql`. Review found that snapshot stale: this task's AUTOINCREMENT delta was missing, along with pre-existing generator drift from earlier units (ten generated objects missing and other declarations/indexes changed). The complete snapshot was regenerated from the current generator; the broader pre-existing differences are recorded as artifact synchronization, not attributed to Task2D7A. The regenerated `workbench_attachments` SQL is exactly `CREATE TABLE workbench_attachments (id INTEGER PRIMARY KEY AUTOINCREMENT,"workbench_task_id" INTEGER NOT NULL REFERENCES workbench_tasks(id),"client_request_id" TEXT NOT NULL,"filename" TEXT NOT NULL,"media_type" TEXT NOT NULL,"size_bytes" INTEGER NOT NULL,"content_sha256" TEXT NOT NULL,"storage_path" TEXT NOT NULL,"created_at" TEXT NOT NULL DEFAULT current_timestamp)`. Its SHA-256 is `528e7a6467dcc81030cf11356e6c2b9adfb6eb1151024d490b684432272130a2`; deterministic `task_run_field_map()` SHA-256 remains `48597a8ff5c98265172e0f7c59bd620a55aa41d022e4c04b77722171268e83b5`.
 
 The test `test_native_reconciliation_preserves_target_injected_source_style_locator` manually inserts a source-style UUID locator into a native target row. It is not a source-migration test. Actual migration is covered by the native API regression and the explicit Task2D7I operator.
 
@@ -47,6 +47,32 @@ WORK_DIR=$(mktemp -d /private/tmp/ceo-task-run-phase2-_ntbufyi/task-2d7a-resume-
 Result: exit 0. It used predecessor SHA `b5c5b92fc0985ef21d865379193a948df171d02a3f8d43186a6023d78f1d4a66`; both cycles constructed the unchanged old WorkbenchStore, preserved the captured source control attachment bytes/hash and parent facts, retained new API-created attachments with their source UUIDs and metadata, allowed the old API write in cycle 1, and completed reforward. The run-owned output lives under the reported fresh task directory; no pre-existing temp directories were touched.
 
 Ruff, compileall and `git diff --check` passed for the changed Python files. The exact deterministic assembled target DDL test passes with AUTOINCREMENT, and source schema factories were not modified. No full suite, production, provider, CLI, constructor activation, main merge, push or deploy was run.
+
+## Fix1 — tracked target SQL snapshot
+
+The review identified that the tracked SQL snapshot did not match the current generator. Regenerated all 76 declared objects into `docs/task-run-entity-target.sql` with `serialize_schema_sql(task_run_entity_objects())`. The parsed tracked field map already matched `list(task_run_field_map())` exactly, so it was not rewritten. Source factories remain unchanged. The full snapshot includes prior generator deltas from other units as artifact synchronization; the Task2D7A-specific change is the attachment AUTOINCREMENT declaration.
+
+Commands and results:
+
+```text
+python -c "import hashlib,json; from pathlib import Path; from app.schema_sql import serialize_schema_sql; from app.task_run_entity_definitions import task_run_entity_objects,task_run_field_map; target=Path('docs/task-run-entity-target.sql'); sql=serialize_schema_sql(task_run_entity_objects()); target.write_text(sql); current=json.loads(Path('docs/task-run-entity-field-map.json').read_text()); generated=task_run_field_map(); print('sql_objects='+str(len(task_run_entity_objects()))); print('sql_bytes='+str(len(sql.encode()))); print('sql_sha256='+hashlib.sha256(sql.encode()).hexdigest()); print('field_map_equal='+str(current==list(generated))); print('field_map_rows='+str(len(generated))); assert current==list(generated)"
+sql_objects=76
+sql_bytes=25027
+sql_sha256=989d78f3898a08f7f554a2fa9a7d31f79260a66cf93671808363191cb14faf37
+field_map_equal=True
+field_map_rows=287
+
+python -c "import json,sqlite3; from pathlib import Path; from app.task_run_entity_definitions import task_run_entity_objects,task_run_field_map; from app.task8_storage import register_task8_functions; from app.schema_sql import serialize_schema_sql; generated=task_run_entity_objects(); a=sqlite3.connect(':memory:'); b=sqlite3.connect(':memory:'); register_task8_functions(a); register_task8_functions(b); a.executescript(Path('docs/task-run-entity-target.sql').read_text()); b.executescript(serialize_schema_sql(generated)); objects=lambda db:{r[0]:r[1] for r in db.execute(\"select name,sql from sqlite_schema where name not like 'sqlite_%'\")}; assert objects(a)==objects(b); cols={r[1]:r for r in a.execute('pragma table_info(workbench_attachments)')}; assert cols['id'][2].upper()=='INTEGER' and cols['id'][5]==1; assert a.execute(\"select sql from sqlite_schema where name='workbench_attachments'\").fetchone()[0]==generated['workbench_attachments']; assert a.execute('pragma foreign_key_check').fetchall()==[]; field_map=json.loads(Path('docs/task-run-entity-field-map.json').read_text()); assert field_map==list(task_run_field_map()); print('target_objects_equal=True; attachment_pk=INTEGER AUTOINCREMENT; foreign_key_check=0; field_map_equal=True')"
+target_objects_equal=True; attachment_pk=INTEGER AUTOINCREMENT; foreign_key_check=0; field_map_equal=True
+
+pytest -q tests/test_task_run_entity_definitions.py
+14 passed
+
+pytest -q tests/test_run_entity_definitions.py::test_committed_run_sql_executes_after_task_and_native_schedule_config_prerequisites
+1 passed
+```
+
+Task 2D7A: fix round 1/5 (1 addressed, 0 open — regenerate tracked target SQL and correct report artifact claim; commit recorded after tests).
 
 ## Remaining boundary
 

@@ -46,21 +46,21 @@ CREATE TABLE feedback_processing_rounds (id INTEGER PRIMARY KEY,"feedback_key" T
 
 CREATE TABLE oa_notification_events (id INTEGER PRIMARY KEY,"event_kind" TEXT NOT NULL,"requires_reply" INTEGER NOT NULL DEFAULT 0,"process_instance_id" TEXT NOT NULL DEFAULT '',"task_id" TEXT NOT NULL DEFAULT '',"channel" TEXT NOT NULL DEFAULT 'dingtalk',"conversation_id" TEXT NOT NULL,"conversation_title" TEXT NOT NULL DEFAULT '',"trigger_message_id" TEXT NOT NULL,"trigger_create_time" TEXT NOT NULL DEFAULT '',"trigger_sender" TEXT NOT NULL DEFAULT '',"trigger_text" TEXT NOT NULL DEFAULT '',"trigger_message_json" TEXT NOT NULL DEFAULT '{}',"oa_url" TEXT NOT NULL DEFAULT '',"status" TEXT NOT NULL DEFAULT 'pending',"claimed_attempt_id" INTEGER NOT NULL DEFAULT 0,"result_attempt_id" INTEGER NOT NULL DEFAULT 0,"last_error" TEXT NOT NULL DEFAULT '',"created_at" TEXT NOT NULL DEFAULT current_timestamp,"updated_at" TEXT NOT NULL DEFAULT current_timestamp,"sent_at" TEXT NOT NULL DEFAULT '');
 
-CREATE TABLE okr_review_items (id INTEGER PRIMARY KEY,"request_id" INTEGER NOT NULL,"objective_title" TEXT NOT NULL,"objective_weight" REAL NOT NULL DEFAULT 0,"kr_title" TEXT NOT NULL,"kr_weight" REAL NOT NULL DEFAULT 0,"item_json" TEXT NOT NULL DEFAULT '{}',"created_at" TEXT NOT NULL DEFAULT current_timestamp);
+CREATE TABLE okr_review_items (id INTEGER PRIMARY KEY,"request_id" INTEGER NOT NULL REFERENCES tasks(id),"objective_title" TEXT NOT NULL,"objective_weight" REAL NOT NULL DEFAULT 0,"kr_title" TEXT NOT NULL,"kr_weight" REAL NOT NULL DEFAULT 0,"item_json" TEXT NOT NULL DEFAULT '{}',"created_at" TEXT NOT NULL DEFAULT current_timestamp);
 
 CREATE TABLE workbench_artifacts (id INTEGER PRIMARY KEY,"workbench_turn_id" INTEGER NOT NULL REFERENCES workbench_turns(task_id),"label" TEXT NOT NULL,"path" TEXT NOT NULL,"media_type" TEXT NOT NULL,"created_at" TEXT NOT NULL DEFAULT current_timestamp);
 
-CREATE TABLE workbench_attachments (id INTEGER PRIMARY KEY,"workbench_task_id" INTEGER NOT NULL REFERENCES workbench_tasks(id),"client_request_id" TEXT NOT NULL,"filename" TEXT NOT NULL,"media_type" TEXT NOT NULL,"size_bytes" INTEGER NOT NULL,"content_sha256" TEXT NOT NULL,"storage_path" TEXT NOT NULL,"created_at" TEXT NOT NULL DEFAULT current_timestamp);
+CREATE TABLE workbench_attachments (id INTEGER PRIMARY KEY AUTOINCREMENT,"workbench_task_id" INTEGER NOT NULL REFERENCES workbench_tasks(id),"client_request_id" TEXT NOT NULL,"filename" TEXT NOT NULL,"media_type" TEXT NOT NULL,"size_bytes" INTEGER NOT NULL,"content_sha256" TEXT NOT NULL,"storage_path" TEXT NOT NULL,"created_at" TEXT NOT NULL DEFAULT current_timestamp);
 
 CREATE INDEX idx_tasks_claim_due ON tasks(kind,status,available_at,id);
 
 CREATE UNIQUE INDEX idx_work_summary_source_identity ON work_summary_inputs(source_type,source_ref);
 
-CREATE UNIQUE INDEX idx_meeting_source_identity ON tasks(json_extract(parameters_json,'$.meeting_id')) WHERE kind='meeting_alignment';
+CREATE UNIQUE INDEX idx_meeting_source_identity ON tasks(CASE WHEN json_type(parameters_json,'$.meeting_id')='object' AND json_extract(parameters_json,'$.meeting_id.t')='blob' THEN unhex(json_extract(parameters_json,'$.meeting_id.v')) ELSE jsonb_extract(parameters_json,'$.meeting_id') END) WHERE kind='meeting_alignment';
 
-CREATE UNIQUE INDEX idx_okr_review_source_identity ON tasks(json_extract(parameters_json,'$.conversation_id'),json_extract(parameters_json,'$.trigger_message_id')) WHERE kind='okr_review';
+CREATE UNIQUE INDEX idx_okr_review_source_identity ON tasks(CASE WHEN json_type(parameters_json,'$.conversation_id')='object' AND json_extract(parameters_json,'$.conversation_id.t')='blob' THEN unhex(json_extract(parameters_json,'$.conversation_id.v')) ELSE jsonb_extract(parameters_json,'$.conversation_id') END,CASE WHEN json_type(parameters_json,'$.trigger_message_id')='object' AND json_extract(parameters_json,'$.trigger_message_id.t')='blob' THEN unhex(json_extract(parameters_json,'$.trigger_message_id.v')) ELSE jsonb_extract(parameters_json,'$.trigger_message_id') END) WHERE kind='okr_review';
 
-CREATE UNIQUE INDEX idx_weekly_analysis_source_identity ON tasks(json_extract(parameters_json,'$.week_end'),json_extract(parameters_json,'$.manager_user_id'),json_extract(parameters_json,'$.source_digest')) WHERE kind='okr_analysis';
+CREATE UNIQUE INDEX idx_weekly_analysis_source_identity ON tasks(CASE WHEN json_type(parameters_json,'$.week_end')='object' AND json_extract(parameters_json,'$.week_end.t')='blob' THEN unhex(json_extract(parameters_json,'$.week_end.v')) ELSE jsonb_extract(parameters_json,'$.week_end') END,CASE WHEN json_type(parameters_json,'$.manager_user_id')='object' AND json_extract(parameters_json,'$.manager_user_id.t')='blob' THEN unhex(json_extract(parameters_json,'$.manager_user_id.v')) ELSE jsonb_extract(parameters_json,'$.manager_user_id') END,CASE WHEN json_type(parameters_json,'$.source_digest')='object' AND json_extract(parameters_json,'$.source_digest.t')='blob' THEN unhex(json_extract(parameters_json,'$.source_digest.v')) ELSE jsonb_extract(parameters_json,'$.source_digest') END) WHERE kind='okr_analysis';
 
 CREATE UNIQUE INDEX idx_business_object_tasks_business_key_identity ON task_business_keys(business_key);
 
@@ -99,6 +99,20 @@ CREATE UNIQUE INDEX idx_workbench_attachments_task_request ON workbench_attachme
 CREATE INDEX idx_workbench_attachments_task_created_id ON workbench_attachments(workbench_task_id,created_at,id);
 
 CREATE UNIQUE INDEX idx_workbench_attachments_id_identity ON workbench_attachments(id);
+
+CREATE INDEX idx_tasks_email_classification_status ON tasks(status,available_at,lease_expires_at,id) WHERE kind='email_classification';
+
+CREATE INDEX idx_tasks_feedback_processing_status ON tasks(status,id) WHERE kind='feedback_processing';
+
+CREATE INDEX idx_tasks_wechat_import_status ON tasks(status,id) WHERE kind='wechat_import';
+
+CREATE INDEX idx_tasks_workbench_turn_status_created ON tasks(status,created_at,id) WHERE kind='workbench_turn';
+
+CREATE INDEX idx_tasks_workbench_turn_status_lease ON tasks(status,lease_expires_at) WHERE kind='workbench_turn';
+
+CREATE INDEX idx_tasks_workbench_turn_created ON tasks(created_at,id) WHERE kind='workbench_turn';
+
+CREATE INDEX idx_workbench_tasks_updated ON workbench_tasks(updated_at,id);
 
 CREATE TRIGGER trg_tasks_parameters_reply_insert BEFORE INSERT ON tasks WHEN NEW.kind='reply' BEGIN SELECT CASE WHEN EXISTS (SELECT 1 FROM json_each(NEW.parameters_json) WHERE key NOT IN ('force_new_decision','manual_rerun_attempt_id','manual_rerun_revision_key','recovery_code'))  THEN RAISE(ABORT,'invalid task parameter contract') END; END;
 
@@ -190,3 +204,9 @@ WHEN (SELECT status FROM tasks WHERE id=NEW.task_id) IN ('queued','running')
              WHERE active.workbench_task_id=OLD.workbench_task_id AND active.task_id<>OLD.task_id
                AND active_task.status IN ('queued','running'))
 BEGIN SELECT RAISE(ABORT,'active Workbench turn already exists'); END;
+
+CREATE TRIGGER trg_tasks_kind_immutable BEFORE UPDATE OF kind ON tasks WHEN NEW.kind IS NOT OLD.kind BEGIN SELECT RAISE(ABORT,'task record type is immutable'); END;
+
+CREATE TRIGGER trg_okr_review_items_request_kind_insert BEFORE INSERT ON okr_review_items WHEN NOT EXISTS(SELECT 1 FROM tasks WHERE id=NEW.request_id AND kind='okr_review') BEGIN SELECT RAISE(ABORT,'OKR item parent must be an OKR review Task'); END;
+
+CREATE TRIGGER trg_okr_review_items_request_kind_update BEFORE UPDATE OF request_id ON okr_review_items WHEN NOT EXISTS(SELECT 1 FROM tasks WHERE id=NEW.request_id AND kind='okr_review') BEGIN SELECT RAISE(ABORT,'OKR item parent must be an OKR review Task'); END;
