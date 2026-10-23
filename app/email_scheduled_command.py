@@ -3,6 +3,9 @@
 from __future__ import annotations
 
 import json
+import imaplib
+import socket
+import time
 from collections.abc import Callable, Mapping, Sequence
 from dataclasses import dataclass
 from datetime import datetime, timezone
@@ -33,10 +36,31 @@ from app.email_worker import (
     persist_model_primary_classification,
     run_email_discovery_once,
 )
+from app.external_retry import retry_delay_seconds
 from app.store import AutoReplyStore
 
 
 HISTORY_EMBEDDING_TIMEOUT_SECONDS = 120.0
+DISCOVERY_NETWORK_MAX_ATTEMPTS = 3
+
+
+class TransientEmailDiscoveryError(TimeoutError):
+    """All failed account scans ended in a retryable provider outage."""
+
+
+def _is_transient_discovery_error(exc: Exception) -> bool:
+    """Distinguish transport outages from account setup and local scan defects."""
+    if isinstance(exc, ConnectionError):
+        # The readonly adapter also uses ConnectionError for login/configuration
+        # failures, which cannot be repaired by retrying the same credentials.
+        detail = str(exc).casefold()
+        if detail.startswith("imap login failed:") or detail in {
+            "email imap credential is unavailable",
+            "email imap tls is required",
+        }:
+            return False
+        return True
+    return isinstance(exc, (socket.gaierror, TimeoutError, imaplib.IMAP4.abort))
 
 
 @dataclass(frozen=True)
@@ -266,6 +290,7 @@ class EmailMessageCheckOnceCommand:
     dependency_builder: Callable[
         [object], EmailDiscoveryBootstrap
     ] = build_email_discovery_dependencies
+    sleep: Callable[[float], None] = time.sleep
 
     def __call__(self) -> str:
         """Read each enabled account once and leave all consumers asynchronous."""
@@ -275,11 +300,27 @@ class EmailMessageCheckOnceCommand:
         if not accounts:
             return "email-message-check-once accounts=0 discovered=0 failures=0"
         active_model = bootstrap.load_active_model()
+        account_errors: list[Exception] = []
+
+        def scan_with_backoff(account: Mapping[str, object], model: object) -> object:
+            for attempt in range(DISCOVERY_NETWORK_MAX_ATTEMPTS):
+                try:
+                    return bootstrap.scan_account(account, model)
+                except Exception as exc:
+                    if (
+                        not _is_transient_discovery_error(exc)
+                        or attempt == DISCOVERY_NETWORK_MAX_ATTEMPTS - 1
+                    ):
+                        account_errors.append(exc)
+                        raise
+                    self.sleep(retry_delay_seconds(1.0, attempt))
+            raise AssertionError("unreachable email discovery retry loop exit")
+
         try:
             metrics = run_email_discovery_once(
                 accounts,
                 active_model,
-                scan_account=bootstrap.scan_account,
+                scan_account=scan_with_backoff,
                 record_health=bootstrap.record_health,
             )
         finally:
@@ -287,6 +328,13 @@ class EmailMessageCheckOnceCommand:
             if callable(close_model):
                 close_model()
         if metrics["failures"]:
+            if len(account_errors) == metrics["failures"] and all(
+                _is_transient_discovery_error(exc) for exc in account_errors
+            ):
+                raise TransientEmailDiscoveryError(
+                    "email discovery failed for "
+                    f"{metrics['failures']} account operation(s)"
+                ) from account_errors[0]
             raise RuntimeError(
                 "email discovery failed for "
                 f"{metrics['failures']} account operation(s)"
