@@ -587,6 +587,7 @@ def test_native_input_new_fact_below_global_water_keeps_canonical_id_on_reforwar
                         "source_physical_id": source_input[0], "canonical_id": 404225}],
             "meeting_business_keys": [{"source_meeting_physical_id": 221,
                                        "task_business_key_row_id": 225}],
+                "workbench_attachment_highwater": 234,
         }
 
         source_metadata = capture_task_entities(db)

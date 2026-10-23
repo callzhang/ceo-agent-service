@@ -3891,6 +3891,11 @@ Task2D7A 的 Workbench parent 候选以 `workbench_tasks.id` 原生 INTEGER 为�
 按已保存的 locator 读取 managed attachment root 中的文件，不从 UUID 或整数路径组件反推
 数据库 owner，也不移动迁移后的现有文件。真实旧 Workbench constructor 的逆迁新附件保留
 由单独的文件协调验收负责；Turn 生命周期、constructor 启用、部署及线上读回仍未完成。
+附件 native 整数 ID 使用 AUTOINCREMENT，且显式逆迁 handoff 携带 allocator highwater，
+正向重迁恢复它；因此 reconciliation 删除最高附件后，新上传不会复用仍可能映射到来源
+UUID 的旧 canonical ID。`test_native_reconciliation_preserves_target_injected_source_style_locator`
+只在 native target 中手工插入来源样式 locator；真正的来源迁入覆盖由 Task2D7A API/迁移
+回归与独立文件协调 operator 提供。
 
 Task2D7I 的显式逆迁文件协调器在 caller-owned FK-off transaction 中，把新建或
 locator 已变化的 native attachment 通过硬链接暂存到恢复后的来源 parent UUID / attachment

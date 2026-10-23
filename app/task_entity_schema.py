@@ -637,11 +637,25 @@ def migrate_task_entities(
         if name in target_tables or name.startswith(("idx_", "trg_")):
             if not sql.lstrip().lower().startswith("create table"):
                 db.execute(sql)
+    attachment_sequence = _sequence(db, "workbench_attachments")
+    attachment_water = attachment_sequence[1] if attachment_sequence else 0
+    if inverse_identity is not None:
+        attachment_water = max(
+            attachment_water, handoff["workbench_attachment_highwater"]
+        )
+    # Keep the captured Tasks sequence rowid stable while restoring it; target
+    # AUTOINCREMENT owners may have allocated sqlite_sequence rowids meanwhile.
+    db.execute("delete from main.sqlite_sequence where name='workbench_attachments'")
     db.execute("delete from main.sqlite_sequence where name='tasks'")
     if metadata["task_sequence"] is not None:
         rowid, water = metadata["task_sequence"]
         db.execute("insert into main.sqlite_sequence(rowid,name,seq) values(?, 'tasks', ?)",
                    (rowid, water))
+    if attachment_water:
+        db.execute(
+            "insert into main.sqlite_sequence(name,seq) values('workbench_attachments',?)",
+            (attachment_water,),
+        )
     for stage in staged.values():
         db.execute("drop table temp." + _quote(stage))
     return {
@@ -664,16 +678,21 @@ def _validate_inverse_identity(value: dict | None) -> dict:
         return {"owners": {}, "meeting_business_keys": {},
                 "workbench_parent_identities": {},
                 "workbench_attachment_identities": {},
-                "workbench_attachment_files": {}}
+                "workbench_attachment_files": {},
+                "workbench_attachment_highwater": 0}
     if (not isinstance(value, dict) or not {"version", "owners"}.issubset(value)
             or not set(value).issubset({"version", "owners", "meeting_business_keys",
                                         "workbench_parent_identities",
                                         "workbench_attachment_identities",
-                                        "workbench_attachment_files"})
+                                        "workbench_attachment_files",
+                                        "workbench_attachment_highwater"})
             or value["version"] != 1):
         raise ValueError("unsupported inverse Task identity handoff")
     if not isinstance(value["owners"], list):
         raise ValueError("invalid inverse Task identity handoff owners")
+    attachment_highwater = value.get("workbench_attachment_highwater", 0)
+    if type(attachment_highwater) is not int or attachment_highwater < 0:
+        raise ValueError("invalid Workbench attachment allocation highwater")
     result = {}
     canonical = set()
     for row in value["owners"]:
@@ -778,7 +797,8 @@ def _validate_inverse_identity(value: dict | None) -> dict:
     return {"owners": result, "meeting_business_keys": key_edges,
             "workbench_parent_identities": parent_identities,
             "workbench_attachment_identities": attachment_identities,
-            "workbench_attachment_files": files}
+            "workbench_attachment_files": files,
+            "workbench_attachment_highwater": attachment_highwater}
 
 
 def _inverse_identity_digest(value: dict) -> str:
@@ -963,6 +983,14 @@ def restore_task_entities(db: sqlite3.Connection, source_metadata: dict, forward
     if source_metadata["source_objects"] != forward_metadata["source_objects"]:
         raise ValueError("Task source declaration metadata differs from forward capture")
     _, _, identities = _inverse_indexes(db, forward_metadata)
+    attachment_sequence = _sequence(db, "workbench_attachments")
+    attachment_rows_highwater = db.execute(
+        "select coalesce(max(id),0) from main.workbench_attachments"
+    ).fetchone()[0]
+    attachment_highwater = max(
+        int(attachment_rows_highwater),
+        attachment_sequence[1] if attachment_sequence else 0,
+    )
     unsupported_key_owner = db.execute(
         "select task.kind from main.task_business_keys business "
         "join main.tasks task on task.id=business.task_id "
@@ -1349,6 +1377,7 @@ def restore_task_entities(db: sqlite3.Connection, source_metadata: dict, forward
             if source_id != target_id
         ],
         "meeting_business_keys": meeting_business_keys,
+        "workbench_attachment_highwater": attachment_highwater,
     }
     if attachment_identities:
         inverse_identity["workbench_attachment_identities"] = attachment_identities

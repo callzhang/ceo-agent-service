@@ -1,34 +1,53 @@
 # Task 2D7A Workbench parent and attachment runtime report
 
-Status: **PARTIAL — native parent CRUD/API and attachment runtime implemented; Task 2D7A remains incomplete pending the separate inverse-tool/full-constructor/portable-cycle gate.** This report does not claim native constructor cold-start acceptance.
+Status: **Implementation complete locally; independent whole-BASE..HEAD SPEC/QUALITY review and the later assembled global Task5 gate remain pending.** The native Workbench constructor is not activated.
 
-## Implementation boundary
+## Runtime boundary
 
-The runtime now uses the assembled native `workbench_tasks` and `workbench_attachments` tables. `workbench_tasks.id` and `workbench_attachments.id` are native integer identities exposed through the existing string DTOs as canonical decimal strings. Attachment ownership uses `workbench_attachments.workbench_task_id`; source `client_request_id` remains a UUID business key, and source `storage_path` remains the independent file locator. Attachment bytes remain filesystem-backed.
+Workbench parent and attachment reads/writes use assembled native `workbench_tasks` and `workbench_attachments`. Canonical native integer IDs cross the existing string DTO/API boundary as decimal strings. Parent routing, list cursors, archive fencing and provider-session ownership use native IDs; the active Turn fence reads raw queued/running `tasks.status` through native `workbench_turns` ownership. Attachment `client_request_id` remains the UUID business idempotency key, and persisted `storage_path` remains independent filesystem provenance. Reconciliation follows the saved locator under the managed attachment root; it neither infers ownership from path segments nor relocates migrated source files. New writes retain the existing staged file/metadata transaction protocol.
 
-Task create/get/summary/list/paginated-list/rename/archive and parent-path API operations use native integer parent identity. Summary and archive fencing read raw queued/running state by joining native `workbench_turns` to its `tasks.status`. Provider-session update resolves the parent from the native turn row. Existing API routes and DTOs remain in place; task IDs are accepted as canonical positive decimal path strings, while turn and artifact IDs retain UUID parsing.
+The actual API regression confirmed native attachment ID reuse: migrate two real source attachments with sparse source identity, reconcile away the highest file/row, then POST a replacement through the registered API. Before the fix, SQLite reused the retired canonical ID (`replacement_id == retired_canonical_id == 235`), and the fail-first regression stopped at `assert int(replacement_id) > retired_canonical_id`; this allowed its sparse inverse identity to refer to a different upload. The target attachment PK is now `INTEGER PRIMARY KEY AUTOINCREMENT`; explicit inverse identity carries the current attachment allocator high-water, and reforward restores it. The regression verifies replacement request ID, filename, media type, content size/hash, new source UUID identity, exact bytes and parent ownership; it performs a second portable inverse/reforward and proves the next API upload receives a greater canonical ID while retaining its own request/hash.
 
-Attachment save/list use native ownership and native attachment IDs, retaining UUID request-key idempotency and the existing staged-file, metadata transaction, rename, fsync, and rollback cleanup protocol. Current attachment reconciliation now validates persisted `storage_path` against the managed root and file protocol rather than inferring parent/attachment identity from locator path components. This preserves captured UUID-locator files after migration. No source predecessor implementation was edited.
+The deterministic target DDL is emitted by `app/task_run_entity_definitions.py::task_run_entity_objects()`; no static generated artifact exists to update. The regenerated `workbench_attachments` SQL is exactly `CREATE TABLE workbench_attachments (id INTEGER PRIMARY KEY AUTOINCREMENT,"workbench_task_id" INTEGER NOT NULL REFERENCES workbench_tasks(id),"client_request_id" TEXT NOT NULL,"filename" TEXT NOT NULL,"media_type" TEXT NOT NULL,"size_bytes" INTEGER NOT NULL,"content_sha256" TEXT NOT NULL,"storage_path" TEXT NOT NULL,"created_at" TEXT NOT NULL DEFAULT current_timestamp)`. Its SHA-256 is `528e7a6467dcc81030cf11356e6c2b9adfb6eb1151024d490b684432272130a2`; deterministic `task_run_field_map()` SHA-256 remains `48597a8ff5c98265172e0f7c59bd620a55aa41d022e4c04b77722171268e83b5`.
+
+The test `test_native_reconciliation_preserves_target_injected_source_style_locator` manually inserts a source-style UUID locator into a native target row. It is not a source-migration test. Actual migration is covered by the native API regression and the explicit Task2D7I operator.
 
 ## Evidence
 
-Before implementation, the new native-target CRUD test failed at the original Workbench parent writer: against the actual assembled target DDL it attempted to insert the removed `_kind` source column (`sqlite3.OperationalError: table tasks has no column named _kind`). The original source-shaped implementation therefore does not satisfy the target contract. The native implementation then passed the same assembled-target fixture. The tests bind current WorkbenchStore methods to the target schema with `object.__new__`; this intentionally does **not** exercise the still-source `WorkbenchStore` constructor.
+The native-target first-run writer previously failed because the source-shaped code tried to insert removed `_kind` (`sqlite3.OperationalError: table tasks has no column named _kind`). The assembled-target test now passes. Store methods in that fixture are bound via `object.__new__`, which does not claim native constructor activation.
 
-The fixture executes the actual Task/Run assembled target DDL. Focused tests cover native parent CRUD/state/cursor/archive fencing, running-turn fencing, native-turn provider-session ownership, numeric attachment API IDs, request-key replay/conflict, exact stored path/hash/bytes, preservation of a migrated historical UUID attachment locator, API create/get/rename/list/upload, and rollback cleanup when metadata commit fails.
-
-Commands run from the assigned worktree:
+Commands and results from the assigned worktree:
 
 ```text
-ruff check app/workbench/store.py app/workbench/api.py tests/test_workbench_native_parent.py
-python -m compileall -q app/workbench/store.py app/workbench/api.py tests/test_workbench_native_parent.py
-git diff --check
-pytest -q tests/test_workbench_native_parent.py
+pytest -q tests/test_workbench_native_parent.py::test_highest_reconciled_attachment_identity_is_not_reused_across_portable_inverse
+1 passed
+
+pytest -q tests/test_task_run_entity_definitions.py tests/test_workbench_native_parent.py
+22 passed
+
+pytest -q tests/test_task_run_entity_definitions.py tests/test_workbench_native_parent.py tests/test_task_entity_schema.py
+48 passed, 2 failed
 ```
 
-Result: Ruff passed, compileall passed, diff check passed, **6 focused tests passed**.
+The two broader-selection failures were `test_native_input_new_fact_below_global_water_keeps_canonical_id_on_reforward`, whose exact inverse-identity dictionary expected no Workbench allocation-highwater key, and `test_new_native_email_task_inverse_uses_predecessor_runtime_identity`, which fails in unchanged `AutoReplyStore._validate_runtime_operation_workload` because that test passes a non-decimal Email workload key. The direct expected handoff was updated to the new contract and passed in the focused rerun below. The unrelated validator/test mismatch remains outside Task2D7A and was not changed.
 
-## Remaining gate and limits
+Final focused rerun:
 
-The actual unchanged predecessor proof in `workbench-attachment-inverse-preparation.md` establishes that Task inverse currently leaves a newly created native attachment incompatible with the frozen source reader; the predecessor constructor deletes the row and file, including when the public ID is UUID-substituted but the persisted path remains independent. The approved remedy is a separate explicit inverse filesystem handoff that allocates source-compatible attachment identity, relocates only newly created native attachment files during inverse, updates restored source `storage_path`, preserves source bytes until verified commit, and carries portable data for exact re-forward restoration. This implementation does not add that tool or alter the frozen predecessor.
+```text
+pytest -q tests/test_task_run_entity_definitions.py tests/test_workbench_native_parent.py tests/test_task_entity_schema.py::test_native_input_new_fact_below_global_water_keeps_canonical_id_on_reforward
+23 passed
+```
 
-The genuine source constructor has not been changed or claimed native. There is no accepted cold native constructor, actual API-to-inverse integration, unchanged-predecessor post-inverse preservation, or two-cycle portable re-forward proof yet. Those remain required before Task 2D7A can be marked done. No full suite, production operation, provider action, CLI action, push, or deploy was run.
+The explicit unchanged-predecessor operator was rerun after the allocator change:
+
+```text
+WORK_DIR=$(mktemp -d /private/tmp/ceo-task-run-phase2-_ntbufyi/task-2d7a-resume-XXXXXX) && python scripts/validate_task_2d7i_workbench_inverse.py --predecessor-root /private/tmp/ceo-task-run-phase2-_ntbufyi/predecessor-c38ce12cf --work-dir "$WORK_DIR"
+```
+
+Result: exit 0. It used predecessor SHA `b5c5b92fc0985ef21d865379193a948df171d02a3f8d43186a6023d78f1d4a66`; both cycles constructed the unchanged old WorkbenchStore, preserved the captured source control attachment bytes/hash and parent facts, retained new API-created attachments with their source UUIDs and metadata, allowed the old API write in cycle 1, and completed reforward. The run-owned output lives under the reported fresh task directory; no pre-existing temp directories were touched.
+
+Ruff, compileall and `git diff --check` passed for the changed Python files. The exact deterministic assembled target DDL test passes with AUTOINCREMENT, and source schema factories were not modified. No full suite, production, provider, CLI, constructor activation, main merge, push or deploy was run.
+
+## Remaining boundary
+
+The accepted Task2D7I file coordinator remains explicit migration tooling. No Workbench Turn lifecycle, runtime constructor selection, Task5/global assembly, release or production behavior is claimed. Independent SPEC/QUALITY review must cover original BASE `eff9c4695ec50be92faf237e24af6a8dcaf8092e` through the final integrated HEAD and account for the interleaved Task2D7I prerequisite separately.

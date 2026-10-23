@@ -24,7 +24,7 @@ from app.task_entity_schema import (
 from app.task8_storage import register_task8_functions
 from app.workbench.api import register_workbench_routes
 from app.workbench.store import WorkbenchConflictError, WorkbenchStore
-from app.task_lifecycle_storage import source_assignments
+from app.task_lifecycle_storage import source_assignments, source_insert
 from app.storage_payload import TASK_RECORD_TYPES
 from tests.test_task_entity_schema import _source
 
@@ -168,7 +168,7 @@ def _attachment_facts(store: WorkbenchStore, attachment_id: str) -> dict[str, ob
         return dict(row)
 
 
-def test_native_reconciliation_preserves_historical_storage_locator(tmp_path: Path):
+def test_native_reconciliation_preserves_target_injected_source_style_locator(tmp_path: Path):
     store = _target_store(tmp_path)
     task = store.create_task(title="Migrated parent", runtime_kind="codex")
     old_parent = "8fb4c9c5-a0e2-4e72-89d6-318f0921234d"
@@ -585,3 +585,283 @@ def test_native_attachment_inverse_stages_source_locator_and_preserves_bytes(tmp
             db, plan_again, inverse_again["inverse_identity"], managed_root,
         )
     assert len(inverse_again["inverse_identity"]["workbench_attachment_files"]) == 2
+
+
+def test_highest_reconciled_attachment_identity_is_not_reused_across_portable_inverse(
+    tmp_path: Path,
+):
+    from app.task20_definitions import task20_projection
+
+    path = tmp_path / "store.sqlite3"
+    source = _source()
+    parent_uuid = str(uuid4())
+    attachment_uuid = str(uuid4())
+    source.execute("update tasks set legacy_key=? where id=202", (parent_uuid,))
+    source_attachment_id = source.execute(
+        "select id from tasks where _kind=?",
+        (TASK_RECORD_TYPES.code("workbench_attachments"),),
+    ).fetchone()[0]
+    control_uuid = str(uuid4())
+    control_path = tmp_path / "workbench" / "attachments" / parent_uuid / control_uuid
+    control_path.parent.mkdir(parents=True)
+    control_bytes = b"lower captured attachment retained"
+    control_path.write_bytes(control_bytes)
+    control_fields = source_assignments(
+        "workbench_attachments",
+        {
+            "id": control_uuid,
+            "size_bytes": len(control_bytes),
+            "content_sha256": hashlib.sha256(control_bytes).hexdigest(),
+            "storage_path": str(control_path),
+        },
+        {},
+        payload_source="tasks.payload_json",
+        source_alias="tasks",
+    )
+    source.execute(
+        f"update tasks set {control_fields.sql} where _kind=? and id=?",
+        (*control_fields.parameters, TASK_RECORD_TYPES.code("workbench_attachments"), source_attachment_id),
+    )
+    from tests.test_task20_definitions import payload
+    old_path = tmp_path / "workbench" / "attachments" / parent_uuid / attachment_uuid
+    old_bytes = b"migrated highest attachment before retirement"
+    old_path.write_bytes(old_bytes)
+    high_values = payload(source, "workbench_attachments")
+    high_values.update(
+        id=attachment_uuid,
+        client_request_id=str(uuid4()),
+        filename="retired-highest.bin",
+        media_type="application/octet-stream",
+        size_bytes=len(old_bytes),
+        content_sha256=hashlib.sha256(old_bytes).hexdigest(),
+        storage_path=str(old_path),
+        created_at="2026-10-23T00:00:00+00:00",
+    )
+    columns, expressions, parameters = source_insert("workbench_attachments", high_values, {})
+    source.execute(
+        'insert into tasks("_kind","id","legacy_key","parent_id",'
+        + ",".join('"' + column + '"' for column in columns) + ") values(?,?,?, ?,"
+        + ",".join(expressions) + ")",
+        (TASK_RECORD_TYPES.code("workbench_attachments"), 235, "235", 202, *parameters),
+    )
+    source.commit()
+    disk = sqlite3.connect(path)
+    source.backup(disk)
+    disk.close()
+    source.close()
+
+    with sqlite3.connect(path) as db:
+        db.row_factory = sqlite3.Row
+        db.execute("pragma foreign_keys=off")
+        db.execute("begin immediate")
+        source_metadata = capture_task_entities(db)
+        forward = migrate_task_entities(db, source_metadata)
+        db.commit()
+
+    store = object.__new__(WorkbenchStore)
+    store.path = path
+    store.busy_timeout_seconds = 30
+    store.busy_timeout_milliseconds = 30_000
+    store._read_snapshot_connection = ContextVar("workbench_reuse_snapshot", default=None)
+    store._reused_connection = ContextVar("workbench_reuse_connection", default=None)
+    with store._connect() as db:
+        control_owner = db.execute(
+            "select id,storage_path,content_sha256 from workbench_attachments "
+            "where filename<>'retired-highest.bin'"
+        ).fetchone()
+        old_owner = db.execute(
+            "select id,workbench_task_id,client_request_id,storage_path "
+            "from workbench_attachments where filename='retired-highest.bin'"
+        ).fetchone()
+        assert old_owner[2] is not None
+        retired_canonical_id = int(old_owner[0])
+        migrated_parent_id = str(old_owner[1])
+        old_identity = db.execute(
+            "select public_key from task_run_identity_map "
+            "where source_kind='workbench_attachments' and target_id=?",
+            (retired_canonical_id,),
+        ).fetchone()
+        assert old_identity[0] == attachment_uuid
+
+    old_path.unlink()
+    store._reconcile_attachments()
+    remaining = store.list_attachments(migrated_parent_id)
+    assert [item.id for item in remaining] == [str(control_owner[0])]
+    assert Path(control_owner[1]).read_bytes() == control_bytes
+    assert hashlib.sha256(Path(control_owner[1]).read_bytes()).hexdigest() == control_owner[2]
+
+    class Executor:
+        workspace = tmp_path
+
+        def run_once(self):
+            return []
+
+    class Registry:
+        def kinds(self):
+            return ("codex",)
+
+    app = FastAPI()
+    register_workbench_routes(
+        app,
+        store,
+        Executor(),
+        Registry(),
+        tmp_path / "assets",
+        mutation_guard=lambda _request: None,
+        scheduler_interval_seconds=60,
+    )
+    request_id = str(uuid4())
+    with TestClient(app) as client:
+        response = client.post(
+            f"/api/workbench/tasks/{migrated_parent_id}/attachments",
+            json={
+                "client_request_id": request_id,
+                "filename": "replacement.bin",
+                "media_type": "text/plain",
+                "content_base64": base64.b64encode(b"replacement attachment").decode(),
+            },
+        )
+    assert response.status_code == 201, response.text
+    replacement_id = response.json()["id"]
+    assert replacement_id.isdecimal()
+    with store._connect() as db:
+        assert db.execute("select client_request_id from workbench_attachments where id=?",
+                          (int(replacement_id),)).fetchone()[0] == request_id
+
+    managed_root = tmp_path / "workbench" / "attachments"
+    with store._attachment_lock(create_workbench=False):
+        with store._connect() as db:
+            snapshot = capture_workbench_attachment_files(db, managed_root)
+            db.execute("pragma foreign_keys=off")
+            db.execute("begin immediate")
+            inverse = restore_task_entities(db, source_metadata, forward)
+            inverse_plan = stage_workbench_attachment_inverse_files(
+                db, managed_root, snapshot, inverse,
+            )
+            db.commit()
+            finalize_workbench_attachment_inverse_files(
+                db, inverse_plan, inverse["inverse_identity"], managed_root,
+            )
+
+    portable = json.loads(json.dumps(inverse["inverse_identity"]))
+    identity = next(
+        row for row in portable["workbench_attachment_identities"]
+        if row["canonical_id"] == int(replacement_id)
+    )
+    new_source_public_id = identity["source_public_id"]
+    with store._connect() as db:
+        replacement = db.execute(
+            "select id,client_request_id,filename,media_type,size_bytes,content_sha256 from ("
+            + task20_projection("workbench_attachments") + ") "
+            "where id=?",
+            (new_source_public_id,),
+        ).fetchone()
+        assert replacement is not None
+    assert tuple(replacement[1:]) == (
+        request_id, "replacement.bin", "text/plain", len(b"replacement attachment"),
+        hashlib.sha256(b"replacement attachment").hexdigest(),
+    )
+
+    with store._attachment_lock(create_workbench=False):
+        with store._connect() as db:
+            db.row_factory = sqlite3.Row
+            db.execute("pragma foreign_keys=off")
+            db.execute("begin immediate")
+            current_source = capture_task_entities(db)
+            forward_plan = stage_workbench_attachment_forward_files(
+                db, managed_root, portable,
+            )
+            next_forward = migrate_task_entities(
+                db,
+                current_source,
+                source_context=inverse["source_context"],
+                inverse_identity=portable,
+            )
+            db.commit()
+        with store._connect() as db:
+            finalize_workbench_attachment_forward_files(
+                db, forward_plan, portable, managed_root,
+            )
+
+    with store._connect() as db:
+        reread = db.execute(
+            "select id,client_request_id,content_sha256,storage_path from workbench_attachments "
+            "where id=?",
+            (int(replacement_id),),
+        ).fetchone()
+        assert reread is not None
+        assert reread[1] == request_id
+        assert hashlib.sha256(Path(reread[3]).read_bytes()).hexdigest() == reread[2]
+        assert next_forward["identity_edges"]
+
+    assert int(replacement_id) > retired_canonical_id, (
+        "reconciled highest attachment ID was reused, allowing its old sparse source "
+        "identity to label a different upload"
+    )
+    assert new_source_public_id != attachment_uuid
+
+    replacement_facts = _attachment_facts(store, replacement_id)
+    replacement_path = Path(replacement_facts["storage_path"])
+    replacement_path.unlink()
+    store._reconcile_attachments()
+
+    with store._attachment_lock(create_workbench=False):
+        with store._connect() as db:
+            snapshot = capture_workbench_attachment_files(db, managed_root)
+            db.execute("pragma foreign_keys=off")
+            db.execute("begin immediate")
+            inverse_again = restore_task_entities(db, source_metadata, next_forward)
+            inverse_plan_again = stage_workbench_attachment_inverse_files(
+                db, managed_root, snapshot, inverse_again,
+            )
+            db.commit()
+            finalize_workbench_attachment_inverse_files(
+                db, inverse_plan_again, inverse_again["inverse_identity"], managed_root,
+            )
+    portable_again = json.loads(json.dumps(inverse_again["inverse_identity"]))
+    with store._attachment_lock(create_workbench=False):
+        with store._connect() as db:
+            db.row_factory = sqlite3.Row
+            db.execute("pragma foreign_keys=off")
+            db.execute("begin immediate")
+            source_after_second_inverse = capture_task_entities(db)
+            forward_plan_again = stage_workbench_attachment_forward_files(
+                db, managed_root, portable_again,
+            )
+            forward_again = migrate_task_entities(
+                db, source_after_second_inverse,
+                source_context=inverse_again["source_context"],
+                inverse_identity=portable_again,
+            )
+            db.commit()
+        with store._connect() as db:
+            finalize_workbench_attachment_forward_files(
+                db, forward_plan_again, portable_again, managed_root,
+            )
+            seq = db.execute(
+                "select seq from sqlite_sequence where name='workbench_attachments'"
+            ).fetchone()[0]
+            assert seq >= int(replacement_id)
+
+    third_request_id = str(uuid4())
+    with TestClient(app) as client:
+        third_response = client.post(
+            f"/api/workbench/tasks/{migrated_parent_id}/attachments",
+            json={
+                "client_request_id": third_request_id,
+                "filename": "third.bin",
+                "media_type": "text/plain",
+                "content_base64": base64.b64encode(b"third attachment").decode(),
+            },
+        )
+    assert third_response.status_code == 201, third_response.text
+    assert int(third_response.json()["id"]) > int(replacement_id)
+    with store._connect() as db:
+        third_row = db.execute(
+            "select client_request_id,content_sha256 from workbench_attachments where id=?",
+            (int(third_response.json()["id"]),),
+        ).fetchone()
+    assert tuple(third_row) == (
+        third_request_id, hashlib.sha256(b"third attachment").hexdigest(),
+    )
+    assert forward_again["identity_edges"]

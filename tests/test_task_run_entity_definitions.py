@@ -236,3 +236,27 @@ def test_feedback_item_native_insert_accepts_source_valid_unassigned_batch_value
     ]
     foreign_keys = db.execute('pragma foreign_key_list(feedback_processing_items)').fetchall()
     assert [(row[3], row[2], row[4]) for row in foreign_keys] == [('task_id', 'tasks', 'id')]
+
+
+def test_workbench_attachment_ids_are_never_reused_after_highest_row_deletion():
+    db = sqlite3.connect(":memory:")
+    db.execute("pragma foreign_keys=on")
+    for ddl in task_run_entity_objects().values():
+        db.execute(ddl)
+    db.execute("insert into workbench_tasks(id,title,runtime_kind) values(1,'parent','codex')")
+    db.execute(
+        "insert into workbench_attachments(workbench_task_id,client_request_id,filename,"
+        "media_type,size_bytes,content_sha256,storage_path) values"
+        "(1,'request-1','one.txt','text/plain',0,'hash','/one'),"
+        "(1,'request-2','two.txt','text/plain',0,'hash','/two')"
+    )
+    retired_id = db.execute("select max(id) from workbench_attachments").fetchone()[0]
+    db.execute("delete from workbench_attachments where id=?", (retired_id,))
+
+    replacement_id = db.execute(
+        "insert into workbench_attachments(workbench_task_id,client_request_id,filename,"
+        "media_type,size_bytes,content_sha256,storage_path) "
+        "values(1,'request-3','three.txt','text/plain',0,'hash','/three') returning id"
+    ).fetchone()[0]
+
+    assert replacement_id > retired_id
