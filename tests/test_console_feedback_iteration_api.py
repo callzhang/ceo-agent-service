@@ -32,13 +32,13 @@ def test_feedback_iteration_decision_api_rejects_forged_round_identity(tmp_path)
     store.create_feedback_processing_batch(["manual:1"], batch_id="batch-1")
     store.claim_feedback_processing_items("batch-1", ["manual:1"])
     store.associate_feedback_processing_turn(
-        "manual:1", expected_batch_id="batch-1", workbench_task_id="actual-task",
-        workbench_turn_id="actual-turn", attempt_id=1, agent_run_id=2,
+        "manual:1", expected_batch_id="batch-1", workbench_task_id="100",
+        workbench_turn_id="200", attempt_id=1, agent_run_id=2,
     )
     app = FastAPI()
     register_console_routes(app, store_factory=lambda: store, status_payload_factory=lambda: {}, feedback_backlog_factory=lambda: {}, attention_rows_factory=lambda: [])
     payload = {
-        "workbench_task_id": "forged-task", "workbench_turn_id": "forged-turn",
+        "workbench_task_id": "101", "workbench_turn_id": "201",
         "decision": {
             "scope": "skill_only", "root_cause": "Procedure is incomplete.",
             "feedback_keys": ["manual:1"], "source_references": ["attempt#1"],
@@ -57,7 +57,7 @@ def test_feedback_iteration_decision_api_rejects_forged_round_identity(tmp_path)
 
 @pytest.mark.parametrize(
     ("task_id", "turn_id"),
-    [(1, "actual-turn"), ("actual-task", None)],
+    [(1, "actual-turn"), ("100", None)],
 )
 def test_feedback_iteration_decision_api_rejects_non_string_provenance(
     tmp_path, task_id, turn_id
@@ -67,8 +67,8 @@ def test_feedback_iteration_decision_api_rejects_non_string_provenance(
     store.create_feedback_processing_batch(["manual:1"], batch_id="batch-1")
     store.claim_feedback_processing_items("batch-1", ["manual:1"])
     store.associate_feedback_processing_turn(
-        "manual:1", expected_batch_id="batch-1", workbench_task_id="actual-task",
-        workbench_turn_id="actual-turn", attempt_id=1, agent_run_id=2,
+        "manual:1", expected_batch_id="batch-1", workbench_task_id="100",
+        workbench_turn_id="200", attempt_id=1, agent_run_id=2,
     )
     app = FastAPI()
     register_console_routes(app, store_factory=lambda: store, status_payload_factory=lambda: {}, feedback_backlog_factory=lambda: {}, attention_rows_factory=lambda: [])
@@ -88,3 +88,24 @@ def test_feedback_iteration_decision_api_rejects_non_string_provenance(
 
     assert response.status_code == 422
     assert response.json()["code"] == "validation_error"
+
+
+def test_feedback_item_patch_keeps_empty_optional_workbench_references(tmp_path):
+    store = AutoReplyStore(tmp_path / "feedback.sqlite3")
+    store.upsert_feedback_event(key="manual:1", feedback_token="token")
+    store.create_feedback_processing_batch(["manual:1"], batch_id="batch-1")
+    store.claim_feedback_processing_items("batch-1", ["manual:1"])
+    app = FastAPI()
+    register_console_routes(app, store_factory=lambda: store, status_payload_factory=lambda: {}, feedback_backlog_factory=lambda: {}, attention_rows_factory=lambda: [])
+
+    with TestClient(app) as client:
+        response = client.patch(
+            "/api/console/feedback/items/manual:1",
+            json={"workbench_task_id": "", "workbench_turn_id": "", "attempt_id": 7},
+        )
+
+    assert response.status_code == 200
+    item = store.get_feedback_processing_item("manual:1")
+    assert item.workbench_task_id == ""
+    assert item.workbench_turn_id == ""
+    assert item.attempt_id == 7

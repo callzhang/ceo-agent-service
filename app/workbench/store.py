@@ -14,12 +14,10 @@ from typing import Any
 from uuid import UUID, uuid4
 
 from app.store import SQLITE_BUSY_TIMEOUT_SECONDS, AutoReplyStore, _utc_store_time
-from app.task_storage import task_physical_id, task_id_expression
-from app.task8_storage import task8_insert_parts, task8_set_parts
-from app.task12_storage import insert_task12, task12_projection
-from app.task20_definitions import task20_column, task20_projection
+from app.task_entity_storage import create_task as create_native_task, update_task_cas
+from app.task12_storage import task12_projection
 from app.external_retry import MAX_AUTOMATIC_ATTEMPTS
-from app.run_storage import WORKBENCH_EVENT_SQL, insert_run
+from app.run_storage import insert_run
 from app.workbench.native_events import (
     AGENT_EVENTS,
     forget_live_turn,
@@ -52,6 +50,7 @@ _TURN_TRANSITIONS = {
     TurnStatus.COMPLETED: set(),
     TurnStatus.STOPPED: set(),
     TurnStatus.FAILED: set(),
+    TurnStatus.WAITING_CONFIRMATION: set(),
 }
 
 _DEFAULT_WORKBENCH_TASK_TITLE = "新任务"
@@ -82,7 +81,11 @@ def _begin_immediate_with_retry(
 
 WORKBENCH_TASK_SQL = """select cast(id as text) as id,title,runtime_kind,
     provider_session_ref,archived_at,created_at,updated_at from workbench_tasks"""
-WORKBENCH_TURN_SQL = task20_projection("workbench_turns")
+WORKBENCH_TURN_SQL = """select cast(t.id as text) as id,cast(w.workbench_task_id as text) as task_id,
+    w.client_request_id,w.task_sequence,w.user_text,t.status,w.stop_requested,
+    '' as final_text,w.error_code,w.error_detail,w.resume_context,w.execution_run_id,w.runtime_quiesced_run_id,
+    t.lease_owner,t.lease_expires_at,w.started_at,w.completed_at,t.created_at,t.updated_at
+    from tasks t join workbench_turns w on w.task_id=t.id where t.kind='workbench_turn'"""
 
 
 # Attachments are owned by the native Workbench parent. Public DTO identities
@@ -91,10 +94,11 @@ WORKBENCH_ATTACHMENT_SQL = """select cast(id as text) as id,
     cast(workbench_task_id as text) as task_id,client_request_id,filename,
     media_type,size_bytes,content_sha256,storage_path,created_at
     from workbench_attachments"""
-WORKBENCH_ARTIFACT_SQL = f"""select c.id,t.legacy_key as turn_id,
-    c.label,c.path,c.media_type,c.created_at
-    from ({task12_projection("workbench_artifacts")}) c join tasks t on t.id=c.turn_id
-    where t.record_type='workbench_turns'"""
+WORKBENCH_ARTIFACT_SQL = """select cast(a.id as text) as id,
+    cast(a.workbench_turn_id as text) as turn_id,a.label,a.path,a.media_type,a.created_at
+    from workbench_artifacts a"""
+WORKBENCH_EVENT_SQL = """select id,cast(task_id as text) as turn_id,sequence,event_type,
+    payload_json,created_at from workbench_events"""
 def _json_object_text(value: dict[str, Any] | str, *, field: str) -> str:
     if isinstance(value, str):
         try:
@@ -411,62 +415,38 @@ class WorkbenchStore(AutoReplyStore):
                 raise WorkbenchConflictError(
                     "task_archived", "workbench task is archived"
                 )
+            parent_id = self._native_task_id(task_id)
             active = db.execute(
-                f"""
-                select 1 from ({WORKBENCH_TURN_SQL}) as workbench_turns
-                where task_id=? and status in ('queued', 'running')
-                """,
-                (task_id,),
+                "select 1 from workbench_turns w join tasks t on t.id=w.task_id "
+                "where w.workbench_task_id=? and t.status in ('queued','running') limit 1",
+                (parent_id,),
             ).fetchone()
             if active is not None:
                 raise ValueError("task already has an active turn")
-            turn_id = str(uuid4())
-            task_sequence = int(
-                db.execute(
-                    f"""select coalesce(max(task_sequence),0)+1
-                       from ({WORKBENCH_TURN_SQL}) as workbench_turns where task_id=?""",
-                    (task_id,),
-                ).fetchone()[0]
-            )
+            task_sequence = int(db.execute(
+                "select coalesce(max(task_sequence),0)+1 from workbench_turns where workbench_task_id=?",
+                (parent_id,),
+            ).fetchone()[0])
+            now_text = db.execute("select current_timestamp").fetchone()[0]
+            native = create_native_task(db, values={
+                "kind": "workbench_turn", "status": TurnStatus.QUEUED.value,
+                "created_at": now_text, "updated_at": now_text,
+            })
+            turn_id = str(native["id"])
             try:
-                insert_parts = task8_insert_parts('workbench_turns', {
-                    "legacy_key": turn_id,
-                    "parent_id": task_physical_id(db, "workbench_tasks", task_id),
-                    "client_request_id": client_request_id,
-                    "task_sequence": task_sequence, "user_text": user_text,
-                    "status": TurnStatus.QUEUED.value,
-                })
                 db.execute(
-                    f"insert into tasks ({insert_parts.columns}) values ({insert_parts.values})",
-                    insert_parts.parameters,
+                    "insert into workbench_turns(task_id,workbench_task_id,client_request_id,"
+                    "task_sequence,user_text,stop_requested,error_code,error_detail,resume_context,"
+                    "execution_run_id,runtime_quiesced_run_id,started_at,completed_at) "
+                    "values(?,?,?,?,?,0,'','','','','','','')",
+                    (native["id"], parent_id, client_request_id, task_sequence, user_text),
                 )
             except sqlite3.IntegrityError as exc:
                 raise ValueError("task already has an active turn") from exc
             if task_sequence == 1 and task["title"] == _DEFAULT_WORKBENCH_TASK_TITLE:
-                set_parts = task8_set_parts(
-                    'workbench_tasks', {},
-                    update_sql={
-                        'title': '?',
-                        'updated_at': 'current_timestamp',
-                    },
-                )
                 db.execute(
-                    f"""
-                    update tasks
-                    set {set_parts.sql}
-                    where record_type='workbench_tasks' and legacy_key=? and {task20_column('workbench_tasks', 'title')}=?
-                      and not exists (
-                          select 1 from ({WORKBENCH_TURN_SQL}) as workbench_turns
-                          where task_id=? and id<>?
-                      )
-                    """,
-                    (
-                        _derive_task_title(user_text),
-                        task_id,
-                        _DEFAULT_WORKBENCH_TASK_TITLE,
-                        task_id,
-                        turn_id,
-                    ),
+                    "update workbench_tasks set title=?,updated_at=current_timestamp where id=? and title=?",
+                    (_derive_task_title(user_text), parent_id, _DEFAULT_WORKBENCH_TASK_TITLE),
                 )
             self._append_control_event(
                 db,
@@ -477,6 +457,7 @@ class WorkbenchStore(AutoReplyStore):
             return self._turn_from_row(self._require_turn(db, turn_id))
 
     def get_turn(self, turn_id: str) -> WorkbenchTurn | None:
+        turn_id = str(self._native_task_id(turn_id))
         with self._connect() as db:
             row = db.execute(
                 f"select * from ({WORKBENCH_TURN_SQL}) as workbench_turns where id=?", (turn_id,)
@@ -488,6 +469,7 @@ class WorkbenchStore(AutoReplyStore):
         return turn
 
     def list_turns(self, task_id: str) -> list[WorkbenchTurn]:
+        task_id = str(self._native_task_id(task_id))
         with self._connect() as db:
             self._require_task(db, task_id)
             rows = db.execute(
@@ -578,7 +560,7 @@ class WorkbenchStore(AutoReplyStore):
                 f"""
                 select workbench_turns.*
                 from ({WORKBENCH_TURN_SQL}) as workbench_turns
-                join ({WORKBENCH_TASK_SQL}) as workbench_tasks on workbench_tasks.id=workbench_turns.task_id
+                join workbench_tasks on workbench_tasks.id=cast(workbench_turns.task_id as integer)
                 where workbench_turns.status='queued'
                   and workbench_tasks.archived_at=''
                 order by workbench_turns.created_at, workbench_turns.id
@@ -587,35 +569,20 @@ class WorkbenchStore(AutoReplyStore):
             ).fetchone()
             if row is None:
                 return None
-            set_parts = task8_set_parts(
-                'workbench_turns', {},
-                update_sql={
-                    'status': "'running'",
-                    'lease_owner': '?',
-                    'lease_expires_at': '?',
-                    'execution_run_id': '?',
-                    'runtime_quiesced_run_id': "''",
-                    'started_at': f"case when {task20_column('workbench_turns', 'started_at')}='' then ? else {task20_column('workbench_turns', 'started_at')} end",
-                    'updated_at': '?',
-                },
-            )
-            if db.execute(
-                f"""
-                update tasks
-                set {set_parts.sql}
-                where record_type='workbench_turns' and legacy_key=? and {task20_column('workbench_turns', 'status')}='queued'
-                """,
-                (
-                    owner,
-                    lease_expires_at,
-                    execution_run_id,
-                    now_text,
-                    now_text,
-                    row["id"],
-                ),
-            ).rowcount != 1:
+            turn_id = int(row["id"])
+            updated = db.execute(
+                "update tasks set status='running',lease_owner=?,lease_expires_at=?,updated_at=? "
+                "where id=? and kind='workbench_turn' and status='queued' returning id",
+                (owner, lease_expires_at, now_text, turn_id),
+            ).fetchone()
+            if updated is None:
                 return None
-            return self._turn_from_row(self._require_turn(db, row["id"]))
+            db.execute(
+                "update workbench_turns set execution_run_id=?,runtime_quiesced_run_id='',"
+                "started_at=case when started_at='' then ? else started_at end where task_id=?",
+                (execution_run_id, now_text, turn_id),
+            )
+            return self._turn_from_row(self._require_turn(db, str(turn_id)))
 
     def renew_turn_lease(
         self,
@@ -637,20 +604,10 @@ class WorkbenchStore(AutoReplyStore):
         with self._connect() as db:
             db.execute("begin immediate")
             self._require_lease(db, turn_id, owner=owner, now_text=now_text)
-            set_parts = task8_set_parts(
-                'workbench_turns', {},
-                update_sql={
-                    'lease_expires_at': '?',
-                    'updated_at': '?',
-                },
-            )
             if db.execute(
-                f"""
-                update tasks
-                set {set_parts.sql}
-                where record_type='workbench_turns' and legacy_key=? and {task20_column('workbench_turns', 'status')}='running' and {task20_column('workbench_turns', 'lease_owner')}=? and {task20_column('workbench_turns', 'lease_expires_at')}>?
-                """,
-                (lease_expires_at, now_text, turn_id, owner, now_text),
+                "update tasks set lease_expires_at=?,updated_at=? where id=? and kind='workbench_turn' "
+                "and status='running' and lease_owner=? and lease_expires_at>?",
+                (lease_expires_at, now_text, int(turn_id), owner, now_text),
             ).rowcount != 1:
                 raise ValueError("turn lease is stale")
             return self._turn_from_row(self._require_turn(db, turn_id))
@@ -671,18 +628,7 @@ class WorkbenchStore(AutoReplyStore):
                 return self._turn_from_row(row)
             if TurnStatus.STOPPED not in _TURN_TRANSITIONS[status]:
                 raise ValueError("invalid turn transition")
-            set_parts = task8_set_parts(
-                'workbench_turns', {},
-                update_sql={
-                    'stop_requested': '1',
-                    'updated_at': '?',
-                },
-            )
-            db.execute(
-                f"""update tasks set {set_parts.sql}
-                where record_type='workbench_turns' and legacy_key=?""",
-                (now_text, turn_id),
-            )
+            db.execute("update workbench_turns set stop_requested=1 where task_id=?", (int(turn_id),))
             self._append_control_event(
                 db,
                 turn_id,
@@ -719,53 +665,49 @@ class WorkbenchStore(AutoReplyStore):
         with self._connect() as db:
             db.execute("begin immediate")
             self._require_executor_lease(db, turn_id, owner=owner, now_text=now_text)
+            native_turn_id = int(turn_id)
             ordinal = 0
             if event_type == "tool_completed":
                 ordinal = db.execute(
-                    "select count(*)+1 from runs where record_type='workbench_events' "
-                    f"and task_id={task_id_expression('workbench_turns', '?')} and event_type='tool_completed'", (turn_id,)
+                    "select count(*)+1 from workbench_events where task_id=? and event_type='tool_completed'",
+                    (native_turn_id,),
                 ).fetchone()[0]
                 call_id = full_payload.get("tool_call_id")
                 if isinstance(call_id, str):
                     started_id = started_tool_event_id(self.path, turn_id, call_id)
                     if started_id is not None:
                         db.execute(
-                            "update runs set payload_json=? "
-                            f"where record_type='workbench_events' and cast(legacy_key as integer)=? and task_id={task_id_expression('workbench_turns', '?')} and event_type='tool_started'",
-                            (json.dumps({"native_ordinal": ordinal}), started_id, turn_id),
+                            "update workbench_events set payload_json=? where id=? and task_id=? and event_type='tool_started'",
+                            (json.dumps({"native_ordinal": ordinal}), started_id, native_turn_id),
                         )
             elif event_type == "text_delta":
                 value = full_payload.get("native_ordinal")
                 ordinal = value if isinstance(value, int) and value > 0 else 1
             elif event_type in {"thinking_summary", "file_changed"}:
                 ordinal = db.execute(
-                    f"select count(*)+1 from runs where record_type='workbench_events' and task_id={task_id_expression('workbench_turns', '?')} and event_type=?",
-                    (turn_id, event_type),
+                    "select count(*)+1 from workbench_events where task_id=? and event_type=?",
+                    (native_turn_id, event_type),
                 ).fetchone()[0]
             payload_json = _json_object_text(
                 stored_payload(event_type, full_payload, ordinal=ordinal), field="payload"
             )
             expected_sequence = int(
                 db.execute(
-                    f"""
-                    select coalesce(max(sequence), 0) + 1
-                    from runs where record_type='workbench_events' and task_id={task_id_expression('workbench_turns', '?')}
-                    """,
-                    (turn_id,),
+                    "select coalesce(max(sequence),0)+1 from workbench_events where task_id=?",
+                    (native_turn_id,),
                 ).fetchone()[0]
             )
             if sequence != expected_sequence:
                 raise ValueError("event sequence must be next")
             try:
-                cursor = insert_run(db, "workbench_events", {
-                    "task_id": task_physical_id(db, "workbench_turns", turn_id),
-                    "sequence": sequence, "event_type": event_type,
-                    "payload_json": payload_json,
-                })
+                cursor = db.execute(
+                    "insert into workbench_events(task_id,sequence,event_type,payload_json,created_at) values(?,?,?,?,?)",
+                    (native_turn_id, sequence, event_type, payload_json, now_text),
+                )
             except sqlite3.IntegrityError as exc:
                 raise ValueError("event sequence already exists") from exc
             event = db.execute(
-                f"select * from ({WORKBENCH_EVENT_SQL}) as workbench_events where id=(select cast(legacy_key as integer) from runs where record_type='workbench_events' and id=?)", (cursor.lastrowid,)
+                f"select * from ({WORKBENCH_EVENT_SQL}) as workbench_events where id=?", (cursor.lastrowid,)
             ).fetchone()
             if event is None:
                 raise RuntimeError("event insert did not create a row")
@@ -785,11 +727,11 @@ class WorkbenchStore(AutoReplyStore):
         with self._connect() as db:
             self._require_turn(db, turn_id)
             query = f"""
-                select * from ({WORKBENCH_EVENT_SQL}
-                    and r.task_id={task_id_expression('workbench_turns', '?')}) as workbench_events
-                where id>? order by id
+                select * from ({WORKBENCH_EVENT_SQL}) as workbench_events
+                where cast(turn_id as integer)=?
+                  and id>? order by id
             """
-            parameters: tuple[Any, ...] = (turn_id, after_id)
+            parameters: tuple[Any, ...] = (int(turn_id), after_id)
             if limit is not None:
                 query += " limit ?"
                 parameters += (limit,)
@@ -805,11 +747,10 @@ class WorkbenchStore(AutoReplyStore):
             db.execute("begin")
             rows = db.execute(
                 f"""
-                select * from ({WORKBENCH_EVENT_SQL}
-                    and r.task_id={task_id_expression('workbench_turns', '?')}) as workbench_events
-                where id>? order by id limit ?
+                select * from ({WORKBENCH_EVENT_SQL}) as workbench_events
+                where cast(turn_id as integer)=? and id>? order by id limit ?
                 """,
-                (turn_id, after_id, limit),
+                (int(turn_id), after_id, limit),
             ).fetchall()
             turn_row = db.execute(
                 f"select * from ({WORKBENCH_TURN_SQL}) as workbench_turns where id=?", (turn_id,)
@@ -850,29 +791,29 @@ class WorkbenchStore(AutoReplyStore):
         with self._connect() as db:
             db.execute("begin immediate")
             self._require_executor_lease(db, turn_id, owner=owner, now_text=now_text)
+            native_turn_id = int(turn_id)
             expected = int(db.execute(
-                f"select coalesce(max(sequence),0)+1 from runs where record_type='workbench_events' and task_id={task_id_expression('workbench_turns', '?')}",
-                (turn_id,),
+                "select coalesce(max(sequence),0)+1 from workbench_events where task_id=?",
+                (native_turn_id,),
             ).fetchone()[0])
             if sequence != expected:
                 raise ValueError("event sequence must be next")
-            insert_task12(db, "workbench_artifacts", {
-                "id": artifact_id,
-                "turn_id": task_physical_id(db, "workbench_turns", turn_id),
-                "label": label,
-                "path": path,
-                "media_type": media_type,
-            })
-            cursor = insert_run(db, "workbench_events", {
-                "task_id": task_physical_id(db, "workbench_turns", turn_id),
-                "sequence": sequence, "event_type": "artifact_created",
-                "payload_json": json.dumps(payload, separators=(",", ":")),
-            })
+            artifact = db.execute(
+                "insert into workbench_artifacts(workbench_turn_id,label,path,media_type) "
+                "values(?,?,?,?) returning id",
+                (native_turn_id, label, path, media_type),
+            ).fetchone()
+            artifact_id = str(artifact["id"])
+            payload["artifact_id"] = artifact_id
+            cursor = db.execute(
+                "insert into workbench_events(task_id,sequence,event_type,payload_json,created_at) values(?,?,?,?,?)",
+                (native_turn_id, sequence, "artifact_created", json.dumps(payload, separators=(",", ":")), now_text),
+            )
             artifact_row = db.execute(
                 f"select * from ({WORKBENCH_ARTIFACT_SQL}) as workbench_artifacts where id=?", (artifact_id,)
             ).fetchone()
             event_row = db.execute(
-                f"select * from ({WORKBENCH_EVENT_SQL}) as workbench_events where id=(select cast(legacy_key as integer) from runs where record_type='workbench_events' and id=?)", (cursor.lastrowid,)
+                f"select * from ({WORKBENCH_EVENT_SQL}) as workbench_events where id=?", (cursor.lastrowid,)
             ).fetchone()
             return self._artifact_from_row(artifact_row), self._event_from_row(event_row)
 
@@ -883,10 +824,10 @@ class WorkbenchStore(AutoReplyStore):
                 f"""
                 select artifacts.*
                 from ({WORKBENCH_ARTIFACT_SQL}) as artifacts
-                join ({WORKBENCH_TURN_SQL}) as turns on turns.id=artifacts.turn_id
-                where turns.task_id=? order by artifacts.created_at, artifacts.id
+                join workbench_turns turns on turns.task_id=cast(artifacts.turn_id as integer)
+                where turns.workbench_task_id=? order by artifacts.created_at, artifacts.id
                 """,
-                (task_id,),
+                (int(task_id),),
             ).fetchall()
             return [self._artifact_from_row(row) for row in rows]
 
@@ -914,21 +855,20 @@ class WorkbenchStore(AutoReplyStore):
             db.execute("begin")
             task_row = self._require_task(db, task_id)
             state_row = db.execute(
-                f"""select {task20_column('workbench_turns', 'status')} as status from tasks where record_type='workbench_turns'
-                   and parent_id={task_id_expression('workbench_tasks', '?')}
-                   order by {task20_column('workbench_turns', 'task_sequence')} desc limit 1""",
-                (task_id,),
+                "select t.status from workbench_turns w join tasks t on t.id=w.task_id "
+                "where w.workbench_task_id=? order by w.task_sequence desc limit 1",
+                (int(task_id),),
             ).fetchone()
             task_state = state_row["status"] if state_row is not None else "idle"
             cursor_sql = ""
-            turn_parameters: list[Any] = [task_id]
+            turn_parameters: list[Any] = [int(task_id)]
             if before_sequence is not None:
                 cursor_sql = "where task_sequence<?"
                 turn_parameters.append(before_sequence)
             turn_parameters.append(turn_limit + 1)
             turn_rows = db.execute(
-                f"""select * from ({WORKBENCH_TURN_SQL}
-                    and tasks.parent_id={task_id_expression('workbench_tasks', '?')}) as workbench_turns
+                f"""select * from ({WORKBENCH_TURN_SQL}) as workbench_turns
+                    where cast(workbench_turns.task_id as integer)=?
                     {cursor_sql} order by task_sequence desc limit ?""",
                 tuple(turn_parameters),
             ).fetchall()
@@ -938,17 +878,16 @@ class WorkbenchStore(AutoReplyStore):
             placeholders = ",".join("?" for _ in turn_ids)
             if turn_ids:
                 event_cursor_sql = ""
-                event_parameters: list[Any] = [
-                    task_physical_id(db, "workbench_turns", turn_id) for turn_id in turn_ids
-                ]
+                event_parameters: list[Any] = [int(turn_id) for turn_id in turn_ids]
                 if event_before is not None:
                     event_cursor_sql = "where id<?"
                     event_parameters.append(event_before)
                 event_parameters.append(event_limit + 1)
                 event_rows = db.execute(
-                    f"""select * from ({WORKBENCH_EVENT_SQL}
-                        and r.task_id in ({placeholders})) as workbench_events
-                        {event_cursor_sql} order by id desc limit ?""",
+                    f"""select * from ({WORKBENCH_EVENT_SQL}) as workbench_events
+                        where cast(turn_id as integer) in ({placeholders})
+                        {event_cursor_sql.replace('where', 'and') if event_cursor_sql else ''}
+                        order by id desc limit ?""",
                     tuple(event_parameters),
                 ).fetchall()
                 artifact_cursor_sql = ""
@@ -961,7 +900,7 @@ class WorkbenchStore(AutoReplyStore):
                         (artifact_after[0], artifact_after[0], artifact_after[1])
                     )
                 artifact_rows = db.execute(
-                    f"""select * from ({WORKBENCH_ARTIFACT_SQL}) as workbench_artifacts where turn_id in ({placeholders})
+                    f"""select * from ({WORKBENCH_ARTIFACT_SQL}) as workbench_artifacts where cast(turn_id as integer) in ({placeholders})
                         {artifact_cursor_sql} order by created_at,id limit 101""",
                     tuple(artifact_parameters),
                 ).fetchall()
@@ -1271,22 +1210,10 @@ class WorkbenchStore(AutoReplyStore):
                     clear_lease=True,
                 )
                 continue
-            set_parts = task8_set_parts(
-                'workbench_turns', {},
-                update_sql={
-                    'status': "'queued'",
-                    'lease_owner': "''",
-                    'lease_expires_at': "''",
-                    'updated_at': '?',
-                },
-            )
             db.execute(
-                f"""
-                update tasks
-                set {set_parts.sql}
-                where record_type='workbench_turns' and legacy_key=? and {task20_column('workbench_turns', 'status')}='running' and {task20_column('workbench_turns', 'lease_expires_at')}<=?
-                """,
-                (now_text, row["id"], now_text),
+                "update tasks set status='queued',lease_owner='',lease_expires_at='',updated_at=? "
+                "where id=? and kind='workbench_turn' and status='running' and lease_expires_at<=?",
+                (now_text, int(row["id"]), now_text),
             )
         return len(rows)
 
@@ -1503,21 +1430,17 @@ class WorkbenchStore(AutoReplyStore):
         payload: dict[str, Any] | str,
     ) -> WorkbenchEvent:
         payload_json = _json_object_text(payload, field="payload")
-        sequence = int(
-            db.execute(
-                f"""
-                select coalesce(max(sequence), 0) + 1
-                from runs where record_type='workbench_events' and task_id={task_id_expression('workbench_turns', '?')}
-                """,
-                (turn_id,),
-            ).fetchone()[0]
+        native_turn_id = int(turn_id)
+        sequence = int(db.execute(
+            "select coalesce(max(sequence),0)+1 from workbench_events where task_id=?",
+            (native_turn_id,),
+        ).fetchone()[0])
+        cursor = db.execute(
+            "insert into workbench_events(task_id,sequence,event_type,payload_json,created_at) values(?,?,?,?,current_timestamp)",
+            (native_turn_id, sequence, event_type, payload_json),
         )
-        cursor = insert_run(db, "workbench_events", {
-            "task_id": task_physical_id(db, "workbench_turns", turn_id),
-            "sequence": sequence, "event_type": event_type, "payload_json": payload_json,
-        })
         row = db.execute(
-            f"select * from ({WORKBENCH_EVENT_SQL}) as workbench_events where id=(select cast(legacy_key as integer) from runs where record_type='workbench_events' and id=?)", (cursor.lastrowid,)
+            f"select * from ({WORKBENCH_EVENT_SQL}) as workbench_events where id=?", (cursor.lastrowid,)
         ).fetchone()
         if row is None:
             raise RuntimeError("control event insert did not create a row")
@@ -1536,8 +1459,9 @@ class WorkbenchStore(AutoReplyStore):
 
     @staticmethod
     def _require_turn(db: sqlite3.Connection, turn_id: str) -> sqlite3.Row:
+        native_id = WorkbenchStore._native_task_id(turn_id)
         row = db.execute(
-            f"select * from ({WORKBENCH_TURN_SQL}) as workbench_turns where id=?", (turn_id,)
+            f"select * from ({WORKBENCH_TURN_SQL}) as workbench_turns where id=?", (str(native_id),)
         ).fetchone()
         if row is None:
             raise ValueError("workbench turn does not exist")
@@ -1590,39 +1514,19 @@ class WorkbenchStore(AutoReplyStore):
         if target not in _TURN_TRANSITIONS[current]:
             raise ValueError("invalid turn transition")
         terminal = target in {TurnStatus.COMPLETED, TurnStatus.STOPPED, TurnStatus.FAILED}
-        set_parts = task8_set_parts(
-            'workbench_turns', {},
-            update_sql={
-                'status': '?',
-                'error_code': '?',
-                'error_detail': '?',
-                'lease_owner': f"case when ? then '' else {task20_column('workbench_turns', 'lease_owner')} end",
-                'lease_expires_at': f"case when ? then '' else {task20_column('workbench_turns', 'lease_expires_at')} end",
-                'completed_at': f"case when ? then ? else {task20_column('workbench_turns', 'completed_at')} end",
-                'updated_at': '?',
-            },
-        )
         cursor = db.execute(
-            f"""
-            update tasks
-            set {set_parts.sql}
-            where record_type='workbench_turns' and legacy_key=? and {task20_column('workbench_turns', 'status')}=?
-            """,
-            (
-                target.value,
-                error_code,
-                error_detail,
-                clear_lease,
-                clear_lease,
-                terminal,
-                now_text,
-                now_text,
-                turn_id,
-                current.value,
-            ),
+            "update tasks set status=?,lease_owner=case when ? then '' else lease_owner end,"
+            "lease_expires_at=case when ? then '' else lease_expires_at end,updated_at=? "
+            "where id=? and kind='workbench_turn' and status=?",
+            (target.value, clear_lease, clear_lease, now_text, int(turn_id), current.value),
         )
         if cursor.rowcount != 1:
             raise ValueError("invalid turn transition")
+        db.execute(
+            "update workbench_turns set error_code=?,error_detail=?,"
+            "completed_at=case when ? then ? else completed_at end where task_id=?",
+            (error_code, error_detail, terminal, now_text, int(turn_id)),
+        )
 
     @staticmethod
     def _task_from_row(row: sqlite3.Row) -> WorkbenchTask:

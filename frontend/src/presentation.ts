@@ -7,6 +7,7 @@ const taskStateLabels: Record<TaskState, string> = {
   completed: "已完成",
   stopped: "已停止",
   failed: "失败",
+  waiting_confirmation: "等待确认",
 };
 
 const legacyToolLabels: Record<string, string> = {

@@ -96,11 +96,27 @@ def _source_row(db, kind, values):
                ",".join("?" for _ in columns) + ")", tuple(row[c] for c in columns))
 
 
-def _run_source(*, orphan_task_id=None, include_task_source_metadata=False):
+def _run_source(*, orphan_task_id=None, include_task_source_metadata=False, workbench_artifact_public_id=None):
     from app.task_entity_schema import capture_task_entities, migrate_task_entities
     from tests.test_task_entity_schema import _source as task_source
 
     db = task_source()
+    if workbench_artifact_public_id is not None:
+        from app.task_lifecycle_storage import source_assignments
+        from app.storage_payload import TASK_RECORD_TYPES
+        physical = db.execute(
+            "select id from tasks where _kind=?",
+            (TASK_RECORD_TYPES.code("workbench_artifacts"),),
+        ).fetchone()[0]
+        values = source_assignments(
+            "workbench_artifacts", {"id": workbench_artifact_public_id}, {},
+            payload_source="tasks.payload_json", source_alias="tasks",
+        )
+        db.execute(
+            f"update tasks set {values.sql} where _kind=? and id=?",
+            (*values.parameters, TASK_RECORD_TYPES.code("workbench_artifacts"), physical),
+        )
+        db.commit()
     db.execute("pragma foreign_keys=off")
     db.execute("begin immediate")
     task_source_metadata = capture_task_entities(db) if include_task_source_metadata else None
@@ -238,6 +254,45 @@ def _run_source(*, orphan_task_id=None, include_task_source_metadata=False):
     return ((db, task_forward, task_source_metadata) if include_task_source_metadata
             else (db, task_forward))
 
+
+
+def test_artifact_created_uuid_reference_survives_native_forward_and_inverse():
+    from uuid import uuid4
+    from app.task_entity_schema import restore_task_entities
+
+    artifact_public_id = str(uuid4())
+    db, task_forward, task_source_metadata = _run_source(
+        include_task_source_metadata=True,
+        workbench_artifact_public_id=artifact_public_id,
+    )
+    try:
+        db.execute(
+            "update runs set event_type='artifact_created', payload_json=? where record_type='workbench_events' and id=1304",
+            (json.dumps({"artifact_id": artifact_public_id, "retained": {"x": 1}}),),
+        )
+        source_metadata = capture_run_entities(db)
+        forward = migrate_run_entities(
+            db, source_metadata, task_metadata=task_forward,
+            run_handoff=_run_handoff(db, source_metadata),
+        )
+        event = db.execute("select task_id,payload_json from workbench_events where sequence=1").fetchone()
+        artifact_id = json.loads(event[1])["artifact_id"]
+        artifact = db.execute("select workbench_turn_id from workbench_artifacts where id=?", (int(artifact_id),)).fetchone()
+        assert int(artifact_id) > 0
+        assert artifact[0] == event[0]
+        assert json.loads(event[1]) == {"artifact_id": artifact_id, "retained": {"x": 1}}
+
+        task_inverse = restore_task_entities(db, task_source_metadata, task_forward)
+        restore_run_entities(
+            db, source_metadata, forward, task_metadata=task_forward,
+            task_inverse_metadata=task_inverse,
+        )
+        restored = db.execute(
+            "select payload_json from runs where record_type='workbench_events' and id=1304"
+        ).fetchone()[0]
+        assert json.loads(restored) == {"artifact_id": artifact_public_id, "retained": {"x": 1}}
+    finally:
+        db.close()
 
 def test_forward_migrates_all_eight_current_source_kinds_and_typed_facts():
     db, task_metadata = _run_source()
@@ -1810,7 +1865,8 @@ def test_task_first_new_run_facts_survive_old_write_and_two_json_cycles():
                 assert db.execute("select workload_key from runs where record_type='agent_runtime_attempts' "
                                   "and id=?", (workbench_attempt_id,)).fetchone()[0] == turn_public
                 assert AutoReplyStore._validate_runtime_operation_workload(
-                    "workbench", turn_public) == ("workbench", turn_public)
+                    "workbench", str(workbench_turn["id"])) == (
+                        "workbench", str(workbench_turn["id"]))
             if cycle == 1:
                 parent_public = db.execute("select cast(legacy_key as integer) from tasks "
                     "where record_type='work_summary_inputs' limit 1").fetchone()

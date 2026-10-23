@@ -78,6 +78,13 @@ from app.feedback_processing import (
 )
 
 
+def _validate_workbench_public_reference(value: str, *, field: str) -> str:
+    if (not value.isascii() or not value.isdecimal()
+            or int(value) <= 0 or str(int(value)) != value):
+        raise HTTPException(status_code=422, detail=f"{field} must be a canonical Workbench ID")
+    return value
+
+
 def _legacy_settings_error_message(body_text: str) -> str:
     """Extract the legacy form validation text before returning a JSON error."""
     match = re.search(r'<p class="attempt-warning">(.*?)</p>', body_text, flags=re.DOTALL)
@@ -1272,6 +1279,10 @@ def register_console_routes(
         if turn_id is not None and not isinstance(turn_id, str):
             raise HTTPException(status_code=400, detail="workbench_turn_id must be a string")
         cleaned_batch_id = batch_id.strip() if isinstance(batch_id, str) else uuid4().hex
+        if task_id and task_id.strip():
+            task_id = _validate_workbench_public_reference(task_id.strip(), field="workbench_task_id")
+        if turn_id and turn_id.strip():
+            turn_id = _validate_workbench_public_reference(turn_id.strip(), field="workbench_turn_id")
         claim_store = store_factory()
         known_rows = claim_store.list_user_feedback_items(limit=10000, offset=0)
         known_keys = {row.key for row in known_rows}
@@ -1322,6 +1333,8 @@ def register_console_routes(
             or not turn_id.strip()
         ):
             return JSONResponse({"ok": False, "code": "validation_error", "message": "workbench_task_id and workbench_turn_id must be non-empty strings", "details": {}}, status_code=422)
+        task_id = _validate_workbench_public_reference(task_id.strip(), field="workbench_task_id")
+        turn_id = _validate_workbench_public_reference(turn_id.strip(), field="workbench_turn_id")
         try:
             decision = FeedbackIterationDecision.model_validate(raw_decision)
             record = store_factory().record_feedback_iteration_decision(
@@ -1343,6 +1356,8 @@ def register_console_routes(
         turn_id = payload.get("workbench_turn_id", payload.get("turn_id", ""))
         if not isinstance(task_id, str) or not isinstance(turn_id, str) or not task_id.strip() or not turn_id.strip():
             raise HTTPException(status_code=400, detail="workbench_task_id and workbench_turn_id are required")
+        task_id = _validate_workbench_public_reference(task_id.strip(), field="workbench_task_id")
+        turn_id = _validate_workbench_public_reference(turn_id.strip(), field="workbench_turn_id")
         store = store_factory()
         batch = store.get_feedback_processing_batch(batch_id)
         if batch is None:
@@ -1401,6 +1416,12 @@ def register_console_routes(
         if not isinstance(task_id, str) or not isinstance(turn_id, str) or not isinstance(attempt_id, int) or isinstance(attempt_id, bool) or not isinstance(agent_run_id, int) or isinstance(agent_run_id, bool):
             raise HTTPException(status_code=400, detail="feedback associations have invalid types")
         if "associations" in payload or any(name in payload for name in ("workbench_task_id", "task_id", "workbench_turn_id", "turn_id", "attempt_id", "agent_run_id")):
+            task_id = task_id.strip()
+            turn_id = turn_id.strip()
+            if task_id:
+                task_id = _validate_workbench_public_reference(task_id, field="workbench_task_id")
+            if turn_id:
+                turn_id = _validate_workbench_public_reference(turn_id, field="workbench_turn_id")
             try:
                 store.associate_feedback_processing_turn(
                     feedback_id,

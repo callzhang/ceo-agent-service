@@ -26,11 +26,12 @@ from app.native_trajectory import (
 )
 from app.workbench.codex_runtime import _native_tool_failed
 from app.workbench.models import WorkbenchEvent, WorkbenchTurn
-from app.run_storage import RUNTIME_ATTEMPT_SQL
-from app.task_storage import task_id_expression
-from app.task20_definitions import task20_projection
 
-WORKBENCH_TURN_SQL = task20_projection('workbench_turns')
+WORKBENCH_TURN_SQL = """select cast(t.id as text) as id,cast(w.workbench_task_id as text) as task_id,
+    w.client_request_id,w.task_sequence,w.user_text,t.status,w.stop_requested,w.error_code,
+    w.error_detail,w.resume_context,w.execution_run_id,w.runtime_quiesced_run_id,
+    t.lease_owner,t.lease_expires_at,w.started_at,w.completed_at,t.created_at,t.updated_at
+    from tasks t join workbench_turns w on w.task_id=t.id where t.kind='workbench_turn'"""
 
 AGENT_EVENTS = {"text_delta", "thinking_summary", "tool_started", "tool_completed", "file_changed"}
 UNAVAILABLE = "原生 Agent 记录不可用。"
@@ -106,7 +107,8 @@ def terminal_cached_turn_ids(db: sqlite3.Connection, db_path: Path) -> list[str]
 
 def _attempts(db: sqlite3.Connection, turn_id: str) -> list[sqlite3.Row]:
     return db.execute(
-        f"select runtime_kind,session_id,transcript_start,transcript_end,status from ({RUNTIME_ATTEMPT_SQL}) as agent_runtime_attempts where workload_kind='workbench' and workload_key=? order by id",
+        "select runtime_kind,session_id,transcript_start,transcript_end,status "
+        "from runtime_attempts where workload_kind='workbench' and workload_key=? order by id",
         (turn_id,),
     ).fetchall()
 
@@ -189,18 +191,19 @@ def hydrate_events(
     for turn_id, selected in pending.items():
         native = _native_events_for_turn(db, turn_id)
         tools, messages, reasoning, files = native if native is not None else (None, None, None, None)
+        task_id = int(turn_id)
         count = db.execute(
-            f"select count(*) from runs where record_type='workbench_events' and task_id={task_id_expression('workbench_turns', '?')} and event_type='tool_completed'",
-            (turn_id,),
+            "select count(*) from workbench_events where task_id=? and event_type='tool_completed'",
+            (task_id,),
         ).fetchone()[0]
         if tools is not None and len(tools) != count:
             tools = None
         text_ends: dict[int, int] = {}
         whole_turn_last_text_id = 0
         for row in db.execute(
-            "select cast(legacy_key as integer) as id,json_extract(payload_json,'$.native_ordinal') as ordinal "
-            f"from runs where record_type='workbench_events' and task_id={task_id_expression('workbench_turns', '?')} and event_type='text_delta' order by cast(legacy_key as integer)",
-            (turn_id,),
+            "select id,json_extract(payload_json,'$.native_ordinal') as ordinal "
+            "from workbench_events where task_id=? and event_type='text_delta' order by id",
+            (task_id,),
         ):
             if isinstance(row["ordinal"], int):
                 text_ends[row["ordinal"]] = row["id"]

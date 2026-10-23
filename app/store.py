@@ -7320,13 +7320,9 @@ class AutoReplyStore(LogicalRunStoreMixin, ReviewedCandidateStoreMixin):
                     "email description workload key must name a frozen snapshot"
                 )
         elif workload_kind == "workbench":
-            try:
-                if str(UUID(workload_key)) != workload_key:
-                    raise ValueError
-            except (AttributeError, ValueError) as exc:
-                raise ValueError(
-                    "workbench workload key must name a persisted turn"
-                ) from exc
+            if (not workload_key.isascii() or not workload_key.isdecimal()
+                    or int(workload_key) <= 0 or str(int(workload_key)) != workload_key):
+                raise ValueError("workbench workload key must name a canonical Task ID")
         elif workload_kind == "memory" and workload_key.startswith("wechat_memory_import_job:"):
             task_id = workload_key.removeprefix("wechat_memory_import_job:")
             if not task_id.isdecimal() or int(task_id) <= 0 or str(int(task_id)) != task_id:
@@ -7455,8 +7451,8 @@ class AutoReplyStore(LogicalRunStoreMixin, ReviewedCandidateStoreMixin):
             )
             args = (snapshot_id,)
         elif workload_kind == "workbench":
-            query = f"""select 1 from tasks where record_type='workbench_turns' and legacy_key=? and {task20_column('workbench_turns', 'status')}='running'"""
-            args = (workload_key,)
+            query = "select 1 from tasks where id=? and kind='workbench_turn' and status='running'"
+            args = (int(workload_key),)
         else:
             source, _, source_key = workload_key.partition(":")
             row_id, _, execution_generation = source_key.partition(":")

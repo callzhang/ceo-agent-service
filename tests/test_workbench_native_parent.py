@@ -112,6 +112,45 @@ def test_native_parent_crud_state_cursor_and_archive_fence(tmp_path: Path):
         store.archive_task(second_task.id, now="2026-10-23T12:00:00+00:00")
 
 
+def test_native_turn_lifecycle_events_and_artifacts_use_canonical_task_owner(tmp_path: Path):
+    store = _target_store(tmp_path)
+    parent = store.create_task(title="Turn lifecycle", runtime_kind="codex")
+    request_id = str(uuid4())
+    created = store.create_turn(parent.id, user_text="hello", client_request_id=request_id)
+    assert created.id.isdecimal() and created.task_id == parent.id
+    assert store.create_turn(parent.id, user_text="hello", client_request_id=request_id) == created
+    with pytest.raises(WorkbenchConflictError, match="client_request_id"):
+        store.create_turn(parent.id, user_text="different", client_request_id=request_id)
+
+    running = store.claim_next_turn(owner="worker", now="2026-10-23T12:00:00+00:00")
+    assert running is not None and running.id == created.id and running.status.value == "running"
+    event = store.append_event(
+        running.id, sequence=2, event_type="text_delta", payload={"text": "hello"},
+        owner="worker", now="2026-10-23T12:00:01+00:00",
+    )
+    assert event.turn_id == created.id
+    artifact, artifact_event = store.append_artifact_event(
+        running.id, sequence=3, label="result", path="/tmp/result.txt",
+        media_type="text/plain", owner="worker", now="2026-10-23T12:00:02+00:00",
+    )
+    assert artifact.id.isdecimal() and artifact.turn_id == created.id
+    assert artifact_event.payload["artifact_id"] == artifact.id
+    assert store.list_artifacts(parent.id) == [artifact]
+    finished = store.complete_turn(
+        running.id, status="completed", owner="worker", now="2026-10-23T12:00:03+00:00"
+    )
+    assert finished.status.value == "completed"
+    events = store.events_after(running.id)
+    assert [event.sequence for event in events] == [1, 2, 3, 4]
+    with store._connect() as db:
+        owner = db.execute(
+            "select kind,status from tasks where id=?", (int(created.id),)
+        ).fetchone()
+        assert tuple(owner) == ("workbench_turn", "completed")
+        assert db.execute("select count(*) from runs").fetchone()[0] == 0
+        assert db.execute("select count(*) from workbench_events").fetchone()[0] == 4
+
+
 def test_native_attachment_owner_keeps_idempotency_metadata_path_and_bytes(tmp_path: Path):
     store = _target_store(tmp_path)
     task = store.create_task(title="Attachments", runtime_kind="codex")
@@ -865,3 +904,44 @@ def test_highest_reconciled_attachment_identity_is_not_reused_across_portable_in
         third_request_id, hashlib.sha256(b"third attachment").hexdigest(),
     )
     assert forward_again["identity_edges"]
+
+
+def test_native_artifact_download_route_uses_canonical_ids(tmp_path: Path):
+    store = _target_store(tmp_path)
+    parent = store.create_task(title="Download", runtime_kind="codex")
+    created = store.create_turn(
+        parent.id, user_text="make artifact", client_request_id=str(uuid4())
+    )
+    running = store.claim_next_turn(owner="worker", now="2026-10-23T12:00:00+00:00")
+    assert running is not None and running.id == created.id
+    output = tmp_path / "result.txt"
+    output.write_text("native result", encoding="utf-8")
+    artifact, _event = store.append_artifact_event(
+        running.id, sequence=2, label="result", path=str(output),
+        media_type="text/plain", owner="worker", now="2026-10-23T12:00:01+00:00",
+    )
+
+    class Executor:
+        workspace = tmp_path
+
+        def run_once(self):
+            return []
+
+    class Registry:
+        def kinds(self):
+            return ("codex",)
+
+    app = FastAPI()
+    scheduler = register_workbench_routes(
+        app, store, Executor(), Registry(), tmp_path / "assets",
+        mutation_guard=lambda _request: None, scheduler_interval_seconds=60,
+    )
+    try:
+        with TestClient(app) as client:
+            response = client.get(
+                f"/api/workbench/tasks/{parent.id}/turns/{created.id}/artifacts/{artifact.id}/download"
+            )
+        assert response.status_code == 200
+        assert response.content == b"native result"
+    finally:
+        scheduler.close()

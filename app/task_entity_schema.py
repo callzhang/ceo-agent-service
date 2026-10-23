@@ -360,6 +360,18 @@ def migrate_task_entities(
                 or handoff["owners"].get(("workbench_attachments", source_id), source_id)
                 != identity["canonical_id"]):
             raise ValueError("Workbench attachment identity handoff differs from source row")
+    artifact_identity_handoff = handoff["workbench_artifact_identities"]
+    artifacts_by_physical = {
+        int(row["_physical_id"]): row for row in all_rows["workbench_artifacts"]
+    }
+    if set(artifact_identity_handoff) - set(artifacts_by_physical):
+        raise ValueError("Workbench artifact identity handoff names a missing source row")
+    for source_id, identity in artifact_identity_handoff.items():
+        row = artifacts_by_physical[source_id]
+        if (row["id"] != identity["source_public_id"]
+                or handoff["owners"].get(("workbench_artifacts", source_id), source_id)
+                != identity["canonical_id"]):
+            raise ValueError("Workbench artifact identity handoff differs from source row")
     for source_id, file_handoff in attachment_file_handoff.items():
         if attachments_by_physical[source_id]["storage_path"] != file_handoff["source_path"]:
             raise ValueError("Workbench attachment source locator differs from handoff")
@@ -678,12 +690,14 @@ def _validate_inverse_identity(value: dict | None) -> dict:
         return {"owners": {}, "meeting_business_keys": {},
                 "workbench_parent_identities": {},
                 "workbench_attachment_identities": {},
+                "workbench_artifact_identities": {},
                 "workbench_attachment_files": {},
                 "workbench_attachment_highwater": 0}
     if (not isinstance(value, dict) or not {"version", "owners"}.issubset(value)
             or not set(value).issubset({"version", "owners", "meeting_business_keys",
                                         "workbench_parent_identities",
                                         "workbench_attachment_identities",
+                                        "workbench_artifact_identities",
                                         "workbench_attachment_files",
                                         "workbench_attachment_highwater"})
             or value["version"] != 1):
@@ -755,6 +769,23 @@ def _validate_inverse_identity(value: dict | None) -> dict:
             raise ValueError("duplicate Workbench attachment identity handoff")
         attachment_identities[row["source_physical_id"]] = row
         attachment_public_ids.add(row["source_public_id"])
+    artifact_identities = {}
+    artifact_public_ids = set()
+    for row in value.get("workbench_artifact_identities", []):
+        if (not isinstance(row, dict) or set(row) != {
+                    "source_physical_id", "canonical_id", "source_public_id", "is_new_native"}
+                or type(row["source_physical_id"]) is not int
+                or type(row["canonical_id"]) is not int
+                or not isinstance(row["source_public_id"], str)
+                or type(row["is_new_native"]) is not bool):
+            raise ValueError("invalid Workbench artifact identity handoff")
+        if (row["is_new_native"] and
+                str(UUID(row["source_public_id"])) != row["source_public_id"]):
+            raise ValueError("invalid new Workbench artifact UUID identity")
+        if row["source_physical_id"] in artifact_identities or row["source_public_id"] in artifact_public_ids:
+            raise ValueError("duplicate Workbench artifact identity handoff")
+        artifact_identities[row["source_physical_id"]] = row
+        artifact_public_ids.add(row["source_public_id"])
     files = {}
     for row in value.get("workbench_attachment_files", []):
         if (not isinstance(row, dict) or set(row) != {
@@ -797,6 +828,7 @@ def _validate_inverse_identity(value: dict | None) -> dict:
     return {"owners": result, "meeting_business_keys": key_edges,
             "workbench_parent_identities": parent_identities,
             "workbench_attachment_identities": attachment_identities,
+            "workbench_artifact_identities": artifact_identities,
             "workbench_attachment_files": files,
             "workbench_attachment_highwater": attachment_highwater}
 
@@ -1117,6 +1149,10 @@ def restore_task_entities(db: sqlite3.Connection, source_metadata: dict, forward
         str(value) for (kind, _), value in old_public.items()
         if kind == "workbench_attachments" and isinstance(value, str)
     }
+    artifact_public_ids = {
+        str(value) for (kind, _), value in old_public.items()
+        if kind == "workbench_artifacts" and isinstance(value, str)
+    }
     for identity in physical_rows:
         kind, canonical_id = identity["source_kind"], identity["target_id"]
         if (kind, canonical_id) in old_public:
@@ -1141,11 +1177,12 @@ def restore_task_entities(db: sqlite3.Connection, source_metadata: dict, forward
                     row[0].encode("utf-8")
                 ).hexdigest()
             else:
-                if kind == "workbench_attachments":
+                if kind in {"workbench_attachments", "workbench_artifacts"}:
                     public_key = str(uuid4())
-                    while public_key in attachment_public_ids:
+                    used_ids = attachment_public_ids if kind == "workbench_attachments" else artifact_public_ids
+                    while public_key in used_ids:
                         public_key = str(uuid4())
-                    attachment_public_ids.add(public_key)
+                    used_ids.add(public_key)
                 else:
                     public_key = (str(uuid4()) if kind in {"workbench_tasks", "workbench_turns"}
                               else source_physical_by_native[(kind, canonical_id)]
@@ -1353,11 +1390,19 @@ def restore_task_entities(db: sqlite3.Connection, source_metadata: dict, forward
             "task_business_key_row_id": int(row[0]),
         })
     attachment_identities = []
+    artifact_identities = []
     parent_target_by_source = {
         source_id: native_id for (kind, native_id), source_id in source_physical_by_native.items()
         if kind == "workbench_tasks"
     }
     for kind, physical_id, target_id, public_key, _, parent_physical in source_rows:
+        if kind == "workbench_artifacts":
+            artifact_identities.append({
+                "source_physical_id": physical_id,
+                "canonical_id": target_id,
+                "source_public_id": public_key,
+                "is_new_native": (kind, target_id) not in old_public,
+            })
         if kind != "workbench_attachments" or (kind, target_id) in old_public:
             continue
         parent_target = parent_target_by_source.get(parent_physical)
@@ -1381,6 +1426,8 @@ def restore_task_entities(db: sqlite3.Connection, source_metadata: dict, forward
     }
     if attachment_identities:
         inverse_identity["workbench_attachment_identities"] = attachment_identities
+    if artifact_identities:
+        inverse_identity["workbench_artifact_identities"] = artifact_identities
     if any(kind == "workbench_attachments" for kind, *_ in source_rows):
         parent_identities = []
         for kind, _, target_id, _, _, _ in source_rows:

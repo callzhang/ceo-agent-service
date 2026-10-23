@@ -1610,6 +1610,10 @@ Task Agent 的正常 liveness 由结构化 provider 事件驱动：每个有效 
 
 `AutoReplyStore` 和 `EmailStore` 在构造器缓存或 journal 修改前只读核对准确当前声明。真正空库在共享路径文件锁内直接建立当前结构；准确当前库冷启动不执行 DDL。旧版本及缺失／损坏对象必须由显式发布工具处理，运行时不迁移、修补或回填。短暂 `locked`／`busy` 仍沿用有限等待复查，不把锁错误当成结构缺失。Email 完整持久行校验在释放 schema 锁后执行。
 
+### Workbench Turn native execution ownership
+
+Workbench public parent and Turn IDs are decimal strings backed by canonical `tasks.id`; Turn-specific control facts remain on `workbench_turns(task_id)`. Claims, leases, stop/recovery/completion, native events and artifact reads/writes use that Task owner directly. Workbench RuntimeAttempts use the exact `workload_kind='workbench'` and canonical Turn Task ID key; no logical Run or UUID execution alias is created. Historical `waiting_confirmation` remains readable/countable and is not added to the active-turn fence or given new confirmation actions. The source `artifact_created` payload's typed `artifact_id` is translated through Task's artifact identity map during migration and explicit inverse handoff, preserving the source public artifact identity and all other payload values.
+
 ### Workbench 启动恢复竞争
 
 审计 Web 启动时会执行 Workbench 恢复。若恰好与 worker 的 SQLite 写事务重叠，恢复会对短暂

@@ -41,6 +41,62 @@ def _objects(db: sqlite3.Connection, table: str) -> list[dict]:
     return _schema_objects(db, table)
 
 
+def _translate_workbench_artifact_payload_forward(db: sqlite3.Connection, event: dict) -> str:
+    """Translate only artifact_created.payload.artifact_id through Task's typed owner map."""
+    payload_text = event.get("payload_json")
+    if event.get("event_type") != "artifact_created" or not isinstance(payload_text, str):
+        return payload_text
+    payload = json.loads(payload_text)
+    if not isinstance(payload, dict) or not isinstance(payload.get("artifact_id"), str):
+        return payload_text
+    row = db.execute(
+        "select target_id from task_run_identity_map where source_kind='workbench_artifacts' "
+        "and public_key=? and public_key_type='text'",
+        (payload["artifact_id"],),
+    ).fetchall()
+    if len(row) > 1:
+        raise ValueError("ambiguous Workbench artifact public identity in Task map")
+    if row:
+        payload["artifact_id"] = str(int(row[0][0]))
+        return json.dumps(payload, ensure_ascii=False, separators=(",", ":"))
+    return payload_text
+
+
+def _translate_workbench_artifact_payload_inverse(
+    db: sqlite3.Connection, event: dict, task_inverse_metadata: dict | None,
+    task_target_to_source: dict,
+) -> str:
+    payload_text = event.get("payload_json")
+    if event.get("event_type") != "artifact_created" or not isinstance(payload_text, str):
+        return payload_text
+    payload = json.loads(payload_text)
+    if not isinstance(payload, dict) or not isinstance(payload.get("artifact_id"), str):
+        return payload_text
+    current_id = payload["artifact_id"]
+    if not current_id.isascii() or not current_id.isdecimal() or int(current_id) < 1:
+        return payload_text
+    handoff = {} if task_inverse_metadata is None else task_inverse_metadata.get("inverse_identity", {})
+    identities = handoff.get("workbench_artifact_identities", [])
+    matches = [row for row in identities if row.get("canonical_id") == int(current_id)]
+    if not matches:
+        raise ValueError("native Workbench artifact event reference has no Task inverse identity")
+    if len(matches) != 1:
+        raise ValueError("ambiguous Workbench artifact Task inverse identity")
+    artifact_identity = matches[0]
+    artifact = db.execute(
+        "select parent_id from tasks where record_type='workbench_artifacts' and id=?",
+        (artifact_identity["source_physical_id"],),
+    ).fetchone()
+    expected_turn_id = _task_source_physical(
+        db, task_target_to_source, "workbench_turns", event["task_id"]
+    ) if event.get("task_id") is not None else None
+    if (artifact is None or expected_turn_id is None
+            or int(artifact[0]) != expected_turn_id):
+        raise ValueError("Workbench artifact event reference has a different Turn owner")
+    payload["artifact_id"] = artifact_identity["source_public_id"]
+    return json.dumps(payload, ensure_ascii=False, separators=(",", ":"))
+
+
 def _require_transaction(db: sqlite3.Connection) -> None:
     if not db.in_transaction or db.execute("pragma foreign_keys").fetchone()[0]:
         raise ValueError("Run entity conversion requires caller-owned FK-off transaction")
@@ -666,6 +722,7 @@ def migrate_run_entities(db: sqlite3.Connection, source_metadata: dict, *,
                 if source["task_id"] is not None:
                     fields["task_id"] = _task_physical_owner(
                         db, task_edges, "workbench_turns", source["task_id"])
+                fields["payload_json"] = _translate_workbench_artifact_payload_forward(db, source)
             _insert(db, owner, fields)
         public = source["legacy_key"]
         public_type = "null" if public is None else {
@@ -1237,6 +1294,8 @@ def restore_run_entities(db: sqlite3.Connection, source_metadata: dict,
                     raise ValueError("unresolved Run failure identity")
                 source["parent_id"] = parent
             elif kind == "workbench_events" and source["task_id"] is not None:
+                source["payload_json"] = _translate_workbench_artifact_payload_inverse(
+                    db, source, task_inverse_metadata, task_target_to_source)
                 source["task_id"] = _task_source_physical(
                     db, task_target_to_source, "workbench_turns", source["task_id"])
             elif kind == "scheduled_task_runs" and source["execution_kind"] == "reply_task":

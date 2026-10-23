@@ -91,7 +91,7 @@ beforeEach(() => {
   } }]);
   api.getStats.mockResolvedValue({
     tasks: { total: 2, active: 2, archived: 0 },
-    turns: { queued: 0, running: 0, completed: 0, stopped: 0, failed: 0 },
+    turns: { queued: 0, running: 0, completed: 0, stopped: 0, failed: 0, waiting_confirmation: 0 },
     events: {}, attachments: 0, artifacts: 0,
     duration: { completed_count: 0, total_seconds: 0, average_seconds: 0 },
   });

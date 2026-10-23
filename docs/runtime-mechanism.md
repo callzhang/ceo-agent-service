@@ -3812,6 +3812,10 @@ weekly analysis 的历史事实仍以 `okr_analysis` Task、参数自然键、Ta
 Email task visibility in Store13: unsubscribe classification lists, classification detail/in-flight progress, verified entry URL lineage and summary queue counts detect the physical tasks/runs tables. They read public task/run IDs through the typed projections and resolve canonical inputs through the physical current_input_id reference. A standalone EmailStore without the shared task tables retains its existing behavior. Existing receipt/lineage/URL validation and redaction rules remain; this change fixes the physical-table presence check and adds no policy.
 
 
+## Task2D7B Workbench Turn native execution
+
+Workbench runtime lifecycle and exact readers use canonical decimal `tasks.id` for Turn DTO/API identity. `tasks(kind='workbench_turn')` owns lifecycle status and lease; `workbench_turns(task_id)` owns source-backed Turn control and request fields. Parent archive fencing, create/idempotency, claim, lease renewal, stop, completion, stale recovery, event sequencing, timeline/SSE, artifacts and statistics read or write native owners. Events and artifacts use native Turn Task foreign keys. The executor/runtime-attempt contract is `workload_kind='workbench'` with `workload_key` equal to that canonical Turn Task ID; native trajectory is hydrated from the selected RuntimeAttempt session/range, and no logical Run or duplicate UUID alias is created. Historical `waiting_confirmation` is readable and countable without a new active-turn or confirmation workflow. Source artifact event `payload.artifact_id` is the one translated typed reference: migration resolves it through the Task identity map, while inverse consumes explicit source-public identity metadata and checks the artifact's Turn owner. Other payload members remain unchanged. Feedback Workbench references at public API boundaries are canonical decimal strings; optional empty item associations remain accepted as before.
+
 ## Phase4C core storage (Store 2026-10-12.1)
 
 隔离候选的核心 schema 将 scheduled_task_runs 和 workbench_events 存入 runs，

@@ -24,6 +24,7 @@ const taskStates: readonly TaskState[] = [
   "completed",
   "stopped",
   "failed",
+  "waiting_confirmation",
 ];
 const turnStatuses: readonly TurnStatus[] = taskStates.slice(1) as TurnStatus[];
 const eventTypes: readonly EventType[] = [
