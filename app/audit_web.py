@@ -3462,7 +3462,7 @@ def _queue_attention_rows(store: AutoReplyStore, *, limit: int | None = None) ->
             "coalesce(nullif(reply_text, ''), nullif(error, ''), nullif(target_id, ''), target_type)",
             "updated_at",
             "case when pre_action_failure=1 then "
-            "'The target could not be opened before send; no message was sent. "
+            "'The send failed before any action (' || error || '); no message was sent. "
             "A fresh target check is required before retry.' else error end",
             ("failed",),
         ),

@@ -277,10 +277,9 @@ class PlaywrightMinutesConsole:
 
 
 # The console is an organisation's management view, so the sign-in ends on a
-# picker of the organisations this account administers. Only one of them owns
-# the minutes this service archives; the others are Derek's own and would serve
-# an empty console.
-MINUTES_CONSOLE_ORG = "北京星尘纪元智能科技有限公司"
+# picker of the organisations this account administers. The service takes the
+# first one the picker lists (Derek 2026-10-23), not a company name.
+_ORG_PICKER_ITEM = ".module-corp-sel-listitem"
 _ORG_PICK_TIMEOUT_MS = 10_000
 _CONSOLE_SETTLE_MS = 6_000
 _USER_CHROME_EXECUTABLE = Path(
@@ -295,7 +294,7 @@ def _service_profile_dir() -> Path:
 
 
 @contextmanager
-def signed_in_console(profile_dir: Path | None = None, *, org: str = ""):
+def signed_in_console(profile_dir: Path | None = None):
     """Open the console in the service's headless Chrome, signed in as Derek.
 
     Refresh the owner's cookie copy on every launch and restore its session
@@ -307,7 +306,6 @@ def signed_in_console(profile_dir: Path | None = None, *, org: str = ""):
 
     from app.service_browser import launch_service_chrome
 
-    wanted = org or MINUTES_CONSOLE_ORG
     profile = profile_dir or _service_profile_dir()
     with sync_playwright() as playwright:
         # Chrome ignores --restore-last-session for a new profile. Initialize
@@ -336,7 +334,7 @@ def signed_in_console(profile_dir: Path | None = None, *, org: str = ""):
                     raise
                 page.wait_for_timeout(_CONSOLE_SETTLE_MS)
                 if LOGIN_HOST in page.url:
-                    _pick_organisation(page, wanted)
+                    _pick_organisation(page)
                 if MINUTES_CONSOLE_HOST not in page.url:
                     raise MinutesBrowserSessionExpired(
                         "the copy of Derek's Chrome cookies no longer carries a "
@@ -360,14 +358,14 @@ def signed_in_console(profile_dir: Path | None = None, *, org: str = ""):
                 context.close()
 
 
-def _pick_organisation(page, org: str) -> None:
-    """Choose the organisation whose console holds this service's minutes."""
-    entry = page.get_by_text(org, exact=False).first
+def _pick_organisation(page) -> None:
+    """Choose the first organisation the sign-in picker offers."""
+    entry = page.locator(_ORG_PICKER_ITEM).first
     try:
         entry.click(timeout=_ORG_PICK_TIMEOUT_MS)
         page.wait_for_url(f"**{MINUTES_CONSOLE_HOST}/**", timeout=_ORG_PICK_TIMEOUT_MS)
     except Exception as exc:  # the picker is a page; it fails in many ways
         raise MinutesBrowserSessionExpired(
-            f"the 听记 sign-in stopped without offering {org!r}: {exc}"
+            f"the 听记 sign-in stopped without offering an organisation: {exc}"
         ) from exc
     page.wait_for_timeout(_CONSOLE_SETTLE_MS)

@@ -187,10 +187,11 @@ def test_a_console_without_the_admin_role_is_not_an_expired_session() -> None:
 class FakePage:
     """Just enough of a Playwright page to drive the sign-in hop."""
 
-    def __init__(self, urls, org_offered=True):
+    def __init__(self, urls, offered=("北京星尘纪元智能科技有限公司", "PreSeen", "磊哥")):
         self._urls = list(urls)
         self.url = self._urls.pop(0)
-        self.org_offered = org_offered
+        self.offered = list(offered)
+        self.selector = ""
         self.clicked = ""
 
     def goto(self, url, **kwargs):
@@ -199,16 +200,17 @@ class FakePage:
     def wait_for_timeout(self, ms):
         return None
 
-    def get_by_text(self, text, exact=False):
+    def locator(self, selector):
         page = self
+        page.selector = selector
 
         class Locator:
             first = None
 
             def click(self, timeout=0):
-                if not page.org_offered:
-                    raise RuntimeError("no such organisation on the page")
-                page.clicked = text
+                if not page.offered:
+                    raise RuntimeError("the picker offers no organisation")
+                page.clicked = page.offered[0]
                 if page._urls:
                     page.url = page._urls.pop(0)
 
@@ -220,12 +222,12 @@ class FakePage:
         return None
 
 
-def test_the_console_chooses_the_organisation_that_owns_these_minutes() -> None:
+def test_the_console_chooses_the_first_organisation_the_picker_lists() -> None:
     """Chrome's cookie copy signs Derek in as far as the organisation picker.
 
-    He administers three organisations and only one of them holds the minutes
-    this service archives, so the console has to say which; left unanswered,
-    the pass reads an empty console and reports a clean nothing-to-do.
+    He administers several organisations; the pass takes the first one listed
+    instead of looking for a company name that may be renamed or listed
+    differently (Derek 2026-10-23).
     """
     import app.minutes_console_browser as browser
 
@@ -233,11 +235,13 @@ def test_the_console_chooses_the_organisation_that_owns_these_minutes() -> None:
         [
             "https://login.dingtalk.com/oauth2/challenge.htm?x=1",
             "https://shanji-admin.dingtalk.com/history",
-        ]
+        ],
+        offered=("Renamed Company Ltd", "PreSeen"),
     )
-    browser._pick_organisation(page, browser.MINUTES_CONSOLE_ORG)
+    browser._pick_organisation(page)
 
-    assert page.clicked == browser.MINUTES_CONSOLE_ORG
+    assert page.selector == browser._ORG_PICKER_ITEM
+    assert page.clicked == "Renamed Company Ltd"
     assert page.url.startswith("https://shanji-admin.dingtalk.com/")
 
 
@@ -249,9 +253,7 @@ def test_a_cookie_copy_without_a_dingtalk_login_fails_the_pass() -> None:
     """
     import app.minutes_console_browser as browser
 
-    page = FakePage(
-        ["https://login.dingtalk.com/oauth2/challenge.htm"], org_offered=False
-    )
+    page = FakePage(["https://login.dingtalk.com/oauth2/challenge.htm"], offered=())
 
     with pytest.raises(MinutesBrowserSessionExpired):
-        browser._pick_organisation(page, browser.MINUTES_CONSOLE_ORG)
+        browser._pick_organisation(page)
