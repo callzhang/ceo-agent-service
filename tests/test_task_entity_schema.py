@@ -1067,6 +1067,25 @@ def test_inverse_rejects_extra_native_index_before_mutation():
 @pytest.mark.parametrize("batch_id", ["", "batch-a", "historical-missing"])
 def test_feedback_item_batch_id_matches_source_through_forward_inverse_reforward(batch_id):
     with closing(_source()) as db:
+        db.execute("pragma foreign_keys=on")
+        assert db.execute("pragma foreign_keys").fetchone() == (1,)
+        source_item_batch_column = task20_definitions.task20_column(
+            "feedback_processing_items", "batch_id"
+        ).strip('"')
+        source_decision_batch_column = task20_definitions.task20_column(
+            "feedback_iteration_decisions", "batch_id"
+        ).strip('"')
+        source_batch_column = task20_definitions.task20_column(
+            "feedback_processing_batches", "batch_id"
+        ).strip('"')
+        source_foreign_keys = db.execute("pragma foreign_key_list(tasks)").fetchall()
+        assert all(row[3] != source_item_batch_column for row in source_foreign_keys)
+        assert any(
+            row[3] == source_decision_batch_column
+            and row[2] == "tasks"
+            and row[4] == source_batch_column
+            for row in source_foreign_keys
+        )
         item_rowid = db.execute(
             "select rowid from (" + task12_projection("feedback_processing_items", include_rowid=True) + ")"
         ).fetchone()[0]
@@ -1075,12 +1094,11 @@ def test_feedback_item_batch_id_matches_source_through_forward_inverse_reforward
             "select batch_id from (" + task20_definitions.task20_projection("feedback_processing_items") + ")"
         ).fetchone()[0]
         assert source_batch_id == batch_id
-        source_ddl = db.execute(
-            "select sql from sqlite_schema where type='table' and name='tasks'"
-        ).fetchone()[0]
-        assert "FOREIGN KEY(batch_id)" not in source_ddl
+        assert db.execute("pragma foreign_key_check").fetchall() == []
         db.commit()
 
+        db.execute("pragma foreign_keys=off")
+        assert db.execute("pragma foreign_keys").fetchone() == (0,)
         db.execute("begin immediate")
         source_metadata = capture_task_entities(db)
         forward = migrate_task_entities(db, source_metadata)
