@@ -843,6 +843,16 @@ def restore_task_entities(db: sqlite3.Connection, source_metadata: dict, forward
     ).fetchone()
     if unsupported_key_owner is not None:
         raise ValueError("TaskBusinessKey owner kind has no current-source inverse")
+    meeting_key_timestamp = db.execute(
+        "select business.id from main.task_business_keys business "
+        "join main.tasks task on task.id=business.task_id "
+        "where task.kind='meeting_alignment' "
+        "and (business.created_at is not null or business.updated_at is not null) limit 1"
+    ).fetchone()
+    if meeting_key_timestamp is not None:
+        raise ValueError(
+            "Meeting TaskBusinessKey timestamps have no current-source inverse"
+        )
     from app import task20_definitions
     from app.task_run_entity_definitions import task_run_field_map, task_run_entity_objects
     from app.task_entity_migration import restore_feedback_workbench_ref

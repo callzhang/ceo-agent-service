@@ -1,11 +1,14 @@
 from contextlib import closing
 import json
 import sqlite3
+from uuid import NAMESPACE_URL, uuid5
 
 from app.task_entity_schema import capture_task_entities, migrate_task_entities, restore_task_entities
 from app.task_entity_storage import get_meeting_delivery_key, list_task_business_keys
 from tests.test_task_entity_schema import _source
 from app.task12_storage import insert_task12
+from app.store import AutoReplyStore
+from app.state_definitions import state_projection
 
 
 def test_meeting_delivery_key_survives_two_portable_inverse_cycles_and_old_allocator_write():
@@ -132,3 +135,92 @@ def test_inverse_rejects_meeting_key_that_no_longer_matches_meeting_source_facts
         else:
             raise AssertionError("stale Meeting delivery identity was accepted")
         assert db.execute("select count(*) from task_business_keys").fetchone()[0] == 2
+
+
+def test_inverse_rejects_meeting_key_timestamps_before_schema_replacement():
+    with closing(_source()) as db:
+        db.execute("begin immediate")
+        metadata = capture_task_entities(db)
+        forward = migrate_task_entities(db, metadata)
+        db.execute("update task_business_keys set created_at='2026-10-23T00:00:00Z' where task_id=221")
+        tasks_before = db.execute("select id,kind from tasks order by id").fetchall()
+        keys_before = db.execute("select id,task_id,business_key,created_at,updated_at from task_business_keys order by id").fetchall()
+        try:
+            restore_task_entities(db, metadata, forward)
+        except ValueError as exc:
+            assert "timestamps" in str(exc)
+        else:
+            raise AssertionError("Meeting association timestamp loss was accepted")
+        assert db.execute("select id,kind from tasks order by id").fetchall() == tasks_before
+        assert db.execute("select id,task_id,business_key,created_at,updated_at from task_business_keys order by id").fetchall() == keys_before
+
+
+def test_real_store_meeting_delivery_facts_survive_task_inverse_and_forward(tmp_path):
+    path = tmp_path / "store.sqlite3"
+    store = AutoReplyStore(path)
+    meeting_id = store.upsert_meeting_alignment_job(
+        meeting_id="meeting-real-store", title="Meeting", source_json="{}",
+        participants_json="[]", ended_at="2026-10-23T00:00:00Z",
+        eligible_at="2026-10-23T00:00:00Z", status="pending",
+    )
+    assert store.get_meeting_alignment_job(meeting_id).meeting_id == "meeting-real-store"
+    primary = f"meeting-alignment:{meeting_id}:meeting-real-store"
+    sensitive = f"{primary}:sensitive"
+    keys = (primary, sensitive)
+    for key, kind, target in ((primary, "group", "group-123"),
+                              (sensitive, "user", "user-456")):
+        store.prepare_meeting_alignment_message(
+            delivery_key=key, body=f"prepared {key}", original_text=f"original {key}",
+            target_kind=kind, target_id=target,
+        )
+        store.record_outbound_postfix_receipt(
+            "dingtalk", key, {"openMessageId": f"provider-{key}", "result": "ok"},
+            operation="send_message",
+        )
+
+    def snapshot(db):
+        actions = db.execute(
+            "select * from actions where action_delivery_key in (?,?) order by id", keys
+        ).fetchall()
+        action_ids = tuple(row[0] for row in actions)
+        receipts = db.execute(
+            "select * from action_receipts where action_id in (?,?) order by id",
+            action_ids,
+        ).fetchall()
+        states = db.execute(
+            f"select * from ({state_projection('service_state')}) where key in (?,?) order by key",
+            tuple(f"meeting_delivery_target:v1:dingtalk:{key}" for key in keys),
+        ).fetchall()
+        return actions, receipts, states
+
+    with sqlite3.connect(path) as db:
+        db.row_factory = sqlite3.Row
+        before = snapshot(db)
+        assert len(before[0]) == len(before[1]) == len(before[2]) == 2
+        db.execute("pragma foreign_keys=off")
+        db.execute("begin immediate")
+        source_metadata = capture_task_entities(db)
+        forward = migrate_task_entities(db, source_metadata)
+        meeting_task_id = db.execute(
+            "select id from tasks where kind='meeting_alignment' and json_extract(parameters_json,'$.meeting_id')=?",
+            ("meeting-real-store",),
+        ).fetchone()[0]
+        assert get_meeting_delivery_key(db, meeting_task_id) == primary
+        inverse = restore_task_entities(db, source_metadata, forward)
+        portable_context = json.loads(json.dumps(inverse["source_context"]))
+        portable_identity = json.loads(json.dumps(inverse["inverse_identity"]))
+        second_source = capture_task_entities(db)
+        migrate_task_entities(
+            db, second_source, source_context=portable_context,
+            inverse_identity=portable_identity,
+        )
+        assert get_meeting_delivery_key(db, meeting_task_id) == primary
+        after = snapshot(db)
+        assert tuple(tuple(row) for group in after for row in group) == tuple(
+            tuple(row) for group in before for row in group
+        )
+
+    assert tuple(str(uuid5(NAMESPACE_URL, f"dingtalk:{key}")) for key in keys) == (
+        "e30c6dfa-ef4b-5f58-9b57-f95395770a84",
+        "e2a53e32-fea5-52c7-9f30-76ab55286187",
+    )
