@@ -1,3 +1,4 @@
+import json
 import sqlite3
 from contextlib import contextmanager
 
@@ -25,7 +26,16 @@ class _AssembledMeetingStore(AutoReplyStore):
 
     @contextmanager
     def _connect(self):
-        yield self.db
+        owned_transaction = not self.db.in_transaction
+        try:
+            yield self.db
+        except BaseException:
+            if owned_transaction and self.db.in_transaction:
+                self.db.rollback()
+            raise
+        else:
+            if owned_transaction and self.db.in_transaction:
+                self.db.commit()
 
     @contextmanager
     def _immediate_write_transaction(self):
@@ -239,3 +249,141 @@ def test_confirmed_delivery_restore_requires_exact_native_saved_key(tmp_path):
     assert restored.status == "ready_to_send"
     assert restored.send_result_json == result_json
     assert restored.final_message == prepared.final_body
+
+
+@pytest.mark.parametrize("first_effect", ["", "provider_effect_started"])
+def test_startup_reset_closes_native_meeting_run_and_attempt_without_replay(tmp_path, first_effect):
+    from app.run_entity_storage import create_runtime_attempt
+
+    store = _AssembledMeetingStore(tmp_path / f"assembled-reset-{bool(first_effect)}.sqlite3")
+    task_id = store.upsert_meeting_alignment_job(
+        meeting_id=f"meeting-reset-{bool(first_effect)}", title="Review", source_json="{}",
+        participants_json="[]", ended_at="2026-10-23T10:00:00", eligible_at="2026-10-23T10:01:00",
+        status="pending",
+    )
+    claimed = store.claim_meeting_alignment_jobs(1, "2026-10-23T10:02:00")
+    run_id = store.claim_professional_run(task_id)
+    create_runtime_attempt(store.db, values={
+        "parent_id": run_id, "workload_kind": "meeting", "workload_key": str(run_id),
+        "attempt_number": 1, "route_name": "route-a", "runtime_kind": "codex_cli",
+        "credential_mode": "oauth", "model": "model", "session_mode": "fresh",
+        "source_session_id": "", "attempt_purpose": "normal", "validation_retry_policy_id": "",
+        "validation_result_schema_id": "", "session_id": "session-live", "transcript_reference": "trace-live",
+        "transcript_start": 3, "transcript_end": 8, "status": "running", "failure_class": "",
+        "failure_code": "", "failover_permitted": 0, "lease_owner": "worker",
+        "lease_expires_at": "2099-01-01T00:00:00+00:00", "first_effect_started_at": first_effect,
+        "result_schema_id": "", "started_at": "now", "finished_at": "", "created_at": "now", "updated_at": "now",
+    })
+    store.db.commit()
+    assert claimed[0].id == task_id
+
+    recovered = store.reset_processing_meeting_alignment_jobs()
+    assert [job.id for job in recovered] == [task_id]
+    assert recovered[0].status == "retry" and recovered[0].attempts == 0
+    run = store.db.execute("select status,error from runs where id=?", (run_id,)).fetchone()
+    assert run[0] == "retry" and "service_startup_requeue" in run[1]
+    attempt = store.db.execute("select status,first_effect_started_at,lease_owner from runtime_attempts where parent_id=?", (run_id,)).fetchone()
+    assert tuple(attempt) == ("failed", first_effect, "")
+    assert store.get_meeting_alignment_job(task_id).send_result_json == "{}"
+
+
+def test_native_meeting_rerun_and_replay_preserve_calendar_result_and_effect_fences(tmp_path):
+    from tests.test_meeting_alignment_delivery import send_decision
+
+    store = _AssembledMeetingStore(tmp_path / "assembled-rerun-replay.sqlite3")
+    task_id = store.upsert_meeting_alignment_job(
+        meeting_id="meeting-rerun", title="Review", source_json="{}", participants_json="[]",
+        ended_at="2026-10-23T10:00:00", eligible_at="2026-10-23T10:01:00", status="failed",
+    )
+    decision = send_decision()
+    store.update_meeting_alignment_job(task_id, decision_json=decision.model_dump_json(),
+        target_kind="group", target_id="group-native", target_title="Group",
+        final_message=decision.final_message, calendar_summary_status="updated",
+        calendar_summary_result_json='{"event_id":"event-1","state":"updated"}')
+    rerun = store.rerun_meeting_alignment_jobs([task_id])
+    assert rerun == [task_id]
+    reset = store.get_meeting_alignment_job(task_id)
+    assert (reset.status, reset.attempts, reset.decision_json, reset.send_result_json) == ("retry", 0, "{}", "{}")
+    assert (reset.calendar_summary_status, reset.calendar_summary_result_json) == (
+        "updated", '{"event_id":"event-1","state":"updated"}',
+    )
+    store.update_meeting_alignment_job(task_id, status="no_action")
+    replay = store.reopen_meeting_alignment_job_for_replay(task_id, title="Review replay",
+        source_json='{"event":"new"}', participants_json='["A"]',
+        ended_at="2026-10-23T11:00:00", eligible_at="2026-10-23T11:01:00")
+    assert replay is not None
+    assert (replay.status, replay.title, replay.source_json, replay.participants_json) == (
+        "pending", "Review replay", '{"event":"new"}', '["A"]',
+    )
+    assert (replay.calendar_summary_status, replay.calendar_summary_result_json) == (
+        "updated", '{"event_id":"event-1","state":"updated"}',
+    )
+    store.update_meeting_alignment_job(task_id, status="failed", decision_json=decision.model_dump_json(),
+        target_kind="group", target_id="group-native", final_message=decision.final_message)
+    store.prepare_meeting_alignment_message(delivery_key=store.get_meeting_delivery_key(task_id), body="prepared",
+        original_text="", target_kind="group", target_id="group-native", feedback_base_url="")
+    assert store.rerun_meeting_alignment_jobs([task_id]) == []
+
+
+def test_native_asr_recovery_updates_only_same_failed_task_and_saved_result_owner(tmp_path):
+    import hashlib
+
+    source = {"meeting_id": "meeting-asr", "calendar_evidence": {"source": "calendar"}}
+    store = _AssembledMeetingStore(tmp_path / "assembled-asr.sqlite3")
+    task_id = store.upsert_meeting_alignment_job(
+        meeting_id="meeting-asr", title="Review", source_json=__import__("json").dumps(source),
+        participants_json="[]", ended_at="2026-10-23T10:00:00", eligible_at="2026-10-23T10:01:00", status="failed",
+    )
+    transcript = {"provider": "ai_services", "model": "qwen3-asr", "audio_sha256": hashlib.sha256(b"a").hexdigest(),
+        "audio_duration_seconds": 60, "completed_chunks": 1, "total_chunks": 1,
+        "segments": [{"start_seconds": 1, "end_seconds": 2, "text": "结论事实"}]}
+    store.update_meeting_alignment_job(task_id, calendar_summary_status="failed",
+        calendar_summary_result_json='{"event_id":"event-1","state":"failed"}')
+    assert store.attach_asr_transcript_and_rerun_meeting_job(task_id, transcript) == task_id
+    job = store.get_meeting_alignment_job(task_id)
+    assert job.status == "retry" and job.attempts == 0
+    saved = json.loads(job.source_json)
+    assert saved["asr_transcript"]["segments"][0]["text"] == "结论事实"
+    assert (job.calendar_summary_status, job.calendar_summary_result_json) == (
+        "failed", '{"event_id":"event-1","state":"failed"}',
+    )
+
+
+def test_actual_meeting_producer_validates_source_then_records_native_run_and_result(tmp_path):
+    from app.dingtalk_models import DingTalkConversation
+    from tests.test_meeting_alignment import (
+        NOW, ConsumerDws, FakeMeetingRunner, consumer_send_decision,
+    )
+    from app.meeting_alignment import consume_meeting_alignment_jobs, produce_meeting_alignment_jobs
+
+    store = _AssembledMeetingStore(tmp_path / "assembled-producer-run.sqlite3")
+    dws = ConsumerDws()
+    dws.search_conversations = lambda query: [DingTalkConversation(
+        open_conversation_id="cid-first", title="项目群", single_chat=False, unread_point=0,
+    )] if "上线" in query else []
+    assert produce_meeting_alignment_jobs(store, dws, now=NOW) == 1
+    task = store.get_meeting_alignment_job_by_meeting_id("minutes-1")
+    assert task is not None and task.id == 1 and task.status == "pending"
+    runner = FakeMeetingRunner(consumer_send_decision())
+
+    assert consume_meeting_alignment_jobs(store, dws, runner, now=NOW, deliver=False) == 1
+    completed_task = store.get_meeting_alignment_job(task.id)
+    assert completed_task.status == "ready_to_send"
+    assert completed_task.target_id == "cid-first" and completed_task.send_result_json == "{}"
+    run = store.list_meeting_alignment_runs(task.id)[0]
+    assert (run.task_id, run.job_id, run.status, run.codex_session_id) == (
+        task.id, None, "ready_to_send", runner.last_session_id,
+    )
+    assert json.loads(completed_task.decision_json)["target"]["conversation_id"] == "cid-first"
+
+
+def test_terminal_input_compaction_without_scheduled_context_keeps_original_input(tmp_path):
+    source = json.dumps({"meeting_id": "meeting-compact"})
+    store = _AssembledMeetingStore(tmp_path / "assembled-compaction.sqlite3")
+    task_id = store.upsert_meeting_alignment_job(meeting_id="meeting-compact", title="Review",
+        source_json=source, participants_json="[]", ended_at="2026-10-23T10:00:00",
+        eligible_at="2026-10-23T10:01:00", status="sent")
+    store.update_meeting_alignment_job(task_id, final_message="Sent result")
+
+    assert not store.compact_meeting_consumer_input(task_id)
+    assert store.get_meeting_alignment_job(task_id).source_json == source

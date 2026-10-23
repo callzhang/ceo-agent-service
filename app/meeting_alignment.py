@@ -823,6 +823,7 @@ def _search_similar_meeting_sessions(
         query_embedding=query_embedding,
         embedding_client=embedding_client,
         limit=3,
+        meeting_native_only=True,
     )
 
 
@@ -1459,14 +1460,6 @@ def _analyze_meeting_job(
         run_id,
         status="ready_to_send",
         error="",
-    )
-    _index_meeting_codex_session(
-        store,
-        runner,
-        job,
-        source,
-        decision,
-        source_id=run_id,
     )
     store.update_meeting_alignment_job(
         job.id,
