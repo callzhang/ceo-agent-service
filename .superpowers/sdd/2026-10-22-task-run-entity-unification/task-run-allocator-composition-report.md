@@ -38,3 +38,18 @@ Passed:
 After repair, the required artifact-route operator was rerun with the same explicit pinned predecessor and a fresh temporary output root. It passed the allocator collision and proceeded through artifact migration/inverse, then stopped at the first reforward Task capture (`app/task_entity_schema.py:79`): `ValueError: unsupported current Task source declaration`. This is later than the repaired Run divergence and remains for the original operator/proof owner; no operator source or input facts were changed.
 
 The architecture and runtime mechanism docs now state the allocator composition rule. No provider, model, main checkout, production service, push, or deploy was used. The final commit is the single implementation/evidence commit that includes this report; its exact HEAD is provided in the task handoff to avoid a report-only follow-up commit.
+
+## Fix round 1/5 — committed integration regression gap
+
+The review found that the previous focused test exercised the relocation helper directly, while the multi-cycle converter test used non-colliding constructor state. Replaced that helper-only test with `test_constructor_shaped_task_run_allocator_collision_survives_two_portable_cycles`, which builds the exact source `sqlite_sequence` facts `(1,tasks:published,2)`, `(2,tasks,3)`, `(3,runs:published,2)`, `(4,runs,2)` through the selected current Task and Run schemas and their source inserts. It drives `capture_task_entities`/`migrate_task_entities` and `capture_run_entities`/`migrate_run_entities`, asserts native `workbench_events` is actually relocated past captured rowid 4, then tests the real inverse and two portable reforward/inverse cycles. The regression checks exact source allocator rows, the unrelated `runs_other` row, and next native event IDs after deletion/high-water retention.
+
+Baseline RED was confirmed without changing shared HEAD or the shared worktree: `git archive f4cb7e1e26e8bf76af3f7a6df6881ae1c26c3692 | tar -x -C <fresh /tmp/task-run-allocator-red.XXXXXX>` created a disposable BASE source tree; the new test file was copied into that tree and only the new test was run there. It failed in the real `migrate_run_entities` restoration with `sqlite3.IntegrityError: UNIQUE constraint failed: sqlite_sequence.rowid`, proving the regression exercises the original divergence. The temporary baseline tree was removed after the run.
+
+GREEN and scoped verification on the repaired HEAD:
+
+- `pytest -q tests/test_run_entity_schema.py::test_run_owner_allocator_relocation_skips_sparse_captured_source_rowids tests/test_run_entity_schema.py::test_constructor_shaped_task_run_allocator_collision_survives_two_portable_cycles tests/test_run_entity_schema.py::test_artifact_created_uuid_reference_survives_native_forward_and_inverse tests/test_run_entity_schema.py::test_forward_migrates_all_eight_current_source_kinds_and_typed_facts` — 4 passed. The separate sparse-source check verifies a captured rowid above the current `sqlite_sequence` maximum is skipped as the next relocation candidate.
+- `ruff check tests/test_run_entity_schema.py app/run_entity_schema.py` — passed.
+- `python -m py_compile tests/test_run_entity_schema.py app/run_entity_schema.py` — passed.
+- `git diff --check` — passed.
+
+No broad Task suite or artifact-route operator was rerun in this fix round. The operator's later Task source-catalog rejection remains outside this allocator regression and is still recorded above for the original proof owner.

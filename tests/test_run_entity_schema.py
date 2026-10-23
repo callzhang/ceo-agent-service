@@ -97,44 +97,161 @@ def _source_row(db, kind, values):
                ",".join("?" for _ in columns) + ")", tuple(row[c] for c in columns))
 
 
-def test_run_owner_allocator_composes_with_captured_source_sequence_rowids():
+def test_run_owner_allocator_relocation_skips_sparse_captured_source_rowids():
     db = sqlite3.connect(":memory:")
-    source_names = ("tasks:published", "tasks")
-    for name in source_names:
-        db.execute(f'create table "{name}"(id integer primary key autoincrement)')
-        db.execute(f'insert into "{name}"(id) values(2)')
-    db.execute('update sqlite_sequence set seq=3 where name="tasks"')
-    db.execute("insert into sqlite_sequence(rowid,name,seq) values(3,'runs:published',2)")
-    db.execute('create table "runs"(id integer primary key autoincrement)')
-    db.execute('insert into "runs"(id) values(2)')
-    db.execute("insert into sqlite_sequence(rowid,name,seq) values(5,'runs:reserved',44)")
-    source_rows = tuple(db.execute(
-        "select rowid,name,seq from sqlite_sequence order by rowid"))
-    assert source_rows == ((1, "tasks:published", 2), (2, "tasks", 3),
-                           (3, "runs:published", 2), (4, "runs", 2),
-                           (5, "runs:reserved", 44))
-
-    # Run conversion drops the source table, then creates the native owner;
-    # its first sequence row reuses captured source ROWID 4.
-    db.execute('drop table "runs"')
-    db.execute("delete from sqlite_sequence where name='runs:reserved'")
-    db.execute("create table workbench_events(id integer primary key autoincrement)")
-    db.execute("insert into workbench_events(id) values(2)")
+    db.execute('create table workbench_events(id integer primary key autoincrement)')
+    db.execute("insert into sqlite_sequence(rowid,name,seq) values(10,'workbench_events',2)")
+    captured_source_rows = (
+        (10, "runs", 2), (11, "runs:published", 8000), (19, "runs:reserved", 44),
+    )
+    # Rowid 11 is both the next technical-rowid candidate and captured source
+    # state above the current sequence-table maximum. It must also be skipped.
+    _relocate_run_owner_sequence_rowids(db, captured_source_rows, {"workbench_events"})
     assert db.execute(
         "select rowid,name,seq from sqlite_sequence where name='workbench_events'"
-    ).fetchone() == (4, "workbench_events", 2)
+    ).fetchone() == (12, "workbench_events", 2)
 
-    run_source_rows = tuple(row for row in source_rows if row[1].startswith("runs"))
-    _relocate_run_owner_sequence_rowids(db, run_source_rows, {"workbench_events"})
-    for row in run_source_rows:
-        db.execute("delete from sqlite_sequence where name=?", (row[1],))
-        db.execute("insert into sqlite_sequence(rowid,name,seq) values(?,?,?)", row)
+
+def test_constructor_shaped_task_run_allocator_collision_survives_two_portable_cycles():
+    from app.logical_run_current_schema import create_current_run11_schema
+    from app.task_entity_schema import (
+        capture_task_entities, migrate_task_entities, restore_task_entities,
+    )
+    from app.task_lifecycle_current_schema import create_current_task20_schema
+    from app.task_lifecycle_storage import source_insert
+    from app.task8_storage import register_task8_functions
+    from app.storage_payload import TASK_RECORD_TYPES
+    from tests.test_task20_definitions import payload as task_payload
+
+    db = sqlite3.connect(":memory:")
+    db.execute("pragma foreign_keys=off")
+    register_task8_functions(db)
+    create_current_task20_schema(db)
+    create_current_run11_schema(db)
+    db.commit()
+    db.execute("begin immediate")
+
+    def insert_task(kind, physical_id, public_id, parent_id):
+        values = task_payload(db, kind)
+        if kind == "workbench_artifacts":
+            values["id"] = "c2f5cb31-b15a-48ca-bbaf-9fb6048a6246"
+        columns, expressions, parameters = source_insert(kind, values, {})
+        columns = ["_kind", "id", "legacy_key", "parent_id", *columns]
+        expressions = [str(TASK_RECORD_TYPES.code(kind)), "?", "?", "?", *expressions]
+        db.execute(
+            "insert into tasks(" + ",".join('"' + name + '"' for name in columns) + ") "
+            "values(" + ",".join(expressions) + ")",
+            (physical_id, public_id, parent_id, *parameters),
+        )
+
+    insert_task("workbench_tasks", 1, "workbench-task-uuid", None)
+    insert_task("workbench_turns", 2, "workbench-turn-uuid", 1)
+    insert_task("workbench_artifacts", 3, "3", 2)
+    artifact_uuid = "c2f5cb31-b15a-48ca-bbaf-9fb6048a6246"
+    db.execute(
+        "insert into runs(id,record_type,task_id,sequence,event_type,payload_json,created_at) "
+        "values(2,'workbench_events',2,1,'artifact_created',?,?)",
+        (json.dumps({"artifact_id": artifact_uuid}), "2026-10-23T12:00:01+00:00"),
+    )
+
+    expected_source_sequences = (
+        (1, "tasks:published", 2), (2, "tasks", 3),
+        (3, "runs:published", 2), (4, "runs", 2),
+    )
+    assert tuple(db.execute(
+        "select rowid,name,seq from sqlite_sequence order by rowid"
+    )) == expected_source_sequences
+    task_source = capture_task_entities(db)
+    run_source = capture_run_entities(db)
+    assert tuple(run_source["sequence_rows"]) == expected_source_sequences[2:]
+
+    task_forward = migrate_task_entities(db, task_source)
     assert tuple(db.execute(
         "select rowid,name,seq from sqlite_sequence where name in "
-        "('tasks:published','tasks','runs:published','runs','runs:reserved') order by rowid")) == source_rows
-    assert db.execute(
+        "('tasks:published','tasks','runs:published','runs') order by rowid"
+    )) == expected_source_sequences
+    owner_highwaters = {owner: None for owner in (
+        "runs", "runtime_attempts", "run_failures", "schedule_occurrences",
+        "workbench_events", "codex_session_search_index",
+        "email_classifier_runtime_samples", "setup_wizard_events")}
+    owner_highwaters["workbench_events"] = 2
+    run_forward = migrate_run_entities(
+        db, run_source, task_metadata=task_forward,
+        run_handoff=_run_handoff(db, run_source, owner_highwaters=owner_highwaters),
+    )
+    assert tuple(db.execute(
+        "select rowid,name,seq from sqlite_sequence where name in "
+        "('tasks:published','tasks','runs:published','runs') order by rowid"
+    )) == expected_source_sequences
+    native_event_sequence = db.execute(
         "select rowid,name,seq from sqlite_sequence where name='workbench_events'"
-    ).fetchone() == (6, "workbench_events", 2)
+    ).fetchone()
+    assert native_event_sequence[0] > 4
+    assert native_event_sequence[2] == 2
+    # Add an unrelated owner only after proving the real Run target occupied
+    # captured source rowid 4, so it cannot mask the collision under test.
+    db.execute("create table runs_other(id integer primary key autoincrement)")
+    db.execute("insert into runs_other(id) values(77)")
+    unrelated_sequence = tuple(db.execute(
+        "select rowid,name,seq from sqlite_sequence where name='runs_other'"))
+    next_event = db.execute(
+        "insert into workbench_events(task_id,sequence,event_type,payload_json,created_at) "
+        "values(2,2,'allocator_probe','{}','now') returning id"
+    ).fetchone()[0]
+    assert next_event == 3
+    db.execute("delete from workbench_events where id=?", (next_event,))
+    owner_highwaters["workbench_events"] = next_event
+    task_inverse = restore_task_entities(db, task_source, task_forward)
+    restore_run_entities(db, run_source, run_forward, task_metadata=task_forward,
+                         task_inverse_metadata=task_inverse)
+    expected_source_sequences = expected_source_sequences[:3] + ((4, "runs", next_event),)
+    assert tuple(db.execute(
+        "select rowid,name,seq from sqlite_sequence order by rowid"
+    )) == expected_source_sequences + unrelated_sequence
+    db.commit()
+
+    for _ in range(2):
+        db.execute("begin immediate")
+        next_task_source = capture_task_entities(db)
+        next_task_forward = migrate_task_entities(
+            db, next_task_source, source_context=task_inverse["source_context"],
+            inverse_identity=task_inverse["inverse_identity"],
+        )
+        next_run_source = capture_run_entities(db)
+        assert tuple(next_run_source["sequence_rows"]) == expected_source_sequences[2:]
+        next_run_forward = migrate_run_entities(
+            db, next_run_source, task_metadata=next_task_forward,
+            run_handoff=_run_handoff(db, next_run_source,
+                                     owner_highwaters=owner_highwaters),
+        )
+        assert tuple(db.execute(
+            "select rowid,name,seq from sqlite_sequence where name in "
+            "('tasks:published','tasks','runs:published','runs') order by rowid"
+        )) == expected_source_sequences
+        assert tuple(db.execute(
+            "select rowid,name,seq from sqlite_sequence where name='runs_other'"
+        )) == unrelated_sequence
+        next_event = db.execute(
+            "insert into workbench_events(task_id,sequence,event_type,payload_json,created_at) "
+            "values(2,2,'allocator_probe','{}','now') returning id"
+        ).fetchone()[0]
+        assert next_event == owner_highwaters["workbench_events"] + 1
+        db.execute("delete from workbench_events where id=?", (next_event,))
+        owner_highwaters["workbench_events"] = next_event
+        task_inverse = restore_task_entities(db, next_task_source, next_task_forward)
+        restore_run_entities(
+            db, next_run_source, next_run_forward, task_metadata=next_task_forward,
+            task_inverse_metadata=task_inverse,
+        )
+        db.commit()
+        expected_source_sequences = expected_source_sequences[:3] + ((4, "runs", next_event),)
+        assert tuple(db.execute(
+            "select rowid,name,seq from sqlite_sequence where name in "
+            "('tasks:published','tasks','runs:published','runs') order by rowid"
+        )) == expected_source_sequences
+        assert tuple(db.execute(
+            "select rowid,name,seq from sqlite_sequence where name='runs_other'"
+        )) == unrelated_sequence
 
 
 def _run_source(*, orphan_task_id=None, include_task_source_metadata=False, workbench_artifact_public_id=None):
