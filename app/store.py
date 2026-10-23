@@ -7379,7 +7379,7 @@ class AutoReplyStore(LogicalRunStoreMixin, ReviewedCandidateStoreMixin):
         if workload_kind == "weekly_okr":
             parts = workload_key.split(":")
             week_end, manager_user_id, source_digest = parts[:3]
-            query = """select 1 from tasks where kind='okr_analysis' and status='processing'
+            query = """select 1 from tasks where kind='okr_analysis' and status='running'
                 and json_extract(parameters_json,'$.week_end')=?
                 and json_extract(parameters_json,'$.manager_user_id')=?
                 and json_extract(parameters_json,'$.source_digest')=?"""
@@ -8212,7 +8212,7 @@ class AutoReplyStore(LogicalRunStoreMixin, ReviewedCandidateStoreMixin):
                 update tasks as job
                 set status='failed', error='runtime_lease_expired', lease_owner='',
                     lease_expires_at='', updated_at=?
-                where job.kind='okr_analysis' and job.status='processing'
+                where job.kind='okr_analysis' and job.status='running'
                   and job.lease_expires_at!='' and job.lease_expires_at<=?
                   and exists (
                     select 1 from runtime_attempts as attempt
@@ -24268,13 +24268,13 @@ class AutoReplyStore(LogicalRunStoreMixin, ReviewedCandidateStoreMixin):
         with self._agent_run_write_transaction(now) as (db, (_, now_text)):
             cursor = db.execute("""
                 update tasks as stale
-                set status='done', error='superseded_by_later_completed_week',
+                set status='completed', error='superseded_by_later_completed_week',
                     lease_owner='', lease_expires_at='', updated_at=?
-                where stale.kind='okr_analysis' and stale.status='processing'
+                where stale.kind='okr_analysis' and stale.status='running'
                   and stale.lease_expires_at!='' and stale.lease_expires_at<=?
                   and exists (
                     select 1 from tasks completed
-                    where completed.kind='okr_analysis' and completed.status='done'
+                    where completed.kind='okr_analysis' and completed.status='completed'
                       and json_extract(completed.parameters_json,'$.manager_user_id')=
                           json_extract(stale.parameters_json,'$.manager_user_id')
                       and json_extract(completed.parameters_json,'$.week_end')>
@@ -24297,14 +24297,14 @@ class AutoReplyStore(LogicalRunStoreMixin, ReviewedCandidateStoreMixin):
         with self._agent_run_write_transaction(now) as (db, (_, now_text)):
             cursor = db.execute("""
                 update tasks as stale
-                set status='done', error='superseded_by_later_completed_week',
+                set status='completed', error='superseded_by_later_completed_week',
                     lease_owner='', lease_expires_at='', updated_at=?
                 where stale.kind='okr_analysis' and stale.status='failed'
                   and stale.error in ('runtime_route_unavailable','runtime_lease_expired',
                                       'runtime_result_validation_failed')
                   and exists (
                     select 1 from tasks completed
-                    where completed.kind='okr_analysis' and completed.status='done'
+                    where completed.kind='okr_analysis' and completed.status='completed'
                       and completed.error=''
                       and json_extract(completed.parameters_json,'$.manager_user_id')=
                           json_extract(stale.parameters_json,'$.manager_user_id')
