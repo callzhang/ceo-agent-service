@@ -495,6 +495,18 @@ reverts committed work they did not author.
    Before restarting, verify `python -c "import app.cli, app.worker,
    app.email_worker, app.service_supervisor"` and tell the other owners.
 6. **Release the claim** by deleting your row when the work is committed.
+7. **Do not develop on this tree's `main`.** Derek, 2026-10-23: this tree's
+   `main` is only a copy of `origin/main` and moves by `git pull --ff-only`.
+   Develop in a worktree or branch cut from `origin/main`
+   (`git worktree add <dir> origin/main`), test there, and push from there. On
+   2026-10-23 this tree was 1591 commits behind `origin/main` with two local
+   commits that were never pushed: `python -m app.deploy` run from it crashed
+   against the live database (`no such table: service_state`), and a merge was
+   refused by 15 files holding other agents' uncommitted edits. Deploy from a
+   clean `origin/main` worktree too. When this tree has to catch up, a
+   temporary `git stash` is allowed for that one merge (Derek, 2026-10-23):
+   stash, `git merge origin/main`, `git stash pop --index`, and say so here if
+   anything conflicts. Every other use of stash stays forbidden.
 
 ## Current claims
 
