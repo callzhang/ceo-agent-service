@@ -80,16 +80,17 @@ def _begin_immediate_with_retry(
             time.sleep(delay_seconds * (attempt + 1))
 
 
-WORKBENCH_TASK_SQL = task20_projection("workbench_tasks")
+WORKBENCH_TASK_SQL = """select cast(id as text) as id,title,runtime_kind,
+    provider_session_ref,archived_at,created_at,updated_at from workbench_tasks"""
 WORKBENCH_TURN_SQL = task20_projection("workbench_turns")
 
 
-# Child source projections keep physical parents and return original public IDs.
-WORKBENCH_ATTACHMENT_SQL = f"""select c.id,t.legacy_key as task_id,
-    c.client_request_id,c.filename,c.media_type,c.size_bytes,c.content_sha256,
-    c.storage_path,c.created_at
-    from ({task12_projection("workbench_attachments")}) c join tasks t on t.id=c.task_id
-    where t.record_type='workbench_tasks'"""
+# Attachments are owned by the native Workbench parent. Public DTO identities
+# remain decimal strings while storage_path remains an independent file locator.
+WORKBENCH_ATTACHMENT_SQL = """select cast(id as text) as id,
+    cast(workbench_task_id as text) as task_id,client_request_id,filename,
+    media_type,size_bytes,content_sha256,storage_path,created_at
+    from workbench_attachments"""
 WORKBENCH_ARTIFACT_SQL = f"""select c.id,t.legacy_key as turn_id,
     c.label,c.path,c.media_type,c.created_at
     from ({task12_projection("workbench_artifacts")}) c join tasks t on t.id=c.turn_id
@@ -151,45 +152,44 @@ class WorkbenchStore(AutoReplyStore):
             raise ValueError("title must be non-empty")
         if not runtime_kind:
             raise ValueError("runtime_kind must be non-empty")
-        task_id = str(uuid4())
-        with self._connect() as db:
-            insert_parts = task8_insert_parts('workbench_tasks', {
-                "legacy_key": task_id, "title": title, "runtime_kind": runtime_kind,
-            })
-            db.execute(
-                f"insert into tasks ({insert_parts.columns}) values ({insert_parts.values})",
-                insert_parts.parameters,
-            )
-            return self._task_from_row(self._require_task(db, task_id))
-
-    def get_task(self, task_id: str) -> WorkbenchTask | None:
         with self._connect() as db:
             row = db.execute(
-                f"select * from ({WORKBENCH_TASK_SQL}) as workbench_tasks where id=?", (task_id,)
+                "insert into workbench_tasks(title,runtime_kind) values(?,?) "
+                "returning id,title,runtime_kind,provider_session_ref,archived_at,created_at,updated_at",
+                (title, runtime_kind),
+            ).fetchone()
+            return self._task_from_row(row)
+
+    def get_task(self, task_id: str) -> WorkbenchTask | None:
+        native_id = self._native_task_id(task_id)
+        with self._connect() as db:
+            row = db.execute(
+                f"select * from ({WORKBENCH_TASK_SQL}) as workbench_tasks where id=?",
+                (str(native_id),),
             ).fetchone()
             return None if row is None else self._task_from_row(row)
 
     def get_task_summary(self, task_id: str) -> tuple[WorkbenchTask, str] | None:
+        native_id = self._native_task_id(task_id)
         with self._connect() as db:
             row = db.execute(
-                f"""
-                select tasks.*,
-                       coalesce((select turns.{task20_column('workbench_turns', 'status')} from tasks turns
-                                 where turns.record_type='workbench_turns'
-                                   and turns.parent_id=(select parent.id from tasks parent
-                                       where parent.record_type='workbench_tasks'
-                                         and parent.legacy_key=tasks.id)
-                                 order by turns.{task20_column('workbench_turns', 'task_sequence')} desc limit 1), 'idle')
+                """
+                select cast(tasks.id as text) as id,tasks.title,tasks.runtime_kind,
+                       tasks.provider_session_ref,tasks.archived_at,tasks.created_at,tasks.updated_at,
+                       coalesce((select turn_task.status from workbench_turns turns
+                                 join tasks turn_task on turn_task.id=turns.task_id
+                                 where turns.workbench_task_id=tasks.id
+                                 order by turns.task_sequence desc limit 1), 'idle')
                            as latest_state
-                from ({WORKBENCH_TASK_SQL}) tasks where tasks.id=?
+                from workbench_tasks tasks where tasks.id=?
                 """,
-                (task_id,),
+                (native_id,),
             ).fetchone()
             return None if row is None else (self._task_from_row(row), row["latest_state"])
 
     def list_tasks(self, *, include_archived: bool = False) -> list[WorkbenchTask]:
         with self._connect() as db:
-            query = f"select * from ({WORKBENCH_TASK_SQL}) as workbench_tasks"
+            query = "select * from workbench_tasks"
             if not include_archived:
                 query += " where archived_at=''"
             query += " order by updated_at desc, id desc"
@@ -213,21 +213,20 @@ class WorkbenchStore(AutoReplyStore):
             clauses.append("tasks.archived_at=''")
         if cursor is not None:
             clauses.append("(tasks.updated_at < ? or (tasks.updated_at=? and tasks.id<?))")
-            parameters.extend((cursor[0], cursor[0], cursor[1]))
+            parameters.extend((cursor[0], cursor[0], self._native_task_id(cursor[1])))
         where = f"where {' and '.join(clauses)}" if clauses else ""
         parameters.append(limit)
         with self._connect() as db:
             rows = db.execute(
                 f"""
-                select tasks.*,
-                       coalesce((select turns.{task20_column('workbench_turns', 'status')} from tasks turns
-                                 where turns.record_type='workbench_turns'
-                                   and turns.parent_id=(select parent.id from tasks parent
-                                       where parent.record_type='workbench_tasks'
-                                         and parent.legacy_key=tasks.id)
-                                 order by turns.{task20_column('workbench_turns', 'task_sequence')} desc limit 1), 'idle')
+                select cast(tasks.id as text) as id,tasks.title,tasks.runtime_kind,
+                       tasks.provider_session_ref,tasks.archived_at,tasks.created_at,tasks.updated_at,
+                       coalesce((select turn_task.status from workbench_turns turns
+                                 join tasks turn_task on turn_task.id=turns.task_id
+                                 where turns.workbench_task_id=tasks.id
+                                 order by turns.task_sequence desc limit 1), 'idle')
                            as latest_state
-                from ({WORKBENCH_TASK_SQL}) as tasks
+                from workbench_tasks as tasks
                 {where}
                 order by tasks.updated_at desc, tasks.id desc limit ?
                 """,
@@ -239,61 +238,41 @@ class WorkbenchStore(AutoReplyStore):
         title = title.strip()
         if not title:
             raise ValueError("title must be non-empty")
+        native_id = self._native_task_id(task_id)
         with self._connect() as db:
-            set_parts = task8_set_parts(
-                'workbench_tasks', {},
-                update_sql={
-                    'title': '?',
-                    'updated_at': 'current_timestamp',
-                },
-            )
             if db.execute(
-                f"""
-                update tasks
-                set {set_parts.sql}
-                where record_type='workbench_tasks' and legacy_key=?
-                """,
-                (title, task_id),
+                "update workbench_tasks set title=?,updated_at=current_timestamp where id=?",
+                (title, native_id),
             ).rowcount != 1:
                 raise ValueError("workbench task does not exist")
-            return self._task_from_row(self._require_task(db, task_id))
+            return self._task_from_row(self._require_task(db, str(native_id)))
 
     def archive_task(
         self, task_id: str, *, now: str | datetime | None = None
     ) -> WorkbenchTask:
         _, now_text = _utc_store_time(now)
+        native_id = self._native_task_id(task_id)
         with self._connect() as db:
             _begin_immediate_with_retry(db)
-            self._require_task(db, task_id)
+            self._require_task(db, str(native_id))
             active = db.execute(
-                f"""
-                select 1 from ({WORKBENCH_TURN_SQL}) as workbench_turns
-                where task_id=? and status in ('queued', 'running')
+                """
+                select 1 from workbench_turns turns join tasks turn_task on turn_task.id=turns.task_id
+                where turns.workbench_task_id=? and turn_task.status in ('queued', 'running')
                 limit 1
                 """,
-                (task_id,),
+                (native_id,),
             ).fetchone()
             if active is not None:
                 raise WorkbenchConflictError(
                     "task_has_active_turn", "workbench task has an active turn"
                 )
-            set_parts = task8_set_parts(
-                'workbench_tasks', {},
-                update_sql={
-                    'archived_at': '?',
-                    'updated_at': '?',
-                },
-            )
             if db.execute(
-                f"""
-                update tasks
-                set {set_parts.sql}
-                where record_type='workbench_tasks' and legacy_key=?
-                """,
-                (now_text, now_text, task_id),
+                "update workbench_tasks set archived_at=?,updated_at=? where id=?",
+                (now_text, now_text, native_id),
             ).rowcount != 1:
                 raise ValueError("workbench task does not exist")
-            return self._task_from_row(self._require_task(db, task_id))
+            return self._task_from_row(self._require_task(db, str(native_id)))
 
     def save_attachment(
         self,
@@ -312,7 +291,8 @@ class WorkbenchStore(AutoReplyStore):
             raise ValueError("filename must be non-empty")
         if not media_type:
             raise ValueError("media_type must be non-empty")
-        task_id = self._canonical_uuid(task_id, field="task_id")
+        native_task_id = self._native_task_id(task_id)
+        task_id = str(native_task_id)
         client_request_id = self._canonical_uuid(
             client_request_id or str(uuid4()), field="client_request_id"
         )
@@ -352,19 +332,17 @@ class WorkbenchStore(AutoReplyStore):
                 try:
                     db.execute("begin immediate")
                     self._require_task(db, task_id)
-                    insert_task12(db, "workbench_attachments", {
-                        "id": attachment_id,
-                        "task_id": task_physical_id(db, "workbench_tasks", task_id),
-                        "client_request_id": client_request_id,
-                        "filename": filename,
-                        "media_type": media_type,
-                        "size_bytes": len(content),
-                        "content_sha256": content_sha256,
-                        "storage_path": str(storage_path),
-                    })
+                    inserted = db.execute(
+                        "insert into workbench_attachments(workbench_task_id,client_request_id,"
+                        "filename,media_type,size_bytes,content_sha256,storage_path) "
+                        "values(?,?,?,?,?,?,?) returning id",
+                        (native_task_id, client_request_id, filename, media_type, len(content),
+                         content_sha256, str(storage_path)),
+                    ).fetchone()
+                    native_attachment_id = int(inserted[0])
                     row = db.execute(
                         f"select * from ({WORKBENCH_ATTACHMENT_SQL}) as workbench_attachments where id=?",
-                        (attachment_id,),
+                        (str(native_attachment_id),),
                     ).fetchone()
                     if row is None:
                         raise RuntimeError("attachment insert did not create a row")
@@ -386,15 +364,16 @@ class WorkbenchStore(AutoReplyStore):
                 raise
 
     def list_attachments(self, task_id: str) -> list[WorkbenchAttachment]:
+        native_id = self._native_task_id(task_id)
         with self._connect() as db:
-            self._require_task(db, task_id)
+            self._require_task(db, str(native_id))
             rows = db.execute(
                 f"""
                 select * from ({WORKBENCH_ATTACHMENT_SQL}) as workbench_attachments
                 where task_id=?
-                order by created_at, id
+                order by created_at, cast(id as integer)
                 """,
-                (task_id,),
+                (str(native_id),),
             ).fetchall()
             return [self._attachment_from_row(row) for row in rows]
 
@@ -999,7 +978,7 @@ class WorkbenchStore(AutoReplyStore):
                 )
             attachment_rows = db.execute(
                 f"""select * from ({WORKBENCH_ATTACHMENT_SQL}) as workbench_attachments where task_id=?
-                   {attachment_cursor_sql} order by created_at,id limit 101""",
+                   {attachment_cursor_sql} order by created_at,cast(id as integer) limit 101""",
                 tuple(attachment_parameters),
             ).fetchall()
             events_has_more = len(event_rows) > event_limit
@@ -1125,28 +1104,27 @@ class WorkbenchStore(AutoReplyStore):
         now: str | datetime | None = None,
     ) -> WorkbenchTask:
         _, now_text = _utc_store_time(now)
+        native_turn_id = self._native_task_id(turn_id)
         with self._connect() as db:
             db.execute("begin immediate")
-            turn = self._require_executor_lease(
-                db, turn_id, owner=owner, now_text=now_text
-            )
-            set_parts = task8_set_parts(
-                'workbench_tasks', {},
-                update_sql={
-                    'provider_session_ref': '?',
-                    'updated_at': '?',
-                },
-            )
+            owner = owner.strip()
+            if not owner:
+                raise ValueError("owner must be non-empty")
+            turn = db.execute(
+                "select turns.workbench_task_id from workbench_turns turns "
+                "join tasks turn_task on turn_task.id=turns.task_id "
+                "where turns.task_id=? and turn_task.status='running' "
+                "and turn_task.lease_owner=? and turn_task.lease_expires_at>?",
+                (native_turn_id, owner, now_text),
+            ).fetchone()
+            if turn is None:
+                raise ValueError("turn lease is stale")
             if db.execute(
-                f"""
-                update tasks
-                set {set_parts.sql}
-                where record_type='workbench_tasks' and legacy_key=?
-                """,
-                (provider_session_ref.strip(), now_text, turn["task_id"]),
+                "update workbench_tasks set provider_session_ref=?,updated_at=? where id=?",
+                (provider_session_ref.strip(), now_text, turn["workbench_task_id"]),
             ).rowcount != 1:
                 raise ValueError("workbench task does not exist")
-            return self._task_from_row(self._require_task(db, turn["task_id"]))
+            return self._task_from_row(self._require_task(db, str(turn["workbench_task_id"])))
 
     def attachment_paths_for_executor(
         self,
@@ -1314,6 +1292,15 @@ class WorkbenchStore(AutoReplyStore):
 
 
     @staticmethod
+    def _native_task_id(value: str) -> int:
+        if not isinstance(value, str) or not value.isascii() or not value.isdecimal():
+            raise ValueError("workbench task ID must be a canonical decimal integer")
+        native_id = int(value)
+        if native_id <= 0 or str(native_id) != value:
+            raise ValueError("workbench task ID must be a canonical decimal integer")
+        return native_id
+
+    @staticmethod
     def _canonical_uuid(value: str, *, field: str) -> str:
         try:
             return str(UUID(value))
@@ -1436,49 +1423,49 @@ class WorkbenchStore(AutoReplyStore):
             return
 
     def _reconcile_attachments(self) -> None:
-        """Keep only generated attachment files that have matching metadata rows."""
+        """Keep files addressed by their persisted locator and matching metadata."""
         with self._attachment_lock(create_workbench=False) as workbench:
             if workbench is None:
                 return
-            root = workbench / "attachments"
+            root = Path(os.path.abspath(workbench / "attachments"))
             if not self._managed_directory(root, create=False):
                 return
             referenced_paths: set[Path] = set()
             with self._connect() as db:
                 db.execute("begin immediate")
                 rows = db.execute(
-                    f"select id, task_id, storage_path from ({WORKBENCH_ATTACHMENT_SQL}) as workbench_attachments"
+                    "select id,storage_path from workbench_attachments"
                 ).fetchall()
                 for row in rows:
+                    expected_path = Path(row["storage_path"])
+                    if not expected_path.is_absolute():
+                        expected_path = self.path.parent / expected_path
+                    expected_path = Path(os.path.abspath(expected_path))
                     try:
-                        task_id = self._canonical_uuid(row["task_id"], field="task_id")
-                        attachment_id = self._canonical_uuid(row["id"], field="id")
+                        components = expected_path.relative_to(root).parts
                     except ValueError:
+                        components = ()
+                    if len(components) < 2:
                         db.execute(
-                            f"delete from tasks where record_type='workbench_attachments' and {task20_column('workbench_attachments', 'id')}=?", (row["id"],)
+                            "delete from workbench_attachments where id=?", (row["id"],)
                         )
                         continue
-                    directory = root / task_id
-                    if not self._managed_directory(directory, create=False):
-                        db.execute(
-                            f"delete from tasks where record_type='workbench_attachments' and {task20_column('workbench_attachments', 'id')}=?", (row["id"],)
-                        )
-                        continue
-                    expected_path = directory / attachment_id
-                    try:
-                        metadata = os.lstat(expected_path)
-                    except FileNotFoundError:
-                        metadata = None
-                    if (
-                        str(expected_path) != str(row["storage_path"])
-                        or metadata is None
-                        or not stat.S_ISREG(metadata.st_mode)
-                    ):
-                        db.execute(
-                            f"delete from tasks where record_type='workbench_attachments' and {task20_column('workbench_attachments', 'id')}=?", (row["id"],)
-                        )
-                        continue
-                    referenced_paths.add(expected_path)
+                    directory = root
+                    for component in components[:-1]:
+                        directory = directory / component
+                        if not self._managed_directory(directory, create=False):
+                            break
+                    else:
+                        try:
+                            metadata = os.lstat(expected_path)
+                        except FileNotFoundError:
+                            metadata = None
+                        if metadata is not None and stat.S_ISREG(metadata.st_mode):
+                            referenced_paths.add(expected_path)
+                            continue
+                    db.execute(
+                        "delete from workbench_attachments where id=?", (row["id"],)
+                    )
             for directory in root.iterdir():
                 try:
                     metadata = os.lstat(directory)
@@ -1489,12 +1476,6 @@ class WorkbenchStore(AutoReplyStore):
                         f"managed attachment component is a symlink: {directory}"
                     )
                 if not stat.S_ISDIR(metadata.st_mode):
-                    continue
-                try:
-                    task_id = self._canonical_uuid(directory.name, field="task_id")
-                except ValueError:
-                    continue
-                if task_id != directory.name:
                     continue
                 for path in directory.iterdir():
                     try:
@@ -1507,10 +1488,10 @@ class WorkbenchStore(AutoReplyStore):
                         os.unlink(path)
                         continue
                     try:
-                        attachment_id = self._canonical_uuid(path.name, field="id")
+                        self._canonical_uuid(path.name, field="id")
                     except ValueError:
                         continue
-                    if attachment_id == path.name and path not in referenced_paths:
+                    if path not in referenced_paths:
                         os.unlink(path)
 
     def _append_control_event(
@@ -1544,8 +1525,10 @@ class WorkbenchStore(AutoReplyStore):
 
     @staticmethod
     def _require_task(db: sqlite3.Connection, task_id: str) -> sqlite3.Row:
+        native_id = WorkbenchStore._native_task_id(task_id)
         row = db.execute(
-            f"select * from ({WORKBENCH_TASK_SQL}) as workbench_tasks where id=?", (task_id,)
+            f"select * from ({WORKBENCH_TASK_SQL}) as workbench_tasks where id=?",
+            (str(native_id),),
         ).fetchone()
         if row is None:
             raise ValueError("workbench task does not exist")
@@ -1643,8 +1626,10 @@ class WorkbenchStore(AutoReplyStore):
 
     @staticmethod
     def _task_from_row(row: sqlite3.Row) -> WorkbenchTask:
+        values = {key: row[key] for key in WorkbenchTask.model_fields}
+        values["id"] = str(values["id"])
         return WorkbenchTask.model_validate(
-            {key: row[key] for key in WorkbenchTask.model_fields}
+            values
         )
 
     @staticmethod
@@ -1676,8 +1661,11 @@ class WorkbenchStore(AutoReplyStore):
 
     @staticmethod
     def _attachment_from_row(row: sqlite3.Row) -> WorkbenchAttachment:
+        values = {key: row[key] for key in WorkbenchAttachment.model_fields}
+        values["id"] = str(values["id"])
+        values["task_id"] = str(values["task_id"])
         return WorkbenchAttachment.model_validate(
-            {key: row[key] for key in WorkbenchAttachment.model_fields}
+            values
         )
 
     @staticmethod

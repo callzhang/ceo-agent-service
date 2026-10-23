@@ -3882,6 +3882,16 @@ pending confirmation，原有业务recovery是独立调用，不作为迁移副�
 执行conversation-session回填并更新schema marker时间；它不承诺所有业务行逐字不变。
 最终发布仍须最新来源绑定、完整CI、正常部署与线上读回；本段不表示已部署。
 
+Task2D7A 的 Workbench parent 候选以 `workbench_tasks.id` 原生 INTEGER 为唯一运行期父 ID，
+现有 API/DTO 仍传递规范十进制字符串；不再以 Task UUID 作为运行时别名。列表游标的
+更新时间相同时按原生父整数 ID 降序。最新 Turn 状态和 archive active fence 读取
+`workbench_turns` 与 `tasks.status` 的实际 queued/running 值，归档仍保留父及 Turn。
+附件继续属于 Workbench parent，使用原子文件写入与 SQLite 元数据提交顺序；UUID
+`client_request_id` 仍是请求幂等键，附件整数 ID 与文件 `storage_path` 分离。重启协调器
+按已保存的 locator 读取 managed attachment root 中的文件，不从 UUID 或整数路径组件反推
+数据库 owner，也不移动迁移后的现有文件。真实旧 Workbench constructor 的逆迁新附件保留
+由单独的文件协调验收负责；Turn 生命周期、constructor 启用、部署及线上读回仍未完成。
+
 
 Phase4C Attention 定时错误读取以原event_id或规范scheduled-task-run:<公共整数ID>
 分别定位候选，再应用原同日程较新dispatched且回复done/skipped的恢复谓词。
