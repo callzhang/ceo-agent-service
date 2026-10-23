@@ -613,3 +613,7 @@ v74–v75 发现合成 Audit 没收到生产审核上下文中的上一轮退回
 固定评测对照使用同一模型、CLI、冻结 case hash 和 grader hash：v75 的 `fresh-source-snapshot` 在 Audit approve 后因 `behavioral_scores_match_evidence` 失败，eval-b 战略能力为60；v76 同场景 Audit approve、全检查通过，分数为70，与来源中“达到经理岗位标准”的明确证据一致。没有改变 case 事实、评分范围或 grader 要求。
 
 v76 后的定向测试为 `tests/test_weekly_okr_report.py` 与 `tests/test_scheduled_okr_agent_eval.py` **136 passed**，Consumer Skill 脚本边界 **5 passed**，完整 `tests/test_consumer_system_release.py` **27 passed**；改动文件 Ruff 与 `git diff --check` 通过。共享 Skill/脚本摘要已同步到 release manifest、脚本审核清单及匹配的生产安装/managed 旧摘要前置文件。production 尚未部署，也尚未创建 run394267 的替代运行。
+
+### PR #277 的远端检查结果
+
+PR #277 已打开，固定 v75/v76 case、模型/CLI 和 grader 对照及本地回归均附在 PR/无正文证据中。GitHub Quality 在 `npm test` 的首步全仓 Ruff lint 中失败，报 **16 项**、位于 7 个测试文件；逐个确认这 7 个文件与 `origin/main` 字节相同，单独在当前代码和这些原样文件上复现同一 lint 错误。后续 npm、workbench 和浏览器步骤因此未运行。Vercel 预览因账号额度限制失败，平台提示 24 小时后可重试。改动文件 Ruff、OKR 定向测试、Consumer 脚本审核测试及 release-manifest 测试均通过；没有为清绿而改动无关测试、降低门槛或跳过 OKR 验收。production 尚未部署；需先处理或获准接受上述远端基线阻塞，再继续正式合并/部署和新 task6 运行。
