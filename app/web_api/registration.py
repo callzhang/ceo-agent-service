@@ -78,6 +78,31 @@ from app.feedback_processing import (
 )
 
 
+def current_approval_history_summary(
+    *, status_text: str, display_summary: str, detail_payload: dict[str, Any],
+) -> str:
+    """Replace stale uncertainty prose only when current Attempt detail agrees.
+
+    The compact History query projects status from the owning current task,
+    while its explanation can still contain an old Attempt error. Hydrate only
+    those contradictory OA rows and reuse the detail projection as the source
+    for both the current action wording and its original receipt time.
+    """
+    if "external_action_uncertain" not in display_summary.lower():
+        return ""
+    detail_status = detail_payload.get("status")
+    if not isinstance(detail_status, dict):
+        return ""
+    if str(detail_status.get("raw") or "").strip().lower() != status_text.strip().lower():
+        return ""
+    message = normalize_display_value(detail_status.get("message") or "")
+    attention = detail_status.get("attention")
+    effect = normalize_display_value(
+        attention.get("external_effect") or ""
+    ) if isinstance(attention, dict) else ""
+    return "；".join(part for part in (message, effect) if part)
+
+
 def _legacy_settings_error_message(body_text: str) -> str:
     """Extract the legacy form validation text before returning a JSON error."""
     match = re.search(r'<p class="attempt-warning">(.*?)</p>', body_text, flags=re.DOTALL)
@@ -253,6 +278,30 @@ def register_console_routes(
             "output": output_text,
             "action": normalize_display_value(getattr(log, "action", "")),
         }
+
+    def project_current_approval_history_summary(item: dict[str, Any], *, store: Any) -> None:
+        if (
+            item.get("type") != "approval"
+            or str(item.get("status") or "").strip().lower() not in {"done", "skipped"}
+            or "external_action_uncertain" not in str(item.get("summary") or "").lower()
+        ):
+            return
+        try:
+            attempt_id = int(item.get("id") or 0)
+        except (TypeError, ValueError):
+            return
+        if not attempt_id:
+            return
+        detail_code, attempt_detail = build_attempt_detail(store, attempt_id)
+        if detail_code != 200 or not attempt_detail:
+            return
+        current_summary = current_approval_history_summary(
+            status_text=str(item.get("status") or ""),
+            display_summary=str(item.get("summary") or ""),
+            detail_payload=attempt_detail,
+        )
+        if current_summary:
+            item["summary"] = current_summary
 
     def queue_history_item(
         task: Any, *, scheduled_task_ids: dict[int, int] | None = None
@@ -763,7 +812,10 @@ def register_console_routes(
                 history_types=selected_history_types,
                 source_tables=visible_source_tables,
             )
-        all_items = [*queue_items, *(history_log_item(row) for row in rows)]
+        all_items = [
+            *queue_items,
+            *(history_log_item(row) for row in rows),
+        ]
         # Anything waiting on Derek sits at the top, newest first within that.
         # Sorted by time alone it slides down the page as ordinary work lands
         # above it, which is the opposite of what the status means: it is the
@@ -779,6 +831,8 @@ def register_console_routes(
         total = log_total + len(queue_items)
         start = (page - 1) * page_size
         items = all_items[start:start + page_size]
+        for item in items:
+            project_current_approval_history_summary(item, store=store)
         response = list_envelope(items, page=page, page_size=page_size, total=total)
         render_chart = (
             include_chart

@@ -4388,6 +4388,15 @@ Attempt detail resolves a persisted run through its stable reply_task_id; messag
 Attempt current stop evidence is scoped to the current task execution generation, including an empty current-run list. Current failure summaries and codes come from that generation's final run, task error or exact current reviewed execution; an approved Audit summary cannot replace a failed or uncertain execution result. Historical run trajectories and execution details retain their identities, while their provider-risk rerun constraints continue to use the original Attempt. A settled done/skipped task has no current stop even if an old Audit returned its candidate.
 
 The OA approval detail endpoint uses the same current-task-generation status projection as History detail for the newest Attempt. It returns the immutable persisted Attempt state separately as `recorded_status`, while older Attempts remain historical rows. This projection does not change the database or external receipts; uncertain current execution evidence is never upgraded to success.
+
+For terminal OA History rows whose legacy summary still says
+`external_action_uncertain`, the list hydrates Attempt detail only after sorting
+and slicing the requested page. It replaces the summary only when the current
+detail's raw status matches the projected History status, using the current or
+reused receipt wording and original provider operation time shown by the detail
+view. A status mismatch or failed detail read retains the old summary. This is a
+read-only display projection; it does not rewrite Attempt status or execution
+evidence.
 Consumer and Audit both persist a new Codex session selected by the existing runtime retry router within the active run. After an idle timeout, a fresh Audit attempt may replace that run's current session just as Consumer does; each runtime attempt retains its original session, transcript slice and failure. Audit never writes the Consumer conversation session slot. This repairs session persistence only and does not change route selection, retry budgets, candidate binding or external execution.
 
 Attention list, summary and count readers follow a historical Attempt's original AgentRun task ID when the OA scanner has since changed the trigger message key. A current bound task in done/skipped no longer appears as an unresolved historical Attempt. Same-generation failed tasks remain visible, valid reviewed human decisions keep their independent projection, and the historical Attempt/run/receipt records are unchanged.

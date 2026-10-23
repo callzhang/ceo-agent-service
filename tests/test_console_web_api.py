@@ -301,7 +301,152 @@ def test_console_oa_approval_projects_latest_attempt_from_current_task_generatio
             "created_at": approval["attempts"][0]["created_at"],
         }
     ]
+
+
+def test_console_oa_history_replaces_stale_uncertain_summary_from_current_detail(
+    tmp_path: Path, monkeypatch,
+):
+    store = AutoReplyStore(tmp_path / "worker.sqlite3")
+    attempt_id = store.record_reply_attempt(
+        conversation_id="oa-history-summary-conversation",
+        conversation_title="OA approval",
+        trigger_message_id="oa-history-summary-message",
+        trigger_sender="Derek OA",
+        trigger_text="",
+        action="oa_approval",
+        sensitivity_kind="general",
+        codex_reason="Action was not verified",
+        oa_process_instance_id="oa-history-summary-process",
+        oa_task_id="oa-history-summary-task",
+        oa_action="comment",
+        oa_remark="Permission request",
+        send_status="failed",
+    )
+    store.update_reply_attempt(
+        attempt_id,
+        send_status="failed",
+        send_error="Action oa-comment was not verified\nexternal_action_uncertain",
+    )
+    assert store.enqueue_reply_task(
+        conversation_id="oa-history-summary-conversation",
+        conversation_title="OA approval",
+        single_chat=False,
+        trigger_message_id="oa-history-summary-message",
+        trigger_create_time="2026-10-19T18:00:00Z",
+        trigger_sender="Derek OA",
+        trigger_text="",
+    )
+    task = store.get_reply_task_for_message(
+        "oa-history-summary-conversation", "oa-history-summary-message"
+    )
+    assert task is not None
+    assert store.claim_reply_task(task.id) is not None
+    store.complete_reply_task(
+        task.id, expected_execution_generation=task.execution_generation,
+    )
+    current_detail = {
+        "status": {
+            "raw": "done",
+            "message": "已审核方案的全部动作已核验完成。",
+            "attention": {
+                "external_effect": (
+                    "本轮外部动作已完成（本轮操作时间：2026-10-19T18:11:53.364Z）"
+                ),
+            },
+        },
+    }
+    detail_reads: list[int] = []
+    monkeypatch.setattr(
+        "app.web_api.registration.build_attempt_detail",
+        lambda _store, current_id: (
+            detail_reads.append(current_id) or (200, current_detail)
+        ),
+    )
+
+    with _client(tmp_path) as client:
+        response = client.get(
+            "/api/console/history?object_type=approval&page=1&page_size=20&include_chart=false"
+        )
+
+    assert response.status_code == 200
+    item = next(row for row in response.json()["items"] if row["id"] == str(attempt_id))
+    assert item["status"] == "done"
+    assert detail_reads == [attempt_id], item
+    assert item["summary"] == (
+        "已审核方案的全部动作已核验完成。；"
+        "本轮外部动作已完成（本轮操作时间：2026-10-19T18:11:53.364Z）"
+    )
+    assert "external_action_uncertain" not in item["summary"]
     assert store.get_reply_attempt(attempt_id).send_status == "failed"
+
+
+def test_console_oa_history_hydrates_only_rows_on_requested_page(
+    tmp_path: Path, monkeypatch,
+):
+    store = AutoReplyStore(tmp_path / "worker.sqlite3")
+    attempt_ids: list[int] = []
+    for index, created_at in enumerate(("2026-10-19T18:03:00Z", "2026-10-19T18:02:00Z")):
+        conversation_id = f"oa-history-page-{index}"
+        trigger_id = f"oa-history-page-message-{index}"
+        attempt_id = store.record_reply_attempt(
+            conversation_id=conversation_id,
+            conversation_title="OA approval",
+            trigger_message_id=trigger_id,
+            trigger_sender="Derek OA",
+            trigger_text="",
+            action="oa_approval",
+            sensitivity_kind="general",
+            codex_reason="Action was not verified",
+            oa_process_instance_id=f"oa-history-page-process-{index}",
+            oa_task_id=f"oa-history-page-task-{index}",
+            oa_action="comment",
+            oa_remark="Permission request",
+            send_status="failed",
+        )
+        store.update_reply_attempt(
+            attempt_id,
+            send_status="failed",
+            send_error="external_action_uncertain",
+        )
+        assert store.enqueue_reply_task(
+            conversation_id=conversation_id,
+            conversation_title="OA approval",
+            single_chat=False,
+            trigger_message_id=trigger_id,
+            trigger_create_time=created_at,
+            trigger_sender="Derek OA",
+            trigger_text="",
+        )
+        task = store.get_reply_task_for_message(conversation_id, trigger_id)
+        assert task is not None
+        assert store.claim_reply_task(task.id) is not None
+        store.complete_reply_task(
+            task.id, expected_execution_generation=task.execution_generation,
+        )
+        attempt_ids.append(attempt_id)
+
+    detail_reads: list[int] = []
+    monkeypatch.setattr(
+        "app.web_api.registration.build_attempt_detail",
+        lambda _store, current_id: (
+            detail_reads.append(current_id)
+            or (200, {"status": {
+                "raw": "done",
+                "message": "已审核方案的全部动作已核验完成。",
+                "attention": {"external_effect": "本轮外部动作已完成（本轮操作时间：2026-10-19T18:11:53.364Z）"},
+            }})
+        ),
+    )
+
+    with _client(tmp_path) as client:
+        response = client.get(
+            "/api/console/history?object_type=approval&page=2&page_size=1&include_chart=false"
+        )
+
+    assert response.status_code == 200
+    item = response.json()["items"][0]
+    assert item["id"] == str(attempt_ids[0])
+    assert detail_reads == [attempt_ids[0]]
 
 
 def test_console_tutorial_run_persists_resulting_step_and_uses_sync_endpoint(
