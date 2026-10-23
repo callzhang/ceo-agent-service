@@ -648,6 +648,11 @@ def scan_pending_oa_approvals(
         )
         if task.conversation_id.startswith("oa_pending_scan:")
     }
+    failed_review_tasks = {
+        task.conversation_id: task
+        for task in store.list_reply_tasks(statuses=("failed",), channel="dingtalk")
+        if task.conversation_id.startswith("oa_pending_scan:")
+    }
 
     def bind_current_oa_skills_for_new_round() -> None:
         nonlocal scheduled_consumer, skill_binding_checked
@@ -748,6 +753,22 @@ def scan_pending_oa_approvals(
             ):
                 process_revisions[process_instance_id] = revision
                 process_skill_digests[process_instance_id] = skill_digest
+            continue
+        failed_task = failed_review_tasks.get(
+            f"oa_pending_scan:{process_instance_id}"
+        )
+        if (
+            failed_task is not None
+            and failed_task.trigger_message_id.startswith(
+                f"oa-pending:{process_instance_id}:{revision}:"
+            )
+        ):
+            # A terminal technical failure has already exhausted this exact
+            # evidence/Skill revision's retry budget. A daily pending scan
+            # must not add a new input and rotate the task generation, which
+            # would otherwise reset the Consumer/Audit failure counters.
+            # New DWS evidence or a new Skill revision produces a new digest
+            # and is admitted as a genuinely new review round.
             continue
         process_revisions[process_instance_id] = revision
         if skill_digest:
