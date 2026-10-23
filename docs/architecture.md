@@ -34,7 +34,8 @@ Task3E1 将 Consumer／Audit Run 的 Store 读取、领取、续租、session �
 直接落在原生 `runs` 行；候选与审核从 adopted result／review 读取，CLI transcript 和最终结果
 仍按实际 `runtime_attempts.parent_id` 引用读取。终态完成与业务采用沿用同一 SQLite 事务，
 Review business ID 与 Audit Run ID 分开。此孤立单元未启用 constructor 或 RuntimeAttempt writer，
-不代表完整 runtime cutover。
+不代表完整 runtime cutover。`fail_expired_agent_run` 只更新 Run 终态，不新增 failure 事件；
+其他 recovery/requeue 的既有 failure-event producers 仍待各自迁移。
 
 Store19.8 的 C1 将九种实际可执行 Task 的源 status、due、attempt、error、时间与
 既有 owner／PID／generation／expiry 事实移到单一物理列；不存在的源字段保持

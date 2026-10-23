@@ -7,6 +7,7 @@ import pytest
 
 from app.store import (
     AutoReplyStore,
+    AgentRunLeaseLostError,
     EmailReplyTaskAuthorizationConflict,
     ReplyTaskIdentityConflict,
     ReplyTaskSpec,
@@ -487,6 +488,11 @@ def test_native_consumer_run_claim_lease_session_and_failure_use_run_owner(tmp_p
         claimed.run.id, "session-native", owner="worker-a",
         now="2026-10-23T12:00:45Z",
     ).codex_session_id == "session-native"
+    with store._connect() as db:
+        db.execute(
+            "insert into run_failures(run_id,phase,structured_error_json,created_at) values(?,?,?,?)",
+            (claimed.run.id, "prior_recovery", '{"code":"prior"}', "2026-10-23T11:59:00Z"),
+        )
 
     failed = store.fail_agent_run(
         claimed.run.id, {"code": "runtime_failed", "retryable": False},
@@ -500,10 +506,13 @@ def test_native_consumer_run_claim_lease_session_and_failure_use_run_owner(tmp_p
             (claimed.run.id,),
         ).fetchone()
         assert tuple(row) == ("consumer", "failed", "session-native")
-        assert db.execute(
-            "select count(*) from run_failures where run_id=?",
+        prior_failures = db.execute(
+            "select phase,structured_error_json,created_at from run_failures where run_id=?",
             (claimed.run.id,),
-        ).fetchone()[0] == 0
+        ).fetchall()
+        assert [tuple(row) for row in prior_failures] == [
+            ("prior_recovery", '{"code":"prior"}', "2026-10-23T11:59:00Z"),
+        ]
 
 
 def test_native_audit_adoption_keeps_review_identity_separate_and_terminal_write_idempotent(tmp_path):
@@ -556,3 +565,162 @@ def test_native_audit_adoption_keeps_review_identity_separate_and_terminal_write
             audit.id, {**audit_result, "feedback": "changed"},
             owner="audit-worker", now="2026-10-23T13:00:50Z",
         )
+
+
+def test_expired_native_run_failure_does_not_create_failure_event(tmp_path):
+    store = _target_store(tmp_path / "target.sqlite3")
+    task = store.ensure_reply_task(**_creator_kwargs(_spec("expired-run-message")))
+    run = store.claim_agent_run(
+        task.id, task.execution_generation, role="consumer",
+        proposal_revision=0, turn_attempt=0, parent_agent_run_id=None,
+        operation_id="", owner="worker-a", lease_seconds=1,
+        now="2026-10-23T14:00:00Z",
+    ).run
+    with store._connect() as db:
+        native_task = db.execute("select status, execution_generation from tasks where id=?", (task.id,)).fetchone()
+        updated = task_entity_storage.update_task_cas(
+            db, task_id=task.id,
+            expected={"status": native_task["status"], "execution_generation": native_task["execution_generation"]},
+            changes={"status": "processing"},
+        )
+        assert updated is not None
+
+    failed = store.fail_expired_agent_run(
+        run.id, {"code": "lease_expired"},
+        expected_execution_generation=task.execution_generation,
+        now="2026-10-23T14:00:02Z",
+    )
+
+    assert failed.status == "failed"
+    with store._connect() as db:
+        assert db.execute(
+            "select count(*) from run_failures where run_id=?", (run.id,),
+        ).fetchone()[0] == 0
+
+
+def test_native_run_claim_rejections_and_expired_lease_reclaim_keep_source_contract(tmp_path):
+    store = _target_store(tmp_path / "target.sqlite3")
+    task = store.ensure_reply_task(**_creator_kwargs(_spec("run-lease-message")))
+    with pytest.raises(ValueError, match="reply task does not exist"):
+        store.claim_agent_run(
+            task.id + 1000, task.execution_generation, role="consumer",
+            proposal_revision=0, turn_attempt=0, parent_agent_run_id=None,
+            operation_id="", owner="worker-a", now="2026-10-23T15:00:00Z",
+        )
+    with pytest.raises(ValueError, match="execution generation mismatch"):
+        store.claim_agent_run(
+            task.id, "stale-generation", role="consumer",
+            proposal_revision=0, turn_attempt=0, parent_agent_run_id=None,
+            operation_id="", owner="worker-a", now="2026-10-23T15:00:00Z",
+        )
+
+    first = store.claim_agent_run(
+        task.id, task.execution_generation, role="consumer",
+        proposal_revision=0, turn_attempt=0, parent_agent_run_id=None,
+        operation_id="", owner="worker-a", lease_seconds=30,
+        now="2026-10-23T15:00:00Z",
+    )
+    assert first.claimed is True
+    with pytest.raises(AgentRunLeaseLostError, match="lease lost"):
+        store.renew_agent_run_lease(
+            first.run.id, owner="worker-b", now="2026-10-23T15:00:01Z",
+        )
+    with pytest.raises(AgentRunLeaseLostError, match="lease lost"):
+        store.renew_agent_run_lease(
+            first.run.id, owner="worker-a", now="2026-10-23T15:00:31Z",
+        )
+
+    reclaimed = store.claim_agent_run(
+        task.id, task.execution_generation, role="consumer",
+        proposal_revision=0, turn_attempt=0, parent_agent_run_id=None,
+        operation_id="", owner="worker-b", lease_seconds=30,
+        now="2026-10-23T15:00:31Z",
+    )
+    assert reclaimed.claimed is True
+    assert reclaimed.run.id == first.run.id
+    assert reclaimed.run.lease_owner == "worker-b"
+    with pytest.raises(AgentRunLeaseLostError, match="lease lost"):
+        store.set_agent_run_session(
+            first.run.id, "late-session", owner="worker-a",
+            now="2026-10-23T15:00:32Z",
+        )
+
+
+def test_native_audit_rejection_can_anchor_only_the_next_consumer_revision(tmp_path):
+    store = _target_store(tmp_path / "target.sqlite3")
+    task = store.ensure_reply_task(**_creator_kwargs(_spec("run-revision-message")))
+    consumer = store.claim_agent_run(
+        task.id, task.execution_generation, role="consumer",
+        proposal_revision=0, turn_attempt=0, parent_agent_run_id=None,
+        operation_id="", owner="consumer-worker", now="2026-10-23T16:00:00Z",
+    ).run
+    consumer = store.complete_agent_run(
+        consumer.id, {"outcome": "proposal", "revision": 0},
+        owner="consumer-worker", now="2026-10-23T16:00:10Z",
+    )
+    candidate = store.adopted_candidate_for_consumer_run(consumer.id)
+    audit = store.claim_agent_run(
+        task.id, task.execution_generation, role="audit",
+        proposal_revision=0, turn_attempt=0, parent_agent_run_id=consumer.id,
+        operation_id="audit-op-0", owner="audit-worker", now="2026-10-23T16:00:20Z",
+    ).run
+    audit = store.complete_agent_run(
+        audit.id, {"outcome": "reject", "candidate_digest": candidate["candidate_digest"]},
+        owner="audit-worker", now="2026-10-23T16:00:30Z",
+    )
+    review = store.reviewed_candidate_for_audit_run(audit.id)
+    with pytest.raises(ValueError, match="previous Audit turn"):
+        store.claim_agent_run(
+            task.id, task.execution_generation, role="consumer",
+            proposal_revision=1, turn_attempt=0, parent_agent_run_id=consumer.id,
+            operation_id="", owner="consumer-worker", now="2026-10-23T16:00:40Z",
+        )
+
+    revision = store.claim_agent_run(
+        task.id, task.execution_generation, role="consumer",
+        proposal_revision=1, turn_attempt=0, parent_agent_run_id=audit.id,
+        operation_id="", owner="consumer-worker", now="2026-10-23T16:00:40Z",
+    ).run
+    with pytest.raises(ValueError, match="matching Consumer turn"):
+        store.claim_agent_run(
+            task.id, task.execution_generation, role="audit",
+            proposal_revision=1, turn_attempt=0, parent_agent_run_id=consumer.id,
+            operation_id="audit-op-1", owner="audit-worker", now="2026-10-23T16:00:41Z",
+        )
+    revised_audit = store.claim_agent_run(
+        task.id, task.execution_generation, role="audit",
+        proposal_revision=1, turn_attempt=0, parent_agent_run_id=revision.id,
+        operation_id="audit-op-1", owner="audit-worker", now="2026-10-23T16:00:42Z",
+    ).run
+    assert revision.parent_agent_run_id == audit.id
+    assert revised_audit.parent_agent_run_id == revision.id
+    assert review["review_id"] != audit.id
+    assert store.reviewed_candidate_for_audit_run(audit.id) == review
+
+
+def test_new_task_generation_blocks_old_run_writes_without_rewriting_old_run(tmp_path):
+    store = _target_store(tmp_path / "target.sqlite3")
+    task = store.ensure_reply_task(**_creator_kwargs(_spec("run-generation-message")))
+    run = store.claim_agent_run(
+        task.id, task.execution_generation, role="consumer",
+        proposal_revision=0, turn_attempt=0, parent_agent_run_id=None,
+        operation_id="", owner="worker-a", now="2026-10-23T17:00:00Z",
+    ).run
+    with store._connect() as db:
+        row = db.execute("select status, execution_generation from tasks where id=?", (task.id,)).fetchone()
+        updated = task_entity_storage.update_task_cas(
+            db, task_id=task.id,
+            expected={"status": row["status"], "execution_generation": row["execution_generation"]},
+            changes={"execution_generation": "next-generation"},
+        )
+        assert updated is not None
+
+    with pytest.raises(AgentRunLeaseLostError, match="superseded"):
+        store.renew_agent_run_lease(
+            run.id, owner="worker-a", now="2026-10-23T17:00:01Z",
+        )
+    with store._connect() as db:
+        current_task = db.execute("select execution_generation from tasks where id=?", (task.id,)).fetchone()[0]
+        old_run = db.execute("select status, execution_generation, lease_owner from runs where id=?", (run.id,)).fetchone()
+    assert current_task == "next-generation"
+    assert tuple(old_run) == ("running", task.execution_generation, "worker-a")

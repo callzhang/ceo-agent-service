@@ -4,7 +4,7 @@
 
 The assigned isolated checkout was `/Users/derek/.codex/worktrees/task-run-entity-phase2/ceo-agent-service`, pinned at `5359a5f5f33f8719640f09fd6dc23bc80d756654`. `app/store.py` now reads the Consumer/Audit Run row directly from `runs`, with adopted candidate/review JSON from `run_adopted_results` and `run_adopted_reviews`. The turn lookup, attempt numbering, business-object latest-run lookup, task-generation list, terminal summaries, and active-lease read use native Run/Task identities.
 
-The lifecycle writer path now claims into `runs`, validates Consumer/Audit ancestry there, reclaims expired Run leases, renews leases, stores session/transcript range, transitions completion/failure, deletes a genuinely unstarted Run, and marks an expired Run failed. Completion and adopted candidate/review persistence remain in one write transaction through the already-native `ReviewedCandidateStoreMixin` methods. Run result and event reads query `runtime_attempts.parent_id`; native trajectory hydration accepts native Run keys directly. No legacy column detection or duplicate Run projection was added. Generic failed Run completion does not create a new failure event; source state is preserved.
+The lifecycle writer path now claims into `runs`, validates Consumer/Audit ancestry there, reclaims expired Run leases, renews leases, stores session/transcript range, transitions completion/failure, deletes a genuinely unstarted Run, and marks an expired Run failed. Completion and adopted candidate/review persistence remain in one write transaction through the already-native `ReviewedCandidateStoreMixin` methods. Run result and event reads query `runtime_attempts.parent_id`; native trajectory hydration accepts native Run keys directly. No legacy column detection or duplicate Run projection was added. Generic failed Run completion and `fail_expired_agent_run` do not create failure events, matching the pinned source behavior; other recovery/requeue event producers remain outside this unit.
 
 ## Verification
 
@@ -50,6 +50,18 @@ Output:
 25 passed in 12.20s
 ```
 
-This includes the 12 native reviewed-candidate Store cases. The Audit regression now reads its adopted review with no `runtime_attempts` row and an unavailable native transcript: the adopted value is returned, tool events stay empty, and no CLI result is fabricated. Generic `fail_agent_run` retains zero `run_failures`; `fail_expired_agent_run` preserves the source recovery writer's `terminal_failure` phase/body/time in the native `run_failures` owner. Discard removes that native child before deleting its unstarted parent.
+This includes the 12 native reviewed-candidate Store cases. The Audit regression now reads its adopted review with no `runtime_attempts` row and an unavailable native transcript: the adopted value is returned, tool events stay empty, and no CLI result is fabricated. Generic `fail_agent_run` preserves pre-existing native failure rows without adding a new one; `fail_expired_agent_run` leaves the failure-row count unchanged. Discard removes existing native child rows before deleting its unstarted parent.
 
 The scoped aggregate attempt also included legacy constructor-bound `tests/test_native_only_core.py` and `tests/test_agent_metadata_lock_boundary.py`; it reported 30 failures / 32 passes. The failures occur while those tests initialize `AutoReplyStore` and call the pre-activation constructor, which lacks `task_inputs` (`sqlite3.OperationalError: no such table: task_inputs`), before exercising this lifecycle code. This is the assigned constructor activation gate, not a native Run lifecycle assertion. One failure in the new test was a missing `json` import and was fixed; the assembled two-file command above is the clean rerun.
+
+## Fix1 — source failure parity and lifecycle edges
+
+The independent review found that the first implementation had added a `run_failures` insert to `fail_expired_agent_run`, although the pinned-base method only updates the Run state. This was removed. The fail-first command was `pytest -q --basetemp=/tmp/task3e1-fix1-red.jrZGzx tests/test_store_task_entity_creator.py::test_expired_native_run_failure_does_not_create_failure_event`; output was `1 failed in 0.85s`, with the observed count `1` where source requires no event. After removal, this regression passed in the assembled focused run below. Existing recovery/requeue failure-event producers remain broader follow-up scope and were not moved or duplicated here.
+
+Native edge coverage added against the assembled target Store:
+
+```text
+pytest -q --basetemp=/tmp/task3e1-fix1-final.C7X5Uv tests/test_store_task_entity_creator.py tests/test_native_reviewed_candidate_store.py
+```
+
+Output: `29 passed in 12.85s` (including the 12 native reviewed-candidate cases). The added cases cover absent and stale-generation Task claims, expired-lease reclaim to a new owner, wrong-owner and expired lease writes, rejection of incorrect Audit/Consumer ancestry, a rejected Audit anchoring only the next Consumer revision, preservation of prior Review identity, generation rollover blocking old Run writes without rewriting old Run facts, and expired-run failure producing no failure row.

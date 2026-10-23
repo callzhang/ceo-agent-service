@@ -9400,10 +9400,6 @@ class AutoReplyStore(LogicalRunStoreMixin, ReviewedCandidateStoreMixin):
             )
             if cursor.rowcount != 1:
                 raise ValueError("expired agent run is not a definite failure")
-            db.execute(
-                "insert into run_failures(run_id,phase,structured_error_json,created_at) values(?,?,?,?)",
-                (run_id, "terminal_failure", error_json, now_text),
-            )
             row = db.execute(
                 "select * from runs where id=? and role in ('consumer','audit')",
                 (run_id,),
