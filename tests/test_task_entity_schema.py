@@ -360,6 +360,70 @@ def test_inverse_handoff_json_preserves_blob_workbench_artifact_identity():
         ).fetchone() == (b"\x00\xff", "blob", "blob")
 
 
+def test_new_native_workbench_artifact_inverse_allocates_numeric_source_legacy_key():
+    with closing(_source()) as db:
+        artifact_kind = TASK_RECORD_TYPES.code("workbench_artifacts")
+        db.execute(
+            "update tasks set legacy_key='900000' where _kind=?",
+            (artifact_kind,),
+        )
+        db.commit()
+        db.execute("pragma foreign_keys=off")
+        db.execute("begin immediate")
+        metadata = capture_task_entities(db)
+        assert db.execute(
+            "select legacy_key from tasks where _kind=?",
+            (artifact_kind,),
+        ).fetchone() == ("900000",)
+        forward = migrate_task_entities(db, metadata)
+        cursor = db.execute(
+            "insert into workbench_artifacts(workbench_turn_id,label,path,media_type,created_at) "
+            "values(203,'native','/tmp/native.bin','application/octet-stream','created')"
+        )
+        canonical_id = int(cursor.lastrowid)
+        inverse = restore_task_entities(db, metadata, forward)
+        artifact_identity = next(
+            item for item in inverse["inverse_identity"]["workbench_artifact_identities"]
+            if item["canonical_id"] == canonical_id
+        )
+        source_physical_id = artifact_identity["source_physical_id"]
+        source_row = db.execute(
+            "select legacy_key,typeof(legacy_key),parent_id from tasks "
+            "where record_type='workbench_artifacts' and id=?",
+            (source_physical_id,),
+        ).fetchone()
+        assert source_row[1:] == ("text", 203)
+        source_legacy_rowid = int(source_row[0])
+        assert source_legacy_rowid > 900000
+        assert source_legacy_rowid not in {source_physical_id, canonical_id}
+        assert db.execute(
+            "select legacy_key from tasks where record_type='workbench_artifacts' "
+            "and id!=?",
+            (source_physical_id,),
+        ).fetchone() == ("900000",)
+        projection = task20_definitions.task20_projection("workbench_artifacts")
+        public_artifact = db.execute(
+            f"select id,turn_id from ({projection}) where id=?",
+            (artifact_identity["source_public_id"],),
+        ).fetchone()
+        assert public_artifact == (artifact_identity["source_public_id"], 203)
+
+        handoff = json.loads(json.dumps(inverse["inverse_identity"]))
+        migrate_task_entities(
+            db,
+            capture_task_entities(db),
+            source_context=inverse["source_context"],
+            inverse_identity=handoff,
+        )
+        mapped = db.execute(
+            "select public_key,typeof(public_key),target_id from task_run_identity_map "
+            "where source_kind='workbench_artifacts' and physical_id=?",
+            (source_physical_id,),
+        ).fetchone()
+        assert mapped == (artifact_identity["source_public_id"], "text", canonical_id)
+        assert artifact_identity["source_public_id"] != str(source_legacy_rowid)
+
+
 def test_historical_task20_source_declaration_is_rejected_without_mutation():
     with closing(sqlite3.connect(":memory:")) as db:
         db.execute("pragma foreign_keys=off")

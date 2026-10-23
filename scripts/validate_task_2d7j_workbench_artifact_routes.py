@@ -44,18 +44,89 @@ root=Path(os.environ["TASK_2D7J_ROOT"]); db=root/"store.sqlite3"
 store=WorkbenchStore(db)
 task_id=os.environ["TASK_2D7J_TASK"]; turn_id=os.environ["TASK_2D7J_TURN"]
 artifact_id=os.environ["TASK_2D7J_ARTIFACT"]
+turn=store.get_turn(turn_id)
+artifact=store.get_artifact(artifact_id)
+events=store.events_after(turn_id)
+matches=[event for event in events if event.event_type=="artifact_created" and event.payload.get("artifact_id")==artifact_id]
+if turn is None or artifact is None or artifact.turn_id!=turn_id or len(matches)!=1:
+    raise AssertionError("source artifact/event projection does not resolve on its source Turn")
 executor=object.__new__(WorkbenchExecutor); executor.workspace=root
 app=FastAPI()
 register_workbench_routes(app,store,executor,RuntimeRegistry(),root,
     mutation_guard=lambda request: None,artifact_roots=(root,))
-with TestClient(app) as client:
-    response=client.get(f"/api/workbench/tasks/{task_id}/turns/{turn_id}/artifacts/{artifact_id}/download")
+client=TestClient(app)
+response=client.get(f"/api/workbench/tasks/{task_id}/turns/{turn_id}/artifacts/{artifact_id}/download")
+client.close()
 if response.status_code != 200: raise AssertionError(f"source download route {response.status_code}: {response.text}")
 print(json.dumps({"status":response.status_code,"bytes_hex":response.content.hex(),
     "sha256":__import__("hashlib").sha256(response.content).hexdigest(),
+    "event_id":matches[0].id,"event_payload":matches[0].payload,
+    "artifact_turn_id":artifact.turn_id,"artifact_path":artifact.path,
     "store_file":WorkbenchStore.__init__.__code__.co_filename,
     "route_file":register_workbench_routes.__code__.co_filename}))
 """
+
+
+def _current_download(
+    store, root: Path, parent_id: str, turn_id: str, artifact_id: str
+) -> dict:
+    from fastapi import FastAPI
+    from fastapi.testclient import TestClient
+    from app.workbench.api import register_workbench_routes
+    from app.workbench.executor import WorkbenchExecutor
+    from app.workbench.runtime import RuntimeRegistry
+
+    executor = object.__new__(WorkbenchExecutor)
+    executor.workspace = root
+    app = FastAPI()
+    register_workbench_routes(
+        app,
+        store,
+        executor,
+        RuntimeRegistry(),
+        root,
+        mutation_guard=lambda request: None,
+        artifact_roots=(root,),
+    )
+    client = TestClient(app)
+    response = client.get(
+        f"/api/workbench/tasks/{parent_id}/turns/{turn_id}/artifacts/{artifact_id}/download"
+    )
+    client.close()
+    if response.status_code != 200:
+        raise AssertionError(
+            f"current download route {response.status_code}: {response.text}"
+        )
+    return {
+        "status": response.status_code,
+        "bytes_hex": response.content.hex(),
+        "sha256": hashlib.sha256(response.content).hexdigest(),
+    }
+
+
+def _native_store(db_path: Path):
+    from contextvars import ContextVar
+    from app.workbench.store import WorkbenchStore
+
+    store = object.__new__(WorkbenchStore)
+    store.path = db_path
+    store.busy_timeout_seconds = 30
+    store.busy_timeout_milliseconds = 30_000
+    store._read_snapshot_connection = ContextVar("task2d7j_snapshot", default=None)
+    store._reused_connection = ContextVar("task2d7j_reused", default=None)
+    return store
+
+
+def _identity(db, source_kind: str, public_key: str) -> str:
+    row = db.execute(
+        "select target_id from task_run_identity_map where source_kind=? and public_key=?",
+        (source_kind, public_key),
+    ).fetchone()
+    if row is None:
+        raise AssertionError(
+            f"missing canonical identity for {source_kind}:{public_key}"
+        )
+    return str(row[0])
 
 
 def main() -> int:
@@ -114,10 +185,18 @@ print(json.dumps({"task":task.id,"turn":turn.id,"artifact":artifact.id,"path":st
         )
 
     import sqlite3
+    import uuid
     from app.task_entity_schema import (
         capture_task_entities,
         migrate_task_entities,
         restore_task_entities,
+    )
+    from app.task_entity_inverse_files import (
+        capture_workbench_attachment_files,
+        finalize_workbench_attachment_forward_files,
+        finalize_workbench_attachment_inverse_files,
+        stage_workbench_attachment_forward_files,
+        stage_workbench_attachment_inverse_files,
     )
     from app.run_entity_schema import (
         capture_run_entities,
@@ -126,10 +205,9 @@ print(json.dumps({"task":task.id,"turn":turn.id,"artifact":artifact.id,"path":st
         run_handoff_context,
         run_handoff_digest,
     )
-    from app.workbench.store import WorkbenchStore
-    from contextvars import ContextVar
 
     db_path = root / "store.sqlite3"
+    attachment_root = root / "workbench" / "attachments"
 
     def run_handoff(metadata: dict) -> dict:
         owners = (
@@ -163,67 +241,46 @@ print(json.dumps({"task":task.id,"turn":turn.id,"artifact":artifact.id,"path":st
         db.execute("begin immediate")
         task_source = capture_task_entities(db)
         run_source = capture_run_entities(db)
-        source_sequences = [
-            tuple(row)
-            for row in db.execute(
-                "select rowid,name,seq from sqlite_sequence order by rowid"
-            )
-        ]
         task_forward = migrate_task_entities(db, task_source)
-        after_task_sequences = [
-            tuple(row)
-            for row in db.execute(
-                "select rowid,name,seq from sqlite_sequence order by rowid"
-            )
-        ]
-        try:
-            run_forward = migrate_run_entities(
-                db,
-                run_source,
-                task_metadata=task_forward,
-                run_handoff=run_handoff(run_source),
-            )
-        except sqlite3.IntegrityError as exc:
-            collision = {
-                "before_task": source_sequences,
-                "after_task_before_run": after_task_sequences,
-                "during_failed_run": [
-                    tuple(row)
-                    for row in db.execute(
-                        "select rowid,name,seq from sqlite_sequence order by rowid"
-                    )
-                ],
-                "run_source_sequences": run_source["sequence_rows"],
-                "error": str(exc),
-            }
-            raise RuntimeError(
-                "Task/Run allocator composition failed: "
-                + json.dumps({"source_artifact": source, "source_route": before,
-                              "allocator": collision})
-            ) from exc
+        run_forward = migrate_run_entities(
+            db,
+            run_source,
+            task_metadata=task_forward,
+            run_handoff=run_handoff(run_source),
+        )
         db.commit()
     with sqlite3.connect(db_path) as db:
-        native_turn = db.execute(
-            "select target_id from task_run_identity_map where source_kind='workbench_turns' and public_key=?",
-            (source["turn"],),
-        ).fetchone()
-        native_parent = db.execute(
-            "select target_id from task_run_identity_map where source_kind='workbench_tasks' and public_key=?",
-            (source["task"],),
-        ).fetchone()
-    if native_turn is None or native_parent is None:
-        raise AssertionError("source Turn/parent identity missing")
-    store = object.__new__(WorkbenchStore)
-    store.path = db_path
-    store.busy_timeout_seconds = 30
-    store.busy_timeout_milliseconds = 30000
-    store._read_snapshot_connection = ContextVar("task2d7j_snapshot", default=None)
-    store._reused_connection = ContextVar("task2d7j_reused", default=None)
+        native_turn = _identity(db, "workbench_turns", source["turn"])
+        native_parent = _identity(db, "workbench_tasks", source["task"])
+    store = _native_store(db_path)
+    source_native_events = store.events_after(native_turn)
+    original_event = next(
+        event
+        for event in source_native_events
+        if event.event_type == "artifact_created"
+        and event.payload.get("label") == "proof.bin"
+    )
+    original_native_id = str(original_event.payload["artifact_id"])
+    original_native = store.get_artifact(original_native_id)
+    if original_native is None or original_native.turn_id != native_turn:
+        raise AssertionError(
+            "forward source artifact reference lost its native Turn owner"
+        )
+    if original_native_id != str(original_event.payload["artifact_id"]):
+        raise AssertionError(
+            "current event does not reference the same source artifact"
+        )
+    current_before = _current_download(
+        store, root, native_parent, native_turn, original_native_id
+    )
+    if current_before["bytes_hex"] != source["bytes_hex"]:
+        raise AssertionError("current route changed source artifact bytes")
+
     # New artifact must come from the real native append writer and its event payload.
     new_path = root / "workbench" / "outputs" / "native-proof.bin"
     new_path.write_bytes(b"new native artifact bytes")
     native_artifact, native_event = store.append_artifact_event(
-        str(native_turn[0]),
+        native_turn,
         sequence=3,
         label="native-proof.bin",
         path=str(new_path),
@@ -232,120 +289,211 @@ print(json.dumps({"task":task.id,"turn":turn.id,"artifact":artifact.id,"path":st
         now="2026-10-23T12:01:00+00:00",
     )
     source_new_bytes = new_path.read_bytes()
+    native_created_id = str(native_artifact.id)
+    native_events = store.events_after(native_turn)
+    appended = next(event for event in native_events if event.id == native_event.id)
+    if appended.payload != {
+        "artifact_id": native_created_id,
+        "label": "native-proof.bin",
+        "filename": "native-proof.bin",
+        "media_type": "application/octet-stream",
+    }:
+        raise AssertionError(
+            "native writer event payload does not resolve to its artifact"
+        )
+    if store.get_artifact(native_created_id).turn_id != native_turn:
+        raise AssertionError("native writer artifact owner differs from its Turn")
+    current_native = _current_download(
+        store, root, native_parent, native_turn, native_created_id
+    )
+    if current_native["bytes_hex"] != source_new_bytes.hex():
+        raise AssertionError("current download route changed new native artifact bytes")
+
+    # The first inverse uses the exact source metadata captured before either forward conversion.
+    def inverse(
+        task_source_metadata,
+        run_source_metadata,
+        task_forward_metadata,
+        run_forward_metadata,
+    ):
+        with store._attachment_lock(create_workbench=False):
+            with sqlite3.connect(db_path) as db:
+                db.row_factory = sqlite3.Row
+                attachment_snapshot = capture_workbench_attachment_files(
+                    db, attachment_root
+                )
+                db.execute("pragma foreign_keys=off")
+                db.execute("begin immediate")
+                task_inverse_metadata = restore_task_entities(
+                    db, task_source_metadata, task_forward_metadata
+                )
+                file_plan = stage_workbench_attachment_inverse_files(
+                    db, attachment_root, attachment_snapshot, task_inverse_metadata
+                )
+                run_inverse_metadata = restore_run_entities(
+                    db,
+                    run_source_metadata,
+                    run_forward_metadata,
+                    task_metadata=task_forward_metadata,
+                    task_inverse_metadata=task_inverse_metadata,
+                )
+                db.commit()
+            with sqlite3.connect(db_path) as db:
+                finalize_workbench_attachment_inverse_files(
+                    db,
+                    file_plan,
+                    task_inverse_metadata["inverse_identity"],
+                    attachment_root,
+                )
+        return task_inverse_metadata, run_inverse_metadata
+
+    task_inverse, run_inverse = inverse(
+        task_source, run_source, task_forward, run_forward
+    )
+    handoff = json.loads(json.dumps(task_inverse["inverse_identity"]))
+    run_handoff_portable = json.loads(json.dumps(run_inverse["run_handoff"]))
+    new_source_artifact_id = _run(
+            predecessor,
+            r"""import json,os; from pathlib import Path; from app.workbench.store import WorkbenchStore
+s=WorkbenchStore(Path(os.environ["TASK_2D7J_ROOT"])/"store.sqlite3")
+e=[e for e in s.events_after(os.environ["TASK_2D7J_TURN"]) if e.event_type=="artifact_created" and e.payload.get("label")=="native-proof.bin"]
+if len(e)!=1: raise AssertionError("inverse source artifact event missing")
+a=s.get_artifact(e[0].payload["artifact_id"])
+if a is None or a.turn_id!=os.environ["TASK_2D7J_TURN"]: raise AssertionError("inverse source artifact does not belong to Turn")
+print(json.dumps({"artifact_id":a.id,"event_id":e[0].id,"payload":e[0].payload,"path":a.path,"turn_id":a.turn_id}))""",
+            {**env, "TASK_2D7J_ARTIFACT": ""},
+        )
+    if not uuid.UUID(new_source_artifact_id["artifact_id"]):
+        raise AssertionError("inverse did not allocate a source UUID artifact identity")
+    if new_source_artifact_id["payload"] != {
+        "artifact_id": new_source_artifact_id["artifact_id"],
+        "label": "native-proof.bin",
+        "filename": "native-proof.bin",
+        "media_type": "application/octet-stream",
+    }:
+        raise AssertionError(
+            "inverse changed new artifact event's unrelated payload facts"
+        )
+    if Path(new_source_artifact_id["path"]).read_bytes() != source_new_bytes:
+        raise AssertionError("inverse changed new native artifact bytes")
+    old_new_artifact_route = _run(
+        predecessor,
+        _route_script(),
+        {**env, "TASK_2D7J_ARTIFACT": new_source_artifact_id["artifact_id"]},
+    )
+    if old_new_artifact_route["bytes_hex"] != source_new_bytes.hex():
+        raise AssertionError(
+            "unchanged predecessor UUID route did not return new artifact bytes"
+        )
+    source_new_event_id = new_source_artifact_id["event_id"]
     cycles = []
     for cycle in range(1, 3):
+        with store._attachment_lock(create_workbench=False):
+            with sqlite3.connect(db_path) as db:
+                db.row_factory = sqlite3.Row
+                db.execute("pragma foreign_keys=off")
+                db.execute("begin immediate")
+                cycle_task_source = capture_task_entities(db)
+                cycle_run_source = capture_run_entities(db)
+                forward_file_plan = stage_workbench_attachment_forward_files(
+                    db, attachment_root, handoff
+                )
+                task_forward = migrate_task_entities(
+                    db,
+                    cycle_task_source,
+                    source_context=task_inverse["source_context"],
+                    inverse_identity=handoff,
+                )
+                run_forward = migrate_run_entities(
+                    db,
+                    cycle_run_source,
+                    task_metadata=task_forward,
+                    run_handoff=run_handoff_portable,
+                )
+                db.commit()
+            with sqlite3.connect(db_path) as db:
+                finalize_workbench_attachment_forward_files(
+                    db, forward_file_plan, handoff, attachment_root
+                )
+        store = _native_store(db_path)
         with sqlite3.connect(db_path) as db:
-            db.row_factory = sqlite3.Row
-            db.execute("pragma foreign_keys=off")
-            db.execute("begin immediate")
-            next_task_source = capture_task_entities(db)
-            next_run_source = capture_run_entities(db)
-            task_forward = migrate_task_entities(
-                db,
-                next_task_source,
-                source_context=task_forward["source_context"],
-                inverse_identity=task_forward["inverse_identity"],
+            canonical_turn = _identity(db, "workbench_turns", source["turn"])
+            canonical_parent = _identity(db, "workbench_tasks", source["task"])
+        current_events = store.events_after(canonical_turn)
+        current_new_events = [
+            event
+            for event in current_events
+            if event.event_type == "artifact_created"
+            and event.payload.get("label") == "native-proof.bin"
+        ]
+        if len(current_new_events) != 1:
+            raise AssertionError("reforward lost the native artifact event")
+        current_event = current_new_events[0]
+        if (
+            current_event.id != native_event.id
+            or current_event.payload != appended.payload
+        ):
+            raise AssertionError(
+                "reforward changed native event identity or unrelated payload values"
             )
-            run_forward = migrate_run_entities(
-                db,
-                next_run_source,
-                task_metadata=task_forward,
-                run_handoff=run_handoff(next_run_source),
+        current_artifact = store.get_artifact(native_created_id)
+        if current_artifact is None or current_artifact.turn_id != canonical_turn:
+            raise AssertionError(
+                "reforward changed native artifact identity or Turn owner"
             )
-            task_inverse = restore_task_entities(db, next_task_source, task_forward)
-            run_inverse = restore_run_entities(
-                db,
-                next_run_source,
-                run_forward,
-                task_metadata=task_forward,
-                task_inverse_metadata=task_inverse,
-            )
-            db.commit()
-        with sqlite3.connect(db_path) as db:
-            row = db.execute(
-                "select payload_json from runs where record_type='workbench_events' and event_type='artifact_created' and json_extract(payload_json,'$.label')='native-proof.bin'"
-            ).fetchone()
-            artifact = db.execute(
-                "select id,turn_id,path from (select id,turn_id,path from workbench_artifacts)"
-            ).fetchall()
-            matching = [r for r in artifact if r[2] == str(new_path)]
-        if not row or len(matching) != 1:
-            raise AssertionError("inverse lost new artifact or event")
-        restored_payload = json.loads(row[0])
-        source_artifact_id = restored_payload["artifact_id"]
-        if restored_payload != {
-            "artifact_id": source_artifact_id,
-            "label": "native-proof.bin",
-            "filename": "native-proof.bin",
-            "media_type": "application/octet-stream",
-        }:
-            raise AssertionError("inverse changed native event payload facts")
-        restored_source = _run(
-            predecessor,
-            _route_script(),
-            {**env, "TASK_2D7J_ARTIFACT": source_artifact_id},
+        if Path(current_artifact.path).read_bytes() != source_new_bytes:
+            raise AssertionError("reforward changed native artifact bytes")
+        route_readback = _current_download(
+            store, root, canonical_parent, canonical_turn, native_created_id
         )
-        if (
-            restored_source["bytes_hex"] != source_new_bytes.hex()
-            or restored_source["sha256"] != hashlib.sha256(source_new_bytes).hexdigest()
-        ):
+        if route_readback["bytes_hex"] != source_new_bytes.hex():
             raise AssertionError(
-                "source UUID route did not return exact new native artifact bytes"
+                "reforward current route returned different artifact bytes"
             )
-        # Reforward the exact portable inverse identity captured by inverse; then independently inverse again.
-        with sqlite3.connect(db_path) as db:
-            db.row_factory = sqlite3.Row
-            db.execute("pragma foreign_keys=off")
-            db.execute("begin immediate")
-            handoff = task_inverse["inverse_identity"]
-            task_source = capture_task_entities(db)
-            run_source = capture_run_entities(db)
-            task_forward = migrate_task_entities(
-                db,
-                task_source,
-                source_context=task_inverse["source_context"],
-                inverse_identity=handoff,
+
+        if cycle == 1:
+            task_inverse, run_inverse = inverse(
+                cycle_task_source, cycle_run_source, task_forward, run_forward
             )
-            run_forward = migrate_run_entities(
-                db,
-                run_source,
-                task_metadata=task_forward,
-                run_handoff=run_inverse["run_handoff"],
+            handoff = json.loads(json.dumps(task_inverse["inverse_identity"]))
+            run_handoff_portable = json.loads(json.dumps(run_inverse["run_handoff"]))
+            source_view = _run(
+                    predecessor,
+                    r"""import json,os; from pathlib import Path; from app.workbench.store import WorkbenchStore
+s=WorkbenchStore(Path(os.environ["TASK_2D7J_ROOT"])/"store.sqlite3")
+e=[e for e in s.events_after(os.environ["TASK_2D7J_TURN"]) if e.event_type=="artifact_created" and e.payload.get("label")=="native-proof.bin"]
+if len(e)!=1: raise AssertionError("second inverse source artifact event missing")
+a=s.get_artifact(e[0].payload["artifact_id"])
+print(json.dumps({"artifact_id":a.id,"event_id":e[0].id,"payload":e[0].payload,"path":a.path,"turn_id":a.turn_id}))""",
+                    env,
+                )
+            if (
+                source_view["artifact_id"] != new_source_artifact_id["artifact_id"]
+                or source_view["event_id"] != source_new_event_id
+            ):
+                raise AssertionError(
+                    "portable inverse changed source artifact/event identity"
+                )
+            if Path(source_view["path"]).read_bytes() != source_new_bytes:
+                raise AssertionError("second inverse changed source artifact bytes")
+            old_route_again = _run(
+                predecessor,
+                _route_script(),
+                {**env, "TASK_2D7J_ARTIFACT": source_view["artifact_id"]},
             )
-            db.commit()
-        native_payload = None
-        with sqlite3.connect(db_path) as db:
-            native_payload = db.execute(
-                "select payload_json from workbench_events where event_type='artifact_created' and json_extract(payload_json,'$.label')='native-proof.bin'"
-            ).fetchone()[0]
-            native_row = db.execute(
-                "select id,workbench_turn_id,path from workbench_artifacts where path=?",
-                (str(new_path),),
-            ).fetchone()
-        if (
-            json.loads(native_payload)
-            != {
-                "artifact_id": str(native_artifact.id),
-                "label": "native-proof.bin",
-                "filename": "native-proof.bin",
-                "media_type": "application/octet-stream",
-            }
-            or native_row is None
-            or str(native_row[0]) != str(native_artifact.id)
-            or int(native_row[1]) != int(native_turn[0])
-        ):
-            raise AssertionError(
-                "reforward changed native artifact/event identity or owner"
-            )
-        if new_path.read_bytes() != source_new_bytes:
-            raise AssertionError("reforward changed artifact bytes")
+            if old_route_again["bytes_hex"] != source_new_bytes.hex():
+                raise AssertionError("source UUID route failed after second inverse")
         cycles.append(
             {
                 "cycle": cycle,
-                "source_artifact_id": source_artifact_id,
-                "source_route_sha256": restored_source["sha256"],
-                "native_artifact_id": str(native_artifact.id),
-                "payload": restored_payload,
+                "canonical_turn": canonical_turn,
+                "canonical_parent": canonical_parent,
+                "native_artifact_id": native_created_id,
+                "native_event_id": current_event.id,
+                "source_artifact_id": new_source_artifact_id["artifact_id"],
+                "source_event_id": source_new_event_id,
+                "payload": current_event.payload,
+                "route_sha256": route_readback["sha256"],
             }
         )
     print(
@@ -354,8 +502,12 @@ print(json.dumps({"task":task.id,"turn":turn.id,"artifact":artifact.id,"path":st
                 "predecessor_sha256": hashes,
                 "source": source,
                 "before_route": before,
-                "native_artifact_id": str(native_artifact.id),
+                "current_original_route": current_before,
+                "current_new_route": current_native,
+                "native_artifact_id": native_created_id,
                 "native_event_id": native_event.id,
+                "inverse_source_artifact": new_source_artifact_id,
+                "inverse_old_route": old_new_artifact_route,
                 "cycles": cycles,
             },
             indent=2,

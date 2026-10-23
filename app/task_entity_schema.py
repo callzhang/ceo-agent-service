@@ -1345,6 +1345,9 @@ def restore_task_entities(db: sqlite3.Connection, source_metadata: dict, forward
                 source_key_next[kind] = raw_value + 1
             elif kind == "email_agent_classification_tasks" and (kind, target_id) not in old_public:
                 raw_value = target_id
+            elif kind == "workbench_artifacts":
+                raw_value = source_key_next.get(kind, 1)
+                source_key_next[kind] = raw_value + 1
             elif kind == "workbench_attachments":
                 raw_value = physical_id
             else:
