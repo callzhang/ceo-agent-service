@@ -24,7 +24,7 @@ Removed the dead writer behavior from the current caller exercise and legacy lif
 
 Passed:
 
-- `pytest -q tests/test_okr_weekly_native_maintenance.py` — 6 passed.
+- `pytest -q tests/test_okr_weekly_native_maintenance.py` — 4 passed.
 - `pytest -q tests/test_okr_weekly_native_maintenance.py tests/test_cli.py::test_service_start_closes_superseded_failed_weekly_okr_jobs tests/test_store.py::test_weekly_okr_report_run_lease_is_single_owner_and_recoverable` — 6 passed.
 - `ruff check app/store.py app/web_api/dashboard.py app/cli.py tests/test_okr_weekly_native_maintenance.py tests/test_okr_weekly_storage_readers.py tests/task_lifecycle_caller_fixture.py` — passed.
 - `python -m compileall -q app/store.py app/web_api/dashboard.py app/cli.py` — passed.
