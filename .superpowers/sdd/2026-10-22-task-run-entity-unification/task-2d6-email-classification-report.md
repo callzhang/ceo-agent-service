@@ -83,12 +83,15 @@ pytest -q --tb=short --basetemp=/private/tmp/ceo-task-run-phase2-_ntbufyi/task2d
 The complete adapter module reported `18 failed, 58 passed`. All 18 failures
 are in existing Email reply/action-plan business-task flows (including producer,
 redacted payload/context and reply identity cases); they fail before reaching
-classifier behavior because `AutoReplyStore._ensure_business_reply_task`
-queries the absent generic `task_inputs` table. Those paths are outside this
-classifier-only change and depend on the separate Task input-reader cutover;
-they were not rewritten, skipped, or represented as passing. The native
-classifier tests, including schema/lifecycle/retry/claim/race and source
-migration tests, pass.
+their intended behavior because those tests instantiate the source-era
+`AutoReplyStore` constructor, whose database does not contain the assembled
+native `task_inputs` table. The native `_ensure_business_reply_task` does query
+the native input owner; the failure is at fixture/constructor coordination,
+not evidence that its reader still needs conversion. These business paths
+remain unverified by this module run and are not represented as passing.
+Separate Reply terminal/readers work remains planned, but it is not the cause
+of this failure. The native classifier tests, including
+schema/lifecycle/retry/claim/race and source migration tests, pass.
 
 For fail-first evidence, the unchanged full `EmailClassificationTaskAdapter`
 from BASE `093509585ad0cb6a81fa4c264e1916fa7df760eb` was loaded from Git with
