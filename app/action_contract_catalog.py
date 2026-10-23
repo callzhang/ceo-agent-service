@@ -128,7 +128,7 @@ def action_contract_catalog(document: str | None = None) -> str:
     lines = [
         "## System Action Capability Catalog",
         "Consumer proposes these registered reviewed actions; Audit reviews them and system code executes approved actions.",
-        "Before proposing or reviewing one, call `agent_cli.read_system_action_contract` with exact `capability` and `operation` values below. Omit `operation` to validate a capability and list its operations. The lookup preserves all canonical shared rules and returns only the requested capability/operation rows, including action_identity, target, payload, and completion requirements.",
+        "Before proposing or reviewing one, use the declared native `read_system_action_contract` tool (with the name shown in Runtime Context) and exact `capability` and `operation` values below. Omit `operation` to validate a capability and list its operations. The lookup preserves all canonical shared rules and returns only the requested capability/operation rows, including action_identity, target, payload, and completion requirements.",
     ]
     lines.extend(
         f"- `{capability}`: " + ", ".join(f"`{operation}`" for operation in names)

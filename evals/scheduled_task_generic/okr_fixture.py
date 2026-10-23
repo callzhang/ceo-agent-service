@@ -294,6 +294,8 @@ class Fixture:
         behavior_by_manager = evidence.get("behavior_by_manager", {})
         for manager in roster:
             uid = manager["user_id"]
+            if uid in self.facts.get("no_independent_document_ids", []):
+                continue
             if uid in evidence:
                 material = evidence[uid]
                 result["eval-evidence-" + key(uid)] = {

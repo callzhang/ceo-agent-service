@@ -2,6 +2,78 @@
 
 ## 状态与证据边界
 
+### 2026-10-23 正式发布预检：OA Skill 旧摘要与批准快照过期
+
+PR #278 已于 08:54 UTC 合入 `main`（merge commit `2479202643d031046e9009536615771663bafdb1`）。
+正式发布按空闲等待后，在 Consumer/Skill 文件摘要校验阶段失败：清单和批准前置记录把已安装的
+`dingtalk-oa-approval/SKILL.md` 旧摘要记为 `b58fb9bb…`，并把候选摘要记为 `0175ea38…`；
+当前生产安装文件与合并后 main 的源文件实际 SHA 均为 `59c0bfd4…`。因此是发布元数据过期，
+不是 OKR Skill 行为或验收标准问题。候选 OA 文件内容没有变化，现将清单旧摘要和批准前置的
+安装/候选摘要都校正到实际值，并保留其余文件、Skill 内容和发布规则。
+
+同一份批准快照还有三项 OA 资产摘要陈旧：财务规则卡和 OA 人员 Skill 的线上文件与 main 源
+都已是候选内容（分别为 `f15c6fea…`、`022dc534…`）；考勤差旅 Skill 的线上旧文件为
+`131758f4…`，main 中已批准的候选为 `6fd80713…`。现据线上文件与 main 源分别校正旧摘要及
+批准摘要，保留三项源文件正文和既有批准候选。
+
+失败后生产代码仍为 `8a10080ffa19e050433e561f068bf56f1969d4e2`，PID 为 96045，healthz HTTP
+200；运行配置仍为 368，task6 仍是 v27 / managed Skill revision235，最新 run 仍为 394981。
+目标 Skill 文件读回仍为 SHA `59c0bfd4…`，没有契约文件写入，也没有新报告或外部副作用。
+本次失败发布不构成 OKR 验收结果；修正清单通过定向校验并正式发布后，才会启动唯一一条新的
+授权 task6 手动验收。
+
+### 2026-10-23 手动 task6 run 394981：分析阶段实际失败，修复候选原生验收通过
+
+run394981 由 task6 正式入口创建，reply task417039；不可变快照绑定 task6 v27、managed
+`ceo-weekly-okr-report` revision235。完整 Consumer 轨迹有四次失败尝试：394985、395004、
+395019、395079。前两次遇到真实的 Dingteam 登录过期；登录恢复后，attempt395019 读取完整
+18人名单、15份有效 Q4 OKR 和3项 `goals_missing`，`prepare` 成功。之后模型因一位成员的独立
+文档检索无匹配结果而退出，没有完成任何成员评分。attempt395079 复用了同一 scheduled run，
+但又重读了名单，并在一次无匹配文档搜索后再次以 `analysis_incomplete` 退出。reply task 最终
+`failed/agent_reported_failure`；没有 Audit、报告写入、通知提案、持久回执或外部副作用。
+
+这是实际 Agent 行为问题，不是评测误判：工具确实返回空搜索结果，但 Skill 已要求缺少补充材料
+时继续，因此模型应保留该证据缺口并继续分析。已在候选 Skill 明确“空检索不阻止后续成员分析”，
+保留每位有效成员的完整分析、现有证据范围与评分规则；同时澄清 KR `base_score` 的离散档位
+不适用于行为维度，行为维度仍按原有70–79岗位达标规则。修订后的摘要必须从最新 `summary.md`
+读回并逐字更新待审提案。
+
+固定空检索案例 `empty-independent-search-continues-analysis` 在原生 Consumer/Audit 流程中
+通过：1/1 case、32项最终检查、Audit approve、无修订回合；工具全为合成 provider，不能算真实
+发布。原有 v76 4/4 仍是先前基线，分开记录。新增案例还暴露单案例筛选退出状态的评测器错误；
+状态回归修复后，单案例运行状态也为 passed。定向 pytest 52 passed，改动文件 Ruff 和
+`git diff --check` 通过。
+
+合入最新主线后，在提交 `67709ed8` 上再次执行同一原生案例，结果仍为 **1/1 passed**，32项
+最终检查全通过，最终 Audit `approve`；本轮包含1次 Consumer 修订和3轮 Audit 检查。两位成员的
+空检索均有记录，模拟 provider 的全部产物写入均读回通过。此证据对应合并后的代码与 Skill
+摘要，仍是合成验收，不代表真实 OKR 文档或钉钉消息已发布。
+
+截至该次复核时，该候选尚未部署，也没有再次创建 task6 运行。生产只读复核为 commit
+`881ea46fe`、PID5478、healthz HTTP 200；task6 仍为 v27 / revision235，下次自然触发
+**2026-10-25 10:00 UTC**。
+394981 不重放。下一步推送并完成代码评审、正式发布；部署后仅新建一条授权的
+task6 手动验证，严格核验完整 Consumer/Audit、全部报告文档真实读回和通知真实回执。
+
+### 2026-10-23 正式发布与生产回读
+
+PR #288（OA 考勤 Skill）先合入 `106c609d`，随后 PR #287（OKR 空检索继续分析及发布摘要收敛）
+合入为 `55b0f9a3`。正式部署操作 `deploy-2ee360dd-3441-4496-8698-0b3b46721928`
+经自然空闲等待成功，将生产从 `3875c379` 更新至 `55b0f9a3`；没有中断在途任务。
+
+生产回读确认：supervisor PID `43616`，服务 worker PID `43623`，healthz HTTP 200；
+Consumer/Skill 运行配置由 368 更新为 369，worker 对配置 369 的加载回执无错误，
+task6 为 v28 / managed Skill revision240，加载的 OKR Skill SHA-256 为
+`49ba4b0bdafdd2ba54989f6bd1ad6b799417464f2dad2cbeefb721eb85a32f8e`。正式发布回执状态为
+`verified`；清单中的 26 项资产摘要全部一致，受影响的定时任务 Skill 引用读回一致。
+队列 active 0 / queued 471，Attention 20，History 37604。发布后没有创建新的 task6
+运行，因此这只证明 Skill 已发布并由新 worker 加载，不代表真实 OKR 报告业务验收通过；
+run394981 保持失败历史，不重放。下一步应等待 task6 后续正常触发，再按完整 Consumer/Audit、
+报告文档读回和真实通知回执验收业务行为。
+
+无正文生产证据：[run394981 与候选验收读回](../evals/scheduled_task_generic/okr-production-readback.json)。
+原生案例记录：[empty-search acceptance v3](../evals/scheduled_task_generic/okr-empty-search-acceptance.v3.json)。
+
 ### 2026-10-23 授权手动 OKR run 394267：登录恢复后仍未完成分析
 
 run394267 使用不可变 task6 v23 / managed `ceo-weekly-okr-report` revision223，执行任务
@@ -601,6 +673,8 @@ v50–v68 轨迹定位出实际报告问题：固定渲染器曾把没有来源�
 ### 发布门禁复核（2026-10-23）
 
 修复提交 `0b226b55e` 合并最新 `origin/main` 后，重新运行定向测试：报告/综合评测 **126 passed**，Agent 工具说明 **8 passed**，改动文件 Ruff 与差异检查通过。发布专项 `tests/test_consumer_skill_script_boundary.py` 为 **4 passed / 1 failed**；失败项 `test_okr_report_prepare_script_matches_reviewed_package` 明确指出 OKR Skill 的 `consumer-scripts.json` 仍固定旧脚本树摘要，现有 `scripts/report.py` 改动尚未纳入已审核摘要。全局 pinned-release 测试另因日报行的 `old_sha256=32d24bb5…` 与已核实 `installed_sha256=45e10866…` 不一致而失败。两处均是发布清单未收敛，不代表降低或绕过 Skill 脚本审核；对应文件仍由既有 active claim 认领。尚未推送、部署或创建新 task6 运行。
+
+**08:07 UTC 生产复核与摘要收敛：**只读 API 和安装文件读回确认 production 为 `b07bd9877b78a8d0ab1cc616485671d44918ae37`，healthz 200，runtime Skill config 368；task14 当前 managed revision 224 / SHA `32d24bb5…`，task6 当前 revision 235 / SHA `d7584ca0…`，task6 最近仍是已失败的 run394981。实际 OKR Skill 安装摘要已是 `d7584ca0…`，`scripts/report.py` 已是 `119a249d…`，原 manifest 却把它们分别登记为 `18b23c5c…` 和 `ab61de2c…`。日报已安装及 managed 摘要为 `32d24bb5…`，其内容摘要没有变；前置快照的 revision ID 203 已过期，应为 224。已在候选分支将旧安装摘要、旧 managed 摘要和对应前置版本按线上值收敛，候选 OKR Skill 新摘要仍为 `49ba4b0b…`；没有改 Skill 内容、评分标准或投递门槛。合并当前 main 后，OA 两项已审阅 Skill 的候选摘要也同步到了匹配的前置记录，未改其正文。发布专项与固定快照检查 **33 passed**，严格 `_load_file_plan` 对生产安装目标的 **26 个资产全部通过**；`git diff --check` 通过。PR 原 Quality 仍在跑旧 head，推送合并后的提交后需等待新 head 检查。随后另一项 mainline 发布尝试在 Skill 发布预检处失败，错误为 `Consumer system configured Skill has a different revision: ceo-weekly-okr-report`。它使用的 mainline 清单仍把 task6 当前 managed revision 235（SHA `d7584ca0…`）写作旧值 `18b23c5c…`；没有产生 Skill 文件写入。失败后 production 仍为提交 `b07bd9877b78a8d0ab1cc616485671d44918ae37`、PID 60615、healthz 200、runtime Skill config 368；task6/13/14 配置及最新 run ID 未变，也没有报告或外部副作用。该错误证实旧 managed 摘要是实际发布阻断；本候选分支已将旧 managed 摘要更新为线上 `d7584ca0…`。
 
 ### v71–v76：修复后原生综合验收通过
 

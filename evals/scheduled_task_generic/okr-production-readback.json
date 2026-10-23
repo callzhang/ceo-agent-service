@@ -679,5 +679,281 @@
     "mutations_or_replays_performed": false,
     "business_report_acceptance_changed": false,
     "triage_status": "The source counters and error classes are now identified; these system-health issues are unresolved and are not evidence of natural scheduled report acceptance."
+  },
+  "manual_authorized_run_394981": {
+    "observed_at": "2026-10-23T07:21:35Z",
+    "trigger_kind": "manual",
+    "scheduled_task_id": 6,
+    "scheduled_run_id": 394981,
+    "reply_task_id": 417039,
+    "snapshot": {
+      "task_version": 27,
+      "timezone": "America/Los_Angeles",
+      "cron": "0 0 3 * * 0",
+      "managed_skill": "ceo-weekly-okr-report",
+      "managed_skill_id": 22,
+      "managed_revision_id": 235,
+      "managed_revision_number": 20,
+      "runtime": "codex_oauth"
+    },
+    "consumer_attempt_ids": [
+      394985,
+      395004,
+      395019,
+      395079
+    ],
+    "consumer_attempt_statuses": [
+      "failed",
+      "failed",
+      "failed",
+      "failed"
+    ],
+    "trajectory_facts": {
+      "attempts_394985_395004": "Real Dingteam headless-session expiration; stopped after the first member read.",
+      "attempt_395019": "After interactive login recovery, read the 18-member roster, 15 current Q4 OKR sources and 3 goals_missing outcomes; prepare succeeded; no member analyses were saved.",
+      "attempt_395079": "Continued the same scheduled run, repeated roster read, then stopped with analysis_incomplete after an independent DingTalk document search returned no match.",
+      "root_cause": "Actual Consumer behavior: an empty independent-document search stopped analysis even though the Skill says missing supplemental material is a disclosed gap and must not block analysis.",
+      "terminal": "reply task failed with agent_reported_failure; scheduled run remained dispatched and linked to the failed reply task.",
+      "audit_runs": 0,
+      "document_writes": 0,
+      "notification_receipts": 0,
+      "provider_delivery_queries": 0,
+      "external_effects": false
+    },
+    "replayed": false
+  },
+  "candidate_empty_independent_search_acceptance": {
+    "observed_at": "2026-10-23T07:17:23Z",
+    "result_file": "okr-empty-search-acceptance.v3.json",
+    "case_id": "empty-independent-search-continues-analysis",
+    "candidate_base_commit": "881ea46fe687a27076d20f26239e252d034f748b",
+    "candidate_skill_sha256": "49ba4b0bdafdd2ba54989f6bd1ad6b799417464f2dad2cbeefb721eb85a32f8e",
+    "selected_cases": [
+      "empty-independent-search-continues-analysis"
+    ],
+    "status": "passed",
+    "case_passed": true,
+    "final_checks_passed": 32,
+    "final_audit_verdict": "approve",
+    "audit_correction_rounds": 0,
+    "empty_searches_verified": 2,
+    "scored_members": 2,
+    "provider_mode": "synthetic fixture only",
+    "mock_document_writes_with_complete_readback": 5,
+    "external_effects": false,
+    "live_production_acceptance": false,
+    "diagnostic_native_runs": [
+      {
+        "attempt": "first candidate run",
+        "case_passed": false,
+        "root_cause": "Audit applied the KR base_score band limitation to leadership/culture dimension scores and required the stale proposal summary to match the new canonical summary."
+      },
+      {
+        "attempt": "second candidate run",
+        "case_passed": true,
+        "root_cause": "Selected case and final Audit passed, but evaluator exit status incorrectly compared the one selected case with all five manifest cases."
+      },
+      {
+        "attempt": "final candidate run",
+        "case_passed": true,
+        "root_cause": "Scope clarification and refreshed canonical proposal resolved the review findings; evaluator now grades selected cases against the selected case set."
+      }
+    ],
+    "post_merge_verification": {
+      "observed_at": "2026-10-23T07:40:00Z",
+      "candidate_git_ref": "67709ed8d0e5d348b9db99382388afbd97bd2685",
+      "skill_sha256": "49ba4b0bdafdd2ba54989f6bd1ad6b799417464f2dad2cbeefb721eb85a32f8e",
+      "temporary_result_artifact": "/tmp/okr-empty-search-merged-main-20261023.json",
+      "temporary_result_sha256": "f150609df704443f9146bc1c4a7c1be3deeaec7586305f1111636c9dcc094615",
+      "status": "passed",
+      "selected_case_count": 1,
+      "final_checks_passed": 32,
+      "final_audit_verdict": "approve",
+      "consumer_corrections": 1,
+      "audit_rounds": 3,
+      "empty_searches_verified": 2,
+      "mock_provider_document_writes_with_complete_readback": 18,
+      "external_effects": false,
+      "live_production_acceptance": false
+    }
+  },
+  "candidate_targeted_tests": {
+    "observed_at": "2026-10-23T07:17:23Z",
+    "pytest_file": "tests/test_scheduled_okr_agent_eval.py",
+    "pytest_passed": 52,
+    "ruff": "passed",
+    "git_diff_check": "passed",
+    "consumer_system_release_tests": "32 passed",
+    "post_merge_okreval": "1 case passed; 32 final checks; Audit approve",
+    "post_merge_pytest_file": "tests/test_scheduled_okr_agent_eval.py: 52 passed",
+    "post_merge_consumer_release_and_skill_boundary": "32 passed"
+  },
+  "latest_release_preflight_snapshot": {
+    "observed_at": "2026-10-23T08:07:07Z",
+    "production_commit": "b07bd9877b78a8d0ab1cc616485671d44918ae37",
+    "healthz_http_status": 200,
+    "service_pid": 56958,
+    "runtime_skill_config_id": 368,
+    "scheduled_tasks": {
+      "task6": {
+        "version": 27,
+        "managed_skill_revision_id": 235,
+        "managed_skill_sha256": "d7584ca089596f09f943d659b67943d04d9bc2c47d8fb15831a1109b94229d9a",
+        "latest_run_id": 394981,
+        "latest_run_terminal": "failed"
+      },
+      "task13": {
+        "version": 49,
+        "managed_skill_revision_id": 202,
+        "next_run_at": "2026-10-24T19:00:00Z"
+      },
+      "task14": {
+        "version": 56,
+        "managed_skill_revision_id": 224,
+        "managed_skill_sha256": "32d24bb5f53b60bcf67b8a91582db258a05cac59c789391c862d3bd95719fc62",
+        "next_run_at": "2026-10-23T13:00:00Z"
+      }
+    },
+    "installed_sha256": {
+      "ceo-daily-report/SKILL.md": "32d24bb5f53b60bcf67b8a91582db258a05cac59c789391c862d3bd95719fc62",
+      "ceo-weekly-okr-report/SKILL.md": "d7584ca089596f09f943d659b67943d04d9bc2c47d8fb15831a1109b94229d9a",
+      "ceo-weekly-okr-report/scripts/report.py": "119a249dd9aa3398c5c6e9a49dfb821f06f05ce3e9e668c6de279ba11543af5d"
+    },
+    "candidate_sha256": {
+      "ceo-daily-report/SKILL.md": "32d24bb5f53b60bcf67b8a91582db258a05cac59c789391c862d3bd95719fc62",
+      "ceo-weekly-okr-report/SKILL.md": "49ba4b0bdafdd2ba54989f6bd1ad6b799417464f2dad2cbeefb721eb85a32f8e",
+      "ceo-weekly-okr-report/scripts/report.py": "119a249dd9aa3398c5c6e9a49dfb821f06f05ce3e9e668c6de279ba11543af5d"
+    },
+    "manifest_reconciliation": {
+      "stale_old_okrs_skill_sha256": "18b23c5c6762ce0fa6cceedf8f1d6cd7db166a2fb2c6991737cce03890d22a9",
+      "stale_old_okr_report_script_sha256": "ab61de2c7e1f715069592f5a44292737ff4be5863dbb2f2203622322c250a653",
+      "daily_precondition_revision_was": "203",
+      "daily_precondition_revision_is": "224",
+      "release_preflight_test": "passed: tests/test_consumer_system_release.py + tests/test_consumer_skill_script_boundary.py + pinned snapshot test; 33 passed",
+      "strict_load_file_plan": "passed: 26 production installed targets, read-only",
+      "additional_mainline_digest_rows_synchronized": [
+        "ci/shared-skills/dingtalk-oa-approval/SKILL.md",
+        "ci/shared-skills/stardust-oa-people-review/SKILL.md"
+      ],
+      "quality_workflow_run_id": 39919036248,
+      "quality_workflow_state_at_readback": "in_progress on previous head; merged head requires fresh run",
+      "mainline_publication_attempt": "failed before contract file writes on stale OKR old managed SHA; candidate branch now pins live revision235 SHA"
+    },
+    "new_report_run_created": false,
+    "external_effects": false
+  },
+  "latest_mainline_publication_attempt": {
+    "observed_by": "2026-10-23T08:18:29.964201Z",
+    "result": "failed_preflight",
+    "error": "Consumer system configured Skill has a different revision: ceo-weekly-okr-report",
+    "root_cause": "mainline release manifest expected old managed SHA 18b23c5c... but live task6 bound managed revision 235 has SHA d7584ca0...",
+    "contract_files_written": false,
+    "production_after_attempt": {
+      "commit": "b07bd9877b78a8d0ab1cc616485671d44918ae37",
+      "service_pid": 60615,
+      "healthz_http_status": 200,
+      "runtime_skill_config_id": 368,
+      "task6_latest_run_id": 394981,
+      "task13_latest_run_id": 391278,
+      "task14_latest_run_id": 392889
+    },
+    "report_runs_created": false,
+    "external_effects": false
+  },
+  "latest_formal_consumer_skill_publication_attempt": {
+    "observed_at": "2026-10-23T09:44:57Z",
+    "target_commit": "c38ce12cf1b2b18c147ea687bccdce11973827eb",
+    "result": "failed_preflight",
+    "error": "Consumer system release SHA mismatch: ci/shared-skills/dingtalk-oa-approval/SKILL.md",
+    "root_cause": "The shared release manifest/precondition snapshots had stale digests for four OA assets. The actual installed and merged-main source dingtalk-oa-approval file is 59c0bfd4...; finance rule cards are already installed at the approved main source SHA f15c6fea...; OA people Skill is already installed at the approved main source SHA 022dc534...; OA attendance/travel installed old bytes are 131758f4... while the approved main source is 6fd80713.... The preflight compares both installed old bytes and candidate source bytes, and rejected before any contract write.",
+    "corrected_release_metadata": {
+      "manifest_old_sha256": "59c0bfd4ac13852b4952cb6dab777c67306c1e67242ea6bff51e8e8443191338",
+      "manifest_new_sha256": "59c0bfd4ac13852b4952cb6dab777c67306c1e67242ea6bff51e8e8443191338",
+      "precondition_installed_sha256": "59c0bfd4ac13852b4952cb6dab777c67306c1e67242ea6bff51e8e8443191338",
+      "precondition_approved_new_sha256": "59c0bfd4ac13852b4952cb6dab777c67306c1e67242ea6bff51e8e8443191338"
+    },
+    "other_reconciled_assets": [
+      {
+        "source": "ci/shared-skills/stardust-oa-finance-review/references/finance-rule-cards.md",
+        "installed_sha256": "f15c6feac0d3be6c85f3f93f594aa3af7e8cfa47bd65bb16207bc071efc51ab1",
+        "candidate_sha256": "f15c6feac0d3be6c85f3f93f594aa3af7e8cfa47bd65bb16207bc071efc51ab1"
+      },
+      {
+        "source": "ci/shared-skills/stardust-oa-people-review/SKILL.md",
+        "installed_sha256": "022dc53499c46c9e504e9fed05aafb4e1fedd09e428d538449041b32c0354f62",
+        "candidate_sha256": "022dc53499c46c9e504e9fed05aafb4e1fedd09e428d538449041b32c0354f62"
+      },
+      {
+        "source": "ci/shared-skills/stardust-oa-attendance-travel-review/SKILL.md",
+        "installed_sha256": "131758f4bbf65a1ee839a165b9ffb128e29f10e59be70c81248b9c4d9c0f2672",
+        "candidate_sha256": "6fd80713c61886e5f42d8bfea419f0db8ae00412e4805d9620068973917e5d46"
+      }
+    ],
+    "production_after_attempt": {
+      "commit": "8a10080ffa19e050433e561f068bf56f1969d4e2",
+      "service_pid": 96045,
+      "healthz_http_status": 200,
+      "runtime_skill_config_id": 368,
+      "task6_config_version": 27,
+      "task6_managed_skill_revision": 235,
+      "task6_latest_run_id": 394981,
+      "task13_config_version": 49,
+      "task13_managed_skill_revision": 202,
+      "task14_config_version": 56,
+      "task14_managed_skill_revision": 224
+    },
+    "contract_files_written": false,
+    "new_report_runs_created": false,
+    "external_effects": false
+  },
+  "latest_formal_consumer_skill_publication": {
+    "observed_at": "2026-10-23T11:03:24Z",
+    "target_commit": "55b0f9a3b4321a8f14d3e4619984a6fa3a4e50f2",
+    "merged_changes": [
+      "PR #288",
+      "PR #287"
+    ],
+    "operation_id": "deploy-2ee360dd-3441-4496-8698-0b3b46721928",
+    "result": "succeeded",
+    "release_receipt_status": "verified",
+    "release_kind": "consumer_system_contracts_v1",
+    "runtime_config": {
+      "old_id": 368,
+      "new_id": 369
+    },
+    "processes": {
+      "supervisor_pid": 43616,
+      "service_worker_pid": 43623,
+      "audit_web_pid": 43624,
+      "email_worker_pid": 43625
+    },
+    "worker_load_receipt": {
+      "runtime_config_id": 369,
+      "worker_pid": 43623,
+      "error": null,
+      "okr_skill_sha256": "49ba4b0bdafdd2ba54989f6bd1ad6b799417464f2dad2cbeefb721eb85a32f8e"
+    },
+    "task6": {
+      "enabled": true,
+      "version": 28,
+      "managed_skill_revision_id": 240,
+      "managed_skill_sha256": "49ba4b0bdafdd2ba54989f6bd1ad6b799417464f2dad2cbeefb721eb85a32f8e"
+    },
+    "asset_readback": {
+      "manifest_entries": 26,
+      "sha256_mismatches": 0,
+      "scheduled_task_references": "exact readback passed for all affected tasks"
+    },
+    "healthz_http_status": 200,
+    "queue": {
+      "active": 0,
+      "queued": 471
+    },
+    "attention_total": 20,
+    "history_total": 37604,
+    "new_task6_run_created": false,
+    "new_okr_report_created": false,
+    "external_effects": false,
+    "business_acceptance": "Skill publication/load verified only; no post-deploy real OKR report run has occurred."
   }
 }

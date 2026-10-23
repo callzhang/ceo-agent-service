@@ -1193,6 +1193,14 @@ def test_only_consumer_routes_with_native_output_schema_omit_wire_schema_text():
         assert CONSUMER_OUTBOUND_INSTRUCTION in developer
         assert "return the typed wire contract" in developer
 
+    codex = render_prompt_sections(
+        sections_by_runtime["codex_cli"], placement="developer",
+    )
+    assert "## Native Output Schema SHA-256\n" in codex
+    assert "## Native Output Schema SHA-256\n" not in render_prompt_sections(
+        sections_by_runtime["claude_cli"], placement="developer",
+    )
+
     friday = render_prompt_sections(
         sections_by_runtime["friday_runtime"], placement="developer",
     )
@@ -1861,6 +1869,45 @@ def test_consumer_default_path_rejects_incompatible_native_wire_before_resume(
     assert store.get_codex_session_id(task.conversation_id) == "session-new"
 
 
+def test_consumer_default_path_resumes_native_schema_with_later_developer_sections(
+    store, task, context, monkeypatch, tmp_path
+):
+    session = tmp_path / "native-session.jsonl"
+    schema_hash = consumer_agent.sha256(
+        native_output_schema_path("consumer").read_bytes()
+    ).hexdigest()
+    developer = (
+        "## Native Output Schema SHA-256\n" + schema_hash
+        + "\n\n## Capability Instructions\nRead-only capabilities follow."
+    )
+    session.write_text(json.dumps({
+        "type": "response_item",
+        "payload": {
+            "type": "message", "role": "developer",
+            "content": [{"type": "input_text", "text": developer}],
+            "internal_chat_message_metadata_passthrough": {
+                "content_item_kinds": ["generic.developer_instructions"]
+            },
+        },
+    }) + "\n")
+    monkeypatch.setattr(consumer_agent, "find_codex_session_path", lambda *_args, **_kwargs: session)
+    monkeypatch.setattr(
+        "app.native_prompt_input.native.find_codex_session_path",
+        lambda *_args, **_kwargs: session,
+    )
+    store.upsert_conversation(task.conversation_id, "Group", False, "session-old")
+    store.set_codex_session_contract_hash(task.conversation_id, "old-contract")
+    executor = CapturingExecutor(_result_jsonl(session="session-old"))
+
+    ConsumerAgentRunner(
+        store=store, workspace=Path("/workspace"), executor=executor
+    ).run(task, context, proposal_revision=0, parent_agent_run_id=None)
+
+    assert executor.commands[0][3:5] == ["exec", "resume"]
+    assert executor.commands[0][-2:] == ["session-old", "-"]
+    assert store.get_codex_session_id(task.conversation_id) == "session-old"
+
+
 def test_consumer_forced_rerun_resumes_the_compatible_session(store, task, context):
     store.upsert_conversation(task.conversation_id, "Group", False, "session-old")
     store.set_codex_session_contract_hash(
@@ -1945,6 +1992,73 @@ def test_consumer_retry_after_invalid_result_carries_validation_locations(
         executor=executor,
     ).run(task, context, proposal_revision=0, parent_agent_run_id=None)
 
+    assert "## Result Correction" in executor.prompts[0]
+    assert "proposal.error_code: string_type" in executor.prompts[0]
+
+
+def test_consumer_retries_recoverable_invalid_result_in_same_session(
+    store, task, context
+):
+    claim = store.claim_agent_run(
+        task.id,
+        task.execution_generation,
+        role=AgentRole.CONSUMER,
+        proposal_revision=0,
+        turn_attempt=0,
+        parent_agent_run_id=None,
+        operation_id="",
+        owner="consumer-invalid-result",
+    )
+    assert claim.claimed
+    store.set_agent_run_session(
+        claim.run.id, "session-invalid-result", owner="consumer-invalid-result"
+    )
+    store.upsert_conversation_runtime_session(
+        task.conversation_id,
+        "codex_oauth",
+        "session-invalid-result",
+        consumer_wire_contract_hash(),
+    )
+    store.fail_agent_run(
+        claim.run.id,
+        {
+            "code": "codex_result_invalid",
+            "retryable": True,
+            "authorization_required": False,
+            "detail": "proposal.error_code: string_type",
+            "source": "codex",
+            "stage": "result",
+            "session_continuable": True,
+        },
+        owner="consumer-invalid-result",
+    )
+    executor = CapturingExecutor(
+        _result_jsonl(session="session-invalid-result")
+    )
+    schema_identity = {
+        "$native_output_schema_sha256": consumer_agent.sha256(
+            native_output_schema_path("consumer").read_bytes()
+        ).hexdigest(),
+    }
+
+    ConsumerAgentRunner(
+        store=store,
+        workspace=Path("/workspace"),
+        executor=executor,
+        codex_session_exists=lambda _: True,
+        codex_session_wire_schema=lambda _: schema_identity,
+    ).run(task, context, proposal_revision=0, parent_agent_run_id=None)
+
+    retry = store.get_agent_run_for_turn(
+        task.id,
+        task.execution_generation,
+        role=AgentRole.CONSUMER,
+        proposal_revision=0,
+        turn_attempt=1,
+    )
+    assert retry is not None and retry.status == "completed"
+    assert executor.commands[0][3:5] == ["exec", "resume"]
+    assert executor.commands[0][-2:] == ["session-invalid-result", "-"]
     assert "## Result Correction" in executor.prompts[0]
     assert "proposal.error_code: string_type" in executor.prompts[0]
 

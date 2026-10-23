@@ -18,8 +18,11 @@ from app.meeting_alignment_agent import (
 )
 from app.meeting_alignment_models import (
     MEETING_ALIGNMENT_CROSS_FIELD_RULES,
+    MeetingAlignmentAuditResult,
     MeetingParticipant,
     MeetingSource,
+    meeting_alignment_decision_digest,
+    MeetingAlignmentDecision,
 )
 from tests.test_meeting_alignment_models import (
     cross_field_rule_payloads,
@@ -175,10 +178,36 @@ def test_meeting_runner_routes_compact_prompt_only_to_codex():
     assert call["command_factory"].project_doc_max_bytes == 0
     instructions = call["command_factory"].developer_instructions
     assert "DWS 只用于群与身份的只读取证。" in instructions
-    assert instructions.count(
-        "Do not directly send external messages or email or execute approvals."
-    ) == 1
+    assert instructions.count("For every task type, do not use any tool") == 1
     assert "不要直接发消息、邮件" not in instructions
+
+
+def test_meeting_audit_uses_separate_read_only_bound_runtime_call():
+    decision = MeetingAlignmentDecision.model_validate(valid_send_decision())
+    digest = meeting_alignment_decision_digest(decision)
+    routed = FakeRoutedMeetingExecution(json.dumps({
+        "outcome": "approve",
+        "candidate_sha256": digest,
+        "summary": "candidate is supported",
+        "feedback": None,
+    }))
+    runner = MeetingAlignmentCodexRunner(routed_execution=routed)
+
+    result = runner.audit(prompt="Review exact candidate", run_id=9, candidate_sha256=digest)
+
+    assert result == MeetingAlignmentAuditResult(
+        outcome="approve", candidate_sha256=digest,
+        summary="candidate is supported", feedback=None,
+    )
+    call = routed.calls[0]
+    assert call["workload_kind"] == "meeting_audit"
+    assert call["workload_key"] == "9"
+    assert call["conversation_id"] is None
+    assert call["command_factory"].output_schema_path.name == "meeting_alignment_audit.schema.json"
+    assert call["command_factory"].skill_names is None
+    assert call["command_factory"].project_doc_max_bytes == 0
+    assert call["command_factory"].model_only is True
+    assert "independent, read-only Audit role" in call["command_factory"].developer_instructions
 
 
 def source_with_unresolved_one_to_one_counterpart() -> MeetingSource:

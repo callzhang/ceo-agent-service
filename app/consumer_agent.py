@@ -53,6 +53,7 @@ from app.managed_skills import RuntimeSkillSnapshot
 from app.claude_runtime_adapter import ClaudeRuntimeAdapter
 from app.codex_history import find_codex_session_path
 from app.native_prompt_input import codex_session_wire_schema as read_codex_session_wire_schema
+from app.native_agent_output import native_output_schema_path
 from app.codex_runner import _codex_home
 from app.codex_runtime_adapter import CodexRuntimeAdapter
 from app.friday_runtime_adapter import FridayRuntimeAdapter
@@ -616,25 +617,23 @@ class ConsumerAgentRunner:
         )
         return tuple(route.name for route in config.routes) if config else ("codex_oauth",)
 
-    def _route_session_exists(
-        self, route_name: str, session_id: str,
-        *, expected_wire_schema: dict[str, object] | None = None,
-    ) -> bool:
+    def _route_kind(self, route_name: str) -> RuntimeKind | None:
         config = self.runtime_config or (
             self.codex_adapter.config if self.codex_adapter is not None else None
         )
-        route_kind = (
-            next(
-                (
-                    route.runtime_kind
-                    for route in config.routes
-                    if route.name == route_name
-                ),
-                None,
-            )
-            if config
-            else RuntimeKind.CODEX_CLI
+        if config is None:
+            return RuntimeKind.CODEX_CLI if route_name == "codex_oauth" else None
+        return next(
+            (route.runtime_kind for route in config.routes if route.name == route_name),
+            None,
         )
+
+    def _route_session_exists(
+        self, route_name: str, session_id: str,
+        *, expected_wire_schema: dict[str, object] | None = None,
+        expected_legacy_wire_schema: dict[str, object] | None = None,
+    ) -> bool:
+        route_kind = self._route_kind(route_name)
         if route_kind is None:
             return False
         if route_kind is RuntimeKind.CLAUDE_CLI:
@@ -648,7 +647,11 @@ class ConsumerAgentRunner:
             and expected_wire_schema is not None
             and self.codex_session_wire_schema is not None
         ):
-            return self.codex_session_wire_schema(session_id) == expected_wire_schema
+            saved_schema = self.codex_session_wire_schema(session_id)
+            return saved_schema == expected_wire_schema or (
+                expected_legacy_wire_schema is not None
+                and saved_schema == expected_legacy_wire_schema
+            )
         return True
 
     def _consumer_route_sessions(
@@ -770,6 +773,11 @@ class ConsumerAgentRunner:
             purpose_name=purpose_name,
         )
         expected_wire_schema = json.loads(_schema_json(consumer_wire_model(purpose_name)))
+        expected_native_schema = {
+            "$native_output_schema_sha256": sha256(
+                native_output_schema_path("consumer", purpose=purpose_name).read_bytes()
+            ).hexdigest(),
+        }
         route_sessions = self._consumer_route_sessions(
             task.conversation_id, skill_session_contract_hash
         )
@@ -780,8 +788,20 @@ class ConsumerAgentRunner:
         # id here only supplies a fast-path hint and never clears other routes.
         conversation_session_id = next(iter(route_sessions.values()), None)
         for route_name, route_session_id in tuple(route_sessions.items()):
+            expected_route_schema = (
+                expected_native_schema
+                if self._route_kind(route_name) is RuntimeKind.CODEX_CLI
+                else expected_wire_schema
+            )
             if not self._route_session_exists(
-                route_name, route_session_id, expected_wire_schema=expected_wire_schema
+                route_name,
+                route_session_id,
+                expected_wire_schema=expected_route_schema,
+                expected_legacy_wire_schema=(
+                    expected_wire_schema
+                    if self._route_kind(route_name) is RuntimeKind.CODEX_CLI
+                    else None
+                ),
             ):
                 self._clear_route_session(
                     task.conversation_id, route_name, route_session_id
@@ -1326,8 +1346,9 @@ def consumer_developer_sections_by_runtime(
 ) -> dict[str, tuple[PromptSection, ...]]:
     """Return the matching Developer sections for each Consumer runtime."""
     native_schema_runtimes = {RuntimeKind.CODEX_CLI, RuntimeKind.CLAUDE_CLI}
-    return {
-        runtime.value: consumer_developer_sections(
+    sections_by_runtime = {}
+    for runtime in RuntimeKind:
+        sections = consumer_developer_sections(
             audit_rules,
             skill_protocol=skill_protocol,
             runtime_context=runtime_context,
@@ -1336,8 +1357,20 @@ def consumer_developer_sections_by_runtime(
             purpose_name=purpose_name,
             include_wire_contract=runtime not in native_schema_runtimes,
         )
-        for runtime in RuntimeKind
-    }
+        if runtime is RuntimeKind.CODEX_CLI:
+            schema_fingerprint = sha256(
+                native_output_schema_path("consumer", purpose=purpose_name).read_bytes()
+            ).hexdigest()
+            sections += (
+                PromptSection(
+                    "原生输出契约指纹",
+                    "服务结构化输出 Schema",
+                    "developer",
+                    f"## Native Output Schema SHA-256\n{schema_fingerprint}",
+                ),
+            )
+        sections_by_runtime[runtime.value] = sections
+    return sections_by_runtime
 
 
 def default_consumer_skill_protocol() -> str:

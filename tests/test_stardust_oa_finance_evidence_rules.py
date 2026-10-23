@@ -85,7 +85,10 @@ def test_supplier_payment_unreadable_submitted_evidence_stays_a_reviewer_blocker
         assert "keep the approval pending" in text
         assert "do not turn an unknown condition into non-compliance" in text
         assert "Only independently readable and source-verified evidence" in text
-        assert "Prior return count is history, not an action rule" in text
+        assert "Prior return count is history, not proof by itself" in text
+        assert "generic OA Skill's three-valid-return rule is the explicit applicable rule" in text
+        assert "At Derek's fourth review" in text
+        assert "count alone is insufficient" in text
         assert "do not ask the applicant to resubmit the same unreadable file" in text
         assert "only when independently verified as applicant-resolvable material omissions" in text
         assert "never because the reviewer cannot read a submitted item" in text
@@ -122,14 +125,12 @@ def test_supplier_payment_tracks_readability_per_attachment() -> None:
 def test_reviewer_side_unreadable_returns_do_not_trigger_three_return_refusal() -> None:
     for path in OA_SKILL_PATHS:
         text = path.read_text(encoding="utf-8")
-        assert "因审阅端权限、下载、解析、OCR 或客户端读失败而要求申请人重交的退回" in text
-        assert "均不得计数" in text
-        assert "记录具体阻塞并保持审批待处理" in text
-        assert "若附件已提交而障碍仅在我方权限或读取能力" in text
-        assert "只有独立证据确认源文件确实缺失、空白、损坏或缺页" in text
-        assert "已提交材料未读不等于申请人缺材料" in text
-        assert "权限修复失败后的处理" in text
-        assert "协调文件所有者/管理员或审批负责人解决访问问题" in text
+        assert "审阅端权限、解析、OCR 或客户端读取失败" in text
+        assert "不计入该缺口的次数" in text
+        assert "记录具体读取阻塞，保留审批待处理" in text
+        assert "只有独立证据确认源文件本身确实缺失、空白、损坏或缺页" in text
+        assert "不得把我方无法读取升级成申请人材料缺口" in text
+        assert "真实权限拒绝按权限申请与有界重试流程处理" in text
         assert "申请人可提供可读副本时优先退回补正" not in text
         assert "若正文无法取得且申请人能补正，优先退回" not in text
         assert "有经独立证据确认属于申请人可补正的真实材料缺口时" in text
@@ -137,11 +138,12 @@ def test_reviewer_side_unreadable_returns_do_not_trigger_three_return_refusal() 
 
 def test_three_return_threshold_requires_verified_per_return_evidence() -> None:
     text = OA_SKILL_PATHS[0].read_text(encoding="utf-8")
-    assert "为每一轮退回建立有效性记录" in text
-    assert "该轮提出的具体问题、当时可读且来源可核验的证据" in text
-    assert "申请人针对该轮的回应及获得公平补正机会的事实" in text
-    assert "未完成逐轮核验的退回次数不得计入拒绝阈值" in text
-    assert "只有逐轮证据证明三轮都针对同一项真实、实质且由申请人或前序审批人可处理的缺口" in text
+    assert "按同一项实质、可由申请人或责任审批方补正的缺口计数" in text
+    assert "每次计入的退回必须有当时可读且来源核验的证据支持" in text
+    assert "给对方公平补正机会" in text
+    assert "确认该缺口在该轮后仍未解决，才可将该轮计入" in text
+    assert "满足这些条件的三次有效退回之后，第四次到达 Derek 授权审批节点时" in text
+    assert "不得仅凭退回次数拒绝" in text
 
 
 def test_supplier_payment_pressure_case_does_not_convert_unknown_acceptance_to_refusal() -> None:
@@ -158,4 +160,4 @@ def test_runtime_oa_skill_does_not_treat_reader_failure_as_applicant_material_ga
         return
     text = RUNTIME_OA_SKILL.read_text(encoding="utf-8")
     assert "有经独立证据确认属于申请人可补正的真实材料缺口时" in text
-    assert "审阅端权限、下载、解析、OCR 或客户端读失败不属于此类缺口" in text
+    assert "审阅端下载、解析、OCR 或客户端读失败不属于此类缺口" in text

@@ -20,6 +20,7 @@ import zipfile
 from collections.abc import Callable, Sequence
 from contextlib import closing
 from dataclasses import dataclass, replace
+from datetime import datetime
 from io import BytesIO
 from pathlib import Path
 from typing import Annotated
@@ -1624,6 +1625,40 @@ def _bound_scheduled_run(db_path: Path | None, task_id: int | None):
     return store, run
 
 
+def _scheduled_read_cutoff(db_path: Path | None, task_id: int | None):
+    """Return the trigger time for scheduled tasks, leaving other tasks unchanged."""
+    if db_path is None or type(task_id) is not int or task_id <= 0:
+        return None
+    from app.store import AutoReplyStore
+
+    store = AutoReplyStore(db_path)
+    task = store.get_reply_task(task_id)
+    if task is None or task.channel != "scheduled":
+        return None
+    run = store.get_scheduled_task_run_for_reply_execution(task_id)
+    if run is None:
+        raise ValueError("scheduled run is missing")
+    return run.scheduled_for
+
+
+def _validate_scheduled_read_window(
+    db_path: Path | None,
+    task_id: int | None,
+    start: str,
+    end: str,
+    *,
+    scheduled_for: datetime | None = None,
+) -> None:
+    cutoff = scheduled_for or _scheduled_read_cutoff(db_path, task_id)
+    if cutoff is None:
+        return
+    from app.service_activity import validate_scheduled_read_window
+
+    validate_scheduled_read_window(
+        datetime.fromisoformat(start), datetime.fromisoformat(end), cutoff
+    )
+
+
 def _write_document_artifact(
     *,
     root: Path,
@@ -2271,12 +2306,13 @@ def build_role_server(
     def search_dingtalk_messages(
         query: str, start: str, end: str, limit: int = 100,
     ) -> dict[str, object]:
-        """Search messages by exact keyword in an explicit time window."""
+        """Search messages in an explicit window, capped at a scheduled trigger."""
         from app.dws_client import DwsClient
         if not query.strip() or not start.strip() or not end.strip():
             raise ValueError("message search query and window are required")
         if type(limit) is not int or not 1 <= limit <= 100:
             raise ValueError("message search limit is invalid")
+        _validate_scheduled_read_window(db_path, task_id, start, end)
         messages = DwsClient().search_messages(query, start, end, limit)
         return {"messages": [item.model_dump(mode="json") for item in messages]}
 
@@ -2332,10 +2368,11 @@ def build_role_server(
     def recent_dingtalk_conversations(
         start: str, end: str,
     ) -> dict[str, object]:
-        """List conversations active in a bounded report time window."""
+        """List conversations in a bounded window, capped at a scheduled trigger."""
         from app.dws_client import DwsClient
         if not start.strip() or not end.strip():
             raise ValueError("conversation window is required")
+        _validate_scheduled_read_window(db_path, task_id, start, end)
         dws = DwsClient()
         return dws.run_json([
             dws.dws_bin, "chat", "+recent-conversations", "--start", start,
@@ -2345,11 +2382,12 @@ def build_role_server(
     def read_dingtalk_messages_in_window(
         conversation_id: str, start: str, end: str,
     ) -> dict[str, object]:
-        """Read one identified conversation over an explicit time window."""
+        """Read one conversation in an explicit window, capped for scheduled tasks."""
         from app.dingtalk_models import DingTalkConversation
         from app.dws_client import DwsClient
         if not conversation_id.strip() or not start.strip() or not end.strip():
             raise ValueError("conversation and window are required")
+        _validate_scheduled_read_window(db_path, task_id, start, end)
         dws = DwsClient()
         bound_sender = _bound_direct_chat_sender(
             db_path, task_id, artifact_generation, conversation_id,
@@ -2396,18 +2434,26 @@ def build_role_server(
         """Read selected service facts in an explicit aware [start, end) interval.
 
         sources: meetings, tasks, attention, emails, attempts, waiting. Attention
-        and waiting return current unresolved records with their timestamps.
+        and waiting return current unresolved records with their timestamps. For
+        scheduled tasks, end cannot exceed the triggering run's scheduled_for.
         """
         from datetime import datetime
-        from app.service_activity import collect_service_activity
+        from app.service_activity import (
+            collect_service_activity,
+            validate_scheduled_read_window,
+        )
         from app.email_store import EmailStore
 
-        store, _run = _bound_scheduled_run(db_path, task_id)
+        store, run = _bound_scheduled_run(db_path, task_id)
+        start_at, end_at = datetime.fromisoformat(start), datetime.fromisoformat(end)
+        validate_scheduled_read_window(
+            start_at, end_at, run.scheduled_for
+        )
         return collect_service_activity(
             store,
             EmailStore(db_path, validate_rows=False),
-            datetime.fromisoformat(start),
-            datetime.fromisoformat(end),
+            start_at,
+            end_at,
             sources,
         )
 

@@ -1,0 +1,35 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "additionalProperties": false,
+  "properties": {
+    "candidate_sha256": {
+      "pattern": "^[0-9a-f]{64}$",
+      "type": "string"
+    },
+    "feedback": {
+      "anyOf": [
+        {
+          "additionalProperties": false,
+          "properties": {
+            "observation": {"minLength": 1, "type": "string"},
+            "requested_revision": {"minLength": 1, "type": "string"},
+            "rule": {"minLength": 1, "type": "string"}
+          },
+          "required": ["rule", "observation", "requested_revision"],
+          "type": "object"
+        },
+        {"type": "null"}
+      ]
+    },
+    "outcome": {
+      "enum": ["approve", "return", "reject"],
+      "type": "string"
+    },
+    "summary": {
+      "minLength": 1,
+      "type": "string"
+    }
+  },
+  "required": ["outcome", "candidate_sha256", "summary", "feedback"],
+  "type": "object"
+}
