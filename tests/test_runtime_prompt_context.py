@@ -30,7 +30,7 @@ def test_context_uses_final_role_directory_and_declared_tools(monkeypatch):
     assert "mcp__agent_cli__consumer_artifact_write" not in audit
     assert "mcp__exa__web_search_exa" in consumer
     assert "agent_cli.list_dingtalk_calendar_events" not in consumer
-    assert "命令网络关闭" in consumer
+    assert "命令网络开启（可运行 dws）" in consumer
     assert "只读审核" in audit
     assert "未绑定" in consumer
 
