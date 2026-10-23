@@ -1129,10 +1129,14 @@ original failed run and failed Attempt remain evidence, not `needs_human` or
 a successful business result. Existing authorization/provider wait paths are
 unchanged.
 
-Retry session selection honors an explicit JSON boolean
-`session_continuable=false` on the latest failed run for the current generation,
-role and revision. A new run does not inherit that session, and Consumer/Audit
-start a fresh runtime rather than restoring it through conversation routing.
+Retry session selection honors `session_continuable=false` on the latest failed
+run for the current generation, role and revision, except that a retryable
+Agent-sourced typed Consumer failure does not force a new session. Its wire result's
+`AgentError.session_continuable` default is not evidence that the native
+session is unusable, so Consumer continues the same route session. Audit keeps
+its existing fresh-session behavior for this case. Service-sourced
+noncontinuable failures still start a fresh runtime. Repeated identical
+invalid/missing result failures retain their existing fresh-session behavior.
 Missing flags and string values are not treated as false. A later completed
 session covers an older failure. Existing candidate digest, revision, source,
 approval and external-receipt checks remain unchanged; fresh transport is not
