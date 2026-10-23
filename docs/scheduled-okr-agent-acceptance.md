@@ -49,10 +49,27 @@ run394981 由 task6 正式入口创建，reply task417039；不可变快照绑�
 空检索均有记录，模拟 provider 的全部产物写入均读回通过。此证据对应合并后的代码与 Skill
 摘要，仍是合成验收，不代表真实 OKR 文档或钉钉消息已发布。
 
-该候选尚未部署，也没有再次创建 task6 运行。生产只读复核为 commit `881ea46fe`、PID5478、
-healthz HTTP 200；task6 仍为 v27 / revision235，下次自然触发 **2026-10-25 10:00 UTC**。
+截至该次复核时，该候选尚未部署，也没有再次创建 task6 运行。生产只读复核为 commit
+`881ea46fe`、PID5478、healthz HTTP 200；task6 仍为 v27 / revision235，下次自然触发
+**2026-10-25 10:00 UTC**。
 394981 不重放。下一步推送并完成代码评审、正式发布；部署后仅新建一条授权的
 task6 手动验证，严格核验完整 Consumer/Audit、全部报告文档真实读回和通知真实回执。
+
+### 2026-10-23 正式发布与生产回读
+
+PR #288（OA 考勤 Skill）先合入 `106c609d`，随后 PR #287（OKR 空检索继续分析及发布摘要收敛）
+合入为 `55b0f9a3`。正式部署操作 `deploy-2ee360dd-3441-4496-8698-0b3b46721928`
+经自然空闲等待成功，将生产从 `3875c379` 更新至 `55b0f9a3`；没有中断在途任务。
+
+生产回读确认：supervisor PID `43616`，服务 worker PID `43623`，healthz HTTP 200；
+Consumer/Skill 运行配置由 368 更新为 369，worker 对配置 369 的加载回执无错误，
+task6 为 v28 / managed Skill revision240，加载的 OKR Skill SHA-256 为
+`49ba4b0bdafdd2ba54989f6bd1ad6b799417464f2dad2cbeefb721eb85a32f8e`。正式发布回执状态为
+`verified`；清单中的 26 项资产摘要全部一致，受影响的定时任务 Skill 引用读回一致。
+队列 active 0 / queued 471，Attention 20，History 37604。发布后没有创建新的 task6
+运行，因此这只证明 Skill 已发布并由新 worker 加载，不代表真实 OKR 报告业务验收通过；
+run394981 保持失败历史，不重放。下一步应等待 task6 后续正常触发，再按完整 Consumer/Audit、
+报告文档读回和真实通知回执验收业务行为。
 
 无正文生产证据：[run394981 与候选验收读回](../evals/scheduled_task_generic/okr-production-readback.json)。
 原生案例记录：[empty-search acceptance v3](../evals/scheduled_task_generic/okr-empty-search-acceptance.v3.json)。
