@@ -564,3 +564,18 @@ task6 run **392187** 使用 task 配置 v20、managed Skill revision 222，派�
 生产读回：PID **65404**，`/healthz` HTTP 200；队列 **active 1 / queued 152**，Attention **19**，History **37,179** 条；14 项定时任务仍在。task6 为 v21、洛杉矶周日 03:00、下次 **2026-10-25 10:00 UTC**；task13 为 v43、洛杉矶周六 12:00、下次 **2026-10-24 19:00 UTC**；task14 为 v49、洛杉矶每天 06:00、下次 **2026-10-22 13:00 UTC**。配置与触发时间保持原值。
 
 GitHub Quality 检查在运行测试前被全仓 Ruff 阶段挡住，报告 14 处旧 lint 错误，位于本 PR 未改动的 5 个测试文件；Vercel 状态因预览部署额度不足失败。代码相关的调度定向回归、改动文件 Ruff 与差异检查已通过。未修补无关文件，也未降低任何验收门槛。新版 task6 仍只观察 2026-10-25 10:00 UTC 的自然触发，不重放 392433。
+## 2026-10-23 OKR 综合验收修复续记
+
+原生综合验收 `okr_results.v69.json` 四场 **4/4 passed**，覆盖完整报告、同周期来源变化恢复、报告日期变化恢复和共享认证失败保护。四场使用隔离 mock provider，没有连接真实外部执行器，不能代替生产发布证据。更早的 v50–v68 失败结果均保留供根因追查。
+
+v50–v68 轨迹定位出实际报告问题：固定渲染器曾把没有来源日期的结果放进“本周重点进展”；缺口区域把内部状态码及原始英文诊断写入中文报告；日期变化恢复会沿用旧标题并写入新日期正文；修订时模型曾改写来源未变成员分析，或重复索要已核验的验收证据。`report.py` 现以“已核实进展”和报告日表述报告，把缺口转换为中文业务说明，并保留 404 不能证明目标是否存在的边界。Skill 现要求来源文件只由 `prepare` 生成、可复用分析逐字节保留、日期变化使用新标题，并只提出当前确实缺少的下一步证据。合成 Audit 提示澄清 mock 审核不会执行对外动作；gap grader 核对可读状态、成员身份和关键事实，不要求报告展示内部状态码。
+
+定向测试 `tests/test_weekly_okr_report.py` 与 `tests/test_scheduled_okr_agent_eval.py` 为 **126 passed**；Consumer runtime/release 子集 **8 passed**；改动文件 Ruff 与 `git diff --check` 通过。完整 release-manifest 固定快照测试尚未通过：另一项 active daily-report 认领正在修改同一发布清单，其 `old_sha256` 当前为 32d24bb5，而本机验证记录中的 installed/managed SHA 为 45e10866。`consumer-scripts.json` 也仍由 `codex-okr-skill-script-review-digest-20261022` 认领；OKR 脚本修改后预期脚本树摘要为 `59a125b5…`，尚未更新。没有把这些并发清单差异写成通过，也没有部署或触发 task6。用户已授权部署后正式手动触发；需要共享发布哈希认领收敛、相关发布测试通过后，再按正式流程发布、读取生产配置与 History，并创建新的 task6 手动验收运行。
+
+### task6 run 394267 真实失败核查
+
+生产 History 显示手动 run **394267**（task6 v23 / managed Skill revision223）派发到 reply task **416922**，终态 `failed`。四次 Consumer 尝试（runtime run **394476、394493、394496、394499**）全部以 `analysis_incomplete` 结束；第一轮已读 18 人名册、15 人有效 Q4 源和 3 项 `goals_missing`，`prepare` 成功生成 source/plan/schema，但没有保存任何成员分析，随后没有 Audit、文档写入或通知。最终 History 标记 `agent_reported_failure (analysis_incomplete)`，`what_happened.reached_the_outside_world=false`，没有外部副作用。
+
+完整 trajectory 中，第一轮尝试读取一个未配置的本地绩效制度文件，工具返回路径不存在；随后虽读了 schema 并查阅历史记忆，仍未继续分析。后续重试又读取了同一批成员源，最终都停在未完成分析。根因是 Agent 把未找到的补充制度材料当成了分析阻断条件，而本任务 Skill 和 `$dingtang-okr-review` 已有足够的正式评分口径。该次失败是实际 Consumer 行为问题，不是评测误报或数据源故障。
+
+已在 Skill 中明确：不要求额外本地制度文件；如找到的补充材料无法读取，应把它记录为证据限制，继续使用已声明的评分口径，不阻止分析或发布。没有降低 0/20/40/60/80/100 评分档、证据要求、Audit、完整读回或通知门槛。Skill 回归断言加入后，`tests/test_weekly_okr_report.py` 与 `tests/test_scheduled_okr_agent_eval.py` 定向套件为 **126 passed**；改动文件 Ruff 与 `git diff --check` 通过。原生综合验收 `okr_results.v70.json` **4/4 passed**，覆盖完整报告、来源变化恢复、日期变化恢复及共享来源认证失败保护；它仍未模拟线上缺失本地制度文件的具体调用，根因修复需由下一条真实 task6 运行验证。此修复未部署；不重放 394267，待发布门槛收敛后创建一条新的 task6 手动验收运行。

@@ -89,6 +89,29 @@ class WeeklyOkrAnalysis(BaseModel):
         return self._member_gaps
 
 
+def _gap_status_label(kind: str) -> str:
+    return {
+        "goals_missing": "当前周期暂无已登记目标",
+        "source_failed": "当前周期成员目标记录未能读取",
+        "analysis_failed": "分析尚未完成",
+    }[kind]
+
+
+def _gap_evidence(item: dict[str, Any]) -> str:
+    outcome = item["sourceOutcome"]
+    if outcome["kind"] == "goals_missing":
+        return "已核查当前周期目标列表为空，当前没有登记该成员的 OKR 目标。"
+    if outcome["kind"] == "source_failed":
+        receipt = item.get("providerReceipt", {})
+        if receipt.get("http_status") == 404 and receipt.get("error_code") == "member_not_found":
+            return "当前季度成员记录读取接口返回404，无法确认该成员是否有OKR目标；同轮名单及其他成员读取成功。"
+        diagnostic = str(outcome.get("diagnostic", ""))
+        if "403" in diagnostic:
+            return "当前周期成员读取接口返回 HTTP 403，本轮无法读取该成员的 OKR 记录。"
+        return "本次未能读取该成员当前周期的 OKR 记录；该成员不形成评分。"
+    return str(outcome.get("evidence", ""))
+
+
 @dataclass(frozen=True)
 class ManagerIdentity:
     name: str
@@ -403,7 +426,7 @@ def render_weekly_okr_report(
         "- 数据口径：实时叮当 OKR 目标、KR 评论/进展；独立材料以本轮实际读取并列明的来源为准，未读取的来源不视为已核验",
         "- 综合证据评分：系统进度仅作为线索；每个 KR 按实际结果、证据强度和完成时间评分",
         "- 评分公式：业务 OKR 按 O 权重×KR 权重汇总；管理者最终分 =（业务 OKR×70% + 领导力×30%）×文化系数",
-        "- 使用提醒：这是截至本周的证据完成度快照，不是季度末绩效预测；管理会应重点审阅证据缺口、风险和下周检查点",
+        "- 使用提醒：这是截至报告日的证据完成度快照，不是季度末绩效预测；管理会应重点审阅证据缺口、风险和下周检查点",
         "",
         "## 管理会审阅页",
         "",
@@ -415,11 +438,10 @@ def render_weekly_okr_report(
         f"- 已形成最终分平均值：{_display_average(finalized_scores)}"
         if finalized_scores
         else "- 已形成最终分平均值：暂不形成",
-        f"- 低于 60 分：{sum(score < 60 for score in finalized_scores)} 人；"
-        "当前主要原因是结果证据、业务效果或系统回填尚未闭环",
+        f"- 低于 60 分：{sum(score < 60 for score in finalized_scores)} 人",
     ]
     if analysis.company_progress:
-        lines.extend(["", "### 本周重点进展", ""])
+        lines.extend(["", "### 已核实进展", ""])
         lines.extend(f"- {item}" for item in analysis.company_progress[:6])
     lines.extend(["", "### 管理会待决策与主要风险", ""])
     if analysis.ceo_attention_items:
@@ -429,12 +451,12 @@ def render_weekly_okr_report(
             for item in analysis.ceo_attention_items[:8]
         )
     else:
-        lines.append("- 本周未发现需要管理会立即决策的新增事项。")
+        lines.append("- 当前材料未显示需要管理会立即决策的事项。")
 
     lines.extend(["", "### 管理者审阅表", ""])
     lines.extend(
         [
-            "| 管理者 | 最终分/状态 | 本周重点进展 | 主要风险 | 下周检查点 |",
+            "| 管理者 | 最终分/状态 | 进展与证据 | 主要风险 | 下周检查点 |",
             "| --- | --- | --- | --- | --- |",
         ]
     )
@@ -443,7 +465,7 @@ def render_weekly_okr_report(
         if manager.user_id in gaps:
             gap = gaps[manager.user_id]
             lines.append(
-                f"| {_md_cell(label)} | 暂不形成 / {gap.kind} | — | "
+                f"| {_md_cell(label)} | 暂不形成 / {_gap_status_label(gap.kind)} | — | "
                 f"{_md_cell(gap.evidence)} | — |"
             )
             continue
@@ -468,7 +490,7 @@ def render_weekly_okr_report(
         if manager.user_id in gaps:
             lines.append(
                 f"| {_md_cell(label)} | {_md_cell(manager.title)} | — | — | — | — | — | "
-                f"{gaps[manager.user_id].kind} |"
+                f"{_gap_status_label(gaps[manager.user_id].kind)} |"
             )
             continue
         review = reviews[manager.user_id]
@@ -492,9 +514,8 @@ def render_weekly_okr_report(
                     f"### {label}｜{manager.title}",
                     "",
                     f"- 成员 ID：{manager.user_id}",
-                    f"- 状态：{gap.kind}；暂不形成评分，不按零分处理。",
-                    f"- 阶段：{gap.stage}",
-                    f"- 证据：{gap.evidence}",
+                    f"- 状态：{_gap_status_label(gap.kind)}；暂不形成评分，不按零分处理。",
+                    f"- 来源说明：{gap.evidence}",
                     "",
                 ]
             )
@@ -601,7 +622,7 @@ def render_group_summary(
     ]
     names = {item["manager"]["userId"]: item["manager"]["name"] for item in manager_payloads}
     pending_reasons = [
-        f"- {names[gap.user_id]} [{gap.user_id}]：{gap.kind}；{gap.evidence}"
+        f"- {names[gap.user_id]} [{gap.user_id}]：{_gap_status_label(gap.kind)}；{gap.evidence}"
         for gap in analysis.member_gaps
     ]
     pending_reasons.extend(
@@ -1031,16 +1052,11 @@ def _analysis_from_files(
                 raise ValueError("shared source collection failed")
             gaps.append(
                 MemberGap(
-                    **{
-                        key: outcome.get(key, "")
-                        for key in (
-                            "user_id",
-                            "stage",
-                            "kind",
-                            "evidence",
-                            "diagnostic",
-                        )
-                    }
+                    user_id=member.user_id,
+                    stage=outcome.get("stage", "collection"),
+                    kind=outcome["kind"],
+                    evidence=_gap_evidence(item),
+                    diagnostic=outcome.get("diagnostic", ""),
                 )
             )
             continue

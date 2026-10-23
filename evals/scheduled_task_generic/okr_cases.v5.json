@@ -100,6 +100,12 @@
           "eval-a",
           "eval-b"
         ],
+        "independent_source_ids": [
+          "eval-evidence-2b0652a9fd02acfb",
+          "eval-behavior-2b0652a9fd02acfb",
+          "eval-evidence-5a2949b1fc19c78b",
+          "eval-behavior-5a2949b1fc19c78b"
+        ],
         "preserve_ids": [],
         "preserve_unscored_roster_titles": true,
         "summary_contains_actual_member_gaps": true,
@@ -180,6 +186,8 @@
             }
           ]
         },
+        "run_id": 2,
+        "previous_run_id": 1,
         "period_label": "2026 Q4",
         "report_date": "2026-10-19",
         "evidence": {
@@ -326,6 +334,8 @@
             }
           ]
         },
+        "run_id": 3,
+        "previous_run_id": 1,
         "period_label": "2026 Q4",
         "report_date": "2026-10-20",
         "evidence": {
@@ -390,6 +400,12 @@
         "rewrite_ids": [
           "eval-a",
           "eval-b"
+        ],
+        "independent_source_ids": [
+          "eval-evidence-2b0652a9fd02acfb",
+          "eval-behavior-2b0652a9fd02acfb",
+          "eval-evidence-5a2949b1fc19c78b",
+          "eval-behavior-5a2949b1fc19c78b"
         ],
         "preserve_ids": [],
         "preserve_unscored_roster_titles": true,
