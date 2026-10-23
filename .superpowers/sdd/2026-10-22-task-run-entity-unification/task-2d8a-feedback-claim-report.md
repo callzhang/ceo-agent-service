@@ -2,7 +2,7 @@
 
 BASE: `95cbc897160252780fd460ed3b7ad94a5be947af`.
 
-Implementation commit (final product-code HEAD): to be recorded after commit. The report is a follow-up commit so this field can name the completed implementation commit without a self-referential hash.
+FINAL HEAD for implementation, tests and behavior docs: `48ee84a0fedc1075b04cfdf461dc24e64e5cb350`. This report is recorded in a follow-up documentation commit.
 
 ## Result and exact scope
 
