@@ -33,6 +33,7 @@ from app.meeting_alignment import (
     recover_meeting_alignment_jobs,
 )
 from app.meeting_alignment_models import (
+    MeetingAlignmentAuditFeedback,
     MeetingAlignmentAuditResult,
     MeetingAlignmentDecision,
     MeetingSource,
@@ -858,6 +859,7 @@ class FakeMeetingRunner:
             outcome="approve",
             candidate_sha256=candidate_sha256,
             summary="exact candidate and recipient supported by the supplied evidence",
+            feedback=None,
         )
 
 
@@ -945,6 +947,7 @@ def audited_decision_json(decision: MeetingAlignmentDecision) -> str:
             outcome="approve",
             candidate_sha256=meeting_alignment_decision_digest(decision),
             summary="exact candidate approved for this test fixture",
+            feedback=None,
         ),
     )
 
@@ -1491,13 +1494,18 @@ def test_meeting_audit_return_blocks_delivery_and_persists_exact_candidate(tmp_p
                 outcome="return",
                 candidate_sha256=candidate_sha256,
                 summary="recipient disclosure evidence is insufficient",
+                feedback=MeetingAlignmentAuditFeedback(
+                    rule="recipient evidence must establish disclosure permission",
+                    observation="the candidate does not cite authority for all group members",
+                    requested_revision="use an evidenced audience or return for human review",
+                ),
             )
 
     runner = ReturningAuditRunner(summary_decision())
     consume_meeting_alignment_jobs(store, dws, runner, now=NOW, limit=1)
 
     job = store.get_meeting_alignment_job(job_id)
-    assert job.status == "needs_human"
+    assert job.status == "retry"
     assert dws.send_calls == []
     assert "规划 Agent 的 audit_summary 只是候选文本" in runner.audit_prompt
     persisted = json.loads(job.decision_json)
@@ -1505,6 +1513,7 @@ def test_meeting_audit_return_blocks_delivery_and_persists_exact_candidate(tmp_p
     assert persisted["_service_audit"]["candidate_sha256"] == meeting_alignment_decision_digest(
         summary_decision()
     )
+    assert persisted["_service_audit"]["feedback_cycles"] == 1
 
 
 def test_meeting_audit_dependency_outage_uses_existing_meeting_retry(tmp_path):
@@ -2612,6 +2621,12 @@ def test_calendar_summary_retry_does_not_resend_meeting_message(tmp_path):
     assert first.status == "ready_to_send"
     assert first.calendar_summary_status == "failed"
     assert len(dws.send_calls) == 1
+    legacy_decision = json.loads(first.decision_json)
+    legacy_decision.pop("_service_audit")
+    store.update_meeting_alignment_job(
+        job_id,
+        decision_json=json.dumps(legacy_decision, ensure_ascii=False),
+    )
 
     consume_meeting_alignment_jobs(
         store,
@@ -2624,6 +2639,94 @@ def test_calendar_summary_retry_does_not_resend_meeting_message(tmp_path):
     assert recovered.status == "sent"
     assert recovered.calendar_summary_status == "updated"
     assert len(dws.send_calls) == 1
+
+
+def test_meeting_audit_return_runs_bounded_feedback_revision(tmp_path):
+    store = AutoReplyStore(tmp_path / "worker.sqlite3")
+    dws = ConsumerDws()
+    job_id = seed_consumer_job(store, dws)
+    first = summary_decision()
+    revised = MeetingAlignmentDecision.model_validate({
+        **first.model_dump(mode="json"),
+        "final_message": first.final_message + "\n\n已补充有证据支持的收件范围。",
+    })
+
+    class RevisingRunner(FakeMeetingRunner):
+        def __init__(self):
+            super().__init__(first)
+            self.prompts = []
+            self.decisions = 0
+            self.audits = 0
+
+        def decide(self, *, prompt, run_id=None, compact_prompt=None):
+            self.prompts.append(prompt)
+            self.decisions += 1
+            return first if self.decisions == 1 else revised
+
+        def audit(self, *, prompt, run_id, candidate_sha256):
+            self.audits += 1
+            if self.audits == 1:
+                return MeetingAlignmentAuditResult(
+                    outcome="return",
+                    candidate_sha256=candidate_sha256,
+                    summary="recipient evidence needs correction",
+                    feedback=MeetingAlignmentAuditFeedback(
+                        rule="recipient disclosure authorization",
+                        observation="the first candidate lacks complete member evidence",
+                        requested_revision="select only an audience supported by the source evidence",
+                    ),
+                )
+            return MeetingAlignmentAuditResult(
+                outcome="approve", candidate_sha256=candidate_sha256,
+                summary="revised candidate is supported", feedback=None,
+            )
+
+    runner = RevisingRunner()
+    consume_meeting_alignment_jobs(store, dws, runner, now=NOW, limit=1)
+    assert store.get_meeting_alignment_job(job_id).status == "retry"
+    consume_meeting_alignment_jobs(
+        store, dws, runner, now=NOW + timedelta(minutes=2), limit=1
+    )
+
+    job = store.get_meeting_alignment_job(job_id)
+    assert job.status == "sent"
+    assert runner.decisions == runner.audits == 2
+    assert "recipient disclosure authorization" in runner.prompts[1]
+    assert "select only an audience supported by the source evidence" in runner.prompts[1]
+    assert revised.final_message in job.final_message
+    assert meeting_alignment.meeting_decision_audit_is_approved(job.decision_json)
+    assert len(store.list_meeting_alignment_runs(job_id)) == 2
+
+
+def test_meeting_audit_feedback_exhaustion_escalates_after_three_revisions(tmp_path):
+    store = AutoReplyStore(tmp_path / "worker.sqlite3")
+    dws = ConsumerDws()
+    job_id = seed_consumer_job(store, dws)
+
+    class NeverApprovedRunner(FakeMeetingRunner):
+        def audit(self, *, prompt, run_id, candidate_sha256):
+            return MeetingAlignmentAuditResult(
+                outcome="return",
+                candidate_sha256=candidate_sha256,
+                summary="the candidate remains unsupported",
+                feedback=MeetingAlignmentAuditFeedback(
+                    rule="evidence must support the exact recipient",
+                    observation="the supplied audience evidence is still incomplete",
+                    requested_revision="provide source-backed recipient authorization",
+                ),
+            )
+
+    runner = NeverApprovedRunner(summary_decision())
+    now = NOW
+    for _ in range(4):
+        consume_meeting_alignment_jobs(store, dws, runner, now=now, limit=1)
+        now += timedelta(minutes=2)
+
+    job = store.get_meeting_alignment_job(job_id)
+    assert job.status == "needs_human"
+    assert dws.send_calls == []
+    assert json.loads(job.decision_json)["_service_audit"]["feedback_cycles"] == 4
+    assert len(store.list_meeting_alignment_runs(job_id)) == 4
 
 
 def test_calendar_summary_non_organizer_permission_marks_sent_without_retry(tmp_path):

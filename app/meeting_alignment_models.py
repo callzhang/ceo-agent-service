@@ -108,6 +108,11 @@ PRIVATE_MESSAGE_BUSINESS_SCOPE_RULE = CrossFieldRule(
     "sensitive private message is only valid beside a business summary",
     "sensitive_private_message 非 null 时，audience_scope 必须是 business",
 )
+MEETING_AUDIT_FEEDBACK_RULE = CrossFieldRule(
+    "meeting Audit return requires actionable feedback",
+    "Meeting Audit outcome=return 时必须返回 rule、observation、requested_revision；"
+    "approve/reject 时 feedback 必须为 null",
+)
 
 MEETING_ALIGNMENT_CROSS_FIELD_RULES: tuple[CrossFieldRule, ...] = (
     ALIGNED_TOPIC_RESULT_RULE,
@@ -539,12 +544,25 @@ class MeetingAlignmentDecision(StrictModel):
         return self
 
 
+class MeetingAlignmentAuditFeedback(StrictModel):
+    rule: str = Field(min_length=1)
+    observation: str = Field(min_length=1)
+    requested_revision: str = Field(min_length=1)
+
+
 class MeetingAlignmentAuditResult(StrictModel):
     """Independent, read-only review of one exact meeting outbound candidate."""
 
     outcome: Literal["approve", "return", "reject"]
     candidate_sha256: str = Field(pattern=r"^[0-9a-f]{64}$")
     summary: str = Field(min_length=1)
+    feedback: MeetingAlignmentAuditFeedback | None
+
+    @model_validator(mode="after")
+    def require_feedback_for_return(self) -> Self:
+        if (self.outcome == "return") != (self.feedback is not None):
+            raise ValueError(MEETING_AUDIT_FEEDBACK_RULE.message)
+        return self
 
 
 def meeting_alignment_decision_digest(decision: MeetingAlignmentDecision) -> str:
@@ -564,6 +582,7 @@ def persist_audited_meeting_decision(
     audit_session_id: str = "",
     audit_transcript_start_line: int = 0,
     audit_transcript_end_line: int = 0,
+    feedback_cycles: int = 0,
 ) -> str:
     digest = meeting_alignment_decision_digest(decision)
     if audit.candidate_sha256 != digest:
@@ -571,6 +590,7 @@ def persist_audited_meeting_decision(
     payload = decision.model_dump(mode="json")
     payload["_service_audit"] = {
         "version": 1,
+        "feedback_cycles": feedback_cycles,
         "candidate_sha256": digest,
         "result": audit.model_dump(mode="json"),
         "session_id": audit_session_id,
@@ -578,6 +598,21 @@ def persist_audited_meeting_decision(
         "transcript_end_line": audit_transcript_end_line,
     }
     return json.dumps(payload, ensure_ascii=False, separators=(",", ":"))
+
+
+def previous_meeting_audit_feedback(raw: str) -> tuple[MeetingAlignmentAuditFeedback | None, int]:
+    try:
+        payload = json.loads(raw)
+        audit = payload.get("_service_audit") if isinstance(payload, dict) else None
+        if not isinstance(audit, dict) or audit.get("version") != 1:
+            return None, 0
+        result = MeetingAlignmentAuditResult.model_validate(audit.get("result"))
+        cycles = int(audit.get("feedback_cycles", 0))
+        if cycles < 0:
+            return None, 0
+        return (result.feedback if result.outcome == "return" else None), cycles
+    except (TypeError, ValueError, json.JSONDecodeError):
+        return None, 0
 
 
 def meeting_decision_audit_is_approved(raw: str) -> bool:
