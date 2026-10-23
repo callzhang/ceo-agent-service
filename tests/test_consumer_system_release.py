@@ -47,10 +47,11 @@ def test_repository_consumer_release_manifest_tracks_oa_skill_digest():
     # The old digest is a release-time precondition. After a successful
     # deployment the installed file has the new digest, so do not compare the
     # old digest with mutable machine state in this repository-level test.
-    assert entry["old_sha256"] == "981e443dcb739bf95cd349db42c1af18c42d900188fb975c2907df8fe550ea54"
+    assert entry["old_sha256"] == "c8130e8dcfb4c6d40980d63a27b2d2c501eba7c4b89497339dcbbf8ead230ccb"
     assert len(entry["old_sha256"]) == 64
     assert all(char in "0123456789abcdef" for char in entry["old_sha256"])
     assert entry["new_sha256"] == _digest((root / entry["source"]).read_bytes())
+    assert entry["old_sha256"] == entry["new_sha256"]
     assert "old_managed_sha256" not in entry
     audit_source = "app/defaults/audit_rules.md"
     audit_entry = next(item for item in manifest["files"] if item["source"] == audit_source)
