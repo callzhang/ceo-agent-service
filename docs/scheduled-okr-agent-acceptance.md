@@ -2,6 +2,26 @@
 
 ## 状态与证据边界
 
+### 2026-10-23 正式发布预检：OA Skill 旧摘要与批准快照过期
+
+PR #278 已于 08:54 UTC 合入 `main`（merge commit `2479202643d031046e9009536615771663bafdb1`）。
+正式发布按空闲等待后，在 Consumer/Skill 文件摘要校验阶段失败：清单和批准前置记录把已安装的
+`dingtalk-oa-approval/SKILL.md` 旧摘要记为 `b58fb9bb…`，并把候选摘要记为 `0175ea38…`；
+当前生产安装文件与合并后 main 的源文件实际 SHA 均为 `59c0bfd4…`。因此是发布元数据过期，
+不是 OKR Skill 行为或验收标准问题。候选 OA 文件内容没有变化，现将清单旧摘要和批准前置的
+安装/候选摘要都校正到实际值，并保留其余文件、Skill 内容和发布规则。
+
+同一份批准快照还有三项 OA 资产摘要陈旧：财务规则卡和 OA 人员 Skill 的线上文件与 main 源
+都已是候选内容（分别为 `f15c6fea…`、`022dc534…`）；考勤差旅 Skill 的线上旧文件为
+`131758f4…`，main 中已批准的候选为 `6fd80713…`。现据线上文件与 main 源分别校正旧摘要及
+批准摘要，保留三项源文件正文和既有批准候选。
+
+失败后生产代码仍为 `8a10080ffa19e050433e561f068bf56f1969d4e2`，PID 为 96045，healthz HTTP
+200；运行配置仍为 368，task6 仍是 v27 / managed Skill revision235，最新 run 仍为 394981。
+目标 Skill 文件读回仍为 SHA `59c0bfd4…`，没有契约文件写入，也没有新报告或外部副作用。
+本次失败发布不构成 OKR 验收结果；修正清单通过定向校验并正式发布后，才会启动唯一一条新的
+授权 task6 手动验收。
+
 ### 2026-10-23 手动 task6 run 394981：分析阶段实际失败，修复候选原生验收通过
 
 run394981 由 task6 正式入口创建，reply task417039；不可变快照绑定 task6 v27、managed
@@ -29,10 +49,27 @@ run394981 由 task6 正式入口创建，reply task417039；不可变快照绑�
 空检索均有记录，模拟 provider 的全部产物写入均读回通过。此证据对应合并后的代码与 Skill
 摘要，仍是合成验收，不代表真实 OKR 文档或钉钉消息已发布。
 
-该候选尚未部署，也没有再次创建 task6 运行。生产只读复核为 commit `881ea46fe`、PID5478、
-healthz HTTP 200；task6 仍为 v27 / revision235，下次自然触发 **2026-10-25 10:00 UTC**。
+截至该次复核时，该候选尚未部署，也没有再次创建 task6 运行。生产只读复核为 commit
+`881ea46fe`、PID5478、healthz HTTP 200；task6 仍为 v27 / revision235，下次自然触发
+**2026-10-25 10:00 UTC**。
 394981 不重放。下一步推送并完成代码评审、正式发布；部署后仅新建一条授权的
 task6 手动验证，严格核验完整 Consumer/Audit、全部报告文档真实读回和通知真实回执。
+
+### 2026-10-23 正式发布与生产回读
+
+PR #288（OA 考勤 Skill）先合入 `106c609d`，随后 PR #287（OKR 空检索继续分析及发布摘要收敛）
+合入为 `55b0f9a3`。正式部署操作 `deploy-2ee360dd-3441-4496-8698-0b3b46721928`
+经自然空闲等待成功，将生产从 `3875c379` 更新至 `55b0f9a3`；没有中断在途任务。
+
+生产回读确认：supervisor PID `43616`，服务 worker PID `43623`，healthz HTTP 200；
+Consumer/Skill 运行配置由 368 更新为 369，worker 对配置 369 的加载回执无错误，
+task6 为 v28 / managed Skill revision240，加载的 OKR Skill SHA-256 为
+`49ba4b0bdafdd2ba54989f6bd1ad6b799417464f2dad2cbeefb721eb85a32f8e`。正式发布回执状态为
+`verified`；清单中的 26 项资产摘要全部一致，受影响的定时任务 Skill 引用读回一致。
+队列 active 0 / queued 471，Attention 20，History 37604。发布后没有创建新的 task6
+运行，因此这只证明 Skill 已发布并由新 worker 加载，不代表真实 OKR 报告业务验收通过；
+run394981 保持失败历史，不重放。下一步应等待 task6 后续正常触发，再按完整 Consumer/Audit、
+报告文档读回和真实通知回执验收业务行为。
 
 无正文生产证据：[run394981 与候选验收读回](../evals/scheduled_task_generic/okr-production-readback.json)。
 原生案例记录：[empty-search acceptance v3](../evals/scheduled_task_generic/okr-empty-search-acceptance.v3.json)。

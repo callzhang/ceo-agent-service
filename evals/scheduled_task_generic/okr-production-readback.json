@@ -859,5 +859,101 @@
     },
     "report_runs_created": false,
     "external_effects": false
+  },
+  "latest_formal_consumer_skill_publication_attempt": {
+    "observed_at": "2026-10-23T09:44:57Z",
+    "target_commit": "c38ce12cf1b2b18c147ea687bccdce11973827eb",
+    "result": "failed_preflight",
+    "error": "Consumer system release SHA mismatch: ci/shared-skills/dingtalk-oa-approval/SKILL.md",
+    "root_cause": "The shared release manifest/precondition snapshots had stale digests for four OA assets. The actual installed and merged-main source dingtalk-oa-approval file is 59c0bfd4...; finance rule cards are already installed at the approved main source SHA f15c6fea...; OA people Skill is already installed at the approved main source SHA 022dc534...; OA attendance/travel installed old bytes are 131758f4... while the approved main source is 6fd80713.... The preflight compares both installed old bytes and candidate source bytes, and rejected before any contract write.",
+    "corrected_release_metadata": {
+      "manifest_old_sha256": "59c0bfd4ac13852b4952cb6dab777c67306c1e67242ea6bff51e8e8443191338",
+      "manifest_new_sha256": "59c0bfd4ac13852b4952cb6dab777c67306c1e67242ea6bff51e8e8443191338",
+      "precondition_installed_sha256": "59c0bfd4ac13852b4952cb6dab777c67306c1e67242ea6bff51e8e8443191338",
+      "precondition_approved_new_sha256": "59c0bfd4ac13852b4952cb6dab777c67306c1e67242ea6bff51e8e8443191338"
+    },
+    "other_reconciled_assets": [
+      {
+        "source": "ci/shared-skills/stardust-oa-finance-review/references/finance-rule-cards.md",
+        "installed_sha256": "f15c6feac0d3be6c85f3f93f594aa3af7e8cfa47bd65bb16207bc071efc51ab1",
+        "candidate_sha256": "f15c6feac0d3be6c85f3f93f594aa3af7e8cfa47bd65bb16207bc071efc51ab1"
+      },
+      {
+        "source": "ci/shared-skills/stardust-oa-people-review/SKILL.md",
+        "installed_sha256": "022dc53499c46c9e504e9fed05aafb4e1fedd09e428d538449041b32c0354f62",
+        "candidate_sha256": "022dc53499c46c9e504e9fed05aafb4e1fedd09e428d538449041b32c0354f62"
+      },
+      {
+        "source": "ci/shared-skills/stardust-oa-attendance-travel-review/SKILL.md",
+        "installed_sha256": "131758f4bbf65a1ee839a165b9ffb128e29f10e59be70c81248b9c4d9c0f2672",
+        "candidate_sha256": "6fd80713c61886e5f42d8bfea419f0db8ae00412e4805d9620068973917e5d46"
+      }
+    ],
+    "production_after_attempt": {
+      "commit": "8a10080ffa19e050433e561f068bf56f1969d4e2",
+      "service_pid": 96045,
+      "healthz_http_status": 200,
+      "runtime_skill_config_id": 368,
+      "task6_config_version": 27,
+      "task6_managed_skill_revision": 235,
+      "task6_latest_run_id": 394981,
+      "task13_config_version": 49,
+      "task13_managed_skill_revision": 202,
+      "task14_config_version": 56,
+      "task14_managed_skill_revision": 224
+    },
+    "contract_files_written": false,
+    "new_report_runs_created": false,
+    "external_effects": false
+  },
+  "latest_formal_consumer_skill_publication": {
+    "observed_at": "2026-10-23T11:03:24Z",
+    "target_commit": "55b0f9a3b4321a8f14d3e4619984a6fa3a4e50f2",
+    "merged_changes": [
+      "PR #288",
+      "PR #287"
+    ],
+    "operation_id": "deploy-2ee360dd-3441-4496-8698-0b3b46721928",
+    "result": "succeeded",
+    "release_receipt_status": "verified",
+    "release_kind": "consumer_system_contracts_v1",
+    "runtime_config": {
+      "old_id": 368,
+      "new_id": 369
+    },
+    "processes": {
+      "supervisor_pid": 43616,
+      "service_worker_pid": 43623,
+      "audit_web_pid": 43624,
+      "email_worker_pid": 43625
+    },
+    "worker_load_receipt": {
+      "runtime_config_id": 369,
+      "worker_pid": 43623,
+      "error": null,
+      "okr_skill_sha256": "49ba4b0bdafdd2ba54989f6bd1ad6b799417464f2dad2cbeefb721eb85a32f8e"
+    },
+    "task6": {
+      "enabled": true,
+      "version": 28,
+      "managed_skill_revision_id": 240,
+      "managed_skill_sha256": "49ba4b0bdafdd2ba54989f6bd1ad6b799417464f2dad2cbeefb721eb85a32f8e"
+    },
+    "asset_readback": {
+      "manifest_entries": 26,
+      "sha256_mismatches": 0,
+      "scheduled_task_references": "exact readback passed for all affected tasks"
+    },
+    "healthz_http_status": 200,
+    "queue": {
+      "active": 0,
+      "queued": 471
+    },
+    "attention_total": 20,
+    "history_total": 37604,
+    "new_task6_run_created": false,
+    "new_okr_report_created": false,
+    "external_effects": false,
+    "business_acceptance": "Skill publication/load verified only; no post-deploy real OKR report run has occurred."
   }
 }

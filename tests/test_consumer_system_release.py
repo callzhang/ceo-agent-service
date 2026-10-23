@@ -99,6 +99,24 @@ def test_release_manifest_pins_current_finance_card_and_active_managed_skill_has
     }
 
 
+def test_okr_release_baseline_matches_already_installed_skill():
+    root = Path(__file__).resolve().parents[1]
+    manifest = json.loads(
+        (root / "ci/consumer-system-contract-release.json").read_text(encoding="utf-8")
+    )
+    entry = next(
+        item for item in manifest["files"]
+        if item["source"] == "ci/shared-skills/ceo-weekly-okr-report/SKILL.md"
+    )
+    installed = Path.home() / ".agents/skills/ceo-weekly-okr-report/SKILL.md"
+
+    installed_digest = _digest(installed.read_bytes())
+    source_digest = _digest((root / entry["source"]).read_bytes())
+    assert entry["old_sha256"] == installed_digest
+    assert entry["old_managed_sha256"] == installed_digest
+    assert entry["new_sha256"] == source_digest
+
+
 def test_finance_rule_card_counts_only_valid_applicant_resolvable_returns():
     root = Path(__file__).resolve().parents[1]
     card = (
@@ -173,8 +191,9 @@ def test_repository_consumer_release_manifest_includes_current_attendance_review
     entry = next(item for item in manifest["files"] if item["source"] == source)
 
     assert entry["target"] == "skills/stardust-oa-attendance-travel-review/SKILL.md"
-    assert entry["old_sha256"] == "6fd80713c61886e5f42d8bfea419f0db8ae00412e4805d9620068973917e5d46"
+    assert entry["old_sha256"] == "f19093c34db7698577962a8c177836bf74e368f3e66655630d20f503ff5763c9"
     assert entry["new_sha256"] == _digest((root / source).read_bytes())
+    assert entry["old_sha256"] == entry["new_sha256"]
 
 
 @pytest.mark.parametrize("script", ("report_contract.py", "validate_run.py"))
