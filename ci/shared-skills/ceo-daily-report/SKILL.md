@@ -16,9 +16,11 @@ DingTalk document and send Derek (磊哥) a short direct message pointing to it.
 - **Service facts**: call `agent_cli.read_scheduled_context`, save its exact JSON
   as `context.json` using `consumer_artifact_write`. Run this Skill's
   `scripts/window.py --context context.json` with `consumer_run_skill_script`.
-  Its report date and window preserve missed days and same-day reruns. Call
-  `read_service_activity(start, end)` using that window. This is the required
-  service input; use `principal_user_id` from scheduled context.
+  The primary window is the report date in Beijing, from 00:00 through this
+  run's actual `scheduled_for` (normally 21:00). If `catchup_window_utc` is not
+  null, read it separately and keep its facts separate from today's report.
+  Call `read_service_activity(start, end)` once for each returned window; use
+  `principal_user_id` from scheduled context.
   The activity contains `meetings`, `tasks`, `attention`, `important_emails`,
   `attempts` and `waiting`. Select completed handled items from `attempts`;
   skipped/no-action records are counts, not handled work. The source timestamps
@@ -26,14 +28,15 @@ DingTalk document and send Derek (磊哥) a short direct message pointing to it.
 - **Important mail** is what the mailbox flagged, not a verdict: report only the
   messages with management meaning (a request, approval, customer, partner,
   legal or money matter) and count the rest, such as sign-in codes.
-- **Group chats**: use the task-bound `agent_cli.recent_dingtalk_conversations`
-  operation to exhaust the inventory of accessible conversations in the report
-  window, then call `agent_cli.read_dingtalk_messages_in_window` for every
-  accessible group conversation. An inventory is not a message read. Complete
+- **Group chats**: for each returned window, use the task-bound
+  `agent_cli.recent_dingtalk_conversations` operation to exhaust the inventory
+  of accessible conversations, then call
+  `agent_cli.read_dingtalk_messages_in_window` for every accessible group
+  conversation in that window. An inventory is not a message read. Complete
   each conversation's pagination and count even an empty, successfully read
-  window as covered. Keep only messages with management meaning: commitments,
-  changes of plan, disagreement, escalation, customer or financing signals,
-  blocked work. Count the rest.
+  window as covered. Keep current-day and catch-up facts separate. Keep only
+  messages with management meaning: commitments, changes of plan, disagreement,
+  escalation, customer or financing signals, blocked work. Count the rest.
 - **Meetings**: when a meeting in the facts needs more than its follow-up
   message, load `dingtalk-minutes` and read its summary.
 
@@ -59,7 +62,10 @@ Title: `CEO 每日总结 YYYY-MM-DD`, using the window script's `report_date`. S
 5. **需关注** — not yet his move, but getting worse or drifting; start from the
    active `attention` items of category `push` and `watch`.
 6. **管理建议** — judgment drawn from the sections above; mark it as judgment.
-7. **覆盖说明** — what was read (counts per source), what failed or was partial.
+7. **覆盖说明** — today's exact Beijing window, counts per source, and what
+   failed or was partial.
+8. **补报覆盖** — when a catch-up window exists, identify its exact interval and
+   summarize its separately sourced items; otherwise omit this section.
 
 Every item names its source: meeting title, group name, task or attention id, or attempt
 id. Keep fact, participant statement, and your judgment distinct. A section
@@ -90,14 +96,16 @@ group, change Tasks, or message anyone else.
 ## Audit coverage check
 
 Before approving the document and direct-message proposal, Audit must check the
-report window and the group-chat coverage statement against the task's source
-evidence. If the inventory contains an accessible conversation with no
+primary and optional catch-up windows against `scheduled_for`, and verify each
+window's group-chat coverage statement against the task's source evidence. If
+any inventory contains an accessible conversation with no
 `read_dingtalk_messages_in_window` attempt and no provider error, return the
 proposal: this is unattempted required coverage, not an allowed partial-source
 case. If a read was attempted and the provider returned an error, timeout, or
 incomplete page, verify the exact limitation is disclosed before approving the
-otherwise valid report. Do not require a second send or a new report to correct
-an audit return; the normal revision flow keeps the original run and action.
+otherwise valid report. Do not merge catch-up facts into today's coverage
+counts. Do not require a second send or a new report to correct an audit return;
+the normal revision flow keeps the original run and action.
 
 **Retrying after an interrupted round.** An earlier round that stopped midway
 leaves each write in one of two states, and the lookup above tells you which:

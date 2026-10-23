@@ -30,7 +30,7 @@ def script(skill, name):
     "status,result,offset",
     [("done", "completed", -2), ("done", "skipped", -1), ("failed", "failed", -1)],
 )
-def test_daily_skill_window_uses_real_completion_not_done_alone(status, result, offset):
+def test_daily_skill_catchup_window_uses_real_completion_not_done_alone(status, result, offset):
     end = datetime(2026, 10, 19, 13, tzinfo=UTC)
     context = {
         "run_id": 3,
@@ -54,7 +54,10 @@ def test_daily_skill_window_uses_real_completion_not_done_alone(status, result, 
     expected = end - timedelta(
         days=1 if status == "done" and result == "completed" else 2
     )
-    assert datetime.fromisoformat(window["window_utc"]["start"]) == expected
+    day_start = datetime(2026, 10, 18, 16, tzinfo=UTC)
+    assert datetime.fromisoformat(window["window_utc"]["start"]) == day_start
+    assert datetime.fromisoformat(window["catchup_window_utc"]["start"]) == expected
+    assert datetime.fromisoformat(window["catchup_window_utc"]["end"]) == day_start
     context["history"].append(
         {
             "run_id": 4,
@@ -63,7 +66,9 @@ def test_daily_skill_window_uses_real_completion_not_done_alone(status, result, 
             "result_status": "completed",
         }
     )
-    assert script("ceo-daily-report", "window").report_window(context) == window
+    rerun = script("ceo-daily-report", "window").report_window(context)
+    assert rerun["window_utc"] == window["window_utc"]
+    assert rerun["catchup_window_utc"] is None
 
 
 def test_daily_skill_first_window_and_beijing_date():
@@ -72,9 +77,13 @@ def test_daily_skill_first_window_and_beijing_date():
         {"run_id": 1, "scheduled_for": end.isoformat(), "history": []}
     )
     assert result["report_date"] == "2026-10-20"
-    assert datetime.fromisoformat(result["window_utc"]["start"]) == end - timedelta(
-        days=1
+    assert datetime.fromisoformat(result["window_utc"]["start"]) == datetime(
+        2026, 10, 19, 16, tzinfo=UTC
     )
+    assert result["catchup_window_utc"] == {
+        "start": (end - timedelta(days=1)).isoformat(),
+        "end": datetime(2026, 10, 19, 16, tzinfo=UTC).isoformat(),
+    }
 
 
 def test_generic_history_exposes_facts_without_report_policy():

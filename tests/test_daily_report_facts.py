@@ -184,20 +184,24 @@ EVENING_23 = datetime(2026, 9, 23, 13, tzinfo=UTC)
 EVENING_24 = datetime(2026, 9, 24, 13, tzinfo=UTC)
 
 
-def test_first_report_looks_back_one_day() -> None:
+def test_first_report_separates_current_day_from_initial_catchup() -> None:
     window = _daily_window(_Runs([_run(1, EVENING_24)], {}), 1)
 
     assert window == {
         "report_date": REPORT_DATE.isoformat(),
         "time_zone": "Asia/Shanghai",
         "window_utc": {
-            "start": (EVENING_24 - timedelta(hours=24)).isoformat(),
+            "start": DAY.start.isoformat(),
             "end": EVENING_24.isoformat(),
+        },
+        "catchup_window_utc": {
+            "start": (EVENING_24 - timedelta(days=1)).isoformat(),
+            "end": DAY.start.isoformat(),
         },
     }
 
 
-def test_window_starts_where_the_last_delivered_report_ended() -> None:
+def test_missed_days_are_separate_from_the_current_calendar_day() -> None:
     runs = _Runs(
         [
             _run(1, EVENING_22, reply_task_id=101),
@@ -207,8 +211,16 @@ def test_window_starts_where_the_last_delivered_report_ended() -> None:
         {101: ("done", "completed"), 102: ("failed", "failed")},
     )
 
-    # The 23rd never went out, so the 24th covers both days.
-    assert _daily_window(runs, 3)["window_utc"]["start"] == EVENING_22.isoformat()
+    # The 23rd never went out; preserve its coverage in a separate catch-up range.
+    window = _daily_window(runs, 3)
+    assert window["window_utc"] == {
+        "start": DAY.start.isoformat(),
+        "end": EVENING_24.isoformat(),
+    }
+    assert window["catchup_window_utc"] == {
+        "start": EVENING_22.isoformat(),
+        "end": DAY.start.isoformat(),
+    }
 
 
 def test_a_done_run_that_published_nothing_is_not_a_delivered_report() -> None:
@@ -222,7 +234,9 @@ def test_a_done_run_that_published_nothing_is_not_a_delivered_report() -> None:
         {101: ("done", "completed"), 102: ("done", "skipped")},
     )
 
-    assert _daily_window(runs, 3)["window_utc"]["start"] == EVENING_22.isoformat()
+    window = _daily_window(runs, 3)
+    assert window["window_utc"]["start"] == DAY.start.isoformat()
+    assert window["catchup_window_utc"]["start"] == EVENING_22.isoformat()
 
 
 def test_same_day_rerun_keeps_the_original_start() -> None:
@@ -242,10 +256,12 @@ def test_same_day_rerun_keeps_the_original_start() -> None:
         window["report_date"],
         window["window_utc"]["start"],
         window["window_utc"]["end"],
+        window["catchup_window_utc"],
     ) == (
         REPORT_DATE.isoformat(),
-        EVENING_23.isoformat(),
+        DAY.start.isoformat(),
         rerun_at.isoformat(),
+        None,
     )
 
 
