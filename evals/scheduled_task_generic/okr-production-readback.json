@@ -859,5 +859,51 @@
     },
     "report_runs_created": false,
     "external_effects": false
+  },
+  "latest_formal_consumer_skill_publication_attempt": {
+    "observed_at": "2026-10-23T09:44:57Z",
+    "target_commit": "c38ce12cf1b2b18c147ea687bccdce11973827eb",
+    "result": "failed_preflight",
+    "error": "Consumer system release SHA mismatch: ci/shared-skills/dingtalk-oa-approval/SKILL.md",
+    "root_cause": "The shared release manifest/precondition snapshots had stale digests for four OA assets. The actual installed and merged-main source dingtalk-oa-approval file is 59c0bfd4...; finance rule cards are already installed at the approved main source SHA f15c6fea...; OA people Skill is already installed at the approved main source SHA 022dc534...; OA attendance/travel installed old bytes are 131758f4... while the approved main source is 6fd80713.... The preflight compares both installed old bytes and candidate source bytes, and rejected before any contract write.",
+    "corrected_release_metadata": {
+      "manifest_old_sha256": "59c0bfd4ac13852b4952cb6dab777c67306c1e67242ea6bff51e8e8443191338",
+      "manifest_new_sha256": "59c0bfd4ac13852b4952cb6dab777c67306c1e67242ea6bff51e8e8443191338",
+      "precondition_installed_sha256": "59c0bfd4ac13852b4952cb6dab777c67306c1e67242ea6bff51e8e8443191338",
+      "precondition_approved_new_sha256": "59c0bfd4ac13852b4952cb6dab777c67306c1e67242ea6bff51e8e8443191338"
+    },
+    "other_reconciled_assets": [
+      {
+        "source": "ci/shared-skills/stardust-oa-finance-review/references/finance-rule-cards.md",
+        "installed_sha256": "f15c6feac0d3be6c85f3f93f594aa3af7e8cfa47bd65bb16207bc071efc51ab1",
+        "candidate_sha256": "f15c6feac0d3be6c85f3f93f594aa3af7e8cfa47bd65bb16207bc071efc51ab1"
+      },
+      {
+        "source": "ci/shared-skills/stardust-oa-people-review/SKILL.md",
+        "installed_sha256": "022dc53499c46c9e504e9fed05aafb4e1fedd09e428d538449041b32c0354f62",
+        "candidate_sha256": "022dc53499c46c9e504e9fed05aafb4e1fedd09e428d538449041b32c0354f62"
+      },
+      {
+        "source": "ci/shared-skills/stardust-oa-attendance-travel-review/SKILL.md",
+        "installed_sha256": "131758f4bbf65a1ee839a165b9ffb128e29f10e59be70c81248b9c4d9c0f2672",
+        "candidate_sha256": "6fd80713c61886e5f42d8bfea419f0db8ae00412e4805d9620068973917e5d46"
+      }
+    ],
+    "production_after_attempt": {
+      "commit": "8a10080ffa19e050433e561f068bf56f1969d4e2",
+      "service_pid": 96045,
+      "healthz_http_status": 200,
+      "runtime_skill_config_id": 368,
+      "task6_config_version": 27,
+      "task6_managed_skill_revision": 235,
+      "task6_latest_run_id": 394981,
+      "task13_config_version": 49,
+      "task13_managed_skill_revision": 202,
+      "task14_config_version": 56,
+      "task14_managed_skill_revision": 224
+    },
+    "contract_files_written": false,
+    "new_report_runs_created": false,
+    "external_effects": false
   }
 }

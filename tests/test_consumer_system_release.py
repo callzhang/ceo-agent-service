@@ -173,7 +173,7 @@ def test_repository_consumer_release_manifest_includes_current_attendance_review
     entry = next(item for item in manifest["files"] if item["source"] == source)
 
     assert entry["target"] == "skills/stardust-oa-attendance-travel-review/SKILL.md"
-    assert entry["old_sha256"] == "6fd80713c61886e5f42d8bfea419f0db8ae00412e4805d9620068973917e5d46"
+    assert entry["old_sha256"] == "131758f4bbf65a1ee839a165b9ffb128e29f10e59be70c81248b9c4d9c0f2672"
     assert entry["new_sha256"] == _digest((root / source).read_bytes())
 
 
