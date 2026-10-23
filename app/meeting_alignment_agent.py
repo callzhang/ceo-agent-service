@@ -21,8 +21,11 @@ from app.agent_cron.commands import ServiceCommandSkillMaterial
 from app.config import principal_display_name
 from app.external_retry import ExternalDependencyError
 from app.meeting_alignment_models import (
+    MeetingAlignmentAuditFeedback,
+    MeetingAlignmentAuditResult,
     MeetingAlignmentDecision,
     MeetingSource,
+    meeting_alignment_decision_digest,
     meeting_alignment_rule_for_message,
     meeting_business_direct_recipient,
     render_meeting_alignment_cross_field_rules,
@@ -37,6 +40,11 @@ MEETING_ALIGNMENT_DECISION_SCHEMA_PATH = (
     / "schemas"
     / "meeting_alignment_decision.schema.json"
 )
+MEETING_ALIGNMENT_AUDIT_SCHEMA_PATH = (
+    Path(__file__).resolve().parent
+    / "schemas"
+    / "meeting_alignment_audit.schema.json"
+)
 MEETING_ALIGNMENT_AUDIT_EVENT_LIMIT = 200
 MEETING_RUNTIME_CAPABILITIES = frozenset(
     {
@@ -46,6 +54,9 @@ MEETING_RUNTIME_CAPABILITIES = frozenset(
 )
 MEETING_RESULT_CODEC = RoutedResultCodec.text(
     schema_id="meeting_alignment.decision.v1"
+)
+MEETING_AUDIT_RESULT_CODEC = RoutedResultCodec.text(
+    schema_id="meeting_alignment.audit.v1"
 )
 def _meeting_alignment_prompt_schema() -> str:
     """Serialize the decision schema for the prompt, minus its root description.
@@ -93,6 +104,10 @@ class MeetingAlignmentCodex(Protocol):
         self, *, prompt: str, run_id: int, compact_prompt: str | None = None
     ) -> MeetingAlignmentDecision: ...
 
+    def audit(
+        self, *, prompt: str, run_id: int, candidate_sha256: str,
+    ) -> MeetingAlignmentAuditResult: ...
+
 
 def _meeting_decision_skill_protocol(
     materials: tuple[ServiceCommandSkillMaterial, ...],
@@ -122,6 +137,7 @@ class MeetingAlignmentAgent:
         consumer_prompt: str = "",
         skill_protocol: str = "",
         skill_materials: tuple[ServiceCommandSkillMaterial, ...] = (),
+        audit_feedback: MeetingAlignmentAuditFeedback | None = None,
     ) -> MeetingAlignmentDecision:
         profile = work_profile_instruction()
         profile_source = (
@@ -136,6 +152,7 @@ class MeetingAlignmentAgent:
             group_candidates=group_candidates or [],
             consumer_prompt=consumer_prompt,
             skill_protocol=skill_protocol,
+            audit_feedback=audit_feedback,
         )
         managed_skill_protocol = _meeting_decision_skill_protocol(skill_materials)
         compact_prompt = (
@@ -147,6 +164,7 @@ class MeetingAlignmentAgent:
                 group_candidates=group_candidates or [],
                 consumer_prompt=consumer_prompt,
                 skill_protocol=managed_skill_protocol,
+                audit_feedback=audit_feedback,
             )
             if managed_skill_protocol is not None
             else None
@@ -183,6 +201,54 @@ class MeetingAlignmentAgent:
             return decision
         raise RuntimeError("meeting alignment target repair did not return a decision")
 
+    def audit(
+        self,
+        source: MeetingSource,
+        decision: MeetingAlignmentDecision,
+        *,
+        run_id: int,
+        similar_sessions: list[CodexSessionSearchResult] | None = None,
+        group_candidates: list[dict[str, Any]] | None = None,
+        consumer_prompt: str = "",
+        skill_protocol: str = "",
+    ) -> MeetingAlignmentAuditResult:
+        digest = meeting_alignment_decision_digest(decision)
+        evidence = {
+            "meeting_source": source.model_dump(mode="json"),
+            "group_candidates": group_candidates or [],
+            "similar_sessions": [
+                item.model_dump(mode="json")
+                if hasattr(item, "model_dump") else item
+                for item in (similar_sessions or [])
+            ],
+            "candidate": decision.model_dump(mode="json"),
+            "candidate_sha256": digest,
+        }
+        prompt = (
+            "独立审核以下 Meeting 对外消息候选。规划 Agent 的 audit_summary 只是候选文本，"
+            "不是审核结论。请只根据本次会议来源、当前群候选证据与候选内容，核对事实准确性、"
+            "完整接收对象、披露权限、内容与受众是否匹配，以及敏感信息是否被不当披露。"
+            "不执行工具、不联系任何人、不改写候选。只有候选内容和精确收件目标均有证据支持"
+            "且适合发送时才能 approve；证据不足或存在实质问题时必须 return 或 reject。"
+            "candidate_sha256 必须逐字等于输入摘要。outcome=return 时，feedback 必须包含"
+            "具体 rule、observation、requested_revision；approve/reject 时 feedback=null。\n\n"
+            "## Applicable shared and task rules\n"
+            + CONSUMER_OUTBOUND_INSTRUCTION
+            + "\n\n"
+            + MESSAGE_AUDIENCE_CONTRACT
+            + ("\n\n## Task-specific prompt\n" + consumer_prompt if consumer_prompt.strip() else "")
+            + ("\n\n## Selected meeting Skill rules\n" + skill_protocol if skill_protocol.strip() else "")
+            + "\n\n"
+            "## Read-only source and candidate\n"
+            + json.dumps(evidence, ensure_ascii=False, separators=(",", ":"))
+        )
+        result = self.codex.audit(
+            prompt=prompt, run_id=run_id, candidate_sha256=digest,
+        )
+        if result.candidate_sha256 != digest:
+            raise ValueError("Meeting Audit returned a different candidate digest")
+        return result
+
 
 class MeetingAlignmentCodexRunner:
     def __init__(
@@ -204,6 +270,9 @@ class MeetingAlignmentCodexRunner:
         self.last_audit_tool_events: list[dict[str, str]] = []
         self.last_transcript_start_line = 0
         self.last_transcript_end_line = 0
+        self.last_audit_session_id: str | None = None
+        self.last_audit_transcript_start_line = 0
+        self.last_audit_transcript_end_line = 0
 
     def decide(
         self, *, prompt: str, run_id: int, compact_prompt: str | None = None
@@ -275,6 +344,63 @@ class MeetingAlignmentCodexRunner:
                 "Codex did not return a valid MeetingAlignmentDecision"
             ) from exc
         return decision
+
+    def audit(
+        self, *, prompt: str, run_id: int, candidate_sha256: str,
+    ) -> MeetingAlignmentAuditResult:
+        try:
+            result = self.routed_execution.execute(
+                workload_kind="meeting_audit",
+                workload_key=str(run_id),
+                prompt=prompt,
+                command_factory=CodexCommandFactory.standard(
+                    developer_instructions=(
+                        "You are the independent, read-only Audit role. Review the exact candidate "
+                        "and source evidence. Never call tools, contact people, send messages, or alter "
+                        "the candidate. Return only MeetingAlignmentAuditResult JSON.\n\n"
+                        + BACKGROUND_AGENT_RUNTIME_BOUNDARY
+                    ),
+                    output_schema_path=MEETING_ALIGNMENT_AUDIT_SCHEMA_PATH,
+                    use_output_schema=True,
+                    project_doc_max_bytes=0,
+                    model_only=True,
+                ),
+                parser=lambda raw: _encode_meeting_alignment_audit_result(
+                    raw, expected_candidate_sha256=candidate_sha256,
+                ),
+                result_codec=MEETING_AUDIT_RESULT_CODEC,
+                conversation_id=None,
+                required_capabilities=MEETING_RUNTIME_CAPABILITIES,
+                result_validation_retry=RoutedResultValidationRetry.same_session_exactly_once(
+                    correction_prompt=lambda _raw: (
+                        "The prior response did not match MeetingAlignmentAuditResult. "
+                        "Return only the required JSON and preserve the exact candidate_sha256."
+                    )
+                ),
+            )
+        except RoutedCodexExecutionError as exc:
+            if not exc.retryable_external_dependency:
+                raise
+            raise ExternalDependencyError(
+                "codex meeting audit", exc, dependency="codex"
+            ) from exc
+        self.last_audit_session_id = result.session_id or None
+        self.last_audit_transcript_start_line = result.transcript_start
+        self.last_audit_transcript_end_line = result.transcript_end
+        audit = MeetingAlignmentAuditResult.model_validate_json(result.value)
+        if audit.candidate_sha256 != candidate_sha256:
+            raise ValueError("Meeting Audit result is not bound to the submitted candidate")
+        return audit
+
+
+def _encode_meeting_alignment_audit_result(
+    raw: str, *, expected_candidate_sha256: str,
+) -> str:
+    payload = json.loads(raw)
+    result = MeetingAlignmentAuditResult.model_validate(payload)
+    if result.candidate_sha256 != expected_candidate_sha256:
+        raise ValueError("Meeting Audit output candidate digest does not match input")
+    return result.model_dump_json()
 
 
 def _encode_meeting_alignment_result(raw: str) -> str:
@@ -400,6 +526,7 @@ def build_meeting_alignment_prompt(
     group_candidates: list[dict[str, Any]] | None = None,
     consumer_prompt: str = "",
     skill_protocol: str = "",
+    audit_feedback: MeetingAlignmentAuditFeedback | None = None,
 ) -> str:
     source_json = json.dumps(
         source.model_dump(mode="json"), ensure_ascii=False, separators=(",", ":")
@@ -440,10 +567,18 @@ def build_meeting_alignment_prompt(
 ## Scheduled Consumer Skills
 {skill_protocol.strip()}
 """
+    audit_feedback_block = (
+        "## Independent Audit feedback for this revision\n"
+        + json.dumps(audit_feedback.model_dump(mode="json"), ensure_ascii=False)
+        + "\nApply this requested correction while preserving supported facts and the existing target contract."
+        if audit_feedback is not None
+        else ""
+    )
 
     return f"""你是 Meeting Alignment Agent。你分析已经结束的会议，但不直接发送消息。
 
 {scheduled_consumer_block}
+{audit_feedback_block}
 
 触发边界：
 - 每场会议均须发送一条总结。出现实质观点分歧，或 {principal_display_name()} 的观点在后续讨论中没有被完整还原时，重点说明对齐或待决事项；没有分歧时，简洁归纳已确认事项和下一步。

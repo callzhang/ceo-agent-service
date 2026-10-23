@@ -444,6 +444,7 @@ RUNTIME_OPERATION_WORKLOAD_KINDS = frozenset(
     {
         "structured",
         "meeting",
+        "meeting_audit",
         "task",
         "weekly_okr",
         "memory",
@@ -7143,7 +7144,7 @@ class AutoReplyStore(LogicalRunStoreMixin, ReviewedCandidateStoreMixin):
         )
         if workload_kind not in RUNTIME_OPERATION_WORKLOAD_KINDS:
             raise ValueError("unsupported runtime operation workload kind")
-        if workload_kind in {"structured", "meeting"}:
+        if workload_kind in {"structured", "meeting", "meeting_audit"}:
             if not workload_key.isdecimal() or int(workload_key) <= 0:
                 raise ValueError("runtime operation workload key must be a persisted ID")
         elif workload_kind == "task":
@@ -7281,7 +7282,7 @@ class AutoReplyStore(LogicalRunStoreMixin, ReviewedCandidateStoreMixin):
         if workload_kind == "structured":
             query = (f"""select 1 from tasks where record_type='okr_review_requests' and cast(legacy_key as integer)=? and {task20_column('okr_review_requests', 'status')}='processing'""")
             args = (int(workload_key),)
-        elif workload_kind == "meeting":
+        elif workload_kind in {"meeting", "meeting_audit"}:
             query = ("select 1 from runs where record_type='agent_runs' and source_type='meeting_alignment_runs' "
                      "and cast(legacy_key as integer)=? and status='running'")
             args = (int(workload_key),)
@@ -8065,7 +8066,7 @@ class AutoReplyStore(LogicalRunStoreMixin, ReviewedCandidateStoreMixin):
                     lease_owner='', lease_expires_at='', finished_at=?, updated_at=?
                 where attempt.record_type='agent_runtime_attempts' and attempt.status in ('starting', 'running')
                   and attempt.parent_id is null
-                  and attempt.workload_kind='meeting'
+                  and attempt.workload_kind in ('meeting', 'meeting_audit')
                   and exists (
                     select 1 from runs parent
                     where parent.record_type='agent_runs' and parent.source_type='meeting_alignment_runs'
@@ -14161,7 +14162,7 @@ class AutoReplyStore(LogicalRunStoreMixin, ReviewedCandidateStoreMixin):
                             failure_code='runtime_parent_requeued',
                             failover_permitted=1, lease_owner='', lease_expires_at='',
                             finished_at=?, updated_at=?
-                        where agent_runtime_attempts.record_type='agent_runtime_attempts' and workload_kind='meeting'
+                        where agent_runtime_attempts.record_type='agent_runtime_attempts' and workload_kind in ('meeting', 'meeting_audit')
                           and workload_key in ({run_placeholders})
                           and status in ('starting', 'running')
                         """,
@@ -14215,7 +14216,7 @@ class AutoReplyStore(LogicalRunStoreMixin, ReviewedCandidateStoreMixin):
                       and not exists (
                         select 1 from ({RUNTIME_ATTEMPT_SQL}) runtime
                         join runs run on runtime.workload_key=run.legacy_key
-                        where runtime.workload_kind='meeting'
+                        where runtime.workload_kind in ('meeting', 'meeting_audit')
                           and run.record_type='agent_runs' and run.source_type='meeting_alignment_runs'
                           and run.task_id=meeting_alignment_jobs.id
                           and runtime.status in ('starting','running')
@@ -14294,7 +14295,7 @@ class AutoReplyStore(LogicalRunStoreMixin, ReviewedCandidateStoreMixin):
             if db.execute(
                 f"""select 1 from ({RUNTIME_ATTEMPT_SQL}) runtime
                     join ({MEETING_LOGICAL_RUN_SQL}) run on runtime.workload_key=cast(run.id as text)
-                    where runtime.workload_kind='meeting'
+                    where runtime.workload_kind in ('meeting', 'meeting_audit')
                       and run.job_id=? and runtime.status in ('starting','running')
                     limit 1""",
                 (job_id,),
@@ -14412,6 +14413,11 @@ class AutoReplyStore(LogicalRunStoreMixin, ReviewedCandidateStoreMixin):
 
     def requeue_failed_meeting_delivery(self, job_id: int) -> MeetingAlignmentJob | None:
         """Resume a reviewed unsent delivery after independent provider readback."""
+        from app.meeting_alignment_models import meeting_decision_audit_is_approved
+
+        current = self.get_meeting_alignment_job(job_id)
+        if current is None or not meeting_decision_audit_is_approved(current.decision_json):
+            return None
         with self._connect() as db:
             row = db.execute(
                 f"""update tasks as meeting_alignment_jobs
@@ -14419,6 +14425,9 @@ class AutoReplyStore(LogicalRunStoreMixin, ReviewedCandidateStoreMixin):
                      and cast(meeting_alignment_jobs.legacy_key as integer)=?
                      and {task20_column('meeting_alignment_jobs', 'status')}='failed' and {task20_column('meeting_alignment_jobs', 'locked_at')} is null
                      and {task20_column('meeting_alignment_jobs', 'decision_json')}!='{{}}' and {task20_column('meeting_alignment_jobs', 'target_id')}!=''
+                     and {task20_column('meeting_alignment_jobs', 'decision_json')}=?
+                     and {task20_column('meeting_alignment_jobs', 'updated_at')}=?
+                     and {task20_column('meeting_alignment_jobs', 'source_json')}=?
                      and {task20_column('meeting_alignment_jobs', 'send_result_json')}='{{}}'
                      and not exists (
                        select 1 from ({OUTBOUND_POSTFIX_RECEIPT_SQL})
@@ -14428,7 +14437,7 @@ class AutoReplyStore(LogicalRunStoreMixin, ReviewedCandidateStoreMixin):
                            meeting_alignment_jobs.{task20_column('meeting_alignment_jobs', 'meeting_id')})
                      )
                    returning {task8_meeting_returning()}""",
-                (job_id,),
+                (job_id, current.decision_json, current.updated_at, current.source_json),
             ).fetchone()
             return self._meeting_alignment_job_from_row(row) if row else None
 
