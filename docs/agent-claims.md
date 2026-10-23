@@ -498,7 +498,6 @@ reverts committed work they did not author.
 
 ## Current claims
 
-| codex-oa-online-work-leave-clarification-20261023 | `ci/shared-skills/stardust-oa-attendance-travel-review/SKILL.md`; `ci/consumer-system-contract-release.json` (attendance Skill digests and exact already-installed generic OA/people Skill digest preconditions only); `tests/test_stardust_oa_attendance_oncall_leave.py`; `tests/test_consumer_system_release.py` (attendance, generic OA and people Skill release digest assertions only); `docs/architecture.md`; `docs/runtime-mechanism.md`; this claim row | Refine the approved on-call rule for the 2026-10-23 leave case: “work/meetings online” alone is not evidence of ordinary work or a reason to ask whether a full-day leave is remote work; handle according to the submitted leave request unless concrete duties or a material entitlement conflict are evidenced. During formal publish, synchronize unrelated generic OA and people-review `old_sha256` preconditions to their exact already-installed/current source digests; no generic OA or people Skill policy changes. Add focused regression coverage and keep runtime docs and release entries aligned. Do not repeat or alter the terminal OA actions. | active 2026-10-23 |
 
 
 
