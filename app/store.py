@@ -22781,7 +22781,7 @@ class AutoReplyStore(LogicalRunStoreMixin, ReviewedCandidateStoreMixin):
         payload_json: str,
     ) -> int:
         source_created_at, body_sha256, body_bytes = self._work_summary_input_provenance(payload_json)
-        with self._connect() as db:
+        with self._immediate_write_transaction() as db:
             from app.task_entity_storage import create_task
             row = db.execute(
                 "select task_id from work_summary_inputs where source_type=? and source_ref=?",

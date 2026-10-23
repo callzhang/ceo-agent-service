@@ -1,19 +1,27 @@
 import sqlite3
+from concurrent.futures import ThreadPoolExecutor
 from contextvars import ContextVar
+from threading import Barrier
 
-from app import run_entity_definitions, task_run_entity_definitions
+from app.task_run_entity_assembly import task_run_entity_assembly_objects
+from app.task_agent import TaskAgentRunner, process_work_item
+from app.task_models import WorkItem
 from app.store import AutoReplyStore
 
 
 def _native_store(tmp_path):
     path = tmp_path / "native.sqlite3"
     db = sqlite3.connect(path)
-    objects = task_run_entity_definitions.task_run_entity_objects()
-    run_objects = run_entity_definitions.run_entity_objects()
-    for name in ("tasks", "task_inputs", "work_summary_inputs"):
-        db.execute(objects[name])
-    for name in ("runs", "run_provenance", "run_projections", "runtime_attempts"):
-        db.execute(run_objects[name])
+    db.execute("PRAGMA foreign_keys=ON")
+    from app.task8_storage import register_task8_functions
+    register_task8_functions(db)
+    objects = task_run_entity_assembly_objects()
+    for ddl in objects.values():
+        if ddl.lstrip().lower().startswith("create table"):
+            db.execute(ddl)
+    for ddl in objects.values():
+        if not ddl.lstrip().lower().startswith("create table"):
+            db.execute(ddl)
     db.commit()
     db.close()
     store = AutoReplyStore.__new__(AutoReplyStore)
@@ -23,6 +31,82 @@ def _native_store(tmp_path):
     store._read_snapshot_connection = ContextVar("test_snapshot", default=None)
     store._reused_connection = ContextVar("test_reused", default=None)
     return store
+
+
+def test_concurrent_work_summary_enqueue_returns_one_canonical_task(tmp_path):
+    store = _native_store(tmp_path)
+    start = Barrier(2)
+
+    def enqueue(payload):
+        start.wait(timeout=5)
+        return store.enqueue_work_summary_input("local_file", "same-source", payload)
+
+    with ThreadPoolExecutor(max_workers=2) as executor:
+        results = list(executor.map(enqueue, ('{"summary":"first"}', '{"summary":"second"}')))
+
+    assert results[0] == results[1]
+    with store._connect() as db:
+        assert db.execute("select count(*) from tasks where kind='work_summary'").fetchone()[0] == 1
+        assert db.execute("select count(*) from work_summary_inputs").fetchone()[0] == 1
+
+
+def test_process_work_item_applies_business_fact_and_native_run_projection(tmp_path, monkeypatch):
+    monkeypatch.setattr("app.task_agent.memory_connector_config_issue", lambda: "")
+    store = _native_store(tmp_path)
+    item = WorkItem.model_validate({
+        "source": {
+            "type": "reply_attempt", "ref": "message:runtime-chain",
+            "title": "报价待补来源链接", "conversation_id": "conversation:runtime-chain",
+            "conversation_title": "客户群", "created_at": "2026-10-23T09:00:00+08:00",
+        },
+        "summary": "补齐来源链接；owner 是 Alex。",
+        "context": {
+            "sender": "Avery", "sender_user_id": "avery-id",
+            "source_conversation_kind": "group",
+        },
+    })
+    task_id = store.enqueue_work_summary_input(
+        item.source.type.value, item.source.ref, item.model_dump_json()
+    )
+    [claimed] = store.claim_work_summary_inputs(limit=1)
+
+    decision = {
+        "project_decisions": [], "project_assessments": [],
+        "update_summary": "本轮没有相关 Project。",
+        "task_decisions": [{
+            "action": "record_candidate", "transition": "none",
+            "source_excerpt": "补齐来源链接", "source_ref": item.source.ref,
+            "title": "补齐报价来源链接", "missing_evidence": ["owner"],
+        }],
+    }
+
+    class SubstituteCodex:
+        last_session_id = "fixture-session"
+
+        def decide(self, **_kwargs):
+            from app.task_agent import TaskAgentDecision
+            return TaskAgentDecision.model_validate(decision)
+
+    process_work_item(store, TaskAgentRunner(SubstituteCodex()), claimed)
+
+    terminal = store.get_work_summary_input(task_id)
+    business_tasks = store.list_business_tasks()
+    assert terminal.status.value == "done"
+    assert terminal.body_compacted == 1
+    assert len(business_tasks) == 1
+    assert business_tasks[0].title == "补齐报价来源链接"
+    with store._connect() as db:
+        [run] = db.execute(
+            "select r.id,r.task_id,r.status,r.session_id,p.source_type,proj.projection_json "
+            "from runs r join run_provenance p on p.run_id=r.id "
+            "join run_projections proj on proj.run_id=r.id where r.task_id=?",
+            (task_id,),
+        ).fetchall()
+    assert run["task_id"] == task_id
+    assert run["status"] == "completed"
+    assert run["session_id"] == "fixture-session"
+    assert run["source_type"] == "task_agent_runs"
+    assert run["projection_json"] != "{}"
 
 
 def test_work_summary_uses_canonical_task_id_and_keeps_terminal_input_immutable(tmp_path):

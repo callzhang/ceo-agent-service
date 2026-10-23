@@ -31,7 +31,8 @@ claimed 指针。范围仅是这些既有 Store API，Reply 其余生命周期�
 dispatcher lease、构造器和 schema 选择仍待后续验收，当前不代表完整 Task runtime 已启用。
 
 Task2D1 将 WorkSummary 的输入队列与 Task Agent Run 改为原生实体：输入 ID 是 `tasks.id`，
-内容和来源摘要在 `work_summary_inputs.task_id`；Run producer 使用原生专业 Run API，投影仍在
+内容和来源摘要在 `work_summary_inputs.task_id`；重复来源写入先取得立即写事务再读 unique child，
+并发调用返回同一 canonical Task ID。Run producer 使用原生专业 Run API，投影仍在
 `run_projections`。pending 输入按现有 due 时间与 ID 顺序领取；attempts、失败/重试/容量延期、
 done/skipped 压缩与 no-effect attempt 收尾遵循既有状态和事务边界。压缩清空 body 但保留
 source-created time、hash、bytes、compact 标记、状态与错误。WorkSummary 专属 History 和修复

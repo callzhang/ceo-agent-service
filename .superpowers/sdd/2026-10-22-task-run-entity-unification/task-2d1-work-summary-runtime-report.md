@@ -27,3 +27,23 @@ The task-owned test temp directory was removed after the focused run.
 - Meeting and OKR producer/readers, other family History branches, remaining full CLI/runtime and constructor integration, cold-open and complete copy/inverse verification, and release gates remain pending.
 - `todo_evidence_candidate.work_summary_input_id` (`app/business_definitions.py`, stored INTEGER, default/sentinel `0`) is the known typed crossing. New writes receive the canonical Task ID from enqueue. Historical values still need explicit coordinator forward/inverse conversion and a remapped-ID regression before historical lookup can be considered ready. No runtime identity-map lookup or numeric fallback was added.
 - Remaining source logical Run projection references in Store are family-general or unrelated APIs; the WorkSummary recovery and producer paths changed here no longer use them. `latest_task_ref` was removed from the WorkSummary repair caller.
+
+## Review round 1 (base `25471b76d`)
+
+The enqueue read/check/create sequence now runs inside the existing `_immediate_write_transaction()` boundary. That acquires the SQLite write reservation before reading the unique source key, so competing callers serialize and the existing `idx_work_summary_source_identity` remains the arbiter. No duplicate-create exception handling or retry path was added. The focused native fixture installs the actual Task and Run DDL, WorkSummary source-identity unique index, parameter triggers, and `work_summary_inputs.task_id` foreign key; a two-thread barrier test calls the real Store method and confirms both callers receive the one canonical Task ID and only one Task/child exists.
+
+The fail-first concurrency reproduction used the prior read-before-write sequence against that actual DDL, with a barrier immediately after both source-key reads. Exact output:
+
+```text
+IntegrityError: UNIQUE constraint failed: work_summary_inputs.source_type, work_summary_inputs.source_ref
+returned 1
+```
+
+The actual producer fixture uses `task_run_entity_assembly_objects()`, the same complete target DDL assembly exercised by `tests/test_task_run_entity_assembly.py`; this supplies native Task/Run plus the retained native Business and Actions owners with their actual references. An initial attempt to combine the old whole-store source Action factory with standalone native Task DDL failed with `sqlite3.OperationalError: foreign key mismatch - "actions" referencing "tasks"`; that fixture was discarded. The final fixture invokes the real `process_work_item` and domain apply with a substitute Codex result, then reads back the Business task fact, compacted terminal input, native Run's Task ID/status/session/provenance, and nonempty native projection receipt. No product function is mocked.
+
+- `python -m pytest -q tests/test_work_summary_task_runtime.py --basetemp=/tmp/task-run-entity-phase2-review1-green` — 4 passed.
+- `python -m pytest -q tests/test_work_summary_task_runtime.py --basetemp=/tmp/task-run-entity-phase2-review1-nativechain` — 5 passed, including the actual producer/domain-apply/native Run/projection chain.
+- `python -m pytest -q tests/test_work_summary_task_runtime.py tests/test_task_run_entity_assembly.py --basetemp=/tmp/task-run-entity-phase2-review1-coverage` — 20 passed.
+- `ruff check app/store.py tests/test_work_summary_task_runtime.py` — passed.
+- `python -m compileall -q app/store.py tests/test_work_summary_task_runtime.py` — passed.
+- `git diff --check` — passed.

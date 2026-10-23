@@ -31,8 +31,9 @@ claimed 指针。范围仅是这些既有 Store API，Reply 其余生命周期�
 dispatcher lease、构造器和 schema 选择仍待后续验收，当前不代表完整 Task runtime 已启用。
 
 Task2D1 将 WorkSummary 输入创建、去重更新、读取、领取、终态压缩、失败重试、容量延期及
-处理中恢复改为原生 `tasks.id` 与 `work_summary_inputs.task_id`；`WorkSummaryInput.id` 是
-Task ID。Task Agent 使用专业 Run 的原生 create/claim/finish/get，并将投影写入
+处理中恢复改为原生 `tasks.id` 与 `work_summary_inputs.task_id`；并发重复来源在取得立即写事务后
+读取唯一 child 并返回同一个 canonical Task ID。`WorkSummaryInput.id` 是 Task ID。Task Agent
+使用专业 Run 的原生 create/claim/finish/get，并将投影写入
 `run_projections`。来源状态、due/order、尝试与错误规则及终态保留的摘要、哈希和字节数不变；
 无 effect 的运行尝试按原 parent Run 关闭，已有 effect 留给原 reconciliation。WorkSummary
 History、Task Agent 项目修复读取使用原生 Run/Task。此单元未启用 Store constructor 或通用
