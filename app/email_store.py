@@ -11740,12 +11740,20 @@ class EmailStore:
                   and a.action_type in ({placeholders})
                   and c.status='processed'
                   and a.action_plan_id=c.current_action_plan_id
-                  and a.action_id>?
+                  and (?='' or a.action_id>?)
                   and (? is null or a.action_id=?)
                 order by a.action_id
                 limit ?
                 """,
-                (account_id, *types, after_action_id, action_id, action_id, int(limit)),
+                (
+                    account_id,
+                    *types,
+                    after_action_id,
+                    after_action_id,
+                    action_id,
+                    action_id,
+                    int(limit),
+                ),
             ).fetchall()
         return [
             FailedDirectAction(
@@ -11887,9 +11895,15 @@ class EmailStore:
             ).fetchone()
             if busy is not None:
                 return None
+            from app.action_entity_storage import get_action
+
+            current_action = get_action(db, int(action_id))
+            if current_action is None:
+                return None
             updated = shared_action_lifecycle.claim_direct_email_action(
                 db, action_id=action_id, expected_status="failed",
-                expected_started_at=None, attempt_count=expected_attempt_count,
+                expected_started_at=current_action["started_at"],
+                attempt_count=expected_attempt_count,
                 claimed_at=claimed_at)
             if updated is None:
                 raise EmailActionAttemptConflict(f"direct action claim changed for {action_id}")

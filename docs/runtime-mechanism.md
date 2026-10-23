@@ -1740,6 +1740,7 @@ Codex CLI 路径通过 `--output-schema` 使用 `app/schemas/task_agent_decision
 该文件由 `TaskAgentDecision.model_json_schema()` 生成并由测试校验一致；strict schema
 要求每个对象显式返回全部属性，省略值用其契约允许的 `null` 表示。服务仍运行本地 Pydantic
 语义校验，失败时最多在同一 session 修正一次；结构化输出不取代业务校验。Task 任务正文不重复附加完整 schema；Codex 使用上述原生通道，Claude／Friday 由现有运行适配器将同一份完整 schema 拼入单条消息。Skill、事实、业务规则和会话绑定保持不变。
+新建、候选及 skip 决定携带 `status` 或 `business_relevance` 时，校验明确要求省略这两个初始字段；只有既有 Task 的 `update_task` 配合 `update_fields` 才能修改它们。该诊断不放宽来源、身份或业务校验。
 Task 业务指导以当前 `ceo-work-tracking` Skill 为主；本机 CLI 路线的每轮包装只给出该文件的绝对路径和 SHA-256，不复制完整正文。Agent 冷启动先读全文；续会话仅在相同版本全文仍处于当前上下文时复用，否则重新读取。远端 Friday Runtime 继续接收完整 Skill 正文。包装保留 Skill 未完整描述的输出约束：assessment 选择器、顺序依赖建议、状态更新 transition、晋升 suggestion、owner_evidence 结构、Attention 决定成员与相同事实提案去重。动态来源、时间、visible_ranges 和当前 Project/Task 上下文保持完整。不新增读取工具、权限或路线；原先完整注入阶段的固定对照见 docs/task-guidance-dedup-evidence.md，按需读取对照见 docs/task-skill-on-demand-validation.md。
 
 
@@ -2141,8 +2142,10 @@ ImapReadbackUnsupported`），而这类失败是终态（`attempt_count=1`、`ne
 `ReadOnlyViolation`。可重复运行（记成 `done` 的行不再是 `failed`）、每次最多 `--limit` 行（默认 100，
 按 action id 排序，输出的 `next_after` 可接着 `--after` 续跑）、行间停 `--pause-seconds`（默认 0.5 秒）；
 单封超时或被限流只记为 `error`、丢弃并重连会话、指数退避后继续，连续 5 次错误才停下（`aborted=true`）；每封（含连接）有 `--message-timeout-seconds`（默认 60 秒）的墙钟上限，超时就从外部关掉该连接并记 `error`，不依赖套接字读超时——曾有一次读取卡住 30 分钟；每 25 封输出一行计数进度，Ctrl-C 会带着已有计数正常结束（`interrupted=true`）。
-输出只有计数（按 move/trash 分：verified、in_source、elsewhere、not_found、ambiguous、error），
-不含邮件内容。
+空 `--after` 表示从最小 action ID 开始，适用于规范化后保存为整数的 Action ID；
+分页游标与内部领取 API 在边界统一转成文本 ID，不改变记录的原始 ID。对账领取按同一
+事务内读取的 Action 当前 `started_at` 精确做 CAS，兼容仍保存空字符串的失败记录。输出只有计数（按
+move/trash 分：verified、in_source、elsewhere、not_found、ambiguous、error），不含邮件内容。
 
 只有确认后不可变 `ActionPlan` 中授权的 `unsubscribe` 创建 `channel=email` 的
 `reply_task`，生命周期固定为 `email_unsubscribe_audited_v2`；其他动作和零动作计划不创建
@@ -2574,7 +2577,7 @@ OKR 本机 SSO 在点击当前账号后先检查指定组织是否已可见；�
 
 另有一个每天 `19:30`（`Asia/Shanghai`）运行的“申请读不到的钉钉 AI 听记”服务命令：读取听记管理后台，逐条在听记页面提交访问申请，并以页面读回状态计数；对方批准后，`20:00` 的归档任务会读取内容。该后台由服务的共享无头 Chrome 打开（`app/service_browser.launch_service_chrome`），带的是每天复制的 Derek 本人 Chrome 登录态；这份副本能把他认到「选择你管理的组织」那一步，再由代码选中「北京星尘纪元智能科技有限公司」（`MINUTES_CONSOLE_ORG`）进入控制台。每次启动都会用当天的副本覆盖 profile，控制台自己的 `access_token` 不会留到下一次，所以这里没有自己保存的会话，也没有过期和续期一说；副本里没有钉钉登录态时命令直接失败，补救办法是在 Chrome 里重新登录钉钉并等当天的 `sync-chrome-cookies` 跑过，而不是在这里扫码。申请命令结果摘要同样持久化在 scheduled run，并显示在定时任务运行记录中，包括本次发现、已申请、已可读、申请人未解析和失败数量。
 
-定时任务共用现有调度、队列、Consumer → Audit → revision 生命周期；14 个默认任务由声明表生成，默认新安装仍暂停。11 项发现/同步任务保留服务命令，CEO 日报、CEO 管理周报和 OKR 管理周报是三项普通 Agent 任务。业务要求由任务 prompt 与 Skill 决定，系统层不按报告名称或 Skill 名称分支，也不以 `publishable` 判断业务质量。通用 `read_scheduled_context` 返回触发时刻、时区、版本及历史完成事实；`read_service_activity` 按调用者明确给出的时间窗口和来源返回服务事实；`read_meeting_archive` 按会议身份读取归档。Codex 与 Claude 均可通过 Consumer 的 `consumer_run_skill_script` 执行所选 Skill 的确定性 Python 脚本。脚本在当前 task generation 的产物目录运行；产物读回分页，完整正文留在本地产物中。
+定时任务共用现有调度、队列、Consumer → Audit → revision 生命周期；14 个默认任务由声明表生成，默认新安装仍暂停。11 项发现/同步任务保留服务命令，CEO 日报、CEO 管理周报和 OKR 管理周报是三项普通 Agent 任务。业务要求由任务 prompt 与 Skill 决定，系统层不按报告名称或 Skill 名称分支，也不以 `publishable` 判断业务质量。通用 `read_scheduled_context` 返回触发时刻、时区、版本及历史完成事实；Consumer 还会收到当前 task generation 中已有产物的文件名和 SHA-256 清单，不包含文件正文，以便重试先复用当前执行已有材料。`read_service_activity` 按调用者明确给出的时间窗口和来源返回服务事实；`read_meeting_archive` 按会议身份读取归档。Codex 与 Claude 均可通过 Consumer 的 `consumer_run_skill_script` 执行所选 Skill 的确定性 Python 脚本。脚本在当前 task generation 的产物目录运行；产物读回分页，完整正文留在本地产物中。
 
 产物 offset 是从0起的字符索引；每页统一返回 offset、total_chars、next_offset，sha256 始终对应整份文件。完整读取从0开始，按 next_offset 续读至 null，不能把非零起点的尾部当作全文。
 
@@ -3111,15 +3114,19 @@ The post-process sensitive-result guard raises the same result-parse exception
 as other invalid typed output. Rejection is recorded as `codex_result_invalid`
 at the result stage, allowing the existing Audit result-correction prompt and
 bounded attempt handling to operate. It is not a CLI execution outage. The
-credential predicate and rejection itself remain unchanged; no unsafe result
-is accepted and no content-feedback cycle is consumed by a parse failure.
+credential rejection itself remains unchanged; no unsafe result is accepted and
+no content-feedback cycle is consumed by a parse failure.
 
 Generic credential key/value text requires the value to end at the string boundary
 or an explicit comma/semicolon delimiter. This avoids treating ordinary diagnostic
 prose such as `access token: load access token: acquiring file lock` as a secret,
 while retaining detection for delimited values such as `api_key=...;`. Known
 credential formats, sensitive-field context, entropy checks and outbound
-credential validation are unchanged.
+credential validation are unchanged, except that Basic-auth text is recognized
+only when the following base64 value decodes to the required `username:password`
+form. This detects credentials in `Authorization: Basic <base64>` headers and
+bare Basic-auth fragments while ordinary prose such as `Basic information`
+does not trigger result rejection or redaction.
 
 Process diagnostic redaction preserves each original line boundary before joining
 separate error fields, while retaining the same field-level whitespace-spanning

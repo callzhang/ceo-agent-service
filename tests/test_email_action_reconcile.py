@@ -6,6 +6,7 @@ LIST, EXAMINE, UID SEARCH or UID FETCH ever reaches it.
 
 from __future__ import annotations
 
+from dataclasses import replace
 from pathlib import Path
 import sqlite3
 import threading
@@ -225,6 +226,57 @@ def test_message_verified_in_target_is_recorded_done_with_reconciliation_evidenc
             f"select folder, uidvalidity, uid from ({EMAIL_CLASSIFICATION_SQL})"
         ).fetchone()
     assert (folder, uidvalidity, uid) == ("Projects", 126, 31)
+    assert all(command in {"EXAMINE", "UID FETCH", "UID SEARCH"} for command in session.commands)
+
+
+def test_normalized_integer_action_id_can_be_recorded_after_readback(
+    db_path: Path,
+) -> None:
+    store = EmailStore(db_path)
+    action_id = _seed_failed(store, "integer-owner", uid=7)
+
+    class IntegerOwnerIdStore:
+        def __getattr__(self, name):
+            return getattr(store, name)
+
+        def list_failed_direct_actions(self, **kwargs):
+            rows = store.list_failed_direct_actions(**kwargs)
+            return [
+                replace(row, action=replace(row.action, action_id=int(row.action.action_id)))
+                for row in rows
+            ]
+
+    session = ReadOnlyFakeSession(
+        messages={"Projects": {31: ("<integer-owner@example.com>", set())}}
+    )
+
+    report = _run(IntegerOwnerIdStore(), session, apply=True)
+
+    assert report.applied == 1
+    assert report.record_failed == 0
+    assert _action_row(db_path, action_id)["status"] == "done"
+    assert all(command in {"EXAMINE", "UID FETCH", "UID SEARCH"} for command in session.commands)
+
+
+def test_empty_persisted_start_time_can_be_claimed_for_verified_reconciliation(
+    db_path: Path,
+) -> None:
+    store = EmailStore(db_path)
+    action_id = _seed_failed(store, "empty-start-time", uid=7)
+    with store._connect() as db:
+        db.execute(
+            "update actions set action_data=jsonb_set(action_data,'$.started_at',json(?)) where id=?",
+            ('""', int(action_id)),
+        )
+    session = ReadOnlyFakeSession(
+        messages={"Projects": {31: ("<empty-start-time@example.com>", set())}}
+    )
+
+    report = _run(store, session, apply=True)
+
+    assert report.applied == 1
+    assert report.record_failed == 0
+    assert _action_row(db_path, action_id)["status"] == "done"
     assert all(command in {"EXAMINE", "UID FETCH", "UID SEARCH"} for command in session.commands)
 
 
