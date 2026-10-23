@@ -399,7 +399,11 @@ SERVICE_HEALTH_STATES = frozenset({"healthy", "degraded"})
 REPLY_ATTEMPT_CLOSED_AFTER_REVIEW = "closed_after_review"
 REPLY_TASK_SQL = task20_projection('reply_tasks')
 REPLY_TASK_INPUT_SQL = task20_projection('reply_task_inputs')
-WORK_SUMMARY_INPUT_SQL = task20_projection('work_summary_inputs')
+WORK_SUMMARY_INPUT_SQL = """select t.id, w.source_type, w.source_ref, w.payload_json,
+    w.source_created_at, w.body_sha256, w.body_bytes, w.body_compacted,
+    t.status, t.attempts, t.error, t.available_at, t.created_at, t.updated_at
+    from tasks t join work_summary_inputs w on w.task_id=t.id
+    where t.kind='work_summary'"""
 MEETING_JOB_SQL = task20_projection('meeting_alignment_jobs')
 OKR_REQUEST_SQL = task20_projection('okr_review_requests')
 WEEKLY_JOB_SQL = task20_projection('weekly_okr_analysis_jobs')
@@ -7405,7 +7409,7 @@ class AutoReplyStore(LogicalRunStoreMixin, ReviewedCandidateStoreMixin):
                     "and status in ('active', 'waiting', 'done', 'archived')"
                 )
             else:
-                query = f"select 1 from ({TASK_LOGICAL_RUN_SQL}) where id=? and status='running'"
+                query = "select 1 from runs r join run_provenance p on p.run_id=r.id where r.id=? and p.source_type='task_agent_runs' and r.status='running'"
             args = (int(row_id),)
         elif workload_kind == "email_classification":
             query = (
@@ -8117,23 +8121,21 @@ class AutoReplyStore(LogicalRunStoreMixin, ReviewedCandidateStoreMixin):
         """Close read-only task attempts abandoned after their task run ended."""
         with self._agent_run_write_transaction(now) as (db, (_, now_text)):
             cursor = db.execute(
-                f"""
-                update runs as attempt
+                """
+                update runtime_attempts as attempt
                 set status='failed', failure_class='process',
                     failure_code='runtime_lease_expired', failover_permitted=1,
                     lease_owner='', lease_expires_at='', finished_at=?, updated_at=?
-                where attempt.record_type='agent_runtime_attempts' and attempt.parent_id is null
-                  and attempt.workload_kind='task'
-                  and (attempt.workload_key not like '%:%'
-                       or attempt.workload_key like '%:decision_repair.%')
+                where attempt.parent_id is not null and attempt.workload_kind='task'
                   and attempt.status in ('starting', 'running')
                   and attempt.first_effect_started_at=''
                   and attempt.lease_expires_at!=''
                   and attempt.lease_expires_at<=?
                   and exists (
                       select 1
-                      from ({TASK_LOGICAL_RUN_SQL}) as task_run
-                      where task_run.id=cast(attempt.workload_key as integer)
+                      from runs task_run join run_provenance p on p.run_id=task_run.id
+                      where task_run.id=attempt.parent_id
+                        and p.source_type='task_agent_runs'
                         and task_run.status in ('completed', 'failed')
                   )
                 """,
@@ -22780,23 +22782,32 @@ class AutoReplyStore(LogicalRunStoreMixin, ReviewedCandidateStoreMixin):
     ) -> int:
         source_created_at, body_sha256, body_bytes = self._work_summary_input_provenance(payload_json)
         with self._connect() as db:
-            _task8_insert = task8_insert_parts('work_summary_inputs', {'source_type': source_type, 'source_ref': source_ref, 'payload_json': encode_work_summary_payload(payload_json), 'source_created_at': source_created_at, 'body_sha256': body_sha256, 'body_bytes': body_bytes}, insert_sql={'body_compacted': '0', 'status': "'pending'", 'attempts': '0', 'error': "''", 'available_at': "''", 'created_at': 'current_timestamp', 'updated_at': 'current_timestamp'})
-            db.execute(
-                f"""
-                insert into tasks
-                    ({_task8_insert.columns}) values ({_task8_insert.values})
-                on conflict({task20_column('work_summary_inputs', 'source_type')}, {task20_column('work_summary_inputs', 'source_ref')}) where record_type='work_summary_inputs' do update set {task8_set_parts('work_summary_inputs', {}, update_sql={'payload_json': f"""excluded.{task20_column('work_summary_inputs', 'payload_json')}""", 'source_created_at': f"""excluded.{task20_column('work_summary_inputs', 'source_created_at')}""", 'body_sha256': f"""excluded.{task20_column('work_summary_inputs', 'body_sha256')}""", 'body_bytes': f"""excluded.{task20_column('work_summary_inputs', 'body_bytes')}""", 'updated_at': 'current_timestamp'}, payload_source='tasks.payload_json').sql} where tasks.{task20_column('work_summary_inputs', 'status')} not in ('processing', 'done', 'skipped')
-                """,
-                _task8_insert.parameters,
-            )
+            from app.task_entity_storage import create_task
             row = db.execute(
-                f"""
-                select id from ({WORK_SUMMARY_INPUT_SQL})
-                where source_type=? and source_ref=?
-                """,
+                "select task_id from work_summary_inputs where source_type=? and source_ref=?",
                 (source_type, source_ref),
             ).fetchone()
-            return int(row["id"])
+            if row is None:
+                created_at = db.execute("select current_timestamp").fetchone()[0]
+                task = create_task(db, values={
+                    "kind": "work_summary", "status": "pending", "available_at": "",
+                    "attempts": 0, "error": "", "created_at": created_at,
+                    "updated_at": created_at,
+                })
+                db.execute(
+                    "insert into work_summary_inputs(task_id,source_type,source_ref,payload_json,source_created_at,body_sha256,body_bytes,body_compacted) values(?,?,?,?,?,?,?,0)",
+                    (task["id"], source_type, source_ref, encode_work_summary_payload(payload_json), source_created_at, body_sha256, body_bytes),
+                )
+                return int(task["id"])
+            task_id = int(row["task_id"])
+            status = db.execute("select status from tasks where id=?", (task_id,)).fetchone()[0]
+            if status not in {"processing", "done", "skipped"}:
+                db.execute(
+                    "update work_summary_inputs set payload_json=?,source_created_at=?,body_sha256=?,body_bytes=? where task_id=? and body_compacted=0",
+                    (encode_work_summary_payload(payload_json), source_created_at, body_sha256, body_bytes, task_id),
+                )
+                db.execute("update tasks set updated_at=current_timestamp where id=?", (task_id,))
+            return task_id
 
     @staticmethod
     def _work_summary_input_provenance(payload_json: str | bytes) -> tuple[str, str, int]:
@@ -22810,21 +22821,23 @@ class AutoReplyStore(LogicalRunStoreMixin, ReviewedCandidateStoreMixin):
         body = payload_text.encode("utf-8")
         return source_created_at, hashlib.sha256(body).hexdigest(), len(body)
 
-    @classmethod
+    @staticmethod
     def _compact_work_summary_input(
-        cls, db: sqlite3.Connection, input_id: int, *, status: str, error: str
+        db: sqlite3.Connection, input_id: int, *, status: str, error: str
     ) -> None:
         row = db.execute(
-            f"select payload_json from ({WORK_SUMMARY_INPUT_SQL}) where id=? and status not in ('done', 'skipped')",
+            f"select id from ({WORK_SUMMARY_INPUT_SQL}) where id=? and status not in ('done', 'skipped') and body_compacted=0",
             (input_id,),
         ).fetchone()
         if row is None:
             return
-        source_created_at, body_sha256, body_bytes = cls._work_summary_input_provenance(row["payload_json"])
         db.execute(
-            f"""update tasks
-               set {task8_set_parts('work_summary_inputs', {}, update_sql={'status': '?', 'error': '?', 'payload_json': "'{}'", 'source_created_at': '?', 'body_sha256': '?', 'body_bytes': '?', 'body_compacted': '1', 'updated_at': 'current_timestamp'}, payload_source='tasks.payload_json').sql}  where record_type='work_summary_inputs' and cast(legacy_key as integer)=? and {task20_column('work_summary_inputs', 'status')} not in ('done', 'skipped')""",
-            (status, error, source_created_at, body_sha256, body_bytes, input_id),
+            "update work_summary_inputs set payload_json='{}',body_compacted=1 where task_id=? and body_compacted=0",
+            (input_id,),
+        )
+        db.execute(
+            "update tasks set status=?,error=?,updated_at=current_timestamp where id=? and kind='work_summary' and status not in ('done','skipped')",
+            (status, error, input_id),
         )
 
     def claim_work_summary_inputs(
@@ -22857,7 +22870,8 @@ class AutoReplyStore(LogicalRunStoreMixin, ReviewedCandidateStoreMixin):
             db.execute(
                 f"""
                 update tasks
-                set {task8_set_parts('work_summary_inputs', {}, update_sql={'status': "'processing'", 'attempts': f"""{task20_column('work_summary_inputs', 'attempts')} + 1""", 'error': "''", 'available_at': "''", 'updated_at': 'current_timestamp'}, payload_source='tasks.payload_json').sql}  where record_type='work_summary_inputs' and cast(legacy_key as integer) in ({placeholders})
+                set status='processing',attempts=attempts+1,error='',available_at='',updated_at=current_timestamp
+                where kind='work_summary' and id in ({placeholders}) and status='pending'
                 """,
                 ids,
             )
@@ -22901,31 +22915,30 @@ class AutoReplyStore(LogicalRunStoreMixin, ReviewedCandidateStoreMixin):
             return 0
         placeholders = ",".join("?" for _ in input_ids)
         run_rows = db.execute(
-            f"""
-            select id from ({TASK_LOGICAL_RUN_SQL})
-            where status='running' and summary_input_id in ({placeholders})
-            """,
-            list(input_ids),
+            f"""select r.id from runs r join run_provenance p on p.run_id=r.id
+            where p.source_type='task_agent_runs' and r.status='running'
+              and r.task_id in ({placeholders})""", list(input_ids),
         ).fetchall()
         if not run_rows:
             return 0
         run_ids = [int(row["id"]) for row in run_rows]
         run_placeholders = ",".join("?" for _ in run_ids)
-        recover_logical_runs(
-            db, "task_agent_runs", run_ids, status="failed",
-            error="orphaned_task_agent_run_parent_not_processing", now=db.execute("select current_timestamp").fetchone()[0],
-        )
+        from app import run_entity_storage
+        now = db.execute("select current_timestamp").fetchone()[0]
+        for run_id in run_ids:
+            run_entity_storage.update_run_cas(
+                db, run_id=run_id, expected={"status": "running"},
+                changes={"status": "failed", "error": "orphaned_task_agent_run_parent_not_processing",
+                         "completed_at": now, "updated_at": now},
+            )
         db.execute(
             f"""
-            update runs as agent_runtime_attempts
+            update runtime_attempts as agent_runtime_attempts
             set status='failed', failure_class='process',
                 failure_code='runtime_parent_terminal_no_effect',
                 failover_permitted=1, lease_owner='', lease_expires_at='',
                 finished_at=current_timestamp, updated_at=current_timestamp
-            where agent_runtime_attempts.record_type='agent_runtime_attempts' and workload_kind='task'
-              and cast(workload_key as integer) in ({run_placeholders})
-              and (workload_key not like '%:%'
-                   or workload_key like '%:decision_repair.%')
+            where parent_id in ({run_placeholders}) and workload_kind='task'
               and status in ('starting', 'running')
               and first_effect_started_at=''
             """,
@@ -22955,7 +22968,7 @@ class AutoReplyStore(LogicalRunStoreMixin, ReviewedCandidateStoreMixin):
             cursor = db.execute(
                 f"""
                 update tasks
-                set {task8_set_parts('work_summary_inputs', {}, update_sql={'status': "'pending'", 'attempts': f"""max({task20_column('work_summary_inputs', 'attempts')} - 1, 0)""", 'error': "''", 'updated_at': 'current_timestamp'}, payload_source='tasks.payload_json').sql}  where record_type='work_summary_inputs' and cast(legacy_key as integer) in ({placeholders})
+                set status='pending',attempts=max(attempts-1,0),error='',updated_at=current_timestamp where kind='work_summary' and id in ({placeholders}) and status='processing'
                 """,
                 stale,
             )
@@ -22979,7 +22992,7 @@ class AutoReplyStore(LogicalRunStoreMixin, ReviewedCandidateStoreMixin):
             db.execute(
                 f"""
                 update tasks
-                set {task8_set_parts('work_summary_inputs', {}, update_sql={'status': "'pending'", 'attempts': f"""max({task20_column('work_summary_inputs', 'attempts')} - 1, 0)""", 'error': "''", 'updated_at': 'current_timestamp'}, payload_source='tasks.payload_json').sql}  where record_type='work_summary_inputs' and cast(legacy_key as integer) in ({placeholders})
+                set status='pending',attempts=max(attempts-1,0),error='',updated_at=current_timestamp where kind='work_summary' and id in ({placeholders}) and status='processing'
                 """,
                 input_ids,
             )
@@ -23005,10 +23018,10 @@ class AutoReplyStore(LogicalRunStoreMixin, ReviewedCandidateStoreMixin):
     def mark_work_summary_input_failed(self, input_id: int, error: str) -> None:
         with self._connect() as db:
             db.execute(
-                f"""
+                """
                 update tasks
-                set {task8_set_parts('work_summary_inputs', {}, update_sql={'status': "'failed'", 'error': '?', 'updated_at': 'current_timestamp'}, payload_source='tasks.payload_json').sql}  where record_type='work_summary_inputs' and cast(legacy_key as integer)=? and {task20_column('work_summary_inputs', 'status')} not in ('done', 'skipped')
-                  and {task20_column('work_summary_inputs', 'body_compacted')}=0
+                set status='failed',error=?,updated_at=current_timestamp where kind='work_summary' and id=? and status not in ('done','skipped')
+                  and exists(select 1 from work_summary_inputs where task_id=tasks.id and body_compacted=0)
                 """,
                 (error, input_id),
             )
@@ -23017,9 +23030,10 @@ class AutoReplyStore(LogicalRunStoreMixin, ReviewedCandidateStoreMixin):
         """Restore one reviewed failure after its root cause has been fixed."""
         with self._connect() as db:
             cursor = db.execute(
-                f"""
+                """
                 update tasks
-                set {task8_set_parts('work_summary_inputs', {}, update_sql={'status': "'pending'", 'attempts': '0', 'error': '?', 'available_at': "''", 'updated_at': 'current_timestamp'}, payload_source='tasks.payload_json').sql}  where record_type='work_summary_inputs' and cast(legacy_key as integer)=? and {task20_column('work_summary_inputs', 'status')}='failed' and {task20_column('work_summary_inputs', 'body_compacted')}=0
+                set status='pending',attempts=0,error=?,available_at='',updated_at=current_timestamp where kind='work_summary' and id=? and status='failed'
+                  and exists(select 1 from work_summary_inputs where task_id=tasks.id and body_compacted=0)
                 """,
                 (reason.strip(), input_id),
             )
@@ -23030,10 +23044,10 @@ class AutoReplyStore(LogicalRunStoreMixin, ReviewedCandidateStoreMixin):
     ) -> None:
         with self._connect() as db:
             cursor = db.execute(
-                f"""
+                """
                 update tasks
-                set {task8_set_parts('work_summary_inputs', {}, update_sql={'status': "'pending'", 'error': '?', 'available_at': '?', 'updated_at': 'current_timestamp'}, payload_source='tasks.payload_json').sql}  where record_type='work_summary_inputs' and cast(legacy_key as integer)=? and {task20_column('work_summary_inputs', 'status')} not in ('done', 'skipped')
-                  and {task20_column('work_summary_inputs', 'body_compacted')}=0
+                set status='pending',error=?,available_at=?,updated_at=current_timestamp where kind='work_summary' and id=? and status not in ('done','skipped')
+                  and exists(select 1 from work_summary_inputs where task_id=tasks.id and body_compacted=0)
                 """,
                 (error, available_at, input_id),
             )
@@ -23045,10 +23059,10 @@ class AutoReplyStore(LogicalRunStoreMixin, ReviewedCandidateStoreMixin):
     ) -> None:
         with self._connect() as db:
             cursor = db.execute(
-                f"""
+                """
                 update tasks
-                set {task8_set_parts('work_summary_inputs', {}, update_sql={'status': "'pending'", 'attempts': f"""max({task20_column('work_summary_inputs', 'attempts')} - 1, 0)""", 'error': '?', 'available_at': '?', 'updated_at': 'current_timestamp'}, payload_source='tasks.payload_json').sql}  where record_type='work_summary_inputs' and cast(legacy_key as integer)=? and {task20_column('work_summary_inputs', 'status')} in ('processing', 'failed')
-                  and {task20_column('work_summary_inputs', 'body_compacted')}=0
+                set status='pending',attempts=max(attempts-1,0),error=?,available_at=?,updated_at=current_timestamp where kind='work_summary' and id=? and status in ('processing','failed')
+                  and exists(select 1 from work_summary_inputs where task_id=tasks.id and body_compacted=0)
                 """,
                 (error, available_at, input_id),
             )
@@ -24510,34 +24524,31 @@ class AutoReplyStore(LogicalRunStoreMixin, ReviewedCandidateStoreMixin):
         """Close task runs whose parent input is no longer processing."""
         with self._agent_run_write_transaction(None) as (db, (_, now_text)):
             rows = db.execute(
-                f"""
-                select run.id
-                from ({TASK_LOGICAL_RUN_SQL}) as run
-                join ({WORK_SUMMARY_INPUT_SQL}) as input
-                  on input.id=run.summary_input_id
-                where run.status='running'
-                  and input.status<>'processing'
-                """
+                """select r.id from runs r join run_provenance p on p.run_id=r.id
+                join tasks input on input.id=r.task_id
+                join work_summary_inputs w on w.task_id=input.id
+                where p.source_type='task_agent_runs' and r.status='running'
+                  and input.kind='work_summary' and input.status<>'processing'"""
             ).fetchall()
             if not rows:
                 return 0
             run_ids = [int(row["id"]) for row in rows]
+            from app import run_entity_storage
+            for run_id in run_ids:
+                run_entity_storage.update_run_cas(
+                    db, run_id=run_id, expected={"status": "running"},
+                    changes={"status": "failed", "error": "orphaned_task_agent_run_parent_not_processing",
+                             "completed_at": now_text, "updated_at": now_text},
+                )
             placeholders = ",".join("?" for _ in run_ids)
-            recover_logical_runs(
-                db, "task_agent_runs", run_ids, status="failed",
-                error="orphaned_task_agent_run_parent_not_processing", now=now_text,
-            )
             db.execute(
                 f"""
-                update runs as agent_runtime_attempts
+                update runtime_attempts as agent_runtime_attempts
                 set status='failed', failure_class='process',
                     failure_code='runtime_parent_terminal_no_effect',
                     failover_permitted=1, lease_owner='', lease_expires_at='',
                     finished_at=?, updated_at=?
-                where agent_runtime_attempts.record_type='agent_runtime_attempts' and workload_kind='task'
-                  and cast(workload_key as integer) in ({placeholders})
-                  and (workload_key not like '%:%'
-                       or workload_key like '%:decision_repair.%')
+                where parent_id in ({placeholders}) and workload_kind='task'
                   and status in ('starting', 'running')
                   and first_effect_started_at=''
                 """,

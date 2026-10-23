@@ -30,6 +30,15 @@ trigger refresh 改为直接读写 `tasks`／`task_inputs` 原生 owner。claim 
 claimed 指针。范围仅是这些既有 Store API，Reply 其余生命周期、recover、terminal、
 dispatcher lease、构造器和 schema 选择仍待后续验收，当前不代表完整 Task runtime 已启用。
 
+Task2D1 将 WorkSummary 的输入队列与 Task Agent Run 改为原生实体：输入 ID 是 `tasks.id`，
+内容和来源摘要在 `work_summary_inputs.task_id`；Run producer 使用原生专业 Run API，投影仍在
+`run_projections`。pending 输入按现有 due 时间与 ID 顺序领取；attempts、失败/重试/容量延期、
+done/skipped 压缩与 no-effect attempt 收尾遵循既有状态和事务边界。压缩清空 body 但保留
+source-created time、hash、bytes、compact 标记、状态与错误。WorkSummary 专属 History 和修复
+读取使用原生 Task/Run。通用 dispatcher claim、constructor activation、Meeting/OKR 与其余 family
+reader、CLI/完整副本及发布验证仍未完成。`todo_evidence_candidate.work_summary_input_id` 的
+新写入是 canonical Task ID；历史整数转换仍待最终协调器。
+
 Task3E1 将 Consumer／Audit Run 的 Store 读取、领取、续租、session 更新、终态与未启动删除
 直接落在原生 `runs` 行；候选与审核从 adopted result／review 读取，CLI transcript 和最终结果
 仍按实际 `runtime_attempts.parent_id` 引用读取。终态完成与业务采用沿用同一 SQLite 事务，
@@ -81,8 +90,9 @@ adoption 入口只选这一分支；Run logical-parent 和四类 Actions Run 引
 Task／OKR 的字典 DTO 保留原公开 `.id`、`source_key` 和 `common_run_id`；
 MeetingAlignmentRun 的 `.id` 仍是原公开键，另有 `common_run_id`，没有 `source_key` 字段。
 
-三个专业来源共同使用 `create_logical_run`／`claim_logical_run`／
-`finish_logical_run`／`get_logical_run` 与同一恢复写入器。旧三套 begin／record／
+在 Task2D1 之前，三个专业来源共同使用 `create_logical_run`／`claim_logical_run`／
+`finish_logical_run`／`get_logical_run` 与同一恢复写入器；Task2D1 已将 WorkSummary
+Task Agent 改为原生专业 Run API，Meeting 与 OKR caller 仍待切换。旧三套 begin／record／
 finish／get writer、九个已无存储事实的结果参数及对应固定 SQL 输出退休；原生
 trajectory 的业务结果仍供详情和 UI 读取。Task 的唯一采用回执 `projection_json`
 及 Meeting Job 已采用的决定不删。专业 Run finish 不进入 Consumer／Audit 的
@@ -5036,6 +5046,6 @@ Task3C progress-selection parity stores `run_execution_progress.selection_id` as
 
 Task3C2B3 adds a bounded offline validator for genuine published-old DAO cold writes. The runner pins a predecessor source root, executes old public candidate/selection/execution reads and a supplement write in a child process after inverse commit and close, then JSON-roundtrips only converter metadata/handoffs and performs a fresh forward. Two cycles preserve the newly added native Audit Review/Run, new supplement and retirement, and a colliding current Action with its own provider receipt lineage. This is offline schema-conversion evidence only; constructors remain unactivated and no provider or production action runs.
 
-Task3E2 adds native professional Run create/claim/finish/get operations using native Run and Task IDs, deriving family from the native Task kind and keeping provenance and Task Agent projection in their typed owners. Task Agent transcript fields remain NULL; Meeting lifecycle/session/transcript/error fields remain source-present; OKR lifecycle/error/completion/update fields remain absent. Native child RuntimeAttempts are selected through actual Task/Meeting Run parents. Historical standalone OKR reads use exact session/range and create no parent relationship. Task Agent, Meeting and OKR producer DTOs still expose source IDs, so their caller conversion remains pending; no source ID is passed to the native API. Several History/recovery SQL readers remain on the frozen source projection, and Meeting detail still needs native Task hydration. Store constructor activation, RuntimeAttempt writers/router conversion, CLI behavior, and release verification remain open; this candidate is not live.
+Task3E2 adds native professional Run create/claim/finish/get operations using native Run and Task IDs, deriving family from the native Task kind and keeping provenance and Task Agent projection in their typed owners. Task Agent transcript fields remain NULL; Meeting lifecycle/session/transcript/error fields remain source-present; OKR lifecycle/error/completion/update fields remain absent. Native child RuntimeAttempts are selected through actual Task/Meeting Run parents. Historical standalone OKR reads use exact session/range and create no parent relationship. Task2D1 subsequently moves the WorkSummary producer, its History/recovery readers, and WorkSummary-specific project repair reads to native Task/Run IDs. Meeting/OKR producer DTOs and History readers, Meeting detail hydration, generic dispatcher/runtime writer activation, CLI behavior, and release verification remain open; this candidate is not live.
 
 Task3D1 extends the unactivated `runtime_attempts.parent_id` contract to permit an optional Run FK for any non-`agent_run` workload. The actual forward conversion assigns this owner only when the source workload key resolves through the typed Task Agent or Meeting Run map: plain/`decision_repair.N` Task keys and Meeting keys. Task backfill business keys and other operation keys remain unowned. The inverse verifies that each native Task/Meeting key still has its exact derivable Run owner and refuses mismatched, missing, or otherwise unrepresentable non-Agent parent facts before changing the schema; it then restores source non-Agent `parent_id` as NULL and returns the exact source public identity in `workload_key`. Two portable inverse/reforward cycles preserve the relationship after Run ID remapping. Operation-attempt leases and the active-lease index follow `workload_kind<>'agent_run'`, independently of parent ownership; tuple/ordinal and active-route keys remain unchanged. The target DDL intentionally does not impose extra workload/Run-provenance policy on non-Agent parent links. The structured OKR producer remains outside this slice: it creates its professional Run after the validated CLI result, so a future producer change must carry that exact returned `attempt_id` and include the native-only parent relationship in portable inverse metadata. No constructor, runtime caller, producer order, or migration is activated here.

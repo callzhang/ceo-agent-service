@@ -1,8 +1,6 @@
 """Read-only repair planning for historical task project metadata."""
 
 from __future__ import annotations
-from app.task20_definitions import task20_projection
-from app.logical_run_storage import logical_run_projection
 
 from app.business_legacy_fields import CURRENT_BUSINESS_PROJECTIONS as BUSINESS_PROJECTIONS
 from app.business_legacy_fields import CURRENT_SYNC_PROJECTIONS as SYNC_ACTION_PROJECTIONS
@@ -17,8 +15,11 @@ from typing import Any
 
 from app.work_summary_payload import decode_work_summary_payload
 
-TASK_LOGICAL_RUN_SQL = logical_run_projection("task_agent_runs")
-WORK_SUMMARY_INPUT_SQL = task20_projection('work_summary_inputs')
+WORK_SUMMARY_INPUT_SQL = """select t.id, w.source_type, w.source_ref, w.payload_json,
+    w.source_created_at, w.body_sha256, w.body_bytes, w.body_compacted,
+    t.status, t.attempts, t.error, t.available_at, t.created_at, t.updated_at
+    from tasks t join work_summary_inputs w on w.task_id=t.id
+    where t.kind='work_summary'"""
 
 
 def _project_sql(db: sqlite3.Connection) -> str:
@@ -172,14 +173,14 @@ def write_manifest(manifest: RepairManifest, path: str | Path) -> None:
 
 
 def _latest_agent_refs(db: sqlite3.Connection) -> list[tuple[int, str, object]]:
-    from app.native_standalone import latest_task_ref
+    from app.native_standalone import native_run_ref
 
     rows = db.execute(
-        f"select id, created_at from ({TASK_LOGICAL_RUN_SQL}) "
-        "where status='completed' order by id desc"
+        "select r.id, r.created_at from runs r join run_provenance p on p.run_id=r.id "
+        "where p.source_type='task_agent_runs' and r.status='completed' order by r.id desc"
     ).fetchall()
     return [
-        (int(row["id"]), str(row["created_at"] or ""), latest_task_ref(db, int(row["id"])))
+        (int(row["id"]), str(row["created_at"] or ""), native_run_ref(db, int(row["id"]), "task_agent_runs"))
         for row in rows
     ]
 
