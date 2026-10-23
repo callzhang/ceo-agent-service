@@ -3,7 +3,7 @@
 Date: 2026-10-23
 Base: `596ff1b69b2d9ddd22452fc84e3476603af96945`
 Branch: `codex/task-run-entity-phase2-20261022`
-Implementation commit: recorded in the handoff after commit.
+Implementation commit: `ae0d7edf3c36ca76ebf348d2f112fac3d1b9dac9`.
 
 ## Scope delivered
 
@@ -41,4 +41,4 @@ This is not complete Reply runtime cutover. Remaining units include `requeue_rep
 
 ## Changeset
 
-Implementation commit and follow-up claim/report commit are recorded in the task handoff after they are created.
+Implementation commit: `ae0d7edf3c36ca76ebf348d2f112fac3d1b9dac9`. Claim released in the following documentation commit.
