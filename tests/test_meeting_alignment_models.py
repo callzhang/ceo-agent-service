@@ -8,11 +8,15 @@ from pydantic import ValidationError
 import app.meeting_alignment_models as models
 from app.meeting_alignment_agent import parse_meeting_alignment_decision
 from app.meeting_alignment_models import (
+    MeetingAlignmentAuditResult,
     MeetingAlignmentDecision,
     MeetingAlignmentJob,
     MeetingAlignmentRun,
     MeetingSource,
     load_persisted_meeting_alignment_decision,
+    meeting_alignment_decision_digest,
+    meeting_decision_audit_is_approved,
+    persist_audited_meeting_decision,
     render_meeting_alignment_cross_field_rules,
 )
 
@@ -1068,3 +1072,32 @@ def test_no_description_claims_the_two_direct_targets_contradict_each_other():
 
     for description in descriptions:
         assert "相反" not in description, description
+
+
+def test_meeting_audit_persistence_is_bound_to_the_exact_candidate():
+    decision = MeetingAlignmentDecision.model_validate(valid_send_decision())
+    digest = meeting_alignment_decision_digest(decision)
+    audit = MeetingAlignmentAuditResult(
+        outcome="approve", candidate_sha256=digest, summary="approved"
+    )
+    raw = persist_audited_meeting_decision(
+        decision,
+        audit,
+        audit_session_id="meeting-audit-session",
+        audit_transcript_start_line=2,
+        audit_transcript_end_line=8,
+    )
+
+    loaded, canonical = load_persisted_meeting_alignment_decision(raw)
+    metadata = json.loads(canonical)["_service_audit"]
+    assert loaded == decision
+    assert metadata["session_id"] == "meeting-audit-session"
+    assert metadata["transcript_start_line"] == 2
+    assert meeting_decision_audit_is_approved(canonical)
+
+    changed = json.loads(canonical)
+    changed["final_message"] = "modified after audit"
+    assert not meeting_decision_audit_is_approved(json.dumps(changed))
+
+    legacy = decision.model_dump_json()
+    assert not meeting_decision_audit_is_approved(legacy)
