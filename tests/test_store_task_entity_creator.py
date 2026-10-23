@@ -75,6 +75,27 @@ def _creator_kwargs(spec):
     return values
 
 
+def _source_feedback_upsert_projection(
+    db, key, *, current_status=None, current_resolved_at=None,
+):
+    # Frozen from the source Task12 upsert SQL at d930a2493. Keep this inline
+    # oracle self-contained so regressions do not depend on Git history.
+    source_value = f"(select resolved_at from ({FEEDBACK_EVENT_SQL}) where key=?)"
+    if current_status is None:
+        row = db.execute(
+            f"select case when trim({source_value})<>'' then 'resolved' else 'pending' end, "
+            f"coalesce({source_value}, '')",
+            (key, key),
+        ).fetchone()
+    else:
+        row = db.execute(
+            f"select case when trim({source_value})<>'' then 'resolved' else ? end, "
+            f"case when trim({source_value})<>'' then {source_value} else ? end",
+            (key, current_status, key, key, current_resolved_at),
+        ).fetchone()
+    return tuple(row)
+
+
 def test_reply_creator_uses_native_owners_and_returns_same_task_for_message_dedupe(tmp_path):
     store = _target_store(tmp_path / "target.sqlite3")
 
@@ -252,6 +273,7 @@ def test_feedback_event_repeat_projects_resolved_source_and_preserves_blank_sour
         (sqlite3.Binary(b""), "blob", b""),
         ("2026-10-23 10:00:00", "text", "2026-10-23 10:00:00"),
         ("", "text", ""),
+        ("   ", "text", "   "),
         ("\t", "text", "\t"),
     ],
 )
@@ -285,10 +307,14 @@ def test_feedback_event_intake_preserves_source_resolved_value_and_sqlite_classi
             f"select typeof(resolved_at),resolved_at from ({FEEDBACK_EVENT_SQL}) where key=?",
             (key,),
         ).fetchone()
-        should_resolve = db.execute(
-            "select trim(?) <> ''", (source_value,),
-        ).fetchone()[0]
         assert tuple(source) == (source_type, source_value)
+        if existing:
+            source_expected = _source_feedback_upsert_projection(
+                db, key, current_status="processing",
+                current_resolved_at="native-resolution",
+            )
+        else:
+            source_expected = _source_feedback_upsert_projection(db, key)
 
     store.upsert_feedback_event(key=key, feedback_token="token-raw", comment="updated")
     with store._connect() as db:
@@ -298,15 +324,12 @@ def test_feedback_event_intake_preserves_source_resolved_value_and_sqlite_classi
             "where item.feedback_key=?",
             (key,),
         ).fetchone()
-        if existing and not should_resolve:
-            expected = ("processing", "text", "native-resolution")
-        else:
-            expected_status = "resolved" if should_resolve else "pending"
-            expected = (
-                expected_status,
-                source_type if should_resolve else "text",
-                source_value if should_resolve else "",
-            )
+        expected_status, expected_resolved_at = source_expected
+        expected = (
+            expected_status,
+            "blob" if isinstance(expected_resolved_at, bytes) else "text",
+            expected_resolved_at,
+        )
         assert tuple(projected) == expected
         source_after = db.execute(
             f"select typeof(resolved_at),resolved_at from ({FEEDBACK_EVENT_SQL}) where key=?",

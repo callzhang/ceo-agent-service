@@ -2188,7 +2188,7 @@ Feedback API 是现有本地后端边界内的操作接口，供 Workbench 和�
 
 Task2D8C 将反馈 intake、列表和待处理数读切换到当前开发候选的实际 native Store。
 首次 event upsert 在同一事务中创建唯一 `feedback_processing` Task 和对应 detail，
-并依据源 event 当前 `resolved_at` 初始化 Task 状态；重复 upsert 按既有冲突规则更新源 event 并更新 Task.updated_at。`resolved_at` 按原 SQLite 值和存储类型复制，空值分类沿用 SQLite `trim(resolved_at) <> ''`。若更新后的 source `resolved_at` 按该表达式非空，则现有 Task 状态变为
+并依据源 event 当前 `resolved_at` 初始化 Task 状态；重复 upsert 按既有冲突规则更新源 event 并更新 Task.updated_at。新 detail 的 `resolved_at` 使用源 SQL 的 `coalesce(resolved_at, '')`，按原 SQLite 值和存储类型复制；因此空 BLOB 与空格等空白 TEXT 仍保留其原值。Task 状态空值分类沿用 SQLite `trim(resolved_at) <> ''`：新建时空值对应 `pending`，非空值对应 `resolved`。若更新后的 source `resolved_at` 按该表达式非空，则现有 Task 状态变为
 `resolved`，Feedback detail 的 `resolved_at` 更新为该源值；若为空，则保留当前
 Task 状态和 detail resolution timestamp。重复 intake 不改关联、证据或历史轮次。Task 持有处理状态与
 生命周期时间，Feedback detail 持有关联、证据和当前 round。列表与 by-key 读仍按

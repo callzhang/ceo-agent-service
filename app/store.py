@@ -17081,7 +17081,8 @@ class AutoReplyStore(LogicalRunStoreMixin, ReviewedCandidateStoreMixin):
                 ).fetchone()
                 status = "resolved" if event and event["is_resolved"] else "pending"
                 resolved_at = (
-                    event["resolved_at"] if event and event["is_resolved"] else ""
+                    event["resolved_at"]
+                    if event and event["resolved_at"] is not None else ""
                 )
                 task_timestamp = str(db.execute("select current_timestamp").fetchone()[0])
                 task = task_entity_storage.create_task(
