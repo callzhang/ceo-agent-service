@@ -679,5 +679,93 @@
     "mutations_or_replays_performed": false,
     "business_report_acceptance_changed": false,
     "triage_status": "The source counters and error classes are now identified; these system-health issues are unresolved and are not evidence of natural scheduled report acceptance."
+  },
+  "manual_authorized_run_394981": {
+    "observed_at": "2026-10-23T07:21:35Z",
+    "trigger_kind": "manual",
+    "scheduled_task_id": 6,
+    "scheduled_run_id": 394981,
+    "reply_task_id": 417039,
+    "snapshot": {
+      "task_version": 27,
+      "timezone": "America/Los_Angeles",
+      "cron": "0 0 3 * * 0",
+      "managed_skill": "ceo-weekly-okr-report",
+      "managed_skill_id": 22,
+      "managed_revision_id": 235,
+      "managed_revision_number": 20,
+      "runtime": "codex_oauth"
+    },
+    "consumer_attempt_ids": [
+      394985,
+      395004,
+      395019,
+      395079
+    ],
+    "consumer_attempt_statuses": [
+      "failed",
+      "failed",
+      "failed",
+      "failed"
+    ],
+    "trajectory_facts": {
+      "attempts_394985_395004": "Real Dingteam headless-session expiration; stopped after the first member read.",
+      "attempt_395019": "After interactive login recovery, read the 18-member roster, 15 current Q4 OKR sources and 3 goals_missing outcomes; prepare succeeded; no member analyses were saved.",
+      "attempt_395079": "Continued the same scheduled run, repeated roster read, then stopped with analysis_incomplete after an independent DingTalk document search returned no match.",
+      "root_cause": "Actual Consumer behavior: an empty independent-document search stopped analysis even though the Skill says missing supplemental material is a disclosed gap and must not block analysis.",
+      "terminal": "reply task failed with agent_reported_failure; scheduled run remained dispatched and linked to the failed reply task.",
+      "audit_runs": 0,
+      "document_writes": 0,
+      "notification_receipts": 0,
+      "provider_delivery_queries": 0,
+      "external_effects": false
+    },
+    "replayed": false
+  },
+  "candidate_empty_independent_search_acceptance": {
+    "observed_at": "2026-10-23T07:17:23Z",
+    "result_file": "okr-empty-search-acceptance.v3.json",
+    "case_id": "empty-independent-search-continues-analysis",
+    "candidate_base_commit": "881ea46fe687a27076d20f26239e252d034f748b",
+    "candidate_skill_sha256": "49ba4b0bdafdd2ba54989f6bd1ad6b799417464f2dad2cbeefb721eb85a32f8e",
+    "selected_cases": [
+      "empty-independent-search-continues-analysis"
+    ],
+    "status": "passed",
+    "case_passed": true,
+    "final_checks_passed": 32,
+    "final_audit_verdict": "approve",
+    "audit_correction_rounds": 0,
+    "empty_searches_verified": 2,
+    "scored_members": 2,
+    "provider_mode": "synthetic fixture only",
+    "mock_document_writes_with_complete_readback": 5,
+    "external_effects": false,
+    "live_production_acceptance": false,
+    "diagnostic_native_runs": [
+      {
+        "attempt": "first candidate run",
+        "case_passed": false,
+        "root_cause": "Audit applied the KR base_score band limitation to leadership/culture dimension scores and required the stale proposal summary to match the new canonical summary."
+      },
+      {
+        "attempt": "second candidate run",
+        "case_passed": true,
+        "root_cause": "Selected case and final Audit passed, but evaluator exit status incorrectly compared the one selected case with all five manifest cases."
+      },
+      {
+        "attempt": "final candidate run",
+        "case_passed": true,
+        "root_cause": "Scope clarification and refreshed canonical proposal resolved the review findings; evaluator now grades selected cases against the selected case set."
+      }
+    ]
+  },
+  "candidate_targeted_tests": {
+    "observed_at": "2026-10-23T07:17:23Z",
+    "pytest_file": "tests/test_scheduled_okr_agent_eval.py",
+    "pytest_passed": 52,
+    "ruff": "passed",
+    "git_diff_check": "passed",
+    "consumer_system_release_tests": "32 passed"
   }
 }

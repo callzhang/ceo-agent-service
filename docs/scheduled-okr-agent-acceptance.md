@@ -2,6 +2,36 @@
 
 ## 状态与证据边界
 
+### 2026-10-23 手动 task6 run 394981：分析阶段实际失败，修复候选原生验收通过
+
+run394981 由 task6 正式入口创建，reply task417039；不可变快照绑定 task6 v27、managed
+`ceo-weekly-okr-report` revision235。完整 Consumer 轨迹有四次失败尝试：394985、395004、
+395019、395079。前两次遇到真实的 Dingteam 登录过期；登录恢复后，attempt395019 读取完整
+18人名单、15份有效 Q4 OKR 和3项 `goals_missing`，`prepare` 成功。之后模型因一位成员的独立
+文档检索无匹配结果而退出，没有完成任何成员评分。attempt395079 复用了同一 scheduled run，
+但又重读了名单，并在一次无匹配文档搜索后再次以 `analysis_incomplete` 退出。reply task 最终
+`failed/agent_reported_failure`；没有 Audit、报告写入、通知提案、持久回执或外部副作用。
+
+这是实际 Agent 行为问题，不是评测误判：工具确实返回空搜索结果，但 Skill 已要求缺少补充材料
+时继续，因此模型应保留该证据缺口并继续分析。已在候选 Skill 明确“空检索不阻止后续成员分析”，
+保留每位有效成员的完整分析、现有证据范围与评分规则；同时澄清 KR `base_score` 的离散档位
+不适用于行为维度，行为维度仍按原有70–79岗位达标规则。修订后的摘要必须从最新 `summary.md`
+读回并逐字更新待审提案。
+
+固定空检索案例 `empty-independent-search-continues-analysis` 在原生 Consumer/Audit 流程中
+通过：1/1 case、32项最终检查、Audit approve、无修订回合；工具全为合成 provider，不能算真实
+发布。原有 v76 4/4 仍是先前基线，分开记录。新增案例还暴露单案例筛选退出状态的评测器错误；
+状态回归修复后，单案例运行状态也为 passed。定向 pytest 52 passed，改动文件 Ruff 和
+`git diff --check` 通过。
+
+该候选尚未部署，也没有再次创建 task6 运行。生产只读复核为 commit `881ea46fe`、PID5478、
+healthz HTTP 200；task6 仍为 v27 / revision235，下次自然触发 **2026-10-25 10:00 UTC**。
+394981 不重放。下一步完成发布清单定向检查、代码评审及正式发布；部署后仅新建一条授权的
+task6 手动验证，严格核验完整 Consumer/Audit、全部报告文档真实读回和通知真实回执。
+
+无正文生产证据：[run394981 与候选验收读回](../evals/scheduled_task_generic/okr-production-readback.json)。
+原生案例记录：[empty-search acceptance v3](../evals/scheduled_task_generic/okr-empty-search-acceptance.v3.json)。
+
 ### 2026-10-23 授权手动 OKR run 394267：登录恢复后仍未完成分析
 
 run394267 使用不可变 task6 v23 / managed `ceo-weekly-okr-report` revision223，执行任务
