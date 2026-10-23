@@ -39,3 +39,23 @@ The full service suite, real native CLI/providers, schema constructor activation
 Changed: `app/task_entity_migration.py`, `app/task_entity_schema.py`, `app/run_adoption_schema.py`, `app/run_adoption_inverse.py`, the three focused converter test files, `docs/architecture.md`, `docs/runtime-mechanism.md`, this report, and the Task 2D8R claim row in `docs/agent-claims.md`.
 
 The unrelated pre-existing dirty reports `task-2d0-reply-claim-input-report.md` and `task-3c2a-adoption-forward-report.md` were preserved. The code implementation commit and final worktree HEAD are supplied in the parent handoff; the report-file commit is not embedded as a self-reference.
+
+## FIX1 — composed current-graph portable-cycle coverage (round 1/5)
+
+Review base: `eb3cbd5c1b784ab4ddf6e01512ad1d2a9bae4a45`.
+
+The composed regression now completes two Task→Run→adoption forwards and both inverses. After the first composed forward, it creates a native current Feedback graph directly in the migrated target: feedback-processing Task canonical ID `500001`, round `15001`, decision `15002`, Workbench task `16002`, Workbench turn Task `500002`, decision-item member row `15003`, and transition row `15004`. The current item and round retain independent opaque `attempt_id=44` and `agent_run_id=13003`; these remain unchanged in both cycles. The in-memory fixture cannot use the path-backed `WorkbenchStore` API, so it writes its native Task/Workbench relation rows directly and uses the existing `insert_feedback_action` API for both Action records. The Workbench values use the ordinary `codex` runtime kind and a canonical UUID client request ID.
+
+The first inverse demonstrates the identity layers separately. The source-shaped Feedback item has public ID `229` and its row projection reports `rowid=229`; its canonical Task ID returns to `500001` after reforward. The Workbench task owner has source physical ID `416923` and canonical ID `16002`, recorded in inverse identity handoff; the Workbench turn is a diagonal physical/canonical ID `500002`, so no sparse owner edge is needed. Its inverse-generated source public UUIDs are read from the passive transition payload, then asserted consistently on the item, round, decision and transition. On reforward those UUID references resolve to the same native Workbench owners (`16002`/`500002`), and the current Feedback Task/round/decision IDs return exactly to `500001`/`15001`/`15002`. Decision-item membership remains `(15003, 15002, "feedback-native-new", 15001)`.
+
+The implementation fix adds the exact inverse-generated Workbench public IDs to the local reverse owner index used by Feedback Workbench-reference restoration. The existing unresolved-source marker remains authoritative, non-TEXT values continue through unchanged, and the existing decision-item scalar mapping is untouched. The regression checks the new current graph immediately after target writes, after each inverse, and after reforward, including the pre-existing mapped, unresolved numeric-looking, unresolved text, empty, and source membership facts.
+
+Verification on the fix:
+
+- First composed test run: failed on the new current graph, confirming that item refs remained native numeric strings when transition inverse had already restored the generated source UUIDs.
+- `pytest -q tests/test_run_adoption_inverse_rows.py::test_adopted_feedback_transition_workbench_refs_roundtrip_with_typed_task_handoff tests/test_task_entity_schema.py::test_feedback_workbench_and_current_round_refs_follow_typed_handoff_two_cycles --disable-warnings --maxfail=1` — 2 passed.
+- `ruff check app/task_entity_schema.py tests/test_run_adoption_inverse_rows.py` — passed.
+- `python -m compileall -q app/task_entity_schema.py tests/test_run_adoption_inverse_rows.py` — passed.
+- `git diff --check` — passed.
+
+This fix does not activate constructors or runtime Feedback writers, invoke providers or a real CLI, run the full suite, or touch production/main/push/deploy state. The earlier known email selection failure and remaining whole-branch independent review are unchanged gates.

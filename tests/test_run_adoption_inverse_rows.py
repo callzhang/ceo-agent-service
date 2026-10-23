@@ -54,6 +54,7 @@ def test_adopted_feedback_transition_workbench_refs_roundtrip_with_typed_task_ha
     from app.task_entity_schema import (
         capture_task_entities, migrate_task_entities, restore_task_entities,
     )
+    from app.task12_storage import task12_projection
     from tests.test_run_adoption_schema import _populated_source
 
     db, context = _populated_source(feedback=True, feedback_transition=True,
@@ -61,71 +62,214 @@ def test_adopted_feedback_transition_workbench_refs_roundtrip_with_typed_task_ha
                                     remap_feedback_rounds=True,
                                     stop_before_adoption=True)
     try:
-        forward = migrate_run_adoptions(
-            db, context["adoption_source"], task_metadata=context["task_metadata"],
-            run_metadata=context["run_metadata"])
-        native = tuple(db.execute(
-            "select legacy_key,json_extract(payload_json,'$[1]'),"
-            "json_extract(payload_json,'$[6]'),"
-            "json_type(payload_json,'$[6]'),json_extract(payload_json,'$[7]') "
-            "from actions where record_type='feedback_processing_transitions' order by cast(legacy_key as integer)"))
-        assert native == (("8", 1229, "1202", "text", "1203"),
-                          ("9", 1229, "1202", "text", "unknown-turn"),
-                          ("10", 1229, "", "text", ""))
-        assert forward["feedback_reference_exceptions"] == [{
-            "action_id": db.execute("select id from actions where legacy_key='9'").fetchone()[0],
-            "field": "workbench_task_id", "value": "1202",
-        }, {
-            "action_id": db.execute("select id from actions where legacy_key='9'").fetchone()[0],
-            "field": "workbench_turn_id", "value": "unknown-turn",
-        }]
         from app.action_feedback_storage import insert_feedback_action
+
+        def forward(task_source, run_source, adoption_source, task_handoff=None,
+                    run_handoff=None):
+            task_forward = migrate_task_entities(db, task_source,
+                source_context=task_handoff.get("source_context") if task_handoff else None,
+                inverse_identity=(json.loads(json.dumps(task_handoff["inverse_identity"]))
+                                  if task_handoff else None))
+            run_forward = migrate_run_entities(db, run_source, task_metadata=task_forward,
+                run_handoff=(json.loads(json.dumps(run_handoff["run_handoff"]))
+                             if run_handoff else None))
+            adoption_forward = migrate_run_adoptions(db, adoption_source,
+                task_metadata=task_forward, run_metadata=run_forward)
+            return task_forward, run_forward, adoption_forward
+
+        def inverse(task_source, run_source, adoption_source, task_forward,
+                    run_forward, adoption_forward):
+            task_inverse = restore_task_entities(db, task_source, task_forward)
+            run_inverse = restore_run_entities(db, run_source, run_forward,
+                task_metadata=task_forward, task_inverse_metadata=task_inverse)
+            restore_run_adoptions(db, adoption_source, adoption_forward,
+                task_metadata=task_forward, task_inverse_metadata=task_inverse,
+                run_inverse_metadata=run_inverse)
+            return task_inverse, run_inverse
+
+        def transition_rows():
+            return tuple(db.execute(
+                "select legacy_key,json_extract(payload_json,'$[1]'),"
+                "json_extract(payload_json,'$[6]'),json_type(payload_json,'$[6]'),"
+                "json_extract(payload_json,'$[7]') from actions "
+                "where record_type='feedback_processing_transitions' "
+                "order by cast(legacy_key as integer)"))
+
+        def decision_member_rows():
+            return tuple(db.execute(
+                "select legacy_key,fb_decision_id,fb_feedback_key,fb_round_id "
+                "from actions where record_type='feedback_iteration_decision_items' "
+                "order by cast(legacy_key as integer)"))
+
+        task_source = context["task_source_metadata"]
+        run_source = context["run_source_metadata"]
+        adoption_source = context["adoption_source"]
+        task_forward = context["task_metadata"]
+        run_forward = context["run_metadata"]
+        adoption_forward = migrate_run_adoptions(db, adoption_source,
+            task_metadata=task_forward, run_metadata=run_forward)
+        assert transition_rows() == (
+            ("8", 1229, "1202", "text", "1203"),
+            ("9", 1229, "1202", "text", "unknown-turn"),
+            ("10", 1229, "", "text", ""))
+        assert decision_member_rows() == (
+            ("5", 416922, "feedback-a", 1229),
+            ("6", 227, "feedback-a", 1229))
+
+        # These explicit writes exercise current native target owners created
+        # after the initial Task→Run→adoption migration. Feedback runtime writers
+        # have not been converted yet, so use the real target tables and existing
+        # native Task/Action storage contracts directly.
+        db.execute("insert into workbench_tasks(id,title,runtime_kind) values(?,?,?)",
+                   (16002, "Native feedback task", "codex"))
+        task_columns = ("id,kind,status,available_at,attempts,error,locked_at,lease_owner,"
+                        "lease_expires_at,owner_pid,generation,adapter_name,execution_generation,"
+                        "current_input_id,claimed_input_id,input_version,claimed_input_version,"
+                        "parameters_json,created_at,updated_at")
+        db.execute(f"insert into tasks({task_columns}) values(?, 'workbench_turn', 'completed', "
+                   "NULL, NULL, NULL, NULL, '', '', NULL, NULL, NULL, NULL, NULL, NULL, NULL, "
+                   "NULL, jsonb('{}'), 'native', 'native')", (500002,))
+        db.execute("insert into workbench_turns(task_id,workbench_task_id,client_request_id,"
+                   "task_sequence,user_text,stop_requested,error_code,error_detail,resume_context,"
+                   "execution_run_id,runtime_quiesced_run_id,started_at,completed_at) "
+                   "values(?, ?, ?, 1, ?, 0, '', '', '', '', '', '', '')",
+                   (500002, 16002, "00000000-0000-4000-8000-000000000001", "native feedback turn"))
+        db.execute(f"insert into tasks({task_columns}) values(?, 'feedback_processing', 'processing', "
+                   "NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL, "
+                   "NULL, jsonb('{}'), 'native', 'native')", (500001,))
+        db.execute("insert into feedback_processing_items(task_id,feedback_key,batch_id,"
+                   "workbench_task_id,workbench_turn_id,attempt_id,agent_run_id,commit_sha,"
+                   "test_evidence_json,restart_evidence_json,health_evidence_json,note,resolved_at,"
+                   "current_round_id) values(?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
+                   (500001, "feedback-native-new", "batch-a", "16002", "500002", 44,
+                    13003, "", "{}", "{}", "{}", "native current item", "", 15001))
+        db.execute("insert into feedback_processing_rounds(id,feedback_key,round_number,batch_id,"
+                   "status,workbench_task_id,workbench_turn_id,attempt_id,agent_run_id) "
+                   "values(?, ?, 1, 'batch-a', 'processing', ?, ?, 44, 13003)",
+                   (15001, "feedback-native-new", "16002", "500002"))
+        db.execute("insert into feedback_iteration_decisions(id,batch_id,workbench_task_id,"
+                   "workbench_turn_id,decision_json) values(?, 'batch-a', ?, ?, '{}')",
+                   (15002, "16002", "500002"))
+        insert_feedback_action(db, "feedback_iteration_decision_items", {
+            "decision_id": 15002, "feedback_key": "feedback-native-new", "round_id": 15001,
+        }, source_rowid=15003)
         insert_feedback_action(db, "feedback_processing_transitions", {
-            "feedback_key": "feedback-a", "round_id": 1229, "batch_id": "batch-a",
-            "from_status": "pending", "to_status": "processing", "reason": "native-write",
-            "workbench_task_id": "1202", "workbench_turn_id": "1203",
-            "created_at": "native-transition-clock",
-        }, source_rowid=99)
-
-        task_inverse = restore_task_entities(
-            db, context["task_source_metadata"], context["task_metadata"])
-        run_inverse = restore_run_entities(
-            db, context["run_source_metadata"], context["run_metadata"],
-            task_metadata=context["task_metadata"], task_inverse_metadata=task_inverse)
-        restore_run_adoptions(
-            db, context["adoption_source"], forward,
-            task_metadata=context["task_metadata"], task_inverse_metadata=task_inverse,
-            run_inverse_metadata=run_inverse)
-        source = tuple(db.execute(
+            "feedback_key": "feedback-native-new", "round_id": 15001, "batch_id": "batch-a",
+            "from_status": "pending", "to_status": "processing", "reason": "native current graph",
+            "workbench_task_id": "16002", "workbench_turn_id": "500002",
+            "created_at": "native current graph",
+        }, source_rowid=15004)
+        assert tuple(db.execute(
+            "select task_id,feedback_key,workbench_task_id,workbench_turn_id,attempt_id,"
+            "agent_run_id,current_round_id from feedback_processing_items "
+            "where feedback_key='feedback-native-new'")) == (
+            (500001, "feedback-native-new", "16002", "500002", 44, 13003, 15001),)
+        assert tuple(db.execute(
+            "select id,workbench_task_id,workbench_turn_id from feedback_processing_rounds "
+            "where feedback_key='feedback-native-new'")) == ((15001, "16002", "500002"),)
+        assert tuple(db.execute(
+            "select id,workbench_task_id,workbench_turn_id from feedback_iteration_decisions "
+            "where id=15002")) == ((15002, "16002", "500002"),)
+        assert decision_member_rows()[-1] == ("15003", 15002, "feedback-native-new", 15001)
+        assert transition_rows()[-1] == (
+            "15004", 15001, "16002", "text", "500002")
+        task_inverse, run_inverse = inverse(task_source, run_source, adoption_source,
+            task_forward, run_forward, adoption_forward)
+        inverse_owner_edges = {
+            (edge["source_kind"], edge["source_physical_id"]): edge["canonical_id"]
+            for edge in task_inverse["inverse_identity"]["owners"]
+        }
+        assert inverse_owner_edges[("workbench_tasks", 416923)] == 16002
+        assert ("workbench_turns", 500002) not in inverse_owner_edges  # diagonal identity
+        first_inverse_item = tuple(db.execute(
+            "select rowid,feedback_key,workbench_task_id,workbench_turn_id,attempt_id,"
+            "agent_run_id,current_round_id from (" +
+            task12_projection("feedback_processing_items", include_rowid=True) + ") "
+            "where feedback_key='feedback-native-new'"))
+        assert first_inverse_item[0][0:2] == (229, "feedback-native-new")
+        first_inverse_transition = tuple(db.execute(
+            "select json_extract(payload_json,'$[6]'),json_extract(payload_json,'$[7]') "
+            "from actions where legacy_key='15004' and record_type='feedback_processing_transitions'"))[0]
+        assert first_inverse_item[0] == (
+            229, "feedback-native-new", *first_inverse_transition, 44, 13003, 15001)
+        assert tuple(db.execute(
             "select legacy_key,json_extract(payload_json,'$[1]'),"
-            "json_extract(payload_json,'$[6]'),"
-            "json_extract(payload_json,'$[7]') from actions "
-            "where record_type='feedback_processing_transitions' order by cast(legacy_key as integer)"))
-        assert source == (("8", 229, "wb-task-a", "wb-turn-a"),
-                          ("9", 229, "1202", "unknown-turn"),
-                          ("10", 229, "", ""),
-                          ("99", 229, "wb-task-a", "wb-turn-a"))
+            "json_extract(payload_json,'$[6]'),json_extract(payload_json,'$[7]') "
+            "from actions where record_type='feedback_processing_transitions' "
+            "order by cast(legacy_key as integer)")) == (
+            ("8", 229, "wb-task-a", "wb-turn-a"),
+            ("9", 229, "1202", "unknown-turn"),
+            ("10", 229, "", ""),
+            ("15004", 15001, *first_inverse_transition))
+        assert decision_member_rows() == (
+            ("5", 7, "feedback-a", 229),
+            ("6", 227, "feedback-a", 229),
+            ("15003", 15002, "feedback-native-new", 15001))
 
+        assert decision_member_rows()[-1] == ("15003", 15002, "feedback-native-new", 15001)
+        assert transition_rows()[-1] == (
+            "15004", 15001, first_inverse_transition[0], "text", first_inverse_transition[1])
+        assert tuple(db.execute(
+            "select rowid,workbench_task_id,workbench_turn_id from (" +
+            task12_projection("feedback_processing_rounds", include_rowid=True) + ") "
+            "where feedback_key='feedback-native-new'")) == (
+            (15001, first_inverse_transition[0], first_inverse_transition[1]),)
+        assert tuple(db.execute(
+            "select rowid,workbench_task_id,workbench_turn_id from (" +
+            task12_projection("feedback_iteration_decisions", include_rowid=True) + ") "
+            "where rowid=15002")) == (
+            (15002, first_inverse_transition[0], first_inverse_transition[1]),)
+
+        # Cycle two repeats the full portable converter chain and inverse.
         task_source = capture_task_entities(db)
         run_source = capture_run_entities(db)
         adoption_source = capture_run_adoptions(db)
-        task_forward = migrate_task_entities(db, task_source,
-            source_context=task_inverse["source_context"],
-            inverse_identity=json.loads(json.dumps(task_inverse["inverse_identity"])))
-        run_forward = migrate_run_entities(db, run_source, task_metadata=task_forward,
-            run_handoff=json.loads(json.dumps(run_inverse["run_handoff"])))
-        adoption_forward = migrate_run_adoptions(db, adoption_source,
-            task_metadata=task_forward, run_metadata=run_forward)
-        reforwards = tuple(db.execute(
-            "select legacy_key,json_extract(payload_json,'$[1]'),"
-            "json_extract(payload_json,'$[6]'),"
-            "json_extract(payload_json,'$[7]') from actions "
-            "where record_type='feedback_processing_transitions' order by cast(legacy_key as integer)"))
-        assert reforwards == (("8", 1229, "1202", "1203"),
-                              ("9", 1229, "1202", "unknown-turn"),
-                              ("10", 1229, "", ""),
-                              ("99", 1229, "1202", "1203"))
-        assert adoption_forward["feedback_reference_exceptions"]
+        task_forward, run_forward, adoption_forward = forward(
+            task_source, run_source, adoption_source, task_inverse, run_inverse)
+        item_native = tuple(db.execute(
+            "select item.task_id,item.feedback_key,item.workbench_task_id,"
+            "item.workbench_turn_id,item.attempt_id,item.agent_run_id,item.current_round_id "
+            "from feedback_processing_items item order by item.feedback_key"))
+        new_item_task_id = db.execute(
+            "select task_id from feedback_processing_items where feedback_key='feedback-native-new'"
+        ).fetchone()[0]
+        new_round_id = db.execute(
+            "select id from feedback_processing_rounds where feedback_key='feedback-native-new'"
+        ).fetchone()[0]
+        new_decision_id = db.execute(
+            "select id from feedback_iteration_decisions where id=15002").fetchone()[0]
+        assert (new_item_task_id, new_round_id, new_decision_id) == (500001, 15001, 15002)
+        assert item_native == ((228, "feedback-a", "202", "203", 0, 0, 0),
+                               (500001, "feedback-native-new", "16002", "500002", 44, 13003, 15001))
+        assert decision_member_rows() == (
+            ("5", 416922, "feedback-a", 1229),
+            ("6", 227, "feedback-a", 1229),
+            ("15003", 15002, "feedback-native-new", 15001))
+        assert transition_rows()[-1] == (
+            "15004", 15001, "16002", "text", "500002")
+        task_inverse, run_inverse = inverse(task_source, run_source, adoption_source,
+            task_forward, run_forward, adoption_forward)
+        item_source = tuple(db.execute(
+            "select rowid,feedback_key,workbench_task_id,"
+            "workbench_turn_id,attempt_id,agent_run_id,current_round_id "
+            "from (" + task12_projection("feedback_processing_items", include_rowid=True) + ") "
+            "order by feedback_key"))
+        assert item_source == ((228, "feedback-a", "202", "203", 0, 0, 0),
+                               first_inverse_item[0])
+        assert tuple(db.execute(
+            "select rowid,workbench_task_id,workbench_turn_id "
+            "from (" + task12_projection("feedback_iteration_decisions", include_rowid=True) + ") "
+            "order by rowid")) == (
+            (7, "202", "203"), (227, "public-task", "public-turn"),
+            (15002, first_inverse_transition[0], first_inverse_transition[1]))
+        assert tuple(db.execute(
+            "select rowid,workbench_task_id,workbench_turn_id from (" +
+            task12_projection("feedback_processing_rounds", include_rowid=True) + ") "
+            "where feedback_key='feedback-native-new'")) == (
+            (15001, first_inverse_transition[0], first_inverse_transition[1]),)
+        assert decision_member_rows()[-1] == ("15003", 15002, "feedback-native-new", 15001)
+        assert transition_rows()[-1] == (
+            "15004", 15001, first_inverse_transition[0], "text", first_inverse_transition[1])
     finally:
         db.close()
 

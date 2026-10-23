@@ -1207,6 +1207,14 @@ def restore_task_entities(db: sqlite3.Connection, source_metadata: dict, forward
                               if kind == "reply_tasks" else canonical_id)
         source_public_by_native[(kind, canonical_id)] = public_key
 
+    # Current native Workbench owners may have been created after the original
+    # source capture. Their inverse public keys are generated above, so include
+    # those exact keys in the reverse reference index used by Feedback rows.
+    inverse_public_index = dict(identities["public_index"])
+    for (kind, canonical_id), public_key in source_public_by_native.items():
+        if kind in {"workbench_tasks", "workbench_turns"}:
+            inverse_public_index[(kind, _typed_key(public_key))] = canonical_id
+
     source_rows = []
     for identity in physical_rows:
         kind, physical_id, target_id = identity["source_kind"], identity["physical_id"], identity["target_id"]
@@ -1242,7 +1250,7 @@ def restore_task_entities(db: sqlite3.Connection, source_metadata: dict, forward
                     key: raw_marker[key] for key in ("field", "value", "type")
                 }
                 value = restore_feedback_workbench_ref(field=field, current_value=value,
-                    indexes={"public": identities["public_index"]}, unresolved_marker=marker)
+                    indexes={"public": inverse_public_index}, unresolved_marker=marker)
             if kind == "feedback_processing_items" and field == "current_round_id":
                 raw_marker = reference_exceptions.get((kind, physical_id, field))
                 marker = None if raw_marker is None else {
