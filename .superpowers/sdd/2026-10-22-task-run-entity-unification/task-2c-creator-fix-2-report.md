@@ -1,6 +1,6 @@
 # Task2C creator Fix 2 report
 
-Status: implemented and locally verified; awaiting independent SPEC and QUALITY re-review. Implementation commit: pending. Report commit: pending.
+Status: implemented and locally verified; awaiting independent SPEC and QUALITY re-review. Implementation commit: `a7327abf6`. Report commit: `f84dfb586`.
 
 ## Corrected DTO behavior
 
