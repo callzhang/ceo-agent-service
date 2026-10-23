@@ -1,0 +1,9 @@
+# Task 3A native Run owner validation
+
+`app.run_entity_storage` is a low-level storage owner over the Task/Run target DDL assembled by `task_run_entity_assembly_objects()`. It accepts a caller-owned SQLite connection, performs no transaction boundary or lifecycle decision, and returns stored SQL facts. Run creation omits the primary key and leaves `created_at` to the actual DDL default when the caller has no source clock. CAS compares only caller-selected fields and writes only caller-supplied fields; a stale match returns `None`.
+
+The primitive covers native Run and RuntimeAttempt rows and the existing typed `run_provenance`, `run_projections`, and `run_failures` children. RuntimeAttempt correction lineage immutability, parent/workload mapping, status, ordinal, and active-route rules are enforced by assembled SQLite DDL. Session and transcript observation fields remain updateable. Projection JSON remains separate from candidate adoption. Failure children record server-side structured failures and do not store CLI logs.
+
+Focused tests execute the actual assembled object declarations with `PRAGMA foreign_keys=ON` and actual native Task storage. They cover all nine Task kinds with absent Run role/revision facts, valid and invalid professional provenance, one Run with no attempts, multiple parented attempts, a standalone attempt, unique ordinal and route constraints, observation updates, all three correction lineage fields independently, typed projection/failure children, unknown fields, stale CAS, and caller rollback.
+
+This foundation does not activate a constructor, migrate source Run rows, close domain callers, route execution, persist adopted results, or establish the complete native CLI/runtime lifecycle. Those remain separate integration and review gates. The predecessor constructor's seven reproduced failures remain a root-owned cutover obligation; they are not tested or claimed by this primitive unit.
