@@ -80,4 +80,8 @@ B3 acceptance; source-selection deferred-FK parity remains queued separately.
 
 ## Commit
 
-Pending commit of this unit's owned files.
+Implementation, focused tests, and behavior documentation were committed as
+`b1724b286 Complete current Action adoption inverse materializer`. This report
+close-out and release of the file claim were committed as `43d85d137`. The
+root-owned frozen source-RO-to-memory inverse/reforward checkpoint is managed
+separately; its result is not included in the focused-test claims above.
