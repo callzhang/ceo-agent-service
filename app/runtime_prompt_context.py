@@ -109,7 +109,8 @@ def render_runtime_context(
     else:
         configs = _command_configs(command)
         shell = configs.get("features.shell_tool") == "true"
-        network = "命令网络关闭" if configs.get("sandbox_workspace_write.network_access") == "false" else "命令网络设置：未提供"
+        network_setting = configs.get("sandbox_workspace_write.network_access")
+        network = {"false": "命令网络关闭", "true": "命令网络开启（可运行 dws）"}.get(network_setting, "命令网络设置：未提供")
         lines.append("- 普通工作：任务工件读写、绑定报告；" + (f"本轮原生 shell/补丁与计算，{network}。" if shell else "原生 shell 执行：本轮未声明。"))
     lines.append("- 来源与普通工作入口（参数以本轮工具 schema 为准）：")
     for server, names in sorted(tools.items()):
