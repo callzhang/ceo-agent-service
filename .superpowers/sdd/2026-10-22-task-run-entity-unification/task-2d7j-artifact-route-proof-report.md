@@ -2,7 +2,13 @@
 
 Status: **COMPLETE for this bounded proof.** A genuine artifact created by the pinned predecessor's constructor/writer resolves through its original UUID download route before migration and through the current route after migration. A new native artifact/event inverses to a distinct source UUID and resolves through the unchanged predecessor route. JSON-portable Task and Run handoffs preserve its bytes, owners, IDs, event payload and native identity across two forward cycles.
 
-Base: `aca557a6984aec12dc799bbb815d8b7a807ba265` (accepted allocator-composition prerequisite). Worktree: `/Users/derek/.codex/worktrees/task-run-entity-phase2/ceo-agent-service`.
+Original Task2D7J base: `79ffb86f23382af2c3e4ca9411cc1eacaa98de92`. Resumption base after the independently accepted allocator prerequisite: `aca557a6984aec12dc799bbb815d8b7a807ba265`. Worktree: `/Users/derek/.codex/worktrees/task-run-entity-phase2/ceo-agent-service`.
+
+## Checkpoint history
+
+The earlier partial checkpoint proved the pinned predecessor's genuine constructor, artifact writer and UUID download route, then stopped when the valid constructor-created source hit the Task/Run `sqlite_sequence` rowid collision. That blocked run did not reach current artifact creation or inverse. The collision was repaired and independently accepted in [the Task/Run allocator-composition report](task-run-allocator-composition-report.md), implementation commit `96add74dc`, claim release `78ad32c84`, and accepted composition test commit `aca557a6984aec12dc799bbb815d8b7a807ba265`. The initial partial evidence is retained in commit `933ce4ec7` and the operator checkpoint in `796cd352c`.
+
+On resumption, the operator scaffold also needed its stage order corrected: perform the first inverse before source-schema recapture, then recapture source metadata for each portable reforward; query predecessor artifacts through the actual mixed-`tasks` logical projection rather than assuming a physical `workbench_artifacts` source table. Those were operator errors, not reasons to relax source validation. With those corrections, the real route operator exposed the separate new-artifact `legacy_key` defect documented below and completed the required proof after its narrow fix.
 
 Pinned predecessor: `/private/tmp/ceo-task-run-phase2-_ntbufyi/predecessor-c38ce12cf`, exact revision `c38ce12cf1b2b18c147ea687bccdce11973827eb`. The operator verifies exact source code by the recorded file hashes and does not modify the predecessor.
 
