@@ -3581,7 +3581,7 @@ ProcessingReaction 在现有 service_state 保存文字表情模板与每条源�
 重启后继续未确认的表情操作。只操作本功能记录的源消息与服务账号的「处理中」表情。
 该进度展示不改变 Consumer/Audit 生命周期、发送授权或现有业务效果检查。
 
-Meeting planner 的 `audit_summary` 不是审核回执。分析成功后，服务以独立 model-only Audit（无原生工具或 MCP）调用复核会议来源、群候选、准确收件人、正文与披露范围；输出绑定候选 SHA-256，并和候选及 Audit session 引用一并保存。只有通过该摘要绑定校验且 `outcome=approve` 的候选可转为 `ready_to_send`。`return`／`reject` 转入 `needs_human`；格式或结果验证失败按原 Meeting 失败规则处理，外部依赖不可用沿用原退避重试。新投递和人工重排都会检查审核绑定，旧的未审核候选、缺失审核、修改后的候选或错误摘要均不得产生新发送。已经有 provider 回执时的只读效果核实与状态恢复沿用原有回执、正文、收件目标验证，不要求为既成外部效果补造审核。不可变收件人准备绑定、同一投递键、provider 回执和原目标冲突保护保持原样。
+Meeting planner 的 `audit_summary` 不是审核回执。分析成功后，服务以独立 model-only Audit（无原生工具或 MCP）调用复核会议来源、群候选、准确收件人、正文与披露范围；输出绑定候选 SHA-256，并和候选及 Audit session 引用一并保存。只有通过该摘要绑定校验且 `outcome=approve` 的候选可转为 `ready_to_send`。`return`／`reject` 转入 `needs_human`；格式或结果验证失败按原 Meeting 失败规则处理，外部依赖不可用沿用原退避重试。新投递和人工重排都会检查审核绑定，旧的未审核候选、缺失审核、修改后的候选或错误摘要均不得产生新发送。已经有 provider 回执时的只读效果核实与状态恢复沿用原有回执、正文、收件目标验证，不要求为既成外部效果补造审核。不可变收件人准备绑定、同一投递键、provider 回执和原目标冲突保护保持原样。Planner RuntimeAttempt 以原生 Meeting Run ID 为 key，Audit attempt 用 `<run_id>:audit`，并以 `parent_id` 指向经 provenance 核实的准确 native Meeting Run；来源/native 往返分别映射 Run ID 前缀并保留 `:audit`。来源 DDL 不允许 operation attempt 的 `parent_id` 指向 professional Run，故 inverse 保留来源 parent NULL；forward 仅从来源 workload key 和来源 Run 映射恢复 native exact parent。失败投递重排在一个即时写事务内读取并核验通过审核的候选、Meeting 来源和更新时间，再以 Task 当前状态/更新时间 CAS 写回；同事务保留原生 saved delivery key、未发送回执、投递 claim/lease 和决定存在性检查，成功后候选内容保持不变。
 
 ## Meeting Audience Recovery
 

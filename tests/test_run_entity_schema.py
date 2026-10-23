@@ -417,6 +417,88 @@ def test_portable_handoff_remaps_all_eight_typed_run_owners_and_references():
         db.close()
 
 
+def test_meeting_audit_runtime_key_and_parent_survive_two_inverse_reforward_cycles():
+    db, task_metadata = _run_source()
+    try:
+        db.execute(
+            "update runs set workload_key='201:audit' "
+            "where record_type='agent_runtime_attempts' and id=1204"
+        )
+        with pytest.raises(sqlite3.IntegrityError, match="logical agent run"):
+            db.execute(
+                "update runs set parent_id=1102 where record_type='agent_runtime_attempts' and id=1204"
+            )
+        source = capture_run_entities(db)
+        handoff = _run_handoff(db, source, identity_edges=[
+            dict(source_kind="agent_runs", source_physical_id=1102, canonical_id=9112),
+        ])
+        forward = migrate_run_entities(
+            db, source, task_metadata=task_metadata,
+            run_handoff=json.loads(json.dumps(handoff)),
+        )
+
+        assert db.execute(
+            "select workload_key,parent_id from runtime_attempts where id=1204"
+        ).fetchone() == ("9112:audit", 9112)
+
+        for _ in range(2):
+            inverse = restore_run_entities(
+                db, source, forward, task_metadata=task_metadata,
+            )
+            assert db.execute(
+                "select workload_key,parent_id from runs where record_type='agent_runtime_attempts' and id=1204"
+            ).fetchone() == ("201:audit", None)
+            source = capture_run_entities(db)
+            forward = migrate_run_entities(
+                db, source, task_metadata=task_metadata,
+                run_handoff=json.loads(json.dumps(inverse["run_handoff"])),
+            )
+            assert db.execute(
+                "select workload_key,parent_id from runtime_attempts where id=1204"
+            ).fetchone() == ("9112:audit", 9112)
+    finally:
+        db.close()
+
+
+@pytest.mark.parametrize("workload_key", ["201:planner", "201:audit:extra", "201:"])
+def test_meeting_audit_runtime_key_rejects_unsupported_suffix_before_forward(workload_key):
+    db, task_metadata = _run_source()
+    try:
+        source = capture_run_entities(db)
+        db.execute(
+            "update runs set workload_key=? where record_type='agent_runtime_attempts' and id=1204",
+            (workload_key,),
+        )
+        with pytest.raises(ValueError, match="Meeting RuntimeAttempt workload key"):
+            migrate_run_entities(
+                db, source, task_metadata=task_metadata,
+                run_handoff=_run_handoff(db, source),
+            )
+    finally:
+        db.close()
+
+
+def test_inverse_meeting_runtime_key_rejects_unsupported_suffix():
+    db, task_metadata = _run_source()
+    try:
+        source = capture_run_entities(db)
+        db.execute(
+            "update runs set workload_key='201:audit' "
+            "where record_type='agent_runtime_attempts' and id=1204"
+        )
+        forward = migrate_run_entities(
+            db, source, task_metadata=task_metadata,
+            run_handoff=_run_handoff(db, source, identity_edges=[
+                dict(source_kind="agent_runs", source_physical_id=1102, canonical_id=9112),
+            ]),
+        )
+        db.execute("update runtime_attempts set workload_key='9112:other' where id=1204")
+        with pytest.raises(ValueError, match="malformed Meeting RuntimeAttempt workload key"):
+            restore_run_entities(db, source, forward, task_metadata=task_metadata)
+    finally:
+        db.close()
+
+
 def test_professional_attempt_owner_survives_two_json_inverse_reforward_cycles():
     db, task_metadata = _run_source()
     try:

@@ -7232,7 +7232,12 @@ class AutoReplyStore(LogicalRunStoreMixin, ReviewedCandidateStoreMixin):
         )
         if workload_kind not in RUNTIME_OPERATION_WORKLOAD_KINDS:
             raise ValueError("unsupported runtime operation workload kind")
-        if workload_kind in {"structured", "meeting"}:
+        if workload_kind == "meeting":
+            run_id, separator, operation = workload_key.partition(":")
+            if (not run_id.isdecimal() or int(run_id) <= 0
+                    or (separator and operation != "audit")):
+                raise ValueError("meeting workload key must name a persisted Run and optional audit operation")
+        elif workload_kind == "structured":
             if not workload_key.isdecimal() or int(workload_key) <= 0:
                 raise ValueError("runtime operation workload key must be a persisted ID")
         elif workload_kind == "task":
@@ -7356,10 +7361,11 @@ class AutoReplyStore(LogicalRunStoreMixin, ReviewedCandidateStoreMixin):
         db: sqlite3.Connection, workload_kind: str, workload_key: str
     ) -> bool:
         if workload_kind == "meeting":
+            run_id = int(workload_key.partition(":")[0])
             return db.execute(
                 "select 1 from runs r join run_provenance p on p.run_id=r.id "
                 "where r.id=? and p.source_type='meeting_alignment_runs' and r.status='running'",
-                (int(workload_key),),
+                (run_id,),
             ).fetchone() is not None
         if workload_kind == "structured":
             return db.execute(
@@ -7485,10 +7491,11 @@ class AutoReplyStore(LogicalRunStoreMixin, ReviewedCandidateStoreMixin):
         db: sqlite3.Connection, workload_kind: str, workload_key: str
     ) -> int | None:
         if workload_kind == "meeting":
+            run_id = int(workload_key.partition(":")[0])
             row = db.execute(
                 "select r.id from runs r join run_provenance p on p.run_id=r.id "
                 "where r.id=? and p.source_type='meeting_alignment_runs' and r.status='running'",
-                (int(workload_key),),
+                (run_id,),
             ).fetchone()
             return None if row is None else int(row[0])
         if workload_kind == "structured":

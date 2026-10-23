@@ -1,6 +1,7 @@
 import json
 import sqlite3
 from contextlib import contextmanager
+from datetime import datetime, timezone
 
 import pytest
 
@@ -51,8 +52,9 @@ class _AssembledMeetingStore(AutoReplyStore):
     @contextmanager
     def _agent_run_write_transaction(self, _now):
         self.db.execute("begin immediate")
+        now = datetime(2026, 10, 23, tzinfo=timezone.utc)
         try:
-            yield self.db, (None, "now")
+            yield self.db, (now, now.strftime("%Y-%m-%d %H:%M:%S"))
         except BaseException:
             self.db.rollback()
             raise
@@ -190,6 +192,12 @@ def test_meeting_sender_receipt_interruption_retries_same_saved_key_and_uuid_onc
 
 
 def test_failed_delivery_requeue_uses_native_saved_key_and_preserves_review(tmp_path):
+    from app.meeting_alignment_models import (
+        MeetingAlignmentAuditResult,
+        MeetingAlignmentDecision,
+        meeting_alignment_decision_digest,
+        persist_audited_meeting_decision,
+    )
     from tests.test_meeting_alignment_delivery import send_decision
 
     store = _AssembledMeetingStore(tmp_path / "assembled-requeue.sqlite3")
@@ -200,19 +208,149 @@ def test_failed_delivery_requeue_uses_native_saved_key_and_preserves_review(tmp_
         meeting_id="meeting-requeue", title="Review", source_json="{}", participants_json="[]",
         ended_at="2026-10-23T10:00:00", eligible_at="2026-10-23T10:01:00", status="failed",
     )
-    decision = send_decision()
-    store.update_meeting_alignment_job(task_id, decision_json=decision.model_dump_json(),
+    decision = MeetingAlignmentDecision.model_validate(send_decision())
+    saved_decision = persist_audited_meeting_decision(
+        decision,
+        MeetingAlignmentAuditResult(
+            outcome="approve", candidate_sha256=meeting_alignment_decision_digest(decision),
+            summary="exact candidate approved for the native Task test",
+        ),
+    )
+    store.update_meeting_alignment_job(task_id, decision_json=saved_decision,
         target_kind="group", target_id="group-native", target_title="Group",
         final_message=decision.final_message, error="provider unavailable")
     key = store.get_meeting_delivery_key(task_id)
     assert key == f"meeting-alignment:{task_id}:meeting-requeue"
     reopened = store.requeue_failed_meeting_delivery(task_id)
     assert reopened is not None and reopened.status == "ready_to_send"
-    assert reopened.decision_json == decision.model_dump_json()
+    assert reopened.decision_json == saved_decision
     assert (reopened.target_kind, reopened.target_id, reopened.final_message) == (
         "group", "group-native", decision.final_message,
     )
     assert store.requeue_failed_meeting_delivery(task_id) is None
+
+
+def test_failed_delivery_requeue_rejects_unreviewed_native_candidate(tmp_path):
+    from tests.test_meeting_alignment_delivery import send_decision
+
+    store = _AssembledMeetingStore(tmp_path / "assembled-unreviewed-requeue.sqlite3")
+    task_id = store.upsert_meeting_alignment_job(
+        meeting_id="meeting-unreviewed-requeue", title="Review", source_json="{}",
+        participants_json="[]", ended_at="2026-10-23T10:00:00",
+        eligible_at="2026-10-23T10:01:00", status="failed",
+    )
+    decision = send_decision()
+    store.update_meeting_alignment_job(
+        task_id, decision_json=decision.model_dump_json(), target_kind="group",
+        target_id="group-native", target_title="Group",
+        final_message=decision.final_message, error="provider unavailable",
+    )
+
+    assert store.requeue_failed_meeting_delivery(task_id) is None
+    assert store.get_meeting_alignment_job(task_id).status == "failed"
+
+
+def test_meeting_audit_runner_claims_native_attempt_with_exact_run_parent(tmp_path, monkeypatch):
+    import json
+    from datetime import UTC, datetime
+
+    from app.agent_runtime_config import load_runtime_config
+    from app.agent_runtime_contracts import RuntimeCapabilitySnapshot
+    from app.agent_runtime_router import AgentRuntimeRouter, RoutedCodexExecution
+    from app.meeting_alignment_agent import MEETING_RUNTIME_CAPABILITIES, MeetingAlignmentCodexRunner
+    from app.process_runner import ProcessRunResult
+    from tests.runtime_route_env import codex_api_env
+    from tests.support.native_protocol import install_protocol_native_trajectories
+
+    class FakeAdapter:
+        def build_command(self, route, prompt, session_id, image_paths, output_schema_path,
+                          use_output_schema, approval_policy, developer_instructions,
+                          use_approval_bypass, sandbox_mode=None, skill_names=(),
+                          inlined_skill_names=(), project_doc_max_bytes=None,
+                          model_only=False, skip_git_repo_check=False):
+            return ["codex-test", "exec", route.name]
+
+        def build_env(self, route):
+            return {"ROUTE": route.name}
+
+        def classify_failure(self, stdout, stderr, returncode, **kwargs):
+            raise AssertionError("the fake native execution should succeed")
+
+    class Executor:
+        def __call__(self, _command, **_kwargs):
+            response = json.dumps({
+                "outcome": "approve", "candidate_sha256": digest, "summary": "supported",
+            })
+            return ProcessRunResult(0, response, "")
+
+    store = _AssembledMeetingStore(tmp_path / "assembled-audit-attempt.sqlite3")
+    store.db.execute("insert into tasks(kind,status,parameters_json,created_at,updated_at) "
+                     "values('reply','pending',jsonb('{}'),'now','now')")
+    store.db.commit()
+    task_id = store.upsert_meeting_alignment_job(
+        meeting_id="meeting-audit-attempt", title="Review", source_json="{}",
+        participants_json="[]", ended_at="2026-10-23T10:00:00",
+        eligible_at="2026-10-23T10:01:00", status="pending",
+    )
+    store.claim_meeting_alignment_jobs(1, "2026-10-23T10:02:00")
+    run_id = store.claim_professional_run(task_id)
+    install_protocol_native_trajectories(
+        tmp_path, monkeypatch, Executor, allow_nonprotocol_output=True,
+    )
+    config = load_runtime_config({
+        "CEO_AGENT_RUNTIME_ROUTES": "codex_api",
+        **codex_api_env("configured-secret"),
+    })
+    snapshots = {
+        route.name: RuntimeCapabilitySnapshot(
+            route_name=route.name, capabilities=MEETING_RUNTIME_CAPABILITIES, healthy=True,
+                checked_at="2026-10-23T00:00:00+00:00", expires_at="2026-10-23T00:05:00+00:00",
+        ) for route in config.routes
+    }
+    routed = RoutedCodexExecution(
+        store=store, config=config,
+        router=AgentRuntimeRouter(routes=config.routes, store=store, snapshots=snapshots,
+                                  now=lambda: datetime(2026, 10, 23, tzinfo=UTC)),
+        adapter=FakeAdapter(), executor=Executor(),
+        session_line_counter=lambda _session_id: 3,
+        now=lambda: datetime(2026, 10, 23, tzinfo=UTC),
+    )
+    candidate_sha256 = "a" * 64
+    digest = candidate_sha256
+    audit = MeetingAlignmentCodexRunner(routed_execution=routed).audit(
+        prompt="Review exact candidate", run_id=run_id, candidate_sha256=candidate_sha256,
+    )
+    assert audit.candidate_sha256 == candidate_sha256
+    attempts = store.list_runtime_operation_attempts("meeting", f"{run_id}:audit")
+    assert len(attempts) == 1
+    attempt = attempts[0]
+    assert attempt.workload_key == f"{run_id}:audit"
+    assert attempt.parent_id == run_id
+    assert store.db.execute(
+        "select p.source_type from runs r join run_provenance p on p.run_id=r.id "
+        "where r.id=?", (attempt.parent_id,),
+    ).fetchone()[0] == "meeting_alignment_runs"
+    assert attempt.parent_id != task_id
+    with pytest.raises(ValueError, match="parent does not exist"):
+        store.claim_runtime_operation_attempt(
+            "meeting", str(task_id), "route-a", "codex_cli", "local_oauth", "model-a",
+        )
+
+
+@pytest.mark.parametrize("suffix", ["planner", "audit:extra", "audit:"])
+def test_meeting_runtime_attempt_rejects_unsupported_operation_suffix(tmp_path, suffix):
+    store = _AssembledMeetingStore(tmp_path / f"assembled-bad-audit-{suffix.replace(':', '-')}.sqlite3")
+    task_id = store.upsert_meeting_alignment_job(
+        meeting_id="meeting-bad-audit", title="Review", source_json="{}",
+        participants_json="[]", ended_at="2026-10-23T10:00:00",
+        eligible_at="2026-10-23T10:01:00", status="pending",
+    )
+    store.claim_meeting_alignment_jobs(1, "2026-10-23T10:02:00")
+    run_id = store.claim_professional_run(task_id)
+    with pytest.raises(ValueError, match="meeting workload key"):
+        store.claim_runtime_operation_attempt(
+            "meeting", f"{run_id}:{suffix}", "route-a", "codex_cli", "local_oauth", "model-a",
+        )
 
 
 def test_confirmed_delivery_restore_requires_exact_native_saved_key(tmp_path):

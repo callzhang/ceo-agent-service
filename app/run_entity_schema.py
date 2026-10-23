@@ -439,6 +439,15 @@ def _task_workload_key_class(key: str) -> str:
     return "decision_repair"
 
 
+def _meeting_workload_key_parts(key: str) -> tuple[int, str]:
+    """Return the Meeting Run identity and the one supported operation suffix."""
+    parts = key.split(":")
+    if (len(parts) not in {1, 2} or not parts[0].isdecimal()
+            or int(parts[0]) <= 0 or (len(parts) == 2 and parts[1] != "audit")):
+        raise ValueError(f"malformed Meeting RuntimeAttempt workload key: {key!r}")
+    return int(parts[0]), ":audit" if len(parts) == 2 else ""
+
+
 def _workload_key(db, row, task_edges, run_physical, run_public):
     kind, key = row["workload_kind"], row["workload_key"]
     parts = key.split(":")
@@ -454,7 +463,8 @@ def _workload_key(db, row, task_edges, run_physical, run_public):
         # their business identity domain.
         return key
     if kind == "meeting":
-        return str(run_public[("meeting_alignment_runs", "int", int(key))])
+        source_run_id, suffix = _meeting_workload_key_parts(key)
+        return str(run_public[("meeting_alignment_runs", "int", source_run_id)]) + suffix
     if kind == "structured":
         return str(_task_public_owner(db, "okr_review_requests", int(key)))
     if kind == "weekly_okr" and len(parts) == 5:
@@ -479,7 +489,8 @@ def _professional_attempt_parent(row, run_public):
         if _task_workload_key_class(key) in {"plain", "decision_repair"}:
             return run_public[("task_agent_runs", "int", int(parts[0]))]
     elif kind == "meeting":
-        return run_public[("meeting_alignment_runs", "int", int(key))]
+        source_run_id, _ = _meeting_workload_key_parts(key)
+        return run_public[("meeting_alignment_runs", "int", source_run_id)]
     return None
 
 
@@ -851,10 +862,11 @@ def _inverse_workload_key(db: sqlite3.Connection, value: str, task_targets: dict
             raise ValueError(f"unresolved native Task Run workload identity: {value!r}")
         return str(run[1]) + ((":" + ":".join(suffix)) if suffix else "")
     if kind == "meeting":
-        run = run_ids.get(int(value))
+        native_run_id, suffix = _meeting_workload_key_parts(value)
+        run = run_ids.get(native_run_id)
         if run is None or run[0] != "meeting_alignment_runs":
             raise ValueError(f"unresolved native Meeting Run workload identity: {value!r}")
-        return str(run[1])
+        return str(run[1]) + suffix
     if kind in {"structured", "email_classification", "workbench"}:
         source_kind = {"structured": "okr_review_requests",
                        "email_classification": "email_agent_classification_tasks",
@@ -1056,7 +1068,9 @@ def restore_run_entities(db: sqlite3.Connection, source_metadata: dict,
             if task_key_class in {"plain", "decision_repair"}:
                 expected_parent, expected_source = int(key.split(":", 1)[0]), "task_agent_runs"
         elif attempt["workload_kind"] == "meeting":
-            expected_parent, expected_source = int(key), "meeting_alignment_runs"
+            expected_parent, expected_source = (
+                _meeting_workload_key_parts(key)[0], "meeting_alignment_runs"
+            )
         actual_parent = attempt["parent_id"]
         if attempt["workload_kind"] == "structured" and actual_parent is not None:
             request_task = int(attempt["workload_key"])
