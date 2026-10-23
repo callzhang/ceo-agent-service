@@ -1142,6 +1142,16 @@
     "write_verification_investigation": {
       "observed_at": "2026-10-23",
       "method": "Read exact provider document versions corresponding to failed DWS create/update calls, then compare source and provider Markdown without retaining report bodies in this evidence file.",
+      "failure_population": {
+        "verification_failures": 52,
+        "write_format": "markdown",
+        "exact_provider_versions_mapped": 41,
+        "remaining_unmapped": 11,
+        "mapped_markdown_readbacks_token_equal": 36,
+        "mapped_markdown_readbacks_token_different": 5,
+        "token_differences_on_four_updates_of_same_appendix": 4,
+        "one_remaining_mapping_uncertain": true
+      },
       "samples": [
         {
           "operation": "create main report",
@@ -1183,13 +1193,43 @@
           "readback_characters": 7261,
           "ordered_text_tokens_equal": true,
           "source_lines": 65,
-          "readback_lines": 63
+          "readback_lines": 63,
+          "format_difference": "two blank lines were removed"
+        },
+        {
+          "operation": "four consecutive appendix updates",
+          "provider_versions": [2, 3, 4, 5],
+          "source_markdown_readback": {
+            "all_versions_differ_by_three_ordered_tokens": true,
+            "first_difference_context": "a table cell with raw HTML line breaks"
+          },
+          "source_cell": {
+            "html_break_tags": 6,
+            "intended_boundary": "separate multiple statements within one table cell"
+          },
+          "exact_provider_jsonml": {
+            "paragraphs_in_cell": 1,
+            "newline_characters": 0,
+            "html_break_tags": 0,
+            "line_breaks_preserved": false
+          },
+          "classification": "actual report formatting loss in the cell; not only a verifier false negative"
         }
       ],
-      "conclusion": "The exact main-report JSONML version preserves the scoring-table right alignment that its Markdown readback projection omitted. This is a DWS Markdown serializer/verifier mismatch in the sampled write, not a loss in the stored document structure. It explains the sampled verification failure mechanism but does not establish the cause of all 52 failures; verify each remaining failure against its exact provider version and JSONML structure.",
-      "classification": "DWS Markdown projection/verifier false negative in the sampled main-report write; full set of 52 not yet explained"
+      "candidate_fix": {
+        "change": "ceo-weekly-okr-report scripts/report.py now converts line breaks in Markdown table cells to a visible full-width semicolon instead of raw <br> HTML, preserving statement boundaries without provider-dropped markup.",
+        "regression": "tests/test_weekly_okr_report.py::test_markdown_table_cell_newlines_use_visible_separator_not_html_breaks failed before the change and passes after it.",
+        "focused_tests_passed": 86,
+        "ruff": "passed",
+        "diff_check": "passed",
+        "release_script_sha256": "f7a96413191b9bd77eb10d86a0c1f7298dde662f80465a16610a2e21af8d627b",
+        "release_script_tree_sha256": "4e24f3ac5584f6230c0fcd71b67673c9c73d1ce0409f41aca96a7c51089b7a72",
+        "status": "candidate_not_deployed"
+      },
+      "conclusion": "There are at least two distinct causes: DWS Markdown projection/verifier false negatives where exact text tokens or JSONML formatting are preserved, and actual line-break loss when raw <br> inside an OKR appendix table cell is stored as a single paragraph without breaks. The candidate report-script fix addresses the confirmed line-break loss. 11 of the 52 failures are still not mapped to exact provider versions, and one of the 41 mapped calls has an uncertain create-node association; do not treat all 52 as explained or accepted yet.",
+      "classification": "mixed: confirmed DWS Markdown verifier false negatives plus confirmed table-cell line-break loss; remaining failures require exact-version mapping and post-fix run verification"
     },
-    "classification": "Manual business publication completed and fully read back. The DWS tool reported write-verification failures and one invalid folder-ID call; final provider content and notification receipt were independently confirmed. The deeper cause of DWS verification mismatch is not established. This is not a natural scheduled-run acceptance result."
+    "classification": "Manual business publication completed and fully read back with a verified notification. The DWS tool reported write-verification failures and one invalid folder-ID call. Investigation found both DWS Markdown projection/verifier false negatives and a real table-cell line-break loss; the candidate Skill renderer fix is not deployed, and 11 failures plus one create mapping are still unresolved. This is not a natural scheduled-run acceptance result."
   },
   "follow_up_document_parent_listing_fix": {
     "status": "candidate_tested_not_deployed",

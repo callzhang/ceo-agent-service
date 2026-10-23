@@ -832,7 +832,7 @@ def _dimension_row(item: DimensionScoreReview) -> str:
 
 
 def _md_cell(value: object) -> str:
-    return str(value).replace("|", "\\|").replace("\r", " ").replace("\n", "<br>")
+    return str(value).replace("|", "\\|").replace("\r", " ").replace("\n", "；")
 
 
 def _brief_cell(items: list[str], *, limit: int = 120) -> str:
