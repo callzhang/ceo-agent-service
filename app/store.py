@@ -14362,6 +14362,13 @@ class AutoReplyStore(LogicalRunStoreMixin, ReviewedCandidateStoreMixin):
                   and cast(legacy_key as integer)=?
                   and {task20_column('meeting_alignment_jobs', 'status')} in ('no_action', 'failed')
                   and {task20_column('meeting_alignment_jobs', 'send_result_json')}='{{}}'
+                  and not exists (
+                    select 1 from ({OUTBOUND_POSTFIX_SQL}) outbound
+                    where outbound.channel='dingtalk' and outbound.delivery_key in (
+                      'meeting-alignment:' || tasks.legacy_key || ':' || tasks.{task20_column('meeting_alignment_jobs', 'meeting_id')},
+                      'meeting-alignment:' || tasks.legacy_key || ':' || tasks.{task20_column('meeting_alignment_jobs', 'meeting_id')} || ':sensitive'
+                    )
+                  )
                 returning {task8_meeting_returning()}
                 """,
                 (
