@@ -113,8 +113,8 @@ def test_one_run_has_many_attempts_and_standalone_invocation_is_valid():
     assert db.execute("SELECT count(*) FROM runtime_attempts WHERE parent_id=1").fetchone()[0] == 2
     with pytest.raises(sqlite3.IntegrityError):
         insert_attempt(db, valid_attempt())
-    with pytest.raises(sqlite3.IntegrityError):
-        db.execute("UPDATE runtime_attempts SET source_session_id='rewritten' WHERE attempt_number=2")
+    db.execute("UPDATE runtime_attempts SET source_session_id='rewritten' WHERE attempt_number=2")
+    assert db.execute("SELECT source_session_id FROM runtime_attempts WHERE attempt_number=2").fetchone()[0] == "rewritten"
     with pytest.raises(sqlite3.IntegrityError):
         missing_lease = list(valid_attempt(parent_id=None, workload_kind='standalone', workload_key='y', status='running'))
         missing_lease[21:23] = ['', '']
@@ -173,6 +173,80 @@ def test_attempt_source_predicates_and_correction_lineage_are_preserved():
         db.execute("UPDATE runtime_attempts SET validation_retry_policy_id='other' WHERE attempt_number=2")
     with pytest.raises(sqlite3.IntegrityError):
         db.execute("UPDATE runtime_attempts SET attempt_purpose='normal',validation_retry_policy_id='',validation_result_schema_id='' WHERE attempt_number=2")
+
+
+def test_native_attempt_observation_updates_match_actual_source_and_assembled_target():
+    from app.logical_run_definitions import logical_run_objects
+    from app.task_run_entity_assembly import task_run_entity_assembly_objects
+    from app.task8_storage import register_task8_functions
+
+    source = sqlite3.connect(":memory:")
+    source.execute("PRAGMA foreign_keys=ON")
+    from app.task_lifecycle_current_schema import create_current_task20_schema
+    from app.configs_storage import create_configs_schema
+    from app.schedules_storage import create_schedules_schema
+    create_schedules_schema(source)
+    create_configs_schema(source)
+    create_current_task20_schema(source)
+    for ddl in logical_run_objects().values():
+        source.execute(ddl)
+
+    target = sqlite3.connect(":memory:")
+    target.execute("PRAGMA foreign_keys=ON")
+    register_task8_functions(target)
+    objects = task_run_entity_assembly_objects()
+    for ddl in objects.values():
+        if ddl.lstrip().lower().startswith("create table"):
+            target.execute(ddl)
+    for ddl in objects.values():
+        if not ddl.lstrip().lower().startswith("create table"):
+            target.execute(ddl)
+
+    target_columns = [row[1] for row in target.execute("PRAGMA table_info(runtime_attempts)") if row[1] != "id"]
+    attempt_values = dict(zip(target_columns, valid_attempt(parent_id=None, workload_kind="structured",
+                                                           workload_key="x", status="starting"), strict=True))
+    attempt_values.update({"session_id": "", "transcript_reference": "",
+                           "transcript_start": 0, "transcript_end": 0})
+
+    source_columns = [row[1] for row in source.execute("PRAGMA table_info(runs)")]
+    source_values = {"record_type": "agent_runtime_attempts", "legacy_key": "101", **attempt_values}
+    source_insert_columns = [name for name in source_columns if name in source_values and name != "id"]
+    source.execute(
+        "INSERT INTO runs(" + ",".join(source_insert_columns) + ") VALUES (" +
+        ",".join("?" for _ in source_insert_columns) + ")",
+        [source_values[name] for name in source_insert_columns],
+    )
+    target.execute(
+        "INSERT INTO runtime_attempts(" + ",".join(target_columns) + ") VALUES (" +
+        ",".join("?" for _ in target_columns) + ")",
+        [attempt_values[name] for name in target_columns],
+    )
+
+    def observe(db, table, predicate, terminal_status):
+        db.execute(f"UPDATE {table} SET status='running',lease_owner='owner',lease_expires_at='expiry' WHERE {predicate}")
+        db.execute(
+            f"UPDATE {table} SET status=?,session_id='observed-session',transcript_reference='observed-transcript',"
+            f"transcript_start=2,transcript_end=5,finished_at='finish',lease_owner='',lease_expires_at='' WHERE {predicate}",
+            (terminal_status,),
+        )
+
+    observe(source, "runs", "record_type='agent_runtime_attempts'", "completed")
+    observe(target, "runtime_attempts", "workload_key='x'", "completed")
+    assert source.execute("SELECT status,session_id,transcript_reference,transcript_start,transcript_end FROM runs").fetchone() == target.execute(
+        "SELECT status,session_id,transcript_reference,transcript_start,transcript_end FROM runtime_attempts"
+    ).fetchone() == ("completed", "observed-session", "observed-transcript", 2, 5)
+
+    for db, table, predicate in ((source, "runs", "record_type='agent_runtime_attempts'"),
+                                 (target, "runtime_attempts", "workload_key='x'")):
+        db.execute(f"UPDATE {table} SET status='starting',session_id='',transcript_reference='',transcript_start=0,transcript_end=0,lease_owner='owner',lease_expires_at='expiry' WHERE {predicate}")
+        db.execute(f"UPDATE {table} SET status='running' WHERE {predicate}")
+        db.execute(
+            f"UPDATE {table} SET status='failed',session_id='failed-session',transcript_reference='failed-transcript',"
+            f"transcript_start=3,transcript_end=4,finished_at='finish',lease_owner='',lease_expires_at='' WHERE {predicate}"
+        )
+    assert source.execute("SELECT status,session_id,transcript_reference,transcript_start,transcript_end FROM runs").fetchone() == target.execute(
+        "SELECT status,session_id,transcript_reference,transcript_start,transcript_end FROM runtime_attempts"
+    ).fetchone() == ("failed", "failed-session", "failed-transcript", 3, 4)
 
 
 def test_professional_runs_cannot_be_parents_or_attach_after_becoming_parent():
