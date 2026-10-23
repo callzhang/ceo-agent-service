@@ -3,7 +3,9 @@ import hashlib
 import json
 import sqlite3
 from pathlib import Path
+from threading import current_thread
 from types import SimpleNamespace
+from concurrent.futures import ThreadPoolExecutor
 
 import pytest
 
@@ -43,6 +45,39 @@ def _native_stores(path: Path):
     email._connect = connect
     email._now = lambda: "2026-10-23T12:00:00+00:00"
     yield oa, email
+
+
+def _existing_oa_store(path: Path):
+    store = AutoReplyStore.__new__(AutoReplyStore)
+    store.path = path
+    @contextmanager
+    def connect():
+        connection = sqlite3.connect(path, timeout=5)
+        connection.row_factory = sqlite3.Row
+        try:
+            with connection:
+                yield connection
+        finally:
+            connection.close()
+    store._connect = connect
+    return store
+
+
+def _existing_email_store(path: Path, now="2026-10-23T12:00:00+00:00"):
+    store = EmailStore.__new__(EmailStore)
+    store.path = path
+    @contextmanager
+    def connect():
+        connection = sqlite3.connect(path, timeout=5)
+        connection.row_factory = sqlite3.Row
+        try:
+            with connection:
+                yield connection
+        finally:
+            connection.close()
+    store._connect = connect
+    store._now = lambda: now
+    return store
 
 
 def _oa_event(store, **overrides):
@@ -95,6 +130,73 @@ def test_oa_direct_owner_first_write_wins_and_claim_attempt_cas(tmp_path):
         assert (row["status"], row["claimed_attempt_id"], row["result_attempt_id"]) == ("sent", 73, 901)
 
 
+def test_oa_independent_connections_contend_for_one_claim(tmp_path, monkeypatch):
+    from contextlib import contextmanager
+    from threading import Condition
+    path = tmp_path / "oa-native-compete.sqlite"
+    with _native_stores(path) as (first, _email):
+        event_id = _oa_event(first, trigger_message_id="contended")
+        second = _existing_oa_store(path)
+        condition = Condition()
+        begin_attempts = []
+
+        def instrument(store):
+            original_connect = store._connect
+
+            class TracedConnection:
+                def __init__(self, connection):
+                    self.connection = connection
+
+                def __getattr__(self, name):
+                    return getattr(self.connection, name)
+
+                def execute(self, statement, *parameters):
+                    if statement.strip().casefold() == "begin immediate":
+                        with condition:
+                            begin_attempts.append(current_thread().name)
+                            condition.notify_all()
+                    return self.connection.execute(statement, *parameters)
+
+            @contextmanager
+            def traced_connect():
+                with original_connect() as db:
+                    yield TracedConnection(db)
+
+            monkeypatch.setattr(store, "_connect", traced_connect)
+
+        instrument(first)
+        instrument(second)
+        blocker = sqlite3.connect(path, timeout=5, isolation_level=None)
+        blocker.execute("begin immediate")
+        blocker_held = True
+        try:
+            with ThreadPoolExecutor(max_workers=2) as pool:
+                futures = [
+                    pool.submit(first.claim_oa_reminder_target, event_id, 801),
+                    pool.submit(second.claim_oa_reminder_target, event_id, 802),
+                ]
+                with condition:
+                    both_attempted = condition.wait_for(lambda: len(begin_attempts) == 2, timeout=5)
+                if both_attempted:
+                    assert len(set(begin_attempts)) == 2
+                    assert not any(future.done() for future in futures)
+                blocker.execute("rollback")
+                blocker.close()
+                blocker_held = False
+        finally:
+            if blocker_held:
+                blocker.execute("rollback")
+                blocker.close()
+
+        assert both_attempted, f"both independent claims must reach BEGIN IMMEDIATE: {begin_attempts}"
+        assert sorted(future.result() for future in futures) == [False, True]
+        with first._connect() as db:
+            row = db.execute(
+                "select status,claimed_attempt_id from oa_notification_events where id=?", (event_id,)
+            ).fetchone()
+        assert tuple(row) in {("sending", 801), ("sending", 802)}
+
+
 def test_oa_adoption_matches_process_and_keeps_provider_task_text_opaque(tmp_path):
     with _native_stores(tmp_path / "native.sqlite") as (store, _email):
         first = _oa_event(store, task_id="", trigger_message_id="one")
@@ -131,6 +233,93 @@ def test_email_four_part_identity_refresh_preserves_retry_and_cursor_epoch(tmp_p
             "uidvalidity": 4, "last_seen_uid": 2}
         assert email.list_historical_candidates(account_id="a", folder="INBOX", model_id="other") == []
         assert email.list_historical_candidates(account_id="a", folder="Archive", model_id="m") == []
+
+
+def test_email_all_four_identity_dimensions_isolate_updates_and_lists(tmp_path):
+    path = tmp_path / "email-four-part-identity.sqlite"
+    with _native_stores(path) as (_store, email):
+        records = [
+            ("a", "INBOX", "m", "same", 1),
+            ("b", "INBOX", "m", "same", 2),
+            ("a", "Archive", "m", "same", 3),
+            ("a", "INBOX", "other-model", "same", 4),
+            ("a", "INBOX", "m", "other-identity", 5),
+        ]
+        for account, folder, model, identity, uid in records:
+            _enqueue(
+                email,
+                [_candidate(identity, uid, account=account, folder=folder)],
+                account=account,
+                folder=folder,
+                model=model,
+                cursor=uid,
+            )
+
+        for account, folder, model, identity, reason in (
+            ("b", "INBOX", "m", "same", "account-only"),
+            ("a", "Archive", "m", "same", "folder-only"),
+            ("a", "INBOX", "other-model", "same", "model-only"),
+            ("a", "INBOX", "m", "other-identity", "identity-only"),
+        ):
+            email.set_historical_candidate_state(
+                account_id=account,
+                folder=folder,
+                model_id=model,
+                stable_message_identity=identity,
+                state="deferred",
+                reason=reason,
+            )
+
+        email._now = lambda: "2099-01-01T00:00:00+00:00"
+        with email._connect() as db:
+            assert db.execute("select count(*) from email_historical_candidates").fetchone()[0] == 5
+        assert [row["stable_message_identity"] for row in email.list_historical_candidates(
+            account_id="b", folder="INBOX", model_id="m"
+        )] == ["same"]
+        assert [row["stable_message_identity"] for row in email.list_historical_candidates(
+            account_id="a", folder="Archive", model_id="m"
+        )] == ["same"]
+        assert [row["stable_message_identity"] for row in email.list_historical_candidates(
+            account_id="a", folder="INBOX", model_id="other-model"
+        )] == ["same"]
+        base = email.list_historical_candidates(account_id="a", folder="INBOX", model_id="m")
+        assert [(row["stable_message_identity"], row["reason"]) for row in base] == [
+            ("other-identity", "identity-only"), ("same", ""),
+        ]
+        email.set_historical_candidate_state(
+            account_id="b", folder="INBOX", model_id="m", stable_message_identity="same",
+            state="terminal", reason="account-only-terminal",
+        )
+        assert email.list_historical_candidates(account_id="b", folder="INBOX", model_id="m") == []
+        base = email.list_historical_candidates(account_id="a", folder="INBOX", model_id="m")
+        assert [(row["stable_message_identity"], row["state"]) for row in base] == [
+            ("other-identity", "deferred"), ("same", "pending"),
+        ]
+
+
+def test_email_deferred_retry_survives_reopen_and_missing_identity_errors(tmp_path):
+    path = tmp_path / "email-deferred-reopen.sqlite"
+    with _native_stores(path) as (_store, email):
+        _enqueue(email, [_candidate("retry-me", 1)], cursor=1)
+        email.set_historical_candidate_state(
+            account_id="a", folder="INBOX", model_id="m", stable_message_identity="retry-me",
+            state="deferred", reason="provider-quota",
+        )
+        with email._connect() as db:
+            saved = dict(db.execute("select * from email_historical_candidates").fetchone())
+
+    before_due = _existing_email_store(path, now="2026-10-23T12:00:00+00:00")
+    assert before_due.list_historical_candidates(account_id="a", folder="INBOX", model_id="m") == []
+    restarted = _existing_email_store(path, now="2099-01-01T00:00:00+00:00")
+    [retry] = restarted.list_historical_candidates(account_id="a", folder="INBOX", model_id="m")
+    assert (retry["state"], retry["reason"], retry["attempted_at"], retry["next_retry_at"]) == (
+        "deferred", "provider-quota", saved["attempted_at"], saved["next_retry_at"]
+    )
+    with pytest.raises(ValueError, match="historical queued candidate is missing"):
+        restarted.set_historical_candidate_state(
+            account_id="a", folder="INBOX", model_id="m", stable_message_identity="absent",
+            state="terminal", reason="missing",
+        )
 
 
 def test_email_page_bad_candidate_rolls_back_rows_and_cursor(tmp_path):
