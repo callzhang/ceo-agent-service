@@ -21,6 +21,7 @@ from app.agent_cron.commands import ServiceCommandSkillMaterial
 from app.config import principal_display_name
 from app.external_retry import ExternalDependencyError
 from app.meeting_alignment_models import (
+    MeetingAlignmentAuditFeedback,
     MeetingAlignmentAuditResult,
     MeetingAlignmentDecision,
     MeetingSource,
@@ -136,6 +137,7 @@ class MeetingAlignmentAgent:
         consumer_prompt: str = "",
         skill_protocol: str = "",
         skill_materials: tuple[ServiceCommandSkillMaterial, ...] = (),
+        audit_feedback: MeetingAlignmentAuditFeedback | None = None,
     ) -> MeetingAlignmentDecision:
         profile = work_profile_instruction()
         profile_source = (
@@ -150,6 +152,7 @@ class MeetingAlignmentAgent:
             group_candidates=group_candidates or [],
             consumer_prompt=consumer_prompt,
             skill_protocol=skill_protocol,
+            audit_feedback=audit_feedback,
         )
         managed_skill_protocol = _meeting_decision_skill_protocol(skill_materials)
         compact_prompt = (
@@ -161,6 +164,7 @@ class MeetingAlignmentAgent:
                 group_candidates=group_candidates or [],
                 consumer_prompt=consumer_prompt,
                 skill_protocol=managed_skill_protocol,
+                audit_feedback=audit_feedback,
             )
             if managed_skill_protocol is not None
             else None
@@ -226,7 +230,8 @@ class MeetingAlignmentAgent:
             "完整接收对象、披露权限、内容与受众是否匹配，以及敏感信息是否被不当披露。"
             "不执行工具、不联系任何人、不改写候选。只有候选内容和精确收件目标均有证据支持"
             "且适合发送时才能 approve；证据不足或存在实质问题时必须 return 或 reject。"
-            "candidate_sha256 必须逐字等于输入摘要。\n\n"
+            "candidate_sha256 必须逐字等于输入摘要。outcome=return 时，feedback 必须包含"
+            "具体 rule、observation、requested_revision；approve/reject 时 feedback=null。\n\n"
             "## Applicable shared and task rules\n"
             + CONSUMER_OUTBOUND_INSTRUCTION
             + "\n\n"
@@ -345,8 +350,8 @@ class MeetingAlignmentCodexRunner:
     ) -> MeetingAlignmentAuditResult:
         try:
             result = self.routed_execution.execute(
-                workload_kind="meeting",
-                workload_key=f"{run_id}:audit",
+                workload_kind="meeting_audit",
+                workload_key=str(run_id),
                 prompt=prompt,
                 command_factory=CodexCommandFactory.standard(
                     developer_instructions=(
@@ -521,6 +526,7 @@ def build_meeting_alignment_prompt(
     group_candidates: list[dict[str, Any]] | None = None,
     consumer_prompt: str = "",
     skill_protocol: str = "",
+    audit_feedback: MeetingAlignmentAuditFeedback | None = None,
 ) -> str:
     source_json = json.dumps(
         source.model_dump(mode="json"), ensure_ascii=False, separators=(",", ":")
@@ -561,10 +567,18 @@ def build_meeting_alignment_prompt(
 ## Scheduled Consumer Skills
 {skill_protocol.strip()}
 """
+    audit_feedback_block = (
+        "## Independent Audit feedback for this revision\n"
+        + json.dumps(audit_feedback.model_dump(mode="json"), ensure_ascii=False)
+        + "\nApply this requested correction while preserving supported facts and the existing target contract."
+        if audit_feedback is not None
+        else ""
+    )
 
     return f"""你是 Meeting Alignment Agent。你分析已经结束的会议，但不直接发送消息。
 
 {scheduled_consumer_block}
+{audit_feedback_block}
 
 触发边界：
 - 每场会议均须发送一条总结。出现实质观点分歧，或 {principal_display_name()} 的观点在后续讨论中没有被完整还原时，重点说明对齐或待决事项；没有分歧时，简洁归纳已确认事项和下一步。

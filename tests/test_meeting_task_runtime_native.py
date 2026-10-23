@@ -213,7 +213,7 @@ def test_failed_delivery_requeue_uses_native_saved_key_and_preserves_review(tmp_
         decision,
         MeetingAlignmentAuditResult(
             outcome="approve", candidate_sha256=meeting_alignment_decision_digest(decision),
-            summary="exact candidate approved for the native Task test",
+            summary="exact candidate approved for the native Task test", feedback=None,
         ),
     )
     store.update_meeting_alignment_job(task_id, decision_json=saved_decision,
@@ -250,6 +250,57 @@ def test_failed_delivery_requeue_rejects_unreviewed_native_candidate(tmp_path):
     assert store.get_meeting_alignment_job(task_id).status == "failed"
 
 
+@pytest.mark.parametrize("sensitive", [False, True])
+def test_meeting_replay_keeps_saved_public_outbound_identity_at_remapped_task_id(tmp_path, sensitive):
+    store = _AssembledMeetingStore(tmp_path / f"assembled-replay-prepared-{sensitive}.sqlite3")
+    task_id = store.upsert_meeting_alignment_job(
+        meeting_id=f"meeting-prepared-{sensitive}", title="Review", source_json="{}",
+        participants_json="[]", ended_at="2026-10-23T10:00:00",
+        eligible_at="2026-10-23T10:01:00", status="failed",
+    )
+    native_key = store.get_meeting_delivery_key(task_id)
+    source_public_key = f"meeting-alignment:901:meeting-prepared-{sensitive}"
+    assert source_public_key != native_key
+    store.db.execute(
+        "update task_business_keys set business_key=? where task_id=?",
+        (source_public_key, task_id),
+    )
+    store.db.commit()
+    delivery_key = source_public_key + (":sensitive" if sensitive else "")
+    store.prepare_meeting_alignment_message(
+        delivery_key=delivery_key, body="Prepared exact candidate", original_text="",
+        target_kind="group", target_id="group-native", feedback_base_url="",
+    )
+
+    assert store.rerun_meeting_alignment_jobs([task_id]) == []
+    assert store.reopen_meeting_alignment_job_for_replay(
+        task_id, title="Replay", source_json="{}", participants_json="[]",
+        ended_at="2026-10-23T11:00:00", eligible_at="2026-10-23T11:01:00",
+    ) is None
+    assert store.get_meeting_alignment_job(task_id).status == "failed"
+
+
+def test_meeting_replay_stays_blocked_by_audit_child_on_exact_run_parent(tmp_path):
+    store = _AssembledMeetingStore(tmp_path / "assembled-replay-live-audit-parent.sqlite3")
+    task_id = store.upsert_meeting_alignment_job(
+        meeting_id="meeting-live-audit-parent", title="Review", source_json="{}",
+        participants_json="[]", ended_at="2026-10-23T10:00:00",
+        eligible_at="2026-10-23T10:01:00", status="failed",
+    )
+    store.update_meeting_alignment_job(task_id, status="processing")
+    run_id = store.claim_professional_run(task_id)
+    attempt = store.claim_runtime_operation_attempt(
+        "meeting_audit", str(run_id), "route-a", "codex_cli", "local_oauth", "model-a",
+    )
+    assert attempt.parent_id == run_id
+    store.db.execute("update runs set status='failed' where id=?", (run_id,))
+    store.db.commit()
+    store.update_meeting_alignment_job(task_id, status="failed")
+
+    assert store.rerun_meeting_alignment_jobs([task_id]) == []
+    assert store.get_meeting_alignment_job(task_id).status == "failed"
+
+
 def test_meeting_audit_runner_claims_native_attempt_with_exact_run_parent(tmp_path, monkeypatch):
     import json
     from datetime import UTC, datetime
@@ -280,6 +331,7 @@ def test_meeting_audit_runner_claims_native_attempt_with_exact_run_parent(tmp_pa
         def __call__(self, _command, **_kwargs):
             response = json.dumps({
                 "outcome": "approve", "candidate_sha256": digest, "summary": "supported",
+                "feedback": None,
             })
             return ProcessRunResult(0, response, "")
 
@@ -321,10 +373,11 @@ def test_meeting_audit_runner_claims_native_attempt_with_exact_run_parent(tmp_pa
         prompt="Review exact candidate", run_id=run_id, candidate_sha256=candidate_sha256,
     )
     assert audit.candidate_sha256 == candidate_sha256
-    attempts = store.list_runtime_operation_attempts("meeting", f"{run_id}:audit")
+    attempts = store.list_runtime_operation_attempts("meeting_audit", str(run_id))
     assert len(attempts) == 1
     attempt = attempts[0]
-    assert attempt.workload_key == f"{run_id}:audit"
+    assert attempt.workload_kind == "meeting_audit"
+    assert attempt.workload_key == str(run_id)
     assert attempt.parent_id == run_id
     assert store.db.execute(
         "select p.source_type from runs r join run_provenance p on p.run_id=r.id "
@@ -333,7 +386,7 @@ def test_meeting_audit_runner_claims_native_attempt_with_exact_run_parent(tmp_pa
     assert attempt.parent_id != task_id
     with pytest.raises(ValueError, match="parent does not exist"):
         store.claim_runtime_operation_attempt(
-            "meeting", str(task_id), "route-a", "codex_cli", "local_oauth", "model-a",
+            "meeting_audit", str(task_id), "route-a", "codex_cli", "local_oauth", "model-a",
         )
 
 
@@ -347,7 +400,7 @@ def test_meeting_runtime_attempt_rejects_unsupported_operation_suffix(tmp_path, 
     )
     store.claim_meeting_alignment_jobs(1, "2026-10-23T10:02:00")
     run_id = store.claim_professional_run(task_id)
-    with pytest.raises(ValueError, match="meeting workload key"):
+    with pytest.raises(ValueError, match="runtime operation workload key"):
         store.claim_runtime_operation_attempt(
             "meeting", f"{run_id}:{suffix}", "route-a", "codex_cli", "local_oauth", "model-a",
         )

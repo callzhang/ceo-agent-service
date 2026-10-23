@@ -711,7 +711,7 @@ def test_meeting_audit_runtime_key_and_parent_survive_two_inverse_reforward_cycl
     db, task_metadata = _run_source()
     try:
         db.execute(
-            "update runs set workload_key='201:audit' "
+            "update runs set workload_kind='meeting_audit',workload_key='201' "
             "where record_type='agent_runtime_attempts' and id=1204"
         )
         with pytest.raises(sqlite3.IntegrityError, match="logical agent run"):
@@ -728,24 +728,24 @@ def test_meeting_audit_runtime_key_and_parent_survive_two_inverse_reforward_cycl
         )
 
         assert db.execute(
-            "select workload_key,parent_id from runtime_attempts where id=1204"
-        ).fetchone() == ("9112:audit", 9112)
+            "select workload_kind,workload_key,parent_id from runtime_attempts where id=1204"
+        ).fetchone() == ("meeting_audit", "9112", 9112)
 
         for _ in range(2):
             inverse = restore_run_entities(
                 db, source, forward, task_metadata=task_metadata,
             )
             assert db.execute(
-                "select workload_key,parent_id from runs where record_type='agent_runtime_attempts' and id=1204"
-            ).fetchone() == ("201:audit", None)
+                "select workload_kind,workload_key,parent_id from runs where record_type='agent_runtime_attempts' and id=1204"
+            ).fetchone() == ("meeting_audit", "201", None)
             source = capture_run_entities(db)
             forward = migrate_run_entities(
                 db, source, task_metadata=task_metadata,
                 run_handoff=json.loads(json.dumps(inverse["run_handoff"])),
             )
             assert db.execute(
-                "select workload_key,parent_id from runtime_attempts where id=1204"
-            ).fetchone() == ("9112:audit", 9112)
+                "select workload_kind,workload_key,parent_id from runtime_attempts where id=1204"
+            ).fetchone() == ("meeting_audit", "9112", 9112)
     finally:
         db.close()
 

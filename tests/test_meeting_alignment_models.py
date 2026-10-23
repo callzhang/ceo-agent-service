@@ -942,6 +942,7 @@ def test_cross_field_validators_raise_only_declared_rule_constants():
         ).read_text()
     )
     declared = {rule.message for rule in models.MEETING_ALIGNMENT_CROSS_FIELD_RULES}
+    declared.add(models.MEETING_AUDIT_FEEDBACK_RULE.message)
     raised_constants: list[str] = []
     for function in ast.walk(module):
         if not isinstance(function, ast.FunctionDef):
@@ -1078,7 +1079,7 @@ def test_meeting_audit_persistence_is_bound_to_the_exact_candidate():
     decision = MeetingAlignmentDecision.model_validate(valid_send_decision())
     digest = meeting_alignment_decision_digest(decision)
     audit = MeetingAlignmentAuditResult(
-        outcome="approve", candidate_sha256=digest, summary="approved"
+        outcome="approve", candidate_sha256=digest, summary="approved", feedback=None
     )
     raw = persist_audited_meeting_decision(
         decision,

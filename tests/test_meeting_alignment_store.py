@@ -439,6 +439,38 @@ def test_replay_reopens_only_unsent_terminal_job(tmp_path, replay_status):
     assert store.get_meeting_alignment_job(sent_id).status == "sent"
 
 
+@pytest.mark.parametrize("delivery_suffix", ["", ":sensitive"])
+def test_replay_does_not_reopen_job_with_prepared_outbound(tmp_path, delivery_suffix):
+    store = AutoReplyStore(tmp_path / "worker.sqlite3")
+    job_id = seed_job(store, meeting_id="prepared-replay", status="failed")
+    delivery_key = f"meeting-alignment:{job_id}:prepared-replay{delivery_suffix}"
+    store.prepare_meeting_alignment_message(
+        delivery_key=delivery_key,
+        body="Prepared message",
+        original_text="Meeting source",
+        target_kind="group",
+        target_id="cid-meeting",
+        feedback_base_url="",
+    )
+
+    reopened = store.reopen_meeting_alignment_job_for_replay(
+        job_id,
+        title="Replay meeting",
+        source_json="{}",
+        participants_json="[]",
+        ended_at="2026-07-14T02:00:00+08:00",
+        eligible_at="2026-07-14T02:10:00+08:00",
+    )
+
+    assert reopened is None
+    job = store.get_meeting_alignment_job(job_id)
+    assert job.status == "failed"
+    assert job.final_message == ""
+    assert store.get_outbound_postfix("dingtalk", delivery_key).final_body.startswith(
+        "Prepared message"
+    )
+
+
 def test_explicit_rerun_reopens_legacy_no_action_meeting(tmp_path):
     store = AutoReplyStore(tmp_path / "worker.sqlite3")
     job_id = seed_job(store, meeting_id="legacy-no-action")

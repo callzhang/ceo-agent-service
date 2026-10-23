@@ -72,8 +72,8 @@
     },
     {
       "source": "ci/shared-skills/dingtalk-oa-approval/SKILL.md",
-      "installed_sha256": "59c0bfd4ac13852b4952cb6dab777c67306c1e67242ea6bff51e8e8443191338",
-      "approved_new_sha256": "59c0bfd4ac13852b4952cb6dab777c67306c1e67242ea6bff51e8e8443191338"
+      "installed_sha256": "981e443dcb739bf95cd349db42c1af18c42d900188fb975c2907df8fe550ea54",
+      "approved_new_sha256": "c8130e8dcfb4c6d40980d63a27b2d2c501eba7c4b89497339dcbbf8ead230ccb"
     },
     {
       "source": "ci/shared-skills/stardust-oa-finance-review/SKILL.md",
@@ -87,13 +87,13 @@
     },
     {
       "source": "ci/shared-skills/stardust-oa-people-review/SKILL.md",
-      "installed_sha256": "022dc53499c46c9e504e9fed05aafb4e1fedd09e428d538449041b32c0354f62",
-      "approved_new_sha256": "022dc53499c46c9e504e9fed05aafb4e1fedd09e428d538449041b32c0354f62"
+      "installed_sha256": "4f71dc707f22f784fb7e0f4d4f43c22ea003262884112081a595a10bb329e651",
+      "approved_new_sha256": "4f71dc707f22f784fb7e0f4d4f43c22ea003262884112081a595a10bb329e651"
     },
     {
       "source": "ci/shared-skills/stardust-oa-attendance-travel-review/SKILL.md",
-      "installed_sha256": "f19093c34db7698577962a8c177836bf74e368f3e66655630d20f503ff5763c9",
-      "approved_new_sha256": "f19093c34db7698577962a8c177836bf74e368f3e66655630d20f503ff5763c9"
+      "installed_sha256": "12fe5ae6a03b2903ffe92df32c18ea25e0330f20d9e202f23fdbee6ee8ded375",
+      "approved_new_sha256": "12fe5ae6a03b2903ffe92df32c18ea25e0330f20d9e202f23fdbee6ee8ded375"
     },
     {
       "source": "ci/shared-skills/ceo-daily-report/scripts/destination.py",
@@ -107,10 +107,10 @@
     },
     {
       "source": "ci/shared-skills/ceo-weekly-okr-report/SKILL.md",
-      "installed_sha256": "d7584ca089596f09f943d659b67943d04d9bc2c47d8fb15831a1109b94229d9a",
-      "approved_new_sha256": "49ba4b0bdafdd2ba54989f6bd1ad6b799417464f2dad2cbeefb721eb85a32f8e",
-      "managed_revision_id": 235,
-      "managed_sha256": "d7584ca089596f09f943d659b67943d04d9bc2c47d8fb15831a1109b94229d9a"
+      "installed_sha256": "49ba4b0bdafdd2ba54989f6bd1ad6b799417464f2dad2cbeefb721eb85a32f8e",
+      "approved_new_sha256": "038973933c0e8ff70f9c87b2912107a5d3ae0efcb53aeaf308e9bd3f091c01b9",
+      "managed_revision_id": 245,
+      "managed_sha256": "038973933c0e8ff70f9c87b2912107a5d3ae0efcb53aeaf308e9bd3f091c01b9"
     },
     {
       "source": "ci/shared-skills/ceo-weekly-okr-report/scripts/analysis.schema.json",

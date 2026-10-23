@@ -466,6 +466,7 @@ RUNTIME_OPERATION_WORKLOAD_KINDS = frozenset(
     {
         "structured",
         "meeting",
+        "meeting_audit",
         "task",
         "weekly_okr",
         "memory",
@@ -7255,12 +7256,7 @@ class AutoReplyStore(LogicalRunStoreMixin, ReviewedCandidateStoreMixin):
         )
         if workload_kind not in RUNTIME_OPERATION_WORKLOAD_KINDS:
             raise ValueError("unsupported runtime operation workload kind")
-        if workload_kind == "meeting":
-            run_id, separator, operation = workload_key.partition(":")
-            if (not run_id.isdecimal() or int(run_id) <= 0
-                    or (separator and operation != "audit")):
-                raise ValueError("meeting workload key must name a persisted Run and optional audit operation")
-        elif workload_kind == "structured":
+        if workload_kind in {"structured", "meeting", "meeting_audit"}:
             if not workload_key.isdecimal() or int(workload_key) <= 0:
                 raise ValueError("runtime operation workload key must be a persisted ID")
         elif workload_kind == "task":
@@ -7379,8 +7375,8 @@ class AutoReplyStore(LogicalRunStoreMixin, ReviewedCandidateStoreMixin):
     def _runtime_operation_parent_exists(
         db: sqlite3.Connection, workload_kind: str, workload_key: str
     ) -> bool:
-        if workload_kind == "meeting":
-            run_id = int(workload_key.partition(":")[0])
+        if workload_kind in {"meeting", "meeting_audit"}:
+            run_id = int(workload_key)
             return db.execute(
                 "select 1 from runs r join run_provenance p on p.run_id=r.id "
                 "where r.id=? and p.source_type='meeting_alignment_runs' and r.status='running'",
@@ -7418,7 +7414,16 @@ class AutoReplyStore(LogicalRunStoreMixin, ReviewedCandidateStoreMixin):
                 query += " and id=? and lease_owner=?"
                 args += (int(parts[3]), parts[4])
             return db.execute(query, args).fetchone() is not None
-        if workload_kind == "task":
+        if workload_kind == "structured":
+            return db.execute(
+                "select 1 from tasks where id=? and kind='okr_review' and status='processing'",
+                (int(workload_key),),
+            ).fetchone() is not None
+        if workload_kind in {"meeting", "meeting_audit"}:
+            return AutoReplyStore._runtime_operation_parent_exists(
+                db, workload_kind, workload_key
+            )
+        elif workload_kind == "task":
             row_id, separator, suffix = workload_key.partition(":")
             if suffix.startswith("deadline_backfill"):
                 # The deadline backfill is keyed by TODO. Checking it against
@@ -7509,8 +7514,8 @@ class AutoReplyStore(LogicalRunStoreMixin, ReviewedCandidateStoreMixin):
     def _runtime_operation_parent_id(
         db: sqlite3.Connection, workload_kind: str, workload_key: str
     ) -> int | None:
-        if workload_kind == "meeting":
-            run_id = int(workload_key.partition(":")[0])
+        if workload_kind in {"meeting", "meeting_audit"}:
+            run_id = int(workload_key)
             row = db.execute(
                 "select r.id from runs r join run_provenance p on p.run_id=r.id "
                 "where r.id=? and p.source_type='meeting_alignment_runs' and r.status='running'",
@@ -8225,9 +8230,8 @@ class AutoReplyStore(LogicalRunStoreMixin, ReviewedCandidateStoreMixin):
                 set status='failed', failure_class='process',
                     failure_code='runtime_parent_requeued', failover_permitted=1,
                     lease_owner='', lease_expires_at='', finished_at=?, updated_at=?
-                where attempt.workload_kind='meeting' and attempt.status in ('starting', 'running')
+                where attempt.workload_kind in ('meeting', 'meeting_audit') and attempt.status in ('starting', 'running')
                   and attempt.parent_id is not null
-                  and attempt.workload_kind='meeting'
                   and exists (
                     select 1 from runs parent
                     join run_provenance provenance on provenance.run_id=parent.id
@@ -14324,7 +14328,7 @@ class AutoReplyStore(LogicalRunStoreMixin, ReviewedCandidateStoreMixin):
                         changes={"status": "retry", "error": error, "completed_at": now_text,
                                  "updated_at": now_text, "lease_owner": "", "lease_expires_at": ""})
                     attempts = db.execute("select id,status from runtime_attempts where parent_id=? "
-                        "and workload_kind='meeting' and status in ('starting','running')", (run_id,)).fetchall()
+                        "and workload_kind in ('meeting','meeting_audit') and status in ('starting','running')", (run_id,)).fetchall()
                     for attempt in attempts:
                         update_runtime_attempt_cas(db, attempt_id=int(attempt["id"]),
                             expected={"status": attempt["status"]},
@@ -14435,7 +14439,7 @@ class AutoReplyStore(LogicalRunStoreMixin, ReviewedCandidateStoreMixin):
             if db.execute(
                 "select 1 from runtime_attempts a join runs r on r.id=a.parent_id "
                 "join run_provenance p on p.run_id=r.id and p.source_type='meeting_alignment_runs' "
-                "where a.workload_kind='meeting' and r.task_id=? and a.status in ('starting','running') limit 1",
+                "where a.workload_kind in ('meeting','meeting_audit') and r.task_id=? and a.status in ('starting','running') limit 1",
                 (job_id,),
             ).fetchone():
                 return None
@@ -14490,12 +14494,19 @@ class AutoReplyStore(LogicalRunStoreMixin, ReviewedCandidateStoreMixin):
         ended_at: str,
         eligible_at: str,
     ) -> MeetingAlignmentJob | None:
-        from app.task_entity_storage import get_task, update_task_cas
+        from app.task_entity_storage import get_meeting_delivery_key, get_task, update_task_cas
         with self._immediate_write_transaction() as db:
             task = get_task(db, job_id)
             current = self._native_meeting_alignment_job(db, job_id)
             if (task is None or task["kind"] != "meeting_alignment" or current is None
                     or task["status"] not in {"no_action", "failed"} or current.send_result_json != "{}"):
+                return None
+            delivery_key = get_meeting_delivery_key(db, job_id)
+            if db.execute(
+                f"select 1 from ({OUTBOUND_POSTFIX_SQL}) outbound "
+                "where outbound.channel='dingtalk' and outbound.delivery_key in (?,?) limit 1",
+                (delivery_key, delivery_key + ":sensitive"),
+            ).fetchone():
                 return None
             parameters = {**task["parameters"], "title": title, "source_json": source_json,
                           "participants_json": participants_json, "ended_at": ended_at, "eligible_at": eligible_at}

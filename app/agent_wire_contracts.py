@@ -14,6 +14,7 @@ from pydantic import (
 
 from app.agent_contracts import (
     AuditAgentResult,
+    AuditEffectiveReturnAssessment,
     AuditFeedback,
     CandidateFieldAssertion,
     ConsumerAgentResult,
@@ -229,6 +230,12 @@ class _AuditFeedbackWire(AuditFeedback):
 class _AuditWire(_WireBase):
     outcome: Literal["approve", "return", "reject", "failed"]
     evidence_refs: list[str] = Field(default_factory=list)
+    oa_effective_return_assessment: AuditEffectiveReturnAssessment | None = Field(
+        default=None,
+        description=AuditAgentResult.model_fields[
+            "oa_effective_return_assessment"
+        ].description,
+    )
     feedback: _AuditFeedbackWire | None = None
 
 
@@ -248,6 +255,7 @@ class AuditAgentWireResult(RootModel[_AuditWire]):
             "proposal_revision": proposal_revision,
             "candidate_digest": candidate_digest,
             "evidence_refs": payload.evidence_refs,
+            "oa_effective_return_assessment": payload.oa_effective_return_assessment,
             "feedback": payload.feedback,
             "risk": payload.risk,
             "confidence": payload.confidence,

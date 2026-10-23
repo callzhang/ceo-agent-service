@@ -1,6 +1,8 @@
 """The native Agent turns must receive only the tools their role can use."""
 
 import asyncio
+import json
+from pathlib import Path
 
 import pytest
 
@@ -96,8 +98,13 @@ def test_codex_roles_scope_native_execution_and_select_service_tools(tmp_path, m
     assert "features.shell_tool=true" in consumer
     assert "features.unified_exec=true" in consumer
     assert 'sandbox_mode="workspace-write"' in consumer
-    assert 'sandbox_workspace_write.network_access=false' in consumer
-    assert 'sandbox_workspace_write.writable_roots=[]' in consumer
+    # Derek 2026-10-23: the Consumer shell runs `dws`, so it needs the network
+    # and a writable dws state directory (and nothing else).
+    assert 'sandbox_workspace_write.network_access=true' in consumer
+    assert (
+        'sandbox_workspace_write.writable_roots='
+        + json.dumps([str(Path.home() / ".dws")])
+    ) in consumer
     assert consumer[consumer.index("--cd") + 1] == str(tmp_path / "task-workspace")
     assert 'features.code_mode.excluded_tool_namespaces=[]' in consumer
     assert "features.shell_tool=false" in audit
@@ -262,8 +269,8 @@ def test_agent_cli_role_catalogue_excludes_controlled_effects() -> None:
     assert "ocr_page_numbers" in audit_catalogue[
         "read_dingtalk_oa_comment_attachment"
     ].description
-    assert "authorize_dingtalk_oa_attachment_preview" in audit_tools
-    assert "authorize_dingtalk_oa_attachment_preview" in consumer_tools
+    assert "authorize_dingtalk_oa_attachment_preview" not in audit_tools
+    assert "authorize_dingtalk_oa_attachment_preview" not in consumer_tools
     assert "instead of a file_id" in audit_catalogue[
         "read_dingtalk_oa_comment_image"
     ].description
@@ -291,12 +298,10 @@ def test_agent_cli_role_catalogue_excludes_controlled_effects() -> None:
         assert "execute_reviewed_read" not in tools
         assert "send_approved_dingtalk_message" not in tools
         assert "unsubscribe_email" not in tools
-    # Derek chose (2026-10-22) to let Audit open preview access for one OA attachment;
-    # it is the only Audit tool allowed to change DingTalk access.
-    assert {
+    assert not {
         name for name, tool in audit_catalogue.items()
         if not tool.annotations.readOnlyHint
-    } == {"authorize_dingtalk_oa_attachment_preview"}
+    }
     assert consumer_catalogue["consumer_document_write"].annotations.readOnlyHint is False
     assert consumer_catalogue["consumer_artifact_write"].annotations.readOnlyHint is False
 

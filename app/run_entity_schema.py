@@ -554,6 +554,10 @@ def _workload_key(db, row, task_edges, run_physical, run_public):
     if kind == "meeting":
         source_run_id, suffix = _meeting_workload_key_parts(key)
         return str(run_public[("meeting_alignment_runs", "int", source_run_id)]) + suffix
+    if kind == "meeting_audit":
+        if not key.isdecimal() or int(key) <= 0:
+            raise ValueError(f"malformed Meeting Audit RuntimeAttempt workload key: {key!r}")
+        return str(run_public[("meeting_alignment_runs", "int", int(key))])
     if kind == "structured":
         return str(_task_public_owner(db, "okr_review_requests", int(key)))
     if kind == "weekly_okr" and len(parts) == 5:
@@ -580,6 +584,10 @@ def _professional_attempt_parent(row, run_public):
     elif kind == "meeting":
         source_run_id, _ = _meeting_workload_key_parts(key)
         return run_public[("meeting_alignment_runs", "int", source_run_id)]
+    elif kind == "meeting_audit":
+        if not key.isdecimal() or int(key) <= 0:
+            raise ValueError(f"malformed Meeting Audit RuntimeAttempt workload key: {key!r}")
+        return run_public[("meeting_alignment_runs", "int", int(key))]
     return None
 
 
@@ -953,6 +961,13 @@ def _inverse_workload_key(db: sqlite3.Connection, value: str, task_targets: dict
         if run is None or run[0] != "meeting_alignment_runs":
             raise ValueError(f"unresolved native Meeting Run workload identity: {value!r}")
         return str(run[1]) + suffix
+    if kind == "meeting_audit":
+        if not value.isdecimal() or int(value) <= 0:
+            raise ValueError(f"malformed native Meeting Audit RuntimeAttempt workload key: {value!r}")
+        run = run_ids.get(int(value))
+        if run is None or run[0] != "meeting_alignment_runs":
+            raise ValueError(f"unresolved native Meeting Audit Run workload identity: {value!r}")
+        return str(run[1])
     if kind in {"structured", "email_classification", "workbench"}:
         source_kind = {"structured": "okr_review_requests",
                        "email_classification": "email_agent_classification_tasks",
@@ -1157,6 +1172,10 @@ def restore_run_entities(db: sqlite3.Connection, source_metadata: dict,
             expected_parent, expected_source = (
                 _meeting_workload_key_parts(key)[0], "meeting_alignment_runs"
             )
+        elif attempt["workload_kind"] == "meeting_audit":
+            if not key.isdecimal() or int(key) <= 0:
+                raise ValueError(f"malformed native Meeting Audit RuntimeAttempt workload key: {key!r}")
+            expected_parent, expected_source = int(key), "meeting_alignment_runs"
         actual_parent = attempt["parent_id"]
         if attempt["workload_kind"] == "structured" and actual_parent is not None:
             request_task = int(attempt["workload_key"])

@@ -189,17 +189,19 @@ def test_meeting_audit_uses_separate_read_only_bound_runtime_call():
         "outcome": "approve",
         "candidate_sha256": digest,
         "summary": "candidate is supported",
+        "feedback": None,
     }))
     runner = MeetingAlignmentCodexRunner(routed_execution=routed)
 
     result = runner.audit(prompt="Review exact candidate", run_id=9, candidate_sha256=digest)
 
     assert result == MeetingAlignmentAuditResult(
-        outcome="approve", candidate_sha256=digest, summary="candidate is supported"
+        outcome="approve", candidate_sha256=digest,
+        summary="candidate is supported", feedback=None,
     )
     call = routed.calls[0]
-    assert call["workload_kind"] == "meeting"
-    assert call["workload_key"] == "9:audit"
+    assert call["workload_kind"] == "meeting_audit"
+    assert call["workload_key"] == "9"
     assert call["conversation_id"] is None
     assert call["command_factory"].output_schema_path.name == "meeting_alignment_audit.schema.json"
     assert call["command_factory"].skill_names is None
