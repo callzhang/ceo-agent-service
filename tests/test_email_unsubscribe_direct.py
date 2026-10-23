@@ -558,15 +558,14 @@ def test_retryable_external_failures_cannot_exceed_the_worker_retry_budget(
         result = operation.execute(task.id)
         assert result["status"] == "failed"
         assert result["error"]["retryable"] is True
-        if attempt < 3:
-            with sqlite3.connect(email_store.path) as db:
-                marker = json.loads(
-                    db.execute(
-                        f"select value from ({state_projection('service_state')}) where key=?",
-                        (f"email_unsubscribe_execution_pending:v1:{ACTION_IDENTITY}",),
-                    ).fetchone()[0]
-                )
-            assert marker["retry_count"] == attempt + 1
+        with sqlite3.connect(email_store.path) as db:
+            marker = json.loads(
+                db.execute(
+                    f"select value from ({state_projection('service_state')}) where key=?",
+                    (f"email_unsubscribe_execution_pending:v1:{ACTION_IDENTITY}",),
+                ).fetchone()[0]
+            )
+        assert marker["retry_count"] == attempt + 1
 
     exhausted = operation.execute(task.id)
 
@@ -574,7 +573,7 @@ def test_retryable_external_failures_cannot_exceed_the_worker_retry_budget(
     assert exhausted["error"]["retryable"] is False
     assert exhausted["error"]["code"] == "email_unsubscribe_outcome_unresolved"
     assert "budget exhausted" in exhausted["summary"]
-    assert len(browser.calls) == TRANSIENT_BROWSER_UNSUBSCRIBE_RETRIES
+    assert len(browser.calls) == TRANSIENT_BROWSER_UNSUBSCRIBE_RETRIES + 1
     assert email_store.get_email_unsubscribe_receipt(ACTION_IDENTITY) is None
 
 
