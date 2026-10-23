@@ -24,4 +24,7 @@
 -- Reply candidate Task-kind guard now belongs to run_adopted_results.consumer_run_id
 --   -> runs.task_id -> tasks.kind='reply'; native Action has no candidate task_id field.
 -- Receipt execution_id becomes execution_run_id REFERENCES run_execution_progress(consumer_run_id).
+-- Six source-only Feedback parent discriminator triggers are omitted; native
+-- Actions retain direct typed FKs to Feedback decisions, items and rounds.
+-- Conversion identity-map rows remain migration metadata, not native ownership.
 -- No runtime activation, copy, migration, or historical data repair is defined here.

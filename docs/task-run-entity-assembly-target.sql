@@ -897,45 +897,9 @@ CREATE TRIGGER trg_actions_execution_id_insert before insert on actions when new
 
 CREATE TRIGGER trg_actions_execution_id_update before update of execution_id on actions when new.execution_id is not null and exists(select 1 from actions where id=new.execution_id and record_type<>'candidate_execution_alias') begin select raise(abort,'action parent type mismatch'); end;
 
-CREATE TRIGGER trg_actions_fb_decision_id_parent_insert BEFORE INSERT ON actions
-WHEN NEW._kind=49 AND EXISTS(
- SELECT 1 FROM task_run_identity_map WHERE physical_id=NEW.fb_decision_id
- AND source_kind<>'feedback_iteration_decisions')
-BEGIN SELECT RAISE(ABORT,'feedback parent type mismatch'); END;
-
-CREATE TRIGGER trg_actions_fb_decision_id_parent_update BEFORE UPDATE OF fb_decision_id ON actions
-WHEN NEW._kind=49 AND EXISTS(
- SELECT 1 FROM task_run_identity_map WHERE physical_id=NEW.fb_decision_id
- AND source_kind<>'feedback_iteration_decisions')
-BEGIN SELECT RAISE(ABORT,'feedback parent type mismatch'); END;
-
 CREATE TRIGGER trg_actions_fb_decision_immutable_delete before delete on actions when old._kind=49 begin select raise(abort,'feedback iteration decision items are append-only'); end;
 
 CREATE TRIGGER trg_actions_fb_decision_immutable_update before update on actions when old._kind=49 begin select raise(abort,'feedback iteration decision items are append-only'); end;
-
-CREATE TRIGGER trg_actions_fb_feedback_key_parent_insert BEFORE INSERT ON actions
-WHEN NEW._kind=49 AND EXISTS(
- SELECT 1 FROM feedback_processing_items i WHERE i.feedback_key=NEW.fb_feedback_key
- AND NOT EXISTS(SELECT 1 FROM task_run_identity_map m WHERE m.source_kind='feedback_processing_items' AND m.public_key=i.feedback_key))
-BEGIN SELECT RAISE(ABORT,'feedback parent type mismatch'); END;
-
-CREATE TRIGGER trg_actions_fb_feedback_key_parent_update BEFORE UPDATE OF fb_feedback_key ON actions
-WHEN NEW._kind=49 AND EXISTS(
- SELECT 1 FROM feedback_processing_items i WHERE i.feedback_key=NEW.fb_feedback_key
- AND NOT EXISTS(SELECT 1 FROM task_run_identity_map m WHERE m.source_kind='feedback_processing_items' AND m.public_key=i.feedback_key))
-BEGIN SELECT RAISE(ABORT,'feedback parent type mismatch'); END;
-
-CREATE TRIGGER trg_actions_fb_round_id_parent_insert BEFORE INSERT ON actions
-WHEN NEW._kind=49 AND EXISTS(
- SELECT 1 FROM task_run_identity_map WHERE physical_id=NEW.fb_round_id
- AND source_kind<>'feedback_processing_rounds')
-BEGIN SELECT RAISE(ABORT,'feedback parent type mismatch'); END;
-
-CREATE TRIGGER trg_actions_fb_round_id_parent_update BEFORE UPDATE OF fb_round_id ON actions
-WHEN NEW._kind=49 AND EXISTS(
- SELECT 1 FROM task_run_identity_map WHERE physical_id=NEW.fb_round_id
- AND source_kind<>'feedback_processing_rounds')
-BEGIN SELECT RAISE(ABORT,'feedback parent type mismatch'); END;
 
 CREATE TRIGGER trg_actions_fb_transition_sequence before insert on actions when new._kind=48 begin insert into sqlite_sequence(name,seq) select 'actions:feedback_processing_transitions',0 where not exists(select 1 from sqlite_sequence where name='actions:feedback_processing_transitions'); update sqlite_sequence set seq=max(seq,cast(new.legacy_key as integer)) where name='actions:feedback_processing_transitions'; end;
 

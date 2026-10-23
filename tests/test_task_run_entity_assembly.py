@@ -231,6 +231,10 @@ def test_feedback_action_references_actual_task_owned_domain_parents():
     from app.task8_storage import register_task8_functions
     register_task8_functions(db)
     objects = task_run_entity_assembly_objects()
+    action_parent_sql = "\n".join(sql for name, sql in objects.items()
+                                  if name.startswith("trg_actions_") and "parent" in name)
+    assert "task_run_identity_map" not in action_parent_sql
+    assert "source_kind" not in action_parent_sql
     for ddl in objects.values():
         if ddl.lstrip().lower().startswith("create table"):
             db.execute(ddl)
@@ -239,21 +243,19 @@ def test_feedback_action_references_actual_task_owned_domain_parents():
             db.execute(ddl)
     task_id = db.execute("insert into tasks(kind,status,parameters_json,created_at,updated_at) values('feedback_processing','pending',jsonb('{}'),'now','now') returning id").fetchone()[0]
     db.execute("insert into feedback_processing_batches(batch_id) values('batch')")
-    db.execute("insert into feedback_iteration_decisions(id,batch_id,workbench_task_id,workbench_turn_id,decision_json) values(3,'batch','workbench','turn','{}')")
+    db.execute("insert into feedback_iteration_decisions(id,batch_id,workbench_task_id,workbench_turn_id,decision_json) values(?,'batch','workbench','turn','{}')", (task_id,))
     db.execute("insert into feedback_processing_items(task_id,feedback_key,batch_id,workbench_task_id,workbench_turn_id,attempt_id,agent_run_id,commit_sha,test_evidence_json,restart_evidence_json,health_evidence_json,note,resolved_at,current_round_id) values(?, 'feedback','batch','','',0,0,'','{}','{}','{}','','',0)", (task_id,))
-    db.execute("insert into feedback_processing_rounds(id,feedback_key,round_number,status) values(2,'feedback',1,'pending')")
-    for source_kind, physical_id, public_key, target_id in (
-        ("feedback_iteration_decisions", 3, "3", 3),
-        ("feedback_processing_items", task_id, "feedback", task_id),
-        ("feedback_processing_rounds", 2, "2", 2),
-    ):
-        db.execute("insert into task_run_identity_map values(?,?,?,?,?)",
-                   (source_kind, physical_id, public_key, "text", target_id))
+    second_task_id = db.execute("insert into tasks(kind,status,parameters_json,created_at,updated_at) values('feedback_processing','pending',jsonb('{}'),'now','now') returning id").fetchone()[0]
+    db.execute("insert into feedback_processing_items(task_id,feedback_key,batch_id,workbench_task_id,workbench_turn_id,attempt_id,agent_run_id,commit_sha,test_evidence_json,restart_evidence_json,health_evidence_json,note,resolved_at,current_round_id) values(?, 'feedback2','batch','','',0,0,'','{}','{}','{}','','',0)", (second_task_id,))
+    db.execute("insert into feedback_processing_rounds(id,feedback_key,round_number,status) values(?,'feedback',1,'pending')", (task_id,))
     code = current_action_payloads().record_types.code("feedback_iteration_decision_items")
     insert = "insert into actions(_kind,legacy_key,payload_json,fb_decision_id,fb_feedback_key,fb_round_id) values(?,?,jsonb('[]'),?,?,?)"
-    db.execute(insert, (code, "1", 3, "feedback", 2))
-    with pytest.raises(sqlite3.IntegrityError):
-        db.execute(insert, (code, "2", 999, "feedback", 2))
+    db.execute(insert, (code, "1", task_id, "feedback", task_id))
+    for key, parents in (("2", (999, "feedback", task_id)),
+                         ("3", (task_id, "missing", task_id)),
+                         ("4", (task_id, "feedback2", 999))):
+        with pytest.raises(sqlite3.IntegrityError, match="FOREIGN KEY"):
+            db.execute(insert, (code, key, *parents))
 
 
 def test_reply_memory_action_references_real_reply_task_and_rejects_wrong_kind():

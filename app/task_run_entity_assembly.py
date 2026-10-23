@@ -31,7 +31,18 @@ RETIRED_ACTION_INDEXES = frozenset({
 })
 
 # These retained Action references previously depended on Task/Run discriminator
-# columns that do not exist in the unified native owners.
+# columns that do not exist in the unified native owners. The Feedback parents
+# are enforced by their translated native foreign keys and therefore have no
+# source-identity-map guards in the assembled target.
+RETIRED_SOURCE_FEEDBACK_PARENT_GUARDS = frozenset({
+    "trg_actions_fb_decision_id_parent_insert",
+    "trg_actions_fb_decision_id_parent_update",
+    "trg_actions_fb_feedback_key_parent_insert",
+    "trg_actions_fb_feedback_key_parent_update",
+    "trg_actions_fb_round_id_parent_insert",
+    "trg_actions_fb_round_id_parent_update",
+})
+
 ACTION_PARENT_GUARDS = {
     "trg_actions_agent_run_id_insert": """CREATE TRIGGER trg_actions_agent_run_id_insert BEFORE INSERT ON actions
 WHEN NEW.agent_run_id IS NOT NULL AND EXISTS(
@@ -41,36 +52,6 @@ BEGIN SELECT RAISE(ABORT,'action parent type mismatch'); END""",
 WHEN NEW.agent_run_id IS NOT NULL AND EXISTS(
  SELECT 1 FROM runs r JOIN run_provenance p ON p.run_id=r.id WHERE r.id=NEW.agent_run_id)
 BEGIN SELECT RAISE(ABORT,'action parent type mismatch'); END""",
-    "trg_actions_fb_decision_id_parent_insert": """CREATE TRIGGER trg_actions_fb_decision_id_parent_insert BEFORE INSERT ON actions
-WHEN NEW._kind=49 AND EXISTS(
- SELECT 1 FROM task_run_identity_map WHERE physical_id=NEW.fb_decision_id
- AND source_kind<>'feedback_iteration_decisions')
-BEGIN SELECT RAISE(ABORT,'feedback parent type mismatch'); END""",
-    "trg_actions_fb_decision_id_parent_update": """CREATE TRIGGER trg_actions_fb_decision_id_parent_update BEFORE UPDATE OF fb_decision_id ON actions
-WHEN NEW._kind=49 AND EXISTS(
- SELECT 1 FROM task_run_identity_map WHERE physical_id=NEW.fb_decision_id
- AND source_kind<>'feedback_iteration_decisions')
-BEGIN SELECT RAISE(ABORT,'feedback parent type mismatch'); END""",
-    "trg_actions_fb_feedback_key_parent_insert": """CREATE TRIGGER trg_actions_fb_feedback_key_parent_insert BEFORE INSERT ON actions
-WHEN NEW._kind=49 AND EXISTS(
- SELECT 1 FROM feedback_processing_items i WHERE i.feedback_key=NEW.fb_feedback_key
- AND NOT EXISTS(SELECT 1 FROM task_run_identity_map m WHERE m.source_kind='feedback_processing_items' AND m.public_key=i.feedback_key))
-BEGIN SELECT RAISE(ABORT,'feedback parent type mismatch'); END""",
-    "trg_actions_fb_feedback_key_parent_update": """CREATE TRIGGER trg_actions_fb_feedback_key_parent_update BEFORE UPDATE OF fb_feedback_key ON actions
-WHEN NEW._kind=49 AND EXISTS(
- SELECT 1 FROM feedback_processing_items i WHERE i.feedback_key=NEW.fb_feedback_key
- AND NOT EXISTS(SELECT 1 FROM task_run_identity_map m WHERE m.source_kind='feedback_processing_items' AND m.public_key=i.feedback_key))
-BEGIN SELECT RAISE(ABORT,'feedback parent type mismatch'); END""",
-    "trg_actions_fb_round_id_parent_insert": """CREATE TRIGGER trg_actions_fb_round_id_parent_insert BEFORE INSERT ON actions
-WHEN NEW._kind=49 AND EXISTS(
- SELECT 1 FROM task_run_identity_map WHERE physical_id=NEW.fb_round_id
- AND source_kind<>'feedback_processing_rounds')
-BEGIN SELECT RAISE(ABORT,'feedback parent type mismatch'); END""",
-    "trg_actions_fb_round_id_parent_update": """CREATE TRIGGER trg_actions_fb_round_id_parent_update BEFORE UPDATE OF fb_round_id ON actions
-WHEN NEW._kind=49 AND EXISTS(
- SELECT 1 FROM task_run_identity_map WHERE physical_id=NEW.fb_round_id
- AND source_kind<>'feedback_processing_rounds')
-BEGIN SELECT RAISE(ABORT,'feedback parent type mismatch'); END""",
     "trg_actions_td_meeting_alignment_delivery_claims_parent_insert": """CREATE TRIGGER trg_actions_td_meeting_alignment_delivery_claims_parent_insert BEFORE INSERT ON actions
 WHEN NEW._kind=40 AND EXISTS(SELECT 1 FROM tasks WHERE id=NEW.td_claim_job_id AND kind<>'meeting_alignment')
 BEGIN SELECT RAISE(ABORT,'task parent must be a meeting job'); END""",
@@ -175,7 +156,8 @@ def _action_objects():
     )
     rows = [("actions", table)]
     rows.extend((_object_name(sql), sql) for sql in (*indexes, *triggers))
-    rows = [(name, sql) for name, sql in rows if name not in RETIRED_ACTION_INDEXES]
+    rows = [(name, sql) for name, sql in rows
+            if name not in RETIRED_ACTION_INDEXES | RETIRED_SOURCE_FEEDBACK_PARENT_GUARDS]
     for name, sql in ACTION_PARENT_GUARDS.items():
         rows = [(key, value) for key, value in rows if key != name]
         rows.append((name, sql))
