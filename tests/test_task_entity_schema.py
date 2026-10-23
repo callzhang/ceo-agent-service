@@ -269,6 +269,84 @@ def test_remapped_reply_task_rebinds_current_and_claimed_source_input_ids():
         }]
 
 
+def test_feedback_workbench_and_current_round_refs_follow_typed_handoff_two_cycles():
+    with closing(_source()) as db:
+        from app.task12_storage import update_task12
+
+        db.execute("begin immediate")
+        append_only = db.execute(
+            "select sql from sqlite_schema where type='trigger' "
+            "and name='trg_task20_decision_update'").fetchone()[0]
+        db.execute("drop trigger trg_task20_decision_update")
+        update_task12(db, "feedback_iteration_decisions", 227, {
+            "workbench_task_id": "wb-task-a", "workbench_turn_id": "wb-turn-a",
+        })
+        update_task12(db, "feedback_processing_items", 228, {
+            "workbench_task_id": "wb-task-a", "workbench_turn_id": "wb-turn-a",
+            "current_round_id": 229,
+        })
+        db.execute(append_only)
+        source_metadata = capture_task_entities(db)
+        handoff = {"version": 1, "owners": [
+            {"source_kind": "workbench_tasks", "source_physical_id": 202, "canonical_id": 1202},
+            {"source_kind": "workbench_turns", "source_physical_id": 203, "canonical_id": 1203},
+            {"source_kind": "feedback_processing_rounds", "source_physical_id": 229, "canonical_id": 1229},
+        ]}
+
+        forward = migrate_task_entities(db, source_metadata, inverse_identity=handoff)
+        assert db.execute("select workbench_task_id,workbench_turn_id,current_round_id "
+                          "from feedback_processing_items where task_id=228").fetchone() == (
+            "1202", "1203", 1229)
+        assert db.execute("select workbench_task_id,workbench_turn_id "
+                          "from feedback_iteration_decisions where id=227").fetchone() == (
+            "1202", "1203")
+        inverse = restore_task_entities(db, source_metadata, forward)
+        item_projection = task12_projection("feedback_processing_items", include_rowid=True)
+        assert db.execute("select workbench_task_id,workbench_turn_id,current_round_id from ("
+                          + item_projection + ") where rowid=228").fetchone() == (
+            "wb-task-a", "wb-turn-a", 229)
+        decision_projection = task12_projection("feedback_iteration_decisions", include_rowid=True)
+        assert db.execute("select workbench_task_id,workbench_turn_id from ("
+                          + decision_projection + ") where rowid=227").fetchone() == (
+            "wb-task-a", "wb-turn-a")
+
+        second = migrate_task_entities(db, source_metadata,
+            source_context=inverse["source_context"], inverse_identity=inverse["inverse_identity"])
+        assert db.execute("select workbench_task_id,workbench_turn_id,current_round_id "
+                          "from feedback_processing_items where task_id=228").fetchone() == (
+            "1202", "1203", 1229)
+        restore_task_entities(db, source_metadata, second)
+        assert db.execute("select current_round_id from (" + item_projection + ") where rowid=228").fetchone() == (229,)
+        assert db.execute("pragma foreign_key_check").fetchall() == []
+
+
+def test_feedback_reference_helpers_preserve_null_and_noninteger_pointer_facts():
+    from app.task_entity_migration import (
+        restore_feedback_round_pointer, restore_feedback_workbench_ref,
+        translate_feedback_round_pointer, translate_feedback_workbench_refs,
+    )
+
+    owners = {"public": {
+        ("workbench_tasks", ("text", "wb-task-a")): 1202,
+        ("workbench_turns", ("text", "wb-turn-a")): 1203,
+        ("feedback_processing_rounds", ("integer", 229)): 1229,
+    }}
+    assert translate_feedback_workbench_refs(
+        task_ref=None, turn_ref="wb-turn-a", task_indexes=owners, turn_indexes=owners) == (
+            None, "1203")
+    assert restore_feedback_workbench_ref(
+        field="workbench_task_id", current_value=None, indexes=owners) is None
+    assert translate_feedback_round_pointer("1229x", owners) == "1229x"
+    assert restore_feedback_round_pointer("1229", owners) == "1229"
+    blob = b"1202"
+    integer = 1202
+    assert translate_feedback_workbench_refs(
+        task_ref=blob, turn_ref=integer, task_indexes=owners, turn_indexes=owners) == (
+            blob, integer)
+    assert restore_feedback_workbench_ref(
+        field="workbench_task_id", current_value=blob, indexes=owners) == blob
+
+
 def test_source_declaration_rejection_happens_before_task_container_mutation():
     with closing(_source()) as db:
         db.execute("begin immediate")

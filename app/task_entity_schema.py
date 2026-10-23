@@ -17,7 +17,8 @@ from app.task_lifecycle_definitions import (
     task_lifecycle_physical_field_map, task_physical_identity_field_map,
 )
 from app.task_entity_migration import (
-    _typed_key, owner_indexes, translate_feedback_workbench_refs,
+    _typed_key, owner_indexes, restore_feedback_round_pointer,
+    translate_feedback_round_pointer, translate_feedback_workbench_refs,
 )
 from app.task8_storage import register_task8_functions
 
@@ -555,13 +556,14 @@ def migrate_task_entities(
                             raise ValueError(f"unresolved {kind}.{source_field} owner")
                         dest = {"reply_task_id": "task_id", "request_id": "request_id",
                                 "task_id": "workbench_task_id", "turn_id": "workbench_turn_id"}.get(source_field, dest)
-                    if kind in {"feedback_processing_items", "feedback_processing_rounds"} and source_field in {
+                    if kind in {"feedback_processing_items", "feedback_processing_rounds",
+                                "feedback_iteration_decisions"} and source_field in {
                         "workbench_task_id", "workbench_turn_id",
                     }:
                         ref_markers = []
                         task_ref, turn_ref = translate_feedback_workbench_refs(
-                            task_ref=(row.get("workbench_task_id") or ""),
-                            turn_ref=(row.get("workbench_turn_id") or ""),
+                            task_ref=row.get("workbench_task_id"),
+                            turn_ref=row.get("workbench_turn_id"),
                             task_indexes=indexes, turn_indexes=indexes,
                             unresolved=ref_markers,
                         )
@@ -570,6 +572,12 @@ def migrate_task_entities(
                             if marker["field"] == source_field:
                                 reference_exceptions.append({"source_kind": kind,
                                     "physical_id": row["_physical_id"], **marker})
+                    if kind == "feedback_processing_items" and source_field == "current_round_id":
+                        ref_markers = []
+                        value = translate_feedback_round_pointer(value, indexes, ref_markers)
+                        for marker in ref_markers:
+                            reference_exceptions.append({"source_kind": kind,
+                                "physical_id": row["_physical_id"], **marker})
                     values[dest] = value
                 if target == "task_inputs":
                     values["id"] = target_ids[(kind, int(row["_physical_id"]))]
@@ -1226,7 +1234,8 @@ def restore_task_entities(db: sqlite3.Connection, source_metadata: dict, forward
                             (parent_kind, value),
                             identities["public_target"].get((parent_kind, value), value),
                         )
-            if kind in {"feedback_processing_items", "feedback_processing_rounds"} and field in {
+            if kind in {"feedback_processing_items", "feedback_processing_rounds",
+                        "feedback_iteration_decisions"} and field in {
                     "workbench_task_id", "workbench_turn_id"}:
                 raw_marker = reference_exceptions.get((kind, physical_id, field))
                 marker = None if raw_marker is None else {
@@ -1234,6 +1243,13 @@ def restore_task_entities(db: sqlite3.Connection, source_metadata: dict, forward
                 }
                 value = restore_feedback_workbench_ref(field=field, current_value=value,
                     indexes={"public": identities["public_index"]}, unresolved_marker=marker)
+            if kind == "feedback_processing_items" and field == "current_round_id":
+                raw_marker = reference_exceptions.get((kind, physical_id, field))
+                marker = None if raw_marker is None else {
+                    key: raw_marker[key] for key in ("field", "value", "type")
+                }
+                value = restore_feedback_round_pointer(
+                    value, {"public": identities["public_index"]}, marker)
             if dest and dest.startswith("parameters_json.$."):
                 values[field] = value
             elif field != "final_text":

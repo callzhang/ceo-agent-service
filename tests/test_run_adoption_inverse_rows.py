@@ -41,6 +41,95 @@ def _inverse_fixture(*, feedback=False, generic_new=False, task_delivery=False,
     return db, context, forward, task_inverse, run_inverse
 
 
+def test_adopted_feedback_transition_workbench_refs_roundtrip_with_typed_task_handoff():
+    import json
+
+    from app.run_adoption_schema import (
+        capture_run_adoptions, migrate_run_adoptions,
+    )
+    from app.run_adoption_inverse import restore_run_adoptions
+    from app.run_entity_schema import (
+        capture_run_entities, migrate_run_entities, restore_run_entities,
+    )
+    from app.task_entity_schema import (
+        capture_task_entities, migrate_task_entities, restore_task_entities,
+    )
+    from tests.test_run_adoption_schema import _populated_source
+
+    db, context = _populated_source(feedback=True, feedback_transition=True,
+                                    remap_workbench=True, remap_runs=True,
+                                    remap_feedback_rounds=True,
+                                    stop_before_adoption=True)
+    try:
+        forward = migrate_run_adoptions(
+            db, context["adoption_source"], task_metadata=context["task_metadata"],
+            run_metadata=context["run_metadata"])
+        native = tuple(db.execute(
+            "select legacy_key,json_extract(payload_json,'$[1]'),"
+            "json_extract(payload_json,'$[6]'),"
+            "json_type(payload_json,'$[6]'),json_extract(payload_json,'$[7]') "
+            "from actions where record_type='feedback_processing_transitions' order by cast(legacy_key as integer)"))
+        assert native == (("8", 1229, "1202", "text", "1203"),
+                          ("9", 1229, "1202", "text", "unknown-turn"),
+                          ("10", 1229, "", "text", ""))
+        assert forward["feedback_reference_exceptions"] == [{
+            "action_id": db.execute("select id from actions where legacy_key='9'").fetchone()[0],
+            "field": "workbench_task_id", "value": "1202",
+        }, {
+            "action_id": db.execute("select id from actions where legacy_key='9'").fetchone()[0],
+            "field": "workbench_turn_id", "value": "unknown-turn",
+        }]
+        from app.action_feedback_storage import insert_feedback_action
+        insert_feedback_action(db, "feedback_processing_transitions", {
+            "feedback_key": "feedback-a", "round_id": 1229, "batch_id": "batch-a",
+            "from_status": "pending", "to_status": "processing", "reason": "native-write",
+            "workbench_task_id": "1202", "workbench_turn_id": "1203",
+            "created_at": "native-transition-clock",
+        }, source_rowid=99)
+
+        task_inverse = restore_task_entities(
+            db, context["task_source_metadata"], context["task_metadata"])
+        run_inverse = restore_run_entities(
+            db, context["run_source_metadata"], context["run_metadata"],
+            task_metadata=context["task_metadata"], task_inverse_metadata=task_inverse)
+        restore_run_adoptions(
+            db, context["adoption_source"], forward,
+            task_metadata=context["task_metadata"], task_inverse_metadata=task_inverse,
+            run_inverse_metadata=run_inverse)
+        source = tuple(db.execute(
+            "select legacy_key,json_extract(payload_json,'$[1]'),"
+            "json_extract(payload_json,'$[6]'),"
+            "json_extract(payload_json,'$[7]') from actions "
+            "where record_type='feedback_processing_transitions' order by cast(legacy_key as integer)"))
+        assert source == (("8", 229, "wb-task-a", "wb-turn-a"),
+                          ("9", 229, "1202", "unknown-turn"),
+                          ("10", 229, "", ""),
+                          ("99", 229, "wb-task-a", "wb-turn-a"))
+
+        task_source = capture_task_entities(db)
+        run_source = capture_run_entities(db)
+        adoption_source = capture_run_adoptions(db)
+        task_forward = migrate_task_entities(db, task_source,
+            source_context=task_inverse["source_context"],
+            inverse_identity=json.loads(json.dumps(task_inverse["inverse_identity"])))
+        run_forward = migrate_run_entities(db, run_source, task_metadata=task_forward,
+            run_handoff=json.loads(json.dumps(run_inverse["run_handoff"])))
+        adoption_forward = migrate_run_adoptions(db, adoption_source,
+            task_metadata=task_forward, run_metadata=run_forward)
+        reforwards = tuple(db.execute(
+            "select legacy_key,json_extract(payload_json,'$[1]'),"
+            "json_extract(payload_json,'$[6]'),"
+            "json_extract(payload_json,'$[7]') from actions "
+            "where record_type='feedback_processing_transitions' order by cast(legacy_key as integer)"))
+        assert reforwards == (("8", 1229, "1202", "1203"),
+                              ("9", 1229, "1202", "unknown-turn"),
+                              ("10", 1229, "", ""),
+                              ("99", 1229, "1202", "1203"))
+        assert adoption_forward["feedback_reference_exceptions"]
+    finally:
+        db.close()
+
+
 def _stored_columns(catalog):
     sql = next(row[2] for row in catalog if row[0] == "table" and row[1] == "actions")
     with sqlite3.connect(":memory:") as db:

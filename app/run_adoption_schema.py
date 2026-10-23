@@ -191,6 +191,7 @@ def _rebuild_actions(db, task_metadata, task_public_index, task_map, run_map, so
     db.execute("drop table main.actions")
     db.execute(target_sql)
     columns = [name for name in target_columns if name in source_columns]
+    feedback_reference_exceptions = []
     for row in retained:
         values = {name: row[name] for name in columns}
         for field in ("agent_run_id", "audit_run_id", "consumer_run_id"):
@@ -219,6 +220,47 @@ def _rebuild_actions(db, task_metadata, task_public_index, task_map, run_map, so
                 values["action_data"] = db.execute(
                     "select jsonb_set(?, '$.agent_run_id', ?)",
                     (data, translated)).fetchone()[0]
+        if row["record_type"] == "feedback_processing_transitions" and values.get("payload_json") is not None:
+            from app.action_feedback_definitions import FEEDBACK_FIELDS
+            transition_fields = FEEDBACK_FIELDS["feedback_processing_transitions"]
+            for field in ("round_id",):
+                index = transition_fields.index(field) - 1  # The source row id is stored in legacy_key.
+                ref, json_type = db.execute(
+                    "select json_extract(?, ?), json_type(?, ?)",
+                    (values["payload_json"], f'$[{index}]', values["payload_json"], f'$[{index}]')).fetchone()
+                if json_type != "integer":
+                    continue
+                target_id = task_public_index.get(
+                    ("feedback_processing_rounds", ("integer", ref)))
+                if target_id is None:
+                    feedback_reference_exceptions.append({
+                        "action_id": row["id"], "field": field,
+                        "value": ref, "type": "integer",
+                    })
+                    continue
+                values["payload_json"] = db.execute(
+                    "select jsonb_set(?, ?, jsonb(?))",
+                    (values["payload_json"], f'$[{index}]', str(target_id))).fetchone()[0]
+            for field, kind in (("workbench_task_id", "workbench_tasks"),
+                                ("workbench_turn_id", "workbench_turns")):
+                index = transition_fields.index(field) - 1  # The source row id is stored in legacy_key.
+                ref, json_type = db.execute(
+                    "select json_extract(?, ?), json_type(?, ?)",
+                    (values["payload_json"], f'$[{index}]', values["payload_json"], f'$[{index}]')).fetchone()
+                if json_type in (None, "null"):
+                    continue
+                if json_type != "text":
+                    continue
+                target_id = task_public_index.get((kind, ("text", ref)))
+                if target_id is None:
+                    if ref:
+                        feedback_reference_exceptions.append({
+                            "action_id": row["id"], "field": field, "value": ref,
+                        })
+                    continue
+                values["payload_json"] = db.execute(
+                    "select jsonb_set(?, ?, jsonb(json_quote(?)))",
+                    (values["payload_json"], f'$[{index}]', str(target_id))).fetchone()[0]
         _insert(db, "actions", values)
     for name, sql in objects.items():
         if name != "actions" and sql.lstrip().lower().startswith(("create index", "create unique index")):
@@ -227,6 +269,7 @@ def _rebuild_actions(db, task_metadata, task_public_index, task_map, run_map, so
         if name != "actions" and sql.lstrip().lower().startswith("create trigger"):
             db.execute(sql)
     _restore_sequence_rows(db, source_sequences, ("actions",))
+    return feedback_reference_exceptions
 
 
 def _source_actions(db):
@@ -461,8 +504,9 @@ def migrate_run_adoptions(db: sqlite3.Connection, source_metadata: dict, *,
             db.execute("insert into main.run_adoption_identity_map(source_kind,source_physical_id,source_public_id,source_public_id_type,target_run_id,target_child_id) values(?,?,?,?,?,?)",
                 (kind, row["id"], stored_public, typ, target_run, child))
             identities.append((kind, row["id"], target_run, child))
-    _rebuild_actions(db, task_metadata, task_public_index, task_map, run_map,
-                     source_metadata["source_sequences"])
+    feedback_reference_exceptions = _rebuild_actions(
+        db, task_metadata, task_public_index, task_map, run_map,
+        source_metadata["source_sequences"])
     _restore_sequence_rows(db, source_metadata["source_sequences"],
                            ("action_receipts", "action_observers", "action_entity_identity_map"))
     db.execute(f'drop table temp."{_CAPTURE}"')
@@ -471,4 +515,5 @@ def migrate_run_adoptions(db: sqlite3.Connection, source_metadata: dict, *,
     db.execute(f'drop table temp."{_ALL_ACTION_CAPTURE}"')
     return {"version": 1, "identity_rows": len(identities), "identities": [list(r) for r in identities],
             "receipt_count": len(rows), "source_sequences": source_metadata["source_sequences"],
-            "selected_counts": source_metadata["selected_counts"], "source_fk_findings": source_metadata["source_fk_findings"]}
+            "selected_counts": source_metadata["selected_counts"], "source_fk_findings": source_metadata["source_fk_findings"],
+            "feedback_reference_exceptions": feedback_reference_exceptions}

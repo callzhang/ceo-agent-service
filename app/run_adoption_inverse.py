@@ -394,7 +394,8 @@ def _feedback_source_public(db, inverse_owners, kind, canonical_id):
 
 def retained_action_source_rows(db: sqlite3.Connection, source_metadata: dict, *,
                                 task_inverse_metadata: dict,
-                                run_inverse_metadata: dict) -> list[dict]:
+                                run_inverse_metadata: dict,
+                                forward_metadata: dict | None = None) -> list[dict]:
     """Translate current retained Actions rows to old-source stored columns.
 
     This is a pure row translator for the caller-owned FK-off inverse path. It
@@ -439,6 +440,24 @@ def retained_action_source_rows(db: sqlite3.Connection, source_metadata: dict, *
     retired_columns = set(source_columns) - set(target_columns)
     run_map, physical_runs = _run_sources(db, run_inverse_metadata)
     task_owners = _task_inverse_owners(task_inverse_metadata)
+    feedback_reference_exceptions = {}
+    for marker in (forward_metadata or {}).get("feedback_reference_exceptions", []):
+        if (type(marker) is not dict or type(marker.get("action_id")) is not int
+                or marker.get("field") not in {
+                    "round_id", "workbench_task_id", "workbench_turn_id",
+                }):
+            raise ValueError("invalid unresolved Feedback transition reference marker")
+        if marker["field"] == "round_id":
+            if (set(marker) != {"action_id", "field", "value", "type"}
+                    or marker["type"] != "integer" or type(marker["value"]) is not int):
+                raise ValueError("invalid unresolved Feedback transition round marker")
+        elif (set(marker) != {"action_id", "field", "value"}
+                or not isinstance(marker["value"], str) or not marker["value"]):
+            raise ValueError("invalid unresolved Feedback transition Workbench marker")
+        key = (marker["action_id"], marker["field"])
+        if key in feedback_reference_exceptions:
+            raise ValueError("duplicate unresolved Feedback transition reference marker")
+        feedback_reference_exceptions[key] = marker["value"]
     result = []
     cursor = db.execute('select * from main.actions order by id')
     native_columns = tuple(item[0] for item in cursor.description)
@@ -482,6 +501,47 @@ def retained_action_source_rows(db: sqlite3.Connection, source_metadata: dict, *
                 data = db.execute("select jsonb_set(?, '$.agent_run_id', jsonb(?))",
                                   (data, str(value))).fetchone()[0]
             row["action_data"] = data
+        if (native["record_type"] == "feedback_processing_transitions"
+                and "payload_json" in native and native["payload_json"] is not None):
+            data = native["payload_json"]
+            from app.action_feedback_definitions import FEEDBACK_FIELDS
+            transition_fields = FEEDBACK_FIELDS["feedback_processing_transitions"]
+            field = "round_id"
+            index = transition_fields.index(field) - 1
+            ref, ref_type = db.execute(
+                "select json_extract(?, ?), json_type(?, ?)",
+                (data, f'$[{index}]', data, f'$[{index}]')).fetchone()
+            if ref_type == "integer":
+                marker = feedback_reference_exceptions.get((native["id"], field))
+                if type(marker) is int:
+                    ref = marker
+                else:
+                    ref = _feedback_source_public(
+                        db, task_owners, "feedback_processing_rounds", int(ref))
+                data = db.execute("select jsonb_set(?, ?, jsonb(?))",
+                                  (data, f'$[{index}]', str(ref))).fetchone()[0]
+            for field, kind in (("workbench_task_id", "workbench_tasks"),
+                                ("workbench_turn_id", "workbench_turns")):
+                index = transition_fields.index(field) - 1
+                ref, ref_type = db.execute(
+                    "select json_extract(?, ?), json_type(?, ?)",
+                    (data, f'$[{index}]', data, f'$[{index}]')).fetchone()
+                if ref_type in (None, "null"):
+                    continue
+                if ref_type != "text":
+                    continue
+                marker = feedback_reference_exceptions.get((native["id"], field))
+                if marker is not None:
+                    ref = marker
+                else:
+                    canonical_id = (int(ref) if ref.isascii() and ref.isdecimal()
+                                    and str(int(ref)) == ref else None)
+                    if canonical_id is not None and canonical_id > 0:
+                        ref = str(_feedback_source_public(
+                            db, task_owners, kind, canonical_id))
+                data = db.execute("select jsonb_set(?, ?, jsonb(json_quote(?)))",
+                                  (data, f'$[{index}]', ref)).fetchone()[0]
+            row["payload_json"] = data
         result.append(row)
     return result
 
@@ -659,7 +719,7 @@ def restore_run_adoptions(db: sqlite3.Connection, source_metadata: dict,
                                      run_inverse_metadata=run_inverse_metadata)
     retained = retained_action_source_rows(
         db, source_metadata, task_inverse_metadata=task_inverse_metadata,
-        run_inverse_metadata=run_inverse_metadata)
+        run_inverse_metadata=run_inverse_metadata, forward_metadata=forward_metadata)
     adopted = adopted_action_source_rows(
         db, source_metadata, forward_metadata,
         run_inverse_metadata=run_inverse_metadata, identity_plan=plan)

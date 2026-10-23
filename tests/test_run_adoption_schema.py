@@ -66,7 +66,8 @@ def _source_snapshot(db):
 def _populated_source(*, remap_runs=False, feedback=False, pre_capture_unknown=False,
                       unresolved_action=False, stop_before_adoption=False, remap_tasks=False,
                       feedback_collision=False, generic_action_task_id=None,
-                      nonagent_run_owner=False):
+                      nonagent_run_owner=False, feedback_transition=False,
+                      remap_workbench=False, remap_feedback_rounds=False):
     """Build the actual old Task/Run/Action source with its production writers."""
     import hashlib
     import json
@@ -144,6 +145,25 @@ def _populated_source(*, remap_runs=False, feedback=False, pre_capture_unknown=F
             insert_feedback_action(db, "feedback_iteration_decision_items", {
                 "decision_id": 227, "feedback_key": "feedback-a", "round_id": 229,
             }, source_rowid=6)
+        if feedback_transition:
+            insert_feedback_action(db, "feedback_processing_transitions", {
+                "feedback_key": "feedback-a", "round_id": 229, "batch_id": "batch-a",
+                "from_status": "pending", "to_status": "processing", "reason": "transition",
+                "workbench_task_id": "wb-task-a", "workbench_turn_id": "wb-turn-a",
+                "created_at": "transition-clock",
+            }, source_rowid=8)
+            insert_feedback_action(db, "feedback_processing_transitions", {
+                "feedback_key": "feedback-a", "round_id": 229, "batch_id": "batch-a",
+                "from_status": "pending", "to_status": "processing", "reason": "unknown",
+                "workbench_task_id": "1202", "workbench_turn_id": "unknown-turn",
+                "created_at": "transition-clock-2",
+            }, source_rowid=9)
+            insert_feedback_action(db, "feedback_processing_transitions", {
+                "feedback_key": "feedback-a", "round_id": 229, "batch_id": "batch-a",
+                "from_status": "pending", "to_status": "processing", "reason": "empty-associations",
+                "workbench_task_id": "", "workbench_turn_id": "",
+                "created_at": "transition-clock-3",
+            }, source_rowid=10)
         if feedback_collision:
             insert_feedback_action(db, "feedback_iteration_decision_items", {
                 "decision_id": collision_source_id, "feedback_key": "feedback-a", "round_id": 229,
@@ -238,6 +258,18 @@ def _populated_source(*, remap_runs=False, feedback=False, pre_capture_unknown=F
         task_handoff = {"version": 1, "owners": [{
             "source_kind": "reply_tasks", "source_physical_id": 201, "canonical_id": 1201,
         }]}
+    if remap_workbench:
+        task_handoff = task_handoff or {"version": 1, "owners": []}
+        task_handoff["owners"].extend([
+            {"source_kind": "workbench_tasks", "source_physical_id": 202, "canonical_id": 1202},
+            {"source_kind": "workbench_turns", "source_physical_id": 203, "canonical_id": 1203},
+        ])
+    if remap_feedback_rounds:
+        task_handoff = task_handoff or {"version": 1, "owners": []}
+        task_handoff["owners"].append({
+            "source_kind": "feedback_processing_rounds", "source_physical_id": 229,
+            "canonical_id": 1229,
+        })
     if remap_tasks and feedback_collision:
         task_handoff["owners"].append({
             "source_kind": "feedback_iteration_decisions", "source_physical_id": collision_source_id,
