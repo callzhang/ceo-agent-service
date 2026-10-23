@@ -997,13 +997,12 @@ def register_console_routes(
     @app.get("/api/console/meeting-attempts/{run_id}")
     def console_meeting_detail(run_id: int):
         store = store_factory()
-        run = store.get_logical_run(
-            'meeting_alignment_runs',
-            run_id,
-        )
+        run = store.get_meeting_alignment_run(run_id)
         if run is None:
             return JSONResponse({"ok": False, "code": "not_found", "message": "Meeting attempt not found", "details": {}}, status_code=404)
-        job = store.get_meeting_alignment_job(run.job_id)
+        if run.task_id is None:
+            return JSONResponse({"ok": False, "code": "not_found", "message": "Meeting Task is unavailable", "details": {}}, status_code=404)
+        job = store.get_meeting_alignment_job(run.task_id)
         if job is None:
             return JSONResponse({"ok": False, "code": "not_found", "message": "Meeting job not found", "details": {}}, status_code=404)
         decision = stored_json(run.decision_json, {})
@@ -1046,7 +1045,7 @@ def register_console_routes(
             run_status = "failed"
         elif run_status == "ready_to_send" and job.status == "sent":
             run_status = "sent"
-        elif run_status == "ready_to_send" and store.has_later_meeting_alignment_run(run.job_id, run.id):
+        elif run_status == "ready_to_send" and store.has_later_meeting_alignment_run(run.task_id, run.id):
             run_status = "ready_to_send"
         elif run_status == "ready_to_send" and job.status in {"retry", "failed"}:
             run_status = "failed"

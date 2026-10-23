@@ -12997,6 +12997,42 @@ class AutoReplyStore(LogicalRunStoreMixin, ReviewedCandidateStoreMixin):
         })
 
     @staticmethod
+    def _native_meeting_alignment_job(db: sqlite3.Connection, task_id: int) -> MeetingAlignmentJob | None:
+        from app.task_entity_storage import get_task
+
+        task = get_task(db, task_id)
+        if task is None or task["kind"] != "meeting_alignment":
+            return None
+        parameters = task["parameters"]
+        result = db.execute(
+            "select * from task_results where task_id=? and result_kind='meeting_alignment'",
+            (task_id,),
+        ).fetchone()
+        output = {} if result is None else dict(result)
+        values = {
+            "id": task_id, "meeting_id": parameters["meeting_id"],
+            "title": parameters.get("title", ""), "source_json": parameters.get("source_json", "{}"),
+            "participants_json": parameters.get("participants_json", "[]"),
+            "ended_at": parameters.get("ended_at", ""), "eligible_at": parameters.get("eligible_at", ""),
+            "status": task["status"], "attempts": task["attempts"] or 0,
+            "locked_at": task["locked_at"], "available_at": task["available_at"] or "",
+            "error": task["error"] or "", "created_at": task["created_at"],
+            "updated_at": task["updated_at"],
+            **{name: output.get(name) for name in (
+                "decision_json", "target_kind", "target_id", "target_title", "mentions_json",
+                "final_message", "send_result_json", "calendar_summary_status",
+                "calendar_summary_result_json",
+            )},
+        }
+        defaults = {"decision_json": "{}", "target_kind": "", "target_id": "", "target_title": "",
+                    "mentions_json": "[]", "final_message": "", "send_result_json": "{}",
+                    "calendar_summary_status": "not_started", "calendar_summary_result_json": "{}"}
+        for name, default in defaults.items():
+            if values[name] is None:
+                values[name] = default
+        return MeetingAlignmentJob.model_validate(values)
+
+    @staticmethod
     def _meeting_alignment_run_from_row(
         row: sqlite3.Row,
         ref: object,
@@ -13004,6 +13040,16 @@ class AutoReplyStore(LogicalRunStoreMixin, ReviewedCandidateStoreMixin):
         from app.native_standalone import NativeStandaloneDecision, meeting_decision
 
         values = {key: row[key] for key in row.keys() if key in MeetingAlignmentRun.model_fields}
+        if "task_id" in row.keys():
+            values.setdefault("task_id", row["task_id"])
+        if "completed_at" in row.keys():
+            values.setdefault("finished_at", row["completed_at"] or "")
+        if "session_id" in row.keys():
+            values.setdefault("codex_session_id", row["session_id"] or "")
+        if "transcript_start" in row.keys():
+            values.setdefault("codex_transcript_start_line", row["transcript_start"] or 0)
+        if "transcript_end" in row.keys():
+            values.setdefault("codex_transcript_end_line", row["transcript_end"] or 0)
         native = (meeting_decision(ref) if ref is not None else
                   NativeStandaloneDecision(
                       False, "native_reference_unavailable",
@@ -13037,15 +13083,20 @@ class AutoReplyStore(LogicalRunStoreMixin, ReviewedCandidateStoreMixin):
         Returns False when this recording is already attached, so a repeated scan
         does not keep reopening a job that is already covering it.
         """
-        with self._connect() as db:
+        with self._immediate_write_transaction() as db:
+            from app.task_entity_storage import get_task, update_task_cas
+
             row = db.execute(
-                f"""select {task20_column('meeting_alignment_jobs', 'source_json')} as source_json from tasks where record_type='meeting_alignment_jobs' and cast(legacy_key as integer)=?""",
+                "select id from tasks where kind='meeting_alignment' and id=?",
                 (job_id,),
             ).fetchone()
             if row is None:
                 return False
+            task = get_task(db, job_id)
+            assert task is not None
+            source_json = task["parameters"].get("source_json", "{}")
             try:
-                source = json.loads(row["source_json"] or "{}")
+                source = json.loads(source_json or "{}")
             except (TypeError, ValueError):
                 source = {}
             segments = source.get("extra_segment_ids")
@@ -13054,16 +13105,15 @@ class AutoReplyStore(LogicalRunStoreMixin, ReviewedCandidateStoreMixin):
                 return False
             segments.append(segment_id)
             source["extra_segment_ids"] = segments
-            db.execute(
-                f"""update tasks set {task8_set_parts('meeting_alignment_jobs', {}, update_sql={'source_json': '?', 'status': '?', 'eligible_at': '?', 'attempts': '0', 'locked_at': 'null', 'available_at': "''", 'error': "''", 'updated_at': 'current_timestamp'}, payload_source='tasks.payload_json').sql}  where record_type='meeting_alignment_jobs' and cast(legacy_key as integer)=?""",
-                (
-                    json.dumps(source, ensure_ascii=False, sort_keys=True),
-                    status,
-                    eligible_at,
-                    job_id,
-                ),
+            params = {**task["parameters"], "source_json": json.dumps(source, ensure_ascii=False, sort_keys=True),
+                      "eligible_at": eligible_at}
+            changed = update_task_cas(
+                db, task_id=job_id, expected={"status": task["status"]},
+                changes={"status": status, "attempts": 0, "locked_at": None,
+                         "available_at": "", "error": "", "updated_at": db.execute("select current_timestamp").fetchone()[0]},
+                parameters=params,
             )
-            return True
+            return changed is not None
 
     def upsert_meeting_alignment_job(
         self,
@@ -13077,37 +13127,48 @@ class AutoReplyStore(LogicalRunStoreMixin, ReviewedCandidateStoreMixin):
         status: MeetingAlignmentQueueStatus,
     ) -> int:
         validated_status = self._validate_meeting_alignment_status(status)
-        with self._connect() as db:
-            _task8_insert = task8_insert_parts('meeting_alignment_jobs', {
-                "meeting_id": meeting_id, "title": title,
-                "source_json": source_json, "participants_json": participants_json,
-                "ended_at": ended_at, "eligible_at": eligible_at,
-                "status": validated_status,
-            })
-            inserted = db.execute(f"insert or ignore into tasks ({_task8_insert.columns}) values ({_task8_insert.values})", _task8_insert.parameters)
-            if inserted.rowcount == 0:
-                db.execute(
-                    f"""update tasks set {task8_set_parts('meeting_alignment_jobs', {}, update_sql={'title': '?', 'source_json': '?', 'participants_json': '?', 'ended_at': '?', 'eligible_at': '?', 'status': '?', 'updated_at': 'current_timestamp'}, payload_source='tasks.payload_json').sql}  where record_type='meeting_alignment_jobs' and {task20_column('meeting_alignment_jobs', 'meeting_id')}=? and {task20_column('meeting_alignment_jobs', 'status')}='waiting'""",
-                    (title, source_json, participants_json, ended_at, eligible_at,
-                     validated_status, meeting_id),
-                )
-            row = db.execute(
-                f"""select cast(legacy_key as integer) as id from tasks where record_type='meeting_alignment_jobs' and {task20_column('meeting_alignment_jobs', 'meeting_id')}=?""",
+        from app.task_entity_storage import associate_business_key, create_task, get_task
+
+        with self._immediate_write_transaction() as db:
+            existing = db.execute(
+                "select id from tasks where kind='meeting_alignment' and json_extract(parameters_json,'$.meeting_id')=?",
                 (meeting_id,),
             ).fetchone()
-            if row is None:
-                raise RuntimeError("meeting alignment job was not persisted")
-            return int(row["id"])
+            if existing is None:
+                task = create_task(db, values={"kind": "meeting_alignment", "status": validated_status,
+                    "available_at": "", "attempts": 0, "error": "", "locked_at": None,
+                    "created_at": db.execute("select current_timestamp").fetchone()[0],
+                    "updated_at": db.execute("select current_timestamp").fetchone()[0]}, parameters={
+                    "meeting_id": meeting_id, "title": title, "source_json": source_json,
+                    "participants_json": participants_json, "ended_at": ended_at, "eligible_at": eligible_at})
+                task_id = int(task["id"])
+                associate_business_key(db, task_id=task_id,
+                    business_key=f"meeting-alignment:{task_id}:{meeting_id}")
+                return task_id
+            task_id = int(existing["id"])
+            task = get_task(db, task_id)
+            assert task is not None
+            if task["status"] == "waiting":
+                parameters = {**task["parameters"], "title": title, "source_json": source_json,
+                    "participants_json": participants_json, "ended_at": ended_at, "eligible_at": eligible_at}
+                from app.task_entity_storage import update_task_cas
+                update_task_cas(db, task_id=task_id, expected={"status": "waiting"},
+                    changes={"status": validated_status, "updated_at": db.execute("select current_timestamp").fetchone()[0]},
+                    parameters=parameters)
+            return task_id
 
     def get_meeting_alignment_job(self, job_id: int) -> MeetingAlignmentJob:
         with self._connect() as db:
-            row = db.execute(
-                f"select * from ({MEETING_JOB_SQL}) where id=?",
-                (job_id,),
-            ).fetchone()
-            if row is None:
+            job = self._native_meeting_alignment_job(db, job_id)
+            if job is None:
                 raise ValueError(f"meeting alignment job not found: {job_id}")
-            return self._meeting_alignment_job_from_row(row)
+            return job
+
+    def get_meeting_delivery_key(self, task_id: int) -> str:
+        from app.task_entity_storage import get_meeting_delivery_key
+
+        with self._connect() as db:
+            return get_meeting_delivery_key(db, task_id)
 
     def find_meeting_alignment_job_for_segment(
         self,
@@ -13127,12 +13188,13 @@ class AutoReplyStore(LogicalRunStoreMixin, ReviewedCandidateStoreMixin):
         segment_start = datetime.fromisoformat(started_at)
         segment_end = datetime.fromisoformat(ended_at)
         with self._connect() as db:
-            rows = db.execute(
-                f"select * from ({MEETING_JOB_SQL}) where title=? order by ended_at desc limit 50",
-                (title,),
-            ).fetchall()
-        for row in rows:
-            job = self._meeting_alignment_job_from_row(row)
+            ids = [int(row[0]) for row in db.execute(
+                "select id from tasks where kind='meeting_alignment' and json_extract(parameters_json,'$.title')=? "
+                "order by datetime(json_extract(parameters_json,'$.ended_at')) desc,id desc limit 50", (title,))]
+            jobs = [self._native_meeting_alignment_job(db, task_id) for task_id in ids]
+        for job in jobs:
+            if job is None:
+                continue
             other_start, other_end = _meeting_alignment_job_span(job)
             if other_start is None or other_end is None:
                 continue
@@ -13145,59 +13207,39 @@ class AutoReplyStore(LogicalRunStoreMixin, ReviewedCandidateStoreMixin):
         meeting_id: str,
     ) -> MeetingAlignmentJob | None:
         with self._connect() as db:
-            row = db.execute(
-                f"select * from ({MEETING_JOB_SQL}) where meeting_id=?",
-                (meeting_id,),
-            ).fetchone()
-            if row is None:
-                return None
-            return self._meeting_alignment_job_from_row(row)
+            row = db.execute("select id from tasks where kind='meeting_alignment' and json_extract(parameters_json,'$.meeting_id')=?", (meeting_id,)).fetchone()
+            return None if row is None else self._native_meeting_alignment_job(db, int(row["id"]))
 
     def list_sent_meeting_alignment_jobs(self) -> list[MeetingAlignmentJob]:
         """Return delivered meeting conclusions in stable chronological order."""
         with self._connect() as db:
-            rows = db.execute(
-                f"""
-                select *
-                from ({MEETING_JOB_SQL})
-                where status='sent'
-                  and trim(final_message) <> ''
-                order by datetime(ended_at), id
-                """
-            ).fetchall()
-        return [self._meeting_alignment_job_from_row(row) for row in rows]
+            ids = [int(row[0]) for row in db.execute(
+                "select t.id from tasks t join task_results r on r.task_id=t.id and r.result_kind='meeting_alignment' "
+                "where t.kind='meeting_alignment' and t.status='sent' and trim(r.final_message)<>'' "
+                "order by datetime(json_extract(t.parameters_json,'$.ended_at')),t.id")]
+            return [job for task_id in ids if (job := self._native_meeting_alignment_job(db, task_id)) is not None]
 
     def list_meeting_alignment_jobs_ended_between(
         self, start: str, end: str
     ) -> list[MeetingAlignmentJob]:
         """Every discovered meeting that ended in [start, end), oldest first."""
         with self._connect() as db:
-            rows = db.execute(
-                f"""
-                select *
-                from ({MEETING_JOB_SQL})
-                where datetime(ended_at) >= datetime(?)
-                  and datetime(ended_at) < datetime(?)
-                order by datetime(ended_at), id
-                """,
-                (start, end),
-            ).fetchall()
-        return [self._meeting_alignment_job_from_row(row) for row in rows]
+            ids = [int(row[0]) for row in db.execute(
+                "select id from tasks where kind='meeting_alignment' "
+                "and datetime(json_extract(parameters_json,'$.ended_at'))>=datetime(?) "
+                "and datetime(json_extract(parameters_json,'$.ended_at'))<datetime(?) "
+                "order by datetime(json_extract(parameters_json,'$.ended_at')),id", (start, end))]
+            return [job for task_id in ids if (job := self._native_meeting_alignment_job(db, task_id)) is not None]
 
     def recurring_meeting_group_targets(self, title: str) -> list[tuple[str, str, int]]:
         with self._connect() as db:
             rows = db.execute(
-                f"""
-                select target_id, max(target_title) as target_title,
-                       count(*) as sent_count
-                from ({MEETING_JOB_SQL})
-                where title=? and status='sent' and target_kind='group'
-                  and trim(target_id)<>'' and trim(final_message)<>''
-                group by target_id
-                having count(*) >= 2
-                order by sent_count desc, max(id) desc
-                limit 5
-                """,
+                "select r.target_id,max(r.target_title) as target_title,count(*) as sent_count "
+                "from tasks t join task_results r on r.task_id=t.id and r.result_kind='meeting_alignment' "
+                "where t.kind='meeting_alignment' and json_extract(t.parameters_json,'$.title')=? "
+                "and t.status='sent' and r.target_kind='group' and trim(r.target_id)<>'' and trim(r.final_message)<>'' "
+                "group by r.target_id having count(*)>=2 "
+                "order by sent_count desc,max(t.id) desc limit 5",
                 (title,),
             ).fetchall()
         return [
@@ -13904,36 +13946,32 @@ class AutoReplyStore(LogicalRunStoreMixin, ReviewedCandidateStoreMixin):
     ) -> list[MeetingAlignmentJob]:
         if limit <= 0:
             return []
-        with self._connect() as db:
+        from app.task_entity_storage import update_task_cas
+        with self._immediate_write_transaction() as db:
             rows = db.execute(
-                f"""
-                with candidates as (
-                    select id
-                    from tasks
-                    where record_type='meeting_alignment_jobs'
-                      and {task20_column('meeting_alignment_jobs', 'status')} in ('waiting', 'pending', 'retry')
-                      and datetime({task20_column('meeting_alignment_jobs', 'eligible_at')}) <= datetime(?)
-                      and (
-                          {task20_column('meeting_alignment_jobs', 'available_at')}=''
-                          or datetime({task20_column('meeting_alignment_jobs', 'available_at')}) <= datetime(?)
-                      )
-                    order by max(datetime({task20_column('meeting_alignment_jobs', 'eligible_at')}),
-                        coalesce(datetime(nullif({task20_column('meeting_alignment_jobs', 'available_at')},'')), datetime({task20_column('meeting_alignment_jobs', 'eligible_at')}))), cast(legacy_key as integer)
-                    limit ?
-                )
-                update tasks
-                set {task8_set_parts('meeting_alignment_jobs', {}, update_sql={'status': "'processing'", 'attempts': f"""{task20_column('meeting_alignment_jobs', 'attempts')} + 1""", 'locked_at': 'current_timestamp', 'updated_at': 'current_timestamp'}, payload_source='tasks.payload_json').sql}  where record_type='meeting_alignment_jobs' and id in (select id from candidates)
-                  and {task20_column('meeting_alignment_jobs', 'status')} in ('waiting', 'pending', 'retry')
-                returning {task8_meeting_returning()}
-                """,
+                "select id,status,locked_at,attempts,available_at,parameters_json from tasks "
+                "where kind='meeting_alignment' and status in ('waiting','pending','retry') "
+                "and datetime(json_extract(parameters_json,'$.eligible_at'))<=datetime(?) "
+                "and (coalesce(available_at,'')='' or datetime(available_at)<=datetime(?)) "
+                "order by max(datetime(json_extract(parameters_json,'$.eligible_at')) ,"
+                "coalesce(datetime(nullif(available_at,'')),datetime(json_extract(parameters_json,'$.eligible_at')))),id limit ?",
                 (now, now, limit),
             ).fetchall()
-            jobs = [self._meeting_alignment_job_from_row(row) for row in rows]
+            jobs = []
+            stamp = db.execute("select current_timestamp").fetchone()[0]
+            for row in rows:
+                task_id = int(row["id"])
+                changed = update_task_cas(db, task_id=task_id,
+                    expected={"status": row["status"], "locked_at": row["locked_at"]},
+                    changes={"status": "processing", "attempts": (row["attempts"] or 0) + 1,
+                             "locked_at": stamp, "updated_at": stamp})
+                if changed is not None:
+                    job = self._native_meeting_alignment_job(db, task_id)
+                    if job is not None:
+                        jobs.append(job)
             return sorted(jobs, key=lambda job: (
                 max(self._parse_stored_timestamp(job.eligible_at),
-                    self._parse_stored_timestamp(job.available_at or job.eligible_at)),
-                job.id,
-            ))
+                    self._parse_stored_timestamp(job.available_at or job.eligible_at)), job.id))
 
     def update_meeting_alignment_job(self, job_id: int, **values: object) -> None:
         if not values:
@@ -13959,6 +13997,7 @@ class AutoReplyStore(LogicalRunStoreMixin, ReviewedCandidateStoreMixin):
             "calendar_summary_result_json",
         }
         filtered = self._filter_allowed_values(values, allowed_columns)
+        settled_status = filtered.get("status")
         release_ready_lock_on_transition = False
         if "status" in filtered:
             filtered["status"] = self._validate_meeting_alignment_status(
@@ -13982,23 +14021,40 @@ class AutoReplyStore(LogicalRunStoreMixin, ReviewedCandidateStoreMixin):
                 "needs_human",
             }:
                 filtered.setdefault("locked_at", None)
-        assignments = {column: "?" for column in filtered}
-        if release_ready_lock_on_transition:
-            assignments["locked_at"] = (
-                f"case when {task20_column('meeting_alignment_jobs', 'status')}!='ready_to_send' "
-                f"then null else {task20_column('meeting_alignment_jobs', 'locked_at')} end"
-            )
-        args = [*filtered.values(), job_id]
-        with self._connect() as db:
-            db.execute(
-                f"""
-                update tasks
-                set {task8_set_parts('meeting_alignment_jobs', {}, update_sql=assignments | {'updated_at': 'current_timestamp'}).sql}
-                where record_type='meeting_alignment_jobs' and cast(legacy_key as integer)=?
-                """,
-                args,
-            )
-        if filtered.get("status") in {"sent", "skipped"}:
+        from app.task_entity_storage import get_task, update_task_cas
+        lifecycle_fields = {name: filtered.pop(name) for name in tuple(filtered)
+                            if name in {"status", "locked_at", "available_at", "error"}}
+        with self._immediate_write_transaction() as db:
+            task = get_task(db, job_id)
+            if task is None or task["kind"] != "meeting_alignment":
+                return
+            parameters = {name: filtered.pop(name) for name in tuple(filtered)
+                          if name in {"title", "source_json", "participants_json", "ended_at", "eligible_at"}}
+            results = filtered
+            if lifecycle_fields.get("status") in {"waiting", "pending", "no_action", "sent", "retry", "failed", "quarantined", "skipped", "needs_human"}:
+                lifecycle_fields.setdefault("locked_at", None)
+            if release_ready_lock_on_transition and lifecycle_fields.get("status") == "ready_to_send":
+                lifecycle_fields.setdefault("available_at", "")
+                if task["status"] != "ready_to_send":
+                    lifecycle_fields.setdefault("locked_at", None)
+            if lifecycle_fields:
+                lifecycle_fields["updated_at"] = db.execute("select current_timestamp").fetchone()[0]
+                update_task_cas(db, task_id=job_id,
+                    expected={"status": task["status"], "locked_at": task["locked_at"]},
+                    changes=lifecycle_fields,
+                    parameters={**task["parameters"], **parameters} if parameters else None)
+            elif parameters:
+                update_task_cas(db, task_id=job_id,
+                    expected={"status": task["status"]}, changes={"updated_at": db.execute("select current_timestamp").fetchone()[0]},
+                    parameters={**task["parameters"], **parameters})
+            if results:
+                columns = ["task_id", "result_kind", *results]
+                db.execute(
+                    f"insert into task_results({','.join(columns)}) values({','.join('?' for _ in columns)}) "
+                    f"on conflict(task_id,result_kind) do update set {','.join(f'{name}=excluded.{name}' for name in results)}",
+                    (job_id, "meeting_alignment", *results.values()),
+                )
+        if settled_status in {"sent", "skipped"}:
             self.compact_meeting_consumer_input(job_id)
 
     def compact_meeting_consumer_input(self, job_id: int) -> bool:
@@ -14086,7 +14142,7 @@ class AutoReplyStore(LogicalRunStoreMixin, ReviewedCandidateStoreMixin):
             if db is None:
                 return []
             rows = db.execute(
-                f"""
+                """
                 with candidates as (
                     select id
                     from tasks
@@ -14292,8 +14348,8 @@ class AutoReplyStore(LogicalRunStoreMixin, ReviewedCandidateStoreMixin):
                       and not exists (
                         select 1 from ({OUTBOUND_POSTFIX_SQL}) outbound
                         where outbound.channel='dingtalk' and outbound.delivery_key in (
-                          'meeting-alignment:' || meeting_alignment_jobs.legacy_key || ':' || meeting_alignment_jobs.{task20_column('meeting_alignment_jobs', 'meeting_id')},
-                          'meeting-alignment:' || meeting_alignment_jobs.legacy_key || ':' || meeting_alignment_jobs.{task20_column('meeting_alignment_jobs', 'meeting_id')} || ':sensitive'
+                          (select business_key from task_business_keys where task_id=meeting_alignment_jobs.id),
+                          (select business_key || ':sensitive' from task_business_keys where task_id=meeting_alignment_jobs.id)
                         )
                       )
                       and not exists (
@@ -14361,9 +14417,8 @@ class AutoReplyStore(LogicalRunStoreMixin, ReviewedCandidateStoreMixin):
                 or row["send_result_json"] != "{}"
             ):
                 return None
-            delivery_key = (
-                "meeting-alignment:" + str(row["legacy_key"]) + ":" + row["meeting_id"]
-            )
+            from app.task_entity_storage import get_meeting_delivery_key
+            delivery_key = get_meeting_delivery_key(db, int(row["id"]))
             if db.execute(
                 f"""select 1 from ({OUTBOUND_POSTFIX_SQL}) outbound
                     where outbound.channel='dingtalk'
@@ -14523,9 +14578,7 @@ class AutoReplyStore(LogicalRunStoreMixin, ReviewedCandidateStoreMixin):
                      and not exists (
                        select 1 from ({OUTBOUND_POSTFIX_RECEIPT_SQL})
                        where channel='dingtalk'
-                         and delivery_key=('meeting-alignment:' ||
-                           meeting_alignment_jobs.legacy_key || ':' ||
-                           meeting_alignment_jobs.{task20_column('meeting_alignment_jobs', 'meeting_id')})
+                         and delivery_key=(select business_key from task_business_keys where task_id=meeting_alignment_jobs.id)
                      )
                    returning {task8_meeting_returning()}""",
                 (job_id,),
@@ -14539,32 +14592,31 @@ class AutoReplyStore(LogicalRunStoreMixin, ReviewedCandidateStoreMixin):
         self,
         job_id: int,
     ) -> list[MeetingAlignmentRun]:
-        from app.native_standalone import latest_standalone_ref
+        from app.native_standalone import native_run_ref
 
         with self._connect() as db:
             rows = db.execute(
-                f"""
-                select *
-                from ({MEETING_LOGICAL_RUN_SQL})
-                where id in (
-                    select cast(legacy_key as integer) from runs
-                    where record_type='agent_runs' and source_type='meeting_alignment_runs'
-                      and task_id={task_id_expression('meeting_alignment_jobs', '?')}
-                    union all
-                    select cast(legacy_key as integer) from runs
-                    where record_type='agent_runs' and source_type='meeting_alignment_runs' and job_id=?
-                )
-                order by id desc
+                """
+                select r.*, p.job_id from runs r
+                join run_provenance p on p.run_id=r.id and p.source_type='meeting_alignment_runs'
+                where r.task_id=?
+                order by r.id desc
                 """,
-                (job_id, job_id),
+                (job_id,),
             ).fetchall()
-            runs = [
-                (row, latest_standalone_ref(
-                    db, workload_kind="meeting", workload_key=str(row["id"]), legacy_row=row,
-                ))
-                for row in rows
-            ]
-        return [self._meeting_alignment_run_from_row(row, ref) for row, ref in runs]
+            runs = [(row, native_run_ref(db, row["id"], "meeting_alignment_runs")) for row in rows]
+        return [self._meeting_alignment_run_from_row(row, provenance) for row, provenance in runs]
+
+    def get_meeting_alignment_run(self, run_id: int) -> MeetingAlignmentRun | None:
+        from app.native_standalone import native_run_ref
+        with self._connect() as db:
+            row = db.execute(
+                "select r.*, p.job_id from runs r join run_provenance p on p.run_id=r.id "
+                "where r.id=? and p.source_type='meeting_alignment_runs'", (run_id,),
+            ).fetchone()
+            if row is None:
+                return None
+            return self._meeting_alignment_run_from_row(row, native_run_ref(db, run_id, "meeting_alignment_runs"))
 
 
 
@@ -14596,46 +14648,28 @@ class AutoReplyStore(LogicalRunStoreMixin, ReviewedCandidateStoreMixin):
 
     def has_later_meeting_alignment_run(self, job_id: int, run_id: int) -> bool:
         with self._connect() as db:
-            row = db.execute(
-                f"""
-                select 1 from runs
-                where record_type='agent_runs' and source_type='meeting_alignment_runs'
-                  and task_id={task_id_expression('meeting_alignment_jobs', '?')}
-                  and cast(legacy_key as integer)>?
-                limit 1
-                """,
-                (job_id, run_id),
-            ).fetchone()
-            if row is None:
-                row = db.execute(
-                    "select 1 from runs where record_type='agent_runs' and source_type='meeting_alignment_runs' "
-                    "and job_id=? and cast(legacy_key as integer)>? limit 1",
-                    (job_id, run_id),
-                ).fetchone()
+            row = db.execute("select 1 from runs r join run_provenance p on p.run_id=r.id "
+                "where p.source_type='meeting_alignment_runs' and r.task_id=? and r.id>? limit 1",
+                (job_id, run_id)).fetchone()
         return row is not None
 
     def list_meeting_alignment_runs_for_codex_session(
         self,
         codex_session_id: str,
     ) -> list[MeetingAlignmentRun]:
-        from app.native_standalone import latest_standalone_ref
+        from app.native_standalone import native_run_ref
 
         with self._connect() as db:
             rows = db.execute(
-                f"""
-                select * from ({MEETING_LOGICAL_RUN_SQL})
-                where codex_session_id=?
-                order by id desc
+                """
+                select r.*, p.job_id from runs r
+                join run_provenance p on p.run_id=r.id and p.source_type='meeting_alignment_runs'
+                where r.session_id=? order by r.id desc
                 """,
                 (codex_session_id,),
             ).fetchall()
-            runs = [
-                (row, latest_standalone_ref(
-                    db, workload_kind="meeting", workload_key=str(row["id"]), legacy_row=row,
-                ))
-                for row in rows
-            ]
-        return [self._meeting_alignment_run_from_row(row, ref) for row, ref in runs]
+            runs = [(row, native_run_ref(db, row["id"], "meeting_alignment_runs")) for row in rows]
+        return [self._meeting_alignment_run_from_row(row, provenance) for row, provenance in runs]
 
     def create_okr_review_request(
         self,

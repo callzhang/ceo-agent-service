@@ -6931,14 +6931,10 @@ def _wechat_send_actions(delivery_id: int | None) -> str:
 def _meeting_history_card(item, store: AutoReplyStore) -> str:
     status = item.status.strip().lower() or "processing"
     detail_url = f"/meeting-attempts/{item.source_id}"
-    run = store.get_logical_run(
-        'meeting_alignment_runs',
-        item.source_id,
-        load_native=False,
-    )
+    run = store.get_meeting_alignment_run(item.source_id)
     attention = None
-    if run is not None:
-        job = store.get_meeting_alignment_job(run.job_id)
+    if run is not None and run.task_id is not None:
+        job = store.get_meeting_alignment_job(run.task_id)
         attention = meeting_history_attention(run, job)
     attention_html = _history_attention_html(
         attention,
@@ -8703,21 +8699,20 @@ def render_meeting_attempt_detail(
     store: AutoReplyStore,
     run_id: int,
 ) -> tuple[int, str]:
-    run = store.get_logical_run(
-        'meeting_alignment_runs',
-        run_id,
-    )
+    run = store.get_meeting_alignment_run(run_id)
     if run is None:
         return 404, render_page(
             "Meeting attempt not found",
             f"<p>Meeting attempt #{run_id} does not exist.</p>",
             active_nav="history",
         )
-    job = store.get_meeting_alignment_job(run.job_id)
+    if run.task_id is None:
+        return 404, render_page("Meeting attempt not found", f"<p>Meeting attempt #{run_id} has no Task parent.</p>", active_nav="history")
+    job = store.get_meeting_alignment_job(run.task_id)
     run_status = _meeting_run_display_status(
         run.status,
         job.status,
-        has_later_run=store.has_later_meeting_alignment_run(run.job_id, run.id),
+        has_later_run=store.has_later_meeting_alignment_run(run.task_id, run.id),
     )
     decision = _meeting_decision_payload(run.decision_json)
     action = str(decision.get("action") or "").strip()

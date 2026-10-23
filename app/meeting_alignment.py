@@ -775,7 +775,7 @@ def reconcile_confirmed_meeting_delivery(
     decision, _ = load_persisted_meeting_alignment_decision(job.decision_json)
     if decision.sensitive_private_message is not None or decision.target is None:
         return report
-    key = f"meeting-alignment:{job.id}:{job.meeting_id}"
+    key = store.get_meeting_delivery_key(job.id)
     prepared = store.get_outbound_postfix("dingtalk", key)
     receipt = store.get_outbound_postfix_receipt("dingtalk", key)
     if prepared is None or receipt is None or store.get_outbound_postfix("dingtalk", f"{key}:sensitive"):
@@ -1178,10 +1178,7 @@ def _analyze_meeting_job(
     except ValueError as exc:
         _fail_job(store, job.id, "meeting_source", exc)
         return
-    run_id = store.claim_logical_run(
-        'meeting_alignment_runs',
-        job.id,
-    )
+    run_id = store.claim_professional_run(job.id)
     try:
         decision = agent.decide(
             source,
@@ -1570,7 +1567,7 @@ def _deliver_meeting_job(
             source,
             dws,
             message_sender=ServiceMessageSender(store=store, dingtalk=dws),
-            delivery_key=f"meeting-alignment:{job.id}:{job.meeting_id}",
+            delivery_key=store.get_meeting_delivery_key(job.id),
         )
     except MeetingDeliveryRetry as exc:
         values: dict[str, object] = {}
@@ -1838,17 +1835,12 @@ def _record_agent_run(
     status: str,
     error: str,
 ) -> int:
-    store.finish_logical_run(
-        'meeting_alignment_runs',
+    store.finish_professional_run(
         run_id,
-        codex_session_id=str(getattr(runner, "last_session_id", "") or ""),
-        codex_transcript_start_line=int(
-            getattr(runner, "last_transcript_start_line", 0) or 0
-        ),
-        codex_transcript_end_line=int(
-            getattr(runner, "last_transcript_end_line", 0) or 0
-        ),
         status=status,
+        session_id=str(getattr(runner, "last_session_id", "") or ""),
+        transcript_start=int(getattr(runner, "last_transcript_start_line", 0) or 0),
+        transcript_end=int(getattr(runner, "last_transcript_end_line", 0) or 0),
         error=error,
     )
     return run_id
