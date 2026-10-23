@@ -200,17 +200,18 @@ including a changed report date. On a same-run retry, reuse the exact source
 readbacks already recorded for that generation and search only for an
 Audit-identified missing or mismatched source.
 
-An empty independent-document search is an evidence gap, not a reason to stop
-analysis. Record that no matching independent document was found, do not invent
-or imply corroboration, and continue with the next live-OKR manager. After the
-required searches, write a complete schema-valid analysis for every manager
-whose live OKR receipt is usable, using only admissible evidence already
-available. Score KR progress and outcomes from the live source and any other
-verified material; for behavioral dimensions, use only evidence that actually
-supports that dimension and apply the existing rubric conservatively when it
-does not. Save each completed manager analysis immediately. Then finish report
-preparation, rendering, review and delivery through the normal workflow. A
-missing independent document must remain visible in `source_coverage`, but it
+Process live-OKR managers sequentially. For each manager, search and read that
+manager's independent evidence, then write and verify the complete schema-valid
+analysis artifact before requesting evidence for another manager. Never batch
+searches across managers. Do not call search for manager N+1 until manager N's
+analysis artifact has been written and read back. An empty search is an evidence
+gap, not a reason to stop: record that no matching document was found, do not
+invent corroboration, and continue using admissible evidence already available. Score KR progress and outcomes
+from the live source and other verified material; score behavioral dimensions
+only from evidence that supports the dimension and apply the existing rubric
+conservatively when it does not. After all manager analyses are saved, finish
+report preparation, rendering, review and delivery through the normal workflow.
+A missing independent document must remain visible in `source_coverage`, but it
 does not make an otherwise analyzable report incomplete or justify ending the
 turn after the first empty search.
 
