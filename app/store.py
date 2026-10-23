@@ -5587,12 +5587,18 @@ class AutoReplyStore(LogicalRunStoreMixin, ReviewedCandidateStoreMixin):
         task_id: int,
         execution_generation: str,
     ) -> ReplyTask | None:
+        from app import task_entity_storage
+
         with self._connect() as db:
-            row = db.execute(
-                f"select * from ({REPLY_TASK_CLAIMED_SQL}) where id=? and execution_generation=?",
-                (task_id, execution_generation),
-            ).fetchone()
-            return self._reply_task_from_row(row) if row is not None else None
+            task = task_entity_storage.get_task_with_inputs(db, task_id)
+            if (
+                task is None
+                or task["kind"] != "reply"
+                or task["execution_generation"] != execution_generation
+                or task["claimed_input"] is None
+            ):
+                return None
+            return self._reply_task_from_native(task, claimed=True)
 
     @staticmethod
     def _reply_input_provenance(trigger_text: str, trigger_message_json: str) -> str:
@@ -6117,6 +6123,10 @@ class AutoReplyStore(LogicalRunStoreMixin, ReviewedCandidateStoreMixin):
                 if provisional is not None:
                     task_id = int(provisional["task_id"])
                     db.execute(
+                        "update task_inputs set business_object_key=? where task_id=?",
+                        (key, task_id),
+                    )
+                    db.execute(
                         "delete from task_business_keys where task_id=? and business_key=?",
                         (task_id, provisional_key),
                     )
@@ -6246,39 +6256,39 @@ class AutoReplyStore(LogicalRunStoreMixin, ReviewedCandidateStoreMixin):
 
     @classmethod
     def _reply_task_from_native(
-        cls, task: Mapping[str, object],
+        cls, task: Mapping[str, object], *, claimed: bool = False,
     ) -> ReplyTask:
-        current_input = task["current_input"]
-        if not isinstance(current_input, Mapping):
-            raise RuntimeError("reply task has no bound current input")
+        selected_input = task["claimed_input" if claimed else "current_input"]
+        if not isinstance(selected_input, Mapping):
+            raise RuntimeError("reply task has no bound claimed input" if claimed else "reply task has no bound current input")
         parameters = task["parameters"]
         if not isinstance(parameters, Mapping):
             raise RuntimeError("reply task parameters are unavailable")
         return ReplyTask(
             id=int(task["id"]),
-            channel=str(current_input["channel"]),
-            conversation_id=str(current_input["conversation_id"]),
-            conversation_title=str(current_input["conversation_title"]),
-            single_chat=bool(current_input["single_chat"]),
-            trigger_message_id=str(current_input["trigger_message_id"]),
-            trigger_create_time=str(current_input["trigger_create_time"]),
-            trigger_sender=str(current_input["trigger_sender"]),
-            trigger_text=str(current_input["trigger_text"]),
+            channel=str(selected_input["channel"]),
+            conversation_id=str(selected_input["conversation_id"]),
+            conversation_title=str(selected_input["conversation_title"]),
+            single_chat=bool(selected_input["single_chat"]),
+            trigger_message_id=str(selected_input["trigger_message_id"]),
+            trigger_create_time=str(selected_input["trigger_create_time"]),
+            trigger_sender=str(selected_input["trigger_sender"]),
+            trigger_text=str(selected_input["trigger_text"]),
             trigger_message_json=(
                 cls._compact_reply_input_json(
-                    str(current_input["input_provenance_json"])
+                    str(selected_input["input_provenance_json"])
                 )
-                if current_input["input_compacted"]
-                else str(current_input["trigger_message_json"])
+                if selected_input["input_compacted"]
+                else str(selected_input["trigger_message_json"])
             ),
             available_at=str(task["available_at"] or ""),
             force_new_decision=bool(parameters["force_new_decision"]),
-            oa_url=str(current_input["oa_url"]),
+            oa_url=str(selected_input["oa_url"]),
             manual_rerun_attempt_id=parameters["manual_rerun_attempt_id"],
             manual_rerun_revision_key=str(parameters["manual_rerun_revision_key"]),
             execution_generation=str(task["execution_generation"]),
             recovery_code=str(parameters["recovery_code"]),
-            business_object_key=str(current_input["business_object_key"]),
+            business_object_key=str(selected_input["business_object_key"]),
             input_version=int(task["input_version"]),
             claimed_input_version=int(task["claimed_input_version"] or 0),
             current_input_id=int(task["current_input_id"]),
@@ -6286,8 +6296,8 @@ class AutoReplyStore(LogicalRunStoreMixin, ReviewedCandidateStoreMixin):
                 int(task["claimed_input_id"])
                 if task["claimed_input_id"] is not None else None
             ),
-            input_provenance_json=str(current_input["input_provenance_json"]),
-            input_compacted=bool(current_input["input_compacted"]),
+            input_provenance_json=str(selected_input["input_provenance_json"]),
+            input_compacted=bool(selected_input["input_compacted"]),
             status=str(task["status"]),
             attempts=int(task["attempts"] or 0),
             locked_at=task["locked_at"],

@@ -1,4 +1,5 @@
 from contextvars import ContextVar
+import hashlib
 import sqlite3
 
 import pytest
@@ -205,6 +206,78 @@ def test_creator_keeps_distinct_channels_separate_and_oa_provisional_key_refines
             (provisional.id,),
         )] == ["oa:process-1:node-1"]
         assert db.execute("select count(*) from task_inputs where task_id=?", (provisional.id,)).fetchone()[0] == 2
+
+
+def test_oa_refinement_updates_claimed_context_key_but_keeps_claimed_source_bytes(tmp_path):
+    store = _target_store(tmp_path / "target.sqlite3")
+    provisional = store.ensure_reply_task(**_creator_kwargs(_spec(
+        "oa-first", business_key="oa:process-claimed:",
+        trigger_text="first immutable body",
+        trigger_message_json='{"raw":"first body"}',
+    )))
+    claimed_message_digest = hashlib.sha256(
+        b'{"raw":"first body"}'
+    ).hexdigest()
+    claimed_text_digest = hashlib.sha256(b"first immutable body").hexdigest()
+    assert store.get_reply_task_for_execution(
+        provisional.id, provisional.execution_generation,
+    ) is None
+    with store._immediate_write_transaction() as db:
+        task_entity_storage.bind_claimed_input(
+            db, task_id=provisional.id,
+            input_id=provisional.current_input_id,
+            claimed_input_version=provisional.input_version,
+        )
+        task_entity_storage.update_task_cas(
+            db, task_id=provisional.id,
+            expected={"status": "pending"},
+            changes={"status": "processing"},
+        )
+
+    refined = store.ensure_reply_task(**_creator_kwargs(_spec(
+        "oa-second", business_key="oa:process-claimed:node-1",
+        trigger_text="second body",
+        trigger_message_json='{"raw":"second body"}',
+    )))
+    execution = store.get_reply_task_for_execution(
+        refined.id, refined.execution_generation,
+    )
+
+    assert refined.id == provisional.id
+    assert refined.current_input_id != provisional.claimed_input_id
+    assert refined.claimed_input_id == provisional.current_input_id
+    assert execution is not None
+    assert execution.trigger_message_id == "oa-first"
+    assert execution.trigger_text == "first immutable body"
+    assert execution.trigger_message_json == '{"raw":"first body"}'
+    assert execution.business_object_key == "oa:process-claimed:node-1"
+    assert execution.current_input_id == refined.current_input_id
+    assert execution.claimed_input_id == provisional.current_input_id
+    assert execution.input_version == refined.input_version
+    assert execution.claimed_input_version == provisional.input_version
+    assert store.get_reply_task_for_execution(refined.id, "wrong-generation") is None
+    with store._connect() as db:
+        inputs = db.execute(
+            "select trigger_message_id, trigger_text, trigger_message_json, input_provenance_json, business_object_key from task_inputs where task_id=? order by id",
+            (refined.id,),
+        ).fetchall()
+        assert [row["business_object_key"] for row in inputs] == [
+            "oa:process-claimed:node-1", "oa:process-claimed:node-1",
+        ]
+        assert [row["trigger_message_id"] for row in inputs] == ["oa-first", "oa-second"]
+        assert [row["trigger_text"] for row in inputs] == [
+            "first immutable body", "second body",
+        ]
+        assert hashlib.sha256(inputs[0]["trigger_text"].encode()).hexdigest() == claimed_text_digest
+        assert [row["trigger_message_json"] for row in inputs] == [
+            '{"raw":"first body"}', '{"raw":"second body"}',
+        ]
+        assert [row["input_provenance_json"] for row in inputs] == ["{}", "{}"]
+        assert hashlib.sha256(inputs[0]["trigger_message_json"].encode()).hexdigest() == claimed_message_digest
+        assert db.execute(
+            "select business_key from task_business_keys where task_id=?",
+            (refined.id,),
+        ).fetchone()[0] == "oa:process-claimed:node-1"
 
 
 def test_batch_creator_rolls_back_task_input_and_key_on_immutable_identity_conflict(tmp_path):
