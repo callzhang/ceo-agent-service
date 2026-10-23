@@ -637,6 +637,8 @@ v50–v68 轨迹定位出实际报告问题：固定渲染器曾把没有来源�
 
 修复提交 `0b226b55e` 合并最新 `origin/main` 后，重新运行定向测试：报告/综合评测 **126 passed**，Agent 工具说明 **8 passed**，改动文件 Ruff 与差异检查通过。发布专项 `tests/test_consumer_skill_script_boundary.py` 为 **4 passed / 1 failed**；失败项 `test_okr_report_prepare_script_matches_reviewed_package` 明确指出 OKR Skill 的 `consumer-scripts.json` 仍固定旧脚本树摘要，现有 `scripts/report.py` 改动尚未纳入已审核摘要。全局 pinned-release 测试另因日报行的 `old_sha256=32d24bb5…` 与已核实 `installed_sha256=45e10866…` 不一致而失败。两处均是发布清单未收敛，不代表降低或绕过 Skill 脚本审核；对应文件仍由既有 active claim 认领。尚未推送、部署或创建新 task6 运行。
 
+**08:07 UTC 生产复核与摘要收敛：**只读 API 和安装文件读回确认 production 为 `b07bd9877b78a8d0ab1cc616485671d44918ae37`，healthz 200，runtime Skill config 368；task14 当前 managed revision 224 / SHA `32d24bb5…`，task6 当前 revision 235 / SHA `d7584ca0…`，task6 最近仍是已失败的 run394981。实际 OKR Skill 安装摘要已是 `d7584ca0…`，`scripts/report.py` 已是 `119a249d…`，原 manifest 却把它们分别登记为 `18b23c5c…` 和 `ab61de2c…`。日报已安装及 managed 摘要为 `32d24bb5…`，其内容摘要没有变；前置快照的 revision ID 203 已过期，应为 224。已在候选分支将旧安装摘要、旧 managed 摘要和对应前置版本按线上值收敛，候选 OKR Skill 新摘要仍为 `49ba4b0b…`；没有改 Skill 内容、评分标准或投递门槛。合并当前 main 后，OA 两项已审阅 Skill 的候选摘要也同步到了匹配的前置记录，未改其正文。发布专项与固定快照检查 **33 passed**，严格 `_load_file_plan` 对生产安装目标的 **26 个资产全部通过**；`git diff --check` 通过。PR 原 Quality 仍在跑旧 head，推送合并后的提交后需等待新 head 检查。另一项正常发布进程仍在等待服务静默；截至本记录，线上配置和最新任务 run 未变化，没有新报告或外部副作用。
+
 ### v71–v76：修复后原生综合验收通过
 
 v71 首次复现了实际工作流违规：Consumer 收到 Audit 修订后直接覆写 `summary.md`、`main.md` 和 `full.md`，Audit 仍批准；独立渲染字节比对正确拒绝该候选。Skill 现将“改分析输入—重新 render—更新文档—完整读回”列为审核退回后的明确步骤，并明确禁止把生成文件当作修订输入。v72–v73 又暴露状态码泄露：报告脚本将成员 404 写入正文，而原评测器错误要求正文出现 404。脚本改用普通业务描述，评测器要求保留缺口原因、禁止泄露状态码；v73 轨迹同时确认 Consumer 也曾把内部状态码写进分析风险。
