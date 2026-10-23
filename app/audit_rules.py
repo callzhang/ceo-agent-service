@@ -26,6 +26,13 @@ AUDIT_RULE_WRAPPER = (
     "candidate without executing any action. If business meaning must change, "
     "return concrete feedback; do not rewrite the candidate yourself."
 )
+OUTBOUND_ACTION_REVIEW_CONTRACT = (
+    "For every proposed message, email, or other externally visible action, "
+    "review the exact recipient or target, content, evidence, and task scope "
+    "before approving it. The candidate is a proposal, not proof that Consumer "
+    "performed the action. Audit must never send it or perform the external "
+    "action; only the System Executor executes the exact persisted approved plan."
+)
 BUSINESS_CONTEXT_CONTRACT = (
     "Judge business suitability from the complete task and conversation context, "
     "the principal's responsibility, applicable workflow, source facts and action consequences. "
@@ -229,6 +236,8 @@ def render_audit_rules(role: AgentRole, path: Path | None = None, *, create_miss
         wrapper, BUSINESS_CONTEXT_CONTRACT, PUBLICATION_SCOPE_CONTRACT,
         MESSAGE_AUDIENCE_CONTRACT, custom,
     ]
+    if role is AgentRole.AUDIT:
+        sections.insert(1, OUTBOUND_ACTION_REVIEW_CONTRACT)
     if role is AgentRole.CONSUMER:
         sections.append(memory_write_reminder())
     return "\n\n".join(sections)
