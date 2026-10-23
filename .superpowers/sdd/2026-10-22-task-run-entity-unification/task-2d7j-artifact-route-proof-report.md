@@ -54,4 +54,4 @@ The source artifact identity was `7c8a6168-4d81-43f4-81f3-af45a0234ac1`, parent 
 
 No provider, model, main checkout, production service, runtime constructor activation, push, or deploy was used. The failure occurs in the existing Task/Run conversion composition before the native Workbench writer stage. A separate bounded allocator-composition repair/proof is required before this route acceptance can continue. The original source Route 200 is not evidence that the required inverse/reforward acceptance passed.
 
-Final HEAD: to be filled by the commit containing this report and operator. The open Task2D7B Fix1 is not accepted by this partial proof.
+Operator/report commit: `796cd352c` (full commit `796cd352c5f6318b7fa64c611112e6a23988c0d7`). Final HEAD for this partial checkpoint: `796cd352c5f6318b7fa64c611112e6a23988c0d7`. The open Task2D7B Fix1 is not accepted by this partial proof.
