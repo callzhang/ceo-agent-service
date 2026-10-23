@@ -1,5 +1,5 @@
 {
-  "observed_at": "2026-10-22T19:31:00Z",
+  "observed_at": "2026-10-23T13:30:00Z",
   "scope": "Historical real publication readback; not new Agent natural-run acceptance",
   "natural_command_completion_facts": [
     {
@@ -955,5 +955,60 @@
     "new_okr_report_created": false,
     "external_effects": false,
     "business_acceptance": "Skill publication/load verified only; no post-deploy real OKR report run has occurred."
+  },
+  "manual_authorized_run_395969": {
+    "run_id": 395969,
+    "reply_task_id": 417176,
+    "history_attempt_id": 15985,
+    "trigger_kind": "manual",
+    "status": "done",
+    "terminal_at": "2026-10-23T13:19:47Z",
+    "task_snapshot": {
+      "task_id": 6,
+      "version": 30,
+      "managed_skill": "ceo-weekly-okr-report",
+      "managed_skill_revision_id": 240,
+      "managed_skill_sha256": "49ba4b0bdafdd2ba54989f6bd1ad6b799417464f2dad2cbeefb721eb85a32f8e"
+    },
+    "trajectory": {
+      "consumer_attempt_ids": [
+        395970,
+        396024,
+        396112,
+        396135
+      ],
+      "audit_attempt_ids": [
+        396109,
+        396125,
+        396140
+      ],
+      "final_audit": "approve",
+      "verified_system_actions": 1,
+      "total_system_actions": 1
+    },
+    "provider_documents": {
+      "main_document_complete_readback": true,
+      "appendix_count": 18,
+      "appendices_complete_readback": 18,
+      "readback_status": "success",
+      "content_success": true,
+      "nonempty_markdown": true
+    },
+    "notification": {
+      "receipt_state": "sent",
+      "provider_open_message_id": "msg0PxuI5Ab9ITYNfkW5WSCmw==",
+      "provider_status_query_present": true,
+      "verified_actions": 1,
+      "total_actions": 1
+    },
+    "document_write_tool_trajectory": {
+      "calls": 62,
+      "completed": 9,
+      "failed": 53,
+      "dws_doc_write_verification_failed": 52,
+      "invalid_wiki_node_list_folder_id": 1,
+      "final_provider_readback_complete": true
+    },
+    "classification": "Manual business publication completed and fully read back. The DWS tool reported write-verification failures and one invalid folder-ID call; final provider content and notification receipt were independently confirmed. The deeper cause of DWS verification mismatch is not established. This is not a natural scheduled-run acceptance result."
   }
 }

@@ -699,3 +699,14 @@ v76 后的定向测试为 `tests/test_weekly_okr_report.py` 与 `tests/test_sche
 ### PR #277 的远端检查结果
 
 PR #277 已打开，固定 v75/v76 case、模型/CLI 和 grader 对照及本地回归均附在 PR/无正文证据中。GitHub Quality 在 `npm test` 的首步全仓 Ruff lint 中失败，报 **16 项**、位于 7 个测试文件；逐个确认这 7 个文件与 `origin/main` 字节相同，单独在当前代码和这些原样文件上复现同一 lint 错误。后续 npm、workbench 和浏览器步骤因此未运行。Vercel 预览因账号额度限制失败，平台提示 24 小时后可重试。改动文件 Ruff、OKR 定向测试、Consumer 脚本审核测试及 release-manifest 测试均通过；没有为清绿而改动无关测试、降低门槛或跳过 OKR 验收。production 尚未部署；需先处理或获准接受上述远端基线阻塞，再继续正式合并/部署和新 task6 运行。
+
+
+### 2026-10-23 task6 手动运行 395969 结果
+
+手动 run **395969**（reply task **417176**）于 13:19:47 UTC 结束为 `done`，History Attempt **15985** 为 `done`；使用 task6 配置 v30 / managed `ceo-weekly-okr-report` revision240，SHA-256 `49ba4b0bdafdd2ba54989f6bd1ad6b799417464f2dad2cbeefb721eb85a32f8e`。Consumer revisions 395970/396024/396112/396135 与 Audit revisions 396109/396125/396140 的完整 trajectory 已检查；末轮 Audit 批准，系统执行 1/1 个动作且已验证。
+
+真实文档结果已由 provider 完整读回：主报告“CEO-2 管理者 OKR 进度周报（2026 Q4 至今：2026-10-01—2026-10-23）”及其 18 份评分附录均返回 `complete=true`、`status=success`、`content.success=true` 和非空正文。群摘要发送的持久回执为 `sent`，provider 返回真实 `openMessageId=msg0PxuI5Ab9ITYNfkW5WSCmw==`；History 中 `verified_actions=1/1`。最终摘要已按 Audit revision 2 修正覆盖范围措辞，不含个人姓名、评分或个人报告链接。
+
+该轨迹里 `consumer_document_write` 共 62 次：9 次成功、53 次失败。其中 52 次 DWS 返回 `doc_write_verification_failed`，其明示含义是“写入已经执行，但回读验证失败”；另有一次把 30 字符文档 node ID 传给 `wiki +node-list --folder`，DWS 拒绝该 ID 格式。多个失败写入后，Consumer 随即读取对应文档；最终主报告和 18 份附录的 provider 正文读回完整。故实际交付已完成，但不能把这些写入工具错误说成评测误报或工具全程成功。已查明错误来自 DWS 写入验证及一次目录列表参数类型不匹配；`doc_write_verification_failed` 更深层的比较失败原因（例如 provider 内容归一化与校验差异）没有从现有回执中解释，仍未查实。本记录不把本次手动运行算作自然调度验收，也不据此关闭 task14/task13 自然报告及睡眠恢复补跑验收。
+
+无正文证据：[okr-production-readback.json](../evals/scheduled_task_generic/okr-production-readback.json) 中 `manual_authorized_run_395969`。
