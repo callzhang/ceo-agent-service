@@ -44,3 +44,26 @@ git diff --check
 ```
 
 The earlier 56-pass/5-failure result is superseded: all 73 tests in that same scoped selection now pass. This remains conversion-only evidence; independent SPEC/QUALITY review is still pending.
+
+## Fix1/5: allocate identities before portable parent edges
+
+The first structured-parent implementation checked the native owner maps before allocating identities for new native rows. A new structured RuntimeAttempt pointing at a newly inserted OKR Run therefore had no source identity to serialize; a mapped Run with a new Attempt had the same problem on the Attempt endpoint. The inverse now validates native parent/request semantics before source DDL, allocates all newly observed owner identities, and only then resolves queued structured parent edges through the completed Run and RuntimeAttempt maps. The existing global allocator remains responsible for collision-free identities.
+
+`test_new_structured_okr_run_and_attempt_parent_edges_allocate_before_inverse` uses the real Task-first inverse sequence and current owner facts. It covers a mapped Run with a newly inserted Attempt, a newly inserted OKR Run with a newly inserted Attempt, a preserved parentless unrelated attempt, JSON serialization and two inverse/forward cycles. It verifies exact parent edges, distinct allocated source IDs, source-side NULL parent representation, exact owner rows after reforward and stable allocator water after the first cycle. `test_new_structured_parent_wrong_request_task_refuses_without_mutation` verifies a mismatched canonical request Task is refused before owner-row or sequence mutation.
+
+Pinned BASE `09239253d19a9de112d2003573e88ccc8be7d58b` RED was run by loading its `app/run_entity_schema.py` into an isolated module and applying only an in-memory substitution to its stale `select kind from tasks` check. The substitution lets the BASE reach the allocation-order defect despite Task-first inverse having already restored the source Task declaration. The fixture was the real `_run_source(include_task_source_metadata=True)`, with Run 1103 mapped to 9113, a new native OKR Run 1800 and a new structured RuntimeAttempt parented to 1800. BASE then failed before DDL with `KeyError: 1215`: the attempt identity did not exist in the preallocation map. This isolates the intended failure; no repository source was changed for the RED run.
+
+Exact current verification:
+
+```text
+pytest -q tests/test_run_entity_schema.py tests/test_run_adoption_inverse.py tests/test_run_adoption_inverse_rows.py
+75 passed in 48.47s
+
+ruff check app/run_entity_schema.py tests/test_run_entity_schema.py tests/test_run_adoption_inverse.py tests/test_run_adoption_inverse_rows.py
+All checks passed!
+
+python -m compileall -q app/run_entity_schema.py tests/test_run_entity_schema.py
+git diff --check
+```
+
+This remains a migration-helper change only. The exact returned-attempt producer and native Task/RuntimeAttempt caller cutover are still subsequent work; no production activation or deployment occurred. Independent SPEC/QUALITY review across the assigned BASE..final range remains pending.

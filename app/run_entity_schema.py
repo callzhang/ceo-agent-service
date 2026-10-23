@@ -931,22 +931,10 @@ def restore_run_entities(db: sqlite3.Connection, source_metadata: dict,
         new_native[kind] = added
 
     staged = []
-    run_identity_by_target = {row["target_id"]: row for row in identities.values()
-                              if row["source_kind"] == "agent_runs"}
-    attempt_identity_by_target = {row["target_id"]: row for row in identities.values()
-                                  if row["source_kind"] == "agent_runtime_attempts"}
     run_source_type = {}
     for target, provenance in db.execute(
             "select run_id,source_type from main.run_provenance"):
         run_source_type[int(target)] = provenance
-    run_source_public_by_target = {
-        row["target_id"]: (run_source_type.get(row["target_id"]), row["public_key_order"])
-        for row in run_identity_by_target.values()
-    }
-    run_source_physical_by_target = {
-        row["target_id"]: int(row["physical_id"])
-        for row in run_identity_by_target.values()
-    }
     native_rows = {}
     for table in _OWNED_TABLES:
         if table == "run_entity_identity_map":
@@ -958,7 +946,7 @@ def restore_run_entities(db: sqlite3.Connection, source_metadata: dict,
             int(values[key_index]): dict(zip(columns, values, strict=True))
             for values in db.execute(f"select * from main.{_quote(table)}")
         }
-    inverse_parent_edges = []
+    pending_structured_parent_edges = []
     for attempt_id, attempt in native_rows["runtime_attempts"].items():
         if attempt["workload_kind"] == "agent_run":
             continue
@@ -972,21 +960,15 @@ def restore_run_entities(db: sqlite3.Connection, source_metadata: dict,
             expected_parent, expected_source = int(key), "meeting_alignment_runs"
         actual_parent = attempt["parent_id"]
         if attempt["workload_kind"] == "structured" and actual_parent is not None:
-            parent_identity = run_identity_by_target.get(int(actual_parent))
             request_task = int(attempt["workload_key"])
-            request_kind = db.execute(
-                "select kind from main.tasks where id=?", (request_task,)).fetchone()
+            _task_source_physical(
+                db, task_target_to_source, "okr_review_requests", request_task)
             parent_provenance = run_source_type.get(int(actual_parent))
             parent_row = native_rows["runs"].get(int(actual_parent))
-            if (parent_identity is None or request_kind is None
-                    or request_kind[0] != _task_kind("okr_review_requests")
-                    or parent_provenance != "okr_review_runs"
+            if (parent_provenance != "okr_review_runs"
                     or parent_row is None or parent_row["task_id"] != request_task):
                 raise ValueError("native structured RuntimeAttempt Run owner cannot be represented by the selected source")
-            inverse_parent_edges.append({
-                "attempt_source_physical_id": int(attempt_identity_by_target[attempt_id]["physical_id"]),
-                "run_source_physical_id": int(parent_identity["physical_id"]),
-            })
+            pending_structured_parent_edges.append((attempt_id, int(actual_parent)))
             continue
         if actual_parent != expected_parent or (expected_parent is not None
                 and run_source_type.get(expected_parent) != expected_source):
@@ -1042,6 +1024,8 @@ def restore_run_entities(db: sqlite3.Connection, source_metadata: dict,
             allocated.append((kind, physical, target))
     run_identity_by_target = {row["target_id"]: row for row in identities.values()
                               if row["source_kind"] == "agent_runs"}
+    attempt_identity_by_target = {row["target_id"]: row for row in identities.values()
+                                  if row["source_kind"] == "agent_runtime_attempts"}
     run_source_public_by_target = {
         row["target_id"]: (run_source_type.get(row["target_id"]), row["public_key_order"])
         for row in run_identity_by_target.values()
@@ -1050,6 +1034,16 @@ def restore_run_entities(db: sqlite3.Connection, source_metadata: dict,
         row["target_id"]: int(row["physical_id"])
         for row in run_identity_by_target.values()
     }
+    inverse_parent_edges = []
+    for attempt_id, parent_id in pending_structured_parent_edges:
+        attempt_identity = attempt_identity_by_target.get(attempt_id)
+        parent_identity = run_identity_by_target.get(parent_id)
+        if attempt_identity is None or parent_identity is None:
+            raise ValueError("structured RuntimeAttempt parent has no allocated source identity")
+        inverse_parent_edges.append({
+            "attempt_source_physical_id": int(attempt_identity["physical_id"]),
+            "run_source_physical_id": int(parent_identity["physical_id"]),
+        })
     for kind, rows in by_kind.items():
         owner = _SOURCE_TO_OWNER[kind]
         for identity in rows:

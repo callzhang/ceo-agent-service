@@ -482,6 +482,121 @@ def test_structured_okr_attempt_parent_survives_two_json_inverse_reforward_cycle
         db.close()
 
 
+def test_new_structured_okr_run_and_attempt_parent_edges_allocate_before_inverse():
+    from tests.test_run_entity_definitions import insert_attempt, valid_attempt
+    from app.task_entity_schema import capture_task_entities, migrate_task_entities, restore_task_entities
+
+    db, task_forward, task_source_metadata = _run_source(include_task_source_metadata=True)
+    try:
+        run_source_metadata = capture_run_entities(db)
+        handoff = _run_handoff(db, run_source_metadata, identity_edges=[
+            dict(source_kind="agent_runs", source_physical_id=1103, canonical_id=9113)])
+        run_forward = migrate_run_entities(db, run_source_metadata, task_metadata=task_forward,
+                                           run_handoff=handoff)
+        # Existing mapped Run + newly inserted attempt exercises one mixed edge.
+        db.execute("update runtime_attempts set parent_id=9113 where id=1205")
+        insert_attempt(db, valid_attempt(parent_id=9113, workload_kind="structured",
+            workload_key="222", attempt=2, status="completed"))
+        mapped_run_attempt = db.execute("select max(id) from runtime_attempts").fetchone()[0]
+        # Both the Run and its attempt are new native facts with no identity-map row.
+        db.execute("insert into runs(id,task_id,session_id,created_at,transcript_start,transcript_end) "
+                   "values(1800,222,'session-new-okr','created',0,0)")
+        db.execute("insert into run_provenance values(1800,'okr_review_runs',NULL)")
+        insert_attempt(db, valid_attempt(parent_id=1800, workload_kind="structured",
+            workload_key="222", attempt=3, status="completed"))
+        new_run_attempt = db.execute("select max(id) from runtime_attempts").fetchone()[0]
+
+        def owner_facts():
+            tables = [name for name in _TARGET_TABLES if name != "run_entity_identity_map"]
+            return {table: sorted((tuple(row) for row in db.execute(f'select * from "{table}"')),
+                                 key=repr) for table in tables}
+
+        expected = owner_facts()
+        stable_sequences = None
+        for cycle in (1, 2):
+            task_inverse = restore_task_entities(db, task_source_metadata, task_forward)
+            result = restore_run_entities(db, run_source_metadata, run_forward,
+                                          task_metadata=task_forward,
+                                          task_inverse_metadata=task_inverse)
+            handoff = json.loads(json.dumps(result["run_handoff"]))
+            edges = handoff["runtime_attempt_parent_edges"]
+            assert len(edges) == 3
+            run_edges = {edge["canonical_id"]: edge["source_physical_id"]
+                         for edge in handoff["identity_edges"]
+                         if edge["source_kind"] == "agent_runs"}
+            attempt_edges = {edge["canonical_id"]: edge["source_physical_id"]
+                             for edge in handoff["identity_edges"]
+                             if edge["source_kind"] == "agent_runtime_attempts"}
+            assert edges == sorted([
+                {"attempt_source_physical_id": 1205,
+                 "run_source_physical_id": run_edges[9113]},
+                {"attempt_source_physical_id": attempt_edges[mapped_run_attempt],
+                 "run_source_physical_id": run_edges[9113]},
+                {"attempt_source_physical_id": attempt_edges[new_run_attempt],
+                 "run_source_physical_id": run_edges[1800]},
+            ], key=lambda edge: (edge["attempt_source_physical_id"],
+                                 edge["run_source_physical_id"]))
+            allocated_source_ids = [edge["source_physical_id"]
+                                    for edge in handoff["identity_edges"]]
+            assert len(allocated_source_ids) == len(set(allocated_source_ids))
+            edge_source_ids = tuple(edge["attempt_source_physical_id"] for edge in edges)
+            assert tuple(db.execute("select parent_id from runs where id in (?,?,?) order by id",
+                                    edge_source_ids)) == ((None,), (None,), (None,))
+            parentless_source = 1206
+            assert db.execute("select parent_id,workload_key from runs where id=?",
+                              (parentless_source,)).fetchone() == (None, "week:manager:digest")
+
+            task_source_metadata = capture_task_entities(db)
+            run_source_metadata = capture_run_entities(db)
+            task_forward = migrate_task_entities(db, task_source_metadata,
+                source_context=task_inverse["source_context"],
+                inverse_identity=json.loads(json.dumps(task_inverse["inverse_identity"])))
+            run_forward = migrate_run_entities(db, run_source_metadata, task_metadata=task_forward,
+                run_handoff=handoff)
+            assert owner_facts() == expected
+            after_sequences = tuple(tuple(row) for row in db.execute(
+                "select rowid,name,seq from sqlite_sequence order by rowid"))
+            if stable_sequences is not None:
+                assert after_sequences == stable_sequences
+            stable_sequences = after_sequences
+            assert db.execute("select parent_id from runtime_attempts where id=1205").fetchone() == (9113,)
+    finally:
+        db.close()
+
+
+def test_new_structured_parent_wrong_request_task_refuses_without_mutation():
+    from tests.test_run_entity_definitions import insert_attempt, valid_attempt
+    from app.task_entity_schema import restore_task_entities
+
+    db, task_forward, task_source_metadata = _run_source(include_task_source_metadata=True)
+    try:
+        source = capture_run_entities(db)
+        forward = migrate_run_entities(db, source, task_metadata=task_forward,
+                                       run_handoff=_run_handoff(db, source))
+        db.execute("insert into runs(id,task_id,session_id,created_at,transcript_start,transcript_end) "
+                   "values(1800,222,'session-new-okr','created',0,0)")
+        db.execute("insert into run_provenance values(1800,'okr_review_runs',NULL)")
+        insert_attempt(db, valid_attempt(parent_id=1800, workload_kind="structured",
+            workload_key="222", attempt=2, status="completed"))
+        attempt_id = db.execute("select max(id) from runtime_attempts").fetchone()[0]
+        task_inverse = restore_task_entities(db, task_source_metadata, task_forward)
+        db.execute("update runtime_attempts set workload_key='221' where id=?", (attempt_id,))
+        before = {table: sorted((tuple(row) for row in db.execute(f'select * from "{table}"')),
+                                key=repr) for table in _TARGET_TABLES}
+        sequences = tuple(tuple(row) for row in db.execute(
+            "select rowid,name,seq from sqlite_sequence order by rowid"))
+        with pytest.raises(ValueError, match="Task reference|structured RuntimeAttempt"):
+            restore_run_entities(db, source, forward, task_metadata=task_forward,
+                                 task_inverse_metadata=task_inverse)
+        after = {table: sorted((tuple(row) for row in db.execute(f'select * from "{table}"')),
+                               key=repr) for table in _TARGET_TABLES}
+        assert after == before
+        assert tuple(tuple(row) for row in db.execute(
+            "select rowid,name,seq from sqlite_sequence order by rowid")) == sequences
+    finally:
+        db.close()
+
+
 @pytest.mark.parametrize("mutation", ["duplicate", "dangling_attempt", "wrong_parent_kind",
                                       "wrong_provenance", "digest"])
 def test_invalid_structured_parent_handoff_rejects_before_source_replacement(mutation):
