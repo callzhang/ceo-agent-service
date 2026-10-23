@@ -835,6 +835,64 @@ def test_current_inverse_decodes_codec_scalars_from_the_whole_native_parameter_o
                               + ")").fetchone() == (expected_value, expected_type)
 
 
+def test_meeting_identity_index_preserves_source_blob_marker_text_and_text_affinity():
+    with closing(_source()) as db:
+        marker_text = '{"t":"blob","v":"70726f76696465722d6964"}'
+        source_rows = (
+            (416922, sqlite3.Binary(b"provider-id")),
+            (416923, marker_text),
+            (416924, 6.0),
+            (416925, float("inf")),
+        )
+        for physical_id, meeting_id in source_rows:
+            values = payload(db, "meeting_alignment_jobs")
+            values["meeting_id"] = meeting_id
+            columns, expressions, parameters = source_insert("meeting_alignment_jobs", values, {})
+            db.execute(
+                'insert into tasks("_kind","id","legacy_key","parent_id",'
+                + ",".join('"' + column + '"' for column in columns) + ") values(?,?,?,? ,"
+                + ",".join(expressions) + ")",
+                (TASK_RECORD_TYPES.code("meeting_alignment_jobs"), physical_id,
+                 str(physical_id), None, *parameters),
+            )
+        assert db.execute(
+            "select meeting_id,typeof(meeting_id) from ("
+            + task20_definitions.task20_projection("meeting_alignment_jobs")
+            + ") where id in ('416922','416923','416924','416925') order by id"
+        ).fetchall() == [
+            (b"provider-id", "blob"), (marker_text, "text"), ("6.0", "text"), ("Inf", "text"),
+        ]
+
+        duplicate = payload(db, "meeting_alignment_jobs")
+        duplicate["meeting_id"] = sqlite3.Binary(b"provider-id")
+        columns, expressions, parameters = source_insert("meeting_alignment_jobs", duplicate, {})
+        with pytest.raises(sqlite3.IntegrityError):
+            db.execute(
+                'insert into tasks("_kind","id","legacy_key","parent_id",'
+                + ",".join('"' + column + '"' for column in columns) + ") values(?,?,?,? ,"
+                + ",".join(expressions) + ")",
+                (TASK_RECORD_TYPES.code("meeting_alignment_jobs"), 416926, "416926", None,
+                 *parameters),
+            )
+
+        db.commit()
+        db.execute("begin immediate")
+        source_metadata = capture_task_entities(db)
+        migrate_task_entities(db, source_metadata)
+        assert db.execute(
+            "select typeof(jsonb_extract(parameters_json,'$.meeting_id')),"
+            "json_type(parameters_json,'$.meeting_id') from tasks where id in "
+            "(416922,416923,416924,416925) order by id"
+        ).fetchall() == [
+            ("blob", "object"), ("text", "text"), ("text", "text"), ("text", "text"),
+        ]
+        with pytest.raises(sqlite3.IntegrityError):
+            db.execute("insert into tasks(kind,status,parameters_json,created_at,updated_at) "
+                       "values('meeting_alignment','waiting',jsonb(?),'now','now')",
+                       (json.dumps({"meeting_id": {"t": "blob", "v": "70726f76696465722d6964"}}),))
+        db.rollback()
+
+
 def test_inverse_preserves_hidden_task12_rowid_legacy_key_for_natural_key_owner():
     with closing(_source()) as db:
         physical_id = db.execute(

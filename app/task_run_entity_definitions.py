@@ -243,6 +243,35 @@ def _task_run_entity_objects_base() -> dict[str, str]:
 def task_run_entity_objects() -> dict[str, str]:
     """Return Task declarations with source-proven parent and query contracts."""
     objects = _task_run_entity_objects_base()
+    # The source identity columns have TEXT affinity. The native parameter
+    # codec represents BLOBs as tagged JSON objects; decode only that object
+    # form so it remains distinct from ordinary marker-looking TEXT. The
+    # actual source writer already applies TEXT affinity to numeric scalars.
+    def source_text_identity(path: str) -> str:
+        value = f"jsonb_extract(parameters_json,'$.{path}')"
+        kind = f"json_type(parameters_json,'$.{path}')"
+        return (
+            f"CASE WHEN {kind}='object' AND "
+            f"json_extract(parameters_json,'$.{path}.t')='blob' THEN "
+            f"unhex(json_extract(parameters_json,'$.{path}.v')) "
+            f"ELSE {value} END"
+        )
+
+    objects["idx_meeting_source_identity"] = (
+        "CREATE UNIQUE INDEX idx_meeting_source_identity ON tasks(" +
+        source_text_identity("meeting_id") + ") WHERE kind='meeting_alignment'"
+    )
+    objects["idx_okr_review_source_identity"] = (
+        "CREATE UNIQUE INDEX idx_okr_review_source_identity ON tasks(" +
+        source_text_identity("conversation_id") + "," +
+        source_text_identity("trigger_message_id") + ") WHERE kind='okr_review'"
+    )
+    objects["idx_weekly_analysis_source_identity"] = (
+        "CREATE UNIQUE INDEX idx_weekly_analysis_source_identity ON tasks(" +
+        source_text_identity("week_end") + "," +
+        source_text_identity("manager_user_id") + "," +
+        source_text_identity("source_digest") + ") WHERE kind='okr_analysis'"
+    )
     objects["okr_review_items"] = objects["okr_review_items"].replace(
         '"request_id" INTEGER NOT NULL,',
         '"request_id" INTEGER NOT NULL REFERENCES tasks(id),',

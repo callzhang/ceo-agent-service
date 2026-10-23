@@ -689,7 +689,7 @@ CREATE UNIQUE INDEX idx_feedback_processing_rounds_feedback_key_batch_id_identit
 
 CREATE UNIQUE INDEX idx_feedback_processing_rounds_feedback_key_round_number_identity ON feedback_processing_rounds(feedback_key,round_number);
 
-CREATE UNIQUE INDEX idx_meeting_source_identity ON tasks(json_extract(parameters_json,'$.meeting_id')) WHERE kind='meeting_alignment';
+CREATE UNIQUE INDEX idx_meeting_source_identity ON tasks(CASE WHEN json_type(parameters_json,'$.meeting_id')='object' AND json_extract(parameters_json,'$.meeting_id.t')='blob' THEN unhex(json_extract(parameters_json,'$.meeting_id.v')) ELSE jsonb_extract(parameters_json,'$.meeting_id') END) WHERE kind='meeting_alignment';
 
 CREATE INDEX idx_oa_notification_events_case_status ON oa_notification_events(process_instance_id,task_id,requires_reply,status,id);
 
@@ -697,7 +697,7 @@ CREATE UNIQUE INDEX idx_oa_notification_events_channel_conversation_id_trigger_m
 
 CREATE INDEX idx_oa_notification_events_claim ON oa_notification_events(status,claimed_attempt_id,id);
 
-CREATE UNIQUE INDEX idx_okr_review_source_identity ON tasks(json_extract(parameters_json,'$.conversation_id'),json_extract(parameters_json,'$.trigger_message_id')) WHERE kind='okr_review';
+CREATE UNIQUE INDEX idx_okr_review_source_identity ON tasks(CASE WHEN json_type(parameters_json,'$.conversation_id')='object' AND json_extract(parameters_json,'$.conversation_id.t')='blob' THEN unhex(json_extract(parameters_json,'$.conversation_id.v')) ELSE jsonb_extract(parameters_json,'$.conversation_id') END,CASE WHEN json_type(parameters_json,'$.trigger_message_id')='object' AND json_extract(parameters_json,'$.trigger_message_id.t')='blob' THEN unhex(json_extract(parameters_json,'$.trigger_message_id.v')) ELSE jsonb_extract(parameters_json,'$.trigger_message_id') END) WHERE kind='okr_review';
 
 CREATE INDEX idx_provenance_source on provenance(source_type,source_ref,source_time,id);
 
@@ -799,7 +799,7 @@ CREATE INDEX idx_tasks_workbench_turn_status_created ON tasks(status,created_at,
 
 CREATE INDEX idx_tasks_workbench_turn_status_lease ON tasks(status,lease_expires_at) WHERE kind='workbench_turn';
 
-CREATE UNIQUE INDEX idx_weekly_analysis_source_identity ON tasks(json_extract(parameters_json,'$.week_end'),json_extract(parameters_json,'$.manager_user_id'),json_extract(parameters_json,'$.source_digest')) WHERE kind='okr_analysis';
+CREATE UNIQUE INDEX idx_weekly_analysis_source_identity ON tasks(CASE WHEN json_type(parameters_json,'$.week_end')='object' AND json_extract(parameters_json,'$.week_end.t')='blob' THEN unhex(json_extract(parameters_json,'$.week_end.v')) ELSE jsonb_extract(parameters_json,'$.week_end') END,CASE WHEN json_type(parameters_json,'$.manager_user_id')='object' AND json_extract(parameters_json,'$.manager_user_id.t')='blob' THEN unhex(json_extract(parameters_json,'$.manager_user_id.v')) ELSE jsonb_extract(parameters_json,'$.manager_user_id') END,CASE WHEN json_type(parameters_json,'$.source_digest')='object' AND json_extract(parameters_json,'$.source_digest.t')='blob' THEN unhex(json_extract(parameters_json,'$.source_digest.v')) ELSE jsonb_extract(parameters_json,'$.source_digest') END) WHERE kind='okr_analysis';
 
 CREATE UNIQUE INDEX idx_work_summary_source_identity ON work_summary_inputs(source_type,source_ref);
 
