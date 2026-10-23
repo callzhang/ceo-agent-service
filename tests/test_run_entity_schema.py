@@ -1282,6 +1282,72 @@ def test_inverse_retires_deleted_mapped_occurrence_and_cache_without_resurrectio
         db.close()
 
 
+@pytest.mark.parametrize("workload_key", [
+    "201:decision_repair", "201:decision_repair.not-a-number", "201:decision_repair.0",
+    "201:decision_repair.01", "201:decision_repair.1:extra",
+])
+def test_forward_rejects_malformed_decision_repair_task_keys_before_schema_mutation(workload_key):
+    db, task_metadata = _run_source()
+    try:
+        source_metadata = capture_run_entities(db)
+        db.execute("update runs set workload_key=? where record_type='agent_runtime_attempts' "
+                   "and workload_kind='task' and workload_key='201:decision_repair.2'", (workload_key,))
+        source_rows = tuple(db.execute("select id,workload_kind,workload_key from runs "
+                                       "where record_type='agent_runtime_attempts' order by id"))
+        with pytest.raises(ValueError, match="decision_repair"):
+            migrate_run_entities(db, source_metadata, task_metadata=task_metadata,
+                                 run_handoff=_run_handoff(db, source_metadata))
+        assert tuple(db.execute("select id,workload_kind,workload_key from runs "
+                                "where record_type='agent_runtime_attempts' order by id")) == source_rows
+        assert db.execute("select 1 from sqlite_schema where type='table' and name='runs'").fetchone()
+        assert not db.execute("select 1 from sqlite_schema where type='table' "
+                              "and name='runtime_attempts'").fetchone()
+        assert not db.execute("select 1 from temp.sqlite_schema where name='_run_entity_forward_rows'").fetchone()
+    finally:
+        db.close()
+
+
+@pytest.mark.parametrize("workload_key", [
+    "201:decision_repair", "201:decision_repair.not-a-number", "201:decision_repair.0",
+    "201:decision_repair.01", "201:decision_repair.1:extra",
+])
+def test_inverse_rejects_malformed_decision_repair_task_keys_before_schema_mutation(workload_key):
+    db, task_metadata = _run_source()
+    try:
+        source_metadata = capture_run_entities(db)
+        forward = migrate_run_entities(db, source_metadata, task_metadata=task_metadata,
+                                       run_handoff=_run_handoff(db, source_metadata))
+        db.execute("update runtime_attempts set workload_key=? where workload_kind='task' "
+                   "and workload_key like '%decision_repair.2'", (workload_key,))
+        native_rows = tuple(db.execute("select id,workload_kind,workload_key,parent_id "
+                                       "from runtime_attempts order by id"))
+        with pytest.raises(ValueError, match="decision_repair"):
+            restore_run_entities(db, source_metadata, forward, task_metadata=task_metadata)
+        assert tuple(db.execute("select id,workload_kind,workload_key,parent_id "
+                                "from runtime_attempts order by id")) == native_rows
+        assert db.execute("select 1 from sqlite_schema where type='table' "
+                          "and name='runtime_attempts'").fetchone()
+    finally:
+        db.close()
+
+
+def test_forward_maps_canonical_first_decision_repair_round_to_task_run():
+    db, task_metadata = _run_source()
+    try:
+        source_metadata = capture_run_entities(db)
+        db.execute("update runs set workload_key='201:decision_repair.1' "
+                   "where record_type='agent_runtime_attempts' and workload_kind='task' "
+                   "and workload_key='201:decision_repair.2'")
+        migrate_run_entities(db, source_metadata, task_metadata=task_metadata,
+                             run_handoff=_run_handoff(db, source_metadata))
+        assert db.execute("select parent_id from runtime_attempts "
+                          "where workload_kind='task' and workload_key='1101:decision_repair.1'").fetchone() == (1101,)
+        assert db.execute("select 1 from runtime_attempts where workload_kind='task' "
+                          "and workload_key in ('301:memory_backfill','302:deadline_backfill.4')").fetchone()
+    finally:
+        db.close()
+
+
 def _q(identifier):
     return '"' + identifier.replace('"', '""') + '"'
 

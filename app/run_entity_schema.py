@@ -337,14 +337,35 @@ def _restore_owner_highwaters(db: sqlite3.Connection, owner_maps: dict,
                 db.execute("insert into main.sqlite_sequence(name,seq) values(?,?)", (owner, desired))
 
 
+def _task_workload_key_class(key: str) -> str:
+    """Classify Task workload identity using the frozen source key grammar."""
+    parts = key.split(":")
+    task_id = parts[0]
+    if not task_id.isdecimal() or int(task_id) <= 0:
+        raise ValueError(f"Task workload key must start with a persisted ID: {key!r}")
+    if len(parts) == 1:
+        return "plain"
+    suffix = parts[1]
+    if suffix != "decision_repair" and not suffix.startswith("decision_repair."):
+        return "business"
+    if len(parts) != 2:
+        raise ValueError(f"malformed decision_repair Task workload key: {key!r}")
+    operation, separator, round_text = suffix.partition(".")
+    if (operation != "decision_repair" or not separator or not round_text.isdecimal()
+            or int(round_text) <= 0 or str(int(round_text)) != round_text):
+        raise ValueError(f"malformed decision_repair Task workload key: {key!r}")
+    return "decision_repair"
+
+
 def _workload_key(db, row, task_edges, run_physical, run_public):
     kind, key = row["workload_kind"], row["workload_key"]
     parts = key.split(":")
     if kind == "agent_run":
         return str(run_physical[int(key)])
     if kind == "task":
+        task_key_class = _task_workload_key_class(key)
         suffix = parts[1:]
-        if not suffix or suffix[0].startswith("decision_repair."):
+        if task_key_class in {"plain", "decision_repair"}:
             physical = run_public[("task_agent_runs", "int", int(parts[0]))]
             return str(physical) + ((":" + ":".join(suffix)) if suffix else "")
         # memory_backfill Project IDs and deadline_backfill Todo IDs remain in
@@ -373,8 +394,7 @@ def _professional_attempt_parent(row, run_public):
     kind, key = row["workload_kind"], row["workload_key"]
     if kind == "task":
         parts = key.split(":")
-        suffix = parts[1:]
-        if not suffix or suffix[0].startswith("decision_repair."):
+        if _task_workload_key_class(key) in {"plain", "decision_repair"}:
             return run_public[("task_agent_runs", "int", int(parts[0]))]
     elif kind == "meeting":
         return run_public[("meeting_alignment_runs", "int", int(key))]
@@ -450,6 +470,12 @@ def migrate_run_entities(db: sqlite3.Connection, source_metadata: dict, *,
                            (name,)).fetchone()
         if found and name not in source_names:
             raise ValueError(f"Run entity target object name already occupied: {name}")
+    # Reject malformed repair-shaped keys before creating even the temporary
+    # migration snapshot. The source Store remains the frozen oracle.
+    for (workload_key,) in db.execute(
+            "select workload_key from main.runs where record_type='agent_runtime_attempts' "
+            "and workload_kind='task'"):
+        _task_workload_key_class(workload_key)
     db.execute(f"create temp table {_quote(_STAGE)} as select * from main.runs")
     rows = list(_source_rows(db))
     owner_maps = _run_owner_maps(rows, run_handoff, source_metadata)
@@ -727,7 +753,8 @@ def _inverse_workload_key(db: sqlite3.Connection, value: str, task_targets: dict
         return value
     if kind == "task":
         suffix = parts[1:]
-        if suffix and not suffix[0].startswith("decision_repair."):
+        task_key_class = _task_workload_key_class(value)
+        if task_key_class == "business":
             return value
         run = run_ids.get(int(parts[0]))
         if run is None or run[0] != "task_agent_runs":
@@ -897,10 +924,9 @@ def restore_run_entities(db: sqlite3.Connection, source_metadata: dict,
         key = attempt["workload_key"]
         expected_parent, expected_source = None, None
         if attempt["workload_kind"] == "task":
-            parts = key.split(":")
-            suffix = parts[1:]
-            if not suffix or suffix[0].startswith("decision_repair."):
-                expected_parent, expected_source = int(parts[0]), "task_agent_runs"
+            task_key_class = _task_workload_key_class(key)
+            if task_key_class in {"plain", "decision_repair"}:
+                expected_parent, expected_source = int(key.split(":", 1)[0]), "task_agent_runs"
         elif attempt["workload_kind"] == "meeting":
             expected_parent, expected_source = int(key), "meeting_alignment_runs"
         actual_parent = attempt["parent_id"]
