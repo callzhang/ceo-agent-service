@@ -258,7 +258,9 @@ def _run_source(*, orphan_task_id=None, include_task_source_metadata=False, work
 
 def test_artifact_created_uuid_reference_survives_native_forward_and_inverse():
     from uuid import uuid4
-    from app.task_entity_schema import restore_task_entities
+    from app.task_entity_schema import (
+        capture_task_entities, migrate_task_entities, restore_task_entities,
+    )
 
     artifact_public_id = str(uuid4())
     db, task_forward, task_source_metadata = _run_source(
@@ -291,6 +293,48 @@ def test_artifact_created_uuid_reference_survives_native_forward_and_inverse():
             "select payload_json from runs where record_type='workbench_events' and id=1304"
         ).fetchone()[0]
         assert json.loads(restored) == {"artifact_id": artifact_public_id, "retained": {"x": 1}}
+        db.commit()
+
+        # Repeat the actual handoff twice: UUID source identity and unrelated
+        # payload facts must remain stable while the physical native ID stays
+        # canonical across cycles.
+        for _ in range(2):
+            db.execute("begin immediate")
+            next_task_source = capture_task_entities(db)
+            next_task_forward = migrate_task_entities(
+                db, next_task_source, source_context=task_inverse["source_context"],
+                inverse_identity=task_inverse["inverse_identity"],
+            )
+            next_run_source = capture_run_entities(db)
+            next_run_forward = migrate_run_entities(
+                db, next_run_source, task_metadata=next_task_forward,
+                run_handoff=_run_handoff(db, next_run_source),
+            )
+            native_event = db.execute(
+                "select task_id,payload_json from workbench_events where sequence=1"
+            ).fetchone()
+            native_artifact_id = json.loads(native_event[1])["artifact_id"]
+            native_artifact = db.execute(
+                "select workbench_turn_id from workbench_artifacts where id=?",
+                (int(native_artifact_id),),
+            ).fetchone()
+            assert native_artifact_id == artifact_id
+            assert native_artifact[0] == native_event[0]
+            assert json.loads(native_event[1]) == {
+                "artifact_id": artifact_id, "retained": {"x": 1},
+            }
+            task_inverse = restore_task_entities(db, next_task_source, next_task_forward)
+            restore_run_entities(
+                db, next_run_source, next_run_forward, task_metadata=next_task_forward,
+                task_inverse_metadata=task_inverse,
+            )
+            restored_payload = db.execute(
+                "select payload_json from runs where record_type='workbench_events' and id=1304"
+            ).fetchone()[0]
+            assert json.loads(restored_payload) == {
+                "artifact_id": artifact_public_id, "retained": {"x": 1},
+            }
+            db.commit()
     finally:
         db.close()
 

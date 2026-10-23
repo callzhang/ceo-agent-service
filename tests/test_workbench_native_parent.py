@@ -151,6 +151,45 @@ def test_native_turn_lifecycle_events_and_artifacts_use_canonical_task_owner(tmp
         assert db.execute("select count(*) from workbench_events").fetchone()[0] == 4
 
 
+def test_native_turn_lease_recovery_stop_race_and_stream_snapshot(tmp_path: Path):
+    store = _target_store(tmp_path)
+    parent = store.create_task(title="Lease and stop", runtime_kind="codex")
+    turn = store.create_turn(parent.id, user_text="hello", client_request_id=str(uuid4()))
+    running = store.claim_next_turn(
+        owner="worker-a", lease_seconds=10, now="2026-10-23T12:00:00+00:00"
+    )
+    assert running is not None and running.id == turn.id
+    store.renew_turn_lease(
+        turn.id, owner="worker-a", lease_seconds=10, now="2026-10-23T12:00:05+00:00"
+    )
+    with store._connect() as db:
+        lease = db.execute("select lease_expires_at from tasks where id=?", (int(turn.id),)).fetchone()[0]
+    assert lease == "2026-10-23 12:00:15"
+    assert store.recover_expired_turns(now="2026-10-23T12:00:14+00:00") == 0
+    recovered = store.recover_expired_turns(now="2026-10-23T12:00:16+00:00")
+    assert recovered == 1
+    reclaimed = store.claim_next_turn(
+        owner="worker-b", lease_seconds=10, now="2026-10-23T12:00:17+00:00"
+    )
+    assert reclaimed is not None and reclaimed.id == turn.id
+    snapshot_events, snapshot_turn = store.event_stream_snapshot(turn.id, after_id=0)
+    assert [event.event_type for event in snapshot_events] == ["status_changed"]
+    assert snapshot_turn is not None and snapshot_turn.id == turn.id
+    stopped = store.request_stop(
+        turn.id, owner="worker-b", now="2026-10-23T12:00:18+00:00"
+    )
+    assert stopped.status.value == "stopped"
+    with store._connect() as db:
+        row = db.execute(
+            "select status,updated_at from tasks where id=?", (int(turn.id),)
+        ).fetchone()
+    assert tuple(row) == ("stopped", "2026-10-23 12:00:18")
+    with pytest.raises(ValueError, match="invalid turn transition"):
+        store.complete_turn(
+            turn.id, status="completed", owner="worker-b", now="2026-10-23T12:00:19+00:00"
+        )
+
+
 def test_native_attachment_owner_keeps_idempotency_metadata_path_and_bytes(tmp_path: Path):
     store = _target_store(tmp_path)
     task = store.create_task(title="Attachments", runtime_kind="codex")
@@ -943,5 +982,39 @@ def test_native_artifact_download_route_uses_canonical_ids(tmp_path: Path):
             )
         assert response.status_code == 200
         assert response.content == b"native result"
+    finally:
+        scheduler.close()
+
+
+def test_native_turn_sse_serves_database_snapshot_and_terminal_event(tmp_path: Path):
+    store = _target_store(tmp_path)
+    parent = store.create_task(title="SSE", runtime_kind="codex")
+    turn = store.create_turn(parent.id, user_text="stream", client_request_id=str(uuid4()))
+    store.request_stop(turn.id, now="2026-10-23T12:00:00+00:00")
+
+    class Executor:
+        workspace = tmp_path
+
+        def run_once(self):
+            return []
+
+    class Registry:
+        def kinds(self):
+            return ("codex",)
+
+    app = FastAPI()
+    scheduler = register_workbench_routes(
+        app, store, Executor(), Registry(), tmp_path / "assets",
+        mutation_guard=lambda _request: None, sse_poll_seconds=0.01,
+        scheduler_interval_seconds=60,
+    )
+    try:
+        with TestClient(app) as client:
+            response = client.get(
+                f"/api/workbench/turns/{turn.id}/events/stream?after=0"
+            )
+        assert response.status_code == 200
+        assert "event: status_changed" in response.text
+        assert '"status":"stopped"' in response.text
     finally:
         scheduler.close()

@@ -9,6 +9,8 @@ from collections import defaultdict
 from uuid import UUID, uuid4
 
 from app import task20_definitions, task_run_entity_definitions
+from app.action_storage import _encoded_native_sqlite_value
+from app.task_entity_storage import _decode_scalar
 from app.task_lifecycle_current_schema import task_lifecycle_objects
 from app.task_lifecycle_definitions import (
     LIFECYCLE_FIELDS, SOURCE_FIELDS, scalar as lifecycle_scalar,
@@ -776,16 +778,24 @@ def _validate_inverse_identity(value: dict | None) -> dict:
                     "source_physical_id", "canonical_id", "source_public_id", "is_new_native"}
                 or type(row["source_physical_id"]) is not int
                 or type(row["canonical_id"]) is not int
-                or not isinstance(row["source_public_id"], str)
                 or type(row["is_new_native"]) is not bool):
             raise ValueError("invalid Workbench artifact identity handoff")
-        if (row["is_new_native"] and
-                str(UUID(row["source_public_id"])) != row["source_public_id"]):
-            raise ValueError("invalid new Workbench artifact UUID identity")
-        if row["source_physical_id"] in artifact_identities or row["source_public_id"] in artifact_public_ids:
+        try:
+            source_public_id = _decode_scalar(row["source_public_id"])
+            if source_public_id is not None and type(source_public_id) not in (str, int, float, bytes):
+                raise ValueError
+            if row["is_new_native"] and (
+                    not isinstance(source_public_id, str)
+                    or str(UUID(source_public_id)) != source_public_id):
+                raise ValueError
+        except (TypeError, ValueError) as exc:
+            raise ValueError("invalid Workbench artifact public identity") from exc
+        if (row["source_physical_id"] in artifact_identities
+                or source_public_id in artifact_public_ids):
             raise ValueError("duplicate Workbench artifact identity handoff")
-        artifact_identities[row["source_physical_id"]] = row
-        artifact_public_ids.add(row["source_public_id"])
+        identity = {**row, "source_public_id": source_public_id}
+        artifact_identities[row["source_physical_id"]] = identity
+        artifact_public_ids.add(source_public_id)
     files = {}
     for row in value.get("workbench_attachment_files", []):
         if (not isinstance(row, dict) or set(row) != {
@@ -1400,7 +1410,7 @@ def restore_task_entities(db: sqlite3.Connection, source_metadata: dict, forward
             artifact_identities.append({
                 "source_physical_id": physical_id,
                 "canonical_id": target_id,
-                "source_public_id": public_key,
+                "source_public_id": _encoded_native_sqlite_value(public_key),
                 "is_new_native": (kind, target_id) not in old_public,
             })
         if kind != "workbench_attachments" or (kind, target_id) in old_public:

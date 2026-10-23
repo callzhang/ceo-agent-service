@@ -629,6 +629,10 @@ class WorkbenchStore(AutoReplyStore):
             if TurnStatus.STOPPED not in _TURN_TRANSITIONS[status]:
                 raise ValueError("invalid turn transition")
             db.execute("update workbench_turns set stop_requested=1 where task_id=?", (int(turn_id),))
+            db.execute(
+                "update tasks set updated_at=? where id=? and kind='workbench_turn'",
+                (now_text, int(turn_id)),
+            )
             self._append_control_event(
                 db,
                 turn_id,

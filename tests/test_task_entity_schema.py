@@ -322,6 +322,44 @@ def test_inverse_handoff_json_keeps_captured_blob_parent_out_of_uuid_file_map():
         ) == 202
 
 
+def test_inverse_handoff_json_preserves_blob_workbench_artifact_identity():
+    from app.storage_payload import TASK_RECORD_TYPES
+    from app.task_lifecycle_storage import source_assignments
+
+    with closing(_source()) as db:
+        physical_id = db.execute(
+            "select id from tasks where _kind=?",
+            (TASK_RECORD_TYPES.code("workbench_artifacts"),),
+        ).fetchone()[0]
+        assignments = source_assignments(
+            "workbench_artifacts", {"id": b"\x00\xff"}, {},
+            payload_source="tasks.payload_json", source_alias="tasks",
+        )
+        db.execute(
+            f"update tasks set {assignments.sql} where _kind=? and id=?",
+            (*assignments.parameters, TASK_RECORD_TYPES.code("workbench_artifacts"), physical_id),
+        )
+        db.commit()
+        db.execute("pragma foreign_keys=off")
+        db.execute("begin immediate")
+        metadata = capture_task_entities(db)
+        forward = migrate_task_entities(db, metadata)
+        inverse = restore_task_entities(db, metadata, forward)
+        identity = json.loads(json.dumps(inverse["inverse_identity"]))
+        owner = next(
+            entry for entry in identity["workbench_artifact_identities"]
+            if entry["source_physical_id"] == physical_id
+        )
+        assert owner["source_public_id"] == {"t": "blob", "v": "00ff"}
+        migrate_task_entities(
+            db, metadata, source_context=inverse["source_context"], inverse_identity=identity,
+        )
+        assert db.execute(
+            "select public_key,typeof(public_key),public_key_type from task_run_identity_map "
+            "where source_kind='workbench_artifacts'"
+        ).fetchone() == (b"\x00\xff", "blob", "blob")
+
+
 def test_historical_task20_source_declaration_is_rejected_without_mutation():
     with closing(sqlite3.connect(":memory:")) as db:
         db.execute("pragma foreign_keys=off")
