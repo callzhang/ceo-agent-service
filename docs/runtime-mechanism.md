@@ -2575,6 +2575,10 @@ History 也显示定时触发（Derek 2026-09-25，类型「定时命令」/「�
 Agent 的生产命令成功时不进 History，它们排入的每一项各自是一条 History。邮件 provider 动作同样进 History
 （类型「邮件动作」），失败口径与 Attention 相同。
 
+History 的回复类记录以 task 为核心：列表行带 `task_id` 与 `run_count`，行内链接指向
+`/history/tasks/<task_id>`；该页只读取 `tasks`、`runs` 和 Attempt 投影，列出 task 的全部 run
+（含历史执行代）与 Attempt，Attempt 详情页保持原样（规则见 `docs/architecture.md` 的「History 语义」）。
+
 微信 History 的任务完成与消息投递分别投影：同一任务、会话和当前执行代的最新投递为
 `failed` 或 `send_unknown` 时，失败 Attempt 继续在列表筛选、详情、状态计数和图表中显示
 `failed`，不能被候选任务的 `done` 掩盖。旧代、其他会话和已有后续成功投递的失败不覆盖
