@@ -1602,14 +1602,12 @@ Consumer run ID/指纹、独立验证备份、原因、请求 ID 和 60–86400 
 
 ## 功能机制开关与任务生产
 
-邮件分类使用独立的 `email_agent_classification_tasks` 持久化队列。每封邮件是一次经共享
+Task2D6 的 Email 分类实现使用原生 `tasks(kind='email_classification')` 持久化队列；输入与结果分别由 `email_classification_inputs` 和 `task_results(result_kind='email_classification')` 拥有。运行期状态仍为 `pending/running/done/failed`，路由工作键只使用规范 Task ID。每封邮件是一次经共享
 Runtime Router 的 Agent 轮次（`EmailClassifierRoutedBackend`），与其他 Agent 轮次使用同一条线路
 顺序和统一 fallback；没有哪条线路名是邮件分类专用的（Derek 2026-09-24）。此前的「直连名为
 `codex_api` 的线路的 Responses API、失败再走路由」主路径已删除，代价是每封邮件变成一次完整的
 命令行轮次，更慢、更耗额度。离线训练标注命令 `app/email_training_labeler.py` 同样走系统模型路由（Derek 2026-09-25，不再有
-`--route` 直连）：路由只运行服务记录为运行中的工作，所以标注命令为每次分类临时登记一条运行中的
-分类工作项（`EmailClassificationTaskAdapter.open_offline_task`，不含邮件定位、不可被扫描领取，分类结束即删，
-启动时清掉崩溃遗留），再交给同一个 `EmailClassifierRoutedBackend`。
+`--route` 直连）：路由只运行服务记录为运行中的工作，所以标注命令为每次分类登记原生运行中 Task 和准确输入子项（`EmailClassificationTaskAdapter.open_offline_task`，不含邮件定位、不可被扫描领取），再交给同一个 `EmailClassifierRoutedBackend`。包装器把规范 Task ID 传入委派分类调用，finally-close 按该 ID 删除准确的空输入占位 Task，启动时只清理同 owner 且符合原空输入条件的崩溃遗留。来源 `INSERT OR REPLACE` 重开同一 incoming token 的行为保持不变。
 分类器 Codex 调用设置原生 `project_doc_max_bytes=0`，因此不会把仓库 `AGENTS.md`
 项目说明重复加入这一封邮件的判断输入；服务仍提交冻结分类 Skill、当前邮件、允许类别及退订候选，
 结果仍按严格结构校验，并只用候选索引绑定本轮原 URL。其他任务的原生项目文档设置不变。

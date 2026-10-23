@@ -4,7 +4,6 @@ from __future__ import annotations
 from app.task_storage import task_id_expression
 from app.task20_definitions import task20_column, task20_projection
 from app.task8_storage import register_task8_functions, task8_set_parts
-from app.task12_storage import task12_projection, task12_set_parts
 
 import argparse
 import json
@@ -34,19 +33,20 @@ def compact_done_email_classification_inputs(database: Path) -> dict[str, int]:
         register_task8_functions(db)
         db.execute("begin immediate")
         rows = db.execute(
-            f"select task_id, input_json from ({task12_projection('email_agent_classification_tasks')}) "
-            "where status='done' and json_extract(input_json, '$.input_compacted') is not 1 "
-            "order by task_id"
+            "select i.task_id, i.input_json from email_classification_inputs i "
+            "join tasks t on t.id=i.task_id "
+            "where t.kind='email_classification' and t.status='done' "
+            "and json_extract(i.input_json, '$.input_compacted') is not 1 "
+            "order by i.task_id"
         ).fetchall()
         for row in rows:
             compact = EmailClassificationTaskAdapter.compact_done_input_json(
                 row["input_json"]
             )
             updated = db.execute(
-                f"update tasks set {task12_set_parts('email_agent_classification_tasks', {}, update_sql={'input_json': '?'}).sql} "
-                f"where record_type='email_agent_classification_tasks' and {task20_column('email_agent_classification_tasks', 'task_id')}=? "
-                f"and {task20_column('email_agent_classification_tasks', 'status')}='done'",
-                (compact, row["task_id"]),
+                "update email_classification_inputs set input_json=? where task_id=? "
+                "and exists(select 1 from tasks where id=? and kind='email_classification' and status='done')",
+                (compact, row["task_id"], row["task_id"]),
             ).rowcount
             counts["tasks_compacted"] += updated
             counts["logical_bytes_removed"] += updated * max(

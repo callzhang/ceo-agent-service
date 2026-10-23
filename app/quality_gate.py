@@ -657,7 +657,7 @@ def _check_email_classification_tasks(
         code="failed",
         count=_count(
             db,
-            f"""select count(*) from ({task12_projection('email_agent_classification_tasks')}) where lower(status)='failed'""",
+            "select count(*) from tasks where kind='email_classification' and lower(status)='failed'",
         ),
         severity="error",
         detail="email classification reached a non-retryable failure",
@@ -668,8 +668,8 @@ def _check_email_classification_tasks(
         code="running_stale",
         count=_count(
             db,
-            f"""select count(*) from ({task12_projection('email_agent_classification_tasks')})
-               where lower(status)='running'
+            """select count(*) from tasks where kind='email_classification'
+               and lower(status)='running'
                  and datetime(updated_at) < datetime(?)""",
             (_cutoff(now, WORK_ITEM_PROCESSING_STALE_SECONDS),),
         ),
@@ -682,8 +682,8 @@ def _check_email_classification_tasks(
         code="pending_stale",
         count=_count(
             db,
-            f"""select count(*) from ({task12_projection('email_agent_classification_tasks')})
-               where lower(status)='pending'
+            """select count(*) from tasks where kind='email_classification'
+               and lower(status)='pending'
                  and (available_at='' or datetime(available_at) <= datetime(?))
                  and datetime(updated_at) < datetime(?)""",
             (

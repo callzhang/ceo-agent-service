@@ -2674,7 +2674,7 @@ Workbench 的实时文字和工具正文仅在运行时 RAM 中使用；SQLite �
 
 Status API 与前端 SystemHealth 解码器均声明 native_delivery_coverage（checked、unavailable）：允许省略或 null；存在时只接受这两个非负整数，仍拒绝未知字段。该字段仅实时计算，不写入质量快照，也不改变质量违规判断。
 
-已完成的邮件分类任务不长期保存分类输入正文：`email_agent_classification_tasks.status=done` 在既有租约／代际校验的完成事务内，将 `input_json` 改为明确标记的来源记录，保留原始 JSON 摘要和字节数、去除 `scheduled_consumer` 后的不可变输入摘要、稳定邮件身份、provider locator、配置版本及脱敏退订候选引用。定时配置与 Skill 只保留运行／版本／摘要引用；模型输入、邮件正文和冻结 Skill 正文不再复制。重复发现以既有不可变输入语义核对摘要，不补回正文；内容变化仍按既有错误处理。pending／running／failed 保留完整输入以便恢复，分类结果、任务状态和执行回执保持原样。历史精简由显式维护命令执行，不在初始化时扫描。该历史分期保留了与邮件原文不同的模型特征文本。最终结构中的 `emails.class_model_text` 仅在活动或原文尚未证明时保留；终态且完整字节已由原生／provider 证明后，改用已有 `message_source_reference_json.model_input` 引用。人工相似案例仍读取准确特征，具体生命周期以下文最终合同为准。
+Task2D6 的 Email 分类运行时拥有原生 `tasks(kind='email_classification')` 行，状态使用 `pending/running/done/failed`；不可变输入只在 `email_classification_inputs`，分类运行结果只在 `task_results(result_kind='email_classification')`。Task `parameters_json` 不复制输入、结果或生命周期字段；路由运行键为规范 Task ID。完成仍在 owner/generation CAS 事务内精简输入，保存精确来源摘要、稳定邮件身份、provider locator、配置版本和脱敏退订候选引用。稳定身份去重、输入不可变性、重试预算、claim 次序和退避保持来源语义；Email 业务分类、ActionPlan 与动作回执仍由 Email 业务表拥有。已完成输入不长期保留正文，历史维护仍显式执行。Task2D6 当前是未激活的原生运行时实现；共享 Store 构造器、全家族 UI/History 和部署前置检查仍是后续统一激活范围。离线训练的 finally-close 保持删除占位 Task 的来源语义；当前 Task→Run 逆迁移对删除后仍存活的终态 Attempt 失败，必须先完成独立、可移植的迁移 handoff 设计，不能把占位 Task 留存或旧键运行时别名当作修复。
 
 存储 schema 升级迁移业务对象映射时，只插入新键、删除已不存在的键或更新变化的任务绑定；绑定未变的 `business_object_tasks` 原行及创建／更新时间保持不变，最新任务与 OA 别名选择规则不变。
 

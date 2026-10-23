@@ -2,7 +2,7 @@ from app.current_action_schema import current_reply_action_projection
 from app.state_definitions import state_projection
 from app.run_storage import SCHEDULED_RUN_SQL
 
-from app.task20_definitions import TASK20_FIELDS, task20_column, task20_projection
+from app.task20_definitions import task20_column, task20_projection
 from app.business_legacy_fields import CURRENT_SYNC_PROJECTIONS as SYNC_ACTION_PROJECTIONS
 from app.task12_storage import task12_projection
 
@@ -3723,26 +3723,23 @@ def _queue_attention_rows(store: AutoReplyStore, *, limit: int | None = None) ->
                         "error": str(row["error"] or ""),
                     }
                 )
-        if _sqlite_table_exists(db, "email_agent_classification_tasks"):
-            email_task_sql = f"""
-                select task_id as id, status,
+        if _sqlite_table_exists(db, "email_classification_inputs"):
+            email_task_sql = """
+                select t.id as id, t.status,
                        coalesce(
-                           nullif(json_extract(input_json, '$.message.sender.email'), ''),
-                           nullif(json_extract(input_json, '$.message.sender.name'), ''),
+                           nullif(json_extract(i.input_json, '$.message.sender.email'), ''),
+                           nullif(json_extract(i.input_json, '$.message.sender.name'), ''),
                            'Email classification'
                        ) as context,
                        coalesce(
-                           nullif(json_extract(input_json, '$.message.subject'), ''),
-                           stable_message_identity
+                           nullif(json_extract(i.input_json, '$.message.subject'), ''),
+                           i.stable_message_identity
                        ) as summary,
-                       updated_at, error
-                from ({task12_projection('email_agent_classification_tasks', include_rowid=True)})
-                where rowid in (
-                    select cast(legacy_key as integer) from tasks
-                    where record_type='email_agent_classification_tasks'
-                      and {task20_column('email_agent_classification_tasks', 'status')}='failed'
-                )
-                order by updated_at desc, task_id desc
+                       t.updated_at, t.error
+                from tasks t
+                join email_classification_inputs i on i.task_id=t.id
+                where t.kind='email_classification' and t.status='failed'
+                order by t.updated_at desc, t.id desc
             """
             email_task_params: tuple[object, ...] = ()
             if limit is not None:
@@ -4098,7 +4095,7 @@ def _human_decision_attention_rows(
 
 def _sqlite_table_exists(db: sqlite3.Connection, table: str) -> bool:
     if table == "email_agent_classification_tasks":
-        table = "tasks"
+        table = "email_classification_inputs"
     row = db.execute(
         "select 1 from sqlite_master where type='table' and name=?",
         (table,),
@@ -4160,7 +4157,11 @@ def _queue_latest_error(
 
 def _queue_relation(table: str) -> str:
     if table == "email_agent_classification_tasks":
-        return f"({task12_projection(table, include_rowid=True)})"
+        return "(select t.id as task_id, t.status, t.updated_at, t.error, " \
+               "t.lease_owner as owner, t.lease_expires_at, " \
+               "i.stable_message_identity, i.input_json " \
+               "from tasks t join email_classification_inputs i on i.task_id=t.id " \
+               "where t.kind='email_classification')"
     if table in SYNC_ACTION_PROJECTIONS:
         return f"({SYNC_ACTION_PROJECTIONS[table]})"
     if table in ("meeting_memory_write_events", "task_memory_write_events", "wechat_deliveries"):
@@ -4170,7 +4171,7 @@ def _queue_relation(table: str) -> str:
 
 def _sqlite_table_columns(db: sqlite3.Connection, table: str) -> set[str]:
     if table == "email_agent_classification_tasks":
-        return set(TASK20_FIELDS[table]) if _sqlite_table_exists(db, table) else set()
+        return {"task_id", "status", "updated_at", "error", "owner", "lease_expires_at", "stable_message_identity", "input_json"} if _sqlite_table_exists(db, table) else set()
     return {str(row["name"]) for row in db.execute(f"pragma table_info({table})")}
 
 

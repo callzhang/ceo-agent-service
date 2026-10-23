@@ -687,6 +687,87 @@ def test_new_native_task_run_attempt_gets_source_backed_owner_on_reforward():
         db.close()
 
 
+def test_closed_offline_email_task_attempt_survives_current_task_run_inverse(tmp_path):
+
+    from app.email_store import EmailStore
+    from app.email_task_adapter import EmailClassificationTaskAdapter
+    from app.run_entity_storage import create_runtime_attempt
+    from app.task_entity_schema import (
+        capture_task_entities, migrate_task_entities, restore_task_entities,
+    )
+
+    db, task_forward, task_source_metadata = _run_source(include_task_source_metadata=True)
+    source = capture_run_entities(db)
+    forward = migrate_run_entities(
+        db, source, task_metadata=task_forward, run_handoff=_run_handoff(db, source)
+    )
+    db.commit()
+    path = tmp_path / "task2d6-offline-inverse.sqlite3"
+    try:
+        path.unlink(missing_ok=True)
+        disk = sqlite3.connect(path)
+        db.backup(disk)
+        disk.close()
+        db.close()
+
+        email_store = EmailStore.__new__(EmailStore)
+        email_store.path = path
+        adapter = EmailClassificationTaskAdapter(email_store)
+        canonical_id = adapter.open_offline_task(
+            task_id="email-classification:" + "a" * 64, owner="email-training-labeler"
+        )
+        with email_store._connect() as native:
+            attempt = create_runtime_attempt(native, values={
+                "parent_id": None, "workload_kind": "email_classification",
+                "workload_key": canonical_id, "attempt_number": 1,
+                "route_name": "codex_oauth", "runtime_kind": "codex_cli",
+                "credential_mode": "oauth", "model": "gpt-6-luna",
+                "session_mode": "fresh", "source_session_id": "",
+                "attempt_purpose": "normal", "validation_retry_policy_id": "",
+                "validation_result_schema_id": "", "session_id": "session-offline",
+                "transcript_reference": "trace-offline", "transcript_start": 0,
+                "transcript_end": 1, "status": "completed", "failure_class": "",
+                "failure_code": "", "failover_permitted": 0, "lease_owner": "",
+                "lease_expires_at": "", "first_effect_started_at": "",
+                "result_schema_id": "", "started_at": "start", "finished_at": "finish",
+                "created_at": "created", "updated_at": "updated",
+            })
+        adapter.close_offline_task(canonical_id)
+
+        with sqlite3.connect(path) as native:
+            native.row_factory = sqlite3.Row
+            native.execute("pragma foreign_keys=off")
+            native.execute("begin immediate")
+            task_inverse = restore_task_entities(native, task_source_metadata, task_forward)
+            run_inverse = restore_run_entities(
+                native, source, forward, task_metadata=task_forward,
+                task_inverse_metadata=task_inverse,
+            )
+            portable_handoff = json.loads(json.dumps(run_inverse["run_handoff"]))
+            fresh_task_capture = capture_task_entities(native)
+            fresh_task_forward = migrate_task_entities(
+                native, fresh_task_capture,
+                source_context=task_inverse["source_context"],
+                inverse_identity=task_inverse["inverse_identity"],
+            )
+            fresh_run_capture = capture_run_entities(native)
+            migrate_run_entities(
+                native, fresh_run_capture, task_metadata=fresh_task_forward,
+                run_handoff=portable_handoff,
+            )
+            persisted = native.execute(
+                "select workload_key,workload_kind,status from runs "
+                "where record_type='agent_runtime_attempts' and id=?", (attempt["id"],)
+            ).fetchone()
+            assert persisted is not None
+    finally:
+        try:
+            db.close()
+        except Exception:
+            pass
+        path.unlink(missing_ok=True)
+
+
 @pytest.mark.parametrize("mutation, message", [
     ("missing", "portable B3 identity handoff"),
     ("digest", "digest mismatch"),

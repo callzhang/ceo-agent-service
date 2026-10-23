@@ -7278,13 +7278,8 @@ class AutoReplyStore(LogicalRunStoreMixin, ReviewedCandidateStoreMixin):
             ):
                 raise ValueError("weekly_okr workload key has an invalid generation")
         elif workload_kind == "email_classification":
-            prefix = "email-classification:"
-            digest = workload_key.removeprefix(prefix)
-            if (
-                not workload_key.startswith(prefix)
-                or len(digest) != 64
-                or any(char not in "0123456789abcdef" for char in digest)
-            ):
+            if (not workload_key.isdecimal() or int(workload_key) <= 0
+                    or str(int(workload_key)) != workload_key):
                 raise ValueError(
                     "email classification workload key must name a persisted task"
                 )
@@ -7417,11 +7412,10 @@ class AutoReplyStore(LogicalRunStoreMixin, ReviewedCandidateStoreMixin):
                 return False
             args = (int(row_id),)
         elif workload_kind == "email_classification":
-            query = (
-                f"select 1 from ({task12_projection('email_agent_classification_tasks')}) "
-                "where task_id=? and status='running'"
-            )
-            args = (workload_key,)
+            return db.execute(
+                "select 1 from tasks where id=? and kind='email_classification' and status='running'",
+                (int(workload_key),),
+            ).fetchone() is not None
         elif workload_kind == "email_unsubscribe_page":
             action_identity, _, _ = workload_key.removeprefix(
                 "email-unsubscribe-page:"
