@@ -2034,7 +2034,7 @@ class RoutedCodexExecution:
                 lease_seconds=self._lease_seconds,
                 now=self._now(),
             )
-        run = self._store.get_agent_run(attempt.agent_run_id)
+        run = self._store.get_agent_run(attempt.parent_id)
         if run is None or not run.lease_owner:
             raise ValueError("agent run lease evidence is missing")
         self._store.renew_agent_run_lease(

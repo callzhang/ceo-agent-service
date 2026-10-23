@@ -24,3 +24,21 @@ Task `work_summary` (plain and `decision_repair.N`) and Meeting operation identi
 - `python -m py_compile app/store.py app/agent_runtime_router.py app/agent_turn_runner.py` — passed.
 - `git diff --check` — passed.
 - Broad legacy test-harness probes were run and did not serve as valid acceptance evidence: `tests/test_routed_codex_execution.py` produced 17 passed / 62 failed, and `tests/test_agent_runtime_router.py` produced 5 passed / 6 failed / 51 setup errors. Failures occur before exercising these changed callers because those fixtures initialize the old Reply/Run schema (examples: missing `execution_generation`, missing `runtime_attempts`, and missing `task_inputs`). No compatibility SQL was added to make those old fixtures pass. A pinned-BASE RED/GREEN comparison was not established, so none is claimed.
+
+## Fix1/5 review correction
+
+Independent SPEC/QUALITY at base `dd98e25a8fa81b63c036d5738a4a14103b99c3b6` found `_renew_attempt_parent_lease` selecting the Agent path by `workload_kind` but reading the retired `attempt.agent_run_id` field. That raised `AttributeError` before the parent lease could renew. The caller now reads `attempt.parent_id`.
+
+The new `test_routed_execution_renews_native_agent_parent_lease` creates an Agent Run and RuntimeAttempt in the assembled native schema, invokes the Agent renewal branch through `RoutedCodexExecution`, and verifies the attempt retains the correct native owner while the exact native Run lease expiry advances. Fail-first command before the code fix:
+
+- `pytest -q --tb=short tests/test_native_reviewed_candidate_store.py::test_routed_execution_renews_native_agent_parent_lease` — **1 failed**, with `AttributeError: 'AgentRuntimeAttempt' object has no attribute 'agent_run_id'` at `app/agent_runtime_router.py` Agent renewal.
+
+After changing that access to `parent_id`:
+
+- `pytest -q --tb=short tests/test_native_reviewed_candidate_store.py` — **16 passed**.
+- `pytest -q --tb=short tests/test_run_entity_storage.py::test_runtime_attempt_native_parent_observation_lineage_and_cas` — **1 passed**. This existing native-storage test covers resumed correction attempts retaining `session_mode='resume'`, `source_session_id`, observed session/range, and immutable correction policy/schema lineage.
+- `ruff check app/agent_runtime_router.py tests/test_native_reviewed_candidate_store.py` — passed.
+- `python -m py_compile app/agent_runtime_router.py tests/test_native_reviewed_candidate_store.py` — passed.
+- `git diff --check` — passed.
+
+This fix does not add a separate resume/correction test; the exact existing native-storage coverage is identified above. End-to-end native CLI resume/correction acceptance remains a later runtime integration gate.

@@ -145,6 +145,61 @@ def test_runtime_attempt_claim_and_agent_history_use_native_parent_owner(monkeyp
     assert store.adopted_candidate_for_consumer_run(run["id"])["candidate_json"] == result_json
 
 
+def test_routed_execution_renews_native_agent_parent_lease(monkeypatch, tmp_path):
+    from datetime import UTC, datetime, timedelta
+
+    from app.agent_runtime_config import load_runtime_config
+    from app.agent_runtime_contracts import RuntimeCapabilitySnapshot
+    from app.agent_runtime_router import AgentRuntimeRouter, RoutedCodexExecution
+
+    store, db, task, _completed_consumer = _native_store(monkeypatch)
+    store.path = tmp_path / "native-agent-renewal.sqlite3"
+    now = datetime(2026, 10, 23, 12, 0, tzinfo=UTC)
+    run = run_entity_storage.create_run(db, values={
+        "task_id": task["id"], "execution_generation": "gen-1",
+        "role": "consumer", "proposal_revision": 0, "turn_attempt": 2,
+        "status": "running", "lease_owner": "agent-owner",
+        "lease_expires_at": "2026-10-23 12:01:00",
+        "operation_id": "", "session_id": "", "transcript_start": 0,
+        "transcript_end": 0, "structured_error_json": "",
+        "started_at": "now", "completed_at": "",
+        "created_at": "now", "updated_at": "now",
+    })
+    db.commit()
+    attempt = store.claim_agent_runtime_attempt(
+        run["id"], "codex_oauth", "codex_cli", "local_oauth", "gpt-6",
+    )
+    started = store.mark_agent_runtime_attempt_running_once(attempt.id, now=now)
+    assert started.parent_id == run["id"]
+
+    config = load_runtime_config({"CEO_AGENT_RUNTIME_ROUTES": "codex_oauth"})
+    snapshot = RuntimeCapabilitySnapshot(
+        route_name="codex_oauth", capabilities=frozenset({"structured_output"}),
+        healthy=True, checked_at="2026-10-23T11:59:00+00:00",
+        expires_at="2026-10-23T12:10:00+00:00",
+    )
+    router = AgentRuntimeRouter(
+        routes=config.routes, store=store, snapshots={"codex_oauth": snapshot},
+        now=lambda: now,
+    )
+    execution = RoutedCodexExecution(
+        store=store, config=config, router=router, adapter=object(), executor=lambda *_a, **_k: None,
+        owner="agent-owner", lease_seconds=120, now=lambda: now,
+    )
+
+    renewed = execution._renew_attempt_parent_lease(started)
+
+    persisted = store.get_agent_runtime_attempt(attempt.id)
+    assert renewed == persisted
+    assert renewed is not None and renewed.parent_id == run["id"]
+    native_run = db.execute(
+        "select lease_owner,lease_expires_at from runs where id=?", (run["id"],)
+    ).fetchone()
+    assert tuple(native_run) == (
+        "agent-owner", (now + timedelta(seconds=execution._lease_seconds)).strftime("%Y-%m-%d %H:%M:%S"),
+    )
+
+
 def test_professional_parent_does_not_change_operation_lease_or_finish_parent(monkeypatch):
     store, db, _reply_task, _consumer = _native_store(monkeypatch)
     task = task_entity_storage.create_task(db, values={
