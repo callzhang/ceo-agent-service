@@ -666,7 +666,7 @@ v50–v68 轨迹定位出实际报告问题：固定渲染器曾把没有来源�
 
 生产 History 显示手动 run **394267**（task6 v23 / managed Skill revision223）派发到 reply task **416922**，终态 `failed`。四次 Consumer 尝试（runtime run **394476、394493、394496、394499**）全部以 `analysis_incomplete` 结束；第一轮已读 18 人名册、15 人有效 Q4 源和 3 项 `goals_missing`，`prepare` 成功生成 source/plan/schema，但没有保存任何成员分析，随后没有 Audit、文档写入或通知。最终 History 标记 `agent_reported_failure (analysis_incomplete)`，`what_happened.reached_the_outside_world=false`，没有外部副作用。
 
-完整 trajectory 中，第一轮尝试读取一个未配置的本地绩效制度文件，工具返回路径不存在；随后虽读了 schema 并查阅历史记忆，仍未继续分析。后续重试又读取了同一批成员源，最终都停在未完成分析。根因是 Agent 把未找到的补充制度材料当成了分析阻断条件，而本任务 Skill 和 `$dingtang-okr-review` 已有足够的正式评分口径。该次失败是实际 Consumer 行为问题，不是评测误报或数据源故障。
+完整 trajectory 中，第一轮尝试读取一个未配置的本地绩效制度文件，工具返回路径不存在；随后虽读了 schema 并查阅历史记忆，仍未继续分析。第二轮另一次读取 Q4 执行清单工作簿失败，DWS 返回 XLSX 内部路径 `xl//xl/worksheets/sheet1.xml` 不存在；后两次重新读完18份成员来源，却仍未开始逐人评分。四轮均以 `analysis_incomplete` 结束，没有 Audit、文档写入或通知。根因不是评测误报：Consumer 把额外材料读取错误当成阻断，并在已有15份有效 OKR 来源后仍未按冻结的评分 Skill 完成分析；工作簿错误是实际工具读取故障，但没有导致外部写入。
 
 已在 Skill 中明确：不要求额外本地制度文件；如找到的补充材料无法读取，应把它记录为证据限制，继续使用已声明的评分口径，不阻止分析或发布。没有降低 0/20/40/60/80/100 评分档、证据要求、Audit、完整读回或通知门槛。Skill 回归断言加入后，`tests/test_weekly_okr_report.py` 与 `tests/test_scheduled_okr_agent_eval.py` 定向套件为 **126 passed**；改动文件 Ruff 与 `git diff --check` 通过。原生综合验收 `okr_results.v70.json` **4/4 passed**，覆盖完整报告、来源变化恢复、日期变化恢复及共享来源认证失败保护；它仍未模拟线上缺失本地制度文件的具体调用，根因修复需由下一条真实 task6 运行验证。此修复未部署；不重放 394267，待发布门槛收敛后创建一条新的 task6 手动验收运行。
 
@@ -716,6 +716,12 @@ PR #277 已打开，固定 v75/v76 case、模型/CLI 和 grader 对照及本地�
 完整 Consumer trajectory 还显示 DWS 将 `--content` 下的文档正文写进了失败诊断；这是独立的诊断隐私问题，PR #294 候选已为 `--content`/`--content-file` 参数增加脱敏回归，尚未合并部署。当前本机 DWS 为 v1.0.65；其他版本上相似验证问题的上游报告不能单独证明本次全部根因。本记录不把本次手动运行算作自然调度验收，也不据此关闭 task14/task13 自然报告及睡眠恢复补跑验收。
 
 无正文证据：[okr-production-readback.json](../evals/scheduled_task_generic/okr-production-readback.json) 中 `manual_authorized_run_395969`。
+
+后续只读复核确认 run395969 已终结，完整读回主报告和18份评分附录，Audit 批准，provider 通知状态 `sent` 并有真实 `openMessageId`。因此不为同一报告周期再创建手动运行，也不重放失败的 run394267。该成功运行采用 v30/revision240，不能替代自然 task6 在当前配置下的验收；下一自然 OKR 周报仍是独立验收。
+
+### 2026-10-23 23:30 UTC 生产服务状态异常
+
+只读检查发现生产 checkout 为 `215802c21a1127bb9cd8aff9f7689b7828ecb5a6`，但 `127.0.0.1:8765/healthz` 拒绝连接，service/supervisor 进程均不存在，LaunchAgent 文件仍在且显示 enabled，但 launchd domain 中未加载该 label。现有 `/tmp/ceo-agent-service-main.{out,err}.log` 文件不存在，无法从当前可读日志确认是谁或为何卸载/停止服务；根因标记为未查实。没有手动 bootstrap、kickstart 或重启。上线发布前需先通过正式 deploy 路径检查并恢复服务，再读回 PID、health、队列、Attention、History 和任务配置；自然调度验收在恢复前保持未完成。
 
 
 ### task6 文档创建父级核对修复候选（2026-10-23）

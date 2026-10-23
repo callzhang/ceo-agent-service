@@ -3232,6 +3232,15 @@ blocks the current plan, dependencies and priority remain unchanged, and the
 claim update remains atomic. Fully settled groups cannot yield a claim and are
 excluded before rows are materialized. This requires no migration or replay.
 
+A direct-action claim compares the Action owner's own stored `started_at`, read
+inside the claim transaction, not the view's projected value. The view reports
+a pending Action's `started_at` as NULL, but Actions written before
+2026-10-22 11:33 UTC store an empty string. Comparing against the projection
+made each claim of such a row raise `EmailActionAttemptConflict`; because the
+oldest eligible Action is always claimed first, one such row at the head blocked
+every later Email action from 2026-10-22 23:59 UTC (615 queued by 10-23). The
+status and attempt-count checks are unchanged, and no stored value is rewritten.
+
 Legacy unsubscribe terminalization uses the same lifecycle selector as its
 inventory: only `email_unsubscribe_consumer_direct_v1`. An inventoried object
 replaced by an `email_unsubscribe_audited_v2` task must remain untouched, even
