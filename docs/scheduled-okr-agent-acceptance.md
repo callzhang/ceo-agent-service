@@ -601,3 +601,15 @@ v50–v68 轨迹定位出实际报告问题：固定渲染器曾把没有来源�
 ### 发布门禁复核（2026-10-23）
 
 修复提交 `0b226b55e` 合并最新 `origin/main` 后，重新运行定向测试：报告/综合评测 **126 passed**，Agent 工具说明 **8 passed**，改动文件 Ruff 与差异检查通过。发布专项 `tests/test_consumer_skill_script_boundary.py` 为 **4 passed / 1 failed**；失败项 `test_okr_report_prepare_script_matches_reviewed_package` 明确指出 OKR Skill 的 `consumer-scripts.json` 仍固定旧脚本树摘要，现有 `scripts/report.py` 改动尚未纳入已审核摘要。全局 pinned-release 测试另因日报行的 `old_sha256=32d24bb5…` 与已核实 `installed_sha256=45e10866…` 不一致而失败。两处均是发布清单未收敛，不代表降低或绕过 Skill 脚本审核；对应文件仍由既有 active claim 认领。尚未推送、部署或创建新 task6 运行。
+
+### v71–v76：修复后原生综合验收通过
+
+v71 首次复现了实际工作流违规：Consumer 收到 Audit 修订后直接覆写 `summary.md`、`main.md` 和 `full.md`，Audit 仍批准；独立渲染字节比对正确拒绝该候选。Skill 现将“改分析输入—重新 render—更新文档—完整读回”列为审核退回后的明确步骤，并明确禁止把生成文件当作修订输入。v72–v73 又暴露状态码泄露：报告脚本将成员 404 写入正文，而原评测器错误要求正文出现 404。脚本改用普通业务描述，评测器要求保留缺口原因、禁止泄露状态码；v73 轨迹同时确认 Consumer 也曾把内部状态码写进分析风险。
+
+v74–v75 发现合成 Audit 没收到生产审核上下文中的上一轮退回意见，造成反馈来回漂移；合成 Audit 现携带上一轮 review，仍须独立核对当前候选。v75 还发现 Consumer 曾因业务 KR 未完成，把独立来源明确标为“达到经理标准”的战略行为维度打低；Skill 现明确业务 KR 与领导力/文化维度独立评分，低于标准分必须有该维度自身的反向证据。以上修正均保留评分、来源覆盖、Audit、完整读回和通知要求。
+
+最新原生验收结果为 [v76 body-free readback](../evals/scheduled_task_generic/okr-native-v76-readback.json)，完整合成轨迹保存在 [okr_results.v76.json](../evals/scheduled_task_generic/okr_results.v76.json)：**4/4 场景通过**，每场最终 Audit `approve`，所有机械检查通过；包括 canonical render、完整文档读回、摘要逐字一致、同周期来源更新、跨日期快照和共享来源认证失败保护。合成 provider 不具备外部执行器；这证明代码/Skill/Agent 综合验收通过，不证明生产发布或真实群消息送达。v71–v75 失败原样保留，不用后续结果覆盖。
+
+固定评测对照使用同一模型、CLI、冻结 case hash 和 grader hash：v75 的 `fresh-source-snapshot` 在 Audit approve 后因 `behavioral_scores_match_evidence` 失败，eval-b 战略能力为60；v76 同场景 Audit approve、全检查通过，分数为70，与来源中“达到经理岗位标准”的明确证据一致。没有改变 case 事实、评分范围或 grader 要求。
+
+v76 后的定向测试为 `tests/test_weekly_okr_report.py` 与 `tests/test_scheduled_okr_agent_eval.py` **136 passed**，Consumer Skill 脚本边界 **5 passed**，完整 `tests/test_consumer_system_release.py` **27 passed**；改动文件 Ruff 与 `git diff --check` 通过。共享 Skill/脚本摘要已同步到 release manifest、脚本审核清单及匹配的生产安装/managed 旧摘要前置文件。production 尚未部署，也尚未创建 run394267 的替代运行。

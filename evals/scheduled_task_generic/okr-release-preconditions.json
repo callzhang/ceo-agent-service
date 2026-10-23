@@ -108,7 +108,7 @@
     {
       "source": "ci/shared-skills/ceo-weekly-okr-report/SKILL.md",
       "installed_sha256": "18b23c5c6762ce0fa6cceedf8f1a7a14591327269897fcc56ba4ea32e9c78744",
-      "approved_new_sha256": "e5a8b76e29f299c46dac8ca6c34dfb9071aa19643d34fbe84b5e34725c0ae6d6",
+      "approved_new_sha256": "d7584ca089596f09f943d659b67943d04d9bc2c47d8fb15831a1109b94229d9a",
       "managed_revision_id": 223,
       "managed_sha256": "18b23c5c6762ce0fa6cceedf8f1a7a14591327269897fcc56ba4ea32e9c78744"
     },
@@ -120,7 +120,7 @@
     {
       "source": "ci/shared-skills/ceo-weekly-okr-report/scripts/report.py",
       "installed_sha256": "ab61de2c7e1f715069592f5a44292737ff4be5863dbb2f2203622322c250a653",
-      "approved_new_sha256": "91af14bb1b6ba63f187a8ebe160815c7467124ee5dc205892977512ccba73af5"
+      "approved_new_sha256": "119a249dd9aa3398c5c6e9a49dfb821f06f05ce3e9e668c6de279ba11543af5d"
     },
     {
       "source": "ci/shared-skills/ceo-weekly-report/scripts/jsonml_check.py",

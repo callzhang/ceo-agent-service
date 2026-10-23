@@ -19,6 +19,8 @@ def test_okr_skill_resumes_saved_inputs_and_does_not_use_failure_for_missing_evi
     )
     assert "Do not invent or require a separate local performance-policy" in skill
     assert "the missing document does not block member analysis or publication" in skill
+    assert "Do not copy provider status codes, machine error labels or raw diagnostics into analyses, report text or the message proposal" in skill
+    assert "an unreadable current-quarter record does not establish that the member has no goal" in skill
     assert "`read_scheduled_context.run_id` is this execution's scheduled run ID" in skill
     assert "call `read_okr_roster` plus `read_okr_member` once for every current roster member" in skill
     assert "search independent DingTalk documents using the" in skill
@@ -57,12 +59,21 @@ def test_okr_skill_resumes_saved_inputs_and_does_not_use_failure_for_missing_evi
     assert "Score each dimension independently" in skill
     assert "Do not transfer evidence between dimensions" in skill
     assert "Audit must independently check all seven dimension/evidence/score" in skill
+    assert "A missed or incomplete business KR does not lower a leadership or culture dimension" in skill
+    assert "a below-standard score requires dimension-specific evidence of an unmet behavior or contrary pattern" in skill
     assert "Innovation requires a specific improvement, validation and observed effect" in skill
     assert "A `scope: member` label or a diagnostic containing “member-bound” is not proof" in skill
     assert "Independently inspect every score of 80 or more" in skill
     assert "routine same-team adoption" in skill
     assert "publish or update and fully read back every appendix" in skill
     assert "an old appendix or its previous readback does not satisfy this run's manifest" in skill
+    correction = skill.split("### Correct an Audit return before publication", 1)[1].split(
+        "## Collect and prepare", 1
+    )[0]
+    assert "Audit correction is not a prose-only edit" in correction
+    assert "Update the affected `analysis-<userId>.json` or `appendix-links.json`" in correction
+    assert "rerun `scripts/report.py render`" in correction
+    assert "Never write generated report outputs with `consumer_artifact_write`" in correction
 
 
 def complete_fixture(tmp_path, case=None):
@@ -404,6 +415,18 @@ def test_native_fixture_exposes_previous_scheduled_run_id(tmp_path):
     context = f.scheduled_context()
     assert context["run_id"] == 2
     assert context["history"] == [{"run_id": 1, "status": "completed"}]
+
+
+def test_native_audit_revision_receives_previous_review_context():
+    prior = {
+        "verdict": "revise",
+        "feedback": ["Keep the customer-acceptance risk in one report section."],
+    }
+    context = okr_eval.audit_revision_context(prior)
+    assert "Previous Audit revision context" in context
+    assert "not source facts or authorization" in context
+    assert "Keep the customer-acceptance risk in one report section." in context
+    assert "judge the current candidate independently" in context
 
 
 def test_actual_artifact_reader_reports_zero_based_ranges_on_full_reads(tmp_path):
@@ -821,6 +844,8 @@ def test_group_summary_keeps_exact_member_gap_evidence(tmp_path):
     summary = (tmp_path / "summary.md").read_text()
     for gap in analysis.member_gaps:
         assert gap.evidence in summary
+    assert "404" not in summary
+    assert "OKR 目标记录未能读取" in summary
 
 
 def test_cases_are_versioned_without_rewriting_failed_oracle():

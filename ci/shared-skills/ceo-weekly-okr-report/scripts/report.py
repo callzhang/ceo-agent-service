@@ -104,10 +104,7 @@ def _gap_evidence(item: dict[str, Any]) -> str:
     if outcome["kind"] == "source_failed":
         receipt = item.get("providerReceipt", {})
         if receipt.get("http_status") == 404 and receipt.get("error_code") == "member_not_found":
-            return "当前季度成员记录读取接口返回404，无法确认该成员是否有OKR目标；同轮名单及其他成员读取成功。"
-        diagnostic = str(outcome.get("diagnostic", ""))
-        if "403" in diagnostic:
-            return "当前周期成员读取接口返回 HTTP 403，本轮无法读取该成员的 OKR 记录。"
+            return "当前季度 OKR 目标记录未能读取，无法确认该成员是否设有目标；同轮名单及其他成员读取成功。"
         return "本次未能读取该成员当前周期的 OKR 记录；该成员不形成评分。"
     return str(outcome.get("evidence", ""))
 

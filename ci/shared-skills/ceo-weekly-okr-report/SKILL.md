@@ -20,11 +20,28 @@ engineering, leadership, culture and deadline calibration criteria. Use its
 not scores. A document deliverable requires reading its actual contents. Search
 independent evidence through Friday Memory, current DingTalk documents, wiki,
 minutes, messages, logs, todos and calendars. Unreadable evidence remains a gap.
+Provider diagnostics stay in the source receipts for Audit. Do not copy provider
+status codes, machine error labels or raw diagnostics into analyses, report text
+or the message proposal. Describe the business impact in plain language; an
+unreadable current-quarter record does not establish that the member has no goal.
 The scoring criteria in this Skill and `dingtang-okr-review` are sufficient to
 complete the report. Do not invent or require a separate local performance-policy
 file. If a relevant policy document is found but cannot be read, record that
 source limitation and continue with the declared scoring criteria; the missing
 document does not block member analysis or publication.
+
+### Correct an Audit return before publication
+
+Audit correction is not a prose-only edit. For each finding, identify the
+source field that generated the incorrect report text. Update the affected
+`analysis-<userId>.json` or `appendix-links.json`, preserve unrelated reusable
+analyses, and rerun `scripts/report.py render` before publishing or proposing a
+message. For example, a missing stable member ID or a duplicated member/KR risk
+must be corrected in that member's analysis; editing the rendered report does
+not correct its source. Never write generated report outputs with
+`consumer_artifact_write`. Read the new rendered bytes, update affected provider
+documents, and verify their complete readbacks before returning the revised
+candidate.
 
 ## Collect and prepare
 
@@ -248,7 +265,12 @@ covers an unnamed dimension. Innovation requires a specific improvement,
 validation and observed effect. AI-era capability requires a specific AI use
 and an observed work quality or efficiency effect. Keep each dimension below
 70 when its own standard is not established, even if adjacent dimensions are
-supported. Audit must independently check all seven dimension/evidence/score
+supported. A missed or incomplete business KR does not lower a leadership or
+culture dimension unless the behavior evidence links that result to the named
+dimension. When independent behavior evidence explicitly says a dimension meets
+the person's role standard and gives matching behaviors, score that dimension
+at 70 or above; a below-standard score requires dimension-specific evidence of
+an unmet behavior or contrary pattern. Audit must independently check all seven dimension/evidence/score
 matches for every scored person and return any unsupported standard score; do
 not approve based only on correct dimension labels, arithmetic or business-KR
 evidence. Independently inspect every score of 80 or more and require explicit

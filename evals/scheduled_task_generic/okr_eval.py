@@ -451,7 +451,8 @@ def _grade(case, work, output, prior=None):
                 (g.kind == "goals_missing" and "目标列表为空" in summary_text)
                 or (
                     g.kind == "source_failed"
-                    and "404" in summary_text
+                    and "404" not in summary_text
+                    and "OKR 目标记录未能读取" in summary_text
                     and any(term in summary_text for term in ("无法确认", "不能判断"))
                     and "同轮名单及其他成员读取成功" in summary_text
                 )
@@ -516,6 +517,7 @@ def native(
     previous=None,
     feedback=None,
     scheduled_run_id=1,
+    previous_review=None,
 ):
     output_dir.mkdir(parents=True, exist_ok=True)
     settings = (
@@ -593,6 +595,7 @@ def native(
             + "\n"
             + system_action_contract_document()
         )
+        prompt = audit_revision_context(previous_review) + prompt
     if role == "consumer":
         prompt += (
             "\nNative transport envelope: purpose_output_json encodes this complete production purpose schema. Its conditional branches are enforced by the real service parser after decoding:\n"
@@ -721,6 +724,17 @@ def native(
     }
 
 
+def audit_revision_context(previous_review):
+    if not previous_review:
+        return ""
+    return (
+        "Previous Audit revision context (not source facts or authorization):\n"
+        + json.dumps(previous_review, ensure_ascii=False)
+        + "\nResolve each carried return point or explain why its requested change is unsupported; "
+        "judge the current candidate independently.\n"
+    )
+
+
 def continue_native_feedback(
     facts_file,
     artifacts,
@@ -759,6 +773,7 @@ def continue_native_feedback(
             flags,
             previous=latest_consumer["output"],
             scheduled_run_id=scheduled_run_id,
+            previous_review=audits[-1]["output"],
         )
         audits.append(audit)
         if audit["output"] is None:
@@ -932,6 +947,7 @@ def main():
                         flags,
                         previous=(correction or consumer)["output"],
                         scheduled_run_id=scheduled_run_id,
+                        previous_review=audit["output"],
                     )
                     if final_audit["output"] is None:
                         result["cases"].append(native_failure_case(

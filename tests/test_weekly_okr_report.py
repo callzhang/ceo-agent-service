@@ -813,6 +813,21 @@ def test_skill_roundtrip_renders_complete_report_appendices_and_group_summary(tm
     assert "publishable" not in result
 
 
+def test_member_not_found_gap_hides_internal_http_status():
+    text = report._gap_evidence(
+        {
+            "sourceOutcome": {"kind": "source_failed"},
+            "providerReceipt": {
+                "http_status": 404,
+                "error_code": "member_not_found",
+            },
+        }
+    )
+    assert "404" not in text
+    assert "无法确认该成员是否设有目标" in text
+    assert "同轮名单及其他成员读取成功" in text
+
+
 def test_same_named_members_keep_distinct_scored_appendices(tmp_path):
     members = [
         ManagerIdentity("甲", "总监", "u1", "o1"),
@@ -884,7 +899,7 @@ def test_source_failure_scope_remains_explicit_and_diagnostics_private(tmp_path,
     )
     assert result["scored_count"] == 0
     text = Path(result["full_file"]).read_text()
-    assert "HTTP 403" in text
+    assert "HTTP 403" not in text
     assert "当前周期成员目标记录未能读取" in text
     assert "source_failed" not in text
     assert "PRIVATE_PATH" not in text and "PRIVATE_TOKEN" not in text
@@ -1061,7 +1076,7 @@ def test_skill_runs_standalone_without_application_imports(tmp_path):
     assert gap_evidence({
         "sourceOutcome": {"kind": "source_failed"},
         "providerReceipt": {"http_status": 404, "error_code": "member_not_found"},
-    }) == "当前季度成员记录读取接口返回404，无法确认该成员是否有OKR目标；同轮名单及其他成员读取成功。"
+    }) == "当前季度 OKR 目标记录未能读取，无法确认该成员是否设有目标；同轮名单及其他成员读取成功。"
     imports = [
         node.module
         for node in ast.walk(ast.parse(SKILL_SCRIPT.read_text()))
