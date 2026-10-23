@@ -44,6 +44,64 @@ def test_expired_console_opens_user_chrome_and_keeps_failure(monkeypatch, tmp_pa
     context.close.assert_called_once()
 
 
+def test_organization_redirect_timeout_opens_user_chrome_and_keeps_failure(
+    monkeypatch, tmp_path
+):
+    (tmp_path / 'Default').mkdir()
+    (tmp_path / 'Default' / 'Preferences').write_text('{}')
+    page = Mock()
+    page.url = 'https://login.dingtalk.com/oauth2/challenge.htm'
+    page.wait_for_url.side_effect = TimeoutError('organization redirect timed out')
+    context = Mock()
+    context.pages = [page]
+    context.new_page.return_value = page
+    monkeypatch.setattr('playwright.sync_api.sync_playwright', lambda: nullcontext(object()))
+    monkeypatch.setattr(service_browser, 'launch_service_chrome', lambda *args, **kwargs: context)
+    open_page = Mock(return_value=SimpleNamespace(returncode=0))
+    monkeypatch.setattr('subprocess.run', open_page)
+
+    with pytest.raises(MinutesBrowserSessionExpired, match='organization redirect timed out'):
+        with browser.signed_in_console(tmp_path):
+            pytest.fail('a timed-out organization redirect must not yield a console')
+
+    assert page.get_by_text.call_args.args == (browser.MINUTES_CONSOLE_ORG,)
+    assert page.get_by_text.return_value.first.click.call_args.kwargs['timeout'] == 10_000
+    assert page.wait_for_url.call_args.kwargs['timeout'] == 10_000
+    open_page.assert_called_once_with(
+        [
+            '/Applications/Google Chrome.app/Contents/MacOS/Google Chrome',
+            '--new-window',
+            browser.HISTORY_URL,
+        ],
+        check=True,
+    )
+    context.close.assert_called_once()
+
+
+def test_login_page_navigation_timeout_opens_user_chrome_and_keeps_failure(
+    monkeypatch, tmp_path
+):
+    (tmp_path / 'Default').mkdir()
+    (tmp_path / 'Default' / 'Preferences').write_text('{}')
+    page = Mock()
+    page.url = 'https://login.dingtalk.com/oauth2/challenge.htm'
+    page.goto.side_effect = [TimeoutError('login page navigation timed out'), None]
+    context = Mock()
+    context.pages = [page]
+    context.new_page.return_value = page
+    monkeypatch.setattr('playwright.sync_api.sync_playwright', lambda: nullcontext(object()))
+    monkeypatch.setattr(service_browser, 'launch_service_chrome', lambda *args, **kwargs: context)
+    open_page = Mock(return_value=SimpleNamespace(returncode=0))
+    monkeypatch.setattr('subprocess.run', open_page)
+
+    with pytest.raises(MinutesBrowserSessionExpired, match='login page navigation timed out'):
+        with browser.signed_in_console(tmp_path):
+            pytest.fail('a timed-out sign-in navigation must not yield a console')
+
+    open_page.assert_called_once()
+    context.close.assert_called_once()
+
+
 @pytest.mark.parametrize('initialized', [True, False])
 def test_copied_session_cookies_are_restored_after_native_profile_initialization(
     monkeypatch, tmp_path, initialized,

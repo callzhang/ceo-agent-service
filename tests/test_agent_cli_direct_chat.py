@@ -1,6 +1,8 @@
 """The native chat reader must use the task's stable direct-chat identity."""
 
 import sqlite3
+from datetime import UTC, datetime
+from pathlib import Path
 
 import pytest
 
@@ -104,6 +106,71 @@ def test_bound_task_keeps_unrelated_group_window_command(tmp_path, monkeypatch):
     assert result == {"complete": True, "messages": []}
     assert commands[0][1:4] == ["chat", "+chat-messages", "--group"]
     assert commands[0][4] == "cid-unrelated-group"
+
+
+@pytest.mark.parametrize(
+    "tool_name,args",
+    [
+        (
+            "read_dingtalk_messages_in_window",
+            ("cid-group", "2026-10-22T13:00:00Z", "2026-10-23T16:00:00Z"),
+        ),
+        (
+            "search_dingtalk_messages",
+            ("milestone", "2026-10-22T13:00:00Z", "2026-10-23T16:00:00Z"),
+        ),
+        (
+            "recent_dingtalk_conversations",
+            ("2026-10-22T13:00:00Z", "2026-10-23T16:00:00Z"),
+        ),
+    ],
+)
+def test_scheduled_message_windows_cannot_extend_past_trigger(
+    tmp_path, monkeypatch, tool_name, args
+):
+    monkeypatch.setattr(
+        "app.agent_cli._scheduled_read_cutoff",
+        lambda *_: datetime(2026, 10, 23, 13, tzinfo=UTC),
+    )
+    monkeypatch.setattr("app.agent_cli._bound_direct_chat_sender", lambda *a: "")
+    monkeypatch.setattr(
+        DwsClient,
+        "run_json",
+        lambda *a, **k: pytest.fail("provider access must not begin"),
+    )
+    monkeypatch.setattr(
+        DwsClient,
+        "search_messages",
+        lambda *a, **k: pytest.fail("provider access must not begin"),
+    )
+    tool = build_role_server(
+        "consumer", db_path=Path(tmp_path / "service.sqlite3")
+    )._tool_manager.get_tool(tool_name).fn
+
+    with pytest.raises(ValueError, match="cannot end after scheduled_for"):
+        tool(*args)
+
+
+def test_scheduled_message_window_accepts_exact_trigger_cutoff(tmp_path, monkeypatch):
+    monkeypatch.setattr(
+        "app.agent_cli._scheduled_read_cutoff",
+        lambda *_: datetime(2026, 10, 23, 13, tzinfo=UTC),
+    )
+    monkeypatch.setattr("app.agent_cli._bound_direct_chat_sender", lambda *a: "")
+    calls = []
+    monkeypatch.setattr(
+        DwsClient,
+        "run_json",
+        lambda self, command: calls.append(command) or {"complete": True, "messages": []},
+    )
+    tool = build_role_server(
+        "consumer", db_path=Path(tmp_path / "service.sqlite3")
+    )._tool_manager.get_tool("read_dingtalk_messages_in_window").fn
+
+    result = tool("cid-group", "2026-10-23T12:00:00Z", "2026-10-23T13:00:00Z")
+
+    assert result == {"complete": True, "messages": []}
+    assert calls[0][calls[0].index("--end") + 1] == "2026-10-23T13:00:00Z"
 
 
 @pytest.mark.parametrize("source_conversation,source_message", [
