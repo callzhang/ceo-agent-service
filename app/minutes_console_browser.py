@@ -281,7 +281,7 @@ class PlaywrightMinutesConsole:
 # the minutes this service archives; the others are Derek's own and would serve
 # an empty console.
 MINUTES_CONSOLE_ORG = "北京星尘纪元智能科技有限公司"
-_ORG_PICK_TIMEOUT_MS = 45_000
+_ORG_PICK_TIMEOUT_MS = 10_000
 _CONSOLE_SETTLE_MS = 6_000
 _USER_CHROME_EXECUTABLE = Path(
     "/Applications/Google Chrome.app/Contents/MacOS/Google Chrome"
@@ -323,9 +323,18 @@ def signed_in_console(profile_dir: Path | None = None, *, org: str = ""):
             for restored_page in tuple(context.pages):
                 if restored_page is not page:
                     restored_page.close()
-            page.goto(HISTORY_URL, wait_until="domcontentloaded", timeout=45_000)
-            page.wait_for_timeout(_CONSOLE_SETTLE_MS)
             try:
+                try:
+                    page.goto(
+                        HISTORY_URL, wait_until="domcontentloaded", timeout=45_000
+                    )
+                except Exception as exc:
+                    if LOGIN_HOST in page.url:
+                        raise MinutesBrowserSessionExpired(
+                            f"the DingTalk sign-in page did not finish loading: {exc}"
+                        ) from exc
+                    raise
+                page.wait_for_timeout(_CONSOLE_SETTLE_MS)
                 if LOGIN_HOST in page.url:
                     _pick_organisation(page, wanted)
                 if MINUTES_CONSOLE_HOST not in page.url:
@@ -356,9 +365,9 @@ def _pick_organisation(page, org: str) -> None:
     entry = page.get_by_text(org, exact=False).first
     try:
         entry.click(timeout=_ORG_PICK_TIMEOUT_MS)
+        page.wait_for_url(f"**{MINUTES_CONSOLE_HOST}/**", timeout=_ORG_PICK_TIMEOUT_MS)
     except Exception as exc:  # the picker is a page; it fails in many ways
         raise MinutesBrowserSessionExpired(
             f"the 听记 sign-in stopped without offering {org!r}: {exc}"
         ) from exc
-    page.wait_for_url(f"**{MINUTES_CONSOLE_HOST}/**", timeout=_ORG_PICK_TIMEOUT_MS)
     page.wait_for_timeout(_CONSOLE_SETTLE_MS)
