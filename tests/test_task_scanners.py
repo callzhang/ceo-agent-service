@@ -1096,6 +1096,14 @@ def test_scan_pending_oa_approvals_closes_completed_oa_needs_human_attempt(tmp_p
             "procInstId=proc-completed&taskId=task-completed"
         ),
     )
+    task = store.get_reply_task_by_trigger_message_id(trigger_message_id)
+    assert task is not None
+    claimed = store.claim_reply_task(task.id)
+    assert claimed is not None
+    store.complete_reply_task(
+        claimed.id,
+        expected_execution_generation=claimed.execution_generation,
+    )
     attempt_id = store.record_reply_attempt(
         conversation_id="oa_pending_scan",
         conversation_title="审批待办",
@@ -1106,13 +1114,6 @@ def test_scan_pending_oa_approvals_closes_completed_oa_needs_human_attempt(tmp_p
         sensitivity_kind="general",
         send_status="needs_human",
     )
-    with store._connect() as db:
-        db.execute(
-            "update tasks set status='done' "
-            "where record_type='reply_tasks' and conversation_id=? and trigger_message_id=?",
-            ("oa_pending_scan", trigger_message_id),
-        )
-
     dws = FakeDws()
     assert scan_pending_oa_approvals(store, dws) == 0
     assert dws.detail_reads == ["proc-completed"]
