@@ -11891,12 +11891,13 @@ class AutoReplyStore(LogicalRunStoreMixin, ReviewedCandidateStoreMixin):
             return requeued
 
     def requeue_expired_wechat_delivery_for_user(self, delivery_id: int):
-        """Restore one expired, never-dispatched delivery after explicit user action.
+        """Restore one never-dispatched delivery after explicit user action.
 
         Automatic retries deliberately stop after their bounded budget.  The
-        exhausted record is still safe for a user to retry only when it was
-        closed from a pre-action target-open failure: that path records a
-        non-empty action start time but never performed a send.  User-rejected,
+        record is still safe for a user to retry when a pre-action failure
+        closed it, either still ``failed`` or already moved to ``skipped``: that
+        path records a non-empty action start time but never performed a send.
+        User-rejected, Audit-rejected (never claimed, so no action start),
         sent, and uncertain deliveries do not meet this transition.
         """
         from app.wechat.models import WechatDelivery, principal_reply_supersession
@@ -11917,7 +11918,13 @@ class AutoReplyStore(LogicalRunStoreMixin, ReviewedCandidateStoreMixin):
                 update actions as wechat_deliveries set {assignments}
                 where wechat_deliveries.record_type='wechat_deliveries'
                   and cast(wechat_deliveries.legacy_key as integer)=?
-                  and wechat_deliveries.td_status='skipped'
+                  and (
+                      wechat_deliveries.td_status='skipped'
+                      or (
+                          wechat_deliveries.td_status='failed'
+                          and wechat_deliveries.td_pre_action_failure=1
+                      )
+                  )
                   and trim(wechat_deliveries.td_action_started_at)<>''
                   and exists (
                       select 1 from ({REPLY_TASK_SQL}) as tasks
@@ -11930,7 +11937,7 @@ class AutoReplyStore(LogicalRunStoreMixin, ReviewedCandidateStoreMixin):
             )
             if cursor.rowcount != 1:
                 raise AgentRunLeaseLostError(
-                    f"WeChat delivery is not an expired pre-action retry: {delivery_id}"
+                    f"WeChat delivery is not a pre-action retry: {delivery_id}"
                 )
             self._sync_wechat_delivery_reply_attempt(
                 db,

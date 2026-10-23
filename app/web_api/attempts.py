@@ -541,7 +541,13 @@ def _action_links(
             delivery_action_label = "发送"
             delivery_action_url = f"/api/console/wechat/deliveries/{delivery_id}/approve"
         elif (
-            delivery_status == "skipped"
+            (
+                delivery_status == "skipped"
+                or (
+                    delivery_status == "failed"
+                    and bool(getattr(wechat_delivery, "pre_action_failure", False))
+                )
+            )
             and not principal_reply_supersession(str(getattr(wechat_delivery, "error", "") or ""))
             and str(getattr(wechat_delivery, "action_started_at", "") or "").strip()
             and delivery_id
@@ -1006,8 +1012,14 @@ def build_attempt_detail(
         elif delivery_status == "skipped" and principal_reply_supersession(str(getattr(wechat_delivery, "error", "") or "")):
             if current_wechat_delivery_matches(attempt, reply_task, wechat_delivery):
                 status_message = "你已在后续消息中亲自回复；这条旧候选已跳过，未发送，无需重试。"
-        elif delivery_status == "skipped" and delivery_started:
-            status_message = "这条微信回复此前未能打开会话，尚未发送；你可以重试。"
+        elif delivery_started and (
+            delivery_status == "skipped"
+            or (
+                delivery_status == "failed"
+                and bool(getattr(wechat_delivery, "pre_action_failure", False))
+            )
+        ):
+            status_message = "这条微信回复在发送前失败，尚未发送；你可以重试。"
     decision_options = []
     decision_actionable = (
         attempt.send_status == "needs_human"
