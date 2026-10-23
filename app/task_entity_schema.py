@@ -29,6 +29,25 @@ def _stored_public_key(value: object):
     return normalized if kind == "blob" else None if kind == "null" else str(normalized)
 
 
+def _identity_ranges(rows: dict[str, list[dict]]) -> dict[str, list[list[int]]]:
+    """Compress exact source physical membership without retaining Task facts."""
+    result = {}
+    for kind, items in rows.items():
+        ordered = sorted({int(row["_physical_id"]) for row in items})
+        ranges = []
+        for value in ordered:
+            if ranges and value == ranges[-1][1] + 1:
+                ranges[-1][1] = value
+            else:
+                ranges.append([value, value])
+        result[kind] = ranges
+    return result
+
+
+def _identity_member(ranges: dict[str, list[list[int]]], kind: str, value: int) -> bool:
+    return any(start <= value <= end for start, end in ranges.get(kind, ()))
+
+
 def _quote(name: str) -> str:
     return '"' + name.replace('"', '""') + '"'
 
@@ -576,6 +595,7 @@ def migrate_task_entities(
         "counts": {kind: len(rows) for kind, rows in all_rows.items()},
         "identity_rows": len(identity_records),
         "identity_edges": identity_records,
+        "source_id_ranges": _identity_ranges(all_rows),
         "owner_highwaters": {kind: max((int(row["_physical_id"]) for row in rows), default=0)
                              for kind, rows in all_rows.items()},
         "raw_key_exceptions": raw_key_exceptions,
@@ -619,9 +639,21 @@ def _inverse_indexes(db: sqlite3.Connection, forward_metadata: dict) -> tuple[di
     edges = forward_metadata.get("identity_edges")
     raw_exceptions = forward_metadata.get("raw_key_exceptions")
     owner_highwaters = forward_metadata.get("owner_highwaters")
+    source_id_ranges = forward_metadata.get("source_id_ranges")
     if (not isinstance(edges, list) or not isinstance(raw_exceptions, list)
-            or not isinstance(owner_highwaters, dict)):
+            or not isinstance(owner_highwaters, dict) or not isinstance(source_id_ranges, dict)
+            or set(source_id_ranges) != set(task20_definitions.TASK20_COLUMNS)):
         raise ValueError("Task inverse requires sparse identity metadata")
+    for kind, ranges in source_id_ranges.items():
+        if type(ranges) is not list:
+            raise ValueError("invalid Task source identity ranges")
+        previous = -1
+        for pair in ranges:
+            if (type(pair) is not list or len(pair) != 2
+                    or any(type(value) is not int or value < 1 for value in pair)
+                    or pair[0] > pair[1] or pair[0] <= previous + 1):
+                raise ValueError(f"invalid Task source identity ranges: {kind}")
+            previous = pair[1]
     exceptional = {}
     for row in edges:
         if (not isinstance(row, dict) or set(row) != {
@@ -658,7 +690,8 @@ def _inverse_indexes(db: sqlite3.Connection, forward_metadata: dict) -> tuple[di
         for target_id in owner_ids:
             edge = exceptional.get((kind, target_id))
             raw = raw_by_target.get((kind, target_id))
-            if edge is None and raw is None and target_id > owner_highwaters.get(kind, 0):
+            if edge is None and raw is None and not _identity_member(
+                    source_id_ranges, kind, target_id):
                 continue
             physical_id = (edge["physical_id"] if edge is not None else
                            raw["physical_id"] if raw is not None else
@@ -851,7 +884,20 @@ def restore_task_entities(db: sqlite3.Connection, source_metadata: dict, forward
             )
             if identity_field is None:
                 continue
-            public_key = str(uuid4()) if kind in {"workbench_tasks", "workbench_turns"} else canonical_id
+            if kind == "email_agent_classification_tasks":
+                row = db.execute(
+                    "select stable_message_identity from main.email_classification_inputs where task_id=?",
+                    (canonical_id,),
+                ).fetchone()
+                if row is None or not isinstance(row[0], str) or not row[0].strip():
+                    raise ValueError(
+                        f"native Email Task lacks stable message identity: {canonical_id}"
+                    )
+                public_key = "email-classification:" + hashlib.sha256(
+                    row[0].encode("utf-8")
+                ).hexdigest()
+            else:
+                public_key = str(uuid4()) if kind in {"workbench_tasks", "workbench_turns"} else canonical_id
         source_public_by_native[(kind, canonical_id)] = public_key
 
     source_rows = []
@@ -893,6 +939,15 @@ def restore_task_entities(db: sqlite3.Connection, source_metadata: dict, forward
                 values[field] = value
             elif field != "final_text":
                 values[field] = value
+        if kind == "email_agent_classification_tasks" and (kind, target_id) not in old_public:
+            stable_identity = values.get("stable_message_identity")
+            if not isinstance(stable_identity, str) or not stable_identity.strip():
+                raise ValueError(
+                    f"native Email Task lacks stable message identity: {target_id}"
+                )
+            values["task_id"] = "email-classification:" + hashlib.sha256(
+                stable_identity.encode("utf-8")
+            ).hexdigest()
         # Dispatch-only scalars are physical Task facts even though they are
         # intentionally outside the older logical field map.
         if kind in _TASK_TABLES:
@@ -971,6 +1026,8 @@ def restore_task_entities(db: sqlite3.Connection, source_metadata: dict, forward
             if public_key is None:
                 raw_value = source_key_next.get(kind, 1)
                 source_key_next[kind] = raw_value + 1
+            elif kind == "email_agent_classification_tasks" and (kind, target_id) not in old_public:
+                raw_value = canonical_id
             else:
                 raw_value = public_key
             raw_type = "text" if isinstance(raw_value, str) else "integer"

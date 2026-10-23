@@ -577,6 +577,31 @@ def test_native_input_new_fact_below_global_water_keeps_canonical_id_on_reforwar
         )
 
 
+def test_native_input_below_kind_highwater_but_in_source_gap_gets_new_source_identity():
+    with closing(_source()) as db:
+        db.execute("pragma foreign_keys=off")
+        db.execute("begin immediate")
+        source_metadata = capture_task_entities(db)
+        forward = migrate_task_entities(db, source_metadata)
+        db.execute(
+            "insert into task_inputs(id,task_id,channel,conversation_id,conversation_title,single_chat,"
+            "trigger_message_id,trigger_create_time,trigger_sender,trigger_text,oa_url,business_object_key,"
+            "input_revision_key) values(?,?,?,?,?,?,?,?,?,?,?,?,?)",
+            (204, 201, "dingtalk", "gap-chat", "Gap", 1, "gap-trigger", "time", "Sender",
+             "gap input", "", "object", "gap-revision"),
+        )
+        inverse = restore_task_entities(db, source_metadata, forward)
+        assigned = db.execute(
+            "select id from tasks where record_type='reply_task_inputs' and "
+            "json_extract(payload_json,'$[4]')='gap-trigger'"
+        ).fetchone()[0]
+        assert assigned > source_metadata["task_sequence"][1]
+        assert assigned != 204
+        handoff = {(row["source_kind"], row["canonical_id"]): row["source_physical_id"]
+                   for row in inverse["inverse_identity"]["owners"]}
+        assert handoff[("reply_task_inputs", 204)] == assigned
+
+
 def test_native_business_key_collision_uses_predecessor_hidden_rowid_allocator():
     from app.task_entity_storage import (
         append_task_input, associate_business_key, bind_claimed_input,
@@ -783,6 +808,50 @@ def test_native_workbench_session_collision_and_turn_preserve_source_uuid_and_op
                           "where owner.client_request_id='client-request-uuid'").fetchone()
         assert tuple(turn)[1:] == (203, "client-request-uuid")
         UUID(turn[0])
+
+
+def test_new_native_email_task_inverse_uses_predecessor_runtime_identity():
+    from hashlib import sha256
+    from app.task_entity_storage import create_task
+
+    with closing(_source()) as db:
+        db.row_factory = sqlite3.Row
+        db.execute("pragma foreign_keys=off")
+        db.execute("begin immediate")
+        source_metadata = capture_task_entities(db)
+        forward = migrate_task_entities(db, source_metadata)
+        stable_identity = "acct:mailbox:folder:uidvalidity:uid"
+        now = db.execute("select current_timestamp").fetchone()[0]
+        new_task = create_task(db, values={"kind": "email_classification", "status": "pending",
+                                           "available_at": now, "attempts": 0, "error": "",
+                                           "owner_pid": None, "generation": 0,
+                                           "lease_owner": "", "lease_expires_at": "",
+                                           "created_at": now, "updated_at": now})
+        db.execute(
+            "insert into email_classification_inputs(task_id,channel,stable_message_identity,input_json) "
+            "values(?,?,?,?)",
+            (new_task["id"], "email", stable_identity, "{}"),
+        )
+        db.execute("insert into task_results(task_id,result_kind,result_json) values(?,?,?)",
+                   (new_task["id"], "email_classification", "{}"))
+
+        inverse = restore_task_entities(db, source_metadata, forward)
+        expected = "email-classification:" + sha256(stable_identity.encode("utf-8")).hexdigest()
+        restored = db.execute(
+            "select id,legacy_key from tasks where record_type='email_agent_classification_tasks' "
+            "and id=?", (new_task["id"],),
+        ).fetchone()
+        assert restored[0] == new_task["id"]
+        assert str(restored[1]).isdecimal()
+        projection = task20_definitions.task20_projection("email_agent_classification_tasks")
+        assert tuple(db.execute("select task_id from (" + projection + ") where task_id=?",
+                                (expected,)).fetchone()) == (expected,)
+        from app.store import AutoReplyStore
+        assert AutoReplyStore._validate_runtime_operation_workload(
+            "email_classification", expected,
+        ) == ("email_classification", expected)
+        assert len(expected.removeprefix("email-classification:")) == 64
+        assert inverse["inverse_identity"]["version"] == 1
 
 
 def test_current_inverse_keeps_marker_shaped_text_parameter_as_text():

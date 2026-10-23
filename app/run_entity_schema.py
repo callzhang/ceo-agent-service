@@ -110,13 +110,16 @@ def _task_kind(source_kind: str) -> str:
 
 def _task_forward_edges(db: sqlite3.Connection, task_metadata: dict) -> dict:
     required = {"counts", "identity_rows", "identity_edges", "owner_highwaters",
-                "raw_key_exceptions", "reference_exceptions", "task_sequence", "source_objects"}
+                "source_id_ranges", "raw_key_exceptions", "reference_exceptions",
+                "task_sequence", "source_objects"}
     if type(task_metadata) is not dict or set(task_metadata) != required:
         raise ValueError("Run conversion requires actual Task2B forward metadata")
     kinds = set(task20_definitions.TASK20_COLUMNS)
     if (type(task_metadata["identity_edges"]) is not list
             or type(task_metadata["owner_highwaters"]) is not dict
             or set(task_metadata["owner_highwaters"]) != kinds
+            or type(task_metadata["source_id_ranges"]) is not dict
+            or set(task_metadata["source_id_ranges"]) != kinds
             or type(task_metadata["counts"]) is not dict
             or set(task_metadata["counts"]) != kinds):
         raise ValueError("invalid Task2B sparse identity metadata")
@@ -129,6 +132,16 @@ def _task_forward_edges(db: sqlite3.Connection, task_metadata: dict) -> dict:
             or type(task_metadata["reference_exceptions"]) is not list
             or type(task_metadata["source_objects"]) is not list):
         raise ValueError("invalid Task2B forward metadata values")
+    for kind, ranges in task_metadata["source_id_ranges"].items():
+        if type(ranges) is not list:
+            raise ValueError("invalid Task2B source identity ranges")
+        previous = -1
+        for pair in ranges:
+            if (type(pair) is not list or len(pair) != 2
+                    or any(type(value) is not int or value < 1 for value in pair)
+                    or pair[0] > pair[1] or pair[0] <= previous + 1):
+                raise ValueError(f"invalid Task2B source identity ranges: {kind}")
+            previous = pair[1]
     actual = {
         (row[0], int(row[1]), row[2], row[3], int(row[4]))
         for row in db.execute(
