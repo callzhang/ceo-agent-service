@@ -577,7 +577,8 @@ def migrate_task_entities(
                 updates[field] = mapped
         if updates:
             assignments = ",".join(_quote(key) + "=?" for key in updates)
-            db.execute(f"update tasks set {assignments} where id=?", (*updates.values(), row["_physical_id"]))
+            db.execute(f"update tasks set {assignments} where id=?",
+                       (*updates.values(), target_ids[("reply_tasks", int(row["_physical_id"]))]))
 
     # Install exact target indexes and triggers only after bulk data insertion.
     for name, sql in objects.items():

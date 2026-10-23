@@ -245,6 +245,30 @@ def test_forward_migrates_all_twenty_families_to_native_task_and_domain_owners()
         ))
 
 
+def test_remapped_reply_task_rebinds_current_and_claimed_source_input_ids():
+    with closing(_source()) as db:
+        db.execute("begin immediate")
+        source_metadata = capture_task_entities(db)
+        forward = migrate_task_entities(db, source_metadata, inverse_identity={
+            "version": 1,
+            "owners": [{"source_kind": "reply_tasks", "source_physical_id": 201,
+                        "canonical_id": 1201}],
+        })
+        native = db.execute(
+            "select current_input_id,claimed_input_id,input_version,claimed_input_version "
+            "from tasks where id=1201").fetchone()
+        assert native == (205, 206, 1, 0)
+
+        inverse = restore_task_entities(db, source_metadata, forward)
+        assert tuple(db.execute(
+            "select current_input_id,claimed_input_id "
+            "from tasks where record_type='reply_tasks' and id=201").fetchone()) == (205, 206)
+        assert inverse["inverse_identity"]["owners"] == [{
+            "source_kind": "reply_tasks", "source_physical_id": 201,
+            "canonical_id": 1201,
+        }]
+
+
 def test_source_declaration_rejection_happens_before_task_container_mutation():
     with closing(_source()) as db:
         db.execute("begin immediate")
