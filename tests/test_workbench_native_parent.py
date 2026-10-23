@@ -440,6 +440,28 @@ def test_native_attachment_inverse_stages_source_locator_and_preserves_bytes(tmp
             raise AssertionError("inverse files finalized before the caller committed")
         assert all(path.exists() for path in original_paths)
         db.commit()
+        real_unlink = Path.unlink
+        unlink_count = 0
+
+        def interrupt_after_first_cleanup(target, *args, **kwargs):
+            nonlocal unlink_count
+            unlink_count += 1
+            if unlink_count == 2:
+                raise OSError("injected inverse finalization interruption")
+            return real_unlink(target, *args, **kwargs)
+
+        monkeypatch.setattr(Path, "unlink", interrupt_after_first_cleanup)
+        try:
+            finalize_workbench_attachment_inverse_files(
+                db, plan, inverse["inverse_identity"], managed_root,
+            )
+        except OSError as exc:
+            assert "injected inverse finalization interruption" in str(exc)
+        else:
+            raise AssertionError("inverse finalization interruption was not raised")
+        assert unlink_count == 2
+        assert sum(path.exists() for path in original_paths) == len(original_paths) - 1
+        monkeypatch.setattr(Path, "unlink", real_unlink)
         finalize_workbench_attachment_inverse_files(
             db, plan, inverse["inverse_identity"], managed_root,
         )
@@ -468,6 +490,40 @@ def test_native_attachment_inverse_stages_source_locator_and_preserves_bytes(tmp
     with store._connect() as db:
         db.execute("pragma foreign_keys=off")
         db.execute("begin immediate")
+        before_rows = db.execute("select id,parent_id,payload_json from tasks order by id").fetchall()
+        before_files = {
+            str(path): path.read_bytes() for path in managed_root.rglob("*") if path.is_file()
+        }
+        swapped_identity = json.loads(json.dumps(portable_identity))
+        first_id, second_id = swapped_identity["workbench_attachment_identities"]
+        first_id["source_public_id"], second_id["source_public_id"] = (
+            second_id["source_public_id"], first_id["source_public_id"],
+        )
+        wrong_parent = json.loads(json.dumps(portable_identity))
+        parent_entry = wrong_parent["workbench_attachment_files"][0]
+        parent_entry["source_parent_public_id"] = str(uuid4())
+        parent_entry["source_path"] = str(
+            managed_root / parent_entry["source_parent_public_id"] / parent_entry["source_public_id"]
+        )
+        wrong_path = json.loads(json.dumps(portable_identity))
+        path_entry = wrong_path["workbench_attachment_files"][0]
+        path_entry["source_path"] = str(
+            managed_root / path_entry["source_parent_public_id"] / str(uuid4())
+        )
+        for tampered in (swapped_identity, wrong_parent, wrong_path):
+            try:
+                stage_workbench_attachment_forward_files(db, managed_root, tampered)
+            except ValueError:
+                pass
+            else:
+                raise AssertionError("tampered Workbench file handoff was accepted")
+            assert db.execute("select id,parent_id,payload_json from tasks order by id").fetchall() == before_rows
+            assert {str(path): path.read_bytes() for path in managed_root.rglob("*") if path.is_file()} == before_files
+        db.rollback()
+
+    with store._connect() as db:
+        db.execute("pragma foreign_keys=off")
+        db.execute("begin immediate")
         inverse_metadata = capture_task_entities(db)
         forward_plan = stage_workbench_attachment_forward_files(
             db, managed_root, portable_identity,
@@ -478,6 +534,27 @@ def test_native_attachment_inverse_stages_source_locator_and_preserves_bytes(tmp
         )
         db.commit()
     with store._connect() as db:
+        real_unlink = Path.unlink
+        unlink_count = 0
+
+        def interrupt_forward_after_first_cleanup(target, *args, **kwargs):
+            nonlocal unlink_count
+            unlink_count += 1
+            if unlink_count == 2:
+                raise OSError("injected forward finalization interruption")
+            return real_unlink(target, *args, **kwargs)
+
+        monkeypatch.setattr(Path, "unlink", interrupt_forward_after_first_cleanup)
+        try:
+            finalize_workbench_attachment_forward_files(
+                db, forward_plan, portable_identity, managed_root,
+            )
+        except OSError as exc:
+            assert "injected forward finalization interruption" in str(exc)
+        else:
+            raise AssertionError("forward finalization interruption was not raised")
+        assert unlink_count == 2
+        monkeypatch.setattr(Path, "unlink", real_unlink)
         finalize_workbench_attachment_forward_files(
             db, forward_plan, portable_identity, managed_root,
         )

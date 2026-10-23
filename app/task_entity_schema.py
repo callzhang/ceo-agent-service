@@ -4,6 +4,7 @@ from __future__ import annotations
 import json
 import hashlib
 import sqlite3
+from pathlib import Path
 from collections import defaultdict
 from uuid import UUID, uuid4
 
@@ -734,6 +735,9 @@ def _validate_inverse_identity(value: dict | None) -> dict:
                 or not isinstance(row["source_parent_public_id"], str)
                 or str(UUID(row["source_parent_public_id"])) != row["source_parent_public_id"]
                 or not isinstance(row["source_public_id"], str)
+                or str(UUID(row["source_public_id"])) != row["source_public_id"]
+                or Path(row["source_path"]).name != row["source_public_id"]
+                or Path(row["source_path"]).parent.name != row["source_parent_public_id"]
                 or not all(isinstance(row[key], str) and row[key] for key in
                            ("source_path", "native_path", "content_sha256"))
                 or type(row["size_bytes"]) is not int or row["size_bytes"] < 0):
@@ -745,6 +749,7 @@ def _validate_inverse_identity(value: dict | None) -> dict:
                 f"source={key}, identities={sorted(attachment_identities)}"
             )
         if (row["canonical_id"] != attachment_identities[key]["canonical_id"]
+                or row["source_public_id"] != attachment_identities[key]["source_public_id"]
                 or len(row["content_sha256"]) != 64):
             raise ValueError("WorkBench attachment file identity mismatch")
         files[key] = row

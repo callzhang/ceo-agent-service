@@ -311,15 +311,19 @@ def finalize_workbench_attachment_inverse_files(db, plan: dict, inverse_identity
                 or int(row[0]) != item["source_parent_physical_id"]):
             raise ValueError("committed Workbench attachment replacement does not match plan")
         _file(destination, root)
-        _file(Path(item["native_path"]), root)
         if _digest(destination) != (item["content_sha256"], item["size_bytes"]):
             raise ValueError("committed Workbench attachment replacement failed readback")
+        original = Path(item["native_path"])
+        if os.path.lexists(original):
+            _file(original, root)
+            if _digest(original) != (item["content_sha256"], item["size_bytes"]):
+                raise ValueError("original Workbench attachment changed before finalization")
+        elif not item["staged"]:
+            raise ValueError("unchanged Workbench attachment locator disappeared")
         rows.append(item)
     for item in rows:
         source = Path(item["native_path"])
-        if item["staged"]:
-            if _digest(source) != (item["content_sha256"], item["size_bytes"]):
-                raise ValueError("original Workbench attachment changed before finalization")
+        if item["staged"] and os.path.lexists(source):
             source.unlink()
             _fsync_dir(source.parent)
 
@@ -359,30 +363,55 @@ def stage_workbench_attachment_forward_files(db, managed_root: str | Path, inver
                   for row in handoff["workbench_attachment_identities"].values()}
     if {row["source_public_id"] for row in identities.values()} - set(by_public_id):
         raise ValueError("Workbench forward handoff names a missing source attachment")
+    from app.storage_payload import TASK_RECORD_TYPES
+    from app.task20_definitions import task20_column
+    prepared = []
+    # Validate every portable file entry and its actual restored source rows
+    # before creating directories or links for any entry.
+    for item in handoff["workbench_attachment_files"].values():
+        identity = identities.get(item["source_physical_id"])
+        if (identity is None or identity["canonical_id"] != item["canonical_id"]
+                or identity["source_public_id"] != item["source_public_id"]):
+            raise ValueError("Workbench forward file identity differs from inverse metadata")
+        row = by_public_id.get(item["source_public_id"])
+        if row is None or row[2] != item["source_path"]:
+            raise ValueError("Workbench forward source locator differs from inverse metadata")
+        if int(row[1]) != item["source_parent_physical_id"]:
+            raise ValueError("Workbench forward file parent is missing")
+        source_parent_public = Path(item["source_path"]).parent.name
+        if (source_parent_public != item["source_parent_public_id"]
+                or Path(item["source_path"]).name != item["source_public_id"]):
+            raise ValueError("Workbench forward source locator differs from UUID identity")
+        source_row = db.execute(
+            "select parent_id," + task20_column("workbench_attachments", "id")
+            + " from main.tasks where id=? and _kind=?",
+            (item["source_physical_id"], TASK_RECORD_TYPES.code("workbench_attachments")),
+        ).fetchone()
+        parent_row = db.execute(
+            "select " + task20_column("workbench_tasks", "id")
+            + " from main.tasks where id=? and _kind=?",
+            (item["source_parent_physical_id"], TASK_RECORD_TYPES.code("workbench_tasks")),
+        ).fetchone()
+        if (source_row is None or int(source_row[0]) != item["source_parent_physical_id"]
+                or source_row[1] != item["source_public_id"]
+                or parent_row is None or parent_row[0] != item["source_parent_public_id"]):
+            raise ValueError(
+                "Workbench forward source rows differ from portable identity: "
+                f"attachment={source_row!r}, parent={parent_row!r}, entry={item!r}"
+            )
+        source = Path(item["source_path"])
+        destination = Path(item["native_path"])
+        if destination.parent != root / str(item["parent_canonical_id"]):
+            raise ValueError("Workbench forward native locator differs from identity handoff")
+        _file(source, root)
+        if _digest(source) != (item["content_sha256"], item["size_bytes"]):
+            raise ValueError("Workbench forward source bytes differ from inverse metadata")
+        prepared.append((item, source, destination))
     entries, created = [], []
     try:
-        for item in handoff["workbench_attachment_files"].values():
-            identity = identities.get(item["source_physical_id"])
-            if identity is None or identity["canonical_id"] != item["canonical_id"]:
-                raise ValueError("Workbench forward file identity differs from inverse metadata")
-            row = by_public_id.get(identity["source_public_id"])
-            if row is None or row[2] != item["source_path"]:
-                raise ValueError("Workbench forward source locator differs from inverse metadata")
-            source = Path(item["source_path"])
-            _file(source, root)
-            source_digest = _digest(source)
-            if source_digest != (item["content_sha256"], item["size_bytes"]):
-                raise ValueError("Workbench forward source bytes differ from inverse metadata")
-            if int(row[1]) != item["source_parent_physical_id"]:
-                raise ValueError("Workbench forward file parent is missing")
-            destination = Path(item["native_path"])
-            expected_parent = root / str(item["parent_canonical_id"])
-            if destination.parent != expected_parent or not destination.name:
-                raise ValueError("Workbench forward native locator differs from identity handoff")
-            try:
-                destination.relative_to(root)
-            except ValueError as exc:
-                raise ValueError("Workbench forward locator is outside its managed root") from exc
+        for item, source, destination in prepared:
+            if not _path_under(destination, root) or not destination.name:
+                raise ValueError("Workbench forward locator is outside its managed root")
             _ensure_directory(destination.parent, root)
             if destination != source:
                 if destination.exists() or destination.is_symlink():
@@ -440,10 +469,13 @@ def finalize_workbench_attachment_forward_files(db, plan: dict, inverse_identity
         if (destination.parent != root / str(item["parent_canonical_id"])
                 or source != root / item["source_parent_public_id"] / item["source_public_id"]):
             raise ValueError("Workbench forward finalization locator differs from identity handoff")
-        _file(source, root)
-        if _digest(source) != (item["content_sha256"], item["size_bytes"]):
-            raise ValueError("Workbench forward source bytes changed before finalization")
-        if staged["staged"]:
+        if os.path.lexists(source):
+            _file(source, root)
+            if _digest(source) != (item["content_sha256"], item["size_bytes"]):
+                raise ValueError("Workbench forward source bytes changed before finalization")
+        elif not staged["staged"]:
+            raise ValueError("unchanged Workbench forward source locator disappeared")
+        if staged["staged"] and os.path.lexists(source):
             source_cleanup.append(source)
     for source in source_cleanup:
         source.unlink()

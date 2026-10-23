@@ -65,3 +65,44 @@ Result: exit 0. `predecessor_sha256=b5c5b92fc0985ef21d865379193a948df171d02a3f8d
 ## Boundaries and remaining review
 
 The report does not claim runtime activation, whole-phase acceptance, production behavior, native CLI acceptance, or a push/deploy. No full suite was run. The operator acceptance depends on the explicit pinned predecessor directory and fresh `/private/tmp` workdir supplied at invocation. Generic file recovery is intentionally narrow to these exact attachment identities and managed-root locators. Commit is the caller's responsibility; finalize cannot run while the DB transaction remains open. The independent whole-BASE..HEAD SPEC+QUALITY review remains required before the original runtime writer resumes integration.
+
+## Fix round 1 (FIX_BASE `de927e6562651ac5442e1673b0acb6192f7ab6db`)
+
+Addressed the two Important findings from `task-2d7i-workbench-file-inverse-review.md`.
+
+Inverse finalization now establishes the committed projection and exact replacement hash/size before cleanup. It verifies an old locator when it still exists and accepts an already-missing old locator only when the exact staged plan says cleanup was required and the verified committed replacement remains present. Forward finalization applies the symmetric rule: the committed native row, locator, parent, hash, and size plus the verified native file establish completion; an absent source locator is accepted only for a staged cleanup entry. Unchanged locators must still exist. Both retry paths skip only the already-removed planned source.
+
+Portable validation binds each file row's canonical and source public UUIDs to its exact attachment identity, and binds `source_path` to the file entry's parent UUID plus attachment UUID. Forward staging prevalidates all entries before creating any directory or link. For every entry it checks the actual restored attachment row's UUID and parent physical ID, the parent row's UUID, current attachment projection locator/parent, source file hash/size, and native destination under the managed root. A stale/swapped ID, inconsistent parent UUID, or mismatching child path therefore fails before filesystem or database mutation.
+
+The Hermetic Workbench test now injects an interruption after the first old-locator unlink in both cleanup directions, confirms the first locator was removed and the rest remain, then retries from the JSON-portable handoff successfully. It also tampers with swapped attachment identities, a parent UUID/path pair that is internally consistent but disagrees with the actual restored parent, and a child path with the wrong UUID; each attempt asserts no Task rows or file bytes changed. The pre-existing second-hardlink failure and uncommitted-finalize rejection remain covered.
+
+Exact focused command and output:
+
+```text
+pytest -q tests/test_workbench_native_parent.py::test_native_attachment_inverse_stages_source_locator_and_preserves_bytes tests/test_task_entity_schema.py::test_inverse_handoff_json_keeps_captured_blob_parent_out_of_uuid_file_map tests/test_task_entity_schema.py::test_inverse_translates_raw_source_physical_ids_through_native_owner_edges tests/test_task_entity_schema.py::test_inverse_preserves_hidden_task12_rowid_legacy_key_for_natural_key_owner
+....                                                                     [100%]
+4 passed in 2.63s
+```
+
+Static checks:
+
+```text
+ruff check app/task_entity_schema.py app/task_entity_inverse_files.py tests/test_workbench_native_parent.py
+All checks passed!
+
+python -m py_compile app/task_entity_schema.py app/task_entity_inverse_files.py
+(exit 0; no output)
+
+git diff --check
+(exit 0; no output)
+```
+
+The genuine predecessor operator was rerun in a fresh child of the approved task root:
+
+```text
+WORK_DIR=$(mktemp -d /private/tmp/ceo-task-run-phase2-_ntbufyi/task-2d7i-fix1-XXXXXX) && python scripts/validate_task_2d7i_workbench_inverse.py --predecessor-root /private/tmp/ceo-task-run-phase2-_ntbufyi/predecessor-c38ce12cf --work-dir "$WORK_DIR"
+```
+
+Exit 0. Predecessor digest remained `b5c5b92fc0985ef21d865379193a948df171d02a3f8d43186a6023d78f1d4a66`; both old constructor and reconcile modules loaded from the exact pinned predecessor `app/workbench/store.py`. Two file inverse/forward cycles completed. The actual unchanged predecessor constructor read both newly written files with correct UUID parent/attachment IDs, paths, SHA-256, sizes, filenames, and media type; cycle 1 harmless old API write changed row count 3→4, and cycle 2 retained row count 6→6. The original control attachment and exact hash remained available. This is the bounded Workbench Task migration/operator acceptance only; it is not whole-service, whole-phase, runtime-activation, or production proof.
+
+This fix round changed only the explicit converter/file helper and focused Workbench tests. The two unrelated report appendices remain untouched by this round. No whole suite, provider, native CLI, push, or deploy was run. FIX_HEAD will be recorded after commit.
