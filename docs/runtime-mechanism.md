@@ -2188,10 +2188,12 @@ Feedback API 是现有本地后端边界内的操作接口，供 Workbench 和�
 
 Task2D8C 将反馈 intake、列表和待处理数读切换到当前开发候选的实际 native Store。
 首次 event upsert 在同一事务中创建唯一 `feedback_processing` Task 和对应 detail，
-并依据源 event 当前 `resolved_at` 初始化 Task 状态；重复 upsert 按既有冲突规则更新源 event 并更新 Task.updated_at，不重置已有 Task 状态、detail 关联/证据或轮次。Task 持有处理状态与
+并依据源 event 当前 `resolved_at` 初始化 Task 状态；重复 upsert 按既有冲突规则更新源 event 并更新 Task.updated_at。若更新后的 source `resolved_at` 非空，则现有 Task 状态变为
+`resolved`，Feedback detail 的 `resolved_at` 更新为该 source 时间；若为空，则保留当前
+Task 状态和 detail resolution timestamp。重复 intake 不改关联、证据或历史轮次。Task 持有处理状态与
 生命周期时间，Feedback detail 持有关联、证据和当前 round。列表与 by-key 读仍按
 最新已发送 token attempt 或 manual key 解析回复上下文，role/session 直接读取 native
-Run；这个回复上下文的 attempt/run 与处理 detail 中保存的 `attempt_id`、`agent_run_id`
+Run 的 role；`codex_session_id` 仍取 ReplyAttempt 本身的既有 source context。这个回复上下文的 attempt/run 与处理 detail 中保存的 `attempt_id`、`agent_run_id`
 是不同事实。pending count 沿用 unresolved、pending、无 reviewer feedback 且无
 corrected reply 的原条件。API 后端已由真实 `register_console_routes` 注册路径覆盖；
 候选仍未激活，完整浏览器 UI 和旧 constructor 冷启动仍属于后续验收范围。

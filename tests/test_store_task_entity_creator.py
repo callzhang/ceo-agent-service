@@ -17,7 +17,11 @@ from app.store import (
 from app import task_entity_storage
 from app.action_storage import insert_action
 from app.action_entity_storage import append_action_receipt, create_action, record_action_result
-from app.action_feedback_storage import insert_feedback_action
+from app.action_feedback_storage import (
+    insert_feedback_action,
+    reopen_feedback_event,
+    resolve_feedback_events,
+)
 from app.task8_storage import register_task8_functions
 from app.task_run_entity_assembly import task_run_entity_assembly_objects
 
@@ -170,6 +174,74 @@ def test_feedback_event_and_task_intake_roll_back_together(tmp_path, monkeypatch
             ("feedback:rollback",),
         ).fetchone()[0] == 0
         assert db.execute("select count(*) from tasks").fetchone()[0] == 0
+
+
+def test_feedback_event_repeat_projects_resolved_source_and_preserves_blank_source_facts(tmp_path):
+    store = _target_store(tmp_path / "target.sqlite3")
+    key = "feedback:resolution-projection"
+    store.upsert_feedback_event(key=key, feedback_token="token-resolution")
+    with store._connect() as db:
+        item = db.execute(
+            "select task.id from tasks task join feedback_processing_items item "
+            "on item.task_id=task.id where item.feedback_key=?",
+            (key,),
+        ).fetchone()
+        task_id = int(item["id"])
+        db.execute(
+            "update tasks set status='processing' where id=?",
+            (task_id,),
+        )
+        db.execute(
+            "update feedback_processing_items set workbench_task_id='workbench-task',"
+            "workbench_turn_id='workbench-turn',attempt_id=31,agent_run_id=32,note='keep note',"
+            "test_evidence_json=? where task_id=?",
+            ('{"passed":true}', task_id),
+        )
+        assert resolve_feedback_events(db, [key], "source-resolved-at") == 1
+
+    store.upsert_feedback_event(key=key, feedback_token="token-resolution", comment="resolved")
+    with store._connect() as db:
+        resolved = db.execute(
+            "select task.status,item.resolved_at,item.workbench_task_id,item.workbench_turn_id,"
+            "item.attempt_id,item.agent_run_id,item.note,item.test_evidence_json "
+            "from tasks task join feedback_processing_items item on item.task_id=task.id "
+            "where task.id=?",
+            (task_id,),
+        ).fetchone()
+        assert tuple(resolved) == (
+            "resolved", "source-resolved-at", "workbench-task", "workbench-turn", 31, 32,
+            "keep note", '{"passed":true}',
+        )
+    item = store.list_user_feedback_items_by_keys([key])[0]
+    assert item.processing_status == "resolved"
+    assert item.resolved_at == "source-resolved-at"
+
+    with store._connect() as db:
+        db.execute(
+            "update tasks set status='processing' where id=?",
+            (task_id,),
+        )
+        db.execute(
+            "update feedback_processing_items set resolved_at='native-current-resolution' "
+            "where task_id=?",
+            (task_id,),
+        )
+        assert reopen_feedback_event(db, key) == 1
+
+    store.upsert_feedback_event(key=key, feedback_token="token-resolution", comment="reopened")
+    with store._connect() as db:
+        reopened = db.execute(
+            "select task.status,item.resolved_at,item.workbench_task_id,item.workbench_turn_id,"
+            "item.attempt_id,item.agent_run_id,item.note,item.test_evidence_json "
+            "from tasks task join feedback_processing_items item on item.task_id=task.id "
+            "where task.id=?",
+            (task_id,),
+        ).fetchone()
+        assert tuple(reopened) == (
+            "processing", "native-current-resolution", "workbench-task", "workbench-turn", 31, 32,
+            "keep note", '{"passed":true}',
+        )
+    assert store.list_user_feedback_items_by_keys([key])[0].processing_status == "processing"
 
 
 def test_feedback_backlog_keeps_latest_token_and_manual_attempt_context(tmp_path):

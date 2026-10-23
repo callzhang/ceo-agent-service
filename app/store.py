@@ -17070,11 +17070,27 @@ class AutoReplyStore(LogicalRunStoreMixin, ReviewedCandidateStoreMixin):
                     (task["id"], key, "", resolved_at),
                 )
             else:
-                db.execute(
-                    "update tasks set updated_at=current_timestamp "
-                    "where id=? and kind='feedback_processing'",
-                    (existing["task_id"],),
-                )
+                event = db.execute(
+                    f"select resolved_at from ({FEEDBACK_EVENT_SQL}) where key=?",
+                    (key,),
+                ).fetchone()
+                resolved_at = str(event["resolved_at"] or "") if event else ""
+                if resolved_at.strip():
+                    db.execute(
+                        "update tasks set status='resolved',updated_at=current_timestamp "
+                        "where id=? and kind='feedback_processing'",
+                        (existing["task_id"],),
+                    )
+                    db.execute(
+                        "update feedback_processing_items set resolved_at=? where task_id=?",
+                        (resolved_at, existing["task_id"]),
+                    )
+                else:
+                    db.execute(
+                        "update tasks set updated_at=current_timestamp "
+                        "where id=? and kind='feedback_processing'",
+                        (existing["task_id"],),
+                    )
 
     @staticmethod
     def _feedback_processing_round_pointer(
