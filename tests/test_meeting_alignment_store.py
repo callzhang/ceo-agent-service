@@ -7,7 +7,6 @@ import app.store as store_module
 from app.meeting_alignment_models import MeetingAlignmentJob, MeetingAlignmentRun
 from app.store import AutoReplyStore
 from app import task_lifecycle_storage as task_claims
-from app.task20_definitions import TASK20_INDEX_DDL
 
 
 def seed_job(
@@ -28,38 +27,19 @@ def seed_job(
     )
 
 
-def test_meeting_alignment_schema_is_added_to_existing_database(tmp_path):
+def test_legacy_database_is_rejected_without_mutation(tmp_path):
     db_path = tmp_path / "worker.sqlite3"
     with sqlite3.connect(db_path) as db:
         db.execute("create table legacy_data (id integer primary key)")
+        before = tuple(db.iterdump())
+        user_version = db.execute("pragma user_version").fetchone()[0]
 
-    store = AutoReplyStore(db_path)
+    with pytest.raises(sqlite3.IntegrityError, match="unsupported or malformed Store source schema"):
+        AutoReplyStore(db_path)
 
-    with store._connect() as db:
-        tables = {
-            row["name"]
-            for row in db.execute(
-                "select name from sqlite_master where type='table'"
-            ).fetchall()
-        }
-        indexes = {
-            row["name"]
-            for row in db.execute(
-                "select name from sqlite_master where type='index'"
-            ).fetchall()
-        }
-    assert "legacy_data" in tables
-    assert {"tasks", "runs"} <= tables
-    assert "meeting_alignment_jobs" not in tables
-    assert "meeting_alignment_runs" not in tables
-    expected_meeting_indexes = {
-        sql.partition(" on tasks(")[0].split()[-1]
-        for sql in TASK20_INDEX_DDL
-        if sql.endswith("where record_type='meeting_alignment_jobs'")
-    }
-    assert expected_meeting_indexes
-    assert expected_meeting_indexes | {"idx_logical_runs_task"} <= indexes
-    assert "idx_meeting_alignment_runs_job" not in indexes
+    with sqlite3.connect(db_path) as db:
+        assert tuple(db.iterdump()) == before
+        assert db.execute("pragma user_version").fetchone()[0] == user_version
 
 
 def test_incomplete_unmarked_meeting_source_is_rejected_without_mutation(tmp_path):
@@ -113,7 +93,7 @@ def test_current_schema_manifest_detects_missing_meeting_payload_column(tmp_path
         before = tuple(db.iterdump())
         user_version = db.execute("pragma user_version").fetchone()[0]
     store_module._INITIALIZED_STORE_PATHS.discard(db_path.resolve())
-    with pytest.raises(sqlite3.IntegrityError, match="malformed current Task lifecycle declaration"):
+    with pytest.raises(sqlite3.IntegrityError, match="unsupported or malformed Store source schema"):
         AutoReplyStore(db_path)
     with sqlite3.connect(db_path) as db:
         assert tuple(db.iterdump()) == before
