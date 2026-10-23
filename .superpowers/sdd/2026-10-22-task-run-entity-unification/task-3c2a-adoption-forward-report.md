@@ -24,3 +24,14 @@ The native runtime constructor and writers remain unactivated. The populated fix
 ## Remaining scope
 
 Full current-fact inverse metadata remains C2B work. This converter does not claim inverse coverage, constructor activation, runtime cutover, publication, or deployment.
+
+## Fix 1: typed Task ownership and representability
+
+- RED: the actual Task2B `reply_tasks` handoff 201→1201 and Run3B Consumer/Audit remap reached C2A, then failed at the candidate-vs-native-Run comparison because candidate `task_id=201` was compared directly with native `runs.task_id=1201`.
+- GREEN: candidate ownership now resolves through the exact `reply_tasks` typed physical map and verifies source membership and native Task kind. The genuine fixture asserts `runs.task_id=1201`, candidate result ownership through that Run, observer `task_id=1201`, while keeping Review business ID 7 separate from Audit Run 9107.
+- RED: a Feedback collision fixture with source physical ID X/public ID 9→native 10 and another actual Feedback owner→native X made the old source-range-plus-native-existence fallback accept `fb_decision_id=X` despite no source public owner X.
+- GREEN: C2A reuses Task2B `_inverse_indexes`' complete typed public-owner map. A separate actual sparse trivial identity (`source public=physical=native ID 227`, no sparse edge) still resolves. The collision regression asserts the physical/public/target facts and caller rollback restores the exact source snapshot.
+- RED: direct SQL populated a retained source Action `task_id`; the preflight previously let forward migration succeed while the exact assembled Actions target had no `task_id` column, silently losing that owner. The assembled target intentionally retires this field; no target column is introduced. Capture now rejects a non-NULL retained value before rebuilding Actions. Candidate-only source `task_id` remains represented through its Consumer Run.
+- GREEN: `test_actual_old_source_forward_maps_remapped_task_owner_for_run_candidate_and_action`, `test_feedback_native_id_collision_without_typed_source_owner_rolls_back`, and `test_retained_generic_action_task_reference_is_rejected_before_target_loss` all pass against actual Task2B/Run3B/C2A converters. Existing zero/NULL sentinel and all prior source/native tests remain covered.
+- Focused command: `pytest -q --basetemp=$(mktemp -d /private/tmp/task3c2a-fix1-final.XXXXXX) tests/test_run_adoption_schema.py` — 14 passed in 17.83s.
+- Fix 1 also updates architecture/runtime docs to state typed Task remapping, exact public-owner lookup, and retained generic `task_id` rejection. No constructor activation, runtime cutover, source publication, provider or production action occurred.

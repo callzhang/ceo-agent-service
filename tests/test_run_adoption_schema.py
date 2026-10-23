@@ -64,7 +64,8 @@ def _source_snapshot(db):
 
 
 def _populated_source(*, remap_runs=False, feedback=False, pre_capture_unknown=False,
-                      unresolved_action=False, stop_before_adoption=False):
+                      unresolved_action=False, stop_before_adoption=False, remap_tasks=False,
+                      feedback_collision=False, generic_action_task_id=None):
     """Build the actual old Task/Run/Action source with its production writers."""
     import hashlib
     import json
@@ -113,10 +114,25 @@ def _populated_source(*, remap_runs=False, feedback=False, pre_capture_unknown=F
         })
         assert decision.source_rowid == 7 and decision.physical_id != 7
         db.execute(decision.sql, decision.parameters)
+        if feedback_collision:
+            collided = task12_insert_parts(db, "feedback_iteration_decisions", {
+                "id": 9, "batch_id": "batch-collision", "workbench_task_id": "204",
+                "workbench_turn_id": "205", "decision_json": "{}",
+            })
+            collision_source_id = collided.physical_id
+            db.execute(collided.sql, collided.parameters)
         from app.action_feedback_storage import insert_feedback_action
         insert_feedback_action(db, "feedback_iteration_decision_items", {
             "decision_id": 7, "feedback_key": "feedback-a", "round_id": 229,
         }, source_rowid=5)
+        if not feedback_collision:
+            insert_feedback_action(db, "feedback_iteration_decision_items", {
+                "decision_id": 227, "feedback_key": "feedback-a", "round_id": 229,
+            }, source_rowid=6)
+        if feedback_collision:
+            insert_feedback_action(db, "feedback_iteration_decision_items", {
+                "decision_id": collision_source_id, "feedback_key": "feedback-a", "round_id": 229,
+            }, source_rowid=6)
 
     candidate_json = json.dumps({
         "outcome": "needs_human",
@@ -150,6 +166,8 @@ def _populated_source(*, remap_runs=False, feedback=False, pre_capture_unknown=F
         "business_object_key": "business-201", "action_identity": "send_notice",
         "operation": "send_group_message", "parameters_json": "{}", "agent_run_id": 9006,
     })
+    if generic_action_task_id is not None:
+        db.execute("update actions set task_id=? where id=?", (generic_action_task_id, action["id"]))
     append_action_receipt(db, action["id"], values={
         "execution_id": execution_id, "operation": "send_group_message",
         "target": '{"conversation_id":"chat"}', "provider_result_json": '{"ok":true}',
@@ -200,7 +218,21 @@ def _populated_source(*, remap_runs=False, feedback=False, pre_capture_unknown=F
     adoption_source = capture_run_adoptions(db)
     task_source_metadata = capture_task_entities(db)
     run_source_metadata = capture_run_entities(db)
-    task_metadata = migrate_task_entities(db, task_source_metadata)
+    task_handoff = None
+    if remap_tasks:
+        task_handoff = {"version": 1, "owners": [{
+            "source_kind": "reply_tasks", "source_physical_id": 201, "canonical_id": 1201,
+        }]}
+    if remap_tasks and feedback_collision:
+        task_handoff["owners"].append({
+            "source_kind": "feedback_iteration_decisions", "source_physical_id": collision_source_id,
+            "canonical_id": 10,
+        })
+        task_handoff["owners"].append({
+            "source_kind": "feedback_iteration_decisions", "source_physical_id": decision.physical_id,
+            "canonical_id": collision_source_id,
+        })
+    task_metadata = migrate_task_entities(db, task_source_metadata, inverse_identity=task_handoff)
     base_handoff = _run_handoff(db, run_source_metadata)
     if remap_runs:
         edges = [
@@ -279,13 +311,72 @@ def test_actual_old_source_forward_maps_remapped_runs_and_typed_feedback_referen
         assert tuple(db.execute("select agent_run_id,task_id from action_observers order by agent_run_id")) == (
             (0, 0), (9107, 201))
         feedback = db.execute("select fb_decision_id,fb_round_id from actions "
-                              "where record_type='feedback_iteration_decision_items'").fetchone()
+                              "where record_type='feedback_iteration_decision_items' and fb_decision_id<>227").fetchone()
+        assert db.execute("select fb_decision_id from actions where record_type='feedback_iteration_decision_items' "
+                          "and fb_decision_id=227").fetchone() == (227,)
         target_decision = db.execute("select id from feedback_iteration_decisions "
                                      "where id not in (227)").fetchone()[0]
         assert tuple(feedback) == (target_decision, 229)
         assert target_decision != 7  # Source public Review/Decision key differs from row ID.
         assert db.execute("select id from feedback_processing_rounds where id=229").fetchone()[0] == 229
         assert db.execute("pragma foreign_key_check").fetchall() == []
+    finally:
+        db.close()
+
+
+def test_actual_old_source_forward_maps_remapped_task_owner_for_run_candidate_and_action():
+    db, _, _, _, _, _ = _populated_source(remap_tasks=True, remap_runs=True)
+    try:
+        assert db.execute("select task_id from runs where id=9106").fetchone() == (1201,)
+        assert db.execute("select runs.task_id from run_adopted_results join runs "
+                          "on runs.id=run_adopted_results.consumer_run_id where runs.id=9106").fetchone() == (1201,)
+        assert tuple(db.execute("select task_id from action_observers where agent_run_id=9107")) == ((1201,),)
+        assert db.execute("select id,audit_run_id from run_adopted_reviews").fetchone() == (7, 9107)
+    finally:
+        db.close()
+
+
+def test_feedback_native_id_collision_without_typed_source_owner_rolls_back():
+    import pytest
+
+    from app.run_adoption_schema import migrate_run_adoptions
+
+    db, context = _populated_source(remap_tasks=True, feedback=True, feedback_collision=True,
+                                    stop_before_adoption=True)
+    try:
+        physical_collision = db.execute(
+            "select fb_decision_id from temp._run_adoption_all_source_actions "
+            "where record_type='feedback_iteration_decision_items' and fb_feedback_key='feedback-a' "
+            "and fb_decision_id not in (7,227)"
+        ).fetchone()[0]
+        feedback_edges = [edge for edge in context["task_metadata"]["identity_edges"]
+                          if edge["source_kind"] == "feedback_iteration_decisions"]
+        assert any(edge["public_key"] == 9 and edge["target_id"] == 10
+                   for edge in feedback_edges)
+        assert any(edge["target_id"] == physical_collision for edge in feedback_edges)
+        assert not any(edge["public_key"] == physical_collision for edge in feedback_edges)
+        with pytest.raises(ValueError, match="unresolved feedback_iteration_decisions public identity"):
+            migrate_run_adoptions(db, context["adoption_source"], task_metadata=context["task_metadata"],
+                                  run_metadata=context["run_metadata"])
+        db.rollback()
+        assert _source_snapshot(db) == context["source_snapshot"]
+    finally:
+        db.close()
+
+
+def test_retained_generic_action_task_reference_is_rejected_before_target_loss():
+    import pytest
+
+    from app.run_adoption_schema import migrate_run_adoptions
+
+    db, context = _populated_source(remap_tasks=True, generic_action_task_id=201,
+                                    stop_before_adoption=True)
+    try:
+        with pytest.raises(ValueError, match="retained source Action task_id has no assembled target representation"):
+            migrate_run_adoptions(db, context["adoption_source"], task_metadata=context["task_metadata"],
+                                  run_metadata=context["run_metadata"])
+        db.rollback()
+        assert _source_snapshot(db) == context["source_snapshot"]
     finally:
         db.close()
 

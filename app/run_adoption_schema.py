@@ -87,7 +87,7 @@ def capture_run_adoptions(db: sqlite3.Connection) -> dict:
 def _identity_maps(db, task_metadata, run_metadata):
     # Verify we were given the actual converter outputs, then use their native
     # identity maps (including sparse non-identity remaps) as the only resolver.
-    from app.run_entity_schema import _run_identity_rows, _task_physical_owner
+    from app.run_entity_schema import _run_identity_rows
     from app.run_entity_schema import _task_forward_edges
     tasks = _task_forward_edges(db, task_metadata)
     runs = _run_identity_rows(db)
@@ -99,16 +99,22 @@ def _identity_maps(db, task_metadata, run_metadata):
         raise ValueError("Run3B metadata differs from its native Run identity map")
     physical_runs = {physical: target for (kind, physical), target in expected_edges.items()
                      if kind == "agent_runs"}
-    return tasks, physical_runs, _task_physical_owner
+    from app.task_entity_schema import _inverse_indexes
+    _, _, task_indexes = _inverse_indexes(db, task_metadata)
+    return tasks, physical_runs, task_indexes["public_index"]
 
 
-def _task_id(db, maps, source_id):
-    if source_id is None:
-        return None
-    matches = [target for (kind, physical), target in maps.items() if physical == source_id]
-    if len(matches) != 1:
-        raise ValueError(f"unresolved or ambiguous source Task reference: {source_id!r}")
-    return matches[0]
+def _task_physical_ref(db, task_metadata, task_map, source_kind, physical_id):
+    if type(physical_id) is not int or not any(
+            start <= physical_id <= end
+            for start, end in task_metadata["source_id_ranges"][source_kind]):
+        raise ValueError(f"unresolved typed source Task owner: {source_kind}:{physical_id!r}")
+    target_id = task_map.get((source_kind, physical_id), physical_id)
+    from app.run_entity_schema import _task_kind
+    row = db.execute("select kind from main.tasks where id=?", (target_id,)).fetchone()
+    if row is None or row[0] != _task_kind(source_kind):
+        raise ValueError(f"typed source Task owner kind mismatch: {source_kind}:{physical_id!r}")
+    return target_id
 
 
 def _run_id(maps, source_id, *, role=None):
@@ -131,17 +137,14 @@ def _selection_branch(candidate_json, option_key):
     return candidate_option(candidate_json, option_key)
 
 
-def _feedback_public_ref(db, task_metadata, source_kind, target_table, value):
+def _feedback_public_ref(db, task_public_index, source_kind, target_table, value):
     if value is None:
         return None
-    edges = [row for row in task_metadata["identity_edges"]
-             if row["source_kind"] == source_kind and row["public_key"] == value]
-    if len(edges) > 1:
-        raise ValueError(f"ambiguous {source_kind} public identity")
-    if edges:
-        return edges[0]["target_id"]
-    if db.execute(f'select 1 from main."{target_table}" where id=?', (value,)).fetchone():
-        return value
+    from app.task_entity_migration import _typed_key
+    target_id = task_public_index.get((source_kind, _typed_key(value)))
+    if target_id is not None and db.execute(
+            f'select 1 from main."{target_table}" where id=?', (target_id,)).fetchone():
+        return target_id
     raise ValueError(f"unresolved {source_kind} public identity")
 
 
@@ -159,7 +162,7 @@ def _restore_sequence_rows(db, source_sequences, names):
             db.execute("insert into main.sqlite_sequence(rowid,name,seq) values(?,?,?)", source)
 
 
-def _rebuild_actions(db, task_metadata, task_map, task_owner, run_map, source_sequences):
+def _rebuild_actions(db, task_metadata, task_public_index, task_map, run_map, source_sequences):
     """Rebuild the actual target Action table and omit retired source kinds."""
     objects = task_run_entity_assembly._action_objects()
     target_sql = objects["actions"]
@@ -175,6 +178,9 @@ def _rebuild_actions(db, task_metadata, task_map, task_owner, run_map, source_se
         f'select * from temp."{_ALL_ACTION_CAPTURE}" where record_type not in '
         "('review_candidates','candidate_reviews','candidate_selections','candidate_supplements',"
         "'candidate_executions','candidate_execution_alias','candidate_action_attempts') order by id")]
+    if "task_id" in source_columns and "task_id" not in target_columns:
+        if any(row["task_id"] is not None for row in retained):
+            raise ValueError("retained source Action task_id has no assembled target representation")
     db.execute("drop table main.actions")
     db.execute(target_sql)
     columns = [name for name in target_columns if name in source_columns]
@@ -188,22 +194,14 @@ def _rebuild_actions(db, task_metadata, task_map, task_owner, run_map, source_se
             ("fb_round_id", "feedback_processing_rounds", "feedback_processing_rounds"),
         ):
             if field in values:
-                values[field] = _feedback_public_ref(db, task_metadata, kind, table, values[field])
-        if "task_id" in values and values["task_id"] is not None and values["task_id"] != 0:
-            task_id = values["task_id"]
-            remaps = {edge["physical_id"]: edge["target_id"]
-                      for edge in task_metadata["identity_edges"]}
-            if task_id in remaps:
-                values["task_id"] = remaps[task_id]
-            elif not db.execute("select 1 from main.tasks where id=?", (task_id,)).fetchone():
-                raise ValueError("Action has unresolved positive Task reference")
+                values[field] = _feedback_public_ref(db, task_public_index, kind, table, values[field])
         for field, source_kind in (
             ("td_reply_task_id", "reply_tasks"),
             ("td_meeting_job_id", "meeting_alignment_jobs"),
             ("td_claim_job_id", "meeting_alignment_jobs"),
         ):
             if field in values and values[field] is not None:
-                values[field] = task_owner(db, task_map, source_kind, values[field])
+                values[field] = _task_physical_ref(db, task_metadata, task_map, source_kind, values[field])
         if "action_data" in values and values["action_data"] is not None:
             data = values["action_data"]
             ref, ref_type = db.execute(
@@ -261,7 +259,7 @@ def migrate_run_adoptions(db: sqlite3.Connection, source_metadata: dict, *,
         if table not in target_objects and not db.execute(
                 "select 1 from main.sqlite_schema where name=?", (table,)).fetchone():
             raise ValueError(f"assembled target lacks adopted owner {table}")
-    task_map, run_map, task_owner = _identity_maps(db, task_metadata, run_metadata)
+    task_map, run_map, task_public_index = _identity_maps(db, task_metadata, run_metadata)
     for name in definitions.TABLES:
         if db.execute("select 1 from main.sqlite_schema where name=?", (name,)).fetchone():
             raise ValueError(f"adoption target name already occupied: {name}")
@@ -305,7 +303,9 @@ def migrate_run_adoptions(db: sqlite3.Connection, source_metadata: dict, *,
     for candidate in candidates.values():
         consumer = _run_id(run_map, candidate["consumer_run_id"])
         run = db.execute("select task_id,execution_generation,proposal_revision,role from main.runs where id=?", (consumer,)).fetchone()
-        if run is None or run[3] != "consumer" or (candidate["task_id"], candidate["execution_generation"], candidate["proposal_revision"]) != tuple(run[:3]):
+        candidate_task_id = _task_physical_ref(db, task_metadata, task_map,
+                                               "reply_tasks", candidate["task_id"])
+        if run is None or run[3] != "consumer" or (candidate_task_id, candidate["execution_generation"], candidate["proposal_revision"]) != tuple(run[:3]):
             raise ValueError("candidate facts differ from native Consumer Run")
         candidate_by_run[consumer] = candidate
         if candidate.get("execution_public_id") is not None:
@@ -428,7 +428,8 @@ def migrate_run_adoptions(db: sqlite3.Connection, source_metadata: dict, *,
         observer = dict(zip(observer_columns, values, strict=True))
         observer["agent_run_id"] = _translate_weak_run_ref(run_map, observer["agent_run_id"])
         if observer["task_id"] != 0:
-            observer["task_id"] = task_owner(db, task_map, "reply_tasks", observer["task_id"])
+            observer["task_id"] = _task_physical_ref(db, task_metadata, task_map,
+                                                     "reply_tasks", observer["task_id"])
         _insert(db, "action_observers", observer)
     identities = []
     for kind, rows_for_kind in source.items():
@@ -453,7 +454,7 @@ def migrate_run_adoptions(db: sqlite3.Connection, source_metadata: dict, *,
             db.execute("insert into main.run_adoption_identity_map(source_kind,source_physical_id,source_public_id,source_public_id_type,target_run_id,target_child_id) values(?,?,?,?,?,?)",
                 (kind, row["id"], stored_public, typ, target_run, child))
             identities.append((kind, row["id"], target_run, child))
-    _rebuild_actions(db, task_metadata, task_map, task_owner, run_map,
+    _rebuild_actions(db, task_metadata, task_public_index, task_map, run_map,
                      source_metadata["source_sequences"])
     _restore_sequence_rows(db, source_metadata["source_sequences"],
                            ("action_receipts", "action_observers", "action_entity_identity_map"))
