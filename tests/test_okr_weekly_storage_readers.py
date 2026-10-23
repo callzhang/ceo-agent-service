@@ -5,7 +5,7 @@ from datetime import UTC, datetime, timedelta
 import pytest
 
 from app.dispatcher.adapters import OkrReviewQueueAdapter
-from app.store import AutoReplyStore, WeeklyOkrAnalysisJobClaimOutcome
+from app.store import AutoReplyStore
 from app.task20_definitions import task20_projection
 from app.task12_storage import task12_projection
 from app.task8_storage import task8_insert_parts
@@ -86,92 +86,6 @@ def test_request_failed_only_upsert_public_id_and_run_reference(tmp_path):
         assert db.execute("select name from sqlite_master where name='okr_review_requests'").fetchone() is None
 
 
-def test_weekly_public_job_id_lease_owner_and_runtime_parent(tmp_path):
-    store = AutoReplyStore(tmp_path / "weekly.sqlite3")
-    values = dict(week_end="2026-10-11", manager_user_id="manager", source_digest="a" * 64)
-    first = store.begin_weekly_okr_analysis_job(
-        **values, owner="first", lease_seconds=60, now="2026-10-11 01:00:00"
-    )
-    assert first.outcome == WeeklyOkrAnalysisJobClaimOutcome.CLAIMED
-    with store._connect() as db:
-        db.execute("update tasks set legacy_key='574' "
-                   "where record_type='weekly_okr_analysis_jobs' and id=?", (first.job_id,))
-        _insert_wrong_type_work_summary(db, 574)
-        assert AutoReplyStore._runtime_operation_parent_exists(
-            db, "weekly_okr", f"{values['week_end']}:manager:{values['source_digest']}:574:first"
-        )
-        assert not AutoReplyStore._runtime_operation_parent_exists(
-            db, "weekly_okr", f"{values['week_end']}:manager:{values['source_digest']}:{first.job_id}:first"
-        )
-    assert store.begin_weekly_okr_analysis_job(
-        **values, owner="second", lease_seconds=60, now="2026-10-11 01:00:30"
-    ).outcome == WeeklyOkrAnalysisJobClaimOutcome.IN_PROGRESS
-    reclaimed = store.begin_weekly_okr_analysis_job(
-        **values, owner="second", lease_seconds=60, now="2026-10-11 01:01:01"
-    )
-    assert (reclaimed.job_id, reclaimed.reclaimed_stale) == (574, True)
-    with pytest.raises(ValueError, match="lease ownership lost"):
-        store.finish_weekly_okr_analysis_job(
-            574, status="completed", owner="first", now="2026-10-11 01:01:02"
-        )
-    store.finish_weekly_okr_analysis_job(
-        574, status="completed", owner="second", now="2026-10-11 01:01:02"
-    )
-    assert store.begin_weekly_okr_analysis_job(
-        **values, owner="third", now="2026-10-11 01:01:03"
-    ).outcome == WeeklyOkrAnalysisJobClaimOutcome.CACHE_HIT
-    miss = store.reclaim_weekly_okr_analysis_job_cache_miss(
-        574, **values, owner="third", now="2026-10-11 01:01:04"
-    )
-    assert (miss.job_id, miss.outcome) == (574, WeeklyOkrAnalysisJobClaimOutcome.CLAIMED)
-    with store._connect() as db:
-        row = db.execute(f"select id,status,lease_owner from ({task20_projection('weekly_okr_analysis_jobs')}) where id=574").fetchone()
-        assert tuple(row) == (574, "running", "third")
-        assert db.execute(f"select status from ({task20_projection('work_summary_inputs')}) "
-                          "where id=574").fetchone()[0] == "pending"
-    later = store.begin_weekly_okr_analysis_job(
-        week_end="2026-10-18", manager_user_id="manager", source_digest="b" * 64,
-        owner="later", now="2026-10-11 01:30:00",
-    )
-    store.finish_weekly_okr_analysis_job(
-        later.job_id, status="completed", owner="later", now="2026-10-11 01:30:01",
-    )
-    assert store.complete_superseded_stale_weekly_okr_analysis_jobs(
-        now="2026-10-11 02:00:00"
-    ) == 1
-    with store._connect() as db:
-        row = db.execute(f"select status,error,lease_owner,lease_expires_at,finished_at "
-                         f"from ({task20_projection('weekly_okr_analysis_jobs')}) where id=574").fetchone()
-        assert tuple(row) == (
-            "completed", "superseded_by_later_completed_week", "", "", "2026-10-11 02:00:00"
-        )
-    technical = store.begin_weekly_okr_analysis_job(
-        week_end="2026-10-04", manager_user_id="manager", source_digest="c" * 64,
-        owner="technical", now="2026-10-11 02:01:00",
-    )
-    business = store.begin_weekly_okr_analysis_job(
-        week_end="2026-10-04", manager_user_id="manager", source_digest="d" * 64,
-        owner="business", now="2026-10-11 02:01:00",
-    )
-    store.finish_weekly_okr_analysis_job(
-        technical.job_id, status="failed", error="runtime_route_unavailable",
-        owner="technical", now="2026-10-11 02:01:01",
-    )
-    store.finish_weekly_okr_analysis_job(
-        business.job_id, status="failed", error="analysis_rejected",
-        owner="business", now="2026-10-11 02:01:01",
-    )
-    assert store.complete_superseded_failed_weekly_okr_analysis_jobs(
-        now="2026-10-11 02:02:00"
-    ) == 1
-    with store._connect() as db:
-        rows = db.execute(f"select id,status,error,finished_at from ({task20_projection('weekly_okr_analysis_jobs')}) "
-                          "where id in (?, ?) order by id", (technical.job_id, business.job_id)).fetchall()
-        by_id = {row["id"]: row for row in rows}
-        assert tuple(by_id[technical.job_id])[1:] == (
-            "completed", "superseded_by_later_completed_week", "2026-10-11 02:02:00"
-        )
-        assert tuple(by_id[business.job_id])[1:3] == ("failed", "analysis_rejected")
 
 
 def test_dispatcher_claim_uses_public_request_id_and_typed_status(tmp_path):

@@ -165,22 +165,6 @@ def exercise(path):
     observe("okr-terminal-held-ledger")
     okr.complete(second, owner="worker", now=now)
 
-    args = dict(week_end="2026-10-18", manager_user_id="manager", source_digest="a" * 64, now=now)
-    weekly = store.begin_weekly_okr_analysis_job(**args, owner="first")
-    observe("weekly-claimed")
-    assert store.begin_weekly_okr_analysis_job(**args, owner="second").outcome == "in_progress"
-    store.finish_weekly_okr_analysis_job(weekly.job_id, status="failed", error="source-error", owner="first", now=now)
-    observe("weekly-failed")
-    reopened = store.begin_weekly_okr_analysis_job(**args, owner="second")
-    observe("weekly-reopened")
-    try:
-        store.finish_weekly_okr_analysis_job(reopened.job_id, status="completed", owner="first", now=now)
-    except ValueError:
-        pass
-    else:
-        raise AssertionError("stale weekly owner completed")
-    store.finish_weekly_okr_analysis_job(reopened.job_id, status="completed", owner="second", now=now)
-    assert store.begin_weekly_okr_analysis_job(**args, owner="third").outcome == "cache_hit"
 
     task = workbench.create_task(title="Task", runtime_kind="codex")
     turn = workbench.create_turn(task.id, user_text="Prepare", client_request_id="one")

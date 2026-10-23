@@ -402,7 +402,6 @@ WORK_SUMMARY_INPUT_SQL = """select t.id, w.source_type, w.source_ref, w.payload_
     where t.kind='work_summary'"""
 MEETING_JOB_SQL = task20_projection('meeting_alignment_jobs')
 OKR_REQUEST_SQL = task20_projection('okr_review_requests')
-WEEKLY_JOB_SQL = task20_projection('weekly_okr_analysis_jobs')
 
 # Current source facts are projected directly from their canonical input row.
 REPLY_TASK_CURRENT_SQL = f"""select parent.*, canonical.trigger_text,
@@ -938,19 +937,6 @@ class AgentRole(StrEnum):
 class RuntimeAttemptSessionMode(StrEnum):
     FRESH = "fresh"
     RESUME = "resume"
-
-
-class WeeklyOkrAnalysisJobClaimOutcome(StrEnum):
-    CLAIMED = "claimed"
-    CACHE_HIT = "cache_hit"
-    IN_PROGRESS = "in_progress"
-
-
-@dataclass(frozen=True)
-class WeeklyOkrAnalysisJobClaim:
-    job_id: int
-    outcome: WeeklyOkrAnalysisJobClaimOutcome
-    reclaimed_stale: bool = False
 
 
 class AgentRuntimeAttemptStartConflictError(RuntimeError):
@@ -7393,12 +7379,13 @@ class AutoReplyStore(LogicalRunStoreMixin, ReviewedCandidateStoreMixin):
         if workload_kind == "weekly_okr":
             parts = workload_key.split(":")
             week_end, manager_user_id, source_digest = parts[:3]
-            query = (
-                f"""select 1 from tasks where record_type='weekly_okr_analysis_jobs' and {task20_column('weekly_okr_analysis_jobs', 'week_end')}=? and {task20_column('weekly_okr_analysis_jobs', 'manager_user_id')}=? and {task20_column('weekly_okr_analysis_jobs', 'source_digest')}=? and {task20_column('weekly_okr_analysis_jobs', 'status')}='running'"""
-            )
+            query = """select 1 from tasks where kind='okr_analysis' and status='processing'
+                and json_extract(parameters_json,'$.week_end')=?
+                and json_extract(parameters_json,'$.manager_user_id')=?
+                and json_extract(parameters_json,'$.source_digest')=?"""
             args: tuple[object, ...] = (week_end, manager_user_id, source_digest)
             if len(parts) == 5:
-                query += f""" and cast(legacy_key as integer)=? and {task20_column('weekly_okr_analysis_jobs', 'lease_owner')}=?"""
+                query += " and id=? and lease_owner=?"
                 args += (int(parts[3]), parts[4])
             return db.execute(query, args).fetchone() is not None
         if workload_kind == "task":
@@ -8221,26 +8208,30 @@ class AutoReplyStore(LogicalRunStoreMixin, ReviewedCandidateStoreMixin):
                 """,
                 (now_text, now_text),
             )
-            weekly_okr_cursor = db.execute(
-                f"""
+            weekly_okr_cursor = db.execute("""
                 update tasks as job
-                set {task8_set_parts('weekly_okr_analysis_jobs', {}, update_sql={'status': "'failed'", 'error': "'runtime_lease_expired'", 'lease_owner': "''", 'lease_expires_at': "''", 'finished_at': '?', 'updated_at': '?'}, payload_source='job.payload_json').sql}  where job.record_type='weekly_okr_analysis_jobs'
-                  and job.{task20_column('weekly_okr_analysis_jobs', 'status')}='running'
-                  and job.{task20_column('weekly_okr_analysis_jobs', 'lease_expires_at')}!=''
-                  and job.{task20_column('weekly_okr_analysis_jobs', 'lease_expires_at')}<=?
+                set status='failed', error='runtime_lease_expired', lease_owner='',
+                    lease_expires_at='', updated_at=?
+                where job.kind='okr_analysis' and job.status='processing'
+                  and job.lease_expires_at!='' and job.lease_expires_at<=?
                   and exists (
                     select 1 from runtime_attempts as attempt
-                    where attempt.workload_kind<>'agent_run'
-                      and attempt.workload_kind='weekly_okr'
+                    where attempt.workload_kind='weekly_okr'
                       and attempt.workload_key like (
-                        job.{task20_column('weekly_okr_analysis_jobs', 'week_end')} || ':' || job.{task20_column('weekly_okr_analysis_jobs', 'manager_user_id')} || ':' ||
-                        job.{task20_column('weekly_okr_analysis_jobs', 'source_digest')} || ':' || job.legacy_key || ':%'
+                        json_extract(job.parameters_json,'$.week_end') || ':' ||
+                        json_extract(job.parameters_json,'$.manager_user_id') || ':' ||
+                        json_extract(job.parameters_json,'$.source_digest') || ':' || job.id || ':%'
                       )
                       and attempt.status='failed'
                       and attempt.failure_code='runtime_lease_expired'
                   )
-                """,
-                (now_text, now_text, now_text),
+                returning id
+                """, (now_text, now_text))
+            weekly_ids = [int(row[0]) for row in weekly_okr_cursor.fetchall()]
+            db.executemany(
+                "insert into task_results(task_id,result_kind,finished_at) values(?,'okr_analysis',?) "
+                "on conflict(task_id,result_kind) do update set finished_at=excluded.finished_at",
+                ((task_id, now_text) for task_id in weekly_ids),
             )
             cursor = db.execute(
                 """
@@ -8267,7 +8258,7 @@ class AutoReplyStore(LogicalRunStoreMixin, ReviewedCandidateStoreMixin):
             )
             return (
                 terminal_meeting_cursor.rowcount
-                + weekly_okr_cursor.rowcount
+                + len(weekly_ids)
                 + cursor.rowcount
             )
 
@@ -24270,251 +24261,66 @@ class AutoReplyStore(LogicalRunStoreMixin, ReviewedCandidateStoreMixin):
             }) == 1
 
 
-    def begin_weekly_okr_analysis_job(
-        self,
-        *,
-        week_end: str,
-        manager_user_id: str,
-        source_digest: str,
-        owner: str = "legacy-weekly-owner",
-        lease_seconds: int = 1860,
-        now: str | datetime | None = None,
-    ) -> WeeklyOkrAnalysisJobClaim:
-        manager_user_id = self._require_runtime_attempt_text(
-            manager_user_id, field="manager_user_id"
-        )
-        _, workload_key = self._validate_runtime_operation_workload(
-            "weekly_okr", f"{week_end}:{manager_user_id}:{source_digest}"
-        )
-        normalized_week_end, normalized_manager, normalized_digest = workload_key.split(
-            ":", 2
-        )
-        owner = self._require_runtime_attempt_text(owner, field="owner")
-        if lease_seconds <= 0:
-            raise ValueError("weekly OKR lease_seconds must be positive")
-        with self._agent_run_write_transaction(now) as (db, clock):
-            now_value, now_text = clock
-            lease_expires_at = (now_value + timedelta(seconds=lease_seconds)).strftime(
-                "%Y-%m-%d %H:%M:%S"
-            )
-            _task8_insert = task8_insert_parts('weekly_okr_analysis_jobs', {
-                "week_end": normalized_week_end,
-                "manager_user_id": normalized_manager,
-                "source_digest": normalized_digest,
-                "lease_owner": owner,
-                "lease_expires_at": lease_expires_at,
-                "updated_at": now_text,
-            })
-            inserted = db.execute(f"insert or ignore into tasks ({_task8_insert.columns}) values ({_task8_insert.values})", _task8_insert.parameters)
-            row = db.execute(
-                f"select id, status, lease_expires_at from ({WEEKLY_JOB_SQL}) "
-                "where week_end=? and manager_user_id=? and source_digest=?",
-                (normalized_week_end, normalized_manager, normalized_digest),
-            ).fetchone()
-            job_id = int(row["id"])
-            if inserted.rowcount == 1:
-                return WeeklyOkrAnalysisJobClaim(
-                    job_id=job_id,
-                    outcome=WeeklyOkrAnalysisJobClaimOutcome.CLAIMED,
-                )
-            if row["status"] == "failed":
-                changed = db.execute(
-                    f"""update tasks set {task8_set_parts('weekly_okr_analysis_jobs', {}, update_sql={'status': "'running'", 'error': "''", 'finished_at': "''", 'lease_owner': '?', 'lease_expires_at': '?', 'updated_at': '?'}, payload_source='tasks.payload_json').sql}  where record_type='weekly_okr_analysis_jobs' and cast(legacy_key as integer)=? and {task20_column('weekly_okr_analysis_jobs', 'status')}='failed'""",
-                    (owner, lease_expires_at, now_text, job_id),
-                )
-                if changed.rowcount != 1:
-                    raise RuntimeError("weekly OKR analysis reopen claim lost")
-                return WeeklyOkrAnalysisJobClaim(
-                    job_id=job_id,
-                    outcome=WeeklyOkrAnalysisJobClaimOutcome.CLAIMED,
-                )
-            if row["status"] == "completed":
-                return WeeklyOkrAnalysisJobClaim(
-                    job_id=job_id,
-                    outcome=WeeklyOkrAnalysisJobClaimOutcome.CACHE_HIT,
-                )
-            if row["status"] != "running":
-                raise RuntimeError("weekly OKR analysis job has invalid status")
-            if not row["lease_expires_at"] or row["lease_expires_at"] <= now_text:
-                changed = db.execute(
-                    f"""update tasks set {task8_set_parts('weekly_okr_analysis_jobs', {}, update_sql={'lease_owner': '?', 'lease_expires_at': '?', 'error': "''", 'finished_at': "''", 'updated_at': '?'}, payload_source='tasks.payload_json').sql}  where record_type='weekly_okr_analysis_jobs' and cast(legacy_key as integer)=? and {task20_column('weekly_okr_analysis_jobs', 'status')}='running' and ({task20_column('weekly_okr_analysis_jobs', 'lease_expires_at')}='' or {task20_column('weekly_okr_analysis_jobs', 'lease_expires_at')}<=?)""",
-                    (owner, lease_expires_at, now_text, job_id, now_text),
-                )
-                if changed.rowcount != 1:
-                    raise RuntimeError("weekly OKR stale lease reclaim lost")
-                return WeeklyOkrAnalysisJobClaim(
-                    job_id=job_id,
-                    outcome=WeeklyOkrAnalysisJobClaimOutcome.CLAIMED,
-                    reclaimed_stale=True,
-                )
-            return WeeklyOkrAnalysisJobClaim(
-                job_id=job_id,
-                outcome=WeeklyOkrAnalysisJobClaimOutcome.IN_PROGRESS,
-            )
-
     def complete_superseded_stale_weekly_okr_analysis_jobs(
-        self,
-        *,
-        now: str | datetime | None = None,
+        self, *, now: str | datetime | None = None,
     ) -> int:
-        """Close expired analysis jobs superseded by a later completed week."""
+        """Complete expired native OKR analysis Tasks replaced by a later week."""
         with self._agent_run_write_transaction(now) as (db, (_, now_text)):
-            cursor = db.execute(
-                f"""
+            cursor = db.execute("""
                 update tasks as stale
-                set {task8_set_parts('weekly_okr_analysis_jobs', {}, update_sql={'status': "'completed'", 'error': "'superseded_by_later_completed_week'", 'lease_owner': "''", 'lease_expires_at': "''", 'finished_at': '?', 'updated_at': '?'}, payload_source='stale.payload_json').sql}  where stale.record_type='weekly_okr_analysis_jobs'
-                  and stale.{task20_column('weekly_okr_analysis_jobs', 'status')}='running'
-                  and stale.{task20_column('weekly_okr_analysis_jobs', 'lease_expires_at')}!=''
-                  and stale.{task20_column('weekly_okr_analysis_jobs', 'lease_expires_at')}<=?
+                set status='done', error='superseded_by_later_completed_week',
+                    lease_owner='', lease_expires_at='', updated_at=?
+                where stale.kind='okr_analysis' and stale.status='processing'
+                  and stale.lease_expires_at!='' and stale.lease_expires_at<=?
                   and exists (
-                    select 1
-                    from tasks as completed
-                    where completed.record_type='weekly_okr_analysis_jobs'
-                      and completed.{task20_column('weekly_okr_analysis_jobs', 'manager_user_id')}=stale.{task20_column('weekly_okr_analysis_jobs', 'manager_user_id')}
-                      and completed.{task20_column('weekly_okr_analysis_jobs', 'status')}='completed'
-                      and completed.{task20_column('weekly_okr_analysis_jobs', 'week_end')}>stale.{task20_column('weekly_okr_analysis_jobs', 'week_end')}
+                    select 1 from tasks completed
+                    where completed.kind='okr_analysis' and completed.status='done'
+                      and json_extract(completed.parameters_json,'$.manager_user_id')=
+                          json_extract(stale.parameters_json,'$.manager_user_id')
+                      and json_extract(completed.parameters_json,'$.week_end')>
+                          json_extract(stale.parameters_json,'$.week_end')
                   )
-                """,
-                (now_text, now_text, now_text),
+                returning id
+                """, (now_text, now_text))
+            ids = [int(row[0]) for row in cursor.fetchall()]
+            db.executemany(
+                "insert into task_results(task_id,result_kind,finished_at) values(?,'okr_analysis',?) "
+                "on conflict(task_id,result_kind) do update set finished_at=excluded.finished_at",
+                ((task_id, now_text) for task_id in ids),
             )
             return cursor.rowcount
 
     def complete_superseded_failed_weekly_okr_analysis_jobs(
-        self,
-        *,
-        now: str | datetime | None = None,
+        self, *, now: str | datetime | None = None,
     ) -> int:
-        """Close technical-failure analysis jobs a later completed analysis replaced.
-
-        A job that ended in a runtime route, lease, or result-validation
-        failure is not owed output once the same manager has a completed
-        analysis for a later week, or a completed analysis started after it
-        (the rerun that actually shipped that week's report). Leaving them
-        `failed` kept outage-era jobs in the failed set for weeks.
-        """
+        """Complete technical-failure Tasks replaced by a later successful report."""
         with self._agent_run_write_transaction(now) as (db, (_, now_text)):
-            cursor = db.execute(
-                f"""
+            cursor = db.execute("""
                 update tasks as stale
-                set {task8_set_parts('weekly_okr_analysis_jobs', {}, update_sql={'status': "'completed'", 'error': "'superseded_by_later_completed_week'", 'lease_owner': "''", 'lease_expires_at': "''", 'finished_at': '?', 'updated_at': '?'}, payload_source='stale.payload_json').sql}  where stale.record_type='weekly_okr_analysis_jobs'
-                  and stale.{task20_column('weekly_okr_analysis_jobs', 'status')}='failed'
-                  and stale.{task20_column('weekly_okr_analysis_jobs', 'error')} in (
-                    'runtime_route_unavailable',
-                    'runtime_lease_expired',
-                    'runtime_result_validation_failed'
-                  )
+                set status='done', error='superseded_by_later_completed_week',
+                    lease_owner='', lease_expires_at='', updated_at=?
+                where stale.kind='okr_analysis' and stale.status='failed'
+                  and stale.error in ('runtime_route_unavailable','runtime_lease_expired',
+                                      'runtime_result_validation_failed')
                   and exists (
-                    select 1
-                    from tasks as completed
-                    where completed.record_type='weekly_okr_analysis_jobs'
-                      and completed.{task20_column('weekly_okr_analysis_jobs', 'manager_user_id')}=stale.{task20_column('weekly_okr_analysis_jobs', 'manager_user_id')}
-                      and completed.{task20_column('weekly_okr_analysis_jobs', 'status')}='completed'
-                      and completed.{task20_column('weekly_okr_analysis_jobs', 'error')}=''
-                      and (
-                        completed.{task20_column('weekly_okr_analysis_jobs', 'week_end')}>stale.{task20_column('weekly_okr_analysis_jobs', 'week_end')}
-                        or completed.{task20_column('weekly_okr_analysis_jobs', 'created_at')}>stale.{task20_column('weekly_okr_analysis_jobs', 'created_at')}
-                      )
+                    select 1 from tasks completed
+                    where completed.kind='okr_analysis' and completed.status='done'
+                      and completed.error=''
+                      and json_extract(completed.parameters_json,'$.manager_user_id')=
+                          json_extract(stale.parameters_json,'$.manager_user_id')
+                      and (json_extract(completed.parameters_json,'$.week_end')>
+                           json_extract(stale.parameters_json,'$.week_end')
+                        or completed.created_at>stale.created_at)
                   )
-                """,
-                (now_text, now_text),
+                returning id
+                """, (now_text,))
+            ids = [int(row[0]) for row in cursor.fetchall()]
+            db.executemany(
+                "insert into task_results(task_id,result_kind,finished_at) values(?,'okr_analysis',?) "
+                "on conflict(task_id,result_kind) do update set finished_at=excluded.finished_at",
+                ((task_id, now_text) for task_id in ids),
             )
             return cursor.rowcount
-
-    def finish_weekly_okr_analysis_job(
-        self,
-        job_id: int,
-        *,
-        status: str,
-        error: str = "",
-        owner: str = "legacy-weekly-owner",
-        now: str | datetime | None = None,
-    ) -> None:
-        if status not in {"completed", "failed"}:
-            raise ValueError("weekly OKR analysis terminal status is invalid")
-        owner = self._require_runtime_attempt_text(owner, field="owner")
-        with self._agent_run_write_transaction(now) as (db, clock):
-            _, now_text = clock
-            row = db.execute(
-                "select status, error, lease_owner, lease_expires_at "
-                f"from ({WEEKLY_JOB_SQL}) where id=?",
-                (job_id,),
-            ).fetchone()
-            if row is None:
-                raise ValueError("weekly OKR analysis job does not exist")
-            if row["status"] != "running":
-                if (row["status"], row["error"]) == (status, error):
-                    return
-                raise ValueError("conflicting weekly OKR analysis terminal rewrite")
-            if row["lease_owner"] != owner or row["lease_expires_at"] <= now_text:
-                raise ValueError("weekly OKR analysis lease ownership lost")
-            changed = db.execute(
-                f"""update tasks set {task8_set_parts('weekly_okr_analysis_jobs', {}, update_sql={'status': '?', 'error': '?', 'lease_owner': "''", 'lease_expires_at': "''", 'finished_at': '?', 'updated_at': '?'}, payload_source='tasks.payload_json').sql}  where record_type='weekly_okr_analysis_jobs' and cast(legacy_key as integer)=? and {task20_column('weekly_okr_analysis_jobs', 'status')}='running' and {task20_column('weekly_okr_analysis_jobs', 'lease_owner')}=? and {task20_column('weekly_okr_analysis_jobs', 'lease_expires_at')}>?""",
-                (status, error, now_text, now_text, job_id, owner, now_text),
-            )
-            if changed.rowcount != 1:
-                raise ValueError("weekly OKR analysis lease ownership lost")
-
-    def reclaim_weekly_okr_analysis_job_cache_miss(
-        self,
-        job_id: int,
-        *,
-        week_end: str,
-        manager_user_id: str,
-        source_digest: str,
-        owner: str = "legacy-weekly-owner",
-        lease_seconds: int = 1860,
-        now: str | datetime | None = None,
-    ) -> WeeklyOkrAnalysisJobClaim:
-        if job_id <= 0:
-            raise ValueError("weekly OKR analysis job id must be positive")
-        manager_user_id = self._require_runtime_attempt_text(
-            manager_user_id, field="manager_user_id"
-        )
-        _, workload_key = self._validate_runtime_operation_workload(
-            "weekly_okr", f"{week_end}:{manager_user_id}:{source_digest}"
-        )
-        expected_key = tuple(workload_key.split(":", 2))
-        owner = self._require_runtime_attempt_text(owner, field="owner")
-        if lease_seconds <= 0:
-            raise ValueError("weekly OKR lease_seconds must be positive")
-        with self._agent_run_write_transaction(now) as (db, clock):
-            now_value, now_text = clock
-            lease_expires_at = (now_value + timedelta(seconds=lease_seconds)).strftime(
-                "%Y-%m-%d %H:%M:%S"
-            )
-            row = db.execute(
-                "select week_end, manager_user_id, source_digest, status "
-                f"from ({WEEKLY_JOB_SQL}) where id=?",
-                (job_id,),
-            ).fetchone()
-            if (
-                row is None
-                or tuple(
-                    row[field]
-                    for field in ("week_end", "manager_user_id", "source_digest")
-                )
-                != expected_key
-            ):
-                raise ValueError("weekly OKR analysis job natural key mismatch")
-            if row["status"] == "completed":
-                changed = db.execute(
-                    f"""update tasks set {task8_set_parts('weekly_okr_analysis_jobs', {}, update_sql={'status': "'running'", 'error': "''", 'finished_at': "''", 'lease_owner': '?', 'lease_expires_at': '?', 'updated_at': '?'}, payload_source='tasks.payload_json').sql}  where record_type='weekly_okr_analysis_jobs' and cast(legacy_key as integer)=? and {task20_column('weekly_okr_analysis_jobs', 'status')}='completed'""",
-                    (owner, lease_expires_at, now_text, job_id),
-                )
-                if changed.rowcount != 1:
-                    raise RuntimeError("weekly OKR cache-miss reclaim lost")
-                return WeeklyOkrAnalysisJobClaim(
-                    job_id=job_id,
-                    outcome=WeeklyOkrAnalysisJobClaimOutcome.CLAIMED,
-                )
-            if row["status"] == "running":
-                return WeeklyOkrAnalysisJobClaim(
-                    job_id=job_id,
-                    outcome=WeeklyOkrAnalysisJobClaimOutcome.IN_PROGRESS,
-                )
-            raise ValueError(
-                "weekly OKR cache-miss reclaim requires completed or running job"
-            )
 
     def begin_wechat_memory_import_job(
         self, *, import_run_id: str, account_id: str
