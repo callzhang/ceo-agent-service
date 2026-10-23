@@ -88,6 +88,18 @@ SPEC/QUALITY approval; fresh productionpreflight/backup/publicationpending.
 C1nine-kind raw-byte/old-code inverse checks have passed during implementation;
 source not frozen/reviewed/live. A5/C2/fullDremainopen.
 
-## Task/Run unification status (2026-10-22)
+## Task/Run unification status (through 2026-10-23)
 
-Phase 1 figures, marker/version, PID, backup measurements and production readbacks recorded above are dated observations for their stated source and time. They are not current production assertions. Task1's assembled schema contract is complete and locally validated, but remains unactivated; Phase 2 has not been published or deployed. A fresh current-production claim requires a new read-only inspection of the active checkout, database and service state. The historical `runs(190042) -> tasks(1)` foreign-key finding is an ordinal-1 entry in `PRAGMA foreign_key_list` (the fourth returned value is the key ordinal), not proof that the referenced Task is missing. No data repair is authorized or implied by that observation.
+The Phase 1 production values, PID, counts and health readbacks above describe their recorded 2026-10-22 inspection only. No fresh production read occurred in this phase2 worktree, and Phase 2 has not been activated, pushed or deployed. The frozen 2026-10-23 read-only `source.sqlite3` snapshot confirms the specific orphan: `runs` row 190042 has `task_id=404225`, `source_type='meeting_alignment_runs'`, `legacy_key='2298'`, and `job_id=4908`; Task 404225 is absent in that snapshot. The finding tuple `('runs', 190042, 'tasks', 1)` ends with foreign-key ordinal 1, not referenced Task ID 1. This snapshot evidence does not establish current production state or authorize a data repair, synthetic Task, NULL conversion, or deletion.
+
+| Area | Accepted local scope | Still open |
+| --- | --- | --- |
+| Task1 | Assembled Task/Run/adoption/receipt schema contract and its focused validations | Constructor/schema activation, integrated runtime, and current-data release gates |
+| Task2 / Task3 | Bounded components accepted: Task2D0 Reply queue/claim/input refresh; Task3C3 native execution/progress/receipt owner; Task3D1 professional RuntimeAttempt owner contract and converters | Remaining Reply lifecycle, recovery/terminal methods, dispatcher and coordinator; complete Run/Attempt/Task runtime and constructor integration |
+| Task4 | Read-only schedule/counts runtime preparation only | Implementation and producer-backed aggregation; no zero-work conclusion from queue count alone |
+| Task5 | Earlier bounded evidence includes the exact frozen 267-second full-copy proof and the separate two-cycle old-DAO cold-write proof; each proves only its recorded inputs and scope | Latest full-copy/current facts; genuine full old-code cold run; native CLI, substitute path, UI and packed-network gates |
+| Task6 / Task7 | No release or live-runtime evidence in this phase2 worktree | Release readiness, publication, deployment and post-deploy readback |
+
+The Task3C3 accepted source/report is `bafff3ee8` with 12 focused native execution tests after Fix1; Task3D1 is `d8cc184bc` with 80 focused definition/schema/storage/assembly tests after Fix1; Task2D0 is `324129193` with 11 focused native Store tests. Each passed its recorded independent scoped review. These are local bounded acceptances; they do not close the rows marked open above. The exact frozen 267-second copy, prior source snapshot, or bounded two-cycle old-DAO proof must not be presented as the latest full-copy/current-release gate.
+
+The exact upstream pin `3875c3796` was integrated locally by normal merge commit `4d0e01878`. There is no main push or deployment claim. The next common Run runtime unit is prepared in `task-3e1-agent-run-lifecycle-brief.md`; the docs truth prerequisite is complete only after its independent review.
