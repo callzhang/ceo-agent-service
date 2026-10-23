@@ -204,3 +204,35 @@ def test_current_reply_identity_uniqueness_ignores_revision_but_allows_versions_
     input3 = db.execute(sql, (tasks[1], *values[:-1], "revision-3")).fetchone()[0]
     with pytest.raises(sqlite3.IntegrityError, match="duplicate current reply identity"):
         db.execute("update tasks set current_input_id=? where id=?", (input3, tasks[1]))
+
+
+def test_feedback_item_native_insert_accepts_source_valid_unassigned_batch_values():
+    db = sqlite3.connect(':memory:')
+    db.execute('pragma foreign_keys=on')
+    for ddl in task_run_entity_objects().values():
+        db.execute(ddl)
+    params = db.execute("select jsonb('{}')").fetchone()[0]
+    for task_id, feedback_key, batch_id in (
+        (901, 'feedback-empty', ''),
+        (902, 'feedback-unresolved', 'historical-missing'),
+    ):
+        db.execute(
+            "insert into tasks(id,kind,status,parameters_json,created_at,updated_at) values(?, 'feedback_processing','pending',?,'now','now')",
+            (task_id, params),
+        )
+        db.execute(
+            """insert into feedback_processing_items(
+                task_id,feedback_key,batch_id,workbench_task_id,workbench_turn_id,
+                attempt_id,agent_run_id,commit_sha,test_evidence_json,restart_evidence_json,
+                health_evidence_json,note,resolved_at,current_round_id
+            ) values(?,?,?,'','',0,0,'','{}','{}','{}','','',0)""",
+            (task_id, feedback_key, batch_id),
+        )
+    assert db.execute(
+        "select feedback_key,batch_id from feedback_processing_items order by feedback_key"
+    ).fetchall() == [
+        ('feedback-empty', ''),
+        ('feedback-unresolved', 'historical-missing'),
+    ]
+    foreign_keys = db.execute('pragma foreign_key_list(feedback_processing_items)').fetchall()
+    assert [(row[3], row[2], row[4]) for row in foreign_keys] == [('task_id', 'tasks', 'id')]

@@ -1061,3 +1061,44 @@ def test_inverse_rejects_extra_native_index_before_mutation():
             raise AssertionError("inverse accepted an extra native index")
         assert db.execute("select * from tasks order by id").fetchall() == before_with_extra
         assert db.execute("select 1 from sqlite_schema where name='idx_task_inverse_unexpected'").fetchone()
+
+
+
+@pytest.mark.parametrize("batch_id", ["", "batch-a", "historical-missing"])
+def test_feedback_item_batch_id_matches_source_through_forward_inverse_reforward(batch_id):
+    with closing(_source()) as db:
+        item_rowid = db.execute(
+            "select rowid from (" + task12_projection("feedback_processing_items", include_rowid=True) + ")"
+        ).fetchone()[0]
+        assert update_task12(db, "feedback_processing_items", item_rowid, {"batch_id": batch_id}) == 1
+        source_batch_id = db.execute(
+            "select batch_id from (" + task20_definitions.task20_projection("feedback_processing_items") + ")"
+        ).fetchone()[0]
+        assert source_batch_id == batch_id
+        source_ddl = db.execute(
+            "select sql from sqlite_schema where type='table' and name='tasks'"
+        ).fetchone()[0]
+        assert "FOREIGN KEY(batch_id)" not in source_ddl
+        db.commit()
+
+        db.execute("begin immediate")
+        source_metadata = capture_task_entities(db)
+        forward = migrate_task_entities(db, source_metadata)
+        assert db.execute(
+            "select batch_id from feedback_processing_items where feedback_key='feedback-a'"
+        ).fetchone() == (batch_id,)
+        target_batch_fks = [
+            row for row in db.execute("pragma foreign_key_list(feedback_processing_items)")
+            if row[2] == "feedback_processing_batches" and row[3] == "batch_id"
+        ]
+        assert target_batch_fks == []
+
+        restore_task_entities(db, source_metadata, forward)
+        assert db.execute(
+            "select batch_id from (" + task20_definitions.task20_projection("feedback_processing_items") + ")"
+        ).fetchone() == (batch_id,)
+        source_metadata = capture_task_entities(db)
+        migrate_task_entities(db, source_metadata)
+        assert db.execute(
+            "select batch_id from feedback_processing_items where feedback_key='feedback-a'"
+        ).fetchone() == (batch_id,)

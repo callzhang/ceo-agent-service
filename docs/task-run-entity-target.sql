@@ -1,4 +1,3 @@
--- Task-only target DDL. Run/Action declarations are assembled by a separate bounded unit.
 CREATE TABLE tasks (
  id INTEGER PRIMARY KEY AUTOINCREMENT, kind TEXT NOT NULL, status TEXT NOT NULL,
  available_at TEXT, attempts INTEGER, error TEXT, locked_at TEXT, lease_owner TEXT,
@@ -31,66 +30,9 @@ CREATE TABLE email_classification_inputs (task_id INTEGER PRIMARY KEY REFERENCES
 
 CREATE TABLE work_summary_inputs (task_id INTEGER PRIMARY KEY REFERENCES tasks(id), source_type TEXT NOT NULL, source_ref TEXT NOT NULL, payload_json TEXT NOT NULL, source_created_at TEXT NOT NULL DEFAULT '', body_sha256 TEXT NOT NULL DEFAULT '', body_bytes INTEGER NOT NULL DEFAULT 0, body_compacted INTEGER NOT NULL DEFAULT 0);
 
-CREATE TABLE feedback_processing_items (task_id INTEGER PRIMARY KEY REFERENCES tasks(id), feedback_key TEXT UNIQUE, batch_id TEXT NOT NULL, workbench_task_id TEXT NOT NULL, workbench_turn_id TEXT NOT NULL, attempt_id INTEGER NOT NULL, agent_run_id INTEGER NOT NULL, commit_sha TEXT NOT NULL, test_evidence_json TEXT NOT NULL, restart_evidence_json TEXT NOT NULL, health_evidence_json TEXT NOT NULL, note TEXT NOT NULL, resolved_at TEXT NOT NULL, current_round_id INTEGER NOT NULL, FOREIGN KEY(batch_id) REFERENCES feedback_processing_batches(batch_id));
+CREATE TABLE feedback_processing_items (task_id INTEGER PRIMARY KEY REFERENCES tasks(id), feedback_key TEXT UNIQUE, batch_id TEXT NOT NULL, workbench_task_id TEXT NOT NULL, workbench_turn_id TEXT NOT NULL, attempt_id INTEGER NOT NULL, agent_run_id INTEGER NOT NULL, commit_sha TEXT NOT NULL, test_evidence_json TEXT NOT NULL, restart_evidence_json TEXT NOT NULL, health_evidence_json TEXT NOT NULL, note TEXT NOT NULL, resolved_at TEXT NOT NULL, current_round_id INTEGER NOT NULL);
 
-CREATE TABLE task_run_identity_map (source_kind TEXT NOT NULL, physical_id INTEGER NOT NULL, public_key TEXT, public_key_type TEXT NOT NULL, target_id INTEGER NOT NULL, PRIMARY KEY(source_kind,physical_id), UNIQUE(source_kind,target_id), CHECK(public_key_type IN ('null','integer','text','blob'))) ;
-
-CREATE TRIGGER trg_tasks_parameters_reply_insert BEFORE INSERT ON tasks WHEN NEW.kind='reply' BEGIN SELECT CASE WHEN EXISTS (SELECT 1 FROM json_each(NEW.parameters_json) WHERE key NOT IN ('force_new_decision','manual_rerun_attempt_id','manual_rerun_revision_key','recovery_code'))  THEN RAISE(ABORT,'invalid task parameter contract') END; END;
-
-CREATE TRIGGER trg_tasks_parameters_reply_update BEFORE UPDATE OF kind,parameters_json ON tasks WHEN NEW.kind='reply' BEGIN SELECT CASE WHEN EXISTS (SELECT 1 FROM json_each(NEW.parameters_json) WHERE key NOT IN ('force_new_decision','manual_rerun_attempt_id','manual_rerun_revision_key','recovery_code'))  THEN RAISE(ABORT,'invalid task parameter contract') END; END;
-
-CREATE TRIGGER trg_tasks_parameters_work_summary_insert BEFORE INSERT ON tasks WHEN NEW.kind='work_summary' BEGIN SELECT CASE WHEN EXISTS (SELECT 1 FROM json_each(NEW.parameters_json) WHERE key NOT IN (''))  THEN RAISE(ABORT,'invalid task parameter contract') END; END;
-
-CREATE TRIGGER trg_tasks_parameters_work_summary_update BEFORE UPDATE OF kind,parameters_json ON tasks WHEN NEW.kind='work_summary' BEGIN SELECT CASE WHEN EXISTS (SELECT 1 FROM json_each(NEW.parameters_json) WHERE key NOT IN (''))  THEN RAISE(ABORT,'invalid task parameter contract') END; END;
-
-CREATE TRIGGER trg_tasks_parameters_meeting_alignment_insert BEFORE INSERT ON tasks WHEN NEW.kind='meeting_alignment' BEGIN SELECT CASE WHEN EXISTS (SELECT 1 FROM json_each(NEW.parameters_json) WHERE key NOT IN ('eligible_at','ended_at','meeting_id','participants_json','source_json','title'))  OR json_type(NEW.parameters_json,'$.meeting_id') IS NULL THEN RAISE(ABORT,'invalid task parameter contract') END; END;
-
-CREATE TRIGGER trg_tasks_parameters_meeting_alignment_update BEFORE UPDATE OF kind,parameters_json ON tasks WHEN NEW.kind='meeting_alignment' BEGIN SELECT CASE WHEN EXISTS (SELECT 1 FROM json_each(NEW.parameters_json) WHERE key NOT IN ('eligible_at','ended_at','meeting_id','participants_json','source_json','title'))  OR json_type(NEW.parameters_json,'$.meeting_id') IS NULL THEN RAISE(ABORT,'invalid task parameter contract') END; END;
-
-CREATE TRIGGER trg_tasks_parameters_okr_review_insert BEFORE INSERT ON tasks WHEN NEW.kind='okr_review' BEGIN SELECT CASE WHEN EXISTS (SELECT 1 FROM json_each(NEW.parameters_json) WHERE key NOT IN ('codex_session_id','conversation_id','conversation_title','okr_source_json','period_end','period_label','period_start','trigger_message_id','trigger_sender','trigger_sender_user_id','trigger_text'))  OR json_type(NEW.parameters_json,'$.conversation_id') IS NULL OR json_type(NEW.parameters_json,'$.conversation_title') IS NULL OR json_type(NEW.parameters_json,'$.period_end') IS NULL OR json_type(NEW.parameters_json,'$.period_label') IS NULL OR json_type(NEW.parameters_json,'$.period_start') IS NULL OR json_type(NEW.parameters_json,'$.trigger_message_id') IS NULL OR json_type(NEW.parameters_json,'$.trigger_sender') IS NULL OR json_type(NEW.parameters_json,'$.trigger_text') IS NULL THEN RAISE(ABORT,'invalid task parameter contract') END; END;
-
-CREATE TRIGGER trg_tasks_parameters_okr_review_update BEFORE UPDATE OF kind,parameters_json ON tasks WHEN NEW.kind='okr_review' BEGIN SELECT CASE WHEN EXISTS (SELECT 1 FROM json_each(NEW.parameters_json) WHERE key NOT IN ('codex_session_id','conversation_id','conversation_title','okr_source_json','period_end','period_label','period_start','trigger_message_id','trigger_sender','trigger_sender_user_id','trigger_text'))  OR json_type(NEW.parameters_json,'$.conversation_id') IS NULL OR json_type(NEW.parameters_json,'$.conversation_title') IS NULL OR json_type(NEW.parameters_json,'$.period_end') IS NULL OR json_type(NEW.parameters_json,'$.period_label') IS NULL OR json_type(NEW.parameters_json,'$.period_start') IS NULL OR json_type(NEW.parameters_json,'$.trigger_message_id') IS NULL OR json_type(NEW.parameters_json,'$.trigger_sender') IS NULL OR json_type(NEW.parameters_json,'$.trigger_text') IS NULL THEN RAISE(ABORT,'invalid task parameter contract') END; END;
-
-CREATE TRIGGER trg_tasks_parameters_okr_analysis_insert BEFORE INSERT ON tasks WHEN NEW.kind='okr_analysis' BEGIN SELECT CASE WHEN EXISTS (SELECT 1 FROM json_each(NEW.parameters_json) WHERE key NOT IN ('manager_user_id','source_digest','week_end'))  OR json_type(NEW.parameters_json,'$.manager_user_id') IS NULL OR json_type(NEW.parameters_json,'$.source_digest') IS NULL OR json_type(NEW.parameters_json,'$.week_end') IS NULL THEN RAISE(ABORT,'invalid task parameter contract') END; END;
-
-CREATE TRIGGER trg_tasks_parameters_okr_analysis_update BEFORE UPDATE OF kind,parameters_json ON tasks WHEN NEW.kind='okr_analysis' BEGIN SELECT CASE WHEN EXISTS (SELECT 1 FROM json_each(NEW.parameters_json) WHERE key NOT IN ('manager_user_id','source_digest','week_end'))  OR json_type(NEW.parameters_json,'$.manager_user_id') IS NULL OR json_type(NEW.parameters_json,'$.source_digest') IS NULL OR json_type(NEW.parameters_json,'$.week_end') IS NULL THEN RAISE(ABORT,'invalid task parameter contract') END; END;
-
-CREATE TRIGGER trg_tasks_parameters_email_classification_insert BEFORE INSERT ON tasks WHEN NEW.kind='email_classification' BEGIN SELECT CASE WHEN EXISTS (SELECT 1 FROM json_each(NEW.parameters_json) WHERE key NOT IN (''))  THEN RAISE(ABORT,'invalid task parameter contract') END; END;
-
-CREATE TRIGGER trg_tasks_parameters_email_classification_update BEFORE UPDATE OF kind,parameters_json ON tasks WHEN NEW.kind='email_classification' BEGIN SELECT CASE WHEN EXISTS (SELECT 1 FROM json_each(NEW.parameters_json) WHERE key NOT IN (''))  THEN RAISE(ABORT,'invalid task parameter contract') END; END;
-
-CREATE TRIGGER trg_tasks_parameters_feedback_processing_insert BEFORE INSERT ON tasks WHEN NEW.kind='feedback_processing' BEGIN SELECT CASE WHEN EXISTS (SELECT 1 FROM json_each(NEW.parameters_json) WHERE key NOT IN (''))  THEN RAISE(ABORT,'invalid task parameter contract') END; END;
-
-CREATE TRIGGER trg_tasks_parameters_feedback_processing_update BEFORE UPDATE OF kind,parameters_json ON tasks WHEN NEW.kind='feedback_processing' BEGIN SELECT CASE WHEN EXISTS (SELECT 1 FROM json_each(NEW.parameters_json) WHERE key NOT IN (''))  THEN RAISE(ABORT,'invalid task parameter contract') END; END;
-
-CREATE TRIGGER trg_tasks_parameters_wechat_import_insert BEFORE INSERT ON tasks WHEN NEW.kind='wechat_import' BEGIN SELECT CASE WHEN EXISTS (SELECT 1 FROM json_each(NEW.parameters_json) WHERE key NOT IN ('account_id','import_run_id'))  OR json_type(NEW.parameters_json,'$.account_id') IS NULL OR json_type(NEW.parameters_json,'$.import_run_id') IS NULL THEN RAISE(ABORT,'invalid task parameter contract') END; END;
-
-CREATE TRIGGER trg_tasks_parameters_wechat_import_update BEFORE UPDATE OF kind,parameters_json ON tasks WHEN NEW.kind='wechat_import' BEGIN SELECT CASE WHEN EXISTS (SELECT 1 FROM json_each(NEW.parameters_json) WHERE key NOT IN ('account_id','import_run_id'))  OR json_type(NEW.parameters_json,'$.account_id') IS NULL OR json_type(NEW.parameters_json,'$.import_run_id') IS NULL THEN RAISE(ABORT,'invalid task parameter contract') END; END;
-
-CREATE TRIGGER trg_tasks_parameters_workbench_turn_insert BEFORE INSERT ON tasks WHEN NEW.kind='workbench_turn' BEGIN SELECT CASE WHEN EXISTS (SELECT 1 FROM json_each(NEW.parameters_json) WHERE key NOT IN (''))  THEN RAISE(ABORT,'invalid task parameter contract') END; END;
-
-CREATE TRIGGER trg_tasks_parameters_workbench_turn_update BEFORE UPDATE OF kind,parameters_json ON tasks WHEN NEW.kind='workbench_turn' BEGIN SELECT CASE WHEN EXISTS (SELECT 1 FROM json_each(NEW.parameters_json) WHERE key NOT IN (''))  THEN RAISE(ABORT,'invalid task parameter contract') END; END;
-
-CREATE TRIGGER trg_reply_current_identity_insert
-      BEFORE UPDATE OF current_input_id ON tasks
-      WHEN NEW.kind='reply' AND NEW.current_input_id IS NOT NULL AND EXISTS (
-        SELECT 1 FROM tasks other JOIN task_inputs old_input ON old_input.id=other.current_input_id
-        JOIN task_inputs new_input ON new_input.id=NEW.current_input_id
-        WHERE other.kind='reply' AND other.id<>NEW.id
-          AND old_input.channel=new_input.channel
-          AND old_input.conversation_id=new_input.conversation_id
-          AND old_input.trigger_message_id=new_input.trigger_message_id)
-      BEGIN SELECT RAISE(ABORT,'duplicate current reply identity'); END;
-
-CREATE TRIGGER trg_reply_current_identity_input_update
-      BEFORE UPDATE OF channel,conversation_id,trigger_message_id ON task_inputs
-      WHEN EXISTS (
-        SELECT 1 FROM tasks owner JOIN tasks other ON other.kind='reply' AND other.id<>owner.id
-        JOIN task_inputs old_input ON old_input.id=other.current_input_id
-        WHERE owner.kind='reply' AND owner.current_input_id=NEW.id
-          AND old_input.channel=NEW.channel AND old_input.conversation_id=NEW.conversation_id
-          AND old_input.trigger_message_id=NEW.trigger_message_id)
-      BEGIN SELECT RAISE(ABORT,'duplicate current reply identity'); END;
+CREATE TABLE task_run_identity_map (source_kind TEXT NOT NULL, physical_id INTEGER NOT NULL, public_key TEXT, public_key_type TEXT NOT NULL, target_id INTEGER NOT NULL, PRIMARY KEY(source_kind,physical_id), UNIQUE(source_kind,target_id), CHECK(public_key_type IN ('null','integer','text','blob')));
 
 CREATE TABLE workbench_tasks (id INTEGER PRIMARY KEY,"title" TEXT NOT NULL,"runtime_kind" TEXT NOT NULL,"provider_session_ref" TEXT NOT NULL DEFAULT '',"archived_at" TEXT NOT NULL DEFAULT '',"created_at" TEXT NOT NULL DEFAULT current_timestamp,"updated_at" TEXT NOT NULL DEFAULT current_timestamp);
 
@@ -157,6 +99,63 @@ CREATE UNIQUE INDEX idx_workbench_attachments_task_request ON workbench_attachme
 CREATE INDEX idx_workbench_attachments_task_created_id ON workbench_attachments(workbench_task_id,created_at,id);
 
 CREATE UNIQUE INDEX idx_workbench_attachments_id_identity ON workbench_attachments(id);
+
+CREATE TRIGGER trg_tasks_parameters_reply_insert BEFORE INSERT ON tasks WHEN NEW.kind='reply' BEGIN SELECT CASE WHEN EXISTS (SELECT 1 FROM json_each(NEW.parameters_json) WHERE key NOT IN ('force_new_decision','manual_rerun_attempt_id','manual_rerun_revision_key','recovery_code'))  THEN RAISE(ABORT,'invalid task parameter contract') END; END;
+
+CREATE TRIGGER trg_tasks_parameters_reply_update BEFORE UPDATE OF kind,parameters_json ON tasks WHEN NEW.kind='reply' BEGIN SELECT CASE WHEN EXISTS (SELECT 1 FROM json_each(NEW.parameters_json) WHERE key NOT IN ('force_new_decision','manual_rerun_attempt_id','manual_rerun_revision_key','recovery_code'))  THEN RAISE(ABORT,'invalid task parameter contract') END; END;
+
+CREATE TRIGGER trg_tasks_parameters_work_summary_insert BEFORE INSERT ON tasks WHEN NEW.kind='work_summary' BEGIN SELECT CASE WHEN EXISTS (SELECT 1 FROM json_each(NEW.parameters_json) WHERE key NOT IN (''))  THEN RAISE(ABORT,'invalid task parameter contract') END; END;
+
+CREATE TRIGGER trg_tasks_parameters_work_summary_update BEFORE UPDATE OF kind,parameters_json ON tasks WHEN NEW.kind='work_summary' BEGIN SELECT CASE WHEN EXISTS (SELECT 1 FROM json_each(NEW.parameters_json) WHERE key NOT IN (''))  THEN RAISE(ABORT,'invalid task parameter contract') END; END;
+
+CREATE TRIGGER trg_tasks_parameters_meeting_alignment_insert BEFORE INSERT ON tasks WHEN NEW.kind='meeting_alignment' BEGIN SELECT CASE WHEN EXISTS (SELECT 1 FROM json_each(NEW.parameters_json) WHERE key NOT IN ('eligible_at','ended_at','meeting_id','participants_json','source_json','title'))  OR json_type(NEW.parameters_json,'$.meeting_id') IS NULL THEN RAISE(ABORT,'invalid task parameter contract') END; END;
+
+CREATE TRIGGER trg_tasks_parameters_meeting_alignment_update BEFORE UPDATE OF kind,parameters_json ON tasks WHEN NEW.kind='meeting_alignment' BEGIN SELECT CASE WHEN EXISTS (SELECT 1 FROM json_each(NEW.parameters_json) WHERE key NOT IN ('eligible_at','ended_at','meeting_id','participants_json','source_json','title'))  OR json_type(NEW.parameters_json,'$.meeting_id') IS NULL THEN RAISE(ABORT,'invalid task parameter contract') END; END;
+
+CREATE TRIGGER trg_tasks_parameters_okr_review_insert BEFORE INSERT ON tasks WHEN NEW.kind='okr_review' BEGIN SELECT CASE WHEN EXISTS (SELECT 1 FROM json_each(NEW.parameters_json) WHERE key NOT IN ('codex_session_id','conversation_id','conversation_title','okr_source_json','period_end','period_label','period_start','trigger_message_id','trigger_sender','trigger_sender_user_id','trigger_text'))  OR json_type(NEW.parameters_json,'$.conversation_id') IS NULL OR json_type(NEW.parameters_json,'$.conversation_title') IS NULL OR json_type(NEW.parameters_json,'$.period_end') IS NULL OR json_type(NEW.parameters_json,'$.period_label') IS NULL OR json_type(NEW.parameters_json,'$.period_start') IS NULL OR json_type(NEW.parameters_json,'$.trigger_message_id') IS NULL OR json_type(NEW.parameters_json,'$.trigger_sender') IS NULL OR json_type(NEW.parameters_json,'$.trigger_text') IS NULL THEN RAISE(ABORT,'invalid task parameter contract') END; END;
+
+CREATE TRIGGER trg_tasks_parameters_okr_review_update BEFORE UPDATE OF kind,parameters_json ON tasks WHEN NEW.kind='okr_review' BEGIN SELECT CASE WHEN EXISTS (SELECT 1 FROM json_each(NEW.parameters_json) WHERE key NOT IN ('codex_session_id','conversation_id','conversation_title','okr_source_json','period_end','period_label','period_start','trigger_message_id','trigger_sender','trigger_sender_user_id','trigger_text'))  OR json_type(NEW.parameters_json,'$.conversation_id') IS NULL OR json_type(NEW.parameters_json,'$.conversation_title') IS NULL OR json_type(NEW.parameters_json,'$.period_end') IS NULL OR json_type(NEW.parameters_json,'$.period_label') IS NULL OR json_type(NEW.parameters_json,'$.period_start') IS NULL OR json_type(NEW.parameters_json,'$.trigger_message_id') IS NULL OR json_type(NEW.parameters_json,'$.trigger_sender') IS NULL OR json_type(NEW.parameters_json,'$.trigger_text') IS NULL THEN RAISE(ABORT,'invalid task parameter contract') END; END;
+
+CREATE TRIGGER trg_tasks_parameters_okr_analysis_insert BEFORE INSERT ON tasks WHEN NEW.kind='okr_analysis' BEGIN SELECT CASE WHEN EXISTS (SELECT 1 FROM json_each(NEW.parameters_json) WHERE key NOT IN ('manager_user_id','source_digest','week_end'))  OR json_type(NEW.parameters_json,'$.manager_user_id') IS NULL OR json_type(NEW.parameters_json,'$.source_digest') IS NULL OR json_type(NEW.parameters_json,'$.week_end') IS NULL THEN RAISE(ABORT,'invalid task parameter contract') END; END;
+
+CREATE TRIGGER trg_tasks_parameters_okr_analysis_update BEFORE UPDATE OF kind,parameters_json ON tasks WHEN NEW.kind='okr_analysis' BEGIN SELECT CASE WHEN EXISTS (SELECT 1 FROM json_each(NEW.parameters_json) WHERE key NOT IN ('manager_user_id','source_digest','week_end'))  OR json_type(NEW.parameters_json,'$.manager_user_id') IS NULL OR json_type(NEW.parameters_json,'$.source_digest') IS NULL OR json_type(NEW.parameters_json,'$.week_end') IS NULL THEN RAISE(ABORT,'invalid task parameter contract') END; END;
+
+CREATE TRIGGER trg_tasks_parameters_email_classification_insert BEFORE INSERT ON tasks WHEN NEW.kind='email_classification' BEGIN SELECT CASE WHEN EXISTS (SELECT 1 FROM json_each(NEW.parameters_json) WHERE key NOT IN (''))  THEN RAISE(ABORT,'invalid task parameter contract') END; END;
+
+CREATE TRIGGER trg_tasks_parameters_email_classification_update BEFORE UPDATE OF kind,parameters_json ON tasks WHEN NEW.kind='email_classification' BEGIN SELECT CASE WHEN EXISTS (SELECT 1 FROM json_each(NEW.parameters_json) WHERE key NOT IN (''))  THEN RAISE(ABORT,'invalid task parameter contract') END; END;
+
+CREATE TRIGGER trg_tasks_parameters_feedback_processing_insert BEFORE INSERT ON tasks WHEN NEW.kind='feedback_processing' BEGIN SELECT CASE WHEN EXISTS (SELECT 1 FROM json_each(NEW.parameters_json) WHERE key NOT IN (''))  THEN RAISE(ABORT,'invalid task parameter contract') END; END;
+
+CREATE TRIGGER trg_tasks_parameters_feedback_processing_update BEFORE UPDATE OF kind,parameters_json ON tasks WHEN NEW.kind='feedback_processing' BEGIN SELECT CASE WHEN EXISTS (SELECT 1 FROM json_each(NEW.parameters_json) WHERE key NOT IN (''))  THEN RAISE(ABORT,'invalid task parameter contract') END; END;
+
+CREATE TRIGGER trg_tasks_parameters_wechat_import_insert BEFORE INSERT ON tasks WHEN NEW.kind='wechat_import' BEGIN SELECT CASE WHEN EXISTS (SELECT 1 FROM json_each(NEW.parameters_json) WHERE key NOT IN ('account_id','import_run_id'))  OR json_type(NEW.parameters_json,'$.account_id') IS NULL OR json_type(NEW.parameters_json,'$.import_run_id') IS NULL THEN RAISE(ABORT,'invalid task parameter contract') END; END;
+
+CREATE TRIGGER trg_tasks_parameters_wechat_import_update BEFORE UPDATE OF kind,parameters_json ON tasks WHEN NEW.kind='wechat_import' BEGIN SELECT CASE WHEN EXISTS (SELECT 1 FROM json_each(NEW.parameters_json) WHERE key NOT IN ('account_id','import_run_id'))  OR json_type(NEW.parameters_json,'$.account_id') IS NULL OR json_type(NEW.parameters_json,'$.import_run_id') IS NULL THEN RAISE(ABORT,'invalid task parameter contract') END; END;
+
+CREATE TRIGGER trg_tasks_parameters_workbench_turn_insert BEFORE INSERT ON tasks WHEN NEW.kind='workbench_turn' BEGIN SELECT CASE WHEN EXISTS (SELECT 1 FROM json_each(NEW.parameters_json) WHERE key NOT IN (''))  THEN RAISE(ABORT,'invalid task parameter contract') END; END;
+
+CREATE TRIGGER trg_tasks_parameters_workbench_turn_update BEFORE UPDATE OF kind,parameters_json ON tasks WHEN NEW.kind='workbench_turn' BEGIN SELECT CASE WHEN EXISTS (SELECT 1 FROM json_each(NEW.parameters_json) WHERE key NOT IN (''))  THEN RAISE(ABORT,'invalid task parameter contract') END; END;
+
+CREATE TRIGGER trg_reply_current_identity_insert
+      BEFORE UPDATE OF current_input_id ON tasks
+      WHEN NEW.kind='reply' AND NEW.current_input_id IS NOT NULL AND EXISTS (
+        SELECT 1 FROM tasks other JOIN task_inputs old_input ON old_input.id=other.current_input_id
+        JOIN task_inputs new_input ON new_input.id=NEW.current_input_id
+        WHERE other.kind='reply' AND other.id<>NEW.id
+          AND old_input.channel=new_input.channel
+          AND old_input.conversation_id=new_input.conversation_id
+          AND old_input.trigger_message_id=new_input.trigger_message_id)
+      BEGIN SELECT RAISE(ABORT,'duplicate current reply identity'); END;
+
+CREATE TRIGGER trg_reply_current_identity_input_update
+      BEFORE UPDATE OF channel,conversation_id,trigger_message_id ON task_inputs
+      WHEN EXISTS (
+        SELECT 1 FROM tasks owner JOIN tasks other ON other.kind='reply' AND other.id<>owner.id
+        JOIN task_inputs old_input ON old_input.id=other.current_input_id
+        WHERE owner.kind='reply' AND owner.current_input_id=NEW.id
+          AND old_input.channel=NEW.channel AND old_input.conversation_id=NEW.conversation_id
+          AND old_input.trigger_message_id=NEW.trigger_message_id)
+      BEGIN SELECT RAISE(ABORT,'duplicate current reply identity'); END;
 
 CREATE TRIGGER trg_workbench_active_turn_insert
 BEFORE INSERT ON workbench_turns
