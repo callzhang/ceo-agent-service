@@ -65,7 +65,8 @@ def _source_snapshot(db):
 
 def _populated_source(*, remap_runs=False, feedback=False, pre_capture_unknown=False,
                       unresolved_action=False, stop_before_adoption=False, remap_tasks=False,
-                      feedback_collision=False, generic_action_task_id=None):
+                      feedback_collision=False, generic_action_task_id=None,
+                      nonagent_run_owner=False):
     """Build the actual old Task/Run/Action source with its production writers."""
     import hashlib
     import json
@@ -103,6 +104,20 @@ def _populated_source(*, remap_runs=False, feedback=False, pre_capture_unknown=F
     _source_row(db, "agent_runs", {"id": 9011, "legacy_key": "9011", **common,
         "operation_id": "audit-op-2", "turn_attempt": 1,
         "role": "audit", "parent_id": 9010})
+    if nonagent_run_owner:
+        _source_row(db, "agent_runtime_attempts", {
+            "id": 9008, "legacy_key": "9008", "parent_id": None,
+            "workload_kind": "task", "workload_key": "201:custom", "attempt_number": 1,
+            "route_name": "r-9008", "runtime_kind": "codex_cli", "credential_mode": "local_oauth",
+            "model": "m", "session_mode": "fresh", "source_session_id": "",
+            "attempt_purpose": "normal", "validation_retry_policy_id": "",
+            "validation_result_schema_id": "", "session_id": "s", "transcript_reference": "t",
+            "transcript_start": 0, "transcript_end": 0, "status": "completed",
+            "failure_class": "", "failure_code": "", "failover_permitted": 0,
+            "lease_owner": "", "lease_expires_at": "", "first_effect_started_at": "",
+            "result_schema_id": "schema", "started_at": "start", "finished_at": "finish",
+            "created_at": "created", "updated_at": "updated",
+        })
 
     if feedback:
         # Distinct physical and public IDs prove the converter resolves the
@@ -241,12 +256,16 @@ def _populated_source(*, remap_runs=False, feedback=False, pre_capture_unknown=F
             {"source_kind": "agent_runs", "source_physical_id": 9010, "canonical_id": 9110},
             {"source_kind": "agent_runs", "source_physical_id": 9011, "canonical_id": 9111},
         ]
+        if nonagent_run_owner:
+            edges.append({"source_kind": "agent_runtime_attempts",
+                          "source_physical_id": 9008, "canonical_id": 9106})
         base_handoff = _run_handoff(db, run_source_metadata, identity_edges=edges,
             owner_highwaters=base_handoff["owner_highwaters"])
     run_metadata = migrate_run_entities(db, run_source_metadata, task_metadata=task_metadata,
                                         run_handoff=base_handoff)
     if stop_before_adoption:
-        return db, {"adoption_source": adoption_source, "task_metadata": task_metadata,
+        return db, {"adoption_source": adoption_source, "task_source_metadata": task_source_metadata,
+                    "task_metadata": task_metadata, "run_source_metadata": run_source_metadata,
                     "run_metadata": run_metadata, "candidate_json": candidate_json,
                     "digest": digest, "source_snapshot": source_snapshot}
     adoption_metadata = migrate_run_adoptions(db, adoption_source,
