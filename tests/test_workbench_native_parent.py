@@ -510,7 +510,14 @@ def test_native_attachment_inverse_stages_source_locator_and_preserves_bytes(tmp
         path_entry["source_path"] = str(
             managed_root / path_entry["source_parent_public_id"] / str(uuid4())
         )
-        for tampered in (swapped_identity, wrong_parent, wrong_path):
+        wrong_canonical_parent = json.loads(json.dumps(portable_identity))
+        canonical_entry = wrong_canonical_parent["workbench_attachment_files"][0]
+        canonical_entry["parent_canonical_id"] += 10000
+        canonical_entry["native_path"] = str(
+            managed_root / str(canonical_entry["parent_canonical_id"])
+            / Path(canonical_entry["native_path"]).name
+        )
+        for tampered in (swapped_identity, wrong_parent, wrong_path, wrong_canonical_parent):
             try:
                 stage_workbench_attachment_forward_files(db, managed_root, tampered)
             except ValueError:

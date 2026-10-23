@@ -662,10 +662,12 @@ def _validate_inverse_identity(value: dict | None) -> dict:
     """Validate the content-free identity handoff returned by the inverse."""
     if value is None:
         return {"owners": {}, "meeting_business_keys": {},
+                "workbench_parent_identities": {},
                 "workbench_attachment_identities": {},
                 "workbench_attachment_files": {}}
     if (not isinstance(value, dict) or not {"version", "owners"}.issubset(value)
             or not set(value).issubset({"version", "owners", "meeting_business_keys",
+                                        "workbench_parent_identities",
                                         "workbench_attachment_identities",
                                         "workbench_attachment_files"})
             or value["version"] != 1):
@@ -703,6 +705,19 @@ def _validate_inverse_identity(value: dict | None) -> dict:
             raise ValueError("duplicate Meeting delivery-key identity handoff")
         key_edges[source_id] = key_id
         key_ids.add(key_id)
+    parent_identities = {}
+    for row in value.get("workbench_parent_identities", []):
+        if (not isinstance(row, dict) or set(row) != {
+                "source_physical_id", "canonical_id", "source_public_id"}
+                or type(row["source_physical_id"]) is not int
+                or type(row["canonical_id"]) is not int
+                or not isinstance(row["source_public_id"], str)
+                or str(UUID(row["source_public_id"])) != row["source_public_id"]):
+            raise ValueError("invalid Workbench parent identity handoff")
+        key = row["source_physical_id"]
+        if key in parent_identities:
+            raise ValueError("duplicate Workbench parent identity handoff")
+        parent_identities[key] = row
     attachment_identities = {}
     attachment_public_ids = set()
     for row in value.get("workbench_attachment_identities", []):
@@ -750,10 +765,18 @@ def _validate_inverse_identity(value: dict | None) -> dict:
             )
         if (row["canonical_id"] != attachment_identities[key]["canonical_id"]
                 or row["source_public_id"] != attachment_identities[key]["source_public_id"]
+                or row["source_parent_physical_id"] not in parent_identities
+                or row["parent_canonical_id"] != parent_identities[
+                    row["source_parent_physical_id"]
+                ]["canonical_id"]
+                or row["source_parent_public_id"] != parent_identities[
+                    row["source_parent_physical_id"]
+                ]["source_public_id"]
                 or len(row["content_sha256"]) != 64):
             raise ValueError("WorkBench attachment file identity mismatch")
         files[key] = row
     return {"owners": result, "meeting_business_keys": key_edges,
+            "workbench_parent_identities": parent_identities,
             "workbench_attachment_identities": attachment_identities,
             "workbench_attachment_files": files}
 
@@ -1329,6 +1352,26 @@ def restore_task_entities(db: sqlite3.Connection, source_metadata: dict, forward
     }
     if attachment_identities:
         inverse_identity["workbench_attachment_identities"] = attachment_identities
+    if any(kind == "workbench_attachments" for kind, *_ in source_rows):
+        parent_identities = []
+        for kind, _, target_id, _, _, _ in source_rows:
+            if kind != "workbench_tasks":
+                continue
+            public_id = source_public_by_native[("workbench_tasks", target_id)]
+            if not isinstance(public_id, str):
+                continue
+            try:
+                if str(UUID(public_id)) != public_id:
+                    continue
+            except ValueError:
+                continue
+            parent_identities.append({
+                "source_physical_id": source_physical_by_native[("workbench_tasks", target_id)],
+                "canonical_id": target_id,
+                "source_public_id": public_id,
+            })
+        if parent_identities:
+            inverse_identity["workbench_parent_identities"] = parent_identities
     source_context = {
         "version": 1,
         "handoff_required": bool(inverse_identity["owners"] or meeting_business_keys

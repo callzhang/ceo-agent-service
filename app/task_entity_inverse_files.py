@@ -361,6 +361,7 @@ def stage_workbench_attachment_forward_files(db, managed_root: str | Path, inver
     by_public_id = {row[0]: row for row in rows}
     identities = {row["source_physical_id"]: row
                   for row in handoff["workbench_attachment_identities"].values()}
+    parent_identities = handoff["workbench_parent_identities"]
     if {row["source_public_id"] for row in identities.values()} - set(by_public_id):
         raise ValueError("Workbench forward handoff names a missing source attachment")
     from app.storage_payload import TASK_RECORD_TYPES
@@ -378,6 +379,18 @@ def stage_workbench_attachment_forward_files(db, managed_root: str | Path, inver
             raise ValueError("Workbench forward source locator differs from inverse metadata")
         if int(row[1]) != item["source_parent_physical_id"]:
             raise ValueError("Workbench forward file parent is missing")
+        parent_identity = parent_identities.get(item["source_parent_physical_id"])
+        if (parent_identity is None
+                or parent_identity["canonical_id"] != item["parent_canonical_id"]
+                or parent_identity["source_public_id"] != item["source_parent_public_id"]):
+            raise ValueError("Workbench forward canonical parent differs from inverse identity")
+        parent_owner = handoff["owners"].get(
+            ("workbench_tasks", item["source_parent_physical_id"])
+        )
+        if (parent_owner is not None and parent_owner != item["parent_canonical_id"]
+                or parent_owner is None and item["parent_canonical_id"]
+                != item["source_parent_physical_id"]):
+            raise ValueError("Workbench forward parent mapping is not an inverse owner edge")
         source_parent_public = Path(item["source_path"]).parent.name
         if (source_parent_public != item["source_parent_public_id"]
                 or Path(item["source_path"]).name != item["source_public_id"]):

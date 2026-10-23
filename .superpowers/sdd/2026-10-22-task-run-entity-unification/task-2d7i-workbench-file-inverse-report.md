@@ -106,3 +106,40 @@ WORK_DIR=$(mktemp -d /private/tmp/ceo-task-run-phase2-_ntbufyi/task-2d7i-fix1-XX
 Exit 0. Predecessor digest remained `b5c5b92fc0985ef21d865379193a948df171d02a3f8d43186a6023d78f1d4a66`; both old constructor and reconcile modules loaded from the exact pinned predecessor `app/workbench/store.py`. Two file inverse/forward cycles completed. The actual unchanged predecessor constructor read both newly written files with correct UUID parent/attachment IDs, paths, SHA-256, sizes, filenames, and media type; cycle 1 harmless old API write changed row count 3→4, and cycle 2 retained row count 6→6. The original control attachment and exact hash remained available. This is the bounded Workbench Task migration/operator acceptance only; it is not whole-service, whole-phase, runtime-activation, or production proof.
 
 This fix round changed only the explicit converter/file helper and focused Workbench tests. The two unrelated report appendices remain untouched by this round. No whole suite, provider, native CLI, push, or deploy was run. FIX_HEAD will be recorded after commit.
+
+## Fix round 2 (FIX_BASE `971a4b249f7faf3c5a987352a31b21c9e4da65ea`)
+
+Addressed the remaining Important finding from `task-2d7i-workbench-file-inverse-rereview1.md`: a file entry could change only its numeric `parent_canonical_id` and matching native directory path while keeping the actual source parent UUID/physical ID valid.
+
+The inverse now includes a content-free `workbench_parent_identities` map built from the actual restored `source_physical_by_native` and `source_public_by_native` mappings. The sparse owner edges remain authoritative: forward staging requires a present non-diagonal `workbench_tasks` edge to match the file's canonical parent; when no sparse edge exists, the persisted parent mapping must explicitly establish the diagonal (`source physical ID == canonical ID`). File-entry canonical parent, source parent physical ID, source parent UUID, and native numeric directory are bound to that map and to the actual restored parent row before any directory or link mutation. This retains remapped/new parents without inferring `public ID == physical ID`.
+
+The focused Workbench regression now adds a tamper that changes only `parent_canonical_id` and changes `native_path` to the matching numeric directory. It verifies rejection before any filesystem or Task row changes, alongside the previous attachment-identity, source UUID/path, and retry-finalization cases.
+
+Exact focused command and output:
+
+```text
+pytest -q tests/test_workbench_native_parent.py::test_native_attachment_inverse_stages_source_locator_and_preserves_bytes tests/test_task_entity_schema.py::test_inverse_handoff_json_keeps_captured_blob_parent_out_of_uuid_file_map tests/test_task_entity_schema.py::test_inverse_translates_raw_source_physical_ids_through_native_owner_edges tests/test_task_entity_schema.py::test_inverse_preserves_hidden_task12_rowid_legacy_key_for_natural_key_owner
+....                                                                     [100%]
+4 passed in 2.97s
+```
+
+Static checks:
+
+```text
+ruff check app/task_entity_schema.py app/task_entity_inverse_files.py tests/test_workbench_native_parent.py
+All checks passed!
+
+python -m py_compile app/task_entity_schema.py app/task_entity_inverse_files.py
+(exit 0; no output)
+
+git diff --check
+(exit 0; no output)
+```
+
+The genuine predecessor operator was rerun in fresh workdir `/private/tmp/ceo-task-run-phase2-_ntbufyi/task-2d7i-fix2-NO50uC` with:
+
+```text
+WORK_DIR=$(mktemp -d /private/tmp/ceo-task-run-phase2-_ntbufyi/task-2d7i-fix2-XXXXXX) && python scripts/validate_task_2d7i_workbench_inverse.py --predecessor-root /private/tmp/ceo-task-run-phase2-_ntbufyi/predecessor-c38ce12cf --work-dir "$WORK_DIR"
+```
+
+Exit 0. Predecessor digest `b5c5b92fc0985ef21d865379193a948df171d02a3f8d43186a6023d78f1d4a66`; constructor and reconciler both resolved to the pinned predecessor `app/workbench/store.py`. Cycle 1 verified both new attachment files and harmless old API write (rows 3→4); cycle 2 verified both files and the retained control attachment (rows 6→6). This remains Task-only Workbench operator acceptance, not whole-service or runtime proof.
