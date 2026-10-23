@@ -8706,13 +8706,19 @@ def render_meeting_attempt_detail(
             f"<p>Meeting attempt #{run_id} does not exist.</p>",
             active_nav="history",
         )
-    if run.task_id is None:
-        return 404, render_page("Meeting attempt not found", f"<p>Meeting attempt #{run_id} has no Task parent.</p>", active_nav="history")
-    job = store.get_meeting_alignment_job(run.task_id)
+    try:
+        job = store.get_meeting_alignment_job(run.task_id) if run.task_id is not None else None
+    except ValueError as exc:
+        if not str(exc).startswith("meeting alignment job not found:"):
+            raise
+        job = None
     run_status = _meeting_run_display_status(
         run.status,
-        job.status,
-        has_later_run=store.has_later_meeting_alignment_run(run.task_id, run.id),
+        job.status if job is not None else "",
+        has_later_run=(
+            store.has_later_meeting_alignment_run(run.task_id, run.id)
+            if job is not None and run.task_id is not None else False
+        ),
     )
     decision = _meeting_decision_payload(run.decision_json)
     action = str(decision.get("action") or "").strip()
@@ -8726,32 +8732,45 @@ def render_meeting_attempt_detail(
     decision_target = ""
     if isinstance(target, dict):
         decision_target = str(target.get("title") or target.get("conversation_id") or "")
-    participant_names = _meeting_participant_names(job.participants_json, job.source_json)
+    participant_names = (
+        _meeting_participant_names(job.participants_json, job.source_json)
+        if job is not None else []
+    )
     participant_preview = ", ".join(participant_names) if participant_names else ""
-    mentions = _meeting_mentions_text(job.mentions_json)
+    mentions = _meeting_mentions_text(job.mentions_json) if job is not None else ""
+    task_unavailable = job is None
+    title = job.title if job is not None else "Meeting Task unavailable"
+    meeting_id = job.meeting_id if job is not None else "unavailable"
+    task_status = job.status if job is not None else "unavailable"
+    final_message = job.final_message if job is not None else ""
     fields = [
-        ("meeting id", job.meeting_id),
+        ("meeting id", meeting_id),
+        ("Task", "unavailable" if task_unavailable else str(job.id)),
+        ("source provenance job id", str(run.job_id) if run.job_id is not None else "unavailable"),
         ("action", action),
         ("status", run_status),
-        ("job status", job.status),
-        ("target kind", job.target_kind),
-        ("delivery target", job.target_title or job.target_id),
+        ("run error", run.error),
+        ("job status", task_status),
+        ("target kind", job.target_kind if job is not None else ""),
+        ("delivery target", (job.target_title or job.target_id) if job is not None else ""),
         ("decision target", decision_target),
         ("Mention resolution", mentions),
-        ("ended at", job.ended_at),
+        ("ended at", job.ended_at if job is not None else ""),
         ("participants", participant_preview),
     ]
     trigger_lines = [
-        f"title: {job.title}",
-        f"meeting id: {job.meeting_id}",
-        f"ended at: {job.ended_at}",
+        f"title: {title}",
+        f"meeting id: {meeting_id}",
+        f"task id: {run.task_id if run.task_id is not None else 'unavailable'}",
+        f"source provenance job id: {run.job_id if run.job_id is not None else 'unavailable'}",
+        f"ended at: {job.ended_at if job is not None else ''}",
         f"participants: {participant_preview}",
     ]
     if trigger_text:
         trigger_lines.append(f"trigger reasons: {trigger_text}")
     body = _agent_detail_body(
         title_label="会议",
-        title=job.title,
+        title=title,
         subtitle=f"参会人：{participant_preview}" if participant_preview else "",
         codex_session_id=run.codex_session_id,
         actions_html="",
@@ -8763,7 +8782,7 @@ def render_meeting_attempt_detail(
         reason_title="Codex reason",
         reason_text=run.audit_summary,
         reply_title="生成回复",
-        reply_text=job.final_message or "No generated reply recorded.",
+        reply_text=final_message or ("Meeting Task unavailable." if task_unavailable else "No generated reply recorded."),
         side_html="",
         extra_cards=(
             f"{_text_card('Audit summary', run.audit_summary)}"

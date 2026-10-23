@@ -1000,11 +1000,17 @@ def register_console_routes(
         run = store.get_meeting_alignment_run(run_id)
         if run is None:
             return JSONResponse({"ok": False, "code": "not_found", "message": "Meeting attempt not found", "details": {}}, status_code=404)
-        if run.task_id is None:
-            return JSONResponse({"ok": False, "code": "not_found", "message": "Meeting Task is unavailable", "details": {}}, status_code=404)
-        job = store.get_meeting_alignment_job(run.task_id)
-        if job is None:
-            return JSONResponse({"ok": False, "code": "not_found", "message": "Meeting job not found", "details": {}}, status_code=404)
+        try:
+            job = store.get_meeting_alignment_job(run.task_id) if run.task_id is not None else None
+        except ValueError as exc:
+            if not str(exc).startswith("meeting alignment job not found:"):
+                raise
+            job = None
+        task_unavailable = job is None
+        title = job.title if job is not None else "Meeting Task unavailable"
+        meeting_id = job.meeting_id if job is not None else "unavailable"
+        task_status = job.status if job is not None else "unavailable"
+        final_message = job.final_message if job is not None else ""
         decision = stored_json(run.decision_json, {})
         if not isinstance(decision, dict):
             decision = {}
@@ -1014,8 +1020,8 @@ def register_console_routes(
         decision_target = ""
         if isinstance(target, dict):
             decision_target = str(target.get("title") or target.get("conversation_id") or "")
-        participants = stored_json(job.participants_json, [])
-        if not participants:
+        participants = stored_json(job.participants_json, []) if job is not None else []
+        if job is not None and not participants:
             source = stored_json(job.source_json, {})
             if isinstance(source, dict):
                 evidence = source.get("calendar_evidence")
@@ -1027,7 +1033,7 @@ def register_console_routes(
             if isinstance(item, dict) and str(item.get("name") or "").strip()
         ]
         participant_preview = ", ".join(participant_names)
-        mentions = stored_json(job.mentions_json, [])
+        mentions = stored_json(job.mentions_json, []) if job is not None else []
         mention_values = []
         if isinstance(mentions, list):
             for mention in mentions:
@@ -1043,28 +1049,31 @@ def register_console_routes(
             run_status = "skipped"
         elif run_status in {"retry", "failed"}:
             run_status = "failed"
-        elif run_status == "ready_to_send" and job.status == "sent":
+        elif run_status == "ready_to_send" and job is not None and job.status == "sent":
             run_status = "sent"
-        elif run_status == "ready_to_send" and store.has_later_meeting_alignment_run(run.task_id, run.id):
+        elif (run_status == "ready_to_send" and job is not None and run.task_id is not None
+              and store.has_later_meeting_alignment_run(run.task_id, run.id)):
             run_status = "ready_to_send"
-        elif run_status == "ready_to_send" and job.status in {"retry", "failed"}:
+        elif run_status == "ready_to_send" and job is not None and job.status in {"retry", "failed"}:
             run_status = "failed"
         fields = [
-            {"label": "meeting id", "value": job.meeting_id},
+            {"label": "meeting id", "value": meeting_id},
+            {"label": "Task", "value": "unavailable" if task_unavailable else str(job.id)},
+            {"label": "source provenance job id", "value": str(run.job_id) if run.job_id is not None else "unavailable"},
             {"label": "action", "value": str(decision.get("action") or "")},
             {"label": "status", "value": run_status},
-            {"label": "job status", "value": job.status},
-            {"label": "target kind", "value": job.target_kind},
-            {"label": "delivery target", "value": job.target_title or job.target_id},
+            {"label": "job status", "value": task_status},
+            {"label": "target kind", "value": job.target_kind if job is not None else ""},
+            {"label": "delivery target", "value": (job.target_title or job.target_id) if job is not None else ""},
             {"label": "decision target", "value": decision_target},
             {"label": "Mention resolution", "value": mention_text},
-            {"label": "ended at", "value": job.ended_at},
+            {"label": "ended at", "value": job.ended_at if job is not None else ""},
             {"label": "participants", "value": participant_preview},
         ]
         conversation_id = ""
         if isinstance(target, dict):
             conversation_id = str(target.get("conversation_id") or "").strip()
-        if not conversation_id:
+        if not conversation_id and job is not None:
             conversation_id = str(job.target_id or "").strip()
         dingtalk_url = (
             f"/open-dingtalk-popup?conversation_id={quote(conversation_id, safe='')}"
@@ -1076,36 +1085,41 @@ def register_console_routes(
         tool_uses = _audit_event_uses_for_attempt(run)
         return item_envelope({
             "id": run.id,
-            "title": job.title,
+            "task_id": run.task_id,
+            "source_job_id": run.job_id,
+            "task_available": not task_unavailable,
+            "title": title,
             "type": "meeting",
             "status": run_status,
             "conversation": {
                 "label": "会议",
-                "title": job.title,
+                "title": title,
                 "subtitle": f"参会人：{participant_preview}" if participant_preview else "",
             },
             "metadata": fields,
             # Keep the generic resource fields for API consumers while the
             # meeting-specific presentation uses the structured sections below.
             "input": {
-                "meeting_id": job.meeting_id,
-                "ended_at": job.ended_at,
+                "meeting_id": meeting_id,
+                "ended_at": job.ended_at if job is not None else "",
                 "participants": participants,
             },
             "decision": decision,
-            "output": job.final_message,
+            "output": final_message,
             "trigger": {
                 "title": "Trigger",
                 "text": "\n".join([
-                    f"title: {job.title}",
-                    f"meeting id: {job.meeting_id}",
-                    f"ended at: {job.ended_at}",
+                    f"title: {title}",
+                    f"meeting id: {meeting_id}",
+                    f"task id: {run.task_id if run.task_id is not None else 'unavailable'}",
+                    f"source provenance job id: {run.job_id if run.job_id is not None else 'unavailable'}",
+                    f"ended at: {job.ended_at if job is not None else ''}",
                     f"participants: {participant_preview}",
                     *([f"trigger reasons: {trigger_text}"] if trigger_text else []),
                 ]),
             },
             "audit_explanation": {"title": "Codex reason", "text": run.audit_summary},
-            "generated_reply": {"title": "生成回复", "text": job.final_message or "No generated reply recorded."},
+            "generated_reply": {"title": "生成回复", "text": final_message or ("Meeting Task unavailable." if task_unavailable else "No generated reply recorded.")},
             "audit_summary": run.audit_summary,
             "tool_uses": tool_uses,
             "native_available": run.native_available,
@@ -1114,10 +1128,10 @@ def register_console_routes(
             "tool_events_reason": run.tool_events_reason,
             "runtime": {
                 "run_status": run.status,
-                "job_status": job.status,
+                "job_status": task_status,
                 "audit_summary": run.audit_summary,
                 "audit_tool_events": stored_json(run.audit_tool_events_json, []),
-                "error": run.error or job.error,
+                "error": run.error or (job.error if job is not None else ""),
                 "created_at": run.created_at,
                 "finished_at": run.finished_at,
                 "updated_at": run.updated_at,
