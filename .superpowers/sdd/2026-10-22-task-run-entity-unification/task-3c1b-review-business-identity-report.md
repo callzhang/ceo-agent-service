@@ -41,3 +41,33 @@ A broader exploratory run of `pytest -q tests/test_agent_orchestrator.py tests/t
 ## Remaining gates
 
 This is an unactivated schema/Store slice. Source-copy conversion, source inverse round-trip, genuine old-code cold-open/read-write/reforward acceptance, broader execution/full-History caller closure, independent SPEC/QUALITY review, production publication and deployment remain later gates. The report does not claim those outcomes.
+
+## Fix1/5 review correction (2026-10-22)
+
+The independent C1B review found that `current_reviewed_candidate` still ordered Reviews by `audit_run_id`, which can diverge from Review creation/adoption order. The original source Store orders current Reviews by the Review business ID. The correction changes the native current-review ordering to `r.id DESC`; it adds no policy or extra ordering field.
+
+The regression uses the real native schema and Store: it creates two Audit Runs in ascending ID order, then adopts both approved Reviews in reverse order. It checks the latest Review ID and its matching distinct Audit Run owner.
+
+RED before the correction:
+
+```text
+pytest -q tests/test_native_reviewed_candidate_store.py -k current_review_projection_follows_review_id_when_audit_adoption_is_reversed
+```
+
+Output: `1 failed, 3 deselected`; the projection returned Review ID `1` instead of the latest Review ID `2`.
+
+GREEN after the correction:
+
+```text
+pytest -q tests/test_native_reviewed_candidate_store.py
+```
+
+Output: `4 passed in 2.01s`.
+
+```text
+ruff check app/reviewed_candidate_store.py tests/test_native_reviewed_candidate_store.py
+```
+
+Output: `All checks passed!`.
+
+`python -m compileall -q app/reviewed_candidate_store.py` and `git diff --check` passed. Full details are also recorded in [task-3c1b-review-business-identity-fix-1-report.md](task-3c1b-review-business-identity-fix-1-report.md). No full suite was run.
