@@ -1,6 +1,6 @@
 # Task2C Reply creator implementation report
 
-Status: implemented and locally verified on the unpublished Task/Run Phase2 worktree. Commit: pending.
+Status: implemented and locally verified on the unpublished Task/Run Phase2 worktree. Implementation commit: `864459462` (`Convert reply task creator to native Task owners`).
 
 ## Converted closure
 
