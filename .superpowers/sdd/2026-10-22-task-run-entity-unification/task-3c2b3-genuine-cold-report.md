@@ -39,4 +39,4 @@ The second cycle starts from the first cycle's fresh-forward database, rather th
 
 ## Commit
 
-Implementation, validation documentation, this report, and this worktree's claim row were first committed as `338466749` and `0e801238e`; strict typed-row and independently derived allocator evidence is finalized in `483eabcd2` (`Strengthen Task3C2B3 cold cycle evidence`). The unrelated dirty C2A report was excluded and remains untouched.
+Implementation and validation evidence were committed as `338466749` and `0e801238e`; strict typed-row and independently derived allocator evidence was finalized in `483eabcd2` (`Strengthen Task3C2B3 cold cycle evidence`), with the final report and claim release in `ccbde6e85` (`Record Task3C2B3 strict acceptance evidence`). The unrelated dirty C2A report was excluded and remains untouched.
