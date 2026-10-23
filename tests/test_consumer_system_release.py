@@ -173,8 +173,9 @@ def test_repository_consumer_release_manifest_includes_current_attendance_review
     entry = next(item for item in manifest["files"] if item["source"] == source)
 
     assert entry["target"] == "skills/stardust-oa-attendance-travel-review/SKILL.md"
-    assert entry["old_sha256"] == "131758f4bbf65a1ee839a165b9ffb128e29f10e59be70c81248b9c4d9c0f2672"
+    assert entry["old_sha256"] == "f19093c34db7698577962a8c177836bf74e368f3e66655630d20f503ff5763c9"
     assert entry["new_sha256"] == _digest((root / source).read_bytes())
+    assert entry["old_sha256"] == entry["new_sha256"]
 
 
 @pytest.mark.parametrize("script", ("report_contract.py", "validate_run.py"))
