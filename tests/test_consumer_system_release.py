@@ -114,6 +114,7 @@ def test_okr_release_baseline_matches_already_installed_skill():
     source_digest = _digest((root / entry["source"]).read_bytes())
     assert entry["new_sha256"] == source_digest
     assert entry["old_managed_sha256"] == "038973933c0e8ff70f9c87b2912107a5d3ae0efcb53aeaf308e9bd3f091c01b9"
+    assert entry["old_sha256"] == entry["old_managed_sha256"]
 
 
 def test_finance_rule_card_counts_only_valid_applicant_resolvable_returns():
