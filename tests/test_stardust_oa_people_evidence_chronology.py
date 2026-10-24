@@ -34,8 +34,8 @@ def test_return_threshold_reconciles_every_dws_redirect_to_effective_rounds() ->
     text = GENERIC_SKILL.read_text(encoding="utf-8")
 
     assert "先按来源时间顺序列出该流程的全部 DWS `REDIRECT_PROCESS` 记录" in text
-    assert "不能因本地没有执行回执就从 DWS 流水中省略一次已核实的退回" in text
-    assert "每条不计入的退回都要写明对应记录及不计数的证据理由" in text
+    assert "本地状态为 `skipped` 或 `uncertain` 本身不能抹去完整 DWS 流水中已核实的退回" in text
+    assert "逐条列出每次不计数的退回时，必须写明对应记录和具体证据理由" in text
     assert "总退回条数与有效轮数不同时，明确解释差异" in text
 
 

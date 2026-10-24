@@ -94,7 +94,7 @@
     {
       "source": "ci/shared-skills/stardust-oa-people-review/SKILL.md",
       "target": "skills/stardust-oa-people-review/SKILL.md",
-      "old_sha256": "4eb05afec2760acff5b4993fd1eb0f9960de2ef202995600316f4773331adbd4",
+      "old_sha256": "69678b983cb12ef002eb3702db716be5526708a1fe5ff46aaa8c62467016ee81",
       "new_sha256": "69678b983cb12ef002eb3702db716be5526708a1fe5ff46aaa8c62467016ee81"
     },
     {
