@@ -207,7 +207,28 @@ def _seed_all_ten(db):
     insert_business(db, "task", {"id": 3, "title": "Task", "stage": "candidate"})
     insert_business(db, "work_cluster", {"id": 4, "title": "Cluster"})
     insert_business(db, "task", {"id": 6, "title": "Second task", "stage": "candidate"})
-    insert_business(db, "work_project", {"id": 7, "title": "Work project"})
+    # This frozen source predates retirement of five legacy work_project
+    # fields. Seed the source payload directly while retaining current writer
+    # defaults for every field that still exists in the public Business API.
+    from app import business_storage
+    values = business_storage._complete_values(db, "work_project", {
+        "id": 7, "title": "Work project",
+    })
+    stored = business_storage._stored_values(db, "work_project", values)
+    payload = json.loads(stored["payload_json"])
+    for name, value in {
+        "priority": "none", "risk_level": "none", "needs_derek_attention": 0,
+        "next_follow_up_at": "", "follow_up_mode": "none",
+    }.items():
+        payload[name] = business_storage._encoded_native_sqlite_value(value)
+    stored["payload_json"] = json.dumps(
+        payload, ensure_ascii=False, allow_nan=False, separators=(",", ":"),
+    )
+    data = {"record_type": "work_project", "legacy_key": "7", **stored}
+    db.execute(
+        "insert into business(" + ",".join(data) + ") values(" +
+        ",".join("?" for _ in data) + ")", tuple(data.values()),
+    )
     insert_business_candidate(db, "attention_item", {
         "id": 5, "stable_key": "attention:5", "category": "watch", "title": "Attention",
         "why_attention": "why", "current_state": "open", "ceo_action": "act",
