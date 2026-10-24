@@ -68,7 +68,7 @@ from app import task_lifecycle_storage as task_claims
 from app.task8_storage import (
     register_task8_functions, task8_set_parts,
 )
-from app.task12_storage import insert_task12, task12_projection
+from app.task12_storage import task12_projection
 from app.action_feedback_definitions import feedback_projection
 from app.action_feedback_storage import (insert_feedback_action,
     upsert_feedback_event, insert_feedback_decision_items,
@@ -12483,35 +12483,48 @@ class AutoReplyStore(LogicalRunStoreMixin, ReviewedCandidateStoreMixin):
         if (evidence.get("audit_decision") != "approve"
             or evidence.get("audit_candidate_digest") != digest):
             return False
-        audit = db.execute(
-            f"select * from ({AGENT_RUN_SQL}) where id=?", (int(run_id),)
-        ).fetchone()
+        audit = db.execute("select * from runs where id=?", (int(run_id),)).fetchone()
         if (audit is None or audit["role"] != "audit"
             or audit["status"] != "completed"
-            or audit["reply_task_id"] != task["id"]
+            or audit["task_id"] != task["id"]
             or audit["execution_generation"] != delivery["execution_generation"]
             or audit["operation_id"] != f"wechat-delivery:{delivery['id']}"):
             return False
-        parent = db.execute(
-            f"select * from ({AGENT_RUN_SQL}) where id=?",
-            (audit["parent_agent_run_id"],),
-        ).fetchone()
+        parent = db.execute("select * from runs where id=?", (audit["parent_id"],)).fetchone()
         return bool(parent is not None and parent["role"] == "consumer"
                     and parent["status"] == "completed"
-                    and parent["reply_task_id"] == task["id"]
+                    and parent["task_id"] == task["id"]
                     and parent["execution_generation"] == delivery["execution_generation"])
+
+    @staticmethod
+    def _native_wechat_delivery(db, delivery_id: int):
+        return db.execute(
+            "select id,td_reply_task_id as reply_task_id,td_account_id as account_id,"
+            "td_target_type as target_type,td_target_id as target_id,"
+            "td_conversation_id as conversation_id,td_reply_text as reply_text,"
+            "td_action_started_at as action_started_at,td_execution_generation as execution_generation,"
+            "td_status as status,td_evidence_json as evidence_json,td_error as error,"
+            "td_pre_action_failure as pre_action_failure from actions "
+            "where id=? and record_type='wechat_deliveries'", (delivery_id,),
+        ).fetchone()
+
+    @staticmethod
+    def _native_wechat_task(db, task_id: int):
+        from app import task_entity_storage
+
+        task = task_entity_storage.get_task_with_inputs(db, task_id)
+        if task is None or task["kind"] != "reply" or task["current_input"] is None:
+            return None
+        current = {key: value for key, value in task["current_input"].items()
+                   if key not in {"id", "task_id"}}
+        return {**task, **current}
 
     def wechat_delivery_review_approved(self, delivery_id: int) -> bool:
         with self._connect() as db:
-            delivery = db.execute(
-                f"select * from ({WECHAT_DELIVERY_SQL}) where id=?", (delivery_id,)
-            ).fetchone()
+            delivery = self._native_wechat_delivery(db, delivery_id)
             if delivery is None:
                 return False
-            task = db.execute(
-                f"select * from ({REPLY_TASK_CURRENT_SQL}) where id=?",
-                (delivery["reply_task_id"],),
-            ).fetchone()
+            task = self._native_wechat_task(db, int(delivery["reply_task_id"]))
             return bool(task is not None
                         and task["execution_generation"] == delivery["execution_generation"]
                         and self._wechat_review_approved_in_connection(db, delivery, task))
@@ -12529,15 +12542,10 @@ class AutoReplyStore(LogicalRunStoreMixin, ReviewedCandidateStoreMixin):
             or WechatAuditDecision.model_validate_json(run.final_result_json) != result):
             raise ValueError("WeChat Audit native result is unavailable or different")
         with self._immediate_write_transaction() as db:
-            delivery = db.execute(
-                f"select * from ({WECHAT_DELIVERY_SQL}) where id=?", (delivery_id,)
-            ).fetchone()
+            delivery = self._native_wechat_delivery(db, delivery_id)
             if delivery is None:
                 raise ValueError("WeChat delivery does not exist")
-            task = db.execute(
-                f"select * from ({REPLY_TASK_CURRENT_SQL}) where id=?",
-                (delivery["reply_task_id"],),
-            ).fetchone()
+            task = self._native_wechat_task(db, int(delivery["reply_task_id"]))
             if (task is None or task["execution_generation"] != delivery["execution_generation"]
                 or delivery["status"] not in ("ready_to_send", "failed")
                 or run.reply_task_id != task["id"]
@@ -12545,11 +12553,11 @@ class AutoReplyStore(LogicalRunStoreMixin, ReviewedCandidateStoreMixin):
                 or run.operation_id != f"wechat-delivery:{delivery_id}"):
                 raise ValueError("WeChat review is not bound to the current delivery")
             parent = db.execute(
-                f"select * from ({AGENT_RUN_SQL}) where id=?",
+                "select * from runs where id=?",
                 (run.parent_agent_run_id,),
             ).fetchone()
             if (parent is None or parent["role"] != "consumer"
-                or parent["status"] != "completed" or parent["reply_task_id"] != task["id"]
+                or parent["status"] != "completed" or parent["task_id"] != task["id"]
                 or parent["execution_generation"] != delivery["execution_generation"]):
                 raise ValueError("WeChat Audit parent is not the completed Consumer")
             digest = wechat_audit_digest(wechat_audit_candidate(task, delivery))
@@ -12578,10 +12586,9 @@ class AutoReplyStore(LogicalRunStoreMixin, ReviewedCandidateStoreMixin):
                 update_sql={"updated_at": "current_timestamp"},
             )
             cursor = db.execute(
-                f"update actions set {assignments} "
-                "where record_type='wechat_deliveries' and cast(legacy_key as integer)=? "
-                "and td_status='ready_to_send'",
-                (*set_args, delivery_id),
+                f"update actions set {assignments} where id=? and record_type='wechat_deliveries' "
+                "and td_status='ready_to_send' and td_evidence_json is ?",
+                (*set_args, delivery_id, delivery["evidence_json"]),
             )
             if cursor.rowcount != 1:
                 raise AgentRunLeaseLostError("WeChat delivery review lost")
@@ -15794,121 +15801,145 @@ class AutoReplyStore(LogicalRunStoreMixin, ReviewedCandidateStoreMixin):
         error: str = "",
         channel: str = "dingtalk",
     ) -> int:
-        with self._agent_run_write_transaction(None) as (db, (_, now_text)):
-            target = db.execute(
-                f"""
-                select *
-                from ({REPLY_TASK_CURRENT_SQL}) as reply_tasks
-                where channel=?
-                  and conversation_id=?
-                  and single_chat=1
-                  and status='pending'
-                  and attempts=0
-                  and trigger_create_time <= ?
-                order by trigger_create_time desc, id desc
-                limit 1
-                """,
+        from app import task_entity_storage
+
+        with self._immediate_write_transaction() as db:
+            target_row = db.execute(
+                "select tasks.id from tasks join task_inputs on task_inputs.id=tasks.current_input_id "
+                "and task_inputs.task_id=tasks.id where tasks.kind='reply' and tasks.status='pending' "
+                "and tasks.attempts=0 and task_inputs.channel=? and task_inputs.conversation_id=? "
+                "and task_inputs.single_chat=1 and task_inputs.trigger_create_time<=? "
+                "order by task_inputs.trigger_create_time desc,tasks.id desc limit 1",
                 (channel, conversation_id, trigger_create_time),
             ).fetchone()
-            if target is None:
+            if target_row is None:
                 return 0
+            target = task_entity_storage.get_task_with_inputs(db, int(target_row["id"]))
+            if target is None or target["current_input"] is None:
+                return 0
+            current_input = target["current_input"]
             task_id = int(target["id"])
             current_generation = str(target["execution_generation"])
             unchanged = all(
-                str(target[field]) == value
+                str(current_input[field]) == value
                 for field, value in (
                     ("trigger_message_id", trigger_message_id),
                     ("trigger_create_time", trigger_create_time),
                     ("trigger_sender", trigger_sender),
                     ("trigger_text", trigger_text),
                     ("trigger_message_json", trigger_message_json),
-                    ("available_at", available_at),
-                    ("error", error),
                 )
-            )
+            ) and str(target["available_at"]) == available_at and str(target["error"]) == error
             if unchanged:
                 return 0
-            self._supersede_running_agent_runs(
-                db,
-                task_id,
-                current_generation,
-                now_text=now_text,
-            )
+            from app import run_entity_storage
+
+            superseded_at = db.execute("select current_timestamp").fetchone()[0]
+            running_runs = db.execute(
+                "select id,status from runs where task_id=? and execution_generation=? and status='running'",
+                (task_id, current_generation),
+            ).fetchall()
+            for run in running_runs:
+                run_entity_storage.update_run_cas(
+                    db, run_id=int(run["id"]), expected={"status": "running"},
+                    changes={"status": "failed",
+                             "structured_error_json": json.dumps(
+                                 {"code": "superseded_by_new_generation", "retryable": False},
+                                 separators=(",", ":")),
+                             "lease_owner": "", "lease_expires_at": "",
+                             "completed_at": superseded_at, "updated_at": superseded_at},
+                )
             execution_generation = uuid4().hex
-            cursor = db.execute(
-                f"""
-                update tasks
-                set {task8_set_parts('reply_tasks', {}, update_sql={'trigger_message_id': '?', 'trigger_create_time': '?', 'trigger_sender': '?', 'execution_generation': '?', 'available_at': '?', 'error': '?', 'updated_at': '?'}, payload_source='tasks.payload_json').sql}  where record_type='reply_tasks' and id=?
-                  and {task20_column('reply_tasks', 'execution_generation')}=?
-                """,
-                (
-                    trigger_message_id,
-                    trigger_create_time,
-                    trigger_sender,
-                    execution_generation,
-                    available_at,
-                    error,
-                    now_text,
-                    task_id,
-                    current_generation,
-                ),
+            now_text = db.execute("select current_timestamp").fetchone()[0]
+            updated = task_entity_storage.update_task_cas(
+                db, task_id=task_id,
+                expected={"status": "pending", "attempts": 0,
+                          "execution_generation": current_generation,
+                          "current_input_id": int(current_input["id"])},
+                changes={"execution_generation": execution_generation,
+                         "available_at": available_at, "error": error,
+                         "updated_at": now_text},
             )
+            if updated is None:
+                return 0
             duplicate_rows = db.execute(
-                f"""
-                select id from ({REPLY_TASK_SQL})
-                where channel=?
-                  and conversation_id=?
-                  and single_chat=1
-                  and status='pending'
-                  and attempts=0
-                  and id != ?
-                """,
+                "select tasks.id from tasks join task_inputs on task_inputs.id=tasks.current_input_id "
+                "and task_inputs.task_id=tasks.id where tasks.kind='reply' and tasks.status='pending' "
+                "and tasks.attempts=0 and task_inputs.channel=? and task_inputs.conversation_id=? "
+                "and task_inputs.single_chat=1 and tasks.id<>?",
                 (channel, conversation_id, task_id),
             ).fetchall()
             duplicate_ids = [int(row["id"]) for row in duplicate_rows]
-            if duplicate_ids:
-                placeholders = ",".join("?" for _ in duplicate_ids)
-                db.execute(
-                    f"""update tasks set {task8_set_parts('reply_task_inputs', {}, update_sql={}, structural_sql={'parent_id': '?'}, payload_source='tasks.payload_json').sql}  where record_type='reply_task_inputs' and parent_id in ({placeholders})""",
-                    (task_id, *duplicate_ids),
-                )
-                db.execute(
-                    f"update tasks set parent_id=? where record_type='business_object_tasks' and parent_id in ({placeholders})",
-                    (task_id, *duplicate_ids),
-                )
-            target_key = str(target["business_object_key"] or "").strip()
+            for duplicate_id in duplicate_ids:
+                # Retained TaskInput identities and all keys are reassigned before
+                # the duplicate Task is removed; native FKs reject unrepresentable
+                # references and the enclosing transaction rolls back.
+                db.execute("update task_inputs set task_id=? where task_id=?", (task_id, duplicate_id))
+                for key in task_entity_storage.list_task_business_keys(db, duplicate_id):
+                    exists = db.execute(
+                        "select 1 from task_business_keys where task_id=? and business_key=?",
+                        (task_id, key["business_key"]),
+                    ).fetchone()
+                    if exists:
+                        db.execute("delete from task_business_keys where id=?", (key["id"],))
+                    else:
+                        db.execute("update task_business_keys set task_id=? where id=?",
+                                   (task_id, key["id"]))
+            target_key = str(current_input["business_object_key"] or "").strip()
             if not target_key:
                 target_key = reply_business_object_key(
                     channel=channel,
                     conversation_id=conversation_id,
-                    trigger_message_id=str(target["trigger_message_id"]),
+                    trigger_message_id=str(current_input["trigger_message_id"]),
                 )
-                db.execute(
-                    f"""update tasks set {task8_set_parts('reply_tasks', {}, update_sql={'business_object_key': '?'}, payload_source='tasks.payload_json').sql}  where record_type='reply_tasks' and id=?""",
-                    (target_key, task_id),
-                )
-            parent = dict(db.execute(f'select * from ({REPLY_TASK_SQL}) where id=?', (task_id,)).fetchone())
-            parent.update(trigger_text=trigger_text, trigger_message_json=trigger_message_json)
-            input_id = self._append_reply_input_snapshot(db, task_id, parent, revision_key=f"merge:{execution_generation}")
-            db.execute(f"""update tasks set {task8_set_parts('reply_tasks', {}, update_sql={}, structural_sql={'current_input_id': "(select id from tasks where record_type='reply_task_inputs' and cast(legacy_key as integer)=?)"}, payload_source='tasks.payload_json').sql}  where record_type='reply_tasks' and id=?""", (input_id, task_id))
-            insert_task12(db, 'business_object_tasks', {'business_object_key': reply_business_object_key(channel=channel, conversation_id=conversation_id, trigger_message_id=trigger_message_id), 'reply_task_id': task_id}, ignore=True)
-            db.execute(
-                f"""
-                delete from tasks
-                where record_type='reply_tasks' and {task20_column('reply_tasks', 'channel')}=?
-                  and {task20_column('reply_tasks', 'conversation_id')}=?
-                  and {task20_column('reply_tasks', 'single_chat')}=1
-                  and {task20_column('reply_tasks', 'status')}='pending'
-                  and {task20_column('reply_tasks', 'attempts')}=0
-                  and id != ?
-                """,
-                (channel, conversation_id, task_id),
+            now_text = db.execute("select current_timestamp").fetchone()[0]
+            for business_key in (
+                target_key,
+                reply_business_object_key(
+                    channel=channel, conversation_id=conversation_id,
+                    trigger_message_id=trigger_message_id,
+                ),
+            ):
+                if db.execute(
+                    "select 1 from task_business_keys where task_id=? and business_key=?",
+                    (task_id, business_key),
+                ).fetchone() is None:
+                    task_entity_storage.associate_business_key(
+                        db, task_id=task_id, business_key=business_key,
+                        created_at=now_text, updated_at=now_text,
+                    )
+            merged_input, inserted = task_entity_storage.append_task_input(
+                db, task_id=task_id, values={
+                    "channel": channel, "conversation_id": conversation_id,
+                    "conversation_title": current_input["conversation_title"],
+                    "single_chat": 1, "trigger_message_id": trigger_message_id,
+                    "trigger_create_time": trigger_create_time,
+                    "trigger_sender": trigger_sender, "trigger_text": trigger_text,
+                    "trigger_message_json": trigger_message_json,
+                    "oa_url": current_input["oa_url"], "business_object_key": target_key,
+                    "input_revision_key": f"merge:{execution_generation}",
+                    "created_at": now_text, "input_provenance_json": "{}",
+                    "input_compacted": 0,
+                },
             )
-            db.execute(
-                f"""update tasks set {task8_set_parts('reply_tasks', {}, update_sql={'input_version': f"""(select count(*) from ({REPLY_TASK_INPUT_SQL}) where reply_task_id=?)"""}, payload_source='tasks.payload_json').sql}  where record_type='reply_tasks' and id=?""",
-                (task_id, task_id),
+            if not inserted:
+                raise RuntimeError("merged reply input was not persisted")
+            advanced = task_entity_storage.bind_current_input(
+                db, task_id=task_id, input_id=int(merged_input["id"]),
+                expected_input_version=int(target["input_version"]),
+                input_version=int(target["input_version"]) + 1,
             )
-            return cursor.rowcount
+            if advanced is None:
+                raise RuntimeError("merged reply input lost its Task owner")
+            # Preserve the explicit source runtime count assignment after moving
+            # duplicate inputs and appending this merge snapshot.
+            new_version = int(db.execute(
+                "select count(*) from task_inputs where task_id=?", (task_id,)
+            ).fetchone()[0])
+            db.execute("update tasks set input_version=? where id=?", (new_version, task_id))
+            for duplicate_id in duplicate_ids:
+                db.execute("delete from tasks where id=? and kind='reply'", (duplicate_id,))
+            return 1
 
     def reset_codex_sessions(self) -> int:
         with self._connect() as db:
@@ -15956,24 +15987,27 @@ class AutoReplyStore(LogicalRunStoreMixin, ReviewedCandidateStoreMixin):
         proposal_revision: int,
         turn_attempt: int,
     ) -> int:
+        from app import run_entity_storage
+
         role = AgentRole(role)
-        with self._connect() as db:
-            cursor = db.execute(
-                """
-                update runs as agent_runs
-                set session_id=''
-                where agent_runs.record_type='agent_runs' and agent_runs.source_type is null and task_id=? and execution_generation=? and role=?
-                  and proposal_revision=? and turn_attempt=?
-                """,
-                (
-                    reply_task_id,
-                    execution_generation,
-                    role.value,
-                    proposal_revision,
-                    turn_attempt,
-                ),
-            )
-            return cursor.rowcount
+        with self._immediate_write_transaction() as db:
+            rows = db.execute(
+                "select runs.id,runs.session_id from runs join tasks on tasks.id=runs.task_id "
+                "and tasks.kind='reply' where runs.task_id=? and runs.execution_generation=? "
+                "and runs.role=? and runs.proposal_revision=? and runs.turn_attempt=?",
+                (reply_task_id, execution_generation, role.value,
+                 proposal_revision, turn_attempt),
+            ).fetchall()
+            changed = 0
+            for row in rows:
+                if row["session_id"] == "":
+                    continue
+                if run_entity_storage.update_run_cas(
+                    db, run_id=int(row["id"]), expected={"session_id": row["session_id"]},
+                    changes={"session_id": ""},
+                ) is not None:
+                    changed += 1
+            return changed
 
     def list_codex_conversations(self) -> list[ConversationRecord]:
         projection = "(" + state_projection("conversations") + ")"

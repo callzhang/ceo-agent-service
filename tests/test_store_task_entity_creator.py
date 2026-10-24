@@ -6,6 +6,7 @@ import sqlite3
 
 import pytest
 
+from app.business_identity import reply_business_object_key
 from app.store import (
     AutoReplyStore,
     AgentRunLeaseLostError,
@@ -15,7 +16,7 @@ from app.store import (
     ReplyTaskSpec,
 )
 from app import task_entity_storage
-from app.action_storage import insert_action, insert_task_delivery_action
+from app.action_storage import insert_action, insert_task_delivery_action, task_delivery_set_parts
 from app.action_entity_storage import append_action_receipt, create_action, record_action_result
 from app.action_feedback_storage import (
     insert_feedback_action,
@@ -121,6 +122,242 @@ def test_reply_creator_uses_native_owners_and_returns_same_task_for_message_dedu
         assert parameters["manual_rerun_attempt_id"] == 17
         assert db.execute("select count(*) from task_inputs where task_id=?", (first.id,)).fetchone()[0] == 1
         assert db.execute("select count(*) from task_business_keys where task_id=?", (first.id,)).fetchone()[0] == 1
+
+
+def test_pending_single_chat_merge_moves_native_inputs_and_keys_before_retiring_duplicates(tmp_path):
+    store = _target_store(tmp_path / "single-chat-merge.sqlite3")
+    first = store.ensure_reply_task(**_creator_kwargs(_spec(
+        "older", single_chat=True, trigger_create_time="2026-10-22T10:00:00Z",
+        business_object_key="message:older",
+    )))
+    second = store.ensure_reply_task(**_creator_kwargs(_spec(
+        "newer", single_chat=True, trigger_create_time="2026-10-22T10:01:00Z",
+        business_object_key="message:newer",
+    )))
+    with store._immediate_write_transaction() as db:
+        db.execute("update tasks set status='pending' where id in (?,?)", (first.id, second.id))
+        task_entity_storage.associate_business_key(
+            db, task_id=second.id, business_key="message:newer-alias",
+        )
+        target_input = task_entity_storage.get_task_with_inputs(db, second.id)["current_input"]
+        task_entity_storage.bind_claimed_input(
+            db, task_id=second.id, input_id=int(target_input["id"]),
+            claimed_input_version=1,
+        )
+        moved_input_ids = [int(row[0]) for row in db.execute(
+            "select id from task_inputs where task_id in (?,?) order by id", (first.id, second.id),
+        )]
+        moved_key_ids = [int(row[0]) for row in db.execute(
+            "select id from task_business_keys where task_id in (?,?) order by id", (first.id, second.id),
+        )]
+
+    assert store.replace_pending_single_chat_reply_task_trigger(
+        conversation_id="conversation", trigger_message_id="incoming",
+        trigger_create_time="2026-10-22T10:02:00Z", trigger_sender="sender",
+        trigger_text="incoming body", trigger_message_json='{"id":"incoming"}',
+    ) == 1
+
+    with store._connect() as db:
+        assert task_entity_storage.get_task(db, first.id) is None
+        owner = task_entity_storage.get_task_with_inputs(db, second.id)
+        assert owner["status"] == "pending"
+        assert owner["execution_generation"] != second.execution_generation
+        assert owner["current_input"]["trigger_message_id"] == "incoming"
+        assert owner["input_version"] == 3
+        assert owner["claimed_input_id"] == moved_input_ids[-1]
+        assert owner["claimed_input_version"] == 1
+        assert [int(row[0]) for row in db.execute(
+            "select id from task_inputs where task_id=? and id<>? order by id",
+            (second.id, owner["current_input_id"]),
+        )] == moved_input_ids
+        assert set(moved_key_ids).issubset({int(row[0]) for row in db.execute(
+            "select id from task_business_keys where task_id=?", (second.id,),
+        )})
+        assert db.execute(
+            "select count(*) from task_business_keys where task_id=? and business_key='message:older'",
+            (second.id,),
+        ).fetchone()[0] == 1
+        assert db.execute(
+            "select count(*) from task_business_keys where task_id=? and business_key=?",
+            (second.id, reply_business_object_key(
+                channel="dingtalk", conversation_id="conversation", trigger_message_id="incoming",
+            )),
+        ).fetchone()[0] == 1
+
+
+def test_clear_agent_run_session_uses_native_run_identity(tmp_path):
+    from app import run_entity_storage
+    from app.store import AgentRole
+
+    store = _target_store(tmp_path / "clear-run-session.sqlite3")
+    task = store.ensure_reply_task(**_creator_kwargs(_spec("clear-session")))
+    with store._immediate_write_transaction() as db:
+        matching = run_entity_storage.create_run(db, values={
+            "task_id": task.id, "execution_generation": task.execution_generation,
+            "role": "consumer", "proposal_revision": 0, "turn_attempt": 0,
+            "operation_id": "matching", "status": "completed", "session_id": "session-a",
+            "transcript_start": 0, "transcript_end": 0, "structured_error_json": "{}",
+            "error": "", "lease_owner": "", "lease_expires_at": "",
+            "started_at": "start", "completed_at": "done", "updated_at": "done",
+        })
+        other = run_entity_storage.create_run(db, values={
+            "task_id": task.id, "execution_generation": "old-generation",
+            "role": "consumer", "proposal_revision": 0, "turn_attempt": 0,
+            "operation_id": "other", "status": "completed", "session_id": "session-b",
+            "transcript_start": 0, "transcript_end": 0, "structured_error_json": "{}",
+            "error": "", "lease_owner": "", "lease_expires_at": "",
+            "started_at": "start", "completed_at": "done", "updated_at": "done",
+        })
+
+    assert store.clear_agent_run_session(
+        task.id, task.execution_generation, role=AgentRole.CONSUMER,
+        proposal_revision=0, turn_attempt=0,
+    ) == 1
+    with store._connect() as db:
+        assert run_entity_storage.get_run(db, int(matching["id"]))["session_id"] == ""
+        assert run_entity_storage.get_run(db, int(other["id"]))["session_id"] == "session-b"
+
+
+def test_pending_single_chat_merge_rolls_back_when_duplicate_task_has_retained_run(tmp_path):
+    from app import run_entity_storage
+
+    store = _target_store(tmp_path / "single-chat-merge-rollback.sqlite3")
+    duplicate = store.ensure_reply_task(**_creator_kwargs(_spec(
+        "older", single_chat=True, trigger_create_time="2026-10-22T10:00:00Z",
+        business_object_key="message:older",
+    )))
+    target = store.ensure_reply_task(**_creator_kwargs(_spec(
+        "newer", single_chat=True, trigger_create_time="2026-10-22T10:01:00Z",
+        business_object_key="message:newer",
+    )))
+    with store._immediate_write_transaction() as db:
+        db.execute("update tasks set status='pending' where id in (?,?)", (duplicate.id, target.id))
+        run_entity_storage.create_run(db, values={
+            "task_id": duplicate.id, "execution_generation": duplicate.execution_generation,
+            "role": "consumer", "proposal_revision": 0, "turn_attempt": 0,
+            "operation_id": "retained-owner", "status": "completed", "session_id": "",
+            "transcript_start": 0, "transcript_end": 0, "structured_error_json": "{}",
+            "error": "", "lease_owner": "", "lease_expires_at": "",
+            "started_at": "start", "completed_at": "done", "updated_at": "done",
+        })
+        before = {
+            "tasks": [tuple(row) for row in db.execute(
+                "select id,status,execution_generation,current_input_id,input_version from tasks order by id",
+            )],
+            "inputs": [tuple(row) for row in db.execute(
+                "select id,task_id,trigger_message_id,input_revision_key from task_inputs order by id",
+            )],
+            "keys": [tuple(row) for row in db.execute(
+                "select id,task_id,business_key from task_business_keys order by id",
+            )],
+            "runs": [tuple(row) for row in db.execute(
+                "select id,task_id,execution_generation,status,structured_error_json from runs order by id",
+            )],
+        }
+
+    with pytest.raises(sqlite3.IntegrityError):
+        store.replace_pending_single_chat_reply_task_trigger(
+            conversation_id="conversation", trigger_message_id="incoming",
+            trigger_create_time="2026-10-22T10:02:00Z", trigger_sender="sender",
+            trigger_text="incoming body", trigger_message_json='{"id":"incoming"}',
+        )
+
+    with store._connect() as db:
+        after = {
+            "tasks": [tuple(row) for row in db.execute(
+                "select id,status,execution_generation,current_input_id,input_version from tasks order by id",
+            )],
+            "inputs": [tuple(row) for row in db.execute(
+                "select id,task_id,trigger_message_id,input_revision_key from task_inputs order by id",
+            )],
+            "keys": [tuple(row) for row in db.execute(
+                "select id,task_id,business_key from task_business_keys order by id",
+            )],
+            "runs": [tuple(row) for row in db.execute(
+                "select id,task_id,execution_generation,status,structured_error_json from runs order by id",
+            )],
+        }
+        assert after == before
+
+
+def test_native_wechat_task_reader_keeps_task_identity_separate_from_current_input(tmp_path):
+    store = _target_store(tmp_path / "native-wechat-task-reader.sqlite3")
+    preceding = store.ensure_reply_task(**_creator_kwargs(_spec("preceding")))
+    with store._immediate_write_transaction() as db:
+        prior_input = task_entity_storage.get_task_with_inputs(db, preceding.id)["current_input"]
+        task_entity_storage.append_task_input(
+            db, task_id=preceding.id,
+            values={**{key: value for key, value in prior_input.items()
+                       if key not in {"id", "task_id"}}, "input_revision_key": "extra"},
+        )
+    task = store.ensure_reply_task(**_creator_kwargs(_spec("wechat", channel="wechat")))
+    with store._connect() as db:
+        native = store._native_wechat_task(db, task.id)
+        assert native["id"] == task.id
+        assert native["id"] != native["current_input"]["id"]
+        assert native["trigger_message_id"] == "wechat"
+
+
+def test_native_wechat_review_reader_binds_audit_and_parent_runs_to_task(tmp_path):
+    from app import run_entity_storage
+    from app.action_storage import insert_task_delivery_action
+    from app.store import AutoReplyStore
+    from app.wechat.audit import wechat_audit_candidate, wechat_audit_digest
+
+    store = _target_store(tmp_path / "native-wechat-review.sqlite3")
+    store.ensure_reply_task(**_creator_kwargs(_spec("wechat-review", channel="wechat")))
+    with store._immediate_write_transaction() as db:
+        task = task_entity_storage.get_task_with_inputs(db, 1)
+        consumer = run_entity_storage.create_run(db, values={
+            "task_id": 1, "execution_generation": task["execution_generation"],
+            "role": "consumer", "proposal_revision": 0, "turn_attempt": 0,
+            "operation_id": "consumer", "status": "completed", "session_id": "",
+            "transcript_start": 0, "transcript_end": 0, "structured_error_json": "{}",
+            "error": "", "lease_owner": "", "lease_expires_at": "",
+            "started_at": "start", "completed_at": "done", "updated_at": "done",
+        })
+        insert_task_delivery_action(db, "wechat_deliveries", {
+            "reply_task_id": 1, "account_id": "account", "target_type": "direct",
+            "target_id": "conversation", "conversation_id": "conversation",
+            "reply_text": "prepared reply", "execution_generation": task["execution_generation"],
+            "status": "ready_to_send", "action_started_at": "", "pre_action_failure": 0,
+            "evidence_json": "{}", "error": "",
+        })
+        delivery_id = int(db.execute(
+            "select id from actions where record_type='wechat_deliveries' "
+            "and td_reply_task_id=? and td_execution_generation=?",
+            (1, task["execution_generation"]),
+        ).fetchone()[0])
+        audit = run_entity_storage.create_run(db, values={
+            "task_id": 1, "parent_id": int(consumer["id"]),
+            "execution_generation": task["execution_generation"],
+            "role": "audit", "proposal_revision": 0, "turn_attempt": 0,
+            "operation_id": f"wechat-delivery:{delivery_id}", "status": "completed",
+            "session_id": "", "transcript_start": 0, "transcript_end": 0,
+            "structured_error_json": "{}", "error": "", "lease_owner": "",
+            "lease_expires_at": "", "started_at": "start", "completed_at": "done",
+            "updated_at": "done",
+        })
+        task = {**task, **{key: value for key, value in task["current_input"].items()
+                           if key not in {"id", "task_id"}}}
+        delivery = AutoReplyStore._native_wechat_delivery(db, delivery_id)
+        evidence = {
+            "audit_run_id": str(audit["id"]),
+            "audit_candidate_digest": wechat_audit_digest(wechat_audit_candidate(task, delivery)),
+            "audit_decision": "approve",
+        }
+        assignments, arguments = task_delivery_set_parts("wechat_deliveries", {
+            "evidence_json": json.dumps(evidence, separators=(",", ":")),
+        })
+        db.execute(f"update actions set {assignments} where id=?", (*arguments, delivery_id))
+
+    assert store.wechat_delivery_review_approved(delivery_id) is True
+    with store._immediate_write_transaction() as db:
+        run_entity_storage.update_run_cas(
+            db, run_id=int(audit["id"]), expected={"parent_id": int(consumer["id"])},
+            changes={"parent_id": None},
+        )
+    assert store.wechat_delivery_review_approved(delivery_id) is False
 
 
 def test_native_settled_reply_compaction_retires_task_input_bodies(tmp_path):

@@ -447,6 +447,108 @@ def test_reply_provenance_task_and_input_references_survive_two_portable_cycles(
                 "and adapter_name='reply' and source_id=?", (str(existing_task_native),),
             ).fetchone() is not None
             if cycle == 0:
+                from contextlib import contextmanager
+                from app import task_entity_storage
+
+                existing = task_entity_storage.get_task_with_inputs(db, existing_task_native)
+                current = existing["current_input"]
+                assert current is not None
+                assert current["channel"] == "dingtalk" and current["single_chat"] == 1
+                assert task_entity_storage.update_task_cas(
+                    db, task_id=existing_task_native,
+                    expected={"status": existing["status"]},
+                    changes={"status": "pending", "attempts": 0,
+                             "available_at": "", "error": ""},
+                ) is not None
+                previous_count = db.execute(
+                    "select count(*) from task_inputs where task_id=?", (existing_task_native,),
+                ).fetchone()[0]
+
+                @contextmanager
+                def migration_db_transaction():
+                    yield db
+
+                merge_store = AutoReplyStore.__new__(AutoReplyStore)
+                merge_store._immediate_write_transaction = migration_db_transaction
+                assert merge_store.replace_pending_single_chat_reply_task_trigger(
+                    conversation_id=current["conversation_id"],
+                    trigger_message_id="cycle-merge-input",
+                    trigger_create_time=current["trigger_create_time"],
+                    trigger_sender=current["trigger_sender"],
+                    trigger_text="cycle merge body",
+                    trigger_message_json='{"id":"cycle-merge-input"}',
+                ) == 1
+                merged = task_entity_storage.get_task_with_inputs(db, existing_task_native)
+                assert merged["current_input"]["trigger_message_id"] == "cycle-merge-input"
+                assert merged["input_version"] == previous_count + 1
+
+                def add_merge_task(message_id, created_at, business_key):
+                    owner = task_entity_storage.create_task(db, values={
+                        "kind": "reply", "status": "pending", "available_at": "",
+                        "attempts": 0, "error": "", "locked_at": None,
+                        "lease_owner": "", "lease_expires_at": "", "owner_pid": None,
+                        "generation": 0, "adapter_name": "reply",
+                        "execution_generation": f"merge-{message_id}",
+                        "input_version": 0, "claimed_input_version": 0,
+                        "created_at": created_at, "updated_at": created_at,
+                    }, parameters={"force_new_decision": False,
+                                   "manual_rerun_attempt_id": 0,
+                                   "manual_rerun_revision_key": "", "recovery_code": ""})
+                    item, inserted = task_entity_storage.append_task_input(
+                        db, task_id=int(owner["id"]), values={
+                            "channel": "dingtalk", "conversation_id": "portable-merge-chat",
+                            "conversation_title": "Portable Merge", "single_chat": 1,
+                            "trigger_message_id": message_id, "trigger_create_time": created_at,
+                            "trigger_sender": "sender", "trigger_text": f"body {message_id}",
+                            "trigger_message_json": json.dumps({"id": message_id}),
+                            "oa_url": "", "business_object_key": business_key,
+                            "input_revision_key": f"initial:{message_id}",
+                            "created_at": created_at, "input_provenance_json": "{}",
+                            "input_compacted": 0,
+                        })
+                    assert inserted
+                    assert task_entity_storage.bind_current_input(
+                        db, task_id=int(owner["id"]), input_id=int(item["id"]),
+                        expected_input_version=0, input_version=1,
+                    ) is not None
+                    task_entity_storage.associate_business_key(
+                        db, task_id=int(owner["id"]), business_key=business_key,
+                        created_at=created_at, updated_at=created_at,
+                    )
+                    return owner, item
+
+                duplicate, duplicate_input = add_merge_task(
+                    "portable-old", "2026-10-22T10:00:00Z", "message:portable-old",
+                )
+                survivor, survivor_input = add_merge_task(
+                    "portable-new", "2026-10-22T10:01:00Z", "message:portable-new",
+                )
+                task_entity_storage.associate_business_key(
+                    db, task_id=int(survivor["id"]), business_key="message:portable-alias",
+                    created_at="2026-10-22T10:01:00Z", updated_at="2026-10-22T10:01:00Z",
+                )
+                task_entity_storage.bind_claimed_input(
+                    db, task_id=int(survivor["id"]), input_id=int(survivor_input["id"]),
+                    claimed_input_version=1,
+                )
+                assert merge_store.replace_pending_single_chat_reply_task_trigger(
+                    conversation_id="portable-merge-chat", trigger_message_id="portable-incoming",
+                    trigger_create_time="2026-10-22T10:02:00Z", trigger_sender="sender",
+                    trigger_text="portable incoming", trigger_message_json='{"id":"portable-incoming"}',
+                ) == 1
+                portable = task_entity_storage.get_task_with_inputs(db, int(survivor["id"]))
+                assert task_entity_storage.get_task(db, int(duplicate["id"])) is None
+                assert portable["current_input"]["trigger_message_id"] == "portable-incoming"
+                assert portable["claimed_input_id"] == int(survivor_input["id"])
+                assert portable["input_version"] == 3
+                assert db.execute(
+                    "select task_id from task_inputs where id=?", (int(duplicate_input["id"]),),
+                ).fetchone()[0] == int(survivor["id"])
+                assert {row[0] for row in db.execute(
+                    "select business_key from task_business_keys where task_id=?",
+                    (int(survivor["id"]),),
+                )} >= {"message:portable-old", "message:portable-new", "message:portable-alias"}
+            if cycle == 0:
                 native_task = task_entity_storage.create_task(db, values={
                     "kind": "reply", "status": "done", "available_at": "",
                     "attempts": 0, "error": "", "locked_at": None,
