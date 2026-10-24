@@ -3,7 +3,7 @@ import json
 import sqlite3
 from datetime import datetime, timedelta
 
-from app.run_storage import insert_run
+from app.run_entity_storage import create_runtime_attempt
 from app import native_trajectory
 from app.store import AutoReplyStore
 from app.task_project_repair import build_repair_manifest
@@ -23,24 +23,23 @@ def _set_project_times(db_path, project_id, *, created_at):
 def _record_agent_value(db_path, project_id, *, title, created_at):
     store = AutoReplyStore(db_path)
     parent = store.enqueue_work_summary_input("local_file", f"repair:{project_id}:{created_at}", "{}")
-    run_id = store.create_logical_run("task_agent_runs", parent)
+    run_id = store.create_professional_run(parent)
     with sqlite3.connect(db_path) as db:
+        db.row_factory = sqlite3.Row
         db.execute("update runs set created_at=? where id=?", (created_at, run_id))
-        insert_run(
-            db, 'agent_runtime_attempts', {
-                'workload_kind': 'task',
-                'workload_key': str(run_id),
-                'attempt_number': 1,
-                'route_name': 'test',
-                'runtime_kind': 'codex_cli',
-                'credential_mode': 'local_oauth',
-                'model': 'test',
-                'session_id': 'native-task',
-                'status': 'completed',
-                'transcript_start': 1,
-                'transcript_end': 2,
-            },
-        )
+        create_runtime_attempt(db, values={
+            "parent_id": run_id, "workload_kind": "agent_run", "workload_key": str(run_id),
+            "attempt_number": 1, "route_name": "test", "runtime_kind": "codex_cli",
+            "credential_mode": "local_oauth", "model": "test", "session_mode": "fresh",
+            "source_session_id": "", "attempt_purpose": "normal",
+            "validation_retry_policy_id": "", "validation_result_schema_id": "",
+            "session_id": "native-task", "transcript_reference": "",
+            "transcript_start": 1, "transcript_end": 2, "status": "completed",
+            "failure_class": "", "failure_code": "", "failover_permitted": 0,
+            "lease_owner": "", "lease_expires_at": "", "first_effect_started_at": "",
+            "result_schema_id": "", "started_at": created_at, "finished_at": created_at,
+            "created_at": created_at, "updated_at": created_at,
+        })
 
 
 def test_manifest_plans_latest_traceable_value(tmp_path, monkeypatch):
