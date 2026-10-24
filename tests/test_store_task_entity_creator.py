@@ -355,6 +355,167 @@ def test_native_failed_run_does_not_accept_another_task_business_key(tmp_path):
         assert tuple(after) == tuple(original)
 
 
+def test_native_recorded_delivery_reconciliation_requires_current_input_receipt_key(tmp_path):
+    store = _target_store(tmp_path / "native-reply-recorded-delivery.sqlite3")
+    task = store.ensure_reply_task(**_creator_kwargs(_spec(
+        "recorded-delivery", business_key="business:current",
+    )))
+    with store._connect() as db:
+        db.execute("update tasks set status='failed',error='codex_result_invalid' where id=?", (task.id,))
+        task_entity_storage.associate_business_key(db, task_id=task.id, business_key="business:other")
+        _native_sent_action(
+            db, external_key="recorded:other", business_key="business:other",
+            channel=task.channel, conversation_id=task.conversation_id,
+            trigger_message_id=task.trigger_message_id,
+        )
+    assert store.reconcile_failed_reply_tasks_with_recorded_deliveries() == 0
+    with store._connect() as db:
+        assert task_entity_storage.get_task(db, task.id)["status"] == "failed"
+        _native_sent_action(
+            db, external_key="recorded:current", business_key="business:current",
+            channel=task.channel, conversation_id=task.conversation_id,
+            trigger_message_id=f"{task.trigger_message_id}:current",
+        )
+    assert store.reconcile_failed_reply_tasks_with_recorded_deliveries() == 1
+    with store._connect() as db:
+        assert task_entity_storage.get_task(db, task.id)["status"] == "done"
+
+
+def test_native_complete_reply_task_settles_task_owner_and_queues_memory_idempotently(tmp_path):
+    store = _target_store(tmp_path / "native-reply-complete.sqlite3")
+    task = store.ensure_reply_task(**_creator_kwargs(_spec("native-complete")))
+    with store._connect() as db:
+        db.execute("update tasks set status='processing',attempts=1,claimed_input_id=current_input_id,"
+                   "claimed_input_version=input_version where id=?", (task.id,))
+        db.execute(
+            "insert into runs(task_id,execution_generation,role,proposal_revision,turn_attempt,"
+            "operation_id,status,session_id,transcript_start,transcript_end,structured_error_json,"
+            "lease_owner,lease_expires_at,started_at,completed_at,updated_at) "
+            "values(?,?,'consumer',0,0,'','completed','session',0,0,'{}','','','','','')",
+            (task.id, task.execution_generation),
+        )
+    store.complete_reply_task(task.id, expected_execution_generation=task.execution_generation)
+    with store._immediate_write_transaction() as db:
+        store._enqueue_task_memory_write_in_connection(
+            db, task_id=task.id, execution_generation=task.execution_generation,
+        )
+    with store._connect() as db:
+        owner = task_entity_storage.get_task_with_inputs(db, task.id)
+        assert owner["status"] == "done"
+        assert owner["execution_generation"] == task.execution_generation
+        assert owner["attempts"] == 1
+        assert db.execute("select count(*) from actions where record_type='task_memory_write_events' "
+                          "and td_reply_task_id=? and td_execution_generation=?",
+                          (task.id, task.execution_generation)).fetchone()[0] == 1
+    with store._immediate_write_transaction() as db:
+        store._enqueue_task_memory_write_in_connection(
+            db, task_id=task.id, execution_generation=task.execution_generation,
+        )
+    with store._connect() as db:
+        assert db.execute("select count(*) from actions where record_type='task_memory_write_events' "
+                          "and td_reply_task_id=? and td_execution_generation=?",
+                          (task.id, task.execution_generation)).fetchone()[0] == 1
+
+
+def test_native_complete_reply_task_does_not_close_retryable_failed_current_run(tmp_path):
+    store = _target_store(tmp_path / "native-reply-complete-retry.sqlite3")
+    task = store.ensure_reply_task(**_creator_kwargs(_spec("native-complete-retry")))
+    failure = '{"code":"codex_provider_overloaded","retryable":true,"session_continuable":true}'
+    with store._connect() as db:
+        db.execute("update tasks set status='processing',attempts=1,claimed_input_id=current_input_id,"
+                   "claimed_input_version=input_version where id=?", (task.id,))
+        db.execute(
+            "insert into runs(task_id,execution_generation,role,proposal_revision,turn_attempt,"
+            "operation_id,status,session_id,transcript_start,transcript_end,structured_error_json,"
+            "lease_owner,lease_expires_at,started_at,completed_at,updated_at) "
+            "values(?,?,'audit',0,0,'','failed','session',0,0,?,'','','','','')",
+            (task.id, task.execution_generation, failure),
+        )
+    store.complete_reply_task(task.id, expected_execution_generation=task.execution_generation)
+    with store._connect() as db:
+        owner = task_entity_storage.get_task_with_inputs(db, task.id)
+        assert owner["status"] == "pending"
+        assert owner["execution_generation"] == task.execution_generation
+        assert owner["error"] == "codex_provider_overloaded"
+
+
+def test_native_terminal_no_action_reconciliation_requires_latest_native_run_code(tmp_path):
+    store = _target_store(tmp_path / "native-terminal-no-action.sqlite3")
+    task = store.ensure_reply_task(**_creator_kwargs(_spec("terminal-no-action")))
+    with store._connect() as db:
+        db.execute("update tasks set status='failed',error='codex_result_invalid' where id=?", (task.id,))
+        db.execute(
+            "insert into runs(task_id,execution_generation,role,proposal_revision,turn_attempt,"
+            "operation_id,status,session_id,transcript_start,transcript_end,structured_error_json,"
+            "lease_owner,lease_expires_at,started_at,completed_at,updated_at) "
+            "values(?,?,'consumer',0,0,'','failed','session',0,0,?,'','','','','')",
+            (task.id, task.execution_generation, '{"code":"provider_permanent_rejection"}'),
+        )
+    assert store.skip_failed_reply_tasks_with_terminal_no_action_run() == 0
+    with store._connect() as db:
+        assert task_entity_storage.get_task(db, task.id)["status"] == "failed"
+        db.execute(
+            "insert into runs(task_id,execution_generation,role,proposal_revision,turn_attempt,"
+            "operation_id,status,session_id,transcript_start,transcript_end,structured_error_json,"
+            "lease_owner,lease_expires_at,started_at,completed_at,updated_at) "
+            "values(?,?,'audit',0,0,'','failed','session',0,0,?,'','','','','')",
+            (task.id, task.execution_generation, '{"code":"task_already_completed"}'),
+        )
+    assert store.skip_failed_reply_tasks_with_terminal_no_action_run() == 1
+    with store._connect() as db:
+        owner = task_entity_storage.get_task_with_inputs(db, task.id)
+        assert owner["status"] == "skipped"
+        assert owner["error"] == "skipped_terminal_no_action:task_already_completed"
+
+
+def test_native_manual_rerun_rotates_task_and_claims_new_input_snapshot(tmp_path):
+    store = _target_store(tmp_path / "native-manual-rerun.sqlite3")
+    initial = _spec("native-manual-rerun")
+    task = store.ensure_reply_task(**_creator_kwargs(initial))
+    with store._immediate_write_transaction() as db:
+        rerun = store._enqueue_manual_rerun_reply_task_in_connection(
+            db, conversation_id="conversation", conversation_title="Conversation",
+            single_chat=False, trigger_message_id="native-manual-rerun",
+            trigger_create_time="2026-10-22T12:00:00Z", trigger_sender="sender",
+            trigger_text="revised source", trigger_message_json='{"id":"native-manual-rerun"}',
+            oa_url="", attempt_id=0, revision_key="source-revision-key", channel="dingtalk",
+        )
+    with store._connect() as db:
+        owner = task_entity_storage.get_task_with_inputs(db, task.id)
+        assert rerun.id == task.id
+        assert owner["execution_generation"] != task.execution_generation
+        assert owner["status"] == "pending"
+        assert owner["attempts"] == 0
+        assert owner["current_input"]["trigger_text"] == "revised source"
+        assert owner["input_version"] == 2
+        assert owner["claimed_input_id"] is None
+        assert owner["claimed_input_version"] == 0
+        assert db.execute("select count(*) from task_inputs where task_id=?", (task.id,)).fetchone()[0] == 2
+        assert db.execute("select count(*) from task_business_keys where task_id=?", (task.id,)).fetchone()[0] == 1
+
+
+def test_native_source_revision_rerun_is_generation_bound_and_idempotent(tmp_path):
+    store = _target_store(tmp_path / "native-source-revision-rerun.sqlite3")
+    task = store.ensure_reply_task(**_creator_kwargs(_spec("native-source-revision")))
+    with store._connect() as db:
+        db.execute("update tasks set status='failed',error='audit_revision_exhausted' where id=?", (task.id,))
+    assert store.requeue_failed_reply_task_for_source_revision(
+        task.id, expected_execution_generation=task.execution_generation,
+        source_revision_key="current-source-revision",
+    )
+    with store._connect() as db:
+        owner = task_entity_storage.get_task_with_inputs(db, task.id)
+        assert owner["status"] == "pending"
+        assert owner["execution_generation"] != task.execution_generation
+        assert owner["error"] == "automatic_source_revision_rerun"
+        assert owner["parameters"]["manual_rerun_revision_key"] == "current-source-revision"
+        assert owner["current_input"]["trigger_message_id"] == task.trigger_message_id
+    assert not store.requeue_failed_reply_task_for_source_revision(
+        task.id, expected_execution_generation=task.execution_generation,
+        source_revision_key="current-source-revision",
+    )
+
+
 @pytest.mark.parametrize(
     "blocker",
     ("newer_unclaimed_input", "running_run", "running_audit_run", "runtime_attempt", "wechat_sending",
