@@ -56,3 +56,9 @@ The historical full-predecessor parity fixture `tests/test_error_actions_native_
 ## Review and commit
 
 The first Unit B commit is `86ec6a7f937af54e180a07f242528436b0928d02`; the follow-up adds the required current-fact two-cycle proof and native stale-Run requeue, and repairs its newly exposed extra SQLite binding in the converted finalizer query. The parent performs independent full `BASE..HEAD` SPEC and QUALITY review.
+
+## Review fix 1 — canonical summary consistency
+
+The independent review found earlier summaries in `docs/architecture.md` and `docs/runtime-mechanism.md` still described Reply terminal settlement and touched lifecycle/query paths as source-projected and awaiting closure. Updated both summaries to match the current unactivated Task2D10C native terminal/receipt candidate. They explicitly keep `replace_pending_single_chat_reply_task_trigger`, shared History/Attention/WeChat and other Reply list/detail readers, global manifest availability, and public Email receipt reconciliation as open boundaries. No product code, tests, policy, activation, or release behavior changed.
+
+Checks: `git diff --check` — passed. `rg -n 'Reply terminal settlement／error reconciliation 和其余触达|terminal settlement／error reconciliation 与其余触达' docs/architecture.md docs/runtime-mechanism.md` — no matches (exit 1), confirming the two stale summary sentences are gone. `rg -n 'Task2D10C|replace_pending_single_chat_reply_task_trigger|公共 Email|unsubscribe receipt reconciliation' docs/architecture.md docs/runtime-mechanism.md` — both canonical docs show the native candidate and retain the pending merge and Email gates. Focused product tests were not rerun for this documentation-only correction; the previous final-tree Unit B checks remain as recorded above.

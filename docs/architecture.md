@@ -82,8 +82,13 @@ adapter 区分的被动历史。Reply 的 stale、无 Run 的 pre-Agent orphan�
 orphan Run 收尾也直接更新 Task／Run／RuntimeAttempt owner，服务失败记录追加到
 `run_failures`。五类 Task-backed adapter 的 State 引用只在显式 Task 转换边界通过类型化
 身份映射双向转换；逆向保留 State 行 ID 和未知历史，含当前 State 编辑的两轮往返回归
-已覆盖。Reply terminal settlement／error reconciliation 和其余触达的 Reply 生命周期／
-查询 API 仍使用来源投影，尚待后续闭合。
+已覆盖。Reply closure 的边界按当前候选范围区分：Task2D10C 已把触达的终态 settlement、
+error reconciliation、rerun、requeue 和相关读取改为 native Task／TaskInput／Run／
+RuntimeAttempt／adopted-result／Action／Receipt owner。候选仍未启用；
+`replace_pending_single_chat_reply_task_trigger` 的 Task 合并写入器和共享
+History／Attention／WeChat 及其他 Reply 列表／详情读取仍保留来源投影。公共 Email
+unsubscribe receipt reconciliation 仍受全局 manifest 可用性门槛约束。方法、验证和其余
+发布门槛见 `task-reply-terminal-closure-report.md`。
 `EmailStore._unsubscribe_cancellation_decision` 仍读取 channel=email 的
 reply／scheduled_execution State 历史；该 channel 对两者都不 eligible，
 这条既有取消前置事实不迁成 Task 租约，也不据 owner／expiry 改变取消判定。
