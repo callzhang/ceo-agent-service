@@ -268,7 +268,7 @@ class AgentTaskContext:
             ),
             "Original trigger\n" + _json(trigger),
             "Recent conversation context\n" + _json(messages),
-            "Service Consumer/Audit turns must use direct agent_cli MCP tools for DingTalk reads; never execute local dws commands through shell. Skill CLI examples are for interactive sessions only.\n"
+            "For service DingTalk reads, the Consumer should prefer declared agent_cli MCP read tools and may use local dws commands through shell for source reads when appropriate, including only the exact attachment-preview/read fallback documented by the selected OA Skill. Never use dws through shell to send DingTalk messages or email, or to approve, reject, return, or comment on OA; those effects must use the reviewed typed-action path. Audit must use declared read tools only and must not use shell or local dws commands.\n"
             "Raw material references and exact read commands\n" + _json(materials),
         ]
         if self.channel == "dingtalk":

@@ -51,8 +51,13 @@ def test_repository_consumer_release_manifest_tracks_oa_skill_digest():
     assert len(entry["old_sha256"]) == 64
     assert all(char in "0123456789abcdef" for char in entry["old_sha256"])
     assert entry["new_sha256"] == _digest((root / entry["source"]).read_bytes())
-    assert entry["old_sha256"] == entry["new_sha256"]
+    assert entry["new_sha256"] == "89532e6cfaea23e5acf8c1417a866e4a0d2edc35304d8070fdd65accf416f6f6"
     assert "old_managed_sha256" not in entry
+    skill = (root / entry["source"]).read_text(encoding="utf-8").lower()
+    assert "可按本 skill 写明的准确路径通过 shell 调用本机 `dws`" in skill
+    assert "不得通过 shell 用 `dws` 发送钉钉消息、发邮件" in skill
+    assert "audit 只能使用具名只读工具，不运行 shell 或本机 `dws`" in skill
+    assert "服务 consumer/audit 必须直接调用" not in skill
     audit_source = "app/defaults/audit_rules.md"
     audit_entry = next(item for item in manifest["files"] if item["source"] == audit_source)
     assert audit_entry["old_sha256"] == "5dcfd33f48d23268296da5d89346eaf3a76ffec665e5d9a353c33654a5de8237"
