@@ -1,0 +1,966 @@
+{
+  "created_on": "2026-10-17",
+  "data_class": "fully synthetic; no production records or Work Profile",
+  "route": "codex_oauth",
+  "model": "gpt-5.6-luna",
+  "reasoning_effort": "medium",
+  "tools": "local fake read-only MCP; no live business MCP or external action",
+  "schema": "trajectory_review.native.v2",
+  "purpose": "Matched anonymous Calendar Consumer cold/resume comparison of same-session timezone-conversion reuse, including a failed strict-input-match trial and a confirmed-fold reuse candidate.",
+  "comparison": {
+    "pre_session_reuse": "Existing within-turn result reuse wording only.",
+    "exact_input_reuse": "First candidate reused only when all three converter input fields were identical; it did not suppress a call when the updated source confirmed the UTC instant.",
+    "confirmed_fold_reuse": "Candidate reuses an exact previously returned UTC choice when the current source confirms it and target timezone matches; current message/calendar reads remain required.",
+    "changed_prompt_scope": "The same frozen Skill instruction only; synthetic facts and native route unchanged."
+  },
+  "arms": {
+    "pre_session_reuse": {
+      "model": "gpt-5.6-luna",
+      "reasoning_effort": "medium",
+      "fixture": "synthetic-only",
+      "work_profile": "omitted",
+      "live_business_mcp": false,
+      "calendar_skill_variant": "pre_session_reuse",
+      "arms": [
+        {
+          "role": "consumer",
+          "mode": "wire_only",
+          "candidate_sha256": null,
+          "turns": [
+            {
+              "stage": "cold",
+              "exit_code": 0,
+              "session_id": "01a14dc3-3737-7660-b951-c890174ea34a",
+              "valid_wire": true,
+              "result": {
+                "outcome": "no_action",
+                "summary": "已完成只读核对：会话中的旧提议已撤销；当前时间 2026-11-01 01:30（America/Los_Angeles）处于重复小时。对应 Europe/London 为：fold=0，2026-11-01 08:30（UTC）；fold=1，2026-11-01 09:30（UTC）。组织者尚未确认，且未发现与 17:00–18:00Z focus block 冲突。未发送消息、创建或修改日历。",
+                "proposal": null,
+                "decision_options": [],
+                "error": {
+                  "code": "",
+                  "retryable": false,
+                  "authorization_required": false,
+                  "stage": "",
+                  "source": "",
+                  "source_code": "",
+                  "session_continuable": false
+                },
+                "risk": "low",
+                "confidence": 0.99,
+                "rule_coverage": 0.98,
+                "information_completeness": 1.0,
+                "needs_human_reason": null,
+                "decision_basis": null,
+                "requested_input": null,
+                "stage_index": 0,
+                "predecessor_review_id": null,
+                "continue_after_execution": false,
+                "source_bindings": [],
+                "durable_memories": []
+              },
+              "tool_calls": [
+                {
+                  "tool": "read_skill",
+                  "arguments": {
+                    "path": "/Users/derek/.agents/AGENTS.md"
+                  },
+                  "result": {
+                    "path": "/Users/derek/.agents/AGENTS.md",
+                    "sha256": "28889c6c22fe8d89a35f9285ef0318f1a0cd65d67274c46ceb45afa07baf9475",
+                    "content_chars": 20200
+                  },
+                  "isError": false
+                },
+                {
+                  "tool": "read_skill",
+                  "arguments": {
+                    "path": "/Users/derek/Projects/ceo-agent-service/ci/shared-skills/ceo-calendar-invite/SKILL.md"
+                  },
+                  "result": {
+                    "path": "/Users/derek/Projects/ceo-agent-service/ci/shared-skills/ceo-calendar-invite/SKILL.md",
+                    "sha256": "cbd8648980c919d0d1f95cfd2f7e2e5c665084368d90daae2307dc1595e087a6",
+                    "content_chars": 8234
+                  },
+                  "isError": false
+                },
+                {
+                  "tool": "read_dingtalk_messages_in_window",
+                  "arguments": {
+                    "conversation_id": "synthetic-calendar-cold-resume",
+                    "start": "2026-11-01T00:00:00Z",
+                    "end": "2026-11-02T00:00:00Z"
+                  },
+                  "result": {
+                    "messages": [
+                      {
+                        "message_id": "fixture-001",
+                        "sender": "Mina",
+                        "content": "旧提议的 2026-11-01 01:30 PDT 已撤销，不要沿用。"
+                      },
+                      {
+                        "message_id": "fixture-002",
+                        "sender": "Mina",
+                        "content": "新提议是 2026-11-01 01:30（America/Los_Angeles）；组织者仍在核对，尚未确认。"
+                      },
+                      {
+                        "message_id": "fixture-003",
+                        "sender": "Bot",
+                        "content": "卡片部分结果：时间待确认；详情未完成。此状态不能证明已确认或已创建日程。"
+                      },
+                      {
+                        "message_id": "fixture-005",
+                        "sender": "Mina",
+                        "content": "我的时区是 Europe/London；请同时告诉我这个时刻对应的伦敦当地时间。"
+                      }
+                    ],
+                    "complete": true,
+                    "fixture_stage": "cold"
+                  },
+                  "isError": false
+                },
+                {
+                  "tool": "list_dingtalk_calendar_events",
+                  "arguments": {
+                    "start": "2026-11-01T00:00:00Z",
+                    "end": "2026-11-02T00:00:00Z"
+                  },
+                  "result": {
+                    "events": [
+                      {
+                        "event_id": "fixture-event-1",
+                        "title": "Synthetic focus block",
+                        "start_time": "2026-11-01T17:00:00Z",
+                        "end_time": "2026-11-01T18:00:00Z",
+                        "timezone": "America/Los_Angeles"
+                      }
+                    ],
+                    "complete": true,
+                    "fixture_stage": "cold"
+                  },
+                  "isError": false
+                },
+                {
+                  "tool": "convert_dingtalk_calendar_time",
+                  "arguments": {
+                    "local_time": "2026-11-01T01:30:00",
+                    "source_timezone": "America/Los_Angeles",
+                    "target_timezone": "Europe/London"
+                  },
+                  "result": {
+                    "status": "ambiguous",
+                    "source_timezone": "America/Los_Angeles",
+                    "target_timezone": "Europe/London",
+                    "local_time": "2026-11-01T01:30:00",
+                    "options": [
+                      {
+                        "fold": 0,
+                        "source_local": "2026-11-01T01:30:00-07:00",
+                        "source_offset": "UTC-07:00",
+                        "utc": "2026-11-01T08:30:00Z",
+                        "target_local": "2026-11-01T08:30:00+00:00",
+                        "target_offset": "UTC+00:00"
+                      },
+                      {
+                        "fold": 1,
+                        "source_local": "2026-11-01T01:30:00-08:00",
+                        "source_offset": "UTC-08:00",
+                        "utc": "2026-11-01T09:30:00Z",
+                        "target_local": "2026-11-01T09:30:00+00:00",
+                        "target_offset": "UTC+00:00"
+                      }
+                    ]
+                  },
+                  "isError": false
+                }
+              ],
+              "errors": [],
+              "stderr_excerpt": "",
+              "submitted_prompt_chars": 290
+            },
+            {
+              "stage": "resume",
+              "exit_code": 0,
+              "session_id": "01a14dc3-3737-7660-b951-c890174ea34a",
+              "valid_wire": true,
+              "result": {
+                "outcome": "no_action",
+                "summary": "已按本轮新来源更新：当前确认时刻为 2026-11-01T09:30:00Z，对应 Europe/London 当地时间为 2026-11-01 09:30（UTC）。旧的 01:30 本地时间不再采用。该时刻尚未创建日程，且没有对方空闲信息；现有 focus block 为 17:00–18:00Z。未执行任何外部操作。",
+                "proposal": null,
+                "decision_options": [],
+                "error": {
+                  "code": "",
+                  "retryable": false,
+                  "authorization_required": false,
+                  "stage": "",
+                  "source": "",
+                  "source_code": "",
+                  "session_continuable": false
+                },
+                "risk": "low",
+                "confidence": 0.99,
+                "rule_coverage": 0.98,
+                "information_completeness": 1.0,
+                "needs_human_reason": null,
+                "decision_basis": null,
+                "requested_input": null,
+                "stage_index": 0,
+                "predecessor_review_id": null,
+                "continue_after_execution": false,
+                "source_bindings": [],
+                "durable_memories": []
+              },
+              "tool_calls": [
+                {
+                  "tool": "read_skill",
+                  "arguments": {
+                    "path": "/Users/derek/.agents/AGENTS.md"
+                  },
+                  "result": {
+                    "path": "/Users/derek/.agents/AGENTS.md",
+                    "sha256": "28889c6c22fe8d89a35f9285ef0318f1a0cd65d67274c46ceb45afa07baf9475",
+                    "content_chars": 20200
+                  },
+                  "isError": false
+                },
+                {
+                  "tool": "read_skill",
+                  "arguments": {
+                    "path": "/Users/derek/Projects/ceo-agent-service/ci/shared-skills/ceo-calendar-invite/SKILL.md"
+                  },
+                  "result": {
+                    "path": "/Users/derek/Projects/ceo-agent-service/ci/shared-skills/ceo-calendar-invite/SKILL.md",
+                    "sha256": "cbd8648980c919d0d1f95cfd2f7e2e5c665084368d90daae2307dc1595e087a6",
+                    "content_chars": 8234
+                  },
+                  "isError": false
+                },
+                {
+                  "tool": "read_dingtalk_messages_in_window",
+                  "arguments": {
+                    "conversation_id": "synthetic-calendar-cold-resume",
+                    "start": "2026-11-01T00:00:00Z",
+                    "end": "2026-11-02T00:00:00Z"
+                  },
+                  "result": {
+                    "messages": [
+                      {
+                        "message_id": "fixture-001",
+                        "sender": "Mina",
+                        "content": "旧提议的 2026-11-01 01:30 PDT 已撤销，不要沿用。"
+                      },
+                      {
+                        "message_id": "fixture-002",
+                        "sender": "Mina",
+                        "content": "新提议是 2026-11-01 01:30（America/Los_Angeles）；组织者仍在核对，尚未确认。"
+                      },
+                      {
+                        "message_id": "fixture-003",
+                        "sender": "Bot",
+                        "content": "卡片部分结果：时间待确认；详情未完成。此状态不能证明已确认或已创建日程。"
+                      },
+                      {
+                        "message_id": "fixture-005",
+                        "sender": "Mina",
+                        "content": "我的时区是 Europe/London；请同时告诉我这个时刻对应的伦敦当地时间。"
+                      },
+                      {
+                        "message_id": "fixture-004",
+                        "sender": "Mina",
+                        "content": "更新：组织者已确认新提议对应 2026-11-01T09:30:00Z。尚未创建日程，也没有对方空闲信息。"
+                      }
+                    ],
+                    "complete": true,
+                    "fixture_stage": "resume"
+                  },
+                  "isError": false
+                },
+                {
+                  "tool": "list_dingtalk_calendar_events",
+                  "arguments": {
+                    "start": "2026-11-01T00:00:00Z",
+                    "end": "2026-11-02T00:00:00Z"
+                  },
+                  "result": {
+                    "events": [
+                      {
+                        "event_id": "fixture-event-1",
+                        "title": "Synthetic focus block",
+                        "start_time": "2026-11-01T17:00:00Z",
+                        "end_time": "2026-11-01T18:00:00Z",
+                        "timezone": "America/Los_Angeles"
+                      }
+                    ],
+                    "complete": true,
+                    "fixture_stage": "resume"
+                  },
+                  "isError": false
+                },
+                {
+                  "tool": "convert_dingtalk_calendar_time",
+                  "arguments": {
+                    "local_time": "2026-11-01T09:30:00",
+                    "source_timezone": "UTC",
+                    "target_timezone": "Europe/London"
+                  },
+                  "result": {
+                    "status": "converted",
+                    "source_timezone": "UTC",
+                    "target_timezone": "Europe/London",
+                    "local_time": "2026-11-01T09:30:00",
+                    "conversion": {
+                      "fold": 0,
+                      "source_local": "2026-11-01T09:30:00+00:00",
+                      "source_offset": "UTC+00:00",
+                      "utc": "2026-11-01T09:30:00Z",
+                      "target_local": "2026-11-01T09:30:00+00:00",
+                      "target_offset": "UTC+00:00"
+                    }
+                  },
+                  "isError": false
+                }
+              ],
+              "errors": [],
+              "stderr_excerpt": "",
+              "submitted_prompt_chars": 262
+            }
+          ]
+        }
+      ]
+    },
+    "exact_input_reuse": {
+      "model": "gpt-5.6-luna",
+      "reasoning_effort": "medium",
+      "fixture": "synthetic-only",
+      "work_profile": "omitted",
+      "live_business_mcp": false,
+      "calendar_skill_variant": "optimized",
+      "arms": [
+        {
+          "role": "consumer",
+          "mode": "wire_only",
+          "candidate_sha256": null,
+          "turns": [
+            {
+              "stage": "cold",
+              "exit_code": 0,
+              "session_id": "01a14dc3-b9fa-71e3-83da-8817f3fa96dd",
+              "valid_wire": true,
+              "result": {
+                "outcome": "no_action",
+                "summary": "已完成只读核对：2026-11-01 01:30 America/Los_Angeles 为重复小时。fold=0 对应 08:30 Europe/London（08:30Z），fold=1 对应 09:30 Europe/London（09:30Z）。日历窗口仅有 17:00–18:00Z 的 Synthetic focus block；未发送消息、未创建或修改日历。",
+                "proposal": null,
+                "decision_options": [],
+                "error": {
+                  "code": "",
+                  "retryable": false,
+                  "authorization_required": false,
+                  "stage": "",
+                  "source": "",
+                  "source_code": "",
+                  "session_continuable": false
+                },
+                "risk": "low",
+                "confidence": 1.0,
+                "rule_coverage": 1.0,
+                "information_completeness": 1.0,
+                "needs_human_reason": null,
+                "decision_basis": null,
+                "requested_input": null,
+                "stage_index": 0,
+                "predecessor_review_id": null,
+                "continue_after_execution": false,
+                "source_bindings": [],
+                "durable_memories": []
+              },
+              "tool_calls": [
+                {
+                  "tool": "read_skill",
+                  "arguments": {
+                    "path": "/Users/derek/Projects/ceo-agent-service/ci/shared-skills/ceo-calendar-invite/SKILL.md"
+                  },
+                  "result": {
+                    "path": "/Users/derek/Projects/ceo-agent-service/ci/shared-skills/ceo-calendar-invite/SKILL.md",
+                    "sha256": "ec2cc41aa92cc8ceef9e2763fcf471afba6ddb7eb1812a096e5ef1521445a48f",
+                    "content_chars": 8341
+                  },
+                  "isError": false
+                },
+                {
+                  "tool": "read_skill",
+                  "arguments": {
+                    "path": "/Users/derek/.agents/AGENTS.md"
+                  },
+                  "result": {
+                    "path": "/Users/derek/.agents/AGENTS.md",
+                    "sha256": "28889c6c22fe8d89a35f9285ef0318f1a0cd65d67274c46ceb45afa07baf9475",
+                    "content_chars": 20200
+                  },
+                  "isError": false
+                },
+                {
+                  "tool": "read_skill",
+                  "arguments": {
+                    "path": "/Users/derek/Projects/ceo-agent-service/ci/shared-skills/dingtalk-calendar/SKILL.md"
+                  },
+                  "result": {
+                    "path": "/Users/derek/.agents/skills/dingtalk-calendar/SKILL.md",
+                    "sha256": "f42f6fe6433656a1ae3dd5ff3f040bfc44e2d6b1bd0ce760aeb2d151b900dd1c",
+                    "content_chars": 7923
+                  },
+                  "isError": false
+                },
+                {
+                  "tool": "read_dingtalk_messages_in_window",
+                  "arguments": {
+                    "conversation_id": "synthetic-calendar-cold-resume",
+                    "start": "2026-11-01T00:00:00Z",
+                    "end": "2026-11-02T00:00:00Z"
+                  },
+                  "result": {
+                    "messages": [
+                      {
+                        "message_id": "fixture-001",
+                        "sender": "Mina",
+                        "content": "旧提议的 2026-11-01 01:30 PDT 已撤销，不要沿用。"
+                      },
+                      {
+                        "message_id": "fixture-002",
+                        "sender": "Mina",
+                        "content": "新提议是 2026-11-01 01:30（America/Los_Angeles）；组织者仍在核对，尚未确认。"
+                      },
+                      {
+                        "message_id": "fixture-003",
+                        "sender": "Bot",
+                        "content": "卡片部分结果：时间待确认；详情未完成。此状态不能证明已确认或已创建日程。"
+                      },
+                      {
+                        "message_id": "fixture-005",
+                        "sender": "Mina",
+                        "content": "我的时区是 Europe/London；请同时告诉我这个时刻对应的伦敦当地时间。"
+                      }
+                    ],
+                    "complete": true,
+                    "fixture_stage": "cold"
+                  },
+                  "isError": false
+                },
+                {
+                  "tool": "list_dingtalk_calendar_events",
+                  "arguments": {
+                    "start": "2026-11-01T00:00:00Z",
+                    "end": "2026-11-02T00:00:00Z"
+                  },
+                  "result": {
+                    "events": [
+                      {
+                        "event_id": "fixture-event-1",
+                        "title": "Synthetic focus block",
+                        "start_time": "2026-11-01T17:00:00Z",
+                        "end_time": "2026-11-01T18:00:00Z",
+                        "timezone": "America/Los_Angeles"
+                      }
+                    ],
+                    "complete": true,
+                    "fixture_stage": "cold"
+                  },
+                  "isError": false
+                },
+                {
+                  "tool": "convert_dingtalk_calendar_time",
+                  "arguments": {
+                    "local_time": "2026-11-01T01:30:00",
+                    "source_timezone": "America/Los_Angeles",
+                    "target_timezone": "Europe/London"
+                  },
+                  "result": {
+                    "status": "ambiguous",
+                    "source_timezone": "America/Los_Angeles",
+                    "target_timezone": "Europe/London",
+                    "local_time": "2026-11-01T01:30:00",
+                    "options": [
+                      {
+                        "fold": 0,
+                        "source_local": "2026-11-01T01:30:00-07:00",
+                        "source_offset": "UTC-07:00",
+                        "utc": "2026-11-01T08:30:00Z",
+                        "target_local": "2026-11-01T08:30:00+00:00",
+                        "target_offset": "UTC+00:00"
+                      },
+                      {
+                        "fold": 1,
+                        "source_local": "2026-11-01T01:30:00-08:00",
+                        "source_offset": "UTC-08:00",
+                        "utc": "2026-11-01T09:30:00Z",
+                        "target_local": "2026-11-01T09:30:00+00:00",
+                        "target_offset": "UTC+00:00"
+                      }
+                    ]
+                  },
+                  "isError": false
+                }
+              ],
+              "errors": [],
+              "stderr_excerpt": "",
+              "submitted_prompt_chars": 290
+            },
+            {
+              "stage": "resume",
+              "exit_code": 0,
+              "session_id": "01a14dc3-b9fa-71e3-83da-8817f3fa96dd",
+              "valid_wire": true,
+              "result": {
+                "outcome": "no_action",
+                "summary": "已重新读取同一 session 的新来源，未沿用旧时间。当前确认时间为 2026-11-01T09:30:00Z，对应 Europe/London 当地时间 2026-11-01 09:30（UTC+00:00，非重复小时）。日历窗口仍仅有 17:00–18:00Z 的 Synthetic focus block；尚未创建日历，未执行任何外部操作。",
+                "proposal": null,
+                "decision_options": [],
+                "error": {
+                  "code": "",
+                  "retryable": false,
+                  "authorization_required": false,
+                  "stage": "",
+                  "source": "",
+                  "source_code": "",
+                  "session_continuable": false
+                },
+                "risk": "low",
+                "confidence": 1.0,
+                "rule_coverage": 1.0,
+                "information_completeness": 1.0,
+                "needs_human_reason": null,
+                "decision_basis": null,
+                "requested_input": null,
+                "stage_index": 0,
+                "predecessor_review_id": null,
+                "continue_after_execution": false,
+                "source_bindings": [],
+                "durable_memories": []
+              },
+              "tool_calls": [
+                {
+                  "tool": "read_skill",
+                  "arguments": {
+                    "path": "/Users/derek/.agents/AGENTS.md"
+                  },
+                  "result": {
+                    "path": "/Users/derek/.agents/AGENTS.md",
+                    "sha256": "28889c6c22fe8d89a35f9285ef0318f1a0cd65d67274c46ceb45afa07baf9475",
+                    "content_chars": 20200
+                  },
+                  "isError": false
+                },
+                {
+                  "tool": "read_skill",
+                  "arguments": {
+                    "path": "/Users/derek/Projects/ceo-agent-service/ci/shared-skills/ceo-calendar-invite/SKILL.md"
+                  },
+                  "result": {
+                    "path": "/Users/derek/Projects/ceo-agent-service/ci/shared-skills/ceo-calendar-invite/SKILL.md",
+                    "sha256": "ec2cc41aa92cc8ceef9e2763fcf471afba6ddb7eb1812a096e5ef1521445a48f",
+                    "content_chars": 8341
+                  },
+                  "isError": false
+                },
+                {
+                  "tool": "read_skill",
+                  "arguments": {
+                    "path": "/Users/derek/.agents/skills/dingtalk-calendar/SKILL.md"
+                  },
+                  "result": {
+                    "path": "/Users/derek/.agents/skills/dingtalk-calendar/SKILL.md",
+                    "sha256": "f42f6fe6433656a1ae3dd5ff3f040bfc44e2d6b1bd0ce760aeb2d151b900dd1c",
+                    "content_chars": 7923
+                  },
+                  "isError": false
+                },
+                {
+                  "tool": "read_dingtalk_messages_in_window",
+                  "arguments": {
+                    "conversation_id": "synthetic-calendar-cold-resume",
+                    "start": "2026-11-01T00:00:00Z",
+                    "end": "2026-11-02T00:00:00Z"
+                  },
+                  "result": {
+                    "messages": [
+                      {
+                        "message_id": "fixture-001",
+                        "sender": "Mina",
+                        "content": "旧提议的 2026-11-01 01:30 PDT 已撤销，不要沿用。"
+                      },
+                      {
+                        "message_id": "fixture-002",
+                        "sender": "Mina",
+                        "content": "新提议是 2026-11-01 01:30（America/Los_Angeles）；组织者仍在核对，尚未确认。"
+                      },
+                      {
+                        "message_id": "fixture-003",
+                        "sender": "Bot",
+                        "content": "卡片部分结果：时间待确认；详情未完成。此状态不能证明已确认或已创建日程。"
+                      },
+                      {
+                        "message_id": "fixture-005",
+                        "sender": "Mina",
+                        "content": "我的时区是 Europe/London；请同时告诉我这个时刻对应的伦敦当地时间。"
+                      },
+                      {
+                        "message_id": "fixture-004",
+                        "sender": "Mina",
+                        "content": "更新：组织者已确认新提议对应 2026-11-01T09:30:00Z。尚未创建日程，也没有对方空闲信息。"
+                      }
+                    ],
+                    "complete": true,
+                    "fixture_stage": "resume"
+                  },
+                  "isError": false
+                },
+                {
+                  "tool": "list_dingtalk_calendar_events",
+                  "arguments": {
+                    "start": "2026-11-01T00:00:00Z",
+                    "end": "2026-11-02T00:00:00Z"
+                  },
+                  "result": {
+                    "events": [
+                      {
+                        "event_id": "fixture-event-1",
+                        "title": "Synthetic focus block",
+                        "start_time": "2026-11-01T17:00:00Z",
+                        "end_time": "2026-11-01T18:00:00Z",
+                        "timezone": "America/Los_Angeles"
+                      }
+                    ],
+                    "complete": true,
+                    "fixture_stage": "resume"
+                  },
+                  "isError": false
+                },
+                {
+                  "tool": "convert_dingtalk_calendar_time",
+                  "arguments": {
+                    "local_time": "2026-11-01T09:30:00",
+                    "source_timezone": "UTC",
+                    "target_timezone": "Europe/London"
+                  },
+                  "result": {
+                    "status": "converted",
+                    "source_timezone": "UTC",
+                    "target_timezone": "Europe/London",
+                    "local_time": "2026-11-01T09:30:00",
+                    "conversion": {
+                      "fold": 0,
+                      "source_local": "2026-11-01T09:30:00+00:00",
+                      "source_offset": "UTC+00:00",
+                      "utc": "2026-11-01T09:30:00Z",
+                      "target_local": "2026-11-01T09:30:00+00:00",
+                      "target_offset": "UTC+00:00"
+                    }
+                  },
+                  "isError": false
+                }
+              ],
+              "errors": [],
+              "stderr_excerpt": "",
+              "submitted_prompt_chars": 262
+            }
+          ]
+        }
+      ]
+    },
+    "confirmed_fold_reuse": {
+      "model": "gpt-5.6-luna",
+      "reasoning_effort": "medium",
+      "fixture": "synthetic-only",
+      "work_profile": "omitted",
+      "live_business_mcp": false,
+      "calendar_skill_variant": "optimized",
+      "arms": [
+        {
+          "role": "consumer",
+          "mode": "wire_only",
+          "candidate_sha256": null,
+          "turns": [
+            {
+              "stage": "cold",
+              "exit_code": 0,
+              "session_id": "01a14dc5-02cc-7790-a70f-ba7b91ee6098",
+              "valid_wire": true,
+              "result": {
+                "outcome": "no_action",
+                "summary": "已核对：2026-11-01 01:30（America/Los_Angeles）是重复小时。fold=0 对应伦敦 2026-11-01 08:30（UTC+00:00，08:30Z）；fold=1 对应伦敦 2026-11-01 09:30（UTC+00:00，09:30Z）。组织者尚未确认具体 fold；未发送消息、创建或修改日历。",
+                "proposal": null,
+                "decision_options": [],
+                "error": {
+                  "code": "",
+                  "retryable": false,
+                  "authorization_required": false,
+                  "stage": "",
+                  "source": "",
+                  "source_code": "",
+                  "session_continuable": false
+                },
+                "risk": "low",
+                "confidence": 1.0,
+                "rule_coverage": 1.0,
+                "information_completeness": 1.0,
+                "needs_human_reason": null,
+                "decision_basis": null,
+                "requested_input": null,
+                "stage_index": 0,
+                "predecessor_review_id": null,
+                "continue_after_execution": false,
+                "source_bindings": [],
+                "durable_memories": []
+              },
+              "tool_calls": [
+                {
+                  "tool": "read_skill",
+                  "arguments": {
+                    "path": "/Users/derek/Projects/ceo-agent-service/ci/shared-skills/ceo-calendar-invite/SKILL.md"
+                  },
+                  "result": {
+                    "path": "/Users/derek/Projects/ceo-agent-service/ci/shared-skills/ceo-calendar-invite/SKILL.md",
+                    "sha256": "88293a34979a00d68b4276c13ab4352423accae5889857595a8c9f9b982f3fbd",
+                    "content_chars": 8414
+                  },
+                  "isError": false
+                },
+                {
+                  "tool": "read_skill",
+                  "arguments": {
+                    "path": "/Users/derek/Projects/ceo-agent-service/ci/shared-skills/dingtalk-calendar/SKILL.md"
+                  },
+                  "result": {
+                    "path": "/Users/derek/.agents/skills/dingtalk-calendar/SKILL.md",
+                    "sha256": "f42f6fe6433656a1ae3dd5ff3f040bfc44e2d6b1bd0ce760aeb2d151b900dd1c",
+                    "content_chars": 7923
+                  },
+                  "isError": false
+                },
+                {
+                  "tool": "read_dingtalk_messages_in_window",
+                  "arguments": {
+                    "conversation_id": "synthetic-calendar-cold-resume",
+                    "start": "2026-11-01T00:00:00Z",
+                    "end": "2026-11-02T00:00:00Z"
+                  },
+                  "result": {
+                    "messages": [
+                      {
+                        "message_id": "fixture-001",
+                        "sender": "Mina",
+                        "content": "旧提议的 2026-11-01 01:30 PDT 已撤销，不要沿用。"
+                      },
+                      {
+                        "message_id": "fixture-002",
+                        "sender": "Mina",
+                        "content": "新提议是 2026-11-01 01:30（America/Los_Angeles）；组织者仍在核对，尚未确认。"
+                      },
+                      {
+                        "message_id": "fixture-003",
+                        "sender": "Bot",
+                        "content": "卡片部分结果：时间待确认；详情未完成。此状态不能证明已确认或已创建日程。"
+                      },
+                      {
+                        "message_id": "fixture-005",
+                        "sender": "Mina",
+                        "content": "我的时区是 Europe/London；请同时告诉我这个时刻对应的伦敦当地时间。"
+                      }
+                    ],
+                    "complete": true,
+                    "fixture_stage": "cold"
+                  },
+                  "isError": false
+                },
+                {
+                  "tool": "list_dingtalk_calendar_events",
+                  "arguments": {
+                    "start": "2026-11-01T00:00:00Z",
+                    "end": "2026-11-02T00:00:00Z"
+                  },
+                  "result": {
+                    "events": [
+                      {
+                        "event_id": "fixture-event-1",
+                        "title": "Synthetic focus block",
+                        "start_time": "2026-11-01T17:00:00Z",
+                        "end_time": "2026-11-01T18:00:00Z",
+                        "timezone": "America/Los_Angeles"
+                      }
+                    ],
+                    "complete": true,
+                    "fixture_stage": "cold"
+                  },
+                  "isError": false
+                },
+                {
+                  "tool": "convert_dingtalk_calendar_time",
+                  "arguments": {
+                    "local_time": "2026-11-01T01:30:00",
+                    "source_timezone": "America/Los_Angeles",
+                    "target_timezone": "Europe/London"
+                  },
+                  "result": {
+                    "status": "ambiguous",
+                    "source_timezone": "America/Los_Angeles",
+                    "target_timezone": "Europe/London",
+                    "local_time": "2026-11-01T01:30:00",
+                    "options": [
+                      {
+                        "fold": 0,
+                        "source_local": "2026-11-01T01:30:00-07:00",
+                        "source_offset": "UTC-07:00",
+                        "utc": "2026-11-01T08:30:00Z",
+                        "target_local": "2026-11-01T08:30:00+00:00",
+                        "target_offset": "UTC+00:00"
+                      },
+                      {
+                        "fold": 1,
+                        "source_local": "2026-11-01T01:30:00-08:00",
+                        "source_offset": "UTC-08:00",
+                        "utc": "2026-11-01T09:30:00Z",
+                        "target_local": "2026-11-01T09:30:00+00:00",
+                        "target_offset": "UTC+00:00"
+                      }
+                    ]
+                  },
+                  "isError": false
+                }
+              ],
+              "errors": [],
+              "stderr_excerpt": "",
+              "submitted_prompt_chars": 290
+            },
+            {
+              "stage": "resume",
+              "exit_code": 0,
+              "session_id": "01a14dc5-02cc-7790-a70f-ba7b91ee6098",
+              "valid_wire": true,
+              "result": {
+                "outcome": "no_action",
+                "summary": "已按新来源更新：组织者确认新提议为 2026-11-01T09:30:00Z，对应 America/Los_Angeles 重复小时的 fold=1，即当地 2026-11-01 01:30（UTC-08:00）。Europe/London 当地时间为 2026-11-01 09:30（UTC+00:00）。日历中仅有 17:00–18:00Z 的 focus block，无时间重叠；尚未创建日程，也无对方空闲信息。未执行任何外部操作。",
+                "proposal": null,
+                "decision_options": [],
+                "error": {
+                  "code": "",
+                  "retryable": false,
+                  "authorization_required": false,
+                  "stage": "",
+                  "source": "",
+                  "source_code": "",
+                  "session_continuable": false
+                },
+                "risk": "low",
+                "confidence": 1.0,
+                "rule_coverage": 1.0,
+                "information_completeness": 1.0,
+                "needs_human_reason": null,
+                "decision_basis": null,
+                "requested_input": null,
+                "stage_index": 0,
+                "predecessor_review_id": null,
+                "continue_after_execution": false,
+                "source_bindings": [],
+                "durable_memories": []
+              },
+              "tool_calls": [
+                {
+                  "tool": "read_skill",
+                  "arguments": {
+                    "path": "/Users/derek/Projects/ceo-agent-service/ci/shared-skills/ceo-calendar-invite/SKILL.md"
+                  },
+                  "result": {
+                    "path": "/Users/derek/Projects/ceo-agent-service/ci/shared-skills/ceo-calendar-invite/SKILL.md",
+                    "sha256": "88293a34979a00d68b4276c13ab4352423accae5889857595a8c9f9b982f3fbd",
+                    "content_chars": 8414
+                  },
+                  "isError": false
+                },
+                {
+                  "tool": "read_skill",
+                  "arguments": {
+                    "path": "/Users/derek/.agents/skills/dingtalk-calendar/SKILL.md"
+                  },
+                  "result": {
+                    "path": "/Users/derek/.agents/skills/dingtalk-calendar/SKILL.md",
+                    "sha256": "f42f6fe6433656a1ae3dd5ff3f040bfc44e2d6b1bd0ce760aeb2d151b900dd1c",
+                    "content_chars": 7923
+                  },
+                  "isError": false
+                },
+                {
+                  "tool": "read_dingtalk_messages_in_window",
+                  "arguments": {
+                    "conversation_id": "synthetic-calendar-cold-resume",
+                    "start": "2026-11-01T00:00:00Z",
+                    "end": "2026-11-02T00:00:00Z"
+                  },
+                  "result": {
+                    "messages": [
+                      {
+                        "message_id": "fixture-001",
+                        "sender": "Mina",
+                        "content": "旧提议的 2026-11-01 01:30 PDT 已撤销，不要沿用。"
+                      },
+                      {
+                        "message_id": "fixture-002",
+                        "sender": "Mina",
+                        "content": "新提议是 2026-11-01 01:30（America/Los_Angeles）；组织者仍在核对，尚未确认。"
+                      },
+                      {
+                        "message_id": "fixture-003",
+                        "sender": "Bot",
+                        "content": "卡片部分结果：时间待确认；详情未完成。此状态不能证明已确认或已创建日程。"
+                      },
+                      {
+                        "message_id": "fixture-005",
+                        "sender": "Mina",
+                        "content": "我的时区是 Europe/London；请同时告诉我这个时刻对应的伦敦当地时间。"
+                      },
+                      {
+                        "message_id": "fixture-004",
+                        "sender": "Mina",
+                        "content": "更新：组织者已确认新提议对应 2026-11-01T09:30:00Z。尚未创建日程，也没有对方空闲信息。"
+                      }
+                    ],
+                    "complete": true,
+                    "fixture_stage": "resume"
+                  },
+                  "isError": false
+                },
+                {
+                  "tool": "list_dingtalk_calendar_events",
+                  "arguments": {
+                    "start": "2026-11-01T00:00:00Z",
+                    "end": "2026-11-02T00:00:00Z"
+                  },
+                  "result": {
+                    "events": [
+                      {
+                        "event_id": "fixture-event-1",
+                        "title": "Synthetic focus block",
+                        "start_time": "2026-11-01T17:00:00Z",
+                        "end_time": "2026-11-01T18:00:00Z",
+                        "timezone": "America/Los_Angeles"
+                      }
+                    ],
+                    "complete": true,
+                    "fixture_stage": "resume"
+                  },
+                  "isError": false
+                }
+              ],
+              "errors": [],
+              "stderr_excerpt": "",
+              "submitted_prompt_chars": 262
+            }
+          ]
+        }
+      ]
+    }
+  },
+  "limits": [
+    "One synthetic cold/resume pair per arm; this is not broad Calendar quality or production evidence.",
+    "The fixture has no calendar write tool and establishes no real availability.",
+    "The measured effect is a tool-call reduction on this case, not provider-token or cost savings."
+  ]
+}
