@@ -4,6 +4,7 @@ from pathlib import Path
 import sys
 
 import pytest
+from tests.support.memory_limit import MemoryLimit
 
 
 os.environ["CEO_ENV_FILE"] = "/private/tmp/ceo-agent-service-test.env.missing"
@@ -44,8 +45,6 @@ os.environ["FAST_PATH_UNREAD_BACKOFF"] = "0s"
 
 
 # Derek, 2026-10-23: fixed on purpose, no environment variable or option.
-from tests.support.memory_limit import MemoryLimit
-
 MEMORY_LIMIT = MemoryLimit(3 * 1024**3)
 
 
