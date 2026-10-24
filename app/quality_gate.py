@@ -27,15 +27,13 @@ from app.store import (
     NATIVE_AGENT_RUN_SQL, NATIVE_REPLY_TASK_CURRENT_SQL,
     NATIVE_REPLY_BUSINESS_KEY_SQL, NATIVE_MEETING_TASK_SQL,
     NATIVE_REVIEW_CANDIDATE_SQL, NATIVE_CANDIDATE_REVIEW_SQL,
+    NATIVE_CANDIDATE_EXECUTION_SQL,
     NATIVE_CANDIDATE_SELECTION_SQL,
 )
 
 from app.action_storage import (
-    REVIEW_CANDIDATE_SQL, SENT_REPLY_SQL, SENT_REPLY_OBSERVER_SQL,
-    CANDIDATE_REVIEW_SQL,
-    CANDIDATE_EXECUTION_SQL,
-    CANDIDATE_ACTION_ATTEMPT_SQL,
-    CANDIDATE_SELECTION_SQL,
+    SENT_REPLY_SQL, SENT_REPLY_OBSERVER_SQL,
+    NATIVE_CANDIDATE_ACTION_ATTEMPT_SQL,
     REPLY_ATTEMPT_COMMON_SQL,
     REPLY_ATTEMPT_PROBLEM_TRIGGER_KEYS_SQL,
     task_delivery_projection,
@@ -48,6 +46,7 @@ MEETING_JOB_SQL = NATIVE_MEETING_TASK_SQL
 OKR_REQUEST_SQL = "select id,status,created_at,updated_at from tasks where kind='okr_review'"
 REPLY_TASK_SQL = NATIVE_REPLY_TASK_CURRENT_SQL
 WORK_SUMMARY_INPUT_SQL = "select tasks.id,tasks.status,tasks.created_at,tasks.updated_at from tasks join work_summary_inputs inputs on inputs.task_id=tasks.id where tasks.kind='work_summary'"
+FEEDBACK_PROCESSING_ROUND_SQL = "select * from feedback_processing_rounds"
 RUNTIME_ATTEMPT_SQL = """select id,parent_id as agent_run_id,workload_kind,workload_key,
     attempt_number,route_name,runtime_kind,credential_mode,model,session_mode,
     source_session_id,attempt_purpose,validation_retry_policy_id,
@@ -965,22 +964,22 @@ def _check_feedback(
         where (fe.resolved_at='' or fe.resolved_at is null)
           and fe.key like 'manual:%'
           and not exists (
-              select 1 from ({task12_projection('feedback_processing_rounds')}) rnd
+              select 1 from ({FEEDBACK_PROCESSING_ROUND_SQL}) rnd
               where rnd.feedback_key=fe.key and rnd.reopened_at<>'')
           and exists (
               select 1
               from ({REPLY_ATTEMPT_COMMON_SQL}) ra
-              join ({CANDIDATE_REVIEW_SQL}) review on review.audit_run_id=ra.agent_run_id
-              join ({CANDIDATE_EXECUTION_SQL}) execution
+              join ({NATIVE_CANDIDATE_REVIEW_SQL}) review on review.audit_run_id=ra.agent_run_id
+              join ({NATIVE_CANDIDATE_EXECUTION_SQL}) execution
                 on execution.candidate_id=review.candidate_id
               where ra.id=cast(substr(fe.key, 8) as integer)
                 and execution.status='done'
                 and julianday(execution.created_at) >= julianday(fe.received_at)
                 and exists (
-                    select 1 from ({CANDIDATE_ACTION_ATTEMPT_SQL}) action
+                    select 1 from ({NATIVE_CANDIDATE_ACTION_ATTEMPT_SQL}) action
                     where action.execution_id=execution.id and action.status='verified')
                 and not exists (
-                    select 1 from ({CANDIDATE_ACTION_ATTEMPT_SQL}) action
+                    select 1 from ({NATIVE_CANDIDATE_ACTION_ATTEMPT_SQL}) action
                     where action.execution_id=execution.id and action.status<>'verified'))
         """)
     _add(violations, source="feedback_events", code="unresolved",

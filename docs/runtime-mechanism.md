@@ -539,6 +539,9 @@ Hourly quality checks reuse the unchanged credential/path predicate result for
 identical runtime metadata strings within one scan. Every historical runtime
 row and all seven fields remain in scope, violations are still counted per
 row, and each new scan resolves the current path-prefix configuration afresh.
+The manual-feedback rerun check reads reopened-round evidence from the native
+`feedback_processing_rounds` owner; reopened feedback
+continues to count as unattended under the existing quality rule.
 
 Reply Attempt fields are VIRTUAL generated columns over `actions.payload_json`.
 The four trigger-latest quality checks first read candidate statuses through
