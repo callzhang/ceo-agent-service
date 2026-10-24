@@ -175,7 +175,7 @@ launchd service. The main service calls a strict owner-only Unix socket (mode
 text send, and best-effort recall operations. Build and install it with:
 
 ```sh
-CEO_WECHAT_SENDER_SIGNING_IDENTITY='CEO WeChat Reader Local Signing' \
+CEO_WECHAT_SENDER_SIGNING_IDENTITY='CEO Agent Local Signing' \
   ./scripts/build-wechat-sender-app.sh
 ./scripts/install-wechat-sender-app.sh
 ```
@@ -188,7 +188,12 @@ System Settings → Privacy & Security → Accessibility itself, at most once ev
 30 minutes (Derek, 2026-09-30: nobody opens that page on their own). An already
 trusted Sender shows nothing. The
 installed app was ad-hoc signed until 2026-09-30; its first build with the
-stable identity needed one fresh grant. The AX runner
+stable identity needed one fresh grant. On 2026-10-23 both apps moved to
+the local `CEO Agent Local Signing` identity (organisation `Stardust CEO Agent`,
+which is what macOS Background Items shows as the developer; the Reader had
+been signed with the personal Apple Development certificate and the Sender with
+`CEO WeChat Reader Local Signing`). A new identity is a new code requirement, so
+Full Disk Access (Reader) and Accessibility (Sender) were granted again once. The AX runner
 does not inspect or foreground WeChat during background health/status polling
 or Tutorial connection checks. On each periodic sender pass, the service reads
 the local `ready_to_send` queue first; an empty queue makes no WeChat UI

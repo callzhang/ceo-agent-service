@@ -584,6 +584,13 @@ Install launchd only after dry-run behavior and configuration are reviewed.
    (`~/Services/ceo-agent-service`, a clean `main` clone), never from a
    development tree or a `.worktrees/*` checkout.
 
+   The plist runs `scripts/ceo-agent-service` (the installer fills in its
+   path), which holds the environment and the `exec` of the supervisor that
+   used to be an inline `zsh -lc` command. Read the workspace, DB, corpus and
+   live-send defaults there. The script is named so that System Settings →
+   Login Items & Extensions → Allow in the Background lists the job as
+   `ceo-agent-service`; the macOS toggle for it stays the user's to set.
+
 2. If launchd should start in dry-run, edit the plist or environment before
    installation. The current template sets `CEO_NOT_SEND_MESSAGE=0`, so do not
    install it blindly on a fresh machine.

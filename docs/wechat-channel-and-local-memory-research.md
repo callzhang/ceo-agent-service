@@ -244,7 +244,7 @@ python3 -m venv .venv-reader-build
 ./scripts/create-wechat-reader-signing-identity.sh
 
 # 生产构建：使用同一个稳定代码签名身份
-CEO_WECHAT_READER_SIGNING_IDENTITY='CEO WeChat Reader Local Signing' \
+CEO_WECHAT_READER_SIGNING_IDENTITY='CEO Agent Local Signing' \
   ./scripts/build-wechat-reader-app.sh
 ./scripts/install-wechat-reader-app.sh
 ```
@@ -350,7 +350,7 @@ Sender 只接受健康检查、权限预检/请求、打开并识别目标、有
 Socket 仅当前 macOS 用户可访问。构建和安装命令：
 
 ```sh
-CEO_WECHAT_READER_SIGNING_IDENTITY='CEO WeChat Reader Local Signing' \
+CEO_WECHAT_READER_SIGNING_IDENTITY='CEO Agent Local Signing' \
   ./scripts/build-wechat-sender-app.sh
 ./scripts/install-wechat-sender-app.sh
 ```

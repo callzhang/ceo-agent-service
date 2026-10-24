@@ -23,6 +23,19 @@ what the native CLI already does (it keeps MCP headers and env in
 caused real failures (the MCP proxy broke OAuth for `memory_connector` on every
 Claude turn). If you find another such layer, propose removing it.
 
+## No logic branches by runtime route
+
+Derek, 2026-10-23: code that runs a task (Task, Consumer, Audit, Meeting and the
+rest) must not branch on the runtime route or kind (Codex, Claude, Friday). A
+feature behaves the same on every route that is allowed to run that task, or it
+is not built. Do not ship a path that only one route takes while the others fall
+back to the old input, prompt or tool set, and do not add a "supports X" flag
+for a caller to test. What a route can do is declared once, as capabilities of
+the route itself (`app/agent_runtime_contracts.py`), and a task states the
+capabilities it requires; a route that lacks one is not selected, it is not
+given a different code path. When a feature needs something one route cannot
+provide, raise that with Derek instead of working around it.
+
 ## Concurrent agents in this working tree
 
 Several agents edit this repository at the same time (Claude Code sessions and
