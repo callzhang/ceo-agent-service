@@ -820,3 +820,11 @@ PR #294 已将 `origin/main` `08e6692f4a2c13dd2f81a038c221f06a0f0a0c46` 以正�
 PR #294 的 exact-head Quality run `40040357025`（head `6533329f00d2edcb5286250d2333407bc6e7c3e4`）attempt 2 在 `npm test` 的 pytest 约 4% 时被 GitHub 标为 cancelled，job 结论为 failure；日志只记录 `The operation was canceled`，没有取消来源或 pytest 汇总。相同 main commit 的 Quality run `40038497470` 也在 pytest 约 13 分钟后以同样的 cancelled 步骤结束。它们都不能算作测试失败的根因结论，也不能算通过。PR 的 108 项定向测试与 Ruff 仍通过；完整 Quality、PR 合并和发布保持未完成。无正文恢复读回见 `okr-production-readback.json` 的 `production_recovery_2026_10_23_23_49_33Z`。
 
 为核实 move 的 provider 状态，按 `dingtalk-mail` 流程只读读取了当前 mailbox 列表：返回 2 个邮箱，但没有一个邮箱标识与 action 关联记录中的 `account_id` 精确匹配。没有猜测账号或 messageId，因此没有对任何邮箱调用 `message get`。provider move 状态仍未查实，action 不能被清理或重放。
+
+### 2026-10-24 00:02 UTC 生产动作对账与服务恢复
+
+后续用配置中的精确邮件账号映射到已登录的 Gmail connector，并按本地 RFC Message-ID 精确查询到唯一邮件。Gmail 元数据确认目标文件夹标签存在且 INBOX 标签不存在；随后通过服务自带的只读 IMAP 对账器检查相同消息，结果为 `verified`。没有执行第二次 move。先用 `recover_stale_processing_actions` 将唯一过期的 action 120060 从 `processing` 记录为 `failed/startup_recovery`，紧接着只对 action 120060 运行既有 `reconcile-email-actions --apply` 状态机；它追加第 2 次 `done/reconciled_readback` 记录并更新邮件定位，原始尝试保留。action 终态为 `done`，没有待重试时间。
+
+之后 `python -m app.deploy --restart` 正常完成；LaunchAgent 为 running，PID 33577，healthz HTTP 200。生产 HEAD 为 `f9649ab6b1f65499a6b00492020025773a76941a`。部署读回包含 14 个启用定时任务；task6 v36 / managed Skill revision 248，下次 2026-10-25 10:00 UTC；task13 v56 / revision 202，下次 2026-10-24 19:00 UTC；task14 v63 / revision 250，下次 2026-10-24 13:00 UTC。Workers API 的队列快照显示 Email provider actions 615 pending、0 processing、0 failed、8 retryable；scheduled 与 scheduled_execution 队列 pending/due/running 均为 0。History 总数 37,782。Attention 共 13 条；系统健康为 degraded、7 项 violations，仍有原有异常需要单独跟进。这些是恢复时读数，不表示 13 条 Attention 均由本次恢复造成。
+
+本次只修复已有邮件动作的本地状态并恢复服务，没有创建或发送报告、邮件或额外通知。PR #294 仍未合并；exact-head Quality 尚无 uncancelled 通过结果。task14/task13/task6 新版自然或授权手动报告验收、真实睡眠恢复补跑分支及完整 Quality 均未完成。

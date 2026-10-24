@@ -1538,5 +1538,101 @@
       "npm_test_step": "cancelled during pytest at about 4 percent; no pytest summary or cancellation actor in logs"
     },
     "acceptance_status": "Service remains unavailable. The initiating service stop and Email provider effect are unverified. Do not clear or replay the Email action; reconcile its source trajectory and provider state before retrying the normal restart. No report run or notification was created. Natural report acceptance and sleep-resume catch-up remain outstanding."
+  },
+  "production_recovery_2026_10_24_00_02Z": {
+    "observed_at": "2026-10-24T00:02:00Z",
+    "source": "Read-only Gmail metadata lookup by the exact configured account and local RFC Message-ID; service read-only IMAP reconciler; application status APIs; launchctl and healthz.",
+    "production_commit": "f9649ab6b1f65499a6b00492020025773a76941a",
+    "launch_agent": {
+      "loaded": true,
+      "state": "running",
+      "pid": 33577,
+      "healthz_http_status": 200
+    },
+    "email_action_recovery": {
+      "action_id": 120060,
+      "operation": "move",
+      "initial_status": "processing",
+      "only_processing_direct_action": true,
+      "stale_recovery_recorded": true,
+      "read_only_imap_result": "verified",
+      "reconciliation_recorded": true,
+      "terminal_status": "done",
+      "provider_operation": "reconciled_readback",
+      "attempts": [
+        {
+          "attempt_number": 1,
+          "status": "failed",
+          "provider_operation": "startup_recovery",
+          "error": "stale_processing_recovered"
+        },
+        {
+          "attempt_number": 2,
+          "status": "done",
+          "provider_operation": "reconciled_readback"
+        }
+      ],
+      "external_move_replayed": false
+    },
+    "provider_evidence": {
+      "gmail_query": "exact configured account plus exact RFC Message-ID",
+      "exact_message_match_count": 1,
+      "gmail_target_folder_label_present": true,
+      "gmail_inbox_label_present": false,
+      "message_body_read": false,
+      "service_imap_read_only_reconcile": "verified"
+    },
+    "post_restart_readback": {
+      "healthz_http_status": 200,
+      "history_total": 37782,
+      "attention_count": 13,
+      "system_health": "degraded",
+      "system_health_violations": 7,
+      "email_provider_actions": {
+        "pending": 615,
+        "processing": 0,
+        "failed": 0,
+        "retryable": 8
+      },
+      "scheduled_dispatcher": {
+        "pending": 0,
+        "due": 0,
+        "running": 0
+      },
+      "scheduled_tasks_total": 14,
+      "scheduled_tasks": {
+        "6": {
+          "version": 36,
+          "enabled": true,
+          "timezone": "America/Los_Angeles",
+          "next_run_at": "2026-10-25T10:00:00Z",
+          "managed_skill": "ceo-weekly-okr-report",
+          "managed_revision_id": 248
+        },
+        "13": {
+          "version": 56,
+          "enabled": true,
+          "timezone": "America/Los_Angeles",
+          "next_run_at": "2026-10-24T19:00:00Z",
+          "managed_skill": "ceo-weekly-report",
+          "managed_revision_id": 202
+        },
+        "14": {
+          "version": 63,
+          "enabled": true,
+          "timezone": "America/Los_Angeles",
+          "next_run_at": "2026-10-24T13:00:00Z",
+          "managed_skill": "ceo-daily-report",
+          "managed_revision_id": 250
+        }
+      }
+    },
+    "quality_run": {
+      "run_id": 40040357025,
+      "head_sha": "6533329f00d2edcb5286250d2333407bc6e7c3e4",
+      "conclusion": "failure",
+      "interpretation": "npm test cancelled during pytest without a pytest summary or cancellation actor; not a pass or verified test failure"
+    },
+    "acceptance_status": "The stalled local Email action was verified in its target folder and reconciled without repeating the external move. The service is healthy and the task configuration/queues were read back. System health remains degraded with 7 violations and 13 Attention entries. PR #294 exact-head Quality, new task14/task13/task6 business-report acceptance, and real sleep/resume catch-up remain outstanding. No report or extra notification was created."
   }
 }
