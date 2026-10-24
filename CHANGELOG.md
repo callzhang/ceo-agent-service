@@ -1,5 +1,10 @@
 # Changelog
 
+## 2026-10-24 — 微信发送放行判定认标准审核（审计类，单独提交）
+
+- **方案 G2（Derek 2026-10-24）**：微信投递的放行判定除原微信审核外，也认标准 Consumer → Audit 审核，且绑定到逐字相同的目标和文本；任何一项对不上都不放行。新增 `AutoReplyStore.create_standard_wechat_delivery` 和 `app/wechat/standard_review.py`；原流水线不能写标准证据字段。
+- 只改判定和投递创建，没有登记动作、处理器或路由，线上行为不变。新增 21 个测试（`tests/wechat/test_standard_review_gate.py`）。`tests/wechat` 里另有 25 个失败在未改动的 main 上同样失败（测试仍在读已改掉的 `tasks.record_type`），与本项无关。
+
 ## 2026-10-24 — 设计文档：Consumer 权限模型是 auto 模式
 
 - 只改文档（Derek 2026-10-24）：Consumer 应运行在 CLI 原生 auto 模式，不用只读／工作区写沙箱限制能力；外发动作仍走 Audit，Audit 仍只读。当前实现（Codex `workspace-write`、Claude shell 沙箱）尚未达到，差距、原因（沙箱挡住钥匙串，周报读不到 CRM）和切换前提都写在 `docs/architecture.md`「Consumer 权限模型」一节。没有改任何运行代码。

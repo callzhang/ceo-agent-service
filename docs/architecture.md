@@ -2108,6 +2108,14 @@ Derek 的设计决定：Consumer 运行在各 CLI 的原生 auto 模式里（Cod
 - 切换到 auto 模式是单独的变更，要先逐个 CLI 确认 auto 模式的实际行为，并处理两点：`service_api` 路由没有 `codex-auto-review` 模型（见「主页面执行入口」一节）；auto 模式下 Consumer 能间接使用钥匙串里的凭据，这是要明确接受的后果。
 - 在切换之前，需要沙箱外权限（钥匙串等）的读取走服务端的只读工具，不靠放开沙箱。
 
+### 微信发送放行：同时认原审核和标准审核（Derek 2026-10-24，方案 G2）
+
+微信投递只有在独立审核批准了「完全相同的目标和文本」之后才能被领取发送。放行判定现在认两种证据，二选一，不能混用：
+- 原微信流水线：投递证据里的 `audit_run_id` 等，绑定 `wechat-delivery:<id>` 的 Audit 运行（`WechatDeliveryAuditor`，阶段 4 前保持不变）。
+- 标准流水线：投递证据里的 `standard_candidate_id`、`standard_review_id`、`standard_action_identity`，指向被采纳的候选、它的 Audit 批准和候选里的 `wechat / send_message` 动作。
+
+标准证据按失败即关闭的方式逐项核对，任何一项对不上都视为未放行：审核是 `approve` 且摘要等于候选摘要、候选未失效、候选属于已完成的 Consumer 运行、Audit 运行已完成且其父运行就是该候选、两者的任务与代次与投递一致、候选是普通 `proposal`、按 `action_identity` 唯一找到该动作、动作的账号／会话类型／对象／会话 ID 与投递完全一致、动作的 `payload.text` 与投递的 `reply_text` 逐字相等。`AutoReplyStore.create_standard_wechat_delivery` 从被批准的动作本身取目标和文本（不取调用方参数），审批文本已是最终正文，因此不再追加发送后缀。原流水线的 `create_wechat_delivery` 与 `finalize_wechat_reply_task` 不能写入这三个标准字段。本项只改放行判定和投递创建；`wechat / send_message` 动作登记、处理器和路由在后续提交。
+
 ### 任务长期记忆
 
 Derek 2026-10-24：任务的长期记忆由执行 Agent A 自己在回合内调用 `memory_connector.memory_write`
