@@ -164,6 +164,10 @@ from app.store import (
     SentTodoRecord,
     ReplyTask,
     SentReply,
+    NATIVE_REVIEW_CANDIDATE_SQL,
+    NATIVE_CANDIDATE_REVIEW_SQL,
+    NATIVE_CANDIDATE_SELECTION_SQL,
+    NATIVE_CANDIDATE_EXECUTION_SQL,
 )
 from app.action_error_definitions import error_projection
 from app.setup_wizard import (
@@ -190,16 +194,17 @@ from app.user_prompt_blocks import USER_PROMPT_BLOCKS, UserPromptBlock
 
 
 from app.action_storage import (
-    REVIEW_CANDIDATE_SQL,
-    CANDIDATE_REVIEW_SQL,
-    CANDIDATE_SELECTION_SQL,
-    CANDIDATE_EXECUTION_SQL,
-    CANDIDATE_ACTION_ATTEMPT_SQL,
-    EXTERNAL_ACTION_RESULT_SQL,
+    NATIVE_CANDIDATE_ACTION_ATTEMPT_SQL as CANDIDATE_ACTION_ATTEMPT_SQL,
+    NATIVE_EXTERNAL_ACTION_RESULT_SQL as EXTERNAL_ACTION_RESULT_SQL,
     SENT_REPLY_SQL,
     REPLY_ATTEMPT_COMMON_SQL,
     task_delivery_projection,
 )
+
+REVIEW_CANDIDATE_SQL = NATIVE_REVIEW_CANDIDATE_SQL
+CANDIDATE_REVIEW_SQL = NATIVE_CANDIDATE_REVIEW_SQL
+CANDIDATE_SELECTION_SQL = NATIVE_CANDIDATE_SELECTION_SQL
+CANDIDATE_EXECUTION_SQL = NATIVE_CANDIDATE_EXECUTION_SQL
 
 MEETING_JOB_SQL = NATIVE_MEETING_TASK_SQL
 OKR_REQUEST_SQL = "select id,status,updated_at,error,coalesce(json_extract(parameters_json,'$.conversation_id'),'') as conversation_id, coalesce(json_extract(parameters_json,'$.conversation_title'),'') as conversation_title, coalesce(json_extract(parameters_json,'$.trigger_message_id'),'') as trigger_message_id, coalesce(json_extract(parameters_json,'$.trigger_sender'),'') as trigger_sender, coalesce(json_extract(parameters_json,'$.trigger_text'),'') as trigger_text, coalesce(json_extract(parameters_json,'$.period_label'),'') as period_label from tasks where kind='okr_review'"

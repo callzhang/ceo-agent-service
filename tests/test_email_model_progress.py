@@ -93,7 +93,7 @@ def test_the_live_rate_counts_only_recent_samples_and_times_only_the_model(tmp_p
     old = (datetime.now(timezone.utc) - timedelta(hours=2)).isoformat()
     with store._connect() as db:
         db.execute(
-            "update email_classifier_runtime_samples set recorded_at=? where id=1", (old,)
+            "update email_classifier_runtime_samples set created_at=? where id=1", (old,)
         )
 
     rate = store.classifier_runtime_rate(window_seconds=600)
@@ -115,7 +115,7 @@ def test_a_quiet_window_reports_the_last_batch_and_says_so(tmp_path: Path) -> No
         )
     old = (datetime.now(timezone.utc) - timedelta(hours=2)).isoformat()
     with store._connect() as db:
-        db.execute("update email_classifier_runtime_samples set recorded_at=?", (old,))
+        db.execute("update email_classifier_runtime_samples set created_at=?", (old,))
 
     rate = store.classifier_runtime_rate(window_seconds=600)
 

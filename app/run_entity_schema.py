@@ -432,10 +432,10 @@ def _translate_schedule_input_refs(db, translate, *, native: bool) -> None:
         ).fetchall():
             trigger = row[1]
             provenance = row[2]
-            if isinstance(trigger, str):
+            if isinstance(trigger, str) and trigger:
                 for path in _SCHEDULED_CONSUMER_REF_PATHS:
                     trigger, _ = _replace_json_integer_leaf(trigger, path, translate)
-            if isinstance(provenance, str):
+            if isinstance(provenance, str) and provenance:
                 provenance, _ = _replace_json_integer_leaf(
                     provenance, ("source", "scheduled_task_run_id"), translate)
             assignments = []
@@ -463,10 +463,10 @@ def _translate_schedule_input_refs(db, translate, *, native: bool) -> None:
             (record_type,),
         ).fetchall():
             trigger, provenance = row[1], row[2]
-            if isinstance(trigger, str):
+            if isinstance(trigger, str) and trigger:
                 for path in _SCHEDULED_CONSUMER_REF_PATHS:
                     trigger, _ = _replace_json_integer_leaf(trigger, path, translate)
-            if isinstance(provenance, str):
+            if isinstance(provenance, str) and provenance:
                 provenance, _ = _replace_json_integer_leaf(
                     provenance, ("source", "scheduled_task_run_id"), translate)
             values = {}
@@ -622,7 +622,7 @@ def _coalesce_historical_empty_occurrences(db) -> dict[str, int]:
                 (trigger, reference_paths),
                 (provenance, (("source", "scheduled_task_run_id"),)),
             ):
-                if encoded is None:
+                if encoded is None or encoded == "":
                     continue
                 parsed = json.loads(encoded, object_pairs_hook=unique_objects)
                 for path in paths:

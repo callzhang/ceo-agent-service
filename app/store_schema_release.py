@@ -145,7 +145,8 @@ def prepare_database_schema_release(root: Path, path: Path, *, recovery_source_p
                     (VERSION_KEY,),
                 ).fetchone() if "state" in tables else None
             if marker is not None and marker[0] == PREDECESSOR_STORE_VERSION:
-                return prepare_task_run_entity_release(path)
+                return prepare_task_run_entity_release(
+                    path, recovery_source_path=recovery_source_path)
         from app.action_entity_schema_release import (
             SOURCE_STORE_VERSION as ACTION_ENTITY_SOURCE_VERSION,
             ActionEntitySchemaRelease,

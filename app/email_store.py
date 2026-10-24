@@ -210,9 +210,9 @@ EMAIL_UNSUBSCRIBE_CONTINUATION_LOCATOR_SQL = email_action_projection(
 EMAIL_UNSUBSCRIBE_RECEIPT_LOCATOR_SQL = email_action_projection(
     "email_unsubscribe_receipts", include_rowid=True
 )
-EMAIL_DIRECT_ACTION_LOCATOR_SQL = email_action_projection(
-    "email_actions", include_rowid=True
-)
+# Direct Email effects are current shared Actions; the source-shaped Email
+# locator remains available only through the explicit release module.
+EMAIL_DIRECT_ACTION_LOCATOR_SQL = DIRECT_EMAIL_ACTION_SQL
 
 EMAIL_SCHEMA_VERSION = 53
 EMAIL_CLASSIFICATION_SQL = _canonical_classifications()
@@ -9519,8 +9519,8 @@ class EmailStore:
         ).isoformat()
         with self._connect() as db:
             rows = db.execute(
-                "select total_ms, created_at as recorded_at from email_classifier_runtime_samples"
-                + ") where recorded_at >= ?",
+                "select total_ms, created_at as recorded_at "
+                "from email_classifier_runtime_samples where created_at >= ?",
                 (cutoff,),
             ).fetchall()
         times = sorted(float(row["total_ms"]) for row in rows)
@@ -9531,8 +9531,8 @@ class EmailStore:
             # changed for that, so report the last batch it did judge and say so.
             with self._connect() as db:
                 last = db.execute(
-                    "select total_ms, created_at as recorded_at from email_classifier_runtime_samples"
-                    + ") order by id desc limit ?",
+                    "select total_ms, created_at as recorded_at "
+                    "from email_classifier_runtime_samples order by id desc limit ?",
                     (_RUNTIME_LATENCY_FALLBACK_SAMPLES,),
                 ).fetchall()
             times = sorted(float(row["total_ms"]) for row in last)

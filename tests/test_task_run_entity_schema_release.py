@@ -1,4 +1,5 @@
 import hashlib
+import json
 import sqlite3
 
 import pytest
@@ -196,6 +197,141 @@ def test_work_summary_error_message_reference_follows_typed_task_inverse(tmp_pat
         ).fetchone()[0]
         assert db.execute("select json_extract(?,?)", (encoded, path_to_message)).fetchone()[0] == str(native_id)
     reforward.rollback()
+
+
+def test_paired_task_run_inverse_handoff_is_durable_and_process_portable(tmp_path):
+    from pathlib import Path
+    from app.task_run_entity_schema_release import TaskRunEntitySchemaRelease
+    from app.store_schema_release import prepare_database_schema_release
+
+    path = tmp_path / "durable-handoff-source.sqlite3"
+    backup_dir = tmp_path / "backups"
+    backup_dir.mkdir()
+    backup = backup_dir / "before-forward.sqlite3"
+    _source_database(path)
+    body_sentinel = "task5-private-body-" + __import__("uuid").uuid4().hex
+    with sqlite3.connect(path) as db:
+        db.execute("""insert into emails(
+            message_id,account_id,stable_message_identity,uidvalidity,uid,message_folder,
+            message_rfc_message_id,message_thread_identity,message_sender,
+            message_recipients_json,message_subject,message_normalized_text,message_preview,
+            message_attachment_metadata_json,message_received_at,message_created_at,message_updated_at
+        ) values(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)""", (
+            900000001, "task5-private-body", "task5-private-body-identity", 1, 1, "INBOX",
+            "<task5-private-body@example.invalid>", "task5-private-body-thread", "fixture",
+            "[]", "Task 5 body sentinel", body_sentinel, "Task 5 body sentinel", "[]",
+            "2026-10-24T00:00:00Z", "2026-10-24T00:00:00Z", "2026-10-24T00:00:00Z",
+        ))
+    from app.database_backup import create_database_backup
+    from app.task_run_entity_schema_release import _restore_portable
+    create_database_backup(path, backup)
+    handoff = path.with_name(path.name + ".task-run-inverse.json")
+    root = Path(__file__).resolve().parents[1]
+    release = prepare_database_schema_release(root, path, recovery_source_path=backup)
+    assert release is not None
+    release.publish()
+    assert handoff.is_file()
+    encoded = handoff.read_text(encoding="utf-8")
+    assert "trigger_text" in encoded, "source declarations may name fields without retaining their values"
+    assert body_sentinel not in encoded, "portable inverse metadata must not include business-body values"
+    next_backup = backup_dir / "after-forward.sqlite3"
+    create_database_backup(path, next_backup)
+    assert not backup.exists(), "only the newest verified database backup is retained"
+    assert handoff.is_file(), "active-schema inverse metadata outlives the source backup rotation"
+    cold_release = TaskRunEntitySchemaRelease.from_inverse_handoff(path, handoff)
+    cold_release.rollback()
+    continuation = _restore_portable(json.loads(handoff.read_text(encoding="utf-8")))
+    assert continuation["format"] == "ceo-task-run-source-identity-v1"
+    assert "meeting_business_keys" in continuation["inverse_identity"]
+    with sqlite3.connect(path) as db:
+        from app.state_definitions import state_projection
+        assert db.execute(
+            f"select value from ({state_projection('service_state')}) "
+            "where key='store_schema_version'"
+        ).fetchone() == ("2026-10-21.1",)
+
+
+def test_failed_handoff_write_rolls_back_and_release_rollback_accepts_source(tmp_path, monkeypatch):
+    from pathlib import Path
+    from app.task_run_entity_schema_release import prepare_task_run_entity_release
+
+    path = tmp_path / "failed-handoff-source.sqlite3"
+    recovery = tmp_path / "verified-predeploy.sqlite3"
+    _source_database(path)
+    with sqlite3.connect(path) as source, sqlite3.connect(recovery) as destination:
+        source.backup(destination)
+        source_catalog = tuple(tuple(row) for row in source.execute(
+            "select type,name,tbl_name,sql from main.sqlite_schema "
+            "where name not glob 'sqlite_*' order by type,name"))
+    release = prepare_task_run_entity_release(path, recovery_source_path=recovery)
+
+    def fail_write(_path):
+        raise OSError("simulated durable handoff write failure")
+
+    monkeypatch.setattr(release, "write_inverse_handoff", fail_write)
+    with pytest.raises(OSError, match="simulated durable handoff write failure"):
+        release.publish()
+    release.rollback()
+    with sqlite3.connect(path) as db:
+        restored_catalog = tuple(tuple(row) for row in db.execute(
+            "select type,name,tbl_name,sql from main.sqlite_schema "
+            "where name not glob 'sqlite_*' order by type,name"))
+        assert restored_catalog == source_catalog
+        assert db.execute("select count(*) from tasks").fetchone()[0] == 0
+
+
+def test_paired_inverse_identity_continuation_preserves_meeting_key_id(tmp_path):
+    from pathlib import Path
+    from app.store_schema_release import prepare_database_schema_release
+
+    path = tmp_path / "meeting-identity-source.sqlite3"
+    backup = tmp_path / "meeting-identity-source-backup.sqlite3"
+    _source_database(path)
+    with sqlite3.connect(path) as source:
+        from app.storage_payload import TASK_RECORD_TYPES
+        from app.task8_storage import register_task8_functions
+        from app.task_lifecycle_storage import source_insert
+        register_task8_functions(source)
+        values = {"id": 4401, "meeting_id": "meeting-identity", "status": "waiting"}
+        columns, expressions, parameters = source_insert("meeting_alignment_jobs", values, {})
+        source.execute(
+            'insert into tasks("_kind","id","legacy_key","parent_id",'
+            + ",".join(f'"{field}"' for field in columns)
+            + ") values(?,?,?,? ," + ",".join(expressions) + ")",
+            (TASK_RECORD_TYPES.code("meeting_alignment_jobs"), 4401, "4401", None, *parameters),
+        )
+        source.commit()
+    with sqlite3.connect(path) as source, sqlite3.connect(backup) as destination:
+        source.backup(destination)
+
+    root = Path(__file__).resolve().parents[1]
+    first = prepare_database_schema_release(root, path, recovery_source_path=backup)
+    first.publish()
+    with sqlite3.connect(path) as db:
+        before = db.execute(
+            "select id,task_id,business_key from task_business_keys "
+            "where business_key='meeting-alignment:4401:meeting-identity'"
+        ).fetchone()
+        assert before is not None
+
+    first.rollback()
+    continuation = path.with_name(path.name + ".task-run-inverse.json")
+    from app.task_run_entity_schema_release import _restore_portable
+    payload = _restore_portable(json.loads(continuation.read_text()))
+    assert payload["format"] == "ceo-task-run-source-identity-v1"
+    assert payload["inverse_identity"]["meeting_business_keys"]
+
+    # The continuation is canonical beside the source DB, not scoped to a
+    # particular verified-backup pathname.
+    second = prepare_database_schema_release(root, path)
+    second.publish()
+    second.finalize()
+    with sqlite3.connect(path) as db:
+        after = db.execute(
+            "select id,task_id,business_key from task_business_keys "
+            "where business_key='meeting-alignment:4401:meeting-identity'"
+        ).fetchone()
+        assert after == before
 
 
 
