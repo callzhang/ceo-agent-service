@@ -16,7 +16,7 @@ from app.store import (
     ReplyTaskSpec,
 )
 from app import task_entity_storage
-from app.action_storage import insert_action, insert_task_delivery_action, task_delivery_set_parts
+from app.action_storage import insert_action, insert_task_delivery_action
 from app.action_entity_storage import append_action_receipt, create_action, record_action_result
 from app.action_feedback_storage import (
     insert_feedback_action,
@@ -185,6 +185,68 @@ def test_pending_single_chat_merge_moves_native_inputs_and_keys_before_retiring_
         ).fetchone()[0] == 1
 
 
+def test_pending_single_chat_merge_keeps_unchanged_and_trigger_time_guards(tmp_path):
+    store = _target_store(tmp_path / "single-chat-merge-guards.sqlite3")
+    task = store.ensure_reply_task(**_creator_kwargs(_spec(
+        "guard", single_chat=True, trigger_create_time="2026-10-22T10:01:00Z",
+    )))
+    assert store.replace_pending_single_chat_reply_task_trigger(
+        conversation_id="conversation", trigger_message_id="guard",
+        trigger_create_time="2026-10-22T10:01:00Z", trigger_sender="sender",
+        trigger_text="message guard", trigger_message_json='{"id":"guard"}',
+    ) == 0
+    assert store.replace_pending_single_chat_reply_task_trigger(
+        conversation_id="conversation", trigger_message_id="older-than-target",
+        trigger_create_time="2026-10-22T10:00:00Z", trigger_sender="sender",
+        trigger_text="incoming", trigger_message_json='{"id":"incoming"}',
+    ) == 0
+    with store._connect() as db:
+        unchanged = task_entity_storage.get_task_with_inputs(db, task.id)
+        assert unchanged["execution_generation"] == task.execution_generation
+        assert unchanged["current_input"]["trigger_message_id"] == "guard"
+        assert unchanged["input_version"] == 1
+
+
+@pytest.mark.parametrize("blocked_by", ["attempted", "leased"])
+def test_pending_single_chat_merge_skips_attempted_or_leased_tasks(tmp_path, blocked_by):
+    store = _target_store(tmp_path / f"single-chat-merge-{blocked_by}.sqlite3")
+    task = store.ensure_reply_task(**_creator_kwargs(_spec(
+        blocked_by, single_chat=True, trigger_create_time="2026-10-22T10:00:00Z",
+    )))
+    with store._connect() as db:
+        if blocked_by == "attempted":
+            db.execute("update tasks set attempts=1 where id=?", (task.id,))
+        else:
+            db.execute("update tasks set status='processing' where id=?", (task.id,))
+    assert store.replace_pending_single_chat_reply_task_trigger(
+        conversation_id="conversation", trigger_message_id="incoming",
+        trigger_create_time="2026-10-22T10:01:00Z", trigger_sender="sender",
+        trigger_text="incoming", trigger_message_json='{"id":"incoming"}',
+    ) == 0
+    with store._connect() as db:
+        current = task_entity_storage.get_task_with_inputs(db, task.id)
+        assert current["execution_generation"] == task.execution_generation
+        assert current["current_input"]["trigger_message_id"] == blocked_by
+
+
+def test_pending_single_chat_merge_stale_generation_cas_returns_without_mutation(tmp_path, monkeypatch):
+    store = _target_store(tmp_path / "single-chat-merge-stale-cas.sqlite3")
+    task = store.ensure_reply_task(**_creator_kwargs(_spec(
+        "stale-cas", single_chat=True, trigger_create_time="2026-10-22T10:00:00Z",
+    )))
+    monkeypatch.setattr(task_entity_storage, "update_task_cas", lambda *_args, **_kwargs: None)
+    assert store.replace_pending_single_chat_reply_task_trigger(
+        conversation_id="conversation", trigger_message_id="incoming",
+        trigger_create_time="2026-10-22T10:01:00Z", trigger_sender="sender",
+        trigger_text="incoming", trigger_message_json='{"id":"incoming"}',
+    ) == 0
+    with store._connect() as db:
+        current = task_entity_storage.get_task_with_inputs(db, task.id)
+        assert current["execution_generation"] == task.execution_generation
+        assert current["current_input"]["trigger_message_id"] == "stale-cas"
+        assert current["input_version"] == 1
+
+
 def test_clear_agent_run_session_uses_native_run_identity(tmp_path):
     from app import run_entity_storage
     from app.store import AgentRole
@@ -195,7 +257,7 @@ def test_clear_agent_run_session_uses_native_run_identity(tmp_path):
         matching = run_entity_storage.create_run(db, values={
             "task_id": task.id, "execution_generation": task.execution_generation,
             "role": "consumer", "proposal_revision": 0, "turn_attempt": 0,
-            "operation_id": "matching", "status": "completed", "session_id": "session-a",
+            "operation_id": "matching", "status": "completed", "session_id": "",
             "transcript_start": 0, "transcript_end": 0, "structured_error_json": "{}",
             "error": "", "lease_owner": "", "lease_expires_at": "",
             "started_at": "start", "completed_at": "done", "updated_at": "done",
@@ -298,16 +360,22 @@ def test_native_wechat_task_reader_keeps_task_identity_separate_from_current_inp
         assert native["trigger_message_id"] == "wechat"
 
 
-def test_native_wechat_review_reader_binds_audit_and_parent_runs_to_task(tmp_path):
+@pytest.mark.parametrize("outcome", ["approve", "reject"])
+def test_native_wechat_review_reader_and_writer_use_public_action_identity(
+    tmp_path, monkeypatch, outcome,
+):
     from app import run_entity_storage
     from app.action_storage import insert_task_delivery_action
     from app.store import AutoReplyStore
-    from app.wechat.audit import wechat_audit_candidate, wechat_audit_digest
+    from app.wechat.audit import WechatAuditDecision, wechat_audit_candidate, wechat_audit_digest
 
     store = _target_store(tmp_path / "native-wechat-review.sqlite3")
     store.ensure_reply_task(**_creator_kwargs(_spec("wechat-review", channel="wechat")))
     with store._immediate_write_transaction() as db:
         task = task_entity_storage.get_task_with_inputs(db, 1)
+        # This physical Action id intentionally collides with the delivery's
+        # public id, while the delivery itself receives a different row id.
+        collision = create_action(db, values={})
         consumer = run_entity_storage.create_run(db, values={
             "task_id": 1, "execution_generation": task["execution_generation"],
             "role": "consumer", "proposal_revision": 0, "turn_attempt": 0,
@@ -316,18 +384,24 @@ def test_native_wechat_review_reader_binds_audit_and_parent_runs_to_task(tmp_pat
             "error": "", "lease_owner": "", "lease_expires_at": "",
             "started_at": "start", "completed_at": "done", "updated_at": "done",
         })
-        insert_task_delivery_action(db, "wechat_deliveries", {
+        delivery_write = insert_task_delivery_action(db, "wechat_deliveries", {
             "reply_task_id": 1, "account_id": "account", "target_type": "direct",
             "target_id": "conversation", "conversation_id": "conversation",
             "reply_text": "prepared reply", "execution_generation": task["execution_generation"],
             "status": "ready_to_send", "action_started_at": "", "pre_action_failure": 0,
             "evidence_json": "{}", "error": "",
         })
-        delivery_id = int(db.execute(
+        delivery_id = int(delivery_write.lastrowid)
+        physical_id = int(db.execute(
             "select id from actions where record_type='wechat_deliveries' "
-            "and td_reply_task_id=? and td_execution_generation=?",
-            (1, task["execution_generation"]),
+            "and cast(legacy_key as integer)=?", (delivery_id,),
         ).fetchone()[0])
+        assert int(collision["id"]) == delivery_id
+        assert physical_id != delivery_id
+        assert db.execute(
+            "select 1 from actions where id=? and record_type='wechat_deliveries'",
+            (delivery_id,),
+        ).fetchone() is None
         audit = run_entity_storage.create_run(db, values={
             "task_id": 1, "parent_id": int(consumer["id"]),
             "execution_generation": task["execution_generation"],
@@ -341,23 +415,46 @@ def test_native_wechat_review_reader_binds_audit_and_parent_runs_to_task(tmp_pat
         task = {**task, **{key: value for key, value in task["current_input"].items()
                            if key not in {"id", "task_id"}}}
         delivery = AutoReplyStore._native_wechat_delivery(db, delivery_id)
-        evidence = {
-            "audit_run_id": str(audit["id"]),
-            "audit_candidate_digest": wechat_audit_digest(wechat_audit_candidate(task, delivery)),
-            "audit_decision": "approve",
-        }
-        assignments, arguments = task_delivery_set_parts("wechat_deliveries", {
-            "evidence_json": json.dumps(evidence, separators=(",", ":")),
-        })
-        db.execute(f"update actions set {assignments} where id=?", (*arguments, delivery_id))
+        decision = WechatAuditDecision(
+            outcome=outcome,
+            candidate_digest=wechat_audit_digest(wechat_audit_candidate(task, delivery)),
+            summary="Reviewed the exact prepared delivery",
+        )
+        digest = decision.candidate_digest
+        db.execute(
+            "insert into run_adopted_results values(?,?,?,?,?,?,?,?)",
+            (int(consumer["id"]), 0, None, digest, "{}", "", "", "created"),
+        )
+        db.execute(
+            "insert into run_adopted_reviews values(?,?,?,?,?,?,?)",
+            (7001, int(audit["id"]), int(consumer["id"]), digest,
+             outcome, decision.model_dump_json(), "created"),
+        )
 
-    assert store.wechat_delivery_review_approved(delivery_id) is True
+    import app.native_trajectory as native_trajectory
+    monkeypatch.setattr(
+        native_trajectory, "read_native_result_json_from_attempt",
+        lambda _db, _row: decision.model_dump_json(),
+    )
+    wrong_digest = decision.model_copy(update={"candidate_digest": "0" * 64})
+    with pytest.raises(ValueError, match="native result"):
+        store.record_wechat_delivery_review(delivery_id, int(audit["id"]), wrong_digest)
+    store.record_wechat_delivery_review(delivery_id, int(audit["id"]), decision)
+    store.record_wechat_delivery_review(delivery_id, int(audit["id"]), decision)
+
+    assert store.wechat_delivery_review_approved(delivery_id) is (outcome == "approve")
+    with store._connect() as db:
+        assert db.execute("select td_status from actions where id=?", (physical_id,)).fetchone()[0] == (
+            "ready_to_send" if outcome == "approve" else "failed"
+        )
     with store._immediate_write_transaction() as db:
         run_entity_storage.update_run_cas(
             db, run_id=int(audit["id"]), expected={"parent_id": int(consumer["id"])},
             changes={"parent_id": None},
         )
     assert store.wechat_delivery_review_approved(delivery_id) is False
+    with pytest.raises(ValueError, match="Audit parent"):
+        store.record_wechat_delivery_review(delivery_id, int(audit["id"]), decision)
 
 
 def test_native_settled_reply_compaction_retires_task_input_bodies(tmp_path):

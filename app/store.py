@@ -12498,14 +12498,11 @@ class AutoReplyStore(LogicalRunStoreMixin, ReviewedCandidateStoreMixin):
 
     @staticmethod
     def _native_wechat_delivery(db, delivery_id: int):
+        from app.action_task_delivery_definitions import task_delivery_projection
+
+        projection = task_delivery_projection("wechat_deliveries", source_variant="actual")
         return db.execute(
-            "select id,td_reply_task_id as reply_task_id,td_account_id as account_id,"
-            "td_target_type as target_type,td_target_id as target_id,"
-            "td_conversation_id as conversation_id,td_reply_text as reply_text,"
-            "td_action_started_at as action_started_at,td_execution_generation as execution_generation,"
-            "td_status as status,td_evidence_json as evidence_json,td_error as error,"
-            "td_pre_action_failure as pre_action_failure from actions "
-            "where id=? and record_type='wechat_deliveries'", (delivery_id,),
+            f"select * from ({projection}) where id=?", (delivery_id,),
         ).fetchone()
 
     @staticmethod
@@ -12581,14 +12578,12 @@ class AutoReplyStore(LogicalRunStoreMixin, ReviewedCandidateStoreMixin):
             if result.outcome == "reject":
                 values.update({"status": "failed", "error": "wechat_audit_rejected",
                                "pre_action_failure": 1})
-            assignments, set_args = task_delivery_set_parts(
-                "wechat_deliveries", values,
-                update_sql={"updated_at": "current_timestamp"},
-            )
-            cursor = db.execute(
-                f"update actions set {assignments} where id=? and record_type='wechat_deliveries' "
-                "and td_status='ready_to_send' and td_evidence_json is ?",
-                (*set_args, delivery_id, delivery["evidence_json"]),
+            values["updated_at"] = db.execute("select current_timestamp").fetchone()[0]
+            from app.action_storage import update_task_delivery_action
+
+            cursor = update_task_delivery_action(
+                db, "wechat_deliveries", delivery_id, values,
+                where_sql="status='ready_to_send'",
             )
             if cursor.rowcount != 1:
                 raise AgentRunLeaseLostError("WeChat delivery review lost")
@@ -13006,16 +13001,10 @@ class AutoReplyStore(LogicalRunStoreMixin, ReviewedCandidateStoreMixin):
         if next_status is None:
             return
         send_status, send_error = next_status
-        row = db.execute(
-            f"""
-            select tasks.conversation_id, tasks.trigger_message_id
-            from ({WECHAT_DELIVERY_SQL}) as deliveries
-            join ({REPLY_TASK_SQL}) as tasks on tasks.id=deliveries.reply_task_id
-            where deliveries.id=?
-            """,
-            (delivery_id,),
-        ).fetchone()
-        if row is None:
+        delivery = cls._native_wechat_delivery(db, delivery_id)
+        task = (None if delivery is None else
+                cls._native_wechat_task(db, int(delivery["reply_task_id"])))
+        if task is None:
             return
         attempt = db.execute(
             f"""
@@ -13027,7 +13016,7 @@ class AutoReplyStore(LogicalRunStoreMixin, ReviewedCandidateStoreMixin):
             order by id desc
             limit 1
             """,
-            (row["conversation_id"], row["trigger_message_id"]),
+            (task["conversation_id"], task["trigger_message_id"]),
         ).fetchone()
         if attempt is None:
             return
@@ -16000,8 +15989,6 @@ class AutoReplyStore(LogicalRunStoreMixin, ReviewedCandidateStoreMixin):
             ).fetchall()
             changed = 0
             for row in rows:
-                if row["session_id"] == "":
-                    continue
                 if run_entity_storage.update_run_cas(
                     db, run_id=int(row["id"]), expected={"session_id": row["session_id"]},
                     changes={"session_id": ""},
