@@ -332,7 +332,13 @@ class WechatSender:
         self.runner = runner
         self.user_initiated = user_initiated
 
-    def send(self, delivery, scope) -> SendOutcome:
+    def send(self, delivery, scope, *, prepared=None) -> SendOutcome:
+        """Send one approved delivery.
+
+        ``prepared`` is the persisted outbound message when it is not stored
+        under the delivery's own key (a standard-pipeline send is prepared under
+        its action's key); it must still be exactly the delivery's final body.
+        """
         # Fail-closed: never send to an unverified/conflicting target.
         if getattr(scope, "binding_status", "unverified") != "verified":
             self.store.set_wechat_delivery_status(
@@ -349,7 +355,10 @@ class WechatSender:
         # refreshed value separately for this one navigation attempt.
         expected_recent_text = delivery.evidence.get("trigger_text") or None
         delivery_key = f"wechat:{delivery.id}"
-        prepared = self.store.get_outbound_postfix("wechat", delivery_key)
+        if prepared is None:
+            prepared = self.store.get_outbound_postfix("wechat", delivery_key)
+        elif self.store.get_outbound_postfix("wechat", prepared.delivery_key) != prepared:
+            raise ValueError("prepared WeChat delivery is required")
         if prepared is None or prepared.final_body != delivery.reply_text:
             raise ValueError("prepared WeChat delivery is required")
         claimed = self.store.claim_wechat_delivery(

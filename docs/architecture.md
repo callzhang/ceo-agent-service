@@ -2117,6 +2117,10 @@ Derek 的设计决定：Consumer 运行在各 CLI 的原生 auto 模式里（Cod
 
 标准证据按失败即关闭的方式逐项核对，任何一项对不上都视为未放行：审核是 `approve` 且摘要等于候选摘要、候选未失效、候选属于已完成的 Consumer 运行、Audit 运行已完成且其父运行就是该候选、两者的任务与代次与投递一致、候选是普通 `proposal`、按 `action_identity` 唯一找到该动作、动作的账号／会话类型／对象／会话 ID 与投递完全一致、动作的 `payload.text` 与投递的 `reply_text` 逐字相等。`AutoReplyStore.create_standard_wechat_delivery` 从被批准的动作本身取目标和文本（不取调用方参数），审批文本已是最终正文，因此不再追加发送后缀。原流水线的 `create_wechat_delivery` 与 `finalize_wechat_reply_task` 不能写入这三个标准字段。本项只改放行判定和投递创建；`wechat / send_message` 动作登记、处理器和路由在后续提交。
 
+### 微信发送动作 `wechat / send_message`（阶段 2，Derek 2026-10-24）
+
+标准流水线通过 `wechat / send_message` 动作发微信：目标是 `account_id`、`target_type`（`direct` 或 `group`）、`target_id`、`conversation_id`，参数只有 `text`，且 `text` 必须逐字等于已持久化的预备正文（与钉钉一致，渠道为 `wechat`，投递键由 `agent_message_delivery_key` 生成）。`WechatSendMessageHandler` 的 `dispatch`：确认任务是微信任务 → 核对预备正文 → 发送开关（`CEO_WECHAT_SENDER_ENABLED` 且 `CEO_WECHAT_SEND_MODE=auto`，否则直接 `failed` 且不创建投递）→ 用 `create_standard_wechat_delivery` 从被批准的动作创建投递 → 放行判定复核标准审核 → 沿用现有的当前会话取证、绑定核对和 `WechatSender.send`（可传入预备消息）。结果完全取自投递状态：`sent`→verified，`sending`／`send_unknown`→uncertain（交给现有的只读对账，从不重发），发送前失败→failed（重试可再次发送），被取代→business_state_changed。发送循环保留，只负责恢复和对账。本阶段没有任何路径提议这个动作，线上行为不变；候选的预备正文、微信 Consumer 和路由在阶段 3。
+
 ### 任务长期记忆
 
 Derek 2026-10-24：任务的长期记忆由执行 Agent A 自己在回合内调用 `memory_connector.memory_write`

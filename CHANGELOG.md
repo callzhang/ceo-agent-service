@@ -1,5 +1,10 @@
 # Changelog
 
+## 2026-10-24 — 微信统一路径阶段 2：登记 `wechat / send_message` 与处理器
+
+- 登记 `wechat / send_message`（目标 `account_id`、`target_type`、`target_id`、`conversation_id`，参数 `text`）；新增 `WechatSendMessageHandler`，同步驱动现有 Sender，并把投递状态映射为动作结果；`WechatSender.send` 可接收预备消息；`create_standard_wechat_delivery` 对发送前失败的投递可重新置为待发送。
+- 没有任何路径提议这个动作，线上行为不变。新增 8 个测试（`tests/wechat/test_send_message_handler.py`）。
+
 ## 2026-10-24 — 微信发送放行判定认标准审核（审计类，单独提交）
 
 - **方案 G2（Derek 2026-10-24）**：微信投递的放行判定除原微信审核外，也认标准 Consumer → Audit 审核，且绑定到逐字相同的目标和文本；任何一项对不上都不放行。新增 `AutoReplyStore.create_standard_wechat_delivery` 和 `app/wechat/standard_review.py`；原流水线不能写标准证据字段。

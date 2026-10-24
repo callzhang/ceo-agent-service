@@ -12815,6 +12815,18 @@ class AutoReplyStore(LogicalRunStoreMixin, ReviewedCandidateStoreMixin):
             if existing is not None:
                 if existing["reply_text"] != fields["text"]:
                     raise ValueError("a different WeChat delivery already exists for this task")
+                if existing["status"] == "failed" and bool(existing["pre_action_failure"]):
+                    # Nothing reached WeChat, so a retried dispatch may try again.
+                    assignments, set_args = task_delivery_set_parts(
+                        "wechat_deliveries",
+                        {"status": "ready_to_send", "pre_action_failure": 0, "error": ""},
+                        update_sql={"updated_at": "current_timestamp"},
+                    )
+                    db.execute(
+                        f"update actions set {assignments} "
+                        "where record_type='wechat_deliveries' and cast(legacy_key as integer)=?",
+                        (*set_args, int(existing["id"])),
+                    )
                 return int(existing["id"])
             self._prepare_new_wechat_delivery(
                 db, reply_task_id=row["task_id"], account_id=fields["account_id"],

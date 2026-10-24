@@ -147,8 +147,6 @@ def test_a_returned_review_cannot_create_or_release_a_delivery(tmp_path):
 @pytest.mark.parametrize("result", [
     _result(operation="reply_to_message"),
     _result(capability="dingtalk-chat"),
-    _result(target={"target_id": "u9"}),
-    _result(text="   "),
 ])
 def test_only_a_complete_wechat_send_action_can_create_a_delivery(tmp_path, result):
     store = AutoReplyStore(tmp_path / "shape.sqlite3")

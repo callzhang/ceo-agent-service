@@ -46,6 +46,7 @@ an example or a previous instance. An unsupported operation fails explicitly.
 | `dingtalk-oa` | `revert_task` | `process_instance_id`, `task_id`, `target_activity_id` | `revert_action`, `remark` | Exact owned task completed with `REDIRECT_PROCESS` |
 | `dingtalk-oa` | `redirect_task` | `process_instance_id`, `task_id`, `to_actioner_id` | Optional `remark` | Source task redirected and a distinct running task owned by the named recipient |
 | `dingtalk-oa` | `append_task` | `process_instance_id`, `task_id`, `appender_user_id` (a verified DingTalk user ID) | `type`: `before` or `parallel` | The principal's source task is running and a new running task owned by the named user appears; refused when that user already has a running task |
+| `wechat` | `send_message` | `account_id`, `target_type` (`direct` or `group`), `target_id`, `conversation_id` of the WeChat target | `text` (exact prepared final body) | The delivery created from this approved action ends `sent`; an unconfirmed send is uncertain and settled by read-only reconciliation, never re-sent |
 | `dingtalk-oa` | `comment` | `process_instance_id` | `content` | Provider comment ID; otherwise uncertain |
 | `dingtalk-doc` | `create_document` | `name` | Markdown `content` | Provider `nodeId` plus exact document name and Markdown readback |
 | `dingtalk-doc` | `create_doc_comment` | `node_id` | `content` | Provider `commentKey`; otherwise uncertain |
