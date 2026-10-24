@@ -1,5 +1,26 @@
 # Business model simplification: current completion and closeout
 
+## Email business-model phase audit — 2026-10-24
+
+The current source already contains the accepted Email B1/B2 model: `emails`
+owns canonical message metadata, and Email operations use the shared Action
+lifecycle. The remaining Email-specific owners are the classification Task
+input, historical-scan candidates, and bounded content-free runtime samples.
+Code inspection and read-only production aggregates found no safe whole-record
+deletion or additional schema merge among those owners. The only immediately
+supported content reduction is the existing explicit compaction of completed
+classification inputs; it was not run in this turn.
+
+No database, runtime, or schema mutation was made, and no backup, database copy,
+or temporary artifact was created. A production migration was not attempted:
+the required current-data forward/inverse acceptance is not available under the
+instruction to create no backup or temporary database, and the normal deploy
+path itself makes a database backup. The exact ownership and reduction boundary
+is recorded in [Email phase audit](business-model-email-phase3-audit.md).
+
+This Email audit does not close the separate A5b Reply-local-result item or
+claim that the broader business-model program is complete.
+
 ## Action Entity Phase 1 production acceptance — 2026-10-22
 
 Phase 1 (the first external-Action unit, Tasks 1–7) is deployed and read back at production commit `87a34d299d5749af1af454bfdd01c48a936799a4`, after the standard deploy from production `036b14624cddbcff04098ebec7697644f95370c0` through `bf07de8d6210709cd76887cc14ebb9ef23fa5600`. The deployed Store marker is `2026-10-21.1`, Email ledger 53, with 14 ordinary tables. Production readback confirmed 15,472 common Actions, 18,621 Action Receipts and 506 Observers; all seven retired populated source kinds have zero rows. The original sole FK finding remains `runs(190042) -> tasks(1)`. Health, status, queues, Attention and History returned HTTP 200. PID is 2903.
