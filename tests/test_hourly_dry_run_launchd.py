@@ -76,8 +76,12 @@ def test_main_launch_agent_runs_single_keepalive_supervisor():
     assert "StartInterval" not in plist
     assert plist["StandardOutPath"].endswith("ceo-agent-service-main.out.log")
     assert plist["StandardErrorPath"].endswith("ceo-agent-service-main.err.log")
-    command = plist["ProgramArguments"]
-    assert command[:2] == ["/bin/zsh", "-lc"]
+    # A named script, so macOS Background Items shows "ceo-agent-service"
+    # rather than "zsh" for this job.
+    assert plist["ProgramArguments"] == ["__SERVICE_ROOT__/scripts/ceo-agent-service"]
+    launcher = REPO_ROOT / "scripts" / "ceo-agent-service"
+    assert os.access(launcher, os.X_OK)
+    command = [None, None, launcher.read_text(encoding="utf-8")]
     assert "app.service_supervisor" in command[2]
     assert "export PYTHONDONTWRITEBYTECODE=1" in command[2]
     assert 'CEO_CONDA_PREFIX="${CEO_CONDA_PREFIX:-${HOME}/miniforge3}"' in command[2]
@@ -122,7 +126,7 @@ def test_main_launch_agent_runs_single_keepalive_supervisor():
         [
             "zsh",
             "-fc",
-            command[2].split(" && exec ", 1)[0]
+            command[2].split("\nexec ", 1)[0]
             + '; print -r -- "$CEO_OKR_LIVE_SOURCE_COMMAND"',
         ],
         check=False,
