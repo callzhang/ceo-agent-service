@@ -80,10 +80,11 @@ def _wechat_delivery_and_attempt_state(store, delivery_id):
                 f"""
                 select attempts.*
                 from ({REPLY_ATTEMPT_COMMON_SQL}) as attempts
-                join tasks as tasks
-                  on tasks.{task20_column('reply_tasks', 'conversation_id')}=attempts.conversation_id
-                 and tasks.{task20_column('reply_tasks', 'trigger_message_id')}=attempts.trigger_message_id
-                where tasks.id=? and tasks.record_type='reply_tasks'
+                join task_inputs as inputs
+                  on inputs.conversation_id=attempts.conversation_id
+                 and inputs.trigger_message_id=attempts.trigger_message_id
+                join tasks as tasks on tasks.id=inputs.task_id
+                where tasks.id=? and tasks.kind='reply'
                   and attempts.channel='wechat'
                 order by attempts.id
                 """,
