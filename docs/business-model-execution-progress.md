@@ -15,8 +15,8 @@ Email 53→54 was migrated and deployed on 2026-10-24 at `a4154c03b` through the
 standard release path. The full current-data forward/inverse/reforward rehearsal
 passed before deployment. Production now reads Store `2026-10-23.1` / Email54;
 schema manifest and `quick_check` pass, and health, active/queued dashboard,
-Attention and History endpoints returned HTTP 200. One pre-existing
-`runs(190042) -> tasks(1)` foreign-key finding remains unchanged. The 182,907-byte
+Attention and History endpoints returned HTTP 200. One pre-existing foreign-key
+finding on `runs` row 190042 remains unchanged. The 182,907-byte
 reduction is the candidate JSON logical payload only; the 514,969,600-byte
 production SQLite file was not VACUUMed and did not shrink. After successful
 readback, the verified deployment backup and remaining backup-directory

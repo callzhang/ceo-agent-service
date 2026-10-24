@@ -67,7 +67,8 @@ Store `2026-10-23.1` / Email54, current schema manifest, `quick_check=ok`, 924
 candidate rows and 140,255 JSON bytes with no exact duplicate locator keys.
 The database file remains 514,969,600 bytes: the 182,907-byte logical JSON
 reduction did not reclaim SQLite pages because production was not VACUUMed.
-The existing foreign-key finding `runs(190042) -> tasks(1)` is unchanged.
+The same single foreign-key finding on `runs` row 190042 remains; this
+migration did not alter it.
 
 The 7.4 MB normalized-text, 8.5 MB model-text, and 7.8 MB preview figures are
 logical value lengths inside `emails`, not independently reclaimable SQLite
