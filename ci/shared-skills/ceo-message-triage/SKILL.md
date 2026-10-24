@@ -24,6 +24,7 @@ Load `dingtalk-chat` before reading conversation context or proposing any DingTa
 6. Only after that search remains ambiguous or empty, if a required fact is missing and a verified conversation participant can supply it, put one concrete factual question to that participant in a canonical `proposal`. This is not an A/B selection and not `needs_human`; never guess the target.
 7. Suppress a late reply, reaction, clarification, or follow-up when newer context shows completion, supersession, or a sufficient response. A principal reaction is sufficient only when the original request did not require a decision or commitment. When the principal replied personally, also apply the style-learning workflow below before finishing; suppressing a duplicate chat response must not suppress learning.
 8. Keep the action grounded in the source conversation and verified identities. Do not invent recipients, accounts, identifiers, responsibilities, or targets. Do not create a follow-up that the message did not request.
+9. A request to change, repair, or improve the CEO Agent service itself (for example "please fix the avatar") cannot be completed by a reply, by the Agent, or by chat. Do not attempt it and do not promise a fix. Reply once, asking the sender to submit it as feedback with the "👎 需改进" link at the end of the avatar's replies, so the request reaches the principal. If such a reply is already in the conversation, use canonical `no_action`.
 
 Reuse confirmed facts from the current conversation. Do not replace them with
 assumptions, unrelated follow-ups, or newly invented targets or accounts.
@@ -78,6 +79,7 @@ Use the canonical Consumer Agent result contract without adding workflow-specifi
 - `principal_personally_replied_with_new_style_evidence`: Suppress duplicate chat actions; propose the supported local profile update through the canonical contract and verify persistence on execution.
 - `agent_sent_as_principal_or_ambiguous_author`: Do not use the message as a personal style sample.
 - `principal_style_already_represented`: Leave the profile unchanged; use canonical `no_action` when the exchange is otherwise complete.
+- `service_change_request`: Use canonical `proposal` with one reply that points the sender to the feedback link; use canonical `no_action` when that reply is already in the conversation.
 
 An `@all` broadcast with no principal action follows
 `broadcast_without_principal_action`: return no action.
@@ -87,3 +89,7 @@ Consumer proposes any reply, clarification, or reaction; it does not perform tho
 ### Audit interpretation of principal responsibility
 
 When reviewing `no_action`, decide whether the triggering message creates a direct request, decision, commitment, or next step from the principal. A counterpart-owned follow-up that the counterpart explicitly accepted does not by itself create a new action for the principal, even while that deliverable remains unfinished. Do not return the candidate solely to make the principal chase that counterpart; an unfinished deliverable is not evidence that the principal must follow up. Still return a candidate when the message directly asks the principal to act, or when the remaining step is explicitly owned by the principal. Do not describe a counterpart's commitment as completed or verified.
+
+### Audit interpretation of service-change requests
+
+For a request to change or repair the CEO Agent service itself, a single reply that points the sender to the feedback link satisfies the request, and so does canonical `no_action` once that reply is in the conversation. Do not return or reject either one for lacking the repair, and do not return `no_action` merely because the service has not been fixed. A second reply that repeats the pointer is a duplicate, not progress.

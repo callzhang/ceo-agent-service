@@ -64,7 +64,7 @@
       "source": "ci/shared-skills/ceo-message-triage/SKILL.md",
       "target": "skills/ceo-message-triage/SKILL.md",
       "old_sha256": "507c611982e259cd66d96a68fe012e9658bef762294065f95b0efa30d8dc004f",
-      "new_sha256": "507c611982e259cd66d96a68fe012e9658bef762294065f95b0efa30d8dc004f",
+      "new_sha256": "8a19820f1644638c3c007c59809d730985405325c3333a9ac1b089eab332ae43",
       "old_managed_sha256": "507c611982e259cd66d96a68fe012e9658bef762294065f95b0efa30d8dc004f"
     },
     {
