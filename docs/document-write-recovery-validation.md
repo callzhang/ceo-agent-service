@@ -64,3 +64,11 @@ DWS 的 `docVerificationError` 生成 `doc.operation.v1/status=partial_success`�
 Derek 明确：确认已执行的文档写入即算写入成功。共用工具将已应用写入的 `ok=false/status=partial_success` 改为 `ok=true/status=success`，核验/读回问题继续保留 `verified=false/readback=null`、目标、原始错误和 provider 结果。未执行、权限拒绝和提交未知仍报错；不增加写入次数，不修改 Audit 规则。即使写入成功，缺少读回的结果也不会冒充完整核验回执。
 
 既有回归改用新成功语义，修改实现前 8 例如预期失败、6 例通过。定向文档恢复及报告回执测试 26 例通过，Ruff 与 diff 检查通过。扩展工件测试 11 例因既有数据库夹具 `tasks` 缺少 `status` 字段失败；在未修改的 HEAD 上对照同样 11 例失败，不属于本次改动。部署与自然业务回读单独记录。
+
+### 写入成功语义的生产发布回读（2026-10-24 06:56 UTC）
+
+实现提交 `b5028e7ef49b187fd8cebe81ba21d18ffaea0eef` 已推送 main，正式 `python -m app.deploy` 返回 `deployed c0382cbb -> b5028e7e`，没有跳过空闲等待。首次回读 PID 由 66176 变为 72854；随后另一会话的正式部署更新到 `7a6caf762265003d6ae33cd8d5e738c87fab75b8`。等待其重启窗口结束后重新读取：该版本仍包含本次修复，生产工作树无源码修改，主进程 PID 76014，worker 76018/76019/76020。进程于 06:56:10 UTC 启动，晚于本次文档工具源码更新时间 06:54:46 UTC，cwd 为正式生产 checkout。生产 `app/agent_cli.py` 与已测试文件逐字节一致，SHA-256 为 `aa50c18de3cd4dfc9465d46c5c96c1e804f454ac04e84519b38fec43dc0e2729`，确认已执行写入的返回为 `ok=true/status=success/verified=false`。
+
+最终 healthz、console status、Attention、History、Dashboard queues 全部 HTTP 200。Attention 10 项、History 37925 项；队列 active 1（原有邮件 provider 工作）、queued 194。Reply/Attempt 失败分别为 13/13，Meeting 失败 1、Meeting Memory 失败 9，与部署前读数相同。原先阻挡排空的邮件动作结束后进入既有重试队列；邮件 provider pending 111、processing 1、retryable 78，继续由原有流程处理，不归因于本次文档回执改动。
+
+只读查询部署窗口后的 Agent 运行记录，新增运行 0 项，尚无自然文档写入样本。结论：新代码已发布并由新进程加载，运行健康回读通过；真实文档写入的成功回执及重复覆盖是否停止仍待首个自然相关 trajectory，不人工重放或操作业务文档。
