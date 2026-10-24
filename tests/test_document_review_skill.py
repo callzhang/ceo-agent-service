@@ -63,8 +63,9 @@ def test_document_review_skill_defines_complete_review_workflow():
         "Do not reuse a conclusion from an older version",
         "Review readable material directly",
         "Do not ask the sender to paste content that the agent can read",
-        "explicit dependency failure",
-        "Do not infer or invent the missing content",
+        "For a verified material access denial, use an authorized `request_access` purpose action once",
+        "Request delivery is not permission approval",
+        "remain explicit technical failures",
         "Deliver comments in the material when the loaded operation Skill supports comments",
         "otherwise deliver the review in the source conversation",
     ):
