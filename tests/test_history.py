@@ -1,9 +1,8 @@
 from tests.support.legacy_todo_facts import seed_legacy_work_project, seed_legacy_work_todo, seed_legacy_work_update
 import sqlite3
 
-from app.run_storage import insert_run
+from app.run_entity_storage import create_run
 from app.action_storage import REPLY_ATTEMPT_COMMON_SQL, update_action, update_sync_action
-from app.task_storage import REPLY_TASK_SQL
 from app.history import HistoryItem, safe_observability_error
 from app.store import AutoReplyStore
 
@@ -58,7 +57,7 @@ def _seed_meeting_run(store: AutoReplyStore, *, status: str = "sent") -> int:
         target_title="项目群",
         final_message="各方对上线范围仍有分歧。@Avery 请确认风险预算。",
     )
-    return store.create_logical_run('meeting_alignment_runs', task_public_id=job_id, codex_session_id="meeting-session-1", status=status, error="")
+    return store.create_professional_run(job_id, session_id="meeting-session-1", status=status, error="")
 
 
 def test_history_merges_reply_and_meeting_runs_by_time(tmp_path):
@@ -78,7 +77,7 @@ def test_history_merges_reply_and_meeting_runs_by_time(tmp_path):
     with sqlite3.connect(store.path) as db:
         update_action(db, "reply_attempts", reply_id, {"created_at": "2026-07-14 10:00:00"})
         db.execute(
-            "update runs set created_at='2026-07-14 10:01:00' where record_type='agent_runs' and source_type='meeting_alignment_runs' and cast(legacy_key as integer)=?",
+            "update runs set created_at='2026-07-14 10:01:00' where id=?",
             (meeting_run_id,),
         )
 
@@ -129,36 +128,32 @@ def test_history_uses_current_run_while_failed_attempt_is_recovering(tmp_path):
         send_status="failed",
     )
     with sqlite3.connect(store.path) as db:
+        db.row_factory = sqlite3.Row
         task_id, generation = db.execute(
-            f"select id, execution_generation from ({REPLY_TASK_SQL}) where trigger_message_id='task-1'"
+            "select id, execution_generation from tasks where kind='reply'"
         ).fetchone()
-        insert_run(
-            db, 'agent_runs', {
-                'task_id': task_id,
-                'execution_generation': generation,
-                'role': 'consumer',
-                'status': 'failed',
-            },
-        )
-        failed_run = db.execute("select last_insert_rowid()").fetchone()[0]
+        failed_run = create_run(db, values={
+            'task_id': task_id,
+            'execution_generation': generation,
+            'role': 'consumer',
+            'status': 'failed',
+        })["id"]
         update_action(db, "reply_attempts", attempt_id, {"agent_run_id": failed_run})
-        insert_run(
-            db, 'agent_runs', {
-                'task_id': task_id,
-                'execution_generation': generation,
-                'role': 'consumer',
-                'status': 'running',
-                'turn_attempt': 1,
-            },
-        )
-        db.execute("update tasks set status='processing' where record_type='reply_tasks' and cast(legacy_key as integer)=?", (task_id,))
+        create_run(db, values={
+            'task_id': task_id,
+            'execution_generation': generation,
+            'role': 'consumer',
+            'status': 'running',
+            'turn_attempt': 1,
+        })
+        db.execute("update tasks set status='processing' where id=?", (task_id,))
 
     assert store.count_history_items(send_statuses=("failed",)) == 0
     [item] = store.list_history_items(limit=20, send_statuses=("processing",))
     assert item.source_id == attempt_id
     with sqlite3.connect(store.path) as db:
         db.execute(
-            "update runs set status='completed' where record_type='agent_runs' and task_id=? and turn_attempt=1",
+            "update runs set status='completed' where task_id=? and turn_attempt=1",
             (task_id,),
         )
     assert store.count_history_items(send_statuses=("failed",)) == 0
@@ -233,8 +228,8 @@ def test_history_preserves_immutable_retry_run_after_job_succeeds(tmp_path):
         eligible_at="2026-07-14T10:00:00+08:00",
         status="pending",
     )
-    retry_run = store.create_logical_run('meeting_alignment_runs', task_public_id=job_id, codex_session_id="session-retry", status="retry", error="temporary")
-    sent_run = store.create_logical_run('meeting_alignment_runs', task_public_id=job_id, codex_session_id="session-sent", status="ready_to_send", error="")
+    retry_run = store.create_professional_run(job_id, session_id="session-retry", status="retry", error="temporary")
+    sent_run = store.create_professional_run(job_id, session_id="session-sent", status="ready_to_send", error="")
     store.update_meeting_alignment_job(job_id, status="sent")
 
     items = store.list_history_items(limit=20)
@@ -258,8 +253,8 @@ def test_history_keeps_earlier_ready_run_sent_after_later_send_succeeds(tmp_path
         eligible_at="2026-07-14T10:00:00+08:00",
         status="pending",
     )
-    first_run = store.create_logical_run('meeting_alignment_runs', task_public_id=job_id, codex_session_id="session-first-ready", status="ready_to_send", error="")
-    second_run = store.create_logical_run('meeting_alignment_runs', task_public_id=job_id, codex_session_id="session-second-ready", status="ready_to_send", error="")
+    first_run = store.create_professional_run(job_id, session_id="session-first-ready", status="ready_to_send", error="")
+    second_run = store.create_professional_run(job_id, session_id="session-second-ready", status="ready_to_send", error="")
     store.update_meeting_alignment_job(job_id, status="sent")
 
     statuses = {
@@ -316,7 +311,8 @@ def test_history_tie_order_is_stable_across_kinds(tmp_path):
     with sqlite3.connect(store.path) as db:
         for (attempt_id,) in db.execute(f"select id from ({REPLY_ATTEMPT_COMMON_SQL})"):
             update_action(db, "reply_attempts", attempt_id, {"created_at": "2026-07-14 10:00:00"})
-        db.execute("update runs set created_at='2026-07-14 10:00:00' where record_type='agent_runs' and source_type='meeting_alignment_runs'")
+        db.execute("update runs set created_at='2026-07-14 10:00:00' where id in "
+                   "(select run_id from run_provenance where source_type='meeting_alignment_runs')")
 
     first_page = store.list_history_items(limit=1, offset=0)
     second_page = store.list_history_items(limit=1, offset=1)
