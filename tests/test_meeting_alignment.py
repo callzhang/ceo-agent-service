@@ -42,10 +42,9 @@ from app.meeting_alignment_models import (
     meeting_decision_audit_is_approved,
     persist_audited_meeting_decision,
 )
-from app.task8_storage import task8_set_parts
+from tests.support.native_task_fields import set_native_task_fields
 from app.action_task_delivery_definitions import task_delivery_projection
 from app.store import MEETING_LOGICAL_RUN_SQL
-from app.runs11_definitions import run11_projection
 from app.store import AutoReplyStore
 from app.task_storage import MEETING_JOB_SQL
 from app.skill_features import FeatureRegistry
@@ -54,19 +53,8 @@ NOW = datetime.fromisoformat("2026-07-14T10:10:00+08:00")
 
 
 def _set_meeting_job_fields(store: AutoReplyStore, job_id: int, **values: object) -> None:
-    parts = task8_set_parts(
-        "meeting_alignment_jobs",
-        {},
-        update_sql={field: "?" for field in values},
-        update_parameters=tuple(values.values()),
-    )
     with store._connect() as db:
-        db.execute(
-            f"update tasks set {parts.sql} "
-            "where record_type='meeting_alignment_jobs' "
-            "and cast(legacy_key as integer)=?",
-            (*parts.parameters, job_id),
-        )
+        set_native_task_fields(db, "meeting_alignment_jobs", job_id, values)
 
 
 @pytest.mark.parametrize("status", ["pending", "processing", "retry", "ready_to_send"])
@@ -1743,13 +1731,51 @@ def test_tool_free_meeting_planner_preserves_all_frozen_skill_requirements(tmp_p
     assert "FROZEN CALENDAR SKILL BODY" not in compact_prompt
 
 
-def test_consumer_injects_similar_codex_sessions_into_meeting_prompt(tmp_path):
+def _seed_native_meeting_session(store, tmp_path, monkeypatch, *, session_id, title, final_message):
+    """A finished Meeting Run whose transcript the similar-session search can read."""
+    from app import native_trajectory
+    from app.meeting_alignment_models import MeetingSource
+    from tests.support.native_run_rows import insert_runtime_attempt_row
+
+    source = MeetingSource.model_validate({
+        "meeting_id": f"history-{session_id}", "title": title,
+        "status": "ended", "started_at": "2026-07-14T07:00:00+08:00",
+        "ended_at": "2026-07-14T08:00:00+08:00",
+        "participants": [{"name": "Derek", "user_id": "derek"}],
+        "attendee_evidence": "calendar", "attendee_roster_complete": True,
+        "current_user_id": "derek", "summary": "会议摘要", "transcript": [],
+    })
+    decision = summary_decision().model_copy(update={"final_message": final_message})
+    native = tmp_path / f"{session_id}.jsonl"
+    native.write_text("\n".join(json.dumps({"type": "response_item", "payload": {
+        "type": "message", "role": role, "content": [{"type": kind, "text": text}],
+    }}, ensure_ascii=False) for role, kind, text in (
+        ("user", "input_text", "完整会议来源 JSON：\n" + source.model_dump_json()),
+        ("assistant", "output_text", decision.model_dump_json()),
+    )) + "\n")
+    monkeypatch.setattr(native_trajectory, "find_codex_session_path", lambda *a, **k: native)
+    job_id = store.upsert_meeting_alignment_job(
+        meeting_id=source.meeting_id, title=title, source_json="{}", participants_json="[]",
+        ended_at="2026-07-14T08:00:00+08:00", eligible_at="2026-07-14T08:10:00+08:00",
+        status="no_action",
+    )
+    run_id = store.create_professional_run(
+        job_id, session_id=session_id, status="ready_to_send", transcript_start=0, transcript_end=2,
+    )
+    with store._connect() as db:
+        insert_runtime_attempt_row(db, {
+            "workload_kind": "meeting", "workload_key": str(run_id), "attempt_number": 1,
+            "route_name": "test", "runtime_kind": "codex_cli", "credential_mode": "local_oauth",
+            "model": "test", "session_id": session_id, "status": "completed",
+            "transcript_start": 0, "transcript_end": 2,
+        })
+
+
+def test_consumer_injects_similar_codex_sessions_into_meeting_prompt(tmp_path, monkeypatch):
     store = AutoReplyStore(tmp_path / "worker.sqlite3")
-    store.upsert_codex_session_search_index(
-        session_id="session-risk-budget",
-        source_type="meeting_alignment",
-        source_id="7",
-        title="历史上线评审",
+    _seed_native_meeting_session(
+        store, tmp_path, monkeypatch, session_id="session-risk-budget",
+        title="历史上线评审", final_message="先定义上线风险预算与故障面",
     )
     dws = ConsumerDws()
     seed_consumer_job(store, dws)
@@ -1782,7 +1808,7 @@ def test_consumer_indexes_completed_meeting_codex_session(tmp_path):
         status="no_action",
     )
     dws = ConsumerDws()
-    seed_consumer_job(store, dws)
+    job_id = seed_consumer_job(store, dws)
     runner = FakeMeetingRunner(consumer_send_decision())
 
     assert consume_meeting_alignment_jobs(
@@ -1795,26 +1821,18 @@ def test_consumer_indexes_completed_meeting_codex_session(tmp_path):
         embedding_client=lambda texts: [[1.0, 0.0] for _ in texts],
     ) == 1
 
-    results = store.search_codex_sessions(
-        fts_query="上线 OR 风险",
-        query_embedding=[1.0, 0.0],
-        limit=1,
-    )
-    assert [result.session_id for result in results] == ["meeting-session-1"]
-    assert results[0].summary_text == ""
-    assert results[0].source_type == "meeting_alignment"
-    assert results[0].source_id == "1"
+    # Search text is derived from native transcripts at query time (see
+    # test_store); the consumer only records the run's index identity.
     with store._connect() as db:
-        projection = "(" + run11_projection("codex_session_search_index") + ")"
-        row = db.execute(
-            f"select * from {projection} where session_id='meeting-session-1'"
-        ).fetchone()
+        rows = db.execute("select * from codex_session_search_index").fetchall()
+        [run] = store.list_meeting_alignment_runs(job_id)
+    [row] = rows
     assert set(row.keys()) == {
         "id", "session_id", "source_type", "source_id", "title",
         "created_at", "updated_at",
     }
-    assert tuple(row)[1:4] == ("meeting-session-1", "meeting_alignment", "1")
-    assert row["title"] == results[0].title
+    assert tuple(row)[1:4] == ("meeting-session-1", "meeting_alignment", str(run.id))
+    assert row["title"]
     assert row["created_at"] and row["updated_at"]
 
 
@@ -2036,7 +2054,7 @@ def test_meeting_outage_backoff_counts_only_trailing_outage_turns(tmp_path):
     dws = ConsumerDws()
     job_id = seed_consumer_job(store, dws)
     for _ in range(45):
-        store.create_logical_run('meeting_alignment_runs', task_public_id=job_id, codex_session_id="", status="retry", error=json.dumps({"kind": "meeting_agent", "message": "result_invalid"}))
+        store.create_professional_run(job_id, session_id="", status="retry", error=json.dumps({"kind": "meeting_agent", "message": "result_invalid"}))
 
     class NoRouteRunner:
         last_session_id = ""
