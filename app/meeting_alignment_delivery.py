@@ -290,10 +290,19 @@ def deliver_meeting_alignment(
     )
     if not delivery_key.strip():
         raise ValueError("meeting delivery key is required")
+    prepared_target_kind = (
+        "group" if target_kind == "group"
+        else "user" if direct_user_id else "open_user"
+    )
+    delivery_key = message_sender.store.resolve_meeting_alignment_delivery_key(
+        delivery_key,
+        target_kind=prepared_target_kind,
+        target_id=target_id,
+    )
     try:
         prepared = message_sender.prepare_meeting_alignment(
             delivery_key=delivery_key, body=message_text, original_text=source.summary,
-            target_kind="group" if target_kind == "group" else "user" if direct_user_id else "open_user",
+            target_kind=prepared_target_kind,
             target_id=target_id,
         )
     except ValueError as exc:

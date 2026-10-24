@@ -1403,6 +1403,82 @@ def test_replay_keeps_failed_job_with_prepared_delivery_on_recovery_path(tmp_pat
     )
 
 
+def test_replay_keeps_failed_job_with_target_scoped_prepared_delivery(tmp_path):
+    store = AutoReplyStore(tmp_path / "worker.sqlite3")
+    meeting = ended_meeting(meeting_id="minutes-scoped-prepared")
+    dws = FakeDws(
+        minutes_pages={"": {"items": [meeting], "has_more": False, "next_token": ""}},
+        info={meeting["taskUuid"]: meeting},
+    )
+    job_id = store.upsert_meeting_alignment_job(
+        meeting_id=meeting["taskUuid"],
+        title="Original title",
+        source_json="{\"original\":true}",
+        participants_json="[]",
+        ended_at=meeting["endTimeISO"],
+        eligible_at=NOW.isoformat(),
+        status="failed",
+    )
+    legacy_key = f"meeting-alignment:{job_id}:{meeting['taskUuid']}"
+    delivery_key = store.resolve_meeting_alignment_delivery_key(
+        legacy_key, target_kind="group", target_id="cid-meeting"
+    )
+    store.prepare_meeting_alignment_message(
+        delivery_key=delivery_key,
+        body="Prepared message",
+        original_text="Meeting source",
+        target_kind="group",
+        target_id="cid-meeting",
+        feedback_base_url="",
+    )
+
+    results = queue_recent_meeting_alignment_replay(store, dws, now=NOW, limit=50)
+
+    assert results[0]["outcome"] == "failed"
+    assert results[0]["job_id"] == job_id
+    assert store.get_meeting_alignment_job(job_id).status == "failed"
+    assert store.get_outbound_postfix("dingtalk", delivery_key).final_body.startswith(
+        "Prepared message"
+    )
+
+
+def test_meeting_delivery_identity_is_scoped_to_immutable_recipient(tmp_path):
+    store = AutoReplyStore(tmp_path / "worker.sqlite3")
+    legacy_key = "meeting-alignment:416946:minutes-1"
+    old_group = store.prepare_meeting_alignment_message(
+        delivery_key=legacy_key,
+        body="Existing group message",
+        original_text="Meeting source",
+        target_kind="group",
+        target_id="group-cid",
+        feedback_base_url="",
+    )
+
+    group_key = store.resolve_meeting_alignment_delivery_key(
+        legacy_key, target_kind="group", target_id="group-cid"
+    )
+    direct_key = store.resolve_meeting_alignment_delivery_key(
+        legacy_key, target_kind="user", target_id="user-id"
+    )
+
+    assert group_key == legacy_key
+    assert direct_key != legacy_key
+    direct = store.prepare_meeting_alignment_message(
+        delivery_key=direct_key,
+        body="New direct message",
+        original_text="Meeting source",
+        target_kind="user",
+        target_id="user-id",
+        feedback_base_url="",
+    )
+    assert direct.delivery_key == direct_key
+    assert store.get_outbound_postfix("dingtalk", legacy_key).final_body == old_group.final_body
+    assert store.get_outbound_postfix("dingtalk", direct_key).final_body == direct.final_body
+    assert store.resolve_meeting_alignment_delivery_key(
+        legacy_key, target_kind="user", target_id="user-id"
+    ) == direct_key
+
+
 def test_replay_item_failure_does_not_block_later_meeting(tmp_path):
     store = AutoReplyStore(tmp_path / "worker.sqlite3")
     first = ended_meeting(meeting_id="minutes-fails", title="失败会议")
