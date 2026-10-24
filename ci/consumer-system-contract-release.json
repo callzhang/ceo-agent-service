@@ -76,8 +76,8 @@
     {
       "source": "ci/shared-skills/dingtalk-oa-approval/SKILL.md",
       "target": "skills/dingtalk-oa-approval/SKILL.md",
-      "old_sha256": "d37513d7a6f809985efa35049c26d8d73e78d7466b143ca2815d865ed8dbf688",
-      "new_sha256": "f2c113065b9714e91194dcf31e273520ae2e3d887233c5d1a43ca7ac0e76013b"
+      "old_sha256": "f2c113065b9714e91194dcf31e273520ae2e3d887233c5d1a43ca7ac0e76013b",
+      "new_sha256": "8329de8d9066411138cc1c17fac473e335e2136fd0dded2492321d58c0529337"
     },
     {
       "source": "ci/shared-skills/stardust-oa-finance-review/SKILL.md",
@@ -94,7 +94,7 @@
     {
       "source": "ci/shared-skills/stardust-oa-people-review/SKILL.md",
       "target": "skills/stardust-oa-people-review/SKILL.md",
-      "old_sha256": "4eb05afec2760acff5b4993fd1eb0f9960de2ef202995600316f4773331adbd4",
+      "old_sha256": "69678b983cb12ef002eb3702db716be5526708a1fe5ff46aaa8c62467016ee81",
       "new_sha256": "69678b983cb12ef002eb3702db716be5526708a1fe5ff46aaa8c62467016ee81"
     },
     {

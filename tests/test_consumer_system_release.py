@@ -148,10 +148,11 @@ def test_people_review_release_file_baseline_matches_installed_candidate():
         if item["source"] == "ci/shared-skills/stardust-oa-people-review/SKILL.md"
     )
     source_digest = _digest((root / entry["source"]).read_bytes())
+    installed = Path.home() / ".agents/skills/stardust-oa-people-review/SKILL.md"
     assert entry["new_sha256"] == source_digest
-    # The baseline is the installed file this release replaces; it equals the
-    # new digest only while the release changes nothing in this Skill.
-    assert len(entry["old_sha256"]) == 64 and set(entry["old_sha256"]) <= set("0123456789abcdef")
+    # The exact precondition must describe the live managed target. When source
+    # and installed bytes already match, the release is an intentional no-op.
+    assert entry["old_sha256"] == _digest(installed.read_bytes())
 
 
 def test_finance_rule_card_counts_only_valid_applicant_resolvable_returns():
