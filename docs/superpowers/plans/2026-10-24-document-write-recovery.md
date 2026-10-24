@@ -13,3 +13,5 @@ Goal：落实用户批准的共用文档写入/读回最小修复；不改变审
 根因、接口和证据边界见 `docs/document-write-recovery-validation.md`。
 
 04:06 UTC尚无部署后Consumer自然运行；最后一项保持未完成，不触发生产任务补证。
+
+后续核查：3次新Consumer均无文档写入，生产行为仍未验收。完整历史JSONML证实47处右对齐仍存在；DWS Markdown读回省略对齐，前述“文档丢失对齐”解释已纠正。剩余DWS修复需完整JSONML取证，不能直接忽略比较差异。
