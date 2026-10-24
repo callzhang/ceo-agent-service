@@ -136,29 +136,6 @@ def test_business_evidence_dao_upsert_and_date_copy_keep_reference_ids(db):
     assert db.execute("pragma foreign_key_check").fetchall() == []
 
 
-def test_store_meeting_memory_bulk_and_claim_sql_on_final_component(db, tmp_path, monkeypatch):
-    from app.store import AutoReplyStore
-    register_task8_functions(db)
-    for public_id, status in ((700, "sent"), (800, "ready_to_send")):
-        parts = task8_insert_parts("meeting_alignment_jobs", dict(legacy_key=public_id, meeting_id=f"meeting-{public_id}", title="Review", ended_at="2026-10-11T00:00:00+00:00", eligible_at="2026-10-11T00:00:00+00:00", status=status, final_message="Decision"))
-        db.execute(f"insert into tasks({parts.columns}) values({parts.values})", parts.parameters)
-    db.commit()
-    path = tmp_path / "final-component.sqlite3"
-    with sqlite3.connect(path) as target:
-        db.backup(target)
-    # Component SQL verification only: paired constructor selection is a
-    # separate final integration gate and is intentionally not asserted here.
-    with monkeypatch.context() as patch:
-        patch.setattr(AutoReplyStore, "_ensure_initialized", lambda self: None)
-        store = AutoReplyStore(path)
-    assert store.enqueue_sent_meeting_memory_write_events() == 1
-    assert store.enqueue_sent_meeting_memory_write_events() == 0
-    claimed = store.claim_ready_to_send_meeting_alignment_job(800, now="2026-10-18T00:00:00+00:00")
-    assert claimed is not None and claimed.id == 800 and claimed.delivery_claim_token
-    with store._connect() as current:
-        assert {tuple(row) for row in current.execute("select record_type,typeof(payload_json) from actions")} == {("meeting_memory_write_events", "blob"), ("meeting_alignment_delivery_claims", "blob")}
-
-
 def test_email_dao_continuation_conflict_copies_encoded_slots(db):
     from app.email_canonical_storage import insert_email_message, insert_email_classification
     from tests.test_email_canonical_storage import _message, _classification

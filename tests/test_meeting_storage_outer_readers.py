@@ -140,8 +140,6 @@ def test_attention_status_and_memory_child_use_physical_meeting_parent(tmp_path)
     assert meeting["failed"] == 1 and meeting["latest_error"] == "meeting failed"
     attention = _queue_attention_rows(store)
     assert any(row["category"] == "Meeting" and row["id"] == "700" for row in attention)
-    memory = [row for row in attention if row.get("root_cause") == "meeting_memory_write_failed"]
-    assert len(memory) == 1 and memory[0]["context"] == "Meeting Memory: Review"
 
 
 def test_explicit_error_migration_changes_typed_projection_only(tmp_path):

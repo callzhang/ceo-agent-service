@@ -908,17 +908,6 @@ projection run after SQLite has released the writer lock and closed the
 connection; lease checks, claim ownership and returned events/results remain
 unchanged.
 
-Meeting Memory enqueue first excludes existing event IDs using the meeting
-status and unique event indexes in a read-only connection. Only missing jobs
-load `final_message` to check the existing nonempty delivered-conclusion rule.
-An empty probe returns without acquiring the shared SQLite writer lock. A
-positive probe closes its read connection, then the immediate write transaction
-rechecks status, conclusion and event absence for those exact IDs before insert.
-Competing enqueues create one event without advancing the sequence on a no-op;
-jobs delivered after the read snapshot are picked up by the next scan. This
-removes the historical wide-row scan from the write transaction: production
-telemetry observed a 13.454-second hold there with a simultaneous 13.045-second
-dispatcher lock wait.
 
 Dispatcher lease completion retains the same newest 10,000 terminal rows,
 ordered by `terminal_at desc, rowid desc`, and every active row. The required
@@ -2406,7 +2395,7 @@ Derek，2026-09-18：**后台周期性工作必须是定时任务**，在控制�
   Agent；一个 1475 文件的头脑风暴目录排了 564 条，一小时里 109 次运行调用有 105 次在读这些
   过程稿。`scan-task-sources` 现在只读 AI 听记。
 - 取消隐藏的 `task-maintenance` 常驻循环：它不再扫描来源、驱动业务任务，也不再以
-  `task_maintenance.*` 健康组件伪装成业务服务。会议 Memory 写入由自身的 Dispatcher 队列完成；
+  `task_maintenance.*` 健康组件伪装成业务服务。会议结论不再由服务写入 Memory（Derek 2026-10-24）；
   错误收口和孤儿任务恢复由服务启动恢复、Consumer/Dispatcher 的租约机制负责。
 - 并入定时任务「补查遗漏的钉钉消息和日历更新」（`recover-recent-messages`）：钉钉待办完成扫描
   （`scan_completed_dingtalk_todos`，Derek 2026-09-25：完成由新证据驱动，不单独检查）。它按页列出
@@ -3886,9 +3875,7 @@ Phase4C Attention 定时错误读取以原event_id或规范scheduled-task-run:<�
 Phase4C 查询性能边界：数字ID投影显式包含已有部分索引的类型条件，SQLite可使用
 idx_tasks_public_id完成按公共ID查找；TEXT投影不加入此条件。Work Attention先从
 work_summary_inputs类型的scalar状态记录筛出公共ID，再读取所选输入正文；无关类型
-增长不扩大其候选扫描。会议Memory入队的missing候选、主键连接和事务复核使用
-现有物理任务ID；Actions 中的 meeting_memory_write_events 类型仍保存物理父FK，对外还原公共ID，
-已入队记录正文不参与候选检查。状态、排序、limit、去重与竞争复核规则不变。
+增长不扩大其候选扫描。状态、排序、limit、去重与竞争复核规则不变。
 
 Phase4C已于2026-10-12通过PR61/05ca33b1正常上线，生产Store2026-10-12.1、Email51、PID43265及数据/队列读回已验证。具体来源、字段映射、回退、CI、容量和清理边界见docs/database-redesign-phase4c-validation.md；上文候选阶段的时间性验收说明以本条及验收文档最终回执为准。
 
@@ -4936,7 +4923,7 @@ build, verification, restart, health and rollback sequence. Success or every
 exception/timeout/cancel path closes the descriptor and permits claims again;
 process exit also releases flock automatically. No pause bit, new task status or
 retry-policy change is introduced. Independent direct email reply/classifier, Workbench and weekly-OKR claims,
-processing provider operations and meeting Memory leases count as in-flight even
+processing provider operations count as in-flight even
 before a native Agent starts. Processing Email actions are read through the
 explicit publication source, including the current common Action status field;
 a Store-only database without the Email migration ledger contributes zero Email

@@ -2007,7 +2007,7 @@ Derek 2026-10-24：任务的长期记忆由执行 Agent A 自己在回合内调�
 - `codex exec` 仍固定 `--disable hooks`：插件 Stop hook 会在结果之后再加一轮，曾使结构化结果重复。
 - Actions 里的 `task_memory_write_events` 记录类型及其索引、触发器保留（历史行可读，需要迁移才能删），
   但没有任何代码再写入它；控制台 Attention 和队列不再列它。
-- 会议结论的 Memory 写入不变，仍由服务经 `meeting_memory_write` 写入。
+- 会议结论的 Memory 写入同日一并删除（Derek 2026-10-24：不应有两条不同路径）：服务不再有 `meeting_memory_write` 写入器、Worker、`meeting-memory-write` 健康组件、Status 的 `meeting_memory_health` 和自己注册的 OAuth 客户端（`app/memory_connector_client.py`、`authorize-memory-connector`）。已发送的会议结论需要进 Memory 时由人工或 Agent 通过 Memory Connector 补写；历史 `meeting_memory_write_events` 行保留不动。
 
 ### Audit Agent B
 
@@ -2592,14 +2592,6 @@ ProcessingReaction 在现有 service_state 保存文字表情模板与每条源�
 正常生产和消费 pass 根据现有 reply_tasks 与 sent_replies 清理已结束的源消息，
 重启后继续未确认的表情操作。只操作本功能记录的源消息与服务账号的「处理中」表情。
 该进度展示不改变 Consumer/Audit 生命周期、发送授权或现有业务效果检查。
-## 会议 Memory 入队的 SQLite 边界
-
-会议结论入队先通过会议状态索引与事件的唯一会议 ID 索引排除已入队历史，随后只读取缺失会议的
-`final_message`，沿用 `sent` 且结论非空的资格。没有候选时不申请共享写锁；存在候选时关闭只读
-连接，在写事务内仅对这些 ID 重新核验状态、结论与事件缺失，再生成原有事件和 execution generation。
-并发入队仍每个会议只有一条事件，空扫描不修改事件或自增序列；只读快照之后新送达的会议由下一轮发现。
-历史正文检查与全量会议扫描不再放在写锁内。
-
 ## Storage retention (2026-10-09)
 
 已完成或明确跳过的工作汇总输入不长期保留正文。`work_summary_inputs` 在业务投影提交的同一事务中将正文替换为空对象，并保留来源类型和引用、来源时间、原始 UTF-8 正文的 SHA-256 与字节数、明确的精简标记、状态、尝试次数和错误，以及既有原生运行引用。扫描器再次发现同一终态来源不会写回正文，执行中的输入也不会被重复入队覆盖；迟到的失败或重试不能重新打开已精简终态。待处理、执行中和失败输入保留准确正文以供恢复；已采纳的业务证据、业务结果和执行回执继续保存。历史终态正文通过显式存储维护清理，不在初始化中批量清理。History 展示来源元数据；依赖原始正文的历史语义导入明确报告来源不可用，不将空对象当作原文或由业务结果重建输入。
@@ -2850,9 +2842,7 @@ Phase4C Attention 定时错误读取以原event_id或规范scheduled-task-run:<�
 Phase4C 查询性能边界：数字ID投影显式包含已有部分索引的类型条件，SQLite可使用
 idx_tasks_public_id完成按公共ID查找；TEXT投影不加入此条件。Work Attention先从
 work_summary_inputs类型的scalar状态记录筛出公共ID，再读取所选输入正文；无关类型
-增长不扩大其候选扫描。会议Memory入队的missing候选、主键连接和事务复核使用
-现有物理任务ID；Actions 中的 meeting_memory_write_events 类型仍保存物理父FK，对外还原公共ID，
-已入队记录正文不参与候选检查。状态、排序、limit、去重与竞争复核规则不变。
+增长不扩大其候选扫描。状态、排序、limit、去重与竞争复核规则不变。
 
 Phase4C已于2026-10-12通过PR61/05ca33b1正常上线，生产Store2026-10-12.1、Email51、PID43265及数据/队列读回已验证。具体来源、字段映射、回退、CI、容量和清理边界见docs/database-redesign-phase4c-validation.md；上文候选阶段的时间性验收说明以本条及验收文档最终回执为准。
 
@@ -3908,7 +3898,7 @@ drain. This does not force hung work to finish.
 
 In-flight checks include claimed email classifiers, Workbench turns and weekly
 OKR jobs before native runtime creation, direct email reply claims and provider operations in processing,
-and claimed meeting Memory writes, in addition to the existing runtime and
+in addition to the existing runtime and
 dispatcher ownership facts. Retry policy, external-action rules and task
 lifecycle are unchanged. The first release installs the claim hooks through
 the existing quiet deployment path; older processes cannot honor the new lock.

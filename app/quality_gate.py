@@ -855,13 +855,6 @@ def _check_external_delivery_queues(
          ("pending", "sending", "ready_to_send"),
          "and lower(coalesce(error, '')) != 'user_rejected'"),
         ("memory_write_events", "status", ("failed",), ("pending", "processing"), ""),
-        (
-            "meeting_memory_write_events",
-            "status",
-            ("failed",),
-            ("pending",),
-            "",
-        ),
     ):
         if source == "memory_write_events":
             if _objects(db, "actions") != current_action_objects():
