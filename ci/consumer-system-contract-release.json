@@ -49,9 +49,9 @@
     {
       "source": "ci/shared-skills/ceo-document-review/SKILL.md",
       "target": "skills/ceo-document-review/SKILL.md",
-      "old_sha256": "112826bef758efa9f495697624769bf42ee265d92628cca662450f16ccea16a7",
+      "old_sha256": "b6b87c3d1ca32bb2e9a9c53675b22dd0a8932aa808205734c8725d9a3eb09d77",
       "new_sha256": "b6b87c3d1ca32bb2e9a9c53675b22dd0a8932aa808205734c8725d9a3eb09d77",
-      "old_managed_sha256": "112826bef758efa9f495697624769bf42ee265d92628cca662450f16ccea16a7"
+      "old_managed_sha256": "b6b87c3d1ca32bb2e9a9c53675b22dd0a8932aa808205734c8725d9a3eb09d77"
     },
     {
       "source": "ci/shared-skills/ceo-mail-review/SKILL.md",
@@ -71,13 +71,14 @@
       "source": "ci/shared-skills/ceo-wechat/SKILL.md",
       "target": "skills/ceo-wechat/SKILL.md",
       "old_sha256": "dc2ae1f5aa4b3466d9fa03bf7bb608cba6734b84b7eeb64b8491c1e465472fae",
-      "new_sha256": "dc2ae1f5aa4b3466d9fa03bf7bb608cba6734b84b7eeb64b8491c1e465472fae"
+      "new_sha256": "dc2ae1f5aa4b3466d9fa03bf7bb608cba6734b84b7eeb64b8491c1e465472fae",
+      "old_managed_sha256": "76a726dff7d5a4a9ee47029c385edb8bea177d114f7377b4db6ad76f532c489d"
     },
     {
       "source": "ci/shared-skills/dingtalk-oa-approval/SKILL.md",
       "target": "skills/dingtalk-oa-approval/SKILL.md",
       "old_sha256": "874778145a80f1dc0e97e6ae5f18a5492450fb73c7df81903dac5ffd03c34d49",
-      "new_sha256": "874778145a80f1dc0e97e6ae5f18a5492450fb73c7df81903dac5ffd03c34d49"
+      "new_sha256": "4042e6cad1eb336615a6b18aebb0458bfc04d2ba7eec920296bb347dd4d20455"
     },
     {
       "source": "ci/shared-skills/stardust-oa-finance-review/SKILL.md",
