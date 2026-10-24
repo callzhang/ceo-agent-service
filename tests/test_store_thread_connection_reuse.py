@@ -113,3 +113,15 @@ def test_terminal_event_hook_runs_only_for_the_use_that_wrote(store, monkeypatch
     with store._connect() as db:
         db.execute("select count(*) from hook_probe").fetchone()
     assert len(calls) == written
+
+
+def test_a_connection_going_idle_releases_its_page_cache(tmp_path):
+    store = AutoReplyStore(tmp_path / "worker.sqlite3")
+    statements: list[str] = []
+
+    with store._connect() as db:
+        db.set_trace_callback(statements.append)
+
+    # The parsed schema is what the idle slot keeps; the page cache (up to
+    # SQLITE_READ_CACHE_SIZE per connection) is let go.
+    assert "pragma shrink_memory" in [s.lower() for s in statements]

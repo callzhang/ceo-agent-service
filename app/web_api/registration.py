@@ -1153,6 +1153,52 @@ def register_console_routes(
             },
         })
 
+    @app.post("/api/console/meeting-attempts/{run_id}/audit-recovery")
+    async def console_meeting_audit_recovery(run_id: int, request: Request):
+        payload = await request.json()
+        candidate_sha256 = (
+            str(payload.get("candidate_sha256") or "").strip()
+            if isinstance(payload, dict) else ""
+        )
+        if not re.fullmatch(r"[0-9a-f]{64}", candidate_sha256):
+            return JSONResponse({
+                "ok": False, "code": "candidate_digest_invalid",
+                "message": "candidate_sha256 must be a lowercase SHA-256 digest",
+                "details": {},
+            }, status_code=400)
+        store = store_factory()
+        run = store.get_meeting_alignment_run(run_id)
+        if run is None:
+            return JSONResponse({
+                "ok": False, "code": "not_found",
+                "message": "Meeting attempt not found", "details": {},
+            }, status_code=404)
+        job = store.get_meeting_alignment_job(run.task_id)
+        if job is None:
+            return JSONResponse({
+                "ok": False, "code": "not_found",
+                "message": "Meeting job not found", "details": {},
+            }, status_code=404)
+        latest_runs = store.list_meeting_alignment_runs(job.id)
+        if not latest_runs or latest_runs[0].id != run_id:
+            return JSONResponse({
+                "ok": False, "code": "attempt_not_latest",
+                "message": "Audit recovery is available only for the latest Meeting attempt",
+                "details": {},
+            }, status_code=409)
+        requested = store.request_failed_meeting_audit_recovery(
+            job.id, expected_candidate_sha256=candidate_sha256,
+        )
+        if requested is None:
+            return JSONResponse({
+                "ok": False, "code": "candidate_not_recoverable",
+                "message": "The failed Meeting candidate changed or is not eligible for Audit-only recovery",
+                "details": {},
+            }, status_code=409)
+        return command_result(
+            message="已将冻结 Meeting 候选交给独立 Audit；只有精确 approve 才会进入原投递流程"
+        )
+
     @app.get("/api/console/oa-approvals/{process_instance_id:path}")
     def console_oa_detail(process_instance_id: str):
         store = store_factory()

@@ -66,7 +66,7 @@ class _AssembledMeetingStore(AutoReplyStore):
 def test_meeting_writer_claim_update_and_delivery_identity_use_canonical_task_id(tmp_path):
     store = _AssembledMeetingStore(tmp_path / "assembled-target.sqlite3")
     # The frozen source reader is the actual pre-cutover call-site query.
-    with pytest.raises(sqlite3.OperationalError, match="no such column: legacy_key"):
+    with pytest.raises(sqlite3.OperationalError, match=r"no such column: (?:t\.)?legacy_key"):
         store.db.execute(f"select * from ({MEETING_JOB_SQL}) limit 1").fetchall()
     # This unrelated native Task makes the Meeting ID differ from every source key.
     store.db.execute("insert into tasks(kind,status,parameters_json,created_at,updated_at) "

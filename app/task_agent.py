@@ -631,8 +631,10 @@ Current Work Item JSON:
 The Work Item's summary above is its source text. Historical sources are in
 source_documents, one per Signal in source_signals. A document with
 source_in_input false is not copied here: read it yourself with dws from that
-Signal's source_type and source_ref (the ref names the minutes id or the
-document), using the matching dws Skill. A document with visible_ranges or
+Signal's source_type and source_ref, using the matching dws Skill. For ai_minutes
+the part of source_ref before "#" is the taskUuid (dws minutes +detail or
++transcript --id); a dingtalk-doc:<node id>#... ref names the document node. A
+document with visible_ranges or
 decoded_excerpts carries its text here; if it has duplicate_of_document_id, use
 that document's ranges, its source identity stays separate. Offsets are character
 ranges in that exact version. A quote you cite must be exact text of the version

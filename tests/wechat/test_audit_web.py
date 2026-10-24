@@ -140,7 +140,9 @@ def test_reject_marks_failed_without_send(review_client):
 
 def test_approve_sends(review_client):
     import time
+    from tests.wechat.support import approve_delivery
     _seed_delivery(review_client.store)
+    approve_delivery(review_client.store, 1)
     r = review_client.post("/wechat/deliveries/1/approve", follow_redirects=False)
     assert r.status_code == 303
     for _ in range(100):
@@ -238,8 +240,9 @@ def test_memory_review_can_resolve_interrupted_write_to_unknown(memory_client):
     memory_client.store.review_wechat_memory_candidate(
         cid, "approve", reviewer="D", final_statement="writing candidate")
     assert memory_client.store.claim_wechat_memory_candidate_write(cid)["outcome"] == "claimed"
-    with memory_client.store._connect() as db:
-        db.execute("update wechat_memory_candidates set updated_at='2000-01-01' where id=?", (cid,))
+    from app.business_candidate_storage import update_business_candidate
+    with memory_client.store._immediate_write_transaction() as db:
+        update_business_candidate(db, "wechat_memory_candidate", cid, {"updated_at": "2000-01-01"})
     response = memory_client.post(
         f"/wechat/memory-review/{cid}/resolve-unknown",
         data={"reviewer": "Derek", f"confirm_stale_{cid}": "1"},

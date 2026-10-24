@@ -39,6 +39,7 @@ from app.meeting_alignment_models import (
     MeetingAlignmentDecision,
     MeetingSource,
     meeting_alignment_decision_digest,
+    meeting_decision_audit_is_approved,
     persist_audited_meeting_decision,
 )
 from app.task8_storage import task8_set_parts
@@ -1406,6 +1407,82 @@ def test_replay_keeps_failed_job_with_prepared_delivery_on_recovery_path(tmp_pat
     assert store.get_outbound_postfix("dingtalk", delivery_key).final_body.startswith(
         "Prepared message"
     )
+
+
+def test_replay_keeps_failed_job_with_target_scoped_prepared_delivery(tmp_path):
+    store = AutoReplyStore(tmp_path / "worker.sqlite3")
+    meeting = ended_meeting(meeting_id="minutes-scoped-prepared")
+    dws = FakeDws(
+        minutes_pages={"": {"items": [meeting], "has_more": False, "next_token": ""}},
+        info={meeting["taskUuid"]: meeting},
+    )
+    job_id = store.upsert_meeting_alignment_job(
+        meeting_id=meeting["taskUuid"],
+        title="Original title",
+        source_json="{\"original\":true}",
+        participants_json="[]",
+        ended_at=meeting["endTimeISO"],
+        eligible_at=NOW.isoformat(),
+        status="failed",
+    )
+    legacy_key = f"meeting-alignment:{job_id}:{meeting['taskUuid']}"
+    delivery_key = store.resolve_meeting_alignment_delivery_key(
+        legacy_key, target_kind="group", target_id="cid-meeting"
+    )
+    store.prepare_meeting_alignment_message(
+        delivery_key=delivery_key,
+        body="Prepared message",
+        original_text="Meeting source",
+        target_kind="group",
+        target_id="cid-meeting",
+        feedback_base_url="",
+    )
+
+    results = queue_recent_meeting_alignment_replay(store, dws, now=NOW, limit=50)
+
+    assert results[0]["outcome"] == "failed"
+    assert results[0]["job_id"] == job_id
+    assert store.get_meeting_alignment_job(job_id).status == "failed"
+    assert store.get_outbound_postfix("dingtalk", delivery_key).final_body.startswith(
+        "Prepared message"
+    )
+
+
+def test_meeting_delivery_identity_is_scoped_to_immutable_recipient(tmp_path):
+    store = AutoReplyStore(tmp_path / "worker.sqlite3")
+    legacy_key = "meeting-alignment:416946:minutes-1"
+    old_group = store.prepare_meeting_alignment_message(
+        delivery_key=legacy_key,
+        body="Existing group message",
+        original_text="Meeting source",
+        target_kind="group",
+        target_id="group-cid",
+        feedback_base_url="",
+    )
+
+    group_key = store.resolve_meeting_alignment_delivery_key(
+        legacy_key, target_kind="group", target_id="group-cid"
+    )
+    direct_key = store.resolve_meeting_alignment_delivery_key(
+        legacy_key, target_kind="user", target_id="user-id"
+    )
+
+    assert group_key == legacy_key
+    assert direct_key != legacy_key
+    direct = store.prepare_meeting_alignment_message(
+        delivery_key=direct_key,
+        body="New direct message",
+        original_text="Meeting source",
+        target_kind="user",
+        target_id="user-id",
+        feedback_base_url="",
+    )
+    assert direct.delivery_key == direct_key
+    assert store.get_outbound_postfix("dingtalk", legacy_key).final_body == old_group.final_body
+    assert store.get_outbound_postfix("dingtalk", direct_key).final_body == direct.final_body
+    assert store.resolve_meeting_alignment_delivery_key(
+        legacy_key, target_kind="user", target_id="user-id"
+    ) == direct_key
 
 
 def test_replay_item_failure_does_not_block_later_meeting(tmp_path):
@@ -3031,6 +3108,143 @@ def test_requeue_failed_meeting_delivery_rejects_unreviewed_candidate(tmp_path):
     )
 
     assert store.requeue_failed_meeting_delivery(job_id) is None
+
+
+def test_failed_frozen_meeting_candidate_can_be_reaudited_without_regeneration(tmp_path):
+    store = AutoReplyStore(tmp_path / "worker.sqlite3")
+    dws = ConsumerDws()
+    job_id = seed_consumer_job(store, dws)
+    decision = consumer_send_decision().model_copy(deep=True)
+    decision.target.kind = "direct"
+    decision.target.conversation_id = ""
+    decision.target.direct_user_id = "user-z"
+    decision.target.title = "Zhang"
+    decision.target.candidates = []
+    original_decision_json = decision.model_dump_json()
+    store.update_meeting_alignment_job(
+        job_id,
+        status="failed",
+        decision_json=original_decision_json,
+        target_kind="direct",
+        target_id="user-z",
+        target_title="Zhang",
+        final_message=decision.final_message,
+        error=json.dumps({"kind": "meeting_target", "message": "prepared target binding conflicts"}),
+        send_result_json="{}",
+    )
+    original = store.get_meeting_alignment_job(job_id)
+    candidate_digest = meeting_alignment_decision_digest(decision)
+    legacy_key = f"meeting-alignment:{job_id}:{original.meeting_id}"
+    store.set_service_state(
+        f"meeting_delivery_target:v1:dingtalk:{legacy_key}",
+        json.dumps({"kind": "group", "id": "old-group"}, sort_keys=True),
+    )
+    store.prepare_outbound_postfix(
+        "dingtalk", legacy_key, "此前发往群聊的正文", "此前发往群聊的正文",
+    )
+    store.record_outbound_postfix_receipt(
+        "dingtalk", legacy_key, {"messageId": "old-group-receipt"},
+        operation="meeting_alignment",
+    )
+
+    requested = store.request_failed_meeting_audit_recovery(
+        job_id, expected_candidate_sha256=candidate_digest,
+    )
+    assert requested is not None
+    assert requested.status == "retry"
+    assert requested.decision_json == original_decision_json
+    direct_key = store.resolve_meeting_alignment_delivery_key(
+        legacy_key, target_kind="user", target_id="user-z",
+    )
+    assert direct_key != legacy_key
+    assert store.get_outbound_postfix_receipt("dingtalk", legacy_key) == {
+        "messageId": "old-group-receipt"
+    }
+    assert store.get_outbound_postfix_receipt("dingtalk", direct_key) is None
+
+    runner = FakeMeetingRunner(decision)
+    consumed = consume_meeting_alignment_jobs(
+        store, dws, runner, now=NOW, limit=1, deliver=False,
+    )
+    assert consumed == 1
+
+    recovered = store.get_meeting_alignment_job(job_id)
+    persisted_decision = json.loads(recovered.decision_json)
+    assert recovered.status == "ready_to_send", recovered.error
+    assert MeetingAlignmentDecision.model_validate(
+        {k: v for k, v in persisted_decision.items() if k != "_service_audit"}
+    ).final_message == original.final_message
+    assert meeting_alignment_decision_digest(
+        MeetingAlignmentDecision.model_validate(
+            {k: v for k, v in persisted_decision.items() if k != "_service_audit"}
+        )
+    ) == candidate_digest
+    assert meeting_decision_audit_is_approved(recovered.decision_json)
+    assert runner.calls == 0
+    runs = store.list_meeting_alignment_runs(job_id)
+    assert runner.audit_run_id == runs[0].id
+    assert dws.send_calls == []
+
+
+def test_failed_frozen_meeting_audit_return_stays_failed(tmp_path):
+    store = AutoReplyStore(tmp_path / "worker.sqlite3")
+    dws = ConsumerDws()
+    job_id = seed_consumer_job(store, dws)
+    decision = consumer_send_decision()
+    store.update_meeting_alignment_job(
+        job_id,
+        status="failed",
+        decision_json=decision.model_dump_json(),
+        target_kind="group",
+        target_id="cid-first",
+        final_message=decision.final_message,
+        error=json.dumps({"kind": "meeting_target", "message": "prepared target binding conflicts"}),
+        send_result_json="{}",
+    )
+    digest = meeting_alignment_decision_digest(decision)
+    assert store.request_failed_meeting_audit_recovery(
+        job_id, expected_candidate_sha256=digest,
+    ) is not None
+
+    class ReturningAuditRunner(FakeMeetingRunner):
+        def audit(self, *, prompt, run_id, candidate_sha256):
+            self.audit_prompt = prompt
+            return MeetingAlignmentAuditResult(
+                outcome="return", candidate_sha256=candidate_sha256,
+                summary="recipient evidence is insufficient",
+                feedback=MeetingAlignmentAuditFeedback(
+                    rule="recipient evidence", observation="missing proof",
+                    requested_revision="provide current recipient evidence",
+                ),
+            )
+
+    runner = ReturningAuditRunner(decision)
+    consume_meeting_alignment_jobs(store, dws, runner, now=NOW, limit=1, deliver=False)
+    failed = store.get_meeting_alignment_job(job_id)
+    assert failed.status == "failed"
+    assert json.loads(failed.error)["kind"] == "meeting_audit_recovery_unapproved", failed.error
+    assert dws.send_calls == []
+
+
+def test_failed_frozen_meeting_audit_recovery_requires_exact_digest(tmp_path):
+    store = AutoReplyStore(tmp_path / "worker.sqlite3")
+    dws = ConsumerDws()
+    job_id = seed_consumer_job(store, dws)
+    decision = consumer_send_decision()
+    store.update_meeting_alignment_job(
+        job_id,
+        status="failed",
+        decision_json=decision.model_dump_json(),
+        target_kind="group",
+        target_id="cid-first",
+        final_message=decision.final_message,
+        error=json.dumps({"kind": "meeting_target", "message": "prepared target binding conflicts"}),
+        send_result_json="{}",
+    )
+    assert store.request_failed_meeting_audit_recovery(
+        job_id, expected_candidate_sha256="0" * 64,
+    ) is None
+    assert store.get_meeting_alignment_job(job_id).status == "failed"
     assert store.get_meeting_alignment_job(job_id).status == "failed"
 
 

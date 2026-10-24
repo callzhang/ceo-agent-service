@@ -472,6 +472,29 @@ def test_scoped_runner_records_delivered_metrics_and_ranges_without_source_body(
     assert runner.context_deliveries[-1]["source_metrics"] is None  # old absent metrics are not reconstructed
 
 
+def test_scoped_runner_records_a_source_left_out_of_the_input():
+    class Base:
+        def __init__(self, codex):
+            self.codex = codex
+
+        def decide(self, *args, **kwargs):
+            return "decision"
+
+    runner = _tool().scoped_runner(Base, None)
+    context = {"source_documents": [
+        {"document_id": 8, "source_in_input": False, "body_utf8_bytes": 9000,
+         "saved_quotations": ["private-original-text"]},
+    ]}
+
+    assert runner.decide(None, json.dumps(context)) == "decision"
+    [delivery] = runner.context_deliveries
+    assert delivery["source_documents"] == [
+        {"document_id": 8, "source_in_input": False,
+         "visible_ranges": [], "decoded_excerpts": []},
+    ]
+    assert "private-original-text" not in json.dumps(delivery)
+
+
 def test_baseline_missing_project_storage_is_an_explicit_comparison_failure(tmp_path):
     path = tmp_path / "missing-provenance.sqlite3"
     store = AutoReplyStore(path)

@@ -742,6 +742,18 @@ def consume_claimed_meeting_alignment_job(
         raise ValueError("meeting job must be claimed before execution")
     if claim_guard is not None:
         claim_guard.assert_current(now.astimezone())
+    try:
+        request = json.loads(job.error)
+    except (TypeError, json.JSONDecodeError):
+        request = {}
+    if (
+        isinstance(request, dict)
+        and request.get("kind") == "meeting_audit_recovery_requested"
+    ):
+        _audit_frozen_meeting_candidate(
+            store, dws, runner, job, request=request, now=now,
+        )
+        return
     _analyze_meeting_job(
         store,
         dws,
@@ -751,6 +763,130 @@ def consume_claimed_meeting_alignment_job(
         retry_delay=retry_delay,
         max_attempts=max_attempts,
         embedding_client=embedding_client,
+    )
+
+
+def _audit_frozen_meeting_candidate(
+    store: AutoReplyStore,
+    dws: Any,
+    runner: Any,
+    job: Any,
+    *,
+    request: dict[str, Any],
+    now: datetime,
+) -> None:
+    """Independently review the saved candidate without regenerating Consumer output."""
+    from app.agent_cron.commands import ServiceCommandConsumerContext
+    from app.meeting_alignment_models import (
+        meeting_alignment_decision_digest,
+        persist_audited_meeting_decision,
+    )
+
+    try:
+        decision = MeetingAlignmentDecision.model_validate_json(job.decision_json)
+        digest = meeting_alignment_decision_digest(decision)
+        if request.get("candidate_sha256") != digest:
+            raise ValueError("frozen Meeting candidate digest changed before Audit")
+        if (
+            decision.action != "send" or decision.target is None
+            or decision.final_message != job.final_message
+        ):
+            raise ValueError("frozen Meeting candidate no longer matches its delivery fields")
+    except (TypeError, ValueError, ValidationError) as exc:
+        store.complete_failed_meeting_audit_recovery(
+            job, audited_decision_json=None, approved=False,
+            error=_error_json("meeting_audit_recovery_failed", str(exc)),
+        )
+        return
+
+    run_id = store.claim_professional_run(job.id)
+    audit_session_id = ""
+    audit_start = 0
+    audit_end = 0
+    try:
+        payload = json.loads(job.source_json)
+        evidence = CalendarMeetingEvidence.model_validate(payload["calendar_evidence"])
+        extra_segment_ids = payload.get("extra_segment_ids")
+        extra_segment_ids = (
+            [str(value) for value in extra_segment_ids]
+            if isinstance(extra_segment_ids, list) else []
+        )
+        source = read_meeting_source(
+            dws,
+            job.meeting_id,
+            calendar_evidence=evidence,
+            creator=minutes_creator_from_list_item(payload.get("minutes_list_item", {})),
+            extra_segment_ids=extra_segment_ids,
+            transcription_override=_stored_asr_transcript_paragraphs(payload, evidence),
+            resummary=bool(extra_segment_ids and (job.final_message or "").strip()),
+        )
+        source = resolve_meeting_creator_identity(source, dws)
+        group_candidates = _search_meeting_group_candidates(dws, source, store)
+        similar_sessions = _search_similar_meeting_sessions(
+            store, source, embedding_client=None,
+        )
+        scheduled_consumer = ServiceCommandConsumerContext.from_payload(
+            payload.get(SERVICE_COMMAND_CONSUMER_CONTEXT_KEY)
+        )
+        agent = MeetingAlignmentAgent(runner)
+        audit_result = agent.audit(
+            source,
+            decision,
+            run_id=run_id,
+            similar_sessions=similar_sessions,
+            group_candidates=group_candidates,
+            consumer_prompt=(
+                scheduled_consumer.prompt if scheduled_consumer is not None else ""
+            ),
+            skill_protocol=(
+                scheduled_consumer.materialized_skill_protocol()
+                if scheduled_consumer is not None else ""
+            ),
+        )
+        audited_json = persist_audited_meeting_decision(
+            decision,
+            audit_result,
+            audit_session_id=str(getattr(runner, "last_audit_session_id", "") or ""),
+            audit_transcript_start_line=int(
+                getattr(runner, "last_audit_transcript_start_line", 0) or 0
+            ),
+            audit_transcript_end_line=int(
+                getattr(runner, "last_audit_transcript_end_line", 0) or 0
+            ),
+        )
+        audit_session_id = str(getattr(runner, "last_audit_session_id", "") or "")
+        audit_start = int(getattr(runner, "last_audit_transcript_start_line", 0) or 0)
+        audit_end = int(getattr(runner, "last_audit_transcript_end_line", 0) or 0)
+        approved = audit_result.outcome == "approve"
+        error = "" if approved else _error_json(
+            "meeting_audit_recovery_unapproved",
+            f"Frozen candidate Audit {audit_result.outcome}: {audit_result.summary}",
+        )
+        completed = store.complete_failed_meeting_audit_recovery(
+            job, audited_decision_json=audited_json, approved=approved, error=error,
+        )
+        status = "ready_to_send" if approved and completed is not None else "failed"
+        if approved and completed is None:
+            error = _error_json(
+                "meeting_audit_recovery_conflict",
+                "Frozen Meeting candidate changed before the audited recovery could be committed.",
+            )
+    except Exception as exc:
+        error = _error_json("meeting_audit_recovery_failed", str(exc))
+        store.complete_failed_meeting_audit_recovery(
+            job, audited_decision_json=None, approved=False, error=error,
+        )
+        status = "failed"
+        audit_session_id = str(getattr(runner, "last_audit_session_id", "") or "")
+        audit_start = int(getattr(runner, "last_audit_transcript_start_line", 0) or 0)
+        audit_end = int(getattr(runner, "last_audit_transcript_end_line", 0) or 0)
+    store.finish_professional_run(
+        run_id,
+        session_id=audit_session_id,
+        transcript_start=audit_start,
+        transcript_end=audit_end,
+        status=status,
+        error=error,
     )
 
 
@@ -779,18 +915,32 @@ def reconcile_confirmed_meeting_delivery(
     decision, _ = load_persisted_meeting_alignment_decision(job.decision_json)
     if decision.sensitive_private_message is not None or decision.target is None:
         return report
-    key = store.get_meeting_delivery_key(job.id)
+    if decision.target.kind != job.target_kind:
+        return report
+    target_kind = "group" if job.target_kind == "group" else "user"
+    target_id = (
+        decision.target.conversation_id
+        if target_kind == "group"
+        else decision.target.direct_user_id or decision.target.open_dingtalk_id
+    )
+    binding_target_kind = (
+        "group" if target_kind == "group"
+        else "user" if decision.target.direct_user_id
+        else "open_user"
+    )
+    if target_id != job.target_id:
+        return report
+    legacy_key = f"meeting-alignment:{job.id}:{job.meeting_id}"
+    key = store.resolve_meeting_alignment_delivery_key(
+        legacy_key, target_kind=binding_target_kind, target_id=target_id
+    )
     prepared = store.get_outbound_postfix("dingtalk", key)
     receipt = store.get_outbound_postfix_receipt("dingtalk", key)
     if prepared is None or receipt is None or store.get_outbound_postfix("dingtalk", f"{key}:sensitive"):
         return report
-    target_kind = "group" if job.target_kind == "group" else "user"
-    if decision.target.kind != job.target_kind:
-        return report
-    target_id = decision.target.conversation_id if target_kind == "group" else decision.target.direct_user_id
-    if target_id != job.target_id:
-        return report
-    store.verify_meeting_alignment_target(key, target_kind=target_kind, target_id=target_id)
+    store.verify_meeting_alignment_target(
+        key, target_kind=binding_target_kind, target_id=target_id
+    )
     verification = dws.verify_message_send_result(receipt)
     if verification.get("state") != "sent":
         return report

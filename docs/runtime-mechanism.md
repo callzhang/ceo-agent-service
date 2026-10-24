@@ -687,6 +687,8 @@ Attempt History 仅对当前 `needs_human` 规则候选显示“需要你处理/
 待办扫描的复审指纹包括当前选择的 Skill 正文摘要。Skill 规则更新时，即使外部审批流水未改变，也为仍在本人待办中的流程排入一轮新 Consumer/Audit；相同 Skill 正文继续去重。新一轮仍冻结实际选中的完整 Skill 正文，并使用原有审批身份、Audit、System Executor 和外部回执门禁。
 组织架构变动的业务理由或受影响工作等可补充事实，由 people-review Skill 指示向已核实的发起人/责任人留言询问并保留 OA 待办；审批人拥有普通最终审批节点本身不构成保留给个人的 `needs_human` 特殊裁量。
 组织架构同一实质、可补正事实缺口的证据、DWS 同意和退回记录按来源时间戳排序。仅将有当时可读且来源核验的证据支持、指出会改变结论的具体缺口、提供可执行补正要求并给予公平机会的退回计为有效轮次；随后必须核实同一缺口仍未解决。三次有效退回后，第四次到达 Derek 授权节点时，若当前可读且来源核验的证据仍证明同一缺口未解决，应拒绝并说明缺口及三轮有效补正机会，不得只按次数拒绝。读取/OCR/解析失败、无依据或不可执行的要求、不同缺口，以及被退回后材料已补正的缺口均不计数。审批评论中的具体可核实陈述是证据，必须审阅；不要求另行确认文件。若经核验身份与职责的接收主管在退回后直接以 OA 评论明确确认汇报或交接事实，应把该陈述作为其明示事实的证据；不得仅因没有独立附件/确认单就把该事实继续视为未解决或重复退回。若仍有具体实质事实缺少支持或存在矛盾，只追问该事实。只退回未解决或新出现的实质缺口，不重复已解决请求。具体审查标准见 people-review Skill。
+历史 OA 复核必须按原审批或退回时点判断：只使用能证明当时已可获得的来源版本。之后才更新的表格或文件不能反推更早内容；除非版本历史或其他带时间的来源能还原，否则更早状态记为未知，不据此认定申请人当时缺材料，也不计作有效退回。
+拒绝前还须把完整 DWS `REDIRECT_PROCESS` 时间线与本地执行回执及有效轮数逐条对账。已核实的 DWS 退回不能仅因本地缺少执行回执而遗漏；每条不计入的退回都要说明记录和证据理由。总退回数与有效轮数不同时必须解释差异；无法核实完整时间线或差异时，不得声称达到拒绝阈值。
 
 Attention 对最新成功待办扫描仍报告为活动的 OA 流程继续显示 pending；本地 Consumer 已完成评论或退回时，默认详情仅说明扫描仍见流程未终结，不推断“没有退回回执”。具体回执以 History/System Execution 与 DWS 流水读回为准。
 History 可对一条已有 uncertain OA 退回执行专用只读核验：调用方必须提供当前绑定的候选和 Audit review；Attempt 必须关联该 Audit run，Attempt 已保存的 OA 身份字段（若有）也必须与候选匹配；并校验唯一既存 uncertain action journal 及 uncertain execution 后，才进入 `reconciliation_only` 执行模式。此模式只调用已注册 OA handler 的严格 DWS 回读，不调用 dispatch；通过后将匹配回执写入外部动作账本并更新同一执行代际，原始 provider response 继续保留在核验证据中。证据不完整或冲突时维持 uncertain。它不创建 Consumer/Audit 新代际，不改变审批结论，也不重放动作。
@@ -1443,6 +1445,8 @@ Workbench 领取轮询先只读检查是否存在 queued 或租约已过期的 r
 `url` / `docUrl` 完成日报文件夹链接要求；服务不由 node ID 拼接 URL，也不为返回该元数据
 新增写操作。provider 未提供链接时仍保留缺失事实。周报回执、审核和消息投递边界不变。
 
+通用文档写入在 DWS 明确返回 `doc.operation.v1` 的对应写操作 `partial_success` 时保留其结构化错误及已执行步骤；写入返回后服务读回失败也保留已有 provider 结果。两者返回 `ok=false/status=partial_success/verified=false/readback=null`，不制造成功读回回执、不自动重写；未执行或提交状态未知仍是原错误。Agent 继续使用现有读取入口核对目标，现有 Audit 与任务续跑规则不变。
+
 所有系统业务审核项必须对应实际系统任务及其当前业务实例；工具或接口存在不构成审核需求。没有对应系统任务就不设置该业务的系统审核项。当前对应关系见 [系统任务与审核范围](audit-task-scope.md)。小青面试与提交由 Derek 在个人对话中处理，不属于本次后台系统审核范围。扫描、下载和登录命令沿用既有技术结果验证，不因这条范围规则新增 Audit 回合。
 
 Consumer 负责业务准备和完整候选，Audit 只读审核整份候选，系统执行已持久化且审核通过的完整结构化动作。所有 Consumer 入口共用同一条行为指令：不直接向外发送消息或邮件，也不直接执行审批；返回结构化决定或候选，由服务处理外部效果。Audit 的角色规则逐项核对外发候选的收件人/目标、内容、证据和任务范围；候选文本不作实际执行或送达证明，Audit 不发送或执行任何动作。若来源或任务明确要求只要草稿或由用户发送，Audit 退回或拒绝拟发送消息、邮件的候选；其他有效结构化外发提案也只能由 System Executor 在 Audit 批准后执行，只有服务回执证明外部效果。Consumer 保留报告、文档准备能力，不自行执行提交审核的受控动作；没有新增 update_daily_report 动作。Email 退订保持独立的系统直接流程。该指令不构成工具或凭据的强制权限隔离。
@@ -1473,6 +1477,8 @@ Audit 的命令不变：仍关闭上述功能，只启用 `ROLE_MCP_READ_TOOLS` 
 Runtime Context 对没有 `enabled_tools` 限制的 server 声明 `mcp__<server>__*`（全部工具，参数以本轮工具 schema 为准），不再逐个枚举。
 
 要求修改 CEO Agent 服务本身的请求（例如「请磊哥修一下分身」，任务 15810）不是回复或 Agent 能完成的事。`ceo-message-triage` Skill 规定 Consumer 只回复一次，引导发信人用回复末尾的「👎 需改进」反馈链接提交，使其进入用户反馈流程；会话里已有这条回复时用 `no_action`。同一 Skill 的 Audit 解释把这条回复（或之后的 `no_action`）视为已满足请求，不得因服务尚未修复而退回，重复发送同样的指引属于重复。此前 Consumer 在「再回复」与 `no_action` 之间被 Audit 反复退回，三轮用完以 `audit_revision_exhausted` 失败。
+
+微信统一路径阶段 1（Derek 2026-10-24，微信 Consumer 与其他频道使用相同工具面）：Consumer 与 Audit 的 `agent_cli` 读取工具新增 `read_wechat_messages(limit)`，读取当前认领的微信任务自己的会话（最新消息在后，链接带文章正文）。工具不接受会话参数，会话 ID 和单聊/群聊类型取自认领任务，任务不是微信频道、执行代变化或没有就绪账号都会拒绝。微信目前仍走自己的流水线，所以只有微信任务才会用到它；其他频道的任务调用它会得到「不是微信会话」的拒绝。
 
 Codex Consumer 命令按当前 `consumer_purpose` 选择 general/OA 原生输出 Schema，并在模型输出后
 把动态 JSON 键值条目无损还原，再交给现有严格 wire/Pydantic 解析器；OA 动作仍按原有
@@ -2012,6 +2018,8 @@ Store schema `2026-10-11.1` 中，`reply_tasks.current_input_id` 与
 `claimed_input_id` 直接外键引用所属输入行。父表不保存正文、provenance 或精简标记副本；
 当前展示读取 current，当次队列领取后的执行和冻结 Skill 按代际校验读取 claimed 快照。
 再次领取仍捕获当时 current 输入，沿用原有恢复及版本水位行为。
+WeChat Agent 的 `read_wechat_messages` 同样读取本轮 claimed TaskInput 的会话，不接受调用者指定会话；
+执行期间 current 指针更新不会改写已领取的会话范围。
 输入变化与指针、版本水位在原事务内更新；`input_version`／`claimed_input_version`
 仍用于原有并发判断。终态输入正文及重复精简 JSON 为空，旧 API 表示按 provenance 生成。
 已结算的真实历史身份不删除，无法证明的旧领取输入不推测。迁移必须在正式 quiet 停止窗口执行。
@@ -2132,6 +2140,8 @@ Prompt 另写入负责人的个人规则（只存在该定时任务的数据库�
 分类，交叉事项组合适用类别；财务规则卡仅约束登记的财务模板，且只提供判断标准，动作按通用决策表。适用业务 Skill 必须覆盖
 当前事项的规则条件、例外、权限和动作映射，适用 Skill 完整覆盖时才允许 `rule_coverage=1.0`；其他情况
 低于 1.0 描述证据缺口；只有低于 0.5 且缺失的是适用决策规则时，才满足通用质量门槛中的规则覆盖分支。符合门槛仍不等于自动批准、拒绝或升级：Consumer 必须提供完整候选，Audit 复核全部事实和规则，技术或材料缺口不得伪装成政策问题。申请人可补材料但不能替公司制定或关闭政策；材料尚未形成、但申请人仍可协调责任来源方补齐时，先正式退回等待补正和重新提交，不能仅因“当前暂时拿不到”就把本案是否继续交给 Derek。材料阶段完成后，若仍有独立规则、例外或授权边界缺口，再按 `needs_human` 处理。
+
+历史 OA 复核按原动作时点还原证据：只使用能证明当时已可获得的文件/表格版本和评论。动作之后才更新的内容不能倒算成当时已有；只有版本历史或其他可核验时间来源能证明内容及时间，才可用于判断。时间或版本无法核实就标记为“未知”，不能据此认定申请人当时漏交材料，也不能把该轮计为有效退回。
 审批服务无法读取已提交附件时，该附件仍视为已提交；权限、下载、解析、OCR 或客户端错误记录为审阅端技术阻塞，审批待办保持未处理。不能要求申请人重复提交同一文件，亦不能把此类错误退回计入“三次后拒绝”；只有独立证据确认源文件自身缺失、空白、损坏或缺页，才走申请人补正分支。财务付款审核必须按附件逐项留存文件名或节点 ID、授权读取结果、可读文本/页数或 OCR 结果及已核实事实；某一附件的读取失败只适用于该附件，不得据此声称其他附件也不可读。证据台账和结果摘要只保留与实质付款条件相关且由当前材料核实的事实；OCR 可读不代表字段与付款判断相关。复核历史退回或拒绝时，只报告有独立证据支持的实质缺口轮数；未计入轮次的历史原因不复述，也不以泛称间接指代。财务 Skill 同时约束付款证据判断：无法核验的验收不等于验收失败；供应商付款审核不评估、请求或在证据叙述/决策理由中复述签章相关栏位或历史要求，不将其作为缺口或拒绝依据；只核对交付、客户验收、结算、金额、收款方、发票及双方对实质条款的确认。已终结流程的历史复核仅产生 `no_action` 分析结果，不提出新的 OA 评论、退回或其他审批动作；重新提交时按新流程当前任务及独立证据审核。多个历史退回本身也不授权拒绝。
 
 对供应商付款，财务 Skill 明确要求完全跳过签字、印章、签章栏的存在/缺失/可读性判断，并在任何内部或对外结果中省略相关观察。它们不是付款条件或补正缺口；此规则只覆盖 `supplier_payment`，不改变其他财务模板各自的证据标准。
@@ -3673,7 +3683,7 @@ ProcessingReaction 在现有 service_state 保存文字表情模板与每条源�
 重启后继续未确认的表情操作。只操作本功能记录的源消息与服务账号的「处理中」表情。
 该进度展示不改变 Consumer/Audit 生命周期、发送授权或现有业务效果检查。
 
-Meeting planner 的 `audit_summary` 不是审核回执。分析成功后，服务以独立 model-only Audit（无原生工具或 MCP）调用复核会议来源、群候选、准确收件人、正文与披露范围；运行器传来的 Codex JSONL 先提取最终 assistant 消息，路由器已规范化的纯 JSON 直接解析，然后对两种输入执行相同结果模型及候选 SHA-256 校验。审核输出绑定候选 SHA-256，并和候选及 Audit session 引用一并保存。只有通过该摘要绑定校验且 `outcome=approve` 的候选可转为 `ready_to_send`。`return` 必须提供 rule/observation/requested_revision，服务持久化反馈并创建新 Meeting run 做最多三轮修订；用尽仍未通过才转入 `needs_human`。`reject` 转人工；格式或结果验证失败按原 Meeting 失败规则处理，外部依赖不可用沿用原退避重试。新投递和人工重排都会检查审核绑定，旧的未审核候选、缺失审核、修改后的候选或错误摘要均不得产生新发送。已经有 provider 回执时的只读效果核实与状态恢复沿用原有回执、正文、收件目标验证，不要求为既成外部效果补造审核。不可变收件人准备绑定、同一投递键、provider 回执和原目标冲突保护保持原样。
+Meeting planner 的 `audit_summary` 不是审核回执。分析成功后，服务以独立 model-only Audit（无原生工具或 MCP）调用复核会议来源、群候选、准确收件人、正文与披露范围；运行器传来的 Codex JSONL 先提取最终 assistant 消息，路由器已规范化的纯 JSON 直接解析，然后对两种输入执行相同结果模型及候选 SHA-256 校验。审核输出绑定候选 SHA-256，并和候选及 Audit session 引用一并保存。只有通过该摘要绑定校验且 `outcome=approve` 的候选可转为 `ready_to_send`。对于无任何发送回执、无活动领取，且因候选与既有收件人绑定冲突而失败的旧任务，最新 Attempt 可以通过明确的 audit-only 恢复入口重新读取会议来源并审核原冻结候选；入口要求精确候选 SHA-256，不重新生成候选，也不改变目标或正文。只有对同一候选的独立 Audit `approve` 才以 CAS 回到原投递 worker；`return`、`reject`、Audit 错误和候选变化均保留失败且不触发发送。`return` 必须提供 rule/observation/requested_revision，服务持久化反馈并创建新 Meeting run 做最多三轮修订；用尽仍未通过才转入 `needs_human`。`reject` 转人工；格式或结果验证失败按原 Meeting 失败规则处理，外部依赖不可用沿用原退避重试。新投递和人工重排都会检查审核绑定，旧的未审核候选、缺失审核、修改后的候选或错误摘要均不得产生新发送。已经有 provider 回执时的只读效果核实与状态恢复沿用原有回执、正文、收件目标验证，不要求为既成外部效果补造审核。不可变收件人准备绑定、同一投递键、provider 回执和原目标冲突保护保持原样。
 
 Meeting planner RuntimeAttempt 使用 `workload_kind='meeting'` 和准确 Meeting Run 的十进制 ID；独立 Audit 使用 `workload_kind='meeting_audit'` 和同一准确 Run 的十进制 ID。两者在 native `runtime_attempts.parent_id` 上都指向经 `meeting_alignment_runs` provenance 核实的那个 Run；Task ID 或无关 Run 不能代替该 owner。显式 source/native 转换分别保留新 source 的 `meeting_audit` 数字键，同时继续仅在转换器中处理历史 source `meeting` 键加 `:audit` 的记录。失败、启动恢复和回放检查同时覆盖两种 workload。
 
@@ -3691,8 +3701,10 @@ Agent 依据实际讨论、完整当前名册、稳定身份、当前职责和�
 恢复前精确核对主消息及敏感消息已准备正文与本次披露范围，不仅检查相同受众分支。
 旧 HR 合并正文若含仅适合另一受众的敏感部分，在任何发送之前明确失败；不覆盖正文或伪造送达。
 会议准备在现有 `service_state` 的 `meeting_delivery_target:v1` 命名空间原子绑定规范化目标与
-原动作正文，发送及复用回执前再次校验目标。不同目标不借用原回执；旧 prepared 缺少目标绑定
-时不从新决策推断或回填，明确保留未核实失败。无需新增表、列或历史数据 apply。
+原动作正文，发送及复用回执前再次校验目标。新投递键包含规范化目标的 SHA-256 指纹；旧键仅在
+其已有目标绑定与本次目标完全一致时复用，因此不同目标不借用原回执。旧 prepared 缺少目标绑定
+时不从新决策推断或回填，明确保留未核实失败。重跑和来源恢复门禁同时检查旧键及目标专属键，
+防止绕过已准备动作。无需新增表、列或历史数据 apply。
 Provider 明确返回 `success=false` 的主消息或敏感消息记录真实失败，不继续发送后续部分，
 不把缺失的送达回执升级为 `sent`。
 
@@ -3834,8 +3846,11 @@ database file was replaced, or the store's `_open_connection` differs. The
 "close" time in the slow-context diagnostics is therefore the time to return
 the connection to the idle slot. Code that registers functions, handlers or
 pragmas on a `_connect` connection must undo them, because the next call in
-that thread sees the same connection. No query, schema, retry, audit or
-safety-policy change.
+that thread sees the same connection. A connection going idle releases its
+page cache (`pragma shrink_memory`) and keeps only the parsed schema: with the
+64 MB read cache per connection, four warm idle connections held about 230 MB
+more than four released ones, and the service keeps one per thread per database.
+No query, schema, retry, audit or safety-policy change.
 
 ## Unified core run storage (Store 2026-10-11.2)
 
