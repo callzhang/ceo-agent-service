@@ -356,37 +356,14 @@ def test_each_dispatcher_source_retains_its_due_item_during_drain(tmp_path, name
     assert result.source_id == ids[0]
 
 
-@pytest.mark.parametrize("name", ["business", "memory"])
-def test_remaining_dispatcher_outboxes_keep_pending_items(tmp_path, name):
+def test_remaining_dispatcher_outboxes_keep_pending_items(tmp_path):
     from app.deployment_drain import deployment_drain
-    from app.dispatcher.adapters import (
-        BusinessTaskTodoSyncOutboxQueueAdapter,
-        TaskMemoryWriteQueueAdapter,
-    )
+    from app.dispatcher.adapters import BusinessTaskTodoSyncOutboxQueueAdapter
     from tests.test_consumer_dispatcher import _business_task_todo_outbox
-    from app.action_storage import insert_task_delivery_action
 
     store = AutoReplyStore(tmp_path / "worker.db")
-    if name == "business":
-        _business_task_todo_outbox(store)
-        adapter = BusinessTaskTodoSyncOutboxQueueAdapter(store)
-    else:
-        enqueue(store)
-        with store._connect() as db:
-            parent = db.execute(
-                "select id from tasks where record_type='reply_tasks'"
-            ).fetchone()[0]
-            insert_task_delivery_action(
-                db,
-                "task_memory_write_events",
-                dict(
-                    reply_task_id=parent,
-                    execution_generation="initial",
-                    consumer_run_id=0,
-                    status="pending",
-                ),
-            )
-        adapter = TaskMemoryWriteQueueAdapter(store)
+    _business_task_todo_outbox(store)
+    adapter = BusinessTaskTodoSyncOutboxQueueAdapter(store)
     with deployment_drain(store.path):
         assert (
             adapter.claim(

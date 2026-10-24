@@ -260,14 +260,10 @@ def read_dashboard_queues(
 def _append_auxiliary_queues(db, queues, now_text):
     sources = []
     for kind, label, parent in (
-        ("task_memory_write_events", "任务 Memory 写入", "reply_task_id"),
         ("meeting_memory_write_events", "会议 Memory 写入", "meeting_job_id"),
     ):
         projection = task_delivery_projection(kind)
         current = ""
-        if kind == "task_memory_write_events":
-            generation = task20_column("reply_tasks", "execution_generation")
-            current = f"and exists(select 1 from tasks t where t.id=a.{parent} and t.record_type='reply_tasks' and t.{generation}=a.execution_generation)"
         sources.append(
             (
                 kind,

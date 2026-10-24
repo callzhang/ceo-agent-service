@@ -889,7 +889,7 @@ Codex provider 错误事件报告的最终 HTTP 429 按已有满载路线处理�
 
 统一 Consumer Dispatcher 不建立第二套业务队列表。各 Queue Adapter 直接领取现有事实来源：
 scheduled trigger、scheduled execution、普通 reply、meeting、work summary、OKR review、
-当前 BusinessTask 的 DingTalk Todo outbox 和任务长期记忆写入（`task_memory_write`）。统一层只处理唤醒、公平领取、租约、全局 Agent 容量和分发；领域 Consumer
+当前 BusinessTask 的 DingTalk Todo outbox。统一层只处理唤醒、公平领取、租约、全局 Agent 容量和分发；领域 Consumer
 继续负责自己的生命周期和外部事实。Dispatcher 的有界等待是跨进程恢复机制，不是用户 Cron，
 也没有用户可编辑的 polling/settle 设置。空队列只显示零指标，不生成 run。
 
@@ -1991,28 +1991,23 @@ Audit 返回或拒绝后，Consumer 必须提交当前阶段的完整修订候�
 
 ### 任务长期记忆
 
-Derek 2026-09-24：长期记忆由执行 Agent A 在结果里给出、系统写入 Memory、不经审核。
+Derek 2026-10-24：任务的长期记忆由执行 Agent A 自己在回合内调用 `memory_connector.memory_write`
+写入，服务不再有任务记忆的队列、重试或写入器。此前（2026-09-19 至 2026-10-24）A 在结果里给出
+`durable_memories`，任务进入 `done` 时服务入队并由 Dispatcher 的 `task_memory_write` adapter 写入；
+实际 245/248 个任务记 `skipped / no_durable_memories`，判断仍是 A 做的，服务层只多了一份独立 OAuth 凭据
+（与 A 读 memory 用的不是同一份，后端对它返回 `FRIDAY_INTROSPECTION_FAILED`），所以整层删除。
 
-- A 的结果协议（`ConsumerAgentWireResult`，四种 outcome 都一样）必填 `durable_memories`，可为空列表。
-  每条是 `title`、`content`、`source_time`（信息在来源里产生的时间，ISO-8601）、`source_refs`
-  （消息 id、文档链接、审批单号）和可选 `subject`（Person/Project/Customer/Organization + 名称）。
-  写什么、不写什么只由字段说明约束（`app/agent_contracts.py` 的 `DurableMemory`）。
-  旧结果读回时视为空列表。
-- 任务在 `finalize_orchestrated_reply_task` 里进入 `done` 的同一事务中，服务从库里存的、该执行代最后一次
-  完成的 Consumer 结果读出这个字段（不用内存里的编排结果对象，它多数情况下不带 Consumer 结果），写进
-  Actions 中的 `task_memory_write_events` 类型：每个任务执行代一行（键为 `reply_task_id +
-  execution_generation`），`pending` 带待写条目；没有条目记 `skipped / no_durable_memories`，
-  没有 Consumer 结果记 `skipped / no_consumer_result`。所以每个经编排结束的任务都有一个记忆结论。
-- 写入是系统自动行为，不是定时任务（Derek 2026-09-24）：统一 Dispatcher 的 `task_memory_write`
-  adapter（`TaskMemoryWriteQueueAdapter`）像 DingTalk Todo outbox 一样，一入队就领取，
-  `app/task_memory_write.py` 用服务自己的 memory-connector 客户端逐条调用 `memory_write`（与会议结论同一客户端）。
-  dry-run 不注册该 adapter。
-  正文与时间来自 Agent，写入前去掉服务附加的反馈回调链接和署名（`app/memory_text.py`，会议结论同样处理，并去掉跟进消息抬头；标识符只放 metadata，不进正文：固定内容会让 memory-connector 聚类把无关 episode 判成近似重复，Derek 2026-10-02）；`thread_id`（会话标识）、`source_metadata`（渠道、会话、触发消息、任务 id，
-  外加 Agent 指认的 `source_refs`）和 `provenance_metadata`（执行者、Consumer run、执行代、线路、
-  模型、用途 `task_durable_memory`）由服务从记录里填。每写成一条就记下它的 id，重试只写剩下的；
-  连接器失败按退避重试（上限 20 次），之后记 `failed` 并进 Attention（`task_memory_write_failed`）。
-- 这取代了让 Agent 自己调用 memory 工具：那条路在 2026-07-26 之后衰减到一条不写；也取代了
-  memory-connector 插件的收尾钩子（服务的 `codex exec` 已固定 `--disable hooks`）。
+- 提示（`app/consumer_agent.py` 的 `_CAPABILITY_COMMON_HEAD`）只要求 A 在结束前检查本轮是否确认了
+  应长期保留的信息，有则逐条 `memory_write`；不写临时任务、日志、代码、一次性错误、未确认的猜测、
+  敏感原文、密钥，以及 Memory 里已有的内容（含同一任务较早修订已写的）。
+- 结果协议不再包含 `durable_memories`（`ConsumerAgentWireResult` 与三份 schema 已删）；旧结果里的该字段
+  读回时被丢弃，不再触发任何写入。
+- Codex 路线的 Consumer 拥有 `memory_connector` 的全部工具（只有 Audit 受 `ROLE_MCP_READ_TOOLS` 限制）。
+  Claude 路线的 Consumer 只连接服务的 `agent_cli`，没有 Memory 工具，所以走该路线的任务不会写长期记忆。
+- `codex exec` 仍固定 `--disable hooks`：插件 Stop hook 会在结果之后再加一轮，曾使结构化结果重复。
+- Actions 里的 `task_memory_write_events` 记录类型及其索引、触发器保留（历史行可读，需要迁移才能删），
+  但没有任何代码再写入它；控制台 Attention 和队列不再列它。
+- 会议结论的 Memory 写入不变，仍由服务经 `meeting_memory_write` 写入。
 
 ### Audit Agent B
 

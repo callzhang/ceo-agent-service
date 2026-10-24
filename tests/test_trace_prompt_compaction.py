@@ -45,7 +45,7 @@ def test_wire_schema_compaction_retains_validation_constraints():
     common = dict(summary="fixture", error_code=None, error_retryable=False,
                   error_authorization_required=False, risk="low", confidence=0.9,
                   rule_coverage=1.0, information_completeness=1.0)
-    consumer = dict(common, outcome="no_action", proposal=None, durable_memories=[])
+    consumer = dict(common, outcome="no_action", proposal=None)
     audit = dict(common, outcome="approve", feedback=None)
     for model, valid in ((ConsumerAgentWireResult, consumer), (AuditAgentWireResult, audit)):
         raw = model.model_json_schema()

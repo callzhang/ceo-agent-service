@@ -162,7 +162,7 @@ def test_failed_compact_attempt_retries_same_session_with_full_input(tmp_path):
         "decision_options": [], "risk": "low", "confidence": 1.0,
         "rule_coverage": 1.0, "information_completeness": 1.0,
         "error_code": "", "error_retryable": False,
-        "error_authorization_required": False, "durable_memories": [],
+        "error_authorization_required": False, 
     }
     success = "\n".join((
         json.dumps({"type": "thread.started", "thread_id": "session-a"}),
@@ -378,7 +378,7 @@ def test_claude_success_uses_trusted_session_without_codex_history_and_resumes(
             "error_code": "",
             "error_retryable": False,
             "error_authorization_required": False,
-            "durable_memories": [],
+            
         },
         separators=(",", ":"),
     )
@@ -552,7 +552,7 @@ def test_claude_success_uses_trusted_session_without_codex_history_and_resumes(
             "error_code": "",
             "error_retryable": False,
             "error_authorization_required": False,
-            "durable_memories": [],
+            
         },
         separators=(",", ":"),
     )
@@ -620,7 +620,7 @@ def test_openai_failure_falls_back_to_claude_for_consumer(tmp_path, monkeypatch)
             "error_code": "",
             "error_retryable": False,
             "error_authorization_required": False,
-            "durable_memories": [],
+            
         },
         separators=(",", ":"),
     )
@@ -792,7 +792,7 @@ def test_friday_runtime_fallback_completes_consumer_run(tmp_path):
             "error_code": "",
             "error_retryable": False,
             "error_authorization_required": False,
-            "durable_memories": [],
+            
         },
         separators=(",", ":"),
     )
@@ -962,7 +962,7 @@ def test_runtime_domain_result_codec_rejects_private_values(
                             "error_code": "",
                             "error_retryable": False,
                             "error_authorization_required": False,
-                            "durable_memories": [],
+                            
                         }
                     ),
                 },
@@ -1190,7 +1190,7 @@ def test_runtime_domain_result_codec_rejects_consumer_document_payload():
                             "error_code": "",
                             "error_retryable": False,
                             "error_authorization_required": False,
-                            "durable_memories": [],
+                            
                         }
                     ),
                 },
@@ -1239,7 +1239,7 @@ def test_runtime_attempt_completion_does_not_treat_provider_events_as_result_evi
                             "error_code": "",
                             "error_retryable": False,
                             "error_authorization_required": False,
-                            "durable_memories": [],
+                            
                         }
                     ),
                 },
@@ -1408,7 +1408,7 @@ def test_consumer_terminal_result_slot_failure_rolls_back_and_store_retry_is_ato
                             "error_code": "",
                             "error_retryable": False,
                             "error_authorization_required": False,
-                            "durable_memories": [],
+                            
                         }
                     ),
                 },

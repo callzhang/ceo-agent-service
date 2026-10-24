@@ -26,7 +26,7 @@ def _consumer(action="no_action", *, purpose="general", target=None, payload=Non
         "payload": payload or {}, "evidence_refs": ["source:1"],
         "summary": "Current source checked", "risk": "low", "confidence": 1.0,
         "rule_coverage": 1.0, "information_completeness": 1.0,
-        "durable_memories": [],
+        
     }).model_dump(mode="json")
     wire["decision"] = {name: wire.pop(name) for name in ("action", "target", "payload")}
     return wire

@@ -51,7 +51,7 @@ def test_stale_historical_action_without_execution_is_not_projected_as_pending(t
                            "no_external_action_evidence": [{"assertion": "Applicant asked for a reply", "references": ["message:1"]}],
                            "conclusion": "Ask Derek"},
         "requested_input": None, "stage_index": 0, "predecessor_review_id": None,
-        "continue_after_execution": False, "durable_memories": [],
+        "continue_after_execution": False, 
     }
     body = ConsumerAgentResult.model_validate(body).model_dump(mode="json")
     body["outcome"] = "proposal"

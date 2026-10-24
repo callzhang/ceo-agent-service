@@ -278,7 +278,6 @@ MEETING_LOGICAL_RUN_SQL = logical_run_projection("meeting_alignment_runs")
 OKR_LOGICAL_RUN_SQL = logical_run_projection("okr_review_runs")
 
 MEETING_MEMORY_WRITE_SQL = task_delivery_projection("meeting_memory_write_events")
-TASK_MEMORY_WRITE_SQL = task_delivery_projection("task_memory_write_events")
 WECHAT_DELIVERY_SQL = task_delivery_projection("wechat_deliveries")
 ERROR_SQL = error_projection()
 FEEDBACK_EVENT_SQL = feedback_projection("feedback_events")
@@ -754,27 +753,6 @@ class MeetingMemoryWriteEvent(BaseModel):
     available_at: str
     error: str
     memory_id: str
-    lease_owner: str = ""
-    lease_expires_at: str = ""
-    started_at: str = ""
-    created_at: str
-    updated_at: str
-
-
-class TaskMemoryWriteEvent(BaseModel):
-    """The durable memories one finished task execution named, and their writes."""
-
-    id: int
-    reply_task_id: int
-    execution_generation: str
-    consumer_run_id: int | None
-    memories_json: str
-    written_memory_ids_json: str
-    status: str
-    attempts: int
-    available_at: str
-    error: str
-    skip_reason: str
     lease_owner: str = ""
     lease_expires_at: str = ""
     started_at: str = ""
@@ -13274,154 +13252,6 @@ class AutoReplyStore(LogicalRunStoreMixin, ReviewedCandidateStoreMixin):
             })
         return inserted.rowcount == 1
 
-    #: Task outcomes worth considering for Memory. A task that never reached a
-    #: conclusion has nothing to remember; the other three all do, including a
-    #: skip (why we decided not to act is the part that is forgotten first).
-    def _enqueue_task_memory_write_in_connection(
-        self,
-        db: sqlite3.Connection,
-        *,
-        task_id: int,
-        execution_generation: str,
-    ) -> None:
-        """Queue what a finished execution asked to remember, in its own transaction.
-
-        Writing to Memory used to depend on the turn choosing to call the tool,
-        and it decayed to nothing (last agent-written memory 2026-07-26). Derek
-        2026-09-19: it is a check the system performs when a task ends; and
-        2026-09-24: the Consumer names what to remember, the system writes it,
-        nothing reviews it. Every finished execution gets a row, including one
-        with nothing to write, so "was this considered" always has an answer.
-
-        The memories are read from the adopted candidate of the execution's last
-        completed Consumer run, the revision the task finished on. The
-        in-memory orchestration result is not used: most of its constructors
-        leave ``consumer_result`` empty (OA task 384747 was queued as having no
-        Consumer result although run 21281 had completed).
-        """
-        consumer_run = db.execute(
-            f"""
-            select r.id, c.candidate_json from ({AGENT_RUN_SQL}) r
-            left join ({REVIEW_CANDIDATE_SQL}) c on c.consumer_run_id=r.id
-            where r.reply_task_id=? and r.execution_generation=?
-              and r.role='consumer' and r.status='completed'
-            order by r.id desc limit 1
-            """,
-            (task_id, execution_generation),
-        ).fetchone()
-        memories: list[object] = []
-        if consumer_run is None:
-            status, skip_reason = "skipped", "no_consumer_result"
-        else:
-            adopted_result = consumer_run["candidate_json"]
-            memories = list(
-                json.loads(adopted_result or "{}").get(
-                    "durable_memories"
-                )
-                or []
-            )
-            status, skip_reason = (
-                ("pending", "") if memories else ("skipped", "no_durable_memories" if adopted_result else "adopted_consumer_candidate_unavailable")
-            )
-        consumer_run_id = consumer_run["id"] if consumer_run is not None else None
-        memories_json = json.dumps(memories, ensure_ascii=False)
-        _email_lock(db, (task_id, execution_generation, consumer_run_id,
-                         memories_json, status, skip_reason))
-        high = _autoincrement_high_water(db, "task_memory_write_events")
-        if high == 2**63 - 1:
-            _raise_autoincrement_full()
-        fields = {
-            "execution_generation": "?", "consumer_run_id": "?", "memories_json": "?",
-            "status": "?", "skip_reason": "?",
-            **{field: expression for field, expression in TASK_DELIVERY_DEFAULTS[
-                "task_memory_write_events"].items() if field not in (
-                    "memories_json", "status", "skip_reason")},
-        }
-        payload_sql = "jsonb_array(" + ",".join(
-            "json(ceo_native_json(" + fields[field] + "))"
-            for field in _action_layout("task_memory_write_events").fields
-        ) + ")"
-        db.execute(
-            f"insert into actions(_kind,legacy_key,payload_json,td_reply_task_id) "
-            f"values({ACTION_RECORD_TYPES.code('task_memory_write_events')},?,{payload_sql},?) "
-            "on conflict(td_reply_task_id,td_execution_generation) "
-            "where record_type='task_memory_write_events' do nothing",
-            (str(high + 1), execution_generation, consumer_run_id,
-             memories_json, status, skip_reason, task_id),
-        )
-
-    def get_task_memory_write_event(self, event_id: int) -> TaskMemoryWriteEvent | None:
-        with self._connect() as db:
-            row = db.execute(
-                f"select * from ({TASK_MEMORY_WRITE_SQL}) where id=?", (event_id,)
-            ).fetchone()
-        return None if row is None else TaskMemoryWriteEvent.model_validate(dict(row))
-
-    def record_task_memory_written_ids(
-        self, event_id: int, *, owner: str, written_memory_ids: list[str]
-    ) -> bool:
-        """Keep each written memory's id as it lands, so a retry skips it."""
-        with self._connect() as db:
-            assignments, set_args = task_delivery_set_parts(
-                "task_memory_write_events",
-                {"written_memory_ids_json": json.dumps(written_memory_ids)},
-                update_sql={"updated_at": "current_timestamp"},
-            )
-            cursor = db.execute(
-                f"update actions set {assignments} "
-                "where record_type='task_memory_write_events' "
-                "and cast(legacy_key as integer)=? and td_status='processing' "
-                "and td_lease_owner=?",
-                (*set_args, event_id, owner),
-            )
-        return cursor.rowcount == 1
-
-    def complete_task_memory_write_event(self, event_id: int, *, owner: str) -> bool:
-        return self._settle_task_memory_write_event(
-            event_id, owner=owner, status="written", error="", available_at=""
-        )
-
-    def retry_task_memory_write_event(
-        self, event_id: int, *, owner: str, error: str, available_at: str
-    ) -> bool:
-        return self._settle_task_memory_write_event(
-            event_id, owner=owner, status="pending", error=error,
-            available_at=available_at,
-        )
-
-    def fail_task_memory_write_event(
-        self, event_id: int, *, owner: str, error: str
-    ) -> bool:
-        return self._settle_task_memory_write_event(
-            event_id, owner=owner, status="failed", error=error, available_at=""
-        )
-
-    def _settle_task_memory_write_event(
-        self, event_id: int, *, owner: str, status: str, error: str, available_at: str
-    ) -> bool:
-        with self._connect() as db:
-            assignments, set_args = task_delivery_set_parts(
-                "task_memory_write_events",
-                {"status": status, "available_at": available_at, "error": error[:500],
-                 "lease_owner": "", "lease_expires_at": ""},
-                update_sql={"attempts": "td_attempts+1", "updated_at": "current_timestamp"},
-            )
-            cursor = db.execute(
-                f"update actions set {assignments} "
-                "where record_type='task_memory_write_events' "
-                "and cast(legacy_key as integer)=? and td_status='processing' "
-                "and td_lease_owner=?",
-                (*set_args, event_id, owner),
-            )
-        return cursor.rowcount == 1
-
-    def list_failed_task_memory_write_events(self) -> list[TaskMemoryWriteEvent]:
-        with self._connect() as db:
-            rows = db.execute(
-                f"select * from ({TASK_MEMORY_WRITE_SQL}) where status='failed' order by id"
-            ).fetchall()
-        return [TaskMemoryWriteEvent.model_validate(dict(row)) for row in rows]
-
     def latest_runtime_route_for_agent_run(self, agent_run_id: int) -> tuple[str, str]:
         """The route and model of an Agent run's last runtime attempt."""
         with self._connect() as db:
@@ -19993,12 +19823,6 @@ class AutoReplyStore(LogicalRunStoreMixin, ReviewedCandidateStoreMixin):
                 )
                 if cursor.rowcount != 1:
                     raise AgentRunLeaseLostError(f"reply task superseded: {task_id}")
-            if task_status == "done":
-                self._enqueue_task_memory_write_in_connection(
-                    db,
-                    task_id=task_id,
-                    execution_generation=expected_execution_generation,
-                )
             if task_status in {"done", "skipped"}:
                 self._compact_settled_reply_task_input(db, task_id)
             return attempt_id

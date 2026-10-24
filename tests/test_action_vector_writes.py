@@ -136,17 +136,6 @@ def test_business_evidence_dao_upsert_and_date_copy_keep_reference_ids(db):
     assert db.execute("pragma foreign_key_check").fetchall() == []
 
 
-def test_store_task_memory_bulk_sql_uses_final_slots_and_dedupe(db):
-    from app.store import AutoReplyStore
-    seed_task(db)
-    db.row_factory = sqlite3.Row
-    AutoReplyStore._enqueue_task_memory_write_in_connection(None, db, task_id=1, execution_generation="generation")
-    AutoReplyStore._enqueue_task_memory_write_in_connection(None, db, task_id=1, execution_generation="generation")
-    row = db.execute("select td_status,td_skip_reason,typeof(payload_json) as representation from actions").fetchone()
-    assert tuple(row) == ("skipped", "no_consumer_result", "blob")
-    assert db.execute("select count(*) from actions").fetchone()[0] == 1
-
-
 def test_store_meeting_memory_bulk_and_claim_sql_on_final_component(db, tmp_path, monkeypatch):
     from app.store import AutoReplyStore
     register_task8_functions(db)

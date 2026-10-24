@@ -1,5 +1,12 @@
 # Changelog
 
+## 2026-10-24 — 任务长期记忆改回 Agent 自己写
+
+- **去掉任务记忆的服务层**（Derek 2026-10-24）：Consumer 结果不再有 `durable_memories`，任务结束不再入队 `task_memory_write_events`，删除 `app/task_memory_write.py`、`TaskMemoryWriteQueueAdapter`、Attention 里的 `task_memory_write_failed` 和控制台的「任务 Memory 写入」队列。Consumer 提示要求它在结束前检查本轮是否确认了应长期保留的信息，有则自己调用 `memory_connector.memory_write`。
+- **原因**：判断一直是 Agent 做的，服务层不会让它记得更多（10-20 以来 248 个任务里 245 个为空）；服务写入用的是独立注册的 OAuth 凭据，与 Agent 读 memory 的不是同一份，后端现在对它返回 500 `FRIDAY_INTROSPECTION_FAILED`。
+- **限制**：Codex 路线的 Consumer 有 `memory_connector` 全部工具；Claude 路线的 Consumer 只连 `agent_cli`，没有 Memory 工具，走该路线的任务不会写长期记忆。会议结论仍由服务写入，未改动。
+- 历史 `task_memory_write_events` 行与索引保留（删除需要数据库迁移）；旧结果里的 `durable_memories` 读回时被丢弃。
+
 ## 2026-10-24 — 微信统一路径：阶段 0 与阶段 1
 
 - **阶段 0（测试，无行为变化）**：`tests/wechat` 在 main 上原有 66 个失败（发送前没有独立 Audit 批准、直接访问重构前的旧表、写死旧重试上限），已通过真实 store 接口修复；新增端到端特征测试与黄金输出文件，固定微信流水线今天的行为，并记录一个潜在问题：审核器的 `wechat_audit_candidate_changed`、`wechat_audit_unavailable` 关闭路径会抛 `AgentRunLeaseLostError`，会挡住排在后面的投递。

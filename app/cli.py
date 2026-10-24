@@ -1180,7 +1180,6 @@ def run_agent_cron_dispatcher_loop(
     from app.agent_runtime_production import build_production_agent_runtime
     from app.dispatcher.adapters import (
         BusinessTaskTodoSyncOutboxQueueAdapter,
-        TaskMemoryWriteQueueAdapter,
         MeetingQueueAdapter,
         OkrReviewQueueAdapter,
         ReplyQueueAdapter,
@@ -1349,15 +1348,6 @@ def run_agent_cron_dispatcher_loop(
         if not guard.resolved:
             guard.finish_source(now, status=status)
 
-    def consume_task_memory_write(envelope, guard) -> None:
-        from app.task_memory_write import write_claimed_task_memories
-
-        status = write_claimed_task_memories(
-            store, int(envelope.source_id), owner=guard.token.owner
-        )
-        if not guard.resolved:
-            guard.finish_source(datetime.now(timezone.utc), status=status)
-
     adapters = (
         ScheduledTaskQueueAdapter(store),
         ScheduledExecutionQueueAdapter(store),
@@ -1367,7 +1357,6 @@ def run_agent_cron_dispatcher_loop(
         OkrReviewQueueAdapter(store),
     ) + (() if settings.dry_run else (
         BusinessTaskTodoSyncOutboxQueueAdapter(store),
-        TaskMemoryWriteQueueAdapter(store),
     ))
     consumers = {
         "scheduled": trigger_consumer,
@@ -1379,7 +1368,6 @@ def run_agent_cron_dispatcher_loop(
     }
     if not settings.dry_run:
         consumers["business_task_todo_sync_outbox"] = consume_business_task_todo_sync_outbox
-        consumers["task_memory_write"] = consume_task_memory_write
     agent_adapters = frozenset(
         {
             "scheduled_execution",

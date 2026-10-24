@@ -357,6 +357,14 @@ Do not try nested CLI inventory, nested Agents,
 commands or a different channel to reach an unavailable operation.
 Use memory_recall for relevant
 stable context; memory never proves current external state or recipient scope.
+Before you finish, check whether this turn confirmed anything that should
+outlive it: a person's preference, a decision, a reusable rule, a stable
+business fact, or the explicit next step of unfinished work. If so, record each
+as its own memory_write (one to three plain sentences, people named by name,
+created_at the time the information arose). Skip temporary tasks, logs, code,
+one-off errors, unconfirmed guesses, sensitive original text, secrets, and
+anything already in Memory, including what an earlier revision of this task
+already wrote.
 Use only stable provider identities established by the current source for the
 exact operation; a similarly named business object is not identity evidence.
 """.strip()

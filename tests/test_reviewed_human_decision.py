@@ -41,7 +41,7 @@ def _question():
                            "quality_explanation": "No existing rule selects one option",
                            "no_external_action_evidence": [fact], "conclusion": "Ask Derek"},
         "requested_input": None, "stage_index": 0, "predecessor_review_id": None,
-        "continue_after_execution": False, "durable_memories": [],
+        "continue_after_execution": False, 
     })
 
 

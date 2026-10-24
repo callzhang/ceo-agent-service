@@ -2420,9 +2420,7 @@ Derek，2026-09-18：**后台周期性工作必须是定时任务**，在控制�
   该定时任务当天先停用，随后删除：服务启动时 seeding 用控制台同一个软删除
   （`delete_scheduled_task`）删掉 migration key 为 `follow-up-delivery-v1` 的任务，运行记录保留为历史；
   `process-follow-ups` 命令、每日维护里的催办步骤一并删除。
-- 任务长期记忆写入**不是**定时任务（Derek 2026-09-24：「写入记忆不应该是个定时任务，而是系统层
-  自动的」）：任务结束时在 `finalize_orchestrated_reply_task` 同一事务里入队，由统一 Dispatcher 的
-  `task_memory_write` adapter 立即领取写入；退避重试的行到点再被领取，重试上限后进 Attention。
+- 任务长期记忆不再由服务写入（Derek 2026-10-24）：Consumer 在回合内自己调用 `memory_write`，服务没有任务记忆队列；
   见 `docs/architecture.md`「任务长期记忆」。
 - 仍为常驻循环的只有 `meeting-delivery`：它只投递已审核通过的会议结论，10 秒一轮就是它的意义；
   以及备份、cron 调度/派发、探针等不产生业务判断的基础设施。
@@ -2580,7 +2578,7 @@ AgentRun 的终态重复完成先在写事务外读取准确原生引用。独�
 微信专用 Runner 在首轮 Developer 指令中给出有效的最小 `AgentEnvelope` 字段示例；首次格式错误仍由原有同 session 校验修正处理，业务结果仍由完整模型校验。原生 output-schema 开关、路线、工具、会话和交付阶段均未因此改变。
 
 同一 Dispatcher 还通过独立 adapter 领取普通 reply、meeting、work summary、OKR review、
-当前 BusinessTask 的 DingTalk Todo outbox 和任务长期记忆写入（`task_memory_write`）。adapter 只读写各自既有事实来源，并统一 claim generation、lease、唤醒、
+当前 BusinessTask 的 DingTalk Todo outbox。adapter 只读写各自既有事实来源，并统一 claim generation、lease、唤醒、
 公平性和容量；Consumer 保持领域边界。主动唤醒之外的有界等待只用于跨进程写入和异常恢复，不是
 用户配置。Status 为每个实际 adapter 展示 pending、oldest、running 和 latest error；scheduler
 进程/扫描健康与 scheduled run 的业务结果分别展示，空队列不会制造 Agent run。

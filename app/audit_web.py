@@ -210,7 +210,6 @@ REPLY_TASK_SQL = task20_projection('reply_tasks')
 WORK_SUMMARY_INPUT_SQL = task20_projection('work_summary_inputs')
 WECHAT_DELIVERY_SQL = task_delivery_projection('wechat_deliveries')
 MEETING_MEMORY_WRITE_SQL = task_delivery_projection('meeting_memory_write_events')
-TASK_MEMORY_WRITE_SQL = task_delivery_projection('task_memory_write_events')
 
 DISPLAY_TIME_FORMAT = "%Y-%m-%d %H:%M:%S"
 LOCAL_DISPLAY_TIME_ZONE = ZoneInfo("Asia/Shanghai")
@@ -2725,7 +2724,6 @@ def _dispatcher_queue_snapshots(store: AutoReplyStore) -> list[dict[str, object]
         ReplyQueueAdapter,
         ScheduledExecutionQueueAdapter,
         ScheduledTaskQueueAdapter,
-        TaskMemoryWriteQueueAdapter,
         WorkSummaryQueueAdapter,
     )
 
@@ -2738,7 +2736,6 @@ def _dispatcher_queue_snapshots(store: AutoReplyStore) -> list[dict[str, object]
         WorkSummaryQueueAdapter(store),
         OkrReviewQueueAdapter(store),
         BusinessTaskTodoSyncOutboxQueueAdapter(store),
-        TaskMemoryWriteQueueAdapter(store),
     )
     rows = []
     for adapter in adapters:
@@ -3835,41 +3832,6 @@ def _queue_attention_rows(store: AutoReplyStore, *, limit: int | None = None) ->
                         "summary": (
                             "Memory write for delivered meeting conclusion: "
                             f"{str(row['summary'] or '')}"
-                        ),
-                        "updated_at": str(row["updated_at"] or ""),
-                        "error": str(row["error"] or ""),
-                    }
-                )
-        if (
-            _sqlite_table_exists(db, "actions")
-            and _sqlite_table_exists(db, "tasks")
-        ):
-            task_memory_sql = f"""
-                select events.id, events.status, events.reply_task_id,
-                       tasks.channel, tasks.conversation_title,
-                       events.updated_at, events.error
-                from ({TASK_MEMORY_WRITE_SQL}) as events
-                join ({REPLY_TASK_SQL}) as tasks on tasks.id=events.reply_task_id
-                where lower(events.status)='failed'
-                order by events.updated_at desc, events.id desc
-            """
-            task_memory_params: tuple[object, ...] = ()
-            if limit is not None:
-                task_memory_sql += " limit ?"
-                task_memory_params = (limit,)
-            for row in db.execute(task_memory_sql, task_memory_params).fetchall():
-                rows.append(
-                    {
-                        "category": "Service error",
-                        "id": f"task-memory-{row['id']}",
-                        "status": str(row["status"] or ""),
-                        "context": (
-                            f"Task Memory: {row['channel']} task {row['reply_task_id']}"
-                        ),
-                        "root_cause": "task_memory_write_failed",
-                        "summary": (
-                            "Memory write for a finished task's durable memories: "
-                            f"{str(row['conversation_title'] or '')}"
                         ),
                         "updated_at": str(row["updated_at"] or ""),
                         "error": str(row["error"] or ""),

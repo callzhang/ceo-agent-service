@@ -8907,54 +8907,6 @@ def test_worker_attention_includes_failed_meeting_memory_writes(tmp_path: Path):
     assert row["error"] == "provider unavailable"
 
 
-def test_worker_attention_includes_failed_task_memory_writes(tmp_path: Path):
-    store = AutoReplyStore(tmp_path / "worker.sqlite3")
-    store.enqueue_reply_task(
-        conversation_id="cid-memory",
-        conversation_title="CEO 日报",
-        single_chat=True,
-        trigger_message_id="msg-memory",
-        trigger_create_time="2026-09-24 10:00:00",
-        trigger_sender="Derek",
-        trigger_text="text",
-    )
-    [task] = store.claim_reply_tasks(limit=1)
-    consumer = store.claim_agent_run(
-        task.id, task.execution_generation, role=AgentRole.CONSUMER,
-        proposal_revision=0, turn_attempt=0, parent_agent_run_id=None,
-        operation_id="", owner="consumer",
-    ).run
-    store.complete_agent_run(
-        consumer.id,
-        {"outcome": "no_action", "durable_memories": [
-            {"title": "t", "content": "c", "source_time": "2026-09-24T10:00:00Z",
-             "source_refs": ["msg-memory"], "subject": None}
-        ]},
-        owner="consumer",
-    )
-    with store._connect() as db:
-        store._enqueue_task_memory_write_in_connection(
-            db, task_id=task.id, execution_generation=task.execution_generation,
-        )
-    from app.dispatcher.adapters import TaskMemoryWriteQueueAdapter
-
-    envelope = TaskMemoryWriteQueueAdapter(store).claim(
-        datetime.fromisoformat("2026-09-25T10:00:00+00:00"),
-        owner="test-task-memory-attention", lease=timedelta(seconds=30),
-    )
-    event = store.get_task_memory_write_event(int(envelope.source_id))
-    assert store.fail_task_memory_write_event(
-        event.id, owner="test-task-memory-attention", error="provider unavailable"
-    )
-
-    rows = audit_web_module._queue_attention_rows(store)
-
-    row = next(row for row in rows if row.get("root_cause") == "task_memory_write_failed")
-    assert row["id"] == f"task-memory-{event.id}"
-    assert row["context"] == f"Task Memory: dingtalk task {task.id}"
-    assert row["error"] == "provider unavailable"
-
-
 def test_worker_attention_uses_local_file_title_as_work_item_context(
     tmp_path: Path,
 ):
@@ -12110,7 +12062,7 @@ def test_status_lists_the_outbox_and_memory_write_queues(tmp_path: Path):
 
     assert "task_todo_sync_outbox" not in names
     assert "business_task_todo_sync_outbox" in names
-    assert "task_memory_write" in names
+    assert "task_memory_write" not in names
 
 
 def test_status_keeps_historical_todo_link_out_of_queue_summary(tmp_path: Path):
