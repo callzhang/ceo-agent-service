@@ -605,7 +605,14 @@ def test_oa_complete_form_fields_still_require_live_detail_read():
     assert "dws oa approval detail" in rendered
     assert "dws oa approval tasks --instance-id pid-1 --format json" in rendered
     assert "Raw material references and exact read commands" in rendered
-    assert "never execute local dws commands through shell" in rendered
+    normalized = " ".join(rendered.replace("`", "").split()).lower()
+    assert "consumer should prefer declared agent_cli mcp read tools" in normalized
+    assert "may use local dws commands through shell for source reads" in normalized
+    assert "never use dws through shell to send dingtalk messages or email" in normalized
+    assert "approve, reject, return, or comment on oa" in normalized
+    assert "audit must use declared read tools only" in normalized
+    assert "must not use shell or local dws commands" in normalized
+    assert "never execute local dws commands through shell" not in normalized
     assert "do not select by applicant or title similarity" not in rendered
     _assert_no_service_oa_resolution_fields(rendered)
 

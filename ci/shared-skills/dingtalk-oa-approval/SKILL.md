@@ -74,7 +74,7 @@ OA 操作使用从当前源对象核实的字符串 `process_instance_id`、`tas
 1. **先审阅，后动作。** 同意和拒绝属于审批决策动作，必须先读完材料、确认当前 `RUNNING` 任务属于当前授权审批人、拿到当前 `taskId` 后才执行。若用户明确说“批了/同意/拒绝”，按用户确认执行；若当前任务或定时任务已明确授权自动处理，只有下文的材料、规则和动作门槛均满足时才可执行。业务 Skill 的判断标准缺失或互相冲突、且本单恰好取决于它时转 `needs_human`；动作本身一律按下文完整决策表，不要由 Skill 臆造审批结论。
 2. **所有可访问材料必须读完。** 包括审批详情、审批流水、审批附言/评论、附件、链接文档、PDF、合同、报销凭证、面试记录、试用期考核标准、交接文档等。
 3. **通过的前提是所有实质文件都已审阅完成，并且有相应标准/依据文档。** 只要审批中的附件、链接、PDF、合同、面试记录、试用期标准、BRD、工时评估、制度依据、预算依据等任一实质材料未读到、未读完或缺少标准文档，不得建议或执行同意。
-4. **判定“读不到”之前先用当前角色可用的只读入口。** 审批表单中的附件用 `read_dingtalk_oa_process_attachment(process_instance_id, file_id, file_name)` 按当前流程和表单中的准确文件 ID 读取；通用钉盘 `drive +info/download` 的权限拒绝不能代替 OA 附件读取结果。评论中的附件用 `read_dingtalk_oa_comment_attachment`。普通已授权钉盘节点才用 `read_dingtalk_drive_file`。这些工具返回受限正文、来源摘要和扫描件的 OCR 页码；需 OCR 时按工具返回的精确来源调用已配置的 `ai_services.ocr_document`，保留页码、置信度和警告。评论附件的高级版下载或表单附件下载被拒绝时，Consumer 在 shell 里先开通这一个附件的预览授权：`dws oa approval attachment authorize-preview --instance-id <流程实例ID> --file-ids <文件ID> --with-comment-attachment --format json`（可重复调用），再用返回的 `spaceId` 调用 `read_dingtalk_drive_file(node_id=文件ID, space_id, file_name)` 读取正文，或用 `dws drive +download --node <文件ID> --output <相对路径>` 下载。Consumer 的 shell 只用来做这类读取和预览授权，不在 shell 里执行同意、拒绝、退回、发消息等写操作；Audit 没有 shell，也不调用 DWS 命令。读取、解析或 OCR 确实失败时，记录技术阻塞并保留待办，不归责申请人，也不声称已读完。
+4. **判定“读不到”之前先用当前角色可用的只读入口。** 审批表单中的附件用 `read_dingtalk_oa_process_attachment(process_instance_id, file_id, file_name)` 按当前流程和表单中的准确文件 ID 读取；通用钉盘 `drive +info/download` 的权限拒绝不能代替 OA 附件读取结果。评论中的附件用 `read_dingtalk_oa_comment_attachment`。普通已授权钉盘节点才用 `read_dingtalk_drive_file`。这些工具返回受限正文、来源摘要和扫描件的 OCR 页码；需 OCR 时按工具返回的精确来源调用已配置的 `ai_services.ocr_document`，保留页码、置信度和警告。评论附件的高级版下载或表单附件下载被拒绝时，Consumer 可在 shell 里对这一个附件开通预览授权：`dws oa approval attachment authorize-preview --instance-id <流程实例ID> --file-ids <文件ID> --with-comment-attachment --format json`（可重复调用），再用返回的 `spaceId` 调用 `read_dingtalk_drive_file(node_id=文件ID, space_id, file_name)` 读取正文，或用 `dws drive +download --node <文件ID> --output <相对路径>` 下载。服务 Consumer 优先使用角色目录中的 `agent_cli` 只读工具；这些工具未覆盖的来源读取可按所选 Skill 中的准确路径通过 shell 调用 `dws`。不得通过 shell 用 `dws` 发送钉钉消息、发邮件，或执行 OA 同意、拒绝、退回、评论；这类 OA 效果只能走经审核的 typed-action 路径。Audit 没有 shell，只能使用声明的只读工具。读取、解析或 OCR 确实失败时，记录技术阻塞并保留待办，不归责申请人，也不声称已读完。
 
 5. **缺材料和读不到是两回事，处理完全不同（Derek, 2026-09-23）。** 两者都不得通过，不得用“同意后补”替代审批前审阅。
    - **缺材料**＝申请人确实没交：必填字段为空、没有附件、表单没有给出要求的文件。这是申请人的缺口，按决策表**退回**。
@@ -129,7 +129,7 @@ OA 审阅下载的附件、OCR 中间文件和转换结果只能放在本次运�
 
 若已有 OA 退回执行结果为 `external_action_uncertain`，不得再次发起退回。按原动作身份读取同一实例的 detail、records、tasks，并核对原 task 是否已取消、当前审批人是否一致、流水是否唯一匹配原动作的 `REDIRECT_PROCESS` 与完整备注、目标 activity 是否生成对应新 task。OpenAPI 的流水时间若只有秒级，应以 DWS 结构化流水中同实例、同操作类型、同操作人的毫秒 `operationTime` 唯一补足精度；不能唯一关联、证据缺失或时间不在原派发与接受边界内时，继续保留未确认状态。目标 task 的 `create_time` 若只有秒级，只有当其时间桶从退回事件之后开始且完整早于下一操作，或该桶与唯一退回流水处于同一秒且 OpenAPI 与 DWS 两类流水在该秒内均无其他操作、该桶与原派发/接受区间相交时，才可结合目标 activity 和实例精确匹配确认任务；精确到毫秒的创建时间按精确事件区间核对。时间桶与操作边界相交或证据不全时继续保留未确认状态。不得向下取整或扩大退回流水的派发/接受边界。此核对只确认原动作是否送达，不授权新的审批动作。
 
-服务中的 Consumer/Audit 必须直接调用角色目录中具名的只读 `agent_cli` MCP 工具；不得通过 shell 执行本机 `dws` 命令，即使任务上下文提供了命令示例也一样。Consumer 提议审批动作，Audit 只审核；System Executor 才通过固定的具名操作执行和回读。下列命令是交互式会话的操作参考，不能在服务角色里当作工具替代品。所需只读接口或附件正文读取能力不在目录中时，报告具体技术能力不可用。
+服务 Consumer 读取钉钉信息时优先使用角色目录中具名的只读 `agent_cli` MCP 工具；这些工具未覆盖的来源读取，可按本 Skill 写明的准确路径通过 shell 调用本机 `dws`。不得通过 shell 用 `dws` 发送钉钉消息、发邮件或执行 OA 同意、拒绝、退回、评论；这类 OA 效果只能由 System Executor 通过审核通过的 typed-action 执行并回读。Audit 只能使用具名只读工具，不运行 shell 或本机 `dws`。下列 DWS 写命令仍只是交互式会话操作参考，不能在服务角色里绕过 typed-action。
 
 调用 OA 详情、流水、任务或退回路径读取工具时，参数必须使用待办/详情对象中对应 ID 字段的原始字符串值。调用前逐字符核对 `process_instance_id`、`task_id` 与来源字段相同；参数值不能混入字段名、URL/query、引号或花括号、标点和其他说明文字。若工具报 `invalid parameter`、`invalid ... response` 等参数/结构错误，先核对实际发出的参数与来源值；仅在确认参数值被抄错或附加了字符时，才用正确原值对同一目标重试只读读取。正确原值仍失败时，按具体技术依赖失败处理，不把它改写成材料缺失或业务不合格，也不更换审批对象。
 
@@ -189,7 +189,7 @@ python3 /Users/derek/.agents/skills/dingtalk-oa-approval/scripts/oa_openapi_deta
 
 ## OpenAPI 详情补读
 
-当 DWS 详情为空、字段丢失、或任务归属异常时，有授权且具备调用能力的交互式会话可用钉钉 OA OpenAPI/API 补读。当前服务 Consumer/Audit 没有任意 HTTP、shell 或本地凭据代理能力，不得执行下面的取 token 命令；若具名只读接口未提供所需字段，记录技术能力缺口。以后如果 DWS 新增完整详情能力，再优先收敛到 DWS。交互式调用还须应用已开通 `qyapi_aflow` 权限。
+当 DWS 详情为空、字段丢失、或任务归属异常时，有授权且具备调用能力的交互式会话可用钉钉 OA OpenAPI/API 补读。服务 Consumer/Audit 没有任意 HTTP 或本地凭据代理能力，不得执行下面的取 token 命令；Consumer 通过 shell 调用 `dws` 时仍须遵守本 Skill 前述只读范围，Audit 不使用 shell 或本机 `dws`。若具名只读接口或允许的 DWS 读取路径未提供所需字段，记录技术能力缺口。以后如果 DWS 新增完整详情能力，再优先收敛到 DWS。交互式调用还须应用已开通 `qyapi_aflow` 权限。
 
 获取 token 和详情：
 
@@ -451,7 +451,7 @@ curl -sS -X POST "https://api.dingtalk.com/v1.0/workflow/processInstances/spaces
 
 接口返回 `result.downloadUri` 后，用该临时地址下载二进制附件，再按 `fileType` 抽取正文：`docx` 解 `word/document.xml`，`xlsx` 读工作表 XML/sharedStrings，`pdf` 用 PDF 文本抽取，图片用 OCR 或人工查看。下载地址通常短期有效，且可能含签名；不得写入日志、SQLite、审批评论、DingTalk 回复或 agent 输出。
 
-在 `ceo-agent-service` 中，只有 worker 已真实注入并可核对来源的 `downloaded_attachment.text` 才可视为已读正文；Consumer/Audit 没有通用附件下载器，不要让角色自行调用 `DwsClient.download_oa_process_attachment`、把 `fileId` 当 drive node，或借用 shell/OpenAPI 绕过工具目录。
+在 `ceo-agent-service` 中，只有 worker 已真实注入并可核对来源的 `downloaded_attachment.text` 才可视为已读正文；Consumer/Audit 没有通用附件下载器，不要让角色自行调用 `DwsClient.download_oa_process_attachment` 或把 `fileId` 当 drive node。Consumer 可按本 Skill 明确记录的 `dws` 读取/预览授权路径补足具名接口未覆盖的读取；不得使用任意 shell/OpenAPI 绕过角色边界，Audit 不使用 shell 或 `dws`。
 
 3. 如果官方审批附件下载接口返回 `noPermission`、超时或网络错误，可重试一次；仍失败时，记录具体错误，并用文件名查找可读的钉钉文档节点作为候选：
 
@@ -491,7 +491,7 @@ curl -sS -X POST "https://api.dingtalk.com/v1.0/workflow/premium/processInstance
    - `extension=docx|pptx|pdf|md` 且 `doc info/download` 可用：`dws doc download --node "<nodeId>" --format json`，再用本地工具抽取文本；若企业搜索已返回完整可判断 snippet，也可作为辅助证据，但合同/关键财务附件仍应尽量下载或读取全文。
 6. 如果 `doc search` 找不到，但 `aisearch search_enterprise` 能返回带完整正文片段的同名文件，可引用该检索结果继续判断，并在材料记录中说明“通过企业知识检索按文件名补读”。
 7. 如果应用已开通开放平台权限 `Storage.Dentry.Search`，可用官方存储搜索接口按附件名、空间或其他线索定位 dentry；若接口返回 `Forbidden.AccessDenied.AccessTokenPermissionDenied`，说明当前应用缺少该权限，继续走文档搜索、企业检索和钉钉界面，不要把它当成附件不存在。
-8. 交互式会话按其已授权且实际可用的路径核对；服务 Consumer/Audit 只能使用当前具名只读目录。预览授权属于写操作，若未由服务提供，不得把“没有运行预览授权”写成“已经尝试全部路径”。关键附件正文仍不可取得时，不得建议通过；真实权限拒绝按权限申请与有界重试流程处理；附件已提交但我方解析、OCR 或客户端读取能力不足时，记录阻塞、保留待办并协调负责人解决，不得仅因此退回或拒绝。只有独立证据确认源文件本身缺失、空白、损坏或缺页，且适用规则要求该材料时，才按具体规则请求补正；并存的独立规则缺口在材料可读后的阶段处理。
+8. 交互式会话按其已授权且实际可用的路径核对。服务 Consumer 可使用具名只读目录，并可按当前 Developer 指令和本 Skill 明确路径调用 `dws` 做来源读取；只有当前服务指令明确提供预览授权 fallback 时，才可通过 shell 为准确附件申请预览权限并读取同一文件。预览授权属于外部写操作，不得扩大到其他文件或权限；若服务未提供该 fallback，不得把“没有运行预览授权”写成“已经尝试全部路径”。Audit 只能使用具名只读目录。关键附件正文仍不可取得时，不得建议通过；真实权限拒绝按权限申请与有界重试流程处理；附件已提交但我方解析、OCR 或客户端读取能力不足时，记录阻塞、保留待办并协调负责人解决，不得仅因此退回或拒绝。只有独立证据确认源文件本身缺失、空白、损坏或缺页，且适用规则要求该材料时，才按具体规则请求补正；并存的独立规则缺口在材料可读后的阶段处理。
 
 财务审批里的发票字段不要只读 `InvoiceField.value`。`value` 可能只有供应商名；完整发票号、开票日期、购销方、价税合计、税额、验真/合规结果、文件 `fileId`/`spaceId` 通常在 `InvoiceField.ext_value` 的 JSON 里。必须解析 `ext_value` 后再判断发票是否匹配付款金额和供应商。
 
@@ -604,7 +604,7 @@ heartbeat 输出要简洁，按风险优先排序。是否提议同意、拒绝�
 
 自动同意只在当前用户指令、定时任务 prompt 或适用业务 Skill 的授权覆盖本案，且 `information_completeness == 1.0`、`rule_coverage == 1.0`、本公司风险门槛满足时由 Consumer 提议。Audit 只审核，System Executor 执行并用审批详情或待办回读确认结果。已有授权覆盖本案时不额外索要逐实例确认；边界缺失时不能自行推断。
 
-以下 DWS 命令仅供具备相应工具权限的交互式会话参考。服务 Consumer/Audit 不运行这些命令；它们通过只读具名接口取得事实，由 System Executor 调用固定的 OA 动作处理器。
+以下 DWS 写命令仅供具备相应工具权限的交互式会话参考。服务 Consumer 可按本 Skill 和当前 Developer 指令，通过 shell 使用 `dws` 做来源读取及明确授权的附件预览 fallback；不得用它发送钉钉消息、发邮件或执行 OA 写操作。Audit 只用具名只读接口；审批效果由 System Executor 调用固定的 OA 动作处理器。
 
 同意：
 
