@@ -620,6 +620,93 @@ class OaRedirectHandler:
         return self._state(action)
 
 
+class OaAppendApproverHandler:
+    """Add one approver (加签) to the principal's own running OA task.
+
+    Only ``before`` and ``parallel`` are registered: both put a running task in
+    front of the appended person at once, which is what the readback checks.
+    ``after`` would not create their task until the principal acts, so its
+    result could not be verified here.
+    """
+
+    def __init__(self, dws: object) -> None:
+        self.dws = dws
+
+    def _read(self, action: ProposedAction) -> tuple[ActionOutcome | None, list[dict[str, object]], dict[str, object] | None]:
+        process_id = action.target.get("process_instance_id")
+        task_id = action.target.get("task_id")
+        appender = action.target.get("appender_user_id")
+        kind = action.payload.get("type")
+        if (not all(isinstance(value, str) and value.strip() for value in (process_id, task_id, appender))
+                or kind not in ("before", "parallel")):
+            return ActionOutcome("failed", {"reason": "oa_append_parameters_invalid"}), [], None
+        response = self.dws.read_oa_approval_detail(process_id)
+        detail = response.get("result") if isinstance(response, dict) else None
+        if not isinstance(detail, dict) or str(detail.get("processInstanceId") or "") != process_id:
+            return ActionOutcome("uncertain", {"reason": "oa_detail_unavailable"}), [], None
+        tasks = detail.get("tasks")
+        if not isinstance(tasks, list):
+            return ActionOutcome("uncertain", {"reason": "oa_tasks_unavailable"}), [], None
+        tasks = [item for item in tasks if isinstance(item, dict)]
+        source = next((item for item in tasks if str(item.get("taskId")) == task_id), None)
+        if source is None:
+            return ActionOutcome("uncertain", {"reason": "oa_source_task_missing"}), tasks, None
+        return None, tasks, source
+
+    @staticmethod
+    def _owner(task: dict[str, object]) -> object:
+        return task.get("userid", task.get("userId"))
+
+    def _appender_tasks(self, tasks: list[dict[str, object]], action: ProposedAction) -> list[dict[str, object]]:
+        return [item for item in tasks
+                if self._owner(item) == action.target["appender_user_id"]
+                and str(item.get("taskStatus") or "").upper() == "RUNNING"]
+
+    def dispatch(self, action: ProposedAction, *, action_key: str, candidate: dict[str, object]) -> ActionOutcome:
+        problem, tasks, source = self._read(action)
+        if problem is not None:
+            return problem
+        current_user = self.dws.get_current_user_id()
+        if not current_user:
+            return ActionOutcome("uncertain", {"reason": "oa_append_owner_unavailable", "readback": source})
+        if self._owner(source) != current_user:
+            return ActionOutcome("business_state_changed", {"reason": "oa_append_source_owner_conflict", "readback": source})
+        if str(source.get("taskStatus") or "").upper() != "RUNNING":
+            return ActionOutcome("business_state_changed", {"reason": "oa_append_source_not_running", "readback": source})
+        if self._appender_tasks(tasks, action):
+            # They already have a task here, so a "new" one could not be told
+            # apart from it afterwards.
+            return ActionOutcome("business_state_changed", {"reason": "oa_append_approver_already_pending"})
+        known = {str(item.get("taskId")) for item in tasks}
+        response = self.dws.append_oa_approval_task(
+            process_instance_id=action.target["process_instance_id"],
+            task_id=action.target["task_id"],
+            appender_user_id=action.target["appender_user_id"],
+            kind=action.payload["type"],
+        )
+        if not isinstance(response, dict) or response.get("success") is False:
+            return ActionOutcome("failed", {"provider_result": response if isinstance(response, dict) else {}})
+        problem, after, _ = self._read(action)
+        if problem is not None:
+            return ActionOutcome("uncertain", {**problem.provider_result, "provider_result": response})
+        added = [item for item in self._appender_tasks(after, action) if str(item.get("taskId")) not in known]
+        if added:
+            return ActionOutcome("verified", {"source_task_id": action.target["task_id"],
+                                              "new_tasks": added, "provider_result": response})
+        return ActionOutcome("uncertain", {"reason": "oa_append_task_not_visible", "provider_result": response})
+
+    def reconcile(self, action: ProposedAction, *, action_key: str, candidate: dict[str, object]) -> ActionOutcome:
+        problem, tasks, source = self._read(action)
+        if problem is not None:
+            return problem
+        added = self._appender_tasks(tasks, action)
+        if added:
+            return ActionOutcome("verified", {"source_task": source, "new_tasks": added})
+        if str(source.get("taskStatus") or "").upper() == "RUNNING":
+            return ActionOutcome("confirmed_no_effect", {"source_task": source})
+        return ActionOutcome("uncertain", {"source_task": source})
+
+
 def _provider_identity(response: object, field: str) -> str:
     if not isinstance(response, dict) or response.get("success") is False or response.get("errcode") not in (None, 0):
         return ""
@@ -880,6 +967,7 @@ def native_dws_handlers(store: object, dws: object) -> dict[tuple[str, str], obj
     handlers[("dingtalk-oa", "reject")] = oa
     handlers[("dingtalk-oa", "revert_task")] = OaRevertHandler(dws)
     handlers[("dingtalk-oa", "redirect_task")] = OaRedirectHandler(dws)
+    handlers[("dingtalk-oa", "append_task")] = OaAppendApproverHandler(dws)
     handlers[("dingtalk-oa", "comment")] = OaCommentHandler(dws)
     handlers[("dingtalk-chat", "add_message_emoji")] = MessageEmotionHandler(dws)
     handlers[("dingtalk-chat", "add_message_text_emotion")] = MessageEmotionHandler(dws)

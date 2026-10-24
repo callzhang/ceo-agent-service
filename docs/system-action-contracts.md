@@ -45,13 +45,14 @@ an example or a previous instance. An unsupported operation fails explicitly.
 | `dingtalk-oa` | `approve`, `reject` | `process_instance_id`, `task_id` | `remark` | Exact owned task completed with `AGREE` or `REFUSE` |
 | `dingtalk-oa` | `revert_task` | `process_instance_id`, `task_id`, `target_activity_id` | `revert_action`, `remark` | Exact owned task completed with `REDIRECT_PROCESS` |
 | `dingtalk-oa` | `redirect_task` | `process_instance_id`, `task_id`, `to_actioner_id` | Optional `remark` | Source task redirected and a distinct running task owned by the named recipient |
+| `dingtalk-oa` | `append_task` | `process_instance_id`, `task_id`, `appender_user_id` (a verified DingTalk user ID) | `type`: `before` or `parallel` | The principal's source task is running and a new running task owned by the named user appears; refused when that user already has a running task |
 | `dingtalk-oa` | `comment` | `process_instance_id` | `content` | Provider comment ID; otherwise uncertain |
 | `dingtalk-doc` | `create_document` | `name` | Markdown `content` | Provider `nodeId` plus exact document name and Markdown readback |
 | `dingtalk-doc` | `create_doc_comment` | `node_id` | `content` | Provider `commentKey`; otherwise uncertain |
 | `dingtang-okr` | `score_kr` | `period_id`, `objective_id`, current `batch_id`, `kr_id`, `evaluator_user_id` from the live score detail; evaluator must equal the logged-in page user | `score` on the 0-1 API scale, `score_description` with evidence | Exact period, objective, current batch, KR, evaluator, score, description and `complete` status in a fresh `getScoreDetail` readback |
 
 For these registered OA operations, `process_instance_id`, `task_id`,
-`target_activity_id` and `to_actioner_id`, where required above, are exact
+`target_activity_id`, `to_actioner_id` and `appender_user_id`, where required above, are exact
 nonempty string identifiers. The Consumer must source the process and task
 identifiers from the current OA instance and its task list; a project ID is not
 an OA process ID, and a numeric task ID must be represented as the provider's

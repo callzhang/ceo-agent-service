@@ -31,7 +31,6 @@ from app.leak_check import contains_credential
 from app.routed_result_privacy import audit_references_from_full_events
 from app.store import AutoReplyStore
 from app.business_skills import bundled_business_skills_root
-from app.structured_agent import load_skill_text
 from app.task_models import (
     TaskDecision,
     TaskAgentDecision,
@@ -551,23 +550,19 @@ def build_task_agent_prompt(
     *,
     memory_issue: str = "",
     current_time: str = "",
-    inline_skill: bool = False,
 ) -> str:
     scheduled_consumer = ServiceCommandConsumerContext.from_payload(
         work_item.scheduled_consumer or None
     )
-    if inline_skill:
-        current_skill_text = load_skill_text([WORK_TRACKING_SKILL_PATH])
-    else:
-        current_skill_path = WORK_TRACKING_SKILL_PATH.resolve(strict=True)
-        current_skill_digest = hashlib.sha256(current_skill_path.read_bytes()).hexdigest()
-        current_skill_text = (
-            "CEO Work Tracking Skill (complete current protocol): "
-            f"{current_skill_path}\nSHA-256: {current_skill_digest}. "
-            "Read it before deciding. On a resumed turn, reuse a prior read only if "
-            "this exact version and its full text remain in the current context; "
-            "otherwise reread the file. Do not use an earlier version."
-        )
+    current_skill_path = WORK_TRACKING_SKILL_PATH.resolve(strict=True)
+    current_skill_digest = hashlib.sha256(current_skill_path.read_bytes()).hexdigest()
+    current_skill_text = (
+        "CEO Work Tracking Skill (complete current protocol): "
+        f"{current_skill_path}\nSHA-256: {current_skill_digest}. "
+        "Read it before deciding. On a resumed turn, reuse a prior read only if "
+        "this exact version and its full text remain in the current context; "
+        "otherwise reread the file. Do not use an earlier version."
+    )
     scheduled_prompt = (
         f"## Scheduled Consumer Prompt\n{scheduled_consumer.prompt}\n"
         if scheduled_consumer is not None
