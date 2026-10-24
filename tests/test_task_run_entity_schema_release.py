@@ -240,7 +240,8 @@ def test_paired_task_run_inverse_handoff_is_durable_and_process_portable(tmp_pat
     assert handoff.is_file(), "active-schema inverse metadata outlives the source backup rotation"
     cold_release = TaskRunEntitySchemaRelease.from_inverse_handoff(path, handoff)
     cold_release.rollback()
-    continuation = _restore_portable(json.loads(handoff.read_text(encoding="utf-8")))
+    identity_path = path.with_name(path.name + ".task-run-source-identity.json")
+    continuation = _restore_portable(json.loads(identity_path.read_text(encoding="utf-8")))
     assert continuation["format"] == "ceo-task-run-source-identity-v1"
     assert "meeting_business_keys" in continuation["inverse_identity"]
     with sqlite3.connect(path) as db:
@@ -315,11 +316,29 @@ def test_paired_inverse_identity_continuation_preserves_meeting_key_id(tmp_path)
         assert before is not None
 
     first.rollback()
-    continuation = path.with_name(path.name + ".task-run-inverse.json")
+    continuation = path.with_name(path.name + ".task-run-source-identity.json")
+    inverse_handoff = path.with_name(path.name + ".task-run-inverse.json")
     from app.task_run_entity_schema_release import _restore_portable
-    payload = _restore_portable(json.loads(continuation.read_text()))
+    original_continuation = continuation.read_bytes()
+    payload = _restore_portable(json.loads(original_continuation))
     assert payload["format"] == "ceo-task-run-source-identity-v1"
     assert payload["inverse_identity"]["meeting_business_keys"]
+
+    failed_retry = prepare_database_schema_release(root, path)
+    def fail_commit(_db):
+        raise OSError("simulated database commit failure after inverse handoff replacement")
+    failed_retry._commit_publish = fail_commit
+    with pytest.raises(OSError, match="simulated database commit failure"):
+        failed_retry.publish()
+    failed_retry.rollback()
+    assert continuation.read_bytes() == original_continuation
+    assert not inverse_handoff.exists()
+    with sqlite3.connect(path) as db:
+        from app.state_definitions import state_projection
+        assert db.execute(
+            f"select value from ({state_projection('service_state')}) "
+            "where key='store_schema_version'"
+        ).fetchone() == ("2026-10-21.1",)
 
     # The continuation is canonical beside the source DB, not scoped to a
     # particular verified-backup pathname.

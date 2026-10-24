@@ -331,10 +331,11 @@ def _final_native_roundtrip(target: Path, frozen_source: Path, predecessor: Path
     )
     if inverse.returncode:
         raise RuntimeError(inverse.stderr or inverse.stdout or "post-native portable inverse failed")
-    if not handoff.is_file():
+    identity_path = target.with_name(target.name + ".task-run-source-identity.json")
+    if not identity_path.is_file():
         raise AssertionError("inverse did not retain its source identity continuation")
     from app.task_run_entity_schema_release import _restore_portable
-    source_identity = _restore_portable(json.loads(handoff.read_text(encoding="utf-8")))
+    source_identity = _restore_portable(json.loads(identity_path.read_text(encoding="utf-8")))
     if (source_identity.get("format") != "ceo-task-run-source-identity-v1"
             or not source_identity.get("inverse_identity", {}).get("meeting_business_keys")):
         raise AssertionError("inverse did not durably retain Meeting delivery-key identities")
@@ -390,6 +391,8 @@ def _final_native_roundtrip(target: Path, frozen_source: Path, predecessor: Path
               "expected_native_user_tables_compared": source_tables_compared,
               "frozen_source_sha256": source_hash, "pre_inverse_handoff_bytes": handoff_bytes,
               "post_reforward_handoff_bytes": handoff.stat().st_size,
+              "source_identity_sidecar_bytes_after_reforward": identity_path.stat().st_size
+                  if identity_path.exists() else 0,
               "source_identity_continuation": {
                   "format": source_identity["format"],
                   **identity_receipt,

@@ -188,6 +188,13 @@ def test_reviewed_email_prepared_share_owner(tmp_path):
 
 
 def test_selected_reviewed_message_uses_prepared_action_through_sent(tmp_path, monkeypatch):
+    import json
+    import os
+    import subprocess
+    import sys
+    import time
+    from datetime import UTC, datetime
+    from pathlib import Path
     from app.agent_context import AgentTaskContext
     from app.agent_contracts import ConsumerAgentResult
     from app.consumer_agent import _prepare_outgoing_dingtalk_messages
@@ -198,12 +205,31 @@ def test_selected_reviewed_message_uses_prepared_action_through_sent(tmp_path, m
     from app.system_executor import SystemExecutor
 
     class StrictProvider:
-        def __init__(self):
+        def __init__(self, ledger_path):
             self.calls = []
+            self.ledger_path = Path(ledger_path)
 
         def send_message(self, conversation_id, body, **target):
             self.calls.append((conversation_id, body, target))
-            return {"success": True, "data": {"messageId": "provider-message-1"}}
+            accepted_at = datetime.now(UTC).isoformat()
+            ledger = {"provider_accepted_count": 1, "send_call_count": len(self.calls),
+                      "conversation_id": conversation_id, "body": body,
+                      "accepted_at": accepted_at,
+                      "provider_result": {"success": True,
+                                          "data": {"messageId": "provider-message-1"}}}
+            with self.ledger_path.open("w", encoding="utf-8") as stream:
+                json.dump(ledger, stream)
+                stream.flush()
+                os.fsync(stream.fileno())
+            return ledger["provider_result"]
+
+        def reconcile_message_send(self, conversation, body, *, not_before):
+            ledger = json.loads(self.ledger_path.read_text(encoding="utf-8"))
+            accepted_at = datetime.fromisoformat(ledger["accepted_at"])
+            if (ledger["conversation_id"] != conversation.open_conversation_id
+                    or ledger["body"] != body or accepted_at < not_before):
+                return None
+            return ledger["provider_result"]
 
         def verify_message_send_result(self, result):
             assert result == {"success": True, "data": {"messageId": "provider-message-1"}}
@@ -273,29 +299,28 @@ def test_selected_reviewed_message_uses_prepared_action_through_sent(tmp_path, m
     store.select_candidate_option(candidate["id"], review["id"], "send_notice")
 
     source_candidate = result
-    provider = StrictProvider()
-    record_prepared_receipt = store.record_outbound_postfix_receipt
+    ledger_path = tmp_path / "durable-provider-accepted.json"
+    provider = StrictProvider(ledger_path)
     interrupted = False
 
     def accept_then_interrupt(*args, **kwargs):
         nonlocal interrupted
-        receipt = record_prepared_receipt(*args, **kwargs)
-        if not interrupted:
-            interrupted = True
-            raise RuntimeError("interrupted after provider acceptance and prepared receipt")
-        return receipt
+        interrupted = True
+        raise SystemExit("process stopped after provider ACK and before local receipt")
 
     monkeypatch.setattr(store, "record_outbound_postfix_receipt", accept_then_interrupt)
-    interrupted_result = SystemExecutor(
-        store, native_dingtalk_message_handlers(store, provider), owner="system",
-    ).execute(task, candidate["id"], review["id"])
+    with pytest.raises(SystemExit, match="before local receipt"):
+        SystemExecutor(
+            store, native_dingtalk_message_handlers(store, provider), owner="system",
+            lease_seconds=1,
+        ).execute(task, candidate["id"], review["id"])
 
-    assert interrupted_result.outcome == "failed"
-    assert interrupted_result.error.code == "external_action_uncertain"
-    assert interrupted_result.error.retryable is True
     assert interrupted is True
     assert len(provider.calls) == 1
-    assert store.get_candidate_execution(candidate["id"])["status"] == "uncertain"
+    assert store.get_candidate_execution(candidate["id"])["status"] == "running"
+    durable_before_recovery = json.loads(ledger_path.read_text(encoding="utf-8"))
+    assert durable_before_recovery["provider_accepted_count"] == 1
+    assert durable_before_recovery["send_call_count"] == 1
     delivery_key = agent_message_delivery_key(
         business_object_key=task.business_object_key,
         action_identity="notice:send_notice",
@@ -321,8 +346,8 @@ def test_selected_reviewed_message_uses_prepared_action_through_sent(tmp_path, m
             f"select id from ({SENT_REPLY_SQL}) where id=?",
             (interrupted_owner["id"],),
         ).fetchone()
-    assert interrupted_attempt["status"] == "uncertain"
-    assert interrupted_owner["action_prepared_receipt_id"] is not None
+    assert interrupted_attempt["status"] == "dispatched"
+    assert interrupted_owner["action_prepared_receipt_id"] is None
     interrupted_owner_id = interrupted_owner["id"]
     interrupted_prepared_receipt_id = interrupted_owner["action_prepared_receipt_id"]
     assert interrupted_owner["action_external_action_key"] == interrupted_attempt["external_action_key"]
@@ -330,13 +355,52 @@ def test_selected_reviewed_message_uses_prepared_action_through_sent(tmp_path, m
     assert interrupted_canonical is None
     assert interrupted_sent is None
 
-    # Resume through the same SystemExecutor caller on a reopened store. The
-    # persisted preparation receipt supplies provider readback; no send repeats.
+    # A new process recovers after the ordinary execution lease expires. The
+    # durable fake provider ledger answers the exact outbound lookup.
+    time.sleep(1.1)
+    recovery_output = tmp_path / "ack-before-receipt-recovery.json"
+    recovery_program = r'''import json,sys
+from datetime import datetime
+from pathlib import Path
+root,db_path,ledger_path,task_id,candidate_id,review_id,output=map(str,sys.argv[1:])
+sys.path.insert(0,root)
+from app.store import AutoReplyStore
+from app.system_action_handlers import native_dingtalk_message_handlers
+from app.system_executor import SystemExecutor
+class DurableFakeProvider:
+    def __init__(self,path): self.path=Path(path)
+    def send_message(self,conversation_id,body,**target):
+        ledger=json.loads(self.path.read_text())
+        ledger['send_call_count']+=1
+        self.path.write_text(json.dumps(ledger))
+        return ledger['provider_result']
+    def reconcile_message_send(self,conversation,body,*,not_before):
+        ledger=json.loads(self.path.read_text())
+        accepted_at=datetime.fromisoformat(ledger['accepted_at'])
+        if ledger['conversation_id']!=conversation.open_conversation_id or ledger['body']!=body or accepted_at<not_before:
+            return None
+        return ledger['provider_result']
+    def verify_message_send_result(self,result): return {'state':'sent','message_id':result['data']['messageId']}
+store=AutoReplyStore(Path(db_path)); task=store.get_reply_task(int(task_id))
+result=SystemExecutor(store,native_dingtalk_message_handlers(store,DurableFakeProvider(ledger_path)),
+                      owner='system-process-recovery').execute(task,int(candidate_id),int(review_id))
+Path(output).write_text(json.dumps(result.model_dump(mode='json')))
+'''
+    child = subprocess.run(
+        [sys.executable, "-c", recovery_program, str(Path(__file__).resolve().parents[1]),
+         str(path), str(ledger_path), str(task.id), str(candidate["id"]),
+         str(review["id"]), str(recovery_output)],
+        cwd=Path(__file__).resolve().parents[1], text=True, capture_output=True, timeout=60,
+    )
+    assert child.returncode == 0, child.stderr or child.stdout
+    recovered_result = json.loads(recovery_output.read_text(encoding="utf-8"))
+    assert recovered_result["outcome"] == "executed"
+    ledger_after_recovery = json.loads(ledger_path.read_text(encoding="utf-8"))
+    assert ledger_after_recovery["provider_accepted_count"] == 1
+    assert ledger_after_recovery["send_call_count"] == 1
     store = AutoReplyStore(path)
-    result = SystemExecutor(
-        store, native_dingtalk_message_handlers(store, provider), owner="system-restarted",
-    ).execute(task, candidate["id"], review["id"])
-
+    result = SystemExecutor(store, native_dingtalk_message_handlers(store, provider),
+                           owner="system-readback").execute(task, candidate["id"], review["id"])
     assert result.outcome == "executed"
     assert len(provider.calls) == 1
     external_action = store.list_candidate_action_attempts(
@@ -379,7 +443,8 @@ def test_selected_reviewed_message_uses_prepared_action_through_sent(tmp_path, m
         ).fetchone()
     assert len(owners) == 1
     assert owner["id"] == interrupted_owner_id
-    assert owner["action_prepared_receipt_id"] == interrupted_prepared_receipt_id
+    assert interrupted_prepared_receipt_id is None
+    assert owner["action_prepared_receipt_id"] == prepared_receipt["id"]
     assert owners[0]["id"] == owner["id"]
     assert owner["action_delivery_key"] == delivery_key
     assert owner["action_external_action_key"] == external_action["external_action_key"]

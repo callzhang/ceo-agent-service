@@ -162,6 +162,10 @@ def _write_source_identity_handoff(path: Path, inverse_identity: dict,
             os.unlink(temporary)
 
 
+def _source_identity_path(database_path: Path) -> Path:
+    return Path(database_path).with_name(Path(database_path).name + ".task-run-source-identity.json")
+
+
 @dataclass
 class TaskRunEntitySchemaRelease:
     database_path: Path
@@ -215,6 +219,10 @@ class TaskRunEntitySchemaRelease:
             if os.path.exists(temporary):
                 os.unlink(temporary)
         return path
+
+    @staticmethod
+    def _commit_publish(db: sqlite3.Connection) -> None:
+        db.commit()
 
     @classmethod
     def from_inverse_handoff(cls, database_path: Path, handoff_path: Path):
@@ -280,7 +288,7 @@ class TaskRunEntitySchemaRelease:
                 if self.recovery_handoff_path is not None:
                     self.write_inverse_handoff(self.recovery_handoff_path)
                     handoff_written = True
-                db.commit()
+                self._commit_publish(db)
             except BaseException:
                 db.rollback()
                 if handoff_written and self.recovery_handoff_path is not None:
@@ -289,6 +297,11 @@ class TaskRunEntitySchemaRelease:
                  self.task_forward, self.run_forward, self.adoption_forward,
                  self.source_inverse_identity, self.source_context) = previous_metadata
                 raise
+        if self.recovery_handoff_path is not None:
+            # A source continuation is kept in its own durable file until
+            # SQLite commits. It is no longer needed once the target schema
+            # and its inverse handoff are committed.
+            _remove_handoff(_source_identity_path(path))
         self.verify_loaded()
 
     def verify_loaded(self):
@@ -349,7 +362,7 @@ class TaskRunEntitySchemaRelease:
                     raise ValueError("paired Task/Run inverse integrity/FK mismatch")
                 if self.recovery_handoff_path is not None:
                     _write_source_identity_handoff(
-                        self.recovery_handoff_path, task_inverse["inverse_identity"],
+                        _source_identity_path(self.database_path), task_inverse["inverse_identity"],
                         task_inverse["source_context"],
                     )
                 db.commit()
@@ -370,8 +383,9 @@ def prepare_task_run_entity_release(path: Path, *, recovery_source_path: Path | 
         handoff_path = path.with_name(path.name + ".task-run-inverse.json")
         source_inverse_identity = None
         source_context = None
-        if handoff_path.is_file():
-            payload = _restore_portable(json.loads(handoff_path.read_text(encoding="utf-8")))
+        source_identity_path = _source_identity_path(path)
+        if source_identity_path.is_file():
+            payload = _restore_portable(json.loads(source_identity_path.read_text(encoding="utf-8")))
             if (type(payload) is not dict
                     or payload.get("format") != "ceo-task-run-source-identity-v1"
                     or set(payload) != {"format", "inverse_identity", "source_context"}):
