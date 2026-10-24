@@ -3,8 +3,7 @@
 import json
 
 from app.action_storage import SENT_REPLY_SQL
-from app.run_storage import AGENT_RUN_SQL
-from app.store import REPLY_TASK_SQL, SentReply
+from app.store import AGENT_RUN_SQL, REPLY_TASK_SQL, SentReply
 from app import shared_action_lifecycle
 
 
