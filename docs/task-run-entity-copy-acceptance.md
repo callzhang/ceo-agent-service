@@ -1,6 +1,6 @@
 # Task 5 final current-copy acceptance
 
-Status: **Task 5 local evidence recorded; round-1 scoped SPEC/QUALITY re-review pending; no release/deploy claim**. The final post-native cold inverse/reforward completed on a disposable clone. Production remained read-only.
+Status: **Task 5 scoped SPEC/QUALITY re-review passed; latest main through `278431eabf2bd1903582d9a480c5f423bdd9ab15` integrated; whole-branch review passed except the documentation correction below; deployment/readback pending**. The final post-native cold inverse/reforward completed on a disposable clone. Production remained read-only. The correction and pinned release-drift follow-up are recorded in the [final fix-wave report](task-run-entity-final-fix-wave-report.md).
 
 ## Frozen inputs and capacity
 
@@ -66,7 +66,7 @@ A prior bounded five-file legacy/current regression run returned 316 passed, 59 
 
 ## Remaining gates
 
-Remaining gates: scoped Task 5 SPEC and QUALITY re-review of the fixes, then independent whole-branch SPEC and QUALITY review; normal merge/integration with current main, affected validation, and root's standard deployment/readback follow those reviews. No push or deploy was performed by this task.
+Remaining gates at this checkpoint: correct this report's stale status under finding I1 and obtain the requested scoped re-review of that correction; then complete the standard deployment/readback. Task 5's scoped SPEC/QUALITY re-review passed, latest main through `278431eabf2bd1903582d9a480c5f423bdd9ab15` is integrated, and the independent whole-branch SPEC/QUALITY review passed apart from I1. The historical broad test result remains non-green as recorded above. No push or deploy was performed by this task.
 
 ## Round 1 fixes and evidence
 
@@ -76,4 +76,4 @@ S2 synthetic Workbench evidence used a separate empty predecessor-shaped DB (not
 
 S1 ruling: there is no Input-version selector in the current History Task UI, so no such browser path was claimed or added as part of this schema migration. The actual browser Task 783 detail showed “原文不可用”; current/claimed Input pointers and version facts were exercised through Store/API and the cold migration chain. A dedicated Input-version UI feature is outside this migration scope.
 
-The final production-derived native clone roundtrip was re-run under the split-sidecar implementation and passed. Its receipt reports the inverse handoff at 30,764,762 bytes and the source-identity continuation absent after reforward (zero residual bytes). Scoped Task 5 re-review remains required.
+The final production-derived native clone roundtrip was re-run under the split-sidecar implementation and passed. Its receipt reports the inverse handoff at 30,764,762 bytes and the source-identity continuation absent after reforward (zero residual bytes). The Task 5 scoped re-review passed; latest main is integrated. The whole-branch review's sole remaining finding is the stale status text corrected in this fix wave; deployment/readback remains pending.
