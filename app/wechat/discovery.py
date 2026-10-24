@@ -7,6 +7,7 @@ never silently choose among multiple accounts.
 from __future__ import annotations
 
 import plistlib
+import glob
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -45,7 +46,10 @@ def discover_account_directories(xwechat_root: Path) -> list[WechatAccountDirect
         if not account_dir.is_dir():
             continue
         db_dir = account_dir / "db_storage"
-        if db_dir.is_dir() and next(db_dir.rglob("*.db"), None) is not None:
+        message_shards = glob.glob(
+            str(db_dir / "message" / "message_[0-9]*.db")
+        )
+        if message_shards:
             result.append(
                 WechatAccountDirectory(
                     account_id=account_dir.name,
