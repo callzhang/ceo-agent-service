@@ -635,7 +635,7 @@ Signals share: source_type, source_ref, source_time, conversation and author
 (a Signal repeats one of those fields only when its value differs). When you
 cite a Signal, give its id and its document's source_ref. A document with
 source_in_input false is not copied here: read it yourself with dws from that
-document's source_type and source_ref, using the matching dws Skill. For ai_minutes
+document's source_type and source_ref. For ai_minutes
 the part of source_ref before "#" is the taskUuid (dws minutes +detail or
 +transcript --id); a dingtalk-doc:<node id>#... ref names the document node. A
 document with visible_ranges or
