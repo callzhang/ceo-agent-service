@@ -63,6 +63,25 @@ def test_repository_consumer_release_manifest_tracks_oa_skill_digest():
     assert audit_entry["old_sha256"] == "5dcfd33f48d23268296da5d89346eaf3a76ffec665e5d9a353c33654a5de8237"
 
 
+def test_repository_consumer_release_manifest_tracks_installed_daily_report_baseline():
+    root = Path(__file__).resolve().parents[1]
+    manifest = json.loads(
+        (root / "ci/consumer-system-contract-release.json").read_text(encoding="utf-8")
+    )
+    entries = {item["source"]: item for item in manifest["files"]}
+    skill_source = "ci/shared-skills/ceo-daily-report/SKILL.md"
+    script_source = "ci/shared-skills/ceo-daily-report/scripts/window.py"
+
+    skill = entries[skill_source]
+    assert skill["new_sha256"] == _digest((root / skill_source).read_bytes())
+    assert skill["old_sha256"] == skill["new_sha256"]
+    assert skill["old_managed_sha256"] == skill["new_sha256"]
+
+    script = entries[script_source]
+    assert script["new_sha256"] == _digest((root / script_source).read_bytes())
+    assert script["old_sha256"] == script["new_sha256"]
+
+
 def test_release_manifest_pins_current_finance_card_and_active_managed_skill_hashes():
     root = Path(__file__).resolve().parents[1]
     manifest = json.loads(
