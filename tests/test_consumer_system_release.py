@@ -44,10 +44,9 @@ def test_repository_consumer_release_manifest_tracks_oa_skill_digest():
         if item["source"] == "ci/shared-skills/dingtalk-oa-approval/SKILL.md"
     )
 
-    # The old digest is a release-time precondition. After a successful
-    # deployment the installed file has the new digest, so do not compare the
-    # old digest with mutable machine state in this repository-level test.
-    assert entry["old_sha256"] == "c8130e8dcfb4c6d40980d63a27b2d2c501eba7c4b89497339dcbbf8ead230ccb"
+    # The old digest is a release-time precondition: the publisher requires it
+    # to equal the installed file. Once the Skill is installed it is re-baselined
+    # to the new digest, so only its shape is pinned here, not a historical value.
     assert len(entry["old_sha256"]) == 64
     assert all(char in "0123456789abcdef" for char in entry["old_sha256"])
     assert entry["new_sha256"] == _digest((root / entry["source"]).read_bytes())
