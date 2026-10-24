@@ -21,6 +21,12 @@ import pytest
 
 import app.store as store_module
 from tests.wechat.support import approve_delivery
+from tests.support.native_run_rows import (
+    insert_native_run as _insert_native_run,
+    insert_run_row as _insert_run_row,
+    insert_runtime_attempt_row as _insert_runtime_attempt_row,
+    insert_scheduled_occurrence as _insert_scheduled_occurrence,
+)
 from tests.reply_schema_fixtures import assert_store_reopen_rejected_without_mutation
 from tests.run_reader_fixtures import assert_no_core_native_storage, insert_native_run_fixture
 from app.action_storage import NATIVE_EXTERNAL_ACTION_RESULT_SQL as EXTERNAL_ACTION_RESULT_SQL, REPLY_ATTEMPT_COMMON_SQL, SENT_REPLY_SQL, SENT_REPLY_OBSERVER_SQL, insert_action, update_action
@@ -56,55 +62,7 @@ _TASK_COLUMNS = frozenset({
 })
 
 
-_ATTEMPT_DEFAULTS = {
-    "session_mode": "fresh", "source_session_id": "", "attempt_purpose": "normal",
-    "validation_retry_policy_id": "", "validation_result_schema_id": "", "session_id": "",
-    "transcript_reference": "", "transcript_start": 0, "transcript_end": 0,
-    "failure_class": "", "failure_code": "", "failover_permitted": 0, "lease_owner": "",
-    "lease_expires_at": "", "first_effect_started_at": "", "result_schema_id": "",
-    "started_at": "", "finished_at": "", "created_at": "", "updated_at": "",
-}
-
-
-def _insert_runtime_attempt_row(db, values):
-    """Insert one native RuntimeAttempt; unset columns take the fixture defaults."""
-    from app.run_entity_storage import create_runtime_attempt
-
-    return create_runtime_attempt(db, values={**_ATTEMPT_DEFAULTS, **values})
-
-
-def _insert_scheduled_occurrence(db, values):
-    from app.scheduled_occurrence_storage import insert_occurrence
-
-    defaults = {
-        "skip_or_error_reason": "", "occurrence_count": 1, "result_summary": "",
-        "lease_owner": "", "created_at": "2026-09-10 12:00:00",
-        "first_scheduled_for": values.get("scheduled_for", ""),
-        "execution_kind": "", "execution_id": "",
-    }
-    return insert_occurrence(db, {**defaults, **values})
-
-
-_RUN_DEFAULTS = {
-    "proposal_revision": 0, "turn_attempt": 0, "operation_id": "", "session_id": "",
-    "transcript_start": 0, "transcript_end": 0, "structured_error_json": "", "error": "",
-    "lease_owner": "", "lease_expires_at": "", "started_at": "", "completed_at": "",
-    "updated_at": "",
-}
-
 RUN_STATE_EVENT_SQL = "select id, run_id as agent_run_id, phase, structured_error_json from run_failures"
-
-
-def _insert_run_row(db, values):
-    from types import SimpleNamespace
-
-    return SimpleNamespace(lastrowid=_insert_native_run(db, values))
-
-
-def _insert_native_run(db, values):
-    from app.run_entity_storage import create_run
-
-    return create_run(db, values={**_RUN_DEFAULTS, **values})["id"]
 
 
 def _bind_business_object_key(db, business_key, owner_task_id):
