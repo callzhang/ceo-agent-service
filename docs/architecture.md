@@ -2904,9 +2904,13 @@ dispatcher、Dashboard、恢复和 reached History 查询改为直接使用 `sch
 冻结配置仍由 `configs` 持有，trigger 的 `snapshot_id` 继续引用对应的公开快照 ID。
 full-state claim 索引服务完整状态仲裁，pending-only dispatch 索引只覆盖待派发记录。
 Scheduled Tasks 页面按 API 返回的 `first_scheduled_for`、`scheduled_for` 和
-`occurrence_count` 展示已保存区间，不再按通用摘要计数合并历史行。此候选尚未激活；
-release-drain 在迁移前仍读冻结旧来源 `SCHEDULED_RUN_SQL`，不可改成无条件 native 查询；
-它是显式发布前检查，不是运行时 fallback。每个 service-command producer 使用单一 typed
+`occurrence_count` 展示已保存区间，不再按通用摘要计数合并历史行。重启补派去重将聚合
+区间端点和候选时间按 SQLite 实际时间比较，因此不同 UTC offset 的原始时间字符串仍代表
+同一覆盖区间；原始时间文本保持不变，专用 partial expression index 支持该范围查询。
+此候选尚未激活。迁移前安静窗口由 `RepositoryUpdater.current_publication_sources` 的旧
+schema 来源检查负责，不能提前查询 native owner。`consumer_system_release` 资产发布发生在
+database release 之后，其显式冻结 `SCHEDULED_RUN_SQL` 来自 `app.run_storage`，不是安静
+窗口来源，也不是普通 runtime fallback。每个 service-command producer 使用单一 typed
 `ServiceCommandResult`；瞬态 counters 不改变持久化摘要。Store 只在当前完整 typed counts
 全零、紧邻前一同 Task occurrence 的完整冻结旧摘要也证明零、冻结 command/config 相同、Cron
 下一时间点精确连续且当前和前一都没有 Task/Meeting 引用时，在一个写事务保留较新身份并更新
@@ -2916,8 +2920,9 @@ release-drain 在迁移前仍读冻结旧来源 `SCHEDULED_RUN_SQL`，不可改�
 在引用转成 native 后，同一事务一次预建保护集并按 UTC 时间/ID tie 顺序单遍退休可证明的历史
 相邻空跑，返回迁移统计且不新增持久字段。versioned scheduler create 仍阻止重启补派覆盖区间内
 的同配置时间点。Task/Meeting occurrence 引用在 forward/current-inverse 中只转换声明整数叶，
-保留其余原始 JSON 字节与 hash 证据。release-drain 在迁移前继续读取冻结旧来源
-`SCHEDULED_RUN_SQL`；候选仍未激活，尚待完整 Task4 独立 SPEC/QUALITY 审查。
+保留其余原始 JSON 字节与 hash 证据。候选仍未激活，尚待完整 Task4 独立 SPEC/QUALITY
+审查；quiet-window source 判定仍在旧 schema 阶段，Consumer/Audit 资产发布在 database release
+之后，后续发布批须将其读取切换至目标 owner。
 
 
 Phase4C 的初始化修复边界：旧分散 Workbench0.7/0.8/0.9表缺列后自动补

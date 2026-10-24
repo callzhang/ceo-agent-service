@@ -4585,7 +4585,8 @@ class AutoReplyStore(LogicalRunStoreMixin, ReviewedCandidateStoreMixin):
                 "from schedule_occurrences as scheduled_task_runs "
                 "where scheduled_task_id=? and trigger_kind='scheduled' "
                 "and occurrence_count>1 and snapshot_id=? "
-                "and first_scheduled_for<=? and scheduled_for>=? "
+                "and julianday(first_scheduled_for)<=julianday(?) "
+                "and julianday(scheduled_for)>=julianday(?) "
                 "order by id desc limit 1",
                 (task_id, snapshot_id, scheduled_for_text, scheduled_for_text),
             ).fetchone()

@@ -1,4 +1,5 @@
 from concurrent.futures import ThreadPoolExecutor
+from contextvars import ContextVar
 from datetime import UTC, datetime, timedelta
 import sqlite3
 from time import perf_counter
@@ -19,6 +20,20 @@ def _scheduled_command(store: AutoReplyStore):
         timezone_name="UTC",
         enabled=True,
     )
+
+
+def _reopen_target_store(path):
+    store = AutoReplyStore.__new__(AutoReplyStore)
+    store.path = path
+    store.busy_timeout_seconds = 5
+    store.busy_timeout_milliseconds = 5000
+    store._read_snapshot_connection = ContextVar(
+        f"creator_read_snapshot_{id(store)}", default=None,
+    )
+    store._reused_connection = ContextVar(
+        f"creator_reused_connection_{id(store)}", default=None,
+    )
+    return store
 
 
 def test_occurrence_crud_and_dispatch_use_native_owner(tmp_path):
@@ -76,6 +91,7 @@ def test_occurrence_crud_and_dispatch_use_native_owner(tmp_path):
             "idx_schedule_occurrences_latest", "idx_schedule_occurrences_reply_execution",
             "idx_schedule_occurrences_scheduled_instant",
             "idx_schedule_occurrences_task_chronology",
+            "idx_schedule_occurrences_covered_range",
         } <= indexes
         snapshot_id = db.execute(
             "select snapshot_id from schedule_occurrences where id=?", (run.id,)
@@ -132,6 +148,12 @@ def test_occurrence_crud_and_dispatch_use_native_owner(tmp_path):
              "and julianday(scheduled_for)<julianday(?) "
              "order by julianday(scheduled_for) desc,id desc limit 1",
              (task.id, instant.isoformat())),
+            ("idx_schedule_occurrences_covered_range",
+             "select id from schedule_occurrences where scheduled_task_id=? "
+             "and trigger_kind='scheduled' and occurrence_count>1 and snapshot_id=? "
+             "and julianday(first_scheduled_for)<=julianday(?) "
+             "and julianday(scheduled_for)>=julianday(?) order by id desc limit 1",
+             (task.id, snapshot_id, instant.isoformat(), instant.isoformat())),
         )
         for index_name, sql, parameters in plan_cases:
             plan = db.execute("explain query plan " + sql, parameters).fetchall()
@@ -216,6 +238,45 @@ def test_empty_occurrence_coalesces_and_covered_instant_is_duplicate(tmp_path):
     assert covered.state is ScheduledTaskRunCreateState.DUPLICATE
     assert covered.run == aggregate
     assert store.list_scheduled_task_runs(task.id) == (aggregate,)
+
+
+def test_restarted_create_dedupes_mixed_offset_covered_instant(tmp_path):
+    path = tmp_path / "native-scheduled-mixed-offset.sqlite3"
+    store = _target_store(path)
+    task = _scheduled_command(store)
+    first_text = "2026-10-22T03:00:00+02:00"
+    end_text = "2026-10-22T01:01:00Z"
+    covered_at = datetime.fromisoformat("2026-10-22T01:00:30+00:00")
+    end_at = datetime.fromisoformat(end_text.replace("Z", "+00:00"))
+    aggregate = store.create_scheduled_task_run(
+        task.id, trigger_kind="scheduled", scheduled_for=end_at, now=end_at,
+    )
+    with store._immediate_write_transaction() as db:
+        db.execute(
+            "update schedule_occurrences set first_scheduled_for=?,scheduled_for=?,"
+            "occurrence_count=2 where id=?",
+            (first_text, end_text, aggregate.id),
+        )
+    store = _reopen_target_store(path)
+
+    restarted = store.create_scheduled_task_run_if_current(
+        task.id,
+        expected_version=task.version,
+        expected_overlap_run_id=aggregate.id,
+        scheduled_for=covered_at,
+        now=end_at + timedelta(seconds=1),
+    )
+
+    assert restarted.state is ScheduledTaskRunCreateState.DUPLICATE
+    assert restarted.run is not None
+    assert restarted.run.id == aggregate.id
+    assert restarted.run.occurrence_count == 2
+    with store._connect() as db:
+        assert tuple(db.execute(
+            "select first_scheduled_for,scheduled_for from schedule_occurrences where id=?",
+            (aggregate.id,),
+        ).fetchone()) == (first_text, end_text)
+    assert len(store.list_scheduled_task_runs(task.id)) == 1
 
 
 def test_unknown_or_positive_counts_never_coalesce(tmp_path):

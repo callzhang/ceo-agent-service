@@ -116,6 +116,7 @@ INDEXES = {
     "idx_schedule_occurrences_reply_execution": "CREATE INDEX idx_schedule_occurrences_reply_execution ON schedule_occurrences(CAST(execution_id AS INTEGER),scheduled_task_id,id) WHERE execution_kind='reply_task'",
     "idx_schedule_occurrences_scheduled_instant": "CREATE UNIQUE INDEX idx_schedule_occurrences_scheduled_instant ON schedule_occurrences(scheduled_task_id,scheduled_for) WHERE trigger_kind='scheduled'",
     "idx_schedule_occurrences_task_chronology": "CREATE INDEX idx_schedule_occurrences_task_chronology ON schedule_occurrences(scheduled_task_id,julianday(scheduled_for),id)",
+    "idx_schedule_occurrences_covered_range": "CREATE INDEX idx_schedule_occurrences_covered_range ON schedule_occurrences(scheduled_task_id,snapshot_id,julianday(first_scheduled_for),julianday(scheduled_for),id) WHERE trigger_kind='scheduled' AND occurrence_count>1",
     "idx_workbench_events_id_turn": "CREATE INDEX idx_workbench_events_id_turn ON workbench_events(id,task_id)",
     "idx_workbench_events_task": "CREATE INDEX idx_workbench_events_task ON workbench_events(task_id,id)",
     "idx_workbench_events_type": "CREATE INDEX idx_workbench_events_type ON workbench_events(event_type)",

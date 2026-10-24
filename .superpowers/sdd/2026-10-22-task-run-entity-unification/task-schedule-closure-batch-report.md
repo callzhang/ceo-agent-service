@@ -16,7 +16,7 @@ Historical retirement is part of `migrate_run_entities`' caller transaction. Aft
 
 Declared occurrence IDs in full TaskInput, compacted provenance, raw/context trigger payloads, and nested Meeting source JSON translate only the integer leaf token through the captured source-public/native map. Forward and current inverse preserve all unrelated source bytes/whitespace and the stored original hash/byte evidence; no body copies or runtime legacy resolver were added. A regression covers a public-ID/native-ID collision in both directions and portable forward/inverse cycles.
 
-The pre-migration release drain remains the exact frozen `SCHEDULED_RUN_SQL` source read in `app.consumer_system_release._prepare_publication`. Switching that call unconditionally to `schedule_occurrences` before schema migration would prevent the quiet-window check from reading the real old production schema. Normal runtime has no legacy fallback. Final publication must explicitly coordinate that source precondition with the declared frozen migration predecessor; global constructors and manifest remain unactivated in this batch.
+The pre-migration quiet window is handled by `RepositoryUpdater.wait_for_quiet` and the old-schema source checks in `RepositoryUpdater.current_publication_sources`; it is not the `consumer_system_release` module. `RepositoryUpdater.execute` orders `wait_for_quiet` → `prepare_database` → `database_release.publish` → optional `prepare_consumer_system_contracts`. The latter asset publication currently imports the explicit frozen `SCHEDULED_RUN_SQL` from `app.run_storage`; it runs after database release, so the next publication batch must switch its source-side query/Task read to the target owner. Do not change the quiet-window oracle, add a normal runtime source fallback, or activate the global constructors/manifest in this batch.
 
 ## Verification and boundaries
 
@@ -41,3 +41,56 @@ The focused output preserves source/current identity separately: public occurren
 ## Remaining release boundary
 
 This is not an activated schema release or a claim of live behavior. Full independent BASE-to-HEAD SPEC/QUALITY review, the approved publication predecessor/frozen-source coordination, and the actual target migration are still required before constructor or manifest selection. No production command counts were replayed for this work.
+
+## Fix round 1/5 — mixed-offset covered range and frozen import ownership
+
+The review finding was reproduced before the fix against the assembled target/native Store. The persisted aggregate used `first_scheduled_for='2026-10-22T03:00:00+02:00'` and `scheduled_for='2026-10-22T01:01:00Z'`; create-if-current for the covered instant `2026-10-22T01:00:30Z` incorrectly inserted a second occurrence because the prior TEXT predicate rejected the interval start.
+
+RED command and output:
+
+```text
+pytest -q tests/test_scheduled_occurrence_native.py::test_restarted_create_dedupes_mixed_offset_covered_instant
+F                                                                        [100%]
+...
+assert restarted.state is ScheduledTaskRunCreateState.DUPLICATE
+E AssertionError: assert <ScheduledTaskRunCreateState.CREATED: 'created'> is <ScheduledTaskRunCreateState.DUPLICATE: 'duplicate'>
+1 failed in 1.19s
+```
+
+A separate import probe reproduced the stale frozen SQL owner after Task4 removed the Store export:
+
+```text
+python -c 'import app.consumer_system_release'
+ImportError: cannot import name 'SCHEDULED_RUN_SQL' from 'app.store'
+exit_code=1
+```
+
+The range predicate now compares `julianday(first_scheduled_for)` and `julianday(scheduled_for)` to the candidate instant, retaining the original timestamp text in storage. The new `idx_schedule_occurrences_covered_range` partial expression index uses the same expressions and limits entries to scheduled aggregates (`occurrence_count>1`). The existing 8,000-row native Store plan regression names/asserts that index for the covered-range query. The import now obtains `SCHEDULED_RUN_SQL` from `app.run_storage` and `REPLY_TASK_SQL` from `app.task_storage`; it does not restore a Store alias or add a fallback. The new import regression verifies the exported constant identity.
+
+GREEN command and output:
+
+```text
+pytest -q tests/test_scheduled_occurrence_native.py::test_restarted_create_dedupes_mixed_offset_covered_instant tests/test_scheduled_occurrence_native.py::test_occurrence_crud_and_dispatch_use_native_owner tests/test_consumer_system_release_import.py
+...                                                                      [100%]
+3 passed in 4.85s
+```
+
+The mixed-offset regression uses the actual assembled Store and versioned create-if-current API; it verifies the covered event ID/count remain the same, the row count stays one, and both source timestamp strings remain byte-for-byte unchanged. The existing native owner test contains the 8,000 terminal-row population and asserts `idx_schedule_occurrences_covered_range` in the actual `EXPLAIN QUERY PLAN` result, alongside the existing claim/latest/execution/chronology plan checks. The earlier **35 failed / 43 passed** legacy source-schema cron result remains a non-green fixture boundary; it was not rerun and is not counted as green evidence.
+
+Publication order correction: `RepositoryUpdater.execute` runs `wait_for_quiet`, `prepare_database`, `database_release.publish`, then optional `prepare_consumer_system_contracts`. The quiet-window source check is `RepositoryUpdater.current_publication_sources`; Consumer/Audit asset publication occurs after database release. Its frozen query is therefore not the pre-migration quiet-window oracle and must be switched to the target owner in a later publication batch. No quiet-window source, manifest, or constructor activation was changed here.
+
+Final focused verification after reopening the same target/native Store from the persisted mixed-offset database:
+
+```text
+pytest -q tests/test_scheduled_occurrence_native.py tests/test_consumer_system_release_import.py
+.........                                                                [100%]
+9 passed in 6.77s
+ruff check app/store.py app/run_entity_definitions.py app/consumer_system_release.py tests/test_scheduled_occurrence_native.py tests/test_consumer_system_release_import.py
+All checks passed!
+python -m py_compile app/store.py app/run_entity_definitions.py app/consumer_system_release.py tests/test_scheduled_occurrence_native.py tests/test_consumer_system_release_import.py
+# exit 0
+ git diff --check
+# exit 0
+```
+
+Self-review: covered detection now uses instant semantics on both persisted bounds and the candidate; the regression reopens the same native database before asking create-if-current, verifies no duplicate identity appears, verifies original timestamp strings and interval count, and uses the existing large-population `EXPLAIN QUERY PLAN` assertion for the new partial expression index. The optional publication import now points at the modules that own the frozen SQL constants. No scheduler policy, source quiet-window oracle, global constructor, or manifest behavior changed. The separate consumer-system publication remains a target-owner follow-up after database release.
