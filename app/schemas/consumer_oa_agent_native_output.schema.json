@@ -446,6 +446,62 @@
             "action": {
               "type": "string",
               "enum": [
+                "add_approver"
+              ]
+            },
+            "target": {
+              "additionalProperties": false,
+              "properties": {
+                "process_instance_id": {
+                  "minLength": 1,
+                  "type": "string"
+                },
+                "task_id": {
+                  "minLength": 1,
+                  "type": "string"
+                },
+                "appender_user_id": {
+                  "minLength": 1,
+                  "type": "string"
+                }
+              },
+              "required": [
+                "process_instance_id",
+                "task_id",
+                "appender_user_id"
+              ],
+              "type": "object"
+            },
+            "payload": {
+              "additionalProperties": false,
+              "properties": {
+                "type": {
+                  "enum": [
+                    "before",
+                    "parallel"
+                  ],
+                  "type": "string"
+                }
+              },
+              "required": [
+                "type"
+              ],
+              "type": "object"
+            }
+          },
+          "required": [
+            "action",
+            "target",
+            "payload"
+          ],
+          "additionalProperties": false
+        },
+        {
+          "type": "object",
+          "properties": {
+            "action": {
+              "type": "string",
+              "enum": [
                 "comment"
               ]
             },
@@ -894,6 +950,7 @@
             "approve",
             "reject",
             "return",
+            "add_approver",
             "comment",
             "request_access"
           ]

@@ -51,7 +51,7 @@ def test_native_consumer_schema_tracks_both_current_purposes():
         return {branch["properties"]["action"]["enum"][0]
                 for branch in schema["properties"]["decision"]["anyOf"]}
 
-    assert actions(oa) - actions(general) == {"approve", "reject", "return", "comment"}
+    assert actions(oa) - actions(general) == {"approve", "reject", "return", "add_approver", "comment"}
 
 
 @pytest.mark.parametrize("purpose", ["general", "oa"])
