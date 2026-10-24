@@ -10,7 +10,7 @@ from concurrent.futures import ThreadPoolExecutor
 import pytest
 
 from app.store import AutoReplyStore
-from app.email_store import EmailStore
+from app.email_store import EmailStore, _historical_candidate_list_item
 from app.task_run_entity_assembly import task_run_entity_assembly_objects
 
 
@@ -223,7 +223,8 @@ def test_email_four_part_identity_refresh_preserves_retry_and_cursor_epoch(tmp_p
         with email._connect() as db:
             after = dict(db.execute("select * from email_historical_candidates").fetchone())
         assert after["normalized_text"] == hashlib.sha256(b"new").hexdigest()
-        assert json.loads(after["provider_message_json"])["uid"] == 8
+        assert "uid" not in json.loads(after["provider_message_json"])
+        assert _historical_candidate_list_item(after)["provider_message"]["uid"] == 8
         assert (after["state"], after["reason"], after["attempted_at"], after["next_retry_at"]) == (
             before["state"], before["reason"], before["attempted_at"], before["next_retry_at"])
         assert email.historical_traversal_cursor(account_id="a", folder="INBOX", model_id="m") == {

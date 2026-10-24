@@ -124,3 +124,22 @@ The Phase 1 production values, PID, counts and health readbacks above describe t
 The latest integrated source for this validation line is `ce841e3826b62cddd068eb9eb36d17deb07de156`, incorporated through the normal merge recorded by `770cac667`; the earlier `6005776` source reference is stale. Accepted bounded evidence is grouped by scope: Task2D0 Reply queue/claim/input refresh (`324129193`, 11 focused Store tests); Task3C3 native execution/progress/receipt (`bafff3ee8`, 12 focused tests after Fix1); Task3D1 professional RuntimeAttempt contract/converters (`d8cc184bc`, 80 focused tests after Fix1); and later Task-family owners, adoption/receipt/converter handoffs, plus Workbench and Feedback paths accepted through Task2D7B/J, Task2D8R and Task2D8A/B. Task2D8C implements native event intake, public feedback list/by-key reads and pending counts locally; independent review remains pending. The known Email workload-key expectation failure remains unresolved, distinct from earlier Task3 fixture failures. Focused counts are individual recorded checks, not an aggregate suite run. These acceptances do not close the parent gates above.
 
 No Phase 2 integration into `main`, push, or deployment occurred. The only production observation remains the dated read-only weekly-count query at `2026-10-23T13:46:56Z`; this status update contains no new production readback. Integrated migration/current-runtime work and Task4–6 gates remain open.
+
+## Email historical candidate locator dedup (2026-10-24)
+
+Read-only production preflight found 924 `email_historical_candidates` rows,
+valid JSON in every row, and all 4,620 instances of the five scalar-owned
+locator properties present with exact typed values. Canonical compact JSON
+length falls from 323,162 to 140,255 UTF-8 bytes, a 182,907-byte logical
+payload reduction. This does not measure or claim SQLite file shrinkage.
+
+The local candidate adds an explicit Email 53→54 row transform and inverse,
+compacts new candidate writes, and reconstructs the current provider-message
+projection from scalar columns in list reads. It leaves differing locator
+values in JSON and fails closed when a source locator key is missing, because
+the inverse cannot distinguish that absence from a key removed by compaction.
+Forward/inverse/reforward, mismatch preservation, unknown-field preservation,
+and exact current Store/Email release selection are covered by five focused
+in-memory tests. These results are local implementation evidence only: the
+current-data release was not executed; no production migration, push, deployment,
+or physical-size verification has occurred.

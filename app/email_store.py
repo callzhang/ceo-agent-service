@@ -214,7 +214,7 @@ EMAIL_UNSUBSCRIBE_RECEIPT_LOCATOR_SQL = email_action_projection(
 # locator remains available only through the explicit release module.
 EMAIL_DIRECT_ACTION_LOCATOR_SQL = DIRECT_EMAIL_ACTION_SQL
 
-EMAIL_SCHEMA_VERSION = 53
+EMAIL_SCHEMA_VERSION = 54
 EMAIL_CLASSIFICATION_SQL = _canonical_classifications()
 EMAIL_MESSAGE_SQL = _canonical_messages()
 MAX_CLASSIFIER_RUNTIME_SAMPLES = 2048
@@ -650,6 +650,16 @@ def _historical_candidate_projection(
         }
     )
     return projection
+
+
+def _historical_candidate_list_item(row: sqlite3.Row) -> dict[str, Any]:
+    from app.email_historical_candidate_schema import reconstruct_projection
+
+    return {
+        **dict(row),
+        "normalized_input_hash": row["normalized_text"],
+        "provider_message": reconstruct_projection(row),
+    }
 
 
 def _legacy_unsubscribe_private_values(url: object) -> tuple[str, ...]:
@@ -3969,6 +3979,14 @@ class EmailStore:
                 normalized_input_hash = sha256(
                     str(candidate.normalized_text).encode("utf-8")
                 ).hexdigest()
+                candidate_uidvalidity = int(message.get('uidValidity') or uidvalidity)
+                candidate_uid = int(message.get('uid') or 0)
+                from app.email_historical_candidate_schema import compact_projection
+                stored_projection = compact_projection(
+                    projection, account_id=account_id, folder=folder,
+                    stable_message_identity=str(candidate.stable_message_identity),
+                    uidvalidity=candidate_uidvalidity, uid=candidate_uid,
+                )
                 db.execute(
                     """insert into email_historical_candidates (
                         account_id,folder,model_id,stable_message_identity,normalized_text,
@@ -3980,9 +3998,8 @@ class EmailStore:
                         uidvalidity=excluded.uidvalidity, uid=excluded.uid,
                         updated_at=excluded.updated_at""",
                     (account_id, folder, model_id, candidate.stable_message_identity,
-                     normalized_input_hash, _json_dump(projection),
-                     int(message.get('uidValidity') or uidvalidity),
-                     int(message.get('uid') or 0), now),
+                     normalized_input_hash, _json_dump(stored_projection),
+                     candidate_uidvalidity, candidate_uid, now),
                 )
             upsert_state(
                 db, "email_historical_traversals",
@@ -4027,15 +4044,7 @@ class EmailStore:
             if len(rows) < limit:
                 rows.extend(deferred_rows[len(reserved):limit-len(rows)+len(reserved)])
         return [
-            {
-                **dict(row),
-                "normalized_input_hash": row["normalized_text"],
-                "provider_message": _json_load(
-                    row["provider_message_json"],
-                    field="provider_message_json",
-                    expected_type=dict,
-                ),
-            }
+            _historical_candidate_list_item(row)
             for row in rows
         ]
 

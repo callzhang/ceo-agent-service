@@ -39,6 +39,32 @@ The read-only aggregate inspection in this work session reported:
 | `email_classifier_runtime_samples` | 2,048 | 299,008 bytes | Bounded content-free timing observations. |
 | `email_historical_candidates` | 924 | 692,224 bytes | Historical scan work and retained candidate source facts. |
 
+### Candidate locator dedup preflight (2026-10-24)
+
+A separate read-only preflight of the configured production database found 924
+candidate rows with valid JSON. Each row had all five locator properties
+(`accountId`, `folder`, `stableMessageIdentity`, `uidValidity`, `uid`) present
+and exactly type/value matched the same row's scalar columns: 4,620 of 4,620
+property instances matched. There were no missing properties, mismatches, or
+unknown extra JSON keys in this observed population. The original JSON occupied
+323,162 UTF-8 bytes; serializing the same JSON objects after removing only those
+five exact duplicates with the existing sorted compact serializer occupied
+140,255 bytes, a 182,907-byte logical payload reduction. This is a JSON value
+length comparison only. It does not establish SQLite page reclamation or a
+physical database file reduction.
+
+The proposed Email 53→54 transform removes a locator property only when its
+JSON type and value exactly match the corresponding scalar column. For
+reversible source semantics it fails closed if any of the five source
+properties is absent; a differing value remains in the JSON, including a
+`uidValidity` that reflects the historical traversal fallback. `messageId`,
+`threadId`, unknown keys, and all candidate state, hashes, timestamps, and
+provenance remain untouched. New writes use the same compact representation;
+the list reader reconstructs the public provider-message projection from
+current scalar owners while retaining any persisted mismatch. The focused
+in-memory forward/inverse/reforward checks pass. No current-data migration,
+publication, provider action, or physical shrink was performed by this work.
+
 The 7.4 MB normalized-text, 8.5 MB model-text, and 7.8 MB preview figures are
 logical value lengths inside `emails`, not independently reclaimable SQLite
 page estimates. They must not be summed as physical savings or removed without
@@ -46,19 +72,22 @@ the per-row provider/source checks.
 
 ## Concrete reduction boundary
 
-1. **Use the existing completed-input compactor.** `compact_done_email_classification_inputs`
+1. **Completed Task input.** `compact_done_email_classification_inputs`
    in `app/storage_maintenance.py` already selects only `done` classifier Tasks,
    applies `EmailClassificationTaskAdapter.compact_done_input_json`, and updates
    the row under a status predicate. This is the only currently source-backed
-   bulk content reduction identified for Email inputs. The compactor explicitly
-   requires caller-owned recovery and coordination; this work did not run it.
+   bulk content reduction for classifier inputs. The read-only preflight found
+   no currently eligible un-compacted completed rows, so no compaction was run.
 2. **Keep runtime samples bounded.** The writer in `EmailStore.record_classifier_runtime_sample`
    removes samples beyond `MAX_CLASSIFIER_RUNTIME_SAMPLES`; current readers use
    those samples for Quality and latency. No evidence supports treating these as
    training data or deleting the current window.
-3. **Compact historical candidates only after row-level proof.** Candidate
-   locator, task/result references, scan state and source availability must be
-   checked together. There is no safe table-wide DELETE rule in the current code.
+3. **Remove only exact historical-candidate locator duplication.** The local
+   Email 53→54 candidate removes the five locator keys only where exact typed
+   values match same-row scalar columns, and the read-only current-data check
+   measured 182,907 logical JSON bytes. It retains message/thread IDs, all
+   candidate content and status facts, and any mismatches. This does not prove a
+   safe table-wide DELETE or candidate-body retirement rule.
 4. **Do not merge Email Tasks or Actions back into `emails`.** A message, a
    classification request, and a provider operation have different identities
    and lifecycles. The accepted B1/B2 design already assigns them to their

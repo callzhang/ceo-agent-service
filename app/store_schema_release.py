@@ -158,7 +158,22 @@ def prepare_database_schema_release(root: Path, path: Path, *, recovery_source_p
             tables = {row[0] for row in db.execute("select name from main.sqlite_schema where type='table'")}
             marker = db.execute(f"select value from ({state_projection('service_state')}) where key=?",
                                 (VERSION_KEY,)).fetchone() if "state" in tables else None
-        if not tables or marker == (CURRENT_STORE_VERSION,):
+            email_version = (db.execute(
+                "select max(version) from main.email_schema_migrations"
+            ).fetchone()[0] if "email_schema_migrations" in tables else None)
+        if not tables:
+            require_current_pair(path)
+            return None
+        if marker == (CURRENT_STORE_VERSION,):
+            from app.email_schema_release import (
+                email_historical_candidate_release_selected,
+                prepare_email_schema_release,
+            )
+            if email_historical_candidate_release_selected(
+                store_marker=marker[0], current_store_marker=CURRENT_STORE_VERSION,
+                email_version=email_version, target_email_version=CURRENT_EMAIL_VERSION,
+            ):
+                return prepare_email_schema_release(root, path)
             require_current_pair(path)
             return None
         if marker == (ACTION_ENTITY_SOURCE_VERSION,):

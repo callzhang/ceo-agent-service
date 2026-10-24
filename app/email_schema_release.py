@@ -15,8 +15,87 @@ import subprocess
 import sys
 from typing import Callable
 
+from app.email_historical_candidate_schema import (
+    SOURCE_VERSION as HISTORICAL_CANDIDATE_SOURCE_VERSION,
+    TARGET_VERSION as HISTORICAL_CANDIDATE_TARGET_VERSION,
+    compact_candidate_locators,
+    restore_candidate_locators,
+)
 
 LOOKUP_INDEX = "idx_email_provider_observations_lookup"
+
+
+def email_historical_candidate_release_selected(
+    *, store_marker: str | None, current_store_marker: str,
+    email_version: int | None, target_email_version: int,
+) -> bool:
+    """Whether the exact current Store/Email pair needs the locator transition."""
+    return (store_marker == current_store_marker
+            and email_version == HISTORICAL_CANDIDATE_SOURCE_VERSION
+            and target_email_version == HISTORICAL_CANDIDATE_TARGET_VERSION)
+
+
+def apply_email_historical_candidate_transition(db, versions, applied_at: str) -> None:
+    current = tuple(tuple(row) for row in db.execute(
+        "select version,applied_at from email_schema_migrations order by version"
+    ))
+    if current != tuple(versions) or not current or current[-1][0] != HISTORICAL_CANDIDATE_SOURCE_VERSION:
+        raise ValueError("Email 53-to-54 source ledger changed")
+    compact_candidate_locators(db)
+    db.execute("insert into email_schema_migrations(version,applied_at) values(?,?)",
+               (HISTORICAL_CANDIDATE_TARGET_VERSION, applied_at))
+
+
+def inverse_email_historical_candidate_transition(db, versions) -> None:
+    expected = tuple(versions)
+    current = tuple(tuple(row) for row in db.execute(
+        "select version,applied_at from email_schema_migrations order by version"
+    ))
+    if current == expected:
+        return
+    if (len(current) != len(expected) + 1 or current[:-1] != expected
+            or current[-1][0] != HISTORICAL_CANDIDATE_TARGET_VERSION
+            or not expected or expected[-1][0] != HISTORICAL_CANDIDATE_SOURCE_VERSION):
+        raise ValueError("Email rollback requires the exact53-to-54 locator transition")
+    restore_candidate_locators(db)
+    db.execute("delete from email_schema_migrations where version=?",
+               (HISTORICAL_CANDIDATE_TARGET_VERSION,))
+    if tuple(tuple(row) for row in db.execute(
+        "select version,applied_at from email_schema_migrations order by version"
+    )) != expected:
+        raise ValueError("Email schema54 rollback ledger readback mismatch")
+
+
+@dataclass
+class EmailHistoricalCandidateLocatorRelease:
+    root: Path
+    database_path: Path
+    versions: tuple[tuple[int, str], ...]
+
+    def publish(self) -> None:
+        with closing(sqlite3.connect(self.database_path)) as db, db:
+            db.execute("begin immediate")
+            from datetime import datetime, timezone
+            apply_email_historical_candidate_transition(
+                db, self.versions, datetime.now(timezone.utc).isoformat())
+        self.verify_loaded()
+
+    def verify_loaded(self) -> None:
+        with closing(sqlite3.connect(self.database_path.as_uri() + "?mode=ro", uri=True)) as db:
+            versions = tuple(db.execute(
+                "select version,applied_at from email_schema_migrations order by version"
+            ))
+            if (len(versions) != len(self.versions) + 1 or versions[:-1] != self.versions
+                    or versions[-1][0] != HISTORICAL_CANDIDATE_TARGET_VERSION):
+                raise ValueError("Email schema54 candidate-locator readback mismatch")
+
+    def rollback(self) -> None:
+        with closing(sqlite3.connect(self.database_path)) as db, db:
+            db.execute("begin immediate")
+            inverse_email_historical_candidate_transition(db, self.versions)
+
+    def finalize(self) -> None:
+        self.verify_loaded()
 
 
 def _target_schema_version(root: Path) -> int:
@@ -236,7 +315,7 @@ class EmailDirectRetrySchemaRelease:
         self.verify_loaded()
 
 
-def prepare_email_schema_release(root: Path, database_path: Path) -> EmailSchemaRelease | EmailActionPlanSchemaRelease | EmailUnsubscribeCancellationSchemaRelease | EmailDirectRetrySchemaRelease | None:
+def prepare_email_schema_release(root: Path, database_path: Path) -> EmailSchemaRelease | EmailActionPlanSchemaRelease | EmailUnsubscribeCancellationSchemaRelease | EmailDirectRetrySchemaRelease | EmailHistoricalCandidateLocatorRelease | None:
     root = root.resolve()
     database_path = database_path.resolve()
     if not database_path.exists():
@@ -249,6 +328,19 @@ def prepare_email_schema_release(root: Path, database_path: Path) -> EmailSchema
         target = _target_schema_version(root)
         if current == target:
             return None
+        if (current, target) == (HISTORICAL_CANDIDATE_SOURCE_VERSION,
+                                 HISTORICAL_CANDIDATE_TARGET_VERSION):
+            from app.current_schema_manifest import STORE_VERSION, schema_is_current
+            from app.state_definitions import state_projection
+            if not schema_is_current(db):
+                raise ValueError("Email 53-to-54 requires the exact current Store declaration")
+            marker = db.execute(
+                f"select value from ({state_projection('service_state')}) where key=?",
+                ("store_schema_version",),
+            ).fetchone()
+            if marker != (STORE_VERSION,):
+                raise ValueError("Email 53-to-54 requires the current Store marker")
+            return EmailHistoricalCandidateLocatorRelease(root, database_path, versions)
         if (current, target) == (50, 51):
             if db.execute("select 1 from sqlite_master where name='email_direct_retry_requests'").fetchone():
                 raise ValueError("Email schema50 unexpectedly contains retry request state")
