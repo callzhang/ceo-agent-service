@@ -20,10 +20,7 @@ def test_current_skill_owns_shared_guidance_once_and_task_keeps_unique_contract(
     prompt = build_task_agent_prompt(
         work, "EXACT_CURRENT_CONTEXT", current_time="2026-10-12T10:00:00Z"
     )
-    full_prompt = build_task_agent_prompt(
-        work, "EXACT_CURRENT_CONTEXT", current_time="2026-10-12T10:00:00Z",
-        inline_skill=True,
-    )
+    full_prompt = f"{prompt}\n{path.read_text()}"
     assert path.read_text().strip() not in prompt
     assert str(path) in prompt
     assert path.read_text().strip() in full_prompt

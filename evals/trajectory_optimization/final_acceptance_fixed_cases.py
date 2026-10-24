@@ -6,6 +6,7 @@ Only a local, read-only fake provider is connected. Never execute candidates.
 from __future__ import annotations
 
 import argparse
+from copy import deepcopy
 from datetime import datetime
 from functools import partial
 from hashlib import sha256
@@ -112,7 +113,11 @@ def main() -> None:
     parser.add_argument("--trace", type=Path)
     parser.add_argument("--output", type=Path)
     parser.add_argument("--case", action="append")
+    parser.add_argument("--route", default="codex_oauth")
+    parser.add_argument("--repeat-current-state", action="store_true",
+                        help="Add one same-session reread of unchanged fake facts when case has no resume phase")
     parser.add_argument("--check-fixture", action="store_true")
+    parser.add_argument("--continue-session", help="One explicit continue after a failed diagnostic; not a cold-start pass")
     parser.add_argument("--resume-correction", help="Resume an existing cross-midnight case; do not rerun cold")
     args = parser.parse_args()
     if args.serve:
@@ -143,13 +148,13 @@ def main() -> None:
     from app.wechat.codex_safety import make_role_agent_command
 
     config = load_runtime_config(read_env_file(Path("/Users/derek/Services/ceo-agent-service/.env")))
-    route = next(r for r in config.routes if r.name == "codex_oauth")
+    route = next(r for r in config.routes if r.name == args.route)
     report = {"scope": "Current six-case acceptance, not original A/B; fake reads only",
               "source_commit": subprocess.check_output(["git", "rev-parse", "HEAD"], cwd=ROOT,
                                                        text=True).strip(),
               "case_manifest_sha256": sha256(MANIFEST.read_bytes()).hexdigest(),
               "harness_sha256": sha256(Path(__file__).read_bytes()).hexdigest(),
-              "model": route.model, "fixed_clock": manifest["fixed_runtime_time"],
+              "route": route.name, "model": route.model, "fixed_clock": manifest["fixed_runtime_time"],
               "results": []}
     names = {c["skill_name"] for c in manifest["cases"]} | {
         "dingtalk-calendar", "dingtalk-chat", "dingtalk-doc", "dingtalk-mail", "dingtalk-shared"}
@@ -169,15 +174,20 @@ def main() -> None:
                 continue
             if args.case and case["id"] not in args.case:
                 continue
+            case = deepcopy(case)
+            if args.repeat_current_state and "resume" not in case["phases"]:
+                case["phases"]["resume"] = deepcopy(case["phases"]["cold"])
+                case["criteria"]["resume"] = case["criteria"]["cold"]
             work = root / case["id"]
             work.mkdir()
             subprocess.run(["git", "init", "-q", str(work)], check=True)
             state, trace = work / "state.json", work / "trace.jsonl"
-            adapter, sid = CodexRuntimeAdapter(work, config), args.resume_correction
-            for phase in (["correction"] if args.resume_correction else case["phases"]):
+            adapter, sid = CodexRuntimeAdapter(work, config), args.resume_correction or args.continue_session
+            for phase in (["correction"] if args.resume_correction else
+                          ["continue"] if args.continue_session else case["phases"]):
                 if phase != "cold" and not sid:
                     break
-                source_phase = "cold" if phase == "correction" else phase
+                source_phase = "cold" if phase in {"correction", "continue"} else phase
                 state.write_text(json.dumps({"case": case, "phase": source_phase, "skills": skills}))
                 role = case["role"]
                 context = ("Anonymous fixed-case acceptance; only local fake read MCP tools. "
@@ -202,10 +212,12 @@ def main() -> None:
                              "adjacent day-boundary event required by this review. Verify that "
                              "boundary against current calendar source and return a replacement "
                              "candidate. No previous candidate was executed.")
+                if phase == "continue":
+                    task = "continue"
                 digest = sha256(json.dumps(case["phases"][source_phase].get("candidate", {}),
                                           sort_keys=True).encode()).hexdigest()
                 if role == "audit":
-                    task += ("\nPrepared candidate:\n" + json.dumps(case["phases"][phase]["candidate"])
+                    task += ("\nPrepared candidate:\n" + json.dumps(case["phases"][source_phase]["candidate"])
                              + "\nproposal_revision=0; candidate_digest=" + digest)
                 with patch("app.codex_runtime_adapter.service_mcp_config_options", return_value=[]):
                     command = adapter.build_command(route, task, sid, None,
@@ -251,7 +263,7 @@ def main() -> None:
                 new_sid = next((e.get("thread_id") for e in events
                                 if e.get("type") == "thread.started"), sid)
                 row.update(exit_code=process.returncode, session_id=new_sid,
-                           reused_session=phase in {"resume", "correction"} and new_sid == sid)
+                           reused_session=phase in {"resume", "correction", "continue"} and new_sid == sid)
                 row["tool_trace"] = [json.loads(line) for line in trace.read_text().splitlines()[before:]] if trace.exists() else []
                 for call in row["tool_trace"]:
                     payload = call["result"]
@@ -273,6 +285,10 @@ def main() -> None:
                         lines = path.read_text().splitlines()
                         row["native_lines"] = len(lines)
                         row["native_sha256"] = sha256("\n".join(lines).encode()).hexdigest()
+                        terminal = next((json.loads(line).get("payload", {}) for line in reversed(lines)
+                                         if json.loads(line).get("payload", {}).get("type") == "task_complete"), {})
+                        if terminal.get("error"):
+                            row["native_terminal_error"] = redact_credentials(json.dumps(terminal["error"]))
                 row["stderr"] = redact_credentials(stderr)[-500:]
                 report["results"].append(row)
                 args.output.write_text(json.dumps(report, ensure_ascii=False, indent=2) + "\n")

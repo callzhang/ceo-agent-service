@@ -1,0 +1,436 @@
+{
+  "scope": "G2 missing cells only; current full Consumer Developer, anonymous existing mail facts, fake read MCP; no business actions. Existing successful OAuth/Qwen Audit evidence reused.",
+  "runs": [
+    {
+      "diagnostic": "qwen-consumer",
+      "scope": "Current six-case acceptance, not original A/B; fake reads only",
+      "source_commit": "205674a5aa53011ced71f45c88791481fc822231",
+      "case_manifest_sha256": "9e6bb578a321cee3865c20051f47762de12710c1076b2e4fbf1c333008a192af",
+      "harness_sha256": "092ade212aeaf2777599df1773620d3b1e7585794c959c938b5a623658cb7dc5",
+      "route": "qwen_gpu4",
+      "model": "qwen3.8-27b",
+      "fixed_clock": "2026-10-08T10:00:00-07:00",
+      "results": [
+        {
+          "case": "mail-already-handled",
+          "phase": "cold",
+          "role": "consumer",
+          "developer_sha256": "9a83db9965f106b9ee24d0b59411c56b8e0354aff4370139816a4e924bb9c613",
+          "task_sha256": "654cdcfd32b35eb8639be4224ffc057c5dfdc071b252b741fc1ad3f33c02b016",
+          "schema_sha256": "72ee10446972dde404f738df395701188a39d9d5e10005312a66fec3b11e9d7b",
+          "criteria": [
+            "use the complete thread rather than the truncated card",
+            "recognize the renewal is already approved and the provider confirmation requests no reply",
+            "return no_action with no duplicate chat or mail action"
+          ],
+          "timeout": true,
+          "exit_code": 0,
+          "session_id": "01a16f8f-3486-7420-bf58-3d1700fdd8c7",
+          "reused_session": false,
+          "tool_trace": [
+            {
+              "tool": "read_task_skill",
+              "arguments": {
+                "name": "ceo-mail-review"
+              },
+              "result": {
+                "name": "ceo-mail-review",
+                "path": "/synthetic/ceo-mail-review/SKILL.md",
+                "sha256": "108e258426ec8f66a0907722d4a1034fba48c8628544eccc69aa5e0162163b9d",
+                "characters": 11918
+              }
+            },
+            {
+              "tool": "read_skill",
+              "arguments": {
+                "name": "dingtalk-mail",
+                "path": ""
+              },
+              "result": {
+                "name": "dingtalk-mail",
+                "path": "/synthetic/dingtalk-mail/SKILL.md",
+                "sha256": "664f31a00f46245c270049129da4d25475ccc561b04d9897e7cd634b2c4a6f18",
+                "characters": 5719
+              }
+            },
+            {
+              "tool": "read_dingtalk_messages",
+              "arguments": {
+                "conversation_id": "eval-mail-conversation"
+              },
+              "result": {
+                "messages": [
+                  {
+                    "message_id": "mail-original",
+                    "sender": "Synthetic vendor",
+                    "create_time": "2026-10-08T08:00:00-07:00",
+                    "text": "Renewal was approved and recorded under receipt renew-77. This is a confirmation only; no reply is requested."
+                  },
+                  {
+                    "message_id": "mail-principal-sent",
+                    "sender": "Principal",
+                    "create_time": "2026-10-08T07:30:00-07:00",
+                    "text": "Approved subject to the recorded legal terms."
+                  }
+                ]
+              }
+            },
+            {
+              "tool": "read_system_action_contract",
+              "arguments": {
+                "capability": "dingtalk-doc",
+                "operation": null
+              },
+              "result": {
+                "capability": "dingtalk-doc",
+                "operation": null,
+                "supported_operations": [
+                  "create_document",
+                  "create_doc_comment"
+                ],
+                "contract": "# Reviewed system action contracts\n\nThis registry describes the actions that require system business review for an\nactual configured system task. Ordinary Consumer work is not made a reviewed\naction merely because a tool writes. Consumer may write its task-generation\nartifacts and use the existing bound report-document workflow, with the actual\ntool result and content readback as evidence. These are ordinary work receipts,\nnot SystemExecutor receipts for a registered action.\n\nConsumer cannot directly dispatch the registered reviewed operations below.\nIt supplies the complete proposal for Audit and SystemExecutor. Audit remains\nread-only. A `summary`, including a historical quotation or an assertion of\ncompletion, never creates an execution record. The parser validates the wire;\nit does not scan prose for completion phrases. Audit assesses the complete\ncandidate against its sources and actual receipts. System completion comes\nonly from the registered handler's persisted dispatch and verification.\n\nThe Consumer proposes `ConsumerProposal.actions`; the Audit reviews the exact\ncandidate digest, and the service executes only its approved plan or selected\noption. An action has `description`, a stable `action_identity`, `capability`,\n`operation`, `target`, `payload`, and `effect: \"external\"`. Use a new\n`action_identity` for a materially different intended external outcome. The\nidentity is stable across a revision that merely clarifies the same outcome.\nThe service refuses to reuse a completed action's receipt when its approved\ncapability, operation, target, payload, or effect changed.\nFor service-owned receipts, the executor resolves the exact persisted selected\nbranch before reuse. Historical receipts without that branch association are\nrefused when the prior choices differ under the same action identity.\n\nThese names and fields are the executable contract. A business description is\nnot an operation name. Do not add a CLI command, shell instruction, or free-form\nAPI call to a plan. Every `target` identifies the current business object, not\nan example or a previous instance. An unsupported operation fails explicitly.\n\n| Capability | Operation | `target` | `payload` | Completion evidence |\n| --- | --- | --- | --- | --- |\n| `dingtalk-doc` | `create_document` | `name` | Markdown `content` | Provider `nodeId` plus exact document name and Markdown readback |\n| `dingtalk-doc` | `create_doc_comment` | `node_id` | `content` | Provider `commentKey`; otherwise uncertain |\n\nFor these registered OA operations, `process_instance_id`, `task_id`,\n`target_activity_id` and `to_actioner_id`, where required above, are exact\nnonempty string identifiers. The Consumer must source the process and task\nidentifiers from the current OA instance and its task list; a project ID is not\nan OA process ID, and a numeric task ID must be represented as the provider's\nexact string before Audit reviews the action. Audit checks that source binding,\nwhile the action model and wire schema reject malformed identifier types before\nreview.\n\nFor message sends, the service first stores the composed final body. The\nConsumer action must carry that same body. The service does not compose a new\nbody after Audit approval. A selected option has its own prepared delivery key.\n\nThe native reaction list exposes `result.messages[].openMessageId` and\n`emotionReplyList[].emoji` with `replyUsers[]`, so an emoji can be read back\nfor the exact message and principal. The native OA records readback exposes\n`operationType`, `operationResult`, `operationTime`, and `userId`, but no comment\nbody or comment ID. The document comment and text-emotion reads have no\nconfirmed unique correlation shape in the current native CLI schema. A generic\n`success: true` without a domain ID or positive readback does not establish\ncompletion. After an unknown dispatch, the service preserves the action as\nuncertain and does not resend it on restart. Xiaoqing transcript and interview\nuploads have no service-owned native client and are not registered system\nactions.\n\n## Consumer purpose action names\n\nConsumer purpose output uses action/reason/target/payload/evidence_refs. Purpose definitions select the available names and strict arguments before the turn. OA approve/reject/comment map to the registered same-named OA operations; return maps to revert_task, with exact target_activity_id and revert_action REVERT_FOR_APPROVAL or REVERT_FOR_RESUBMIT. General reply/react map to reply_to_message/add_message_emoji. A typed plan preserves the existing multi-action proposal and all action contracts above.\n\nrequest_access is a Consumer purpose action that asks the verified responsible party through an OA comment or source-conversation reply. Its receipt proves the request was sent, not that access was granted. Only a verified request_access source candidate can anchor permission retries. While access is still unavailable, Consumer may return `retry` with empty target/payload and a reference to that request's `external_action_key`; the service strips one known `receipt:` or `prior_receipt_id=` label before exact key matching. This permission-wait retry is not an approval-result proposal, does not enter Audit, and has no provider dispatch. The service persists at most three later Consumer reads, 12 hours apart, and a 72-hour hard deadline from the original verified request's dispatch record, independent of sessions/revisions/restarts. All other executable actions retain the completion evidence specified above.\n\nFor field definitions, OA return and retry JSON examples, reservation semantics,\nand recovery boundaries, see [Consumer purpose output](consumer-purpose-output.md)."
+              }
+            },
+            {
+              "tool": "read_dingtalk_messages",
+              "arguments": {
+                "conversation_id": "eval-mail-conversation"
+              },
+              "result": {
+                "messages": [
+                  {
+                    "message_id": "mail-original",
+                    "sender": "Synthetic vendor",
+                    "create_time": "2026-10-08T08:00:00-07:00",
+                    "text": "Renewal was approved and recorded under receipt renew-77. This is a confirmation only; no reply is requested."
+                  },
+                  {
+                    "message_id": "mail-principal-sent",
+                    "sender": "Principal",
+                    "create_time": "2026-10-08T07:30:00-07:00",
+                    "text": "Approved subject to the recorded legal terms."
+                  }
+                ]
+              }
+            },
+            {
+              "tool": "read_dingtalk_messages",
+              "arguments": {
+                "conversation_id": "eval-mail-conversation"
+              },
+              "result": {
+                "messages": [
+                  {
+                    "message_id": "mail-original",
+                    "sender": "Synthetic vendor",
+                    "create_time": "2026-10-08T08:00:00-07:00",
+                    "text": "Renewal was approved and recorded under receipt renew-77. This is a confirmation only; no reply is requested."
+                  },
+                  {
+                    "message_id": "mail-principal-sent",
+                    "sender": "Principal",
+                    "create_time": "2026-10-08T07:30:00-07:00",
+                    "text": "Approved subject to the recorded legal terms."
+                  }
+                ]
+              }
+            },
+            {
+              "tool": "read_system_action_contract",
+              "arguments": {
+                "capability": "dingtalk-doc",
+                "operation": "create_document"
+              },
+              "result": {
+                "capability": "dingtalk-doc",
+                "operation": "create_document",
+                "supported_operations": [
+                  "create_document"
+                ],
+                "contract": "# Reviewed system action contracts\n\nThis registry describes the actions that require system business review for an\nactual configured system task. Ordinary Consumer work is not made a reviewed\naction merely because a tool writes. Consumer may write its task-generation\nartifacts and use the existing bound report-document workflow, with the actual\ntool result and content readback as evidence. These are ordinary work receipts,\nnot SystemExecutor receipts for a registered action.\n\nConsumer cannot directly dispatch the registered reviewed operations below.\nIt supplies the complete proposal for Audit and SystemExecutor. Audit remains\nread-only. A `summary`, including a historical quotation or an assertion of\ncompletion, never creates an execution record. The parser validates the wire;\nit does not scan prose for completion phrases. Audit assesses the complete\ncandidate against its sources and actual receipts. System completion comes\nonly from the registered handler's persisted dispatch and verification.\n\nThe Consumer proposes `ConsumerProposal.actions`; the Audit reviews the exact\ncandidate digest, and the service executes only its approved plan or selected\noption. An action has `description`, a stable `action_identity`, `capability`,\n`operation`, `target`, `payload`, and `effect: \"external\"`. Use a new\n`action_identity` for a materially different intended external outcome. The\nidentity is stable across a revision that merely clarifies the same outcome.\nThe service refuses to reuse a completed action's receipt when its approved\ncapability, operation, target, payload, or effect changed.\nFor service-owned receipts, the executor resolves the exact persisted selected\nbranch before reuse. Historical receipts without that branch association are\nrefused when the prior choices differ under the same action identity.\n\nThese names and fields are the executable contract. A business description is\nnot an operation name. Do not add a CLI command, shell instruction, or free-form\nAPI call to a plan. Every `target` identifies the current business object, not\nan example or a previous instance. An unsupported operation fails explicitly.\n\n| Capability | Operation | `target` | `payload` | Completion evidence |\n| --- | --- | --- | --- | --- |\n| `dingtalk-doc` | `create_document` | `name` | Markdown `content` | Provider `nodeId` plus exact document name and Markdown readback |\n\nFor these registered OA operations, `process_instance_id`, `task_id`,\n`target_activity_id` and `to_actioner_id`, where required above, are exact\nnonempty string identifiers. The Consumer must source the process and task\nidentifiers from the current OA instance and its task list; a project ID is not\nan OA process ID, and a numeric task ID must be represented as the provider's\nexact string before Audit reviews the action. Audit checks that source binding,\nwhile the action model and wire schema reject malformed identifier types before\nreview.\n\nFor message sends, the service first stores the composed final body. The\nConsumer action must carry that same body. The service does not compose a new\nbody after Audit approval. A selected option has its own prepared delivery key.\n\nThe native reaction list exposes `result.messages[].openMessageId` and\n`emotionReplyList[].emoji` with `replyUsers[]`, so an emoji can be read back\nfor the exact message and principal. The native OA records readback exposes\n`operationType`, `operationResult`, `operationTime`, and `userId`, but no comment\nbody or comment ID. The document comment and text-emotion reads have no\nconfirmed unique correlation shape in the current native CLI schema. A generic\n`success: true` without a domain ID or positive readback does not establish\ncompletion. After an unknown dispatch, the service preserves the action as\nuncertain and does not resend it on restart. Xiaoqing transcript and interview\nuploads have no service-owned native client and are not registered system\nactions.\n\n## Consumer purpose action names\n\nConsumer purpose output uses action/reason/target/payload/evidence_refs. Purpose definitions select the available names and strict arguments before the turn. OA approve/reject/comment map to the registered same-named OA operations; return maps to revert_task, with exact target_activity_id and revert_action REVERT_FOR_APPROVAL or REVERT_FOR_RESUBMIT. General reply/react map to reply_to_message/add_message_emoji. A typed plan preserves the existing multi-action proposal and all action contracts above.\n\nrequest_access is a Consumer purpose action that asks the verified responsible party through an OA comment or source-conversation reply. Its receipt proves the request was sent, not that access was granted. Only a verified request_access source candidate can anchor permission retries. While access is still unavailable, Consumer may return `retry` with empty target/payload and a reference to that request's `external_action_key`; the service strips one known `receipt:` or `prior_receipt_id=` label before exact key matching. This permission-wait retry is not an approval-result proposal, does not enter Audit, and has no provider dispatch. The service persists at most three later Consumer reads, 12 hours apart, and a 72-hour hard deadline from the original verified request's dispatch record, independent of sessions/revisions/restarts. All other executable actions retain the completion evidence specified above.\n\nFor field definitions, OA return and retry JSON examples, reservation semantics,\nand recovery boundaries, see [Consumer purpose output](consumer-purpose-output.md)."
+              }
+            },
+            {
+              "tool": "read_task_skill",
+              "arguments": {
+                "name": "ceo-mail-review"
+              },
+              "result": {
+                "name": "ceo-mail-review",
+                "path": "/synthetic/ceo-mail-review/SKILL.md",
+                "sha256": "108e258426ec8f66a0907722d4a1034fba48c8628544eccc69aa5e0162163b9d",
+                "characters": 11918
+              }
+            },
+            {
+              "tool": "read_dingtalk_messages",
+              "arguments": {
+                "conversation_id": "eval-mail-conversation"
+              },
+              "result": {
+                "messages": [
+                  {
+                    "message_id": "mail-original",
+                    "sender": "Synthetic vendor",
+                    "create_time": "2026-10-08T08:00:00-07:00",
+                    "text": "Renewal was approved and recorded under receipt renew-77. This is a confirmation only; no reply is requested."
+                  },
+                  {
+                    "message_id": "mail-principal-sent",
+                    "sender": "Principal",
+                    "create_time": "2026-10-08T07:30:00-07:00",
+                    "text": "Approved subject to the recorded legal terms."
+                  }
+                ]
+              }
+            },
+            {
+              "tool": "read_system_action_contract",
+              "arguments": {
+                "capability": "dingtalk-doc",
+                "operation": "create_document"
+              },
+              "result": {
+                "capability": "dingtalk-doc",
+                "operation": "create_document",
+                "supported_operations": [
+                  "create_document"
+                ],
+                "contract": "# Reviewed system action contracts\n\nThis registry describes the actions that require system business review for an\nactual configured system task. Ordinary Consumer work is not made a reviewed\naction merely because a tool writes. Consumer may write its task-generation\nartifacts and use the existing bound report-document workflow, with the actual\ntool result and content readback as evidence. These are ordinary work receipts,\nnot SystemExecutor receipts for a registered action.\n\nConsumer cannot directly dispatch the registered reviewed operations below.\nIt supplies the complete proposal for Audit and SystemExecutor. Audit remains\nread-only. A `summary`, including a historical quotation or an assertion of\ncompletion, never creates an execution record. The parser validates the wire;\nit does not scan prose for completion phrases. Audit assesses the complete\ncandidate against its sources and actual receipts. System completion comes\nonly from the registered handler's persisted dispatch and verification.\n\nThe Consumer proposes `ConsumerProposal.actions`; the Audit reviews the exact\ncandidate digest, and the service executes only its approved plan or selected\noption. An action has `description`, a stable `action_identity`, `capability`,\n`operation`, `target`, `payload`, and `effect: \"external\"`. Use a new\n`action_identity` for a materially different intended external outcome. The\nidentity is stable across a revision that merely clarifies the same outcome.\nThe service refuses to reuse a completed action's receipt when its approved\ncapability, operation, target, payload, or effect changed.\nFor service-owned receipts, the executor resolves the exact persisted selected\nbranch before reuse. Historical receipts without that branch association are\nrefused when the prior choices differ under the same action identity.\n\nThese names and fields are the executable contract. A business description is\nnot an operation name. Do not add a CLI command, shell instruction, or free-form\nAPI call to a plan. Every `target` identifies the current business object, not\nan example or a previous instance. An unsupported operation fails explicitly.\n\n| Capability | Operation | `target` | `payload` | Completion evidence |\n| --- | --- | --- | --- | --- |\n| `dingtalk-doc` | `create_document` | `name` | Markdown `content` | Provider `nodeId` plus exact document name and Markdown readback |\n\nFor these registered OA operations, `process_instance_id`, `task_id`,\n`target_activity_id` and `to_actioner_id`, where required above, are exact\nnonempty string identifiers. The Consumer must source the process and task\nidentifiers from the current OA instance and its task list; a project ID is not\nan OA process ID, and a numeric task ID must be represented as the provider's\nexact string before Audit reviews the action. Audit checks that source binding,\nwhile the action model and wire schema reject malformed identifier types before\nreview.\n\nFor message sends, the service first stores the composed final body. The\nConsumer action must carry that same body. The service does not compose a new\nbody after Audit approval. A selected option has its own prepared delivery key.\n\nThe native reaction list exposes `result.messages[].openMessageId` and\n`emotionReplyList[].emoji` with `replyUsers[]`, so an emoji can be read back\nfor the exact message and principal. The native OA records readback exposes\n`operationType`, `operationResult`, `operationTime`, and `userId`, but no comment\nbody or comment ID. The document comment and text-emotion reads have no\nconfirmed unique correlation shape in the current native CLI schema. A generic\n`success: true` without a domain ID or positive readback does not establish\ncompletion. After an unknown dispatch, the service preserves the action as\nuncertain and does not resend it on restart. Xiaoqing transcript and interview\nuploads have no service-owned native client and are not registered system\nactions.\n\n## Consumer purpose action names\n\nConsumer purpose output uses action/reason/target/payload/evidence_refs. Purpose definitions select the available names and strict arguments before the turn. OA approve/reject/comment map to the registered same-named OA operations; return maps to revert_task, with exact target_activity_id and revert_action REVERT_FOR_APPROVAL or REVERT_FOR_RESUBMIT. General reply/react map to reply_to_message/add_message_emoji. A typed plan preserves the existing multi-action proposal and all action contracts above.\n\nrequest_access is a Consumer purpose action that asks the verified responsible party through an OA comment or source-conversation reply. Its receipt proves the request was sent, not that access was granted. Only a verified request_access source candidate can anchor permission retries. While access is still unavailable, Consumer may return `retry` with empty target/payload and a reference to that request's `external_action_key`; the service strips one known `receipt:` or `prior_receipt_id=` label before exact key matching. This permission-wait retry is not an approval-result proposal, does not enter Audit, and has no provider dispatch. The service persists at most three later Consumer reads, 12 hours apart, and a 72-hour hard deadline from the original verified request's dispatch record, independent of sessions/revisions/restarts. All other executable actions retain the completion evidence specified above.\n\nFor field definitions, OA return and retry JSON examples, reservation semantics,\nand recovery boundaries, see [Consumer purpose output](consumer-purpose-output.md)."
+              }
+            },
+            {
+              "tool": "read_task_skill",
+              "arguments": {
+                "name": "ceo-mail-review"
+              },
+              "result": {
+                "name": "ceo-mail-review",
+                "path": "/synthetic/ceo-mail-review/SKILL.md",
+                "sha256": "108e258426ec8f66a0907722d4a1034fba48c8628544eccc69aa5e0162163b9d",
+                "characters": 11918
+              }
+            },
+            {
+              "tool": "read_dingtalk_messages",
+              "arguments": {
+                "conversation_id": "eval-mail-conversation"
+              },
+              "result": {
+                "messages": [
+                  {
+                    "message_id": "mail-original",
+                    "sender": "Synthetic vendor",
+                    "create_time": "2026-10-08T08:00:00-07:00",
+                    "text": "Renewal was approved and recorded under receipt renew-77. This is a confirmation only; no reply is requested."
+                  },
+                  {
+                    "message_id": "mail-principal-sent",
+                    "sender": "Principal",
+                    "create_time": "2026-10-08T07:30:00-07:00",
+                    "text": "Approved subject to the recorded legal terms."
+                  }
+                ]
+              }
+            },
+            {
+              "tool": "read_system_action_contract",
+              "arguments": {
+                "capability": "dingtalk-doc",
+                "operation": "create_document"
+              },
+              "result": {
+                "capability": "dingtalk-doc",
+                "operation": "create_document",
+                "supported_operations": [
+                  "create_document"
+                ],
+                "contract": "# Reviewed system action contracts\n\nThis registry describes the actions that require system business review for an\nactual configured system task. Ordinary Consumer work is not made a reviewed\naction merely because a tool writes. Consumer may write its task-generation\nartifacts and use the existing bound report-document workflow, with the actual\ntool result and content readback as evidence. These are ordinary work receipts,\nnot SystemExecutor receipts for a registered action.\n\nConsumer cannot directly dispatch the registered reviewed operations below.\nIt supplies the complete proposal for Audit and SystemExecutor. Audit remains\nread-only. A `summary`, including a historical quotation or an assertion of\ncompletion, never creates an execution record. The parser validates the wire;\nit does not scan prose for completion phrases. Audit assesses the complete\ncandidate against its sources and actual receipts. System completion comes\nonly from the registered handler's persisted dispatch and verification.\n\nThe Consumer proposes `ConsumerProposal.actions`; the Audit reviews the exact\ncandidate digest, and the service executes only its approved plan or selected\noption. An action has `description`, a stable `action_identity`, `capability`,\n`operation`, `target`, `payload`, and `effect: \"external\"`. Use a new\n`action_identity` for a materially different intended external outcome. The\nidentity is stable across a revision that merely clarifies the same outcome.\nThe service refuses to reuse a completed action's receipt when its approved\ncapability, operation, target, payload, or effect changed.\nFor service-owned receipts, the executor resolves the exact persisted selected\nbranch before reuse. Historical receipts without that branch association are\nrefused when the prior choices differ under the same action identity.\n\nThese names and fields are the executable contract. A business description is\nnot an operation name. Do not add a CLI command, shell instruction, or free-form\nAPI call to a plan. Every `target` identifies the current business object, not\nan example or a previous instance. An unsupported operation fails explicitly.\n\n| Capability | Operation | `target` | `payload` | Completion evidence |\n| --- | --- | --- | --- | --- |\n| `dingtalk-doc` | `create_document` | `name` | Markdown `content` | Provider `nodeId` plus exact document name and Markdown readback |\n\nFor these registered OA operations, `process_instance_id`, `task_id`,\n`target_activity_id` and `to_actioner_id`, where required above, are exact\nnonempty string identifiers. The Consumer must source the process and task\nidentifiers from the current OA instance and its task list; a project ID is not\nan OA process ID, and a numeric task ID must be represented as the provider's\nexact string before Audit reviews the action. Audit checks that source binding,\nwhile the action model and wire schema reject malformed identifier types before\nreview.\n\nFor message sends, the service first stores the composed final body. The\nConsumer action must carry that same body. The service does not compose a new\nbody after Audit approval. A selected option has its own prepared delivery key.\n\nThe native reaction list exposes `result.messages[].openMessageId` and\n`emotionReplyList[].emoji` with `replyUsers[]`, so an emoji can be read back\nfor the exact message and principal. The native OA records readback exposes\n`operationType`, `operationResult`, `operationTime`, and `userId`, but no comment\nbody or comment ID. The document comment and text-emotion reads have no\nconfirmed unique correlation shape in the current native CLI schema. A generic\n`success: true` without a domain ID or positive readback does not establish\ncompletion. After an unknown dispatch, the service preserves the action as\nuncertain and does not resend it on restart. Xiaoqing transcript and interview\nuploads have no service-owned native client and are not registered system\nactions.\n\n## Consumer purpose action names\n\nConsumer purpose output uses action/reason/target/payload/evidence_refs. Purpose definitions select the available names and strict arguments before the turn. OA approve/reject/comment map to the registered same-named OA operations; return maps to revert_task, with exact target_activity_id and revert_action REVERT_FOR_APPROVAL or REVERT_FOR_RESUBMIT. General reply/react map to reply_to_message/add_message_emoji. A typed plan preserves the existing multi-action proposal and all action contracts above.\n\nrequest_access is a Consumer purpose action that asks the verified responsible party through an OA comment or source-conversation reply. Its receipt proves the request was sent, not that access was granted. Only a verified request_access source candidate can anchor permission retries. While access is still unavailable, Consumer may return `retry` with empty target/payload and a reference to that request's `external_action_key`; the service strips one known `receipt:` or `prior_receipt_id=` label before exact key matching. This permission-wait retry is not an approval-result proposal, does not enter Audit, and has no provider dispatch. The service persists at most three later Consumer reads, 12 hours apart, and a 72-hour hard deadline from the original verified request's dispatch record, independent of sessions/revisions/restarts. All other executable actions retain the completion evidence specified above.\n\nFor field definitions, OA return and retry JSON examples, reservation semantics,\nand recovery boundaries, see [Consumer purpose output](consumer-purpose-output.md)."
+              }
+            },
+            {
+              "tool": "read_dingtalk_messages",
+              "arguments": {
+                "conversation_id": "eval-mail-conversation"
+              },
+              "result": {
+                "messages": [
+                  {
+                    "message_id": "mail-original",
+                    "sender": "Synthetic vendor",
+                    "create_time": "2026-10-08T08:00:00-07:00",
+                    "text": "Renewal was approved and recorded under receipt renew-77. This is a confirmation only; no reply is requested."
+                  },
+                  {
+                    "message_id": "mail-principal-sent",
+                    "sender": "Principal",
+                    "create_time": "2026-10-08T07:30:00-07:00",
+                    "text": "Approved subject to the recorded legal terms."
+                  }
+                ]
+              }
+            },
+            {
+              "tool": "read_dingtalk_messages",
+              "arguments": {
+                "conversation_id": "eval-mail-conversation"
+              },
+              "result": {
+                "messages": [
+                  {
+                    "message_id": "mail-original",
+                    "sender": "Synthetic vendor",
+                    "create_time": "2026-10-08T08:00:00-07:00",
+                    "text": "Renewal was approved and recorded under receipt renew-77. This is a confirmation only; no reply is requested."
+                  },
+                  {
+                    "message_id": "mail-principal-sent",
+                    "sender": "Principal",
+                    "create_time": "2026-10-08T07:30:00-07:00",
+                    "text": "Approved subject to the recorded legal terms."
+                  }
+                ]
+              }
+            }
+          ],
+          "canonical_valid": false,
+          "error": "no valid typed result JSON found in Codex JSONL",
+          "native_lines": 124,
+          "native_sha256": "ef98942f39f3417218714eb5eb927a4aee2cb02fdd1c798713a837bc2bfc1730",
+          "stderr": "",
+          "native_call_counts": {
+            "read_dingtalk_messages": 7,
+            "read_system_action_contract": 4,
+            "read_task_skill": 3,
+            "read_skill": 1,
+            "wait": 3
+          },
+          "native_error_observation": "Three native wait calls used nonexistent exec cell IDs; no external action. Tool trace lists only 15 successful fake MCP returns; actual native calls total 18.",
+          "acceptance": "failed_timeout_no_final_result; resume not run because cold invalid"
+        }
+      ],
+      "skill_sha256": {
+        "ceo-calendar-invite": "b76b913b63c9b2f3eaba5e90eb64e5dd1a58cf123330815a07d7c32c01451175",
+        "ceo-mail-review": "108e258426ec8f66a0907722d4a1034fba48c8628544eccc69aa5e0162163b9d",
+        "ceo-work-tracking": "2db7c6bfb1a8dc8f64863d2e97f78fc3378400b3ff3df43ed22414a47d7edd3e",
+        "dingtalk-doc": "9f64d7a84c8daa8a622d027a6a7b23cee7515d3d49ea54b9427f446e6726f07e",
+        "dingtalk-chat": "e1ffcc8c47a45333a0f268b1479ed98daecd8b105da4d99e2f328172ca653e91",
+        "ceo-document-review": "b6b87c3d1ca32bb2e9a9c53675b22dd0a8932aa808205734c8725d9a3eb09d77",
+        "dingtalk-calendar": "f42f6fe6433656a1ae3dd5ff3f040bfc44e2d6b1bd0ce760aeb2d151b900dd1c",
+        "dingtalk-shared": "7c3f6231072cd0e038b69a94b94957e99a1b1b82b961882413e08a1cf56336fb",
+        "dingtalk-mail": "664f31a00f46245c270049129da4d25475ccc561b04d9897e7cd634b2c4a6f18"
+      },
+      "completed_at": "2026-10-24T13:19:59.233131-07:00"
+    },
+    {
+      "diagnostic": "api-consumer",
+      "scope": "Current six-case acceptance, not original A/B; fake reads only",
+      "source_commit": "205674a5aa53011ced71f45c88791481fc822231",
+      "case_manifest_sha256": "9e6bb578a321cee3865c20051f47762de12710c1076b2e4fbf1c333008a192af",
+      "harness_sha256": "092ade212aeaf2777599df1773620d3b1e7585794c959c938b5a623658cb7dc5",
+      "route": "codex_api",
+      "model": "gpt-5.6-luna",
+      "fixed_clock": "2026-10-08T10:00:00-07:00",
+      "results": [
+        {
+          "case": "mail-already-handled",
+          "phase": "cold",
+          "role": "consumer",
+          "developer_sha256": "9a83db9965f106b9ee24d0b59411c56b8e0354aff4370139816a4e924bb9c613",
+          "task_sha256": "654cdcfd32b35eb8639be4224ffc057c5dfdc071b252b741fc1ad3f33c02b016",
+          "schema_sha256": "72ee10446972dde404f738df395701188a39d9d5e10005312a66fec3b11e9d7b",
+          "criteria": [
+            "use the complete thread rather than the truncated card",
+            "recognize the renewal is already approved and the provider confirmation requests no reply",
+            "return no_action with no duplicate chat or mail action"
+          ],
+          "exit_code": 1,
+          "session_id": "01a16f8f-b637-7cc1-9686-315a03e40aeb",
+          "reused_session": false,
+          "tool_trace": [],
+          "canonical_valid": false,
+          "error": "no valid typed result JSON found in Codex JSONL",
+          "native_lines": 10,
+          "native_sha256": "a7c845da128680535811712766fd561ce66e996dc6483d0937901c99e36b5203",
+          "stderr": "",
+          "native_terminal_error": {
+            "message": "exceeded retry limit, last status: 429 Too Many Requests",
+            "codex_error_info": {
+              "response_too_many_failed_attempts": {
+                "http_status_code": 429
+              }
+            }
+          },
+          "acceptance": "blocked_429; no valid cold result or resume acceptance"
+        }
+      ],
+      "skill_sha256": {
+        "dingtalk-doc": "9f64d7a84c8daa8a622d027a6a7b23cee7515d3d49ea54b9427f446e6726f07e",
+        "dingtalk-calendar": "f42f6fe6433656a1ae3dd5ff3f040bfc44e2d6b1bd0ce760aeb2d151b900dd1c",
+        "dingtalk-mail": "664f31a00f46245c270049129da4d25475ccc561b04d9897e7cd634b2c4a6f18",
+        "ceo-work-tracking": "2db7c6bfb1a8dc8f64863d2e97f78fc3378400b3ff3df43ed22414a47d7edd3e",
+        "ceo-mail-review": "108e258426ec8f66a0907722d4a1034fba48c8628544eccc69aa5e0162163b9d",
+        "ceo-document-review": "b6b87c3d1ca32bb2e9a9c53675b22dd0a8932aa808205734c8725d9a3eb09d77",
+        "dingtalk-chat": "e1ffcc8c47a45333a0f268b1479ed98daecd8b105da4d99e2f328172ca653e91",
+        "dingtalk-shared": "7c3f6231072cd0e038b69a94b94957e99a1b1b82b961882413e08a1cf56336fb",
+        "ceo-calendar-invite": "b76b913b63c9b2f3eaba5e90eb64e5dd1a58cf123330815a07d7c32c01451175"
+      },
+      "completed_at": "2026-10-24T13:17:35.954942-07:00"
+    },
+    {
+      "diagnostic": "api-continue",
+      "scope": "Current six-case acceptance, not original A/B; fake reads only",
+      "source_commit": "205674a5aa53011ced71f45c88791481fc822231",
+      "case_manifest_sha256": "9e6bb578a321cee3865c20051f47762de12710c1076b2e4fbf1c333008a192af",
+      "harness_sha256": "3d7df63734eae0ecdd26c8e5ddf255caeff2ca60209534ed9724cddc20936c6c",
+      "route": "codex_api",
+      "model": "gpt-5.6-luna",
+      "fixed_clock": "2026-10-08T10:00:00-07:00",
+      "results": [
+        {
+          "case": "mail-already-handled",
+          "phase": "continue",
+          "role": "consumer",
+          "developer_sha256": "9a83db9965f106b9ee24d0b59411c56b8e0354aff4370139816a4e924bb9c613",
+          "task_sha256": "e256ee8e7aff6957a781d8328f0f68e26996564c81fa458da59fbca2305138ad",
+          "schema_sha256": "72ee10446972dde404f738df395701188a39d9d5e10005312a66fec3b11e9d7b",
+          "criteria": [
+            "use the complete thread rather than the truncated card",
+            "recognize the renewal is already approved and the provider confirmation requests no reply",
+            "return no_action with no duplicate chat or mail action"
+          ],
+          "exit_code": 1,
+          "session_id": "01a16f8f-b637-7cc1-9686-315a03e40aeb",
+          "reused_session": true,
+          "tool_trace": [],
+          "canonical_valid": false,
+          "error": "no valid typed result JSON found in Codex JSONL",
+          "native_lines": 19,
+          "native_sha256": "4daccdc2dca8f97c40457ccd4b6a95f4d64401dd03c38bceceb6da1b39163c48",
+          "stderr": "",
+          "native_terminal_error": {
+            "message": "exceeded retry limit, last status: 429 Too Many Requests",
+            "codex_error_info": {
+              "response_too_many_failed_attempts": {
+                "http_status_code": 429
+              }
+            }
+          },
+          "acceptance": "blocked_429; no valid cold result or resume acceptance"
+        }
+      ],
+      "skill_sha256": {
+        "ceo-mail-review": "108e258426ec8f66a0907722d4a1034fba48c8628544eccc69aa5e0162163b9d",
+        "dingtalk-mail": "664f31a00f46245c270049129da4d25475ccc561b04d9897e7cd634b2c4a6f18",
+        "ceo-work-tracking": "2db7c6bfb1a8dc8f64863d2e97f78fc3378400b3ff3df43ed22414a47d7edd3e",
+        "dingtalk-doc": "9f64d7a84c8daa8a622d027a6a7b23cee7515d3d49ea54b9427f446e6726f07e",
+        "dingtalk-calendar": "f42f6fe6433656a1ae3dd5ff3f040bfc44e2d6b1bd0ce760aeb2d151b900dd1c",
+        "ceo-calendar-invite": "b76b913b63c9b2f3eaba5e90eb64e5dd1a58cf123330815a07d7c32c01451175",
+        "dingtalk-shared": "7c3f6231072cd0e038b69a94b94957e99a1b1b82b961882413e08a1cf56336fb",
+        "ceo-document-review": "b6b87c3d1ca32bb2e9a9c53675b22dd0a8932aa808205734c8725d9a3eb09d77",
+        "dingtalk-chat": "e1ffcc8c47a45333a0f268b1479ed98daecd8b105da4d99e2f328172ca653e91"
+      },
+      "completed_at": "2026-10-24T13:18:45.121975-07:00"
+    }
+  ]
+}
