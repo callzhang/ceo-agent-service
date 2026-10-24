@@ -21,8 +21,6 @@ from pathlib import Path
 from typing import Any
 
 from app.action_storage import (
-    AGENT_EFFECT_INTENT_SQL,
-    AGENT_EXECUTION_RECEIPT_SQL,
     NATIVE_CANDIDATE_ACTION_ATTEMPT_SQL,
     NATIVE_EXTERNAL_ACTION_RESULT_SQL,
     AGENT_EFFECT_INTENT_SQL,
@@ -285,7 +283,7 @@ def apply_deferral(
             until = _stamp(instant + timedelta(seconds=duration_seconds))
             if snap['available_at'] and snap['available_at'] >= until:
                 raise ValueError('existing deferral is later')
-            db.execute(f"""update tasks set status='pending',available_at=?,locked_at=null,updated_at=? where id=? and kind='reply' and status in ('pending','processing')""",
+            db.execute("""update tasks set status='pending',available_at=?,locked_at=null,updated_at=? where id=? and kind='reply' and status in ('pending','processing')""",
                 (until, _stamp(instant), task_id))
             receipt_id = insert_receipt(db, dict(
                 request_id=request_id, task_id=task_id, business_object_key=snap['business_object_key'],
@@ -333,7 +331,7 @@ def resume_deferral(
                 row['latest_failed_run_id'],row['latest_failed_run_fingerprint'],
                 'pending',row['deferred_until']):
                 raise ValueError('deferral state changed')
-            db.execute(f"""update tasks set available_at=?,updated_at=? where id=? and kind='reply' and status='pending'""",
+            db.execute("""update tasks set available_at=?,updated_at=? where id=? and kind='reply' and status='pending'""",
                        (row['original_available_at'],_stamp(instant),task_id))
             update_receipt(db, receipt_id, dict(status='resumed', resume_request_id=request_id, resumed_at=_stamp(instant)))
             saved = _receipt(db, receipt_id)

@@ -224,7 +224,6 @@ from app.wechat.models import WechatReplyScope
 
 
 from app.action_storage import (
-    ACTION_RECORD_TYPES, _action_layout,
     OUTBOUND_POSTFIX_SQL, OUTBOUND_POSTFIX_RECEIPT_SQL,
     insert_action,
     update_action,
@@ -237,17 +236,13 @@ from app.action_storage import (
     AGENT_EXECUTION_RECEIPT_SQL,
     update_sync_action,
     SYNC_ACTION_PROJECTIONS,
-    _autoincrement_high_water,
-    _raise_autoincrement_full,
     task_delivery_projection,
     insert_task_delivery_action,
     task_delivery_set_parts,
     task_delivery_insert_parts,
-    _email_lock,
     insert_error_action,
     error_set_parts,
 )
-from app.action_task_delivery_definitions import TASK_DELIVERY_DEFAULTS
 from app.action_error_definitions import error_projection
 
 from app.shared_action_definitions import email_projection as email_action_projection

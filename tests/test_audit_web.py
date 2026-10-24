@@ -21,11 +21,9 @@ from tests.run_reader_fixtures import insert_native_run_fixture
 from tests.feedback_processing_fixtures import resolve_feedback_fixture
 from app.run_storage import insert_run
 from app.action_storage import (
-    REPLY_ATTEMPT_COMMON_SQL, update_action, insert_task_delivery_action,
-    task_delivery_projection, insert_error_action,
+    REPLY_ATTEMPT_COMMON_SQL, update_action, insert_error_action,
 )
 from app.action_error_definitions import error_projection
-from app.task_storage import task_physical_id
 from app.task12_storage import insert_task12
 from app.task20_definitions import task20_projection
 from app.task8_storage import task8_set_parts

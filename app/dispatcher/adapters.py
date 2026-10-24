@@ -6,7 +6,7 @@ from app.state_storage import state_json_field, update_state, upsert_state
 from app import task_lifecycle_storage as task_claims
 from app.task_lifecycle_definitions import DISPATCH_TASK_KINDS, dispatch_task_projection
 from app.action_followup_sync_definitions import SYNC_ACTION_PROJECTIONS
-from app.action_storage import update_sync_action, task_delivery_projection, task_delivery_set_parts
+from app.action_storage import update_sync_action
 
 
 import sqlite3
