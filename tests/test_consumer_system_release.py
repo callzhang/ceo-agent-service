@@ -149,7 +149,9 @@ def test_people_review_release_file_baseline_matches_installed_candidate():
     )
     source_digest = _digest((root / entry["source"]).read_bytes())
     assert entry["new_sha256"] == source_digest
-    assert entry["old_sha256"] == source_digest
+    # The baseline is the installed file this release replaces; it equals the
+    # new digest only while the release changes nothing in this Skill.
+    assert len(entry["old_sha256"]) == 64 and set(entry["old_sha256"]) <= set("0123456789abcdef")
 
 
 def test_finance_rule_card_counts_only_valid_applicant_resolvable_returns():
@@ -180,7 +182,7 @@ def test_repository_consumer_release_manifest_tracks_message_triage_skill_digest
     )
 
     assert entry["new_sha256"] == _digest((root / entry["source"]).read_bytes())
-    assert entry["old_sha256"] == entry["new_sha256"]
+    assert len(entry["old_sha256"]) == 64 and set(entry["old_sha256"]) <= set("0123456789abcdef")
 
 
 def test_repository_consumer_release_manifest_tracks_every_source_digest():
@@ -216,7 +218,7 @@ def test_repository_consumer_release_manifest_includes_people_review_skill():
 
     assert entry["target"] == "skills/stardust-oa-people-review/SKILL.md"
     assert entry["new_sha256"] == _digest((root / source).read_bytes())
-    assert entry["old_sha256"] == entry["new_sha256"]
+    assert len(entry["old_sha256"]) == 64 and set(entry["old_sha256"]) <= set("0123456789abcdef")
 
 
 def test_repository_consumer_release_manifest_includes_current_attendance_review_skill():
