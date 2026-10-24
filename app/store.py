@@ -14399,12 +14399,15 @@ class AutoReplyStore(LogicalRunStoreMixin, ReviewedCandidateStoreMixin):
 
     def requeue_failed_meeting_delivery(self, job_id: int) -> MeetingAlignmentJob | None:
         """Resume a reviewed unsent delivery after independent provider readback."""
-        from app.meeting_alignment_models import meeting_decision_audit_is_approved
+        from app.meeting_alignment_models import (
+            load_persisted_meeting_alignment_decision,
+            meeting_decision_audit_is_approved,
+        )
 
         current = self.get_meeting_alignment_job(job_id)
         if current is None or not meeting_decision_audit_is_approved(current.decision_json):
             return None
-        decision = MeetingAlignmentDecision.model_validate_json(current.decision_json)
+        decision, _ = load_persisted_meeting_alignment_decision(current.decision_json)
         if decision.target is None:
             return None
         target_kind = (
@@ -14450,7 +14453,8 @@ class AutoReplyStore(LogicalRunStoreMixin, ReviewedCandidateStoreMixin):
         """Queue one independent Audit of an unchanged failed Meeting candidate."""
         import hmac
         from app.meeting_alignment_models import (
-            MeetingAlignmentDecision,
+            MeetingAlignmentAuditResult,
+            load_persisted_meeting_alignment_decision,
             meeting_alignment_decision_digest,
             meeting_decision_audit_is_approved,
         )
@@ -14464,12 +14468,42 @@ class AutoReplyStore(LogicalRunStoreMixin, ReviewedCandidateStoreMixin):
         try:
             error = json.loads(current.error)
             raw_decision = json.loads(current.decision_json)
-            decision = MeetingAlignmentDecision.model_validate(raw_decision)
+            decision, candidate_json = load_persisted_meeting_alignment_decision(
+                current.decision_json
+            )
+            candidate_json = json.dumps(
+                decision.model_dump(mode="json"),
+                ensure_ascii=False,
+                separators=(",", ":"),
+            )
         except (TypeError, ValueError, json.JSONDecodeError):
             return None
+        if not isinstance(error, dict) or not isinstance(raw_decision, dict):
+            return None
+        prior_audit = raw_decision.get("_service_audit")
+        prior_result = (
+            prior_audit.get("result") if isinstance(prior_audit, dict) else None
+        )
+        try:
+            parsed_prior_result = MeetingAlignmentAuditResult.model_validate(prior_result)
+        except (TypeError, ValueError):
+            parsed_prior_result = None
+        prior_return = (
+            error.get("kind") == "meeting_audit_recovery_unapproved"
+            and isinstance(prior_audit, dict)
+            and parsed_prior_result is not None
+            and parsed_prior_result.outcome == "return"
+            and prior_audit.get("candidate_sha256")
+            == meeting_alignment_decision_digest(decision)
+            and parsed_prior_result.candidate_sha256
+            == meeting_alignment_decision_digest(decision)
+        )
+        initial_target_failure = (
+            error.get("kind") == "meeting_target"
+            and not isinstance(prior_audit, dict)
+        )
         if (
-            not isinstance(error, dict) or error.get("kind") != "meeting_target"
-            or not isinstance(raw_decision, dict) or "_service_audit" in raw_decision
+            not (initial_target_failure or prior_return)
             or meeting_decision_audit_is_approved(current.decision_json)
             or not expected_candidate_sha256
             or not hmac.compare_digest(
@@ -14507,7 +14541,7 @@ class AutoReplyStore(LogicalRunStoreMixin, ReviewedCandidateStoreMixin):
         with self._immediate_write_transaction() as db:
             row = db.execute(
                 f"""update tasks as meeting_alignment_jobs
-                   set {task8_set_parts('meeting_alignment_jobs', {}, update_sql={'status': "'retry'", 'locked_at': 'null', 'available_at': "''", 'error': '?', 'updated_at': 'current_timestamp'}, payload_source='meeting_alignment_jobs.payload_json').sql}  where meeting_alignment_jobs.record_type='meeting_alignment_jobs'
+                   set {task8_set_parts('meeting_alignment_jobs', {}, update_sql={'status': "'retry'", 'locked_at': 'null', 'available_at': "''", 'error': '?', 'decision_json': '?', 'updated_at': 'current_timestamp'}, payload_source='meeting_alignment_jobs.payload_json').sql}  where meeting_alignment_jobs.record_type='meeting_alignment_jobs'
                      and cast(meeting_alignment_jobs.legacy_key as integer)=?
                      and {task20_column('meeting_alignment_jobs', 'status')}='failed'
                      and {task20_column('meeting_alignment_jobs', 'locked_at')} is null
@@ -14523,7 +14557,7 @@ class AutoReplyStore(LogicalRunStoreMixin, ReviewedCandidateStoreMixin):
                        where channel='dingtalk' and delivery_key=?
                      )
                    returning {task8_meeting_returning()}""",
-                (marker, job_id, current.decision_json, current.source_json,
+                (marker, candidate_json, job_id, current.decision_json, current.source_json,
                  current.target_kind, current.target_id, current.final_message,
                  current.error, delivery_key),
             ).fetchone()

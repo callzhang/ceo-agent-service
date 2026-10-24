@@ -222,6 +222,38 @@ def test_meeting_audit_uses_separate_read_only_bound_runtime_call():
     assert "independent, read-only Audit role" in call["command_factory"].developer_instructions
 
 
+def test_meeting_audit_treats_explicit_followup_assignment_as_limited_share_evidence():
+    decision = MeetingAlignmentDecision.model_validate(valid_send_decision())
+    meeting_source_payload = source().model_dump(mode="json")
+    meeting_source_payload["transcript"].append({
+        "speaker_name": "Derek",
+        "text": "Avery，下周继续梳理方案并带回讨论。",
+    })
+    meeting_source = MeetingSource.model_validate(meeting_source_payload)
+
+    class AuditCodex:
+        prompt = ""
+
+        def audit(self, *, prompt, run_id, candidate_sha256):
+            self.prompt = prompt
+            return MeetingAlignmentAuditResult(
+                outcome="approve",
+                candidate_sha256=candidate_sha256,
+                summary="The assigned recipient may receive the limited follow-up.",
+                feedback=None,
+            )
+
+    codex = AuditCodex()
+    MeetingAlignmentAgent(codex).audit(
+        meeting_source, decision, run_id=9,
+    )
+
+    assert "会议原文明确把后续工作分配给精确收件人" in codex.prompt
+    assert "该分配本身是分享完成该任务所需信息的依据" in codex.prompt
+    assert "不能据此扩大到无关或敏感内容" in codex.prompt
+    assert "Avery，下周继续梳理方案并带回讨论。" in codex.prompt
+
+
 def source_with_unresolved_one_to_one_counterpart() -> MeetingSource:
     payload = source(participant_count=2).model_dump(mode="json")
     payload["participants"][1].update(
