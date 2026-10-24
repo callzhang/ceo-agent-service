@@ -99,7 +99,7 @@ def test_task_agent_runtime_prompt_keeps_current_shared_source_body_once(
     assert len(semantic["source_documents"]) == 1
     document = semantic["source_documents"][0]
     assert document["document_id"] == semantic["current_work_item"]["document_id"]
-    assert semantic["source_signals"][0]["document_id"] == document["document_id"]
+    assert semantic["source_signals"][0]["doc"] == document["doc"]
     assert "".join(span["text"] for span in document["visible_ranges"]) == item.summary
     assert store.get_work_summary_input(id).status.value != "failed"
 

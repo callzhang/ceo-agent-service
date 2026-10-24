@@ -2026,6 +2026,8 @@ def test_task_prompt_keeps_the_work_item_text_and_tells_the_agent_how_to_read_hi
     assert "source_in_input false" in prompt
     assert "read it yourself with dws" in prompt
     assert "part of source_ref before" in prompt
+    assert 'names its document by "doc"' in prompt
+    assert "give its id and its document's source_ref" in prompt
     assert "current_work_item" not in prompt
 
 

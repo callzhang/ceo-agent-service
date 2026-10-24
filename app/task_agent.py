@@ -629,9 +629,13 @@ Current Work Item JSON:
 {work_item_json}
 {transcript_limitation}
 The Work Item's summary above is its source text. Historical sources are in
-source_documents, one per Signal in source_signals. A document with
+source_documents; each Signal in source_signals names its document by "doc" and
+keeps only its id, context_json and created_at. The document holds what its
+Signals share: source_type, source_ref, source_time, conversation and author
+(a Signal repeats one of those fields only when its value differs). When you
+cite a Signal, give its id and its document's source_ref. A document with
 source_in_input false is not copied here: read it yourself with dws from that
-Signal's source_type and source_ref, using the matching dws Skill. For ai_minutes
+document's source_type and source_ref, using the matching dws Skill. For ai_minutes
 the part of source_ref before "#" is the taskUuid (dws minutes +detail or
 +transcript --id); a dingtalk-doc:<node id>#... ref names the document node. A
 document with visible_ranges or
