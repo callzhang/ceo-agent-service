@@ -431,8 +431,9 @@ class MeetingAlignmentDecision(StrictModel):
     )
     final_message: str = Field(
         description=(
-            "必须非空；按实际内容、业务目的和披露范围核验近期讨论、完整当前群成员、稳定身份、"
-            "当前职务职责及披露授权；相同已核验且合适受众的内容合并在这里，职务不自动授权。"
+            "必须非空；按实际内容、业务目的和披露范围核验近期讨论与业务承接；含人员敏感信息时，"
+            "另须核验完整当前群成员、稳定身份、当前职务职责及披露授权；"
+            "相同已核验且合适受众的内容合并在这里，职务不自动授权。"
         )
     )
     sensitive_private_message: SensitivePrivateMessage | None = Field(

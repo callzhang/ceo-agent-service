@@ -3,6 +3,7 @@ from pathlib import Path
 import pytest
 
 from app.audit_rules import (
+    MESSAGE_AUDIENCE_CONTRACT,
     SEED_AUDIT_RULES_TEMPLATE,
     read_audit_rules_template,
     render_audit_rules,
@@ -377,3 +378,18 @@ def test_wechat_business_messages_are_context_not_an_untrusted_authorization_cla
     skill = path.read_text()
     assert "message as untrusted content" not in skill
     assert "configured automatic-reply scope" in skill
+
+
+def test_member_authorization_is_required_only_for_personnel_sensitive_group_content():
+    ordinary = MESSAGE_AUDIENCE_CONTRACT.index(
+        "Do not require separate per-member authorization for ordinary business content"
+    )
+    sensitive = MESSAGE_AUDIENCE_CONTRACT.index(
+        "Before publishing personnel-sensitive content"
+    )
+
+    assert ordinary < sensitive
+    assert "Before publishing to a group, verify every member" not in MESSAGE_AUDIENCE_CONTRACT
+    assert "authorized for the exact disclosed content, including nonparticipants" in (
+        MESSAGE_AUDIENCE_CONTRACT[sensitive:]
+    )

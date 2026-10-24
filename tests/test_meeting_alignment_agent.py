@@ -383,6 +383,16 @@ def test_prompt_uses_shared_audience_contract_without_private_fallback():
     assert "一律是业务内容，必须返回 audience_scope=business" not in prompt
 
 
+def test_prompt_asks_member_authorization_only_for_personnel_sensitive_content():
+    prompt = build_meeting_alignment_prompt(
+        source(), work_profile="", work_profile_source="profile"
+    )
+    assert "普通业务内容不要求逐一证明群成员的披露授权" in prompt
+    assert "仅当内容含人员敏感信息时，才须逐一核实完整群成员" in prompt
+    assert "完整群成员中每一位是否拥有本条消息实际内容的披露权限" not in prompt
+    assert "仍须核验本次完整群成员、实际内容及每位成员的授权" not in prompt
+
+
 def test_prompt_schema_does_not_override_generic_audience_policy():
     from app.meeting_alignment_models import MeetingAlignmentDecision
 
