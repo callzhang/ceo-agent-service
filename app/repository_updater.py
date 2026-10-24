@@ -21,7 +21,10 @@ from urllib.request import urlopen
 from app.database_backup import _backup_directory_lock, create_database_backup
 from app.external_retry import MAX_AUTOMATIC_ATTEMPTS
 from app.repository_upgrade import GitRepository
-from app.current_publication_sources import publication_run_sources
+from app.current_publication_sources import (
+    publication_run_sources,
+)
+from app.email_historical_candidate_schema import SOURCE_VERSION as EMAIL_RELEASE_SOURCE_VERSION
 from app.current_publication_sources import publication_meeting_sources, publication_task_sources
 from app.current_publication_sources import publication_deployment_task_sources
 from app.current_publication_sources import publication_email_action_source
@@ -409,12 +412,25 @@ def in_flight_work(database_path: Path) -> int:
     with closing(sqlite3.connect(
         f"file:{database_path}?mode=ro", uri=True, timeout=30
     )) as db:
-        agent_source, runtime_source = publication_run_sources(db)
-        reply_source, work_source = publication_task_sources(db)
-        scheduled_source = publication_scheduled_source(db)
-        meeting_jobs, meeting_runs = publication_meeting_sources(db)
-        workbench_tasks, weekly_okr_tasks, email_classification_tasks = publication_deployment_task_sources(db)
-        email_action_source = publication_email_action_source(db)
+        release_source_email_version = EMAIL_RELEASE_SOURCE_VERSION
+        agent_source, runtime_source = publication_run_sources(
+            db, release_source_email_version=release_source_email_version
+        )
+        reply_source, work_source = publication_task_sources(
+            db, release_source_email_version=release_source_email_version
+        )
+        scheduled_source = publication_scheduled_source(
+            db, release_source_email_version=release_source_email_version
+        )
+        meeting_jobs, meeting_runs = publication_meeting_sources(
+            db, release_source_email_version=release_source_email_version
+        )
+        workbench_tasks, weekly_okr_tasks, email_classification_tasks = publication_deployment_task_sources(
+            db, release_source_email_version=release_source_email_version
+        )
+        email_action_source = publication_email_action_source(
+            db, release_source_email_version=release_source_email_version
+        )
         email_action_count = (
             f"(select count(*) from ({email_action_source}) where status='processing')"
             if email_action_source is not None else "0"
@@ -434,7 +450,7 @@ def in_flight_work(database_path: Path) -> int:
             f"      exists (select 1 from ({agent_source}) as runs "
             "        where runs.reply_task_id=task.id "
             "          and runs.status in ('starting','running')) "
-            f"      or exists (select 1 from ({publication_dispatcher_source(db, current_version=TARGET_STORE_VERSION, previous_versions=PREVIOUS_STORE_VERSIONS)}) as claim "
+            f"      or exists (select 1 from ({publication_dispatcher_source(db, current_version=TARGET_STORE_VERSION, previous_versions=PREVIOUS_STORE_VERSIONS, release_source_email_version=release_source_email_version)}) as claim "
             "        where claim.adapter_name='reply' "
             "          and claim.source_id=cast(task.id as text) "
             "          and claim.claim_active "
@@ -444,14 +460,14 @@ def in_flight_work(database_path: Path) -> int:
             "    where (jobs.status='processing' and ("
             f"      exists (select 1 from ({meeting_runs}) as runs "
             "        where runs.job_id=jobs.id and runs.status='running') "
-            f"      or exists (select 1 from ({publication_dispatcher_source(db, current_version=TARGET_STORE_VERSION, previous_versions=PREVIOUS_STORE_VERSIONS)}) as claim "
+            f"      or exists (select 1 from ({publication_dispatcher_source(db, current_version=TARGET_STORE_VERSION, previous_versions=PREVIOUS_STORE_VERSIONS, release_source_email_version=release_source_email_version)}) as claim "
             "        where claim.adapter_name='meeting' "
             "          and claim.source_id=cast(jobs.id as text) "
             "          and claim.claim_active "
             "          and julianday(claim.lease_expires_at)>julianday('now')))) "
             "    or (jobs.status='ready_to_send' "
             "      and coalesce(jobs.locked_at,'')<>''))"
-            f" + (select count(*) from ({publication_dispatcher_source(db, current_version=TARGET_STORE_VERSION, previous_versions=PREVIOUS_STORE_VERSIONS)})"
+            f" + (select count(*) from ({publication_dispatcher_source(db, current_version=TARGET_STORE_VERSION, previous_versions=PREVIOUS_STORE_VERSIONS, release_source_email_version=release_source_email_version)})"
             "    where claim_active"
             "    and julianday(lease_expires_at)>julianday('now'))"
             f" + (select count(*) from ({email_classification_tasks}) "

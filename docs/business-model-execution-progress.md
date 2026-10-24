@@ -1,5 +1,26 @@
 # Business model simplification: current completion and closeout
 
+## Email business-model phase audit — 2026-10-24
+
+The current source already contains the accepted Email B1/B2 model: `emails`
+owns canonical message metadata, and Email operations use the shared Action
+lifecycle. The remaining Email-specific owners are the classification Task
+input, historical-scan candidates, and bounded content-free runtime samples.
+Code inspection and read-only production aggregates found no safe whole-record
+deletion or additional schema merge among those owners. The only immediately
+supported content reduction is the existing explicit compaction of completed
+classification inputs; it was not run in this turn.
+
+No database, runtime, or schema mutation was made, and no backup, database copy,
+or temporary artifact was created. A production migration was not attempted:
+the required current-data forward/inverse acceptance is not available under the
+instruction to create no backup or temporary database, and the normal deploy
+path itself makes a database backup. The exact ownership and reduction boundary
+is recorded in [Email phase audit](business-model-email-phase3-audit.md).
+
+This Email audit does not close the separate A5b Reply-local-result item or
+claim that the broader business-model program is complete.
+
 ## Action Entity Phase 1 production acceptance — 2026-10-22
 
 Phase 1 (the first external-Action unit, Tasks 1–7) is deployed and read back at production commit `87a34d299d5749af1af454bfdd01c48a936799a4`, after the standard deploy from production `036b14624cddbcff04098ebec7697644f95370c0` through `bf07de8d6210709cd76887cc14ebb9ef23fa5600`. The deployed Store marker is `2026-10-21.1`, Email ledger 53, with 14 ordinary tables. Production readback confirmed 15,472 common Actions, 18,621 Action Receipts and 506 Observers; all seven retired populated source kinds have zero rows. The original sole FK finding remains `runs(190042) -> tasks(1)`. Health, status, queues, Attention and History returned HTTP 200. PID is 2903.
@@ -103,3 +124,22 @@ The Phase 1 production values, PID, counts and health readbacks above describe t
 The latest integrated source for this validation line is `ce841e3826b62cddd068eb9eb36d17deb07de156`, incorporated through the normal merge recorded by `770cac667`; the earlier `6005776` source reference is stale. Accepted bounded evidence is grouped by scope: Task2D0 Reply queue/claim/input refresh (`324129193`, 11 focused Store tests); Task3C3 native execution/progress/receipt (`bafff3ee8`, 12 focused tests after Fix1); Task3D1 professional RuntimeAttempt contract/converters (`d8cc184bc`, 80 focused tests after Fix1); and later Task-family owners, adoption/receipt/converter handoffs, plus Workbench and Feedback paths accepted through Task2D7B/J, Task2D8R and Task2D8A/B. Task2D8C implements native event intake, public feedback list/by-key reads and pending counts locally; independent review remains pending. The known Email workload-key expectation failure remains unresolved, distinct from earlier Task3 fixture failures. Focused counts are individual recorded checks, not an aggregate suite run. These acceptances do not close the parent gates above.
 
 No Phase 2 integration into `main`, push, or deployment occurred. The only production observation remains the dated read-only weekly-count query at `2026-10-23T13:46:56Z`; this status update contains no new production readback. Integrated migration/current-runtime work and Task4–6 gates remain open.
+
+## Email historical candidate locator dedup (2026-10-24)
+
+Read-only production preflight found 924 `email_historical_candidates` rows,
+valid JSON in every row, and all 4,620 instances of the five scalar-owned
+locator properties present with exact typed values. Canonical compact JSON
+length falls from 323,162 to 140,255 UTF-8 bytes, a 182,907-byte logical
+payload reduction. This does not measure or claim SQLite file shrinkage.
+
+The local candidate adds an explicit Email 53→54 row transform and inverse,
+compacts new candidate writes, and reconstructs the current provider-message
+projection from scalar columns in list reads. It leaves differing locator
+values in JSON and fails closed when a source locator key is missing, because
+the inverse cannot distinguish that absence from a key removed by compaction.
+Forward/inverse/reforward, mismatch preservation, unknown-field preservation,
+and exact current Store/Email release selection are covered by five focused
+in-memory tests. These results are local implementation evidence only: the
+current-data release was not executed; no production migration, push, deployment,
+or physical-size verification has occurred.
