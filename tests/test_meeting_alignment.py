@@ -2763,6 +2763,45 @@ def test_calendar_summary_retry_does_not_resend_meeting_message(tmp_path):
     assert len(dws.send_calls) == 1
 
 
+def test_calendar_summary_readback_already_contains_exact_sent_summary(tmp_path):
+    store = AutoReplyStore(tmp_path / "worker.sqlite3")
+    dws = ConsumerDws()
+    job_id = seed_consumer_job(store, dws)
+    runner = FakeMeetingRunner(consumer_send_decision())
+
+    consume_meeting_alignment_jobs(store, dws, runner, now=NOW, limit=1)
+    sent = store.get_meeting_alignment_job(job_id)
+    assert sent.status == "sent"
+    assert len(dws.send_calls) == 1
+
+    existing_description = f"Prior note\n\n{sent.final_message}"
+    dws.calendar_pages[""]["events"][0].description = existing_description
+    store.update_meeting_alignment_job(
+        job_id,
+        status="ready_to_send",
+        calendar_summary_status="failed",
+        calendar_summary_result_json='{"state":"failed"}',
+        available_at="",
+        error="calendar summary readback mismatch",
+    )
+    calendar_writes_before_retry = len(dws.calendar_update_calls)
+
+    consume_meeting_alignment_jobs(
+        store, dws, runner, now=NOW + timedelta(minutes=1), limit=1
+    )
+
+    recovered = store.get_meeting_alignment_job(job_id)
+    receipt = json.loads(recovered.calendar_summary_result_json)
+    assert recovered.status == "sent"
+    assert recovered.calendar_summary_status == "skipped"
+    assert receipt["state"] == "already_present"
+    assert receipt["event_id"] == json.loads(sent.source_json)[
+        "calendar_evidence"
+    ]["event_id"]
+    assert len(dws.calendar_update_calls) == calendar_writes_before_retry
+    assert len(dws.send_calls) == 1
+
+
 def test_meeting_audit_return_runs_bounded_feedback_revision(tmp_path):
     store = AutoReplyStore(tmp_path / "worker.sqlite3")
     dws = ConsumerDws()

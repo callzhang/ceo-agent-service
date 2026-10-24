@@ -1998,6 +1998,31 @@ def _write_meeting_summary_to_calendar_or_retry(
         event = dws.get_calendar_event(evidence.event_id)
         if event is None:
             raise MeetingDeliveryRetry("original calendar event is unavailable")
+        if summary in event.description:
+            receipt = json.dumps(
+                {
+                    "event_id": evidence.event_id,
+                    "state": "already_present",
+                    "reason": (
+                        "exact frozen summary is already present in the original "
+                        "event description"
+                    ),
+                },
+                ensure_ascii=False,
+                sort_keys=True,
+            )
+            store.update_meeting_alignment_job(
+                job.id,
+                status="sent",
+                final_message=summary,
+                send_result_json=delivery.model_dump_json(),
+                calendar_summary_status="skipped",
+                calendar_summary_result_json=receipt,
+                error="",
+            )
+            _withdraw_superseded_follow_up(dws, superseded_send_result_json)
+            _notify_meeting_sent(job, delivery)
+            return
         description = _calendar_description_with_summary(event.description, summary)
         if event.description != description:
             update_result = dws.update_calendar_event_description(
