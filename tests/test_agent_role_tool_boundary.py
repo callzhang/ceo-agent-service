@@ -62,9 +62,12 @@ def test_codex_roles_scope_native_execution_and_select_service_tools(tmp_path, m
     make_consumer_agent_command(consumer, task_workspace=str(tmp_path / "task-workspace"))
     make_audit_agent_command(audit)
 
+    # Derek 2026-10-24: the Consumer inherits app connectors, plugins and every
+    # MCP server from the CLI home; Audit keeps them disabled.
+    for feature in ("apps", "plugins", "remote_plugin"):
+        assert f"features.{feature}=false" in audit
+        assert not any(o.startswith(f"features.{feature}=") for o in consumer)
     for command in (consumer, audit):
-        assert "features.apps=false" in command
-        assert "features.plugins=false" in command
         assert "features.computer_use=false" in command
         for feature in (
             "browser_use", "browser_use_external", "browser_use_full_cdp_access",
@@ -82,18 +85,23 @@ def test_codex_roles_scope_native_execution_and_select_service_tools(tmp_path, m
         assert "features.code_mode.enabled=false" not in command
         assert 'features.code_mode.direct_only_tool_namespaces=["mcp__agent_cli", "mcp__ai_services"]' in command
         assert sum(option.startswith("features.code_mode.direct_only_tool_namespaces=") for option in command) == 1
-        assert "mcp_servers.node_repl.enabled=false" in command
-        assert "mcp_servers.plaud.enabled=false" in command
-        assert "mcp_servers.future_executor.enabled=false" in command
         assert "mcp_servers.memory_connector.enabled=false" not in command
         assert 'approval_policy="never"' in command
-        assert 'mcp_servers.memory_connector.enabled_tools=["user_get", "memory_recall", "memory_get", "timeline_get"]' in command
-        assert 'mcp_servers.xiaoqing_interview.enabled_tools=["search_candidates", "get_dashboard_stats", "get_interview_context", "download_attachment", "list_candidate_interviews"]' in command
-        assert 'mcp_servers.ai_services.enabled_tools=["ocr_document"]' in command
         assert "mcp_servers.ai_services.enabled=false" not in command
         assert not any(option.startswith("tools.enabled_tools=") for option in command)
         assert "--dangerously-bypass-approvals-and-sandbox" not in command
         assert not any("execute_reviewed_read" in option for option in command)
+    for name in ("node_repl", "plaud", "future_executor"):
+        assert f"mcp_servers.{name}.enabled=false" in audit
+        assert f"mcp_servers.{name}.enabled=false" not in consumer
+        assert f'mcp_servers.{name}.default_tools_approval_mode="approve"' in consumer
+    assert 'mcp_servers.memory_connector.enabled_tools=["user_get", "memory_recall", "memory_get", "timeline_get"]' in audit
+    assert 'mcp_servers.ai_services.enabled_tools=["ocr_document"]' in audit
+    assert any(o.startswith("mcp_servers.xiaoqing_interview.enabled_tools=") for o in audit)
+    assert not any(".enabled_tools=" in o and not o.startswith("mcp_servers.agent_cli.")
+                   for o in consumer)
+    for name in ("memory_connector", "xiaoqing_interview", "ai_services"):
+        assert f'mcp_servers.{name}.default_tools_approval_mode="approve"' in consumer
     assert "--skip-git-repo-check" in consumer
     assert "features.shell_tool=true" in consumer
     assert "features.unified_exec=true" in consumer
@@ -145,7 +153,8 @@ def test_oa_consumer_can_handoff_ocr_bytes_inside_code_mode(tmp_path, monkeypatc
     # The same role-scoped MCP tools can now be composed in one V8 cell, so
     # the model never needs to receive and recopy a large base64 image.
     assert "features.code_mode.direct_only_tool_namespaces=[]" in consumer
-    assert 'mcp_servers.ai_services.enabled_tools=["ocr_document"]' in consumer
+    assert not any(o.startswith("mcp_servers.ai_services.enabled_tools=") for o in consumer)
+    assert 'mcp_servers.ai_services.default_tools_approval_mode="approve"' in consumer
     assert "mcp_servers.ai_services.enabled=false" not in consumer
     assert 'features.code_mode.excluded_tool_namespaces=[]' in consumer
     assert (
@@ -478,3 +487,64 @@ def test_codex_role_preserves_message_list_output(tmp_path, monkeypatch, role, r
     assert not any(value.startswith("tool_output_token_limit=") for value in command)
     assert command[-1] == "-"
     assert ("resume" in command) is resume
+
+
+def test_consumer_inherits_cli_home_servers_but_not_manifest_disabled_ones(
+    tmp_path, monkeypatch
+) -> None:
+    """A server the manifest disables stays off; every other local server is usable."""
+    home = tmp_path / "codex-home"
+    home.mkdir()
+    (home / "config.toml").write_text(
+        '[mcp_servers.figma_local]\ncommand = "/usr/bin/figma"\n'
+        '[mcp_servers.brightdata]\ncommand = "/usr/bin/npx"\n'
+        '[mcp_servers.cua_repl]\ncommand = "/usr/bin/cua"\n'
+        '[mcp_servers.computer-use]\ncommand = "/usr/bin/computer-use"\n',
+        encoding="utf-8",
+    )
+    monkeypatch.setenv("CODEX_HOME", str(home))
+    command = _codex_command()
+    command[-1:-1] = [
+        "-c", 'mcp_servers.cua_repl={"enabled" = false, "command" = "/usr/bin/false"}',
+        "-c", 'mcp_servers.brightdata={"enabled" = false, "command" = "/usr/bin/false"}',
+    ]
+
+    make_consumer_agent_command(command, task_workspace=str(tmp_path / "task-workspace"))
+
+    assert 'mcp_servers.figma_local.default_tools_approval_mode="approve"' in command
+    assert "mcp_servers.figma_local.enabled=false" not in command
+    for disabled in ("cua_repl", "brightdata"):
+        assert f"mcp_servers.{disabled}.enabled=false" not in command
+        assert not any(
+            o.startswith(f"mcp_servers.{disabled}.default_tools_approval_mode=")
+            for o in command
+        )
+    assert any(o.startswith('mcp_servers.cua_repl={"enabled" = false') for o in command)
+    # Desktop control is off even though the manifest does not name it.
+    assert "mcp_servers.computer-use.enabled=false" in command
+    assert not any(
+        o.startswith("mcp_servers.computer-use.default_tools_approval_mode=")
+        for o in command
+    )
+    # The fan-out and computer-use surfaces stay off for the Consumer too.
+    for feature in ("multi_agent", "computer_use", "browser_use"):
+        assert f"features.{feature}=false" in command
+
+
+def test_audit_command_is_unchanged_by_the_consumer_tool_surface(
+    tmp_path, monkeypatch
+) -> None:
+    home = tmp_path / "codex-home"
+    home.mkdir()
+    (home / "config.toml").write_text(
+        '[mcp_servers.figma_local]\ncommand = "/usr/bin/figma"\n', encoding="utf-8",
+    )
+    monkeypatch.setenv("CODEX_HOME", str(home))
+    audit = _codex_command()
+
+    make_audit_agent_command(audit)
+
+    assert "mcp_servers.figma_local.enabled=false" in audit
+    for feature in ("apps", "plugins", "remote_plugin", "multi_agent", "computer_use"):
+        assert f"features.{feature}=false" in audit
+    assert 'mcp_servers.memory_connector.enabled_tools=["user_get", "memory_recall", "memory_get", "timeline_get"]' in audit

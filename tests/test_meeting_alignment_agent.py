@@ -185,12 +185,24 @@ def test_meeting_runner_routes_compact_prompt_only_to_codex():
 def test_meeting_audit_uses_separate_read_only_bound_runtime_call():
     decision = MeetingAlignmentDecision.model_validate(valid_send_decision())
     digest = meeting_alignment_decision_digest(decision)
-    routed = FakeRoutedMeetingExecution(json.dumps({
+    audit_result = json.dumps({
         "outcome": "approve",
         "candidate_sha256": digest,
         "summary": "candidate is supported",
         "feedback": None,
-    }))
+    })
+    routed = FakeRoutedMeetingExecution("\n".join((
+        json.dumps({"type": "thread.started", "thread_id": "meeting-session"}),
+        json.dumps({
+            "type": "response_item",
+            "payload": {
+                "type": "message",
+                "role": "assistant",
+                "content": [{"type": "output_text", "text": audit_result}],
+            },
+        }),
+        json.dumps({"type": "turn.completed"}),
+    )))
     runner = MeetingAlignmentCodexRunner(routed_execution=routed)
 
     result = runner.audit(prompt="Review exact candidate", run_id=9, candidate_sha256=digest)

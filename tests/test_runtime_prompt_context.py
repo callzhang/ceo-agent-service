@@ -28,7 +28,11 @@ def test_context_uses_final_role_directory_and_declared_tools(monkeypatch):
     assert "Read the principal's events over an explicit time window" not in consumer
     assert "mcp__agent_cli__consumer_artifact_write" in consumer
     assert "mcp__agent_cli__consumer_artifact_write" not in audit
-    assert "mcp__exa__web_search_exa" in consumer
+    # The Consumer may call every tool of the servers in its command; Audit only
+    # the reviewed read tools.
+    assert "mcp__exa__*" in consumer
+    assert "mcp__exa__web_search_exa" in audit
+    assert "mcp__exa__*" not in audit
     assert "agent_cli.list_dingtalk_calendar_events" not in consumer
     assert "命令网络开启（可运行 dws）" in consumer
     assert "只读审核" in audit

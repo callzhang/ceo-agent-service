@@ -47,7 +47,24 @@ def declared_role_tools(role: str, route: RuntimeRoute, command: list[str]) -> d
             server = key.removeprefix("mcp_servers.").removesuffix(".enabled_tools")
             if configs.get(f"mcp_servers.{server}.enabled") != "false":
                 tools[server] = json.loads(value)
+    for server in unrestricted_role_servers(command):
+        tools.setdefault(server, ["*"])
     return tools
+
+
+def unrestricted_role_servers(command: list[str]) -> list[str]:
+    """MCP servers the role may call with every tool they offer (no enabled_tools list)."""
+    configs = _command_configs(command)
+    names = {
+        key.removeprefix("mcp_servers.").removesuffix(".default_tools_approval_mode")
+        for key in configs
+        if key.startswith("mcp_servers.") and key.endswith(".default_tools_approval_mode")
+    }
+    return sorted(
+        name for name in names
+        if f"mcp_servers.{name}.enabled_tools" not in configs
+        and configs.get(f"mcp_servers.{name}.enabled") != "false"
+    )
 
 
 def declared_thinking_effort(command: list[str]) -> str:
