@@ -614,9 +614,9 @@ def _check_agent_runs(
 
 def _check_runtime_attempt_invariants(db: sqlite3.Connection, violations: list[QualityIssue]) -> None:
     checks = {
-        "runtime_attempt_without_parent": f'select count(*) from ({RUNTIME_ATTEMPT_SQL}) a where a.agent_run_id is not null and not exists (select 1 from ({NATIVE_AGENT_RUN_SQL}) r where r.id=a.agent_run_id)',
+        "runtime_attempt_without_parent": f"select count(*) from ({RUNTIME_ATTEMPT_SQL}) a where a.agent_run_id is not null and not exists (select 1 from runs r where r.id=a.agent_run_id)",
         "multiple_active_runtime_attempts": f"select count(*) from (select workload_kind, workload_key from ({RUNTIME_ATTEMPT_SQL}) as agent_runtime_attempts where status in ('starting','running') group by workload_kind, workload_key having count(*)>1)",
-        "completed_runtime_attempt_without_final_run": f"select count(*) from ({RUNTIME_ATTEMPT_SQL}) a where a.status='completed' and a.agent_run_id is not null and not exists (select 1 from ({NATIVE_AGENT_RUN_SQL}) r where r.id=a.agent_run_id and r.status in ('completed','failed','unknown'))",
+        "completed_runtime_attempt_without_final_run": f"select count(*) from ({RUNTIME_ATTEMPT_SQL}) a where a.workload_kind='agent_run' and a.status='completed' and a.agent_run_id is not null and not exists (select 1 from runs r where r.id=a.agent_run_id and r.status in ('completed','failed','unknown'))",
     }
     for code, sql in checks.items():
         _add(violations, source="agent_runtime_attempts", code=code, count=_count(db, sql), severity="error", detail="runtime attempt invariant violated")

@@ -304,6 +304,63 @@ def test_quality_gate_runtime_attempt_invariants_use_persisted_rows(tmp_path):
     assert "unknown_effect_with_fallback_attempt" not in codes
 
 
+def test_quality_gate_runtime_attempt_invariants_follow_all_native_run_owners(tmp_path):
+    from app.quality_gate import _check_runtime_attempt_invariants
+
+    store = AutoReplyStore(tmp_path / "runtime-attempt-native-parent.sqlite3")
+    with store._connect() as db:
+        db.execute("pragma foreign_keys=off")
+        parent_ids = {}
+        for label, status in (("terminal", "completed"), ("nonterminal", "running")):
+            task = create_task(db, values={
+                "kind": "work_summary", "status": "completed",
+                "created_at": "2026-08-07 00:00:00", "updated_at": "2026-08-07 00:00:00",
+            }, parameters={})
+            run = create_run(db, values={
+                "task_id": task["id"], "status": status,
+                "created_at": "2026-08-07 00:00:00", "updated_at": "2026-08-07 00:00:00",
+            })
+            db.execute(
+                "insert into run_provenance(run_id,source_type) values(?, 'task_agent_runs')",
+                (run["id"],),
+            )
+            parent_ids[label] = run["id"]
+
+        meeting_run = create_run(db, values={
+            "status": "ready_to_send",
+            "created_at": "2026-08-07 00:00:00", "updated_at": "2026-08-07 00:00:00",
+        })
+        db.execute(
+            "insert into run_provenance(run_id,source_type,job_id) values(?, 'meeting_alignment_runs', 1)",
+            (meeting_run["id"],),
+        )
+        parent_ids["meeting"] = meeting_run["id"]
+
+        attempts = (
+            ("agent_run", parent_ids["terminal"]),
+            ("agent_run", parent_ids["nonterminal"]),
+            ("meeting", parent_ids["meeting"]),
+            ("agent_run", 999999),
+        )
+        for attempt_number, (workload_kind, parent_id) in enumerate(
+            attempts, start=1
+        ):
+            insert_run(db, "agent_runtime_attempts", {
+                "parent_id": parent_id,
+                "workload_kind": workload_kind,
+                "workload_key": str(parent_id),
+                "attempt_number": attempt_number,
+                "status": "completed",
+            })
+
+        violations = []
+        _check_runtime_attempt_invariants(db, violations)
+
+    counts = {issue.code: issue.count for issue in violations}
+    assert counts["runtime_attempt_without_parent"] == 1
+    assert counts["completed_runtime_attempt_without_final_run"] == 2
+
+
 def test_quality_gate_covers_every_runtime_attempt_invariant_with_persisted_rows(tmp_path):
     seeders = {
         "runtime_attempt_without_parent": [
