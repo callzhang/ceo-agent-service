@@ -14614,6 +14614,175 @@ class AutoReplyStore(LogicalRunStoreMixin, ReviewedCandidateStoreMixin):
             ).fetchone()
             return self._meeting_alignment_job_from_row(row) if row else None
 
+    def request_failed_meeting_audit_recovery(
+        self, job_id: int, *, expected_candidate_sha256: str,
+    ) -> MeetingAlignmentJob | None:
+        """Queue one independent Audit of an unchanged failed Meeting candidate."""
+        import hmac
+        from app.meeting_alignment_models import (
+            MeetingAlignmentDecision,
+            meeting_alignment_decision_digest,
+            meeting_decision_audit_is_approved,
+        )
+
+        current = self.get_meeting_alignment_job(job_id)
+        if (
+            current is None or current.status != "failed" or current.locked_at
+            or current.send_result_json != "{}" or current.decision_json == "{}"
+        ):
+            return None
+        try:
+            error = json.loads(current.error)
+            raw_decision = json.loads(current.decision_json)
+            decision = MeetingAlignmentDecision.model_validate(raw_decision)
+        except (TypeError, ValueError, json.JSONDecodeError):
+            return None
+        if (
+            not isinstance(error, dict) or error.get("kind") != "meeting_target"
+            or not isinstance(raw_decision, dict) or "_service_audit" in raw_decision
+            or meeting_decision_audit_is_approved(current.decision_json)
+            or not expected_candidate_sha256
+            or not hmac.compare_digest(
+                meeting_alignment_decision_digest(decision),
+                expected_candidate_sha256,
+            )
+            or decision.action != "send" or decision.target is None
+            or decision.sensitive_private_message is not None
+            or decision.final_message != current.final_message
+        ):
+            return None
+        target_kind = (
+            "group" if decision.target.kind == "group"
+            else "user" if decision.target.direct_user_id
+            else "open_user"
+        )
+        target_id = (
+            decision.target.conversation_id if target_kind == "group"
+            else decision.target.direct_user_id or decision.target.open_dingtalk_id
+        )
+        if not target_id or (decision.target.kind, target_id) != (
+            current.target_kind, current.target_id,
+        ):
+            return None
+        delivery_key = self.resolve_meeting_alignment_delivery_key(
+            f"meeting-alignment:{current.id}:{current.meeting_id}",
+            target_kind=target_kind,
+            target_id=target_id,
+        )
+        marker = json.dumps({
+            "kind": "meeting_audit_recovery_requested",
+            "message": "Audit the unchanged failed Meeting candidate only.",
+            "candidate_sha256": expected_candidate_sha256,
+        }, ensure_ascii=False, sort_keys=True)
+        with self._immediate_write_transaction() as db:
+            row = db.execute(
+                f"""update tasks as meeting_alignment_jobs
+                   set {task8_set_parts('meeting_alignment_jobs', {}, update_sql={'status': "'retry'", 'locked_at': 'null', 'available_at': "''", 'error': '?', 'updated_at': 'current_timestamp'}, payload_source='meeting_alignment_jobs.payload_json').sql}  where meeting_alignment_jobs.record_type='meeting_alignment_jobs'
+                     and cast(meeting_alignment_jobs.legacy_key as integer)=?
+                     and {task20_column('meeting_alignment_jobs', 'status')}='failed'
+                     and {task20_column('meeting_alignment_jobs', 'locked_at')} is null
+                     and {task20_column('meeting_alignment_jobs', 'decision_json')}=?
+                     and {task20_column('meeting_alignment_jobs', 'source_json')}=?
+                     and {task20_column('meeting_alignment_jobs', 'target_kind')}=?
+                     and {task20_column('meeting_alignment_jobs', 'target_id')}=?
+                     and {task20_column('meeting_alignment_jobs', 'final_message')}=?
+                     and {task20_column('meeting_alignment_jobs', 'error')}=?
+                     and {task20_column('meeting_alignment_jobs', 'send_result_json')}='{{}}'
+                     and not exists (
+                       select 1 from ({OUTBOUND_POSTFIX_RECEIPT_SQL})
+                       where channel='dingtalk' and delivery_key=?
+                     )
+                   returning {task8_meeting_returning()}""",
+                (marker, job_id, current.decision_json, current.source_json,
+                 current.target_kind, current.target_id, current.final_message,
+                 current.error, delivery_key),
+            ).fetchone()
+            return self._meeting_alignment_job_from_row(row) if row else None
+
+    def complete_failed_meeting_audit_recovery(
+        self, job: MeetingAlignmentJob, *, audited_decision_json: str | None,
+        approved: bool, error: str = "",
+    ) -> MeetingAlignmentJob | None:
+        """CAS the exact audit-only result; approve alone re-enters delivery."""
+        from app.meeting_alignment_models import (
+            MeetingAlignmentDecision,
+            meeting_alignment_decision_digest,
+            meeting_decision_audit_is_approved,
+        )
+
+        try:
+            original = MeetingAlignmentDecision.model_validate_json(job.decision_json)
+            audited_payload = (
+                json.loads(audited_decision_json)
+                if audited_decision_json is not None else None
+            )
+            if isinstance(audited_payload, dict):
+                audited_payload = {
+                    key: value for key, value in audited_payload.items()
+                    if key != "_service_audit"
+                }
+            audited = (
+                MeetingAlignmentDecision.model_validate(audited_payload)
+                if audited_payload is not None else original
+            )
+        except (TypeError, ValueError):
+            return None
+        original_digest = meeting_alignment_decision_digest(original)
+        if (
+            meeting_alignment_decision_digest(audited) != original_digest
+            or original.model_dump(mode="json") != audited.model_dump(mode="json")
+            or (approved and (
+                audited_decision_json is None
+                or not meeting_decision_audit_is_approved(audited_decision_json)
+            ))
+            or (approved and error)
+            or (not approved and not error)
+            or job.status != "processing"
+            or job.send_result_json != "{}"
+        ):
+            return None
+        next_status = "ready_to_send" if approved else "failed"
+        target_kind = "group" if original.target and original.target.kind == "group" else "user"
+        target_id = (
+            original.target.conversation_id if target_kind == "group"
+            else (original.target.direct_user_id or original.target.open_dingtalk_id)
+            if original.target else ""
+        )
+        binding_kind = (
+            "group" if target_kind == "group"
+            else "user" if original.target and original.target.direct_user_id
+            else "open_user"
+        )
+        delivery_key = self.resolve_meeting_alignment_delivery_key(
+            f"meeting-alignment:{job.id}:{job.meeting_id}",
+            target_kind=binding_kind,
+            target_id=target_id,
+        )
+        with self._immediate_write_transaction() as db:
+            row = db.execute(
+                f"""update tasks as meeting_alignment_jobs
+                   set {task8_set_parts('meeting_alignment_jobs', {}, update_sql={'status': '?', 'locked_at': 'null', 'available_at': "''", 'decision_json': '?', 'error': '?', 'updated_at': 'current_timestamp'}, payload_source='meeting_alignment_jobs.payload_json').sql}  where meeting_alignment_jobs.record_type='meeting_alignment_jobs'
+                     and cast(meeting_alignment_jobs.legacy_key as integer)=?
+                     and {task20_column('meeting_alignment_jobs', 'status')}='processing'
+                     and {task20_column('meeting_alignment_jobs', 'locked_at')}=?
+                     and {task20_column('meeting_alignment_jobs', 'decision_json')}=?
+                     and {task20_column('meeting_alignment_jobs', 'source_json')}=?
+                     and {task20_column('meeting_alignment_jobs', 'target_kind')}=?
+                     and {task20_column('meeting_alignment_jobs', 'target_id')}=?
+                     and {task20_column('meeting_alignment_jobs', 'final_message')}=?
+                     and {task20_column('meeting_alignment_jobs', 'error')}=?
+                     and {task20_column('meeting_alignment_jobs', 'send_result_json')}='{{}}'
+                     and (?!='ready_to_send' or not exists (
+                       select 1 from ({OUTBOUND_POSTFIX_RECEIPT_SQL})
+                       where channel='dingtalk' and delivery_key=?
+                     ))
+                   returning {task8_meeting_returning()}""",
+                (next_status, audited_decision_json or job.decision_json, error, job.id, job.locked_at,
+                 job.decision_json, job.source_json, job.target_kind, job.target_id,
+                 job.final_message, job.error, next_status, delivery_key),
+            ).fetchone()
+            return self._meeting_alignment_job_from_row(row) if row else None
+
 
 
 
