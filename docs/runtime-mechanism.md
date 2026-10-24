@@ -1972,6 +1972,8 @@ Console Attention 同时投影当前队列故障和当前有效、已通过 Audi
 5. 外发消息是否只形成一条 `sent_replies` 投影，其他 run 是否只追加 observer；
 6. Workers、Attention 和质量门是否只统计 current projection，而不是历史物理行。
 
+质量门对「反馈没有结案」的处理见 `docs/architecture.md`：已重跑且全部动作已验证的手动反馈是提示，不是错误。
+
 典型错误链是“多个入口生成多个 task → 各自反馈和执行 → 一个 task 成功后其他 task 仍运行”。
 修复目标是稳定业务身份、唯一当前投影和动作幂等；不得通过删除历史 run、修改旧 tool event、
 按人员姓名硬编码跳过发送，或重新引入应用层命令/证据审核来掩盖重复执行。

@@ -1025,6 +1025,13 @@ Attempt 详情页默认展示 `reply_attempt` 的 current projection，并允许
    read-only 分类、receipt 格式或所谓“未知效果”推断业务是否完成。
 5. Attention、Workers 和质量门只统计 current projection；History 展示旧 task、旧 run 和失败状态，原始过程按需从可用的原生来源读取。
 
+质量门的「反馈没有结案」（`feedback_events / unresolved`，Derek 2026-10-24 批准）：没结案的反馈算错误，
+但同时满足下列全部条件的手动反馈改为提示 `acted_unresolved`，不再让 Status 变 degraded——
+key 是 `manual:<attempt 编号>`；该 attempt 在反馈到达之后又有一轮候选执行（执行创建时间不早于反馈）；
+该执行状态为 `done`，至少一个动作已 `verified` 且没有未验证的动作；反馈从未被重新打开。
+原因：结案要代码、Skill 或配置证据，纯操作性重跑（重新审批）不产生这些证据。提示只说明反馈没有被晾着，
+不说明重跑做对了；反馈记录本身仍是待处理，结案流程、Audit 和系统执行都不变。其他反馈（含用户 👎）照旧算错误。
+
 失败 Reply task 的 Attention 诊断读取该任务当前执行代的最新 run，展示原始 `source_code`
 （没有时使用 `code`）、来源与明确标注为「Agent 说明」的 `reported_summary`。旧代或无法
 解析的诊断不替换任务自己的错误。展示这些字段不证明外部操作已执行，不改变拒绝、重试、

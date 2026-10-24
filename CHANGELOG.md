@@ -1,5 +1,10 @@
 # Changelog
 
+## 2026-10-24 — 已执行的手动反馈不再让 Status 变 degraded
+
+- **质量门的「反馈没有结案」分两类**（Derek 2026-10-24 批准，单独提交）：手动反馈（`manual:<attempt>`）在反馈到达之后又重跑了一轮、该轮执行 `done` 且所有动作已 `verified`、并且从未被重新打开时，改为提示 `acted_unresolved`；其余仍是错误。此前 5 条这样的反馈（15716、15718、15719、15869、15810）让 Status 一直 degraded，而结案需要代码、Skill 或配置证据，重跑审批不产生这些。
+- 反馈记录不动、仍是待处理；提示不证明重跑做对了。
+
 ## 2026-10-24 — 会议结论不再由服务写 Memory
 
 - **去掉会议结论的服务写入**（Derek 2026-10-24：任务那一路去掉后，会议这一路不应是另一条路径）：删除 `app/meeting_memory_write.py`、服务自己注册的 OAuth 客户端 `app/memory_connector_client.py` 和 `authorize-memory-connector` 命令、`meeting-memory-write` 健康组件、`--meeting-memory-workers` / `CEO_MEETING_MEMORY_WORKERS`、`scan-meetings-once` 里的入队与写入、控制台 Status 的 `meeting_memory_health` 卡片、Attention 的 `meeting_memory_write_failed` 和部署排空对会议 Memory 租约的计数。
