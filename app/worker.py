@@ -2838,7 +2838,7 @@ class DingTalkAutoReplyWorker:
             return {}
         receipts = {row["action_identity"]: row for row in self.store.list_verified_candidate_actions(task.id)}
         for action in plan.actions:
-            if action.capability != "dingtalk-oa" or action.operation not in ("approve", "reject", "revert_task", "redirect_task", "comment"):
+            if action.capability != "dingtalk-oa" or action.operation not in ("approve", "reject", "revert_task", "redirect_task", "append_task", "comment"):
                 continue
             receipt = receipts.get(action.action_identity)
             if receipt is None:

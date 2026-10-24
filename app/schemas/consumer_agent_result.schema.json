@@ -293,6 +293,7 @@
                   "reject",
                   "revert_task",
                   "redirect_task",
+                  "append_task",
                   "comment"
                 ]
               }
@@ -329,7 +330,8 @@
                   "approve",
                   "reject",
                   "revert_task",
-                  "redirect_task"
+                  "redirect_task",
+                  "append_task"
                 ]
               }
             },
@@ -415,6 +417,39 @@
                 },
                 "required": [
                   "to_actioner_id"
+                ]
+              }
+            }
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "capability": {
+                "const": "dingtalk-oa"
+              },
+              "operation": {
+                "enum": [
+                  "append_task"
+                ]
+              }
+            },
+            "required": [
+              "capability",
+              "operation"
+            ]
+          },
+          "then": {
+            "properties": {
+              "target": {
+                "properties": {
+                  "appender_user_id": {
+                    "pattern": "\\S",
+                    "type": "string"
+                  }
+                },
+                "required": [
+                  "appender_user_id"
                 ]
               }
             }

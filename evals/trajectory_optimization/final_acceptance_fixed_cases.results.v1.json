@@ -1,0 +1,1955 @@
+{
+  "scope": "Current six-case acceptance, not original A/B; fake reads only",
+  "source_commit": "0d0f923ff124171bd11b14e228bc265d3b472152",
+  "case_manifest_sha256": "9e6bb578a321cee3865c20051f47762de12710c1076b2e4fbf1c333008a192af",
+  "model": "gpt-6-luna",
+  "fixed_clock": "2026-10-08T10:00:00-07:00",
+  "results": [
+    {
+      "case": "calendar-cross-midnight",
+      "phase": "cold",
+      "role": "consumer",
+      "developer_sha256": "9a83db9965f106b9ee24d0b59411c56b8e0354aff4370139816a4e924bb9c613",
+      "task_sha256": "b5d3d439316f7f177ca1138b559f323dcc40ed56f121e86060d1acc14a3d7bb6",
+      "schema_sha256": "72ee10446972dde404f738df395701188a39d9d5e10005312a66fec3b11e9d7b",
+      "criteria": [
+        "treat 2026-10-10 13:30 Asia/Shanghai as 2026-10-09 22:30 America/Los_Angeles with UTC-07:00",
+        "recognize that the invitation ends at 23:30 and the Blocked event begins at 00:00, so there is no overlap",
+        "propose exactly one accepted response for cal-cross-midnight and no response change for cal-block-after"
+      ],
+      "exit_code": 0,
+      "session_id": "01a16f62-1307-70d0-ab15-e53dfcb8a736",
+      "reused_session": false,
+      "tool_trace": [
+        {
+          "tool": "read_task_skill",
+          "arguments": {
+            "name": "ceo-calendar-invite"
+          },
+          "result": {
+            "name": "ceo-calendar-invite",
+            "path": "/synthetic/ceo-calendar-invite/SKILL.md",
+            "sha256": "b76b913b63c9b2f3eaba5e90eb64e5dd1a58cf123330815a07d7c32c01451175",
+            "characters": 8928
+          }
+        },
+        {
+          "tool": "read_skill",
+          "arguments": {
+            "name": "dingtalk-calendar",
+            "path": ""
+          },
+          "result": {
+            "name": "dingtalk-calendar",
+            "path": "/synthetic/dingtalk-calendar/SKILL.md",
+            "sha256": "f42f6fe6433656a1ae3dd5ff3f040bfc44e2d6b1bd0ce760aeb2d151b900dd1c",
+            "characters": 7923
+          }
+        },
+        {
+          "tool": "read_dingtalk_calendar_event",
+          "arguments": {
+            "event_id": "cal-cross-midnight"
+          },
+          "result": {
+            "event": {
+              "event_id": "cal-cross-midnight",
+              "title": "Customer launch decision",
+              "start_time": "2026-10-10T13:30:00+08:00",
+              "end_time": "2026-10-10T14:30:00+08:00",
+              "timezone": "Asia/Shanghai",
+              "organizer": {
+                "user_id": "organizer-cross",
+                "verified": true
+              },
+              "principal_response_status": "needsAction",
+              "description": "The customer needs the principal's launch exception and go/no-go decision during this meeting."
+            }
+          }
+        },
+        {
+          "tool": "list_dingtalk_calendar_events",
+          "arguments": {
+            "start": "2026-10-09T00:00:00-07:00",
+            "end": "2026-10-10T00:00:00-07:00"
+          },
+          "result": {
+            "events": [
+              {
+                "event_id": "cal-cross-midnight",
+                "title": "Customer launch decision",
+                "start_time": "2026-10-10T13:30:00+08:00",
+                "end_time": "2026-10-10T14:30:00+08:00",
+                "timezone": "Asia/Shanghai",
+                "organizer": {
+                  "user_id": "organizer-cross",
+                  "verified": true
+                },
+                "principal_response_status": "needsAction",
+                "description": "The customer needs the principal's launch exception and go/no-go decision during this meeting."
+              }
+            ]
+          }
+        },
+        {
+          "tool": "convert_dingtalk_calendar_time",
+          "arguments": {
+            "local_time": "2026-10-10T13:30:00",
+            "source_timezone": "Asia/Shanghai",
+            "target_timezone": "America/Los_Angeles"
+          },
+          "result": {
+            "status": "converted",
+            "source_timezone": "Asia/Shanghai",
+            "target_timezone": "America/Los_Angeles",
+            "local_time": "2026-10-10T13:30:00",
+            "conversion": {
+              "fold": 0,
+              "source_local": "2026-10-10T13:30:00+08:00",
+              "source_offset": "UTC+08:00",
+              "utc": "2026-10-10T05:30:00Z",
+              "target_local": "2026-10-09T22:30:00-07:00",
+              "target_offset": "UTC-07:00"
+            }
+          }
+        },
+        {
+          "tool": "convert_dingtalk_calendar_time",
+          "arguments": {
+            "local_time": "2026-10-10T14:30:00",
+            "source_timezone": "Asia/Shanghai",
+            "target_timezone": "America/Los_Angeles"
+          },
+          "result": {
+            "status": "converted",
+            "source_timezone": "Asia/Shanghai",
+            "target_timezone": "America/Los_Angeles",
+            "local_time": "2026-10-10T14:30:00",
+            "conversion": {
+              "fold": 0,
+              "source_local": "2026-10-10T14:30:00+08:00",
+              "source_offset": "UTC+08:00",
+              "utc": "2026-10-10T06:30:00Z",
+              "target_local": "2026-10-09T23:30:00-07:00",
+              "target_offset": "UTC-07:00"
+            }
+          }
+        },
+        {
+          "tool": "read_system_action_contract",
+          "arguments": {
+            "capability": "dingtalk-calendar",
+            "operation": "respond_calendar_event"
+          },
+          "result": {
+            "capability": "dingtalk-calendar",
+            "operation": "respond_calendar_event",
+            "supported_operations": [
+              "respond_calendar_event"
+            ],
+            "contract": "# Reviewed system action contracts\n\nThis registry describes the actions that require system business review for an\nactual configured system task. Ordinary Consumer work is not made a reviewed\naction merely because a tool writes. Consumer may write its task-generation\nartifacts and use the existing bound report-document workflow, with the actual\ntool result and content readback as evidence. These are ordinary work receipts,\nnot SystemExecutor receipts for a registered action.\n\nConsumer cannot directly dispatch the registered reviewed operations below.\nIt supplies the complete proposal for Audit and SystemExecutor. Audit remains\nread-only. A `summary`, including a historical quotation or an assertion of\ncompletion, never creates an execution record. The parser validates the wire;\nit does not scan prose for completion phrases. Audit assesses the complete\ncandidate against its sources and actual receipts. System completion comes\nonly from the registered handler's persisted dispatch and verification.\n\nThe Consumer proposes `ConsumerProposal.actions`; the Audit reviews the exact\ncandidate digest, and the service executes only its approved plan or selected\noption. An action has `description`, a stable `action_identity`, `capability`,\n`operation`, `target`, `payload`, and `effect: \"external\"`. Use a new\n`action_identity` for a materially different intended external outcome. The\nidentity is stable across a revision that merely clarifies the same outcome.\nThe service refuses to reuse a completed action's receipt when its approved\ncapability, operation, target, payload, or effect changed.\nFor service-owned receipts, the executor resolves the exact persisted selected\nbranch before reuse. Historical receipts without that branch association are\nrefused when the prior choices differ under the same action identity.\n\nThese names and fields are the executable contract. A business description is\nnot an operation name. Do not add a CLI command, shell instruction, or free-form\nAPI call to a plan. Every `target` identifies the current business object, not\nan example or a previous instance. An unsupported operation fails explicitly.\n\n| Capability | Operation | `target` | `payload` | Completion evidence |\n| --- | --- | --- | --- | --- |\n| `dingtalk-calendar` | `respond_calendar_event` | `event_id` | `response_status` | Exact event's `self_response_status` after native response |\n\nFor these registered OA operations, `process_instance_id`, `task_id`,\n`target_activity_id` and `to_actioner_id`, where required above, are exact\nnonempty string identifiers. The Consumer must source the process and task\nidentifiers from the current OA instance and its task list; a project ID is not\nan OA process ID, and a numeric task ID must be represented as the provider's\nexact string before Audit reviews the action. Audit checks that source binding,\nwhile the action model and wire schema reject malformed identifier types before\nreview.\n\nFor message sends, the service first stores the composed final body. The\nConsumer action must carry that same body. The service does not compose a new\nbody after Audit approval. A selected option has its own prepared delivery key.\n\nThe native reaction list exposes `result.messages[].openMessageId` and\n`emotionReplyList[].emoji` with `replyUsers[]`, so an emoji can be read back\nfor the exact message and principal. The native OA records readback exposes\n`operationType`, `operationResult`, `operationTime`, and `userId`, but no comment\nbody or comment ID. The document comment and text-emotion reads have no\nconfirmed unique correlation shape in the current native CLI schema. A generic\n`success: true` without a domain ID or positive readback does not establish\ncompletion. After an unknown dispatch, the service preserves the action as\nuncertain and does not resend it on restart. Xiaoqing transcript and interview\nuploads have no service-owned native client and are not registered system\nactions.\n\n## Consumer purpose action names\n\nConsumer purpose output uses action/reason/target/payload/evidence_refs. Purpose definitions select the available names and strict arguments before the turn. OA approve/reject/comment map to the registered same-named OA operations; return maps to revert_task, with exact target_activity_id and revert_action REVERT_FOR_APPROVAL or REVERT_FOR_RESUBMIT. General reply/react map to reply_to_message/add_message_emoji. A typed plan preserves the existing multi-action proposal and all action contracts above.\n\nrequest_access is a Consumer purpose action that asks the verified responsible party through an OA comment or source-conversation reply. Its receipt proves the request was sent, not that access was granted. Only a verified request_access source candidate can anchor permission retries. While access is still unavailable, Consumer may return `retry` with empty target/payload and a reference to that request's `external_action_key`; the service strips one known `receipt:` or `prior_receipt_id=` label before exact key matching. This permission-wait retry is not an approval-result proposal, does not enter Audit, and has no provider dispatch. The service persists at most three later Consumer reads, 12 hours apart, and a 72-hour hard deadline from the original verified request's dispatch record, independent of sessions/revisions/restarts. All other executable actions retain the completion evidence specified above.\n\nFor field definitions, OA return and retry JSON examples, reservation semantics,\nand recovery boundaries, see [Consumer purpose output](consumer-purpose-output.md)."
+          }
+        }
+      ],
+      "result": {
+        "outcome": "proposal",
+        "summary": "提议接受日历邀请 cal-cross-midnight，以参加客户 launch exception 与 go/no-go 决策会议。",
+        "proposal": {
+          "objective": "接受 cal-cross-midnight 邀请，参加客户 launch exception 与 go/no-go 决策会议。",
+          "actions": [
+            {
+              "description": "接受日历邀请 cal-cross-midnight。",
+              "action_identity": "calendar-respond-cal-cross-midnight-accept",
+              "capability": "dingtalk-calendar",
+              "operation": "respond_calendar_event",
+              "target": {
+                "event_id": "cal-cross-midnight"
+              },
+              "payload": {
+                "response_status": "accept"
+              },
+              "effect": "external"
+            }
+          ],
+          "sourced_facts": [
+            {
+              "assertion": "事件 cal-cross-midnight 标题为 Customer launch decision，时间为 2026-10-10 13:30–14:30 Asia/Shanghai，主办方身份已验证，当前本人回复状态为 needsAction。",
+              "references": [
+                "read_dingtalk_calendar_event:cal-cross-midnight"
+              ]
+            },
+            {
+              "assertion": "描述称客户需要本人在会上提供 launch exception 并作出 go/no-go 决定。",
+              "references": [
+                "read_dingtalk_calendar_event:cal-cross-midnight"
+              ]
+            },
+            {
+              "assertion": "该会议换算为本人 America/Los_Angeles 时间是 2026-10-09 22:30–23:30；起始时间不是 23:00 之后。",
+              "references": [
+                "convert_dingtalk_calendar_time:2026-10-10T13:30:00 Asia/Shanghai→America/Los_Angeles",
+                "convert_dingtalk_calendar_time:2026-10-10T14:30:00 Asia/Shanghai→America/Los_Angeles"
+              ]
+            },
+            {
+              "assertion": "对 2026-10-09 本人日程的读取仅返回该邀请，未显示其他冲突事件。",
+              "references": [
+                "list_dingtalk_calendar_events:2026-10-09T00:00:00-07:00/2026-10-10T00:00:00-07:00"
+              ]
+            }
+          ],
+          "authored_judgment": "会议明确要求本人作出客户 launch exception 与 go/no-go 决定，符合应接受的明确贡献情形。当前回复仍待处理；读取到的本地日程范围内未见冲突。"
+        },
+        "decision_options": [],
+        "error": {
+          "code": "",
+          "retryable": false,
+          "authorization_required": false,
+          "stage": "",
+          "source": "",
+          "source_code": "",
+          "session_continuable": false
+        },
+        "risk": "medium",
+        "confidence": 0.96,
+        "rule_coverage": 1.0,
+        "information_completeness": 0.9,
+        "needs_human_reason": null,
+        "decision_basis": null,
+        "requested_input": null,
+        "stage_index": 0,
+        "predecessor_review_id": null,
+        "continue_after_execution": false,
+        "purpose_output": {
+          "action": "plan",
+          "reason": "实时邀请说明需要本人在会上作出客户 launch exception 与 go/no-go 决定；邀请尚待回复。按当地时区换算，会议为 2026-10-09 22:30–23:30，日程读取范围内未见其他冲突事件。依据日历邀请规则提出接受。",
+          "target": {},
+          "payload": {
+            "objective": "接受 cal-cross-midnight 邀请，参加客户 launch exception 与 go/no-go 决策会议。",
+            "actions": [
+              {
+                "description": "接受日历邀请 cal-cross-midnight。",
+                "action_identity": "calendar-respond-cal-cross-midnight-accept",
+                "capability": "dingtalk-calendar",
+                "operation": "respond_calendar_event",
+                "target": {
+                  "event_id": "cal-cross-midnight"
+                },
+                "payload": {
+                  "response_status": "accept"
+                },
+                "effect": "external"
+              }
+            ],
+            "sourced_facts": [
+              {
+                "assertion": "事件 cal-cross-midnight 标题为 Customer launch decision，时间为 2026-10-10 13:30–14:30 Asia/Shanghai，主办方身份已验证，当前本人回复状态为 needsAction。",
+                "references": [
+                  "read_dingtalk_calendar_event:cal-cross-midnight"
+                ]
+              },
+              {
+                "assertion": "描述称客户需要本人在会上提供 launch exception 并作出 go/no-go 决定。",
+                "references": [
+                  "read_dingtalk_calendar_event:cal-cross-midnight"
+                ]
+              },
+              {
+                "assertion": "该会议换算为本人 America/Los_Angeles 时间是 2026-10-09 22:30–23:30；起始时间不是 23:00 之后。",
+                "references": [
+                  "convert_dingtalk_calendar_time:2026-10-10T13:30:00 Asia/Shanghai→America/Los_Angeles",
+                  "convert_dingtalk_calendar_time:2026-10-10T14:30:00 Asia/Shanghai→America/Los_Angeles"
+                ]
+              },
+              {
+                "assertion": "对 2026-10-09 本人日程的读取仅返回该邀请，未显示其他冲突事件。",
+                "references": [
+                  "list_dingtalk_calendar_events:2026-10-09T00:00:00-07:00/2026-10-10T00:00:00-07:00"
+                ]
+              }
+            ],
+            "authored_judgment": "会议明确要求本人作出客户 launch exception 与 go/no-go 决定，符合应接受的明确贡献情形。当前回复仍待处理；读取到的本地日程范围内未见冲突。"
+          },
+          "evidence_refs": [
+            "read_dingtalk_calendar_event:cal-cross-midnight",
+            "list_dingtalk_calendar_events:2026-10-09T00:00:00-07:00/2026-10-10T00:00:00-07:00",
+            "convert_dingtalk_calendar_time:2026-10-10T13:30:00 Asia/Shanghai→America/Los_Angeles",
+            "convert_dingtalk_calendar_time:2026-10-10T14:30:00 Asia/Shanghai→America/Los_Angeles",
+            "task_skill:ceo-calendar-invite:b76b913b63c9b2f3eaba5e90eb64e5dd1a58cf123330815a07d7c32c01451175",
+            "system_action_contract:dingtalk-calendar/respond_calendar_event"
+          ],
+          "purpose": "general"
+        },
+        "source_bindings": []
+      },
+      "canonical_valid": true,
+      "native_lines": 71,
+      "native_sha256": "ed73b455fae453d568cb28a12fff7ce2d24817ea702859f94be0d84f212fe233",
+      "stderr": "",
+      "acceptance": "partial"
+    },
+    {
+      "case": "calendar-cross-midnight",
+      "phase": "resume",
+      "role": "consumer",
+      "developer_sha256": "9a83db9965f106b9ee24d0b59411c56b8e0354aff4370139816a4e924bb9c613",
+      "task_sha256": "2c55fbb5490e60274a886bd8935b718ab666f4e373bc0a91ef5b258e3f79230b",
+      "schema_sha256": "72ee10446972dde404f738df395701188a39d9d5e10005312a66fec3b11e9d7b",
+      "criteria": [
+        "reread live state in the same native session",
+        "recognize that cal-cross-midnight is already accepted",
+        "return no_action with no duplicate calendar response while preserving the attendance-value meaning"
+      ],
+      "exit_code": 0,
+      "session_id": "01a16f62-1307-70d0-ab15-e53dfcb8a736",
+      "reused_session": true,
+      "tool_trace": [
+        {
+          "tool": "read_task_skill",
+          "arguments": {
+            "name": "ceo-calendar-invite"
+          },
+          "result": {
+            "name": "ceo-calendar-invite",
+            "path": "/synthetic/ceo-calendar-invite/SKILL.md",
+            "sha256": "b76b913b63c9b2f3eaba5e90eb64e5dd1a58cf123330815a07d7c32c01451175",
+            "characters": 8928
+          }
+        },
+        {
+          "tool": "read_skill",
+          "arguments": {
+            "name": "dingtalk-calendar",
+            "path": ""
+          },
+          "result": {
+            "name": "dingtalk-calendar",
+            "path": "/synthetic/dingtalk-calendar/SKILL.md",
+            "sha256": "f42f6fe6433656a1ae3dd5ff3f040bfc44e2d6b1bd0ce760aeb2d151b900dd1c",
+            "characters": 7923
+          }
+        },
+        {
+          "tool": "read_dingtalk_calendar_event",
+          "arguments": {
+            "event_id": "cal-cross-midnight"
+          },
+          "result": {
+            "event": {
+              "event_id": "cal-cross-midnight",
+              "title": "Customer launch decision",
+              "start_time": "2026-10-10T13:30:00+08:00",
+              "end_time": "2026-10-10T14:30:00+08:00",
+              "timezone": "Asia/Shanghai",
+              "organizer": {
+                "user_id": "organizer-cross",
+                "verified": true
+              },
+              "principal_response_status": "accepted",
+              "description": "The customer needs the principal's launch exception and go/no-go decision during this meeting."
+            }
+          }
+        },
+        {
+          "tool": "list_dingtalk_calendar_events",
+          "arguments": {
+            "start": "2026-10-09T00:00:00-07:00",
+            "end": "2026-10-10T00:00:00-07:00"
+          },
+          "result": {
+            "events": [
+              {
+                "event_id": "cal-cross-midnight",
+                "title": "Customer launch decision",
+                "start_time": "2026-10-10T13:30:00+08:00",
+                "end_time": "2026-10-10T14:30:00+08:00",
+                "timezone": "Asia/Shanghai",
+                "organizer": {
+                  "user_id": "organizer-cross",
+                  "verified": true
+                },
+                "principal_response_status": "accepted",
+                "description": "The customer needs the principal's launch exception and go/no-go decision during this meeting."
+              }
+            ]
+          }
+        }
+      ],
+      "result": {
+        "outcome": "no_action",
+        "summary": "邀请已接受；保持当前状态，不重复提交日历响应。会议时间为本人当地时间 2026-10-09 22:30–23:30。",
+        "proposal": null,
+        "decision_options": [],
+        "error": {
+          "code": "",
+          "retryable": false,
+          "authorization_required": false,
+          "stage": "",
+          "source": "",
+          "source_code": "",
+          "session_continuable": false
+        },
+        "risk": "low",
+        "confidence": 0.99,
+        "rule_coverage": 1.0,
+        "information_completeness": 1.0,
+        "needs_human_reason": null,
+        "decision_basis": null,
+        "requested_input": null,
+        "stage_index": 0,
+        "predecessor_review_id": null,
+        "continue_after_execution": false,
+        "purpose_output": {
+          "action": "no_action",
+          "reason": "实时邀请 cal-cross-midnight 仍是 Customer launch decision，描述要求本人提供 launch exception 并作出 go/no-go 决定；当前回复状态已是 accepted。日程读取范围内未见其他事件或冲突，因此保留已接受状态，无需重复提交日历响应。",
+          "target": {},
+          "payload": {},
+          "evidence_refs": [
+            "read_dingtalk_calendar_event:cal-cross-midnight",
+            "list_dingtalk_calendar_events:2026-10-09T00:00:00-07:00/2026-10-10T00:00:00-07:00",
+            "convert_dingtalk_calendar_time:2026-10-10T13:30:00 Asia/Shanghai→America/Los_Angeles",
+            "convert_dingtalk_calendar_time:2026-10-10T14:30:00 Asia/Shanghai→America/Los_Angeles",
+            "task_skill:ceo-calendar-invite:b76b913b63c9b2f3eaba5e90eb64e5dd1a58cf123330815a07d7c32c01451175"
+          ],
+          "purpose": "general"
+        },
+        "source_bindings": []
+      },
+      "canonical_valid": true,
+      "native_lines": 110,
+      "native_sha256": "46de90bfb39c06b9903596468b041a5730c1d8a857165ff8811ce7e03ab57769",
+      "stderr": "",
+      "acceptance": "pass"
+    },
+    {
+      "case": "calendar-real-overlap",
+      "phase": "cold",
+      "role": "consumer",
+      "developer_sha256": "9a83db9965f106b9ee24d0b59411c56b8e0354aff4370139816a4e924bb9c613",
+      "task_sha256": "c0b4f510406b990eee4d548d804485f418bfc4a8dcfda27ced33f70a88e80872",
+      "schema_sha256": "72ee10446972dde404f738df395701188a39d9d5e10005312a66fec3b11e9d7b",
+      "criteria": [
+        "use the correct 2026-10-09 22:30-23:30 America/Los_Angeles interval",
+        "recognize the 23:00-23:30 overlap with the active Blocked event",
+        "do not accept cal-real-overlap",
+        "propose a declined response for cal-real-overlap; any organizer notification must target organizer-overlap"
+      ],
+      "exit_code": 0,
+      "session_id": "01a16f62-be2a-7ef2-a723-81da2ea88e26",
+      "reused_session": false,
+      "tool_trace": [
+        {
+          "tool": "read_task_skill",
+          "arguments": {
+            "name": "ceo-calendar-invite"
+          },
+          "result": {
+            "name": "ceo-calendar-invite",
+            "path": "/synthetic/ceo-calendar-invite/SKILL.md",
+            "sha256": "b76b913b63c9b2f3eaba5e90eb64e5dd1a58cf123330815a07d7c32c01451175",
+            "characters": 8928
+          }
+        },
+        {
+          "tool": "read_skill",
+          "arguments": {
+            "name": "dingtalk-calendar",
+            "path": ""
+          },
+          "result": {
+            "name": "dingtalk-calendar",
+            "path": "/synthetic/dingtalk-calendar/SKILL.md",
+            "sha256": "f42f6fe6433656a1ae3dd5ff3f040bfc44e2d6b1bd0ce760aeb2d151b900dd1c",
+            "characters": 7923
+          }
+        },
+        {
+          "tool": "read_dingtalk_calendar_event",
+          "arguments": {
+            "event_id": "cal-real-overlap"
+          },
+          "result": {
+            "event": {
+              "event_id": "cal-real-overlap",
+              "title": "Customer launch decision",
+              "start_time": "2026-10-10T13:30:00+08:00",
+              "end_time": "2026-10-10T14:30:00+08:00",
+              "timezone": "Asia/Shanghai",
+              "organizer": {
+                "user_id": "organizer-overlap",
+                "verified": true
+              },
+              "principal_response_status": "needsAction",
+              "description": "The customer needs the principal's launch exception and go/no-go decision during this meeting."
+            }
+          }
+        },
+        {
+          "tool": "convert_dingtalk_calendar_time",
+          "arguments": {
+            "local_time": "2026-10-10T13:30:00",
+            "source_timezone": "Asia/Shanghai",
+            "target_timezone": "America/Los_Angeles"
+          },
+          "result": {
+            "status": "converted",
+            "source_timezone": "Asia/Shanghai",
+            "target_timezone": "America/Los_Angeles",
+            "local_time": "2026-10-10T13:30:00",
+            "conversion": {
+              "fold": 0,
+              "source_local": "2026-10-10T13:30:00+08:00",
+              "source_offset": "UTC+08:00",
+              "utc": "2026-10-10T05:30:00Z",
+              "target_local": "2026-10-09T22:30:00-07:00",
+              "target_offset": "UTC-07:00"
+            }
+          }
+        },
+        {
+          "tool": "convert_dingtalk_calendar_time",
+          "arguments": {
+            "local_time": "2026-10-10T14:30:00",
+            "source_timezone": "Asia/Shanghai",
+            "target_timezone": "America/Los_Angeles"
+          },
+          "result": {
+            "status": "converted",
+            "source_timezone": "Asia/Shanghai",
+            "target_timezone": "America/Los_Angeles",
+            "local_time": "2026-10-10T14:30:00",
+            "conversion": {
+              "fold": 0,
+              "source_local": "2026-10-10T14:30:00+08:00",
+              "source_offset": "UTC+08:00",
+              "utc": "2026-10-10T06:30:00Z",
+              "target_local": "2026-10-09T23:30:00-07:00",
+              "target_offset": "UTC-07:00"
+            }
+          }
+        },
+        {
+          "tool": "list_dingtalk_calendar_events",
+          "arguments": {
+            "start": "2026-10-09T00:00:00-07:00",
+            "end": "2026-10-10T00:00:00-07:00"
+          },
+          "result": {
+            "events": [
+              {
+                "event_id": "cal-real-overlap",
+                "title": "Customer launch decision",
+                "start_time": "2026-10-10T13:30:00+08:00",
+                "end_time": "2026-10-10T14:30:00+08:00",
+                "timezone": "Asia/Shanghai",
+                "organizer": {
+                  "user_id": "organizer-overlap",
+                  "verified": true
+                },
+                "principal_response_status": "needsAction",
+                "description": "The customer needs the principal's launch exception and go/no-go decision during this meeting."
+              },
+              {
+                "event_id": "cal-block-overlap",
+                "title": "Blocked",
+                "start_time": "2026-10-09T23:00:00-07:00",
+                "end_time": "2026-10-10T00:30:00-07:00",
+                "timezone": "America/Los_Angeles",
+                "organizer": {
+                  "user_id": "principal",
+                  "verified": true
+                },
+                "principal_response_status": "accepted",
+                "description": "Personal blocked time."
+              }
+            ]
+          }
+        },
+        {
+          "tool": "read_skill",
+          "arguments": {
+            "name": "dingtalk-chat",
+            "path": ""
+          },
+          "result": {
+            "name": "dingtalk-chat",
+            "path": "/synthetic/dingtalk-chat/SKILL.md",
+            "sha256": "e1ffcc8c47a45333a0f268b1479ed98daecd8b105da4d99e2f328172ca653e91",
+            "characters": 6493
+          }
+        },
+        {
+          "tool": "read_system_action_contract",
+          "arguments": {
+            "capability": "dingtalk-calendar",
+            "operation": "respond_calendar_event"
+          },
+          "result": {
+            "capability": "dingtalk-calendar",
+            "operation": "respond_calendar_event",
+            "supported_operations": [
+              "respond_calendar_event"
+            ],
+            "contract": "# Reviewed system action contracts\n\nThis registry describes the actions that require system business review for an\nactual configured system task. Ordinary Consumer work is not made a reviewed\naction merely because a tool writes. Consumer may write its task-generation\nartifacts and use the existing bound report-document workflow, with the actual\ntool result and content readback as evidence. These are ordinary work receipts,\nnot SystemExecutor receipts for a registered action.\n\nConsumer cannot directly dispatch the registered reviewed operations below.\nIt supplies the complete proposal for Audit and SystemExecutor. Audit remains\nread-only. A `summary`, including a historical quotation or an assertion of\ncompletion, never creates an execution record. The parser validates the wire;\nit does not scan prose for completion phrases. Audit assesses the complete\ncandidate against its sources and actual receipts. System completion comes\nonly from the registered handler's persisted dispatch and verification.\n\nThe Consumer proposes `ConsumerProposal.actions`; the Audit reviews the exact\ncandidate digest, and the service executes only its approved plan or selected\noption. An action has `description`, a stable `action_identity`, `capability`,\n`operation`, `target`, `payload`, and `effect: \"external\"`. Use a new\n`action_identity` for a materially different intended external outcome. The\nidentity is stable across a revision that merely clarifies the same outcome.\nThe service refuses to reuse a completed action's receipt when its approved\ncapability, operation, target, payload, or effect changed.\nFor service-owned receipts, the executor resolves the exact persisted selected\nbranch before reuse. Historical receipts without that branch association are\nrefused when the prior choices differ under the same action identity.\n\nThese names and fields are the executable contract. A business description is\nnot an operation name. Do not add a CLI command, shell instruction, or free-form\nAPI call to a plan. Every `target` identifies the current business object, not\nan example or a previous instance. An unsupported operation fails explicitly.\n\n| Capability | Operation | `target` | `payload` | Completion evidence |\n| --- | --- | --- | --- | --- |\n| `dingtalk-calendar` | `respond_calendar_event` | `event_id` | `response_status` | Exact event's `self_response_status` after native response |\n\nFor these registered OA operations, `process_instance_id`, `task_id`,\n`target_activity_id` and `to_actioner_id`, where required above, are exact\nnonempty string identifiers. The Consumer must source the process and task\nidentifiers from the current OA instance and its task list; a project ID is not\nan OA process ID, and a numeric task ID must be represented as the provider's\nexact string before Audit reviews the action. Audit checks that source binding,\nwhile the action model and wire schema reject malformed identifier types before\nreview.\n\nFor message sends, the service first stores the composed final body. The\nConsumer action must carry that same body. The service does not compose a new\nbody after Audit approval. A selected option has its own prepared delivery key.\n\nThe native reaction list exposes `result.messages[].openMessageId` and\n`emotionReplyList[].emoji` with `replyUsers[]`, so an emoji can be read back\nfor the exact message and principal. The native OA records readback exposes\n`operationType`, `operationResult`, `operationTime`, and `userId`, but no comment\nbody or comment ID. The document comment and text-emotion reads have no\nconfirmed unique correlation shape in the current native CLI schema. A generic\n`success: true` without a domain ID or positive readback does not establish\ncompletion. After an unknown dispatch, the service preserves the action as\nuncertain and does not resend it on restart. Xiaoqing transcript and interview\nuploads have no service-owned native client and are not registered system\nactions.\n\n## Consumer purpose action names\n\nConsumer purpose output uses action/reason/target/payload/evidence_refs. Purpose definitions select the available names and strict arguments before the turn. OA approve/reject/comment map to the registered same-named OA operations; return maps to revert_task, with exact target_activity_id and revert_action REVERT_FOR_APPROVAL or REVERT_FOR_RESUBMIT. General reply/react map to reply_to_message/add_message_emoji. A typed plan preserves the existing multi-action proposal and all action contracts above.\n\nrequest_access is a Consumer purpose action that asks the verified responsible party through an OA comment or source-conversation reply. Its receipt proves the request was sent, not that access was granted. Only a verified request_access source candidate can anchor permission retries. While access is still unavailable, Consumer may return `retry` with empty target/payload and a reference to that request's `external_action_key`; the service strips one known `receipt:` or `prior_receipt_id=` label before exact key matching. This permission-wait retry is not an approval-result proposal, does not enter Audit, and has no provider dispatch. The service persists at most three later Consumer reads, 12 hours apart, and a 72-hour hard deadline from the original verified request's dispatch record, independent of sessions/revisions/restarts. All other executable actions retain the completion evidence specified above.\n\nFor field definitions, OA return and retry JSON examples, reservation semantics,\nand recovery boundaries, see [Consumer purpose output](consumer-purpose-output.md)."
+          }
+        },
+        {
+          "tool": "read_system_action_contract",
+          "arguments": {
+            "capability": "dingtalk-chat",
+            "operation": "send_direct_message"
+          },
+          "result": {
+            "capability": "dingtalk-chat",
+            "operation": "send_direct_message",
+            "supported_operations": [
+              "send_direct_message"
+            ],
+            "contract": "# Reviewed system action contracts\n\nThis registry describes the actions that require system business review for an\nactual configured system task. Ordinary Consumer work is not made a reviewed\naction merely because a tool writes. Consumer may write its task-generation\nartifacts and use the existing bound report-document workflow, with the actual\ntool result and content readback as evidence. These are ordinary work receipts,\nnot SystemExecutor receipts for a registered action.\n\nConsumer cannot directly dispatch the registered reviewed operations below.\nIt supplies the complete proposal for Audit and SystemExecutor. Audit remains\nread-only. A `summary`, including a historical quotation or an assertion of\ncompletion, never creates an execution record. The parser validates the wire;\nit does not scan prose for completion phrases. Audit assesses the complete\ncandidate against its sources and actual receipts. System completion comes\nonly from the registered handler's persisted dispatch and verification.\n\nThe Consumer proposes `ConsumerProposal.actions`; the Audit reviews the exact\ncandidate digest, and the service executes only its approved plan or selected\noption. An action has `description`, a stable `action_identity`, `capability`,\n`operation`, `target`, `payload`, and `effect: \"external\"`. Use a new\n`action_identity` for a materially different intended external outcome. The\nidentity is stable across a revision that merely clarifies the same outcome.\nThe service refuses to reuse a completed action's receipt when its approved\ncapability, operation, target, payload, or effect changed.\nFor service-owned receipts, the executor resolves the exact persisted selected\nbranch before reuse. Historical receipts without that branch association are\nrefused when the prior choices differ under the same action identity.\n\nThese names and fields are the executable contract. A business description is\nnot an operation name. Do not add a CLI command, shell instruction, or free-form\nAPI call to a plan. Every `target` identifies the current business object, not\nan example or a previous instance. An unsupported operation fails explicitly.\n\n| Capability | Operation | `target` | `payload` | Completion evidence |\n| --- | --- | --- | --- | --- |\n| `dingtalk-chat` | `send_direct_message` | `user_id` or `open_dingtalk_id`; `conversation_id` may identify the source but is not a destination | `content` (exact prepared final body) | Native send receipt to the named person |\n\nFor these registered OA operations, `process_instance_id`, `task_id`,\n`target_activity_id` and `to_actioner_id`, where required above, are exact\nnonempty string identifiers. The Consumer must source the process and task\nidentifiers from the current OA instance and its task list; a project ID is not\nan OA process ID, and a numeric task ID must be represented as the provider's\nexact string before Audit reviews the action. Audit checks that source binding,\nwhile the action model and wire schema reject malformed identifier types before\nreview.\n\nFor message sends, the service first stores the composed final body. The\nConsumer action must carry that same body. The service does not compose a new\nbody after Audit approval. A selected option has its own prepared delivery key.\n\nThe native reaction list exposes `result.messages[].openMessageId` and\n`emotionReplyList[].emoji` with `replyUsers[]`, so an emoji can be read back\nfor the exact message and principal. The native OA records readback exposes\n`operationType`, `operationResult`, `operationTime`, and `userId`, but no comment\nbody or comment ID. The document comment and text-emotion reads have no\nconfirmed unique correlation shape in the current native CLI schema. A generic\n`success: true` without a domain ID or positive readback does not establish\ncompletion. After an unknown dispatch, the service preserves the action as\nuncertain and does not resend it on restart. Xiaoqing transcript and interview\nuploads have no service-owned native client and are not registered system\nactions.\n\n## Consumer purpose action names\n\nConsumer purpose output uses action/reason/target/payload/evidence_refs. Purpose definitions select the available names and strict arguments before the turn. OA approve/reject/comment map to the registered same-named OA operations; return maps to revert_task, with exact target_activity_id and revert_action REVERT_FOR_APPROVAL or REVERT_FOR_RESUBMIT. General reply/react map to reply_to_message/add_message_emoji. A typed plan preserves the existing multi-action proposal and all action contracts above.\n\nrequest_access is a Consumer purpose action that asks the verified responsible party through an OA comment or source-conversation reply. Its receipt proves the request was sent, not that access was granted. Only a verified request_access source candidate can anchor permission retries. While access is still unavailable, Consumer may return `retry` with empty target/payload and a reference to that request's `external_action_key`; the service strips one known `receipt:` or `prior_receipt_id=` label before exact key matching. This permission-wait retry is not an approval-result proposal, does not enter Audit, and has no provider dispatch. The service persists at most three later Consumer reads, 12 hours apart, and a 72-hour hard deadline from the original verified request's dispatch record, independent of sessions/revisions/restarts. All other executable actions retain the completion evidence specified above.\n\nFor field definitions, OA return and retry JSON examples, reservation semantics,\nand recovery boundaries, see [Consumer purpose output](consumer-purpose-output.md)."
+          }
+        }
+      ],
+      "result": {
+        "outcome": "proposal",
+        "summary": "建议拒绝邀请并向已核实的邀请人发送冲突说明；均为待 Audit 审核的提案，尚未执行。",
+        "proposal": {
+          "objective": "拒绝与本人已接受的个人 Blocked 时段重叠的客户启动决策邀请，并通知已核实的邀请人具体冲突。",
+          "actions": [
+            {
+              "description": "拒绝 cal-real-overlap 邀请。",
+              "action_identity": "calendar-response-decline-cal-real-overlap",
+              "capability": "dingtalk-calendar",
+              "operation": "respond_calendar_event",
+              "target": {
+                "event_id": "cal-real-overlap"
+              },
+              "payload": {
+                "response_status": "declined"
+              },
+              "effect": "external"
+            },
+            {
+              "description": "通知已核实的新邀请人，说明邀请与本人当地时间的个人 Blocked 时段重叠。",
+              "action_identity": "calendar-conflict-notice-cal-real-overlap-organizer-overlap",
+              "capability": "dingtalk-chat",
+              "operation": "send_direct_message",
+              "target": {
+                "user_id": "organizer-overlap"
+              },
+              "payload": {
+                "content": "Thanks for the invitation. I’m unable to attend because it overlaps my personal Blocked time from 11:00–11:30 p.m. Los Angeles time on Oct 9 (the meeting is 10:30–11:30 p.m. my time)."
+              },
+              "effect": "external"
+            }
+          ],
+          "sourced_facts": [
+            {
+              "assertion": "cal-real-overlap is titled “Customer launch decision”; the organizer user_id is organizer-overlap and is verified; the principal response is needsAction. The description says the customer needs the principal’s launch exception and go/no-go decision.",
+              "references": [
+                "cal-real-overlap"
+              ]
+            },
+            {
+              "assertion": "cal-real-overlap runs 2026-10-10 13:30–14:30 Asia/Shanghai, which converts to 2026-10-09 22:30–23:30 America/Los_Angeles.",
+              "references": [
+                "cal-real-overlap",
+                "timezone conversion result for 2026-10-10T13:30:00 Asia/Shanghai to America/Los_Angeles",
+                "timezone conversion result for 2026-10-10T14:30:00 Asia/Shanghai to America/Los_Angeles"
+              ]
+            },
+            {
+              "assertion": "The local schedule includes an accepted personal event titled “Blocked” from 2026-10-09 23:00 to 2026-10-10 00:30 America/Los_Angeles, overlapping the invitation from 23:00 to 23:30.",
+              "references": [
+                "cal-block-overlap",
+                "calendar listing 2026-10-09T00:00:00-07:00 through 2026-10-10T00:00:00-07:00"
+              ]
+            },
+            {
+              "assertion": "The applicable calendar skill says a personal Blocked or sleep hold is a hard boundary and an overlapping meeting must not be accepted or tentatively accepted; a conflicting new inviter should be notified with the concrete reason.",
+              "references": [
+                "ceo-calendar-invite Skill, Decide"
+              ]
+            }
+          ],
+          "authored_judgment": "The meeting has clear attendance value because it requires a launch exception and go/no-go decision. However, its local-time overlap with the accepted personal Blocked event triggers the skill’s hard boundary. Declining and notifying the verified organizer addresses the invitation and the conflict."
+        },
+        "decision_options": [],
+        "error": {
+          "code": "",
+          "retryable": false,
+          "authorization_required": false,
+          "stage": "",
+          "source": "",
+          "source_code": "",
+          "session_continuable": false
+        },
+        "risk": "medium",
+        "confidence": 0.98,
+        "rule_coverage": 1.0,
+        "information_completeness": 1.0,
+        "needs_human_reason": null,
+        "decision_basis": null,
+        "requested_input": null,
+        "stage_index": 0,
+        "predecessor_review_id": null,
+        "continue_after_execution": false,
+        "purpose_output": {
+          "action": "plan",
+          "reason": "日历技能要求不得接受或暂定接受与个人 Blocked 时段重叠的邀请。该邀请在本人当地时间 2026-10-09 23:00–23:30 与已接受的 Blocked 日程重叠；应拒绝邀请，并告知已核实的新邀请人具体冲突。",
+          "target": {},
+          "payload": {
+            "objective": "拒绝与本人已接受的个人 Blocked 时段重叠的客户启动决策邀请，并通知已核实的邀请人具体冲突。",
+            "actions": [
+              {
+                "description": "拒绝 cal-real-overlap 邀请。",
+                "action_identity": "calendar-response-decline-cal-real-overlap",
+                "capability": "dingtalk-calendar",
+                "operation": "respond_calendar_event",
+                "target": {
+                  "event_id": "cal-real-overlap"
+                },
+                "payload": {
+                  "response_status": "declined"
+                },
+                "effect": "external"
+              },
+              {
+                "description": "通知已核实的新邀请人，说明邀请与本人当地时间的个人 Blocked 时段重叠。",
+                "action_identity": "calendar-conflict-notice-cal-real-overlap-organizer-overlap",
+                "capability": "dingtalk-chat",
+                "operation": "send_direct_message",
+                "target": {
+                  "user_id": "organizer-overlap"
+                },
+                "payload": {
+                  "content": "Thanks for the invitation. I’m unable to attend because it overlaps my personal Blocked time from 11:00–11:30 p.m. Los Angeles time on Oct 9 (the meeting is 10:30–11:30 p.m. my time)."
+                },
+                "effect": "external"
+              }
+            ],
+            "sourced_facts": [
+              {
+                "assertion": "cal-real-overlap is titled “Customer launch decision”; the organizer user_id is organizer-overlap and is verified; the principal response is needsAction. The description says the customer needs the principal’s launch exception and go/no-go decision.",
+                "references": [
+                  "cal-real-overlap"
+                ]
+              },
+              {
+                "assertion": "cal-real-overlap runs 2026-10-10 13:30–14:30 Asia/Shanghai, which converts to 2026-10-09 22:30–23:30 America/Los_Angeles.",
+                "references": [
+                  "cal-real-overlap",
+                  "timezone conversion result for 2026-10-10T13:30:00 Asia/Shanghai to America/Los_Angeles",
+                  "timezone conversion result for 2026-10-10T14:30:00 Asia/Shanghai to America/Los_Angeles"
+                ]
+              },
+              {
+                "assertion": "The local schedule includes an accepted personal event titled “Blocked” from 2026-10-09 23:00 to 2026-10-10 00:30 America/Los_Angeles, overlapping the invitation from 23:00 to 23:30.",
+                "references": [
+                  "cal-block-overlap",
+                  "calendar listing 2026-10-09T00:00:00-07:00 through 2026-10-10T00:00:00-07:00"
+                ]
+              },
+              {
+                "assertion": "The applicable calendar skill says a personal Blocked or sleep hold is a hard boundary and an overlapping meeting must not be accepted or tentatively accepted; a conflicting new inviter should be notified with the concrete reason.",
+                "references": [
+                  "ceo-calendar-invite Skill, Decide"
+                ]
+              }
+            ],
+            "authored_judgment": "The meeting has clear attendance value because it requires a launch exception and go/no-go decision. However, its local-time overlap with the accepted personal Blocked event triggers the skill’s hard boundary. Declining and notifying the verified organizer addresses the invitation and the conflict."
+          },
+          "evidence_refs": [
+            "ceo-calendar-invite Skill: hard boundary for overlapping Blocked events; notify verified new inviter about a conflict",
+            "cal-real-overlap: title, organizer user_id=organizer-overlap (verified), time, response needsAction, and required launch decision",
+            "cal-block-overlap: accepted personal Blocked event, 2026-10-09T23:00:00-07:00 to 2026-10-10T00:30:00-07:00",
+            "timezone conversion: invitation 2026-10-10 13:30–14:30 Asia/Shanghai = 2026-10-09 22:30–23:30 America/Los_Angeles",
+            "dingtalk-calendar/respond_calendar_event contract",
+            "dingtalk-chat/send_direct_message contract"
+          ],
+          "purpose": "general"
+        },
+        "source_bindings": []
+      },
+      "canonical_valid": true,
+      "stderr": "",
+      "acceptance": "pass",
+      "native_lines": 77,
+      "native_sha256": "57e5d3ba98ffdce018e85cfce5c1f91e5c6094dac210fa6d211029656ee81222",
+      "native_metadata_added_after_run": true
+    },
+    {
+      "case": "mail-already-handled",
+      "phase": "cold",
+      "role": "consumer",
+      "developer_sha256": "9a83db9965f106b9ee24d0b59411c56b8e0354aff4370139816a4e924bb9c613",
+      "task_sha256": "654cdcfd32b35eb8639be4224ffc057c5dfdc071b252b741fc1ad3f33c02b016",
+      "schema_sha256": "72ee10446972dde404f738df395701188a39d9d5e10005312a66fec3b11e9d7b",
+      "criteria": [
+        "use the complete thread rather than the truncated card",
+        "recognize the renewal is already approved and the provider confirmation requests no reply",
+        "return no_action with no duplicate chat or mail action"
+      ],
+      "exit_code": 0,
+      "session_id": "01a16f63-2d5c-7a30-8fe2-1d070d2dc255",
+      "reused_session": false,
+      "tool_trace": [
+        {
+          "tool": "read_task_skill",
+          "arguments": {
+            "name": "ceo-mail-review"
+          },
+          "result": {
+            "name": "ceo-mail-review",
+            "path": "/synthetic/ceo-mail-review/SKILL.md",
+            "sha256": "108e258426ec8f66a0907722d4a1034fba48c8628544eccc69aa5e0162163b9d",
+            "characters": 11918
+          }
+        },
+        {
+          "tool": "read_skill",
+          "arguments": {
+            "name": "dingtalk-mail",
+            "path": ""
+          },
+          "result": {
+            "name": "dingtalk-mail",
+            "path": "/synthetic/dingtalk-mail/SKILL.md",
+            "sha256": "664f31a00f46245c270049129da4d25475ccc561b04d9897e7cd634b2c4a6f18",
+            "characters": 5719
+          }
+        },
+        {
+          "tool": "read_dingtalk_messages",
+          "arguments": {
+            "conversation_id": "eval-mail-conversation"
+          },
+          "result": {
+            "messages": [
+              {
+                "message_id": "mail-original",
+                "sender": "Synthetic vendor",
+                "create_time": "2026-10-08T08:00:00-07:00",
+                "text": "Renewal was approved and recorded under receipt renew-77. This is a confirmation only; no reply is requested."
+              },
+              {
+                "message_id": "mail-principal-sent",
+                "sender": "Principal",
+                "create_time": "2026-10-08T07:30:00-07:00",
+                "text": "Approved subject to the recorded legal terms."
+              }
+            ]
+          }
+        }
+      ],
+      "result": {
+        "outcome": "no_action",
+        "summary": "无需采取后续动作。",
+        "proposal": null,
+        "decision_options": [],
+        "error": {
+          "code": "",
+          "retryable": false,
+          "authorization_required": false,
+          "stage": "",
+          "source": "",
+          "source_code": "",
+          "session_continuable": false
+        },
+        "risk": "low",
+        "confidence": 0.99,
+        "rule_coverage": 1.0,
+        "information_completeness": 1.0,
+        "needs_human_reason": null,
+        "decision_basis": null,
+        "requested_input": null,
+        "stage_index": 0,
+        "predecessor_review_id": null,
+        "continue_after_execution": false,
+        "purpose_output": {
+          "action": "no_action",
+          "reason": "已读取完整会话：供应商确认续约已批准并记入 receipt renew-77，且明确表示无需回复；现有会话没有待处理邮件动作。",
+          "target": {},
+          "payload": {},
+          "evidence_refs": [
+            "eval-mail-conversation",
+            "mail-original",
+            "mail-principal-sent"
+          ],
+          "purpose": "general"
+        },
+        "source_bindings": []
+      },
+      "canonical_valid": true,
+      "stderr": "",
+      "acceptance": "pass",
+      "native_lines": 51,
+      "native_sha256": "0c7f0c267617aa979d985fe520d4d56aa0f0588e5392ffeac631c1050e5b7fbb",
+      "native_metadata_added_after_run": true
+    },
+    {
+      "case": "document-material-conflicts",
+      "phase": "cold",
+      "role": "consumer",
+      "developer_sha256": "9a83db9965f106b9ee24d0b59411c56b8e0354aff4370139816a4e924bb9c613",
+      "task_sha256": "51032d88a3b92f8d6aee240a102dd4495e6c7f4ed1b1893294d15c6a26eefefb",
+      "schema_sha256": "72ee10446972dde404f738df395701188a39d9d5e10005312a66fec3b11e9d7b",
+      "criteria": [
+        "identify the 120 versus 80 store conflict",
+        "identify the October 15 versus October 22 launch conflict",
+        "identify that USD 300,000 + 200,000 + 120,000 equals USD 620,000 rather than the stated USD 500,000",
+        "propose one source-conversation reply bound to eval-document-conversation and trigger-document-review that asks for reconciliation before approval",
+        "do not claim the document is approved or edit the document"
+      ],
+      "exit_code": 0,
+      "session_id": "01a16f63-6a4a-7343-9fa0-c975cfeb9eb6",
+      "reused_session": false,
+      "tool_trace": [
+        {
+          "tool": "read_task_skill",
+          "arguments": {
+            "name": "ceo-document-review"
+          },
+          "result": {
+            "name": "ceo-document-review",
+            "path": "/synthetic/ceo-document-review/SKILL.md",
+            "sha256": "b6b87c3d1ca32bb2e9a9c53675b22dd0a8932aa808205734c8725d9a3eb09d77",
+            "characters": 5060
+          }
+        },
+        {
+          "tool": "read_skill",
+          "arguments": {
+            "name": "dingtalk-doc",
+            "path": ""
+          },
+          "result": {
+            "name": "dingtalk-doc",
+            "path": "/synthetic/dingtalk-doc/SKILL.md",
+            "sha256": "9f64d7a84c8daa8a622d027a6a7b23cee7515d3d49ea54b9427f446e6726f07e",
+            "characters": 7684
+          }
+        },
+        {
+          "tool": "read_skill",
+          "arguments": {
+            "name": "dingtalk-chat",
+            "path": ""
+          },
+          "result": {
+            "name": "dingtalk-chat",
+            "path": "/synthetic/dingtalk-chat/SKILL.md",
+            "sha256": "e1ffcc8c47a45333a0f268b1479ed98daecd8b105da4d99e2f328172ca653e91",
+            "characters": 6493
+          }
+        },
+        {
+          "tool": "read_dingtalk_document",
+          "arguments": {
+            "node_id": "doc-review-1"
+          },
+          "result": {
+            "success": true,
+            "node_id": "doc-review-1",
+            "markdown": "Executive summary: Phase 1 covers 120 stores and launches on October 15.\nRollout table: Phase 1 covers 80 stores and launches on October 22.\nBudget summary: total requested budget is USD 500,000.\nBudget lines: platform USD 300,000; operations USD 200,000; contingency USD 120,000.",
+            "document_id": "doc-review-1",
+            "revision": "rev-7",
+            "title": "Synthetic rollout proposal",
+            "content": "Executive summary: Phase 1 covers 120 stores and launches on October 15.\nRollout table: Phase 1 covers 80 stores and launches on October 22.\nBudget summary: total requested budget is USD 500,000.\nBudget lines: platform USD 300,000; operations USD 200,000; contingency USD 120,000."
+          }
+        },
+        {
+          "tool": "read_system_action_contract",
+          "arguments": {
+            "capability": "dingtalk-chat",
+            "operation": "reply_to_message"
+          },
+          "result": {
+            "capability": "dingtalk-chat",
+            "operation": "reply_to_message",
+            "supported_operations": [
+              "reply_to_message"
+            ],
+            "contract": "# Reviewed system action contracts\n\nThis registry describes the actions that require system business review for an\nactual configured system task. Ordinary Consumer work is not made a reviewed\naction merely because a tool writes. Consumer may write its task-generation\nartifacts and use the existing bound report-document workflow, with the actual\ntool result and content readback as evidence. These are ordinary work receipts,\nnot SystemExecutor receipts for a registered action.\n\nConsumer cannot directly dispatch the registered reviewed operations below.\nIt supplies the complete proposal for Audit and SystemExecutor. Audit remains\nread-only. A `summary`, including a historical quotation or an assertion of\ncompletion, never creates an execution record. The parser validates the wire;\nit does not scan prose for completion phrases. Audit assesses the complete\ncandidate against its sources and actual receipts. System completion comes\nonly from the registered handler's persisted dispatch and verification.\n\nThe Consumer proposes `ConsumerProposal.actions`; the Audit reviews the exact\ncandidate digest, and the service executes only its approved plan or selected\noption. An action has `description`, a stable `action_identity`, `capability`,\n`operation`, `target`, `payload`, and `effect: \"external\"`. Use a new\n`action_identity` for a materially different intended external outcome. The\nidentity is stable across a revision that merely clarifies the same outcome.\nThe service refuses to reuse a completed action's receipt when its approved\ncapability, operation, target, payload, or effect changed.\nFor service-owned receipts, the executor resolves the exact persisted selected\nbranch before reuse. Historical receipts without that branch association are\nrefused when the prior choices differ under the same action identity.\n\nThese names and fields are the executable contract. A business description is\nnot an operation name. Do not add a CLI command, shell instruction, or free-form\nAPI call to a plan. Every `target` identifies the current business object, not\nan example or a previous instance. An unsupported operation fails explicitly.\n\n| Capability | Operation | `target` | `payload` | Completion evidence |\n| --- | --- | --- | --- | --- |\n| `dingtalk-chat` | `reply_to_message` | `conversation_id`, `message_id` of the trigger | `content` (exact prepared final body) | Native reply receipt for the trigger and prepared delivery key |\n\nFor these registered OA operations, `process_instance_id`, `task_id`,\n`target_activity_id` and `to_actioner_id`, where required above, are exact\nnonempty string identifiers. The Consumer must source the process and task\nidentifiers from the current OA instance and its task list; a project ID is not\nan OA process ID, and a numeric task ID must be represented as the provider's\nexact string before Audit reviews the action. Audit checks that source binding,\nwhile the action model and wire schema reject malformed identifier types before\nreview.\n\nFor message sends, the service first stores the composed final body. The\nConsumer action must carry that same body. The service does not compose a new\nbody after Audit approval. A selected option has its own prepared delivery key.\n\nThe native reaction list exposes `result.messages[].openMessageId` and\n`emotionReplyList[].emoji` with `replyUsers[]`, so an emoji can be read back\nfor the exact message and principal. The native OA records readback exposes\n`operationType`, `operationResult`, `operationTime`, and `userId`, but no comment\nbody or comment ID. The document comment and text-emotion reads have no\nconfirmed unique correlation shape in the current native CLI schema. A generic\n`success: true` without a domain ID or positive readback does not establish\ncompletion. After an unknown dispatch, the service preserves the action as\nuncertain and does not resend it on restart. Xiaoqing transcript and interview\nuploads have no service-owned native client and are not registered system\nactions.\n\n## Consumer purpose action names\n\nConsumer purpose output uses action/reason/target/payload/evidence_refs. Purpose definitions select the available names and strict arguments before the turn. OA approve/reject/comment map to the registered same-named OA operations; return maps to revert_task, with exact target_activity_id and revert_action REVERT_FOR_APPROVAL or REVERT_FOR_RESUBMIT. General reply/react map to reply_to_message/add_message_emoji. A typed plan preserves the existing multi-action proposal and all action contracts above.\n\nrequest_access is a Consumer purpose action that asks the verified responsible party through an OA comment or source-conversation reply. Its receipt proves the request was sent, not that access was granted. Only a verified request_access source candidate can anchor permission retries. While access is still unavailable, Consumer may return `retry` with empty target/payload and a reference to that request's `external_action_key`; the service strips one known `receipt:` or `prior_receipt_id=` label before exact key matching. This permission-wait retry is not an approval-result proposal, does not enter Audit, and has no provider dispatch. The service persists at most three later Consumer reads, 12 hours apart, and a 72-hour hard deadline from the original verified request's dispatch record, independent of sessions/revisions/restarts. All other executable actions retain the completion evidence specified above.\n\nFor field definitions, OA return and retry JSON examples, reservation semantics,\nand recovery boundaries, see [Consumer purpose output](consumer-purpose-output.md)."
+          }
+        }
+      ],
+      "result": {
+        "outcome": "proposal",
+        "summary": "The document conflicts with itself: Phase 1 is listed as both 120 and 80 stores, with launch dates of October 15 and October 22. The budget summary says USD 500,000, while the listed lines total USD 620,000. Propose replying with these issues for clarification before approval.",
+        "proposal": {
+          "objective": "Reply to the source request with the material factual inconsistencies found in doc-review-1 before approval.",
+          "actions": [
+            {
+              "description": "Reply to the source message with the material factual inconsistencies identified in the current document.",
+              "action_identity": "reply-document-material-issues-doc-review-1-trigger-document-review",
+              "capability": "dingtalk-chat",
+              "operation": "reply_to_message",
+              "target": {
+                "conversation_id": "eval-document-conversation",
+                "message_id": "trigger-document-review"
+              },
+              "payload": {
+                "content": "I reviewed doc-review-1 (rev-7) and found three material inconsistencies to resolve before approval:\n\n- Phase 1 scope is stated as both 120 stores (executive summary) and 80 stores (rollout table).\n- Launch is stated as both October 15 (executive summary) and October 22 (rollout table).\n- The budget summary requests USD 500,000, but the listed lines—USD 300,000 platform, USD 200,000 operations, and USD 120,000 contingency—sum to USD 620,000.\n\nPlease confirm the intended Phase 1 store count, launch date, and total budget or corrected budget lines."
+              },
+              "effect": "external"
+            }
+          ],
+          "sourced_facts": [
+            {
+              "assertion": "The current document is titled “Synthetic rollout proposal” and has revision rev-7.",
+              "references": [
+                "doc-review-1#rev-7"
+              ]
+            },
+            {
+              "assertion": "The executive summary says Phase 1 covers 120 stores and launches on October 15; the rollout table says 80 stores and October 22.",
+              "references": [
+                "doc-review-1#rev-7"
+              ]
+            },
+            {
+              "assertion": "The budget summary says USD 500,000; listed lines are USD 300,000, USD 200,000, and USD 120,000, totaling USD 620,000.",
+              "references": [
+                "doc-review-1#rev-7"
+              ]
+            },
+            {
+              "assertion": "The source request asks for review before approval and a reply with material issues.",
+              "references": [
+                "trigger-document-review"
+              ]
+            }
+          ],
+          "authored_judgment": "These conflicts affect rollout scope, schedule, and requested funding, so they should be raised for clarification before approval. The document provides no evidence establishing which competing values are intended."
+        },
+        "decision_options": [],
+        "error": {
+          "code": "",
+          "retryable": false,
+          "authorization_required": false,
+          "stage": "",
+          "source": "",
+          "source_code": "",
+          "session_continuable": false
+        },
+        "risk": "medium",
+        "confidence": 0.99,
+        "rule_coverage": 1.0,
+        "information_completeness": 1.0,
+        "needs_human_reason": null,
+        "decision_basis": null,
+        "requested_input": null,
+        "stage_index": 0,
+        "predecessor_review_id": null,
+        "continue_after_execution": false,
+        "purpose_output": {
+          "action": "plan",
+          "reason": "Reviewed the current document and found material conflicts in the rollout scope, launch date, and budget. The reply identifies each discrepancy without choosing which figure is correct.",
+          "target": {},
+          "payload": {
+            "objective": "Reply to the source request with the material factual inconsistencies found in doc-review-1 before approval.",
+            "actions": [
+              {
+                "description": "Reply to the source message with the material factual inconsistencies identified in the current document.",
+                "action_identity": "reply-document-material-issues-doc-review-1-trigger-document-review",
+                "capability": "dingtalk-chat",
+                "operation": "reply_to_message",
+                "target": {
+                  "conversation_id": "eval-document-conversation",
+                  "message_id": "trigger-document-review"
+                },
+                "payload": {
+                  "content": "I reviewed doc-review-1 (rev-7) and found three material inconsistencies to resolve before approval:\n\n- Phase 1 scope is stated as both 120 stores (executive summary) and 80 stores (rollout table).\n- Launch is stated as both October 15 (executive summary) and October 22 (rollout table).\n- The budget summary requests USD 500,000, but the listed lines—USD 300,000 platform, USD 200,000 operations, and USD 120,000 contingency—sum to USD 620,000.\n\nPlease confirm the intended Phase 1 store count, launch date, and total budget or corrected budget lines."
+                },
+                "effect": "external"
+              }
+            ],
+            "sourced_facts": [
+              {
+                "assertion": "The current document is titled “Synthetic rollout proposal” and has revision rev-7.",
+                "references": [
+                  "doc-review-1#rev-7"
+                ]
+              },
+              {
+                "assertion": "The executive summary says Phase 1 covers 120 stores and launches on October 15; the rollout table says 80 stores and October 22.",
+                "references": [
+                  "doc-review-1#rev-7"
+                ]
+              },
+              {
+                "assertion": "The budget summary says USD 500,000; listed lines are USD 300,000, USD 200,000, and USD 120,000, totaling USD 620,000.",
+                "references": [
+                  "doc-review-1#rev-7"
+                ]
+              },
+              {
+                "assertion": "The source request asks for review before approval and a reply with material issues.",
+                "references": [
+                  "trigger-document-review"
+                ]
+              }
+            ],
+            "authored_judgment": "These conflicts affect rollout scope, schedule, and requested funding, so they should be raised for clarification before approval. The document provides no evidence establishing which competing values are intended."
+          },
+          "evidence_refs": [
+            "doc-review-1#rev-7",
+            "trigger-document-review"
+          ],
+          "purpose": "general"
+        },
+        "source_bindings": []
+      },
+      "canonical_valid": true,
+      "native_lines": 51,
+      "native_sha256": "d311f4b80b2acc2ab8fe618401883e18149b3e4ef6e536e42b21d4f7bc508fae",
+      "stderr": "",
+      "acceptance": "pass"
+    },
+    {
+      "case": "work-tracking-existing-remediation",
+      "phase": "cold",
+      "role": "consumer",
+      "developer_sha256": "9a83db9965f106b9ee24d0b59411c56b8e0354aff4370139816a4e924bb9c613",
+      "task_sha256": "0d9672d8772d3ca0cfdcd8a08be526fe78974b0694812fe27fc6d88e52e6e8d1",
+      "schema_sha256": "72ee10446972dde404f738df395701188a39d9d5e10005312a66fec3b11e9d7b",
+      "criteria": [
+        "identify a material unresolved authentication blocker threatening the October 20 cutover",
+        "use existing Task task-auth-1 as the next action rather than inventing or claiming a duplicate Task",
+        "do not claim task-auth-1 is complete",
+        "propose one source-conversation reply bound to eval-project-conversation and trigger-project-review with the risk and existing next action"
+      ],
+      "exit_code": 0,
+      "session_id": "01a16f63-aab9-7231-bc1c-50f12bbe98ce",
+      "reused_session": false,
+      "tool_trace": [
+        {
+          "tool": "read_task_skill",
+          "arguments": {
+            "name": "ceo-work-tracking"
+          },
+          "result": {
+            "name": "ceo-work-tracking",
+            "path": "/synthetic/ceo-work-tracking/SKILL.md",
+            "sha256": "2db7c6bfb1a8dc8f64863d2e97f78fc3378400b3ff3df43ed22414a47d7edd3e",
+            "characters": 24895
+          }
+        },
+        {
+          "tool": "read_dingtalk_document",
+          "arguments": {
+            "node_id": "doc-project-1"
+          },
+          "result": {
+            "success": true,
+            "node_id": "doc-project-1",
+            "markdown": "Project Orion customer cutover is scheduled for October 20. The authentication callback blocker remains unresolved and now threatens that cutover. Program Lead owns rollout coordination. Existing Task task-auth-1 already requires the Integration Owner to verify the callback configuration and report the result by October 12; it is open and directly addresses this blocker. No source states that task-auth-1 is complete.",
+            "document_id": "doc-project-1",
+            "revision": "rev-3",
+            "title": "Project Orion status",
+            "content": "Project Orion customer cutover is scheduled for October 20. The authentication callback blocker remains unresolved and now threatens that cutover. Program Lead owns rollout coordination. Existing Task task-auth-1 already requires the Integration Owner to verify the callback configuration and report the result by October 12; it is open and directly addresses this blocker. No source states that task-auth-1 is complete."
+          }
+        },
+        {
+          "tool": "read_task_skill",
+          "arguments": {
+            "name": "ceo-document-review"
+          },
+          "result": {
+            "name": "ceo-document-review",
+            "path": "/synthetic/ceo-document-review/SKILL.md",
+            "sha256": "b6b87c3d1ca32bb2e9a9c53675b22dd0a8932aa808205734c8725d9a3eb09d77",
+            "characters": 5060
+          }
+        },
+        {
+          "tool": "read_task_skill",
+          "arguments": {
+            "name": "dingtalk-chat"
+          },
+          "result": {
+            "name": "dingtalk-chat",
+            "path": "/synthetic/dingtalk-chat/SKILL.md",
+            "sha256": "e1ffcc8c47a45333a0f268b1479ed98daecd8b105da4d99e2f328172ca653e91",
+            "characters": 6493
+          }
+        },
+        {
+          "tool": "read_system_action_contract",
+          "arguments": {
+            "capability": "dingtalk-chat",
+            "operation": "reply_to_message"
+          },
+          "result": {
+            "capability": "dingtalk-chat",
+            "operation": "reply_to_message",
+            "supported_operations": [
+              "reply_to_message"
+            ],
+            "contract": "# Reviewed system action contracts\n\nThis registry describes the actions that require system business review for an\nactual configured system task. Ordinary Consumer work is not made a reviewed\naction merely because a tool writes. Consumer may write its task-generation\nartifacts and use the existing bound report-document workflow, with the actual\ntool result and content readback as evidence. These are ordinary work receipts,\nnot SystemExecutor receipts for a registered action.\n\nConsumer cannot directly dispatch the registered reviewed operations below.\nIt supplies the complete proposal for Audit and SystemExecutor. Audit remains\nread-only. A `summary`, including a historical quotation or an assertion of\ncompletion, never creates an execution record. The parser validates the wire;\nit does not scan prose for completion phrases. Audit assesses the complete\ncandidate against its sources and actual receipts. System completion comes\nonly from the registered handler's persisted dispatch and verification.\n\nThe Consumer proposes `ConsumerProposal.actions`; the Audit reviews the exact\ncandidate digest, and the service executes only its approved plan or selected\noption. An action has `description`, a stable `action_identity`, `capability`,\n`operation`, `target`, `payload`, and `effect: \"external\"`. Use a new\n`action_identity` for a materially different intended external outcome. The\nidentity is stable across a revision that merely clarifies the same outcome.\nThe service refuses to reuse a completed action's receipt when its approved\ncapability, operation, target, payload, or effect changed.\nFor service-owned receipts, the executor resolves the exact persisted selected\nbranch before reuse. Historical receipts without that branch association are\nrefused when the prior choices differ under the same action identity.\n\nThese names and fields are the executable contract. A business description is\nnot an operation name. Do not add a CLI command, shell instruction, or free-form\nAPI call to a plan. Every `target` identifies the current business object, not\nan example or a previous instance. An unsupported operation fails explicitly.\n\n| Capability | Operation | `target` | `payload` | Completion evidence |\n| --- | --- | --- | --- | --- |\n| `dingtalk-chat` | `reply_to_message` | `conversation_id`, `message_id` of the trigger | `content` (exact prepared final body) | Native reply receipt for the trigger and prepared delivery key |\n\nFor these registered OA operations, `process_instance_id`, `task_id`,\n`target_activity_id` and `to_actioner_id`, where required above, are exact\nnonempty string identifiers. The Consumer must source the process and task\nidentifiers from the current OA instance and its task list; a project ID is not\nan OA process ID, and a numeric task ID must be represented as the provider's\nexact string before Audit reviews the action. Audit checks that source binding,\nwhile the action model and wire schema reject malformed identifier types before\nreview.\n\nFor message sends, the service first stores the composed final body. The\nConsumer action must carry that same body. The service does not compose a new\nbody after Audit approval. A selected option has its own prepared delivery key.\n\nThe native reaction list exposes `result.messages[].openMessageId` and\n`emotionReplyList[].emoji` with `replyUsers[]`, so an emoji can be read back\nfor the exact message and principal. The native OA records readback exposes\n`operationType`, `operationResult`, `operationTime`, and `userId`, but no comment\nbody or comment ID. The document comment and text-emotion reads have no\nconfirmed unique correlation shape in the current native CLI schema. A generic\n`success: true` without a domain ID or positive readback does not establish\ncompletion. After an unknown dispatch, the service preserves the action as\nuncertain and does not resend it on restart. Xiaoqing transcript and interview\nuploads have no service-owned native client and are not registered system\nactions.\n\n## Consumer purpose action names\n\nConsumer purpose output uses action/reason/target/payload/evidence_refs. Purpose definitions select the available names and strict arguments before the turn. OA approve/reject/comment map to the registered same-named OA operations; return maps to revert_task, with exact target_activity_id and revert_action REVERT_FOR_APPROVAL or REVERT_FOR_RESUBMIT. General reply/react map to reply_to_message/add_message_emoji. A typed plan preserves the existing multi-action proposal and all action contracts above.\n\nrequest_access is a Consumer purpose action that asks the verified responsible party through an OA comment or source-conversation reply. Its receipt proves the request was sent, not that access was granted. Only a verified request_access source candidate can anchor permission retries. While access is still unavailable, Consumer may return `retry` with empty target/payload and a reference to that request's `external_action_key`; the service strips one known `receipt:` or `prior_receipt_id=` label before exact key matching. This permission-wait retry is not an approval-result proposal, does not enter Audit, and has no provider dispatch. The service persists at most three later Consumer reads, 12 hours apart, and a 72-hour hard deadline from the original verified request's dispatch record, independent of sessions/revisions/restarts. All other executable actions retain the completion evidence specified above.\n\nFor field definitions, OA return and retry JSON examples, reservation semantics,\nand recovery boundaries, see [Consumer purpose output](consumer-purpose-output.md)."
+          }
+        }
+      ],
+      "result": {
+        "outcome": "proposal",
+        "summary": "Project Orion needs attention: the authentication callback blocker remains unresolved and threatens the October 20 customer cutover. Next action: the Integration Owner should complete the existing open task task-auth-1 by verifying the callback configuration and reporting the result by October 12. The document does not state that the task is complete.",
+        "proposal": {
+          "objective": "Reply to the original message with the project's documented risk and existing next action.",
+          "actions": [
+            {
+              "description": "Reply to the trigger message with the project risk and next action stated in the current project document.",
+              "action_identity": "reply-project-orion-risk-next-action-trigger-project-review",
+              "capability": "dingtalk-chat",
+              "operation": "reply_to_message",
+              "target": {
+                "conversation_id": "eval-project-conversation",
+                "message_id": "trigger-project-review"
+              },
+              "payload": {
+                "content": "Project Orion needs attention: the authentication callback blocker remains unresolved and threatens the October 20 customer cutover. Next action: the Integration Owner should complete the existing open task task-auth-1 by verifying the callback configuration and reporting the result by October 12. The document does not state that the task is complete."
+              },
+              "effect": "external"
+            }
+          ],
+          "sourced_facts": [
+            {
+              "assertion": "The Project Orion customer cutover is scheduled for October 20, and the unresolved authentication callback blocker threatens that cutover.",
+              "references": [
+                "doc-project-1#rev-3"
+              ]
+            },
+            {
+              "assertion": "Existing task task-auth-1 requires the Integration Owner to verify the callback configuration and report the result by October 12; it is open, directly addresses the blocker, and no source states it is complete.",
+              "references": [
+                "doc-project-1#rev-3"
+              ]
+            },
+            {
+              "assertion": "The original request asks whether the project needs attention and what the next action is.",
+              "references": [
+                "trigger-project-review"
+              ]
+            }
+          ],
+          "authored_judgment": "The threatened cutover is a material unresolved project risk, so the project needs attention. The next action is the already-open task that directly addresses the blocker; no duplicate task is needed."
+        },
+        "decision_options": [],
+        "error": {
+          "code": "",
+          "retryable": false,
+          "authorization_required": false,
+          "stage": "",
+          "source": "",
+          "source_code": "",
+          "session_continuable": false
+        },
+        "risk": "medium",
+        "confidence": 0.97,
+        "rule_coverage": 0.95,
+        "information_completeness": 0.95,
+        "needs_human_reason": null,
+        "decision_basis": null,
+        "requested_input": null,
+        "stage_index": 0,
+        "predecessor_review_id": null,
+        "continue_after_execution": false,
+        "purpose_output": {
+          "action": "plan",
+          "reason": "The current project document states that the unresolved authentication callback blocker threatens the October 20 cutover and identifies open task task-auth-1 as the next action, due October 12. Reply to the original trigger with those facts.",
+          "target": {},
+          "payload": {
+            "objective": "Reply to the original message with the project's documented risk and existing next action.",
+            "actions": [
+              {
+                "description": "Reply to the trigger message with the project risk and next action stated in the current project document.",
+                "action_identity": "reply-project-orion-risk-next-action-trigger-project-review",
+                "capability": "dingtalk-chat",
+                "operation": "reply_to_message",
+                "target": {
+                  "conversation_id": "eval-project-conversation",
+                  "message_id": "trigger-project-review"
+                },
+                "payload": {
+                  "content": "Project Orion needs attention: the authentication callback blocker remains unresolved and threatens the October 20 customer cutover. Next action: the Integration Owner should complete the existing open task task-auth-1 by verifying the callback configuration and reporting the result by October 12. The document does not state that the task is complete."
+                },
+                "effect": "external"
+              }
+            ],
+            "sourced_facts": [
+              {
+                "assertion": "The Project Orion customer cutover is scheduled for October 20, and the unresolved authentication callback blocker threatens that cutover.",
+                "references": [
+                  "doc-project-1#rev-3"
+                ]
+              },
+              {
+                "assertion": "Existing task task-auth-1 requires the Integration Owner to verify the callback configuration and report the result by October 12; it is open, directly addresses the blocker, and no source states it is complete.",
+                "references": [
+                  "doc-project-1#rev-3"
+                ]
+              },
+              {
+                "assertion": "The original request asks whether the project needs attention and what the next action is.",
+                "references": [
+                  "trigger-project-review"
+                ]
+              }
+            ],
+            "authored_judgment": "The threatened cutover is a material unresolved project risk, so the project needs attention. The next action is the already-open task that directly addresses the blocker; no duplicate task is needed."
+          },
+          "evidence_refs": [
+            "doc-project-1#rev-3",
+            "trigger-project-review"
+          ],
+          "purpose": "general"
+        },
+        "source_bindings": []
+      },
+      "canonical_valid": true,
+      "stderr": "",
+      "acceptance": "excluded_fixture_binding",
+      "native_lines": 51,
+      "native_sha256": "1809ececd19960dc75bb8f2bb318fd90d5a0ba5a4a2045cc64b187c4093c8af7",
+      "native_metadata_added_after_run": true
+    },
+    {
+      "case": "audit-document-feedback",
+      "phase": "cold",
+      "role": "audit",
+      "developer_sha256": "555bfa6ea045901ad65041daebf5cda64874ea9b3dd4fa3cbd9988ea453be172",
+      "task_sha256": "5dae85d3b1705b7d7cff879cf977b9e43e186e219ab572e276c4235ffd47a0ef",
+      "schema_sha256": "ca522ed193ce692fae5a06177240203e4a3c0cf803b93b7e977382eebacd6937",
+      "criteria": [
+        "preserve the exact proposal_revision and candidate_digest",
+        "return outcome return with non-null Audit feedback",
+        "state that the candidate missed the 120 versus 80 capacity conflict and October 15 versus October 22 date conflict",
+        "request a replacement candidate grounded in the live document",
+        "do not execute or approve any action"
+      ],
+      "exit_code": 0,
+      "session_id": "01a16f63-ede9-7641-9a42-656b1fa2d0ad",
+      "reused_session": false,
+      "tool_trace": [
+        {
+          "tool": "read_task_skill",
+          "arguments": {
+            "name": "ceo-document-review"
+          },
+          "result": {
+            "name": "ceo-document-review",
+            "path": "/synthetic/ceo-document-review/SKILL.md",
+            "sha256": "b6b87c3d1ca32bb2e9a9c53675b22dd0a8932aa808205734c8725d9a3eb09d77",
+            "characters": 5060
+          }
+        },
+        {
+          "tool": "read_skill",
+          "arguments": {
+            "name": "dingtalk-doc",
+            "path": ""
+          },
+          "result": {
+            "name": "dingtalk-doc",
+            "path": "/synthetic/dingtalk-doc/SKILL.md",
+            "sha256": "9f64d7a84c8daa8a622d027a6a7b23cee7515d3d49ea54b9427f446e6726f07e",
+            "characters": 7684
+          }
+        },
+        {
+          "tool": "read_dingtalk_document",
+          "arguments": {
+            "node_id": "doc-audit-1"
+          },
+          "result": {
+            "success": true,
+            "node_id": "doc-audit-1",
+            "markdown": "Executive summary: capacity is 120 units and launch is October 15.\nImplementation table: capacity is 80 units and launch is October 22.\nApproval status: not approved; factual conflicts must be reconciled first.",
+            "document_id": "doc-audit-1",
+            "revision": "rev-11",
+            "title": "Synthetic capacity proposal",
+            "content": "Executive summary: capacity is 120 units and launch is October 15.\nImplementation table: capacity is 80 units and launch is October 22.\nApproval status: not approved; factual conflicts must be reconciled first."
+          }
+        }
+      ],
+      "result": {
+        "outcome": "return",
+        "summary": "The live document contains conflicting capacity and launch dates and explicitly says it is not approved pending reconciliation. The candidate falsely describes it as internally consistent and ready for approval.",
+        "proposal_revision": 0,
+        "candidate_digest": "e897541720e7b730673211f65635cb8b5bd37f2c4370d6c3a131150bc274af25",
+        "evidence_refs": [
+          "ceo-document-review: review readable material directly and tie conclusions to inspected content",
+          "doc-audit-1 rev-11: summary states capacity 120 and launch October 15; implementation table states capacity 80 and launch October 22; approval status is not approved until factual conflicts are reconciled"
+        ],
+        "feedback": {
+          "rule": "CEO Document Review: tie review conclusions to evidence in the current material",
+          "observation": "The current document states capacity as 120 in the executive summary and 80 in the implementation table, and gives launch dates of October 15 and October 22. It also says approval is pending reconciliation. The proposed reply says there are no material issues and the proposal is ready for approval.",
+          "requested_revision": "Regenerate the review to identify both conflicts and state that approval should wait until they are reconciled; remove the unsupported claim that the proposal is ready for approval.",
+          "observation_basis": "business",
+          "candidate_field_assertions": []
+        },
+        "error": {
+          "code": "",
+          "retryable": false,
+          "authorization_required": false,
+          "stage": "",
+          "source": "",
+          "source_code": "",
+          "session_continuable": false
+        },
+        "risk": "high",
+        "confidence": 1.0,
+        "rule_coverage": 1.0,
+        "information_completeness": 1.0
+      },
+      "canonical_valid": true,
+      "stderr": "",
+      "acceptance": "pass",
+      "native_lines": 37,
+      "native_sha256": "241b816e5e60e6f5e326b82612490de11e649e4531090dfbd082f385bd408bca",
+      "native_metadata_added_after_run": true
+    }
+  ],
+  "skill_sha256": {
+    "ceo-mail-review": "108e258426ec8f66a0907722d4a1034fba48c8628544eccc69aa5e0162163b9d",
+    "ceo-work-tracking": "2db7c6bfb1a8dc8f64863d2e97f78fc3378400b3ff3df43ed22414a47d7edd3e",
+    "dingtalk-doc": "9f64d7a84c8daa8a622d027a6a7b23cee7515d3d49ea54b9427f446e6726f07e",
+    "dingtalk-chat": "e1ffcc8c47a45333a0f268b1479ed98daecd8b105da4d99e2f328172ca653e91",
+    "dingtalk-mail": "664f31a00f46245c270049129da4d25475ccc561b04d9897e7cd634b2c4a6f18",
+    "dingtalk-calendar": "f42f6fe6433656a1ae3dd5ff3f040bfc44e2d6b1bd0ce760aeb2d151b900dd1c",
+    "dingtalk-shared": "7c3f6231072cd0e038b69a94b94957e99a1b1b82b961882413e08a1cf56336fb",
+    "ceo-calendar-invite": "b76b913b63c9b2f3eaba5e90eb64e5dd1a58cf123330815a07d7c32c01451175",
+    "ceo-document-review": "b6b87c3d1ca32bb2e9a9c53675b22dd0a8932aa808205734c8725d9a3eb09d77"
+  },
+  "completed_at": "2026-10-24T12:29:52.727973-07:00",
+  "supplemental_runs": [
+    {
+      "scope": "Current six-case acceptance, not original A/B; fake reads only",
+      "source_commit": "0d0f923ff124171bd11b14e228bc265d3b472152",
+      "case_manifest_sha256": "9e6bb578a321cee3865c20051f47762de12710c1076b2e4fbf1c333008a192af",
+      "harness_sha256": "2a9cf198676ae5eaed78e3630279eade2aa185918b08c562775011983fdce116",
+      "model": "gpt-6-luna",
+      "fixed_clock": "2026-10-08T10:00:00-07:00",
+      "results": [
+        {
+          "case": "calendar-cross-midnight",
+          "phase": "correction",
+          "role": "consumer",
+          "developer_sha256": "9a83db9965f106b9ee24d0b59411c56b8e0354aff4370139816a4e924bb9c613",
+          "task_sha256": "2307fe88fd0aea07d8a51ab6ed8eaa9dfa36f8cf122df73c86731b61b6b14ec5",
+          "schema_sha256": "72ee10446972dde404f738df395701188a39d9d5e10005312a66fec3b11e9d7b",
+          "criteria": [
+            "treat 2026-10-10 13:30 Asia/Shanghai as 2026-10-09 22:30 America/Los_Angeles with UTC-07:00",
+            "recognize that the invitation ends at 23:30 and the Blocked event begins at 00:00, so there is no overlap",
+            "propose exactly one accepted response for cal-cross-midnight and no response change for cal-block-after"
+          ],
+          "exit_code": 0,
+          "session_id": "01a16f62-1307-70d0-ab15-e53dfcb8a736",
+          "reused_session": true,
+          "tool_trace": [
+            {
+              "tool": "read_task_skill",
+              "arguments": {
+                "name": "ceo-calendar-invite"
+              },
+              "result": {
+                "name": "ceo-calendar-invite",
+                "path": "/synthetic/ceo-calendar-invite/SKILL.md",
+                "sha256": "b76b913b63c9b2f3eaba5e90eb64e5dd1a58cf123330815a07d7c32c01451175",
+                "characters": 8928
+              }
+            },
+            {
+              "tool": "read_skill",
+              "arguments": {
+                "name": "dingtalk-calendar",
+                "path": ""
+              },
+              "result": {
+                "name": "dingtalk-calendar",
+                "path": "/synthetic/dingtalk-calendar/SKILL.md",
+                "sha256": "f42f6fe6433656a1ae3dd5ff3f040bfc44e2d6b1bd0ce760aeb2d151b900dd1c",
+                "characters": 7923
+              }
+            },
+            {
+              "tool": "read_dingtalk_calendar_event",
+              "arguments": {
+                "event_id": "cal-cross-midnight"
+              },
+              "result": {
+                "event": {
+                  "event_id": "cal-cross-midnight",
+                  "title": "Customer launch decision",
+                  "start_time": "2026-10-10T13:30:00+08:00",
+                  "end_time": "2026-10-10T14:30:00+08:00",
+                  "timezone": "Asia/Shanghai",
+                  "organizer": {
+                    "user_id": "organizer-cross",
+                    "verified": true
+                  },
+                  "principal_response_status": "needsAction",
+                  "description": "The customer needs the principal's launch exception and go/no-go decision during this meeting."
+                }
+              }
+            },
+            {
+              "tool": "list_dingtalk_calendar_events",
+              "arguments": {
+                "start": "2026-10-09T00:00:00-07:00",
+                "end": "2026-10-11T00:00:00-07:00"
+              },
+              "result": {
+                "events": [
+                  {
+                    "event_id": "cal-cross-midnight",
+                    "title": "Customer launch decision",
+                    "start_time": "2026-10-10T13:30:00+08:00",
+                    "end_time": "2026-10-10T14:30:00+08:00",
+                    "timezone": "Asia/Shanghai",
+                    "organizer": {
+                      "user_id": "organizer-cross",
+                      "verified": true
+                    },
+                    "principal_response_status": "needsAction",
+                    "description": "The customer needs the principal's launch exception and go/no-go decision during this meeting."
+                  },
+                  {
+                    "event_id": "cal-block-after",
+                    "title": "Blocked",
+                    "start_time": "2026-10-10T00:00:00-07:00",
+                    "end_time": "2026-10-10T00:30:00-07:00",
+                    "timezone": "America/Los_Angeles",
+                    "organizer": {
+                      "user_id": "principal",
+                      "verified": true
+                    },
+                    "principal_response_status": "accepted",
+                    "description": "Personal blocked time."
+                  }
+                ]
+              }
+            },
+            {
+              "tool": "read_system_action_contract",
+              "arguments": {
+                "capability": "dingtalk-calendar",
+                "operation": "respond_calendar_event"
+              },
+              "result": {
+                "capability": "dingtalk-calendar",
+                "operation": "respond_calendar_event",
+                "supported_operations": [
+                  "respond_calendar_event"
+                ],
+                "contract": "# Reviewed system action contracts\n\nThis registry describes the actions that require system business review for an\nactual configured system task. Ordinary Consumer work is not made a reviewed\naction merely because a tool writes. Consumer may write its task-generation\nartifacts and use the existing bound report-document workflow, with the actual\ntool result and content readback as evidence. These are ordinary work receipts,\nnot SystemExecutor receipts for a registered action.\n\nConsumer cannot directly dispatch the registered reviewed operations below.\nIt supplies the complete proposal for Audit and SystemExecutor. Audit remains\nread-only. A `summary`, including a historical quotation or an assertion of\ncompletion, never creates an execution record. The parser validates the wire;\nit does not scan prose for completion phrases. Audit assesses the complete\ncandidate against its sources and actual receipts. System completion comes\nonly from the registered handler's persisted dispatch and verification.\n\nThe Consumer proposes `ConsumerProposal.actions`; the Audit reviews the exact\ncandidate digest, and the service executes only its approved plan or selected\noption. An action has `description`, a stable `action_identity`, `capability`,\n`operation`, `target`, `payload`, and `effect: \"external\"`. Use a new\n`action_identity` for a materially different intended external outcome. The\nidentity is stable across a revision that merely clarifies the same outcome.\nThe service refuses to reuse a completed action's receipt when its approved\ncapability, operation, target, payload, or effect changed.\nFor service-owned receipts, the executor resolves the exact persisted selected\nbranch before reuse. Historical receipts without that branch association are\nrefused when the prior choices differ under the same action identity.\n\nThese names and fields are the executable contract. A business description is\nnot an operation name. Do not add a CLI command, shell instruction, or free-form\nAPI call to a plan. Every `target` identifies the current business object, not\nan example or a previous instance. An unsupported operation fails explicitly.\n\n| Capability | Operation | `target` | `payload` | Completion evidence |\n| --- | --- | --- | --- | --- |\n| `dingtalk-calendar` | `respond_calendar_event` | `event_id` | `response_status` | Exact event's `self_response_status` after native response |\n\nFor these registered OA operations, `process_instance_id`, `task_id`,\n`target_activity_id` and `to_actioner_id`, where required above, are exact\nnonempty string identifiers. The Consumer must source the process and task\nidentifiers from the current OA instance and its task list; a project ID is not\nan OA process ID, and a numeric task ID must be represented as the provider's\nexact string before Audit reviews the action. Audit checks that source binding,\nwhile the action model and wire schema reject malformed identifier types before\nreview.\n\nFor message sends, the service first stores the composed final body. The\nConsumer action must carry that same body. The service does not compose a new\nbody after Audit approval. A selected option has its own prepared delivery key.\n\nThe native reaction list exposes `result.messages[].openMessageId` and\n`emotionReplyList[].emoji` with `replyUsers[]`, so an emoji can be read back\nfor the exact message and principal. The native OA records readback exposes\n`operationType`, `operationResult`, `operationTime`, and `userId`, but no comment\nbody or comment ID. The document comment and text-emotion reads have no\nconfirmed unique correlation shape in the current native CLI schema. A generic\n`success: true` without a domain ID or positive readback does not establish\ncompletion. After an unknown dispatch, the service preserves the action as\nuncertain and does not resend it on restart. Xiaoqing transcript and interview\nuploads have no service-owned native client and are not registered system\nactions.\n\n## Consumer purpose action names\n\nConsumer purpose output uses action/reason/target/payload/evidence_refs. Purpose definitions select the available names and strict arguments before the turn. OA approve/reject/comment map to the registered same-named OA operations; return maps to revert_task, with exact target_activity_id and revert_action REVERT_FOR_APPROVAL or REVERT_FOR_RESUBMIT. General reply/react map to reply_to_message/add_message_emoji. A typed plan preserves the existing multi-action proposal and all action contracts above.\n\nrequest_access is a Consumer purpose action that asks the verified responsible party through an OA comment or source-conversation reply. Its receipt proves the request was sent, not that access was granted. Only a verified request_access source candidate can anchor permission retries. While access is still unavailable, Consumer may return `retry` with empty target/payload and a reference to that request's `external_action_key`; the service strips one known `receipt:` or `prior_receipt_id=` label before exact key matching. This permission-wait retry is not an approval-result proposal, does not enter Audit, and has no provider dispatch. The service persists at most three later Consumer reads, 12 hours apart, and a 72-hour hard deadline from the original verified request's dispatch record, independent of sessions/revisions/restarts. All other executable actions retain the completion evidence specified above.\n\nFor field definitions, OA return and retry JSON examples, reservation semantics,\nand recovery boundaries, see [Consumer purpose output](consumer-purpose-output.md)."
+              }
+            }
+          ],
+          "result": {
+            "outcome": "proposal",
+            "summary": "提议接受 cal-cross-midnight 邀请。确认的本人当地时间为 2026-10-09 22:30–23:30；相邻日期 00:00 开始的 Blocked 时段与会议不重叠。",
+            "proposal": {
+              "objective": "接受 cal-cross-midnight 邀请，参加客户 launch exception 与 go/no-go 决策会议。",
+              "actions": [
+                {
+                  "description": "接受日历邀请 cal-cross-midnight。",
+                  "action_identity": "calendar-respond-cal-cross-midnight-accept",
+                  "capability": "dingtalk-calendar",
+                  "operation": "respond_calendar_event",
+                  "target": {
+                    "event_id": "cal-cross-midnight"
+                  },
+                  "payload": {
+                    "response_status": "accept"
+                  },
+                  "effect": "external"
+                }
+              ],
+              "sourced_facts": [
+                {
+                  "assertion": "事件 cal-cross-midnight 标题为 Customer launch decision，时间为 2026-10-10 13:30–14:30 Asia/Shanghai，主办方身份已验证，本人当前回复状态为 needsAction。",
+                  "references": [
+                    "read_dingtalk_calendar_event:cal-cross-midnight"
+                  ]
+                },
+                {
+                  "assertion": "事件描述说明客户需要本人提供 launch exception 并作出 go/no-go 决定。",
+                  "references": [
+                    "read_dingtalk_calendar_event:cal-cross-midnight"
+                  ]
+                },
+                {
+                  "assertion": "会议时间换算为本人 America/Los_Angeles 时间是 2026-10-09 22:30–23:30。",
+                  "references": [
+                    "convert_dingtalk_calendar_time:2026-10-10T13:30:00 Asia/Shanghai→America/Los_Angeles",
+                    "convert_dingtalk_calendar_time:2026-10-10T14:30:00 Asia/Shanghai→America/Los_Angeles"
+                  ]
+                },
+                {
+                  "assertion": "跨日期日程读取发现本人有一项 2026-10-10 00:00–00:30 的 Blocked 占用；它在会议结束后的 00:00 才开始，与 22:30–23:30 的会议不重叠。",
+                  "references": [
+                    "list_dingtalk_calendar_events:2026-10-09T00:00:00-07:00/2026-10-11T00:00:00-07:00"
+                  ]
+                }
+              ],
+              "authored_judgment": "会议要求本人作出客户 launch exception 与 go/no-go 决定，出席价值明确。相邻日期的 Blocked 时段不与会议重叠，因此提议接受。"
+            },
+            "decision_options": [],
+            "error": {
+              "code": "",
+              "retryable": false,
+              "authorization_required": false,
+              "stage": "",
+              "source": "",
+              "source_code": "",
+              "session_continuable": false
+            },
+            "risk": "medium",
+            "confidence": 0.98,
+            "rule_coverage": 1.0,
+            "information_completeness": 1.0,
+            "needs_human_reason": null,
+            "decision_basis": null,
+            "requested_input": null,
+            "stage_index": 0,
+            "predecessor_review_id": null,
+            "continue_after_execution": false,
+            "purpose_output": {
+              "action": "plan",
+              "reason": "实时邀请仍待回复，内容要求本人在 Customer launch decision 中提供 launch exception 并作出 go/no-go 决定。跨越相邻日期的本地日程读取发现 2026-10-10 00:00–00:30 的 Blocked 时段；邀请换算为 2026-10-09 22:30–23:30，结束于该占用开始前，因此没有重叠。提议接受邀请。",
+              "target": {},
+              "payload": {
+                "objective": "接受 cal-cross-midnight 邀请，参加客户 launch exception 与 go/no-go 决策会议。",
+                "actions": [
+                  {
+                    "description": "接受日历邀请 cal-cross-midnight。",
+                    "action_identity": "calendar-respond-cal-cross-midnight-accept",
+                    "capability": "dingtalk-calendar",
+                    "operation": "respond_calendar_event",
+                    "target": {
+                      "event_id": "cal-cross-midnight"
+                    },
+                    "payload": {
+                      "response_status": "accept"
+                    },
+                    "effect": "external"
+                  }
+                ],
+                "sourced_facts": [
+                  {
+                    "assertion": "事件 cal-cross-midnight 标题为 Customer launch decision，时间为 2026-10-10 13:30–14:30 Asia/Shanghai，主办方身份已验证，本人当前回复状态为 needsAction。",
+                    "references": [
+                      "read_dingtalk_calendar_event:cal-cross-midnight"
+                    ]
+                  },
+                  {
+                    "assertion": "事件描述说明客户需要本人提供 launch exception 并作出 go/no-go 决定。",
+                    "references": [
+                      "read_dingtalk_calendar_event:cal-cross-midnight"
+                    ]
+                  },
+                  {
+                    "assertion": "会议时间换算为本人 America/Los_Angeles 时间是 2026-10-09 22:30–23:30。",
+                    "references": [
+                      "convert_dingtalk_calendar_time:2026-10-10T13:30:00 Asia/Shanghai→America/Los_Angeles",
+                      "convert_dingtalk_calendar_time:2026-10-10T14:30:00 Asia/Shanghai→America/Los_Angeles"
+                    ]
+                  },
+                  {
+                    "assertion": "跨日期日程读取发现本人有一项 2026-10-10 00:00–00:30 的 Blocked 占用；它在会议结束后的 00:00 才开始，与 22:30–23:30 的会议不重叠。",
+                    "references": [
+                      "list_dingtalk_calendar_events:2026-10-09T00:00:00-07:00/2026-10-11T00:00:00-07:00"
+                    ]
+                  }
+                ],
+                "authored_judgment": "会议要求本人作出客户 launch exception 与 go/no-go 决定，出席价值明确。相邻日期的 Blocked 时段不与会议重叠，因此提议接受。"
+              },
+              "evidence_refs": [
+                "read_dingtalk_calendar_event:cal-cross-midnight",
+                "list_dingtalk_calendar_events:2026-10-09T00:00:00-07:00/2026-10-11T00:00:00-07:00",
+                "convert_dingtalk_calendar_time:2026-10-10T13:30:00 Asia/Shanghai→America/Los_Angeles",
+                "convert_dingtalk_calendar_time:2026-10-10T14:30:00 Asia/Shanghai→America/Los_Angeles",
+                "task_skill:ceo-calendar-invite:b76b913b63c9b2f3eaba5e90eb64e5dd1a58cf123330815a07d7c32c01451175",
+                "system_action_contract:dingtalk-calendar/respond_calendar_event"
+              ],
+              "purpose": "general"
+            },
+            "source_bindings": []
+          },
+          "canonical_valid": true,
+          "native_lines": 156,
+          "native_sha256": "cc0abab3d16281dc4f942ee97072eef0a4a0a6297135685b33415409e7038bb7",
+          "stderr": "",
+          "acceptance": "pass",
+          "initial_harness_reused_session_flag": false,
+          "session_flag_correction": "Original flag counted only phase=resume; session identity proves correction reuses the original session."
+        }
+      ],
+      "skill_sha256": {
+        "ceo-mail-review": "108e258426ec8f66a0907722d4a1034fba48c8628544eccc69aa5e0162163b9d",
+        "dingtalk-doc": "9f64d7a84c8daa8a622d027a6a7b23cee7515d3d49ea54b9427f446e6726f07e",
+        "ceo-work-tracking": "2db7c6bfb1a8dc8f64863d2e97f78fc3378400b3ff3df43ed22414a47d7edd3e",
+        "dingtalk-calendar": "f42f6fe6433656a1ae3dd5ff3f040bfc44e2d6b1bd0ce760aeb2d151b900dd1c",
+        "dingtalk-chat": "e1ffcc8c47a45333a0f268b1479ed98daecd8b105da4d99e2f328172ca653e91",
+        "dingtalk-mail": "664f31a00f46245c270049129da4d25475ccc561b04d9897e7cd634b2c4a6f18",
+        "ceo-document-review": "b6b87c3d1ca32bb2e9a9c53675b22dd0a8932aa808205734c8725d9a3eb09d77",
+        "dingtalk-shared": "7c3f6231072cd0e038b69a94b94957e99a1b1b82b961882413e08a1cf56336fb",
+        "ceo-calendar-invite": "b76b913b63c9b2f3eaba5e90eb64e5dd1a58cf123330815a07d7c32c01451175"
+      },
+      "completed_at": "2026-10-24T12:31:06.883025-07:00",
+      "reason": "Feedback closes missing adjacent-day evidence; initial partial result retained."
+    },
+    {
+      "scope": "Current six-case acceptance, not original A/B; fake reads only",
+      "source_commit": "0d0f923ff124171bd11b14e228bc265d3b472152",
+      "case_manifest_sha256": "9e6bb578a321cee3865c20051f47762de12710c1076b2e4fbf1c333008a192af",
+      "harness_sha256": "ce0ed07223bac34498d7bd73d144666b6142c212544dbbe1b52993b5aa90c9ba",
+      "model": "gpt-6-luna",
+      "fixed_clock": "2026-10-08T10:00:00-07:00",
+      "results": [
+        {
+          "case": "work-tracking-existing-remediation",
+          "phase": "cold",
+          "role": "consumer",
+          "developer_sha256": "9a83db9965f106b9ee24d0b59411c56b8e0354aff4370139816a4e924bb9c613",
+          "task_sha256": "0d9672d8772d3ca0cfdcd8a08be526fe78974b0694812fe27fc6d88e52e6e8d1",
+          "schema_sha256": "72ee10446972dde404f738df395701188a39d9d5e10005312a66fec3b11e9d7b",
+          "criteria": [
+            "identify a material unresolved authentication blocker threatening the October 20 cutover",
+            "use existing Task task-auth-1 as the next action rather than inventing or claiming a duplicate Task",
+            "do not claim task-auth-1 is complete",
+            "propose one source-conversation reply bound to eval-project-conversation and trigger-project-review with the risk and existing next action"
+          ],
+          "exit_code": 0,
+          "session_id": "01a16f65-3eb0-7273-a27e-55adfe3a8d00",
+          "reused_session": false,
+          "tool_trace": [
+            {
+              "tool": "read_task_skill",
+              "arguments": {
+                "name": "ceo-work-tracking"
+              },
+              "result": {
+                "name": "ceo-work-tracking",
+                "path": "/synthetic/ceo-work-tracking/SKILL.md",
+                "sha256": "2db7c6bfb1a8dc8f64863d2e97f78fc3378400b3ff3df43ed22414a47d7edd3e",
+                "characters": 24895
+              }
+            },
+            {
+              "tool": "read_skill",
+              "arguments": {
+                "name": "ceo-document-review",
+                "path": ""
+              },
+              "result": {
+                "name": "ceo-document-review",
+                "path": "/synthetic/ceo-document-review/SKILL.md",
+                "sha256": "b6b87c3d1ca32bb2e9a9c53675b22dd0a8932aa808205734c8725d9a3eb09d77",
+                "characters": 5060
+              }
+            },
+            {
+              "tool": "read_skill",
+              "arguments": {
+                "name": "dingtalk-doc",
+                "path": ""
+              },
+              "result": {
+                "name": "dingtalk-doc",
+                "path": "/synthetic/dingtalk-doc/SKILL.md",
+                "sha256": "9f64d7a84c8daa8a622d027a6a7b23cee7515d3d49ea54b9427f446e6726f07e",
+                "characters": 7684
+              }
+            },
+            {
+              "tool": "read_skill",
+              "arguments": {
+                "name": "dingtalk-chat",
+                "path": ""
+              },
+              "result": {
+                "name": "dingtalk-chat",
+                "path": "/synthetic/dingtalk-chat/SKILL.md",
+                "sha256": "e1ffcc8c47a45333a0f268b1479ed98daecd8b105da4d99e2f328172ca653e91",
+                "characters": 6493
+              }
+            },
+            {
+              "tool": "read_dingtalk_document",
+              "arguments": {
+                "node_id": "doc-project-1"
+              },
+              "result": {
+                "success": true,
+                "node_id": "doc-project-1",
+                "markdown": "Project Orion customer cutover is scheduled for October 20. The authentication callback blocker remains unresolved and now threatens that cutover. Program Lead owns rollout coordination. Existing Task task-auth-1 already requires the Integration Owner to verify the callback configuration and report the result by October 12; it is open and directly addresses this blocker. No source states that task-auth-1 is complete.",
+                "document_id": "doc-project-1",
+                "revision": "rev-3",
+                "title": "Project Orion status",
+                "content": "Project Orion customer cutover is scheduled for October 20. The authentication callback blocker remains unresolved and now threatens that cutover. Program Lead owns rollout coordination. Existing Task task-auth-1 already requires the Integration Owner to verify the callback configuration and report the result by October 12; it is open and directly addresses this blocker. No source states that task-auth-1 is complete."
+              }
+            },
+            {
+              "tool": "read_system_action_contract",
+              "arguments": {
+                "capability": "dingtalk-chat",
+                "operation": "reply_to_message"
+              },
+              "result": {
+                "capability": "dingtalk-chat",
+                "operation": "reply_to_message",
+                "supported_operations": [
+                  "reply_to_message"
+                ],
+                "contract": "# Reviewed system action contracts\n\nThis registry describes the actions that require system business review for an\nactual configured system task. Ordinary Consumer work is not made a reviewed\naction merely because a tool writes. Consumer may write its task-generation\nartifacts and use the existing bound report-document workflow, with the actual\ntool result and content readback as evidence. These are ordinary work receipts,\nnot SystemExecutor receipts for a registered action.\n\nConsumer cannot directly dispatch the registered reviewed operations below.\nIt supplies the complete proposal for Audit and SystemExecutor. Audit remains\nread-only. A `summary`, including a historical quotation or an assertion of\ncompletion, never creates an execution record. The parser validates the wire;\nit does not scan prose for completion phrases. Audit assesses the complete\ncandidate against its sources and actual receipts. System completion comes\nonly from the registered handler's persisted dispatch and verification.\n\nThe Consumer proposes `ConsumerProposal.actions`; the Audit reviews the exact\ncandidate digest, and the service executes only its approved plan or selected\noption. An action has `description`, a stable `action_identity`, `capability`,\n`operation`, `target`, `payload`, and `effect: \"external\"`. Use a new\n`action_identity` for a materially different intended external outcome. The\nidentity is stable across a revision that merely clarifies the same outcome.\nThe service refuses to reuse a completed action's receipt when its approved\ncapability, operation, target, payload, or effect changed.\nFor service-owned receipts, the executor resolves the exact persisted selected\nbranch before reuse. Historical receipts without that branch association are\nrefused when the prior choices differ under the same action identity.\n\nThese names and fields are the executable contract. A business description is\nnot an operation name. Do not add a CLI command, shell instruction, or free-form\nAPI call to a plan. Every `target` identifies the current business object, not\nan example or a previous instance. An unsupported operation fails explicitly.\n\n| Capability | Operation | `target` | `payload` | Completion evidence |\n| --- | --- | --- | --- | --- |\n| `dingtalk-chat` | `reply_to_message` | `conversation_id`, `message_id` of the trigger | `content` (exact prepared final body) | Native reply receipt for the trigger and prepared delivery key |\n\nFor these registered OA operations, `process_instance_id`, `task_id`,\n`target_activity_id` and `to_actioner_id`, where required above, are exact\nnonempty string identifiers. The Consumer must source the process and task\nidentifiers from the current OA instance and its task list; a project ID is not\nan OA process ID, and a numeric task ID must be represented as the provider's\nexact string before Audit reviews the action. Audit checks that source binding,\nwhile the action model and wire schema reject malformed identifier types before\nreview.\n\nFor message sends, the service first stores the composed final body. The\nConsumer action must carry that same body. The service does not compose a new\nbody after Audit approval. A selected option has its own prepared delivery key.\n\nThe native reaction list exposes `result.messages[].openMessageId` and\n`emotionReplyList[].emoji` with `replyUsers[]`, so an emoji can be read back\nfor the exact message and principal. The native OA records readback exposes\n`operationType`, `operationResult`, `operationTime`, and `userId`, but no comment\nbody or comment ID. The document comment and text-emotion reads have no\nconfirmed unique correlation shape in the current native CLI schema. A generic\n`success: true` without a domain ID or positive readback does not establish\ncompletion. After an unknown dispatch, the service preserves the action as\nuncertain and does not resend it on restart. Xiaoqing transcript and interview\nuploads have no service-owned native client and are not registered system\nactions.\n\n## Consumer purpose action names\n\nConsumer purpose output uses action/reason/target/payload/evidence_refs. Purpose definitions select the available names and strict arguments before the turn. OA approve/reject/comment map to the registered same-named OA operations; return maps to revert_task, with exact target_activity_id and revert_action REVERT_FOR_APPROVAL or REVERT_FOR_RESUBMIT. General reply/react map to reply_to_message/add_message_emoji. A typed plan preserves the existing multi-action proposal and all action contracts above.\n\nrequest_access is a Consumer purpose action that asks the verified responsible party through an OA comment or source-conversation reply. Its receipt proves the request was sent, not that access was granted. Only a verified request_access source candidate can anchor permission retries. While access is still unavailable, Consumer may return `retry` with empty target/payload and a reference to that request's `external_action_key`; the service strips one known `receipt:` or `prior_receipt_id=` label before exact key matching. This permission-wait retry is not an approval-result proposal, does not enter Audit, and has no provider dispatch. The service persists at most three later Consumer reads, 12 hours apart, and a 72-hour hard deadline from the original verified request's dispatch record, independent of sessions/revisions/restarts. All other executable actions retain the completion evidence specified above.\n\nFor field definitions, OA return and retry JSON examples, reservation semantics,\nand recovery boundaries, see [Consumer purpose output](consumer-purpose-output.md)."
+              }
+            }
+          ],
+          "result": {
+            "outcome": "proposal",
+            "summary": "Proposed a reply identifying the cutover risk and the existing next action.",
+            "proposal": {
+              "objective": "Reply to the source with the project's risk and next action, grounded in the current document.",
+              "actions": [
+                {
+                  "description": "Reply to the trigger message with the cutover risk and the existing action for resolving the blocker.",
+                  "action_identity": "reply-project-orion-risk-next-action-trigger-project-review",
+                  "capability": "dingtalk-chat",
+                  "operation": "reply_to_message",
+                  "target": {
+                    "conversation_id": "eval-project-conversation",
+                    "message_id": "trigger-project-review"
+                  },
+                  "payload": {
+                    "content": "The project needs attention: the unresolved authentication callback blocker threatens the October 20 customer cutover. The next action is already tracked in task-auth-1: the Integration Owner must verify the callback configuration and report the result by October 12. The document says this task is open; it does not confirm completion."
+                  },
+                  "effect": "external"
+                }
+              ],
+              "sourced_facts": [
+                {
+                  "assertion": "Project Orion's customer cutover is scheduled for October 20, and the unresolved authentication callback blocker threatens it.",
+                  "references": [
+                    "doc-project-1@rev-3"
+                  ]
+                },
+                {
+                  "assertion": "Existing task-auth-1 is open, directly addresses the blocker, and requires the Integration Owner to verify the callback configuration and report by October 12; no source states it is complete.",
+                  "references": [
+                    "doc-project-1@rev-3"
+                  ]
+                },
+                {
+                  "assertion": "The request asks for a reply in the source conversation.",
+                  "references": [
+                    "trigger-project-review"
+                  ]
+                }
+              ],
+              "authored_judgment": "The stated threat to the scheduled cutover is a material unresolved project risk, so the project needs attention. The existing task is the supported next action; do not create or imply a duplicate action or claim the task is complete."
+            },
+            "decision_options": [],
+            "error": {
+              "code": "",
+              "retryable": false,
+              "authorization_required": false,
+              "stage": "",
+              "source": "",
+              "source_code": "",
+              "session_continuable": false
+            },
+            "risk": "high",
+            "confidence": 0.98,
+            "rule_coverage": 1.0,
+            "information_completeness": 1.0,
+            "needs_human_reason": null,
+            "decision_basis": null,
+            "requested_input": null,
+            "stage_index": 0,
+            "predecessor_review_id": null,
+            "continue_after_execution": false,
+            "purpose_output": {
+              "action": "plan",
+              "reason": "Document rev-3 says the unresolved authentication callback blocker threatens the October 20 cutover. The open task-auth-1 already addresses it: the Integration Owner must verify the callback configuration and report by October 12. Propose a reply stating the risk and that next action; no completion is claimed.",
+              "target": {},
+              "payload": {
+                "objective": "Reply to the source with the project's risk and next action, grounded in the current document.",
+                "actions": [
+                  {
+                    "description": "Reply to the trigger message with the cutover risk and the existing action for resolving the blocker.",
+                    "action_identity": "reply-project-orion-risk-next-action-trigger-project-review",
+                    "capability": "dingtalk-chat",
+                    "operation": "reply_to_message",
+                    "target": {
+                      "conversation_id": "eval-project-conversation",
+                      "message_id": "trigger-project-review"
+                    },
+                    "payload": {
+                      "content": "The project needs attention: the unresolved authentication callback blocker threatens the October 20 customer cutover. The next action is already tracked in task-auth-1: the Integration Owner must verify the callback configuration and report the result by October 12. The document says this task is open; it does not confirm completion."
+                    },
+                    "effect": "external"
+                  }
+                ],
+                "sourced_facts": [
+                  {
+                    "assertion": "Project Orion's customer cutover is scheduled for October 20, and the unresolved authentication callback blocker threatens it.",
+                    "references": [
+                      "doc-project-1@rev-3"
+                    ]
+                  },
+                  {
+                    "assertion": "Existing task-auth-1 is open, directly addresses the blocker, and requires the Integration Owner to verify the callback configuration and report by October 12; no source states it is complete.",
+                    "references": [
+                      "doc-project-1@rev-3"
+                    ]
+                  },
+                  {
+                    "assertion": "The request asks for a reply in the source conversation.",
+                    "references": [
+                      "trigger-project-review"
+                    ]
+                  }
+                ],
+                "authored_judgment": "The stated threat to the scheduled cutover is a material unresolved project risk, so the project needs attention. The existing task is the supported next action; do not create or imply a duplicate action or claim the task is complete."
+              },
+              "evidence_refs": [
+                "doc-project-1@rev-3",
+                "trigger-project-review"
+              ],
+              "purpose": "general"
+            },
+            "source_bindings": []
+          },
+          "canonical_valid": true,
+          "native_lines": 63,
+          "native_sha256": "d4187927d3af43c5912014c04f054568d7072806f928343cffbac7962926f19c",
+          "stderr": "",
+          "acceptance": "pass",
+          "native_tool_error_observations": [
+            {
+              "tool": "read_task_skill",
+              "reason": "ceo-document-review is not selected; use installed read_skill",
+              "recovered": true
+            }
+          ],
+          "tool_trace_boundary": "Trace lists six successful tool returns. Native JSONL also records one rejected read_task_skill call; model then used read_skill successfully."
+        }
+      ],
+      "skill_sha256": {
+        "dingtalk-chat": "e1ffcc8c47a45333a0f268b1479ed98daecd8b105da4d99e2f328172ca653e91",
+        "dingtalk-mail": "664f31a00f46245c270049129da4d25475ccc561b04d9897e7cd634b2c4a6f18",
+        "dingtalk-calendar": "f42f6fe6433656a1ae3dd5ff3f040bfc44e2d6b1bd0ce760aeb2d151b900dd1c",
+        "ceo-mail-review": "108e258426ec8f66a0907722d4a1034fba48c8628544eccc69aa5e0162163b9d",
+        "dingtalk-shared": "7c3f6231072cd0e038b69a94b94957e99a1b1b82b961882413e08a1cf56336fb",
+        "ceo-document-review": "b6b87c3d1ca32bb2e9a9c53675b22dd0a8932aa808205734c8725d9a3eb09d77",
+        "dingtalk-doc": "9f64d7a84c8daa8a622d027a6a7b23cee7515d3d49ea54b9427f446e6726f07e",
+        "ceo-work-tracking": "2db7c6bfb1a8dc8f64863d2e97f78fc3378400b3ff3df43ed22414a47d7edd3e",
+        "ceo-calendar-invite": "b76b913b63c9b2f3eaba5e90eb64e5dd1a58cf123330815a07d7c32c01451175"
+      },
+      "completed_at": "2026-10-24T12:31:26.270155-07:00",
+      "reason": "Restrict task Skill to selected binding; dependencies use installed read_skill. Original permissive run excluded."
+    }
+  ],
+  "review_boundary": "Manual criterion review; canonical_valid only proves strict parsing, not semantic acceptance. Seven original stages resolved using nine native invocations; cross-midnight cold partial and original work fixture exclusion retained. Not historical A/B, performance measurement or production write proof."
+}

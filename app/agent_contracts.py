@@ -159,6 +159,7 @@ _OA_ACTION_TARGET_FIELDS = {
     "reject": ("process_instance_id", "task_id"),
     "revert_task": ("process_instance_id", "task_id", "target_activity_id"),
     "redirect_task": ("process_instance_id", "task_id", "to_actioner_id"),
+    "append_task": ("process_instance_id", "task_id", "appender_user_id"),
     "comment": ("process_instance_id",),
 }
 
@@ -191,7 +192,7 @@ def _proposed_action_json_schema(schema: dict[str, object]) -> None:
                 },
             },
         }
-        for field in ("process_instance_id", "task_id", "target_activity_id", "to_actioner_id")
+        for field in ("process_instance_id", "task_id", "target_activity_id", "to_actioner_id", "appender_user_id")
     ]
     schema["allOf"].append({
         "if": {"properties": {"capability": {"const": "dingtalk-chat"}},
@@ -258,6 +259,8 @@ class ProposedAction(BaseModel):
                 value = self.target.get(field)
                 if not isinstance(value, str) or not value.strip():
                     raise ValueError(f"dingtalk-oa {self.operation} requires target.{field} as a nonempty string")
+            if self.operation == "append_task" and self.payload.get("type") not in ("before", "parallel"):
+                raise ValueError("dingtalk-oa append_task requires payload.type of before or parallel")
         if self.capability == "dingtalk-doc" and self.operation == "create_document":
             content = self.payload.get("content")
             if not isinstance(content, str) or not content.strip():
