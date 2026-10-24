@@ -371,10 +371,9 @@ def _many_due_sources(
                 execution_generation=f"generation-{index}",
             )
             with store._connect() as db:
-                from app.task20_definitions import task20_projection
-
                 reply_id = db.execute(
-                    f"select id from ({task20_projection('reply_tasks')}) where trigger_message_id=?",
+                    "select tasks.id from tasks join task_inputs on task_inputs.task_id=tasks.id "
+                    "where tasks.kind='reply' and task_inputs.trigger_message_id=?",
                     (f"msg-{index}",),
                 ).fetchone()[0]
             ids.append(str(reply_id))

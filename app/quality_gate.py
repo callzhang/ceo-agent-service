@@ -31,7 +31,11 @@ from app.store import (
 )
 
 from app.action_storage import (
-    SENT_REPLY_SQL, SENT_REPLY_OBSERVER_SQL,
+    REVIEW_CANDIDATE_SQL, SENT_REPLY_SQL, SENT_REPLY_OBSERVER_SQL,
+    CANDIDATE_REVIEW_SQL,
+    CANDIDATE_EXECUTION_SQL,
+    CANDIDATE_ACTION_ATTEMPT_SQL,
+    CANDIDATE_SELECTION_SQL,
     REPLY_ATTEMPT_COMMON_SQL,
     REPLY_ATTEMPT_PROBLEM_TRIGGER_KEYS_SQL,
     task_delivery_projection,
@@ -200,7 +204,7 @@ def scan_hourly_quality(
         _check_okr_reviews(db, checked_now, violations, attention)
         _check_external_delivery_queues(db, checked_now, violations, attention)
         native_delivery_coverage = _check_delivery_records(db, violations)
-        _check_feedback(db, violations)
+        _check_feedback(db, violations, attention)
         _check_scan_health(db, violations, attention)
         _check_scheduler_health(db, checked_now, violations)
         _check_codex_capacity_pause(db, checked_now, attention)
@@ -860,13 +864,6 @@ def _check_external_delivery_queues(
          ("pending", "sending", "ready_to_send"),
          "and lower(coalesce(error, '')) != 'user_rejected'"),
         ("memory_write_events", "status", ("failed",), ("pending", "processing"), ""),
-        (
-            "meeting_memory_write_events",
-            "status",
-            ("failed",),
-            ("pending",),
-            "",
-        ),
     ):
         if source == "memory_write_events":
             target_action_objects = [
@@ -947,11 +944,53 @@ def _check_delivery_records(
 def _check_feedback(
     db: sqlite3.Connection,
     violations: list[QualityIssue],
+    attention: list[QualityIssue],
 ) -> None:
-    _add(violations, source="feedback_events", code="unresolved", count=_count(
+    """Count feedback nobody has acted on; list the rest as attention.
+
+    A manual Workbench item (``manual:<attempt id>``) that was rerun after it
+    arrived, whose new execution finished with every approved action verified,
+    has been acted on even though no resolution is recorded: closing one needs
+    code, Skill or config evidence an operational rerun does not produce
+    (Derek 2026-10-24). It stays visible as attention. This says the feedback
+    was not left unattended, not that the rerun did what it asked. A reopened
+    item is counted again, and so is any other feedback.
+    """
+    unresolved = _count(
         db, f"select count(*) from ({feedback_projection('feedback_events')}) "
             "where resolved_at='' or resolved_at is null"
-    ), severity="error", detail="user feedback has not reached a recorded resolution")
+    )
+    acted = _count(db, f"""
+        select count(*) from ({feedback_projection('feedback_events')}) fe
+        where (fe.resolved_at='' or fe.resolved_at is null)
+          and fe.key like 'manual:%'
+          and not exists (
+              select 1 from ({task12_projection('feedback_processing_rounds')}) rnd
+              where rnd.feedback_key=fe.key and rnd.reopened_at<>'')
+          and exists (
+              select 1
+              from ({REPLY_ATTEMPT_COMMON_SQL}) ra
+              join ({CANDIDATE_REVIEW_SQL}) review on review.audit_run_id=ra.agent_run_id
+              join ({CANDIDATE_EXECUTION_SQL}) execution
+                on execution.candidate_id=review.candidate_id
+              where ra.id=cast(substr(fe.key, 8) as integer)
+                and execution.status='done'
+                and julianday(execution.created_at) >= julianday(fe.received_at)
+                and exists (
+                    select 1 from ({CANDIDATE_ACTION_ATTEMPT_SQL}) action
+                    where action.execution_id=execution.id and action.status='verified')
+                and not exists (
+                    select 1 from ({CANDIDATE_ACTION_ATTEMPT_SQL}) action
+                    where action.execution_id=execution.id and action.status<>'verified'))
+        """)
+    _add(violations, source="feedback_events", code="unresolved",
+         count=unresolved - acted, severity="error",
+         detail="user feedback has not reached a recorded resolution")
+    _add(attention, source="feedback_events", code="acted_unresolved", count=acted,
+         severity="info", detail=(
+             "manual feedback was rerun and its actions verified, but no resolution "
+             "is recorded; confirm the rerun did what it asked"
+         ))
 
 
 def _check_scan_health(

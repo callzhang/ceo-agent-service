@@ -11,12 +11,10 @@ import json
 from dataclasses import dataclass
 from typing import Any
 
-from app.task_storage import task_id_expression
-from app.task20_definitions import task20_projection
-from app.task8_storage import task8_set_parts
+from app.task_entity_storage import update_task_cas
 
 
-MEETING_JOB_SQL = task20_projection('meeting_alignment_jobs')
+MEETING_JOB_SQL = "select id, status, error from tasks where kind='meeting_alignment'"
 
 
 @dataclass(frozen=True)
@@ -61,7 +59,7 @@ def migrate_legacy_meeting_projections(
             f"select id, error from ({MEETING_JOB_SQL}) where status='failed'"
         ).fetchall()
         scanned = 0
-        updates: list[tuple[str, int]] = []
+        updates: list[tuple[int, str, str]] = []
         for row in rows:
             try:
                 payload = json.loads(str(row["error"] or ""))
@@ -85,14 +83,22 @@ def migrate_legacy_meeting_projections(
                 "retryable": True,
                 "legacy_code": payload.get("kind") or message,
             }
-            updates.append((json.dumps(migrated, ensure_ascii=False), int(row["id"])))
+            updates.append((int(row["id"]), str(row["error"] or ""),
+                            json.dumps(migrated, ensure_ascii=False)))
         if not dry_run:
-            db.executemany(
-                f"""update tasks set {task8_set_parts('meeting_alignment_jobs', {}, update_sql={'error': '?', 'updated_at': 'current_timestamp'}).sql} where id={task_id_expression('meeting_alignment_jobs', '?')} and record_type='meeting_alignment_jobs'""",
-                updates,
+            changed = sum(
+                update_task_cas(
+                    db, task_id=task_id,
+                    expected={"kind": "meeting_alignment", "status": "failed",
+                              "error": old_error},
+                    changes={"error": migrated_error},
+                ) is not None
+                for task_id, old_error, migrated_error in updates
             )
+        else:
+            changed = len(updates)
         return ProjectionMigrationResult(
             scanned=scanned,
-            changed=len(updates),
+            changed=changed,
             dry_run=dry_run,
         )

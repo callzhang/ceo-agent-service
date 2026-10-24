@@ -346,27 +346,12 @@ export interface StatusEmailHealth {
   accounts: StatusEmailHealthEntry[];
   checks: StatusEmailHealthEntry[];
 }
-export interface StatusMeetingMemoryHealth {
-  pending: number;
-  due: number;
-  delayed: number;
-  processing: number;
-  retryable: number;
-  failed: number;
-  oldest_due_at: string;
-  oldest_due_seconds: number;
-  completed_last_hour: number;
-  active_agents: number;
-  ghost_runtime_attempts: number;
-  delayed_after_seconds: number;
-}
 export interface WorkerStatus {
   service: StatusService;
   system_health: StatusSystemHealth;
   components: StatusComponent[];
   connectors: Record<string, { channel: string; state: string; reason_code: string; detail: string; commands: string[][] }>;
   email: StatusEmailHealth;
-  meeting_memory_health: StatusMeetingMemoryHealth;
   wechat: { reader: { enabled: boolean; status: string; error: string }; sender: { enabled: boolean; status: string; error: string }; preflight: { status: string; error: string }; account: { ready: boolean; account_id: string } };
   queues: Array<{ name: string; table: string; counts: Record<string, number>; pending: number; processing: number; failed: number; retryable: number; latest_updated_at: string; latest_error: string }>;
   dispatcher_queues: StatusDispatcherQueue[];
@@ -1334,20 +1319,6 @@ function wechatStatus(value: unknown): boolean {
     && account !== null && typeof account.ready === "boolean" && typeof account.account_id === "string";
 }
 
-function meetingMemoryHealth(value: unknown): boolean {
-  const row = exactRecord(value, [
-    "pending", "due", "delayed", "processing", "retryable", "failed",
-    "oldest_due_at", "oldest_due_seconds", "completed_last_hour",
-    "active_agents", "ghost_runtime_attempts", "delayed_after_seconds",
-  ]);
-  return row !== null && typeof row.oldest_due_at === "string"
-    && counts(row, [
-      "pending", "due", "delayed", "processing", "retryable", "failed",
-      "oldest_due_seconds", "completed_last_hour", "active_agents",
-      "ghost_runtime_attempts", "delayed_after_seconds",
-    ]);
-}
-
 function queueStatus(value: unknown): boolean {
   const row = exactRecord(value, ["name", "table", "counts", "pending", "processing", "failed", "retryable", "latest_updated_at", "latest_error"]);
   return row !== null && strings(row, ["name", "table", "latest_updated_at", "latest_error"])
@@ -1370,7 +1341,7 @@ function attentionRow(value: unknown, detailFields: string[]): boolean {
 }
 
 function workerStatus(value: unknown): value is WorkerStatus {
-  const row = exactRecord(value, ["service", "system_health", "components", "connectors", "email", "meeting_memory_health", "wechat", "queues", "dispatcher_queues", "attention_rows", "database", "summary"], ["human_decision_rows"]);
+  const row = exactRecord(value, ["service", "system_health", "components", "connectors", "email", "wechat", "queues", "dispatcher_queues", "attention_rows", "database", "summary"], ["human_decision_rows"]);
   if (row === null) return false;
   const service = exactRecord(row.service, ["label", "target", "ok", "state", "detail", "pid", "runs", "initialized", "last_terminating_signal", "returncode"]);
   const health = exactRecord(row.system_health, ["state", "detail", "checked_at", "violations", "components"], ["native_delivery_coverage"]);
@@ -1385,7 +1356,7 @@ function workerStatus(value: unknown): value is WorkerStatus {
     && (coverage == null || (deliveryCoverage !== null && counts(deliveryCoverage, ["checked", "unavailable"])))
     && Array.isArray(row.components) && row.components.every(statusComponent)
     && isRecord(row.connectors) && Object.values(row.connectors).every(connectorStatus)
-    && emailHealth(row.email) && meetingMemoryHealth(row.meeting_memory_health) && wechatStatus(row.wechat)
+    && emailHealth(row.email) && wechatStatus(row.wechat)
     && Array.isArray(row.queues) && row.queues.every(queueStatus)
     && Array.isArray(row.dispatcher_queues) && row.dispatcher_queues.every(dispatcherQueueStatus)
     && Array.isArray(row.attention_rows) && row.attention_rows.every((item) => attentionRow(item, []))

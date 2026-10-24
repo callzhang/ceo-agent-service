@@ -211,15 +211,12 @@ OKR_REQUEST_SQL = "select id,status,updated_at,error,coalesce(json_extract(param
 REPLY_TASK_SQL = NATIVE_REPLY_TASK_CURRENT_SQL
 
 WECHAT_DELIVERY_SQL = task_delivery_projection('wechat_deliveries')
-MEETING_MEMORY_WRITE_SQL = task_delivery_projection('meeting_memory_write_events')
-TASK_MEMORY_WRITE_SQL = task_delivery_projection('task_memory_write_events')
 
 DISPLAY_TIME_FORMAT = "%Y-%m-%d %H:%M:%S"
 LOCAL_DISPLAY_TIME_ZONE = ZoneInfo("Asia/Shanghai")
 # A due Meeting Memory write has missed its service objective after 30 minutes.
 # The value is deliberately visible in the status contract so operations can
 # distinguish an ordinary queued item from an unhealthy backlog.
-MEETING_MEMORY_HEALTH_DELAY_SECONDS = 30 * 60
 # Web startup recovery and the worker share the same SQLite file. A two second
 # timeout caused intermittent startup failure while the worker held its write
 # transaction; use the store's normal timeout instead.
@@ -2237,9 +2234,6 @@ def build_worker_status_payload(
         attention_rows = _queue_attention_rows(store)
         human_decision_rows = _human_decision_attention_rows(store)
         email_health = _email_worker_health_snapshot(store)
-        meeting_memory_health = store.meeting_memory_health_snapshot(
-            delayed_after_seconds=MEETING_MEMORY_HEALTH_DELAY_SECONDS
-        )
     summary_queues = [
         queue for queue in queues if not queue.get("_summary_projection", False)
     ]
@@ -2260,7 +2254,6 @@ def build_worker_status_payload(
         # delays the queue/status snapshot used by /workers and /attention.
         "connectors": {},
         "email": email_health,
-        "meeting_memory_health": meeting_memory_health,
         "queues": queues,
         "dispatcher_queues": dispatcher_queues,
         "attention_rows": attention_rows,
@@ -2276,19 +2269,13 @@ def build_worker_status_payload(
         },
     }
     if include_system_health:
-        payload["system_health"] = _system_health_snapshot(
-            store,
-            service,
-            meeting_memory_health=meeting_memory_health,
-        )
+        payload["system_health"] = _system_health_snapshot(store, service)
     return payload
 
 
 def _system_health_snapshot(
     store: AutoReplyStore,
     service: Mapping[str, object],
-    *,
-    meeting_memory_health: Mapping[str, object] | None = None,
 ) -> dict[str, object]:
     """Project process liveness and repair-window health separately.
 
@@ -2302,23 +2289,6 @@ def _system_health_snapshot(
             "detail": "The main launchd service is not running normally.",
             "checked_at": "",
             "violations": 1,
-        }
-    meeting_memory_health = meeting_memory_health or store.meeting_memory_health_snapshot(
-        delayed_after_seconds=MEETING_MEMORY_HEALTH_DELAY_SECONDS
-    )
-    delayed = int(meeting_memory_health.get("delayed") or 0)
-    ghosts = int(meeting_memory_health.get("ghost_runtime_attempts") or 0)
-    if delayed or ghosts:
-        reasons: list[str] = []
-        if delayed:
-            reasons.append(f"{delayed} Meeting Memory write(s) delayed")
-        if ghosts:
-            reasons.append(f"{ghosts} stale Meeting Memory runtime record(s)")
-        return {
-            "state": "degraded",
-            "detail": "; ".join(reasons),
-            "checked_at": str(meeting_memory_health.get("oldest_due_at") or ""),
-            "violations": delayed + ghosts,
         }
     unhealthy_components = [
         component
@@ -2460,15 +2430,12 @@ def _service_component_snapshots(
         {"name": "agent-cron-scheduler", "role": "business trigger scheduling", "cadence": "task configured"},
         {"name": "agent-cron-dispatcher", "role": f"queue dispatch x{consumer_worker_count()}", "cadence": "internal"},
         {"name": "meeting-delivery", "role": "meeting conclusion delivery", "cadence": "internal"},
-        {"name": "meeting-memory-write", "role": "meeting conclusion Memory write", "cadence": "internal"},
         {"name": "runtime-probe", "role": "runtime route health", "cadence": "internal"},
         {"name": "service-heartbeat", "role": "component liveness", "cadence": "internal"},
     ]
     # `task-maintenance` and `follow-up-delivery` are gone. Their business
     # work is either a visible scheduled task or an explicit user action, so
     # neither should appear as a phantom health component.
-    # `meeting-memory-write` stays: the scheduled meeting task still reports
-    # it by that name.
     return [
         {
             **component,
@@ -2608,20 +2575,13 @@ def _queue_status_snapshots(store: AutoReplyStore) -> list[dict[str, object]]:
         ("Meeting jobs", "meeting_alignment_jobs", "status", "updated_at", "error"),
         ("OKR reviews", "okr_review_requests", "status", "updated_at", "error"),
         ("Memory writes", "memory_write_events", "status", "updated_at", "last_error"),
-        (
-            "Meeting Memory writes",
-            "meeting_memory_write_events",
-            "status",
-            "updated_at",
-            "error",
-        ),
         ("WeChat deliveries", "wechat_deliveries", "status", "updated_at", "error"),
     ]
     snapshots: list[dict[str, object]] = []
     with store._connect() as db:
         for name, table, status_column, updated_column, error_column in specs:
             physical_table = ("tasks" if table in ("reply_tasks", "work_summary_inputs", "meeting_alignment_jobs", "okr_review_requests")
-                              else "actions" if table in ("reply_attempts", "memory_write_events", "follow_up_drafts", "meeting_memory_write_events", "wechat_deliveries") else table)
+                              else "actions" if table in ("reply_attempts", "memory_write_events", "follow_up_drafts", "wechat_deliveries") else table)
             if not _sqlite_table_exists(db, physical_table):
                 continue
             if table == "reply_tasks":
@@ -2728,7 +2688,6 @@ def _dispatcher_queue_snapshots(store: AutoReplyStore) -> list[dict[str, object]
         ReplyQueueAdapter,
         ScheduledExecutionQueueAdapter,
         ScheduledTaskQueueAdapter,
-        TaskMemoryWriteQueueAdapter,
         WorkSummaryQueueAdapter,
     )
 
@@ -2741,7 +2700,6 @@ def _dispatcher_queue_snapshots(store: AutoReplyStore) -> list[dict[str, object]
         WorkSummaryQueueAdapter(store),
         OkrReviewQueueAdapter(store),
         BusinessTaskTodoSyncOutboxQueueAdapter(store),
-        TaskMemoryWriteQueueAdapter(store),
     )
     rows = []
     for adapter in adapters:
@@ -3793,75 +3751,6 @@ def _queue_attention_rows(store: AutoReplyStore, *, limit: int | None = None) ->
                         "status": str(row["status"] or ""),
                         "context": str(row["context"] or ""),
                         "summary": str(row["summary"] or ""),
-                        "updated_at": str(row["updated_at"] or ""),
-                        "error": str(row["error"] or ""),
-                    }
-                )
-        if (
-            _sqlite_table_exists(db, "actions")
-            and _sqlite_table_exists(db, "tasks")
-        ):
-            meeting_memory_sql = f"""
-                select events.id, events.status,
-                       coalesce(nullif(jobs.title, ''), jobs.meeting_id) as context,
-                       coalesce(nullif(jobs.title, ''), jobs.meeting_id) as summary,
-                       events.updated_at, events.error
-                from ({MEETING_MEMORY_WRITE_SQL}) as events
-                join ({NATIVE_MEETING_TASK_SQL}) as jobs on jobs.id=events.meeting_job_id
-                where lower(events.status)='failed'
-                order by events.updated_at desc, events.id desc
-            """
-            meeting_memory_params: tuple[object, ...] = ()
-            if limit is not None:
-                meeting_memory_sql += " limit ?"
-                meeting_memory_params = (limit,)
-            for row in db.execute(meeting_memory_sql, meeting_memory_params).fetchall():
-                rows.append(
-                    {
-                        "category": "Service error",
-                        "id": f"meeting-memory-{row['id']}",
-                        "status": str(row["status"] or ""),
-                        "context": f"Meeting Memory: {str(row['context'] or '')}",
-                        "root_cause": "meeting_memory_write_failed",
-                        "summary": (
-                            "Memory write for delivered meeting conclusion: "
-                            f"{str(row['summary'] or '')}"
-                        ),
-                        "updated_at": str(row["updated_at"] or ""),
-                        "error": str(row["error"] or ""),
-                    }
-                )
-        if (
-            _sqlite_table_exists(db, "actions")
-            and _sqlite_table_exists(db, "tasks")
-        ):
-            task_memory_sql = f"""
-                select events.id, events.status, events.reply_task_id,
-                       tasks.channel, tasks.conversation_title,
-                       events.updated_at, events.error
-                from ({TASK_MEMORY_WRITE_SQL}) as events
-                join ({REPLY_TASK_SQL}) as tasks on tasks.id=events.reply_task_id
-                where lower(events.status)='failed'
-                order by events.updated_at desc, events.id desc
-            """
-            task_memory_params: tuple[object, ...] = ()
-            if limit is not None:
-                task_memory_sql += " limit ?"
-                task_memory_params = (limit,)
-            for row in db.execute(task_memory_sql, task_memory_params).fetchall():
-                rows.append(
-                    {
-                        "category": "Service error",
-                        "id": f"task-memory-{row['id']}",
-                        "status": str(row["status"] or ""),
-                        "context": (
-                            f"Task Memory: {row['channel']} task {row['reply_task_id']}"
-                        ),
-                        "root_cause": "task_memory_write_failed",
-                        "summary": (
-                            "Memory write for a finished task's durable memories: "
-                            f"{str(row['conversation_title'] or '')}"
-                        ),
                         "updated_at": str(row["updated_at"] or ""),
                         "error": str(row["error"] or ""),
                     }

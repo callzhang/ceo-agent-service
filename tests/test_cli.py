@@ -3877,8 +3877,6 @@ def test_parser_supports_single_service_command(monkeypatch):
             "8765",
             "--consumer-workers",
             "3",
-            "--meeting-memory-workers",
-            "4",
         ]
     )
 
@@ -3886,7 +3884,6 @@ def test_parser_supports_single_service_command(monkeypatch):
     assert args.host == "127.0.0.1"
     assert args.port == 8765
     assert args.consumer_workers == 3
-    assert args.meeting_memory_workers == 4
 
 
 @pytest.mark.parametrize(
@@ -6392,13 +6389,6 @@ def test_meeting_consumer_does_not_compete_with_dedicated_memory_writer(
             )
         ),
     )
-    monkeypatch.setattr(
-        cli,
-        "process_meeting_memory_writes",
-        lambda *args, **kwargs: pytest.fail(
-            "only run_meeting_memory_write_loop may consume Memory events"
-        ),
-    )
 
     def sleep(seconds):
         calls.append(("sleep", seconds))
@@ -6480,11 +6470,6 @@ def test_scan_meetings_once_command_writes_one_job_with_fixed_ten_minute_window(
     )
     assert job is not None
     assert job.eligible_at == "2026-09-08T19:50:00+08:00"
-    with AutoReplyStore(db_path)._connect() as db:
-        memory_events = db.execute(
-            "select count(*) from actions where record_type='meeting_memory_write_events'"
-        ).fetchone()[0]
-    assert memory_events == 0
 
 
 def test_meeting_loops_skip_when_network_not_ready(monkeypatch, tmp_path):
@@ -6556,7 +6541,6 @@ def test_meeting_consumer_does_not_preflight_codex_auth(monkeypatch, tmp_path):
         "consume_meeting_alignment_jobs",
         lambda *args, **kwargs: calls.append("consume-meeting"),
     )
-    monkeypatch.setattr(cli, "process_meeting_memory_writes", lambda *args, **kwargs: None)
     with pytest.raises(StopLoop):
         cli.run_meeting_consumer_loop(
             settings,
@@ -6818,184 +6802,6 @@ def test_wechat_sender_loop_resolves_old_errors_only_after_successful_tick(
         assert calls == [
             ("error", "wechat", "", "wechat_sender_loop_error", str(process_error))
         ]
-
-
-def test_meeting_memory_write_loop_processes_sent_conclusions(
-    monkeypatch, tmp_path
-):
-    class StopLoop(Exception):
-        pass
-
-    calls = []
-
-    class FakeStore:
-        def set_service_health_component(
-            self,
-            component,
-            *,
-            state,
-            status,
-            latest_tick_at,
-            latest_error,
-            latest_error_at,
-        ):
-            calls.append(
-                (
-                    "health",
-                    component,
-                    state,
-                    status,
-                    latest_tick_at,
-                    latest_error,
-                    latest_error_at,
-                )
-            )
-
-        def resolve_unresolved_errors_by_kind(self, kind, *, resolution):
-            calls.append(("resolve", kind, resolution))
-
-        def record_error(self, *_args):
-            raise AssertionError("Memory write loop unexpectedly failed")
-
-    store = FakeStore()
-    routed_execution = object()
-    monkeypatch.setattr(cli, "AutoReplyStore", lambda _path: store)
-    monkeypatch.setattr(
-        "app.agent_runtime_production.build_production_routed_codex_execution",
-        lambda **kwargs: calls.append(("build", kwargs)) or routed_execution,
-    )
-    monkeypatch.setattr(
-        cli,
-        "process_meeting_memory_writes",
-        lambda received_store, *, workspace, routed_execution, limit, concurrency, lease_seconds: calls.append(
-            (
-                "process",
-                received_store,
-                workspace,
-                routed_execution,
-                limit,
-                concurrency,
-                lease_seconds,
-            )
-        ),
-    )
-
-    with pytest.raises(StopLoop):
-        cli.run_meeting_memory_write_loop(
-            WorkerSettings(db_path=tmp_path / "worker.sqlite3", workspace=tmp_path),
-            sleep=lambda _seconds: (_ for _ in ()).throw(StopLoop()),
-            network_ready=lambda: True,
-        )
-
-    assert calls[0][0] == "build"
-    assert calls[1][:4] == ("process", store, tmp_path, routed_execution)
-    assert calls[1][4] == 20
-    assert calls[1][5] == 2
-    assert calls[1][6] == 2700
-    assert calls[2][:4] == (
-        "health",
-        "meeting-memory-write",
-        "healthy",
-        "running",
-    )
-    assert calls[2][4]
-    assert calls[2][5:] == ("", "")
-
-
-def test_meeting_memory_write_loop_uses_its_own_workers_and_runtime_lease(
-    monkeypatch, tmp_path
-):
-    class StopLoop(Exception):
-        pass
-
-    calls: list[dict[str, object]] = []
-    store = SimpleNamespace(
-        set_service_health_component=lambda *_args, **_kwargs: None,
-        resolve_unresolved_errors_by_kind=lambda *_args, **_kwargs: 0,
-        record_error=lambda *_args, **_kwargs: pytest.fail("unexpected error"),
-    )
-    monkeypatch.setattr(cli, "AutoReplyStore", lambda _path: store)
-    monkeypatch.setattr(
-        "app.agent_runtime_production.build_production_routed_codex_execution",
-        lambda **_kwargs: object(),
-    )
-    monkeypatch.setattr(
-        cli,
-        "process_meeting_memory_writes",
-        lambda *_args, **kwargs: calls.append(kwargs),
-    )
-
-    with pytest.raises(StopLoop):
-        cli.run_meeting_memory_write_loop(
-            WorkerSettings(
-                db_path=tmp_path / "worker.sqlite3",
-                workspace=tmp_path,
-                meeting_memory_workers=3,
-                codex_timeout_seconds=3600,
-                codex_idle_timeout_seconds=60,
-            ),
-            sleep=lambda _seconds: (_ for _ in ()).throw(StopLoop()),
-            network_ready=lambda: True,
-        )
-
-    assert len(calls) == 1
-    assert calls[0]["workspace"] == tmp_path
-    assert calls[0]["routed_execution"] is not None
-    assert calls[0]["limit"] == 20
-    assert calls[0]["concurrency"] == 3
-    assert calls[0]["lease_seconds"] == 3900
-
-
-def test_meeting_memory_write_loop_does_not_report_a_deferred_wave_as_healthy(
-    monkeypatch, tmp_path
-):
-    class StopLoop(Exception):
-        pass
-
-    calls: list[tuple[object, ...]] = []
-
-    class Store:
-        def set_service_health_component(self, component, **kwargs):
-            calls.append(("health", component, kwargs))
-
-        def resolve_unresolved_errors_by_kind(self, kind, *, resolution):
-            calls.append(("resolve", kind, resolution))
-
-        def record_error(self, *_args):
-            raise AssertionError("deferred Meeting Memory wave must not throw")
-
-    monkeypatch.setattr(cli, "AutoReplyStore", lambda _path: Store())
-    monkeypatch.setattr(
-        "app.agent_runtime_production.build_production_routed_codex_execution",
-        lambda **_kwargs: object(),
-    )
-    monkeypatch.setattr(
-        cli,
-        "process_meeting_memory_writes",
-        lambda *_args, **_kwargs: SimpleNamespace(
-            claimed=2, completed=0, retried=2, failed=0, lost_lease=0
-        ),
-    )
-
-    with pytest.raises(StopLoop):
-        cli.run_meeting_memory_write_loop(
-            WorkerSettings(db_path=tmp_path / "worker.sqlite3", workspace=tmp_path),
-            sleep=lambda _seconds: (_ for _ in ()).throw(StopLoop()),
-            network_ready=lambda: True,
-        )
-
-    assert calls == [
-        (
-            "health",
-            "meeting-memory-write",
-            {
-                "state": "degraded",
-                "status": "waiting",
-                "detail": "2 claimed Meeting Memory write(s) completed 0; retry 2, failed 0, lease lost 0",
-                "latest_tick_at": pytest.approx(calls[0][2]["latest_tick_at"]),
-            },
-        )
-    ]
 
 
 def test_meeting_loop_failure_isolated_and_retried(monkeypatch, tmp_path):
@@ -7352,14 +7158,6 @@ def test_run_service_starts_cron_dispatcher_without_legacy_producer_loops(
         )
         or stop("meeting-delivery"),
     )
-    monkeypatch.setattr(
-        cli,
-        "run_meeting_memory_write_loop",
-        lambda settings, network_ready=None: calls.append(
-            ("meeting-memory-write", network_ready is gate.ready)
-        )
-        or stop("meeting-memory-write"),
-    )
     monkeypatch.setattr(cli, "run_oa_pending_scan_loop", oa_pending_scan_loop)
     monkeypatch.setattr(
         cli,
@@ -7553,7 +7351,6 @@ def test_agent_cron_dispatcher_owns_all_migrated_consumer_queues(
         "work_summary",
         "okr_review",
         "business_task_todo_sync_outbox",
-        "task_memory_write",
     ]
     assert set(captured["consumers"]) == {
         "scheduled",
@@ -7563,10 +7360,9 @@ def test_agent_cron_dispatcher_owns_all_migrated_consumer_queues(
         "work_summary",
         "okr_review",
         "business_task_todo_sync_outbox",
-        "task_memory_write",
     }
     assert set(captured["executors"]) == set(captured["consumers"])
-    assert len({id(executor) for executor in captured["executors"].values()}) == 8
+    assert len({id(executor) for executor in captured["executors"].values()}) == 7
     assert captured["max_in_flight"] == {
         name: 1 if name in {"meeting", "work_summary"} else 2
         for name in captured["consumers"]

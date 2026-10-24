@@ -94,7 +94,7 @@ def test_retry_wire_schema_does_not_offer_a_technical_error_state():
     value = {'action': 'retry', 'reason': 'access requested', 'target': {}, 'payload': {},
              'evidence_refs': ['receipt'], 'summary': 'Waiting for permission',
              'risk': 'low', 'confidence': 1.0, 'rule_coverage': 1.0,
-             'information_completeness': 0.3, 'durable_memories': []}
+             'information_completeness': 0.3}
     schema = model.model_json_schema()
     validator = Draft202012Validator(schema)
     assert not list(validator.iter_errors(value))

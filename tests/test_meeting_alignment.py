@@ -3110,7 +3110,7 @@ def test_requeue_failed_meeting_delivery_rejects_unreviewed_candidate(tmp_path):
     assert store.requeue_failed_meeting_delivery(job_id) is None
 
 
-def test_failed_frozen_meeting_candidate_can_be_reaudited_without_regeneration(tmp_path):
+def test_failed_frozen_meeting_candidate_reaudit_stops_after_prior_receipt(tmp_path):
     store = AutoReplyStore(tmp_path / "worker.sqlite3")
     dws = ConsumerDws()
     job_id = seed_consumer_job(store, dws)
@@ -3150,39 +3150,11 @@ def test_failed_frozen_meeting_candidate_can_be_reaudited_without_regeneration(t
     requested = store.request_failed_meeting_audit_recovery(
         job_id, expected_candidate_sha256=candidate_digest,
     )
-    assert requested is not None
-    assert requested.status == "retry"
-    assert requested.decision_json == original_decision_json
-    direct_key = store.resolve_meeting_alignment_delivery_key(
-        legacy_key, target_kind="user", target_id="user-z",
-    )
-    assert direct_key != legacy_key
-    assert store.get_outbound_postfix_receipt("dingtalk", legacy_key) == {
-        "messageId": "old-group-receipt"
-    }
-    assert store.get_outbound_postfix_receipt("dingtalk", direct_key) is None
-
-    runner = FakeMeetingRunner(decision)
-    consumed = consume_meeting_alignment_jobs(
-        store, dws, runner, now=NOW, limit=1, deliver=False,
-    )
-    assert consumed == 1
-
-    recovered = store.get_meeting_alignment_job(job_id)
-    persisted_decision = json.loads(recovered.decision_json)
-    assert recovered.status == "ready_to_send", recovered.error
-    assert MeetingAlignmentDecision.model_validate(
-        {k: v for k, v in persisted_decision.items() if k != "_service_audit"}
-    ).final_message == original.final_message
-    assert meeting_alignment_decision_digest(
-        MeetingAlignmentDecision.model_validate(
-            {k: v for k, v in persisted_decision.items() if k != "_service_audit"}
-        )
-    ) == candidate_digest
-    assert meeting_decision_audit_is_approved(recovered.decision_json)
-    assert runner.calls == 0
-    runs = store.list_meeting_alignment_runs(job_id)
-    assert runner.audit_run_id == runs[0].id
+    assert requested is None
+    unchanged = store.get_meeting_alignment_job(job_id)
+    assert unchanged.status == "failed"
+    assert unchanged.decision_json == original_decision_json
+    assert unchanged.final_message == original.final_message
     assert dws.send_calls == []
 
 
@@ -3224,6 +3196,110 @@ def test_failed_frozen_meeting_audit_return_stays_failed(tmp_path):
     assert failed.status == "failed"
     assert json.loads(failed.error)["kind"] == "meeting_audit_recovery_unapproved", failed.error
     assert dws.send_calls == []
+
+
+def test_returned_frozen_candidate_can_be_explicitly_reaudited_without_changes(tmp_path):
+    store = AutoReplyStore(tmp_path / "worker.sqlite3")
+    dws = ConsumerDws()
+    job_id = seed_consumer_job(store, dws)
+    decision = consumer_send_decision()
+    digest = meeting_alignment_decision_digest(decision)
+    returned_json = persist_audited_meeting_decision(
+        decision,
+        MeetingAlignmentAuditResult(
+            outcome="return",
+            candidate_sha256=digest,
+            summary="Current-duty evidence is missing.",
+            feedback=MeetingAlignmentAuditFeedback(
+                rule="Recipient evidence",
+                observation="The recipient's current duties are unclear.",
+                requested_revision="Use the explicit meeting assignment as evidence.",
+            ),
+        ),
+    )
+    store.update_meeting_alignment_job(
+        job_id,
+        status="failed",
+        decision_json=returned_json,
+        target_kind="group",
+        target_id="cid-first",
+        final_message=decision.final_message,
+        error=json.dumps({
+            "kind": "meeting_audit_recovery_unapproved",
+            "message": "Frozen candidate Audit return: current-duty evidence is missing.",
+        }),
+        send_result_json="{}",
+    )
+
+    requested = store.request_failed_meeting_audit_recovery(
+        job_id, expected_candidate_sha256=digest,
+    )
+
+    assert requested is not None
+    assert requested.status == "retry"
+    assert requested.final_message == decision.final_message
+    assert requested.target_id == "cid-first"
+    assert meeting_alignment_decision_digest(
+        MeetingAlignmentDecision.model_validate_json(requested.decision_json)
+    ) == digest
+    assert json.loads(requested.error)["kind"] == "meeting_audit_recovery_requested"
+
+    class ReturningAuditRunner(FakeMeetingRunner):
+        def audit(self, *, prompt, run_id, candidate_sha256):
+            return MeetingAlignmentAuditResult(
+                outcome="return",
+                candidate_sha256=candidate_sha256,
+                summary="The follow-up is not supported by the source.",
+                feedback=MeetingAlignmentAuditFeedback(
+                    rule="Source evidence",
+                    observation="No matching assignment was found.",
+                    requested_revision="Correct the candidate from the source.",
+                ),
+            )
+
+    runner = ReturningAuditRunner(decision)
+    consume_meeting_alignment_jobs(
+        store, dws, runner, now=NOW, limit=1, deliver=False,
+    )
+    failed_again = store.get_meeting_alignment_job(job_id)
+    assert failed_again.status == "failed"
+    assert json.loads(failed_again.error)["kind"] == "meeting_audit_recovery_unapproved"
+    assert dws.send_calls == []
+
+
+def test_rejected_frozen_candidate_cannot_be_reaudited_as_a_return(tmp_path):
+    store = AutoReplyStore(tmp_path / "worker.sqlite3")
+    dws = ConsumerDws()
+    job_id = seed_consumer_job(store, dws)
+    decision = consumer_send_decision()
+    digest = meeting_alignment_decision_digest(decision)
+    rejected_json = persist_audited_meeting_decision(
+        decision,
+        MeetingAlignmentAuditResult(
+            outcome="reject",
+            candidate_sha256=digest,
+            summary="The recipient is not appropriate for this content.",
+            feedback=None,
+        ),
+    )
+    store.update_meeting_alignment_job(
+        job_id,
+        status="failed",
+        decision_json=rejected_json,
+        target_kind="group",
+        target_id="cid-first",
+        final_message=decision.final_message,
+        error=json.dumps({
+            "kind": "meeting_audit_recovery_unapproved",
+            "message": "Frozen candidate Audit reject: recipient is not appropriate.",
+        }),
+        send_result_json="{}",
+    )
+
+    assert store.request_failed_meeting_audit_recovery(
+        job_id, expected_candidate_sha256=digest,
+    ) is None
+    assert store.get_meeting_alignment_job(job_id).status == "failed"
 
 
 def test_failed_frozen_meeting_audit_recovery_requires_exact_digest(tmp_path):

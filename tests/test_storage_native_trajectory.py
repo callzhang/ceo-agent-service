@@ -251,7 +251,7 @@ def test_delivery_reconciliation_after_restart_reads_interrupted_native_turn(tmp
             "information_completeness": 1.0,
             "error_code": "", "error_retryable": False,
             "error_authorization_required": False,
-            "durable_memories": [], "decision_options": [],
+             "decision_options": [],
             "proposal": {
                 "objective": "Deliver the message", "sourced_facts": [],
                 "authored_judgment": "Send the reviewed text.",

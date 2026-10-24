@@ -1,5 +1,28 @@
 # Changelog
 
+## 2026-10-24 — Task/Run 阶段 2 与最新 main 集成（尚未发布）
+
+- 将 Task5 的 Task/Run 实体与 `origin/main` 最新的任务记忆退役、会议冻结候选复核和编号来源文档行为正常合并，并把仍支持的会议错误迁移和排空测试读取改到原生 Task 所有者。
+- 这只是开发分支集成记录；未推送、未部署，也不代表生产已切换到 Task/Run。Task5 历史宽测试结果仍为 316 通过、59 失败、3 个 setup 错误；失败节点清单未保存，不能据此宣称全绿。详见 `.superpowers/sdd/2026-10-22-task-run-entity-unification/latest-main-integration-report.md`。
+
+## 2026-10-24 — 已执行的手动反馈不再让 Status 变 degraded
+
+- **质量门的「反馈没有结案」分两类**（Derek 2026-10-24 批准，单独提交）：手动反馈（`manual:<attempt>`）在反馈到达之后又重跑了一轮、该轮执行 `done` 且所有动作已 `verified`、并且从未被重新打开时，改为提示 `acted_unresolved`；其余仍是错误。此前 5 条这样的反馈（15716、15718、15719、15869、15810）让 Status 一直 degraded，而结案需要代码、Skill 或配置证据，重跑审批不产生这些。
+- 反馈记录不动、仍是待处理；提示不证明重跑做对了。
+
+## 2026-10-24 — 会议结论不再由服务写 Memory
+
+- **去掉会议结论的服务写入**（Derek 2026-10-24：任务那一路去掉后，会议这一路不应是另一条路径）：删除 `app/meeting_memory_write.py`、服务自己注册的 OAuth 客户端 `app/memory_connector_client.py` 和 `authorize-memory-connector` 命令、`meeting-memory-write` 健康组件、`--meeting-memory-workers` / `CEO_MEETING_MEMORY_WORKERS`、`scan-meetings-once` 里的入队与写入、控制台 Status 的 `meeting_memory_health` 卡片、Attention 的 `meeting_memory_write_failed` 和部署排空对会议 Memory 租约的计数。
+- **原因**：服务的凭据与 Agent 读 memory 的不是同一份，后端对它返回 500 `FRIDAY_INTROSPECTION_FAILED`，昨天 07:51 UTC 之后 9 条会议结论写入全部失败；任务那一路已改成 Agent 自己写。
+- 9 条失败行与历史 `meeting_memory_write_events` 记录保留不动，不再出现在 Attention；这 9 场会议的结论由人工补写进 Memory。
+
+## 2026-10-24 — 任务长期记忆改回 Agent 自己写
+
+- **去掉任务记忆的服务层**（Derek 2026-10-24）：Consumer 结果不再有 `durable_memories`，任务结束不再入队 `task_memory_write_events`，删除 `app/task_memory_write.py`、`TaskMemoryWriteQueueAdapter`、Attention 里的 `task_memory_write_failed` 和控制台的「任务 Memory 写入」队列。Consumer 提示要求它在结束前检查本轮是否确认了应长期保留的信息，有则自己调用 `memory_connector.memory_write`。
+- **原因**：判断一直是 Agent 做的，服务层不会让它记得更多（10-20 以来 248 个任务里 245 个为空）；服务写入用的是独立注册的 OAuth 凭据，与 Agent 读 memory 的不是同一份，后端现在对它返回 500 `FRIDAY_INTROSPECTION_FAILED`。
+- **限制**：Codex 路线的 Consumer 有 `memory_connector` 全部工具；Claude 路线的 Consumer 只连 `agent_cli`，没有 Memory 工具，走该路线的任务不会写长期记忆。会议结论仍由服务写入，未改动。
+- 历史 `task_memory_write_events` 行与索引保留（删除需要数据库迁移）；旧结果里的 `durable_memories` 读回时被丢弃。
+
 ## 2026-10-24 — 微信统一路径：阶段 0 与阶段 1
 
 - **阶段 0（测试，无行为变化）**：`tests/wechat` 在 main 上原有 66 个失败（发送前没有独立 Audit 批准、直接访问重构前的旧表、写死旧重试上限），已通过真实 store 接口修复；新增端到端特征测试与黄金输出文件，固定微信流水线今天的行为，并记录一个潜在问题：审核器的 `wechat_audit_candidate_changed`、`wechat_audit_unavailable` 关闭路径会抛 `AgentRunLeaseLostError`，会挡住排在后面的投递。

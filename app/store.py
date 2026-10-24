@@ -252,8 +252,6 @@ from app.action_error_definitions import error_projection
 
 from app.shared_action_definitions import email_projection as email_action_projection
 
-MEETING_MEMORY_WRITE_SQL = task_delivery_projection("meeting_memory_write_events")
-TASK_MEMORY_WRITE_SQL = task_delivery_projection("task_memory_write_events")
 WECHAT_DELIVERY_SQL = task_delivery_projection("wechat_deliveries")
 ERROR_SQL = error_projection()
 FEEDBACK_EVENT_SQL = feedback_projection("feedback_events")
@@ -845,45 +843,6 @@ class MemoryWriteEvent(BaseModel):
     updated_at: str
 
 
-class MeetingMemoryWriteEvent(BaseModel):
-    """One durable Memory delivery for one already-sent meeting conclusion."""
-
-    id: int
-    meeting_job_id: int
-    execution_generation: str
-    status: str
-    attempts: int
-    available_at: str
-    error: str
-    memory_id: str
-    lease_owner: str = ""
-    lease_expires_at: str = ""
-    started_at: str = ""
-    created_at: str
-    updated_at: str
-
-
-class TaskMemoryWriteEvent(BaseModel):
-    """The durable memories one finished task execution named, and their writes."""
-
-    id: int
-    reply_task_id: int
-    execution_generation: str
-    consumer_run_id: int | None
-    memories_json: str
-    written_memory_ids_json: str
-    status: str
-    attempts: int
-    available_at: str
-    error: str
-    skip_reason: str
-    lease_owner: str = ""
-    lease_expires_at: str = ""
-    started_at: str = ""
-    created_at: str
-    updated_at: str
-
-
 class FeedbackEvent(BaseModel):
     key: str
     feedback_token: str
@@ -1404,13 +1363,6 @@ def _is_sqlite_missing_schema_error(exc: sqlite3.Error) -> bool:
     return message.startswith("no such table:") or message.startswith(
         "no such column:"
     )
-
-
-def _meeting_memory_settlement_time(now: datetime | None) -> str:
-    value = datetime.now(timezone.utc) if now is None else now
-    if value.tzinfo is None or value.utcoffset() is None:
-        raise ValueError("meeting Memory settlement time must include a timezone")
-    return value.isoformat()
 
 
 # Opening a SQLite connection re-parses the whole schema (hundreds of objects
@@ -7882,7 +7834,6 @@ class AutoReplyStore(LogicalRunStoreMixin, ReviewedCandidateStoreMixin):
             if (
                 source not in {
                     "memory_write_event",
-                    "meeting_memory_write_event",
                     "wechat_memory_candidate",
                     "wechat_memory_import_job",
                 }
@@ -7891,13 +7842,7 @@ class AutoReplyStore(LogicalRunStoreMixin, ReviewedCandidateStoreMixin):
                 or int(source_id) <= 0
             ):
                 raise ValueError("memory workload key must name a persisted source row")
-            if source == "meeting_memory_write_event" and (
-                not generation_separator or not execution_generation.strip()
-            ):
-                raise ValueError(
-                    "meeting Memory workload key must include an execution generation"
-                )
-            if source != "meeting_memory_write_event" and generation_separator:
+            if generation_separator:
                 raise ValueError("memory workload key has an unsupported suffix")
         return workload_kind, workload_key
 
@@ -8020,11 +7965,6 @@ class AutoReplyStore(LogicalRunStoreMixin, ReviewedCandidateStoreMixin):
                     "and cast(legacy_key as integer)=? "
                     "and memory_status in ('pending', 'failed')"
                 ),
-                "meeting_memory_write_event": (
-                    "select 1 from actions where record_type='meeting_memory_write_events' "
-                    "and cast(legacy_key as integer)=? "
-                    "and td_status='processing' and td_execution_generation=?"
-                ),
                 "wechat_memory_candidate": (
                     f"select 1 from ({candidate_projection('wechat_memory_candidate')}) where id=? "
                     "and status='approved' and memory_write_status='writing'"
@@ -8033,11 +7973,7 @@ class AutoReplyStore(LogicalRunStoreMixin, ReviewedCandidateStoreMixin):
                     "select 1 from tasks where id=? and kind='wechat_import' and status='running'"
                 ),
             }[source]
-            args = (
-                (int(row_id), execution_generation)
-                if source == "meeting_memory_write_event"
-                else (int(row_id),)
-            )
+            args = (int(row_id),)
         return db.execute(query, args).fetchone() is not None
 
     @staticmethod
@@ -8858,42 +8794,6 @@ class AutoReplyStore(LogicalRunStoreMixin, ReviewedCandidateStoreMixin):
                   and updated_at<=?
                 """,
                 (now_text, now_text, stale_before),
-            )
-            return cursor.rowcount
-
-    def supersede_obsolete_meeting_memory_runtime_attempts(self) -> int:
-        """Close an interrupted Memory generation after its event was safely reopened.
-
-        Meeting Memory events receive a new execution generation only when a
-        failed event is explicitly requeued.  An active runtime attempt for the
-        old generation can therefore no longer complete the current event.  It
-        is safe to terminalize that stale attempt only while it has not crossed
-        the persisted external-effect fence.
-        """
-        with self._agent_run_write_transaction(None) as (db, (_, now_text)):
-            cursor = db.execute(
-                f"""
-                update runtime_attempts as attempt
-                set status='superseded', failure_class='', failure_code='',
-                    failover_permitted=0, lease_owner='', lease_expires_at='',
-                    finished_at=?, updated_at=?
-                where attempt.workload_kind='memory' and attempt.parent_id is null
-                  and attempt.workload_kind='memory'
-                  and attempt.status in ('starting', 'running')
-                  and attempt.first_effect_started_at=''
-                  and exists (
-                      select 1
-                      from ({MEETING_MEMORY_WRITE_SQL}) as event
-                      where attempt.workload_key like (
-                          'meeting_memory_write_event:' || event.id || ':%'
-                      )
-                        and substr(
-                            attempt.workload_key,
-                            length('meeting_memory_write_event:' || event.id || ':') + 1
-                        ) <> event.execution_generation
-                  )
-                """,
-                (now_text, now_text),
             )
             return cursor.rowcount
 
@@ -13809,189 +13709,6 @@ class AutoReplyStore(LogicalRunStoreMixin, ReviewedCandidateStoreMixin):
         ]
 
     @staticmethod
-    def _meeting_memory_write_event_from_row(
-        row: sqlite3.Row,
-    ) -> MeetingMemoryWriteEvent:
-        return MeetingMemoryWriteEvent.model_validate(dict(row))
-
-    def create_meeting_memory_write_event(
-        self,
-        meeting_job_id: int,
-    ) -> bool:
-        """Queue one Memory write for an already delivered conclusion.
-
-        The unique meeting-job key deliberately keeps Memory delivery separate
-        from the meeting's terminal send state while making restarts idempotent.
-        """
-        with self._immediate_write_transaction() as db:
-            parent = db.execute(
-                "select 1 from tasks t join task_results r on r.task_id=t.id and r.result_kind='meeting_alignment' "
-                "where t.id=? and t.kind='meeting_alignment' and t.status='sent' and trim(r.final_message)<>''",
-                (meeting_job_id,),
-            ).fetchone()
-            if parent is None:
-                raise ValueError(
-                    "meeting Memory write requires a sent conclusion"
-                )
-            if db.execute(
-                "select 1 from actions where record_type='meeting_memory_write_events' "
-                "and td_meeting_job_id=?", (meeting_job_id,),
-            ).fetchone():
-                return False
-            inserted = insert_task_delivery_action(db, "meeting_memory_write_events", {
-                "meeting_job_id": meeting_job_id, "execution_generation": uuid4().hex,
-                "payload_json": "{}",
-            })
-        return inserted.rowcount == 1
-
-    #: Task outcomes worth considering for Memory. A task that never reached a
-    #: conclusion has nothing to remember; the other three all do, including a
-    #: skip (why we decided not to act is the part that is forgotten first).
-    def _enqueue_task_memory_write_in_connection(
-        self,
-        db: sqlite3.Connection,
-        *,
-        task_id: int,
-        execution_generation: str,
-    ) -> None:
-        """Queue what a finished execution asked to remember, in its own transaction.
-
-        Writing to Memory used to depend on the turn choosing to call the tool,
-        and it decayed to nothing (last agent-written memory 2026-07-26). Derek
-        2026-09-19: it is a check the system performs when a task ends; and
-        2026-09-24: the Consumer names what to remember, the system writes it,
-        nothing reviews it. Every finished execution gets a row, including one
-        with nothing to write, so "was this considered" always has an answer.
-
-        The memories are read from the adopted candidate of the execution's last
-        completed Consumer run, the revision the task finished on. The
-        in-memory orchestration result is not used: most of its constructors
-        leave ``consumer_result`` empty (OA task 384747 was queued as having no
-        Consumer result although run 21281 had completed).
-        """
-        consumer_run = db.execute(
-            """
-            select r.id, c.candidate_json from runs r
-            left join run_adopted_results c on c.consumer_run_id=r.id
-            where r.task_id=? and r.execution_generation=?
-              and r.role='consumer' and r.status='completed'
-            order by r.id desc limit 1
-            """,
-            (task_id, execution_generation),
-        ).fetchone()
-        memories: list[object] = []
-        if consumer_run is None:
-            status, skip_reason = "skipped", "no_consumer_result"
-        else:
-            adopted_result = consumer_run["candidate_json"]
-            memories = list(
-                json.loads(adopted_result or "{}").get(
-                    "durable_memories"
-                )
-                or []
-            )
-            status, skip_reason = (
-                ("pending", "") if memories else ("skipped", "no_durable_memories" if adopted_result else "adopted_consumer_candidate_unavailable")
-            )
-        consumer_run_id = consumer_run["id"] if consumer_run is not None else None
-        memories_json = json.dumps(memories, ensure_ascii=False)
-        _email_lock(db, (task_id, execution_generation, consumer_run_id,
-                         memories_json, status, skip_reason))
-        high = _autoincrement_high_water(db, "task_memory_write_events")
-        if high == 2**63 - 1:
-            _raise_autoincrement_full()
-        fields = {
-            "execution_generation": "?", "consumer_run_id": "?", "memories_json": "?",
-            "status": "?", "skip_reason": "?",
-            **{field: expression for field, expression in TASK_DELIVERY_DEFAULTS[
-                "task_memory_write_events"].items() if field not in (
-                    "memories_json", "status", "skip_reason")},
-        }
-        payload_sql = "jsonb_array(" + ",".join(
-            "json(ceo_native_json(" + fields[field] + "))"
-            for field in _action_layout("task_memory_write_events").fields
-        ) + ")"
-        db.execute(
-            f"insert into actions(_kind,legacy_key,payload_json,td_reply_task_id) "
-            f"values({ACTION_RECORD_TYPES.code('task_memory_write_events')},?,{payload_sql},?) "
-            "on conflict(td_reply_task_id,td_execution_generation) "
-            "where record_type='task_memory_write_events' do nothing",
-            (str(high + 1), execution_generation, consumer_run_id,
-             memories_json, status, skip_reason, task_id),
-        )
-
-    def get_task_memory_write_event(self, event_id: int) -> TaskMemoryWriteEvent | None:
-        with self._connect() as db:
-            row = db.execute(
-                f"select * from ({TASK_MEMORY_WRITE_SQL}) where id=?", (event_id,)
-            ).fetchone()
-        return None if row is None else TaskMemoryWriteEvent.model_validate(dict(row))
-
-    def record_task_memory_written_ids(
-        self, event_id: int, *, owner: str, written_memory_ids: list[str]
-    ) -> bool:
-        """Keep each written memory's id as it lands, so a retry skips it."""
-        with self._connect() as db:
-            assignments, set_args = task_delivery_set_parts(
-                "task_memory_write_events",
-                {"written_memory_ids_json": json.dumps(written_memory_ids)},
-                update_sql={"updated_at": "current_timestamp"},
-            )
-            cursor = db.execute(
-                f"update actions set {assignments} "
-                "where record_type='task_memory_write_events' "
-                "and cast(legacy_key as integer)=? and td_status='processing' "
-                "and td_lease_owner=?",
-                (*set_args, event_id, owner),
-            )
-        return cursor.rowcount == 1
-
-    def complete_task_memory_write_event(self, event_id: int, *, owner: str) -> bool:
-        return self._settle_task_memory_write_event(
-            event_id, owner=owner, status="written", error="", available_at=""
-        )
-
-    def retry_task_memory_write_event(
-        self, event_id: int, *, owner: str, error: str, available_at: str
-    ) -> bool:
-        return self._settle_task_memory_write_event(
-            event_id, owner=owner, status="pending", error=error,
-            available_at=available_at,
-        )
-
-    def fail_task_memory_write_event(
-        self, event_id: int, *, owner: str, error: str
-    ) -> bool:
-        return self._settle_task_memory_write_event(
-            event_id, owner=owner, status="failed", error=error, available_at=""
-        )
-
-    def _settle_task_memory_write_event(
-        self, event_id: int, *, owner: str, status: str, error: str, available_at: str
-    ) -> bool:
-        with self._connect() as db:
-            assignments, set_args = task_delivery_set_parts(
-                "task_memory_write_events",
-                {"status": status, "available_at": available_at, "error": error[:500],
-                 "lease_owner": "", "lease_expires_at": ""},
-                update_sql={"attempts": "td_attempts+1", "updated_at": "current_timestamp"},
-            )
-            cursor = db.execute(
-                f"update actions set {assignments} "
-                "where record_type='task_memory_write_events' "
-                "and cast(legacy_key as integer)=? and td_status='processing' "
-                "and td_lease_owner=?",
-                (*set_args, event_id, owner),
-            )
-        return cursor.rowcount == 1
-
-    def list_failed_task_memory_write_events(self) -> list[TaskMemoryWriteEvent]:
-        with self._connect() as db:
-            rows = db.execute(
-                f"select * from ({TASK_MEMORY_WRITE_SQL}) where status='failed' order by id"
-            ).fetchall()
-        return [TaskMemoryWriteEvent.model_validate(dict(row)) for row in rows]
-
     def latest_runtime_route_for_agent_run(self, agent_run_id: int) -> tuple[str, str]:
         """The route and model of an Agent run's last runtime attempt."""
         with self._connect() as db:
@@ -14001,491 +13718,6 @@ class AutoReplyStore(LogicalRunStoreMixin, ReviewedCandidateStoreMixin):
                 (agent_run_id,),
             ).fetchone()
         return (row["route_name"], row["model"]) if row is not None else ("", "")
-
-    def enqueue_sent_meeting_memory_write_events(self) -> int:
-        """Probe missing conclusions, then recheck only those jobs while writing."""
-        with self._connect() as db:
-            missing_ids = [
-                int(row["id"])
-                for row in db.execute(
-                    """
-                    with missing as materialized (
-                        select jobs.id
-                        from tasks as jobs
-                        where jobs.kind='meeting_alignment'
-                          and jobs.status='sent'
-                          and not exists (
-                              select 1 from actions as events
-                              where events.record_type='meeting_memory_write_events'
-                                and events.td_meeting_job_id=jobs.id
-                          )
-                    )
-                    select jobs.id
-                    from missing
-                    join tasks as jobs on jobs.id=missing.id
-                      and jobs.kind='meeting_alignment'
-                    join task_results result on result.task_id=jobs.id and result.result_kind='meeting_alignment'
-                    where trim(result.final_message)<>''
-                    """
-                )
-            ]
-        if not missing_ids:
-            return 0
-        placeholders = ",".join("?" for _ in missing_ids)
-        with self._immediate_write_transaction() as db:
-            eligible_sql = f"""
-                from tasks as jobs
-                where jobs.kind='meeting_alignment'
-                  and jobs.id in ({placeholders})
-                  and jobs.status='sent'
-                  and exists (select 1 from task_results result where result.task_id=jobs.id
-                              and result.result_kind='meeting_alignment' and trim(result.final_message)<>'')
-                  and not exists (
-                      select 1 from actions as events
-                      where events.record_type='meeting_memory_write_events'
-                        and events.td_meeting_job_id=jobs.id
-                  )
-            """
-            count = db.execute("select count(*) " + eligible_sql, missing_ids).fetchone()[0]
-            if not count:
-                return 0
-            high = _autoincrement_high_water(db, "meeting_memory_write_events")
-            if high > 2**63 - 1 - count:
-                _raise_autoincrement_full()
-            defaults = TASK_DELIVERY_DEFAULTS["meeting_memory_write_events"]
-            payload_fields = {"payload_json": "'{}'", **defaults,
-                              "execution_generation": "lower(hex(randomblob(16)))"}
-            payload_sql = "jsonb_array(" + ",".join(
-                "json(ceo_native_json(" + payload_fields[field] + "))"
-                for field in _action_layout("meeting_memory_write_events").fields
-            ) + ")"
-            cursor = db.execute(
-                f"""
-                insert into actions (_kind,legacy_key,payload_json,td_meeting_job_id)
-                select {ACTION_RECORD_TYPES.code('meeting_memory_write_events')},
-                       cast(? + row_number() over () as text),
-                       {payload_sql}, jobs.id
-                {eligible_sql}
-                """,
-                (high, *missing_ids),
-            )
-        return cursor.rowcount
-
-    def list_due_meeting_memory_write_events(
-        self,
-        *,
-        now: str,
-        limit: int,
-    ) -> list[MeetingMemoryWriteEvent]:
-        if limit <= 0:
-            return []
-        with self._connect() as db:
-            rows = db.execute(
-                f"""
-                select events.*
-                from ({MEETING_MEMORY_WRITE_SQL}) events
-                join tasks jobs on jobs.id=events.meeting_job_id
-                  and jobs.kind='meeting_alignment'
-                where events.status='pending'
-                  and (events.available_at='' or datetime(events.available_at)<=datetime(?))
-                order by events.id
-                limit ?
-                """,
-                (now, limit),
-            ).fetchall()
-        return [self._meeting_memory_write_event_from_row(row) for row in rows]
-
-    def meeting_memory_health_snapshot(
-        self,
-        *,
-        now: str | datetime | None = None,
-        delayed_after_seconds: int = 30 * 60,
-    ) -> dict[str, int | str]:
-        """Return a lease-backed health projection for Meeting Memory writes.
-
-        ``agent_runtime_attempts.status`` is not a liveness signal by itself:
-        a process can disappear while its historical row remains ``running``.
-        An active worker therefore needs both an unexpired event lease and an
-        unexpired runtime-attempt lease held by the same owner. A running
-        attempt without that matching event lease is reported as a ghost.
-        """
-        if delayed_after_seconds <= 0:
-            raise ValueError("meeting Memory delay threshold must be positive")
-        now_value, _ = _utc_store_time(now)
-        with self._connect() as db:
-            event_rows = db.execute(
-                f"""
-                select id, execution_generation, status, available_at, error,
-                       lease_owner, lease_expires_at, created_at, updated_at
-                from ({MEETING_MEMORY_WRITE_SQL})
-                order by id
-                """
-            ).fetchall()
-            runtime_rows = db.execute(
-                """
-                select workload_key, status, lease_owner, lease_expires_at
-                from runtime_attempts
-                where workload_kind='memory'
-                  and workload_key like 'meeting_memory_write_event:%'
-                  and status in ('starting', 'running')
-                """
-            ).fetchall()
-
-        pending = due = delayed = processing = retryable = failed = 0
-        completed_last_hour = 0
-        oldest_due_at: datetime | None = None
-        oldest_due_text = ""
-        events_by_key: dict[str, sqlite3.Row] = {}
-        for row in event_rows:
-            status = str(row["status"])
-            event_key = (
-                f"meeting_memory_write_event:{row['id']}:"
-                f"{row['execution_generation']}"
-            )
-            events_by_key[event_key] = row
-            if status == "processing":
-                processing += 1
-            elif status == "failed":
-                failed += 1
-            elif status == "done":
-                completed_at = self._parse_stored_timestamp(row["updated_at"])
-                if completed_at is not None and completed_at >= now_value - timedelta(hours=1):
-                    completed_last_hour += 1
-            if status != "pending":
-                continue
-            pending += 1
-            if str(row["error"] or "").strip():
-                retryable += 1
-            due_text = str(row["available_at"] or "").strip() or str(
-                row["created_at"] or ""
-            ).strip()
-            due_at = self._parse_stored_timestamp(due_text)
-            if due_at is None or due_at > now_value:
-                continue
-            due += 1
-            if oldest_due_at is None or due_at < oldest_due_at:
-                oldest_due_at = due_at
-                oldest_due_text = due_text
-            if (now_value - due_at).total_seconds() >= delayed_after_seconds:
-                delayed += 1
-
-        active_agents = ghost_runtime_attempts = 0
-        for runtime in runtime_rows:
-            event = events_by_key.get(str(runtime["workload_key"]))
-            runtime_owner = str(runtime["lease_owner"] or "").strip()
-            runtime_expires_at = self._parse_stored_timestamp(
-                runtime["lease_expires_at"]
-            )
-            event_owner = str(event["lease_owner"] or "").strip() if event else ""
-            event_expires_at = (
-                self._parse_stored_timestamp(event["lease_expires_at"])
-                if event is not None
-                else None
-            )
-            event_is_live = bool(
-                event is not None
-                and event["status"] == "processing"
-                and event_owner
-                and event_expires_at is not None
-                and event_expires_at > now_value
-            )
-            runtime_is_live = bool(
-                runtime_owner
-                and runtime_expires_at is not None
-                and runtime_expires_at > now_value
-            )
-            if event_is_live and runtime_is_live and event_owner == runtime_owner:
-                active_agents += 1
-            else:
-                ghost_runtime_attempts += 1
-
-        oldest_due_seconds = (
-            max(0, int((now_value - oldest_due_at).total_seconds()))
-            if oldest_due_at is not None
-            else 0
-        )
-        return {
-            "pending": pending,
-            "due": due,
-            "delayed": delayed,
-            "processing": processing,
-            "retryable": retryable,
-            "failed": failed,
-            "oldest_due_at": oldest_due_text,
-            "oldest_due_seconds": oldest_due_seconds,
-            "completed_last_hour": completed_last_hour,
-            "active_agents": active_agents,
-            "ghost_runtime_attempts": ghost_runtime_attempts,
-            "delayed_after_seconds": delayed_after_seconds,
-        }
-
-    def claim_due_meeting_memory_write_events(
-        self,
-        *,
-        now: str,
-        limit: int,
-        owner: str,
-        lease_seconds: int,
-    ) -> list[MeetingMemoryWriteEvent]:
-        """Atomically claim due writes, reclaiming only expired processing leases."""
-        if limit <= 0:
-            return []
-        owner = owner.strip()
-        if not owner:
-            raise ValueError("meeting Memory lease owner is required")
-        if lease_seconds <= 0:
-            raise ValueError("meeting Memory lease duration must be positive")
-        try:
-            claimed_at = datetime.fromisoformat(now.replace("Z", "+00:00"))
-        except ValueError as exc:
-            raise ValueError("meeting Memory claim time must be ISO-8601") from exc
-        if claimed_at.tzinfo is None or claimed_at.utcoffset() is None:
-            raise ValueError("meeting Memory claim time must include a timezone")
-        lease_expires_at = (claimed_at + timedelta(seconds=lease_seconds)).isoformat()
-        with claim_connection(self, immediate=True) as db:
-            if db is None:
-                return []
-            assignments, set_args = task_delivery_set_parts(
-                "meeting_memory_write_events",
-                {"status": "processing", "lease_owner": owner,
-                 "lease_expires_at": lease_expires_at, "started_at": now},
-                update_sql={"updated_at": "current_timestamp"},
-            )
-            rows = db.execute(
-                f"""
-                update actions set {assignments}
-                where record_type='meeting_memory_write_events'
-                  and cast(legacy_key as integer) in (
-                    select id
-                    from ({MEETING_MEMORY_WRITE_SQL})
-                    where (
-                        status='pending'
-                        and (
-                            available_at=''
-                            or datetime(available_at)<=datetime(?)
-                        )
-                    ) or (
-                        status='processing'
-                        and (
-                            trim(lease_expires_at)=''
-                            or datetime(lease_expires_at)<=datetime(?)
-                        )
-                    )
-                    order by id
-                    limit ?
-                )
-                returning cast(legacy_key as integer) as id
-                """,
-                (*set_args, now, now, limit),
-            ).fetchall()
-            if not rows:
-                return []
-            placeholders = ",".join("?" for _ in rows)
-            events = db.execute(
-                    "select events.* "
-                f"from ({MEETING_MEMORY_WRITE_SQL}) events "
-                f"join tasks jobs on jobs.id=events.meeting_job_id "
-                    f"and jobs.kind='meeting_alignment' "
-                f"where events.id in ({placeholders})",
-                [row["id"] for row in rows],
-            ).fetchall()
-        return [self._meeting_memory_write_event_from_row(row) for row in events]
-
-    def complete_meeting_memory_write_event(
-        self,
-        event_id: int,
-        *,
-        owner: str,
-        memory_id: str,
-        now: datetime | None = None,
-    ) -> bool:
-        settlement_time = _meeting_memory_settlement_time(now)
-        with self._connect() as db:
-            assignments, set_args = task_delivery_set_parts(
-                "meeting_memory_write_events",
-                {"status": "done", "available_at": "", "error": "",
-                 "memory_id": memory_id, "lease_owner": "", "lease_expires_at": ""},
-                update_sql={"attempts": "td_attempts+1", "updated_at": "current_timestamp"},
-            )
-            cursor = db.execute(
-                f"update actions set {assignments} "
-                "where record_type='meeting_memory_write_events' "
-                "and cast(legacy_key as integer)=? and td_status='processing' "
-                "and td_lease_owner=? and datetime(td_lease_expires_at)>datetime(?)",
-                (*set_args, event_id, owner, settlement_time),
-            )
-        return cursor.rowcount == 1
-
-    def renew_meeting_memory_write_event_lease(
-        self,
-        event_id: int,
-        *,
-        lease_owner: str,
-        now: datetime,
-        lease_seconds: int,
-    ) -> bool:
-        """Extend a live worker lease without allowing a stale owner to reclaim it."""
-        if not lease_owner.strip():
-            raise ValueError("meeting Memory lease owner is required")
-        if lease_seconds <= 0:
-            raise ValueError("meeting Memory lease duration must be positive")
-        renewal_time = _meeting_memory_settlement_time(now)
-        lease_expires_at = (now + timedelta(seconds=lease_seconds)).isoformat()
-        with self._connect() as db:
-            assignments, set_args = task_delivery_set_parts(
-                "meeting_memory_write_events", {"lease_expires_at": lease_expires_at},
-                update_sql={"updated_at": "current_timestamp"},
-            )
-            cursor = db.execute(
-                f"update actions set {assignments} "
-                "where record_type='meeting_memory_write_events' "
-                "and cast(legacy_key as integer)=? and td_status='processing' "
-                "and td_lease_owner=? and datetime(td_lease_expires_at)>datetime(?)",
-                (*set_args, event_id, lease_owner, renewal_time),
-            )
-        return cursor.rowcount == 1
-
-    def retry_meeting_memory_write_event(
-        self,
-        event_id: int,
-        *,
-        owner: str,
-        error: str,
-        available_at: str,
-        now: datetime | None = None,
-        new_generation: bool = False,
-    ) -> bool:
-        """Put a Memory write back in the queue.
-
-        ``new_generation`` gives the retry its own runtime operation. A turn
-        that ran to completion is stored under the event's generation, and the
-        same generation hands that stored result straight back; a retry after a
-        completed turn therefore needs a new generation to run another turn.
-        """
-        settlement_time = _meeting_memory_settlement_time(now)
-        with self._connect() as db:
-            assignments, set_args = task_delivery_set_parts(
-                "meeting_memory_write_events",
-                {"status": "pending", "available_at": available_at, "error": error[:500],
-                 "lease_owner": "", "lease_expires_at": ""},
-                update_sql={
-                    "attempts": "td_attempts+1",
-                    "execution_generation": "case when ? then ? else td_execution_generation end",
-                    "updated_at": "current_timestamp",
-                },
-                update_parameters=(1 if new_generation else 0, uuid4().hex),
-            )
-            cursor = db.execute(
-                f"update actions set {assignments} "
-                "where record_type='meeting_memory_write_events' "
-                "and cast(legacy_key as integer)=? and td_status='processing' "
-                "and td_lease_owner=? and datetime(td_lease_expires_at)>datetime(?)",
-                (*set_args, event_id, owner, settlement_time),
-            )
-        return cursor.rowcount == 1
-
-    def fail_meeting_memory_write_event(
-        self,
-        event_id: int,
-        *,
-        owner: str,
-        error: str,
-        now: datetime | None = None,
-    ) -> bool:
-        settlement_time = _meeting_memory_settlement_time(now)
-        with self._connect() as db:
-            assignments, set_args = task_delivery_set_parts(
-                "meeting_memory_write_events",
-                {"status": "failed", "available_at": "", "error": error[:500],
-                 "lease_owner": "", "lease_expires_at": ""},
-                update_sql={"attempts": "td_attempts+1", "updated_at": "current_timestamp"},
-            )
-            cursor = db.execute(
-                f"update actions set {assignments} "
-                "where record_type='meeting_memory_write_events' "
-                "and cast(legacy_key as integer)=? and td_status='processing' "
-                "and td_lease_owner=? and datetime(td_lease_expires_at)>datetime(?)",
-                (*set_args, event_id, owner, settlement_time),
-            )
-        return cursor.rowcount == 1
-
-    def requeue_failed_meeting_memory_write_event(
-        self,
-        event_id: int,
-        *,
-        reason: str,
-    ) -> bool:
-        """Reopen one failed Memory projection after its service root cause is fixed."""
-        if event_id <= 0:
-            raise ValueError("meeting Memory write event id must be positive")
-        if not reason.strip():
-            raise ValueError("meeting Memory write recovery reason is required")
-        with self._immediate_write_transaction() as db:
-            assignments, set_args = task_delivery_set_parts(
-                "meeting_memory_write_events",
-                {"status": "pending", "available_at": "", "error": reason[:500],
-                 "execution_generation": uuid4().hex, "lease_owner": "",
-                 "lease_expires_at": "", "started_at": ""},
-                update_sql={"updated_at": "current_timestamp"},
-            )
-            cursor = db.execute(
-                f"""
-                update actions as events set {assignments}
-                where events.record_type='meeting_memory_write_events'
-                  and cast(events.legacy_key as integer)=? and events.td_status='failed'
-                  and exists (
-                    select 1
-                    from tasks as jobs join task_results result on result.task_id=jobs.id
-                      and result.result_kind='meeting_alignment'
-                    where jobs.kind='meeting_alignment' and jobs.id=events.td_meeting_job_id
-                      and jobs.status='sent' and trim(result.final_message)<>''
-                  )
-                """,
-                (*set_args, event_id),
-            )
-        return cursor.rowcount == 1
-
-    def reconcile_failed_meeting_memory_write_event(
-        self,
-        event_id: int,
-        *,
-        memory_id: str,
-    ) -> bool:
-        """Close an unsettled projection after an independent Memory readback.
-
-        The caller must verify ``memory_id`` through the Memory service before
-        calling this method. This records an already accepted write and never
-        starts a second Memory delivery.
-        """
-        if event_id <= 0:
-            raise ValueError("meeting Memory write event id must be positive")
-        memory_id = memory_id.strip()
-        if not memory_id:
-            raise ValueError("meeting Memory write reconciliation requires memory_id")
-        with self._immediate_write_transaction() as db:
-            assignments, set_args = task_delivery_set_parts(
-                "meeting_memory_write_events",
-                {"status": "done", "available_at": "", "error": "", "memory_id": memory_id,
-                 "lease_owner": "", "lease_expires_at": ""},
-                update_sql={"updated_at": "current_timestamp"},
-            )
-            cursor = db.execute(
-                f"""
-                update actions as events set {assignments}
-                where events.record_type='meeting_memory_write_events'
-                  and cast(events.legacy_key as integer)=?
-                  and events.td_status in ('pending', 'failed')
-                  and exists (
-                    select 1
-                    from tasks as jobs join task_results result on result.task_id=jobs.id
-                      and result.result_kind='meeting_alignment'
-                    where jobs.kind='meeting_alignment' and jobs.id=events.td_meeting_job_id
-                      and jobs.status='sent' and trim(result.final_message)<>''
-                  )
-                """,
-                (*set_args, event_id),
-            )
-        return cursor.rowcount == 1
 
     def claim_meeting_alignment_jobs(
         self,
@@ -15027,11 +14259,6 @@ class AutoReplyStore(LogicalRunStoreMixin, ReviewedCandidateStoreMixin):
             delivery_key = get_meeting_delivery_key(db, job_id)
             target_key_prefix = delivery_key + ":target:"
             if db.execute(
-                f"select 1 from ({OUTBOUND_POSTFIX_SQL}) outbound "
-                "where outbound.channel='dingtalk' and (outbound.delivery_key in (?,?) "
-                "or substr(outbound.delivery_key,1,length(?))=?) limit 1",
-                (delivery_key, delivery_key + ":sensitive", target_key_prefix, target_key_prefix),
-            ).fetchone() or db.execute(
                 f"select 1 from ({OUTBOUND_POSTFIX_RECEIPT_SQL}) outbound "
                 "where outbound.channel='dingtalk' and (outbound.delivery_key in (?,?) "
                 "or substr(outbound.delivery_key,1,length(?))=?) limit 1",
@@ -15139,11 +14366,6 @@ class AutoReplyStore(LogicalRunStoreMixin, ReviewedCandidateStoreMixin):
         )
         if target_id != current.target_id:
             return None
-        delivery_key = self.resolve_meeting_alignment_delivery_key(
-            f"meeting-alignment:{current.id}:{current.meeting_id}",
-            target_kind=target_kind,
-            target_id=target_id,
-        )
         with self._immediate_write_transaction() as db:
             task = get_task(db, job_id)
             latest = self._native_meeting_alignment_job(db, job_id)
@@ -15153,12 +14375,19 @@ class AutoReplyStore(LogicalRunStoreMixin, ReviewedCandidateStoreMixin):
                     or latest.updated_at != current.updated_at
                     or latest.source_json != current.source_json
                     or latest.send_result_json != "{}"
-                    or latest.target_id != current.target_id):
+                    or latest.target_kind != current.target_kind
+                    or latest.target_id != current.target_id
+                    or latest.final_message != current.final_message
+                    or latest.error != current.error):
                 return None
+            from app.task_entity_storage import get_meeting_delivery_key
+            delivery_key = get_meeting_delivery_key(db, job_id)
+            target_key_prefix = delivery_key + ":target:"
             if db.execute(
-                f"select 1 from ({OUTBOUND_POSTFIX_RECEIPT_SQL}) "
-                "where channel='dingtalk' and delivery_key=?",
-                (delivery_key,),
+                f"select 1 from ({OUTBOUND_POSTFIX_RECEIPT_SQL}) outbound "
+                "where outbound.channel='dingtalk' and (outbound.delivery_key in (?,?) "
+                "or substr(outbound.delivery_key,1,length(?))=?) limit 1",
+                (delivery_key, delivery_key + ":sensitive", target_key_prefix, target_key_prefix),
             ).fetchone():
                 return None
             if task["lease_owner"] and db.execute(
@@ -15180,7 +14409,8 @@ class AutoReplyStore(LogicalRunStoreMixin, ReviewedCandidateStoreMixin):
         """Queue one independent Audit of an unchanged failed Meeting candidate."""
         import hmac
         from app.meeting_alignment_models import (
-            MeetingAlignmentDecision,
+            MeetingAlignmentAuditResult,
+            load_persisted_meeting_alignment_decision,
             meeting_alignment_decision_digest,
             meeting_decision_audit_is_approved,
         )
@@ -15194,12 +14424,44 @@ class AutoReplyStore(LogicalRunStoreMixin, ReviewedCandidateStoreMixin):
         try:
             error = json.loads(current.error)
             raw_decision = json.loads(current.decision_json)
-            decision = MeetingAlignmentDecision.model_validate(raw_decision)
+            decision, _ = load_persisted_meeting_alignment_decision(
+                current.decision_json
+            )
+            candidate_json = current.decision_json
         except (TypeError, ValueError, json.JSONDecodeError):
             return None
+        if not isinstance(error, dict) or not isinstance(raw_decision, dict):
+            return None
+        prior_audit = raw_decision.get("_service_audit")
+        prior_result = (
+            prior_audit.get("result") if isinstance(prior_audit, dict) else None
+        )
+        try:
+            parsed_prior_result = MeetingAlignmentAuditResult.model_validate(prior_result)
+        except (TypeError, ValueError):
+            parsed_prior_result = None
+        prior_return = (
+            error.get("kind") == "meeting_audit_recovery_unapproved"
+            and isinstance(prior_audit, dict)
+            and parsed_prior_result is not None
+            and parsed_prior_result.outcome == "return"
+            and prior_audit.get("candidate_sha256")
+            == meeting_alignment_decision_digest(decision)
+            and parsed_prior_result.candidate_sha256
+            == meeting_alignment_decision_digest(decision)
+        )
+        if prior_return:
+            candidate_json = json.dumps(
+                decision.model_dump(mode="json"),
+                ensure_ascii=False,
+                separators=(",", ":"),
+            )
+        initial_target_failure = (
+            error.get("kind") == "meeting_target"
+            and not isinstance(prior_audit, dict)
+        )
         if (
-            not isinstance(error, dict) or error.get("kind") != "meeting_target"
-            or not isinstance(raw_decision, dict) or "_service_audit" in raw_decision
+            not (initial_target_failure or prior_return)
             or meeting_decision_audit_is_approved(current.decision_json)
             or not expected_candidate_sha256
             or not hmac.compare_digest(
@@ -15224,11 +14486,6 @@ class AutoReplyStore(LogicalRunStoreMixin, ReviewedCandidateStoreMixin):
             current.target_kind, current.target_id,
         ):
             return None
-        delivery_key = self.resolve_meeting_alignment_delivery_key(
-            f"meeting-alignment:{current.id}:{current.meeting_id}",
-            target_kind=target_kind,
-            target_id=target_id,
-        )
         marker = json.dumps({
             "kind": "meeting_audit_recovery_requested",
             "message": "Audit the unchanged failed Meeting candidate only.",
@@ -15245,11 +14502,17 @@ class AutoReplyStore(LogicalRunStoreMixin, ReviewedCandidateStoreMixin):
                     or latest.target_kind != current.target_kind
                     or latest.target_id != current.target_id
                     or latest.final_message != current.final_message
-                    or latest.error != current.error or latest.send_result_json != "{}"):
+                    or latest.error != current.error or latest.send_result_json != "{}"
+                    or latest.updated_at != current.updated_at):
                 return None
+            from app.task_entity_storage import get_meeting_delivery_key
+            delivery_key = get_meeting_delivery_key(db, job_id)
+            target_key_prefix = delivery_key + ":target:"
             if db.execute(
-                f"select 1 from ({OUTBOUND_POSTFIX_RECEIPT_SQL}) "
-                "where channel='dingtalk' and delivery_key=?", (delivery_key,),
+                f"select 1 from ({OUTBOUND_POSTFIX_RECEIPT_SQL}) outbound "
+                "where outbound.channel='dingtalk' and (outbound.delivery_key in (?,?) "
+                "or substr(outbound.delivery_key,1,length(?))=?) limit 1",
+                (delivery_key, delivery_key + ":sensitive", target_key_prefix, target_key_prefix),
             ).fetchone():
                 return None
             changed = update_task_cas(
@@ -15259,7 +14522,16 @@ class AutoReplyStore(LogicalRunStoreMixin, ReviewedCandidateStoreMixin):
                 changes={"status": "retry", "available_at": "", "error": marker,
                          "updated_at": db.execute("select current_timestamp").fetchone()[0]},
             )
-            return self._native_meeting_alignment_job(db, job_id) if changed else None
+            if changed is None:
+                return None
+            candidate = db.execute(
+                "update task_results set decision_json=? where task_id=? "
+                "and result_kind='meeting_alignment' and decision_json=?",
+                (candidate_json, job_id, current.decision_json),
+            )
+            if candidate.rowcount != 1:
+                raise RuntimeError("Meeting candidate changed while queuing its frozen re-audit")
+            return self._native_meeting_alignment_job(db, job_id)
 
     def complete_failed_meeting_audit_recovery(
         self, job: MeetingAlignmentJob, *, audited_decision_json: str | None,
@@ -20731,12 +20003,6 @@ class AutoReplyStore(LogicalRunStoreMixin, ReviewedCandidateStoreMixin):
                     changes=changes,
                 ) is None:
                     raise AgentRunLeaseLostError(f"reply task superseded: {task_id}")
-            if task_status == "done":
-                self._enqueue_task_memory_write_in_connection(
-                    db,
-                    task_id=task_id,
-                    execution_generation=expected_execution_generation,
-                )
             if task_status in {"done", "skipped"}:
                 self._compact_settled_reply_task_input(db, task_id)
             return attempt_id

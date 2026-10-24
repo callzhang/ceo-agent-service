@@ -1,15 +1,17 @@
 """Meeting outer readers use typed physical storage and public queue IDs."""
 
 from datetime import datetime, timedelta, timezone
+import json
 import sqlite3
 
 import pytest
 
 from app.dispatcher.adapters import MeetingQueueAdapter
+from app.error_code_migration import MEETING_JOB_SQL as MIGRATION_MEETING_JOB_SQL, migrate_legacy_meeting_projections
 from app.quality_gate import _check_meetings
 from app.repository_updater import in_flight_work
 from app.audit_web import _queue_attention_rows, _queue_status_snapshots
-from app.action_storage import insert_task_delivery_action
+from app.action_storage import insert_task_delivery_action, task_delivery_projection
 from app.store import AutoReplyStore
 from app.task_schema_release import publication_meeting_sources
 from app.task_storage import MEETING_JOB_SQL
@@ -125,5 +127,26 @@ def test_attention_status_and_memory_child_use_physical_meeting_parent(tmp_path)
     assert meeting["failed"] == 1 and meeting["latest_error"] == "meeting failed"
     attention = _queue_attention_rows(store)
     assert any(row["category"] == "Meeting" and row["id"] == str(physical) for row in attention)
-    memory = [row for row in attention if row.get("root_cause") == "meeting_memory_write_failed"]
-    assert len(memory) == 1 and memory[0]["context"] == "Meeting Memory: Review"
+    assert not any(row.get("root_cause") == "meeting_memory_write_failed" for row in attention)
+    with store._connect() as db:
+        historical = db.execute(
+            f"select id,error from ({task_delivery_projection('meeting_memory_write_events')}) "
+            "where meeting_job_id=?", (physical,),
+        ).fetchone()
+    assert historical is not None and historical[1] == "memory failed"
+
+
+def test_explicit_error_migration_changes_typed_projection_only(tmp_path):
+    store = AutoReplyStore(tmp_path / "store.db")
+    physical = _job(store, status="failed")
+    original = json.dumps({"kind": "meeting_agent", "message": "runtime_effect_policy_violation"})
+    with store._connect() as db:
+        update_task_cas(db, task_id=physical, expected={"status": "failed"},
+                        changes={"error": original})
+    assert migrate_legacy_meeting_projections(store).changed == 1
+    with store._connect() as db:
+        assert db.execute(f"select error from ({MIGRATION_MEETING_JOB_SQL}) where id=?", (physical,)).fetchone()[0] == original
+    assert migrate_legacy_meeting_projections(store, dry_run=False).changed == 1
+    with store._connect() as db:
+        changed = json.loads(db.execute(f"select error from ({MIGRATION_MEETING_JOB_SQL}) where id=?", (physical,)).fetchone()[0])
+    assert changed["code"] == "runtime_execution_failed"

@@ -732,7 +732,6 @@ def _seed_runtime_operation_parent(
             source_id, _, execution_generation = source_key.partition(":")
             table_name = {
                 "memory_write_event": "memory_write_events",
-                "meeting_memory_write_event": "meeting_memory_write_events",
                 "wechat_memory_candidate": "wechat_memory_candidates",
                 "wechat_memory_import_job": "wechat_memory_import_jobs",
             }[source]
@@ -746,13 +745,6 @@ def _seed_runtime_operation_parent(
                     "send_status": "pending"})
                 insert_action(db, "memory_write_events", {"id": int(source_id),
                     "attempt_id": 1, "event_type": "test"})
-            elif table_name == "meeting_memory_write_events":
-                _insert_current_task8(db, 'meeting_alignment_jobs', {'legacy_key': 1, 'meeting_id': 'meeting-memory-parent', 'status': 'sent', 'final_message': 'sent summary'})
-                insert_task_delivery_action(db, "meeting_memory_write_events", {
-                    "id": int(source_id), "meeting_job_id": 1,
-                    "execution_generation": execution_generation,
-                    "payload_json": "{}", "status": "processing",
-                })
             elif table_name == "wechat_memory_candidates":
                 insert_business_candidate(db, "wechat_memory_candidate", {
                     "id": int(source_id), "import_run_id": "import", "account_id": "account",
@@ -1145,7 +1137,6 @@ def test_current_runtime_preserves_trim_session_evidence_triggers(tmp_path: Path
         ("task", "15:memory_backfill"),
         ("weekly_okr", "2026-08-16:manager-1:" + "a" * 64),
         ("memory", "memory_write_event:16"),
-        ("memory", "meeting_memory_write_event:16:generation-16"),
         ("memory", "wechat_memory_import_job:17"),
         ("email_classification", "email-classification:" + "a" * 64),
         (
@@ -1232,8 +1223,6 @@ def test_meeting_audit_runtime_has_an_independent_valid_workload_identity(
         ("weekly_okr", "not-a-stable-key"),
         ("memory", "memory-16"),
         ("memory", "memory_write_event:999"),
-        ("memory", "meeting_memory_write_event:999"),
-        ("memory", "meeting_memory_write_event:999:missing-generation"),
         ("memory", "wechat_memory_import_job:999"),
         ("email_classification", "email-classification:not-a-digest"),
         ("email_unsubscribe_page", "email-unsubscribe-page:not-an-action"),
@@ -1267,17 +1256,11 @@ def test_runtime_attempt_memory_keys_are_source_qualified_and_collision_free(
 ):
     store = AutoReplyStore(tmp_path / "runtime-attempt.sqlite3")
     _seed_runtime_operation_parent(store, "memory", "memory_write_event:1")
-    _seed_runtime_operation_parent(
-        store, "memory", "meeting_memory_write_event:1:generation-1"
-    )
     _seed_runtime_operation_parent(store, "memory", "wechat_memory_candidate:1")
     _seed_runtime_operation_parent(store, "memory", "wechat_memory_import_job:1")
 
     event_attempt = store.claim_runtime_operation_attempt(
         "memory", "memory_write_event:1", "codex_oauth", "codex_cli", "local_oauth", "gpt-5.5"
-    )
-    meeting_attempt = store.claim_runtime_operation_attempt(
-        "memory", "meeting_memory_write_event:1:generation-1", "codex_oauth", "codex_cli", "local_oauth", "gpt-5.5"
     )
     candidate_attempt = store.claim_runtime_operation_attempt(
         "memory", "wechat_memory_candidate:1", "codex_oauth", "codex_cli", "local_oauth", "gpt-5.5"
@@ -1288,13 +1271,11 @@ def test_runtime_attempt_memory_keys_are_source_qualified_and_collision_free(
 
     assert len({
         event_attempt.workload_key,
-        meeting_attempt.workload_key,
         candidate_attempt.workload_key,
         import_attempt.workload_key,
-    }) == 4
+    }) == 3
     assert {
         event_attempt.attempt_number,
-        meeting_attempt.attempt_number,
         candidate_attempt.attempt_number,
         import_attempt.attempt_number,
     } == {1}
@@ -9843,87 +9824,6 @@ def test_service_health_components_hold_current_component_state(tmp_path: Path):
     assert store.list_service_health_components()[0]["state"] == "healthy"
 
 
-def test_meeting_memory_health_uses_matching_live_leases_not_runtime_status_alone(
-    tmp_path: Path,
-) -> None:
-    store = AutoReplyStore(tmp_path / "meeting-memory-health.sqlite3")
-    now = "2026-09-15T12:00:00+00:00"
-    with store._connect() as db:
-        for job_id, meeting_id in enumerate(
-            ("health-active", "health-ghost", "health-due", "health-retry", "health-failed"),
-            start=1,
-        ):
-            parts = task8_insert_parts('meeting_alignment_jobs', {
-                'legacy_key': job_id, 'meeting_id': meeting_id,
-                'status': 'sent', 'final_message': 'summary',
-            })
-            db.execute(
-                f"insert into tasks (id,{parts.columns}) values (?,{parts.values})",
-                (job_id, *parts.parameters),
-            )
-        for values in (
-            dict(id=31, meeting_job_id=1, execution_generation='active',
-                 status='processing', lease_owner='worker-active',
-                 lease_expires_at='2026-09-15T12:20:00+00:00',
-                 created_at='2026-09-15T11:55:00+00:00', updated_at='2026-09-15T11:55:00+00:00'),
-            dict(id=32, meeting_job_id=2, execution_generation='ghost',
-                 status='processing', lease_owner='worker-ghost',
-                 lease_expires_at='2026-09-15T11:59:00+00:00',
-                 created_at='2026-09-15T11:55:00+00:00', updated_at='2026-09-15T11:55:00+00:00'),
-            dict(id=33, meeting_job_id=3, execution_generation='due', status='pending',
-                 available_at='2026-09-15T11:20:00+00:00',
-                 created_at='2026-09-15T11:00:00+00:00', updated_at='2026-09-15T11:00:00+00:00'),
-            dict(id=34, meeting_job_id=4, execution_generation='retry', status='pending',
-                 available_at='2026-09-15T12:10:00+00:00', error='temporary route failure',
-                 created_at='2026-09-15T11:55:00+00:00', updated_at='2026-09-15T11:55:00+00:00'),
-            dict(id=35, meeting_job_id=5, execution_generation='failed', status='failed',
-                 error='permanent failure', created_at='2026-09-15T11:55:00+00:00',
-                 updated_at='2026-09-15T11:55:00+00:00'),
-        ):
-            insert_task_delivery_action(
-                db, 'meeting_memory_write_events', dict(payload_json='{}', **values),
-            )
-        for event_id, generation, owner in (
-            (31, "active", "worker-active"),
-            (32, "ghost", "worker-ghost"),
-        ):
-            insert_run(
-                db, 'agent_runtime_attempts', {
-                    'workload_kind': 'memory',
-                    'workload_key': f"meeting_memory_write_event:{event_id}:{generation}",
-                    'attempt_number': 1,
-                    'route_name': 'codex_oauth',
-                    'runtime_kind': 'codex_cli',
-                    'credential_mode': 'local_oauth',
-                    'model': 'gpt-5.6-sol',
-                    'status': 'running',
-                    'lease_owner': owner,
-                    'lease_expires_at': '2026-09-15T12:20:00+00:00',
-                    'started_at': '2026-09-15T11:55:00+00:00',
-                    'updated_at': '2026-09-15T11:55:00+00:00',
-                },
-            )
-
-    health = store.meeting_memory_health_snapshot(
-        now=now, delayed_after_seconds=30 * 60
-    )
-
-    assert health == {
-        "pending": 2,
-        "due": 1,
-        "delayed": 1,
-        "processing": 2,
-        "retryable": 1,
-        "failed": 1,
-        "oldest_due_at": "2026-09-15T11:20:00+00:00",
-        "oldest_due_seconds": 40 * 60,
-        "completed_last_hour": 0,
-        "active_agents": 1,
-        "ghost_runtime_attempts": 1,
-        "delayed_after_seconds": 30 * 60,
-    }
-
-
 def test_scheduler_health_keeps_recent_error_when_a_new_tick_succeeds(tmp_path: Path):
     store = AutoReplyStore(tmp_path / "worker.sqlite3")
     store.set_service_health_component(
@@ -11068,38 +10968,6 @@ def test_current_schema_rejects_meeting_memory_lease_index(tmp_path):
         assert tuple(db.iterdump()) == before
 
 
-def test_current_meeting_memory_event_references_delivered_job_without_payload_copy(tmp_path: Path) -> None:
-    db_path = tmp_path / "meeting-memory-payload-removal.sqlite3"
-    store = AutoReplyStore(db_path)
-    job_id = store.upsert_meeting_alignment_job(
-        meeting_id="meeting-memory-payload-removal",
-        title="Meeting",
-        source_json="{}",
-        participants_json="[]",
-        ended_at="2026-09-14T09:30:00+00:00",
-        eligible_at="2026-09-14T09:40:00+00:00",
-        status="sent",
-    )
-    store.update_meeting_alignment_job(
-        job_id,
-        status="sent",
-        final_message="Delivered conclusion",
-    )
-    assert store.create_meeting_memory_write_event(job_id) is True
-
-    [event] = store.list_due_meeting_memory_write_events(now='2099-01-01 00:00:00', limit=10)
-    assert event.meeting_job_id == job_id
-    with store._connect() as db:
-        assert db.execute(
-            f"select payload_json from ({task_delivery_projection('meeting_memory_write_events')}) where id=?",
-            (event.id,),
-        ).fetchone()[0] == '{}'
-    assert store.get_meeting_alignment_job(job_id).final_message == 'Delivered conclusion'
-    with store._connect() as db:
-        assert not db.execute("select 1 from sqlite_schema where name='meeting_memory_write_events'").fetchone()
-    assert store._schema_is_current() is True
-
-
 @pytest.mark.parametrize('column', ['td_lease_owner', 'td_lease_expires_at', 'td_started_at'])
 def test_current_meeting_memory_lease_declaration_rejects_malformed_column(tmp_path: Path, column):
     path = tmp_path / 'meeting-memory-malformed-lease.sqlite3'
@@ -11224,7 +11092,7 @@ def test_recover_unstarted_runtime_operation_attempts_releases_short_stale_claim
     tmp_path: Path,
 ):
     store = AutoReplyStore(tmp_path / "unstarted-runtime-attempt.sqlite3")
-    workload_key = "meeting_memory_write_event:51:generation-51"
+    workload_key = "wechat_memory_import_job:51"
     _seed_runtime_operation_parent(store, "memory", workload_key)
     claimed = store.claim_runtime_operation_attempt(
         "memory",
@@ -11261,7 +11129,7 @@ def test_recover_unstarted_runtime_operation_attempts_keeps_session_evidence(
     tmp_path: Path,
 ):
     store = AutoReplyStore(tmp_path / "started-runtime-attempt.sqlite3")
-    workload_key = "meeting_memory_write_event:52:generation-52"
+    workload_key = "wechat_memory_import_job:52"
     _seed_runtime_operation_parent(store, "memory", workload_key)
     claimed = store.claim_runtime_operation_attempt(
         "memory",
@@ -11293,88 +11161,6 @@ def test_recover_unstarted_runtime_operation_attempts_keeps_session_evidence(
         now="2026-09-14T23:01:01+00:00",
     ) == 0
     assert store.get_agent_runtime_attempt(claimed.id).status == "running"
-
-
-def test_supersede_obsolete_meeting_memory_runtime_attempts_after_requeue(
-    tmp_path: Path,
-):
-    store = AutoReplyStore(tmp_path / "obsolete-meeting-memory-runtime.sqlite3")
-    job_id = store.upsert_meeting_alignment_job(
-        meeting_id="obsolete-meeting-memory-runtime",
-        title="Meeting",
-        source_json="{}",
-        participants_json="[]",
-        ended_at="2026-09-14T22:00:00+00:00",
-        eligible_at="2026-09-14T22:10:00+00:00",
-        status="sent",
-    )
-    store.update_meeting_alignment_job(
-        job_id,
-        status="sent",
-        final_message="Delivered conclusion",
-    )
-    assert store.create_meeting_memory_write_event(job_id) is True
-    with store._connect() as db:
-        event = db.execute(
-            f"select id, execution_generation from ({task_delivery_projection('meeting_memory_write_events')}) "
-            "where meeting_job_id=?",
-            (job_id,),
-        ).fetchone()
-        parts, parameters = task_delivery_set_parts(
-            'meeting_memory_write_events', {'execution_generation': 'old-generation'},
-        )
-        db.execute(f"update actions set {parts} where record_type='meeting_memory_write_events' "
-                   "and cast(legacy_key as integer)=?", (*parameters, event['id']))
-    assert event is not None
-    stale_key = f"meeting_memory_write_event:{event['id']}:old-generation"
-    claimed_event = store.claim_due_meeting_memory_write_events(
-        now="2026-09-14T23:00:00+00:00",
-        limit=1,
-        owner="interrupted-memory-owner",
-        lease_seconds=1800,
-    )
-    assert [item.id for item in claimed_event] == [event["id"]]
-    claimed = store.claim_runtime_operation_attempt(
-        "memory",
-        stale_key,
-        "codex_oauth",
-        "codex_cli",
-        "local_oauth",
-        "gpt-5.6-sol",
-        owner="interrupted-memory-owner",
-        lease_seconds=1800,
-        now="2026-09-14T23:00:00+00:00",
-    )
-    store.mark_agent_runtime_attempt_running_once(
-        claimed.id,
-        owner="interrupted-memory-owner",
-        lease_seconds=1800,
-        now="2026-09-14T23:00:00+00:00",
-    )
-    store.set_agent_runtime_attempt_session(
-        claimed.id,
-        "session-before-requeue",
-        "codex_session:session-before-requeue",
-        owner="interrupted-memory-owner",
-        now="2026-09-14T23:00:01+00:00",
-    )
-    assert store.fail_meeting_memory_write_event(
-        event["id"],
-        owner="interrupted-memory-owner",
-        error="interrupted before write",
-        now=datetime.fromisoformat("2026-09-14T23:00:01+00:00"),
-    )
-    assert store.requeue_failed_meeting_memory_write_event(
-        event["id"], reason="verified pre-write interruption"
-    )
-
-    assert store.supersede_obsolete_meeting_memory_runtime_attempts() == 1
-
-    superseded = store.get_agent_runtime_attempt(claimed.id)
-    assert superseded is not None
-    assert superseded.status == "superseded"
-    assert superseded.lease_owner == ""
-    assert superseded.lease_expires_at == ""
 
 
 def test_recover_stale_runtime_attempts_immediately_closes_terminal_meeting_parent(

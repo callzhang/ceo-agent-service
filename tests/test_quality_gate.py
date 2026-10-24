@@ -35,10 +35,12 @@ def test_feedback_quality_reads_selected_actions_and_resolution(tmp_path):
     with store._connect() as db:
         assert resolve_feedback_events(db, ["resolved"], "2026-10-17 00:00:00") == 1
         violations = []
-        _check_feedback(db, violations)
+        attention = []
+        _check_feedback(db, violations, attention)
     assert [(item.source, item.code, item.count) for item in violations] == [
         ("feedback_events", "unresolved", 1),
     ]
+    assert attention == []
     report = scan_hourly_quality(store.path, now=NOW)
     assert "feedback_events" in report.checked_sources
     assert "feedback_events" not in report.missing_sources

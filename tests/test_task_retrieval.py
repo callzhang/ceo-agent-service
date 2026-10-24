@@ -446,14 +446,15 @@ def test_render_semantic_context_bounds_repeated_source_signal_evidence(tmp_path
     payload = json.loads(render_task_semantic_context(context))
     rendered_signal = payload["source_signals"][0]
 
-    document = next(doc for doc in payload["source_documents"] if doc["document_id"] == rendered_signal["document_id"])
+    document = next(doc for doc in payload["source_documents"] if doc["doc"] == rendered_signal["doc"])
     ranges = document["visible_ranges"]
     assert "evidence_text" not in rendered_signal
     assert sum(len(span["text"]) for span in ranges) <= 2048
     assert ranges[0]["text"].startswith("开头证据")
     assert ranges[-1]["text"].endswith("结尾证据")
     assert document["full_length"] == len(long_evidence) and document["truncated"]
-    assert rendered_signal["source_ref"] == "meeting:long#todos-sha256=one"
+    assert "source_ref" not in rendered_signal
+    assert document["source_ref"] == "meeting:long#todos-sha256=one"
 
 
 def test_semantic_context_requires_attached_owner_source_not_merely_owner_fields(tmp_path):

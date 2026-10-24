@@ -81,8 +81,8 @@ def test_applied_write_returns_unverified_result_without_replay(
     result = _write_document_artifact(
         root=tmp_path, artifact_name="report.md", title="Report", doc_format="markdown", **target
     )
-    assert result["status"] == "partial_success"
-    assert result["ok"] is False and result["verified"] is False
+    assert result["status"] == "success"
+    assert result["ok"] is True and result["verified"] is False
     assert result["node_id"] == "doc-1"
     assert result["readback"] is None
     assert result["error"] == (error if stage == "verify_write" else {"reason": "read_failed"})
@@ -141,8 +141,8 @@ def test_created_identity_survives_failed_target_listing(tmp_path, monkeypatch, 
         root=tmp_path, artifact_name="report.md", title="Report", doc_format="markdown",
         parent_id="folder", workspace_id="wiki"
     )
-    assert result["ok"] is False
-    assert result["status"] == "partial_success"
+    assert result["ok"] is True
+    assert result["status"] == "success"
     assert result["node_id"] == "created-doc"
     assert result["provider_result"] == provider_result
     assert result["readback"] is None
@@ -160,7 +160,7 @@ def test_unverified_document_result_is_not_a_successful_audit_receipt():
         tool_events=[{"type": "item.completed", "item": {
             "type": "mcp_tool_call", "server": "agent_cli", "tool": "consumer_document_write",
             "result": {"structuredContent": {
-                "ok": False, "status": "partial_success", "verified": False,
+                "ok": True, "status": "success", "verified": False,
                 "operation": "updated", "node_id": "doc-1", "title": "Report",
                 "readback": None, "error": verification_error(),
             }},
