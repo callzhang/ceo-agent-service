@@ -36,6 +36,7 @@ def test_dws_verified_return_survives_local_uncertain_but_candidate_alone_does_n
     architecture = ARCHITECTURE_DOC.read_text()
 
     assert "DWS 记录证明退回动作发生，但若完整详情也不含退回理由" in content
+    assert "逐条列出每次不计数的退回时，必须写明对应记录和具体证据理由" in content
     assert "先读完整审批详情中的 `operationRecords` 和各条 `remark`" in content
     assert "Consumer 生成但被跳过或未执行的候选文字" in content
     assert "没有 DWS 实际备注或其他可核验的已发送证据" in content
