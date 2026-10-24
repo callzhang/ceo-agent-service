@@ -799,7 +799,7 @@ def _audit_frozen_meeting_candidate(
         )
         return
 
-    run_id = store.claim_logical_run("meeting_alignment_runs", job.id)
+    run_id = store.claim_professional_run(job.id)
     audit_session_id = ""
     audit_start = 0
     audit_end = 0
@@ -880,12 +880,11 @@ def _audit_frozen_meeting_candidate(
         audit_session_id = str(getattr(runner, "last_audit_session_id", "") or "")
         audit_start = int(getattr(runner, "last_audit_transcript_start_line", 0) or 0)
         audit_end = int(getattr(runner, "last_audit_transcript_end_line", 0) or 0)
-    store.finish_logical_run(
-        "meeting_alignment_runs",
+    store.finish_professional_run(
         run_id,
-        codex_session_id=audit_session_id,
-        codex_transcript_start_line=audit_start,
-        codex_transcript_end_line=audit_end,
+        session_id=audit_session_id,
+        transcript_start=audit_start,
+        transcript_end=audit_end,
         status=status,
         error=error,
     )
@@ -978,6 +977,7 @@ def _search_similar_meeting_sessions(
         query_embedding=query_embedding,
         embedding_client=embedding_client,
         limit=3,
+        meeting_native_only=True,
     )
 
 
@@ -1336,10 +1336,7 @@ def _analyze_meeting_job(
     audit_feedback, feedback_cycles = previous_meeting_audit_feedback(
         job.decision_json
     )
-    run_id = store.claim_logical_run(
-        'meeting_alignment_runs',
-        job.id,
-    )
+    run_id = store.claim_professional_run(job.id)
     try:
         decision = agent.decide(
             source,
@@ -1747,14 +1744,6 @@ def _analyze_meeting_job(
         status="ready_to_send",
         error="",
     )
-    _index_meeting_codex_session(
-        store,
-        runner,
-        job,
-        source,
-        decision,
-        source_id=run_id,
-    )
     store.update_meeting_alignment_job(
         job.id,
         status="ready_to_send",
@@ -1865,7 +1854,7 @@ def _deliver_meeting_job(
             source,
             dws,
             message_sender=ServiceMessageSender(store=store, dingtalk=dws),
-            delivery_key=f"meeting-alignment:{job.id}:{job.meeting_id}",
+            delivery_key=store.get_meeting_delivery_key(job.id),
         )
     except MeetingDeliveryRetry as exc:
         values: dict[str, object] = {}
@@ -2009,6 +1998,31 @@ def _write_meeting_summary_to_calendar_or_retry(
         event = dws.get_calendar_event(evidence.event_id)
         if event is None:
             raise MeetingDeliveryRetry("original calendar event is unavailable")
+        if summary in event.description:
+            receipt = json.dumps(
+                {
+                    "event_id": evidence.event_id,
+                    "state": "already_present",
+                    "reason": (
+                        "exact frozen summary is already present in the original "
+                        "event description"
+                    ),
+                },
+                ensure_ascii=False,
+                sort_keys=True,
+            )
+            store.update_meeting_alignment_job(
+                job.id,
+                status="sent",
+                final_message=summary,
+                send_result_json=delivery.model_dump_json(),
+                calendar_summary_status="skipped",
+                calendar_summary_result_json=receipt,
+                error="",
+            )
+            _withdraw_superseded_follow_up(dws, superseded_send_result_json)
+            _notify_meeting_sent(job, delivery)
+            return
         description = _calendar_description_with_summary(event.description, summary)
         if event.description != description:
             update_result = dws.update_calendar_event_description(
@@ -2133,17 +2147,12 @@ def _record_agent_run(
     status: str,
     error: str,
 ) -> int:
-    store.finish_logical_run(
-        'meeting_alignment_runs',
+    store.finish_professional_run(
         run_id,
-        codex_session_id=str(getattr(runner, "last_session_id", "") or ""),
-        codex_transcript_start_line=int(
-            getattr(runner, "last_transcript_start_line", 0) or 0
-        ),
-        codex_transcript_end_line=int(
-            getattr(runner, "last_transcript_end_line", 0) or 0
-        ),
         status=status,
+        session_id=str(getattr(runner, "last_session_id", "") or ""),
+        transcript_start=int(getattr(runner, "last_transcript_start_line", 0) or 0),
+        transcript_end=int(getattr(runner, "last_transcript_end_line", 0) or 0),
         error=error,
     )
     return run_id

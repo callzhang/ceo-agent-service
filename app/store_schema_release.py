@@ -65,12 +65,14 @@ def prepare_store_schema_release(
     if target is None or not path.exists():
         return None
     with closing(sqlite3.connect(path.as_uri() + "?mode=ro", uri=True)) as db:
-        if not db.execute(
-            "select 1 from sqlite_master where type='table' and name='service_state'"
-        ).fetchone():
+        tables = {row[0] for row in db.execute(
+            "select name from main.sqlite_schema where type='table'")}
+        if "state" not in tables:
             return None
+        from app.state_definitions import state_projection
         version = db.execute(
-            "select value,updated_at from service_state where key=?", (VERSION_KEY,)
+            f"select value,updated_at from ({state_projection('service_state')}) where key=?",
+            (VERSION_KEY,),
         ).fetchone()
         if version is None or version[0] == target:
             return None
@@ -127,6 +129,24 @@ def prepare_database_schema_release(root: Path, path: Path, *, recovery_source_p
     target = (_target_store_version(root), email_schema_release._target_schema_version(root) if (root / "app" / "email_store.py").exists() else None)
     from app.current_schema_manifest import STORE_VERSION as CURRENT_STORE_VERSION, EMAIL_VERSION as CURRENT_EMAIL_VERSION, require_current_pair
     if target == (CURRENT_STORE_VERSION, CURRENT_EMAIL_VERSION) and path.exists():
+        from app.predecessor_database_schema import PREDECESSOR_STORE_VERSION
+        from app.task_run_entity_schema_release import (
+            TARGET_STORE_VERSION as TASK_RUN_TARGET_VERSION,
+            prepare_task_run_entity_release,
+        )
+        if (CURRENT_STORE_VERSION == TASK_RUN_TARGET_VERSION):
+            from app.state_definitions import state_projection
+            with closing(sqlite3.connect(path.resolve().as_uri() + "?mode=ro", uri=True)) as db:
+                db.execute("begin")
+                tables = {row[0] for row in db.execute(
+                    "select name from main.sqlite_schema where type='table'")}
+                marker = db.execute(
+                    f"select value from ({state_projection('service_state')}) where key=?",
+                    (VERSION_KEY,),
+                ).fetchone() if "state" in tables else None
+            if marker is not None and marker[0] == PREDECESSOR_STORE_VERSION:
+                return prepare_task_run_entity_release(
+                    path, recovery_source_path=recovery_source_path)
         from app.action_entity_schema_release import (
             SOURCE_STORE_VERSION as ACTION_ENTITY_SOURCE_VERSION,
             ActionEntitySchemaRelease,

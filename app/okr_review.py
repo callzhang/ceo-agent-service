@@ -735,12 +735,14 @@ def process_okr_review_request(*, store, runner, request, single_chat: bool) -> 
     payload = OkrReviewPayload.model_validate(
         domain_payload
     )
-    store.create_logical_run(
-        'okr_review_runs',
-        task_public_id=request.id,
-        codex_session_id=run.codex_session_id,
-        codex_transcript_start_line=run.transcript_start_line,
-        codex_transcript_end_line=run.transcript_end_line,
+    run_id = store.create_professional_run(
+        request.id,
+        session_id=run.codex_session_id,
+        transcript_start=run.transcript_start_line,
+        transcript_end=run.transcript_end_line,
+    )
+    store.bind_okr_review_runtime_attempt(
+        task_id=request.id, run_id=run_id, attempt_id=run.attempt_id,
     )
     for item in payload.items:
         store.record_okr_review_item(

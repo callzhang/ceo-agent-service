@@ -25,6 +25,14 @@ class OAReturnTarget(OATask):
     target_activity_id: str = Field(min_length=1)
 
 
+class OAAppendTarget(OATask):
+    appender_user_id: str = Field(min_length=1)
+
+
+class AppendPayload(_Strict):
+    type: Literal['before', 'parallel']
+
+
 class OAProcess(_Strict):
     process_instance_id: str = Field(min_length=1)
 
@@ -70,6 +78,7 @@ def action_contracts(purpose: str):
             'approve': (OATask, Remark, 'dingtalk-oa', 'approve'),
             'reject': (OATask, Remark, 'dingtalk-oa', 'reject'),
             'return': (OAReturnTarget, ReturnPayload, 'dingtalk-oa', 'revert_task'),
+            'add_approver': (OAAppendTarget, AppendPayload, 'dingtalk-oa', 'append_task'),
             'comment': (OAProcess, Content, 'dingtalk-oa', 'comment'),
             'request_access': (OAMaterialTarget, Content, 'dingtalk-oa', 'comment'),
         }

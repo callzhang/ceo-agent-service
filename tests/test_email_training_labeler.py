@@ -12,6 +12,22 @@ from app.email_training_labeler import LabelCandidate, label_candidate, select_c
 from app.task12_storage import task12_projection
 
 
+def _native_email_store(path):
+    from app.task_run_entity_assembly import task_run_entity_assembly_objects
+
+    db = sqlite3.connect(path)
+    db.execute("pragma foreign_keys=on")
+    objects = task_run_entity_assembly_objects()
+    for sql in objects.values():
+        if sql.lstrip().lower().startswith("create table"):
+            db.execute(sql)
+    for sql in objects.values():
+        if not sql.lstrip().lower().startswith("create table"):
+            db.execute(sql)
+    db.close()
+    store = EmailStore.__new__(EmailStore)
+    store.path = path
+    return store
 def _observation(identity, subject, folder="INBOX", sender="bill@vendor.example"):
     return {
         "stable_message_identity": identity,
@@ -242,11 +258,10 @@ def test_gmail_search_takes_newest_unclassified_hits_over_a_readonly_select():
 def test_each_classification_runs_as_a_recorded_item_and_leaves_none_behind(tmp_path):
     """The router runs only recorded work, so a batch records one item per call."""
 
-    from app.email_store import EmailStore
     from app.email_task_adapter import EmailClassificationTaskAdapter
     from app.email_training_labeler import OFFLINE_TASK_OWNER, _OfflineTaskBackend
 
-    email_store = EmailStore(tmp_path / "labeler.sqlite3")
+    email_store = _native_email_store(tmp_path / "labeler.sqlite3")
     tasks = EmailClassificationTaskAdapter(email_store)
     task_id = "email-classification:" + "a" * 64
     seen = []
@@ -258,18 +273,20 @@ def test_each_classification_runs_as_a_recorded_item_and_leaves_none_behind(tmp_
 
     assert _OfflineTaskBackend(Backend(), tasks).classify(task_id=task_id) == "{}"
 
+    native_id = seen[0].task_id
+    assert native_id.isdecimal()
     assert seen[0].status == "running" and seen[0].owner == OFFLINE_TASK_OWNER
-    assert tasks.get_task(task_id) is None
+    assert seen[0].stable_message_identity == "offline:" + task_id
+    assert tasks.get_task(native_id) is None
 
 
 def test_a_failed_classification_still_removes_its_recorded_item(tmp_path):
     import pytest
 
-    from app.email_store import EmailStore
     from app.email_task_adapter import EmailClassificationTaskAdapter
     from app.email_training_labeler import _OfflineTaskBackend
 
-    email_store = EmailStore(tmp_path / "labeler.sqlite3")
+    email_store = _native_email_store(tmp_path / "labeler.sqlite3")
     tasks = EmailClassificationTaskAdapter(email_store)
     task_id = "email-classification:" + "b" * 64
 
@@ -280,17 +297,35 @@ def test_a_failed_classification_still_removes_its_recorded_item(tmp_path):
     with pytest.raises(RuntimeError):
         _OfflineTaskBackend(Backend(), tasks).classify(task_id=task_id)
 
-    assert tasks.get_task(task_id) is None
+    with email_store._connect() as db:
+        assert db.execute("select count(*) from tasks where kind='email_classification'").fetchone()[0] == 0
 
 
 def test_recorded_items_never_reach_the_scan_worker_or_uid_protection(tmp_path):
-    from app.email_store import EmailStore
     from app.email_task_adapter import EmailClassificationTaskAdapter
 
-    email_store = EmailStore(tmp_path / "labeler.sqlite3")
+    email_store = _native_email_store(tmp_path / "labeler.sqlite3")
     tasks = EmailClassificationTaskAdapter(email_store)
     tasks.open_offline_task(task_id="email-classification:" + "c" * 64, owner="labeler")
 
     assert tasks.claim_next(owner="worker") is None
     assert tasks.stable_provider_uids(account_id="a", folder="INBOX", uidvalidity=1) == frozenset()
+    assert tasks.purge_offline_tasks("labeler") == 1
+
+
+def test_reopening_offline_classification_replaces_the_same_native_owner(tmp_path):
+    from app.email_task_adapter import EmailClassificationTaskAdapter
+
+    email_store = _native_email_store(tmp_path / "labeler.sqlite3")
+    tasks = EmailClassificationTaskAdapter(email_store)
+    first = tasks.open_offline_task(task_id="email-classification:" + "d" * 64, owner="labeler")
+    second = tasks.open_offline_task(task_id="email-classification:" + "d" * 64, owner="labeler")
+    assert second != first
+    assert tasks.get_task(first) is None
+    current = tasks.get_task(second)
+    assert current is not None
+    assert (current.status, current.owner, current.generation, current.attempt_count) == (
+        "running", "labeler", 1, 1,
+    )
+    assert current.stable_message_identity == "offline:" + "email-classification:" + "d" * 64
     assert tasks.purge_offline_tasks("labeler") == 1

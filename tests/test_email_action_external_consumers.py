@@ -161,6 +161,22 @@ def test_email_attention_id_matches_strict_worker_status_contract(tmp_path):
                 if row["category"] == "Email action")["id"] == str(action_ids[2])
 
 
+def test_direct_email_history_locator_uses_current_action_owner_id(tmp_path):
+    from app.email_store import EMAIL_DIRECT_ACTION_LOCATOR_SQL
+
+    store, action_ids = _current_direct_action_store(tmp_path / "history-current.sqlite3")
+
+    with store._connect() as db:
+        rows = db.execute(
+            f"select action_id from ({EMAIL_DIRECT_ACTION_LOCATOR_SQL}) order by action_id"
+        ).fetchall()
+    logs = store.list_operation_logs(source_tables=("actions",))
+
+    assert [row[0] for row in rows] == sorted(action_ids)
+    assert {row.source_id for row in logs}.issuperset(action_ids)
+    assert all(row.id == f"action:{row.source_id}" for row in logs)
+
+
 def test_history_keeps_native_signed_rowid_and_nullable_public_id(tmp_path):
     store = _two_failed_actions(tmp_path / "history.sqlite3")
     total, page = store.list_operation_logs_with_count(

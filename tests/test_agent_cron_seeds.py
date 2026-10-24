@@ -14,6 +14,7 @@ from app.agent_cron.commands import (
     SERVICE_COMMAND_EXECUTION_KIND,
     ServiceCommandRegistry,
 )
+from tests.scheduled_command_results import unknown_service_result
 from app.agent_cron.models import ScheduledTaskSkillRef
 from app.agent_cron.options import ScheduledTaskOptionService
 from app.agent_cron.consumer import ScheduledTaskTriggerConsumer
@@ -1595,36 +1596,58 @@ def test_proactive_cron_triggers_create_snapshotted_business_inputs(
             {
                 "email-message-check-once": (
                     lambda: (
-                        produced.append("email-message-check-once") or "discovered=0"
+                        unknown_service_result(
+                            produced.append("email-message-check-once") or "discovered=0"
+                        )
                     )
                 ),
-                "produce-once": lambda: produced.append("produce-once") or "queued=0",
+                "produce-once": lambda: unknown_service_result(
+                    produced.append("produce-once") or "queued=0"
+                ),
                 "calendar-invites-once": (
-                    lambda: produced.append("calendar-invites-once") or "queued=0"
+                    lambda: unknown_service_result(
+                        produced.append("calendar-invites-once") or "queued=0"
+                    )
                 ),
                 "recover-recent-messages": (
-                    lambda: produced.append("recover-recent-messages") or "queued=0"
+                    lambda: unknown_service_result(
+                        produced.append("recover-recent-messages") or "queued=0"
+                    )
                 ),
                 "wechat-produce-once": (
-                    lambda: produced.append("wechat-produce-once") or "queued=0"
+                    lambda: unknown_service_result(
+                        produced.append("wechat-produce-once") or "queued=0"
+                    )
                 ),
                 "scan-meetings-once": (
-                    lambda: produced.append("scan-meetings-once") or "queued=0"
+                    lambda: unknown_service_result(
+                        produced.append("scan-meetings-once") or "queued=0"
+                    )
                 ),
                 "scan-oa-approvals": (
-                    lambda: produced.append("scan-oa-approvals") or "queued=0"
+                    lambda: unknown_service_result(
+                        produced.append("scan-oa-approvals") or "queued=0"
+                    )
                 ),
                 "scan-meeting-todos-once": (
-                    lambda: produced.append("scan-meeting-todos-once") or "queued=0"
+                    lambda: unknown_service_result(
+                        produced.append("scan-meeting-todos-once") or "queued=0"
+                    )
                 ),
                 "sync-chrome-cookies": (
-                    lambda: produced.append("sync-chrome-cookies") or "kept=0"
+                    lambda: unknown_service_result(
+                        produced.append("sync-chrome-cookies") or "kept=0"
+                    )
                 ),
                 "request-minutes-access": (
-                    lambda: produced.append("request-minutes-access") or "requested=0"
+                    lambda: unknown_service_result(
+                        produced.append("request-minutes-access") or "requested=0"
+                    )
                 ),
                 "sync-minutes-once": (
-                    lambda: produced.append("sync-minutes-once") or "queued=0"
+                    lambda: unknown_service_result(
+                        produced.append("sync-minutes-once") or "queued=0"
+                    )
                 ),
             }
         ),

@@ -7,12 +7,9 @@ from urllib.parse import quote
 
 import pytest
 
-from app.run_storage import insert_run
-from app.action_storage import REVIEW_CANDIDATE_SQL, update_action
+from app.action_storage import update_action
 from app.audit_web import handle_rerun_attempt_post
 from app.store import AgentRole, AutoReplyStore
-from app.task8_storage import task8_set_parts
-from app.task20_definitions import task20_column
 from app.web_api.attempts import (
     _consumer_result_payload as build_consumer_result_payload,
     _linked_consumer_run,
@@ -21,7 +18,7 @@ from app.web_api.attempts import (
     build_attempt_detail,
 )
 
-from app.action_storage import CANDIDATE_EXECUTION_SQL
+from app.store import NATIVE_CANDIDATE_EXECUTION_SQL
 
 
 CONVERSATION = "email-thread:thread-digest"
@@ -199,11 +196,9 @@ def test_attempt_detail_does_not_promote_current_uncertain_execution_to_done(tmp
             "resolved_at": "2026-10-16 00:00:00",
             "resolution": "Business follow-up closed; original external receipt remains unverified.",
         })
-        task_update = task8_set_parts("reply_tasks", {"status": "done"})
         assert db.execute(
-            f"update tasks set {task_update.sql} "
-            "where record_type='reply_tasks' and cast(legacy_key as integer)=?",
-            (*task_update.parameters, task.id),
+            "update tasks set status='done' where id=? and kind='reply'",
+            (task.id,),
         ).rowcount == 1
 
     status, payload = build_attempt_detail(store, attempt_id)
@@ -694,24 +689,51 @@ def _seed_email_attempt(store: AutoReplyStore, *, with_agent_runs: bool) -> int:
     )
     if not with_agent_runs:
         return attempt_id
+    task = next(
+        task for task in store.list_reply_tasks(limit=10)
+        if task.conversation_id == CONVERSATION
+        and task.trigger_message_id == TRIGGER
+    )
+    consumer = store.claim_agent_run(
+        task.id, task.execution_generation, role=AgentRole.CONSUMER,
+        proposal_revision=0, turn_attempt=0, parent_agent_run_id=None,
+        operation_id="", owner="history-fixture",
+    ).run
+    consumer_runtime = store.claim_agent_runtime_attempt(
+        consumer.id, "codex_oauth", "codex_cli", "local_oauth", "test-model"
+    )
+    store.complete_agent_runtime_attempt(
+        consumer_runtime.id, "session-consumer", "", 0, 42
+    )
     with store._connect() as db:
-        task_id = db.execute(
-            "select id from tasks where record_type='reply_tasks' and "
-            f"{task20_column('reply_tasks', 'conversation_id')}=? and "
-            f"{task20_column('reply_tasks', 'trigger_message_id')}=?",
-            (CONVERSATION, TRIGGER),
-        ).fetchone()[0]
-        consumer = insert_run(db, 'agent_runs', {
-            'task_id': task_id, 'execution_generation': 'initial',
-            'role': 'consumer', 'status': 'completed', 'session_id': 'session-consumer',
-            'transcript_start': 0, 'transcript_end': 42,
-        }).lastrowid
-        audit = insert_run(db, 'agent_runs', {
-            'task_id': task_id, 'execution_generation': 'initial',
-            'role': 'audit', 'status': 'completed', 'parent_id': consumer,
-            'session_id': 'session-audit', 'transcript_start': 0, 'transcript_end': 59,
-        }).lastrowid
-        update_action(db, "reply_attempts", attempt_id, {"agent_run_id": audit})
+        db.execute(
+            "update runs set session_id=?,transcript_start=0,transcript_end=42 where id=?",
+            ("session-consumer", consumer.id),
+        )
+    candidate_body = {"outcome": "proposal", "proposal": {"actions": []}}
+    store.complete_agent_run(consumer.id, candidate_body, owner="history-fixture")
+    candidate = store.persist_review_candidate(task, consumer, candidate_body)
+    audit = store.claim_agent_run(
+        task.id, task.execution_generation, role=AgentRole.AUDIT,
+        proposal_revision=0, turn_attempt=0, parent_agent_run_id=consumer.id,
+        operation_id="history-fixture-audit", owner="history-fixture",
+    ).run
+    audit_runtime = store.claim_agent_runtime_attempt(
+        audit.id, "codex_oauth", "codex_cli", "local_oauth", "test-model"
+    )
+    store.complete_agent_runtime_attempt(
+        audit_runtime.id, "session-audit", "", 0, 59
+    )
+    with store._connect() as db:
+        db.execute(
+            "update runs set session_id=?,transcript_start=0,transcript_end=59 where id=?",
+            ("session-audit", audit.id),
+        )
+    audit_body = {"outcome": "approve", "candidate_digest": candidate["candidate_digest"]}
+    store.complete_agent_run(audit.id, audit_body, owner="history-fixture")
+    store.record_candidate_review(candidate["id"], audit.id, audit_body)
+    with store._connect() as db:
+        update_action(db, "reply_attempts", attempt_id, {"agent_run_id": audit.id})
     return attempt_id
 
 
@@ -1147,8 +1169,10 @@ def test_attempt_detail_api_marks_unavailable_consumer_result_per_field(
     if failure is None:
         consumer = _complete_consumer_run(store, task, owner="malformed-api")
         with store._immediate_write_transaction() as db:
-            public_id = db.execute(f"select id from ({REVIEW_CANDIDATE_SQL}) where consumer_run_id=?", (consumer.id,)).fetchone()[0]
-            update_action(db, 'review_candidates', public_id, {'candidate_json': json.dumps(stored_result)})
+            db.execute(
+                "update run_adopted_results set candidate_json=? where consumer_run_id=?",
+                (json.dumps(stored_result), consumer.id),
+            )
     else:
         claimed = store.claim_agent_run(
             task.id,
@@ -1186,8 +1210,10 @@ def test_attempt_detail_api_preserves_valid_metrics_from_partial_consumer_result
     partial.pop("information_completeness")
     partial.pop("rule_coverage")
     with store._immediate_write_transaction() as db:
-        public_id = db.execute(f"select id from ({REVIEW_CANDIDATE_SQL}) where consumer_run_id=?", (consumer.id,)).fetchone()[0]
-        update_action(db, 'review_candidates', public_id, {'candidate_json': json.dumps(partial)})
+        db.execute(
+            "update run_adopted_results set candidate_json=? where consumer_run_id=?",
+            (json.dumps(partial), consumer.id),
+        )
     attempt_id = _finalize_consumer_result_attempt(store, task, consumer)
 
     status, item = build_attempt_detail(store, attempt_id)
@@ -1212,8 +1238,10 @@ def test_attempt_detail_api_marks_completed_consumer_without_result_unavailable(
     task = _consumer_result_task(store)
     consumer = _complete_consumer_run(store, task, owner="missing-result-api")
     with store._immediate_write_transaction() as db:
-        public_id = db.execute(f"select id from ({REVIEW_CANDIDATE_SQL}) where consumer_run_id=?", (consumer.id,)).fetchone()[0]
-        update_action(db, 'review_candidates', public_id, {'candidate_json': ''})
+        db.execute(
+            "update run_adopted_results set candidate_json='' where consumer_run_id=?",
+            (consumer.id,),
+        )
     attempt_id = _finalize_consumer_result_attempt(store, task, consumer)
 
     _, item = build_attempt_detail(store, attempt_id)
@@ -1238,7 +1266,7 @@ def test_attempt_detail_api_recovers_consumer_when_audit_parent_link_is_missing(
     audit = _complete_audit_run(store, task, consumer, owner="missing-audit-api")
     attempt_id = _finalize_consumer_result_attempt(store, task, audit)
     with store._immediate_write_transaction() as db:
-        db.execute("update runs set parent_id=null where record_type='agent_runs' and cast(legacy_key as integer)=?", (audit.id,))
+        db.execute("update runs set parent_id=null where id=?", (audit.id,))
 
     _, item = build_attempt_detail(store, attempt_id)
 
@@ -1257,7 +1285,7 @@ def test_attempt_detail_api_recovers_consumer_when_audit_parent_is_invalid(
     audit = _complete_audit_run(store, task, consumer, owner="wrong-role-audit-api")
     attempt_id = _finalize_consumer_result_attempt(store, task, audit)
     with store._immediate_write_transaction() as db:
-        db.execute("update runs set parent_id=? where record_type='agent_runs' and cast(legacy_key as integer)=?", (audit.id, audit.id))
+        db.execute("update runs set parent_id=? where id=?", (audit.id, audit.id))
 
     _, item = build_attempt_detail(store, attempt_id)
 
@@ -1341,15 +1369,14 @@ def test_failed_attempt_rerun_presentation_uses_structured_historical_refusal(
     # A later failed generation must still describe the original refusal.
     raw = error if error == 'malformed-json' else json.dumps(error)
     with store._connect() as db:
-        db.execute("update runs set status='failed', execution_generation='old-generation', "
-                   "structured_error_json=? where record_type='agent_runs' and cast(legacy_key as integer)=?", (raw, run.id))
-        task_update = task8_set_parts(
-            "reply_tasks", {"status": "failed", "error": "agent_reported_failure"}
+        db.execute(
+            "update runs set status='failed',structured_error_json=? where id=?",
+            (raw, run.id),
         )
         assert db.execute(
-            f"update tasks set {task_update.sql} "
-            "where record_type='reply_tasks' and cast(legacy_key as integer)=?",
-            (*task_update.parameters, task.id),
+            "update tasks set status='failed',error='agent_reported_failure' "
+            "where id=? and kind='reply'",
+            (task.id,),
         ).rowcount == 1
     attempt_id = store.record_reply_attempt(
         conversation_id=task.conversation_id, conversation_title=task.conversation_title,
@@ -1381,7 +1408,76 @@ def test_failed_attempt_rerun_presentation_uses_structured_historical_refusal(
     assert store.get_agent_run(run.id) == before
     assert store.get_reply_task(task.id).status == 'failed'
     with store._connect() as db:
-        assert db.execute(f'select count(*) from ({CANDIDATE_EXECUTION_SQL})').fetchone()[0] == 0
+        assert db.execute(f'select count(*) from ({NATIVE_CANDIDATE_EXECUTION_SQL})').fetchone()[0] == 0
+
+
+def test_resolved_terminal_oa_attempt_has_no_history_rerun_action(tmp_path: Path):
+    store = AutoReplyStore(tmp_path / "terminal-oa-rerun.sqlite3")
+    process_id = "terminal-process"
+    task_id = "terminal-task"
+    conversation_id = f"oa_pending_scan:{process_id}"
+    trigger_id = f"oa-pending:{process_id}:revision-1:2026-10-24"
+    trigger = {
+        "open_conversation_id": conversation_id,
+        "open_message_id": trigger_id,
+        "conversation_title": "审批待办",
+        "single_chat": True,
+        "sender_name": "Derek OA",
+        "create_time": "2026-10-24T10:00:00Z",
+        "content": "Review this OA process.",
+    }
+    store.enqueue_reply_task(
+        conversation_id=conversation_id,
+        conversation_title="审批待办",
+        single_chat=True,
+        trigger_message_id=trigger_id,
+        trigger_create_time="2026-10-24T10:00:00Z",
+        trigger_sender="Derek OA",
+        trigger_text="Review this OA process.",
+        trigger_message_json=json.dumps(trigger),
+        oa_url=f"https://aflow.dingtalk.com/detail?procInstId={process_id}&taskId={task_id}",
+        business_object_key=f"oa:{process_id}:{task_id}",
+        execution_generation="terminal-review-generation",
+    )
+    task = store.claim_reply_task(1)
+    assert task is not None
+    store.complete_reply_task(
+        task.id, expected_execution_generation=task.execution_generation
+    )
+    with store._connect() as db:
+        db.execute("update tasks set status='skipped' where id=?", (task.id,))
+    attempt_id = store.record_reply_attempt(
+        conversation_id=conversation_id,
+        conversation_title="审批待办",
+        trigger_message_id=trigger_id,
+        trigger_sender="Derek OA",
+        trigger_text="Review this OA process.",
+        action="agent_run",
+        sensitivity_kind="general",
+        send_status="skipped",
+        channel="dingtalk",
+        oa_process_instance_id=process_id,
+        oa_task_id=task_id,
+        oa_url=f"https://aflow.dingtalk.com/detail?procInstId={process_id}&taskId={task_id}",
+        oa_action="review",
+    )
+    with store._connect() as db:
+        update_action(db, "reply_attempts", attempt_id, {
+            "reviewer_feedback": "Review again.",
+            "resolved_at": "2026-10-24 18:00:00",
+            "resolution": "The source OA task was verified terminal.",
+        })
+
+    status, item = build_attempt_detail(store, attempt_id)
+
+    assert status == 200
+    assert item is not None
+    assert item["status"]["raw"] == "skipped"
+    assert item["actions"]["can_rerun"] is False
+    assert item["actions"]["rerun_block_reason"] == "The source OA task was verified terminal."
+    response_status, _, response_body = handle_rerun_attempt_post(store, attempt_id)
+    assert response_status == 409
+    assert "The source OA task was verified terminal." in response_body
 
 
 def test_failed_attempt_does_not_inherit_another_business_objects_refusal(tmp_path: Path):

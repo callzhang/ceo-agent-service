@@ -6,12 +6,8 @@ from pathlib import Path
 from uuid import uuid4
 import pytest
 
-from app.logical_run_storage import create_logical_run
-from app.run_storage import insert_run
-from app.store import AutoReplyStore,WORK_SUMMARY_INPUT_SQL
-from app.store import TASK_LOGICAL_RUN_SQL
-from app.task20_definitions import task20_column
-from app.task8_storage import task8_set_parts
+from app.run_entity_storage import create_runtime_attempt, set_run_projection
+from app.store import AutoReplyStore, NATIVE_TASK_RUN_SQL, WORK_SUMMARY_INPUT_SQL
 
 from tests.support.task_native import read_task_fixture_decision
 
@@ -50,47 +46,39 @@ def _database(path, monkeypatch):
     assert input_id == 7
     assert store.enqueue_work_summary_input("fixture", "unrelated-input", "{}") == 8
     with store._connect() as db:
-        db.execute(
-            "update tasks set id=107 where record_type='work_summary_inputs' "
-            f"and {task20_column('work_summary_inputs', 'id')}=?", (input_id,),
-        )
-        completed_status = task8_set_parts(
-            'work_summary_inputs', {'status': 'completed'},
-            payload_source='tasks.payload_json',
-        )
-        db.execute(
-            f"update tasks set {completed_status.sql} "
-            "where record_type='work_summary_inputs' and id=107",
-            completed_status.parameters,
-        )
-        for physical_id, public_id, input_id, status, projection in (
-            (1010, 10, 7, "completed", {}),
-            (1009, 11, 7, "completed", {"status": "pending", "proposal_count": 2,
-                                     "applied_count": 0, "project_assessments": []}),
-            (1008, 12, 8, "failed", {}),
-        ):
-            created = create_logical_run(db, "task_agent_runs", input_id, status=status)
-            db.execute("update runs set id=?,legacy_key=?,projection_json=? where id=?",
-                       (physical_id, str(public_id), json.dumps(projection), created))
-        insert_run(db, 'agent_runtime_attempts', {
-            'id': 1, 'legacy_key': '1',
-            'workload_kind': 'task', 'workload_key': '11',
+        db.execute("update tasks set status='done' where id=? and kind='work_summary'", (input_id,))
+    runs = []
+    for owner_id, status, projection in (
+        (input_id, "completed", {}),
+        (input_id, "completed", {"status": "pending", "proposal_count": 2,
+                                  "applied_count": 0, "project_assessments": []}),
+        (8, "failed", {}),
+    ):
+        run_id = store.create_professional_run(owner_id, status=status)
+        runs.append(run_id)
+        with store._connect() as db:
+            set_run_projection(db, run_id=run_id, projection_json=json.dumps(projection))
+    with store._connect() as db:
+        create_runtime_attempt(db, values={
+            'parent_id': runs[1], 'workload_kind': 'task', 'workload_key': str(runs[1]),
             'status': 'completed', 'runtime_kind': 'codex_cli',
             'session_id': session_id, 'transcript_start': 1, 'transcript_end': 3,
             'attempt_number': 1, 'route_name': 'test', 'credential_mode': 'oauth',
-            'model': 'test',
+            'model': 'test', 'session_mode': 'fresh', 'source_session_id': '',
+            'attempt_purpose': 'normal', 'validation_retry_policy_id': '',
+            'validation_result_schema_id': '', 'transcript_reference': '',
+            'failure_class': '', 'failure_code': '', 'failover_permitted': 0,
+            'lease_owner': '', 'lease_expires_at': '', 'first_effect_started_at': '',
+            'result_schema_id': '', 'started_at': '', 'finished_at': '',
+            'created_at': '', 'updated_at': '',
         })
         assert db.execute(
             f"select id from ({WORK_SUMMARY_INPUT_SQL}) where id=?", (7,),
         ).fetchone()[0] == 7
-        assert db.execute(
-            "select id from tasks where record_type='work_summary_inputs' "
-            f"and {task20_column('work_summary_inputs', 'id')}=?", (7,),
-        ).fetchone()[0] == 107
         assert [row[0] for row in db.execute(
-            f"select id from ({TASK_LOGICAL_RUN_SQL}) where summary_input_id=? order by id",
+            f"select id from ({NATIVE_TASK_RUN_SQL}) where summary_input_id=? order by id",
             (7,),
-        ).fetchall()] == [10, 11]
+        ).fetchall()] == runs[:2]
 
 
 def test_inspect_task_attention_reads_exact_input_receipts_without_payload(tmp_path, monkeypatch):
@@ -102,8 +90,8 @@ def test_inspect_task_attention_reads_exact_input_receipts_without_payload(tmp_p
     output = json.loads(result.stdout)
     assert output["input_id"] == 7
     assert output["source_type"] == "management_weekly_report"
-    assert output["input_status"] == "completed"
-    assert [run["run_id"] for run in output["runs"]] == [10, 11]
+    assert output["input_status"] == "done"
+    assert [run["run_id"] for run in output["runs"]] == [1, 2]
     assert "project_assessments" not in output["runs"][0]
     assert output["runs"][0]["projection"] == {}
     assert output["runs"][1]["project_assessments"] == []
@@ -150,7 +138,9 @@ def test_inspector_does_not_replace_unavailable_native_decision_with_sql_body(tm
         native.write_text("".join(json.dumps(record) + "\n" for record in records), encoding="utf-8")
     else:
         with sqlite3.connect(path) as db:
-            db.execute("update runs set transcript_end=99 where record_type='agent_runtime_attempts'")
+            db.execute("update runtime_attempts set transcript_end=99 where parent_id=("
+                       "select max(r.id) from runs r join run_provenance p on p.run_id=r.id "
+                       "where r.task_id=7 and p.source_type='task_agent_runs')")
     before = path.read_bytes()
     result = _inspect(path, 7)
     assert result.returncode == 0, result.stderr
@@ -231,11 +221,11 @@ def test_inspector_reads_actual_zero_task_project_revision_without_rewriting_old
             prepared_sources=prepared_sources,
         )
     input_id = store.enqueue_work_summary_input("reply_attempt", "m:inspect", '{"private": "input body"}')
-    old_id = store.create_logical_run('task_agent_runs', input_id)
+    old_id = store.create_professional_run(input_id)
     decision = {"project_decisions": [], "task_decisions": [], "project_assessments": [],
                 "update_summary": "No new Project judgment is proposed; inspect the saved receipt."}
     session_id = str(uuid4())
-    run_id = store.create_logical_run('task_agent_runs', input_id, codex_session_id=session_id)
+    run_id = store.create_professional_run(input_id, session_id=session_id)
     records = [
         {"type": "session_meta", "payload": {"id": session_id}},
         {"type": "event_msg", "payload": {"type": "task_started"}},
@@ -249,8 +239,9 @@ def test_inspector_reads_actual_zero_task_project_revision_without_rewriting_old
         "\n".join(map(json.dumps, records)) + "\n", encoding="utf-8",
     )
     with store._connect() as db:
-        insert_run(
-            db, 'agent_runtime_attempts', {
+        create_runtime_attempt(
+            db, values={
+                'parent_id': run_id,
                 'workload_kind': 'task',
                 'workload_key': str(run_id),
                 'attempt_number': 1,
@@ -258,11 +249,27 @@ def test_inspector_reads_actual_zero_task_project_revision_without_rewriting_old
                 'runtime_kind': 'codex_cli',
                 'credential_mode': 'local_oauth',
                 'model': 'fixture',
+                'session_mode': 'fresh',
+                'source_session_id': '',
+                'attempt_purpose': 'normal',
+                'validation_retry_policy_id': '',
+                'validation_result_schema_id': '',
                 'session_id': session_id,
                 'status': 'completed',
                 'transcript_reference': f"codex_session:{session_id}",
                 'transcript_start': 1,
                 'transcript_end': 4,
+                'failure_class': '',
+                'failure_code': '',
+                'failover_permitted': 0,
+                'lease_owner': '',
+                'lease_expires_at': '',
+                'first_effect_started_at': '',
+                'result_schema_id': '',
+                'started_at': '',
+                'finished_at': '',
+                'created_at': '',
+                'updated_at': '',
             },
         )
     assert read_task_fixture_decision(store, run_id) == decision
@@ -285,15 +292,15 @@ def test_inspector_reads_actual_zero_task_project_revision_without_rewriting_old
     ).model_dump(mode="json")
     store.record_task_agent_projection(run_id, json.dumps(projection))
     with sqlite3.connect(path) as db:
-        original = db.execute(f"select id, projection_json from ({TASK_LOGICAL_RUN_SQL}) order by id").fetchall()
+        original = db.execute(f"select id, projection_json from ({NATIVE_TASK_RUN_SQL}) order by id").fetchall()
     assert original[0][1] == "{}"
-    assert "decision_json" not in {column[0] for column in db.execute(f"select * from ({TASK_LOGICAL_RUN_SQL})").description}
+    assert "decision_json" not in {column[0] for column in db.execute(f"select * from ({NATIVE_TASK_RUN_SQL})").description}
     inspected = _inspect(path, input_id)
     assert inspected.returncode == 0, inspected.stderr
     assert "private" not in inspected.stdout
     assert store.list_business_tasks() == ()
     with sqlite3.connect(path) as db:
-        assert db.execute(f"select id, projection_json from ({TASK_LOGICAL_RUN_SQL}) order by id").fetchall() == original
+        assert db.execute(f"select id, projection_json from ({NATIVE_TASK_RUN_SQL}) order by id").fetchall() == original
     runs = json.loads(inspected.stdout)["runs"]
     assert runs[0]["run_id"] == old_id
     assert "project_decisions" not in runs[0]
@@ -319,7 +326,7 @@ def test_inspector_reads_exact_replay_delivery_artifact_without_reconstructing_h
     path = tmp_path / "delivery.sqlite3"
     _database(path, monkeypatch)
     artifact = tmp_path / "result.json"
-    artifact.write_text(json.dumps({"input_id": 7, "run_id": 11, "context_deliveries": [{
+    artifact.write_text(json.dumps({"input_id": 7, "run_id": 2, "context_deliveries": [{
         "source_metrics": {"signal_count": 3, "document_count": 1, "unique_body_chars": 9000, "visible_body_chars": 2048},
         "source_documents": [{"document_id": 8, "full_length": 9000, "visible_ranges": [{"start": 0, "end": 2048}]}],
     }]}))

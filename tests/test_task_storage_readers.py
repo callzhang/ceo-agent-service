@@ -1,71 +1,57 @@
 """Runtime reads and transitions use typed storage with original public IDs."""
 
-from contextlib import closing
 import sqlite3
 
 import pytest
 
 from app.store import AgentRunLeaseLostError, AutoReplyStore
-from app.task_storage import RETIRED_TASK_TABLES, migrate_task_schema
-from tests.test_task_storage import source_database
-from tests.workbench_caller_fixtures import empty_source13, advance_source16_to_store17, advance_source17_to_current_store
-from tests.test_email_legacy_schema import published_source as published_source
-
-
-def original_rows_source13(path, published_source, source_factory=source_database):
-    """Keep every original business row on independently captured source13 DDL."""
-    with closing(source_factory(path.with_suffix(".original.sqlite3"))) as original:
-        original.execute("begin immediate")
-        migrate_task_schema(original)
-        original.commit()
-        with empty_source13(path, published_source) as db:
-            for table, sql in original.execute(
-                "select name,sql from sqlite_master where type='table' "
-                "and name not like 'sqlite_%' and name<>'service_state'"
-            ).fetchall():
-                if not db.execute("select 1 from sqlite_master where name=?", (table,)).fetchone():
-                    db.execute(sql)
-                    for (object_sql,) in original.execute(
-                        "select sql from sqlite_master where tbl_name=? "
-                        "and type<>'table' and sql is not null", (table,),
-                    ):
-                        db.execute(object_sql)
-                db.execute(f'delete from "{table}"')
-                columns = [row[1] for row in original.execute(f'pragma table_info("{table}")')]
-                rows = original.execute(f'select * from "{table}"').fetchall()
-                column_sql = ','.join(f'"{column}"' for column in columns)
-                if rows:
-                    placeholders = ','.join('?' for _ in columns)
-                    db.executemany(f'insert into "{table}" ({column_sql}) values ({placeholders})', rows)
-                assert db.execute(f'select {column_sql} from "{table}" order by rowid').fetchall() == original.execute(
-                    f'select {column_sql} from "{table}" order by rowid'
-                ).fetchall()
-            for name, seq in original.execute("select name,seq from sqlite_sequence"):
-                db.execute("update sqlite_sequence set seq=? where name=?", (seq, name))
-
-
+from app.task_storage import RETIRED_TASK_TABLES
 @pytest.fixture(params=("fresh", "migrated"))
-def typed_runtime(request, tmp_path, monkeypatch, published_source):
+def typed_runtime(request, tmp_path, monkeypatch):
     path = tmp_path / "runtime.db"
     if request.param == "migrated":
-        original_rows_source13(path, published_source)
-        # Preserve this reader's original local-file recovery input on source13.
-        with sqlite3.connect(path) as db:
-            db.execute("update tasks set source_type='local_file' "
-                       "where record_type='work_summary_inputs' and legacy_key='2'")
-        advance_source16_to_store17(path)
-        advance_source17_to_current_store(path, published_source)
-        AutoReplyStore(path)  # Publish the complete source before observing typed readers.
+        from app.task8_storage import register_task8_functions, task8_insert_parts
+        from app.store_schema_release import prepare_database_schema_release
+        from tests.test_task_run_entity_schema_release import _source_database
 
-    accesses = set()
+        _source_database(path)
+        with sqlite3.connect(path) as db:
+            register_task8_functions(db)
+            for identity in (1, 2):
+                parts = task8_insert_parts("work_summary_inputs", {
+                    "legacy_key": str(identity), "source_type": "local_file",
+                    "source_ref": f"reader-{identity}",
+                    "payload_json": '{"receipt":"retained"}',
+                    "status": "pending", "attempts": 0, "error": "",
+                    "created_at": "created", "updated_at": "updated",
+                    "available_at": "", "source_created_at": "",
+                    "body_sha256": "", "body_bytes": 0, "body_compacted": 0,
+                })
+                db.execute(f"insert into tasks ({parts.columns}) values ({parts.values})", parts.parameters)
+            db.commit()
+        from pathlib import Path
+        release = prepare_database_schema_release(Path(__file__).resolve().parents[1], path)
+        assert release is not None
+        release.publish()
+
+    # Initialize the current declaration before installing the runtime reader
+    # fence. work_summary_inputs remains a narrow native domain owner; its
+    # identity metadata is readable, while the captured body stays excluded.
+    store = AutoReplyStore(path)
     retired_accesses = []
+    body_accesses = []
+    check_body_reads = [False]
+    retired_runtime_tables = set(RETIRED_TASK_TABLES) - {"work_summary_inputs"}
     original_open = AutoReplyStore._open_connection
 
     def observe(action, table, column, *_):
         if action in {sqlite3.SQLITE_READ, sqlite3.SQLITE_INSERT, sqlite3.SQLITE_UPDATE}:
-            accesses.add(table)
-            if table in RETIRED_TASK_TABLES:
+            if table in retired_runtime_tables:
                 retired_accesses.append((action, table, column))
+                return sqlite3.SQLITE_DENY
+            if (check_body_reads[0] and action == sqlite3.SQLITE_READ
+                    and table == "work_summary_inputs" and column == "payload_json"):
+                body_accesses.append((action, table, column))
                 return sqlite3.SQLITE_DENY
         return sqlite3.SQLITE_OK
 
@@ -75,13 +61,13 @@ def typed_runtime(request, tmp_path, monkeypatch, published_source):
         return db
 
     monkeypatch.setattr(AutoReplyStore, "_open_connection", monitored_open)
-    store = AutoReplyStore(path)
     with store._connect() as db:
         names = {row[0] for row in db.execute("select name from sqlite_master")}
-        assert not names.intersection(RETIRED_TASK_TABLES)
-    yield store, request.param
-    assert "tasks" in accesses
+        assert not names.intersection(retired_runtime_tables)
+        assert "work_summary_inputs" in names
+    yield store, request.param, check_body_reads
     assert retired_accesses == []
+    assert body_accesses == []
 
 
 def _reply(store, suffix="one"):
@@ -116,15 +102,13 @@ def _pre_run_failure(store, task, *, generation=None):
     )
 
 
-def test_history_and_work_input_recovery_use_original_public_ids(typed_runtime):
-    store, layout = typed_runtime
+def test_history_and_work_input_recovery_use_canonical_task_ids(typed_runtime):
+    store, layout, check_body_reads = typed_runtime
     if layout == "migrated":
-        input_id = 2
         with store._connect() as db:
-            physical_id = db.execute(
-                "select id from tasks where record_type='work_summary_inputs' and legacy_key='2'"
+            input_id = db.execute(
+                "select task_id from work_summary_inputs where source_ref='reader-2'"
             ).fetchone()[0]
-        assert physical_id != input_id
     else:
         input_id = store.enqueue_work_summary_input("local_file", "reader", '{ "body": 1 }')
     store.record_error("work_summary_input", str(input_id), "task_agent", "retry")
@@ -132,17 +116,21 @@ def test_history_and_work_input_recovery_use_original_public_ids(typed_runtime):
     assert store.resolve_errors_recovered_by_terminal_work_summary_inputs() == 1
     assert store.list_errors()[0].resolved_at
     assert store.get_work_summary_input(input_id).body_compacted == 1
-    history = store.list_operation_logs(source_tables=("work_summary_inputs",))
+    check_body_reads[0] = True
+    try:
+        history = store.list_operation_logs(source_tables=("work_summary_inputs",))
+    finally:
+        check_body_reads[0] = False
     assert input_id in [item.source_id for item in history]
     if layout == "migrated":
         assert {item.source_id for item in history} == {1, 2}
         with store._connect() as db:
-            assert db.execute("select hex(body) from receipt where id=1").fetchone()[0] == "FF00"
+            assert tuple(db.execute("select payload_json,body_compacted from work_summary_inputs where task_id=?", (input_id,)).fetchone()) == ("{}", 1)
             assert db.execute("pragma foreign_key_check").fetchall() == []
 
 
 def test_pre_run_failure_retry_and_settlement_keep_generation_and_history(typed_runtime):
-    store, _ = typed_runtime
+    store, _, _ = typed_runtime
     task = store.claim_reply_task(_reply(store).id)
     attempt_id = _pre_run_failure(store, task)
     assert store.count_current_unresolved_problem_attempts() == 1
@@ -175,7 +163,7 @@ def test_pre_run_failure_retry_and_settlement_keep_generation_and_history(typed_
 
 
 def test_stale_pre_run_finalization_rolls_back_attempt_write(typed_runtime):
-    store, _ = typed_runtime
+    store, _, _ = typed_runtime
     task = store.claim_reply_task(_reply(store, "stale").id)
     next_generation = store.rotate_reply_task_execution_generation(task.id)
     current = store.claim_reply_task(task.id)

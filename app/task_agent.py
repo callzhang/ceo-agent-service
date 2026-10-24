@@ -31,7 +31,6 @@ from app.leak_check import contains_credential
 from app.routed_result_privacy import audit_references_from_full_events
 from app.store import AutoReplyStore
 from app.business_skills import bundled_business_skills_root
-from app.structured_agent import load_skill_text
 from app.task_models import (
     TaskDecision,
     TaskAgentDecision,
@@ -551,23 +550,19 @@ def build_task_agent_prompt(
     *,
     memory_issue: str = "",
     current_time: str = "",
-    inline_skill: bool = False,
 ) -> str:
     scheduled_consumer = ServiceCommandConsumerContext.from_payload(
         work_item.scheduled_consumer or None
     )
-    if inline_skill:
-        current_skill_text = load_skill_text([WORK_TRACKING_SKILL_PATH])
-    else:
-        current_skill_path = WORK_TRACKING_SKILL_PATH.resolve(strict=True)
-        current_skill_digest = hashlib.sha256(current_skill_path.read_bytes()).hexdigest()
-        current_skill_text = (
-            "CEO Work Tracking Skill (complete current protocol): "
-            f"{current_skill_path}\nSHA-256: {current_skill_digest}. "
-            "Read it before deciding. On a resumed turn, reuse a prior read only if "
-            "this exact version and its full text remain in the current context; "
-            "otherwise reread the file. Do not use an earlier version."
-        )
+    current_skill_path = WORK_TRACKING_SKILL_PATH.resolve(strict=True)
+    current_skill_digest = hashlib.sha256(current_skill_path.read_bytes()).hexdigest()
+    current_skill_text = (
+        "CEO Work Tracking Skill (complete current protocol): "
+        f"{current_skill_path}\nSHA-256: {current_skill_digest}. "
+        "Read it before deciding. On a resumed turn, reuse a prior read only if "
+        "this exact version and its full text remain in the current context; "
+        "otherwise reread the file. Do not use an earlier version."
+    )
     scheduled_prompt = (
         f"## Scheduled Consumer Prompt\n{scheduled_consumer.prompt}\n"
         if scheduled_consumer is not None
@@ -635,7 +630,7 @@ Signals share: source_type, source_ref, source_time, conversation and author
 (a Signal repeats one of those fields only when its value differs). When you
 cite a Signal, give its id and its document's source_ref. A document with
 source_in_input false is not copied here: read it yourself with dws from that
-document's source_type and source_ref, using the matching dws Skill. For ai_minutes
+document's source_type and source_ref. For ai_minutes
 the part of source_ref before "#" is the taskUuid (dws minutes +detail or
 +transcript --id); a dingtalk-doc:<node id>#... ref names the document node. A
 document with visible_ranges or
@@ -2812,10 +2807,8 @@ def apply_task_agent_decision(
         with store.task_agent_domain_apply_transaction() as db:
             apply(db)
         if record_run:
-            recorded_run_id = store.create_logical_run(
-                'task_agent_runs',
-                task_public_id=summary_input_id,
-                codex_session_id=codex_session_id,
+            recorded_run_id = store.create_professional_run(
+                summary_input_id, status="completed", session_id=codex_session_id,
             )
     result = TaskAgentApplyResult(
         task_ids=tuple(task_ids),
@@ -3555,10 +3548,7 @@ def process_work_item(
         source_reader = store.business_source_reader(provider_reader=dws)
         semantic_context = retrieve_task_semantic_context(store, work_item, source_reader=source_reader)
         context_prompt = render_task_semantic_context(semantic_context)
-        active_run_id = store.claim_logical_run(
-            'task_agent_runs',
-            work_input.id,
-        )
+        active_run_id = store.claim_professional_run(work_input.id)
         memory_issue = memory_connector_config_issue()
         repair_context = None
         prepared_sources = None
@@ -3641,11 +3631,10 @@ def process_work_item(
                     or "No source-grounded Project or Task decision.",
                     _db=db,
                 )
-            store.finish_logical_run(
-                'task_agent_runs',
+            store.finish_professional_run(
                 active_run_id,
                 status="completed",
-                codex_session_id=session_id,
+                session_id=session_id,
                 _db=db,
             )
             receipt = apply_result.projection_receipt
@@ -3657,8 +3646,7 @@ def process_work_item(
         active_run_id = None
     except Exception as exc:
         if active_run_id is not None:
-            store.finish_logical_run(
-                'task_agent_runs',
+            store.finish_professional_run(
                 active_run_id,
                 status="failed",
                 error=str(exc),

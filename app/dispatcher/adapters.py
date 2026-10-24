@@ -1,12 +1,10 @@
 from __future__ import annotations
 
 from app.deployment_drain import claim_connection
-from app.run_storage import SCHEDULED_RUN_SQL
 from app.state_definitions import state_projection
 from app.state_storage import state_json_field, update_state, upsert_state
-from app.task20_definitions import task20_column, task20_projection
 from app import task_lifecycle_storage as task_claims
-from app.task_lifecycle_definitions import DISPATCH_KINDS, dispatch_source_projection
+from app.task_lifecycle_definitions import DISPATCH_TASK_KINDS, dispatch_task_projection
 from app.action_followup_sync_definitions import SYNC_ACTION_PROJECTIONS
 from app.action_storage import update_sync_action, task_delivery_projection, task_delivery_set_parts
 
@@ -25,10 +23,6 @@ from app.external_retry import MAX_AUTOMATIC_ATTEMPTS
 from app.store import AutoReplyStore
 
 
-MEETING_JOB_SQL = task20_projection('meeting_alignment_jobs')
-OKR_REQUEST_SQL = task20_projection('okr_review_requests')
-REPLY_TASK_SQL = task20_projection('reply_tasks')
-WORK_SUMMARY_INPUT_SQL = task20_projection('work_summary_inputs')
 
 
 _CLAIM_SCAN_PAGE_SIZE = 32
@@ -110,25 +104,25 @@ class ScheduledTaskQueueAdapter(_LedgerClaimLifecycle):
         ).isoformat(timespec="seconds")
         with self.store._connect() as db:
             pending = db.execute(
-                f"select count(*) from ({SCHEDULED_RUN_SQL}) as scheduled_task_runs "
+                "select count(*) from schedule_occurrences as scheduled_task_runs "
                 "where dispatch_status='pending' "
                 "and (lease_owner='' or lease_expires_at<=?)",
                 (now_text,),
             ).fetchone()[0]
             due = db.execute(
-                f"select count(*) from ({SCHEDULED_RUN_SQL}) as scheduled_task_runs "
+                "select count(*) from schedule_occurrences as scheduled_task_runs "
                 "where dispatch_status='pending' and scheduled_for<=? "
                 "and (lease_owner='' or lease_expires_at<=?)",
                 (now_text, now_text),
             ).fetchone()[0]
             claimed = db.execute(
-                f"select count(*) from ({SCHEDULED_RUN_SQL}) as scheduled_task_runs "
+                "select count(*) from schedule_occurrences as scheduled_task_runs "
                 "where dispatch_status='pending' and lease_owner<>'' "
                 "and lease_expires_at>?",
                 (now_text,),
             ).fetchone()[0]
             oldest = db.execute(
-                f"select min(scheduled_for) from ({SCHEDULED_RUN_SQL}) as scheduled_task_runs "
+                "select min(scheduled_for) from schedule_occurrences as scheduled_task_runs "
                 "where dispatch_status='pending' and scheduled_for<=? "
                 "and (lease_owner='' or lease_expires_at<=?)",
                 (now_text, now_text),
@@ -137,7 +131,7 @@ class ScheduledTaskQueueAdapter(_LedgerClaimLifecycle):
                 db,
                 column="skip_or_error_reason",
                 source_projection=(
-                    f"from ({SCHEDULED_RUN_SQL}) source "
+                    f"from schedule_occurrences source "
                     f"left join {_LEASE_PROJECTION} source_claim "
                     "on source_claim.adapter_name=? "
                     "and source_claim.source_id=cast(source.id as text) "
@@ -201,7 +195,7 @@ class ScheduledTaskQueueAdapter(_LedgerClaimLifecycle):
                     "claim.owner_pid as claim_owner_pid, "
                     "claim.generation as claim_generation, "
                     "claim.lease_expires_at as claim_expires_at "
-                    f"from ({SCHEDULED_RUN_SQL}) run "
+                    f"from schedule_occurrences run "
                     f"left join {_LEASE_PROJECTION} claim "
                     "on claim.adapter_name=? and claim.source_id=cast(run.id as text) "
                     "where run.dispatch_status='pending' and run.scheduled_for<=? "
@@ -229,8 +223,8 @@ class ScheduledTaskQueueAdapter(_LedgerClaimLifecycle):
                 return None
             previous_source_owner = str(candidate["lease_owner"] or "")
             cursor = db.execute(
-                "update runs set lease_owner=?, lease_expires_at=? "
-                "where record_type='scheduled_task_runs' and cast(legacy_key as integer)=? and dispatch_status='pending' and scheduled_for<=? "
+                "update schedule_occurrences set lease_owner=?, lease_expires_at=? "
+                "where id=? and dispatch_status='pending' and scheduled_for<=? "
                 "and (lease_owner='' or lease_expires_at<=? or lease_owner=?)",
                 (
                     owner,
@@ -274,7 +268,7 @@ class ScheduledTaskQueueAdapter(_LedgerClaimLifecycle):
                 now=now_text,
             )
             claimed = db.execute(
-                f"select {self.store._scheduled_task_run_columns()} from ({SCHEDULED_RUN_SQL}) as scheduled_task_runs where id=?", (candidate["id"],)
+                f"select {self.store._scheduled_task_run_columns()} from schedule_occurrences as scheduled_task_runs where id=?", (candidate["id"],)
             ).fetchone()
             assert claimed is not None
             run = self.store._scheduled_task_run_from_row(claimed)
@@ -305,8 +299,8 @@ class ScheduledTaskQueueAdapter(_LedgerClaimLifecycle):
                 ).isoformat(timespec="seconds"),
             )
             cursor = db.execute(
-                "update runs set lease_owner='', lease_expires_at=null "
-                "where record_type='scheduled_task_runs' and cast(legacy_key as integer)=? and dispatch_status='pending' and lease_owner=?",
+                "update schedule_occurrences set lease_owner='', lease_expires_at=null "
+                "where id=? and dispatch_status='pending' and lease_owner=?",
                 (int(envelope.source_id), owner),
             )
             if cursor.rowcount != 1:
@@ -338,8 +332,8 @@ class ScheduledTaskQueueAdapter(_LedgerClaimLifecycle):
                 lease_expires_at=lease_text,
             )
             cursor = db.execute(
-                "update runs set lease_expires_at=? "
-                "where record_type='scheduled_task_runs' and cast(legacy_key as integer)=? and dispatch_status='pending' and lease_owner=? "
+                "update schedule_occurrences set lease_expires_at=? "
+                "where id=? and dispatch_status='pending' and lease_owner=? "
                 "and lease_expires_at>?",
                 (lease_text, int(envelope.source_id), owner, now_text),
             )
@@ -360,7 +354,7 @@ class ScheduledTaskQueueAdapter(_LedgerClaimLifecycle):
                 now=now_text,
             )
             row = db.execute(
-                f"select 1 from ({SCHEDULED_RUN_SQL}) as scheduled_task_runs where id=? "
+                "select 1 from schedule_occurrences as scheduled_task_runs where id=? "
                 "and dispatch_status='pending' and lease_owner=? "
                 "and lease_expires_at>?",
                 (int(envelope.source_id), owner, now_text),
@@ -402,30 +396,30 @@ class _TaskQueueAdapter(_LedgerClaimLifecycle):
 
     @property
     def kind(self):
-        return DISPATCH_KINDS[self.name]
+        return DISPATCH_TASK_KINDS[self.name]
 
     @property
     def source(self):
-        return dispatch_source_projection(self.kind)
+        return dispatch_task_projection(self.name)
 
     def _channel_clause(self, alias="task"):
         return "1"
 
     def _pending(self, alias="task"):
-        phases = "('waiting','pending','retry')" if self.kind == "meeting_alignment_jobs" else "('pending')"
+        phases = "('waiting','pending','retry')" if self.kind == "meeting_alignment" else "('pending')"
         return alias + ".task_status='pending' and " + alias + ".status in " + phases
 
     def _due(self, now_text, alias="task"):
         due = ""
         params = []
-        if self.kind == "meeting_alignment_jobs":
+        if self.kind == "meeting_alignment":
             due += " and datetime(" + alias + ".eligible_at)<=datetime(?)"
             params.append(now_text)
-        if self.kind == "work_summary_inputs":
+        if self.kind == "work_summary":
             from app.cli import WORK_SUMMARY_TRANSIENT_RETRY_ATTEMPTS
             due += " and (" + alias + ".attempts>=? or " + alias + ".available_at='' or datetime(" + alias + ".available_at)<=datetime(?))"
             params.extend((WORK_SUMMARY_TRANSIENT_RETRY_ATTEMPTS, now_text))
-        elif self.kind != "okr_review_requests":
+        elif self.kind != "okr_review":
             due += " and (" + alias + ".available_at='' or datetime(" + alias + ".available_at)<=datetime(?))"
             params.append(now_text)
         return (self._channel_clause(alias) + " and " + alias + ".task_status in ('pending','processing') and ((" + self._pending(alias) + due
@@ -434,7 +428,7 @@ class _TaskQueueAdapter(_LedgerClaimLifecycle):
             (*params, now_text, now_text))
 
     def _ready_at(self, alias="task"):
-        if self.kind == "meeting_alignment_jobs":
+        if self.kind == "meeting_alignment":
             return ("max(datetime(" + alias + ".eligible_at),coalesce(datetime(nullif(" + alias
                     + ".available_at,'')),datetime(" + alias + ".eligible_at)))")
         return alias + ".id"
@@ -443,11 +437,11 @@ class _TaskQueueAdapter(_LedgerClaimLifecycle):
         now_text = _sqlite_time(now)
         eligible, params = self._due(now_text)
         joined = f"from ({self.source}) task "
-        if self.kind == "meeting_alignment_jobs":
+        if self.kind == "meeting_alignment":
             oldest_sql = ("case when task.available_at='' then task.eligible_at "
                           "when datetime(task.available_at)>datetime(task.eligible_at) "
                           "then task.available_at else task.eligible_at end")
-        elif self.kind == "okr_review_requests":
+        elif self.kind == "okr_review":
             oldest_sql = "task.created_at"
         else:
             oldest_sql = "case when task.available_at='' then task.created_at else task.available_at end"
@@ -482,12 +476,12 @@ class _TaskQueueAdapter(_LedgerClaimLifecycle):
             def fetch_page(after, limit):
                 keyset, keys = "", []
                 if after is not None:
-                    if self.kind == "meeting_alignment_jobs":
+                    if self.kind == "meeting_alignment":
                         keyset = " and (" + ready + ">datetime(?) or (" + ready + "=datetime(?) and task.id>?))"
                         keys = [after["ready_at"], after["ready_at"], after["id"]]
                     else:
                         keyset, keys = " and task.id>?", [after["id"]]
-                elif self.kind != "meeting_alignment_jobs":
+                elif self.kind != "meeting_alignment":
                     # The source adapters start their public ID keyset at zero.
                     keyset, keys = " and task.id>?", [0]
                 return db.execute(
@@ -510,44 +504,44 @@ class _TaskQueueAdapter(_LedgerClaimLifecycle):
             changes = {"status": "'processing'", "updated_at": "?"}
             bindings = [now_text]
             structural = {}
-            if self.kind != "okr_review_requests":
-                changes["attempts"] = task20_column(self.kind, "attempts") + "+1"
-            if self.kind in ("reply_tasks", "meeting_alignment_jobs"):
+            if self.kind != "okr_review":
+                changes["attempts"] = "attempts+1"
+            if self.kind in ("reply", "meeting_alignment"):
                 changes["locked_at"] = "?"
                 bindings.append(now_text)
-            if self.kind in ("reply_tasks", "work_summary_inputs"):
+            if self.kind in ("reply", "work_summary"):
                 changes["available_at"] = "''"
-            if self.kind in ("work_summary_inputs", "okr_review_requests"):
+            if self.kind in ("work_summary", "okr_review"):
                 changes["error"] = "''"
-            if self.kind == "reply_tasks":
-                changes["claimed_input_version"] = task20_column(self.kind, "input_version")
+            if self.kind == "reply":
+                changes["claimed_input_version"] = "input_version"
                 structural["claimed_input_id"] = "current_input_id"
             generation = task_claims.acquire_claim(db, adapter_name=self.name, source_id=source_id,
                 owner=owner, owner_pid=owner_pid, lease_expires_at=_lease_expiry(now, lease), now=now_text,
                 domain_sql=changes, domain_parameters=tuple(bindings), structural_sql=structural,
-                domain_where=(task20_column(self.kind, "status") + "=" + repr(row["status"])
+                domain_where=("status=" + repr(row["status"])
                               + " and " + self._channel_clause("tasks")))
             claimed = db.execute(f"select * from ({self.source}) where id=?", (row["id"],)).fetchone()
-        time_field = "eligible_at" if self.kind == "meeting_alignment_jobs" else "created_at"
+        time_field = "eligible_at" if self.kind == "meeting_alignment" else "created_at"
         return DispatchEnvelope(adapter_name=self.name, source_id=source_id,
             available_at=_source_time(str(claimed[time_field]), fallback=now), priority=0,
-            attempt=generation if self.kind == "okr_review_requests" else int(claimed["attempts"]), generation=generation)
+        attempt=generation if self.kind == "okr_review" else int(claimed["attempts"]), generation=generation)
 
     def release(self, envelope: DispatchEnvelope, *, owner: str, now: datetime) -> None:
         _validate_release(self.name, envelope, owner, now)
         now_text = _sqlite_time(now)
-        changes = {"status": "'retry'" if self.kind == "meeting_alignment_jobs" else "'pending'",
+        changes = {"status": "'retry'" if self.kind == "meeting_alignment" else "'pending'",
                    "updated_at": "?"}
-        if self.kind != "okr_review_requests":
-            changes["attempts"] = "max(" + task20_column(self.kind, "attempts") + "-1,0)"
-        if self.kind in ("reply_tasks", "meeting_alignment_jobs"):
+        if self.kind != "okr_review":
+            changes["attempts"] = "max(attempts-1,0)"
+        if self.kind in ("reply", "meeting_alignment"):
             changes["locked_at"] = "null"
         with self.store._immediate_write_transaction() as db:
             task_claims.transition_claim(db, envelope=envelope, owner=owner,
                 values={"lease_owner": "", "lease_expires_at": ""},
                 history={"owner": "", "lease_expires_at": "", "updated_at": now_text},
                 domain_sql=changes, domain_parameters=(now_text,),
-                domain_where=task20_column(self.kind, "status") + "='processing'")
+                domain_where="status='processing'")
 
     def renew(self, envelope: DispatchEnvelope, *, owner: str, now: datetime, lease: timedelta) -> None:
         _renew_lease(self.store, envelope=envelope, owner=owner, now=now, lease=lease)
@@ -562,21 +556,23 @@ class _TaskQueueAdapter(_LedgerClaimLifecycle):
             now + timedelta(seconds=retry_delay_seconds(60, max(envelope.attempt - 1, 0))))
         changes = {"status": "failed" if terminal else "pending",
                    "available_at": available_at, "error": error[:2000], "updated_at": now_text}
-        if self.kind == "reply_tasks":
+        if self.kind == "reply":
             changes["locked_at"] = None
         with self.store._immediate_write_transaction() as db:
             task_claims.transition_claim(db, envelope=envelope, owner=owner,
                 values={"lease_owner": "", "lease_expires_at": ""},
                 history={"owner": "", "lease_expires_at": "", "updated_at": now_text},
                 domain_values=changes,
-                domain_where=task20_column(self.kind, "status") + "='processing'")
+                domain_where="status='processing'")
 
 
 class ReplyQueueAdapter(_TaskQueueAdapter):
     name = "reply"
 
     def _channel_clause(self, alias="task"):
-        return f"{alias}.{task20_column('reply_tasks', 'channel') if alias == 'tasks' else 'channel'} in ('dingtalk','wechat')"
+        if alias == "tasks":
+            return "exists(select 1 from task_inputs current_input where current_input.id=tasks.current_input_id and current_input.channel in ('dingtalk','wechat'))"
+        return f"{alias}.channel in ('dingtalk','wechat')"
 
     def complete(self, envelope: DispatchEnvelope, *, owner: str, now: datetime) -> None:
         with self.store._immediate_write_transaction() as db:
@@ -593,7 +589,9 @@ class ScheduledExecutionQueueAdapter(ReplyQueueAdapter):
     name = "scheduled_execution"
 
     def _channel_clause(self, alias="task"):
-        return f"{alias}.{task20_column('reply_tasks', 'channel') if alias == 'tasks' else 'channel'}='scheduled'"
+        if alias == "tasks":
+            return "exists(select 1 from task_inputs current_input where current_input.id=tasks.current_input_id and current_input.channel='scheduled')"
+        return f"{alias}.channel='scheduled'"
 
 
 class MeetingQueueAdapter(_TaskQueueAdapter):
@@ -836,7 +834,7 @@ def _acquire_lease(
     lease_expires_at: str,
     now: str,
 ) -> int:
-    if adapter_name in DISPATCH_KINDS:
+    if adapter_name in DISPATCH_TASK_KINDS:
         return task_claims.acquire_claim(db, adapter_name=adapter_name, source_id=source_id,
             owner=owner, owner_pid=owner_pid, lease_expires_at=lease_expires_at, now=now)
     row = db.execute(
@@ -933,7 +931,7 @@ def _release_lease(
     owner: str,
     now: str,
 ) -> None:
-    if envelope.adapter_name in DISPATCH_KINDS:
+    if envelope.adapter_name in DISPATCH_TASK_KINDS:
         task_claims.transition_claim(db, envelope=envelope, owner=owner,
             values={"lease_owner": "", "lease_expires_at": ""},
             history={"owner": "", "lease_expires_at": "", "updated_at": now})
@@ -977,7 +975,7 @@ def _renew_lease_in_db(
     now: str,
     lease_expires_at: str,
 ) -> None:
-    if envelope.adapter_name in DISPATCH_KINDS:
+    if envelope.adapter_name in DISPATCH_TASK_KINDS:
         task_claims.transition_claim(db, envelope=envelope, owner=owner, now=now,
             values={"lease_expires_at": lease_expires_at},
             history={"lease_expires_at": lease_expires_at, "last_error": "", "updated_at": now})
@@ -1020,7 +1018,7 @@ def _assert_ledger_current_in_db(
     owner: str,
     now: str,
 ) -> None:
-    if envelope.adapter_name in DISPATCH_KINDS:
+    if envelope.adapter_name in DISPATCH_TASK_KINDS:
         task_claims.assert_claim(db, envelope=envelope, owner=owner, now=now)
         return
     row = db.execute(
@@ -1058,7 +1056,7 @@ def _complete_ledger_in_db(
     owner: str,
     now: str,
 ) -> None:
-    if envelope.adapter_name in DISPATCH_KINDS:
+    if envelope.adapter_name in DISPATCH_TASK_KINDS:
         task_claims.transition_claim(db, envelope=envelope, owner=owner,
             values={"lease_owner": "", "lease_expires_at": ""},
             history={"owner": "", "lease_expires_at": "", "terminal_at": now,
@@ -1106,11 +1104,11 @@ def _let_go_of_lease(
     claim someone else has since taken is untouched.
     """
     with store._immediate_write_transaction() as db:
-        if envelope.adapter_name in DISPATCH_KINDS:
+        if envelope.adapter_name in DISPATCH_TASK_KINDS:
             task_claims.recover_claims(db, adapter=envelope.adapter_name,
                 source_ids=(envelope.source_id,), values={"owner_pid": 0, "lease_expires_at": ""},
                 history={"owner_pid": 0, "lease_expires_at": ""},
-                where_sql="lifecycle_lease_owner=? and lifecycle_generation=?",
+                where_sql="lease_owner=? and generation=?",
                 parameters=(owner, envelope.generation), repack_history=True)
             return
         update_state(

@@ -431,11 +431,14 @@ class _OfflineTaskBackend:
 
     def classify(self, **kwargs: object) -> str:
         task_id = str(kwargs["task_id"])
-        self._tasks.open_offline_task(task_id=task_id, owner=OFFLINE_TASK_OWNER)
+        native_task_id = self._tasks.open_offline_task(
+            task_id=task_id, owner=OFFLINE_TASK_OWNER
+        )
+        kwargs["task_id"] = native_task_id
         try:
             return self._backend.classify(**kwargs)
         finally:
-            self._tasks.close_offline_task(task_id)
+            self._tasks.close_offline_task(native_task_id)
 
 
 def main(argv: Iterable[str] | None = None) -> int:

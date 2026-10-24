@@ -3839,6 +3839,61 @@ def _forbid_action_task_production():
     )
 
 
+def _native_email_classification_store(path):
+    from app.task_run_entity_assembly import task_run_entity_assembly_objects
+
+    db = sqlite3.connect(path)
+    db.execute("pragma foreign_keys=on")
+    objects = task_run_entity_assembly_objects()
+    for sql in objects.values():
+        if sql.lstrip().lower().startswith("create table"):
+            db.execute(sql)
+    for sql in objects.values():
+        if not sql.lstrip().lower().startswith("create table"):
+            db.execute(sql)
+    db.close()
+    store = EmailStore.__new__(EmailStore)
+    store.path = path
+    return store
+
+
+def test_native_classification_worker_keeps_email_result_separate_from_task_result(tmp_path):
+    from app.email_classifier_agent import AgentClassificationResult
+
+    email_store = _native_email_classification_store(tmp_path / "native-classification.sqlite3")
+    adapter = EmailClassificationTaskAdapter(email_store)
+    task = adapter.ensure_task(_classification_task_input())
+    agent = SimpleNamespace(
+        classify=lambda _task, **_kwargs: AgentClassificationResult(
+            category="work", important=True, certainty="certain", confidence=0.96,
+            reason="Customer project decision.", unsubscribe_candidate_index=None,
+            unsubscribe_url=None,
+        )
+    )
+    outcome = _module().run_email_classification_task_once(
+        adapter, agent, email_store, owner="email-worker:test",
+        provider_readback=_classification_provider_readback,
+        action_task_producer=_forbid_action_task_production(),
+    )
+    assert outcome["decision_status"] == "processed"
+    with email_store._connect() as db:
+        native_task = db.execute(
+            "select kind,status,parameters_json from tasks where id=?", (int(task.task_id),)
+        ).fetchone()
+        task_result = db.execute(
+            "select result_kind,result_json from task_results where task_id=?", (int(task.task_id),)
+        ).fetchone()
+        assert native_task["kind"] == "email_classification"
+        assert native_task["status"] == "done"
+        assert json.loads(db.execute("select json(parameters_json) from tasks where id=?",
+                                     (int(task.task_id),)).fetchone()[0]) == {}
+        assert task_result["result_kind"] == "email_classification"
+        assert json.loads(task_result["result_json"])["classification_id"] == outcome["classification_id"]
+    classification = email_store.get_classification(outcome["classification_id"])
+    assert classification["classification_source"] == "agent"
+    assert classification["stable_message_identity"] == task.stable_message_identity
+
+
 def test_classification_worker_persists_certain_decision_and_direct_plan(tmp_path):
     from app.email_classifier_agent import AgentClassificationResult
     from app.email_task_adapter import EmailClassificationTaskAdapter

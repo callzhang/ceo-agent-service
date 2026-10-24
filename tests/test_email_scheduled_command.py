@@ -11,6 +11,7 @@ from app.agent_cron.commands import (
     ServiceCommandConsumerContext,
     ServiceCommandRegistry,
 )
+from tests.scheduled_command_results import unknown_service_result
 from app.email_classifier_agent import EmailClassifierAgent
 from app.email_classifier_scan import EmailScanResult
 from app.email_classifier_runtime import OnlineClassificationResult, RuntimeSnapshot
@@ -49,7 +50,9 @@ def test_email_scheduled_command_loads_one_model_runtime_and_closes_it() -> None
         SimpleNamespace(), dependency_builder=lambda _settings: bootstrap
     )()
 
-    assert summary == "email-message-check-once accounts=1 discovered=1 failures=0"
+    assert summary.summary == "email-message-check-once accounts=1 discovered=1 failures=0"
+    assert summary.producer_counts == (("discovered", 1), ("failures", 0))
+    assert summary.complete
     assert events[0] == "load-model"
     assert ("scan", "account-1", runtime) in events
     assert events[-1] == "close-model"
@@ -67,7 +70,9 @@ def test_email_scheduled_command_without_accounts_is_an_idempotent_noop() -> Non
         SimpleNamespace(), dependency_builder=lambda _settings: bootstrap
     )()
 
-    assert summary == "email-message-check-once accounts=0 discovered=0 failures=0"
+    assert summary.summary == "email-message-check-once accounts=0 discovered=0 failures=0"
+    assert summary.producer_counts == (("discovered", 0), ("failures", 0))
+    assert summary.complete
 
 
 def test_email_discovery_retries_transient_dns_with_capped_backoff() -> None:
@@ -93,7 +98,8 @@ def test_email_discovery_retries_transient_dns_with_capped_backoff() -> None:
         sleep=delays.append,
     )()
 
-    assert summary == "email-message-check-once accounts=1 discovered=1 failures=0"
+    assert summary.summary == "email-message-check-once accounts=1 discovered=1 failures=0"
+    assert summary.producer_counts == (("discovered", 1), ("failures", 0))
     assert len(attempts) == 3
     assert delays == [1.0, 2.0]
 
@@ -314,7 +320,8 @@ def test_email_cron_registry_chain_enqueues_then_uses_exact_scheduled_prompt_and
         ),
     )
     implementations = {
-        option.name: (lambda: "unused") for option in SERVICE_COMMAND_OPTIONS
+        option.name: (lambda: unknown_service_result("unused"))
+        for option in SERVICE_COMMAND_OPTIONS
     }
     implementations["email-message-check-once"] = EmailMessageCheckOnceCommand(
         settings, dependency_builder=lambda _settings: bootstrap

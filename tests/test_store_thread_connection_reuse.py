@@ -125,4 +125,3 @@ def test_a_connection_going_idle_releases_its_page_cache(tmp_path):
     # The parsed schema is what the idle slot keeps; the page cache (up to
     # SQLITE_READ_CACHE_SIZE per connection) is let go.
     assert "pragma shrink_memory" in [s.lower() for s in statements]
-

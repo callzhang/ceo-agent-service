@@ -79,6 +79,13 @@ from app.feedback_processing import (
 )
 
 
+def _validate_workbench_public_reference(value: str, *, field: str) -> str:
+    if (not value.isascii() or not value.isdecimal()
+            or int(value) <= 0 or str(int(value)) != value):
+        raise HTTPException(status_code=422, detail=f"{field} must be a canonical Workbench ID")
+    return value
+
+
 def _legacy_settings_error_message(body_text: str) -> str:
     """Extract the legacy form validation text before returning a JSON error."""
     match = re.search(r'<p class="attempt-warning">(.*?)</p>', body_text, flags=re.DOTALL)
@@ -1001,15 +1008,20 @@ def register_console_routes(
     @app.get("/api/console/meeting-attempts/{run_id}")
     def console_meeting_detail(run_id: int):
         store = store_factory()
-        run = store.get_logical_run(
-            'meeting_alignment_runs',
-            run_id,
-        )
+        run = store.get_meeting_alignment_run(run_id)
         if run is None:
             return JSONResponse({"ok": False, "code": "not_found", "message": "Meeting attempt not found", "details": {}}, status_code=404)
-        job = store.get_meeting_alignment_job(run.job_id)
-        if job is None:
-            return JSONResponse({"ok": False, "code": "not_found", "message": "Meeting job not found", "details": {}}, status_code=404)
+        try:
+            job = store.get_meeting_alignment_job(run.task_id) if run.task_id is not None else None
+        except ValueError as exc:
+            if not str(exc).startswith("meeting alignment job not found:"):
+                raise
+            job = None
+        task_unavailable = job is None
+        title = job.title if job is not None else "Meeting Task unavailable"
+        meeting_id = job.meeting_id if job is not None else "unavailable"
+        task_status = job.status if job is not None else "unavailable"
+        final_message = job.final_message if job is not None else ""
         decision = stored_json(run.decision_json, {})
         if not isinstance(decision, dict):
             decision = {}
@@ -1019,8 +1031,8 @@ def register_console_routes(
         decision_target = ""
         if isinstance(target, dict):
             decision_target = str(target.get("title") or target.get("conversation_id") or "")
-        participants = stored_json(job.participants_json, [])
-        if not participants:
+        participants = stored_json(job.participants_json, []) if job is not None else []
+        if job is not None and not participants:
             source = stored_json(job.source_json, {})
             if isinstance(source, dict):
                 evidence = source.get("calendar_evidence")
@@ -1032,7 +1044,7 @@ def register_console_routes(
             if isinstance(item, dict) and str(item.get("name") or "").strip()
         ]
         participant_preview = ", ".join(participant_names)
-        mentions = stored_json(job.mentions_json, [])
+        mentions = stored_json(job.mentions_json, []) if job is not None else []
         mention_values = []
         if isinstance(mentions, list):
             for mention in mentions:
@@ -1048,28 +1060,31 @@ def register_console_routes(
             run_status = "skipped"
         elif run_status in {"retry", "failed"}:
             run_status = "failed"
-        elif run_status == "ready_to_send" and job.status == "sent":
+        elif run_status == "ready_to_send" and job is not None and job.status == "sent":
             run_status = "sent"
-        elif run_status == "ready_to_send" and store.has_later_meeting_alignment_run(run.job_id, run.id):
+        elif (run_status == "ready_to_send" and job is not None and run.task_id is not None
+              and store.has_later_meeting_alignment_run(run.task_id, run.id)):
             run_status = "ready_to_send"
-        elif run_status == "ready_to_send" and job.status in {"retry", "failed"}:
+        elif run_status == "ready_to_send" and job is not None and job.status in {"retry", "failed"}:
             run_status = "failed"
         fields = [
-            {"label": "meeting id", "value": job.meeting_id},
+            {"label": "meeting id", "value": meeting_id},
+            {"label": "Task", "value": "unavailable" if task_unavailable else str(job.id)},
+            {"label": "source provenance job id", "value": str(run.job_id) if run.job_id is not None else "unavailable"},
             {"label": "action", "value": str(decision.get("action") or "")},
             {"label": "status", "value": run_status},
-            {"label": "job status", "value": job.status},
-            {"label": "target kind", "value": job.target_kind},
-            {"label": "delivery target", "value": job.target_title or job.target_id},
+            {"label": "job status", "value": task_status},
+            {"label": "target kind", "value": job.target_kind if job is not None else ""},
+            {"label": "delivery target", "value": (job.target_title or job.target_id) if job is not None else ""},
             {"label": "decision target", "value": decision_target},
             {"label": "Mention resolution", "value": mention_text},
-            {"label": "ended at", "value": job.ended_at},
+            {"label": "ended at", "value": job.ended_at if job is not None else ""},
             {"label": "participants", "value": participant_preview},
         ]
         conversation_id = ""
         if isinstance(target, dict):
             conversation_id = str(target.get("conversation_id") or "").strip()
-        if not conversation_id:
+        if not conversation_id and job is not None:
             conversation_id = str(job.target_id or "").strip()
         dingtalk_url = (
             f"/open-dingtalk-popup?conversation_id={quote(conversation_id, safe='')}"
@@ -1081,36 +1096,41 @@ def register_console_routes(
         tool_uses = _audit_event_uses_for_attempt(run)
         return item_envelope({
             "id": run.id,
-            "title": job.title,
+            "task_id": run.task_id,
+            "source_job_id": run.job_id,
+            "task_available": not task_unavailable,
+            "title": title,
             "type": "meeting",
             "status": run_status,
             "conversation": {
                 "label": "会议",
-                "title": job.title,
+                "title": title,
                 "subtitle": f"参会人：{participant_preview}" if participant_preview else "",
             },
             "metadata": fields,
             # Keep the generic resource fields for API consumers while the
             # meeting-specific presentation uses the structured sections below.
             "input": {
-                "meeting_id": job.meeting_id,
-                "ended_at": job.ended_at,
+                "meeting_id": meeting_id,
+                "ended_at": job.ended_at if job is not None else "",
                 "participants": participants,
             },
             "decision": decision,
-            "output": job.final_message,
+            "output": final_message,
             "trigger": {
                 "title": "Trigger",
                 "text": "\n".join([
-                    f"title: {job.title}",
-                    f"meeting id: {job.meeting_id}",
-                    f"ended at: {job.ended_at}",
+                    f"title: {title}",
+                    f"meeting id: {meeting_id}",
+                    f"task id: {run.task_id if run.task_id is not None else 'unavailable'}",
+                    f"source provenance job id: {run.job_id if run.job_id is not None else 'unavailable'}",
+                    f"ended at: {job.ended_at if job is not None else ''}",
                     f"participants: {participant_preview}",
                     *([f"trigger reasons: {trigger_text}"] if trigger_text else []),
                 ]),
             },
             "audit_explanation": {"title": "Codex reason", "text": run.audit_summary},
-            "generated_reply": {"title": "生成回复", "text": job.final_message or "No generated reply recorded."},
+            "generated_reply": {"title": "生成回复", "text": final_message or ("Meeting Task unavailable." if task_unavailable else "No generated reply recorded.")},
             "audit_summary": run.audit_summary,
             "tool_uses": tool_uses,
             "native_available": run.native_available,
@@ -1119,10 +1139,10 @@ def register_console_routes(
             "tool_events_reason": run.tool_events_reason,
             "runtime": {
                 "run_status": run.status,
-                "job_status": job.status,
+                "job_status": task_status,
                 "audit_summary": run.audit_summary,
                 "audit_tool_events": stored_json(run.audit_tool_events_json, []),
-                "error": run.error or job.error,
+                "error": run.error or (job.error if job is not None else ""),
                 "created_at": run.created_at,
                 "finished_at": run.finished_at,
                 "updated_at": run.updated_at,
@@ -1147,13 +1167,13 @@ def register_console_routes(
                 "details": {},
             }, status_code=400)
         store = store_factory()
-        run = store.get_logical_run("meeting_alignment_runs", run_id)
+        run = store.get_meeting_alignment_run(run_id)
         if run is None:
             return JSONResponse({
                 "ok": False, "code": "not_found",
                 "message": "Meeting attempt not found", "details": {},
             }, status_code=404)
-        job = store.get_meeting_alignment_job(run.job_id)
+        job = store.get_meeting_alignment_job(run.task_id)
         if job is None:
             return JSONResponse({
                 "ok": False, "code": "not_found",
@@ -1309,6 +1329,10 @@ def register_console_routes(
         if turn_id is not None and not isinstance(turn_id, str):
             raise HTTPException(status_code=400, detail="workbench_turn_id must be a string")
         cleaned_batch_id = batch_id.strip() if isinstance(batch_id, str) else uuid4().hex
+        if task_id and task_id.strip():
+            task_id = _validate_workbench_public_reference(task_id.strip(), field="workbench_task_id")
+        if turn_id and turn_id.strip():
+            turn_id = _validate_workbench_public_reference(turn_id.strip(), field="workbench_turn_id")
         claim_store = store_factory()
         known_rows = claim_store.list_user_feedback_items(limit=10000, offset=0)
         known_keys = {row.key for row in known_rows}
@@ -1359,6 +1383,8 @@ def register_console_routes(
             or not turn_id.strip()
         ):
             return JSONResponse({"ok": False, "code": "validation_error", "message": "workbench_task_id and workbench_turn_id must be non-empty strings", "details": {}}, status_code=422)
+        task_id = _validate_workbench_public_reference(task_id.strip(), field="workbench_task_id")
+        turn_id = _validate_workbench_public_reference(turn_id.strip(), field="workbench_turn_id")
         try:
             decision = FeedbackIterationDecision.model_validate(raw_decision)
             record = store_factory().record_feedback_iteration_decision(
@@ -1380,6 +1406,8 @@ def register_console_routes(
         turn_id = payload.get("workbench_turn_id", payload.get("turn_id", ""))
         if not isinstance(task_id, str) or not isinstance(turn_id, str) or not task_id.strip() or not turn_id.strip():
             raise HTTPException(status_code=400, detail="workbench_task_id and workbench_turn_id are required")
+        task_id = _validate_workbench_public_reference(task_id.strip(), field="workbench_task_id")
+        turn_id = _validate_workbench_public_reference(turn_id.strip(), field="workbench_turn_id")
         store = store_factory()
         batch = store.get_feedback_processing_batch(batch_id)
         if batch is None:
@@ -1438,6 +1466,12 @@ def register_console_routes(
         if not isinstance(task_id, str) or not isinstance(turn_id, str) or not isinstance(attempt_id, int) or isinstance(attempt_id, bool) or not isinstance(agent_run_id, int) or isinstance(agent_run_id, bool):
             raise HTTPException(status_code=400, detail="feedback associations have invalid types")
         if "associations" in payload or any(name in payload for name in ("workbench_task_id", "task_id", "workbench_turn_id", "turn_id", "attempt_id", "agent_run_id")):
+            task_id = task_id.strip()
+            turn_id = turn_id.strip()
+            if task_id:
+                task_id = _validate_workbench_public_reference(task_id, field="workbench_task_id")
+            if turn_id:
+                turn_id = _validate_workbench_public_reference(turn_id, field="workbench_turn_id")
             try:
                 store.associate_feedback_processing_turn(
                     feedback_id,

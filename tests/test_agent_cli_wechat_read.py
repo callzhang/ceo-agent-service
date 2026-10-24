@@ -76,6 +76,47 @@ def test_wechat_task_reads_its_own_conversation(
     assert kwargs == {"conversation_id": "u9", "conversation_type": kind, "limit": 5}
 
 
+def test_wechat_read_uses_the_claimed_input_after_current_input_refresh(
+    tmp_path, monkeypatch,
+):
+    db_path, task_id = _bound_task(tmp_path)
+    store = AutoReplyStore(db_path)
+    with store._immediate_write_transaction() as db:
+        from app.task_entity_storage import (
+            append_task_input,
+            bind_current_input,
+            get_task_with_inputs,
+        )
+
+        task = get_task_with_inputs(db, task_id)
+        claimed = task["current_input"]
+        refreshed = {
+            key: value for key, value in claimed.items()
+            if key not in {"id", "task_id"}
+        }
+        refreshed.update(
+            conversation_id="u10",
+            trigger_message_id="m2",
+            input_revision_key="refresh:2:changed-conversation",
+        )
+        new_input, inserted = append_task_input(db, task_id=task_id, values=refreshed)
+        assert inserted
+        assert bind_current_input(
+            db,
+            task_id=task_id,
+            input_id=int(new_input["id"]),
+            expected_input_version=int(task["input_version"]),
+            input_version=int(task["input_version"]) + 1,
+        ) is not None
+
+    reader = FakeReader([_message(1)])
+    monkeypatch.setattr(service, "build_reader", lambda **_kw: reader)
+    result = _tool("consumer", db_path, task_id)(limit=5)
+
+    assert result["conversation_id"] == "u9"
+    assert reader.calls[0][1]["conversation_id"] == "u9"
+
+
 def test_wechat_read_cannot_name_another_conversation(tmp_path):
     db_path, task_id = _bound_task(tmp_path)
 

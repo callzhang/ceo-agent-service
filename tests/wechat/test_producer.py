@@ -9,6 +9,7 @@ from app.agent_cron.commands import (
     ServiceCommandConsumerContext,
     ServiceCommandRegistry,
 )
+from tests.scheduled_command_results import unknown_service_result
 from app.skill_features import FeatureRegistry
 from app.wechat.models import WechatAccount, WechatMessage, WechatReplyScope
 from app.wechat.producer import WechatReplyProducer, is_reply_candidate
@@ -113,12 +114,14 @@ def test_scheduled_trigger_persists_consumer_prompt_and_skills(
         skill_names=("ceo-wechat",),
         skill_protocol="TARGETED WECHAT SKILL",
     )
-    registry = ServiceCommandRegistry(
-        {
-            option.name: (producer.run_once if option.name == "wechat-produce-once" else lambda: 0)
-            for option in SERVICE_COMMAND_OPTIONS
-        }
+    implementations = {
+        option.name: (lambda: unknown_service_result("unused"))
+        for option in SERVICE_COMMAND_OPTIONS
+    }
+    implementations["wechat-produce-once"] = lambda: unknown_service_result(
+        str(producer.run_once())
     )
+    registry = ServiceCommandRegistry(implementations)
 
     registry.run("wechat-produce-once", consumer_context=context)
 

@@ -1,68 +1,39 @@
 """Dashboard uses current persisted execution facts, without changing them."""
 
 from datetime import UTC, datetime
-import sqlite3
-
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
 
 from app.store import AutoReplyStore
-from app.task8_storage import task8_set_parts
-from app.task_lifecycle_storage import encoded
 
 NOW = datetime(2026, 10, 20, 17, 0, tzinfo=UTC)
 
 
-def test_runtime_metadata_supports_deployed_runs_schema_without_summary_input_id():
+def test_runtime_metadata_reads_native_runtime_attempts(tmp_path):
     from app.web_api.dashboard import _runtime_metadata
-
-    db = sqlite3.connect(":memory:")
-    db.row_factory = sqlite3.Row
-    db.executescript(
-        """
-        create table runs (
-            id integer primary key,
-            record_type text,
-            legacy_key text,
-            task_id integer,
-            parent_id integer,
-            execution_generation text,
-            role text,
-            status text,
-            lease_owner text,
-            lease_expires_at text,
-            started_at text,
-            updated_at text,
-            workload_kind text,
-            workload_key text,
-            runtime_kind text,
-            model text
-        );
-        create table tasks (
-            id integer primary key,
-            record_type text,
-            lifecycle_status text,
-            "reply_tasks__execution_generation" text,
-            lifecycle_lease_owner text,
-            lifecycle_lease_expires_at text
-        );
-        insert into tasks values
-            (9, 'meeting_alignment_jobs', 'processing', 'generation-1', 'worker', '2026-10-20T17:10:00+00:00');
-        insert into runs values
-            (1, 'meeting_alignment_runs', '55', 9, null, null, null, 'running', '', '',
-             '2026-10-20T16:59:00+00:00', '2026-10-20T16:59:00+00:00',
-             null, null, null, null),
-            (2, 'agent_runtime_attempts', '2', null, null, null, 'consumer', 'running',
-             'worker', '2026-10-20T17:10:00+00:00', '2026-10-20T16:59:00+00:00',
-             '2026-10-20T16:59:00+00:00', 'meeting', '55', 'codex_cli', 'test-model');
-        """
-    )
-
-    assert _runtime_metadata(db, "2026-10-20T17:00:00+00:00")[9]["model"] == "test-model"
+    store = AutoReplyStore(tmp_path / "runtime.db")
+    task_id = seed(store, "native-runtime", status="processing", lease="2026-10-20 17:10:00")
+    from app.run_entity_storage import create_run, create_runtime_attempt
+    with store._connect() as db:
+        now = "2026-10-20 16:58:00"
+        run = create_run(db, values={"task_id": task_id, "execution_generation": "initial",
+            "role": "consumer", "status": "running", "started_at": now, "updated_at": now})
+        create_runtime_attempt(db, values={"parent_id": run["id"], "workload_kind": "agent_run",
+            "workload_key": str(run["id"]), "attempt_number": 1, "route_name": "primary",
+            "runtime_kind": "codex_cli", "credential_mode": "oauth", "model": "test-model",
+            "session_mode": "fresh", "source_session_id": "", "attempt_purpose": "normal",
+            "validation_retry_policy_id": "", "validation_result_schema_id": "", "session_id": "",
+            "transcript_reference": "", "transcript_start": 0, "transcript_end": 0,
+            "status": "running", "failure_class": "", "failure_code": "", "failover_permitted": 0,
+            "lease_owner": "worker", "lease_expires_at": "2026-10-20 17:10:00",
+            "first_effect_started_at": "", "result_schema_id": "", "started_at": now,
+            "finished_at": "", "created_at": now, "updated_at": now})
+        rows = _runtime_metadata(db, "2026-10-20T17:00:00+00:00")
+    assert rows[task_id]["model"] == "test-model"
 
 
 def seed(store, key, *, status="pending", attempts=0, lease=""):
-    store.enqueue_reply_task(
+    task = store.ensure_reply_task(
         conversation_id=key,
         conversation_title=f"Task {key}",
         single_chat=True,
@@ -72,32 +43,18 @@ def seed(store, key, *, status="pending", attempts=0, lease=""):
         trigger_text="input",
     )
     with store._connect() as db:
-        task_id = db.execute(
-            "select max(id) from tasks where record_type='reply_tasks'"
-        ).fetchone()[0]
-        parts = task8_set_parts(
-            "reply_tasks",
-            {
-                "status": status,
-                "attempts": attempts,
-                "created_at": "2026-10-20 16:00:00",
-                "updated_at": "2026-10-20 16:59:00",
-                "available_at": "2026-10-20 17:05:00"
-                if attempts and status == "pending"
-                else "",
-                "locked_at": "2026-10-20 16:58:00" if status == "processing" else None,
-            },
-        )
         db.execute(
-            "update tasks set " + parts.sql + " where id=?",
-            (*parts.parameters, task_id),
+            "update tasks set status=?,attempts=?,created_at=?,updated_at=?,available_at=?,locked_at=? where id=? and kind='reply'",
+            (status, attempts, "2026-10-20 16:00:00", "2026-10-20 16:59:00",
+             "2026-10-20 17:05:00" if attempts and status == "pending" else "",
+             "2026-10-20 16:58:00" if status == "processing" else None, task.id),
         )
         if lease:
             db.execute(
-                "update tasks set lease_owner=jsonb(?),lease_expires_at=jsonb(?) where id=?",
-                (encoded("worker"), encoded(lease), task_id),
+                "update tasks set lease_owner=?,lease_expires_at=? where id=? and kind='reply'",
+                ("worker", lease, task.id),
             )
-    return task_id
+    return task.id
 
 
 def test_initial_retry_and_active_are_distinct_and_reads_do_not_write(tmp_path):
@@ -128,44 +85,28 @@ def test_initial_retry_and_active_are_distinct_and_reads_do_not_write(tmp_path):
 
 def test_running_agent_metadata_and_current_generation(tmp_path):
     from app.web_api.dashboard import read_dashboard_queues
-    from app.run_storage import insert_run
+    from app.run_entity_storage import create_run, create_runtime_attempt
 
     store = AutoReplyStore(tmp_path / "test.db")
     task = seed(
         store, "agent", status="processing", attempts=1, lease="2026-10-20 17:10:00"
     )
     with store._connect() as db:
-        run = insert_run(
-            db,
-            "agent_runs",
-            dict(
-                task_id=task,
-                execution_generation="initial",
-                role="audit",
-                status="running",
-                lease_owner="worker",
-                lease_expires_at="2026-10-20 17:10:00",
-                started_at="2026-10-20 16:58:00",
-            ),
-        )
-        insert_run(
-            db,
-            "agent_runtime_attempts",
-            dict(
-                parent_id=run.lastrowid,
-                workload_kind="agent_run",
-                workload_key=str(run.lastrowid),
-                attempt_number=1,
-                route_name="primary",
-                runtime_kind="codex_cli",
-                credential_mode="oauth",
-                model="test-model",
-                status="running",
-                lease_owner="",
-                lease_expires_at="",
-                started_at="2026-10-20 16:58:00",
-            ),
-        )
+        generation = db.execute("select execution_generation from tasks where id=?", (task,)).fetchone()[0]
+        now = "2026-10-20 16:58:00"
+        run = create_run(db, values={"task_id": task, "execution_generation": generation,
+            "role": "audit", "status": "running", "lease_owner": "worker",
+            "lease_expires_at": "2026-10-20 17:10:00", "started_at": now, "updated_at": now})
+        create_runtime_attempt(db, values={"parent_id": run["id"], "workload_kind": "agent_run",
+            "workload_key": str(run["id"]), "attempt_number": 1, "route_name": "primary",
+            "runtime_kind": "codex_cli", "credential_mode": "oauth", "model": "test-model",
+            "session_mode": "fresh", "source_session_id": "", "attempt_purpose": "normal",
+            "validation_retry_policy_id": "", "validation_result_schema_id": "", "session_id": "",
+            "transcript_reference": "", "transcript_start": 0, "transcript_end": 0,
+            "status": "running", "failure_class": "", "failure_code": "", "failover_permitted": 0,
+            "lease_owner": "worker", "lease_expires_at": "2026-10-20 17:10:00",
+            "first_effect_started_at": "", "result_schema_id": "", "started_at": now,
+            "finished_at": "", "created_at": now, "updated_at": now})
         result = read_dashboard_queues(db, now=NOW)
         assert not read_dashboard_queues(db, now=NOW.replace(minute=11))["active"]
     row = result["active"][0]
@@ -197,22 +138,12 @@ def test_endpoint_pages_queue_without_exposing_payloads(tmp_path):
 
 def test_superseded_business_object_is_not_in_queue(tmp_path):
     from app.web_api.dashboard import read_dashboard_queues
-    from app.task20_definitions import task20_column
-
     store = AutoReplyStore(tmp_path / "test.db")
     old = seed(store, "old")
     new = seed(store, "new")
     with store._connect() as db:
-        key = db.execute(
-            "select "
-            + task20_column("reply_tasks", "business_object_key")
-            + " from tasks where id=?",
-            (new,),
-        ).fetchone()[0]
-        parts = task8_set_parts("reply_tasks", {"business_object_key": key})
-        db.execute(
-            "update tasks set " + parts.sql + " where id=?", (*parts.parameters, old)
-        )
+        key = db.execute("select business_object_key from task_inputs where task_id=?", (new,)).fetchone()[0]
+        db.execute("update task_inputs set business_object_key=? where task_id=?", (key, old))
         result = read_dashboard_queues(db, now=NOW)
     assert [r["id"] for r in result["queued"]] == [f"reply_tasks:{new}"]
 
@@ -227,43 +158,28 @@ def test_dashboard_route_is_registered_in_console_app(tmp_path):
 
 
 def test_email_classifier_uses_subject_and_its_live_model(tmp_path):
-    from app.task12_storage import insert_task12
-    from app.run_storage import insert_run
+    from app.task_entity_storage import create_task
+    from app.run_entity_storage import create_runtime_attempt
     from app.web_api.dashboard import read_dashboard_queues
 
     store = AutoReplyStore(tmp_path / "test.db")
     with store._connect() as db:
-        insert_task12(
-            db,
-            "email_agent_classification_tasks",
-            dict(
-                task_id="classify-1",
-                channel="email",
-                stable_message_identity="opaque-message-id",
-                status="running",
-                owner="classifier",
-                lease_expires_at="2026-10-20 17:10:00",
-                attempt_count=1,
-                input_json='{"message":{"subject":"Customer proposal"}}',
-            ),
-        )
-        insert_run(
-            db,
-            "agent_runtime_attempts",
-            dict(
-                workload_kind="email_classification",
-                workload_key="classify-1",
-                attempt_number=1,
-                route_name="primary",
-                runtime_kind="claude_cli",
-                credential_mode="oauth",
-                model="real-classifier-model",
-                status="running",
-                lease_owner="routed-classifier",
-                lease_expires_at="2026-10-20 17:10:00",
-                started_at="2026-10-20 16:58:00",
-            ),
-        )
+        now = "2026-10-20 16:58:00"
+        task = create_task(db, values={"kind": "email_classification", "status": "processing",
+            "created_at": now, "updated_at": now, "lease_owner": "classifier",
+            "lease_expires_at": "2026-10-20 17:10:00"})
+        db.execute("insert into email_classification_inputs(task_id,channel,stable_message_identity,input_json) values(?,?,?,?)",
+                   (task["id"], "email", "opaque-message-id", '{"message":{"subject":"Customer proposal"}}'))
+        create_runtime_attempt(db, values={"parent_id": None, "workload_kind": "email_classification",
+            "workload_key": str(task["id"]), "attempt_number": 1, "route_name": "primary",
+            "runtime_kind": "claude_cli", "credential_mode": "oauth", "model": "real-classifier-model",
+            "session_mode": "fresh", "source_session_id": "", "attempt_purpose": "normal",
+            "validation_retry_policy_id": "", "validation_result_schema_id": "", "session_id": "",
+            "transcript_reference": "", "transcript_start": 0, "transcript_end": 0,
+            "status": "running", "failure_class": "", "failure_code": "", "failover_permitted": 0,
+            "lease_owner": "routed-classifier", "lease_expires_at": "2026-10-20 17:10:00",
+            "first_effect_started_at": "", "result_schema_id": "", "started_at": now,
+            "finished_at": "", "created_at": now, "updated_at": now})
         result = read_dashboard_queues(db, now=NOW)
     assert len(result["active"]) == 1
     row = result["active"][0]
@@ -272,7 +188,7 @@ def test_email_classifier_uses_subject_and_its_live_model(tmp_path):
 
 
 def test_meeting_waits_until_eligible_and_delivery_wait_remains_queued(tmp_path):
-    from app.task8_storage import task8_insert_parts
+    from app.task_entity_storage import create_task
     from app.web_api.dashboard import read_dashboard_queues
 
     store = AutoReplyStore(tmp_path / "test.db")
@@ -282,25 +198,12 @@ def test_meeting_waits_until_eligible_and_delivery_wait_remains_queued(tmp_path)
             ("102", "ready_to_send"),
             ("103", "waiting"),
         ]:
-            parts = task8_insert_parts(
-                "meeting_alignment_jobs",
-                dict(
-                    legacy_key=key,
-                    meeting_id="meeting-" + key,
-                    title="Meeting " + key,
-                    source_json="{}",
-                    participants_json="[]",
-                    ended_at="2026-10-20 16:30:00",
-                    eligible_at="2026-10-20 17:30:00" if key != "103" else "",
-                    available_at="2026-10-20 17:45:00" if key == "103" else "",
-                    status=phase,
-                    locked_at=None,
-                ),
-            )
-            db.execute(
-                f"insert into tasks({parts.columns}) values({parts.values})",
-                parts.parameters,
-            )
+            create_task(db, values={"kind": "meeting_alignment", "status": phase,
+                "available_at": "2026-10-20 17:45:00" if key == "103" else "",
+                "created_at": "2026-10-20 16:30:00", "updated_at": "2026-10-20 16:30:00"},
+                parameters={"meeting_id": "meeting-" + key, "title": "Meeting " + key,
+                    "source_json": "{}", "participants_json": "[]", "ended_at": "2026-10-20 16:30:00",
+                    "eligible_at": "2026-10-20 17:30:00" if key != "103" else ""})
         result = read_dashboard_queues(db, now=NOW)
     assert len(result["active"]) == 0
     assert len(result["queued"]) == 3
@@ -319,20 +222,15 @@ def test_active_direct_email_retry_counts_completed_attempts(tmp_path):
 
     with store._connect() as db:
         db.execute("BEGIN IMMEDIATE")
-        assert (
-            shared_action_lifecycle.transition(
-                db,
-                "email",
-                "claim",
-                identity=action_id,
-                values={
-                    "started_at": "2026-10-20T17:00:00+00:00",
-                    "updated_at": "2026-10-20T17:00:00+00:00",
-                },
-                expected={"status": "failed", "attempt_count": 1},
-            ).rowcount
-            == 1
+        from app.action_entity_storage import get_action
+        action = get_action(db, int(action_id))
+        assert action is not None
+        claimed = shared_action_lifecycle.claim_direct_email_action(
+            db, action_id=action_id, expected_status="failed",
+            expected_started_at=action["started_at"], attempt_count=1,
+            claimed_at="2026-10-20T17:00:00+00:00",
         )
+        assert claimed is not None
     with store._connect() as db:
         result = read_dashboard_queues(db, now=NOW)
     rows = [r for r in result["active"] if r["id"] == f"email_actions:{action_id}"]
@@ -341,56 +239,27 @@ def test_active_direct_email_retry_counts_completed_attempts(tmp_path):
 
 
 def test_workbench_title_model_and_start_with_distinct_valid_owners(tmp_path):
-    from app.task8_storage import task8_insert_parts
-    from app.run_storage import insert_run
+    from app.workbench.store import WorkbenchStore
+    from app.run_entity_storage import create_runtime_attempt
     from app.web_api.dashboard import read_dashboard_queues
 
-    store = AutoReplyStore(tmp_path / "test.db")
+    store = WorkbenchStore(tmp_path / "test.db")
+    workbench = store.create_task(title="Investigate incident", runtime_kind="codex")
+    turn = store.create_turn(workbench.id, user_text="start", client_request_id="opaque-request")
     with store._connect() as db:
-        parent = task8_insert_parts(
-            "workbench_tasks",
-            dict(
-                legacy_key="wb-task", title="Investigate incident", runtime_kind="codex"
-            ),
-        )
-        parent_id = db.execute(
-            f"insert into tasks({parent.columns}) values({parent.values})",
-            parent.parameters,
-        ).lastrowid
-        turn = task8_insert_parts(
-            "workbench_turns",
-            dict(
-                legacy_key="wb-turn",
-                parent_id=parent_id,
-                client_request_id="opaque-request",
-                task_sequence=1,
-                user_text="start",
-                status="running",
-                lease_owner="executor-owner",
-                lease_expires_at="2026-10-20 17:10:00",
-                started_at="2026-10-20 16:58:00",
-            ),
-        )
-        db.execute(
-            f"insert into tasks({turn.columns}) values({turn.values})", turn.parameters
-        )
-        insert_run(
-            db,
-            "agent_runtime_attempts",
-            dict(
-                workload_kind="workbench",
-                workload_key="wb-turn",
-                attempt_number=1,
-                route_name="primary",
-                runtime_kind="codex_cli",
-                credential_mode="oauth",
-                model="real-workbench-model",
-                status="running",
-                lease_owner="routed-owner",
-                lease_expires_at="2026-10-20 17:10:00",
-                started_at="2026-10-20 16:58:00",
-            ),
-        )
+        db.execute("update tasks set status='processing',lease_owner='executor-owner',lease_expires_at=?,locked_at=?,updated_at=? where id=?",
+                   ("2026-10-20 17:10:00", "2026-10-20 16:58:00", "2026-10-20 16:58:00", int(turn.id)))
+        now = "2026-10-20 16:58:00"
+        create_runtime_attempt(db, values={"parent_id": None, "workload_kind": "workbench",
+            "workload_key": str(turn.id), "attempt_number": 1, "route_name": "primary",
+            "runtime_kind": "codex_cli", "credential_mode": "oauth", "model": "real-workbench-model",
+            "session_mode": "fresh", "source_session_id": "", "attempt_purpose": "normal",
+            "validation_retry_policy_id": "", "validation_result_schema_id": "", "session_id": "",
+            "transcript_reference": "", "transcript_start": 0, "transcript_end": 0,
+            "status": "running", "failure_class": "", "failure_code": "", "failover_permitted": 0,
+            "lease_owner": "routed-owner", "lease_expires_at": "2026-10-20 17:10:00",
+            "first_effect_started_at": "", "result_schema_id": "", "started_at": now,
+            "finished_at": "", "created_at": now, "updated_at": now})
         rows = read_dashboard_queues(db, now=NOW)["active"]
     assert len(rows) == 1
     assert rows[0]["title"] == "Investigate incident"
@@ -399,59 +268,32 @@ def test_workbench_title_model_and_start_with_distinct_valid_owners(tmp_path):
 
 
 def test_independent_okr_and_wechat_runtime_metadata(tmp_path):
-    from app.task12_storage import insert_task12
-    from app.run_storage import insert_run
+    from app.task_entity_storage import create_task
+    from app.run_entity_storage import create_runtime_attempt
     from app.web_api.dashboard import read_dashboard_queues
 
     store = AutoReplyStore(tmp_path / "test.db")
     with store._connect() as db:
-        from app.task8_storage import task8_insert_parts
-
-        parts = task8_insert_parts(
-            "okr_review_requests",
-            dict(
-                legacy_key="901",
-                conversation_id="okr",
-                conversation_title="Review OKR",
-                trigger_message_id="msg",
-                trigger_sender="owner",
-                trigger_text="review",
-                period_label="Q4",
-                period_start="2026-10-01",
-                period_end="2026-12-31",
-                status="processing",
-            ),
-        )
-        db.execute(
-            f"insert into tasks({parts.columns}) values({parts.values})",
-            parts.parameters,
-        )
-        imported = insert_task12(
-            db,
-            "wechat_memory_import_jobs",
-            dict(import_run_id="import", account_id="wechat", status="running"),
-        )
-        for workload, key in (
-            ("structured", "901"),
-            ("memory", f"wechat_memory_import_job:{imported.lastrowid}"),
-        ):
-            insert_run(
-                db,
-                "agent_runtime_attempts",
-                dict(
-                    workload_kind=workload,
-                    workload_key=key,
-                    attempt_number=1,
-                    route_name="primary",
-                    runtime_kind="codex_cli",
-                    credential_mode="oauth",
-                    model="independent-model",
-                    status="running",
-                    lease_owner="native-owner",
-                    lease_expires_at="2026-10-20 17:10:00",
-                    started_at="2026-10-20 16:58:00",
-                ),
-            )
+        now = "2026-10-20 16:58:00"
+        okr = create_task(db, values={"kind": "okr_review", "status": "processing",
+            "created_at": now, "updated_at": now}, parameters={
+                "conversation_id": "okr", "conversation_title": "Review OKR", "trigger_message_id": "msg",
+                "trigger_sender": "owner", "trigger_text": "review", "period_label": "Q4",
+                "period_start": "2026-10-01", "period_end": "2026-12-31"})
+        imported = create_task(db, values={"kind": "wechat_import", "status": "processing",
+            "created_at": now, "updated_at": now},
+            parameters={"account_id": "wechat", "import_run_id": "import"})
+        for workload, task in (("structured", okr), ("memory", imported)):
+            create_runtime_attempt(db, values={"parent_id": None, "workload_kind": workload,
+                "workload_key": str(task["id"]), "attempt_number": 1, "route_name": "primary",
+                "runtime_kind": "codex_cli", "credential_mode": "oauth", "model": "independent-model",
+                "session_mode": "fresh", "source_session_id": "", "attempt_purpose": "normal",
+                "validation_retry_policy_id": "", "validation_result_schema_id": "", "session_id": "",
+                "transcript_reference": "", "transcript_start": 0, "transcript_end": 0,
+                "status": "running", "failure_class": "", "failure_code": "", "failover_permitted": 0,
+                "lease_owner": "native-owner", "lease_expires_at": "2026-10-20 17:10:00",
+                "first_effect_started_at": "", "result_schema_id": "", "started_at": now,
+                "finished_at": "", "created_at": now, "updated_at": now})
         rows = read_dashboard_queues(db, now=NOW)["active"]
     assert len(rows) == 2
     assert all(row["model"] == "independent-model" for row in rows)

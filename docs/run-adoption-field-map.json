@@ -1,0 +1,317 @@
+{
+  "contract": "Task1C source to Run-owned target field map",
+  "status": "unactivated schema contract",
+  "fields": [
+    {
+      "source_kind": "review_candidates",
+      "source_field": "id",
+      "target_table": "run_adoption_identity_map",
+      "target_field_or_expression": "source_public_id"
+    },
+    {
+      "source_kind": "review_candidates",
+      "source_field": "task_id",
+      "target_table": "runs",
+      "target_field_or_expression": "task_id (through consumer_run_id)"
+    },
+    {
+      "source_kind": "review_candidates",
+      "source_field": "execution_generation",
+      "target_table": "runs",
+      "target_field_or_expression": "execution_generation (through consumer_run_id)"
+    },
+    {
+      "source_kind": "review_candidates",
+      "source_field": "consumer_run_id",
+      "target_table": "run_adopted_results",
+      "target_field_or_expression": "consumer_run_id"
+    },
+    {
+      "source_kind": "review_candidates",
+      "source_field": "stage_index",
+      "target_table": "run_adopted_results",
+      "target_field_or_expression": "stage_index"
+    },
+    {
+      "source_kind": "review_candidates",
+      "source_field": "proposal_revision",
+      "target_table": "runs",
+      "target_field_or_expression": "proposal_revision (through consumer_run_id)"
+    },
+    {
+      "source_kind": "review_candidates",
+      "source_field": "predecessor_review_id",
+      "target_table": "run_adopted_results",
+      "target_field_or_expression": "predecessor_review_id"
+    },
+    {
+      "source_kind": "review_candidates",
+      "source_field": "candidate_digest",
+      "target_table": "run_adopted_results",
+      "target_field_or_expression": "candidate_digest"
+    },
+    {
+      "source_kind": "review_candidates",
+      "source_field": "candidate_json",
+      "target_table": "run_adopted_results",
+      "target_field_or_expression": "candidate_json"
+    },
+    {
+      "source_kind": "review_candidates",
+      "source_field": "invalidated_at",
+      "target_table": "run_adopted_results",
+      "target_field_or_expression": "invalidated_at"
+    },
+    {
+      "source_kind": "review_candidates",
+      "source_field": "invalidation_reason",
+      "target_table": "run_adopted_results",
+      "target_field_or_expression": "invalidation_reason"
+    },
+    {
+      "source_kind": "review_candidates",
+      "source_field": "created_at",
+      "target_table": "run_adopted_results",
+      "target_field_or_expression": "created_at"
+    },
+    {
+      "source_kind": "candidate_reviews",
+      "source_field": "id",
+      "target_table": "run_adopted_reviews",
+      "target_field_or_expression": "id and run_adoption_identity_map.target_child_id"
+    },
+    {
+      "source_kind": "candidate_reviews",
+      "source_field": "candidate_id",
+      "target_table": "run_adopted_reviews",
+      "target_field_or_expression": "consumer_run_id (through review row)"
+    },
+    {
+      "source_kind": "candidate_reviews",
+      "source_field": "audit_run_id",
+      "target_table": "run_adopted_reviews",
+      "target_field_or_expression": "audit_run_id"
+    },
+    {
+      "source_kind": "candidate_reviews",
+      "source_field": "decision",
+      "target_table": "run_adopted_reviews",
+      "target_field_or_expression": "decision"
+    },
+    {
+      "source_kind": "candidate_reviews",
+      "source_field": "candidate_digest",
+      "target_table": "run_adopted_reviews",
+      "target_field_or_expression": "candidate_digest"
+    },
+    {
+      "source_kind": "candidate_reviews",
+      "source_field": "result_json",
+      "target_table": "run_adopted_reviews",
+      "target_field_or_expression": "result_json"
+    },
+    {
+      "source_kind": "candidate_reviews",
+      "source_field": "created_at",
+      "target_table": "run_adopted_reviews",
+      "target_field_or_expression": "created_at"
+    },
+    {
+      "source_kind": "candidate_selections",
+      "source_field": "id",
+      "target_table": "run_adoption_identity_map",
+      "target_field_or_expression": "source_public_id"
+    },
+    {
+      "source_kind": "candidate_selections",
+      "source_field": "candidate_id",
+      "target_table": "run_adopted_selections",
+      "target_field_or_expression": "consumer_run_id"
+    },
+    {
+      "source_kind": "candidate_selections",
+      "source_field": "review_id",
+      "target_table": "run_adopted_selections",
+      "target_field_or_expression": "audit_run_id (via Review owner)"
+    },
+    {
+      "source_kind": "candidate_selections",
+      "source_field": "option_key",
+      "target_table": "run_adopted_selections",
+      "target_field_or_expression": "option_key"
+    },
+    {
+      "source_kind": "candidate_selections",
+      "source_field": "branch_json",
+      "target_table": null,
+      "target_field_or_expression": "derived from bound candidate option_key; omitted from stored target"
+    },
+    {
+      "source_kind": "candidate_selections",
+      "source_field": "status",
+      "target_table": "run_adopted_selections",
+      "target_field_or_expression": "status"
+    },
+    {
+      "source_kind": "candidate_selections",
+      "source_field": "created_at",
+      "target_table": "run_adopted_selections",
+      "target_field_or_expression": "created_at"
+    },
+    {
+      "source_kind": "candidate_supplements",
+      "source_field": "id",
+      "target_table": "run_adopted_supplements",
+      "target_field_or_expression": "id and run_adoption_identity_map.target_child_id"
+    },
+    {
+      "source_kind": "candidate_supplements",
+      "source_field": "candidate_id",
+      "target_table": "run_adopted_supplements",
+      "target_field_or_expression": "consumer_run_id"
+    },
+    {
+      "source_kind": "candidate_supplements",
+      "source_field": "instruction",
+      "target_table": "run_adopted_supplements",
+      "target_field_or_expression": "instruction"
+    },
+    {
+      "source_kind": "candidate_supplements",
+      "source_field": "created_at",
+      "target_table": "run_adopted_supplements",
+      "target_field_or_expression": "created_at"
+    },
+    {
+      "source_kind": "candidate_executions",
+      "source_field": "id",
+      "target_table": "run_adoption_identity_map",
+      "target_field_or_expression": "source_public_id"
+    },
+    {
+      "source_kind": "candidate_executions",
+      "source_field": "candidate_id",
+      "target_table": "run_execution_progress",
+      "target_field_or_expression": "consumer_run_id"
+    },
+    {
+      "source_kind": "candidate_executions",
+      "source_field": "review_id",
+      "target_table": "run_execution_progress",
+      "target_field_or_expression": "approved_audit_run_id"
+    },
+    {
+      "source_kind": "candidate_executions",
+      "source_field": "selection_id",
+      "target_table": "run_execution_progress",
+      "target_field_or_expression": "selection_id (actual Selection business ID)"
+    },
+    {
+      "source_kind": "candidate_executions",
+      "source_field": "status",
+      "target_table": "run_execution_progress",
+      "target_field_or_expression": "status"
+    },
+    {
+      "source_kind": "candidate_executions",
+      "source_field": "lease_owner",
+      "target_table": "run_execution_progress",
+      "target_field_or_expression": "lease_owner"
+    },
+    {
+      "source_kind": "candidate_executions",
+      "source_field": "lease_expires_at",
+      "target_table": "run_execution_progress",
+      "target_field_or_expression": "lease_expires_at"
+    },
+    {
+      "source_kind": "candidate_executions",
+      "source_field": "result_json",
+      "target_table": "run_execution_progress",
+      "target_field_or_expression": "result_json"
+    },
+    {
+      "source_kind": "candidate_executions",
+      "source_field": "created_at",
+      "target_table": "run_execution_progress",
+      "target_field_or_expression": "created_at"
+    },
+    {
+      "source_kind": "candidate_executions",
+      "source_field": "updated_at",
+      "target_table": "run_execution_progress",
+      "target_field_or_expression": "updated_at"
+    },
+    {
+      "source_kind": "candidate_execution_alias",
+      "source_field": "id",
+      "target_table": "run_adoption_identity_map",
+      "target_field_or_expression": "source physical identity"
+    },
+    {
+      "source_kind": "candidate_execution_alias",
+      "source_field": "candidate_id",
+      "target_table": "run_execution_progress",
+      "target_field_or_expression": "consumer_run_id"
+    },
+    {
+      "source_kind": "candidate_execution_alias",
+      "source_field": "legacy_key",
+      "target_table": "run_adoption_identity_map",
+      "target_field_or_expression": "source_public_id"
+    }
+  ],
+  "source_constraints": {
+    "candidate_to_consumer_run": "unique 1:1",
+    "review_to_audit_run": "unique 1:1",
+    "candidate_to_review": "1:N; no unique candidate constraint",
+    "predecessor": "candidate review id resolves to Audit Run",
+    "selection": "unique per candidate and exact review; option key only; branch body derived",
+    "supplements": "1:N independent identity",
+    "execution_progress": "one per Consumer Run; status and lease independent of runs.status",
+    "receipt_execution_association": "per receipt FK to run_execution_progress(consumer_run_id); 425 receipt rows map to 424 Action parents and one Action spans two Consumer Runs",
+    "observer_run": "preserve action_observers(agent_run_id) unchanged",
+    "execution_progress_selection_binding": "execution_review_id and execution_selection_id retain immediate source existence FKs; run_execution_progress.approved_audit_run_id references the existing Audit Review immediately, selection_id references the actual Selection business ID immediately, while deferred composite Consumer/approved-Audit and Selection/Consumer/approved-Audit FKs enforce ownership at COMMIT"
+  },
+  "frozen_source_metadata": {
+    "candidates": 1344,
+    "reviews": 1333,
+    "selections": 0,
+    "supplements": 8,
+    "execution_progress": 437,
+    "execution_aliases": 437,
+    "candidate_execution_receipts": 425,
+    "receipt_identity_map_entries": 424,
+    "receipt_action_parents": 424,
+    "observer_rows_on_candidate_actions": 287,
+    "unmapped_extra_receipt": {
+      "receipt_id": 18622,
+      "execution_public_id": 437,
+      "action_index": 0
+    }
+  },
+  "source_indexes": [
+    "idx_actions_consumer_run",
+    "idx_actions_candidates_task",
+    "idx_actions_audit_run",
+    "idx_actions_reviews_candidate",
+    "idx_actions_selection_candidate",
+    "idx_actions_execution_binding",
+    "idx_actions_execution_alias_candidate",
+    "idx_actions_parent_candidate",
+    "idx_actions_parent_review"
+  ],
+  "source_references": [
+    "review_candidates.consumer_run_id -> runs.id",
+    "review_candidates.predecessor_review_id -> candidate_reviews.id -> AuditRun",
+    "candidate_reviews.audit_run_id -> runs.id",
+    "candidate_reviews.candidate_id -> review_candidates.id",
+    "candidate_selections.review_id -> candidate_reviews.id",
+    "candidate_supplements.candidate_id -> review_candidates.id",
+    "candidate_executions.review_id -> candidate_reviews.id",
+    "candidate_executions.selection_id -> candidate_selections.id",
+    "action_receipts.action_id -> actions.id",
+    "action_receipts.provider_receipt_id -> action_receipts.id within same Action",
+    "action_observers.action_id -> actions.id; observer agent_run_id retained"
+  ]
+}

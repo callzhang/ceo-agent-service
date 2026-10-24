@@ -40,11 +40,11 @@ def candidate_option(candidate_json, option_key):
 
 
 def selected_branch(db, selection_id):
-    """Read a public selection ID's branch through its physical candidate FK."""
+    """Read the selected branch through its native adopted-result owner."""
     row = db.execute("""select c.candidate_json,s.option_key
-        from main.actions s left join main.actions c
-          on c.id=s.candidate_id and c.record_type='review_candidates'
-        where s.record_type='candidate_selections' and s.legacy_key=?""", (str(selection_id),)).fetchone()
+        from run_adopted_selections s join run_adopted_results c
+          on c.consumer_run_id=s.consumer_run_id
+        where s.id=?""", (selection_id,)).fetchone()
     if row is None or row[0] is None:
         raise ValueError("selection or its exact candidate is missing")
     return candidate_option(row[0], row[1])

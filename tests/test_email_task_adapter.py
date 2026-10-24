@@ -41,8 +41,7 @@ from app.email_task_adapter import (
     EmailClassificationTaskInput,
 )
 from app.email_task_producer import EmailActionTaskProducer
-from app.task12_storage import task12_set_parts
-from app.task20_definitions import task20_column
+from app.email_task_producer import EmailClassificationTaskProducer
 from app.email_unsubscribe import (
     EmailUnsubscribeEffect,
     UnsubscribeAuthenticationEvidence,
@@ -50,6 +49,228 @@ from app.email_unsubscribe import (
 )
 from app.store import AutoReplyStore
 from app.skill_features import FeatureRegistry
+
+
+def _native_email_store(path: Path) -> EmailStore:
+    """Bind the real EmailStore connection code to a target-only test database."""
+    from app.task_run_entity_assembly import task_run_entity_assembly_objects
+
+    if not path.exists():
+        db = sqlite3.connect(path)
+        db.execute("pragma foreign_keys=on")
+        objects = task_run_entity_assembly_objects()
+        for sql in objects.values():
+            if sql.lstrip().lower().startswith("create table"):
+                db.execute(sql)
+        for sql in objects.values():
+            if not sql.lstrip().lower().startswith("create table"):
+                db.execute(sql)
+        db.close()
+    store = EmailStore.__new__(EmailStore)
+    store.path = path
+    return store
+
+
+def test_email_classification_adapter_uses_native_task_and_typed_result(tmp_path):
+    store = _native_email_store(tmp_path / "native-email.sqlite3")
+    adapter = EmailClassificationTaskAdapter(store)
+    queued = adapter.ensure_task(_classification_input(uid=101))
+    assert queued.task_id.isdecimal()
+    assert queued.status == "pending"
+    claimed = adapter.claim_next(owner="worker-1")
+    assert claimed is not None
+    assert claimed.task_id == queued.task_id
+    assert (claimed.status, claimed.owner, claimed.attempt_count, claimed.generation) == (
+        "running", "worker-1", 1, 1,
+    )
+    adapter.complete(claimed, {"decision_status": "processed"})
+    done = adapter.get_task(claimed.task_id)
+    assert done is not None and done.status == "done"
+    assert json.loads(done.result_json) == {"decision_status": "processed"}
+    assert json.loads(done.input_json)["input_compacted"] is True
+    with store._connect() as db:
+        assert db.execute("select count(*) from email_classification_inputs").fetchone()[0] == 1
+        assert db.execute("select count(*) from task_results where result_kind='email_classification'").fetchone()[0] == 1
+        task = db.execute("select kind,parameters_json from tasks where id=?", (int(done.task_id),)).fetchone()
+        assert task["kind"] == "email_classification"
+        assert json.loads(db.execute("select json(parameters_json) from tasks where id=?",
+                                     (int(done.task_id),)).fetchone()[0]) == {}
+
+
+def test_email_classification_console_queue_reads_native_owner(tmp_path):
+    from app.audit_web import _queue_latest_error, _queue_status_counts
+
+    store = _native_email_store(tmp_path / "native-email.sqlite3")
+    adapter = EmailClassificationTaskAdapter(store)
+    task = adapter.ensure_task(_classification_input(uid=119))
+    with store._connect() as db:
+        db.execute(
+            "update tasks set status='failed',error='native classifier failure' where id=?",
+            (int(task.task_id),),
+        )
+        counts = _queue_status_counts(db, "email_agent_classification_tasks", "status")
+        latest_error = _queue_latest_error(
+            db, "email_agent_classification_tasks", "status", "error",
+        )
+    assert counts == {"failed": 1}
+    assert latest_error == "native classifier failure"
+
+
+def test_source_migrated_email_tasks_keep_status_input_result_and_lifecycle_facts(tmp_path):
+    from app.task12_storage import insert_task12
+    from app.run_adoption_schema import capture_run_adoptions, migrate_run_adoptions
+    from app.run_entity_schema import capture_run_entities, migrate_run_entities
+    from app.task_entity_schema import capture_task_entities, migrate_task_entities
+    from tests.test_run_entity_schema import _run_handoff
+
+    source_path = tmp_path / "source-email.sqlite3"
+    EmailStore(source_path)
+    source = sqlite3.connect(source_path)
+    source.row_factory = sqlite3.Row
+    from app.task8_storage import register_task8_functions
+    register_task8_functions(source)
+    source.execute("pragma foreign_keys=off")
+    source.execute("begin immediate")
+    source_inputs = {}
+    for index, status in enumerate(("pending", "running", "done"), start=1):
+        task_input = _classification_input(uid=500 + index)
+        source_inputs[index] = task_input
+        insert_task12(source, "email_agent_classification_tasks", {
+            "task_id": f"classification-native-migration-{index}",
+            "channel": "email", "stable_message_identity": task_input.stable_message_identity,
+            "status": status, "attempt_count": index,
+            "owner": "classifier-worker" if status == "running" else "",
+            "generation": index,
+            "lease_expires_at": "2099-01-01T00:00:00Z" if status == "running" else "",
+            "available_at": "", "error": "",
+            "input_json": json.dumps(task_input.payload(), ensure_ascii=False, sort_keys=True,
+                                      separators=(",", ":")),
+            "result_json": '{"decision_status":"processed"}' if status == "done" else "null",
+            "created_at": f"2026-10-23 00:00:0{index}",
+            "updated_at": f"2026-10-23 00:01:0{index}",
+        })
+    adoption_source = capture_run_adoptions(source)
+    task_source_metadata = capture_task_entities(source)
+    run_source_metadata = capture_run_entities(source)
+    task_metadata = migrate_task_entities(source, task_source_metadata)
+    run_handoff = _run_handoff(source, run_source_metadata)
+    run_metadata = migrate_run_entities(
+        source, run_source_metadata, task_metadata=task_metadata, run_handoff=run_handoff,
+    )
+    migrate_run_adoptions(
+        source, adoption_source, task_metadata=task_metadata, run_metadata=run_metadata,
+    )
+    source.commit()
+    source.execute("pragma foreign_keys=on")
+    assert source.execute("pragma foreign_keys").fetchone()[0] == 1
+    assert tuple(source.execute("pragma foreign_key_check")) == ()
+    database = tmp_path / "source-migrated-email.sqlite3"
+    with sqlite3.connect(database) as target:
+        source.backup(target)
+    source.close()
+
+    store = _native_email_store(database)
+    adapter = EmailClassificationTaskAdapter(store)
+    with store._connect() as db:
+        ids = {
+            identity: str(task_id)
+            for task_id, identity in db.execute(
+                "select task_id,stable_message_identity from email_classification_inputs "
+                "where stable_message_identity like 'account-primary:%'"
+            )
+        }
+        result_rows = db.execute(
+            "select task_id,result_kind,result_json from task_results "
+            "where result_kind='email_classification'"
+        ).fetchall()
+        assert len(result_rows) == 3
+        assert all(key.isdecimal() for key in ids.values())
+        assert any(json.loads(row[2]) == {"decision_status": "processed"} for row in result_rows)
+        assert tuple(db.execute(
+            "select created_at,updated_at from tasks where id=?",
+            (int(ids[source_inputs[3].stable_message_identity]),),
+        ).fetchone()) == ("2026-10-23 00:00:03", "2026-10-23 00:01:03")
+        assert db.execute(
+            "select count(*) from email_classification_inputs where stable_message_identity "
+            "like 'account-primary:%'"
+        ).fetchone()[0] == 3
+
+    tasks = {status: adapter.get_task(ids[source_inputs[index].stable_message_identity])
+             for index, status in enumerate(("pending", "running", "done"), start=1)}
+    assert all(task is not None for task in tasks.values())
+    assert {status: task.status for status, task in tasks.items()} == {
+        "pending": "pending", "running": "running", "done": "done",
+    }
+    running = tasks["running"]
+    assert (running.owner, running.attempt_count, running.generation, running.lease_expires_at) == (
+        "classifier-worker", 2, 2, "2099-01-01T00:00:00Z",
+    )
+    assert tasks["done"].result_json == '{"decision_status":"processed"}'
+    producer = EmailClassificationTaskProducer(store)
+    assert producer.adapter.ensure_task(source_inputs[3]).task_id == tasks["done"].task_id
+    pending_claim = adapter.claim_next(owner="migrated-pending-worker")
+    assert pending_claim is not None
+    assert pending_claim.task_id == tasks["pending"].task_id
+    adapter.complete(pending_claim, {"decision_status": "processed"})
+    adapter.complete(tasks["running"], {"decision_status": "processed"})
+    assert adapter.get_task(tasks["pending"].task_id).status == "done"
+    assert adapter.get_task(tasks["running"].task_id).status == "done"
+    assert adapter.get_task(tasks["done"].task_id).result_json == '{"decision_status":"processed"}'
+
+
+def test_email_classification_expired_claim_uses_native_cas_and_canonical_runtime_key(tmp_path):
+    from datetime import timedelta
+
+    now = [datetime(2026, 10, 23, tzinfo=timezone.utc)]
+    store = _native_email_store(tmp_path / "native-email.sqlite3")
+    adapter = EmailClassificationTaskAdapter(
+        store, now=lambda: now[0], lease_seconds=1, retry_base_seconds=0,
+    )
+    queued = adapter.ensure_task(_classification_input(uid=102))
+    first = adapter.claim_next(owner="worker-a")
+    assert first is not None
+    with store._connect() as db:
+        assert AutoReplyStore._validate_runtime_operation_workload(
+            "email_classification", first.task_id
+        ) == ("email_classification", first.task_id)
+        assert AutoReplyStore._runtime_operation_parent_exists(
+            db, "email_classification", first.task_id
+        )
+        with pytest.raises(ValueError, match="persisted task"):
+            AutoReplyStore._validate_runtime_operation_workload(
+                "email_classification", "email-classification:" + "f" * 64
+            )
+        assert not AutoReplyStore._runtime_operation_parent_exists(
+            db, "email_classification", "999999"
+        )
+    now[0] += timedelta(seconds=2)
+    second = adapter.claim_next(owner="worker-b")
+    assert second is not None
+    assert (second.task_id, second.status, second.owner, second.attempt_count, second.generation) == (
+        queued.task_id, "running", "worker-b", 2, 2,
+    )
+    with pytest.raises(ValueError, match="lease changed"):
+        adapter.complete(first, {"stale": True})
+    adapter.complete(second, {"current": True})
+    with store._connect() as db:
+        assert not AutoReplyStore._runtime_operation_parent_exists(
+            db, "email_classification", second.task_id
+        )
+
+
+def test_concurrent_native_classification_enqueue_has_one_stable_owner(tmp_path):
+    path = tmp_path / "native-email.sqlite3"
+    first = EmailClassificationTaskAdapter(_native_email_store(path))
+    second = EmailClassificationTaskAdapter(_native_email_store(path))
+    task_input = _classification_input(uid=103)
+    with ThreadPoolExecutor(max_workers=2) as pool:
+        results = list(pool.map(lambda adapter: adapter.ensure_task(task_input), (first, second)))
+    assert results[0].task_id == results[1].task_id
+    with first.email_store._connect() as db:
+        assert db.execute(
+            "select count(*) from tasks where kind='email_classification'"
+        ).fetchone()[0] == 1
+        assert db.execute("select count(*) from email_classification_inputs").fetchone()[0] == 1
 
 
 def _store(tmp_path: Path) -> AutoReplyStore:
@@ -193,7 +414,7 @@ def _percent_encode(value: str, rounds: int) -> str:
 def test_classification_task_adapter_persists_one_stable_task_across_reopen(
     tmp_path: Path,
 ):
-    store = _email_store(tmp_path)
+    store = _native_email_store(tmp_path / "native-email.sqlite3")
     task_input = EmailClassificationTaskInput.from_message(
         {
             "accountId": "account-primary",
@@ -226,7 +447,9 @@ def test_classification_task_adapter_persists_one_stable_task_across_reopen(
     )
 
     first = EmailClassificationTaskAdapter(store).ensure_task(task_input)
-    reopened = EmailClassificationTaskAdapter(_email_store(tmp_path)).ensure_task(
+    reopened = EmailClassificationTaskAdapter(
+        _native_email_store(tmp_path / "native-email.sqlite3")
+    ).ensure_task(
         task_input
     )
 
@@ -245,7 +468,7 @@ def test_classification_task_adapter_persists_one_stable_task_across_reopen(
 def test_duplicate_email_scan_keeps_first_trigger_context_without_conflict(
     tmp_path: Path,
 ) -> None:
-    store = _email_store(tmp_path)
+    store = _native_email_store(tmp_path / "native-email.sqlite3")
     first_context = ServiceCommandConsumerContext(
         scheduled_task_id=10,
         scheduled_task_run_id=101,
@@ -288,7 +511,7 @@ def test_duplicate_email_scan_keeps_first_trigger_context_without_conflict(
 
 
 def test_completed_classification_compacts_input_and_keeps_immutable_identity(tmp_path: Path):
-    store = _email_store(tmp_path)
+    store = _native_email_store(tmp_path / "native-email.sqlite3")
     adapter = EmailClassificationTaskAdapter(store)
     context = ServiceCommandConsumerContext(
         scheduled_task_id=10, scheduled_task_run_id=101,
@@ -342,7 +565,8 @@ def test_completed_classification_compacts_input_and_keeps_immutable_identity(tm
     )).task_id == pending.task_id
     with pytest.raises(ValueError, match="stable classification task input changed"):
         adapter.ensure_task(replace(original, message={"text": "different"}))
-    EmailStore(store.path)  # Full durable-row validation accepts the compacted row.
+    # The assembled target remains deliberately unactivated by EmailStore's
+    # shared constructor; the native owners above are the acceptance surface.
 
 
 def test_compacted_classifier_input_never_copies_custom_skill_preamble():
@@ -371,7 +595,9 @@ def test_compacted_classifier_input_never_copies_custom_skill_preamble():
 
 
 def test_classification_failed_and_retry_inputs_remain_exact(tmp_path: Path):
-    adapter = EmailClassificationTaskAdapter(_email_store(tmp_path), retry_base_seconds=0)
+    adapter = EmailClassificationTaskAdapter(
+        _native_email_store(tmp_path / "native-email.sqlite3"), retry_base_seconds=0
+    )
     task = adapter.ensure_task(replace(
         _classification_input(uid=192), message={"text": "retry body " * 200}
     ))
@@ -390,53 +616,56 @@ def test_classification_failed_and_retry_inputs_remain_exact(tmp_path: Path):
     assert adapter.get_task(task.task_id).input_json == task.input_json
 
 
-def test_classifier_queue_schema_is_owned_by_email_store_not_adapter(tmp_path: Path):
-    store = _email_store(tmp_path)
+def test_assembled_classifier_schema_is_email_owned_not_adapter(tmp_path: Path):
+    store = _native_email_store(tmp_path / "email-agent.sqlite3")
     with store._connect() as db:
         columns = {
             row["name"]
             for row in db.execute("pragma table_xinfo(tasks)")
         }
-    assert {
-        "email_agent_classification_tasks__" + field
-        for field in ("generation", "attempt_count", "lease_expires_at", "available_at")
-    } <= columns
+        input_columns = {row[1] for row in db.execute("pragma table_info(email_classification_inputs)")}
+        result_columns = {row[1] for row in db.execute("pragma table_info(task_results)")}
+    assert {"id", "kind", "status", "available_at", "attempts", "generation",
+            "lease_owner", "lease_expires_at", "parameters_json"} <= columns
+    assert {"task_id", "channel", "stable_message_identity", "input_json"} <= input_columns
+    assert {"task_id", "result_kind", "result_json"} <= result_columns
     assert (
         "create table"
         not in inspect.getsource(EmailClassificationTaskAdapter).casefold()
     )
 
 
-def test_email_store_rejects_malformed_classifier_queue_schema(tmp_path: Path):
-    database = tmp_path / "malformed-classifier.sqlite3"
-    EmailStore(database)
-    with sqlite3.connect(database) as db:
-        db.execute("drop index idx_task20_native_1")
-        db.execute("create index idx_task20_native_1 on tasks(id)")
-    before = database.read_bytes()
-    with pytest.raises(sqlite3.IntegrityError, match="malformed current Task lifecycle declaration"):
-        EmailStore(database)
-    assert database.read_bytes() == before
+def test_email_native_classifier_schema_keeps_input_and_result_out_of_task_parameters(tmp_path: Path):
+    store = _native_email_store(tmp_path / "email-agent.sqlite3")
+    task = EmailClassificationTaskAdapter(store).ensure_task(_classification_input(uid=141))
+    with store._connect() as db:
+        native = db.execute("select parameters_json from tasks where id=?", (int(task.task_id),)).fetchone()
+        assert json.loads(db.execute("select json(parameters_json) from tasks where id=?",
+                                     (int(task.task_id),)).fetchone()[0]) == {}
+        assert db.execute(
+            "select count(*) from email_classification_inputs where task_id=?", (int(task.task_id),)
+        ).fetchone()[0] == 1
+        assert db.execute(
+            "select count(*) from task_results where task_id=? and result_kind='email_classification'",
+            (int(task.task_id),),
+        ).fetchone()[0] == 0
+        assert native is not None
 
 
 @pytest.mark.parametrize("state", ["empty", "done", "delayed", "live"])
 def test_ineligible_classification_poll_does_not_acquire_writer_lock(
     tmp_path: Path, monkeypatch, state: str
 ):
-    store = _email_store(tmp_path)
+    store = _native_email_store(tmp_path / "email-agent.sqlite3")
     adapter = EmailClassificationTaskAdapter(store)
     if state != "empty":
         task = adapter.ensure_task(_classification_input(uid=142))
         with store._connect() as db:
-            parts = task12_set_parts("email_agent_classification_tasks", {
-                "status": "pending" if state == "delayed" else "running" if state == "live" else "done",
-                "available_at": "2099-01-01 00:00:00" if state == "delayed" else "",
-                "lease_expires_at": "2099-01-01 00:00:00" if state == "live" else "",
-            })
             db.execute(
-                f"update tasks set {parts.sql} where record_type='email_agent_classification_tasks' "
-                f"and {task20_column('email_agent_classification_tasks', 'task_id')}=?",
-                (*parts.parameters, task.task_id),
+                "update tasks set status=?, available_at=?, lease_expires_at=? where id=?",
+                ("pending" if state == "delayed" else "running" if state == "live" else "done",
+                 "2099-01-01 00:00:00" if state == "delayed" else "",
+                 "2099-01-01 00:00:00" if state == "live" else "", int(task.task_id)),
             )
     original_open = store._open_connection
 
@@ -455,10 +684,10 @@ def test_ineligible_classification_poll_does_not_acquire_writer_lock(
 
 
 def test_classification_claim_rechecks_after_an_intervening_owner(tmp_path: Path, monkeypatch):
-    store = _email_store(tmp_path)
+    store = _native_email_store(tmp_path / "email-agent.sqlite3")
     adapter = EmailClassificationTaskAdapter(store)
     task = adapter.ensure_task(_classification_input(uid=142))
-    competitor = EmailClassificationTaskAdapter(EmailStore(store.path))
+    competitor = EmailClassificationTaskAdapter(_native_email_store(store.path))
     original_open = store._open_connection
     claims = []
 
@@ -483,7 +712,7 @@ def test_classification_claim_rechecks_after_an_intervening_owner(tmp_path: Path
 
 def test_classification_task_claim_is_single_owner_and_recoverable(tmp_path: Path):
     adapter = EmailClassificationTaskAdapter(
-        _email_store(tmp_path), retry_base_seconds=0
+        _native_email_store(tmp_path / "email-agent.sqlite3"), retry_base_seconds=0
     )
     task_input = EmailClassificationTaskInput.from_message(
         {
@@ -518,7 +747,7 @@ def test_live_classifier_lease_cannot_be_stolen_or_completed_by_stale_claim(
 ):
     now = [datetime(2026, 9, 8, tzinfo=timezone.utc)]
     adapter = EmailClassificationTaskAdapter(
-        _email_store(tmp_path), now=lambda: now[0], lease_seconds=60
+        _native_email_store(tmp_path / "email-agent.sqlite3"), now=lambda: now[0], lease_seconds=60
     )
     adapter.ensure_task(_classification_input(uid=142))
     first = adapter.claim_next(owner="worker-1")
@@ -538,7 +767,7 @@ def test_fast_restart_reclaims_claim_when_lease_expires_during_normal_polling(
     tmp_path: Path,
 ):
     now = [datetime(2026, 9, 8, tzinfo=timezone.utc)]
-    store = _email_store(tmp_path)
+    store = _native_email_store(tmp_path / "email-agent.sqlite3")
     original = EmailClassificationTaskAdapter(
         store, now=lambda: now[0], lease_seconds=60
     )
@@ -548,7 +777,7 @@ def test_fast_restart_reclaims_claim_when_lease_expires_during_normal_polling(
 
     now[0] = datetime(2026, 9, 8, 0, 0, 30, tzinfo=timezone.utc)
     restarted = EmailClassificationTaskAdapter(
-        _email_store(tmp_path), now=lambda: now[0], lease_seconds=60
+        _native_email_store(tmp_path / "email-agent.sqlite3"), now=lambda: now[0], lease_seconds=60
     )
     assert restarted.claim_next(owner="worker-after-restart") is None
 
@@ -567,7 +796,7 @@ def test_expired_classifier_claim_returns_to_retry_queue_without_terminal_failur
 ):
     now = [datetime(2026, 9, 8, tzinfo=timezone.utc)]
     adapter = EmailClassificationTaskAdapter(
-        _email_store(tmp_path),
+        _native_email_store(tmp_path / "email-agent.sqlite3"),
         now=lambda: now[0],
         lease_seconds=60,
         retry_base_seconds=10,
@@ -594,7 +823,7 @@ def test_expired_classifier_claim_returns_to_retry_queue_without_terminal_failur
 
 
 def test_default_classifier_lease_outlasts_maximum_agent_turn(tmp_path: Path):
-    adapter = EmailClassificationTaskAdapter(_email_store(tmp_path))
+    adapter = EmailClassificationTaskAdapter(_native_email_store(tmp_path / "email-agent.sqlite3"))
 
     assert adapter.lease_seconds > 900
 
@@ -602,7 +831,7 @@ def test_default_classifier_lease_outlasts_maximum_agent_turn(tmp_path: Path):
 def test_classifier_retry_uses_shared_capped_backoff_until_success(tmp_path: Path):
     now = [datetime(2026, 9, 8, tzinfo=timezone.utc)]
     adapter = EmailClassificationTaskAdapter(
-        _email_store(tmp_path),
+        _native_email_store(tmp_path / "email-agent.sqlite3"),
         now=lambda: now[0],
         retry_base_seconds=10,
         retry_max_delay_seconds=15,
@@ -629,7 +858,7 @@ def test_classifier_retry_uses_shared_capped_backoff_until_success(tmp_path: Pat
 
 
 def test_classifier_retryable_failure_stops_after_four_attempts(tmp_path: Path):
-    adapter = EmailClassificationTaskAdapter(_email_store(tmp_path), retry_base_seconds=0)
+    adapter = EmailClassificationTaskAdapter(_native_email_store(tmp_path / "email-agent.sqlite3"), retry_base_seconds=0)
     original = adapter.ensure_task(_classification_input(uid=245))
     for attempt in range(1, 5):
         claimed = adapter.claim_next(owner="worker")
@@ -649,7 +878,7 @@ def test_classifier_retryable_failure_stops_after_four_attempts(tmp_path: Path):
 def test_classifier_repeated_expired_claims_stop_after_four_attempts(tmp_path: Path):
     now = [datetime(2026, 9, 8, tzinfo=timezone.utc)]
     adapter = EmailClassificationTaskAdapter(
-        _email_store(tmp_path), now=lambda: now[0], lease_seconds=1,
+        _native_email_store(tmp_path / "email-agent.sqlite3"), now=lambda: now[0], lease_seconds=1,
     )
     original = adapter.ensure_task(_classification_input(uid=246))
     for attempt in range(1, 5):
@@ -666,17 +895,13 @@ def test_classifier_repeated_expired_claims_stop_after_four_attempts(tmp_path: P
 
 
 def test_classifier_closes_legacy_exhausted_pending_before_claiming(tmp_path: Path):
-    store = _email_store(tmp_path)
+    store = _native_email_store(tmp_path / "email-agent.sqlite3")
     adapter = EmailClassificationTaskAdapter(store)
     original = adapter.ensure_task(_classification_input(uid=247))
     with store._connect() as db:
-        parts = task12_set_parts("email_agent_classification_tasks", {
-            "attempt_count": 58, "available_at": "2099-01-01T00:00:00+00:00",
-            "error": "LookupError:email source UID is unavailable",
-        })
         db.execute(
-            f"update tasks set {parts.sql} where record_type='email_agent_classification_tasks'",
-            parts.parameters,
+            "update tasks set attempts=58, available_at=?, error=? where id=?",
+            ("2099-01-01T00:00:00+00:00", "LookupError:email source UID is unavailable", int(original.task_id)),
         )
     assert adapter.claim_next(owner="worker") is None
     exhausted = adapter.get_task(original.task_id)
@@ -691,7 +916,7 @@ def test_classifier_closes_legacy_exhausted_pending_before_claiming(tmp_path: Pa
 def test_explicit_classifier_repair_reopens_only_selected_failed_tasks(
     tmp_path: Path,
 ):
-    adapter = EmailClassificationTaskAdapter(_email_store(tmp_path))
+    adapter = EmailClassificationTaskAdapter(_native_email_store(tmp_path / "email-agent.sqlite3"))
     selected = adapter.ensure_task(_classification_input(uid=146))
     claimed = adapter.claim_next(owner="worker")
     assert claimed is not None and claimed.task_id == selected.task_id
@@ -721,7 +946,7 @@ def test_explicit_classifier_repair_reopens_only_selected_failed_tasks(
 
 
 def test_classification_task_bootstrap_recovers_crash_interrupted_claim(tmp_path: Path):
-    store = _email_store(tmp_path)
+    store = _native_email_store(tmp_path / "email-agent.sqlite3")
     now = [datetime(2026, 9, 8, tzinfo=timezone.utc)]
     adapter = EmailClassificationTaskAdapter(
         store, now=lambda: now[0], lease_seconds=60
@@ -749,7 +974,7 @@ def test_classification_task_bootstrap_recovers_crash_interrupted_claim(tmp_path
 
     now[0] = datetime(2026, 9, 8, 0, 2, tzinfo=timezone.utc)
     reopened = EmailClassificationTaskAdapter(
-        _email_store(tmp_path), now=lambda: now[0], lease_seconds=60
+        _native_email_store(tmp_path / "email-agent.sqlite3"), now=lambda: now[0], lease_seconds=60
     )
     assert reopened.recover_running_tasks() == 1
     reclaimed = reopened.claim_next(owner="replacement-worker")
@@ -1747,7 +1972,7 @@ def test_current_plan_switch_cannot_interleave_after_authorization_read(
         )
         try:
             assert authorization_checked.wait(timeout=1)
-            competing_email_store = EmailStore(database)
+            competing_email_store = _native_email_store(database)
 
             def zero_timeout_open_connection(*, foreign_keys: bool = True) -> sqlite3.Connection:
                 connection = sqlite3.connect(database, timeout=0)
@@ -1854,7 +2079,7 @@ def test_agent_action_identity_conflict_rolls_back_the_whole_plan(tmp_path: Path
     with sqlite3.connect(tmp_path / "email-agent.sqlite3") as db:
         assert (
             db.execute(
-                f"select count(*) from tasks where record_type='reply_tasks' and {task20_column('reply_tasks', 'trigger_message_id')}=?",
+                "select count(*) from task_inputs where channel='email' and trigger_message_id=?",
                 (auto_reply_identity,),
             ).fetchone()[0]
             == 0

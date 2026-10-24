@@ -1054,7 +1054,6 @@ def test_service_command_task_needs_no_runtime_and_lists_its_catalog(
         "sync-chrome-cookies",
         "request-minutes-access",
         "sync-minutes-once",
-        "weekly-okr-report",
         "recover-recent-messages",
     ]
     assert [entry["display_name"] for entry in catalog] == [
@@ -1068,7 +1067,6 @@ def test_service_command_task_needs_no_runtime_and_lists_its_catalog(
         "同步 Chrome 登录态",
         "申请没有权限的听记",
         "同步听记到工作区",
-        "生成并发送 OKR 周报",
         "补查近期钉钉消息",
     ]
     assert all(entry["description"].strip() for entry in catalog)
@@ -1217,7 +1215,6 @@ def test_service_command_catalog_omits_runtime_and_role_boundary_details(
         chrome_cookies,
         minutes_access,
         minutes,
-        okr,
         recovery,
     ) = payload[
         "service_command_options"
@@ -1256,7 +1253,6 @@ def test_service_command_catalog_omits_runtime_and_role_boundary_details(
         True,
         True,
         True,
-        False,
         False,
         False,
         False,

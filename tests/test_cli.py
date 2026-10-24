@@ -383,6 +383,55 @@ def test_service_start_reconciles_invalid_human_projections(monkeypatch):
     assert recovered == 2
 
 
+@pytest.mark.parametrize(
+    ("outcome", "expected_status"),
+    (("done", "done"), ("skipped_no_reliable_entry", "skipped")),
+)
+def test_service_start_recovery_runs_native_reply_queries_on_disposable_store(
+    tmp_path, monkeypatch, outcome, expected_status
+):
+    """Exercise full startup recovery and native Email receipt projection."""
+    path = tmp_path / "startup-recovery.sqlite3"
+    store = AutoReplyStore(path)
+    from app.email_store import EmailStore
+    from app import task_entity_storage
+    from app.action_storage import insert_email_action
+    from tests.test_email_action_storage import _cases
+
+    EmailStore(path)
+    identity = "email-action:" + "c" * 64
+    task = store.ensure_reply_task(
+        channel="email", conversation_id="email-thread",
+        conversation_title="Email", single_chat=False,
+        trigger_message_id=identity, trigger_create_time="",
+        trigger_sender="", trigger_text="unsubscribe receipt recovery",
+    )
+    with store._connect() as db:
+        db.execute("pragma foreign_keys=off")
+        task_entity_storage.update_task_cas(
+            db, task_id=task.id,
+            expected={"status": "pending", "execution_generation": task.execution_generation},
+            changes={"status": "failed", "error": "worker_interrupted"},
+        )
+        cases = _cases()
+        insert_email_action(
+            db, "email_unsubscribe_receipts",
+            cases["email_unsubscribe_receipts"] | {
+                "action_identity": identity, "outcome": outcome,
+            },
+        )
+    monkeypatch.setattr(cli, "AutoReplyStore", lambda path: store)
+
+    recovered = cli._recover_orphaned_reply_tasks_on_service_start(
+        SimpleNamespace(db_path=path)
+    )
+
+    assert recovered == 1
+    with store._connect() as db:
+        task_after = task_entity_storage.get_task(db, task.id)
+    assert task_after["status"] == expected_status
+
+
 def seed_exhausted_stale_wechat_delivery(store: AutoReplyStore) -> tuple[int, int]:
     store.enqueue_reply_task(
         channel="wechat",
@@ -8103,6 +8152,28 @@ def test_service_command_registry_binds_the_catalog_to_service_operations(
     assert wechat._restart_reader is cli._restart_wechat_reader_service
     assert registry.run("wechat-produce-once") == (
         "wechat produce-once skipped: no ready WeChat account"
+    )
+
+
+def test_scan_meetings_service_command_returns_only_live_meeting_count(
+    monkeypatch, tmp_path
+):
+    from app.agent_cron.commands import ServiceCommandResult
+
+    monkeypatch.setattr(
+        cli, "_initialize_meeting_discovery_on_service_start", lambda *a, **k: None,
+    )
+    monkeypatch.setattr(cli, "_create_meeting_dws", lambda _settings: object())
+    monkeypatch.setattr(cli, "produce_meeting_alignment_jobs", lambda *a, **k: 2)
+    settings = WorkerSettings(db_path=tmp_path / "cron.sqlite3", max_batches=3)
+    registry = cli._service_command_registry(
+        AutoReplyStore(settings.db_path), object(), settings,
+    )
+
+    result = registry.run_with_result("scan-meetings-once")
+
+    assert result == ServiceCommandResult(
+        "scan-meetings-once queued=2", (("meeting_jobs_queued", 2),), True,
     )
 
 

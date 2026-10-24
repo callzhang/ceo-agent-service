@@ -1094,7 +1094,7 @@ def reconcile_failed_oa_reply_tasks(store: AutoReplyStore, dws: Any) -> list[int
             if not isinstance(action, dict) or action.get("capability") != "dingtalk-oa":
                 continue
             if action.get("operation") not in {
-                "approve", "reject", "revert_task", "redirect_task", "comment"
+                "approve", "reject", "revert_task", "redirect_task", "append_task", "comment"
             }:
                 continue
             target = action.get("target")

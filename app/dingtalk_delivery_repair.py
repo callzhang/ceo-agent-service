@@ -1,26 +1,37 @@
 """Explicit repair of historical reply receipts using provider task readback."""
 
 from app.model_action_schema import selected_branch
-from app.execution_owner_storage import update_plan_execution
+from app.execution_owner_storage import update_native_execution
 
 import hashlib
 import json
 from datetime import datetime, timedelta, timezone
 
 from app.action_storage import (
-    CANDIDATE_ACTION_ATTEMPT_SQL, candidate_action_attempt_row, CANDIDATE_EXECUTION_SQL, CANDIDATE_REVIEW_SQL,
-    CANDIDATE_SELECTION_SQL, EXTERNAL_ACTION_RESULT_SQL, REVIEW_CANDIDATE_SQL,
-    REPLY_ATTEMPT_COMMON_SQL, SENT_REPLY_SQL,
+    NATIVE_CANDIDATE_ACTION_ATTEMPT_SQL,
+    NATIVE_EXTERNAL_ACTION_RESULT_SQL, candidate_action_attempt_row,
+    SENT_REPLY_SQL,
 )
+from app.current_action_schema import current_reply_action_projection
 from app.agent_contracts import SystemExecutionResult
-from app.logical_run_storage import AGENT_RUN_SQL
-from app.task20_definitions import task20_column, task20_projection
-from app.task8_storage import task8_set_parts
+from app.store import (
+    NATIVE_AGENT_RUN_SQL, NATIVE_CANDIDATE_EXECUTION_SQL,
+    NATIVE_CANDIDATE_REVIEW_SQL, NATIVE_CANDIDATE_SELECTION_SQL,
+    NATIVE_REPLY_TASK_CURRENT_SQL, NATIVE_REVIEW_CANDIDATE_SQL,
+)
+from app.task_entity_storage import update_task_cas
 
 from app import shared_action_lifecycle
 
 
-REPLY_TASK_SQL = task20_projection('reply_tasks')
+REPLY_TASK_SQL = NATIVE_REPLY_TASK_CURRENT_SQL
+AGENT_RUN_SQL = NATIVE_AGENT_RUN_SQL
+CANDIDATE_ACTION_ATTEMPT_SQL = NATIVE_CANDIDATE_ACTION_ATTEMPT_SQL
+CANDIDATE_EXECUTION_SQL = NATIVE_CANDIDATE_EXECUTION_SQL
+CANDIDATE_REVIEW_SQL = NATIVE_CANDIDATE_REVIEW_SQL
+CANDIDATE_SELECTION_SQL = NATIVE_CANDIDATE_SELECTION_SQL
+EXTERNAL_ACTION_RESULT_SQL = NATIVE_EXTERNAL_ACTION_RESULT_SQL
+REVIEW_CANDIDATE_SQL = NATIVE_REVIEW_CANDIDATE_SQL
 
 
 
@@ -135,7 +146,7 @@ def apply_delivery_reverification(store, proof: dict) -> bool:
                     error={"code": error_code, "retryable": False,
                            "stage": "system_execution", "authorization_required": False},
                 )
-                update_plan_execution(db, execution["id"], {
+                update_native_execution(db, execution["candidate_id"], {
                     "status": action_status, "result_json": pending.model_dump_json(),
                     "lease_owner": "", "lease_expires_at": "", "updated_at": proof["queried_at"],
                 })
@@ -144,17 +155,24 @@ def apply_delivery_reverification(store, proof: dict) -> bool:
             # Agent runs and historical Attempt rows are never rewritten.
             run = db.execute(f"select * from ({AGENT_RUN_SQL}) where id=?", (row["first_agent_run_id"],)).fetchone()
             if run is not None:
-                task = db.execute(f"select tasks.*, {task20_column('reply_tasks', 'execution_generation')} as repair_generation, {task20_column('reply_tasks', 'status')} as repair_status, {task20_column('reply_tasks', 'error')} as repair_error from tasks where record_type='reply_tasks' and legacy_key=?", (str(run["reply_task_id"]),)).fetchone()
-                if task is not None and task["repair_generation"] == run["execution_generation"]:
-                    if task["repair_status"] in ("pending", "processing"):
+                task = db.execute(
+                    "select id,execution_generation,status,error from tasks where id=? and kind='reply'",
+                    (run["reply_task_id"],),
+                ).fetchone()
+                if task is not None and task["execution_generation"] == run["execution_generation"]:
+                    if task["status"] in ("pending", "processing"):
                         raise ValueError("delivery task is active")
-                    if task["repair_status"] == "done":
+                    if task["status"] == "done":
                         changed["verification_repair"]["previous_task_state"] = {
-                            "id": run["reply_task_id"], "execution_generation": task["repair_generation"],
-                            "status": task["repair_status"], "error": task["repair_error"],
+                            "id": run["reply_task_id"], "execution_generation": task["execution_generation"],
+                            "status": task["status"], "error": task["error"],
                         }
-                        db.execute(f"""update tasks set {task8_set_parts('reply_tasks', {}, update_sql={'status': "'failed'", 'error': '?', 'updated_at': '?'}).sql} where id=?""",
-                                   (error_code, proof["queried_at"], task["id"]))
+                        if update_task_cas(db, task_id=task["id"], expected={
+                            "status": task["status"], "error": task["error"],
+                            "execution_generation": task["execution_generation"],
+                        }, changes={"status": "failed", "error": error_code,
+                                    "updated_at": proof["queried_at"]}) is None:
+                            raise ValueError("delivery task changed during repair")
         body = json.dumps(changed, ensure_ascii=False, sort_keys=True, separators=(",", ":"))
         provider_receipt_id = shared_action_lifecycle.record_reviewed_provider_receipt(
             db, external_action_key=key, operation=row["operation"],
@@ -272,7 +290,7 @@ def apply_native_chat_readback(store, proof: dict) -> bool:
             raise ValueError("native chat proof has no outgoing message identity")
 
         receipt = db.execute(
-            f"select * from ({EXTERNAL_ACTION_RESULT_SQL}) where external_action_key=?",
+                f"select * from ({NATIVE_EXTERNAL_ACTION_RESULT_SQL}) where external_action_key=?",
             (sent["external_action_key"],),
         ).fetchone()
         if receipt is None or receipt["business_object_key"] != task["business_object_key"]:
@@ -291,7 +309,8 @@ def apply_native_chat_readback(store, proof: dict) -> bool:
                        s.option_key, a.id as action_attempt_id, a.status as action_status
                 from ({CANDIDATE_EXECUTION_SQL}) e
                 join ({REVIEW_CANDIDATE_SQL}) c on c.id=e.candidate_id
-                join ({CANDIDATE_REVIEW_SQL}) r on r.id=e.review_id
+                join ({CANDIDATE_REVIEW_SQL}) r on r.candidate_id=e.candidate_id
+                    and r.audit_run_id=e.audit_run_id
                 left join ({CANDIDATE_SELECTION_SQL}) s on s.id=e.selection_id
                 join ({CANDIDATE_ACTION_ATTEMPT_SQL}) a on a.execution_id=e.id
                     and a.external_action_key=?
@@ -303,11 +322,11 @@ def apply_native_chat_readback(store, proof: dict) -> bool:
         ).fetchall()
         if not candidate:
             historical_candidates = db.execute(
-                f"select id from ({REVIEW_CANDIDATE_SQL}) where task_id=?", (task_id,)
+                f"select id from ({NATIVE_REVIEW_CANDIDATE_SQL}) where task_id=?", (task_id,)
             ).fetchall()
             attempts = db.execute(
-                f"select * from ({REPLY_ATTEMPT_COMMON_SQL}) where agent_run_id=? "
-                "and channel=? and conversation_id=? and trigger_message_id=?",
+                f"select * from ({current_reply_action_projection('reply_attempts')}) "
+                "where agent_run_id=? and channel=? and conversation_id=? and trigger_message_id=?",
                 (receipt["first_agent_run_id"], task["channel"], task["conversation_id"],
                  task["trigger_message_id"]),
             ).fetchall()
@@ -384,11 +403,12 @@ def apply_native_chat_readback(store, proof: dict) -> bool:
                 receipt_id=receipt['provider_receipt_id'],
                 expected_provider_json=receipt['provider_result_json'],
             )
-            task_cursor = db.execute(
-                f"""update tasks set {task8_set_parts('reply_tasks', {}, update_sql={'status': "'done'", 'error': "''", 'available_at': "''", 'locked_at': 'null', 'updated_at': '?'}).sql} where record_type='reply_tasks' and id=? and {task20_column('reply_tasks', 'status')}='failed' and {task20_column('reply_tasks', 'error')}='external_action_uncertain' and {task20_column('reply_tasks', 'execution_generation')}=?""",
-                (queried_at, task_id, task["execution_generation"]),
-            )
-            if task_cursor.rowcount != 1:
+            updated_task = update_task_cas(db, task_id=task_id, expected={
+                "kind": "reply", "status": "failed", "error": "external_action_uncertain",
+                "execution_generation": task["execution_generation"],
+            }, changes={"status": "done", "error": "", "available_at": "",
+                        "locked_at": None, "updated_at": queried_at})
+            if updated_task is None:
                 raise ValueError("legacy reply task changed during reconciliation")
             store._compact_settled_reply_task_input(db, task_id)
             return True
@@ -400,7 +420,7 @@ def apply_native_chat_readback(store, proof: dict) -> bool:
         if (candidate["decision"] != "approve"
                 or candidate["review_digest"] != candidate["candidate_digest"]):
             raise ValueError("current action approval does not match its candidate")
-        if receipt["first_agent_run_id"] != candidate["consumer_run_id"]:
+        if receipt["first_agent_run_id"] != candidate["candidate_id"]:
             raise ValueError("external receipt is not from the approved candidate run")
         if candidate["execution_status"] not in ("uncertain", "failed") or candidate["lease_owner"]:
             raise ValueError("candidate execution is not safely settleable")
@@ -520,15 +540,16 @@ def apply_native_chat_readback(store, proof: dict) -> bool:
                              "live_result_reference": verification},
             completed_action_keys=(sent["external_action_key"],),
         ).model_dump_json()
-        update_plan_execution(db, candidate["execution_id"], {
+        update_native_execution(db, candidate["candidate_id"], {
             "status": "done", "result_json": execution_result,
             "lease_owner": "", "lease_expires_at": "", "updated_at": queried_at,
         })
-        task_cursor = db.execute(
-            f"""update tasks set {task8_set_parts('reply_tasks', {}, update_sql={'status': "'done'", 'error': "''", 'available_at': "''", 'locked_at': 'null', 'updated_at': '?'}).sql} where record_type='reply_tasks' and id=? and {task20_column('reply_tasks', 'status')}='failed' and {task20_column('reply_tasks', 'error')}='external_action_uncertain' and {task20_column('reply_tasks', 'execution_generation')}=?""",
-            (queried_at, task_id, task["execution_generation"]),
-        )
-        if task_cursor.rowcount != 1:
+        updated_task = update_task_cas(db, task_id=task_id, expected={
+            "kind": "reply", "status": "failed", "error": "external_action_uncertain",
+            "execution_generation": task["execution_generation"],
+        }, changes={"status": "done", "error": "", "available_at": "",
+                    "locked_at": None, "updated_at": queried_at})
+        if updated_task is None:
             raise ValueError("reply task changed during reconciliation")
         store._compact_settled_reply_task_input(db, task_id)
     return True

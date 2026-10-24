@@ -1,5 +1,4 @@
 from __future__ import annotations
-from app.task20_definitions import task20_projection
 
 import asyncio
 import atexit
@@ -63,8 +62,6 @@ from app.native_cli_metadata import (
 )
 from app.task_artifacts import migrate_legacy_task_artifacts, task_artifact_directory
 
-REPLY_TASK_INPUT_SQL = task20_projection("reply_task_inputs")
-REPLY_TASK_SQL = task20_projection("reply_tasks")
 
 # Codex truncates one MCP text block at 1 MiB. Keep command output below that
 # boundary even after JSON escaping so the controlled receipt remains valid.
@@ -1398,7 +1395,7 @@ def _current_task_generation(db_path: Path | None, task_id: int | None) -> str:
     try:
         with closing(sqlite3.connect(f"file:{quote(str(database))}?mode=ro", uri=True)) as connection:
             row = connection.execute(
-                f"select execution_generation from ({REPLY_TASK_SQL}) where id=?", (task_id,)
+                "select execution_generation from tasks where id=? and kind='reply'", (task_id,)
             ).fetchone()
     except sqlite3.Error as exc:
         raise ValueError("task file binding is unavailable") from exc
@@ -1417,12 +1414,14 @@ def _bound_wechat_conversation(
     """
     if db_path is None or task_id is None:
         raise ValueError("a WeChat read needs a claimed WeChat task")
+    from app.store import NATIVE_REPLY_TASK_CLAIMED_SQL
+
     database = Path(db_path).resolve()
     with closing(sqlite3.connect(f"file:{quote(str(database))}?mode=ro", uri=True)) as connection:
         row = connection.execute(
             "select tasks.execution_generation, tasks.channel, tasks.single_chat, "
             "tasks.conversation_id "
-            f"from ({REPLY_TASK_SQL}) tasks where tasks.id=?",
+            f"from ({NATIVE_REPLY_TASK_CLAIMED_SQL}) tasks where tasks.id=?",
             (task_id,),
         ).fetchone()
     if row is None or row[0] != generation:
@@ -1444,12 +1443,12 @@ def _bound_direct_chat_sender(
     database = Path(db_path).resolve()
     with closing(sqlite3.connect(f"file:{quote(str(database))}?mode=ro", uri=True)) as connection:
         row = connection.execute(
-            "select tasks.execution_generation, tasks.channel, tasks.single_chat, "
-            "tasks.conversation_id, tasks.trigger_message_id, "
+            "select tasks.execution_generation, inputs.channel, inputs.single_chat, "
+            "inputs.conversation_id, inputs.trigger_message_id, "
             "inputs.trigger_message_json, inputs.input_compacted "
-            f"from ({REPLY_TASK_SQL}) tasks join ({REPLY_TASK_INPUT_SQL}) inputs "
-            "on inputs.id=tasks.claimed_input_id and inputs.reply_task_id=tasks.id "
-            "where tasks.id=?",
+            "from tasks join task_inputs inputs "
+            "on inputs.id=tasks.claimed_input_id and inputs.task_id=tasks.id "
+            "where tasks.id=? and tasks.kind='reply'",
             (task_id,),
         ).fetchone()
     if row is None or row[0] != generation:
@@ -1487,10 +1486,13 @@ def _read_bound_task_skill(
             sqlite3.connect(f"file:{quote(str(database))}?mode=ro", uri=True)
         ) as connection:
             row = connection.execute(
-                "select tasks.execution_generation, inputs.trigger_message_json "
-                f"from ({REPLY_TASK_SQL}) tasks join ({REPLY_TASK_INPUT_SQL}) inputs "
-                "on inputs.id=tasks.claimed_input_id and inputs.reply_task_id=tasks.id "
-                "where tasks.id=?",
+                "select tasks.execution_generation, "
+                "case when inputs.input_compacted=1 "
+                "then json_extract(inputs.input_provenance_json,'$.source') "
+                "else inputs.trigger_message_json end "
+                "from tasks join task_inputs inputs "
+                "on inputs.id=tasks.claimed_input_id and inputs.task_id=tasks.id "
+                "where tasks.id=? and tasks.kind='reply'",
                 (task_id,),
             ).fetchone()
     except sqlite3.Error as exc:
@@ -2206,6 +2208,44 @@ def build_role_server(
             "--sheet-id", sheet_id, "--range", cell_range, "--format", "json",
         ]))
 
+    def read_dingtalk_aitable_base(base_id: str):
+        """Read one DingTalk AI table Base as compact JSON text."""
+        from app.dws_client import DwsClient
+        if not base_id.strip():
+            raise ValueError("AI table base ID is required")
+        return json.dumps(
+            DwsClient().get_aitable_base(base_id), ensure_ascii=False,
+            separators=(",", ":"),
+        )
+
+    def read_dingtalk_aitable_tables(
+        base_id: str, table_ids: list[str] | None = None,
+    ):
+        """Read selected table metadata from one DingTalk AI table Base."""
+        from app.dws_client import DwsClient
+        if not base_id.strip():
+            raise ValueError("AI table base ID is required")
+        if table_ids is not None and any(not item.strip() for item in table_ids):
+            raise ValueError("AI table IDs must be non-empty")
+        return json.dumps(
+            DwsClient().get_aitable_tables(base_id, table_ids), ensure_ascii=False,
+            separators=(",", ":"),
+        )
+
+    def read_dingtalk_aitable_records(
+        base_id: str, table_id: str, limit: int = 10,
+    ):
+        """Read a bounded page of records from one DingTalk AI table."""
+        from app.dws_client import DwsClient
+        if not base_id.strip() or not table_id.strip():
+            raise ValueError("AI table base and table IDs are required")
+        if type(limit) is not int or limit < 1:
+            raise ValueError("AI table record limit must be a positive integer")
+        return json.dumps(
+            DwsClient().query_aitable_records(base_id, table_id, limit),
+            ensure_ascii=False, separators=(",", ":"),
+        )
+
     def read_dingtalk_oa(process_instance_id: str) -> dict[str, object]:
         """Read the live DingTalk OA process and its current facts."""
         from app.dws_client import DwsClient
@@ -2248,6 +2288,18 @@ def build_role_server(
         from app.dws_client import DwsClient
         events = DwsClient().list_calendar_events(start, end)
         return {"events": [item.model_dump(mode="json") for item in events]}
+
+    def convert_dingtalk_calendar_time(
+        local_time: str, source_timezone: str, target_timezone: str
+    ) -> dict[str, object]:
+        """Convert one local wall time using IANA zones and date-specific offsets.
+
+        Pass an ISO local datetime without an offset and explicit IANA timezone
+        names. Ambiguous and nonexistent local times need clarification. This
+        conversion does not check calendar or participant availability.
+        """
+        from app.calendar_timezone import convert_calendar_timezone
+        return convert_calendar_timezone(local_time, source_timezone, target_timezone)
 
     def list_dingtalk_mailboxes() -> dict[str, object]:
         """Read the current identity's DingTalk mailboxes."""
@@ -2725,6 +2777,9 @@ def build_role_server(
         ("list_dingtalk_sheets", list_dingtalk_sheets),
         ("read_dingtalk_sheet_info", read_dingtalk_sheet_info),
         ("read_dingtalk_sheet_range", read_dingtalk_sheet_range),
+        ("read_dingtalk_aitable_base", read_dingtalk_aitable_base),
+        ("read_dingtalk_aitable_tables", read_dingtalk_aitable_tables),
+        ("read_dingtalk_aitable_records", read_dingtalk_aitable_records),
         ("read_dingtalk_oa", read_dingtalk_oa),
         ("list_dingtalk_pending_oa", list_dingtalk_pending_oa),
         ("read_dingtalk_oa_records", read_dingtalk_oa_records),
@@ -2736,6 +2791,7 @@ def build_role_server(
         ("read_dingtalk_mail_message", read_dingtalk_mail_message),
         ("read_dingtalk_mail_sent_status", read_dingtalk_mail_sent_status),
         ("list_dingtalk_calendar_events", list_dingtalk_calendar_events),
+        ("convert_dingtalk_calendar_time", convert_dingtalk_calendar_time),
         ("search_dingtalk_contacts", search_dingtalk_contacts),
         ("read_dingtalk_group_members", read_dingtalk_group_members),
         ("read_dingtalk_user_profiles", read_dingtalk_user_profiles),

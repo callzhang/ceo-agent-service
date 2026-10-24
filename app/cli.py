@@ -1,4 +1,3 @@
-from app.task20_definitions import task20_projection
 from app.action_storage import REPLY_ATTEMPT_COMMON_SQL
 from app.action_storage import SENT_REPLY_SQL
 import argparse
@@ -91,7 +90,10 @@ from app.org_cache import (
     refresh_org_cache,
 )
 from app.scheduled_task_recovery import close_superseded_scheduled_reply_tasks
-from app.store import AgentRunLeaseLostError, AutoReplyStore
+from app.store import (
+    AgentRunLeaseLostError, AutoReplyStore,
+    NATIVE_MEETING_TASK_SQL, NATIVE_REPLY_TASK_CURRENT_SQL,
+)
 from app.task_agent_session import TaskAgentSessionLease, TaskAgentSessionLeaseLost
 from app.task_agent import (
     TaskAgentCodexRunner,
@@ -129,7 +131,7 @@ from app.weekly_okr_report import (
     refresh_company_okr_archive_command,
 )
 
-REPLY_TASK_SQL = task20_projection("reply_tasks")
+REPLY_TASK_SQL = NATIVE_REPLY_TASK_CURRENT_SQL
 
 
 def run_consumer_dispatcher_loop(
@@ -1006,7 +1008,7 @@ def _service_command_registry(
     runtime_skill_snapshot=None,
 ):
     """Bind scheduled service commands to the same operations the CLI runs."""
-    from app.agent_cron.commands import ServiceCommandRegistry
+    from app.agent_cron.commands import ServiceCommandRegistry, ServiceCommandResult
     from app.email_scheduled_command import EmailMessageCheckOnceCommand
     from app.wechat.scheduled_command import WechatProduceOnceCommand
 
@@ -1016,9 +1018,13 @@ def _service_command_registry(
     # will make the same idempotent discovery after recovery completes.
     dingtalk_producer_lock = threading.Lock()
 
-    def run_fast_producer(command_name: str, *, calendar_only: bool) -> str:
+    def run_fast_producer(
+        command_name: str, *, calendar_only: bool
+    ) -> ServiceCommandResult:
         if not dingtalk_producer_lock.acquire(blocking=False):
-            return f"{command_name} deferred=producer_busy"
+            return ServiceCommandResult(
+                f"{command_name} deferred=producer_busy", None, False,
+            )
         try:
             queued = reply_worker.produce_once(
                 max_tasks=settings.max_batches,
@@ -1026,22 +1032,74 @@ def _service_command_registry(
             )
         finally:
             dingtalk_producer_lock.release()
-        return f"{command_name} queued={queued}"
+        return ServiceCommandResult(
+            f"{command_name} queued={queued}", (("queued", queued),), True,
+        )
 
-    def produce_once_command() -> str:
+    def produce_once_command() -> ServiceCommandResult:
         return run_fast_producer("produce-once", calendar_only=False)
 
-    def calendar_invites_once_command() -> str:
+    def calendar_invites_once_command() -> ServiceCommandResult:
         return run_fast_producer("calendar-invites-once", calendar_only=True)
 
-    def recover_recent_messages_command() -> str:
+    def recover_recent_messages_command() -> ServiceCommandResult:
         with dingtalk_producer_lock:
             queued = reply_worker.produce_once(
                 recovery=True,
                 max_tasks=settings.max_batches,
             )
         closed = scan_completed_dingtalk_todos_command(settings)
-        return f"recover-recent-messages queued={queued} dingtalk_todos_closed={closed}"
+        return ServiceCommandResult(
+            f"recover-recent-messages queued={queued} dingtalk_todos_closed={closed}",
+            (("queued", queued), ("dingtalk_todos_closed", closed)), True,
+        )
+
+    def scan_meetings_service_command() -> ServiceCommandResult:
+        created = scan_meetings_once_command(settings)
+        return ServiceCommandResult(
+            f"scan-meetings-once queued={created}",
+            (("meeting_jobs_queued", created),),
+            True,
+        )
+
+    def scan_oa_service_command() -> ServiceCommandResult:
+        queued = scan_oa_approvals_command(
+            settings, max_new_items=settings.max_batches,
+            runtime_skill_snapshot=runtime_skill_snapshot,
+        )
+        return ServiceCommandResult(
+            f"scan-oa-approvals queued={queued}", (("queued", queued),), True,
+        )
+
+    def scan_meeting_todos_service_command() -> ServiceCommandResult:
+        queued = scan_meeting_todos_once_command(
+            settings, max_new_items=settings.max_batches,
+        )
+        return ServiceCommandResult(
+            f"scan-meeting-todos-once queued={queued}", (("queued", queued),), True,
+        )
+
+    def request_minutes_access_service_command() -> ServiceCommandResult:
+        result = request_minutes_access_command(settings, return_result=True)
+        return ServiceCommandResult(
+            f"request-minutes-access {result.summary()}",
+            tuple((name, getattr(result, name)) for name in (
+                "discovered", "requested", "already_requested", "readable",
+                "unresolved", "failed",
+            )),
+            True,
+        )
+
+    def sync_minutes_service_command() -> ServiceCommandResult:
+        result = sync_minutes_once_command(settings, return_result=True)
+        return ServiceCommandResult(
+            f"sync-minutes-once {result.summary()}",
+            tuple((name, getattr(result, name)) for name in (
+                "discovered", "synced", "skipped", "permission_requested",
+                "permission_pending", "failed",
+            )),
+            True,
+        )
 
     return ServiceCommandRegistry(
         {
@@ -1052,26 +1110,15 @@ def _service_command_registry(
             "wechat-produce-once": WechatProduceOnceCommand(
                 store, restart_reader=_restart_wechat_reader_service
             ),
-            "scan-meetings-once": lambda: (
-                f"scan-meetings-once queued={scan_meetings_once_command(settings)}"
+            "scan-meetings-once": scan_meetings_service_command,
+            "scan-oa-approvals": scan_oa_service_command,
+            "scan-meeting-todos-once": scan_meeting_todos_service_command,
+            "request-minutes-access": request_minutes_access_service_command,
+            "sync-chrome-cookies": lambda: ServiceCommandResult(
+                f"sync-chrome-cookies {sync_chrome_cookies_command(settings)}",
+                None, False,
             ),
-            "scan-oa-approvals": lambda: (
-                "scan-oa-approvals "
-                f"queued={scan_oa_approvals_command(settings, max_new_items=settings.max_batches, runtime_skill_snapshot=runtime_skill_snapshot)}"
-            ),
-            "scan-meeting-todos-once": lambda: (
-                "scan-meeting-todos-once "
-                f"queued={scan_meeting_todos_once_command(settings, max_new_items=settings.max_batches)}"
-            ),
-            "request-minutes-access": lambda: (
-                f"request-minutes-access {request_minutes_access_command(settings)}"
-            ),
-            "sync-chrome-cookies": lambda: (
-                f"sync-chrome-cookies {sync_chrome_cookies_command(settings)}"
-            ),
-            "sync-minutes-once": lambda: (
-                f"sync-minutes-once {sync_minutes_once_command(settings)}"
-            ),
+            "sync-minutes-once": sync_minutes_service_command,
         }
     )
 
@@ -2314,7 +2361,9 @@ def scan_meeting_todos_once_command(
     return total
 
 
-def sync_minutes_once_command(settings: WorkerSettings) -> str:
+def sync_minutes_once_command(
+    settings: WorkerSettings, *, return_result: bool = False,
+) -> str | object:
     """Mirror new DingTalk AI minutes into the local archive.
 
     Deterministic throughout, and it sends nothing outward. A partial result
@@ -2345,7 +2394,7 @@ def sync_minutes_once_command(settings: WorkerSettings) -> str:
     print(f"sync-minutes-once {result.summary()}", flush=True)
     if result.failed or result.permission_pending:
         raise RuntimeError(f"sync-minutes-once incomplete: {result.summary()}")
-    return result.summary()
+    return result if return_result else result.summary()
 
 
 def sync_chrome_cookies_command(settings: WorkerSettings) -> str:
@@ -2382,7 +2431,9 @@ def sync_chrome_cookies_command(settings: WorkerSettings) -> str:
     return summary
 
 
-def request_minutes_access_command(settings: WorkerSettings) -> str:
+def request_minutes_access_command(
+    settings: WorkerSettings, *, return_result: bool = False,
+) -> str | object:
     """Ask each minute's owner for the access the read API refuses us.
 
     Deterministic throughout: the console says which minutes exist, the read
@@ -2407,7 +2458,7 @@ def request_minutes_access_command(settings: WorkerSettings) -> str:
     print(f"request-minutes-access {result.summary()}", flush=True)
     if result.failed:
         raise RuntimeError(f"request-minutes-access incomplete: {result.summary()}")
-    return result.summary()
+    return result if return_result else result.summary()
 
 
 def scan_oa_approvals_command(
@@ -3435,8 +3486,11 @@ def import_meeting_asr_transcript_command(
         with sqlite3.connect(f"file:{settings.db_path.resolve()}?mode=ro", uri=True) as db:
             db.row_factory = sqlite3.Row
             row = db.execute(
-                f"""select meeting_id, status, locked_at, send_result_json
-                   from ({task20_projection('meeting_alignment_jobs')}) where id=?""",
+                f"""select meeting.meeting_id, meeting.status, tasks.locked_at,
+                          meeting.send_result_json
+                   from ({NATIVE_MEETING_TASK_SQL}) meeting
+                   join tasks on tasks.id=meeting.id and tasks.kind='meeting_alignment'
+                   where meeting.id=?""",
                 (job_id,),
             ).fetchone()
         if row is None:

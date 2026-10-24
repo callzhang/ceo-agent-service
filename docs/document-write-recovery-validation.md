@@ -72,3 +72,26 @@ Derek 明确：确认已执行的文档写入即算写入成功。共用工具�
 最终 healthz、console status、Attention、History、Dashboard queues 全部 HTTP 200。Attention 10 项、History 37925 项；队列 active 1（原有邮件 provider 工作）、queued 194。Reply/Attempt 失败分别为 13/13，Meeting 失败 1、Meeting Memory 失败 9，与部署前读数相同。原先阻挡排空的邮件动作结束后进入既有重试队列；邮件 provider pending 111、processing 1、retryable 78，继续由原有流程处理，不归因于本次文档回执改动。
 
 只读查询部署窗口后的 Agent 运行记录，新增运行 0 项，尚无自然文档写入样本。结论：新代码已发布并由新进程加载，运行健康回读通过；真实文档写入的成功回执及重复覆盖是否停止仍待首个自然相关 trajectory，不人工重放或操作业务文档。
+
+### 版本化重新构建与升级原因闭环（2026-10-24）
+
+后续对账发现原生源码安装的 `dev` 构建已被官方 v1.0.65 替换。只读 State 的 `dws_upgrade_check_result` 明确记录：`checked_at=2026-10-24T07:00:02.731877+00:00`、`current_version=dev`、`latest_version=v1.0.65`、`needs_upgrade=true`；`dws_upgrade_checked_date` 于07:00:09更新。`worker._maybe_upgrade_dws_once_per_day` 在这一状态下调用原生 `dws upgrade -y`。原因是上次用了开发构建的默认dev身份，现有自动升级流程将其当作较旧版本。
+
+沿用原v1.0.65加补丁提交 `87ddde4130bd3aa7080b7528f2c2324f5e6c2112`，未修改源码或服务升级策略。使用原生Go链接参数注入 `v1.0.65+ceo-jsonml.87ddde41`、准确commit和原生release-build-time脚本返回的提交时间2026-10-24T06:21:35Z；沿用原生runtime payload校验/附加与macOS签名。既有 `TestCompareVersions`、`TestNeedsUpgrade` 通过。比较器按SemVer忽略build metadata，仍允许真实更高官方版本的升级，没有伪造未来版本。
+
+07:56:20 UTC（00:56:20 PDT）将已验证构建按原安装器的staged-copy/atomic-rename方式安装至 `/Users/derek/.local/bin/dws`，SHA-256为 `4efec8a5d6b80a34f98df6dc917497166050a3e6c89307556db3e905b0da7ad6`。原有 `dws.before` 重新核对仍等于官方原版SHA `1d832e4f...`，未新增重复备份；原安装receipt保留并追加versioned_reinstallation元数据。实际执行 `dws upgrade --check --format json` 返回补丁版本、latest_version=v1.0.65、needs_upgrade=false。主进程92731的实际PATH解析到新二进制且摘要相等。DWS逐次启动，无需为CLI更新重启Python服务；没有手动改State、绕过升级或覆盖Skill。
+
+此项解决同版官方包覆盖dev修复包的打包问题，不承诺未来更高官方版本一定包含该补丁；上游PR1551仍由维护者处理。文档逻辑来自同一已测提交，复用114项文档模块测试和原始样本证据。新增自然Consumer398975、Audit398977的完整原生范围均未调用文档写入，失败恢复的生产行为仍待对应自然样本。
+
+
+## 自然运行补证（2026-10-24 20:16 UTC）
+
+本次仅通过生产SQLite只读URI及完整原生记录核对，没有生产重放、真实测试写入或发送。此前截止后的Consumer/Audit共8条新Run：399292–399297、399302、399303。399302没有session或原生范围，其运行不冒充可验收trajectory；其余可定位记录均读取，重复session只累计一次。
+
+自然定时报告Consumer399294/399296复用session `01a16e00-e6ca-7c60-9ffe-368a354b6097`，285行SHA `4aa76cace558def5004cc72c7949992c549682068d124edb549b8aebffd85764`。Audit399295/399297复用 `01a16e04-f3e9-7d10-92f8-a0aec507a5a4`，163行SHA `0113d3db1bc61d752652fb1f5d1405d22445c0da648032d14d16c73f665403bd`。
+
+- Consumer第217行保存正文，SHA `04abf9ebf09094c4425745217e38eb198e2a616b568300008919eab3aa4c7599`，第224行创建文档。Provider `doc.create/status=success/verified=true`，服务保留同一正文SHA、目标及readback摘要 `bcd2b0193c5a315805958bfd2808a099dd5a3b3e63c1f676670ea59e3caace1f`。
+- Audit反馈后的续轮先读取实际文档，再于第260行保存修订正文，SHA `9b1e26bba4af3c3552773e57a8cc225f10c6ade08a15f06b052f0c84d4ed2372`，第267行带expected_revision覆盖同一目标。Provider `doc.update/status=success/verified=true`，服务回执正文SHA相等，readback摘要 `47014b952d5ac24b410db8a51d4ea83b433967d7570bef1c5d40143d5ebcc045`。
+- 两次写入正文不同，不是相同内容因核验失败重写。其余新Run的可读原生记录未出现consumer_document_write。没有把修订写入归因于本修复产生的“节省”，也未保存业务正文。
+
+当前DWS仍是 `v1.0.65+ceo-jsonml.87ddde41`，二进制SHA `4efec8a5d6b80a34f98df6dc917497166050a3e6c89307556db3e905b0da7ad6`，与版本化修复相同。此自然样本**验收正常创建、覆盖及反馈后使用已有文档路径**；没有出现已执行但核验失败，仍不能替代该失败状态的生产交接验收。G1保持“已上线待行为验收”，缺的仅是该状态的自然样本；不为补证制造失败或重放任务。

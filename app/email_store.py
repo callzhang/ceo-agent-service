@@ -7,10 +7,13 @@ provider and never creates Agent, Audit, reply-task, or run records.
 from __future__ import annotations
 
 from app.deployment_drain import claim_connection
-from app.task20_definitions import task20_projection
 from app.external_retry import MAX_AUTOMATIC_ATTEMPTS
 
-from app.store import REPLY_TASK_CURRENT_SQL, AutoReplyStore
+from app.store import (
+    NATIVE_AGENT_RUN_SQL,
+    NATIVE_REPLY_TASK_CURRENT_SQL,
+    AutoReplyStore,
+)
 
 from collections.abc import Callable, Iterator, Mapping, Sequence
 from contextlib import closing, contextmanager
@@ -80,10 +83,8 @@ from app.current_schema_manifest import (
     schema_is_current,
 )
 
-from app.task8_storage import register_task8_functions, task8_set_parts
+from app.task8_storage import register_task8_functions
 from app.state_definitions import state_projection
-from app.runs11_definitions import run11_projection
-from app.runs11_storage import insert_run11_fact
 from app.state_storage import insert_state, state_json_field, update_state_rows, upsert_state
 from app.provider_state_definitions import FRESH_OBSERVATION_FIELDS
 from app.provider_state_storage import (
@@ -96,28 +97,28 @@ from app.email_html_text import html_to_text, visible_email_text
 from app.email_provider_folders import FolderRole
 from app.leak_check import assert_no_credentials, is_sensitive_url_component_name
 from app.sqlite_schema_lock import schema_initialize_lock
-from app.logical_run_storage import AGENT_RUN_SQL
 from app.action_storage import (
     ActionWriteResult, EMAIL_ACTION_PROJECTIONS, insert_action, insert_email_action, update_action,
     delete_action, delete_email_action,
 )
 
 
-from app.task12_storage import task12_insert_parts, task12_projection, task12_set_parts
-from app.task20_definitions import TASK20_FIELDS, task20_column
-
 from app import shared_action_lifecycle
 from app.shared_action_definitions import email_projection as email_action_projection
 
-REPLY_TASK_SQL = task20_projection('reply_tasks')
+REPLY_TASK_SQL = NATIVE_REPLY_TASK_CURRENT_SQL
+REPLY_TASK_CURRENT_SQL = NATIVE_REPLY_TASK_CURRENT_SQL
+AGENT_RUN_SQL = NATIVE_AGENT_RUN_SQL
 
-_EMAIL_CLASSIFICATION_SQL = task12_projection('email_agent_classification_tasks')
-_EMAIL_HISTORICAL_KIND = 'email_historical_candidates'
-_EMAIL_HISTORICAL_SQL = task12_projection(_EMAIL_HISTORICAL_KIND)
-_EMAIL_HISTORICAL_COLUMNS = {
-    field: task20_column(_EMAIL_HISTORICAL_KIND, field)
-    for field in TASK20_FIELDS[_EMAIL_HISTORICAL_KIND]
-}
+_EMAIL_CLASSIFICATION_SQL = """select tasks.id, tasks.id as task_id,
+    inputs.stable_message_identity, tasks.status,
+    tasks.lease_owner as owner, tasks.lease_expires_at,
+    inputs.input_json, coalesce(results.result_json,'null') as result_json,
+    tasks.attempts
+    from tasks join email_classification_inputs inputs on inputs.task_id=tasks.id
+    left join task_results results on results.task_id=tasks.id
+      and results.result_kind='email_classification'
+    where tasks.kind='email_classification'"""
 
 
 # Finite Email29 source-shaped reads used by the current DAO and validators.
@@ -209,9 +210,9 @@ EMAIL_UNSUBSCRIBE_CONTINUATION_LOCATOR_SQL = email_action_projection(
 EMAIL_UNSUBSCRIBE_RECEIPT_LOCATOR_SQL = email_action_projection(
     "email_unsubscribe_receipts", include_rowid=True
 )
-EMAIL_DIRECT_ACTION_LOCATOR_SQL = email_action_projection(
-    "email_actions", include_rowid=True
-)
+# Direct Email effects are current shared Actions; the source-shaped Email
+# locator remains available only through the explicit release module.
+EMAIL_DIRECT_ACTION_LOCATOR_SQL = DIRECT_EMAIL_ACTION_SQL
 
 EMAIL_SCHEMA_VERSION = 53
 EMAIL_CLASSIFICATION_SQL = _canonical_classifications()
@@ -3968,29 +3969,20 @@ class EmailStore:
                 normalized_input_hash = sha256(
                     str(candidate.normalized_text).encode("utf-8")
                 ).hexdigest()
-                parts = task12_insert_parts(db, _EMAIL_HISTORICAL_KIND, {
-                    'account_id': account_id, 'folder': folder, 'model_id': model_id,
-                    'stable_message_identity': candidate.stable_message_identity,
-                    'normalized_text': normalized_input_hash,
-                    'provider_message_json': _json_dump(projection),
-                    'uidvalidity': int(message.get('uidValidity') or uidvalidity),
-                    'uid': int(message.get('uid') or 0),
-                    'state': 'pending', 'reason': '', 'updated_at': now,
-                })
-                update_parts = task12_set_parts(_EMAIL_HISTORICAL_KIND, {}, update_sql={
-                    field: 'excluded.' + _EMAIL_HISTORICAL_COLUMNS[field]
-                    for field in ('normalized_text', 'provider_message_json',
-                                  'uidvalidity', 'uid', 'updated_at')
-                })
-                conflict_columns = ','.join(
-                    _EMAIL_HISTORICAL_COLUMNS[field]
-                    for field in ('account_id', 'folder', 'model_id', 'stable_message_identity')
-                )
                 db.execute(
-                    parts.sql + f" on conflict({conflict_columns}) "
-                    "where record_type='email_historical_candidates' do update set "
-                    + update_parts.sql,
-                    (*parts.parameters, *update_parts.parameters),
+                    """insert into email_historical_candidates (
+                        account_id,folder,model_id,stable_message_identity,normalized_text,
+                        provider_message_json,uidvalidity,uid,state,reason,updated_at
+                    ) values (?,?,?,?,?,?,?,?, 'pending','',?)
+                    on conflict(account_id,folder,model_id,stable_message_identity)
+                    do update set normalized_text=excluded.normalized_text,
+                        provider_message_json=excluded.provider_message_json,
+                        uidvalidity=excluded.uidvalidity, uid=excluded.uid,
+                        updated_at=excluded.updated_at""",
+                    (account_id, folder, model_id, candidate.stable_message_identity,
+                     normalized_input_hash, _json_dump(projection),
+                     int(message.get('uidValidity') or uidvalidity),
+                     int(message.get('uid') or 0), now),
                 )
             upsert_state(
                 db, "email_historical_traversals",
@@ -4017,31 +4009,23 @@ class EmailStore:
         deferred_quota = min(2, limit)
         with self._connect() as db:
             deferred_rows = db.execute(
-                f"""
-                select * from ({_EMAIL_HISTORICAL_SQL})
-                where account_id=? and folder=? and model_id=?
-                  and state='deferred'
+                """select * from email_historical_candidates
+                where account_id=? and folder=? and model_id=? and state='deferred'
                   and next_retry_at != '' and next_retry_at <= ?
-                order by
-                    case when attempted_at='' then updated_at else attempted_at end,
-                    uid, stable_message_identity
-                limit ?
-                """,
+                order by case when attempted_at='' then updated_at else attempted_at end,
+                         uid, stable_message_identity limit ?""",
                 (account_id, folder, model_id, now, limit),
             ).fetchall()
             reserved = list(deferred_rows[:deferred_quota])
             pending_rows = db.execute(
-                f"""
-                select * from ({_EMAIL_HISTORICAL_SQL})
+                """select * from email_historical_candidates
                 where account_id=? and folder=? and model_id=? and state='pending'
-                order by uid, stable_message_identity
-                limit ?
-                """,
+                order by uid, stable_message_identity limit ?""",
                 (account_id, folder, model_id, limit - len(reserved)),
             ).fetchall()
             rows = reserved + list(pending_rows)
             if len(rows) < limit:
-                rows.extend(deferred_rows[len(reserved) : limit - len(rows) + len(reserved)])
+                rows.extend(deferred_rows[len(reserved):limit-len(rows)+len(reserved)])
         return [
             {
                 **dict(row),
@@ -4077,17 +4061,12 @@ class EmailStore:
                 + timedelta(seconds=HISTORICAL_DEFER_RETRY_SECONDS)
             ).isoformat(timespec="seconds")
         with self._connect() as db:
-            parts = task12_set_parts(_EMAIL_HISTORICAL_KIND, {
-                'state': state, 'reason': reason, 'attempted_at': attempted_at,
-                'next_retry_at': next_retry_at, 'updated_at': now,
-            })
             updated = db.execute(
-                f"update tasks set {parts.sql} where record_type='email_historical_candidates' "
-                f"and {_EMAIL_HISTORICAL_COLUMNS['account_id']}=? "
-                f"and {_EMAIL_HISTORICAL_COLUMNS['folder']}=? "
-                f"and {_EMAIL_HISTORICAL_COLUMNS['model_id']}=? "
-                f"and {_EMAIL_HISTORICAL_COLUMNS['stable_message_identity']}=?",
-                (*parts.parameters, account_id, folder, model_id, stable_message_identity),
+                """update email_historical_candidates set state=?,reason=?,attempted_at=?,
+                    next_retry_at=?,updated_at=? where account_id=? and folder=? and model_id=?
+                    and stable_message_identity=?""",
+                (state, reason, attempted_at, next_retry_at, now,
+                 account_id, folder, model_id, stable_message_identity),
             ).rowcount
         if updated != 1:
             raise ValueError("historical queued candidate is missing")
@@ -9457,30 +9436,21 @@ class EmailStore:
         ):
             raise ValueError("runtime timings must be finite and non-negative")
         with self._connect() as db:
-            insert_run11_fact(
-                db, "email_classifier_runtime_samples",
-                {
-                    "model_id": model_id.strip(),
-                    "outcome": outcome,
-                    "fallback_code": fallback_code,
-                    "cache_hit": int(cache_hit),
-                    "runtime_warm": int(runtime_warm),
-                    "queue_ms": float(queue_ms),
-                    "http_ms": float(http_ms),
-                    "embedding_ms": float(embedding_ms),
-                    "head_ms": float(head_ms),
-                    "total_ms": float(total_ms),
-                    "recorded_at": self._now(),
-                },
+            db.execute(
+                "insert into email_classifier_runtime_samples "
+                "(model_id,outcome,fallback_code,cache_hit,runtime_warm,queue_ms,"
+                "http_ms,embedding_ms,head_ms,total_ms,created_at) "
+                "values(?,?,?,?,?,?,?,?,?,?,?)",
+                (model_id.strip(), outcome, fallback_code, int(cache_hit),
+                 int(runtime_warm), float(queue_ms), float(http_ms),
+                 float(embedding_ms), float(head_ms), float(total_ms), self._now()),
             )
             db.execute(
                 """
-                delete from runs
-                where record_type='email_classifier_runtime_samples'
-                  and id not in (
-                    select id from runs indexed by idx_runs11_sample_id
-                    where record_type='email_classifier_runtime_samples'
-                    order by cast(legacy_key as integer) desc limit ?
+                delete from email_classifier_runtime_samples
+                where id not in (
+                    select id from email_classifier_runtime_samples
+                    order by id desc limit ?
                   )
                 """,
                 (MAX_CLASSIFIER_RUNTIME_SAMPLES,),
@@ -9558,8 +9528,8 @@ class EmailStore:
         ).isoformat()
         with self._connect() as db:
             rows = db.execute(
-                "select total_ms, recorded_at from (" + run11_projection("email_classifier_runtime_samples")
-                + ") where recorded_at >= ?",
+                "select total_ms, created_at as recorded_at "
+                "from email_classifier_runtime_samples where created_at >= ?",
                 (cutoff,),
             ).fetchall()
         times = sorted(float(row["total_ms"]) for row in rows)
@@ -9570,8 +9540,8 @@ class EmailStore:
             # changed for that, so report the last batch it did judge and say so.
             with self._connect() as db:
                 last = db.execute(
-                    "select total_ms, recorded_at from (" + run11_projection("email_classifier_runtime_samples")
-                    + ") order by id desc limit ?",
+                    "select total_ms, created_at as recorded_at "
+                    "from email_classifier_runtime_samples order by id desc limit ?",
                     (_RUNTIME_LATENCY_FALLBACK_SAMPLES,),
                 ).fetchall()
             times = sorted(float(row["total_ms"]) for row in last)
@@ -9611,7 +9581,7 @@ class EmailStore:
             rows = db.execute(
                 "select outcome, fallback_code, cache_hit, runtime_warm, "
                 "queue_ms, http_ms, embedding_ms, head_ms, total_ms from ("
-                + run11_projection("email_classifier_runtime_samples")
+                + "select * from email_classifier_runtime_samples"
                 + ") where model_id=? order by id desc limit ?",
                 (model_id.strip(), MAX_CLASSIFIER_RUNTIME_SAMPLES),
             ).fetchall()
@@ -9985,7 +9955,6 @@ class EmailStore:
         """Retire one completed original with an exact source and no unfinished dependency."""
         from app.email_body_source import locate_original
         from app.email_preview import email_preview
-        from app.run_storage import RUNTIME_ATTEMPT_SQL
 
         eligible = self._completed_email_input_sql() + " and json_type(message_source_reference_json,'$.kind') is null " \
             "and typeof(message_normalized_text)='text' and message_normalized_text<>''"
@@ -9997,7 +9966,7 @@ class EmailStore:
                 return False
             original = dict(row)
             attempts = db.execute(f"select a.runtime_kind,a.session_id,a.transcript_start,a.transcript_end "
-                f"from ({RUNTIME_ATTEMPT_SQL}) a join ({_EMAIL_CLASSIFICATION_SQL}) t "
+                f"from runtime_attempts a join ({_EMAIL_CLASSIFICATION_SQL}) t "
                 "on a.workload_kind='email_classification' and a.workload_key=t.task_id "
                 "where t.stable_message_identity=? and a.status not in ('starting','running') order by a.id desc",
                 (original["stable_message_identity"],)).fetchall()
@@ -10018,7 +9987,6 @@ class EmailStore:
         """Replace a completed exact model input with its native/provider proof."""
         from app.email_body_source import locate_original
         from app.email_classifier_model import CpuTfidfLogisticClassifier
-        from app.run_storage import RUNTIME_ATTEMPT_SQL
 
         eligible = self._completed_email_input_sql() + " and typeof(class_model_text)='text' and class_model_text<>'' " \
             "and json_type(message_source_reference_json,'$.model_input') is null"
@@ -10031,7 +9999,7 @@ class EmailStore:
                 return False
             original = dict(row)
             attempts = db.execute(f"select a.runtime_kind,a.session_id,a.transcript_start,a.transcript_end "
-                f"from ({RUNTIME_ATTEMPT_SQL}) a join ({_EMAIL_CLASSIFICATION_SQL}) t "
+                f"from runtime_attempts a join ({_EMAIL_CLASSIFICATION_SQL}) t "
                 "on a.workload_kind='email_classification' and a.workload_key=t.task_id "
                 "where t.stable_message_identity=? and a.status not in ('starting','running') order by a.id desc",
                 (original["stable_message_identity"],)).fetchall()
@@ -11497,15 +11465,19 @@ class EmailStore:
                     "decision_json": _json_dump(decision),
                 },
             )
-            parts = task8_set_parts("reply_tasks", {
-                "status": "skipped", "error": "email_unsubscribe_cancelled_by_principal",
-                "available_at": "", "locked_at": None, "updated_at": decision["recorded_at"],
-            })
-            db.execute(
-                f"update tasks set {parts.sql} where record_type='reply_tasks' "
-                f"and {task20_column('reply_tasks', 'id')}=?",
-                (*parts.parameters, task_id),
+            changed = db.execute(
+                "update tasks set status='skipped', "
+                "error='email_unsubscribe_cancelled_by_principal', available_at='', "
+                "locked_at=null, updated_at=? "
+                "where id=? and kind='reply' and status='failed' "
+                "and execution_generation=? and input_version=? and locked_at is null",
+                (
+                    decision["recorded_at"], task_id,
+                    expected_execution_generation, expected_input_version,
+                ),
             )
+            if changed.rowcount != 1:
+                raise EmailActionPlanConflict("unsubscribe cancellation task changed")
             return decision
 
     @classmethod

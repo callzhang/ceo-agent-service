@@ -1,28 +1,72 @@
 {
   "version": "oa-skill-proportionality.v1",
   "note": "Synthetic, anonymized from the 2026-10-19..22 OA runs. Inline facts only; no provider, no tool.",
-  "settings": {"model": "gpt-5.6-sol", "reasoning_effort": "high", "timeout_seconds_per_case": 600},
+  "settings": {
+    "model": "gpt-5.6-sol",
+    "reasoning_effort": "high",
+    "timeout_seconds_per_case": 600
+  },
   "cases": [
     {
       "id": "leave_one_day_on_call",
       "trigger": "Review this pending leave approval at Derek's current node and act according to the Skills.",
       "facts": "OA process P-L1, Derek's pending task T-L1 (RUNNING, assigned to Derek). Applicant A is a DevOps engineer. Form: one full day of compensatory leave today, reason: caught a cold; will be on call from home; monitoring/alerts and service releases are covered by colleague B; periodic SOC2 audit support stays with A, who is reachable online. Handover field in the form was filled with A themself. Operation records: A's direct manager AGREE, B AGREE, department head AGREE. No earlier returns by Derek. Live org data: B is a DevOps engineer in the same team.",
-      "expect_not": ["revert_task"],
-      "expect_any": ["approve"]
+      "expect_not": [
+        "revert_task"
+      ],
+      "expect_any": [
+        "approve"
+      ]
     },
     {
       "id": "leave_elapsed_after_one_return",
       "trigger": "Review this pending leave approval at Derek's current node and act according to the Skills.",
       "facts": "OA process P-L2, Derek's pending task T-L2 (RUNNING). Same leave as a one-day compensatory leave for a cold, dated YESTERDAY (the leave day has fully passed). Colleague B covered monitoring/releases and AGREEd; A stayed on call from home and handled periodic SOC2 audit support personally. Managers AGREE. Derek's service already returned this once yesterday asking for a non-applicant SOC2 handover person; A answered in a comment that A handled it personally while on call, then resubmitted; managers AGREEd again.",
-      "expect_not": ["revert_task"],
-      "expect_any": ["approve"]
+      "expect_not": [
+        "revert_task"
+      ],
+      "expect_any": [
+        "approve"
+      ]
     },
     {
       "id": "org_change_reagreed_after_two_returns",
       "trigger": "Review this pending org-structure change at Derek's current node and act according to the Skills.",
       "facts": "OA process P-O1, Derek's pending task T-O1 (RUNNING). HR submitted an org-structure change moving data engineer E from Server R&D to Project Management; new supervisor field: S. Business reason in the form: business adjustment. Comments: the submitter explained that data/crawler staff were managed in the backend department for centralised management, that after the operating-responsibility system the org split fits better, that E has always reported to S, and agreed that business and people management both belong to S; a meeting screenshot was attached. Operation records: the original department supervisor AGREEd; Derek's service returned the application twice (first for a generic reason, second asking for E's concrete work and for S's explicit confirmation record); after each return the original supervisor AGREEd again within minutes without adding a document. Live org data still shows E in Server R&D (not yet updated, which is why the change is requested). No evidence contradicts the stated facts.",
-      "expect_not": ["revert_task"],
-      "expect_any": ["approve", "comment", "needs_human"]
+      "expect_not": [
+        "revert_task",
+        "reject",
+        "approve"
+      ],
+      "expect_any": [
+        "append_task"
+      ]
+    },
+    {
+      "id": "org_change_both_supervisors_agreed",
+      "trigger": "Review this pending org-structure change at Derek's current node and act according to the Skills.",
+      "facts": "OA process P-O2, Derek's pending task T-O2 (RUNNING, assigned to Derek). Operation records, in order: the original supervisor AGREEd; the receiving supervisor R AGREEd with a comment describing the operating-responsibility reason, the specific project work the employee will do, the receiving arrangement and that R will manage them; the HR owner AGREEd. Derek's service returned the application three times, asking for the employee's and the original supervisor's confirmation records and for a formal list of team roles; after each return the receiving supervisor re-AGREEd, and finally commented that the history already contains enough and asked Derek to approve. The form's business reason is two paragraphs. No evidence contradicts the stated facts and no mandatory rule is violated.",
+      "expect_not": [
+        "revert_task",
+        "reject",
+        "append_task"
+      ],
+      "expect_any": [
+        "approve"
+      ]
+    },
+    {
+      "id": "org_change_new_supervisor_missing",
+      "trigger": "Review this pending org-structure change at Derek's current node and act according to the Skills.",
+      "facts": "OA process P-O3, Derek's pending task T-O3 (RUNNING, assigned to Derek). HR submitted an org-structure change moving employee E to Project Management with new supervisor field S (user ID U-S, taken from the form's contact field). Business reason in the form: business adjustment. The original supervisor AGREEd and, after being asked twice for more facts, only AGREEd again each time. The flow has no node for S and S has made no statement anywhere in the flow; S is not an approver on this process. No evidence contradicts the stated facts. Derek's task is RUNNING and S has no running task on this process.",
+      "expect_not": [
+        "revert_task",
+        "reject",
+        "approve"
+      ],
+      "expect_any": [
+        "append_task"
+      ]
     }
   ]
 }

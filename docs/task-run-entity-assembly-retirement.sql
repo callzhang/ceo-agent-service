@@ -1,0 +1,33 @@
+-- Unactivated Task/Run assembly retirement inventory; not executable migration SQL.
+-- Native retained-owner declarations remain sourced from their current individual factories.
+-- Task1C adopted Action kinds have Run-owned replacements:
+--   review_candidates
+--   candidate_reviews
+--   candidate_selections
+--   candidate_supplements
+--   candidate_executions
+--   candidate_execution_alias
+-- candidate_action_attempts was already retired by the current native Action owner.
+-- Candidate-only Action indexes absent from the assembled owner:
+--   idx_actions_attempt_sequence
+--   idx_actions_audit_run
+--   idx_actions_candidates_task
+--   idx_actions_consumer_run
+--   idx_actions_execution_alias_candidate
+--   idx_actions_execution_binding
+--   idx_actions_execution_candidate
+--   idx_actions_external_key
+--   idx_actions_parent_candidate
+--   idx_actions_parent_review
+--   idx_actions_reviews_candidate
+--   idx_actions_selection_candidate
+-- Reply candidate Task-kind guard now belongs to run_adopted_results.consumer_run_id
+--   -> runs.task_id -> tasks.kind='reply'; native Action has no candidate task_id field.
+-- Receipt execution_id becomes execution_run_id REFERENCES run_execution_progress(consumer_run_id).
+-- Six source-only Feedback parent discriminator triggers are omitted; native
+-- Actions retain direct typed FKs to Feedback decisions, items and rounds.
+-- Conversion identity-map rows remain migration metadata, not native ownership.
+-- No runtime activation, copy, migration, or historical data repair is defined here.
+-- Current runtime caller selection is implemented separately from this DDL
+-- retirement inventory. The paired candidate remains unactivated until its
+-- aggregate review and full-copy/cold-reader/recovery/UI/capacity gates pass.

@@ -1,0 +1,12 @@
+-- Explicitly non-stored or replaced source projections; reasons are in the field map.
+-- reply_task_inputs.reply_task_id: replaced by task_inputs.task_id FK
+-- workbench_turns.final_text: source declaration storage is none; value is hydrated, not physically persisted
+-- business_object_tasks.reply_task_id: replaced by task_business_keys.task_id FK
+-- workbench_artifacts.turn_id: retained as domain FK in workbench_artifacts
+-- workbench_attachments.task_id: retained as domain FK in workbench_attachments
+-- Runtime call sites in the local publication candidate now use native Task,
+-- Run, RuntimeAttempt, adopted-result, and retained Action owners. Frozen
+-- 2026-10-21.1 projections are selected only inside the explicit deploy window
+-- and migration converters. This inventory still defines no activation or
+-- runtime fallback; current-target fixture coverage is tracked in
+-- task-native-caller-finish-report.md.

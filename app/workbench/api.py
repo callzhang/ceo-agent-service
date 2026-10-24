@@ -299,8 +299,27 @@ class WorkbenchScheduler:
             return self._close_complete
 
 
-def _uuid_text(value: UUID) -> str:
-    return str(value)
+def _task_id_text(value: str) -> str:
+    try:
+        return str(WorkbenchStore._native_task_id(value))
+    except ValueError as exc:
+        raise HTTPException(status_code=422, detail="Invalid task ID") from exc
+
+
+def _turn_id_text(value: str) -> str:
+    try:
+        return str(WorkbenchStore._native_task_id(value))
+    except ValueError as exc:
+        raise HTTPException(status_code=422, detail="Invalid turn ID") from exc
+
+
+def _artifact_id_text(value: str) -> str:
+    if not isinstance(value, str) or not value.isascii() or not value.isdecimal():
+        raise HTTPException(status_code=422, detail="Invalid artifact ID")
+    identity = int(value)
+    if identity <= 0 or str(identity) != value:
+        raise HTTPException(status_code=422, detail="Invalid artifact ID")
+    return value
 
 
 def _not_found() -> HTTPException:
@@ -415,7 +434,7 @@ def _parse_task_cursor(cursor: str | None) -> tuple[str, str] | None:
             isinstance(item, str) and item for item in value
         ):
             raise ValueError
-        UUID(value[1])
+        WorkbenchStore._native_task_id(value[1])
         return value[0], value[1]
     except (ValueError, TypeError, binascii.Error, json.JSONDecodeError) as exc:
         raise HTTPException(status_code=400, detail="Invalid task cursor") from exc
@@ -782,25 +801,26 @@ def register_workbench_routes(
             raise _public_error(400, "unknown") from exc
 
     @app.get("/api/workbench/tasks/{task_id}", response_model=PublicTask)
-    def get_task(task_id: UUID) -> PublicTask:
-        summary = store.get_task_summary(_uuid_text(task_id))
+    def get_task(task_id: str) -> PublicTask:
+        summary = store.get_task_summary(_task_id_text(task_id))
         if summary is None:
             raise _not_found()
         return _public_task_with_state(*summary, executor.workspace)
 
     @app.patch("/api/workbench/tasks/{task_id}", response_model=PublicTask)
-    async def rename_task(task_id: UUID, request: Request) -> PublicTask:
+    async def rename_task(task_id: str, request: Request) -> PublicTask:
         payload = await _request_model(
             request, _RenameTask, mutation_guard=mutation_guard
         )
         assert isinstance(payload, _RenameTask)
-        if await anyio.to_thread.run_sync(store.get_task, _uuid_text(task_id)) is None:
+        task_id_text = _task_id_text(task_id)
+        if await anyio.to_thread.run_sync(store.get_task, task_id_text) is None:
             raise _not_found()
         try:
             return await anyio.to_thread.run_sync(
                 lambda: _public_task(
                     store,
-                    store.rename_task(_uuid_text(task_id), title=payload.title),
+                    store.rename_task(task_id_text, title=payload.title),
                     executor.workspace,
                 )
             )
@@ -808,15 +828,16 @@ def register_workbench_routes(
             raise _public_error(400, "unknown") from exc
 
     @app.post("/api/workbench/tasks/{task_id}/archive", response_model=PublicTask)
-    async def archive_task(task_id: UUID, request: Request) -> PublicTask:
+    async def archive_task(task_id: str, request: Request) -> PublicTask:
         await _request_model(request, _StrictModel, mutation_guard=mutation_guard)
-        if await anyio.to_thread.run_sync(store.get_task, _uuid_text(task_id)) is None:
+        task_id_text = _task_id_text(task_id)
+        if await anyio.to_thread.run_sync(store.get_task, task_id_text) is None:
             raise _not_found()
         try:
             return await anyio.to_thread.run_sync(
                 lambda: _public_task(
                     store,
-                    store.archive_task(_uuid_text(task_id)),
+                    store.archive_task(task_id_text),
                     executor.workspace,
                 )
             )
@@ -829,11 +850,11 @@ def register_workbench_routes(
         "/api/workbench/tasks/{task_id}/attachments",
         response_model=list[WorkbenchAttachment],
     )
-    def list_attachments(task_id: UUID) -> list[WorkbenchAttachment]:
+    def list_attachments(task_id: str) -> list[WorkbenchAttachment]:
         try:
             return [
                 _public_attachment(attachment, executor.workspace)
-                for attachment in store.list_attachments(_uuid_text(task_id))
+                for attachment in store.list_attachments(_task_id_text(task_id))
             ]
         except ValueError as exc:
             raise _not_found() from exc
@@ -843,7 +864,7 @@ def register_workbench_routes(
         response_model=WorkbenchAttachment,
         status_code=201,
     )
-    async def upload_attachment(task_id: UUID, request: Request) -> WorkbenchAttachment:
+    async def upload_attachment(task_id: str, request: Request) -> WorkbenchAttachment:
         payload = await _request_model(
             request,
             _AttachmentUpload,
@@ -851,7 +872,8 @@ def register_workbench_routes(
             max_bytes=_MAX_ATTACHMENT_JSON_BYTES,
         )
         assert isinstance(payload, _AttachmentUpload)
-        if await anyio.to_thread.run_sync(store.get_task, _uuid_text(task_id)) is None:
+        task_id_text = _task_id_text(task_id)
+        if await anyio.to_thread.run_sync(store.get_task, task_id_text) is None:
             raise _not_found()
         try:
             if len(payload.content_base64) > _MAX_ATTACHMENT_BASE64_LENGTH:
@@ -859,7 +881,7 @@ def register_workbench_routes(
             content = await anyio.to_thread.run_sync(_decode_attachment, payload)
             saved = await anyio.to_thread.run_sync(
                 lambda: store.save_attachment(
-                    _uuid_text(task_id),
+                    task_id_text,
                     client_request_id=str(payload.client_request_id),
                     filename=payload.filename,
                     media_type=payload.media_type,
@@ -878,12 +900,12 @@ def register_workbench_routes(
         response_model=PublicTurn,
         status_code=201,
     )
-    async def create_turn(task_id: UUID, request: Request) -> PublicTurn:
+    async def create_turn(task_id: str, request: Request) -> PublicTurn:
         payload = await _request_model(
             request, _CreateTurn, mutation_guard=mutation_guard
         )
         assert isinstance(payload, _CreateTurn)
-        task_id_text = _uuid_text(task_id)
+        task_id_text = _task_id_text(task_id)
         if await anyio.to_thread.run_sync(store.get_task, task_id_text) is None:
             raise _not_found()
         try:
@@ -906,15 +928,15 @@ def register_workbench_routes(
         "/api/workbench/tasks/{task_id}/turns/{turn_id}",
         response_model=PublicTurn,
     )
-    def get_nested_turn(task_id: UUID, turn_id: UUID) -> PublicTurn:
+    def get_nested_turn(task_id: str, turn_id: str) -> PublicTurn:
         return _public_turn(
-            _owned_turn(store, _uuid_text(task_id), _uuid_text(turn_id)),
+            _owned_turn(store, _task_id_text(task_id), _turn_id_text(turn_id)),
             executor.workspace,
         )
 
     @app.get("/api/workbench/turns/{turn_id}", response_model=PublicTurn)
-    def get_turn(turn_id: UUID) -> PublicTurn:
-        turn = store.get_turn(_uuid_text(turn_id))
+    def get_turn(turn_id: str) -> PublicTurn:
+        turn = store.get_turn(_turn_id_text(turn_id))
         if turn is None:
             raise _not_found()
         return _public_turn(turn, executor.workspace)
@@ -923,11 +945,11 @@ def register_workbench_routes(
         "/api/workbench/tasks/{task_id}/turns/{turn_id}/stop",
         response_model=PublicTurn,
     )
-    async def stop_turn(task_id: UUID, turn_id: UUID, request: Request) -> PublicTurn:
+    async def stop_turn(task_id: str, turn_id: str, request: Request) -> PublicTurn:
         await _request_model(request, _StrictModel, mutation_guard=mutation_guard)
-        turn_id_text = _uuid_text(turn_id)
+        turn_id_text = _turn_id_text(turn_id)
         await anyio.to_thread.run_sync(
-            _owned_turn, store, _uuid_text(task_id), turn_id_text
+            _owned_turn, store, _task_id_text(task_id), turn_id_text
         )
         try:
             result = await anyio.to_thread.run_sync(
@@ -940,7 +962,7 @@ def register_workbench_routes(
 
     @app.get("/api/workbench/turns/{turn_id}/events", response_model=list[PublicEvent])
     def replay_events(
-        turn_id: UUID,
+        turn_id: str,
         after: int = Query(default=0, ge=0),
         limit: int = Query(default=100, ge=1, le=1000),
     ) -> list[PublicEvent]:
@@ -948,7 +970,7 @@ def register_workbench_routes(
             return [
                 _public_event(event, executor.workspace)
                 for event in store.events_after(
-                    _uuid_text(turn_id), after_id=after, limit=limit
+                    _turn_id_text(turn_id), after_id=after, limit=limit
                 )
             ]
         except ValueError as exc:
@@ -956,7 +978,7 @@ def register_workbench_routes(
 
     @app.get("/api/workbench/tasks/{task_id}/timeline", response_model=PublicTimeline)
     def timeline(
-        task_id: UUID,
+        task_id: str,
         turn_limit: int = Query(default=100, ge=1, le=100),
         event_limit: int = Query(default=1000, ge=1, le=1000),
         before: str | None = None,
@@ -964,7 +986,7 @@ def register_workbench_routes(
         artifact_after: str | None = None,
         attachment_after: str | None = None,
     ) -> PublicTimeline:
-        task_id_text = _uuid_text(task_id)
+        task_id_text = _task_id_text(task_id)
         try:
             task, turns, events, attachments, artifacts, page = (
                 store.timeline_snapshot(
@@ -1039,12 +1061,12 @@ def register_workbench_routes(
         "/api/workbench/tasks/{task_id}/turns/{turn_id}/artifacts/{artifact_id}/download"
     )
     def download_artifact(
-        task_id: UUID, turn_id: UUID, artifact_id: UUID
+        task_id: str, turn_id: str, artifact_id: str
     ) -> StreamingResponse:
-        task_id_text = _uuid_text(task_id)
-        turn_id_text = _uuid_text(turn_id)
+        task_id_text = _task_id_text(task_id)
+        turn_id_text = _turn_id_text(turn_id)
         _owned_turn(store, task_id_text, turn_id_text)
-        artifact = store.get_artifact(_uuid_text(artifact_id))
+        artifact = store.get_artifact(_artifact_id_text(artifact_id))
         if artifact is None or artifact.turn_id != turn_id_text:
             raise _not_found()
         opened = _open_artifact_fd(artifact.path, roots)
@@ -1075,10 +1097,10 @@ def register_workbench_routes(
             raise
 
     @app.get("/api/workbench/turns/{turn_id}/events/stream")
-    async def event_stream(turn_id: UUID, request: Request) -> StreamingResponse:
+    async def event_stream(turn_id: str, request: Request) -> StreamingResponse:
         if stream_guard is not None:
             stream_guard(request)
-        turn_id_text = _uuid_text(turn_id)
+        turn_id_text = _turn_id_text(turn_id)
         if await anyio.to_thread.run_sync(store.get_turn, turn_id_text) is None:
             raise _not_found()
         cursor = _parse_event_cursor(request)

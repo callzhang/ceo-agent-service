@@ -9,9 +9,6 @@ table as a failed check rather than silently dropping a queue from coverage.
 
 from __future__ import annotations
 from app.state_definitions import state_projection
-from app.runs11_definitions import run11_projection
-from app.task20_definitions import task20_projection
-from app.task12_storage import task12_projection
 from app.action_feedback_definitions import feedback_projection
 
 
@@ -25,25 +22,38 @@ from urllib.parse import urlsplit
 from app.agent_cron.scheduler import SCHEDULED_CAPABILITY_UNAVAILABLE_KINDS
 from app.config import forbidden_path_prefixes
 from app.leak_check import contains_credential, contains_local_runtime_leak
-from app.store import SERVICE_HEALTH_STATE_PREFIX, REPLY_TASK_CURRENT_SQL, ERROR_SQL
-from app.logical_run_storage import AGENT_RUN_SQL
-from app.run_storage import RUNTIME_ATTEMPT_SQL
+from app.store import (
+    SERVICE_HEALTH_STATE_PREFIX, REPLY_TASK_CURRENT_SQL, ERROR_SQL,
+    NATIVE_AGENT_RUN_SQL, NATIVE_REPLY_TASK_CURRENT_SQL,
+    NATIVE_REPLY_BUSINESS_KEY_SQL, NATIVE_MEETING_TASK_SQL,
+    NATIVE_REVIEW_CANDIDATE_SQL, NATIVE_CANDIDATE_REVIEW_SQL,
+    NATIVE_CANDIDATE_EXECUTION_SQL,
+    NATIVE_CANDIDATE_SELECTION_SQL,
+)
 
 from app.action_storage import (
-    REVIEW_CANDIDATE_SQL, SENT_REPLY_SQL, SENT_REPLY_OBSERVER_SQL,
-    CANDIDATE_REVIEW_SQL,
-    CANDIDATE_SELECTION_SQL,
+    SENT_REPLY_SQL, SENT_REPLY_OBSERVER_SQL,
+    NATIVE_CANDIDATE_ACTION_ATTEMPT_SQL,
     REPLY_ATTEMPT_COMMON_SQL,
     REPLY_ATTEMPT_PROBLEM_TRIGGER_KEYS_SQL,
     task_delivery_projection,
 )
-from app.current_action_schema import current_action_objects, current_reply_action_projection
+from app.current_action_schema import current_reply_action_projection
+from app.current_schema_manifest import current_objects
 from app.action_storage import _objects
 
-MEETING_JOB_SQL = task20_projection('meeting_alignment_jobs')
-OKR_REQUEST_SQL = task20_projection('okr_review_requests')
-REPLY_TASK_SQL = task20_projection('reply_tasks')
-WORK_SUMMARY_INPUT_SQL = task20_projection('work_summary_inputs')
+MEETING_JOB_SQL = NATIVE_MEETING_TASK_SQL
+OKR_REQUEST_SQL = "select id,status,created_at,updated_at from tasks where kind='okr_review'"
+REPLY_TASK_SQL = NATIVE_REPLY_TASK_CURRENT_SQL
+WORK_SUMMARY_INPUT_SQL = "select tasks.id,tasks.status,tasks.created_at,tasks.updated_at from tasks join work_summary_inputs inputs on inputs.task_id=tasks.id where tasks.kind='work_summary'"
+FEEDBACK_PROCESSING_ROUND_SQL = "select * from feedback_processing_rounds"
+RUNTIME_ATTEMPT_SQL = """select id,parent_id as agent_run_id,workload_kind,workload_key,
+    attempt_number,route_name,runtime_kind,credential_mode,model,session_mode,
+    source_session_id,attempt_purpose,validation_retry_policy_id,
+    validation_result_schema_id,session_id,status,failure_class,failure_code,
+    failover_permitted,transcript_reference,first_effect_started_at,
+    started_at,finished_at,created_at,updated_at
+    from runtime_attempts"""
 
 
 REQUIRED_SOURCES = (
@@ -193,7 +203,7 @@ def scan_hourly_quality(
         _check_okr_reviews(db, checked_now, violations, attention)
         _check_external_delivery_queues(db, checked_now, violations, attention)
         native_delivery_coverage = _check_delivery_records(db, violations)
-        _check_feedback(db, violations)
+        _check_feedback(db, violations, attention)
         _check_scan_health(db, violations, attention)
         _check_scheduler_health(db, checked_now, violations)
         _check_codex_capacity_pause(db, checked_now, attention)
@@ -520,23 +530,23 @@ def _check_structured_needs_human(
             select c.candidate_json as reviewed_candidate_json,
                    choice.id as selection_id
             from latest a
-            left join ({CANDIDATE_REVIEW_SQL}) review on review.audit_run_id=a.agent_run_id
+            left join ({NATIVE_CANDIDATE_REVIEW_SQL}) review on review.audit_run_id=a.agent_run_id
               and review.decision='approve'
-            left join ({REVIEW_CANDIDATE_SQL}) c on c.id=review.candidate_id
+            left join ({NATIVE_REVIEW_CANDIDATE_SQL}) c on c.id=review.candidate_id
               and c.invalidated_at='' and c.candidate_digest=review.candidate_digest
-              and c.id=(select max(newest.id) from ({REVIEW_CANDIDATE_SQL}) newest
+              and c.id=(select max(newest.id) from ({NATIVE_REVIEW_CANDIDATE_SQL}) newest
                   where newest.task_id=c.task_id and newest.execution_generation=c.execution_generation)
               and exists(select 1 from ({REPLY_TASK_SQL}) task where task.id=c.task_id
                   and task.execution_generation=c.execution_generation
                   and task.status='needs_human')
-            left join ({CANDIDATE_SELECTION_SQL}) choice on choice.candidate_id=c.id
+            left join ({NATIVE_CANDIDATE_SELECTION_SQL}) choice on choice.candidate_id=c.id
             where a.ordinal=1 and lower(a.send_status)='needs_human'
               and a.reviewed_at is null
               and trim(coalesce(a.resolved_at, ''))=''
               and not exists (
                   select 1
                   from ({REPLY_TASK_SQL}) as historical_task
-                  join ({task12_projection('business_object_tasks')}) as current_business_object
+                  join ({NATIVE_REPLY_BUSINESS_KEY_SQL}) as current_business_object
                     on current_business_object.business_object_key=
                        historical_task.business_object_key
                   where historical_task.channel=a.channel
@@ -593,20 +603,20 @@ def _check_agent_runs(
 ) -> None:
     _add(violations, source="agent_runs", code="running_stale", count=_count(
         db,
-        f"select count(*) from ({AGENT_RUN_SQL}) as agent_runs where lower(status) in ('pending','running') and datetime(updated_at) < datetime(?)",
+        f"select count(*) from ({NATIVE_AGENT_RUN_SQL}) as agent_runs where lower(status) in ('pending','running') and datetime(updated_at) < datetime(?)",
         (_cutoff(now, REPLY_PROCESSING_STALE_SECONDS),),
     ), severity="error", detail="agent run exceeded its execution lease")
     _add(attention, source="agent_runs", code="active", count=_count(
-        db, f"select count(*) from ({AGENT_RUN_SQL}) as agent_runs where lower(status) in ('pending','running')"
+        db, f"select count(*) from ({NATIVE_AGENT_RUN_SQL}) as agent_runs where lower(status) in ('pending','running')"
     ), severity="info", detail="agent execution is in progress")
     _check_runtime_attempt_invariants(db, violations)
 
 
 def _check_runtime_attempt_invariants(db: sqlite3.Connection, violations: list[QualityIssue]) -> None:
     checks = {
-        "runtime_attempt_without_parent": f'select count(*) from ({RUNTIME_ATTEMPT_SQL}) a where a.agent_run_id is not null and not exists (select 1 from ({AGENT_RUN_SQL}) r where r.id=a.agent_run_id)',
+        "runtime_attempt_without_parent": f"select count(*) from ({RUNTIME_ATTEMPT_SQL}) a where a.agent_run_id is not null and not exists (select 1 from runs r where r.id=a.agent_run_id)",
         "multiple_active_runtime_attempts": f"select count(*) from (select workload_kind, workload_key from ({RUNTIME_ATTEMPT_SQL}) as agent_runtime_attempts where status in ('starting','running') group by workload_kind, workload_key having count(*)>1)",
-        "completed_runtime_attempt_without_final_run": f"select count(*) from ({RUNTIME_ATTEMPT_SQL}) a where a.status='completed' and a.agent_run_id is not null and not exists (select 1 from ({AGENT_RUN_SQL}) r where r.id=a.agent_run_id and r.status in ('completed','failed','unknown'))",
+        "completed_runtime_attempt_without_final_run": f"select count(*) from ({RUNTIME_ATTEMPT_SQL}) a where a.workload_kind='agent_run' and a.status='completed' and a.agent_run_id is not null and not exists (select 1 from runs r where r.id=a.agent_run_id and r.status in ('completed','failed','unknown'))",
     }
     for code, sql in checks.items():
         _add(violations, source="agent_runtime_attempts", code=code, count=_count(db, sql), severity="error", detail="runtime attempt invariant violated")
@@ -657,7 +667,7 @@ def _check_email_classification_tasks(
         code="failed",
         count=_count(
             db,
-            f"""select count(*) from ({task12_projection('email_agent_classification_tasks')}) where lower(status)='failed'""",
+            "select count(*) from tasks where kind='email_classification' and lower(status)='failed'",
         ),
         severity="error",
         detail="email classification reached a non-retryable failure",
@@ -668,8 +678,8 @@ def _check_email_classification_tasks(
         code="running_stale",
         count=_count(
             db,
-            f"""select count(*) from ({task12_projection('email_agent_classification_tasks')})
-               where lower(status)='running'
+            """select count(*) from tasks where kind='email_classification'
+               and lower(status)='running'
                  and datetime(updated_at) < datetime(?)""",
             (_cutoff(now, WORK_ITEM_PROCESSING_STALE_SECONDS),),
         ),
@@ -682,8 +692,8 @@ def _check_email_classification_tasks(
         code="pending_stale",
         count=_count(
             db,
-            f"""select count(*) from ({task12_projection('email_agent_classification_tasks')})
-               where lower(status)='pending'
+            """select count(*) from tasks where kind='email_classification'
+               and lower(status)='pending'
                  and (available_at='' or datetime(available_at) <= datetime(?))
                  and datetime(updated_at) < datetime(?)""",
             (
@@ -755,9 +765,8 @@ def _check_email_model_runtime(
     counts = {
         str(row["outcome"]): int(row["total"])
         for row in db.execute(
-            "select outcome, count(*) as total from ("
-            + run11_projection("email_classifier_runtime_samples")
-            + ") where recorded_at >= ? group by outcome",
+            "select outcome, count(*) as total from email_classifier_runtime_samples "
+            "where created_at >= ? group by outcome",
             (cutoff,),
         )
     }
@@ -767,9 +776,8 @@ def _check_email_model_runtime(
     recent_outcomes = [
         str(row["outcome"] or "")
         for row in db.execute(
-            "select outcome from ("
-            + run11_projection("email_classifier_runtime_samples")
-            + ") where recorded_at >= ? order by recorded_at desc, id desc",
+            "select outcome from email_classifier_runtime_samples "
+            "where created_at >= ? order by created_at desc,id desc",
             (cutoff,),
         )
     ]
@@ -857,7 +865,12 @@ def _check_external_delivery_queues(
         ("memory_write_events", "status", ("failed",), ("pending", "processing"), ""),
     ):
         if source == "memory_write_events":
-            if _objects(db, "actions") != current_action_objects():
+            target_action_objects = [
+                {"type": kind, "name": name, "sql": sql}
+                for kind, name, table, sql in current_objects()
+                if table == "actions" and sql is not None
+            ]
+            if _objects(db, "actions") != target_action_objects:
                 raise sqlite3.IntegrityError("unsupported or mixed Attempt/Memory action schema")
             source_sql = f"({current_reply_action_projection('memory_write_events')})"
         else:
@@ -894,7 +907,7 @@ def _check_delivery_records(
     becomes a record of sending.
     """
     from app.native_trajectory import read_native_result_json
-    rows = db.execute(f"""select audit.* from ({AGENT_RUN_SQL}) audit
+    rows = db.execute(f"""select audit.* from ({NATIVE_AGENT_RUN_SQL}) audit
         join ({REPLY_TASK_SQL}) task on task.id=audit.reply_task_id
         where audit.role='audit' and audit.status='completed'
           and task.channel='dingtalk'
@@ -904,7 +917,8 @@ def _check_delivery_records(
     missing = 0
     unavailable = 0
     for row in rows:
-        native_result = read_native_result_json(db, row)
+        physical_run = db.execute("select * from runs where id=?", (row["id"],)).fetchone()
+        native_result = read_native_result_json(db, physical_run)
         if not native_result:
             unavailable += 1
             continue
@@ -929,11 +943,53 @@ def _check_delivery_records(
 def _check_feedback(
     db: sqlite3.Connection,
     violations: list[QualityIssue],
+    attention: list[QualityIssue],
 ) -> None:
-    _add(violations, source="feedback_events", code="unresolved", count=_count(
+    """Count feedback nobody has acted on; list the rest as attention.
+
+    A manual Workbench item (``manual:<attempt id>``) that was rerun after it
+    arrived, whose new execution finished with every approved action verified,
+    has been acted on even though no resolution is recorded: closing one needs
+    code, Skill or config evidence an operational rerun does not produce
+    (Derek 2026-10-24). It stays visible as attention. This says the feedback
+    was not left unattended, not that the rerun did what it asked. A reopened
+    item is counted again, and so is any other feedback.
+    """
+    unresolved = _count(
         db, f"select count(*) from ({feedback_projection('feedback_events')}) "
             "where resolved_at='' or resolved_at is null"
-    ), severity="error", detail="user feedback has not reached a recorded resolution")
+    )
+    acted = _count(db, f"""
+        select count(*) from ({feedback_projection('feedback_events')}) fe
+        where (fe.resolved_at='' or fe.resolved_at is null)
+          and fe.key like 'manual:%'
+          and not exists (
+              select 1 from ({FEEDBACK_PROCESSING_ROUND_SQL}) rnd
+              where rnd.feedback_key=fe.key and rnd.reopened_at<>'')
+          and exists (
+              select 1
+              from ({REPLY_ATTEMPT_COMMON_SQL}) ra
+              join ({NATIVE_CANDIDATE_REVIEW_SQL}) review on review.audit_run_id=ra.agent_run_id
+              join ({NATIVE_CANDIDATE_EXECUTION_SQL}) execution
+                on execution.candidate_id=review.candidate_id
+              where ra.id=cast(substr(fe.key, 8) as integer)
+                and execution.status='done'
+                and julianday(execution.created_at) >= julianday(fe.received_at)
+                and exists (
+                    select 1 from ({NATIVE_CANDIDATE_ACTION_ATTEMPT_SQL}) action
+                    where action.execution_id=execution.id and action.status='verified')
+                and not exists (
+                    select 1 from ({NATIVE_CANDIDATE_ACTION_ATTEMPT_SQL}) action
+                    where action.execution_id=execution.id and action.status<>'verified'))
+        """)
+    _add(violations, source="feedback_events", code="unresolved",
+         count=unresolved - acted, severity="error",
+         detail="user feedback has not reached a recorded resolution")
+    _add(attention, source="feedback_events", code="acted_unresolved", count=acted,
+         severity="info", detail=(
+             "manual feedback was rerun and its actions verified, but no resolution "
+             "is recorded; confirm the rerun did what it asked"
+         ))
 
 
 def _check_scan_health(

@@ -2,28 +2,54 @@
 import sqlite3
 import pytest
 from app import current_publication_sources as sources
-from app.current_action_schema_release import prepare_current_action_schema_release
-from tests.test_current_action_schema_release import source_database, ROOT
+from tests.test_task_run_entity_schema_release import _source_database
 
 
-@pytest.mark.parametrize('variant',('actual_no_memory_fk','fresh_memory_fk'))
-def test_publication_readers_prepare_on_previous_and_current(tmp_path,variant):
+def test_publication_readers_select_the_explicit_predecessor_and_target(tmp_path):
     path=tmp_path/'paired.sqlite3'
-    source_database(path,variant)
-    release=prepare_current_action_schema_release(ROOT,path)
-    for target in (False,True):
-        if target:
-            release.publish()
-        with sqlite3.connect(path) as db:
-            selects=[*sources.publication_run_sources(db),*sources.publication_task_sources(db),
-                *sources.publication_meeting_sources(db),sources.publication_scheduled_source(db),
-                sources.publication_dispatcher_source(db),sources.publication_candidate_source(db),
-                *sources.publication_receipt_sources(db).values(),*sources.publication_delivery_sources(db).values(),
-                sources.publication_email_action_source(db)]
-            for select in selects:
-                db.execute('select * from ('+select+') limit 1').fetchall()
-            if target:
-                assert sources.current_email_actions_available(db)
+    _source_database(path)
+    from app.task_run_entity_schema_release import prepare_task_run_entity_release
+    from app.repository_updater import in_flight_work
+    from app.action_entity_storage import create_action
+    from app.task8_storage import register_task8_functions, task8_insert_parts
+    release=prepare_task_run_entity_release(path)
+    assert release is not None
+    with sqlite3.connect(path) as db:
+        register_task8_functions(db)
+        create_action(db, values={
+            "operation": "archive", "parameters_json": "{}", "status": "processing",
+            "action_plan_id": "source-plan", "classification_id": 1,
+            "account_id": "source-account", "created_at": "now", "updated_at": "now",
+        })
+        meeting = task8_insert_parts("meeting_alignment_jobs", {
+            "meeting_id": "source-meeting", "status": "ready_to_send",
+            "locked_at": "claimed", "updated_at": "now",
+        })
+        db.execute(f"insert into tasks({meeting.columns}) values({meeting.values})", meeting.parameters)
+    assert in_flight_work(path) == 2
+    with sqlite3.connect(path) as db:
+        predecessor_selects=[*sources.publication_run_sources(db),*sources.publication_task_sources(db),
+            *sources.publication_deployment_task_sources(db),
+            *sources.publication_meeting_sources(db),sources.publication_scheduled_source(db),
+            sources.publication_dispatcher_source(db),sources.publication_candidate_source(db),
+            *sources.publication_receipt_sources(db).values(),
+            *sources.publication_delivery_sources(db).values(),
+            sources.publication_email_action_source(db)]
+        for select in predecessor_selects:
+            db.execute('select * from ('+select+') limit 1').fetchall()
+    release.publish()
+    assert in_flight_work(path) == 2
+    with sqlite3.connect(path) as db:
+        target_selects=[*sources.publication_run_sources(db),*sources.publication_task_sources(db),
+            *sources.publication_deployment_task_sources(db),
+            *sources.publication_meeting_sources(db),sources.publication_scheduled_source(db),
+            sources.publication_dispatcher_source(db),sources.publication_candidate_source(db),
+            *sources.publication_receipt_sources(db).values(),*sources.publication_delivery_sources(db).values(),
+            sources.publication_email_action_source(db)]
+        for select in target_selects:
+            db.execute('select * from ('+select+') limit 1').fetchall()
+        assert sources.current_email_actions_available(db)
+    release.rollback()
 
 
 def test_store_first_has_no_email_runtime(tmp_path):

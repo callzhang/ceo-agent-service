@@ -435,7 +435,9 @@ def _action_definitions(include_receipts=False, include_postfix=False, include_d
     if execution_owner:
         if not compact_payload:
             raise ValueError('execution owner requires compact Actions payloads')
-        kinds = tuple(kind for kind in kinds if kind != 'candidate_executions') + (EXECUTION_ALIAS,)
+        kinds = tuple(kind for kind in kinds if kind != 'candidate_executions')
+        if EXECUTION_ALIAS not in retired_types:
+            kinds += (EXECUTION_ALIAS,)
     if postfix_owner:
         from app.prepared_action_definitions import CHILDREN, prepared_schema_parts
         if not (compact_payload and include_postfix):
@@ -527,7 +529,10 @@ def _action_definitions(include_receipts=False, include_postfix=False, include_d
         if include_receipts and column == 'external_action_key':
             expression = f"case when record_type='external_action_results' then legacy_key else {expression} end"
         generated.append(f"{column} {'integer' if column in INTEGER_FIELDS or execution_owner and column == 'execution_public_id' else 'text'} generated always as ({expression}) virtual")
-    if execution_owner:
+    execution_checks = ()
+    execution_indexes = ()
+    execution_triggers = ()
+    if execution_owner and EXECUTION_ALIAS not in retired_types:
         execution_generated, execution_checks, execution_indexes, execution_triggers = execution_schema_parts(record_types=payloads.record_types)
         generated.extend(execution_generated)
     if sent_result_references and not action_entity:
@@ -660,9 +665,9 @@ def _action_definitions(include_receipts=False, include_postfix=False, include_d
         table += "," + ",".join(ba_checks)
     if include_email_history:
         table += "," + ",".join(history_checks)
-    if execution_owner:
+    if execution_owner and execution_checks:
         table += "," + ",".join(execution_checks)
-        if include_reply and reply_variant == 'fresh_memory_fk':
+        if EXECUTION_ALIAS not in retired_types and include_reply and reply_variant == 'fresh_memory_fk':
             table += ",check(record_type<>'candidate_execution_alias' or memory_attempt_ref is null)"
     if sent_result_references and not action_entity:
         table += "," + ",".join(sent_checks)
@@ -695,7 +700,7 @@ def _action_definitions(include_receipts=False, include_postfix=False, include_d
     if "candidate_action_attempts" in retired_types:
         indexes = tuple(sql for sql in indexes if "idx_actions_attempt_sequence" not in sql
                         and "idx_actions_external_key" not in sql)
-    if execution_owner:
+    if execution_owner and EXECUTION_ALIAS not in retired_types:
         indexes = tuple(sql for sql in indexes if 'idx_actions_execution_candidate ' not in sql) + execution_indexes
     if include_receipts:
         indexes += (
@@ -768,7 +773,7 @@ def _action_definitions(include_receipts=False, include_postfix=False, include_d
             for event, suffix in (("insert", "insert"), (f"update of {field}", "update"))
         ),
     )
-    if execution_owner:
+    if execution_owner and EXECUTION_ALIAS not in retired_types:
         # The retired selection_id reference is replaced by the plan's two FKs.
         triggers = tuple(sql.replace('or selection_id=old.id', 'or execution_review_id=old.id or execution_selection_id=old.id') for sql in triggers)
         triggers += execution_triggers
@@ -985,6 +990,19 @@ where a.record_type='action' and a.action_external_action_key is not null
   and r.id=(select max(latest.id) from action_receipts latest
             where latest.action_id=r.action_id and latest.execution_id=r.execution_id
               and latest.action_index=r.action_index)"""
+NATIVE_CANDIDATE_ACTION_ATTEMPT_SQL = """select r.id,a.id as action_owner_id,
+       r.execution_run_id as execution_id,r.action_index,
+       a.action_external_action_key as external_action_key,r.status,
+       coalesce(r.outcome_json,p.provider_result_json,'{}') as result_json,
+       r.agent_run_id,r.provider_receipt_id,r.target,r.created_at,r.updated_at
+from action_receipts r join actions a on a.id=r.action_id
+left join action_receipts p on p.id=r.provider_receipt_id and p.action_id=r.action_id
+where a.record_type='action' and a.action_external_action_key is not null
+  and r.execution_run_id is not null and r.action_index is not null
+  and r.id=(select max(latest.id) from action_receipts latest
+            where latest.action_id=r.action_id
+              and latest.execution_run_id=r.execution_run_id
+              and latest.action_index=r.action_index)"""
 
 
 class CandidateResultReferenceError(sqlite3.IntegrityError):
@@ -1037,6 +1055,10 @@ where a.record_type='action' and a.action_external_action_key is not null
   and coalesce(r.result_digest,canonical.result_digest) is not null
   and canonical.agent_run_id is not null
   and r.provider_result_json is not null"""
+NATIVE_EXTERNAL_ACTION_RESULT_SQL = EXTERNAL_ACTION_RESULT_SQL.replace(
+    CANONICAL_PROVIDER_RECEIPT_SQL,
+    CANONICAL_PROVIDER_RECEIPT_SQL.replace("metadata.execution_id", "metadata.execution_run_id"),
+)
 AGENT_EFFECT_INTENT_SQL = ACTION_PROJECTIONS["agent_effect_intents"]
 AGENT_EXECUTION_RECEIPT_SQL = ACTION_PROJECTIONS["agent_execution_receipts"]
 # Task 3 runtime projection: prepared message data and its dispatch/accepted

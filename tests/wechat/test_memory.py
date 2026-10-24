@@ -9,7 +9,6 @@ from pydantic import ValidationError
 from app.agent_runtime_router import CodexCommandFactory, RoutedCodexExecutionError
 from app.store import AutoReplyStore
 from app.business_candidate_storage import update_business_candidate
-from app.task12_storage import task12_projection
 from app.wechat.memory import (
     CodexMemoryExtractionRunner,
     CodexMemoryWriteBackend,
@@ -18,6 +17,7 @@ from app.wechat.memory import (
     WechatMemoryWriter,
 )
 from app.wechat.memory_import import CodexMemoryRecallMatcher, DurableMemoryMatch
+from tests.test_wechat_import_native import AssembledTaskStore
 from app.codex_memory_write import CodexMemoryWriteFailed
 from app.wechat.memory_writer import MEMORY_ID_CODEC
 from app.wechat.models import WechatMessage
@@ -55,7 +55,7 @@ class CallbackRouted:
 def extraction_runner(tmp_path, callback):
     return CodexMemoryExtractionRunner(
         tmp_path,
-        store=AutoReplyStore(tmp_path / "extraction-runtime.sqlite3"),
+        store=AssembledTaskStore(tmp_path / "extraction-runtime.sqlite3"),
         routed_execution=CallbackRouted(callback),
     )
 
@@ -63,7 +63,7 @@ def extraction_runner(tmp_path, callback):
 def recall_matcher(tmp_path, callback):
     return CodexMemoryRecallMatcher(
         tmp_path,
-        store=AutoReplyStore(tmp_path / "recall-runtime.sqlite3"),
+        store=AssembledTaskStore(tmp_path / "recall-runtime.sqlite3"),
         routed_execution=CallbackRouted(callback),
     )
 
@@ -840,7 +840,7 @@ def test_codex_extraction_runner_parses_batch_envelope_and_forbids_write(tmp_pat
 def test_codex_extraction_creates_parent_before_routed_invocation(
     tmp_path,
 ):
-    store = AutoReplyStore(tmp_path / "wechat-routed.sqlite3")
+    store = AssembledTaskStore(tmp_path / "wechat-routed.sqlite3")
     calls = []
     payload = {"candidates": [candidate("durable fact", category="fact").model_dump()]}
 
@@ -850,9 +850,9 @@ def test_codex_extraction_creates_parent_before_routed_invocation(
             job_id = int(kwargs["workload_key"].rsplit(":", 1)[1])
             with store._connect() as db:
                 job = db.execute(
-                    f"select status from ({task12_projection('wechat_memory_import_jobs')}) where id=?",
-                    (job_id,),
+                    "select kind,status from tasks where id=?", (job_id,)
                 ).fetchone()
+            assert job["kind"] == "wechat_import"
             assert job["status"] == "running"
             return SimpleNamespace(
                 value=kwargs["parser"](json.dumps(payload, ensure_ascii=False)),
@@ -879,7 +879,7 @@ def test_codex_extraction_creates_parent_before_routed_invocation(
     command = built_factory_command(calls[0]["command_factory"], tmp_path)
     assert "--dangerously-bypass-approvals-and-sandbox" not in command
     with store._connect() as db:
-        job = db.execute(f"select status from ({task12_projection('wechat_memory_import_jobs')})").fetchone()
+        job = db.execute("select status from tasks where kind='wechat_import'").fetchone()
     assert job["status"] == "completed"
 
 
@@ -961,7 +961,7 @@ def test_recall_matcher_uses_one_exact_query_per_candidate(tmp_path):
     assert "--dangerously-bypass-approvals-and-sandbox" not in command
     with matcher.store._connect() as db:
         jobs = db.execute(
-            f"select status from ({task12_projection('wechat_memory_import_jobs')}) order by id"
+            "select status from tasks where kind='wechat_import' order by id"
         ).fetchall()
     assert [job["status"] for job in jobs] == ["completed", "completed"]
 

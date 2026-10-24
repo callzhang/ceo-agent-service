@@ -1,10 +1,7 @@
 """Explicit historical input compaction; native-copy storage is retired."""
 
 from __future__ import annotations
-from app.task_storage import task_id_expression
-from app.task20_definitions import task20_column, task20_projection
-from app.task8_storage import register_task8_functions, task8_set_parts
-from app.task12_storage import task12_projection, task12_set_parts
+from app.task8_storage import register_task8_functions
 
 import argparse
 import json
@@ -16,8 +13,8 @@ from app.store import AutoReplyStore, REPLY_TASK_CURRENT_SQL
 from app.action_storage import REPLY_ATTEMPT_COMMON_SQL
 
 
-REPLY_TASK_INPUT_SQL = task20_projection('reply_task_inputs')
-WORK_SUMMARY_INPUT_SQL = task20_projection('work_summary_inputs')
+REPLY_TASK_INPUT_SQL = "select id,task_id,trigger_text,trigger_message_json,input_provenance_json,input_compacted from task_inputs"
+WORK_SUMMARY_INPUT_SQL = "select t.id,t.status,w.payload_json,w.source_created_at,w.body_sha256,w.body_bytes,w.body_compacted from tasks t join work_summary_inputs w on w.task_id=t.id where t.kind='work_summary'"
 
 
 def compact_done_email_classification_inputs(database: Path) -> dict[str, int]:
@@ -34,19 +31,20 @@ def compact_done_email_classification_inputs(database: Path) -> dict[str, int]:
         register_task8_functions(db)
         db.execute("begin immediate")
         rows = db.execute(
-            f"select task_id, input_json from ({task12_projection('email_agent_classification_tasks')}) "
-            "where status='done' and json_extract(input_json, '$.input_compacted') is not 1 "
-            "order by task_id"
+            "select i.task_id, i.input_json from email_classification_inputs i "
+            "join tasks t on t.id=i.task_id "
+            "where t.kind='email_classification' and t.status='done' "
+            "and json_extract(i.input_json, '$.input_compacted') is not 1 "
+            "order by i.task_id"
         ).fetchall()
         for row in rows:
             compact = EmailClassificationTaskAdapter.compact_done_input_json(
                 row["input_json"]
             )
             updated = db.execute(
-                f"update tasks set {task12_set_parts('email_agent_classification_tasks', {}, update_sql={'input_json': '?'}).sql} "
-                f"where record_type='email_agent_classification_tasks' and {task20_column('email_agent_classification_tasks', 'task_id')}=? "
-                f"and {task20_column('email_agent_classification_tasks', 'status')}='done'",
-                (compact, row["task_id"]),
+                "update email_classification_inputs set input_json=? where task_id=? "
+                "and exists(select 1 from tasks where id=? and kind='email_classification' and status='done')",
+                (compact, row["task_id"], row["task_id"]),
             ).rowcount
             counts["tasks_compacted"] += updated
             counts["logical_bytes_removed"] += updated * max(
@@ -136,8 +134,10 @@ def compact_terminal_work_summary_inputs(database: Path) -> dict[str, int]:
             payload = row["payload_json"]
             source_created_at, digest, body_bytes = AutoReplyStore._work_summary_input_provenance(payload)
             db.execute(
-                f"""update tasks set {task8_set_parts('work_summary_inputs', {}, update_sql={'payload_json': "'{}'", 'source_created_at': '?', 'body_sha256': '?', 'body_bytes': '?', 'body_compacted': '1'}).sql} where record_type='work_summary_inputs' and id={task_id_expression('work_summary_inputs', '?')} and {task20_column('work_summary_inputs', 'status')} in ('done', 'skipped') and {task20_column('work_summary_inputs', 'body_compacted')}=0""",
-                (source_created_at, digest, body_bytes, row["id"]),
+                """update work_summary_inputs set payload_json='{}',source_created_at=?,
+                   body_sha256=?,body_bytes=?,body_compacted=1 where task_id=? and body_compacted=0
+                   and exists(select 1 from tasks where id=? and kind='work_summary' and status in ('done','skipped'))""",
+                (source_created_at, digest, body_bytes, row["id"], row["id"]),
             )
             counts["rows_compacted"] += 1
             counts["logical_bytes_removed"] += max(0, body_bytes - 2)

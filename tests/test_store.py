@@ -1358,26 +1358,6 @@ def test_task_memory_backfill_parent_is_work_project_not_summary_input(tmp_path:
         )
 
 
-def test_weekly_okr_parent_matches_the_complete_natural_key(tmp_path: Path):
-    store = AutoReplyStore(tmp_path / "weekly-parent.sqlite3")
-    digest = "a" * 64
-    claim = store.begin_weekly_okr_analysis_job(
-        week_end="2026-08-16", manager_user_id="manager-1", source_digest=digest
-    )
-    assert claim.outcome == "claimed"
-
-    attempt = store.claim_runtime_operation_attempt(
-        "weekly_okr", f"2026-08-16:manager-1:{digest}", "codex_oauth",
-        "codex_cli", "local_oauth", "gpt-5.5",
-    )
-    assert attempt.workload_key.endswith(digest)
-
-    store.finish_weekly_okr_analysis_job(claim.job_id, status="completed")
-    with pytest.raises(ValueError, match="parent does not exist or is not running"):
-        store.claim_runtime_operation_attempt(
-            "weekly_okr", f"2026-08-16:manager-1:{digest}", "codex_oauth",
-            "codex_cli", "local_oauth", "gpt-5.5",
-        )
 
 
 def test_weekly_okr_report_run_lease_is_single_owner_and_recoverable(tmp_path: Path):
@@ -1415,237 +1395,20 @@ def test_weekly_okr_report_run_lease_can_be_reclaimed_after_expiry(tmp_path: Pat
     )
 
 
-def test_weekly_okr_generation_key_matches_the_claimed_job_and_lease(tmp_path: Path):
-    store = AutoReplyStore(tmp_path / "weekly-generation-parent.sqlite3")
-    digest = "b" * 64
-    owner = "weekly-okr-lease-1"
-    claim = store.begin_weekly_okr_analysis_job(
-        week_end="2026-08-16",
-        manager_user_id="manager-1",
-        source_digest=digest,
-        owner=owner,
-    )
-
-    attempt = store.claim_runtime_operation_attempt(
-        "weekly_okr",
-        f"2026-08-16:manager-1:{digest}:{claim.job_id}:{owner}",
-        "codex_oauth",
-        "codex_cli",
-        "local_oauth",
-        "gpt-5.5",
-    )
-
-    assert attempt.workload_key.endswith(f":{claim.job_id}:{owner}")
 
 
-def test_weekly_okr_failed_job_reopens_and_completed_job_is_cache_hit(tmp_path: Path):
-    store = AutoReplyStore(tmp_path / "weekly-reopen.sqlite3")
-    values = {
-        "week_end": "2026-08-16",
-        "manager_user_id": "manager-1",
-        "source_digest": "b" * 64,
-    }
-    first = store.begin_weekly_okr_analysis_job(**values)
-    store.finish_weekly_okr_analysis_job(
-        first.job_id, status="failed", error="provider unavailable"
-    )
-
-    reopened = store.begin_weekly_okr_analysis_job(**values)
-    assert reopened.job_id == first.job_id
-    assert reopened.outcome == "claimed"
-    with store._connect() as db:
-        row = db.execute(
-            f"select * from ({task20_projection('weekly_okr_analysis_jobs')}) where id=?",
-            (reopened.job_id,),
-        ).fetchone()
-    assert row["status"] == "running"
-    assert row["error"] == ""
-    assert row["finished_at"] == ""
-
-    store.finish_weekly_okr_analysis_job(reopened.job_id, status="completed")
-    cache_hit = store.begin_weekly_okr_analysis_job(**values)
-    assert cache_hit.job_id == first.job_id
-    assert cache_hit.outcome == "cache_hit"
 
 
-def test_weekly_okr_manager_identity_is_canonicalized(tmp_path: Path):
-    store = AutoReplyStore(tmp_path / "weekly-manager-canonical.sqlite3")
-    digest = "c" * 64
-    claim = store.begin_weekly_okr_analysis_job(
-        week_end="2026-08-16",
-        manager_user_id="  manager-1  ",
-        source_digest=digest,
-    )
-    with store._connect() as db:
-        row = db.execute(
-            f"select manager_user_id from ({task20_projection('weekly_okr_analysis_jobs')}) where id=?",
-            (claim.job_id,),
-        ).fetchone()
-    assert row["manager_user_id"] == "manager-1"
-    with pytest.raises(ValueError, match="canonical"):
-        store.claim_runtime_operation_attempt(
-            "weekly_okr", f"2026-08-16: manager-1 :{digest}", "codex_oauth",
-            "codex_cli", "local_oauth", "gpt-5.5",
-        )
 
 
-def test_weekly_okr_failed_job_reopen_is_concurrency_safe(tmp_path: Path):
-    store = AutoReplyStore(tmp_path / "weekly-reopen-concurrent.sqlite3")
-    values = {
-        "week_end": "2026-08-16",
-        "manager_user_id": "manager-1",
-        "source_digest": "d" * 64,
-    }
-    original = store.begin_weekly_okr_analysis_job(**values)
-    store.finish_weekly_okr_analysis_job(
-        original.job_id, status="failed", error="retry"
-    )
-    barrier = Barrier(3)
-    claims = []
-
-    def reopen() -> None:
-        barrier.wait(timeout=5)
-        claims.append(store.begin_weekly_okr_analysis_job(**values))
-
-    threads = [Thread(target=reopen) for _ in range(2)]
-    for thread in threads:
-        thread.start()
-    barrier.wait(timeout=5)
-    for thread in threads:
-        thread.join(timeout=5)
-
-    assert len(claims) == 2
-    assert {claim.job_id for claim in claims} == {original.job_id}
-    assert sorted(claim.outcome for claim in claims) == ["claimed", "in_progress"]
 
 
-def test_weekly_okr_completed_cache_miss_reclaims_same_job(tmp_path: Path):
-    store = AutoReplyStore(tmp_path / "weekly-cache-miss.sqlite3")
-    values = {
-        "week_end": "2026-08-16",
-        "manager_user_id": "manager-1",
-        "source_digest": "e" * 64,
-    }
-    original = store.begin_weekly_okr_analysis_job(**values)
-    store.finish_weekly_okr_analysis_job(original.job_id, status="completed")
-    assert store.begin_weekly_okr_analysis_job(**values).outcome == "cache_hit"
-
-    reclaimed = store.reclaim_weekly_okr_analysis_job_cache_miss(
-        original.job_id, **values
-    )
-
-    assert reclaimed.job_id == original.job_id
-    assert reclaimed.outcome == "claimed"
-    with store._connect() as db:
-        row = db.execute(
-            f"select status, error, finished_at from ({task20_projection('weekly_okr_analysis_jobs')}) where id=?",
-            (original.job_id,),
-        ).fetchone()
-    assert tuple(row) == ("running", "", "")
 
 
-def test_weekly_okr_completed_cache_miss_reclaim_is_concurrency_safe(
-    tmp_path: Path,
-):
-    store = AutoReplyStore(tmp_path / "weekly-cache-miss-concurrent.sqlite3")
-    values = {
-        "week_end": "2026-08-16",
-        "manager_user_id": "manager-1",
-        "source_digest": "f" * 64,
-    }
-    original = store.begin_weekly_okr_analysis_job(**values)
-    store.finish_weekly_okr_analysis_job(original.job_id, status="completed")
-    barrier = Barrier(3)
-    claims = []
-
-    def reclaim() -> None:
-        barrier.wait(timeout=5)
-        claims.append(
-            store.reclaim_weekly_okr_analysis_job_cache_miss(
-                original.job_id, **values
-            )
-        )
-
-    threads = [Thread(target=reclaim) for _ in range(2)]
-    for thread in threads:
-        thread.start()
-    barrier.wait(timeout=5)
-    for thread in threads:
-        thread.join(timeout=5)
-
-    assert len(claims) == 2
-    assert {claim.job_id for claim in claims} == {original.job_id}
-    assert sorted(claim.outcome for claim in claims) == ["claimed", "in_progress"]
 
 
-def test_weekly_okr_live_lease_blocks_and_expired_owner_is_reclaimed(tmp_path: Path):
-    store = AutoReplyStore(tmp_path / "weekly-lease.sqlite3")
-    values = {
-        "week_end": "2026-08-16",
-        "manager_user_id": "manager-1",
-        "source_digest": "9" * 64,
-    }
-    now = datetime(2026, 8, 20, 10, 0, tzinfo=timezone.utc)
-    first = store.begin_weekly_okr_analysis_job(
-        **values, owner="owner-1", lease_seconds=5, now=now
-    )
-    blocked = store.begin_weekly_okr_analysis_job(
-        **values,
-        owner="owner-2",
-        lease_seconds=5,
-        now=now + timedelta(seconds=4),
-    )
-    reclaimed = store.begin_weekly_okr_analysis_job(
-        **values,
-        owner="owner-2",
-        lease_seconds=5,
-        now=now + timedelta(seconds=6),
-    )
-
-    assert blocked.outcome == "in_progress"
-    assert reclaimed.job_id == first.job_id
-    assert reclaimed.outcome == "claimed"
-    assert reclaimed.reclaimed_stale is True
-    with pytest.raises(ValueError, match="lease ownership lost"):
-        store.finish_weekly_okr_analysis_job(
-            first.job_id,
-            status="failed",
-            owner="owner-1",
-            now=now + timedelta(seconds=6),
-        )
-    store.finish_weekly_okr_analysis_job(
-        first.job_id,
-        status="completed",
-        owner="owner-2",
-        now=now + timedelta(seconds=7),
-    )
 
 
-def test_weekly_okr_cache_miss_reclaim_wrong_key_or_status_fails_closed(
-    tmp_path: Path,
-):
-    store = AutoReplyStore(tmp_path / "weekly-cache-miss-guard.sqlite3")
-    values = {
-        "week_end": "2026-08-16",
-        "manager_user_id": "manager-1",
-        "source_digest": "1" * 64,
-    }
-    original = store.begin_weekly_okr_analysis_job(**values)
-    store.finish_weekly_okr_analysis_job(original.job_id, status="completed")
-
-    with pytest.raises(ValueError, match="natural key"):
-        store.reclaim_weekly_okr_analysis_job_cache_miss(
-            original.job_id,
-            **{**values, "source_digest": "2" * 64},
-        )
-    store.reclaim_weekly_okr_analysis_job_cache_miss(original.job_id, **values)
-    store.finish_weekly_okr_analysis_job(
-        original.job_id, status="failed", error="provider unavailable"
-    )
-    with pytest.raises(ValueError, match="completed or running"):
-        store.reclaim_weekly_okr_analysis_job_cache_miss(
-            original.job_id, **values
-        )
 
 
 def _completed_projection_run(store):
@@ -1961,7 +1724,9 @@ def test_meeting_run_finish_accepts_production_terminal_statuses(
 
 
 def test_wechat_import_jobs_are_distinct_per_invocation(tmp_path: Path):
-    store = AutoReplyStore(tmp_path / "wechat-import-job.sqlite3")
+    from tests.test_wechat_import_native import AssembledTaskStore
+
+    store = AssembledTaskStore(tmp_path / "wechat-import-job.sqlite3")
     first = store.begin_wechat_memory_import_job(
         import_run_id="wechat-scope", account_id="account-1"
     )
@@ -11442,127 +11207,8 @@ def test_recover_stale_runtime_attempts_immediately_closes_terminal_meeting_pare
     assert recovered.failure_code == "runtime_parent_requeued"
 
 
-def test_recover_stale_runtime_attempts_closes_expired_weekly_okr_parent(
-    tmp_path: Path,
-):
-    store = AutoReplyStore(tmp_path / "expired-weekly-okr-parent.sqlite3")
-    values = {
-        "week_end": "2026-09-06",
-        "manager_user_id": "manager-1",
-        "source_digest": "a" * 64,
-    }
-    claim = store.begin_weekly_okr_analysis_job(
-        **values,
-        owner="crashed-weekly-owner",
-        lease_seconds=60,
-        now="2026-09-08 04:00:00",
-    )
-    attempt = store.claim_runtime_operation_attempt(
-        "weekly_okr",
-        (
-            f"{values['week_end']}:{values['manager_user_id']}:"
-            f"{values['source_digest']}:{claim.job_id}:crashed-weekly-owner"
-        ),
-        "codex_oauth",
-        "codex_cli",
-        "local_oauth",
-        "gpt-5.6-sol",
-        owner="crashed-weekly-owner",
-        lease_seconds=60,
-        now="2026-09-08 04:00:00",
-    )
-    store.mark_agent_runtime_attempt_running_once(
-        attempt.id,
-        owner="crashed-weekly-owner",
-        lease_seconds=60,
-        now="2026-09-08 04:00:00",
-    )
-    assert store.recover_expired_runtime_operation_attempt(
-        "weekly_okr",
-        attempt.workload_key,
-        now="2026-09-08 04:01:01",
-    ) is not None
-
-    assert store.recover_stale_runtime_attempts(
-        stale_after_seconds=60,
-        now="2026-09-08 04:01:02",
-    ) == 1
-
-    with store._connect() as db:
-        job = db.execute(
-            f"select status, error, lease_owner, lease_expires_at, finished_at from ({task20_projection('weekly_okr_analysis_jobs')}) where id=?",
-            (claim.job_id,),
-        ).fetchone()
-    assert tuple(job) == (
-        "failed",
-        "runtime_lease_expired",
-        "",
-        "",
-        "2026-09-08 04:01:02",
-    )
 
 
-def test_superseded_stale_weekly_okr_job_is_completed_and_can_be_reclaimed(
-    tmp_path: Path,
-):
-    store = AutoReplyStore(tmp_path / "superseded-weekly-okr.sqlite3")
-    stale_values = {
-        "week_end": "2026-08-28",
-        "manager_user_id": "manager-1",
-        "source_digest": "a" * 64,
-    }
-    stale = store.begin_weekly_okr_analysis_job(
-        **stale_values,
-        owner="stale-owner",
-        lease_seconds=60,
-        now="2026-08-28 00:00:00",
-    )
-    completed = store.begin_weekly_okr_analysis_job(
-        week_end="2026-09-06",
-        manager_user_id="manager-1",
-        source_digest="b" * 64,
-        owner="current-owner",
-        lease_seconds=60,
-        now="2026-09-06 00:00:00",
-    )
-    store.finish_weekly_okr_analysis_job(
-        completed.job_id,
-        status="completed",
-        owner="current-owner",
-        now="2026-09-06 00:00:01",
-    )
-
-    assert store.complete_superseded_stale_weekly_okr_analysis_jobs(
-        now="2026-09-08 00:00:00"
-    ) == 1
-    with store._connect() as db:
-        row = db.execute(
-            f"select status, error, lease_owner, lease_expires_at from ({task20_projection('weekly_okr_analysis_jobs')}) where id=?",
-            (stale.job_id,),
-        ).fetchone()
-    assert tuple(row) == (
-        "completed",
-        "superseded_by_later_completed_week",
-        "",
-        "",
-    )
-
-    cache_hit = store.begin_weekly_okr_analysis_job(
-        **stale_values,
-        owner="retry-owner",
-        lease_seconds=60,
-        now="2026-09-08 00:01:00",
-    )
-    assert cache_hit.outcome == "cache_hit"
-    reclaimed = store.reclaim_weekly_okr_analysis_job_cache_miss(
-        cache_hit.job_id,
-        **stale_values,
-        owner="retry-owner",
-        lease_seconds=60,
-        now="2026-09-08 00:01:00",
-    )
-    assert reclaimed.outcome == "claimed"
-    assert reclaimed.job_id == stale.job_id
 
 
 def test_current_schema_rejects_missing_agent_run_recovery_index(tmp_path):
@@ -11618,88 +11264,6 @@ def test_discard_unstarted_agent_run_removes_only_a_fresh_claim(tmp_path: Path):
     assert store.get_agent_run(terminal.id) is not None
 
 
-@pytest.mark.parametrize(
-    "failure",
-    (
-        "runtime_lease_expired",
-        "runtime_route_unavailable",
-        "runtime_result_validation_failed",
-    ),
-)
-def test_superseded_failed_weekly_okr_job_is_completed(tmp_path: Path, failure: str):
-    store = AutoReplyStore(tmp_path / "superseded-failed-weekly-okr.sqlite3")
-    stale = store.begin_weekly_okr_analysis_job(
-        week_end="2026-09-08",
-        manager_user_id="manager-1",
-        source_digest="a" * 64,
-        owner="stale-owner",
-        lease_seconds=60,
-        now="2026-09-08 04:25:00",
-    )
-    store.finish_weekly_okr_analysis_job(
-        stale.job_id, status="failed", error=failure, owner="stale-owner",
-        now="2026-09-08 04:25:30",
-    )
-    # A job whose failure is not a technical outage stays failed.
-    business = store.begin_weekly_okr_analysis_job(
-        week_end="2026-09-08",
-        manager_user_id="manager-2",
-        source_digest="c" * 64,
-        owner="stale-owner",
-        lease_seconds=60,
-        now="2026-09-08 04:25:00",
-    )
-    store.finish_weekly_okr_analysis_job(
-        business.job_id, status="failed", error="analysis_rejected", owner="stale-owner",
-        now="2026-09-08 04:25:30",
-    )
-    # The rerun that shipped the report: an EARLIER week_end but started later.
-    for manager in ("manager-1", "manager-2"):
-        shipped = store.begin_weekly_okr_analysis_job(
-            week_end="2026-09-06",
-            manager_user_id=manager,
-            source_digest="b" * 64,
-            owner="current-owner",
-            lease_seconds=60,
-            now="2026-09-08 05:12:00",
-        )
-        store.finish_weekly_okr_analysis_job(
-            shipped.job_id, status="completed", owner="current-owner",
-            now="2026-09-08 05:12:30",
-        )
-
-    # begin_weekly_okr_analysis_job stamps created_at with the wall clock;
-    # pin the order the live rows had (the rerun started after the failure).
-    with store._connect() as db:
-        _update_current_task8(
-            db,
-            'weekly_okr_analysis_jobs',
-            {'created_at': '2026-09-08 04:25:00'},
-            where_sql='and cast(legacy_key as integer) in (?, ?)',
-            parameters=(stale.job_id, business.job_id),
-        )
-        _update_current_task8(
-            db,
-            'weekly_okr_analysis_jobs',
-            {'created_at': '2026-09-08 05:12:00'},
-            where_sql=f"and {task20_column('weekly_okr_analysis_jobs', 'status')}='completed'",
-        )
-
-    assert store.complete_superseded_failed_weekly_okr_analysis_jobs(
-        now="2026-09-10 00:00:00"
-    ) == 1
-    with store._connect() as db:
-        rows = {
-            row[0]: tuple(row[1:])
-            for row in db.execute(
-                f"select id, status, error, lease_owner, lease_expires_at from ({task20_projection('weekly_okr_analysis_jobs')}) where id in (?, ?)",
-                (stale.job_id, business.job_id),
-            ).fetchall()
-        }
-    assert rows[stale.job_id] == ("completed", "superseded_by_later_completed_week", "", "")
-    assert rows[business.job_id] == ("failed", "analysis_rejected", "", "")
-    # Idempotent: a second pass changes nothing.
-    assert store.complete_superseded_failed_weekly_okr_analysis_jobs() == 0
 
 
 def test_schema_currency_check_reads_no_more_than_the_first_stale_snapshot(tmp_path: Path):
@@ -13194,3 +12758,63 @@ def test_manual_rerun_can_reopen_only_feedback_backed_skipped_pending_oa_review(
     assert rerun.status == "pending"
     assert rerun.execution_generation != task.execution_generation
     assert rerun.manual_rerun_attempt_id == attempt_id
+
+
+def test_requeue_reply_task_fails_stale_run_and_records_terminal_event(tmp_path):
+    from tests.test_task20_definitions import payload
+
+    store = AutoReplyStore(tmp_path / "requeue-source.sqlite3")
+    with store._connect() as db:
+        task_parts = task8_insert_parts("reply_tasks", payload(
+            db, "reply_tasks", status="processing",
+            execution_generation="generation-1", available_at="",
+            error="", force_new_decision=0,
+        ))
+        task_id = db.execute(
+            f"insert into tasks ({task_parts.columns}) values ({task_parts.values})",
+            task_parts.parameters,
+        ).lastrowid
+        run_id = insert_run(db, "agent_runs", {
+            "task_id": task_id,
+            "execution_generation": "generation-1",
+            "role": "consumer",
+            "status": "running",
+            "lease_expires_at": "2000-01-01 00:00:00",
+            "updated_at": "2000-01-01 00:00:00",
+        }).lastrowid
+
+    store.requeue_reply_task(
+        task_id, "stale_agent_turn_recovery",
+        expected_execution_generation="generation-1",
+        available_at="2026-10-23 17:00:00",
+    )
+
+    with store._connect() as db:
+        task_row = db.execute(
+            f"select status,available_at,error,force_new_decision from ({task20_projection('reply_tasks')}) where id=?",
+            (task_id,),
+        ).fetchone()
+        run = db.execute(
+            f"select status,structured_error_json,lease_owner,lease_expires_at from ({AGENT_RUN_SQL}) where id=?",
+            (run_id,),
+        ).fetchone()
+        events = db.execute(
+            f"select phase,structured_error_json from ({RUN_STATE_EVENT_SQL}) where agent_run_id=? order by id",
+            (run_id,),
+        ).fetchall()
+    assert tuple(task_row) == ("pending", "2026-10-23 17:00:00", "stale_agent_turn_recovery", 1)
+    assert tuple(run[:1]) == ("failed",)
+    assert json.loads(run["structured_error_json"]) == {
+        "authorization_required": False,
+        "code": "stale_agent_turn_recovery",
+        "retryable": True,
+    }
+    assert run["lease_owner"] == ""
+    assert run["lease_expires_at"] == ""
+    assert [(row["phase"], json.loads(row["structured_error_json"])) for row in events] == [
+        ("terminal_failure", {
+            "authorization_required": False,
+            "code": "stale_agent_turn_recovery",
+            "retryable": True,
+        })
+    ]

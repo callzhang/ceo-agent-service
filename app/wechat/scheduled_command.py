@@ -5,6 +5,7 @@ from __future__ import annotations
 from collections.abc import Callable
 import errno
 
+from app.agent_cron.commands import ServiceCommandResult
 from app.config import wechat_reader_enabled
 from app.wechat.reader_ipc import ReaderIpcError
 from app.wechat.service import (
@@ -13,6 +14,10 @@ from app.wechat.service import (
     ready_account_state,
     run_produce_once,
 )
+
+
+def _unknown_result(summary: str) -> ServiceCommandResult:
+    return ServiceCommandResult(summary=summary, producer_counts=None, complete=False)
 
 
 WECHAT_READER_COMPONENT = "wechat.reader"
@@ -46,12 +51,12 @@ class WechatProduceOnceCommand:
         self._consecutive_reader_failures = 0
         self._reported = False
 
-    def __call__(self) -> str:
+    def __call__(self) -> ServiceCommandResult:
         if not wechat_reader_enabled():
-            return "wechat produce-once skipped: reader disabled"
+            return _unknown_result("wechat produce-once skipped: reader disabled")
         state = ready_account_state(self._store)
         if state is None:
-            return "wechat produce-once skipped: no ready WeChat account"
+            return _unknown_result("wechat produce-once skipped: no ready WeChat account")
         account = account_from_state(state)
         if self._reader is None:
             self._reader = self._reader_factory()
@@ -76,15 +81,17 @@ class WechatProduceOnceCommand:
         self._reported = False
         self._store.resolve_errors_recovered_by_wechat_reader()
         self._store.set_service_health_component(WECHAT_READER_COMPONENT, state="healthy")
-        return f"wechat produce-once queued={queued}"
+        return ServiceCommandResult(
+            f"wechat produce-once queued={queued}", (("queued", queued),), True,
+        )
 
-    def _permission_required(self, detail: str) -> str:
+    def _permission_required(self, detail: str) -> ServiceCommandResult:
         if not self._reported:
             self._store.record_error("wechat", "", WECHAT_DATA_PERMISSION_REQUIRED, detail)
             self._reported = True
-        return "wechat produce-once paused: data permission required"
+        return _unknown_result("wechat produce-once paused: data permission required")
 
-    def _reader_unavailable(self, exc: ReaderIpcError) -> str:
+    def _reader_unavailable(self, exc: ReaderIpcError) -> ServiceCommandResult:
         self._consecutive_reader_failures += 1
         if (
             self._consecutive_reader_failures >= READER_RESTART_AFTER_FAILURES
@@ -101,4 +108,4 @@ class WechatProduceOnceCommand:
                 f"WeChat reader unavailable; producer retrying automatically: {exc}",
             )
             self._reported = True
-        return f"wechat produce-once reader unavailable: {exc}"
+        return _unknown_result(f"wechat produce-once reader unavailable: {exc}")

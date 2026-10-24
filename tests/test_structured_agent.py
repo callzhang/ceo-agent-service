@@ -118,6 +118,7 @@ def test_structured_runner_routes_processing_request_with_standard_runtime(tmp_p
         }
     )
     assert result.codex_session_id == "structured-session"
+    assert result.attempt_id == 1
 
 
 def test_parse_agent_envelope_rejects_legacy_okr_review_result():

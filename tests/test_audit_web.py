@@ -7549,6 +7549,9 @@ def test_history_needs_human_item_does_not_activate_unreviewed_legacy_choices(tm
     assert "1. 同意当前方案" not in html
     assert "2. 要求补充材料" not in html
     assert f'action="/attempts/{attempt_id}/human-decision?return_to=/history"' not in html
+    # This fixture has no Audit-approved persisted question. The native query
+    # must still compile and preserve that empty result.
+    assert audit_web_module._human_decision_attention_rows(store) == []
     with store._connect() as db:
         update_action(db, "reply_attempts", attempt_id, {"reviewed_at": "2026-08-11 05:00:01"})
     decisions = audit_web_module._human_decision_attention_rows(store)

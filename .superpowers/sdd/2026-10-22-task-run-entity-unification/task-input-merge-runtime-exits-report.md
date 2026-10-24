@@ -1,0 +1,31 @@
+# Task/Input merge and remaining runtime exits — Unit C
+
+BASE: `479bfd68448284711002c75df0abe1dc70c3d958`
+Implementation tree (code, tests, behavior docs, and report before self-identification): `6496c10161cc5f2d523f9636afa5406b04934908`
+
+This is a local, unactivated Task/Run candidate. Fix round 1/5 is based on `08180873047b5080f847b87a215355282ce1c484`; the assembled Store constructor, global manifest, History/Attention/session-search publication, production checkout, `main`, and provider/runtime activation were not changed.
+
+## Native owner changes
+
+- `AutoReplyStore.replace_pending_single_chat_reply_task_trigger`, reached by the DingTalk worker and WeChat producer, now selects and writes through `tasks`, `task_inputs`, `task_business_keys`, and native `runs`. It preserves the source newest-eligible pending/zero-attempt single-chat selection, exact unchanged test, generation/status/current-input CAS, supersession of running Runs for the selected generation, and the input-version count assignment after input movement and append. Existing Input IDs are moved intact. Business-key associations are retained; a collision already owned by the selected Task is coalesced, otherwise the existing key row is reassigned. The selected current key is retained (or derived as before), the incoming key is associated, and duplicate Tasks are retired in the same transaction. The selected Task's claimed Input and claimed version are not changed.
+- New TaskBusinessKey associations now receive the same `current_timestamp` already used by the merge transaction for `created_at` and `updated_at`. The native columns have no SQL default, while the source `business_object_tasks` writer relied on `current_timestamp`; leaving them NULL made an actual merged current-fact inverse fail its source NOT NULL checks. This uses the existing helper's timestamp arguments and does not change its nullable Meeting association contract.
+- `clear_agent_run_session` selects native Run owners joined to native Reply Tasks and clears only exact Task/generation/role/revision/attempt matches through Run CAS. It preserves the source UPDATE row count when a matching session is already empty. No source-shaped test-only API was retired.
+- The WeChat review approval/recording methods read and write delivery Actions by the public numeric Action ID (`cast(legacy_key as integer)`), hydrate Reply facts from the current TaskInput while retaining canonical Task identity, and check the exact Audit Run and Consumer parent chain. Review updates keep the source `ready_to_send` predicate; the unrelated evidence JSON CAS predicate was removed. In this model `run_adopted_reviews.id` remains its protocol/business identity and `audit_run_id` is the native Audit Run owner; those meanings are not conflated. Reject propagation now obtains the current conversation/message from native Task/Input before updating the existing Reply Attempt Action.
+
+## Focused evidence
+
+- RED/GREEN: the public/physical-ID fixture establishes that the former `actions.id = delivery_id` lookup returns no WeChat row when another Action's physical ID equals the delivery's public ID; the public-ID reader/writer test then passes with the public delivery intact. `pytest -q tests/test_store_task_entity_creator.py -k 'pending_single_chat_merge or clear_agent_run_session or native_wechat_review_reader_and_writer' --tb=short` — **9 passed, 90 deselected**. This includes existing success/rollback coverage, unchanged/no-eligible/newer-than-trigger/attempted/leased guards, simulated stale Task-generation CAS loss, and an already-empty matching Run session. The public review API is exercised with a persisted adopted Audit row whose public review ID differs from its native Audit Run ID. Approval, rejection, idempotent repeat, mismatched Audit result, parent mismatch, and physical-row isolation are checked.
+- `pytest -q tests/test_run_adoption_inverse.py -k reply_provenance_task_and_input_references_survive_two_portable_cycles --tb=short` — **1 passed, 10 deselected**. The existing assembled current-fact fixture now runs the actual merge against a migrated Task, then merges two native pending Tasks with multiple BusinessKeys, a claimed Input, and a retained duplicate Input identity. It verifies duplicate Task retirement, Input/key reassignment, current and claimed pointers, and version count before continuing the actual Task→Run→adoption inverse/reforward twice. Existing passive dispatcher claim facts, provenance references, and allocator/current-fact assertions remain in the same test. The test uses source fixture trigger time `time` unchanged in its lexical comparison, matching its source selector behavior.
+- `ruff check app/store.py tests/test_store_task_entity_creator.py tests/test_run_adoption_inverse.py` — passed.
+- `python -m compileall -q app/store.py tests/test_store_task_entity_creator.py tests/test_run_adoption_inverse.py` — passed.
+- `git diff --check` — passed.
+
+Caller evidence: `app/worker.py:3625` calls this merge method from DingTalk single-chat enqueue, and `app/wechat/producer.py:97` calls the same method for direct WeChat messages. The focused tests call the exact Store API both callers use. An attempted run of the older `tests/wechat/test_independent_audit_gate.py` fixtures failed at setup because they create a source-era store without native `task_inputs`; these old fixtures were not adapted or included as product evidence. No WeChat sender/provider was invoked.
+
+## Remaining boundaries
+
+This change does not port broader WeChat delivery claim/status/list/detail readers, shared History/Attention/session search, global manifest/constructor selection, public Email receipt reconciliation, generic dispatcher/other-family publication, or cold-process/full-copy/browser acceptance. These remain the separate final publication unit or later runtime acceptance gates. The existing frozen source factories and explicit migration-only identity maps remain unchanged. No audit, authorization, retry, cancellation, or reconciliation policy changed.
+
+## Review and commit
+
+The parent will perform the independent full `BASE..HEAD` SPEC and QUALITY review. This report records only the bounded implementation and focused checks above; it is not constructor, production, push, deployment, or release evidence.

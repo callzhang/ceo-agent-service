@@ -474,21 +474,12 @@ def test_direct_email_reply_claim_is_paused_and_counted_before_runtime(
     assert in_flight_work(store.path) == 1
 
 
-@pytest.fixture(scope="module")
-def previous_store_source(tmp_path_factory):
-    from tests.test_task_lifecycle_release import archived_source
-
-    return archived_source.__wrapped__(tmp_path_factory)
-
-
-def test_quiet_reads_supported_pre_lifecycle_publication_source(
-    previous_store_source, tmp_path
-):
-    from tests.test_task_lifecycle_release import seed
+def test_quiet_reads_supported_pre_lifecycle_publication_source(tmp_path):
+    from tests.test_task_run_entity_schema_release import _source_database
     from app.repository_updater import in_flight_work
 
-    path = tmp_path / "store19-7.db"
-    seed(previous_store_source, path)
+    path = tmp_path / "store21-1.db"
+    _source_database(path)
     assert in_flight_work(path) == 0
 
 

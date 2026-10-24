@@ -4,7 +4,7 @@ from pathlib import Path
 from app.agent_cron.models import ScheduledTaskSkillRef
 from app.scheduled_task_recovery import close_superseded_scheduled_reply_tasks
 from app.store import AutoReplyStore
-from app.task_storage import REPLY_TASK_SQL
+from app.store import NATIVE_REPLY_TASK_CURRENT_SQL
 from app.action_storage import REPLY_ATTEMPT_COMMON_SQL
 
 
@@ -91,15 +91,15 @@ def test_failed_agent_task_is_closed_after_service_command_migration(
     with store._connect() as db:
         db.execute(
             "update tasks set status='failed', error='codex_process_failed' "
-            "where record_type='reply_tasks' and trigger_message_id=?",
+            "where kind='reply' and id=(select task_id from task_inputs where trigger_message_id=?)",
             (scheduled_run.event_id,),
         )
         task_id = db.execute(
-            f"select id from ({REPLY_TASK_SQL}) where trigger_message_id=?",
+            "select t.id from tasks t join task_inputs i on i.task_id=t.id where t.kind='reply' and i.trigger_message_id=?",
             (scheduled_run.event_id,),
         ).fetchone()["id"]
         db.execute(
-            "update runs set dispatch_status='dispatched', execution_kind='reply_task', execution_id=? where record_type='scheduled_task_runs' and cast(legacy_key as integer)=?",
+            "update schedule_occurrences set dispatch_status='dispatched', execution_kind='reply_task', execution_id=? where id=?",
             (str(task_id), scheduled_run.id),
         )
 
@@ -113,7 +113,7 @@ def test_failed_agent_task_is_closed_after_service_command_migration(
     ) == 0
     with store._connect() as db:
         task_row = db.execute(
-            f"select status, error, recovery_code from ({REPLY_TASK_SQL}) "
+            f"select status, error, recovery_code from ({NATIVE_REPLY_TASK_CURRENT_SQL}) "
             "where trigger_message_id=?",
             (scheduled_run.event_id,),
         ).fetchone()

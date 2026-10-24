@@ -8,7 +8,6 @@ import sqlite3
 from dataclasses import dataclass
 
 from app.native_trajectory import read_native_result_stream
-from app.run_storage import RUNTIME_ATTEMPT_SQL
 
 
 @dataclass(frozen=True)
@@ -274,10 +273,79 @@ def task_project_value(ref: NativeStandaloneRef | None) -> dict | None:
 
 def latest_task_ref(db: sqlite3.Connection, run_id: int) -> NativeStandaloneRef | None:
     attempt = db.execute(
-        f"select runtime_kind, session_id, transcript_start, transcript_end from ({RUNTIME_ATTEMPT_SQL}) as agent_runtime_attempts where workload_kind='task' and (workload_key=? or workload_key like ?) and status='completed' order by id desc limit 1",
-        (str(run_id), f"{run_id}:decision_repair.%"),
+        "select runtime_kind,session_id,transcript_start,transcript_end "
+        "from runtime_attempts where parent_id=? and workload_kind='task' "
+        "and status='completed' order by id desc limit 1",
+        (run_id,),
     ).fetchone()
     return ref_from_attempt(attempt)
+
+
+def native_run_ref(
+    db: sqlite3.Connection, run_id: int, source_type: str,
+) -> NativeStandaloneRef | None:
+    """Resolve native child attempts by their native Run or Task identity."""
+    if source_type in {"task_agent_runs", "meeting_alignment_runs"}:
+        attempt = db.execute(
+            "select status,runtime_kind,session_id,transcript_start,transcript_end "
+            "from runtime_attempts where parent_id=? "
+            "order by (status='completed') desc,id desc limit 1", (run_id,),
+        ).fetchone()
+        if attempt is not None:
+            return ref_from_attempt(attempt) if attempt["status"] == "completed" else None
+    else:
+        run = db.execute(
+            "select r.task_id,r.session_id,r.transcript_start,r.transcript_end "
+            "from runs r join run_provenance p on p.run_id=r.id "
+            "where r.id=? and p.source_type='okr_review_runs'", (run_id,),
+        ).fetchone()
+        if run is None:
+            return None
+        parent_attempts = db.execute(
+            "select status,runtime_kind,session_id,transcript_start,transcript_end,"
+            "workload_kind,workload_key from runtime_attempts where parent_id=? order by id",
+            (run_id,),
+        ).fetchall()
+        if parent_attempts:
+            if len(parent_attempts) != 1:
+                return None
+            attempt = parent_attempts[0]
+            task_key = "" if run["task_id"] is None else str(run["task_id"])
+            if (attempt["status"] != "completed" or attempt["workload_kind"] != "structured"
+                    or not task_key or attempt["workload_key"] != task_key):
+                return None
+            return ref_from_attempt(attempt)
+
+        task_key = "" if run["task_id"] is None else str(run["task_id"])
+        if task_key:
+            exact = db.execute(
+                "select status,runtime_kind,session_id,transcript_start,transcript_end "
+                "from runtime_attempts where parent_id is null and workload_kind='structured' "
+                "and workload_key=? and session_id=? and transcript_start=? and transcript_end=? "
+                "order by (status='completed') desc,id desc limit 1",
+                (task_key, run["session_id"], run["transcript_start"], run["transcript_end"]),
+            ).fetchone()
+            if exact is not None:
+                return ref_from_attempt(exact) if exact["status"] == "completed" else None
+            any_task_attempt = db.execute(
+                "select 1 from runtime_attempts where workload_kind='structured' "
+                "and workload_key=? limit 1", (task_key,),
+            ).fetchone()
+            if any_task_attempt is not None:
+                return None
+        session_id = str(run["session_id"] or "")
+        start, end = int(run["transcript_start"] or 0), int(run["transcript_end"] or 0)
+        return NativeStandaloneRef("codex_cli", session_id, start, end) if session_id and end > start else None
+    if source_type == "task_agent_runs":
+        return None
+    run = db.execute(
+        "select session_id,transcript_start,transcript_end from runs where id=?", (run_id,),
+    ).fetchone()
+    if run is None:
+        return None
+    session_id = str(run["session_id"] or "")
+    start, end = int(run["transcript_start"] or 0), int(run["transcript_end"] or 0)
+    return NativeStandaloneRef("codex_cli", session_id, start, end) if session_id and end > start else None
 
 
 def latest_standalone_ref(
@@ -285,7 +353,9 @@ def latest_standalone_ref(
     legacy_row: sqlite3.Row | None = None,
 ) -> NativeStandaloneRef | None:
     attempt = db.execute(
-        f"select status, runtime_kind, session_id, transcript_start, transcript_end from ({RUNTIME_ATTEMPT_SQL}) as agent_runtime_attempts where workload_kind=? and workload_key=? order by (status='completed') desc, id desc limit 1",
+        "select status,runtime_kind,session_id,transcript_start,transcript_end "
+        "from runtime_attempts where workload_kind=? and workload_key=? "
+        "order by (status='completed') desc,id desc limit 1",
         (workload_kind, workload_key),
     ).fetchone()
     if attempt is None:
@@ -301,7 +371,10 @@ def exact_standalone_ref(
 ) -> NativeStandaloneRef | None:
     """Bind one stored run to its own completed native session and range."""
     attempt = db.execute(
-        f"select runtime_kind, session_id, transcript_start, transcript_end from ({RUNTIME_ATTEMPT_SQL}) as agent_runtime_attempts where workload_kind=? and workload_key=? and status='completed' and session_id=? and transcript_start=? and transcript_end=? order by id desc limit 1",
+        "select runtime_kind,session_id,transcript_start,transcript_end "
+        "from runtime_attempts where workload_kind=? and workload_key=? "
+        "and status='completed' and session_id=? and transcript_start=? "
+        "and transcript_end=? order by id desc limit 1",
         (
             workload_kind, workload_key, row["codex_session_id"],
             row["codex_transcript_start_line"], row["codex_transcript_end_line"],
@@ -310,7 +383,7 @@ def exact_standalone_ref(
     if attempt is not None:
         return ref_from_attempt(attempt)
     exists = db.execute(
-        f'select 1 from ({RUNTIME_ATTEMPT_SQL}) as agent_runtime_attempts where workload_kind=? and workload_key=? limit 1',
+        "select 1 from runtime_attempts where workload_kind=? and workload_key=? limit 1",
         (workload_kind, workload_key),
     ).fetchone()
     return legacy_codex_ref(row) if exists is None else None

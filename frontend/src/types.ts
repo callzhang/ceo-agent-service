@@ -4,7 +4,8 @@ export type TaskState =
   | "running"
   | "completed"
   | "stopped"
-  | "failed";
+  | "failed"
+  | "waiting_confirmation";
 
 export type TurnStatus = Exclude<TaskState, "idle">;
 

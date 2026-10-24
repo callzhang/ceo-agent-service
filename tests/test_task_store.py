@@ -1182,6 +1182,42 @@ def test_recent_single_chat_recovery_uses_task_activity_when_seen_row_is_old(
     assert [record.conversation_id for record in records] == ["cid-mina"]
 
 
+def test_recent_single_chat_recovery_ignores_compacted_task_json(tmp_path: Path):
+    store = _store(tmp_path)
+    store.upsert_conversation(
+        conversation_id="cid-compacted",
+        title="Compacted contact",
+        single_chat=True,
+        codex_session_id=None,
+    )
+    task_id = store.enqueue_reply_task(
+        conversation_id="cid-compacted",
+        conversation_title="Compacted contact",
+        single_chat=True,
+        trigger_message_id="msg-compacted",
+        trigger_create_time="2026-09-07 17:02:04",
+        trigger_sender="Contact",
+        trigger_text="old content",
+        trigger_message_json=json.dumps({"sender_user_id": "old-user"}),
+    )
+    assert task_id is not None
+    store.mark_seen("msg-compacted", "cid-compacted")
+    with store._connect() as db:
+        db.execute(
+            "update task_inputs set trigger_text='', trigger_message_json='', "
+            "input_compacted=1 where task_id=?",
+            (task_id,),
+        )
+
+    records = store.list_recent_single_chat_conversations(
+        "2000-01-01 00:00:00", limit=10,
+    )
+
+    assert [record.conversation_id for record in records] == ["cid-compacted"]
+    assert records[0].direct_user_id == ""
+    assert records[0].direct_open_dingtalk_id == ""
+
+
 def test_list_work_todo_dingtalk_links_filters_by_work_todo_before_limit(
     tmp_path: Path,
 ):

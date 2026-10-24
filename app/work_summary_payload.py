@@ -1,9 +1,7 @@
 """Versioned, lossless storage codec for work-summary input JSON."""
 
 from __future__ import annotations
-from app.task_storage import task_id_expression
-from app.task20_definitions import task20_column, task20_projection
-from app.task8_storage import register_task8_functions, task8_set_parts
+from app.task8_storage import register_task8_functions
 
 import argparse
 import json
@@ -13,7 +11,7 @@ from contextlib import closing
 from pathlib import Path
 
 
-WORK_SUMMARY_INPUT_SQL = task20_projection('work_summary_inputs')
+WORK_SUMMARY_INPUT_SQL = "select t.id, t.status, w.payload_json from tasks t join work_summary_inputs w on w.task_id=t.id where t.kind='work_summary'"
 
 _MAGIC = b"\x00WSI1"
 _COMPRESSION_LEVEL = 6
@@ -84,8 +82,9 @@ def migrate_work_summary_payloads(
                     if stored == raw:
                         continue
                     cursor = db.execute(
-                        f"""update tasks set {task8_set_parts('work_summary_inputs', {}, update_sql={'payload_json': '?'}).sql} where record_type='work_summary_inputs' and id={task_id_expression('work_summary_inputs', '?')} and {task20_column('work_summary_inputs', 'payload_json')}=?""",
-                        (encoded, row_id, current),
+                        """update work_summary_inputs set payload_json=? where task_id=? and payload_json=? and exists(
+                           select 1 from tasks where id=? and kind='work_summary' and status not in ('done','skipped'))""",
+                        (encoded, row_id, current, row_id),
                     )
                     if cursor.rowcount:
                         counts["compressed"] += 1

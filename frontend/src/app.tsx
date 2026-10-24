@@ -175,7 +175,7 @@ function mergeResourcePage(current: Timeline, incoming: Timeline, kind: Resource
   };
 }
 
-const turnStatuses: readonly TurnStatus[] = ["queued", "running", "completed", "stopped", "failed"];
+const turnStatuses: readonly TurnStatus[] = ["queued", "running", "completed", "stopped", "failed", "waiting_confirmation"];
 const activeTurnStatuses: readonly TurnStatus[] = ["queued", "running"];
 
 function statusFromEvent(event: WorkbenchEvent): TurnStatus | null {

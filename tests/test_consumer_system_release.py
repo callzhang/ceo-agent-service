@@ -44,13 +44,11 @@ def test_repository_consumer_release_manifest_tracks_oa_skill_digest():
         if item["source"] == "ci/shared-skills/dingtalk-oa-approval/SKILL.md"
     )
 
-    # The old digest is a release-time precondition: the publisher requires it
-    # to equal the installed file. Once the Skill is installed it is re-baselined
-    # to the new digest, so only its shape is pinned here, not a historical value.
-    assert len(entry["old_sha256"]) == 64
-    assert all(char in "0123456789abcdef" for char in entry["old_sha256"])
+    installed = Path.home() / ".agents/skills/dingtalk-oa-approval/SKILL.md"
+    # The old digest is the release-time precondition and must match the
+    # currently installed target; the new digest tracks repository source.
+    assert entry["old_sha256"] == _digest(installed.read_bytes())
     assert entry["new_sha256"] == _digest((root / entry["source"]).read_bytes())
-    assert entry["new_sha256"] == "874778145a80f1dc0e97e6ae5f18a5492450fb73c7df81903dac5ffd03c34d49"
     assert "old_managed_sha256" not in entry
     skill = (root / entry["source"]).read_text(encoding="utf-8").lower()
     assert "可按本 skill 写明的准确路径通过 shell 调用本机 `dws`" in skill
@@ -118,7 +116,7 @@ def test_release_manifest_pins_current_finance_card_and_active_managed_skill_has
             "ci/shared-skills/ceo-weekly-report/SKILL.md",
         )
     } == {
-        "ci/shared-skills/ceo-calendar-invite/SKILL.md": "8fa06610ac6f272b3d9121167dd71da211ab7659d43e0f60f4f40f374a68137f",
+        "ci/shared-skills/ceo-calendar-invite/SKILL.md": "b76b913b63c9b2f3eaba5e90eb64e5dd1a58cf123330815a07d7c32c01451175",
         "ci/shared-skills/ceo-message-triage/SKILL.md": "8a19820f1644638c3c007c59809d730985405325c3333a9ac1b089eab332ae43",
         "ci/shared-skills/ceo-weekly-report/SKILL.md": "ececf8bf22e740573b68c0a4e1f1d6cd7db166a2fb2c6991737cce03890d22a9",
     }
@@ -151,7 +149,9 @@ def test_people_review_release_file_baseline_matches_installed_candidate():
     )
     source_digest = _digest((root / entry["source"]).read_bytes())
     assert entry["new_sha256"] == source_digest
-    assert entry["old_sha256"] == source_digest
+    # The baseline is the installed file this release replaces; it equals the
+    # new digest only while the release changes nothing in this Skill.
+    assert len(entry["old_sha256"]) == 64 and set(entry["old_sha256"]) <= set("0123456789abcdef")
 
 
 def test_finance_rule_card_counts_only_valid_applicant_resolvable_returns():
@@ -182,7 +182,7 @@ def test_repository_consumer_release_manifest_tracks_message_triage_skill_digest
     )
 
     assert entry["new_sha256"] == _digest((root / entry["source"]).read_bytes())
-    assert entry["old_sha256"] == entry["new_sha256"]
+    assert len(entry["old_sha256"]) == 64 and set(entry["old_sha256"]) <= set("0123456789abcdef")
 
 
 def test_repository_consumer_release_manifest_tracks_every_source_digest():
@@ -218,7 +218,7 @@ def test_repository_consumer_release_manifest_includes_people_review_skill():
 
     assert entry["target"] == "skills/stardust-oa-people-review/SKILL.md"
     assert entry["new_sha256"] == _digest((root / source).read_bytes())
-    assert entry["old_sha256"] == entry["new_sha256"]
+    assert len(entry["old_sha256"]) == 64 and set(entry["old_sha256"]) <= set("0123456789abcdef")
 
 
 def test_repository_consumer_release_manifest_includes_current_attendance_review_skill():

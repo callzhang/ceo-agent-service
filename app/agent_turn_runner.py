@@ -1845,7 +1845,7 @@ class AgentTurnProcess(Generic[ResultT]):
             run.role is not AgentRole.CONSUMER
             or persisted_attempt is None
             or persisted_attempt != failed_attempt
-            or persisted_attempt.agent_run_id != run.id
+            or persisted_attempt.parent_id != run.id
             or persisted_attempt.route_name != route.name
             or persisted_attempt.status != "failed"
             or persisted_attempt.session_mode != RuntimeAttemptSessionMode.RESUME

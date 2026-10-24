@@ -1,40 +1,95 @@
 from contextlib import contextmanager
+from types import SimpleNamespace
 import pytest
 
 from app import history_types
-from app.action_storage import _action_path, _reply_variant_for, insert_action, update_action
-from app.run_storage import insert_run
-from app.store import AutoReplyStore, OperationLog, REPLY_TASK_SQL
-from app.task8_storage import task8_insert_parts, task8_set_parts
+from app.action_storage import insert_action, update_action
+from app.store import AutoReplyStore, OperationLog, NATIVE_REPLY_TASK_CURRENT_SQL
+from app import task_entity_storage
+
+
+def insert_run(db, record_type, values):
+    assert record_type == "agent_runs"
+    mapping = {
+        "parent_agent_run_id": "parent_id",
+        "codex_session_id": "session_id",
+        "codex_transcript_start_line": "transcript_start",
+        "codex_transcript_end_line": "transcript_end",
+    }
+    row = {mapping.get(key, key): value for key, value in values.items()}
+    row.setdefault("proposal_revision", 0)
+    row.setdefault("turn_attempt", 0)
+    row.setdefault("operation_id", "")
+    row.setdefault("session_id", "")
+    row.setdefault("transcript_start", 0)
+    row.setdefault("transcript_end", 0)
+    row.setdefault("structured_error_json", "{}")
+    row.setdefault("error", "")
+    columns = list(row)
+    return db.execute(
+        f"insert into runs ({','.join(columns)}) values ({','.join('?' for _ in columns)})",
+        tuple(row.values()),
+    )
 
 
 def _insert_reply_task(db, values):
-    parts = task8_insert_parts("reply_tasks", values)
-    return db.execute(
-        f"insert into tasks ({parts.columns}) values ({parts.values})",
-        parts.parameters,
+    task = task_entity_storage.create_task(
+        db, values={"kind": "reply", "status": values.get("status", "pending"),
+                    "execution_generation": values.get("execution_generation", ""),
+                    "created_at": "2026-10-01 00:00:00",
+                    "updated_at": "2026-10-01 00:00:00"},
     )
+    task_entity_storage.append_task_input(db, task_id=task["id"], values={
+        "channel": values.get("channel", "dingtalk"),
+        "conversation_id": values["conversation_id"],
+        "conversation_title": values.get("conversation_title", ""),
+        "single_chat": values.get("single_chat", 0),
+        "trigger_message_id": values["trigger_message_id"],
+        "input_revision_key": str(task["id"]),
+        "trigger_create_time": values.get("trigger_create_time", ""),
+        "trigger_sender": values.get("trigger_sender", ""),
+        "trigger_text": values.get("trigger_text", ""),
+        "business_object_key": "message:" + values.get("channel", "dingtalk") + ":" +
+            values["conversation_id"] + ":" + values["trigger_message_id"],
+    })
+    row = db.execute("select id from tasks where id=?", (task["id"],)).fetchone()
+    return SimpleNamespace(lastrowid=row["id"])
 
 
 def _update_reply_task(db, physical_id, values):
-    parts = task8_set_parts("reply_tasks", values)
-    return db.execute(
-        f"update tasks set {parts.sql} where record_type='reply_tasks' and id=?",
-        (*parts.parameters, physical_id),
-    )
+    task_changes = {key: value for key, value in values.items()
+                    if key in {"status", "execution_generation", "updated_at", "error"}}
+    cursor = None
+    if task_changes:
+        fields = tuple(task_changes)
+        cursor = db.execute(
+            "update tasks set " + ",".join(f'"{name}"=?' for name in fields) + " where id=? and kind='reply'",
+            (*task_changes.values(), physical_id),
+        )
+    if "trigger_message_id" in values:
+        current = db.execute(
+            "select * from task_inputs where id=(select current_input_id from tasks where id=?)",
+            (physical_id,),
+        ).fetchone()
+        item = {key: current[key] for key in (
+            "channel", "conversation_id", "conversation_title", "single_chat",
+            "trigger_message_id", "trigger_create_time", "trigger_sender", "trigger_text",
+            "trigger_message_json", "oa_url", "business_object_key", "input_provenance_json",
+            "input_compacted",
+        )}
+        item["trigger_message_id"] = values["trigger_message_id"]
+        item["input_revision_key"] = "history-refresh"
+        new_input, _ = task_entity_storage.append_task_input(db, task_id=physical_id, values=item)
+        db.execute("update tasks set current_input_id=?,input_version=input_version+1 where id=?",
+                   (new_input["id"], physical_id))
+    return cursor or SimpleNamespace(rowcount=1)
 
 
 def _reply_task_ids(store, trigger_message_id):
     with store._connect() as db:
         row = db.execute(
-            f"""
-            select tasks.id as physical_id, reply_tasks.id as public_id
-            from tasks
-            join ({REPLY_TASK_SQL}) as reply_tasks
-              on reply_tasks.id=cast(tasks.legacy_key as integer)
-            where tasks.record_type='reply_tasks'
-              and reply_tasks.trigger_message_id=?
-            """,
+            f"""select id as physical_id,id as public_id
+            from ({NATIVE_REPLY_TASK_CURRENT_SQL}) where trigger_message_id=?""",
             (trigger_message_id,),
         ).fetchone()
     assert row is not None
@@ -573,17 +628,13 @@ def test_history_latest_attempt_keeps_only_current_generation_and_last_task_atte
     with store._connect() as db:
         db.execute("pragma foreign_keys=off")
         db.execute("update runs set task_id=99999999 where id in (?, ?)", orphan_run_ids)
-        db.execute(
-            "update actions set payload_json=jsonb_set(payload_json, ?, json('99999998')) "
-            "where legacy_key=? and record_type='reply_attempts'",
-            (_action_path(
-                "reply_attempts", "agent_run_id", reply_variant=_reply_variant_for(db)
-            ), str(ids[4])),
-        )
+        update_action(db, "reply_attempts", ids[4], {"agent_run_id": 99999998})
+        from app.current_action_schema import current_reply_action_projection
         assert db.execute(
-            "select attempt_agent_run_id from actions where legacy_key=? and record_type='reply_attempts'",
-            (str(ids[4]),),
+            f"select attempt_agent_run_id from ({current_reply_action_projection('reply_attempts')}) where id=?",
+            (ids[4],),
         ).fetchone()[0] == 99999998
+    assert store.get_reply_attempt(ids[4]).agent_run_id == 99999998
 
     total, rows = store.list_operation_logs_with_count(
         limit=20, source_tables=("reply_attempts",)
@@ -592,8 +643,9 @@ def test_history_latest_attempt_keeps_only_current_generation_and_last_task_atte
     assert {item.source_id for item in rows} == {ids[1], ids[3], ids[4], ids[6]}
     with store._connect() as db:
         row = db.execute(
-            "select id, cast(legacy_key as integer) from actions "
-            "where record_type='reply_attempts' and legacy_key=?", (str(ids[1]),)
+            "select actions.id,cast(identity.source_identity as integer) "
+            "from actions join action_entity_identity_map identity on identity.action_id=actions.id "
+            "where identity.source_type='reply_attempts' and identity.source_identity=?", (str(ids[1]),)
         ).fetchone()
     assert row[0] != row[1]
     assert store.count_operation_logs(source_tables=("reply_attempts",)) == 4
@@ -876,28 +928,14 @@ def test_history_projects_terminal_oa_closure_as_skipped_while_preserving_uncert
             "parent_id": consumer.lastrowid,
             "status": "completed",
         })
-        candidate = insert_action(db, "review_candidates", {
-            "task_id": task_id,
-            "execution_generation": "generation-1",
-            "consumer_run_id": consumer.lastrowid,
-            "stage_index": 0,
-            "proposal_revision": 0,
-            "candidate_digest": "candidate-digest",
-            "candidate_json": '{"outcome":"proposal","proposal":{"actions":[]}}',
-        })
-        review = insert_action(db, "candidate_reviews", {
-            "candidate_id": candidate.lastrowid,
-            "audit_run_id": audit.lastrowid,
-            "decision": "approve",
-            "candidate_digest": "candidate-digest",
-            "result_json": '{"outcome":"approve"}',
-        })
-        execution = insert_action(db, "candidate_executions", {
-            "candidate_id": candidate.lastrowid,
-            "review_id": review.lastrowid,
-            "status": "uncertain",
-            "result_json": '{"reason":"receipt pending"}',
-        })
+        store._adopt_review_candidate_in_connection(
+            db, db.execute("select * from runs where id=?", (consumer.lastrowid,)).fetchone(),
+            {"outcome": "proposal", "proposal": {"actions": []}},
+        )
+        store._adopt_candidate_review_in_connection(
+            db, consumer.lastrowid, audit.lastrowid,
+            {"outcome": "approve", "candidate_digest": store._candidate_context(db, consumer.lastrowid)["candidate_digest"]},
+        )
         attempt_id = insert_action(db, "reply_attempts", {
             "conversation_id": "terminal-oa-source",
             "conversation_title": "张玲玲",
@@ -939,7 +977,7 @@ def test_history_projects_terminal_oa_closure_as_skipped_while_preserving_uncert
         limit=20, statuses=("uncertain",), source_tables=("reply_attempts",)
     )
 
-    assert execution.lastrowid
+    assert store.get_review_candidate(consumer.lastrowid) is not None
     assert skipped_total == 1
     assert [(row.source_id, row.status) for row in skipped_rows] == [(attempt_id, "skipped")]
     assert uncertain_total == 0
@@ -1228,26 +1266,21 @@ def test_history_keeps_current_uncertain_execution_uncertain_after_task_closes(t
             "parent_id": consumer.lastrowid,
             "status": "completed",
         })
-        candidate = insert_action(db, "review_candidates", {
-            "task_id": task_id,
-            "execution_generation": "generation-1",
-            "consumer_run_id": consumer.lastrowid,
-            "stage_index": 0,
-            "proposal_revision": 0,
-            "candidate_digest": "candidate-digest",
-            "candidate_json": '{"outcome":"proposal","proposal":{"actions":[]}}',
-        })
-        review = insert_action(db, "candidate_reviews", {
-            "candidate_id": candidate.lastrowid,
-            "audit_run_id": audit.lastrowid,
-            "decision": "approve",
-            "candidate_digest": "candidate-digest",
-            "result_json": '{"outcome":"approve"}',
-        })
-        execution = insert_action(db, "candidate_executions", {
-            "candidate_id": candidate.lastrowid,
-            "review_id": review.lastrowid,
-            "status": "uncertain",
+        store._adopt_review_candidate_in_connection(
+            db, db.execute("select * from runs where id=?", (consumer.lastrowid,)).fetchone(),
+            {"outcome": "proposal", "proposal": {"actions": []}},
+        )
+        store._adopt_candidate_review_in_connection(
+            db, consumer.lastrowid, audit.lastrowid,
+            {"outcome": "approve", "candidate_digest": store._candidate_context(db, consumer.lastrowid)["candidate_digest"]},
+        )
+        from app.execution_owner_storage import create_native_execution, update_native_execution
+        create_native_execution(
+            db, consumer_run_id=consumer.lastrowid,
+            approved_audit_run_id=audit.lastrowid, selection_id=None,
+            status="uncertain", lease_owner="", lease_expires_at="",
+        )
+        update_native_execution(db, consumer.lastrowid, {
             "result_json": '{"reason":"receipt pending"}',
         })
         attempt_id = insert_action(db, "reply_attempts", {
@@ -1276,7 +1309,7 @@ def test_history_keeps_current_uncertain_execution_uncertain_after_task_closes(t
         limit=20, statuses=("done",), source_tables=("reply_attempts",)
     )
 
-    assert execution.lastrowid
+    assert store.get_review_candidate(consumer.lastrowid) is not None
     assert uncertain_total == 1
     assert [(row.source_id, row.status) for row in uncertain_rows] == [(attempt_id, "uncertain")]
     assert done_total == 0

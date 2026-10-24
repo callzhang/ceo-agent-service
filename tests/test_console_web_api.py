@@ -1196,11 +1196,11 @@ def test_meeting_audit_recovery_rejects_nonlatest_attempt(tmp_path: Path):
         eligible_at="2026-08-29T10:05:00Z",
         status="failed",
     )
-    earlier_run = store.create_logical_run(
-        "meeting_alignment_runs", task_public_id=job_id, status="failed", error="old"
+    earlier_run = store.create_professional_run(
+        job_id, status="failed", error="old"
     )
-    latest_run = store.create_logical_run(
-        "meeting_alignment_runs", task_public_id=job_id, status="failed", error="latest"
+    latest_run = store.create_professional_run(
+        job_id, status="failed", error="latest"
     )
 
     with _client(tmp_path) as client:

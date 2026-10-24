@@ -83,6 +83,7 @@ class AgentSpec:
 @dataclass(frozen=True)
 class StructuredAgentRun:
     envelope: AgentEnvelope
+    attempt_id: int
     codex_session_id: str
     transcript_start_line: int
     transcript_end_line: int
@@ -142,6 +143,7 @@ class StructuredCodexRunner:
         )
         return StructuredAgentRun(
             envelope=envelope,
+            attempt_id=result.attempt_id,
             codex_session_id=result.session_id,
             transcript_start_line=result.transcript_start,
             transcript_end_line=result.transcript_end,

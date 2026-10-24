@@ -7,8 +7,7 @@ from typing import Any, Iterable
 from pydantic import BaseModel, ConfigDict, Field
 
 from app.action_storage import REPLY_ATTEMPT_COMMON_SQL
-from app.logical_run_storage import logical_run_projection
-from app.task20_definitions import task20_column
+from app.store import NATIVE_AGENT_RUN_SQL, NATIVE_MEETING_RUN_SQL, NATIVE_REPLY_TASK_CURRENT_SQL
 from app.web_api.common import ApiListMeta, normalize_display_value
 
 
@@ -169,18 +168,18 @@ def attention_record_detail_url(
     if category == "Reply":
         return f"/attempts/{record_id}"
     if category in ("Reply task", "OA approval"):
-        generation = task20_column("reply_tasks", "execution_generation")
         attempt = db.execute(
             f"select a.id from ({REPLY_ATTEMPT_COMMON_SQL}) a "
-            "join runs g on g.record_type='agent_runs' and cast(g.legacy_key as integer)=a.agent_run_id "
-            f"join tasks t on t.id=g.task_id and t.{generation}=g.execution_generation "
-            "where t.record_type='reply_tasks' and t.legacy_key=? order by a.id desc limit 1",
-            (str(record_id),),
+            f"join ({NATIVE_AGENT_RUN_SQL}) g on g.id=a.agent_run_id "
+            f"join ({NATIVE_REPLY_TASK_CURRENT_SQL}) t on t.id=g.reply_task_id "
+            "and t.execution_generation=g.execution_generation "
+            "where t.id=? order by a.id desc limit 1",
+            (int(record_id),),
         ).fetchone()
         return f"/attempts/{attempt[0]}" if attempt else ""
     if category == "Meeting":
         run = db.execute(
-            f"select id from ({logical_run_projection('meeting_alignment_runs')}) "
+            f"select id from ({NATIVE_MEETING_RUN_SQL}) "
             "where job_id=? order by id desc limit 1",
             (int(record_id),),
         ).fetchone()

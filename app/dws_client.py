@@ -2551,6 +2551,36 @@ class DwsClient:
             raise DwsError("invalid OA redirect response")
         return payload
 
+    def append_oa_approval_task(
+        self,
+        *,
+        process_instance_id: str,
+        task_id: str,
+        appender_user_id: str,
+        kind: str,
+    ) -> dict[str, Any]:
+        """Add one approver to one exact OA task (加签) by DingTalk user ID.
+
+        One approver, who must approve (``--agree-all true``), in the order the
+        kind says. Resolving the person to a user ID is the caller's job.
+        """
+        provider_kind = {"before": "before", "parallel": "Parallel"}.get(kind)
+        if provider_kind is None:
+            raise ValueError("OA append kind must be before or parallel")
+        if not all(value.strip() for value in (process_instance_id, task_id, appender_user_id)):
+            raise ValueError("OA append needs an exact process, task and user ID")
+        command = [
+            self.dws_bin, "oa", "approval", "append-task",
+            "--instance-id", process_instance_id, "--task-id", task_id,
+            "--type", provider_kind, "--appender-user-ids", appender_user_id,
+            "--activate-type", "ONE_BY_ONE", "--agree-all", "true",
+            "--format", "json", "--yes",
+        ]
+        payload = self.run_json(command)
+        if not isinstance(payload, dict):
+            raise DwsError("invalid OA append response")
+        return payload
+
     def revert_oa_approval_task(
         self,
         *,

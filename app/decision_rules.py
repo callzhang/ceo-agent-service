@@ -124,6 +124,9 @@ DECISION_ACTIONS: tuple[DecisionAction, ...] = (
     _reaches_person("chat", "message", "reply"),
     _reaches_person("chat", "message", "edit"),
     _reaches_person("chat", "message", "recall"),
+    # Adding an approver puts the matter in front of one more named person,
+    # who decides it themselves; it carries no reason text and ends nothing.
+    _reaches_person("oa", "approval", "append-task"),
     _reaches_person("oa", "approval", "oa-comments"),
     _reaches_person("oa", "approval", "comment"),
     # A revert carries the gap the applicant has to close; without it they

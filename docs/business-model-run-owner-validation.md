@@ -58,7 +58,10 @@ Run105／public2298 → absentTask9901／job4908，并验证两向 FK multiset
 保留原公开 `.id` 和 `common_run_id`，没有 `source_key` 字段。三来源和
 Consumer／Audit 同号可以并存；错误 namespace
 不能读到另一个来源。`idx_runs_public_id` 保持源的整数 cast 唯一性语义，
-仅把原专业 namespace 纳入共同 owner 的唯一性键。
+仅把原专业 namespace 纳入共同 owner 的唯一性键。迁移也使用 SQLite 原生
+`CAST(legacy_key AS INTEGER)` 生成 Run public identity 索引值与 workload 查找键；
+例如 `'201suffix'`、`'201.0'` 和 `x'323031'` 均按源查询解析为 201，而原始
+`legacy_key` 的值和 SQLite 存储类型仍保留供逆迁。
 
 原三个专业 INSERT 均使用 `runs` 原生 AUTOINCREMENT，并由原 public-key
 trigger 写入 `legacy_key=new.id`，由既有 `trg_runs8_sequence` 维护真实
@@ -264,3 +267,31 @@ runtime代码未变，原dry-run、结果计数、错误代码和历史error断�
 新freeze明确区分45f真实业务源、6a恢复snapshot和本轮修改；原清单不覆盖。
 实现工作结束后已删除本代理claim行，其他代理行不改；本记录承接验收历史。
 当前待fresh SPEC→QUALITY和父级后续副本／native／发布证明，不能据此称为已上线。
+
+## Task3B1 current-owner forward transfer (2026-10-22)
+
+The isolated Task3B1 unit now provides migration-only capture and forward-transfer
+functions in `app/run_entity_schema.py`. Capture accepts only the exact selected
+current Run declaration from `logical_run_current_schema.current_run11_objects()`;
+the historical `runs11_current_schema` declaration is rejected. The transfer
+runs inside the caller's FK-off transaction, stages the source `runs` table,
+and writes the eight source record kinds into the native Run, RuntimeAttempt,
+RunFailure, ScheduleOccurrence, WorkbenchEvent, CodexSessionIndex, EmailSample,
+and SetupWizardEvent owners. Professional Run kind/job and projection facts move
+to the declared provenance/projection owners. It keeps source physical Task
+references separate from namespace-and-type-qualified Task public identities,
+rewrites only the typed runtime/workload references established by the source
+contract, captures only the five source-owned Run allocator names, and preserves
+a missing physical Task edge only when the current Run FK capture records that
+exact missing edge. Task conversion metadata must be the actual Task2B forward
+result; its sparse identity rows are checked against the native identity map,
+and every physical/public Task resolution is checked against the expected
+native Task kind. The composed migration captures and forwards Task2B before it
+captures and forwards Run, with the caller keeping one FK-off transaction.
+
+This is a bounded forward-only unit. It does not yet provide the current-fact
+inverse or preserve native facts across a subsequent legacy handoff; those are
+separate Task3B2/3B3 units. It is not runtime activation or a production
+migration. Parent integration still must run a bounded full frozen-source copy,
+review the inverse and handoff units, verify whole-catalog/allocator/FK parity,
+and complete the separately authorized release and readback.

@@ -7,18 +7,16 @@ from datetime import UTC, datetime
 from pathlib import Path
 
 import pytest
-from app.action_storage import insert_action
 from app.state_storage import insert_state
 from app.deferral_receipt_storage import find_receipt
 
-from app.run_storage import AGENT_RUN_SQL, insert_run
-from app.task20_definitions import task20_projection
-from app.task8_storage import register_task8_functions, task8_set_parts
+from app.store import NATIVE_REPLY_TASK_CURRENT_SQL, NATIVE_AGENT_RUN_SQL
 
 from app.reply_task_deferral import apply_deferral, main, preview_deferral, resume_deferral
 from app.store import AgentRole, AutoReplyStore
 
-REPLY_TASK_SQL = task20_projection("reply_tasks")
+REPLY_TASK_SQL = NATIVE_REPLY_TASK_CURRENT_SQL
+AGENT_RUN_SQL = NATIVE_AGENT_RUN_SQL
 
 
 NOW = datetime(2026, 10, 5, 12, 0, tzinfo=UTC)
@@ -26,10 +24,96 @@ NOW = datetime(2026, 10, 5, 12, 0, tzinfo=UTC)
 
 def _insert_dispatcher_claim(db, values):
     from app.task_lifecycle_storage import acquire_claim
-    register_task8_functions(db)
     acquire_claim(db, adapter_name=values["adapter_name"], source_id=values["source_id"],
         owner=values["owner"], owner_pid=values.get("owner_pid", 0),
         lease_expires_at=values["lease_expires_at"], now="2026-10-05 12:00:00")
+
+
+def _insert_runtime_attempt(db, values):
+    from app.run_entity_storage import create_runtime_attempt
+
+    db.row_factory = sqlite3.Row
+    now = "2026-10-05 12:00:00"
+    defaults = {
+        "parent_id": None,
+        "workload_kind": "agent_run",
+        "workload_key": "",
+        "attempt_number": 1,
+        "route_name": "test",
+        "runtime_kind": "codex_cli",
+        "credential_mode": "oauth",
+        "model": "test",
+        "session_mode": "fresh",
+        "source_session_id": "",
+        "attempt_purpose": "normal",
+        "validation_retry_policy_id": "",
+        "validation_result_schema_id": "",
+        "session_id": "",
+        "transcript_reference": "",
+        "transcript_start": 0,
+        "transcript_end": 0,
+        "status": "failed",
+        "failure_class": "",
+        "failure_code": "",
+        "failover_permitted": 0,
+        "lease_owner": "",
+        "lease_expires_at": "",
+        "first_effect_started_at": "",
+        "result_schema_id": "",
+        "started_at": now,
+        "finished_at": now,
+        "created_at": now,
+        "updated_at": now,
+    }
+    defaults.update(values)
+    if defaults["workload_kind"] == "agent_run":
+        defaults["workload_key"] = str(defaults["parent_id"])
+    return create_runtime_attempt(db, values=defaults)
+
+
+def _insert_retained_action_fact(db, record_type, values, *, run_id):
+    """Seed a retained Action type using its current declared payload layout."""
+    from app.current_action_schema import current_action_payloads
+    from app.action_storage import DEFAULTS
+    from app.storage_payload import ACTION_RECORD_TYPES
+
+    layout = current_action_payloads().layouts[record_type]
+    now = "2026-10-05 11:59:00"
+    payload_values = dict.fromkeys(layout.fields)
+    payload_values.update({name: now for name in ("created_at", "updated_at", "prepared_at", "sent_at")
+                           if name in layout.fields})
+    payload_values.update(DEFAULTS[record_type])
+    payload_values.update({name: value for name, value in values.items() if name in layout.fields})
+    packed = layout.pack({name: payload_values[name] for name in layout.fields}, scalar_codec=__import__(
+        "app.action_storage", fromlist=["_encoded_native_sqlite_value"]
+    )._encoded_native_sqlite_value)
+    payload = db.execute("select jsonb(?)", (packed,)).fetchone()[0]
+    public_key = values.get("external_action_key", "1")
+    db.execute(
+        "insert into actions(_kind,payload_json,agent_run_id,legacy_key) values(?,?,?,?)",
+        (ACTION_RECORD_TYPES.code(record_type), payload, run_id, str(public_key)),
+    )
+
+
+def _insert_native_external_action_result(db, values, *, run_id):
+    from app.action_entity_storage import create_action, append_action_receipt
+    action = create_action(db, values={
+        "operation": values["operation"], "parameters_json": "{}", "status": "verified",
+        "external_action_key": values["external_action_key"],
+        "business_object_key": values["business_object_key"],
+        "action_identity": values["action_identity"], "agent_run_id": run_id,
+    })
+    receipt = append_action_receipt(db, action["id"], values={
+        "operation": values["operation"], "target": values["target_identifiers_json"],
+        "provider_result_json": values["provider_result_json"],
+        "result_digest": values["result_digest"], "agent_run_id": run_id,
+        "created_at": "2026-10-05 11:59:00",
+    })
+    append_action_receipt(db, action["id"], values={
+        "operation": values["operation"], "target": values["target_identifiers_json"],
+        "result_digest": values["result_digest"], "agent_run_id": run_id,
+        "provider_receipt_id": receipt, "created_at": "2026-10-05 11:59:00",
+    })
 
 
 def ready(tmp_path: Path, *, path=None):
@@ -46,9 +130,7 @@ def ready(tmp_path: Path, *, path=None):
         parent_agent_run_id=None, operation_id='', owner='agent')
     store.fail_agent_run(claim.run.id, {'code': 'origin_validation_failed', 'retryable': False}, owner='agent')
     with store._connect() as db:
-        register_task8_functions(db)
-        parts = task8_set_parts("reply_tasks", {"status": "pending", "locked_at": None})
-        db.execute("update tasks set " + parts.sql + " where record_type='reply_tasks' and id=?", (*parts.parameters, task.id))
+        db.execute("update tasks set status='pending',locked_at=null where kind='reply' and id=?", (task.id,))
     backup = tmp_path / 'verified-backup.sqlite3'
     with sqlite3.connect(path) as source, sqlite3.connect(backup) as destination:
         source.backup(destination)
@@ -56,10 +138,14 @@ def ready(tmp_path: Path, *, path=None):
 
 
 def set_reply_fields(db, task_id, **fields):
-    register_task8_functions(db)
-    parts = task8_set_parts("reply_tasks", fields)
-    db.execute("update tasks set " + parts.sql + " where record_type='reply_tasks' and id=?",
-               (*parts.parameters, task_id))
+    business_key = fields.pop("business_object_key", None)
+    if fields:
+        assignments = ",".join(f"{name}=?" for name in fields)
+        db.execute(f"update tasks set {assignments} where kind='reply' and id=?",
+                   (*fields.values(), task_id))
+    if business_key is not None:
+        db.execute("update task_business_keys set business_key=? where task_id=?",
+                   (business_key, task_id))
 
 
 def increment_input_version(db, task_id):
@@ -79,7 +165,7 @@ def native_events(path, task_id, monkeypatch, item, *, missing=False):
         native.write_text('\n'.join(json.dumps(record) for record in records))
     monkeypatch.setattr(native_trajectory, 'find_codex_session_path', lambda *a, **k: native)
     with sqlite3.connect(path) as db:
-        db.execute("update runs set session_id='native-test',transcript_start=0,transcript_end=? where record_type='agent_runs' and task_id=?", (len(records), task_id))
+        db.execute("update runs set session_id='native-test',transcript_start=0,transcript_end=? where task_id=?", (len(records), task_id))
     return len(records)
 
 
@@ -115,8 +201,8 @@ def test_failed_attempt_before_native_session_remains_eligible(tmp_path, status)
     path, task_id, _ = ready(tmp_path)
     with sqlite3.connect(path) as db:
         run_id = db.execute(f'select id from ({AGENT_RUN_SQL}) where reply_task_id=?', (task_id,)).fetchone()[0]
-        insert_run(
-            db, 'agent_runtime_attempts', {
+        _insert_runtime_attempt(
+            db, {
                 'parent_id': run_id,
                 'workload_kind': 'agent_run',
                 'workload_key': str(run_id),
@@ -138,7 +224,7 @@ def test_observed_session_without_attempt_or_bounds_is_unavailable(tmp_path):
     path, task_id, _ = ready(tmp_path)
     EmailStore(path)
     with sqlite3.connect(path) as db:
-        db.execute("update runs set session_id='observed-session' where record_type='agent_runs' and task_id=?", (task_id,))
+        db.execute("update runs set session_id='observed-session' where task_id=?", (task_id,))
     assert 'native_event_source_unavailable' in preview_deferral(path, task_id, now=NOW)['blockers']
     with pytest.raises(UpgradePreconditionError, match='native event source unavailable'):
         check_maintenance(path, (task_id,))
@@ -169,8 +255,8 @@ def test_complete_native_metadata_preserves_operator_eligibility(tmp_path, monke
     monkeypatch.setattr(native_trajectory, 'find_codex_session_path', lambda *a, **k: native)
     with sqlite3.connect(path) as db:
         run_id = db.execute(f'select id from ({AGENT_RUN_SQL}) where reply_task_id=?', (task_id,)).fetchone()[0]
-        insert_run(
-            db, 'agent_runtime_attempts', {
+        _insert_runtime_attempt(
+            db, {
                 'parent_id': run_id,
                 'workload_kind': 'agent_run',
                 'workload_key': str(run_id),
@@ -206,7 +292,7 @@ def test_preview_read_only_and_apply_resume_preserve_task_and_run(tmp_path):
     path, task_id, backup = ready(tmp_path)
     with sqlite3.connect(path) as db:
         before = db.execute(f'select status, attempts, execution_generation, input_version, error from ({REPLY_TASK_SQL}) where id=?', (task_id,)).fetchone()
-        runs_before = db.execute(f'select id, final_result_json, structured_error_json from ({AGENT_RUN_SQL}) where reply_task_id=?', (task_id,)).fetchall()
+        runs_before = db.execute(f'select id, structured_error_json from ({AGENT_RUN_SQL}) where reply_task_id=?', (task_id,)).fetchall()
         schema_before = db.execute("select name from sqlite_master where type='table'").fetchall()
     preview = preview_deferral(path, task_id, now=NOW)
     assert preview['eligible'] is True
@@ -220,7 +306,7 @@ def test_preview_read_only_and_apply_resume_preserve_task_and_run(tmp_path):
         task = db.execute(f'select status, attempts, execution_generation, input_version, error, available_at from ({REPLY_TASK_SQL}) where id=?', (task_id,)).fetchone()
         assert task[:5] == before
         assert task[5] > '2026-10-05 12:00:00'
-        assert db.execute(f'select id, final_result_json, structured_error_json from ({AGENT_RUN_SQL}) where reply_task_id=?', (task_id,)).fetchall() == runs_before
+        assert db.execute(f'select id, structured_error_json from ({AGENT_RUN_SQL}) where reply_task_id=?', (task_id,)).fetchall() == runs_before
     restored = resume_deferral(path, task_id, receipt_id=receipt['id'], request_id='resume-one', now=NOW)
     assert restored['status'] == 'resumed'
     assert resume_deferral(path, task_id, receipt_id=receipt['id'], request_id='resume-one', now=NOW)['id'] == receipt['id']
@@ -273,8 +359,7 @@ def test_deferral_old_passive_owner_does_not_create_an_active_task_owner(tmp_pat
 
 def test_unrelated_message_delivery_does_not_block_this_task(tmp_path):
     path, task_id, _backup = ready(tmp_path)
-    with sqlite3.connect(path) as db:
-        insert_action(db, 'sent_replies', {'conversation_id':'cid-deferral','trigger_message_id':'other-message','reply_text':'sent'})
+    AutoReplyStore(path).record_sent_reply('cid-deferral', 'other-message', 'sent')
     assert preview_deferral(path, task_id, now=NOW)['eligible'] is True
 
 
@@ -310,8 +395,8 @@ def test_active_deferral_previews_blocked_and_distinct_apply_is_explicit_conflic
 @pytest.mark.parametrize('mutation', [
     increment_input_version,
     lambda db, task_id: set_reply_fields(db, task_id, execution_generation="new-gen"),
-    "update runs set structured_error_json='changed' where record_type='agent_runs'",
-    "update runs set status='running' where record_type='agent_runs'",
+    "update runs set structured_error_json='changed' ",
+    "update runs set status='running' ",
     "candidate_selection",
 ])
 def test_apply_refuses_changed_identity_or_live_work(tmp_path, mutation):
@@ -321,22 +406,19 @@ def test_apply_refuses_changed_identity_or_live_work(tmp_path, mutation):
         if callable(mutation):
             mutation(db, task_id)
         elif mutation == 'candidate_selection':
-            from app.shared_action_lifecycle import persist_plan
+            from app.run_entity_storage import create_run
+            db.row_factory = sqlite3.Row
             run = db.execute(f"select id,execution_generation from ({AGENT_RUN_SQL}) where reply_task_id=?", (task_id,)).fetchone()
-            persist_plan(db, 'reviewed', {
-                'id': 1, 'task_id': task_id, 'execution_generation': run[1],
-                'consumer_run_id': run[0], 'stage_index': 0, 'proposal_revision': 0,
-                'candidate_digest': 'd'*64, 'candidate_json': '{}',
-            })
-            insert_action(db, 'candidate_reviews', {
-                'id': 1, 'candidate_id': 1, 'audit_run_id': 1, 'decision': 'approve',
-                'candidate_digest': 'd'*64, 'result_json': '{}',
-            })
-            insert_action(db, 'candidate_selections', {
-                'candidate_id': 1, 'review_id': 1, 'option_key': 'x',
-            }, selection_references=True)
+            consumer = db.execute("select task_id,proposal_revision from runs where id=?", (run[0],)).fetchone()
+            audit = create_run(db, values={"task_id": task_id, "parent_id": run[0],
+                "execution_generation": run[1], "role": "audit", "proposal_revision": consumer[1],
+                "turn_attempt": 0, "status": "completed", "started_at": "2026-10-05 11:59:00",
+                "completed_at": "2026-10-05 12:00:00", "updated_at": "2026-10-05 12:00:00"})
+            db.execute("insert into run_adopted_results(consumer_run_id,stage_index,candidate_digest,candidate_json,invalidated_at,invalidation_reason,created_at) values(?,0,?,'{}','','','2026-10-05 11:59:00')", (run[0], 'd'*64))
+            db.execute("insert into run_adopted_reviews(audit_run_id,consumer_run_id,candidate_digest,decision,result_json,created_at) values(?,?,?,'approve','{}','2026-10-05 12:00:00')", (audit["id"], run[0], 'd'*64))
+            db.execute("insert into run_adopted_selections(consumer_run_id,audit_run_id,option_key,status,created_at) values(?,?,?,'selected','2026-10-05 12:00:00')", (run[0], audit["id"], 'x'))
         else:
-            db.execute(mutation + (" where record_type='reply_tasks' and id=?" if mutation.startswith('update tasks') else (' and task_id=?' if mutation.startswith("update runs ") else '')), ((task_id,) if mutation.startswith('update ') else ()))
+            db.execute(mutation + (" where kind='reply' and id=?" if mutation.startswith('update tasks') else (' and task_id=?' if mutation.startswith("update runs ") else '')), ((task_id,) if mutation.startswith('update ') else ()))
     with pytest.raises(ValueError):
         apply_deferral(path, task_id, expected_business_object_key=preview['business_object_key'],
             expected_generation=preview['execution_generation'],
@@ -346,14 +428,14 @@ def test_apply_refuses_changed_identity_or_live_work(tmp_path, mutation):
 
 
 @pytest.mark.parametrize(('statement', 'values'), [
-    ("update runs set lease_owner='worker', lease_expires_at='2026-10-05 13:00:00' where record_type='agent_runs'", ()),
-    ("update runs set lease_owner='worker', lease_expires_at='2026-10-05T13:00:00Z' where record_type='agent_runs'", ()),
+    ("update runs set lease_owner='worker', lease_expires_at='2026-10-05 13:00:00' ", ()),
+    ("update runs set lease_owner='worker', lease_expires_at='2026-10-05T13:00:00Z' ", ()),
     (lambda db, values: (db.execute("begin"), _insert_dispatcher_claim(db, {
         "adapter_name": "reply", "source_id": values[0], "owner": "worker",
         "lease_expires_at": "2026-10-05 13:00:00",
     })), ('TASK',)),
-    (lambda db, values=(): insert_run(
-        db, 'agent_runtime_attempts', {
+    (lambda db, values=(): _insert_runtime_attempt(
+        db, {
             'parent_id': values[0],
             'workload_kind': 'agent_run',
             'workload_key': values[1],
@@ -365,8 +447,8 @@ def test_apply_refuses_changed_identity_or_live_work(tmp_path, mutation):
             'status': 'running',
         },
     ), ('RUN', 'RUN_TEXT')),
-    (lambda db, values=(): insert_run(
-        db, 'agent_runtime_attempts', {
+    (lambda db, values=(): _insert_runtime_attempt(
+        db, {
             'parent_id': values[0],
             'workload_kind': 'agent_run',
             'workload_key': values[1],
@@ -379,29 +461,29 @@ def test_apply_refuses_changed_identity_or_live_work(tmp_path, mutation):
             'first_effect_started_at': '2026-10-05 11:00:00',
         },
     ), ('RUN', 'RUN_TEXT')),
-    (lambda db, values: insert_action(db, 'agent_effect_intents', {
+    (lambda db, values: _insert_retained_action_fact(db, 'agent_effect_intents', {
         'agent_run_id': values[0], 'authorization_id': 'auth', 'action_index': 0,
         'receipt_operation_id': 'op', 'capability': 'c', 'operation': 'o',
         'operation_digest': 'd', 'arguments_digest': 'a',
         'target_identifiers_json': '{}', 'state': 'dispatched',
-    }), ('RUN',)),
-    (lambda db, values: insert_action(db, 'agent_effect_intents', {
+    }, run_id=values[0]), ('RUN',)),
+    (lambda db, values: _insert_retained_action_fact(db, 'agent_effect_intents', {
         'agent_run_id': values[0], 'authorization_id': 'auth', 'action_index': 0,
         'receipt_operation_id': 'op', 'capability': 'c', 'operation': 'o',
         'operation_digest': 'd', 'arguments_digest': 'a',
         'target_identifiers_json': '{}', 'state': 'prepared',
-    }), ('RUN',)),
-    (lambda db, values: insert_action(db, 'agent_execution_receipts', {
+    }, run_id=values[0]), ('RUN',)),
+    (lambda db, values: _insert_retained_action_fact(db, 'agent_execution_receipts', {
         'agent_run_id': values[0], 'receipt_id': 'r', 'operation_id': 'op',
         'cli': 'cli', 'command_path': 'cmd', 'command_digest': 'd',
         'exit_code': 1, 'completed': 0, 'persisted': 0, 'safe_to_confirm': 0,
-    }), ('RUN',)),
-    (lambda db, values: insert_action(db, 'sent_replies', {'conversation_id':'cid-deferral','trigger_message_id':'mid-deferral','reply_text':'sent'}), ()),
-    (lambda db, values: insert_action(db, 'external_action_results', {
+    }, run_id=values[0]), ('RUN',)),
+    ('sent_reply', ()),
+    (lambda db, values: _insert_native_external_action_result(db, {
         'external_action_key': 'k', 'business_object_key': values[0],
         'action_identity': 'a', 'operation': 'o', 'target_identifiers_json': '{}',
         'provider_result_json': '{}', 'result_digest': 'd', 'first_agent_run_id': values[1],
-    }), ('BUSINESS', 'RUN')),
+    }, run_id=values[1]), ('BUSINESS', 'RUN')),
 ])
 def test_preview_and_apply_refuse_live_or_possible_effect(tmp_path, statement, values):
     path, task_id, backup = ready(tmp_path)
@@ -410,7 +492,9 @@ def test_preview_and_apply_refuse_live_or_possible_effect(tmp_path, statement, v
                     'RUN_TEXT': str(original['latest_failed_run_id']),
                     'BUSINESS': original['business_object_key']}.get(value, value) for value in values)
     with sqlite3.connect(path) as db:
-        if callable(statement):
+        if statement == 'sent_reply':
+            AutoReplyStore(path).record_sent_reply('cid-deferral', 'mid-deferral', 'sent')
+        elif callable(statement):
             statement(db, actual)
         else:
             db.execute(statement + (' and task_id=?' if statement.startswith("update runs ") else ''),
@@ -427,7 +511,8 @@ def test_backup_must_be_separate_intact_and_exact(tmp_path):
     with pytest.raises(ValueError, match='separate'):
         apply_ready(path, task_id, path)
     with sqlite3.connect(backup) as db:
-        set_reply_fields(db, task_id, business_object_key="changed")
+        db.execute("update task_inputs set business_object_key='changed' where id=(select current_input_id from tasks where id=?)", (task_id,))
+        db.execute("update task_business_keys set business_key='changed' where task_id=?", (task_id,))
     with pytest.raises(ValueError, match='exact'):
         apply_ready(path, task_id, backup)
     backup.write_bytes(b'not a sqlite database')
@@ -438,7 +523,7 @@ def test_backup_must_be_separate_intact_and_exact(tmp_path):
 @pytest.mark.parametrize('change', [
     increment_input_version,
     lambda db, task_id: set_reply_fields(db, task_id, available_at="2026-10-05 15:00:00"),
-    "update runs set structured_error_json='changed' where record_type='agent_runs'",
+    "update runs set structured_error_json='changed' ",
     lambda db, task_id: _insert_dispatcher_claim(db, {
         "adapter_name": "reply", "source_id": str(task_id), "owner": "worker",
         "lease_expires_at": "2026-10-05 13:00:00",
@@ -453,7 +538,7 @@ def test_resume_refuses_intervening_change(tmp_path, change):
             change(db, task_id)
         else:
             statement = change.replace('TASK', str(task_id))
-            db.execute(statement + (" where record_type='reply_tasks' and id=?" if statement.startswith('update tasks') else
+            db.execute(statement + (" where kind='reply' and id=?" if statement.startswith('update tasks') else
                                     (' and task_id=?' if statement.startswith("update runs ") else '')),
                        ((task_id,) if statement.startswith('update ') else ()))
     with pytest.raises(ValueError):

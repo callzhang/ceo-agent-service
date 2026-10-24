@@ -123,7 +123,7 @@ class ScheduledTaskTriggerConsumer:
             return
         try:
             consumer_context = self._builder.build_consumer_context(run)
-            summary = self._commands.run(
+            command_result = self._commands.run_with_result(
                 command,
                 consumer_context=consumer_context,
             )
@@ -153,10 +153,13 @@ class ScheduledTaskTriggerConsumer:
         self._store.link_scheduled_task_run_execution(
             run.id, owner=guard.token.owner,
             execution_kind=SERVICE_COMMAND_EXECUTION_KIND, execution_id=command,
-            result_summary=summary,
+            result_summary=command_result.summary,
             now=now,
         )
         guard.finish_source(now, status="dispatched")
+        self._store.coalesce_empty_scheduled_occurrence(
+            run.id, command_result=command_result,
+        )
         self._store.resolve_errors_recovered_by_scheduled_service_command()
         logger.info(
             "scheduled_task_service_command_completed",
@@ -164,7 +167,7 @@ class ScheduledTaskTriggerConsumer:
                 "scheduled_task_id": run.scheduled_task_id,
                 "scheduled_task_run_id": run.id,
                 "service_command": command,
-                "service_command_summary": summary,
+                "service_command_summary": command_result.summary,
             },
         )
 

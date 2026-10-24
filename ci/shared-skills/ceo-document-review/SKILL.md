@@ -10,19 +10,21 @@ metadata:
 
 Identify the material type, read the current version, and keep review output tied to evidence in that material.
 
-Load the operation Skill that matches the actual material type before reading, commenting, or delivering a review. Use only the capability and command shape documented by that Skill.
+Load the operation Skill that matches the actual material type before a business operation, comment, or delivery. For read-only source inspection in CEO Agent Service Consumer or Audit runs, use the matching native MCP route below; load the operation Skill only when its additional workflow is needed.
 
 ## Material Reads
 
 | Material | Operation Skill | Required read |
 | --- | --- | --- |
 | DingTalk document | `dingtalk-doc` | read current content |
-| DingTalk AI table | `dingtalk-aitable` | never use document read |
+| DingTalk AI table | General tasks: `dingtalk-aitable`; CEO Agent Service Consumer/Audit: use the read-only `agent_cli` route below | never use document read |
 | ordinary file | `matching drive Skill` | use the supplied exact command |
 | image | none for attached input | inspect the image before conclusions |
 | Lark document | `lark-doc` | read current content |
 | Lark table | `lark-base` | read current table data |
 | Lark file | `lark-drive` | use the supplied exact command |
+
+For CEO Agent Service Consumer/Audit, read an AITable through `agent_cli.read_dingtalk_aitable_base` → `read_dingtalk_aitable_tables` → `read_dingtalk_aitable_records`; do not load the full operation Skill just to choose the reader. Do not use document/workbook readers or shell DWS calls for an AITable. If these MCP tools are unavailable, report a dependency failure.
 
 For DingTalk stored files, the matching drive Skill is `dingtalk-drive`. Load `dingtalk-chat` before delivering a DingTalk chat response. For another supported source, load its corresponding document, table, drive, and source-conversation Skills rather than substituting a DingTalk operation.
 

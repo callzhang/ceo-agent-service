@@ -64,8 +64,8 @@ def test_workbench_uses_shared_service_execution_and_projects_events(tmp_path: P
     )
     events = []
     request = RuntimeRequest(
-        turn_id="00000000-0000-0000-0000-000000000002",
-        conversation_id="00000000-0000-0000-0000-000000000001",
+        turn_id="2",
+        conversation_id="1",
         workspace=tmp_path,
         prompt="检查销售进度",
     )
@@ -109,8 +109,8 @@ def test_ui_event_projection_cannot_abort_shared_service_execution(tmp_path: Pat
         routed_execution_factory=lambda **_kwargs: ProjectionBreakingExecution(),
     )
     request = RuntimeRequest(
-        turn_id="00000000-0000-0000-0000-000000000002",
-        conversation_id="00000000-0000-0000-0000-000000000001",
+        turn_id="2",
+        conversation_id="1",
         workspace=tmp_path,
         prompt="检查销售进度",
     )

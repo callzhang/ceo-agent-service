@@ -19,6 +19,7 @@ from app.agent_cron.commands import (
     ServiceCommandConsumerContext,
     ServiceCommandRegistry,
 )
+from tests.scheduled_command_results import unknown_service_result
 from app.agent_contracts import AuditAgentResult, ConsumerAgentResult
 from app.agent_orchestrator import OrchestrationResult
 from app.agent_envelope import AgentEnvelope
@@ -1820,7 +1821,9 @@ def test_scheduled_service_trigger_persists_consumer_context_on_new_reply_task(
     registry = ServiceCommandRegistry(
         {
             option.name: (
-                produce if option.name == "produce-once" else lambda: "unused"
+                (lambda: unknown_service_result(produce()))
+                if option.name == "produce-once"
+                else lambda: unknown_service_result("unused")
             )
             for option in SERVICE_COMMAND_OPTIONS
         }

@@ -11,8 +11,9 @@ from uuid import uuid4
 
 import pytest
 
-from app.run_storage import AGENT_RUN_SQL, insert_run
-from app.action_storage import ACTION_PROJECTIONS, insert_action, update_action
+from app.store import NATIVE_AGENT_RUN_SQL as AGENT_RUN_SQL
+from app.run_entity_storage import create_run
+from app.action_storage import insert_action, update_action
 from app.audit_web import _reply_attempt_queue_snapshot, handle_rerun_attempt_post
 from app.quality_gate import scan_hourly_quality
 from app.store import AutoReplyStore
@@ -72,17 +73,23 @@ def seed(store, *, native_home):
     )) + "\n")
     with store._connect() as db:
         task_id = db.execute(
-            "select id from tasks where record_type='reply_tasks'"
+            "select id from tasks where kind='reply'"
         ).fetchone()[0]
-        db.execute(
-            "update tasks set status='done' where record_type='reply_tasks' and id=?",
-            (task_id,),
-        )
-        run_id = insert_run(db, 'agent_runs', {
+        from app.task_entity_storage import update_task_cas
+        task = db.execute("select status from tasks where id=?", (task_id,)).fetchone()
+        assert update_task_cas(db, task_id=task_id,
+            expected={"kind": "reply", "status": task[0]},
+            changes={"status": "done"}) is not None
+        run = create_run(db, values={
             'task_id': task_id, 'execution_generation': 'old-contract',
+            'proposal_revision': 0, 'turn_attempt': 0, 'operation_id': '',
             'role': 'consumer', 'status': 'completed', 'session_id': session_id,
             'transcript_start': 1, 'transcript_end': 2,
-        }).lastrowid
+            'structured_error_json': '', 'error': '', 'lease_owner': '',
+            'lease_expires_at': '', 'started_at': NOW.isoformat(),
+            'completed_at': NOW.isoformat(), 'updated_at': NOW.isoformat(),
+        })
+        run_id = run['id']
         update_action(db, "reply_attempts", attempt_id, {"agent_run_id": run_id})
     return attempt_id, task_id, run_id, result
 
@@ -156,11 +163,15 @@ def test_explicit_retirement_records_provenance_preserves_history_and_is_idempot
     assert store.get_reply_task(task_id).status == "done"
     with store._connect() as db:
         assert db.execute(f'select count(*) from ({AGENT_RUN_SQL})').fetchone()[0] == 1
-        assert db.execute(f'select final_result_json from ({AGENT_RUN_SQL}) where id=?', (run_id,)).fetchone()[0] == ""
-        for table in ("candidate_reviews", "candidate_selections", "candidate_executions",
-                      "candidate_action_attempts", "external_action_results", "sent_replies"):
-            source = f'({ACTION_PROJECTIONS[table]})' if table in ACTION_PROJECTIONS else table
-            assert db.execute(f"select count(*) from {source}").fetchone()[0] == 0
+        settled_run = db.execute(
+            'select status,session_id,transcript_start,transcript_end from runs where id=?',
+            (run_id,),
+        ).fetchone()
+        assert (settled_run["status"], settled_run["transcript_start"],
+                settled_run["transcript_end"]) == ("completed", 1, 2)
+        assert native_path(store, run_id).is_file()
+        for table in ("run_adopted_reviews", "run_adopted_selections", "run_execution_progress"):
+            assert db.execute(f"select count(*) from {table}").fetchone()[0] == 0
         assert json.loads(db.execute("select value from (" + state_projection("service_state") + ") where key=?",
                           (f"rule_question_retirement:{attempt_id}",)).fetchone()[0]) == receipt
 
@@ -181,21 +192,21 @@ def test_retirement_refuses_current_or_unproven_questions(tmp_path, change, isol
         elif change == "generation":
             db.execute(
                 "update tasks set execution_generation='new' "
-                "where record_type='reply_tasks' and id=?",
+                "where kind='reply' and id=?",
                 (task_id,),
             )
         elif change == "active":
             db.execute(
                 "update tasks set status='needs_human' "
-                "where record_type='reply_tasks' and id=?",
+                "where kind='reply' and id=?",
                 (task_id,),
             )
         elif change == "candidate":
-            insert_action(db, 'review_candidates', {
-                'task_id': task_id, 'execution_generation': 'old-contract',
-                'consumer_run_id': run_id, 'candidate_json': '{}',
-                'candidate_digest': 'digest', 'stage_index': 0, 'proposal_revision': 0,
-            })
+            db.execute(
+                "insert into run_adopted_results(consumer_run_id,stage_index,predecessor_review_id,"
+                "candidate_digest,candidate_json,invalidated_at,invalidation_reason,created_at) "
+                "values(?,0,null,'digest','{}','','','now')", (run_id,),
+            )
         elif change == "newer":
             insert_action(db, "reply_attempts", {
                 "channel": "dingtalk", "conversation_id": "synthetic",
@@ -220,7 +231,6 @@ def test_cli_preview_does_not_initialize_or_migrate_the_database(tmp_path, isola
     attempt_id, _, run_id, _ = seed(store, native_home=isolated_native_home)
     original_native = native_path(store, run_id).read_bytes()
     with store._connect() as db:
-        db.execute("drop table meeting_alignment_delivery_claims")
         before = list(db.execute("select sql from sqlite_master order by name"))
         before_data = "\n".join(db.iterdump())
     preview = subprocess.run([

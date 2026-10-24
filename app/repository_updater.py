@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 from app.deployment_drain import QUIET_WAIT_SECONDS, deployment_drain
-from app.task20_definitions import task20_projection
 from app.current_publication_sources import publication_dispatcher_source
 from app.current_publication_sources import TARGET_STORE_VERSION, PREVIOUS_STORE_VERSIONS
 from app.current_publication_sources import publication_scheduled_source
@@ -24,6 +23,8 @@ from app.external_retry import MAX_AUTOMATIC_ATTEMPTS
 from app.repository_upgrade import GitRepository
 from app.current_publication_sources import publication_run_sources
 from app.current_publication_sources import publication_meeting_sources, publication_task_sources
+from app.current_publication_sources import publication_deployment_task_sources
+from app.current_publication_sources import publication_email_action_source
 
 
 UPGRADE_OPERATION_STATE_KEY = "repository_upgrade_operation:v1"
@@ -412,13 +413,8 @@ def in_flight_work(database_path: Path) -> int:
         reply_source, work_source = publication_task_sources(db)
         scheduled_source = publication_scheduled_source(db)
         meeting_jobs, meeting_runs = publication_meeting_sources(db)
-        email_action_source = None
-        if db.execute(
-            "select 1 from sqlite_schema where type='table' and name='email_schema_migrations'"
-        ).fetchone():
-            from app.email_publication_sources import publication_email_action_source
-
-            email_action_source = publication_email_action_source(db)
+        workbench_tasks, weekly_okr_tasks, email_classification_tasks = publication_deployment_task_sources(db)
+        email_action_source = publication_email_action_source(db)
         email_action_count = (
             f"(select count(*) from ({email_action_source}) where status='processing')"
             if email_action_source is not None else "0"
@@ -458,14 +454,13 @@ def in_flight_work(database_path: Path) -> int:
             f" + (select count(*) from ({publication_dispatcher_source(db, current_version=TARGET_STORE_VERSION, previous_versions=PREVIOUS_STORE_VERSIONS)})"
             "    where claim_active"
             "    and julianday(lease_expires_at)>julianday('now'))"
-            f" + (select count(*) from ({task20_projection('email_agent_classification_tasks')}) "
-            "    where status='running' and owner<>'' "
+            f" + (select count(*) from ({email_classification_tasks}) "
+            "    where status='running' "
+            "    and lease_owner<>'' "
             "    and julianday(lease_expires_at)>julianday('now'))"
-            f" + (select count(*) from ({task20_projection('workbench_turns')}) "
-            "    where status='running' and lease_owner<>'' "
+            f" + (select count(*) from ({workbench_tasks}) where status='running' and lease_owner<>'' "
             "    and julianday(lease_expires_at)>julianday('now'))"
-            f" + (select count(*) from ({task20_projection('weekly_okr_analysis_jobs')}) "
-            "    where status='running' and lease_owner<>'' "
+            f" + (select count(*) from ({weekly_okr_tasks}) where status='running' and lease_owner<>'' "
             "    and julianday(lease_expires_at)>julianday('now'))"
             f" + {email_action_count}"
             f" + (select count(*) from ({scheduled_source}) where dispatch_status='pending'"

@@ -15,6 +15,7 @@ from app.agent_cron.commands import (
     ServiceCommandRegistry,
     ServiceCommandSkillMaterial,
 )
+from tests.scheduled_command_results import unknown_service_result
 from app.agent_runtime_contracts import RuntimeFailureClass
 from app.agent_runtime_router import RoutedCodexExecutionError
 from app.dws_client import (
@@ -45,7 +46,8 @@ from app.task8_storage import task8_set_parts
 from app.action_task_delivery_definitions import task_delivery_projection
 from app.store import MEETING_LOGICAL_RUN_SQL
 from app.runs11_definitions import run11_projection
-from app.store import AutoReplyStore, MEETING_JOB_SQL
+from app.store import AutoReplyStore
+from app.task_storage import MEETING_JOB_SQL
 from app.skill_features import FeatureRegistry
 
 NOW = datetime.fromisoformat("2026-07-14T10:10:00+08:00")
@@ -117,10 +119,13 @@ def test_meeting_producer_carries_scheduled_consumer_context(tmp_path):
         skill_names=("ceo-meeting-work",),
         skill_protocol="# Targeted Meeting Skill",
     )
-    implementations = {option.name: lambda: "unused" for option in SERVICE_COMMAND_OPTIONS}
-    implementations["scan-meetings-once"] = lambda: str(
+    implementations = {
+        option.name: lambda: unknown_service_result("unused")
+        for option in SERVICE_COMMAND_OPTIONS
+    }
+    implementations["scan-meetings-once"] = lambda: unknown_service_result(str(
         produce_meeting_alignment_jobs(store, FakeDws(), now=NOW)
-    )
+    ))
 
     ServiceCommandRegistry(implementations).run(
         "scan-meetings-once",
@@ -1713,11 +1718,12 @@ def test_tool_free_meeting_planner_preserves_all_frozen_skill_requirements(tmp_p
         ),
     )
     implementations = {
-        option.name: lambda: "unused" for option in SERVICE_COMMAND_OPTIONS
+        option.name: lambda: unknown_service_result("unused")
+        for option in SERVICE_COMMAND_OPTIONS
     }
-    implementations["scan-meetings-once"] = lambda: str(
+    implementations["scan-meetings-once"] = lambda: unknown_service_result(str(
         produce_meeting_alignment_jobs(store, dws, now=NOW)
-    )
+    ))
     ServiceCommandRegistry(implementations).run(
         "scan-meetings-once", consumer_context=context
     )
@@ -2757,6 +2763,45 @@ def test_calendar_summary_retry_does_not_resend_meeting_message(tmp_path):
     assert len(dws.send_calls) == 1
 
 
+def test_calendar_summary_readback_already_contains_exact_sent_summary(tmp_path):
+    store = AutoReplyStore(tmp_path / "worker.sqlite3")
+    dws = ConsumerDws()
+    job_id = seed_consumer_job(store, dws)
+    runner = FakeMeetingRunner(consumer_send_decision())
+
+    consume_meeting_alignment_jobs(store, dws, runner, now=NOW, limit=1)
+    sent = store.get_meeting_alignment_job(job_id)
+    assert sent.status == "sent"
+    assert len(dws.send_calls) == 1
+
+    existing_description = f"Prior note\n\n{sent.final_message}"
+    dws.calendar_pages[""]["events"][0].description = existing_description
+    store.update_meeting_alignment_job(
+        job_id,
+        status="ready_to_send",
+        calendar_summary_status="failed",
+        calendar_summary_result_json='{"state":"failed"}',
+        available_at="",
+        error="calendar summary readback mismatch",
+    )
+    calendar_writes_before_retry = len(dws.calendar_update_calls)
+
+    consume_meeting_alignment_jobs(
+        store, dws, runner, now=NOW + timedelta(minutes=1), limit=1
+    )
+
+    recovered = store.get_meeting_alignment_job(job_id)
+    receipt = json.loads(recovered.calendar_summary_result_json)
+    assert recovered.status == "sent"
+    assert recovered.calendar_summary_status == "skipped"
+    assert receipt["state"] == "already_present"
+    assert receipt["event_id"] == json.loads(sent.source_json)[
+        "calendar_evidence"
+    ]["event_id"]
+    assert len(dws.calendar_update_calls) == calendar_writes_before_retry
+    assert len(dws.send_calls) == 1
+
+
 def test_meeting_audit_return_runs_bounded_feedback_revision(tmp_path):
     store = AutoReplyStore(tmp_path / "worker.sqlite3")
     dws = ConsumerDws()
@@ -3104,7 +3149,7 @@ def test_requeue_failed_meeting_delivery_rejects_unreviewed_candidate(tmp_path):
     assert store.requeue_failed_meeting_delivery(job_id) is None
 
 
-def test_failed_frozen_meeting_candidate_can_be_reaudited_without_regeneration(tmp_path):
+def test_failed_frozen_meeting_candidate_reaudit_stops_after_prior_receipt(tmp_path):
     store = AutoReplyStore(tmp_path / "worker.sqlite3")
     dws = ConsumerDws()
     job_id = seed_consumer_job(store, dws)
@@ -3144,39 +3189,11 @@ def test_failed_frozen_meeting_candidate_can_be_reaudited_without_regeneration(t
     requested = store.request_failed_meeting_audit_recovery(
         job_id, expected_candidate_sha256=candidate_digest,
     )
-    assert requested is not None
-    assert requested.status == "retry"
-    assert requested.decision_json == original_decision_json
-    direct_key = store.resolve_meeting_alignment_delivery_key(
-        legacy_key, target_kind="user", target_id="user-z",
-    )
-    assert direct_key != legacy_key
-    assert store.get_outbound_postfix_receipt("dingtalk", legacy_key) == {
-        "messageId": "old-group-receipt"
-    }
-    assert store.get_outbound_postfix_receipt("dingtalk", direct_key) is None
-
-    runner = FakeMeetingRunner(decision)
-    consumed = consume_meeting_alignment_jobs(
-        store, dws, runner, now=NOW, limit=1, deliver=False,
-    )
-    assert consumed == 1
-
-    recovered = store.get_meeting_alignment_job(job_id)
-    persisted_decision = json.loads(recovered.decision_json)
-    assert recovered.status == "ready_to_send", recovered.error
-    assert MeetingAlignmentDecision.model_validate(
-        {k: v for k, v in persisted_decision.items() if k != "_service_audit"}
-    ).final_message == original.final_message
-    assert meeting_alignment_decision_digest(
-        MeetingAlignmentDecision.model_validate(
-            {k: v for k, v in persisted_decision.items() if k != "_service_audit"}
-        )
-    ) == candidate_digest
-    assert meeting_decision_audit_is_approved(recovered.decision_json)
-    assert runner.calls == 0
-    runs = store.list_meeting_alignment_runs(job_id)
-    assert runner.audit_run_id == runs[0].id
+    assert requested is None
+    unchanged = store.get_meeting_alignment_job(job_id)
+    assert unchanged.status == "failed"
+    assert unchanged.decision_json == original_decision_json
+    assert unchanged.final_message == original.final_message
     assert dws.send_calls == []
 
 

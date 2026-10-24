@@ -12,8 +12,6 @@ from fastapi import FastAPI
 from fastapi.responses import JSONResponse
 
 from app.action_storage import REPLY_ATTEMPT_COMMON_SQL
-from app.run_storage import AGENT_RUN_SQL
-from app.store import REPLY_TASK_CURRENT_SQL
 from app.web_api.common import json_safe, normalize_display_value, snapshot_at
 
 _CHUNK = 500
@@ -42,15 +40,19 @@ def annotate_task_identity(store: Any, items: list[dict[str, Any]]) -> None:
             # of the same message, as the Attempt detail page resolves it.
             for row in db.execute(
                 f"""select attempts.id as attempt_id,
-                           coalesce(runs.reply_task_id, (
+                           coalesce(runs.task_id, (
                                select max(tasks.id)
-                               from ({REPLY_TASK_CURRENT_SQL}) as tasks
-                               where tasks.channel=attempts.channel
-                                 and tasks.conversation_id=attempts.conversation_id
-                                 and tasks.trigger_message_id=attempts.trigger_message_id
+                               from tasks
+                               join task_inputs inputs on inputs.id=tasks.current_input_id
+                                 and inputs.task_id=tasks.id
+                               where tasks.kind='reply'
+                                 and inputs.channel=attempts.channel
+                                 and inputs.conversation_id=attempts.conversation_id
+                                 and inputs.trigger_message_id=attempts.trigger_message_id
                            )) as task_id
                     from ({REPLY_ATTEMPT_COMMON_SQL}) as attempts
-                    left join ({AGENT_RUN_SQL}) as runs on runs.id=attempts.agent_run_id
+                    left join runs on runs.id=attempts.agent_run_id
+                      and not exists (select 1 from run_provenance p where p.run_id=runs.id)
                     where attempts.id in ({marks})""",
                 chunk,
             ).fetchall():
@@ -59,9 +61,10 @@ def annotate_task_identity(store: Any, items: list[dict[str, Any]]) -> None:
         for chunk in _chunks(sorted(set(attempt_task.values()))):
             marks = ",".join("?" for _ in chunk)
             for row in db.execute(
-                f"""select reply_task_id, count(*) as run_count
-                    from ({AGENT_RUN_SQL}) as agent_runs
-                    where reply_task_id in ({marks}) group by reply_task_id""",
+                f"""select task_id as reply_task_id, count(*) as run_count
+                    from runs as agent_runs
+                    where not exists (select 1 from run_provenance p where p.run_id=agent_runs.id)
+                      and task_id in ({marks}) group by task_id""",
                 chunk,
             ).fetchall():
                 run_counts[int(row["reply_task_id"])] = int(row["run_count"])
@@ -77,16 +80,22 @@ def annotate_task_identity(store: Any, items: list[dict[str, Any]]) -> None:
 def build_task_history(store: Any, task_id: int) -> dict[str, Any] | None:
     with store._connect() as db:
         task = db.execute(
-            f"select * from ({REPLY_TASK_CURRENT_SQL}) as reply_tasks where id=?",
+                """select tasks.*, inputs.channel, inputs.conversation_id,
+                          inputs.conversation_title, inputs.trigger_sender,
+                          inputs.trigger_text, inputs.trigger_message_id
+                     from tasks join task_inputs inputs
+                       on inputs.id=tasks.current_input_id and inputs.task_id=tasks.id
+                    where tasks.id=? and tasks.kind='reply'""",
             (task_id,),
         ).fetchone()
         if task is None:
             return None
         runs = db.execute(
-            f"""select id, execution_generation, role, proposal_revision,
+            """select id, execution_generation, role, proposal_revision,
                        turn_attempt, status, started_at, completed_at, created_at
-                from ({AGENT_RUN_SQL}) as agent_runs
-                where reply_task_id=? order by id""",
+                from runs as agent_runs
+                where not exists (select 1 from run_provenance p where p.run_id=agent_runs.id)
+                  and task_id=? order by id""",
             (task_id,),
         ).fetchall()
         attempts = db.execute(
@@ -101,7 +110,8 @@ def build_task_history(store: Any, task_id: int) -> dict[str, Any] | None:
                 f"""select id, agent_run_id, action, send_status, updated_at,
                            final_reply_text, audit_summary, send_error
                     from ({REPLY_ATTEMPT_COMMON_SQL}) as attempts
-                    where agent_run_id in (select id from ({AGENT_RUN_SQL}) where reply_task_id=?)""",
+                    where agent_run_id in (select id from runs where task_id=?
+                      and not exists (select 1 from run_provenance p where p.run_id=runs.id))""",
                 (task_id,),
             ).fetchall()
             if int(row["id"]) not in {int(a["id"]) for a in attempts}

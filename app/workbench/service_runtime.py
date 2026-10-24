@@ -7,7 +7,7 @@ from collections.abc import Callable
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
-from uuid import UUID, uuid4
+from uuid import uuid4
 
 from app.agent_runtime_production import build_production_routed_codex_execution
 from app.agent_runtime_router import (
@@ -232,14 +232,13 @@ class ServiceWorkbenchRuntime:
             workspace.relative_to(self.workspace)
         except ValueError as exc:
             raise ValueError("workspace is outside runtime boundary") from exc
-        for field_name, value in (
-            ("turn_id", request.turn_id),
-            ("conversation_id", request.conversation_id),
-        ):
-            try:
-                if str(UUID(value)) != value:
-                    raise ValueError
-            except (AttributeError, ValueError) as exc:
-                raise ValueError(f"{field_name} must be a canonical UUID") from exc
+        turn_id = request.turn_id
+        if (not turn_id.isascii() or not turn_id.isdecimal()
+                or int(turn_id) <= 0 or str(int(turn_id)) != turn_id):
+            raise ValueError("turn_id must be a canonical Task ID")
+        conversation_id = request.conversation_id
+        if (not conversation_id.isascii() or not conversation_id.isdecimal()
+                or int(conversation_id) <= 0 or str(int(conversation_id)) != conversation_id):
+            raise ValueError("conversation_id must be a canonical parent Task ID")
         if request.attachment_paths:
             raise ValueError("attachments are not supported by the service runtime")

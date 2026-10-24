@@ -9,9 +9,24 @@ import json
 from app.action_storage import _encoded_native_sqlite_value
 from app import task20_definitions as source
 from app.task_lifecycle_definitions import SOURCE_FIELDS, TASK20_LAYOUTS
-from app.task_lifecycle_definitions import DISPATCH_KINDS
+from app.task_lifecycle_definitions import DISPATCH_KINDS, DISPATCH_TASK_KINDS
 from app.task_lifecycle_jsonb import restore_sql
 from app.state_storage import upsert_state, update_state, update_state_rows, state_json_field
+
+_TASK_MUTABLE_FIELDS = frozenset({
+    "status", "available_at", "attempts", "error", "locked_at", "lease_owner",
+    "lease_expires_at", "owner_pid", "generation", "adapter_name", "execution_generation",
+    "current_input_id", "claimed_input_id", "input_version", "claimed_input_version",
+    "updated_at",
+})
+
+
+def _task_setters(values, expressions):
+    if (set(values) | set(expressions)) - _TASK_MUTABLE_FIELDS or set(values) & set(expressions):
+        raise ValueError("unknown or duplicate native Task update field")
+    assignments = [_quote(field) + "=?" for field in values]
+    assignments.extend(_quote(field) + "=" + expression for field, expression in expressions.items())
+    return ",".join(assignments)
 
 
 @dataclass(frozen=True)
@@ -119,23 +134,28 @@ def source_insert(kind, values, expressions, parameters=(), *, replace=False):
 
 
 def claim_projection():
-    """Current claim facts from Tasks; error clocks/IDs are passive history."""
+    """Current claim facts from native Task IDs; history carries the same ID."""
     return (
-        "select t.lifecycle_adapter_name as adapter_name,t.legacy_key as source_id,"
-        "t.lifecycle_lease_owner as owner,t.lifecycle_owner_pid as owner_pid,"
-        "t.lifecycle_generation as generation,t.lifecycle_lease_expires_at as lease_expires_at,"
+        "select t.adapter_name as adapter_name,cast(t.id as text) as source_id,"
+        "t.lease_owner as owner,t.owner_pid as owner_pid,"
+        "t.generation as generation,t.lease_expires_at as lease_expires_at,"
         "history.terminal_at,history.last_error,history.created_at,history.updated_at,"
         "cast(history.legacy_key as integer) as rowid "
         "from tasks t left join state history on history.record_type='dispatcher_claim_leases' "
-        "and history.adapter_name=t.lifecycle_adapter_name and history.source_id=t.legacy_key "
-        "where t.lifecycle_adapter_name is not null"
+        "and history.adapter_name=t.adapter_name and history.source_id=cast(t.id as text) "
+        "where t.adapter_name is not null"
     )
 
 
 def _task_identity(adapter, source_id):
-    kind = DISPATCH_KINDS[adapter]
-    return ("record_type=? and record_type not in ('workbench_tasks','workbench_turns') "
-            "and cast(legacy_key as integer)=?", (kind, int(source_id)))
+    kind = DISPATCH_TASK_KINDS[adapter]
+    try:
+        task_id = int(source_id)
+    except (TypeError, ValueError):
+        raise ValueError("dispatcher Task ID is not canonical") from None
+    if str(task_id) != str(source_id):
+        raise ValueError("dispatcher Task ID is not canonical")
+    return ("id=? and kind=?", (task_id, kind))
 
 
 def _write_claim_history(db, adapter, source_id, values, *, create=False, repack=True):
@@ -165,7 +185,7 @@ def acquire_claim(db, *, adapter_name, source_id, owner, owner_pid, lease_expire
                   domain_values=None, domain_sql=None, domain_parameters=(),
                   structural_sql=None, domain_where=""):
     identity, keys = _task_identity(adapter_name, source_id)
-    row = db.execute("select lifecycle_adapter_name,lifecycle_generation from tasks where " + identity, keys).fetchone()
+    row = db.execute("select adapter_name,generation from tasks where " + identity, keys).fetchone()
     if row is None:
         raise ValueError("dispatcher Task source is missing")
     if row[0] is not None and row[0] != adapter_name:
@@ -176,18 +196,20 @@ def acquire_claim(db, *, adapter_name, source_id, owner, owner_pid, lease_expire
         generation = 1 if prior is None else int(prior[0]) + 1
     else:
         generation = 1 if row[1] is None else int(row[1]) + 1
-    domain = source_assignments(DISPATCH_KINDS[adapter_name], domain_values or {}, domain_sql or {})
+    domain_values = domain_values or {}
+    domain_sql = domain_sql or {}
+    domain = _task_setters(domain_values, domain_sql)
     fields = {"lease_owner": owner, "owner_pid": owner_pid, "generation": generation,
               "lease_expires_at": lease_expires_at, "adapter_name": adapter_name}
-    sql = ",".join(_quote(f) + "=jsonb(?)" for f in fields)
-    if domain.sql:
-        sql += "," + domain.sql
+    sql = ",".join(_quote(f) + "=?" for f in fields)
+    if domain:
+        sql += "," + domain
     if structural_sql:
         sql += "," + ",".join(_quote(f) + "=" + expression for f, expression in structural_sql.items())
     guard = " and (" + domain_where + ")" if domain_where else ""
     changed = db.execute("update tasks set " + sql + " where " + identity
-        + " and (lifecycle_lease_owner is null or lifecycle_lease_owner='' or lifecycle_lease_expires_at<=?)" + guard,
-        (*map(encoded, fields.values()), *domain.parameters, *domain_parameters, *keys, now)).rowcount
+        + " and (lease_owner is null or lease_owner='' or lease_expires_at<=?)" + guard,
+        (*fields.values(), *domain_values.values(), *domain_parameters, *keys, now)).rowcount
     if changed != 1:
         raise ValueError("dispatcher source lease is still active")
     _write_claim_history(db, adapter_name, source_id, {
@@ -201,8 +223,8 @@ def acquire_claim(db, *, adapter_name, source_id, owner, owner_pid, lease_expire
 def assert_claim(db, *, envelope, owner, now):
     identity, keys = _task_identity(envelope.adapter_name, envelope.source_id)
     if db.execute("select 1 from tasks where " + identity
-        + " and lifecycle_adapter_name=? and lifecycle_lease_owner=? and lifecycle_generation=? "
-        "and lifecycle_lease_expires_at>?",
+        + " and adapter_name=? and lease_owner=? and generation=? "
+        "and lease_expires_at>?",
         (*keys, envelope.adapter_name, owner, envelope.generation, now)).fetchone() is None:
         raise ValueError("dispatcher source claim is no longer owned")
 
@@ -211,16 +233,17 @@ def transition_claim(db, *, envelope, owner, values, history, now=None,
                      domain_values=None, domain_sql=None, domain_parameters=(), domain_where=""):
     """Update one Task domain+claim CAS and its passive metadata in one transaction."""
     identity, keys = _task_identity(envelope.adapter_name, envelope.source_id)
-    domain = source_assignments(DISPATCH_KINDS[envelope.adapter_name],
-                                domain_values or {}, domain_sql or {})
-    sql = ",".join(_quote(f) + "=jsonb(?)" for f in values)
-    if domain.sql:
-        sql = ",".join(s for s in (sql, domain.sql) if s)
-    guard = " and lifecycle_adapter_name=? and lifecycle_lease_owner=? and lifecycle_generation=?"
-    params = (*map(encoded, values.values()), *domain.parameters, *domain_parameters,
+    domain_values = domain_values or {}
+    domain_sql = domain_sql or {}
+    domain = _task_setters(domain_values, domain_sql)
+    sql = ",".join(_quote(f) + "=?" for f in values)
+    if domain:
+        sql = ",".join(s for s in (sql, domain) if s)
+    guard = " and adapter_name=? and lease_owner=? and generation=?"
+    params = (*values.values(), *domain_values.values(), *domain_parameters,
               *keys, envelope.adapter_name, owner, envelope.generation)
     if now is not None:
-        guard += " and lifecycle_lease_expires_at>?"
+        guard += " and lease_expires_at>?"
         params += (now,)
     if domain_where:
         guard += " and (" + domain_where + ")"
@@ -236,12 +259,16 @@ def recover_claims(db, *, adapter, source_ids, values, history, where_sql="", pa
     if not source_ids:
         return 0
     ids = tuple(str(value) for value in source_ids)
-    clause = "record_type=? and lifecycle_adapter_name=? and legacy_key in (" + ",".join("?" for _ in ids) + ")"
+    canonical_ids = tuple(int(value) for value in ids)
+    if any(str(value) != str(task_id) for value, task_id in zip(ids, canonical_ids, strict=True)):
+        raise ValueError("dispatcher Task ID is not canonical")
+    clause = "kind=? and adapter_name=? and id in (" + ",".join("?" for _ in ids) + ")"
     if where_sql:
         clause += " and (" + where_sql + ")"
-    rows = db.execute("update tasks set " + ",".join(_quote(f) + "=jsonb(?)" for f in values)
-        + " where " + clause + " returning legacy_key",
-        (*map(encoded, values.values()), DISPATCH_KINDS[adapter], adapter, *ids, *parameters)).fetchall()
+    rows = db.execute("update tasks set " + ",".join(_quote(f) + "=?" for f in values)
+        + " where " + clause + " returning cast(id as text)",
+        (*values.values(), DISPATCH_TASK_KINDS[adapter], adapter,
+         *canonical_ids, *parameters)).fetchall()
     for row in rows:
         _write_claim_history(db, adapter, row[0], history, repack=repack_history)
     return len(rows)
@@ -255,8 +282,8 @@ def forget_pruned_claims(db, deleted):
         db.execute(
             "update tasks set lease_owner=null,owner_pid=null,generation=null,"
             "lease_expires_at=null,adapter_name=null "
-            "where lifecycle_adapter_name=? and legacy_key=? and record_type=? "
-            "and lifecycle_generation is ? "
-            "and (lifecycle_lease_owner is null or lifecycle_lease_owner='')",
-            (adapter, source_id, DISPATCH_KINDS[adapter], generation),
+            "where adapter_name=? and id=? and kind=? "
+            "and generation is ? "
+            "and (lease_owner is null or lease_owner='')",
+            (adapter, source_id, DISPATCH_TASK_KINDS[adapter], generation),
         )
