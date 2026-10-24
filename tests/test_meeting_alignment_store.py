@@ -7,7 +7,6 @@ import app.store as store_module
 from app.meeting_alignment_models import MeetingAlignmentJob, MeetingAlignmentRun
 from app.store import AutoReplyStore
 from app import task_lifecycle_storage as task_claims
-from app.task20_definitions import TASK20_INDEX_DDL
 
 
 def seed_job(
@@ -28,12 +27,8 @@ def seed_job(
     )
 
 
-def test_meeting_alignment_schema_is_added_to_existing_database(tmp_path):
-    db_path = tmp_path / "worker.sqlite3"
-    with sqlite3.connect(db_path) as db:
-        db.execute("create table legacy_data (id integer primary key)")
-
-    store = AutoReplyStore(db_path)
+def test_meeting_alignment_schema_uses_native_task_and_run_owners(tmp_path):
+    store = AutoReplyStore(tmp_path / "worker.sqlite3")
 
     with store._connect() as db:
         tables = {
@@ -48,17 +43,10 @@ def test_meeting_alignment_schema_is_added_to_existing_database(tmp_path):
                 "select name from sqlite_master where type='index'"
             ).fetchall()
         }
-    assert "legacy_data" in tables
-    assert {"tasks", "runs"} <= tables
+    assert {"tasks", "runs", "run_provenance", "task_results"} <= tables
     assert "meeting_alignment_jobs" not in tables
     assert "meeting_alignment_runs" not in tables
-    expected_meeting_indexes = {
-        sql.partition(" on tasks(")[0].split()[-1]
-        for sql in TASK20_INDEX_DDL
-        if sql.endswith("where record_type='meeting_alignment_jobs'")
-    }
-    assert expected_meeting_indexes
-    assert expected_meeting_indexes | {"idx_logical_runs_task"} <= indexes
+    assert {"idx_meeting_source_identity", "idx_runs_task"} <= indexes
     assert "idx_meeting_alignment_runs_job" not in indexes
 
 
@@ -104,16 +92,16 @@ def test_incomplete_unmarked_meeting_source_is_rejected_without_mutation(tmp_pat
         assert db.execute("pragma user_version").fetchone()[0] == user_version
 
 
-def test_current_schema_manifest_detects_missing_meeting_payload_column(tmp_path):
+def test_current_schema_manifest_detects_missing_meeting_source_identity_index(tmp_path):
     db_path = tmp_path / "worker.sqlite3"
     store = AutoReplyStore(db_path)
     seed_job(store, meeting_id="minutes-retained")
     with sqlite3.connect(db_path) as db:
-        db.execute("alter table tasks rename column payload_json to missing_payload_json")
+        db.execute("drop index idx_meeting_source_identity")
         before = tuple(db.iterdump())
         user_version = db.execute("pragma user_version").fetchone()[0]
     store_module._INITIALIZED_STORE_PATHS.discard(db_path.resolve())
-    with pytest.raises(sqlite3.IntegrityError, match="malformed current Task lifecycle declaration"):
+    with pytest.raises(sqlite3.IntegrityError, match="unsupported or malformed Store source schema"):
         AutoReplyStore(db_path)
     with sqlite3.connect(db_path) as db:
         assert tuple(db.iterdump()) == before
@@ -317,7 +305,7 @@ def test_startup_recovery_closes_interrupted_meeting_run_and_runtime_attempt(tmp
         limit=1, now="2026-07-14 02:11:00"
     )
     assert claimed.id == job_id
-    run_id = store.claim_logical_run('meeting_alignment_runs', job_id)
+    run_id = store.claim_professional_run(job_id)
     attempt = store.claim_runtime_operation_attempt(
         "meeting",
         str(run_id),
@@ -356,11 +344,11 @@ def test_startup_recovery_closes_interrupted_meeting_run_and_runtime_attempt(tmp
     assert runtime_attempt.finished_at
     with store._connect() as db:
         lease = db.execute(
-            f"select owner, owner_pid, lease_expires_at from ({task_claims.claim_projection()}) "
+            f"select owner, lease_expires_at from ({task_claims.claim_projection()}) "
             "where adapter_name='meeting' and source_id=?",
             (str(job_id),),
         ).fetchone()
-    assert tuple(lease) == ("", 0, "")
+    assert tuple(lease) == ("", "")
 
 
 def test_activation_baseline_silences_unsent_historical_jobs(tmp_path):
@@ -606,8 +594,8 @@ def test_ready_reconciliation_retry_is_atomic_and_not_claimable_before_due(tmp_p
 def test_meeting_agent_runs_are_immutable(tmp_path):
     store = AutoReplyStore(tmp_path / "worker.sqlite3")
     job_id = seed_job(store)
-    first_id = store.create_logical_run('meeting_alignment_runs', task_public_id=job_id, codex_session_id="session-1", status="retry", error="send status pending")
-    second_id = store.create_logical_run('meeting_alignment_runs', task_public_id=job_id, codex_session_id="session-2", codex_transcript_start_line=10, codex_transcript_end_line=25, status="sent", error="")
+    first_id = store.create_professional_run(job_id, session_id="session-1", status="retry", error="send status pending")
+    second_id = store.create_professional_run(job_id, session_id="session-2", transcript_start=10, transcript_end=25, status="sent", error="")
 
     runs = store.list_meeting_alignment_runs(job_id)
     assert [run.id for run in runs] == [second_id, first_id]
