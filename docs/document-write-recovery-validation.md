@@ -42,3 +42,33 @@ DWS 的 `docVerificationError` 生成 `doc.operation.v1/status=partial_success`�
 因此，这份样本的50处对齐token差异反映Markdown读回省略属性，而非已证明写入丢失对齐。DWS `executeVerifiedDocContentMutation` 对Markdown写入只用`get_document_content(format=markdown)`核验，无法从该输出区分真实对齐缺失与导出省略。剩余1处文本空格差异还需要独立核对；不能由47处对齐存在推断整篇已完全匹配。
 
 已核对DWS上游main，仍采用相同Markdown核验路径；没有找到已发布的对应修复。后续DWS修复必须以完整JSONML核对Markdown无法表达回来的属性，并保留真正对齐缺失、正文数值变化、正文缺失的失败检测；禁止简单忽略对齐token或把本样本改判成功。本轮未改DWS、未切换生产文档写入格式、未重放报告。服务交接已上线，实际重复覆盖是否收敛仍待首个相关自然样本。
+
+## DWS核验修复与本机安装（2026-10-24 06:25 UTC）
+
+用户明确要求修复DWS、用完整JSONML核对对齐，并按现有计划验证上线。本次变更在DWS所属仓库完成：上游候选提交 `4e79e33a`，PR [DingTalk-Real-AI/dingtalk-workspace-cli#1551](https://github.com/DingTalk-Real-AI/dingtalk-workspace-cli/pull/1551)；本机安装以原v1.0.65的 `92c4f8c3` 为基线，仅带入同一修复，发布提交为 `87ddde4130bd3aa7080b7528f2c2324f5e6c2112`（已推送callzhang fork的 `codex/doc-jsonml-alignment-v1.0.65`）。上游PR尚未合入；这是本机源码修复版，不冒充官方新版本，原生源码安装的version输出为dev。
+
+机制：Markdown包含显式表格对齐时，每个既有核验轮次读取Markdown与完整JSONML，核对表/行/列数量及每个目标单元格段落的jc属性；只有JSONML证明对齐正确，才恢复比较AST中的对齐token，继续执行原有渲染等价及结构/内容比较。缺失或错误对齐、缺失正文、数值变化、不完整/损坏/片段JSONML、读回失败均不能成功。没有增加写入重试；compact回执保留JSONML对齐证据摘要，不返回第二份完整正文。
+
+原始样本剩余的1处空格差异确认为结构指纹将转义文本AST片段的边界误当作空格；现改为先拼接原片段再归一化实际空白，显式换行和真实词间空格保留。匿名失败回归已证明该缺陷。原始完整样本离线核验由失败变为通过；不存在生产写入或任务重放。
+
+验证：上游main基线和安装用v1.0.65基线的完整文档模块测试均通过；安装分支包含114项顶层测试及子场景，go vet通过。新增先失败的用例覆盖导出省略对齐仍成功、真实对齐缺失/错误仍失败、数值和正文变化、JSONML缺失/损坏/非root/不完整、多个表格、追加、创建、一次写入、JSONML读取失败、实体转义和空正文覆盖。独立审查发现的空正文及HTML实体两项退化均以失败回归复现并修复，复核无剩余问题。
+
+通过仓库原生 `make build` 和 `scripts/install.sh` 的源码安装路径安装到 `/Users/derek/.local/bin/dws`（`DWS_NO_SKILLS=1`，保留原有5份Skill备份）；runtime payload校验、签名校验通过。安装文件与构建产物一致，SHA-256为 `ec9a6d35f01cbc13ac5ae0fcc8608b282b807e2d135643c3c3963dcf669cf92d`。原文件SHA为 `1d832e4fe77a8746e3546de026ffd3d21b0eaddcfcdea7f2027543989af83dd8`，备份及校验回执保存在本机 `Library/Application Support/ceo-agent-service/backups/dws-doc-jsonml-87ddde41/`；未修改CEO服务生产checkout或Skill正文。
+
+安装后使用该DWS二进制只读fetch原目标，exit0，完整JSONML为3张表、47处右对齐；响应SHA为 `72a275cfecce5f4935c21268fdb9e1e64f3628627e3f2630283e1cea8dc400f2`，不保存正文。已检查实际进程环境，服务主进程37209及worker37212/37213/37214均将dws解析到已更新的文件；DWS为逐次启动CLI，新调用加载新二进制，无须为本次CLI安装重启CEO Python服务。healthz、status、Attention和History均HTTP200，Attention10项、History37920项；这些是观测值，不宣称既有错误已清零或其增长与本次变更有关。
+
+截至安装后查询，新增Consumer自然运行0项：**DWS修复已在本机运行路径上线，原始离线样本通过，实际自然文档写入是否停止重复覆盖仍待业务轨迹验收。** 不人工触发报告制造样本，不将只读fetch成功当作写入行为已验证。
+
+## 2026-10-24 写入成功与核验状态分离
+
+Derek 明确：确认已执行的文档写入即算写入成功。共用工具将已应用写入的 `ok=false/status=partial_success` 改为 `ok=true/status=success`，核验/读回问题继续保留 `verified=false/readback=null`、目标、原始错误和 provider 结果。未执行、权限拒绝和提交未知仍报错；不增加写入次数，不修改 Audit 规则。即使写入成功，缺少读回的结果也不会冒充完整核验回执。
+
+既有回归改用新成功语义，修改实现前 8 例如预期失败、6 例通过。定向文档恢复及报告回执测试 26 例通过，Ruff 与 diff 检查通过。扩展工件测试 11 例因既有数据库夹具 `tasks` 缺少 `status` 字段失败；在未修改的 HEAD 上对照同样 11 例失败，不属于本次改动。部署与自然业务回读单独记录。
+
+### 写入成功语义的生产发布回读（2026-10-24 06:56 UTC）
+
+实现提交 `b5028e7ef49b187fd8cebe81ba21d18ffaea0eef` 已推送 main，正式 `python -m app.deploy` 返回 `deployed c0382cbb -> b5028e7e`，没有跳过空闲等待。首次回读 PID 由 66176 变为 72854；随后另一会话的正式部署更新到 `7a6caf762265003d6ae33cd8d5e738c87fab75b8`。等待其重启窗口结束后重新读取：该版本仍包含本次修复，生产工作树无源码修改，主进程 PID 76014，worker 76018/76019/76020。进程于 06:56:10 UTC 启动，晚于本次文档工具源码更新时间 06:54:46 UTC，cwd 为正式生产 checkout。生产 `app/agent_cli.py` 与已测试文件逐字节一致，SHA-256 为 `aa50c18de3cd4dfc9465d46c5c96c1e804f454ac04e84519b38fec43dc0e2729`，确认已执行写入的返回为 `ok=true/status=success/verified=false`。
+
+最终 healthz、console status、Attention、History、Dashboard queues 全部 HTTP 200。Attention 10 项、History 37925 项；队列 active 1（原有邮件 provider 工作）、queued 194。Reply/Attempt 失败分别为 13/13，Meeting 失败 1、Meeting Memory 失败 9，与部署前读数相同。原先阻挡排空的邮件动作结束后进入既有重试队列；邮件 provider pending 111、processing 1、retryable 78，继续由原有流程处理，不归因于本次文档回执改动。
+
+只读查询部署窗口后的 Agent 运行记录，新增运行 0 项，尚无自然文档写入样本。结论：新代码已发布并由新进程加载，运行健康回读通过；真实文档写入的成功回执及重复覆盖是否停止仍待首个自然相关 trajectory，不人工重放或操作业务文档。

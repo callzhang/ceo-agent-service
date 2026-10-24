@@ -889,7 +889,7 @@ Codex provider 错误事件报告的最终 HTTP 429 按已有满载路线处理�
 
 统一 Consumer Dispatcher 不建立第二套业务队列表。各 Queue Adapter 直接领取现有事实来源：
 scheduled trigger、scheduled execution、普通 reply、meeting、work summary、OKR review、
-当前 BusinessTask 的 DingTalk Todo outbox 和任务长期记忆写入（`task_memory_write`）。统一层只处理唤醒、公平领取、租约、全局 Agent 容量和分发；领域 Consumer
+当前 BusinessTask 的 DingTalk Todo outbox。统一层只处理唤醒、公平领取、租约、全局 Agent 容量和分发；领域 Consumer
 继续负责自己的生命周期和外部事实。Dispatcher 的有界等待是跨进程恢复机制，不是用户 Cron，
 也没有用户可编辑的 polling/settle 设置。空队列只显示零指标，不生成 run。
 
@@ -1395,7 +1395,7 @@ meeting job ID 绑定模型、音频 SHA-256、分段时间和完整分块数，
 原失败运行；外部消息仍只能由原 Meeting 审查与投递流程产生。
 独立 Meeting Alignment planner/delivery 仍是独立路径；共享受众规则不代表迁入通用 Consumer/Audit 引擎。Meeting Alignment 没有任务内 Skill 读取能力。Codex 路线在本轮有冻结的托管会议 Skill 时，提交本轮定时任务提示和该托管 Skill 的完整规则，省去已由服务完成的操作 Skill 正文；原生 Skill 目录仅保留 `dingtalk-chat` 入口供 Agent 按需使用 DWS 核验群，其余重复 Skill 隐藏。其他路线仍提交全部冻结 Skill 正文。没有托管会议 Skill 或冻结材料时，沿用完整原输入及旧自定义 inline 约定。结果模型、受众核验及通过审核后的投递机制保持不变；新增独立审核门禁。
 
-Meeting planner 生成的 `audit_summary` 只是候选字段，不是 Audit。每个候选在进入 `ready_to_send` 前必须由独立、model-only（无原生工具或 MCP）的 Audit 调用复核会议来源、群候选证据、准确收件目标、正文事实和披露范围。运行器传来的 Codex JSONL 先提取最终 assistant 消息；路由器已规范化的纯 JSON 则直接解析，两种输入均执行相同结果模型校验和候选 SHA-256 绑定校验。审核结果以 `_service_audit` 元数据与原候选共同保存，并绑定候选 SHA-256；新投递与人工重排入口都要求重新验证该绑定且结果为 `approve`。`return` 携带 rule/observation/requested_revision 并进入最多三轮的反馈修订，新 Consumer revision 使用独立 Meeting run 与 Audit runtime workload；达到上限仍未通过才转 `needs_human`。`reject` 转人工，缺失、无效或摘要不匹配按失败关闭，均不得产生新投递。独立 Audit 的外部依赖暂时不可用时，沿用 Meeting 原有外部依赖退避重试；无效审核结果按失败处理。旧的未审核 `ready_to_send` 记录也会在投递前失败关闭。已存在 provider 回执的只读核实与状态恢复继续沿用原有回执、正文及目标校验，不要求为既成外部效果补造审核。收件人准备绑定仍不可变；新会议投递键按规范化收件目标区分，旧键只有在已绑定目标与本次目标完全一致时才复用，避免跨目标误用回执。重跑与来源恢复仍会拦截已有准备动作；provider 回执与幂等投递保护不变。
+Meeting planner 生成的 `audit_summary` 只是候选字段，不是 Audit。每个候选在进入 `ready_to_send` 前必须由独立、model-only（无原生工具或 MCP）的 Audit 调用复核会议来源、群候选证据、准确收件目标、正文事实和披露范围。会议原文明确把后续工作分配给精确收件人时，该分工本身可证明向其分享完成任务所需的简要结论和必要背景；不要求另有逐字发送指示，也不能据此扩大到无关或敏感内容，职位本身不构成授权。运行器传来的 Codex JSONL 先提取最终 assistant 消息；路由器已规范化的纯 JSON 则直接解析，两种输入均执行相同结果模型校验和候选 SHA-256 绑定校验。审核结果以 `_service_audit` 元数据与原候选共同保存，并绑定候选 SHA-256；新投递与人工重排入口都要求重新验证该绑定且结果为 `approve`。没有发送回执、没有活动领取，且因候选与既有收件目标绑定冲突失败的旧任务，可由最新 Attempt 通过明确的 audit-only 恢复入口重新读取会议来源并审核原冻结候选；若上一次 Audit 为 `return`，同一入口可在用户明确请求后再次复核。入口要求精确候选 SHA-256，不重新生成或改写目标/正文，并先剥离旧审核封套再解析候选。只有同一候选的新独立 Audit `approve` 才以 CAS 重新进入原投递 worker；`return`、`reject`、Audit 错误或候选变化均保留失败，不触发发送。`return` 携带 rule/observation/requested_revision 并进入最多三轮的反馈修订，新 Consumer revision 使用独立 Meeting run 与 Audit runtime workload；达到上限仍未通过才转 `needs_human`。`reject` 转人工，缺失、无效或摘要不匹配按失败关闭，均不得产生新投递。独立 Audit 的外部依赖暂时不可用时，沿用 Meeting 原有外部依赖退避重试；无效审核结果按失败处理。旧的未审核 `ready_to_send` 记录也会在投递前失败关闭。已存在 provider 回执的只读核实与状态恢复继续沿用原有回执、正文及目标校验，不要求为既成外部效果补造审核。收件人准备绑定仍不可变；新会议投递键按规范化收件目标区分，旧键只有在已绑定目标与本次目标完全一致时才复用，避免跨目标误用回执。重跑与来源恢复仍会拦截已有准备动作；provider 回执与幂等投递保护不变。
 
 定时 Meeting 重放仅重新开启没有结果、也没有已准备钉钉外发动作的失败或 `no_action` 任务。普通和敏感版本的 prepared outbound 都由原有投递恢复路径处理；重放不能清除后重新分析其既定动作，也不能改变已绑定收件人。
 
@@ -1860,7 +1860,7 @@ Task 且已确认关联同 Project；当前显示成员仍只取 open/waiting。
 零 Task 项目仍可读 context、当前职责/事实证明与有界近期来源，context revision limit=1，
 证据有界并固定保留引用 ID。current_project_attention 保留真实卡成员和原 assessment 原文。
 Task 语义上下文用无损紧凑 JSON 序列化，省去排版缩进；字段、顺序、原文字符串、引用偏移和检索选择保持不变。
-source_documents 按完整绑定身份键提供精确版本的共享正文一次，source_signals 保留引用 ID、来源和业务元数据并指向正文；数据库内部 dedupe_key 不进入 Agent 输入，持久去重键及其查询行为不变。
+source_documents 按完整绑定身份键提供精确版本的共享正文一次，每份 document 带 `doc` 序号和其 Signal 共有的来源字段（source_type/source_ref/source_time、会话、作者）及 `document_id` 一次；source_signals 只保留 Signal id、`doc`、`context_json`、`created_at`，某个共有字段取值与其 document 不同时才在该 Signal 上重复写出（真实回放 104 条 Signal 的这两部分 JSON 由 76,825 降到 48,279 字符）。Agent 引用仍是 Signal id 加该 document 的 source_ref，服务校验引文不变；数据库内部 dedupe_key 不进入 Agent 输入，持久去重键及其查询行为不变。
 同一轮 Task semantic context 中完全相同的 `visible_ranges` 与 `decoded_excerpts` 只序列化一次，其余文档用 `duplicate_of_document_id` 指向首份投影；文档身份、元数据、信号和引用保持独立，展开后与原始 source bundle 完全一致。若压缩后的完整 bundle 不更短，则保留原始表示。
 Task 输入里，当前 WorkItem 的正文就是 Work Item JSON 里的 `summary`，只出现一次；语义上下文不再含
 `current_work_item`，也没有 `source_metrics`。来源绑定带外部定位信息（provider 或 native 定位，`source_ref`
@@ -1941,7 +1941,7 @@ Consumer 负责业务准备和完整候选，Audit 只读审核整份候选，�
 
 Consumer 可以直接使用普通工作工具，写入并读回本任务本代次的材料，或通过既有绑定的
 通用 scheduled 文档接口操作明确目标的文档。普通写入不因为有副作用而被一律改成待审核系统动作；其事实证据是
-真实工具结果与读回。`consumer_artifact_write` 将本任务材料写入
+真实工具结果与读回。文档写入与核验分别表达：provider 已确认执行的写入返回 `ok=true/status=success`，即使后续目标解析、读回或核验失败；此时保留 `verified=false`、原始错误与已有目标，不生成成功读回。未执行或提交状态未知仍返回原错误。`consumer_artifact_write` 将本任务材料写入
 `/tmp/ceo-agent-service-task-artifacts/<task_id>/<generation>`，`read_task_artifact` 与
 `list_task_artifacts` 为两角色提供当前代的只读材料；Audit 没有对应写入工具。任务仍为
 `pending` 或 `processing` 时保留文件供恢复和审核；进入 `done`、`failed`、`needs_human` 或
@@ -1991,28 +1991,23 @@ Audit 返回或拒绝后，Consumer 必须提交当前阶段的完整修订候�
 
 ### 任务长期记忆
 
-Derek 2026-09-24：长期记忆由执行 Agent A 在结果里给出、系统写入 Memory、不经审核。
+Derek 2026-10-24：任务的长期记忆由执行 Agent A 自己在回合内调用 `memory_connector.memory_write`
+写入，服务不再有任务记忆的队列、重试或写入器。此前（2026-09-19 至 2026-10-24）A 在结果里给出
+`durable_memories`，任务进入 `done` 时服务入队并由 Dispatcher 的 `task_memory_write` adapter 写入；
+实际 245/248 个任务记 `skipped / no_durable_memories`，判断仍是 A 做的，服务层只多了一份独立 OAuth 凭据
+（与 A 读 memory 用的不是同一份，后端对它返回 `FRIDAY_INTROSPECTION_FAILED`），所以整层删除。
 
-- A 的结果协议（`ConsumerAgentWireResult`，四种 outcome 都一样）必填 `durable_memories`，可为空列表。
-  每条是 `title`、`content`、`source_time`（信息在来源里产生的时间，ISO-8601）、`source_refs`
-  （消息 id、文档链接、审批单号）和可选 `subject`（Person/Project/Customer/Organization + 名称）。
-  写什么、不写什么只由字段说明约束（`app/agent_contracts.py` 的 `DurableMemory`）。
-  旧结果读回时视为空列表。
-- 任务在 `finalize_orchestrated_reply_task` 里进入 `done` 的同一事务中，服务从库里存的、该执行代最后一次
-  完成的 Consumer 结果读出这个字段（不用内存里的编排结果对象，它多数情况下不带 Consumer 结果），写进
-  Actions 中的 `task_memory_write_events` 类型：每个任务执行代一行（键为 `reply_task_id +
-  execution_generation`），`pending` 带待写条目；没有条目记 `skipped / no_durable_memories`，
-  没有 Consumer 结果记 `skipped / no_consumer_result`。所以每个经编排结束的任务都有一个记忆结论。
-- 写入是系统自动行为，不是定时任务（Derek 2026-09-24）：统一 Dispatcher 的 `task_memory_write`
-  adapter（`TaskMemoryWriteQueueAdapter`）像 DingTalk Todo outbox 一样，一入队就领取，
-  `app/task_memory_write.py` 用服务自己的 memory-connector 客户端逐条调用 `memory_write`（与会议结论同一客户端）。
-  dry-run 不注册该 adapter。
-  正文与时间来自 Agent，写入前去掉服务附加的反馈回调链接和署名（`app/memory_text.py`，会议结论同样处理，并去掉跟进消息抬头；标识符只放 metadata，不进正文：固定内容会让 memory-connector 聚类把无关 episode 判成近似重复，Derek 2026-10-02）；`thread_id`（会话标识）、`source_metadata`（渠道、会话、触发消息、任务 id，
-  外加 Agent 指认的 `source_refs`）和 `provenance_metadata`（执行者、Consumer run、执行代、线路、
-  模型、用途 `task_durable_memory`）由服务从记录里填。每写成一条就记下它的 id，重试只写剩下的；
-  连接器失败按退避重试（上限 20 次），之后记 `failed` 并进 Attention（`task_memory_write_failed`）。
-- 这取代了让 Agent 自己调用 memory 工具：那条路在 2026-07-26 之后衰减到一条不写；也取代了
-  memory-connector 插件的收尾钩子（服务的 `codex exec` 已固定 `--disable hooks`）。
+- 提示（`app/consumer_agent.py` 的 `_CAPABILITY_COMMON_HEAD`）只要求 A 在结束前检查本轮是否确认了
+  应长期保留的信息，有则逐条 `memory_write`；不写临时任务、日志、代码、一次性错误、未确认的猜测、
+  敏感原文、密钥，以及 Memory 里已有的内容（含同一任务较早修订已写的）。
+- 结果协议不再包含 `durable_memories`（`ConsumerAgentWireResult` 与三份 schema 已删）；旧结果里的该字段
+  读回时被丢弃，不再触发任何写入。
+- Codex 路线的 Consumer 拥有 `memory_connector` 的全部工具（只有 Audit 受 `ROLE_MCP_READ_TOOLS` 限制）。
+  Claude 路线的 Consumer 只连接服务的 `agent_cli`，没有 Memory 工具，所以走该路线的任务不会写长期记忆。
+- `codex exec` 仍固定 `--disable hooks`：插件 Stop hook 会在结果之后再加一轮，曾使结构化结果重复。
+- Actions 里的 `task_memory_write_events` 记录类型及其索引、触发器保留（历史行可读，需要迁移才能删），
+  但没有任何代码再写入它；控制台 Attention 和队列不再列它。
+- 会议结论的 Memory 写入同日一并删除（Derek 2026-10-24：不应有两条不同路径）：服务不再有 `meeting_memory_write` 写入器、Worker、`meeting-memory-write` 健康组件、Status 的 `meeting_memory_health` 和自己注册的 OAuth 客户端（`app/memory_connector_client.py`、`authorize-memory-connector`）。已发送的会议结论需要进 Memory 时由人工或 Agent 通过 Memory Connector 补写；历史 `meeting_memory_write_events` 行保留不动。
 
 ### Audit Agent B
 
@@ -2597,14 +2592,6 @@ ProcessingReaction 在现有 service_state 保存文字表情模板与每条源�
 正常生产和消费 pass 根据现有 reply_tasks 与 sent_replies 清理已结束的源消息，
 重启后继续未确认的表情操作。只操作本功能记录的源消息与服务账号的「处理中」表情。
 该进度展示不改变 Consumer/Audit 生命周期、发送授权或现有业务效果检查。
-## 会议 Memory 入队的 SQLite 边界
-
-会议结论入队先通过会议状态索引与事件的唯一会议 ID 索引排除已入队历史，随后只读取缺失会议的
-`final_message`，沿用 `sent` 且结论非空的资格。没有候选时不申请共享写锁；存在候选时关闭只读
-连接，在写事务内仅对这些 ID 重新核验状态、结论与事件缺失，再生成原有事件和 execution generation。
-并发入队仍每个会议只有一条事件，空扫描不修改事件或自增序列；只读快照之后新送达的会议由下一轮发现。
-历史正文检查与全量会议扫描不再放在写锁内。
-
 ## Storage retention (2026-10-09)
 
 已完成或明确跳过的工作汇总输入不长期保留正文。`work_summary_inputs` 在业务投影提交的同一事务中将正文替换为空对象，并保留来源类型和引用、来源时间、原始 UTF-8 正文的 SHA-256 与字节数、明确的精简标记、状态、尝试次数和错误，以及既有原生运行引用。扫描器再次发现同一终态来源不会写回正文，执行中的输入也不会被重复入队覆盖；迟到的失败或重试不能重新打开已精简终态。待处理、执行中和失败输入保留准确正文以供恢复；已采纳的业务证据、业务结果和执行回执继续保存。历史终态正文通过显式存储维护清理，不在初始化中批量清理。History 展示来源元数据；依赖原始正文的历史语义导入明确报告来源不可用，不将空对象当作原文或由业务结果重建输入。
@@ -2855,9 +2842,7 @@ Phase4C Attention 定时错误读取以原event_id或规范scheduled-task-run:<�
 Phase4C 查询性能边界：数字ID投影显式包含已有部分索引的类型条件，SQLite可使用
 idx_tasks_public_id完成按公共ID查找；TEXT投影不加入此条件。Work Attention先从
 work_summary_inputs类型的scalar状态记录筛出公共ID，再读取所选输入正文；无关类型
-增长不扩大其候选扫描。会议Memory入队的missing候选、主键连接和事务复核使用
-现有物理任务ID；Actions 中的 meeting_memory_write_events 类型仍保存物理父FK，对外还原公共ID，
-已入队记录正文不参与候选检查。状态、排序、limit、去重与竞争复核规则不变。
+增长不扩大其候选扫描。状态、排序、limit、去重与竞争复核规则不变。
 
 Phase4C已于2026-10-12通过PR61/05ca33b1正常上线，生产Store2026-10-12.1、Email51、PID43265及数据/队列读回已验证。具体来源、字段映射、回退、CI、容量和清理边界见docs/database-redesign-phase4c-validation.md；上文候选阶段的时间性验收说明以本条及验收文档最终回执为准。
 
@@ -3913,7 +3898,7 @@ drain. This does not force hung work to finish.
 
 In-flight checks include claimed email classifiers, Workbench turns and weekly
 OKR jobs before native runtime creation, direct email reply claims and provider operations in processing,
-and claimed meeting Memory writes, in addition to the existing runtime and
+in addition to the existing runtime and
 dispatcher ownership facts. Retry policy, external-action rules and task
 lifecycle are unchanged. The first release installs the claim hooks through
 the existing quiet deployment path; older processes cannot honor the new lock.

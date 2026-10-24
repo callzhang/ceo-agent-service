@@ -1185,6 +1185,41 @@ def test_console_meeting_detail_uses_meeting_run_id(tmp_path: Path):
     assert "codex_session_id" not in json.dumps(item)
 
 
+def test_meeting_audit_recovery_rejects_nonlatest_attempt(tmp_path: Path):
+    store = AutoReplyStore(tmp_path / "worker.sqlite3")
+    job_id = store.upsert_meeting_alignment_job(
+        meeting_id="meeting-audit-recovery",
+        title="项目评审会",
+        source_json='{"summary":"讨论上线范围"}',
+        participants_json='[]',
+        ended_at="2026-08-29T10:00:00Z",
+        eligible_at="2026-08-29T10:05:00Z",
+        status="failed",
+    )
+    earlier_run = store.create_logical_run(
+        "meeting_alignment_runs", task_public_id=job_id, status="failed", error="old"
+    )
+    latest_run = store.create_logical_run(
+        "meeting_alignment_runs", task_public_id=job_id, status="failed", error="latest"
+    )
+
+    with _client(tmp_path) as client:
+        invalid = client.post(
+            f"/api/console/meeting-attempts/{latest_run}/audit-recovery",
+            json={"candidate_sha256": "not-a-digest"},
+        )
+        stale = client.post(
+            f"/api/console/meeting-attempts/{earlier_run}/audit-recovery",
+            json={"candidate_sha256": "0" * 64},
+        )
+
+    assert invalid.status_code == 400
+    assert invalid.json()["code"] == "candidate_digest_invalid"
+    assert stale.status_code == 409
+    assert stale.json()["code"] == "attempt_not_latest"
+    assert store.get_meeting_alignment_job(job_id).status == "failed"
+
+
 def test_console_feedback_pending_badge_is_global_when_filtered_to_resolved(
     tmp_path: Path,
 ):
@@ -1290,7 +1325,6 @@ def test_console_status_accepts_live_native_delivery_coverage(
     health = audit_web_module._system_health_snapshot(
         store,
         {"ok": True},
-        meeting_memory_health={"delayed": 0, "ghost_runtime_attempts": 0},
     )
     assert SystemHealth.model_validate(health).native_delivery_coverage.model_dump() == {
         "checked": 2, "unavailable": 3,
@@ -1471,20 +1505,6 @@ def test_console_status_is_json_serializable_and_has_snapshot(monkeypatch, tmp_p
                 "runtime_loops": [],
                 "accounts": [],
                 "checks": [],
-            },
-            "meeting_memory_health": {
-                "pending": 0,
-                "due": 0,
-                "delayed": 0,
-                "processing": 0,
-                "retryable": 0,
-                "failed": 0,
-                "oldest_due_at": "",
-                "oldest_due_seconds": 0,
-                "completed_last_hour": 0,
-                "active_agents": 0,
-                "ghost_runtime_attempts": 0,
-                "delayed_after_seconds": 30 * 60,
             },
             "queues": [],
             "dispatcher_queues": [],

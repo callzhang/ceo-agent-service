@@ -714,7 +714,6 @@ def _wire_result(result: dict[str, object]) -> dict[str, object]:
         "error_code": error["code"],
         "error_retryable": error["retryable"],
         "error_authorization_required": error["authorization_required"],
-        "durable_memories": result.get("durable_memories", []),
     }
 
 
@@ -922,7 +921,7 @@ def test_consumer_codex_turn_uses_matching_native_schema_and_parser(
         "action": "no_action", "reason": "Already handled", "target": {},
         "payload": {}, "evidence_refs": [], "summary": "Already handled",
         "risk": "low", "confidence": 1.0, "rule_coverage": 1.0,
-        "information_completeness": 1.0, "durable_memories": [],
+        "information_completeness": 1.0, 
     }).model_dump(mode="json")
     stream = "\n".join((
         json.dumps({"type": "thread.started", "thread_id": f"native-{purpose}"}),
@@ -4182,7 +4181,7 @@ def _consumer_failure_wire(error_code: str, outcome: str = "failed") -> str:
             "error_code": error_code,
             "error_retryable": True,
             "error_authorization_required": False,
-            "durable_memories": [],
+            
         }
     )
     return json.dumps(

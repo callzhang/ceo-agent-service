@@ -21,7 +21,7 @@ def test_request_access_keeps_audit_required_noncontinuation_flag():
         "confidence": 1.0,
         "rule_coverage": 1.0,
         "information_completeness": 1.0,
-        "durable_memories": [],
+        
     }).to_result()
 
     assert result.continue_after_execution is False
@@ -44,7 +44,7 @@ def test_verified_access_request_starts_wait_even_when_review_stage_must_stop(tm
         "confidence": 1.0,
         "rule_coverage": 1.0,
         "information_completeness": 1.0,
-        "durable_memories": [],
+        
     }).to_result()
     consumer = ScriptedConsumer(store, request)
     audit = ScriptedAudit(store, "approve")

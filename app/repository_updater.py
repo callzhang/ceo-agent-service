@@ -468,9 +468,6 @@ def in_flight_work(database_path: Path) -> int:
             "    where status='running' and lease_owner<>'' "
             "    and julianday(lease_expires_at)>julianday('now'))"
             f" + {email_action_count}"
-            " + (select count(*) from actions where record_type='meeting_memory_write_events' "
-            "    and td_status='processing' and td_lease_owner<>'' "
-            "    and julianday(td_lease_expires_at)>julianday('now'))"
             f" + (select count(*) from ({scheduled_source}) where dispatch_status='pending'"
             "    and lease_owner<>'' and lease_expires_at>strftime('%Y-%m-%dT%H:%M:%S+00:00','now'))"
         ).fetchone()[0])

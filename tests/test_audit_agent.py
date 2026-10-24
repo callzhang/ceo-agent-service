@@ -48,7 +48,7 @@ def _candidate() -> ConsumerAgentResult:
         "needs_human_reason": None, "decision_basis": None,
         "requested_input": None, "stage_index": 0,
         "predecessor_review_id": None, "continue_after_execution": False,
-        "durable_memories": [],
+        
     })
 
 

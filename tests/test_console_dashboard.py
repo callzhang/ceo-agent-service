@@ -217,33 +217,6 @@ def test_superseded_business_object_is_not_in_queue(tmp_path):
     assert [r["id"] for r in result["queued"]] == [f"reply_tasks:{new}"]
 
 
-def test_memory_write_retry_is_visible_and_terminal_history_is_not(tmp_path):
-    from app.web_api.dashboard import read_dashboard_queues
-    from app.action_storage import insert_task_delivery_action
-
-    store = AutoReplyStore(tmp_path / "test.db")
-    task = seed(store, "memory-parent", status="done", attempts=1)
-    with store._connect() as db:
-        insert_task_delivery_action(
-            db,
-            "task_memory_write_events",
-            dict(
-                reply_task_id=task,
-                execution_generation="initial",
-                consumer_run_id=0,
-                status="pending",
-                attempts=2,
-                available_at="2026-10-20 17:05:00",
-                error="connection timeout",
-            ),
-        )
-        result = read_dashboard_queues(db, now=NOW)
-    assert len(result["queued"]) == 1
-    assert result["queued"][0]["source"] == "任务 Memory 写入"
-    assert result["queued"][0]["retry_number"] == 2
-    assert result["queued"][0]["error"] == "connection timeout"
-
-
 def test_dashboard_route_is_registered_in_console_app(tmp_path):
     from tests.test_console_web_api import _client
 
@@ -365,31 +338,6 @@ def test_active_direct_email_retry_counts_completed_attempts(tmp_path):
     rows = [r for r in result["active"] if r["id"] == f"email_actions:{action_id}"]
     assert len(rows) == 1
     assert rows[0]["retry_number"] == 1
-
-
-def test_active_memory_retry_keeps_completed_attempt_count(tmp_path):
-    from app.web_api.dashboard import read_dashboard_queues
-    from app.action_storage import insert_task_delivery_action
-
-    store = AutoReplyStore(tmp_path / "test.db")
-    task = seed(store, "memory-active", status="done", attempts=1)
-    with store._connect() as db:
-        insert_task_delivery_action(
-            db,
-            "task_memory_write_events",
-            dict(
-                reply_task_id=task,
-                execution_generation="initial",
-                consumer_run_id=0,
-                status="processing",
-                attempts=1,
-                lease_owner="memory",
-                lease_expires_at="2026-10-20 17:10:00",
-                started_at="2026-10-20 16:58:00",
-            ),
-        )
-        result = read_dashboard_queues(db, now=NOW)
-    assert result["active"][0]["retry_number"] == 1
 
 
 def test_workbench_title_model_and_start_with_distinct_valid_owners(tmp_path):

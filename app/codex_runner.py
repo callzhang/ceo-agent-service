@@ -300,8 +300,9 @@ class CodexRunner:
             # hooks in the shared ~/.codex can add a turn after it: the
             # memory-connector Stop hook asks "anything to remember?", the
             # model answers with a second schema-valid result, and that one
-            # won (daily-report runs 83977, 83997). Memory is written by the
-            # service from the Consumer's durable_memories instead.
+            # won (daily-report runs 83977, 83997). The Consumer calls
+            # memory_write itself during the turn instead (prompt in
+            # consumer_agent.py), so no hook is needed.
             "--disable",
             "hooks",
             *(["--ignore-user-config"] if ignore_user_config else []),

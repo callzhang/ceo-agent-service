@@ -33,7 +33,6 @@ from app.config import (
     embedding_model,
     embedding_timeout_seconds,
     principal_display_name,
-    meeting_memory_worker_count,
     repository_upgrade_branch,
     repository_upgrade_check_interval_seconds,
     repository_upgrade_enabled,
@@ -86,11 +85,6 @@ from app.meeting_alignment import (
     recover_meeting_alignment_jobs,
 )
 from app.meeting_alignment_agent import MeetingAlignmentCodexRunner
-from app.meeting_memory_write import (
-    enqueue_sent_meeting_memory_writes,
-    meeting_memory_write_lease_seconds,
-    process_meeting_memory_writes,
-)
 from app.org_cache import (
     CachedDwsClient,
     CachedOrgDirectory,
@@ -243,7 +237,6 @@ class WorkerSettings(BaseModel):
     task_codex_idle_timeout_seconds: PositiveInt = 900
     oa_pending_scan_lookback_days: PositiveInt = 365
     consumer_workers: PositiveInt = 2
-    meeting_memory_workers: PositiveInt = 2
     max_batches: NonNegativeInt | None = None
     repository_upgrade_enabled: bool = repository_upgrade_enabled()
     repository_upgrade_remote: str = repository_upgrade_remote()
@@ -256,13 +249,6 @@ class WorkerSettings(BaseModel):
             return value
         return min(int(value), MAX_AUTOMATIC_RETRIES)
     repository_upgrade_check_interval_seconds: PositiveInt = repository_upgrade_check_interval_seconds()
-
-    @field_validator("meeting_memory_workers")
-    @classmethod
-    def validate_meeting_memory_workers(cls, value: int) -> int:
-        if not 1 <= value <= 4:
-            raise ValueError("meeting_memory_workers must be between 1 and 4")
-        return value
 
 
 def _env_bool(name: str, default: bool) -> bool:
@@ -370,7 +356,6 @@ def build_parser() -> argparse.ArgumentParser:
         "refresh-okr-archive",
         "scan-task-sources",
         "scan-meeting-todos-once",
-        "authorize-memory-connector",
         "request-minutes-access",
         "sync-chrome-cookies",
         "sync-minutes-once",
@@ -780,12 +765,6 @@ def build_parser() -> argparse.ArgumentParser:
                 default=consumer_worker_count(),
                 help="global concurrent Agent execution capacity; each queue remains independently scheduled",
             )
-            subparser.add_argument(
-                "--meeting-memory-workers",
-                type=_positive_int,
-                default=meeting_memory_worker_count(),
-                help="concurrent Meeting Memory writes; independent from message consumers",
-            )
         if command == "export-feedback":
             subparser.add_argument(
                 "--output",
@@ -929,9 +908,6 @@ def settings_from_args(args: argparse.Namespace) -> WorkerSettings:
         task_codex_idle_timeout_seconds=args.task_codex_idle_timeout_seconds,
         oa_pending_scan_lookback_days=args.oa_pending_scan_lookback_days,
         consumer_workers=getattr(args, "consumer_workers", consumer_worker_count()),
-        meeting_memory_workers=getattr(
-            args, "meeting_memory_workers", meeting_memory_worker_count()
-        ),
         max_batches=args.max_batches,
         repository_upgrade_enabled=repository_upgrade_enabled(),
         repository_upgrade_remote=repository_upgrade_remote(),
@@ -1180,7 +1156,6 @@ def run_agent_cron_dispatcher_loop(
     from app.agent_runtime_production import build_production_agent_runtime
     from app.dispatcher.adapters import (
         BusinessTaskTodoSyncOutboxQueueAdapter,
-        TaskMemoryWriteQueueAdapter,
         MeetingQueueAdapter,
         OkrReviewQueueAdapter,
         ReplyQueueAdapter,
@@ -1349,15 +1324,6 @@ def run_agent_cron_dispatcher_loop(
         if not guard.resolved:
             guard.finish_source(now, status=status)
 
-    def consume_task_memory_write(envelope, guard) -> None:
-        from app.task_memory_write import write_claimed_task_memories
-
-        status = write_claimed_task_memories(
-            store, int(envelope.source_id), owner=guard.token.owner
-        )
-        if not guard.resolved:
-            guard.finish_source(datetime.now(timezone.utc), status=status)
-
     adapters = (
         ScheduledTaskQueueAdapter(store),
         ScheduledExecutionQueueAdapter(store),
@@ -1367,7 +1333,6 @@ def run_agent_cron_dispatcher_loop(
         OkrReviewQueueAdapter(store),
     ) + (() if settings.dry_run else (
         BusinessTaskTodoSyncOutboxQueueAdapter(store),
-        TaskMemoryWriteQueueAdapter(store),
     ))
     consumers = {
         "scheduled": trigger_consumer,
@@ -1379,7 +1344,6 @@ def run_agent_cron_dispatcher_loop(
     }
     if not settings.dry_run:
         consumers["business_task_todo_sync_outbox"] = consume_business_task_todo_sync_outbox
-        consumers["task_memory_write"] = consume_task_memory_write
     agent_adapters = frozenset(
         {
             "scheduled_execution",
@@ -2382,77 +2346,6 @@ def sync_minutes_once_command(settings: WorkerSettings) -> str:
     if result.failed or result.permission_pending:
         raise RuntimeError(f"sync-minutes-once incomplete: {result.summary()}")
     return result.summary()
-
-
-def authorize_memory_connector_command(settings: WorkerSettings) -> int:
-    """Authorize this service with the Memory connector, once.
-
-    The connector issues no API keys, so the service registers its own public
-    OAuth client and keeps its own refresh token. It never borrows the
-    credential another tool holds: that one expires on that tool's schedule and
-    is refreshed by it.
-    """
-    del settings
-    import http.server
-    import secrets
-    import threading
-    from urllib.parse import parse_qs, urlparse
-
-    from app.memory_connector_client import (
-        authorization_url,
-        exchange_code,
-        pkce_pair,
-        register_client,
-        save_credential,
-    )
-
-    received: dict[str, str] = {}
-
-    class Callback(http.server.BaseHTTPRequestHandler):
-        def do_GET(self) -> None:  # noqa: N802 - http.server's own spelling
-            query = parse_qs(urlparse(self.path).query)
-            received["code"] = (query.get("code") or [""])[0]
-            received["state"] = (query.get("state") or [""])[0]
-            self.send_response(200)
-            self.send_header("Content-Type", "text/plain; charset=utf-8")
-            self.end_headers()
-            self.wfile.write("Authorized. You can close this tab.".encode("utf-8"))
-
-        def log_message(self, *args: object) -> None:
-            return
-
-    server = http.server.HTTPServer(("127.0.0.1", 0), Callback)
-    redirect_uri = f"http://127.0.0.1:{server.server_address[1]}/callback"
-    client_id = register_client(redirect_uri=redirect_uri)
-    verifier, challenge = pkce_pair()
-    state = secrets.token_urlsafe(16)
-    print("authorize-memory-connector open this URL to authorize:", flush=True)
-    print(
-        authorization_url(
-            client_id=client_id,
-            redirect_uri=redirect_uri,
-            code_challenge=challenge,
-            state=state,
-        ),
-        flush=True,
-    )
-    thread = threading.Thread(target=server.handle_request, daemon=True)
-    thread.start()
-    thread.join(timeout=300)
-    server.server_close()
-    if received.get("state") != state or not received.get("code"):
-        raise RuntimeError(
-            "authorize-memory-connector received no matching authorization code"
-        )
-    credential = exchange_code(
-        client_id=client_id,
-        code=received["code"],
-        code_verifier=verifier,
-        redirect_uri=redirect_uri,
-    )
-    path = save_credential(credential)
-    print(f"authorize-memory-connector saved={path}", flush=True)
-    return 0
 
 
 def sync_chrome_cookies_command(settings: WorkerSettings) -> str:
@@ -3578,63 +3471,8 @@ def scan_meetings_once_command(
         now=current,
         settle_seconds=600,
     )
-    memory_writes_queued = enqueue_sent_meeting_memory_writes(store)
-    # Derek, 2026-09-18: queueing a Memory write and performing it are one
-    # task, not two. Reply-queue recovery is infrastructure-owned and does
-    # not belong in this evidence discovery command.
-    memory_writes_done = _process_meeting_memory_writes_once(settings, store)
-    print(
-        "scan-meetings-once "
-        f"queued={created} memory_writes_queued={memory_writes_queued} "
-        f"memory_writes_done={memory_writes_done}",
-        flush=True,
-    )
+    print(f"scan-meetings-once queued={created}", flush=True)
     return created
-
-
-def _process_meeting_memory_writes_once(
-    settings: WorkerSettings,
-    store: AutoReplyStore,
-) -> int:
-    """Run the queued Memory writes once, with the production runtime."""
-
-    from app.agent_runtime_production import (
-        build_production_routed_codex_execution,
-    )
-
-    from app.meeting_memory_write import (
-        MEETING_MEMORY_WRITE_IDLE_TIMEOUT_SECONDS,
-        MEETING_MEMORY_WRITE_PASS_LIMIT,
-        MEETING_MEMORY_WRITE_TIMEOUT_SECONDS,
-    )
-
-    total_timeout = min(
-        settings.codex_timeout_seconds, MEETING_MEMORY_WRITE_TIMEOUT_SECONDS
-    )
-    idle_timeout = min(
-        settings.codex_idle_timeout_seconds,
-        MEETING_MEMORY_WRITE_IDLE_TIMEOUT_SECONDS,
-    )
-    routed_execution = build_production_routed_codex_execution(
-        store=store,
-        workspace=settings.workspace,
-        total_timeout_seconds=total_timeout,
-        idle_timeout_seconds=idle_timeout,
-    )
-    # Not `max_batches`: that is how many queue items a worker pass takes, and
-    # applying it here capped Memory to four writes per ten-minute scan, so a
-    # meeting's conclusion could sit unwritten for over an hour. A due write is
-    # one already-delivered conclusion; the pass drains them.
-    outcome = process_meeting_memory_writes(
-        store,
-        routed_execution=routed_execution,
-        workspace=settings.workspace,
-        limit=MEETING_MEMORY_WRITE_PASS_LIMIT,
-        lease_seconds=meeting_memory_write_lease_seconds(
-            total_timeout, idle_timeout
-        ),
-    )
-    return int(getattr(outcome, "completed", 0) or 0)
 
 
 def run_meeting_producer_loop(
@@ -3775,84 +3613,6 @@ def run_meeting_delivery_loop(
             except Exception as exc:
                 if not _is_dws_transient_dependency_error(exc):
                     store.record_error("", "", "meeting_alignment_delivery", str(exc))
-        sleep(10)
-
-
-def run_meeting_memory_write_loop(
-    settings: WorkerSettings,
-    *,
-    sleep: Callable[[int], None] = time.sleep,
-    network_ready: Callable[[], bool] = _macos_wifi_connected,
-) -> None:
-    """Persist sent meeting-alignment conclusions through the live Memory route."""
-    from app.agent_runtime_production import (
-        build_production_routed_codex_execution,
-    )
-
-    store = AutoReplyStore(settings.db_path)
-    routed_execution = build_production_routed_codex_execution(
-        store=store,
-        workspace=settings.workspace,
-        total_timeout_seconds=settings.codex_timeout_seconds,
-        idle_timeout_seconds=settings.codex_idle_timeout_seconds,
-    )
-    limit = 20 if settings.max_batches is None else settings.max_batches
-    lease_seconds = meeting_memory_write_lease_seconds(
-        settings.codex_timeout_seconds,
-        settings.codex_idle_timeout_seconds,
-    )
-    while True:
-        if not settings.dry_run and network_ready():
-            try:
-                outcome = process_meeting_memory_writes(
-                    store,
-                    workspace=settings.workspace,
-                    routed_execution=routed_execution,
-                    limit=limit,
-                    concurrency=settings.meeting_memory_workers,
-                    lease_seconds=lease_seconds,
-                )
-                no_completed_claims = bool(
-                    outcome is not None
-                    and outcome.claimed > 0
-                    and outcome.completed == 0
-                )
-                has_terminal_worker_problem = bool(
-                    outcome is not None
-                    and (outcome.failed > 0 or outcome.lost_lease > 0)
-                )
-                if no_completed_claims or has_terminal_worker_problem:
-                    claimed = int(getattr(outcome, "claimed", 0))
-                    completed = int(getattr(outcome, "completed", 0))
-                    retried = int(getattr(outcome, "retried", 0))
-                    failed = int(getattr(outcome, "failed", 0))
-                    lost_lease = int(getattr(outcome, "lost_lease", 0))
-                    store.set_service_health_component(
-                        "meeting-memory-write",
-                        state="degraded",
-                        status="waiting" if no_completed_claims else "failed",
-                        detail=(
-                            f"{claimed} claimed Meeting Memory write(s) completed "
-                            f"{completed}; retry {retried}, failed {failed}, "
-                            f"lease lost {lost_lease}"
-                        ),
-                        latest_tick_at=datetime.now(timezone.utc).isoformat(),
-                    )
-                else:
-                    store.set_service_health_component(
-                        "meeting-memory-write",
-                        state="healthy",
-                        status="running",
-                        latest_tick_at=datetime.now(timezone.utc).isoformat(),
-                        latest_error="",
-                        latest_error_at="",
-                    )
-                    store.resolve_unresolved_errors_by_kind(
-                        "meeting_memory_write",
-                        resolution="recovered by later Memory write cycle",
-                    )
-            except Exception as exc:
-                store.record_error("", "", "meeting_memory_write", str(exc))
         sleep(10)
 
 
@@ -4282,7 +4042,7 @@ def run_service(
                 runtime_refresher=runtime_refresher,
             ),
         ),
-        # Derek, 2026-09-18: meeting-memory-write and follow-up delivery are
+        # Derek, 2026-09-18: follow-up delivery is
         # scheduled work, so all business decisions remain visible and
         # switchable in the scheduler. Meeting delivery stays a loop: it only
         # sends what is already approved, and a ten-second cadence is the point
@@ -5087,8 +4847,6 @@ def main() -> None:
         scan_task_sources_command(settings)
     elif args.command == "scan-meeting-todos-once":
         scan_meeting_todos_once_command(settings, max_new_items=settings.max_batches)
-    elif args.command == "authorize-memory-connector":
-        authorize_memory_connector_command(settings)
     elif args.command == "request-minutes-access":
         request_minutes_access_command(settings)
     elif args.command == "sync-chrome-cookies":

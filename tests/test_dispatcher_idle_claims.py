@@ -13,7 +13,6 @@ ADAPTERS = [
     adapters.ScheduledTaskQueueAdapter, adapters.ScheduledExecutionQueueAdapter,
     adapters.ReplyQueueAdapter, adapters.MeetingQueueAdapter,
     adapters.OkrReviewQueueAdapter, adapters.WorkSummaryQueueAdapter,
-    adapters.TaskMemoryWriteQueueAdapter,
     adapters.BusinessTaskTodoSyncOutboxQueueAdapter,
 ]
 

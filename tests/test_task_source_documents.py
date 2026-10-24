@@ -155,13 +155,17 @@ def test_shared_source_bundle_keeps_every_signal_and_one_body_per_exact_version(
             "text": SOURCE["evidence_text"],
         }
     ]
+    # The source's own fields are written once, on its document.
+    assert doc["doc"] == 1
+    assert doc["source_ref"] == SOURCE["source_ref"]
+    assert doc["author_name"] == "张三"
+    assert doc["source_time"] == SOURCE["source_time"]
     for signal, reference in zip(signals, result["source_signals"]):
         assert "evidence_text" not in reference
-        assert reference["id"] == signal.id
-        assert reference["document_id"] == signal.source.identity_key
-        assert reference["author_name"] == "张三"
-        assert reference["source_time"] == SOURCE["source_time"]
-        assert reference["context_json"] == signal.context_json
+        assert reference == {
+            "id": signal.id, "doc": 1,
+            "context_json": signal.context_json, "created_at": signal.created_at,
+        }
     assert "source_metrics" not in result
 
 
@@ -182,7 +186,9 @@ def test_shared_source_bundle_separates_versions_and_provenance(tmp_path):
         signals.append(store.get_business_task_signal(id))
     bundle = _bundle(store, signals)
     assert len(bundle["source_documents"]) == 4
-    assert len({r["document_id"] for r in bundle["source_signals"]}) == 4
+    assert len({r["doc"] for r in bundle["source_signals"]}) == 4
+    assert [d["doc"] for d in bundle["source_documents"]] == [1, 2, 3, 4]
+    assert [r["doc"] for r in bundle["source_signals"]] == [1, 2, 3, 4]
 
 
 def test_agent_source_projection_preserves_provenance_without_storage_dedupe_key(tmp_path):
@@ -193,8 +199,11 @@ def test_agent_source_projection_preserves_provenance_without_storage_dedupe_key
     result = _bundle(store, (signal,), bodies={signal.id: SOURCE["evidence_text"]})
     reference = result["source_signals"][0]
     assert "dedupe_key" not in reference
-    assert reference["document_id"] == signal.source.identity_key
-    assert reference["source_ref"] == signal.source_ref
+    document = result["source_documents"][0]
+    assert document["document_id"] == signal.source.identity_key
+    assert reference["doc"] == document["doc"]
+    assert "source_ref" not in reference
+    assert document["source_ref"] == signal.source_ref
     assert result["source_documents"][0]["source_available"] is True
     assert result["source_documents"][0]["visible_ranges"][0]["text"] == SOURCE["evidence_text"]
     with store._connect() as db:
@@ -242,7 +251,13 @@ def test_a_source_with_an_external_locator_is_left_for_the_agent_to_read(tmp_pat
 
     (document,) = result["source_documents"]
     assert document == {
+        "doc": 1,
         "document_id": located.source.identity_key,
+        **{name: SOURCE[name] for name in (
+            "source_type", "source_ref", "source_time", "conversation_id",
+            "author_user_id", "author_name", "author_kind",
+        )},
+        "conversation_title": "",
         "source_in_input": False,
         "body_utf8_bytes": located.source.body_utf8_bytes,
         "saved_quotations": ["李四负责材料"],
@@ -250,7 +265,34 @@ def test_a_source_with_an_external_locator_is_left_for_the_agent_to_read(tmp_pat
     # Nothing was read to build it: the service reads a source only when a
     # decision cites it, before it writes.
     assert prepared.readings == {}
-    assert result["source_signals"][0]["source_ref"] == "m:1"
+    assert document["source_ref"] == "m:1"
+    assert result["source_signals"][0]["doc"] == document["doc"]
+
+
+def test_a_signal_repeats_only_the_source_fields_that_differ_from_its_document(tmp_path):
+    store = AutoReplyStore(tmp_path / "override.sqlite3")
+    ids = [
+        store.create_business_task_signal(
+            **SOURCE, conversation_title=title, dedupe_key=f"t:{i}"
+        )
+        for i, title in enumerate(("项目群", "项目群", "改名后的项目群"))
+    ]
+    signals = tuple(store.get_business_task_signal(id) for id in ids)
+
+    result = _bundle(store, signals)
+
+    (document,) = result["source_documents"]
+    assert document["conversation_title"] == "项目群"
+    assert [
+        {name: value for name, value in reference.items() if name.startswith("conversation")}
+        for reference in result["source_signals"]
+    ] == [{}, {}, {"conversation_title": "改名后的项目群"}]
+    # Every Signal still resolves to its full original metadata.
+    for signal, reference in zip(signals, result["source_signals"]):
+        resolved = {**document, **reference}
+        assert resolved["conversation_title"] == signal.conversation_title
+        assert resolved["source_ref"] == signal.source_ref
+        assert resolved["author_name"] == signal.author_name
 
 
 def test_shared_source_bundle_reports_real_ranges_and_pins_middle_citation(tmp_path):

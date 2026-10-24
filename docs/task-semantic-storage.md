@@ -157,16 +157,24 @@ latest). Project proof reads are bounded recent rows plus explicitly pinned
 current-context Signal IDs, rather than a growing full-history load. Task owner,
 suggestion, and saved Attention citations also retain their original Signals.
 
-`source_bundle` renders each exact source version once in `source_documents`.
-`source_signals` retains real Signal IDs, source type/ref/time, actor,
-conversation, and context, and points each Signal at its `document_id`. The
+`source_bundle` renders each exact source version once in `source_documents`,
+numbered `doc` within the input, together with what its Signals share: source
+type/ref/time, conversation and actor. `source_signals` keeps the real Signal ID,
+`context_json` and `created_at`, and points each Signal at its document by `doc`;
+a Signal repeats one of the shared fields only when its value differs from its
+document's (for example a renamed conversation). The `document_id` identity key
+is written once, on the document. Citation is unchanged: the Agent gives the
+Signal id and that document's `source_ref`, and the service checks the quote
+against the Signal's own bound version. On a real replay of 104 Signals the
+`source_documents` plus `source_signals` JSON fell from 76,825 to 48,279 characters
+(72,025 to 36,280 for a conversation with no external-locator sources). The
 current Work Item is not part of this context: its text is the `summary` in the
 prompt's Work Item JSON, once.
 
 A source whose binding keeps an external locator (a provider or native locator;
 its `source_ref` names the minutes id or the DingTalk document node) is not
-copied into the input. Its document is `{document_id, source_in_input: false,
-body_utf8_bytes, saved_quotations}`; the Agent reads the original itself with
+copied into the input. Its document is the shared source fields plus
+`{source_in_input: false, body_utf8_bytes, saved_quotations}`; the Agent reads the original itself with
 dws, and the service still reads the exact bound version only when a decision
 cites it, to check the quote (`PreparedSources` reads lazily). A source with no
 locator (a Console action record) has nowhere to be read from, so it keeps the

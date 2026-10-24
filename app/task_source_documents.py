@@ -15,6 +15,13 @@ if TYPE_CHECKING:
 
 SOURCE_CONTEXT_LIMIT = 2048
 
+# Fields every Signal of one source version normally shares. They are written
+# once on the document entry; a Signal repeats one only when its value differs.
+_DOCUMENT_SOURCE_FIELDS = (
+    "source_type", "source_ref", "source_time", "conversation_id",
+    "conversation_title", "author_user_id", "author_name", "author_kind",
+)
+
 
 def source_is_observed(source_type: str) -> bool:
     """Provenance quotations are not observations of their referenced original."""
@@ -169,6 +176,7 @@ def source_bundle(
     documents: dict[str, dict] = {}
     signal_documents: dict[int, str] = {}
     references: list[dict] = []
+    first_reference: dict[str, dict] = {}
     for signal in signals:
         key = signal.source.identity_key
         references.append({
@@ -183,6 +191,7 @@ def source_bundle(
             "context_json": signal.context_json, "created_at": signal.created_at,
         })
         signal_documents[signal.id] = key
+        first_reference.setdefault(key, references[-1])
         doc = documents.setdefault(key, {"quotes": [], "signal": signal, "conflict": False})
         if signal.source != doc["signal"].source:
             # Two bindings claim one version key: neither may stand for it.
@@ -234,4 +243,39 @@ def source_bundle(
             "source_unavailable_reason": None,
             **_document_projection(reading.body, quotes, full=False),
         })
-    return {"source_documents": rendered, "source_signals": references}
+    return _compact_by_document(rendered, references, first_reference)
+
+
+def _compact_by_document(
+    rendered: list[dict], references: list[dict], first_reference: dict[str, dict]
+) -> dict:
+    """Write each source's shared fields once and let Signals point to it.
+
+    `doc` is the entry's number within this input. Only what the Agent reads is
+    shortened: the Signal id, quotation and bound version are unchanged.
+    """
+    numbers: dict[str, int] = {}
+    documents = []
+    for number, entry in enumerate(rendered, 1):
+        key = entry["document_id"]
+        numbers[key] = number
+        first = first_reference[key]
+        documents.append({
+            "doc": number, "document_id": key,
+            **{name: first[name] for name in _DOCUMENT_SOURCE_FIELDS},
+            **{name: value for name, value in entry.items() if name != "document_id"},
+        })
+    signals = []
+    for reference in references:
+        key = reference["document_id"]
+        first = first_reference[key]
+        signals.append({
+            "id": reference["id"], "doc": numbers[key],
+            **{
+                name: reference[name] for name in _DOCUMENT_SOURCE_FIELDS
+                if reference[name] != first[name]
+            },
+            "context_json": reference["context_json"],
+            "created_at": reference["created_at"],
+        })
+    return {"source_documents": documents, "source_signals": signals}

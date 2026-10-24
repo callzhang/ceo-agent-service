@@ -908,17 +908,6 @@ projection run after SQLite has released the writer lock and closed the
 connection; lease checks, claim ownership and returned events/results remain
 unchanged.
 
-Meeting Memory enqueue first excludes existing event IDs using the meeting
-status and unique event indexes in a read-only connection. Only missing jobs
-load `final_message` to check the existing nonempty delivered-conclusion rule.
-An empty probe returns without acquiring the shared SQLite writer lock. A
-positive probe closes its read connection, then the immediate write transaction
-rechecks status, conclusion and event absence for those exact IDs before insert.
-Competing enqueues create one event without advancing the sequence on a no-op;
-jobs delivered after the read snapshot are picked up by the next scan. This
-removes the historical wide-row scan from the write transaction: production
-telemetry observed a 13.454-second hold there with a simultaneous 13.045-second
-dispatcher lock wait.
 
 Dispatcher lease completion retains the same newest 10,000 terminal rows,
 ordered by `terminal_at desc, rowid desc`, and every active row. The required
@@ -1335,7 +1324,7 @@ Workbench 领取轮询先只读检查是否存在 queued 或租约已过期的 r
 `url` / `docUrl` 完成日报文件夹链接要求；服务不由 node ID 拼接 URL，也不为返回该元数据
 新增写操作。provider 未提供链接时仍保留缺失事实。周报回执、审核和消息投递边界不变。
 
-通用文档写入在 DWS 明确返回 `doc.operation.v1` 的对应写操作 `partial_success` 时保留其结构化错误及已执行步骤；写入返回后服务读回失败也保留已有 provider 结果。两者返回 `ok=false/status=partial_success/verified=false/readback=null`，不制造成功读回回执、不自动重写；未执行或提交状态未知仍是原错误。Agent 继续使用现有读取入口核对目标，现有 Audit 与任务续跑规则不变。
+通用文档写入在 DWS 明确返回 `doc.operation.v1` 的对应写操作 `partial_success` 时保留其结构化错误及已执行步骤；写入返回后服务读回失败也保留已有 provider 结果。已确认写入执行成功即返回 `ok=true/status=success`；目标解析、读回或核验失败独立保留为 `verified=false/readback=null` 及原始错误，不把核验失败当作写入失败，不制造成功读回回执、不自动重写；未执行或提交状态未知仍是原错误。Agent 继续使用现有读取入口核对目标，现有 Audit 与任务续跑规则不变。
 
 所有系统业务审核项必须对应实际系统任务及其当前业务实例；工具或接口存在不构成审核需求。没有对应系统任务就不设置该业务的系统审核项。当前对应关系见 [系统任务与审核范围](audit-task-scope.md)。小青面试与提交由 Derek 在个人对话中处理，不属于本次后台系统审核范围。扫描、下载和登录命令沿用既有技术结果验证，不因这条范围规则新增 Audit 回合。
 
@@ -1851,7 +1840,7 @@ Task 且已确认关联同 Project；当前显示成员仍只取 open/waiting。
 零 Task 项目仍可读 context、当前职责/事实证明与有界近期来源，context revision limit=1，
 证据有界并固定保留引用 ID。current_project_attention 保留真实卡成员和原 assessment 原文。
 Task 语义上下文用无损紧凑 JSON 序列化，省去排版缩进；字段、顺序、原文字符串、引用偏移和检索选择保持不变。
-source_documents 以完整来源绑定身份键提供精确版本的共享正文一次，source_signals 保留引用 ID、来源和业务元数据并指向正文；数据库内部 dedupe_key 不进入 Agent 输入，持久去重键及其查询行为不变。
+source_documents 以完整来源绑定身份键提供精确版本的共享正文一次，每份 document 带 `doc` 序号和其 Signal 共有的来源字段（source_type/source_ref/source_time、会话、作者）及 `document_id` 一次；source_signals 只保留 Signal id、`doc`、`context_json`、`created_at`，某个共有字段取值与其 document 不同时才在该 Signal 上重复写出（真实回放 104 条 Signal 的这两部分 JSON 由 76,825 降到 48,279 字符）。Agent 引用仍是 Signal id 加该 document 的 source_ref，服务校验引文不变；数据库内部 dedupe_key 不进入 Agent 输入，持久去重键及其查询行为不变。
 同一轮 Task semantic context 中完全相同的 `visible_ranges` 与 `decoded_excerpts` 只序列化一次，其余文档用 `duplicate_of_document_id` 指向首份投影；文档身份、元数据、信号和引用保持独立，展开后与原始 source bundle 完全一致。若压缩后的完整 bundle 不更短，则保留原始表示。
 Task 输入里，当前 WorkItem 的正文就是 Work Item JSON 里的 `summary`，只出现一次；语义上下文不再含
 `current_work_item`，也没有 `source_metrics`。来源绑定带外部定位信息（provider 或 native 定位，`source_ref`
@@ -2408,7 +2397,7 @@ Derek，2026-09-18：**后台周期性工作必须是定时任务**，在控制�
   Agent；一个 1475 文件的头脑风暴目录排了 564 条，一小时里 109 次运行调用有 105 次在读这些
   过程稿。`scan-task-sources` 现在只读 AI 听记。
 - 取消隐藏的 `task-maintenance` 常驻循环：它不再扫描来源、驱动业务任务，也不再以
-  `task_maintenance.*` 健康组件伪装成业务服务。会议 Memory 写入由自身的 Dispatcher 队列完成；
+  `task_maintenance.*` 健康组件伪装成业务服务。会议结论不再由服务写入 Memory（Derek 2026-10-24）；
   错误收口和孤儿任务恢复由服务启动恢复、Consumer/Dispatcher 的租约机制负责。
 - 并入定时任务「补查遗漏的钉钉消息和日历更新」（`recover-recent-messages`）：钉钉待办完成扫描
   （`scan_completed_dingtalk_todos`，Derek 2026-09-25：完成由新证据驱动，不单独检查）。它按页列出
@@ -2422,9 +2411,7 @@ Derek，2026-09-18：**后台周期性工作必须是定时任务**，在控制�
   该定时任务当天先停用，随后删除：服务启动时 seeding 用控制台同一个软删除
   （`delete_scheduled_task`）删掉 migration key 为 `follow-up-delivery-v1` 的任务，运行记录保留为历史；
   `process-follow-ups` 命令、每日维护里的催办步骤一并删除。
-- 任务长期记忆写入**不是**定时任务（Derek 2026-09-24：「写入记忆不应该是个定时任务，而是系统层
-  自动的」）：任务结束时在 `finalize_orchestrated_reply_task` 同一事务里入队，由统一 Dispatcher 的
-  `task_memory_write` adapter 立即领取写入；退避重试的行到点再被领取，重试上限后进 Attention。
+- 任务长期记忆不再由服务写入（Derek 2026-10-24）：Consumer 在回合内自己调用 `memory_write`，服务没有任务记忆队列；
   见 `docs/architecture.md`「任务长期记忆」。
 - 仍为常驻循环的只有 `meeting-delivery`：它只投递已审核通过的会议结论，10 秒一轮就是它的意义；
   以及备份、cron 调度/派发、探针等不产生业务判断的基础设施。
@@ -2582,7 +2569,7 @@ AgentRun 的终态重复完成先在写事务外读取准确原生引用。独�
 微信专用 Runner 在首轮 Developer 指令中给出有效的最小 `AgentEnvelope` 字段示例；首次格式错误仍由原有同 session 校验修正处理，业务结果仍由完整模型校验。原生 output-schema 开关、路线、工具、会话和交付阶段均未因此改变。
 
 同一 Dispatcher 还通过独立 adapter 领取普通 reply、meeting、work summary、OKR review、
-当前 BusinessTask 的 DingTalk Todo outbox 和任务长期记忆写入（`task_memory_write`）。adapter 只读写各自既有事实来源，并统一 claim generation、lease、唤醒、
+当前 BusinessTask 的 DingTalk Todo outbox。adapter 只读写各自既有事实来源，并统一 claim generation、lease、唤醒、
 公平性和容量；Consumer 保持领域边界。主动唤醒之外的有界等待只用于跨进程写入和异常恢复，不是
 用户配置。Status 为每个实际 adapter 展示 pending、oldest、running 和 latest error；scheduler
 进程/扫描健康与 scheduled run 的业务结果分别展示，空队列不会制造 Agent run。
@@ -3555,7 +3542,7 @@ ProcessingReaction 在现有 service_state 保存文字表情模板与每条源�
 重启后继续未确认的表情操作。只操作本功能记录的源消息与服务账号的「处理中」表情。
 该进度展示不改变 Consumer/Audit 生命周期、发送授权或现有业务效果检查。
 
-Meeting planner 的 `audit_summary` 不是审核回执。分析成功后，服务以独立 model-only Audit（无原生工具或 MCP）调用复核会议来源、群候选、准确收件人、正文与披露范围；运行器传来的 Codex JSONL 先提取最终 assistant 消息，路由器已规范化的纯 JSON 直接解析，然后对两种输入执行相同结果模型及候选 SHA-256 校验。审核输出绑定候选 SHA-256，并和候选及 Audit session 引用一并保存。只有通过该摘要绑定校验且 `outcome=approve` 的候选可转为 `ready_to_send`。`return` 必须提供 rule/observation/requested_revision，服务持久化反馈并创建新 Meeting run 做最多三轮修订；用尽仍未通过才转入 `needs_human`。`reject` 转人工；格式或结果验证失败按原 Meeting 失败规则处理，外部依赖不可用沿用原退避重试。新投递和人工重排都会检查审核绑定，旧的未审核候选、缺失审核、修改后的候选或错误摘要均不得产生新发送。已经有 provider 回执时的只读效果核实与状态恢复沿用原有回执、正文、收件目标验证，不要求为既成外部效果补造审核。不可变收件人准备绑定、同一投递键、provider 回执和原目标冲突保护保持原样。
+Meeting planner 的 `audit_summary` 不是审核回执。分析成功后，服务以独立 model-only Audit（无原生工具或 MCP）调用复核会议来源、群候选、准确收件人、正文与披露范围。会议原文明确把后续工作分配给精确收件人时，这项分工可作为向其分享完成任务所需简要结论和必要背景的依据；无需额外逐字发送指示，也不授权发送无关或敏感内容，职位本身不构成授权。运行器传来的 Codex JSONL 先提取最终 assistant 消息，路由器已规范化的纯 JSON 直接解析，然后对两种输入执行相同结果模型及候选 SHA-256 校验。审核输出绑定候选 SHA-256，并和候选及 Audit session 引用一并保存。只有通过该摘要绑定校验且 `outcome=approve` 的候选可转为 `ready_to_send`。对于无任何发送回执、无活动领取，且因候选与既有收件人绑定冲突而失败的旧任务，最新 Attempt 可以通过明确的 audit-only 恢复入口重新读取会议来源并审核原冻结候选；若上次 Audit 为 `return`，用户明确请求后可用同一入口再次复核。入口要求精确候选 SHA-256，不重新生成候选、不改目标或正文，并在解析前剥离旧审核封套。只有对同一候选的新独立 Audit `approve` 才以 CAS 回到原投递 worker；`return`、`reject`、Audit 错误和候选变化均保留失败且不触发发送。`return` 必须提供 rule/observation/requested_revision，服务持久化反馈并创建新 Meeting run 做最多三轮修订；用尽仍未通过才转入 `needs_human`。`reject` 转人工；格式或结果验证失败按原 Meeting 失败规则处理，外部依赖不可用沿用原退避重试。新投递和人工重排都会检查审核绑定，旧的未审核候选、缺失审核、修改后的候选或错误摘要均不得产生新发送。已经有 provider 回执时的只读效果核实与状态恢复沿用原有回执、正文、收件目标验证，不要求为既成外部效果补造审核。不可变收件人准备绑定、同一投递键、provider 回执和原目标冲突保护保持原样。
 
 ## Meeting Audience Recovery
 
@@ -3890,9 +3877,7 @@ Phase4C Attention 定时错误读取以原event_id或规范scheduled-task-run:<�
 Phase4C 查询性能边界：数字ID投影显式包含已有部分索引的类型条件，SQLite可使用
 idx_tasks_public_id完成按公共ID查找；TEXT投影不加入此条件。Work Attention先从
 work_summary_inputs类型的scalar状态记录筛出公共ID，再读取所选输入正文；无关类型
-增长不扩大其候选扫描。会议Memory入队的missing候选、主键连接和事务复核使用
-现有物理任务ID；Actions 中的 meeting_memory_write_events 类型仍保存物理父FK，对外还原公共ID，
-已入队记录正文不参与候选检查。状态、排序、limit、去重与竞争复核规则不变。
+增长不扩大其候选扫描。状态、排序、limit、去重与竞争复核规则不变。
 
 Phase4C已于2026-10-12通过PR61/05ca33b1正常上线，生产Store2026-10-12.1、Email51、PID43265及数据/队列读回已验证。具体来源、字段映射、回退、CI、容量和清理边界见docs/database-redesign-phase4c-validation.md；上文候选阶段的时间性验收说明以本条及验收文档最终回执为准。
 
@@ -4940,7 +4925,7 @@ build, verification, restart, health and rollback sequence. Success or every
 exception/timeout/cancel path closes the descriptor and permits claims again;
 process exit also releases flock automatically. No pause bit, new task status or
 retry-policy change is introduced. Independent direct email reply/classifier, Workbench and weekly-OKR claims,
-processing provider operations and meeting Memory leases count as in-flight even
+processing provider operations count as in-flight even
 before a native Agent starts. Processing Email actions are read through the
 explicit publication source, including the current common Action status field;
 a Store-only database without the Email migration ledger contributes zero Email

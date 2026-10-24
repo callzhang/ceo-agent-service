@@ -28,7 +28,7 @@ def output(action, *, target=None, payload=None, refs=None):
         'payload': payload or {}, 'evidence_refs': refs or [],
         'summary': action, 'error_code': '', 'error_retryable': False,
         'error_authorization_required': False, 'risk': 'low', 'confidence': 1.0,
-        'rule_coverage': 1.0, 'information_completeness': 1.0, 'durable_memories': [],
+        'rule_coverage': 1.0, 'information_completeness': 1.0, 
     }).to_result()
 
 

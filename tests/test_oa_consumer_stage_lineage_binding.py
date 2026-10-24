@@ -26,7 +26,7 @@ def _wire_result(*, stage_index, predecessor_review_id):
         "stage_index": stage_index,
         "predecessor_review_id": predecessor_review_id,
         "continue_after_execution": False,
-        "durable_memories": [],
+        
     }).model_dump(mode="json")
 
 

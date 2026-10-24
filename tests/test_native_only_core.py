@@ -40,7 +40,7 @@ def test_completed_run_result_is_read_from_native_without_sqlite_copy(tmp_path, 
         "rule_coverage": 1.0, "information_completeness": 1.0,
         "summary": "Nothing to do.", "proposal": None,
         "decision_options": [], "error_code": "", "error_retryable": False,
-        "error_authorization_required": False, "durable_memories": [],
+        "error_authorization_required": False, 
     }
     native_path = tmp_path / "session.jsonl"
     native_path.write_text(json.dumps({"type": "response_item", "payload": {"type": "message", "role": "assistant", "content": [{"type": "output_text", "text": json.dumps(wire)}]}}) + "\n")
@@ -187,7 +187,7 @@ def test_completed_runtime_result_recovers_typed_value_from_native(tmp_path, mon
         "rule_coverage": 1.0, "information_completeness": 1.0,
         "summary": "Native answer.", "proposal": None,
         "decision_options": [], "error_code": "", "error_retryable": False,
-        "error_authorization_required": False, "durable_memories": [],
+        "error_authorization_required": False, 
     }
     path = tmp_path / "session.jsonl"
     path.write_text(json.dumps({"type": "response_item", "payload": {"type": "message", "role": "assistant", "content": [{"type": "output_text", "text": json.dumps(wire)}]}}) + "\n")
@@ -220,37 +220,6 @@ def test_audit_tool_events_are_never_persisted_as_compact_copies():
         "aggregated_output": "private receipt",
     }}])
     assert _audit_event_metadata_json(events) == "[]"
-
-
-def test_task_memory_queue_uses_adopted_memories_once_when_native_is_missing(tmp_path, monkeypatch):
-    store = AutoReplyStore(tmp_path / "runs.sqlite3")
-    task = _task(store)
-    run = _claim_consumer(store, task).run
-    memory = {
-        "title": "Preference", "content": "Derek prefers direct evidence.",
-        "source_time": "2026-10-09T10:00:00Z", "source_refs": ["msg-1"],
-        "subject": {"type": "Person", "name": "Derek"},
-    }
-    wire = {
-        "outcome": "no_action", "risk": "low", "confidence": 1.0,
-        "rule_coverage": 1.0, "information_completeness": 1.0,
-        "summary": "Memory identified.", "proposal": None,
-        "decision_options": [], "error_code": "", "error_retryable": False,
-        "error_authorization_required": False, "durable_memories": [memory],
-    }
-    path = tmp_path / "session.jsonl"
-    path.write_text(json.dumps({"type": "response_item", "payload": {"type": "message", "role": "assistant", "content": [{"type": "output_text", "text": json.dumps(wire)}]}}) + "\n")
-    monkeypatch.setattr(native_trajectory, "find_codex_session_path", lambda *args, **kwargs: path)
-    store.set_agent_run_session(run.id, "native-session", owner="consumer", transcript_start_line=0)
-    store.complete_agent_run(run.id, {"outcome": "no_action", "durable_memories": [memory]}, owner="consumer", transcript_end_line=1)
-    path.unlink()
-    with store._connect() as db:
-        store._enqueue_task_memory_write_in_connection(db, task_id=task.id, execution_generation=task.execution_generation)
-        store._enqueue_task_memory_write_in_connection(db, task_id=task.id, execution_generation=task.execution_generation)
-        row = db.execute("select status, memories_json from task_memory_write_events where reply_task_id=?", (task.id,)).fetchone()
-        assert db.execute('select count(*) from task_memory_write_events').fetchone()[0] == 1
-    assert row["status"] == "pending"
-    assert json.loads(row["memories_json"])[0]["title"] == "Preference"
 
 
 def test_consumer_completion_adopts_prepared_candidate_atomically(tmp_path, monkeypatch):
@@ -601,7 +570,7 @@ def test_prepared_failure_does_not_adopt_native_proposed_success(tmp_path, monke
     wire = {'outcome': 'no_action', 'summary': 'Proposed success', 'proposal': None,
             'error_code': '', 'error_retryable': False, 'error_authorization_required': False,
             'risk': 'low', 'confidence': 1.0, 'rule_coverage': 1.0,
-            'information_completeness': 1.0, 'durable_memories': []}
+            'information_completeness': 1.0}
     _native_final(tmp_path, monkeypatch, store, run.id, wire)
     monkeypatch.setattr('app.agent_turn_runner.count_codex_session_lines', lambda *a, **k: 1)
     config = load_runtime_config({'CEO_AGENT_RUNTIME_ROUTES': 'codex_oauth'})
