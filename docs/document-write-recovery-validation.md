@@ -72,3 +72,13 @@ Derek 明确：确认已执行的文档写入即算写入成功。共用工具�
 最终 healthz、console status、Attention、History、Dashboard queues 全部 HTTP 200。Attention 10 项、History 37925 项；队列 active 1（原有邮件 provider 工作）、queued 194。Reply/Attempt 失败分别为 13/13，Meeting 失败 1、Meeting Memory 失败 9，与部署前读数相同。原先阻挡排空的邮件动作结束后进入既有重试队列；邮件 provider pending 111、processing 1、retryable 78，继续由原有流程处理，不归因于本次文档回执改动。
 
 只读查询部署窗口后的 Agent 运行记录，新增运行 0 项，尚无自然文档写入样本。结论：新代码已发布并由新进程加载，运行健康回读通过；真实文档写入的成功回执及重复覆盖是否停止仍待首个自然相关 trajectory，不人工重放或操作业务文档。
+
+### 版本化重新构建与升级原因闭环（2026-10-24）
+
+后续对账发现原生源码安装的 `dev` 构建已被官方 v1.0.65 替换。只读 State 的 `dws_upgrade_check_result` 明确记录：`checked_at=2026-10-24T07:00:02.731877+00:00`、`current_version=dev`、`latest_version=v1.0.65`、`needs_upgrade=true`；`dws_upgrade_checked_date` 于07:00:09更新。`worker._maybe_upgrade_dws_once_per_day` 在这一状态下调用原生 `dws upgrade -y`。原因是上次用了开发构建的默认dev身份，现有自动升级流程将其当作较旧版本。
+
+沿用原v1.0.65加补丁提交 `87ddde4130bd3aa7080b7528f2c2324f5e6c2112`，未修改源码或服务升级策略。使用原生Go链接参数注入 `v1.0.65+ceo-jsonml.87ddde41`、准确commit和原生release-build-time脚本返回的提交时间2026-10-24T06:21:35Z；沿用原生runtime payload校验/附加与macOS签名。既有 `TestCompareVersions`、`TestNeedsUpgrade` 通过。比较器按SemVer忽略build metadata，仍允许真实更高官方版本的升级，没有伪造未来版本。
+
+07:56:20 UTC（00:56:20 PDT）将已验证构建按原安装器的staged-copy/atomic-rename方式安装至 `/Users/derek/.local/bin/dws`，SHA-256为 `4efec8a5d6b80a34f98df6dc917497166050a3e6c89307556db3e905b0da7ad6`。原有 `dws.before` 重新核对仍等于官方原版SHA `1d832e4f...`，未新增重复备份；原安装receipt保留并追加versioned_reinstallation元数据。实际执行 `dws upgrade --check --format json` 返回补丁版本、latest_version=v1.0.65、needs_upgrade=false。主进程92731的实际PATH解析到新二进制且摘要相等。DWS逐次启动，无需为CLI更新重启Python服务；没有手动改State、绕过升级或覆盖Skill。
+
+此项解决同版官方包覆盖dev修复包的打包问题，不承诺未来更高官方版本一定包含该补丁；上游PR1551仍由维护者处理。文档逻辑来自同一已测提交，复用114项文档模块测试和原始样本证据。新增自然Consumer398975、Audit398977的完整原生范围均未调用文档写入，失败恢复的生产行为仍待对应自然样本。
