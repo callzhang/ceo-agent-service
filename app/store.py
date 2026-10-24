@@ -16541,7 +16541,7 @@ class AutoReplyStore(LogicalRunStoreMixin, ReviewedCandidateStoreMixin):
             compact_rows = db.execute(
                 f"""
                 select current_tasks.id,current_tasks.status,current_tasks.execution_generation,
-                       receipts.outcome
+                       current_receipts.outcome
                 from ({NATIVE_REPLY_TASK_CURRENT_SQL}) as current_tasks
                     join ({email_action_projection('email_unsubscribe_receipts')}) as current_receipts
                       on current_receipts.action_identity=current_tasks.trigger_message_id

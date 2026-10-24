@@ -383,18 +383,53 @@ def test_service_start_reconciles_invalid_human_projections(monkeypatch):
     assert recovered == 2
 
 
+@pytest.mark.parametrize(
+    ("outcome", "expected_status"),
+    (("done", "done"), ("skipped_no_reliable_entry", "skipped")),
+)
 def test_service_start_recovery_runs_native_reply_queries_on_disposable_store(
-    tmp_path, monkeypatch
+    tmp_path, monkeypatch, outcome, expected_status
 ):
-    """Exercise every startup recovery query without provider boundaries."""
-    store = AutoReplyStore(tmp_path / "startup-recovery.sqlite3")
+    """Exercise full startup recovery and native Email receipt projection."""
+    path = tmp_path / "startup-recovery.sqlite3"
+    store = AutoReplyStore(path)
+    from app.email_store import EmailStore
+    from app import task_entity_storage
+    from app.action_storage import insert_email_action
+    from tests.test_email_action_storage import _cases
+
+    EmailStore(path)
+    identity = "email-action:" + "c" * 64
+    task = store.ensure_reply_task(
+        channel="email", conversation_id="email-thread",
+        conversation_title="Email", single_chat=False,
+        trigger_message_id=identity, trigger_create_time="",
+        trigger_sender="", trigger_text="unsubscribe receipt recovery",
+    )
+    with store._connect() as db:
+        db.execute("pragma foreign_keys=off")
+        task_entity_storage.update_task_cas(
+            db, task_id=task.id,
+            expected={"status": "pending", "execution_generation": task.execution_generation},
+            changes={"status": "failed", "error": "worker_interrupted"},
+        )
+        cases = _cases()
+        insert_email_action(
+            db, "email_unsubscribe_receipts",
+            cases["email_unsubscribe_receipts"] | {
+                "action_identity": identity, "outcome": outcome,
+            },
+        )
     monkeypatch.setattr(cli, "AutoReplyStore", lambda path: store)
 
     recovered = cli._recover_orphaned_reply_tasks_on_service_start(
-        SimpleNamespace(db_path=tmp_path / "startup-recovery.sqlite3")
+        SimpleNamespace(db_path=path)
     )
 
-    assert recovered == 0
+    assert recovered == 1
+    with store._connect() as db:
+        task_after = task_entity_storage.get_task(db, task.id)
+    assert task_after["status"] == expected_status
 
 
 def seed_exhausted_stale_wechat_delivery(store: AutoReplyStore) -> tuple[int, int]:

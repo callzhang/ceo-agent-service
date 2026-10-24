@@ -4243,6 +4243,9 @@ unsubscribe, terminal-attempt, settlement, human-projection, and interrupted-run
 reconciliations against the native Task projection. The confirmation-required
 query interpolates that projection SQL before execution; this repairs startup
 SQL parsing without changing its predicates, terminal states, or recovery order.
+Email unsubscribe settlement joins the native `email_unsubscribe_receipts`
+projection by action identity and reads its source `outcome` field; it does not
+infer the domain outcome from a provider result envelope.
 
 Historical terminal Attempt or settlement projections cannot override a current external_action_uncertain/external_action_failed task error. A later verified provider result uses the normal execution completion writer. Original Attempt and settlement history remains unchanged.
 
