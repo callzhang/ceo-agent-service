@@ -1,0 +1,81 @@
+{
+  "ask_clarifying_audit_approve": {
+    "attempt": {
+      "send_error": "",
+      "send_status": "sent"
+    },
+    "delivery": {
+      "error": "",
+      "pre_action_failure": false,
+      "status": "sent"
+    },
+    "runs": [
+      [
+        "consumer",
+        "completed"
+      ],
+      [
+        "audit",
+        "completed"
+      ]
+    ]
+  },
+  "handoff_to_human": {
+    "attempt": {
+      "send_error": "handoff_to_human",
+      "send_status": "skipped"
+    },
+    "delivery": null,
+    "runs": []
+  },
+  "no_reply": {
+    "attempt": {
+      "send_error": "no_reply",
+      "send_status": "skipped"
+    },
+    "delivery": null,
+    "runs": []
+  },
+  "send_reply_audit_approve": {
+    "attempt": {
+      "send_error": "",
+      "send_status": "sent"
+    },
+    "delivery": {
+      "error": "",
+      "pre_action_failure": false,
+      "status": "sent"
+    },
+    "runs": [
+      [
+        "consumer",
+        "completed"
+      ],
+      [
+        "audit",
+        "completed"
+      ]
+    ]
+  },
+  "send_reply_audit_reject": {
+    "attempt": {
+      "send_error": "wechat_audit_rejected",
+      "send_status": "failed"
+    },
+    "delivery": {
+      "error": "wechat_audit_rejected",
+      "pre_action_failure": true,
+      "status": "failed"
+    },
+    "runs": [
+      [
+        "consumer",
+        "completed"
+      ],
+      [
+        "audit",
+        "completed"
+      ]
+    ]
+  }
+}

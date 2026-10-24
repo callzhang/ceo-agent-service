@@ -12,3 +12,13 @@ def test_generic_oa_skill_requires_three_effective_same_gap_returns_before_count
     assert "不得仅凭退回次数拒绝" in content
     assert "退回回执只证明退回动作发生" in content
     assert "回应后同一缺口仍成立" in content
+
+
+def test_historical_oa_review_uses_evidence_available_at_original_action_time():
+    content = SKILL.read_text()
+
+    assert "历史审批证据按当时可见版本判断" in content
+    assert "之后才更新的表格、文件或评论不能倒推" in content
+    assert "明确标记为“未知”" in content
+    assert "不得据此认定申请人当时漏交材料" in content
+    assert "不得将该轮计为有效退回" in content

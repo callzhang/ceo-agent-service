@@ -71,6 +71,7 @@ AGENT_CLI_READ_TOOLS = (
     "read_dingtalk_user_profiles",
     "search_dingtalk_documents",
     "read_dingtalk_messages",
+    "read_wechat_messages",
     "search_dingtalk_messages",
     "read_dingtalk_thread_replies",
     "search_dingtalk_conversations",

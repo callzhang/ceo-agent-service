@@ -1407,6 +1407,31 @@ def _current_task_generation(db_path: Path | None, task_id: int | None) -> str:
     return row[0]
 
 
+def _bound_wechat_conversation(
+    db_path: Path | None, task_id: int | None, generation: str | None,
+) -> tuple[str, str]:
+    """The conversation id and type of the claimed WeChat task.
+
+    A WeChat task may read only its own conversation, so the tool takes no
+    conversation argument.
+    """
+    if db_path is None or task_id is None:
+        raise ValueError("a WeChat read needs a claimed WeChat task")
+    database = Path(db_path).resolve()
+    with closing(sqlite3.connect(f"file:{quote(str(database))}?mode=ro", uri=True)) as connection:
+        row = connection.execute(
+            "select tasks.execution_generation, tasks.channel, tasks.single_chat, "
+            "tasks.conversation_id "
+            f"from ({REPLY_TASK_SQL}) tasks where tasks.id=?",
+            (task_id,),
+        ).fetchone()
+    if row is None or row[0] != generation:
+        raise ValueError("bound task generation or input changed")
+    if row[1] != "wechat" or not row[3]:
+        raise ValueError("the bound task is not a WeChat conversation")
+    return row[3], "direct" if row[2] else "group"
+
+
 def _bound_direct_chat_sender(
     db_path: Path | None,
     task_id: int | None,
@@ -1671,7 +1696,7 @@ def _write_document_artifact(
     expected_revision: int | None = None,
 ) -> dict[str, object]:
     """Submit an exact task artifact to an explicit provider target."""
-    from app.dws_client import DwsClient
+    from app.dws_client import DwsClient, DwsError
 
     material = _task_file_path(root, artifact_name)
     if not material.is_file() or material.stat().st_size > MAX_TASK_FILE_BYTES:
@@ -1690,71 +1715,100 @@ def _write_document_artifact(
         if assessment != "passed":
             raise ValueError("document JSONML parser did not pass")
     version = None
-    if node_id:
-        if parent_id:
-            raise ValueError("document update takes node_id, not parent_id")
-        if doc_format == "jsonml":
-            if type(expected_revision) is not int or expected_revision < 0:
-                raise ValueError("JSONML update requires expected_revision")
-            version = dws.save_report_document_version(node_id)
-        result = dws.overwrite_report_document(
-            node_id=node_id,
-            content=content,
-            doc_format=doc_format,
-            expected_revision=expected_revision,
-        )
-        operation = "updated"
-    else:
-        if not parent_id or not workspace_id or expected_revision is not None:
-            raise ValueError(
-                "document creation requires parent_id and workspace_id without revision"
+    operation = "updated" if node_id else "created"
+    result = None
+    try:
+        if node_id:
+            if parent_id:
+                raise ValueError("document update takes node_id, not parent_id")
+            if doc_format == "jsonml":
+                if type(expected_revision) is not int or expected_revision < 0:
+                    raise ValueError("JSONML update requires expected_revision")
+                version = dws.save_report_document_version(node_id)
+            result = dws.overwrite_report_document(
+                node_id=node_id,
+                content=content,
+                doc_format=doc_format,
+                expected_revision=expected_revision,
             )
+        else:
+            if not parent_id or not workspace_id or expected_revision is not None:
+                raise ValueError(
+                    "document creation requires parent_id and workspace_id without revision"
+                )
+            def matching_nodes():
+                payload = dws.run_json(
+                    [
+                        dws.dws_bin,
+                        "doc",
+                        "+list",
+                        "--folder",
+                        parent_id,
+                        "--page-all",
+                        "--format",
+                        "json",
+                    ]
+                )
+                if (
+                    payload.get("status") != "success"
+                    or payload.get("complete") is not True
+                    or payload.get("hasMore") is not False
+                    or payload.get("failures") != []
+                    or not isinstance(payload.get("documents"), list)
+                ):
+                    raise ValueError("document parent listing is incomplete")
+                return [item for item in payload["documents"] if item.get("name") == title]
 
-        def matching_nodes():
-            payload = dws.run_json(
-                [
-                    dws.dws_bin,
-                    "doc",
-                    "+list",
-                    "--folder",
-                    parent_id,
-                    "--page-all",
-                    "--format",
-                    "json",
-                ]
+            if matching_nodes():
+                raise ValueError("document target appeared before creation; reread target")
+            result = dws.create_report_document(
+                name=title, content=content, doc_format=doc_format, folder_id=parent_id
             )
+            result_data = result.get("data")
             if (
-                payload.get("status") != "success"
-                or payload.get("complete") is not True
-                or payload.get("hasMore") is not False
-                or payload.get("failures") != []
-                or not isinstance(payload.get("documents"), list)
+                result.get("status") != "success"
+                or result.get("complete") is not True
+                or not isinstance(result_data, dict)
+                or result_data.get("verified") is not True
+                or not isinstance(result_data.get("nodeId"), str)
+                or not result_data["nodeId"].strip()
             ):
-                raise ValueError("document parent listing is incomplete")
-            return [item for item in payload["documents"] if item.get("name") == title]
-
-        if matching_nodes():
-            raise ValueError("document target appeared before creation; reread target")
-        result = dws.create_report_document(
-            name=title, content=content, doc_format=doc_format, folder_id=parent_id
+                raise ValueError("document create receipt is incomplete or unverified")
+            node_id = result_data["nodeId"]
+            operation = "created"
+        readback = (
+            dws.fetch_report_document_full(node_id)
+            if doc_format == "jsonml"
+            else dws.read_doc(node_id)
         )
-        result_data = result.get("data")
-        if (
-            result.get("status") != "success"
-            or result.get("complete") is not True
-            or not isinstance(result_data, dict)
-            or result_data.get("verified") is not True
-            or not isinstance(result_data.get("nodeId"), str)
-            or not result_data["nodeId"].strip()
-        ):
-            raise ValueError("document create receipt is incomplete or unverified")
-        node_id = result_data["nodeId"]
-        operation = "created"
-    readback = (
-        dws.fetch_report_document_full(node_id)
-        if doc_format == "jsonml"
-        else dws.read_doc(node_id)
-    )
+    except (DwsError, ValueError) as exc:
+        provider_error = exc.provider_error if isinstance(exc, DwsError) else {}
+        details = provider_error.get("details", {})
+        if not isinstance(details, dict):
+            details = {}
+        partial_write = (
+            details.get("contractVersion") == "doc.operation.v1"
+            and details.get("status") == "partial_success"
+            and provider_error.get("operation") == ("doc.update" if operation == "updated" else "doc.create")
+        )
+        if result is None and not partial_write:
+            raise
+        data = details.get("data", {})
+        if isinstance(data, dict) and isinstance(data.get("nodeId"), str):
+            node_id = data["nodeId"] or node_id
+        return {
+            "ok": False,
+            "status": "partial_success",
+            "verified": False,
+            "operation": operation,
+            "node_id": node_id,
+            "title": title,
+            "provider_result": result,
+            "error": provider_error or {"message": str(exc)},
+            "saved_version": version,
+            "content_sha256": hashlib.sha256(content.encode()).hexdigest(),
+            "readback": None,
+        }
     raw = json.dumps(readback, ensure_ascii=False).encode("utf-8")
     receipt_name = (
         hashlib.sha256(raw).hexdigest()
@@ -2268,6 +2322,47 @@ def build_role_server(
         matches = DwsClient().search_documents(query, page_size)
         return {"documents": [item.model_dump(mode="json") for item in matches]}
 
+    def read_wechat_messages(limit: int = 20) -> dict[str, object]:
+        """Read the recent messages of the WeChat conversation this task is bound to.
+
+        Messages are oldest first. The conversation cannot be chosen: a WeChat
+        task reads only its own. Links in recent messages carry the article text.
+        """
+        from app.wechat import service
+        from app.wechat.article import enrich_context
+
+        if type(limit) is not int or not 1 <= limit <= 100:
+            raise ValueError("message read limit is invalid")
+        conversation_id, conversation_type = _bound_wechat_conversation(
+            db_path, task_id, artifact_generation,
+        )
+        from app.store import AutoReplyStore
+
+        state = service.ready_account_state(AutoReplyStore(db_path))
+        if state is None:
+            raise ValueError("no ready WeChat account")
+        messages = service.build_reader().read_messages(
+            service.account_from_state(state),
+            conversation_id=conversation_id,
+            conversation_type=conversation_type,
+            limit=limit,
+        )
+        return {
+            "conversation_id": conversation_id,
+            "conversation_type": conversation_type,
+            "messages": [
+                {
+                    "message_id": item.message_id,
+                    "sender": item.sender_display_name,
+                    "direction": item.direction,
+                    "sent_at": item.sent_at,
+                    "kind": item.kind,
+                    "text": item.text,
+                }
+                for item in enrich_context(messages)
+            ],
+        }
+
     def read_dingtalk_messages(
         conversation_id: str, title: str = "", single_chat: bool = False,
         limit: int = 50, direct_open_dingtalk_id: str = "",
@@ -2646,6 +2741,7 @@ def build_role_server(
         ("read_dingtalk_user_profiles", read_dingtalk_user_profiles),
         ("search_dingtalk_documents", search_dingtalk_documents),
         ("read_dingtalk_messages", read_dingtalk_messages),
+        ("read_wechat_messages", read_wechat_messages),
         ("search_dingtalk_messages", search_dingtalk_messages),
         ("read_dingtalk_thread_replies", read_dingtalk_thread_replies),
         ("search_dingtalk_conversations", search_dingtalk_conversations),

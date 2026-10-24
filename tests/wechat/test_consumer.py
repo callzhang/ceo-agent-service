@@ -727,10 +727,16 @@ def test_corrected_generation_replaces_unsent_wechat_delivery(
     first = store.get_reply_task(1)
     assert first is not None
 
+    from app.task8_storage import task8_set_parts
+
+    parts = task8_set_parts(
+        "reply_tasks", {"status": "pending", "execution_generation": "corrected"},
+    )
     with store._connect() as db:
         db.execute(
-            "update tasks set status='pending', execution_generation='corrected' "
-            "where record_type='reply_tasks' and cast(legacy_key as integer)=1"
+            f"update tasks set {parts.sql} "
+            "where record_type='reply_tasks' and cast(legacy_key as integer)=1",
+            parts.parameters,
         )
     fake_codex.decision = CodexDecision(
         action=CodexAction.SEND_REPLY,

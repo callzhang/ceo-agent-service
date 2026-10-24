@@ -167,6 +167,7 @@ from app.managed_skills import (
     validate_managed_skill_name,
 )
 from app.meeting_alignment_models import (
+    MeetingAlignmentDecision,
     MeetingAlignmentJob,
     MeetingAlignmentQueueStatus,
     MeetingAlignmentRun,
@@ -1380,6 +1381,11 @@ def _return_idle_connection(
     except sqlite3.Error:
         reusable = False
     if reusable:
+        # What is worth keeping is the parsed schema; the page cache (up to
+        # SQLITE_READ_CACHE_SIZE per connection) is not, and an idle connection
+        # per thread per database would otherwise hold it for good.
+        with suppress(sqlite3.Error):
+            connection.execute("pragma shrink_memory")
         pool[key] = (connection, identity, connection.total_changes)
     else:
         with suppress(sqlite3.Error):
@@ -1866,6 +1872,31 @@ class AutoReplyStore(LogicalRunStoreMixin, ReviewedCandidateStoreMixin):
             if target is None:
                 insert_state(db, 'service_state', {'key': state_key, 'value': target_json})
             return message
+
+    def resolve_meeting_alignment_delivery_key(
+        self, delivery_key: str, *, target_kind: str, target_id: str,
+    ) -> str:
+        """Reuse a legacy key only for its exact bound recipient; scope new keys."""
+        legacy_key = delivery_key.strip()
+        if not legacy_key:
+            raise ValueError("meeting delivery key is required")
+        if target_kind not in {"group", "user", "open_user"} or not target_id.strip():
+            raise ValueError("meeting delivery target is invalid")
+        target_json = json.dumps(
+            {"kind": target_kind, "id": target_id.strip()}, sort_keys=True
+        )
+        state_key = f"meeting_delivery_target:v1:dingtalk:{legacy_key}"
+        bound = self.get_service_state(state_key)
+        prepared = self.get_outbound_postfix("dingtalk", legacy_key)
+        receipt = self.get_outbound_postfix_receipt("dingtalk", legacy_key)
+        if bound == target_json and prepared is not None:
+            return legacy_key
+        if bound is not None and prepared is None:
+            raise ValueError("meeting prepared target binding conflicts")
+        if bound is None and (prepared is not None or receipt is not None):
+            raise ValueError("meeting prepared target is unverified")
+        target_digest = hashlib.sha256(target_json.encode("utf-8")).hexdigest()
+        return f"{legacy_key}:target:{target_digest}"
 
     def verify_meeting_alignment_target(self, delivery_key: str, *, target_kind: str, target_id: str) -> None:
         expected = json.dumps({"kind": target_kind, "id": target_id.strip()}, sort_keys=True)
@@ -14282,10 +14313,18 @@ class AutoReplyStore(LogicalRunStoreMixin, ReviewedCandidateStoreMixin):
                       and {task20_column('meeting_alignment_jobs', 'send_result_json')}='{{}}'
                       and not exists (
                         select 1 from ({OUTBOUND_POSTFIX_SQL}) outbound
-                        where outbound.channel='dingtalk' and outbound.delivery_key in (
-                          'meeting-alignment:' || meeting_alignment_jobs.legacy_key || ':' || meeting_alignment_jobs.{task20_column('meeting_alignment_jobs', 'meeting_id')},
-                          'meeting-alignment:' || meeting_alignment_jobs.legacy_key || ':' || meeting_alignment_jobs.{task20_column('meeting_alignment_jobs', 'meeting_id')} || ':sensitive'
-                        )
+                        where outbound.channel='dingtalk'
+                          and (
+                            outbound.delivery_key in (
+                              'meeting-alignment:' || meeting_alignment_jobs.legacy_key || ':' || meeting_alignment_jobs.{task20_column('meeting_alignment_jobs', 'meeting_id')},
+                              'meeting-alignment:' || meeting_alignment_jobs.legacy_key || ':' || meeting_alignment_jobs.{task20_column('meeting_alignment_jobs', 'meeting_id')} || ':sensitive'
+                            )
+                            or substr(
+                              outbound.delivery_key,
+                              1,
+                              length('meeting-alignment:' || meeting_alignment_jobs.legacy_key || ':' || meeting_alignment_jobs.{task20_column('meeting_alignment_jobs', 'meeting_id')} || ':target:')
+                            ) = 'meeting-alignment:' || meeting_alignment_jobs.legacy_key || ':' || meeting_alignment_jobs.{task20_column('meeting_alignment_jobs', 'meeting_id')} || ':target:'
+                          )
                       )
                       and not exists (
                         select 1 from actions delivery
@@ -14355,12 +14394,16 @@ class AutoReplyStore(LogicalRunStoreMixin, ReviewedCandidateStoreMixin):
             delivery_key = (
                 "meeting-alignment:" + str(row["legacy_key"]) + ":" + row["meeting_id"]
             )
+            target_key_prefix = delivery_key + ":target:"
             if db.execute(
                 f"""select 1 from ({OUTBOUND_POSTFIX_SQL}) outbound
                     where outbound.channel='dingtalk'
-                      and outbound.delivery_key in (?, ?)
+                      and (
+                        outbound.delivery_key in (?, ?)
+                        or substr(outbound.delivery_key, 1, length(?))=?
+                      )
                     limit 1""",
-                (delivery_key, delivery_key + ":sensitive"),
+                (delivery_key, delivery_key + ":sensitive", target_key_prefix, target_key_prefix),
             ).fetchone():
                 return None
             if db.execute(
@@ -14452,12 +14495,20 @@ class AutoReplyStore(LogicalRunStoreMixin, ReviewedCandidateStoreMixin):
                   and cast(legacy_key as integer)=?
                   and {task20_column('meeting_alignment_jobs', 'status')} in ('no_action', 'failed')
                   and {task20_column('meeting_alignment_jobs', 'send_result_json')}='{{}}'
-                  and not exists (
+                    and not exists (
                     select 1 from ({OUTBOUND_POSTFIX_SQL}) outbound
-                    where outbound.channel='dingtalk' and outbound.delivery_key in (
-                      'meeting-alignment:' || tasks.legacy_key || ':' || tasks.{task20_column('meeting_alignment_jobs', 'meeting_id')},
-                      'meeting-alignment:' || tasks.legacy_key || ':' || tasks.{task20_column('meeting_alignment_jobs', 'meeting_id')} || ':sensitive'
-                    )
+                    where outbound.channel='dingtalk'
+                      and (
+                        outbound.delivery_key in (
+                          'meeting-alignment:' || tasks.legacy_key || ':' || tasks.{task20_column('meeting_alignment_jobs', 'meeting_id')},
+                          'meeting-alignment:' || tasks.legacy_key || ':' || tasks.{task20_column('meeting_alignment_jobs', 'meeting_id')} || ':sensitive'
+                        )
+                        or substr(
+                          outbound.delivery_key,
+                          1,
+                          length('meeting-alignment:' || tasks.legacy_key || ':' || tasks.{task20_column('meeting_alignment_jobs', 'meeting_id')} || ':target:')
+                        ) = 'meeting-alignment:' || tasks.legacy_key || ':' || tasks.{task20_column('meeting_alignment_jobs', 'meeting_id')} || ':target:'
+                      )
                   )
                 returning {task8_meeting_returning()}
                 """,
@@ -14492,7 +14543,15 @@ class AutoReplyStore(LogicalRunStoreMixin, ReviewedCandidateStoreMixin):
                 return False
             target = db.execute(f"select value from ({state_projection('service_state')}) where key=?",
                 (f"meeting_delivery_target:v1:dingtalk:{key}",)).fetchone()
-            expected_target = {"kind": "group" if job.target_kind == "group" else "user", "id": job.target_id}
+            decision = MeetingAlignmentDecision.model_validate_json(job.decision_json)
+            if decision.target is None:
+                return False
+            binding_target_kind = (
+                "group" if decision.target.kind == "group"
+                else "user" if decision.target.direct_user_id
+                else "open_user"
+            )
+            expected_target = {"kind": binding_target_kind, "id": job.target_id}
             if target is None or json.loads(target["value"]) != expected_target:
                 return False
             if db.execute(f"select 1 from ({OUTBOUND_POSTFIX_SQL}) where channel='dingtalk' and delivery_key=?", (f"{key}:sensitive",)).fetchone():
@@ -14515,6 +14574,25 @@ class AutoReplyStore(LogicalRunStoreMixin, ReviewedCandidateStoreMixin):
         current = self.get_meeting_alignment_job(job_id)
         if current is None or not meeting_decision_audit_is_approved(current.decision_json):
             return None
+        decision = MeetingAlignmentDecision.model_validate_json(current.decision_json)
+        if decision.target is None:
+            return None
+        target_kind = (
+            "group" if decision.target.kind == "group"
+            else "user" if decision.target.direct_user_id
+            else "open_user"
+        )
+        target_id = (
+            decision.target.conversation_id if target_kind == "group"
+            else decision.target.direct_user_id or decision.target.open_dingtalk_id
+        )
+        if target_id != current.target_id:
+            return None
+        delivery_key = self.resolve_meeting_alignment_delivery_key(
+            f"meeting-alignment:{current.id}:{current.meeting_id}",
+            target_kind=target_kind,
+            target_id=target_id,
+        )
         with self._connect() as db:
             row = db.execute(
                 f"""update tasks as meeting_alignment_jobs
@@ -14529,12 +14607,10 @@ class AutoReplyStore(LogicalRunStoreMixin, ReviewedCandidateStoreMixin):
                      and not exists (
                        select 1 from ({OUTBOUND_POSTFIX_RECEIPT_SQL})
                        where channel='dingtalk'
-                         and delivery_key=('meeting-alignment:' ||
-                           meeting_alignment_jobs.legacy_key || ':' ||
-                           meeting_alignment_jobs.{task20_column('meeting_alignment_jobs', 'meeting_id')})
+                         and delivery_key=?
                      )
                    returning {task8_meeting_returning()}""",
-                (job_id, current.decision_json, current.updated_at, current.source_json),
+                (job_id, current.decision_json, current.updated_at, current.source_json, delivery_key),
             ).fetchone()
             return self._meeting_alignment_job_from_row(row) if row else None
 

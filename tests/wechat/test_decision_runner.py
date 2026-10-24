@@ -29,9 +29,9 @@ def test_wechat_instruction_describes_reply_using_same_envelope():
     assert "user_response.mode=send_reply" in instruction
     assert "user_response.text" in instruction
     assert "delivery remains a separate persisted service step" in instruction
-    assert instruction.count(
-        "Do not directly send external messages or email or execute approvals."
-    ) == 1
+    from app.wechat.decision_runner import CONSUMER_OUTBOUND_INSTRUCTION
+
+    assert instruction.count(CONSUMER_OUTBOUND_INSTRUCTION) == 1
 
 
 class CapturingExecutor:
