@@ -1335,7 +1335,7 @@ Workbench 领取轮询先只读检查是否存在 queued 或租约已过期的 r
 `url` / `docUrl` 完成日报文件夹链接要求；服务不由 node ID 拼接 URL，也不为返回该元数据
 新增写操作。provider 未提供链接时仍保留缺失事实。周报回执、审核和消息投递边界不变。
 
-通用文档写入在 DWS 明确返回 `doc.operation.v1` 的对应写操作 `partial_success` 时保留其结构化错误及已执行步骤；写入返回后服务读回失败也保留已有 provider 结果。两者返回 `ok=false/status=partial_success/verified=false/readback=null`，不制造成功读回回执、不自动重写；未执行或提交状态未知仍是原错误。Agent 继续使用现有读取入口核对目标，现有 Audit 与任务续跑规则不变。
+通用文档写入在 DWS 明确返回 `doc.operation.v1` 的对应写操作 `partial_success` 时保留其结构化错误及已执行步骤；写入返回后服务读回失败也保留已有 provider 结果。已确认写入执行成功即返回 `ok=true/status=success`；目标解析、读回或核验失败独立保留为 `verified=false/readback=null` 及原始错误，不把核验失败当作写入失败，不制造成功读回回执、不自动重写；未执行或提交状态未知仍是原错误。Agent 继续使用现有读取入口核对目标，现有 Audit 与任务续跑规则不变。
 
 所有系统业务审核项必须对应实际系统任务及其当前业务实例；工具或接口存在不构成审核需求。没有对应系统任务就不设置该业务的系统审核项。当前对应关系见 [系统任务与审核范围](audit-task-scope.md)。小青面试与提交由 Derek 在个人对话中处理，不属于本次后台系统审核范围。扫描、下载和登录命令沿用既有技术结果验证，不因这条范围规则新增 Audit 回合。
 

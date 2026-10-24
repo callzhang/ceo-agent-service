@@ -1941,7 +1941,7 @@ Consumer 负责业务准备和完整候选，Audit 只读审核整份候选，�
 
 Consumer 可以直接使用普通工作工具，写入并读回本任务本代次的材料，或通过既有绑定的
 通用 scheduled 文档接口操作明确目标的文档。普通写入不因为有副作用而被一律改成待审核系统动作；其事实证据是
-真实工具结果与读回。`consumer_artifact_write` 将本任务材料写入
+真实工具结果与读回。文档写入与核验分别表达：provider 已确认执行的写入返回 `ok=true/status=success`，即使后续目标解析、读回或核验失败；此时保留 `verified=false`、原始错误与已有目标，不生成成功读回。未执行或提交状态未知仍返回原错误。`consumer_artifact_write` 将本任务材料写入
 `/tmp/ceo-agent-service-task-artifacts/<task_id>/<generation>`，`read_task_artifact` 与
 `list_task_artifacts` 为两角色提供当前代的只读材料；Audit 没有对应写入工具。任务仍为
 `pending` 或 `processing` 时保留文件供恢复和审核；进入 `done`、`failed`、`needs_human` 或

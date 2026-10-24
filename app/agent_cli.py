@@ -1794,8 +1794,8 @@ def _write_document_artifact(
         if isinstance(data, dict) and isinstance(data.get("nodeId"), str):
             node_id = data["nodeId"] or node_id
         return {
-            "ok": False,
-            "status": "partial_success",
+            "ok": True,
+            "status": "success",
             "verified": False,
             "operation": operation,
             "node_id": node_id,

@@ -58,3 +58,9 @@ DWS 的 `docVerificationError` 生成 `doc.operation.v1/status=partial_success`�
 安装后使用该DWS二进制只读fetch原目标，exit0，完整JSONML为3张表、47处右对齐；响应SHA为 `72a275cfecce5f4935c21268fdb9e1e64f3628627e3f2630283e1cea8dc400f2`，不保存正文。已检查实际进程环境，服务主进程37209及worker37212/37213/37214均将dws解析到已更新的文件；DWS为逐次启动CLI，新调用加载新二进制，无须为本次CLI安装重启CEO Python服务。healthz、status、Attention和History均HTTP200，Attention10项、History37920项；这些是观测值，不宣称既有错误已清零或其增长与本次变更有关。
 
 截至安装后查询，新增Consumer自然运行0项：**DWS修复已在本机运行路径上线，原始离线样本通过，实际自然文档写入是否停止重复覆盖仍待业务轨迹验收。** 不人工触发报告制造样本，不将只读fetch成功当作写入行为已验证。
+
+## 2026-10-24 写入成功与核验状态分离
+
+Derek 明确：确认已执行的文档写入即算写入成功。共用工具将已应用写入的 `ok=false/status=partial_success` 改为 `ok=true/status=success`，核验/读回问题继续保留 `verified=false/readback=null`、目标、原始错误和 provider 结果。未执行、权限拒绝和提交未知仍报错；不增加写入次数，不修改 Audit 规则。即使写入成功，缺少读回的结果也不会冒充完整核验回执。
+
+既有回归改用新成功语义，修改实现前 8 例如预期失败、6 例通过。定向文档恢复及报告回执测试 26 例通过，Ruff 与 diff 检查通过。扩展工件测试 11 例因既有数据库夹具 `tasks` 缺少 `status` 字段失败；在未修改的 HEAD 上对照同样 11 例失败，不属于本次改动。部署与自然业务回读单独记录。
