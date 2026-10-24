@@ -6,6 +6,7 @@ not wired into a constructor or runtime path.
 """
 from __future__ import annotations
 
+import json
 import sqlite3
 
 from app import run_adoption_definitions as definitions
@@ -148,6 +149,34 @@ def _feedback_public_ref(db, task_public_index, source_kind, target_table, value
     raise ValueError(f"unresolved {source_kind} public identity")
 
 
+def _reply_attempt_internal_references(db, payload, *, translate):
+    """Translate only generated Task/Input leaves in ReplyAttempt provenance."""
+    from app.current_action_schema import current_action_payloads
+
+    path = current_action_payloads().path(
+        "reply_attempts", "trigger_text_provenance_json")
+    provenance = db.execute("select json_extract(?,?)", (payload, path)).fetchone()[0]
+    if not isinstance(provenance, str):
+        return payload
+    try:
+        value = json.loads(provenance)
+    except (TypeError, json.JSONDecodeError):
+        return payload
+    if type(value) is not dict:
+        return payload
+    changed = False
+    for field in ("reply_task_id", "matching_input_id"):
+        leaf = value.get(field)
+        if type(leaf) is int:
+            target = translate(field, leaf)
+            if target != leaf:
+                value[field] = target
+                changed = True
+    if not changed:
+        return payload
+    encoded = json.dumps(value, ensure_ascii=False, separators=(",", ":"))
+    return db.execute("select jsonb_set(?,?,json(json_quote(?)))",
+                      (payload, path, encoded)).fetchone()[0]
 def _insert(db, table, values):
     columns = tuple(values)
     db.execute(f'insert into main."{table}" ({",".join(chr(34)+c+chr(34) for c in columns)}) '
@@ -192,6 +221,7 @@ def _rebuild_actions(db, task_metadata, task_public_index, task_map, run_map, so
     db.execute(target_sql)
     columns = [name for name in target_columns if name in source_columns]
     feedback_reference_exceptions = []
+    reply_reference_exceptions = []
     for row in retained:
         values = {name: row[name] for name in columns}
         for field in ("agent_run_id", "audit_run_id", "consumer_run_id"):
@@ -261,6 +291,32 @@ def _rebuild_actions(db, task_metadata, task_public_index, task_map, run_map, so
                 values["payload_json"] = db.execute(
                     "select jsonb_set(?, ?, jsonb(json_quote(?)))",
                     (values["payload_json"], f'$[{index}]', str(target_id))).fetchone()[0]
+        if row["record_type"] == "reply_attempts" and values.get("payload_json") is not None:
+            def translate_reply_reference(field, value):
+                if value == 0:
+                    return value
+                if field == "reply_task_id":
+                    try:
+                        return _task_physical_ref(
+                            db, task_metadata, task_map, "reply_tasks", value)
+                    except ValueError:
+                        reply_reference_exceptions.append({
+                            "action_id": row["id"], "field": field,
+                            "value": value, "type": "integer",
+                        })
+                        return value
+                target_id = task_public_index.get(
+                    ("reply_task_inputs", ("integer", value)))
+                if target_id is None:
+                    reply_reference_exceptions.append({
+                        "action_id": row["id"], "field": field,
+                        "value": value, "type": "integer",
+                    })
+                    return value
+                return target_id
+
+            values["payload_json"] = _reply_attempt_internal_references(
+                db, values["payload_json"], translate=translate_reply_reference)
         _insert(db, "actions", values)
     for name, sql in objects.items():
         if name != "actions" and sql.lstrip().lower().startswith(("create index", "create unique index")):
@@ -269,7 +325,7 @@ def _rebuild_actions(db, task_metadata, task_public_index, task_map, run_map, so
         if name != "actions" and sql.lstrip().lower().startswith("create trigger"):
             db.execute(sql)
     _restore_sequence_rows(db, source_sequences, ("actions",))
-    return feedback_reference_exceptions
+    return feedback_reference_exceptions, reply_reference_exceptions
 
 
 def _source_actions(db):
@@ -504,7 +560,7 @@ def migrate_run_adoptions(db: sqlite3.Connection, source_metadata: dict, *,
             db.execute("insert into main.run_adoption_identity_map(source_kind,source_physical_id,source_public_id,source_public_id_type,target_run_id,target_child_id) values(?,?,?,?,?,?)",
                 (kind, row["id"], stored_public, typ, target_run, child))
             identities.append((kind, row["id"], target_run, child))
-    feedback_reference_exceptions = _rebuild_actions(
+    feedback_reference_exceptions, reply_reference_exceptions = _rebuild_actions(
         db, task_metadata, task_public_index, task_map, run_map,
         source_metadata["source_sequences"])
     _restore_sequence_rows(db, source_metadata["source_sequences"],
@@ -516,4 +572,5 @@ def migrate_run_adoptions(db: sqlite3.Connection, source_metadata: dict, *,
     return {"version": 1, "identity_rows": len(identities), "identities": [list(r) for r in identities],
             "receipt_count": len(rows), "source_sequences": source_metadata["source_sequences"],
             "selected_counts": source_metadata["selected_counts"], "source_fk_findings": source_metadata["source_fk_findings"],
-            "feedback_reference_exceptions": feedback_reference_exceptions}
+            "feedback_reference_exceptions": feedback_reference_exceptions,
+            "reply_reference_exceptions": reply_reference_exceptions}

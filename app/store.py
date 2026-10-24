@@ -5741,49 +5741,59 @@ class AutoReplyStore(LogicalRunStoreMixin, ReviewedCandidateStoreMixin):
         cls, db: sqlite3.Connection, task_id: int,
     ) -> bool:
         """Compact one settled task and its input copies in the same transaction."""
-        task = db.execute(f"select * from ({REPLY_TASK_CURRENT_SQL}) as reply_tasks where id=?", (task_id,)).fetchone()
+        task = db.execute(
+            "select tasks.*,current_input.business_object_key,current_input.channel, "
+            "current_input.conversation_id,current_input.trigger_message_id "
+            "from tasks "
+            "join task_inputs current_input on current_input.id=tasks.current_input_id "
+            "where tasks.id=? and tasks.kind='reply'", (task_id,),
+        ).fetchone()
         if task is None or task["status"] not in {"done", "skipped"}:
             return False
         if (int(task["claimed_input_version"]) > 0
             and int(task["input_version"]) > int(task["claimed_input_version"])):
             return False
         if db.execute(
-            f"select 1 from ({AGENT_RUN_SQL}) as agent_runs where reply_task_id=? and status='running' limit 1",
+            "select 1 from runs where task_id=? and role in ('consumer','audit') "
+            "and status='running' limit 1",
             (task_id,),
         ).fetchone() is not None:
             return False
         if db.execute(
-            f"""select 1 from ({RUNTIME_ATTEMPT_SQL}) attempts
-               join ({AGENT_RUN_SQL}) runs on runs.id=attempts.agent_run_id
-               where runs.reply_task_id=? and attempts.status in ('starting','running')
+            """select 1 from runtime_attempts attempts
+               join runs parents on parents.id=attempts.parent_id
+               where parents.task_id=?
+                 and attempts.status in ('starting','running')
                limit 1""",
             (task_id,),
         ).fetchone() is not None:
             return False
         if db.execute(
-            f"""select 1 from ({WECHAT_DELIVERY_SQL}) where reply_task_id=?
-               and execution_generation=? and status in ('ready_to_send','sending')
+            """select 1 from actions where record_type='wechat_deliveries' and td_reply_task_id=?
+               and td_execution_generation=? and td_status in ('ready_to_send','sending')
                limit 1""",
             (task_id, task["execution_generation"]),
         ).fetchone() is not None:
             return False
         if db.execute(
-            f"""select 1 from ({task_claims.claim_projection()}) where source_id=?
+            """select 1 from tasks where id=? and kind='reply'
                and adapter_name in ('reply','scheduled_execution')
-               and owner<>'' limit 1""",
-            (str(task_id),),
+               and lease_owner<>'' limit 1""",
+            (task_id,),
         ).fetchone() is not None:
             return False
         if task["status"] == "done":
             latest = db.execute(
-                f'select status from ({AGENT_RUN_SQL}) as agent_runs where reply_task_id=? and execution_generation=? order by id desc limit 1',
+                "select status from runs where task_id=? and execution_generation=? order by id desc limit 1",
                 (task_id, task["execution_generation"]),
             ).fetchone()
             if latest is not None and latest["status"] == "failed":
                 # Match the receipt/settlement exclusions used by
                 # reconcile_done_reply_tasks_with_failed_current_run.
+                from app.action_storage import NATIVE_EXTERNAL_ACTION_RESULT_SQL
+
                 settled = db.execute(
-                    f"""select 1 from ({EXTERNAL_ACTION_RESULT_SQL}) actions
+                    f"""select 1 from ({NATIVE_EXTERNAL_ACTION_RESULT_SQL}) actions
                        join ({SENT_REPLY_SQL}) replies
                          on replies.external_action_key=actions.external_action_key
                        where actions.business_object_key=? limit 1""",
@@ -5797,7 +5807,8 @@ class AutoReplyStore(LogicalRunStoreMixin, ReviewedCandidateStoreMixin):
                            and trim(coalesce(resolution,''))<>'' limit 1""",
                         (task["conversation_id"], task["trigger_message_id"]),
                     ).fetchone() is not None
-                if not settled and cls._email_unsubscribe_receipts_table_exists(db):
+                if (not settled and task["channel"] == "email"
+                        and cls._email_unsubscribe_receipts_table_exists(db)):
                     outcomes = [
                         *cls._email_unsubscribe_outcomes_by_task_status()["done"],
                         *cls._email_unsubscribe_outcomes_by_task_status()["skipped"],
@@ -5812,8 +5823,9 @@ class AutoReplyStore(LogicalRunStoreMixin, ReviewedCandidateStoreMixin):
                 if not settled:
                     return False
         latest_attempt = db.execute(
-            f"""select send_status, resolved_at from ({REPLY_ATTEMPT_COMMON_SQL}) as reply_attempts where channel=?
-               and conversation_id=? and trigger_message_id=?
+            """select attempt_send_status as send_status,attempt_resolved_at as resolved_at
+               from actions where record_type='reply_attempts' and attempt_channel=?
+               and attempt_conversation_id=? and attempt_trigger_message_id=?
                order by id desc limit 1""",
             (task["channel"], task["conversation_id"], task["trigger_message_id"]),
         ).fetchone()
@@ -5822,7 +5834,7 @@ class AutoReplyStore(LogicalRunStoreMixin, ReviewedCandidateStoreMixin):
             and not str(latest_attempt["resolved_at"] or "").strip()):
             return False
         inputs = db.execute(
-            f'select * from ({REPLY_TASK_INPUT_SQL}) where reply_task_id=? and input_compacted=0',
+            'select * from task_inputs where task_id=? and input_compacted=0',
             (task_id,),
         ).fetchall()
         for item in inputs:
@@ -5830,7 +5842,8 @@ class AutoReplyStore(LogicalRunStoreMixin, ReviewedCandidateStoreMixin):
                 str(item["trigger_text"]), str(item["trigger_message_json"])
             )
             db.execute(
-                f"""update tasks set {task8_set_parts('reply_task_inputs', {}, update_sql={'trigger_text': "''", 'trigger_message_json': "''", 'input_provenance_json': '?', 'input_compacted': '1'}, payload_source='tasks.payload_json').sql}  where record_type='reply_task_inputs' and cast(legacy_key as integer)=? and {task20_column('reply_task_inputs', 'input_compacted')}=0""",
+                "update task_inputs set trigger_text='',trigger_message_json='',"
+                "input_provenance_json=?,input_compacted=1 where id=? and input_compacted=0",
                 (provenance, item["id"]),
             )
         identities = {
@@ -5838,25 +5851,26 @@ class AutoReplyStore(LogicalRunStoreMixin, ReviewedCandidateStoreMixin):
              str(task["trigger_message_id"])),
             *((str(item["channel"]), str(item["conversation_id"]),
                str(item["trigger_message_id"])) for item in db.execute(
-                   f'select channel, conversation_id, trigger_message_id from ({REPLY_TASK_INPUT_SQL}) where reply_task_id=?', (task_id,)
+                   'select channel, conversation_id, trigger_message_id from task_inputs where task_id=?', (task_id,)
                ).fetchall()),
         }
         for channel, conversation_id, message_id in identities:
             other_active = db.execute(
-                f"""select 1 from ({REPLY_TASK_SQL}) where channel=? and conversation_id=?
-                   and trigger_message_id=? and id<>?
-                   and status in ('pending','processing','failed','needs_human')
+                """select 1 from tasks join task_inputs on task_inputs.task_id=tasks.id
+                   where task_inputs.channel=? and task_inputs.conversation_id=?
+                   and task_inputs.trigger_message_id=? and tasks.id<>? and tasks.kind='reply'
+                   and tasks.status in ('queued','running','failed','needs_human')
                    limit 1""",
                 (channel, conversation_id, message_id, task_id),
             ).fetchone()
             if other_active is None:
                 attempts = db.execute(
-                    f"select id, trigger_text from ({REPLY_ATTEMPT_COMMON_SQL}) as reply_attempts where channel=? "
-                    "and conversation_id=? and trigger_message_id=? and trigger_text<>''",
+                    "select id,attempt_trigger_text as trigger_text from actions where record_type='reply_attempts' and attempt_channel=? "
+                    "and attempt_conversation_id=? and attempt_trigger_message_id=? and attempt_trigger_text<>''",
                     (channel, conversation_id, message_id),
                 ).fetchall()
                 input_refs = db.execute(
-                    f'select id, input_provenance_json from ({REPLY_TASK_INPUT_SQL}) where reply_task_id=? and channel=? and conversation_id=? and trigger_message_id=?',
+                    'select id, input_provenance_json from task_inputs where task_id=? and channel=? and conversation_id=? and trigger_message_id=?',
                     (task_id, channel, conversation_id, message_id),
                 ).fetchall()
                 for attempt in attempts:
@@ -5873,9 +5887,16 @@ class AutoReplyStore(LogicalRunStoreMixin, ReviewedCandidateStoreMixin):
                          "matching_input_id": matching_input_id},
                         sort_keys=True, separators=(",", ":"),
                     )
-                    update_action(db, "reply_attempts", attempt["id"], {
-                        "trigger_text": "", "trigger_text_provenance_json": provenance,
-                    }, where_sql="trigger_text<>''")
+                    from app.current_action_schema import current_action_payloads
+
+                    payloads = current_action_payloads()
+                    db.execute(
+                        "update actions set payload_json=jsonb_set(payload_json,?,json(?),?,json(?)) "
+                        "where id=? and record_type='reply_attempts' and attempt_trigger_text<>''",
+                        (payloads.path("reply_attempts", "trigger_text"), json.dumps(""),
+                         payloads.path("reply_attempts", "trigger_text_provenance_json"),
+                         json.dumps(provenance, ensure_ascii=False), int(attempt["id"])),
+                    )
         return True
 
     @classmethod

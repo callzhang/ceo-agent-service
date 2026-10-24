@@ -67,12 +67,14 @@ def _populated_source(*, remap_runs=False, feedback=False, pre_capture_unknown=F
                       unresolved_action=False, stop_before_adoption=False, remap_tasks=False,
                       feedback_collision=False, generic_action_task_id=None,
                       nonagent_run_owner=False, feedback_transition=False,
-                      remap_workbench=False, remap_feedback_rounds=False):
+                      remap_workbench=False, remap_feedback_rounds=False,
+                      reply_provenance=None):
     """Build the actual old Task/Run/Action source with its production writers."""
     import hashlib
     import json
 
     from app.action_entity_storage import add_action_observer, append_action_receipt, create_action
+    from app.action_storage import insert_action
     from app.current_database_schema import create_current_database_schema
     from app.execution_owner_storage import create_plan_execution
     from app.run_adoption_schema import capture_run_adoptions, migrate_run_adoptions
@@ -105,6 +107,18 @@ def _populated_source(*, remap_runs=False, feedback=False, pre_capture_unknown=F
     _source_row(db, "agent_runs", {"id": 9011, "legacy_key": "9011", **common,
         "operation_id": "audit-op-2", "turn_attempt": 1,
         "role": "audit", "parent_id": 9010})
+    if reply_provenance is not None:
+        provenances = (reply_provenance if isinstance(reply_provenance, list)
+                       else [reply_provenance])
+        for index, provenance in enumerate(provenances):
+            insert_action(db, "reply_attempts", {
+                "conversation_id": "chat", "conversation_title": "Chat",
+                "trigger_message_id": "trigger" if index == 0 else f"trigger-{index}",
+                "trigger_sender": "Sender",
+                "trigger_text": "reply body", "trigger_text_provenance_json": provenance,
+                "action": "send_reply", "sensitivity_kind": "general",
+                "send_status": "sent", "channel": "dingtalk",
+            })
     if nonagent_run_owner:
         _source_row(db, "agent_runtime_attempts", {
             "id": 9008, "legacy_key": "9008", "parent_id": None,
@@ -347,6 +361,43 @@ def test_actual_old_source_forward_moves_candidate_review_selection_supplements_
         from app.model_action_schema import selected_branch
         assert selected_branch(db, 18) == {"key": "stop", "value": {"mode": "stop"}}
         assert db.execute("select count(*) from actions where record_type='candidate_action_attempts'").fetchone()[0] == 0
+    finally:
+        db.close()
+
+
+def test_forward_translates_only_generated_reply_task_and_input_provenance_references():
+    import json
+
+    from app.run_adoption_schema import migrate_run_adoptions
+
+    source_provenance = json.dumps({
+        "sha256": "known-digest", "bytes": 7, "reply_task_id": 201,
+        "matching_input_id": 5, "source_extension": {"id": 5, "text": "5"},
+    }, separators=(",", ":"))
+    db, context = _populated_source(
+        remap_tasks=True, stop_before_adoption=True,
+        reply_provenance=source_provenance,
+    )
+    try:
+        forward = migrate_run_adoptions(
+            db, context["adoption_source"], task_metadata=context["task_metadata"],
+            run_metadata=context["run_metadata"],
+        )
+        input_id = db.execute(
+            "select id from task_inputs where task_id=1201 and trigger_message_id='trigger'"
+        ).fetchone()[0]
+        provenance_json = db.execute(
+            "select attempt_trigger_text_provenance_json from actions "
+            "where record_type='reply_attempts'",
+        ).fetchone()[0]
+        actual = json.loads(provenance_json)
+        assert actual == {
+            "sha256": "known-digest", "bytes": 7, "reply_task_id": 1201,
+            "matching_input_id": input_id,
+            "source_extension": {"id": 5, "text": "5"},
+        }
+        assert input_id != 5
+        assert forward["version"] == 1
     finally:
         db.close()
 

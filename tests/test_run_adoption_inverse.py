@@ -363,6 +363,186 @@ def test_actual_c2a_task_run_inverse_planner_uses_current_review_and_source_run_
         db.close()
 
 
+def test_reply_provenance_task_and_input_references_survive_two_portable_cycles():
+    import json
+
+    from app.run_adoption_inverse import restore_run_adoptions
+    from app.run_adoption_schema import capture_run_adoptions, migrate_run_adoptions
+    from app.run_entity_schema import capture_run_entities, migrate_run_entities, restore_run_entities
+    from app.task_entity_schema import capture_task_entities, migrate_task_entities, restore_task_entities
+    from app import task_entity_storage
+    from app.action_storage import insert_action
+    from app.store import AutoReplyStore
+    from tests.test_run_adoption_schema import _populated_source
+
+    provenance = json.dumps({
+        "sha256": "example-digest", "bytes": 7, "reply_task_id": 201,
+        "matching_input_id": 5, "opaque": {"id": 5, "quote": "201"},
+    }, separators=(",", ":"))
+    unresolved_collision = json.dumps({
+        "sha256": "collision-digest", "bytes": 11,
+        "reply_task_id": 1201, "matching_input_id": 205,
+    }, separators=(",", ":"))
+    blob_provenance = b'{"reply_task_id":201,"matching_input_id":5}'
+    db, context = _populated_source(
+        remap_tasks=True, remap_runs=True, stop_before_adoption=True,
+        reply_provenance=[provenance, unresolved_collision, blob_provenance],
+    )
+    db.row_factory = __import__("sqlite3").Row
+    task_inverse = None
+    run_inverse = None
+    try:
+        for cycle in range(2):
+            if cycle == 0:
+                task_source = context["task_source_metadata"]
+                run_source = context["run_source_metadata"]
+                adoption_source = context["adoption_source"]
+                task_forward = context["task_metadata"]
+                run_forward = context["run_metadata"]
+            else:
+                task_source = capture_task_entities(db)
+                run_source = capture_run_entities(db)
+                adoption_source = capture_run_adoptions(db)
+                task_forward = migrate_task_entities(
+                    db, task_source, source_context=task_inverse["source_context"],
+                    inverse_identity=json.loads(json.dumps(task_inverse["inverse_identity"])),
+                )
+                run_forward = migrate_run_entities(
+                    db, run_source, task_metadata=task_forward,
+                    run_handoff=json.loads(json.dumps(run_inverse["run_handoff"])),
+                )
+            adoption_forward = migrate_run_adoptions(
+                db, adoption_source, task_metadata=task_forward, run_metadata=run_forward,
+            )
+            if cycle == 0:
+                collision_markers = adoption_forward["reply_reference_exceptions"]
+                assert { (marker["field"], marker["value"]) for marker in collision_markers } == {
+                    ("reply_task_id", 1201), ("matching_input_id", 205),
+                }
+            if cycle == 0:
+                native_task = task_entity_storage.create_task(db, values={
+                    "kind": "reply", "status": "done", "available_at": "",
+                    "attempts": 0, "error": "", "locked_at": None,
+                    "lease_owner": "", "lease_expires_at": "", "owner_pid": None,
+                    "generation": 0, "adapter_name": "reply",
+                    "execution_generation": "initial", "input_version": 0,
+                    "claimed_input_version": 0, "created_at": "native-created",
+                    "updated_at": "native-created",
+                }, parameters={"force_new_decision": False,
+                               "manual_rerun_attempt_id": 0,
+                               "manual_rerun_revision_key": "", "recovery_code": ""})
+                native_input, inserted = task_entity_storage.append_task_input(
+                    db, task_id=int(native_task["id"]), values={
+                        "channel": "dingtalk", "conversation_id": "new-chat",
+                        "conversation_title": "New Chat", "single_chat": 1,
+                        "trigger_message_id": "new-native-message",
+                        "trigger_create_time": "native-created", "trigger_sender": "sender",
+                        "trigger_text": "new native body",
+                        "trigger_message_json": '{"id":"new-native-message"}',
+                        "oa_url": "", "business_object_key": "new-business",
+                        "input_revision_key": "", "created_at": "native-created",
+                        "input_provenance_json": "{}", "input_compacted": 0,
+                    })
+                assert inserted
+                assert task_entity_storage.bind_current_input(
+                    db, task_id=int(native_task["id"]),
+                    input_id=int(native_input["id"]), expected_input_version=0,
+                    input_version=1,
+                ) is not None
+                insert_action(db, "reply_attempts", {
+                    "conversation_id": "new-chat", "conversation_title": "New Chat",
+                    "trigger_message_id": "new-native-message", "trigger_sender": "sender",
+                    "trigger_text": "new native body", "action": "send_reply",
+                    "sensitivity_kind": "general", "send_status": "sent",
+                    "channel": "dingtalk",
+                })
+                assert AutoReplyStore._compact_settled_reply_task_input(
+                    db, int(native_task["id"]),
+                )
+            task_native = next(edge["target_id"] for edge in task_forward["identity_edges"]
+                               if edge["source_kind"] == "reply_tasks"
+                               and edge["physical_id"] == 201)
+            input_native = db.execute(
+                "select id from task_inputs where task_id=? and trigger_message_id='trigger'",
+                (task_native,),
+            ).fetchone()[0]
+            actual = json.loads(db.execute(
+                "select attempt_trigger_text_provenance_json from actions "
+                "where record_type='reply_attempts'",
+            ).fetchone()[0])
+            assert actual == {
+                "sha256": "example-digest", "bytes": 7,
+                "reply_task_id": task_native, "matching_input_id": input_native,
+                "opaque": {"id": 5, "quote": "201"},
+            }
+            native_generated = json.loads(db.execute(
+                "select attempt_trigger_text_provenance_json from actions "
+                "where record_type='reply_attempts' and attempt_trigger_message_id='new-native-message'",
+            ).fetchone()[0])
+            new_native_task = db.execute(
+                "select task_id from task_inputs where trigger_message_id='new-native-message'",
+            ).fetchone()[0]
+            new_native_input = db.execute(
+                "select id from task_inputs where trigger_message_id='new-native-message'",
+            ).fetchone()[0]
+            assert native_generated["reply_task_id"] == new_native_task
+            assert native_generated["matching_input_id"] == new_native_input
+            task_inverse = restore_task_entities(
+                db, task_source, task_forward,
+            )
+            run_inverse = restore_run_entities(
+                db, run_source, run_forward, task_metadata=task_forward,
+                task_inverse_metadata=task_inverse,
+            )
+            restore_run_adoptions(
+                db, adoption_source, adoption_forward,
+                task_metadata=task_forward, task_inverse_metadata=task_inverse,
+                run_inverse_metadata=run_inverse,
+            )
+            source_value = db.execute(
+                "select trigger_text_provenance_json from "
+                "(select attempt_trigger_text_provenance_json as trigger_text_provenance_json "
+                "from actions where record_type='reply_attempts')",
+            ).fetchone()[0]
+            assert json.loads(source_value) == json.loads(provenance)
+            assert "201" == json.loads(source_value)["opaque"]["quote"]
+            assert json.loads(source_value)["reply_task_id"] == 201
+            assert json.loads(source_value)["matching_input_id"] == 5
+            collision_source_value = db.execute(
+                "select trigger_text_provenance_json from "
+                "(select attempt_trigger_text_provenance_json as trigger_text_provenance_json "
+                "from actions where record_type='reply_attempts' "
+                "and attempt_trigger_message_id='trigger-1')",
+            ).fetchone()[0]
+            assert json.loads(collision_source_value) == json.loads(unresolved_collision)
+            blob_source_value = db.execute(
+                "select trigger_text_provenance_json from "
+                "(select attempt_trigger_text_provenance_json as trigger_text_provenance_json "
+                "from actions where record_type='reply_attempts' "
+                "and attempt_trigger_message_id='trigger-2')",
+            ).fetchone()[0]
+            assert bytes(blob_source_value) == blob_provenance
+            from app.task20_definitions import task20_projection
+
+            source_input = db.execute(
+                f"select id,reply_task_id from ({task20_projection('reply_task_inputs')}) "
+                "where trigger_message_id='new-native-message'",
+            ).fetchone()
+            new_source_task = source_input["reply_task_id"]
+            new_source_input = source_input["id"]
+            assert json.loads(db.execute(
+                "select attempt_trigger_text_provenance_json from actions "
+                "where record_type='reply_attempts' and attempt_trigger_message_id='new-native-message'",
+            ).fetchone()[0]) == {
+                "sha256": __import__("hashlib").sha256(b"new native body").hexdigest(),
+                "bytes": len(b"new native body"),
+                "reply_task_id": int(new_source_task),
+                "matching_input_id": new_source_input,
+            }
+    finally:
+        db.close()
+
+
 def test_actual_task_run_then_adoption_inverse_restores_source_action_catalog_and_facts():
     import json
     import sqlite3

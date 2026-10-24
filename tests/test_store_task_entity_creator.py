@@ -123,6 +123,336 @@ def test_reply_creator_uses_native_owners_and_returns_same_task_for_message_dedu
         assert db.execute("select count(*) from task_business_keys where task_id=?", (first.id,)).fetchone()[0] == 1
 
 
+def test_native_settled_reply_compaction_retires_task_input_bodies(tmp_path):
+    store = _target_store(tmp_path / "native-reply-compaction.sqlite3")
+    task = store.ensure_reply_task(**_creator_kwargs(_spec("compact-me")))
+    with store._connect() as db:
+        db.execute("update tasks set status='done' where id=?", (task.id,))
+        before = db.execute(
+            "select task_inputs.id,trigger_text,trigger_message_json,input_version,claimed_input_id "
+            "from task_inputs join tasks on tasks.id=task_inputs.task_id where task_id=?",
+            (task.id,),
+        ).fetchone()
+        assert AutoReplyStore._compact_settled_reply_task_input(db, task.id)
+        after = db.execute(
+            "select id,trigger_text,trigger_message_json,input_provenance_json,input_compacted "
+            "from task_inputs where task_id=?", (task.id,),
+        ).fetchone()
+        assert tuple(before[:1]) == tuple(after[:1])
+        assert before["input_version"] == 1 and before["claimed_input_id"] is None
+        assert after["trigger_text"] == after["trigger_message_json"] == ""
+        assert after["input_compacted"] == 1
+        provenance = json.loads(after["input_provenance_json"])
+        assert provenance["trigger_text"] == {
+            "sha256": hashlib.sha256(b"message compact-me").hexdigest(),
+            "bytes": len(b"message compact-me"),
+        }
+        first_compacted = tuple(after)
+        assert AutoReplyStore._compact_settled_reply_task_input(db, task.id)
+        repeated = tuple(db.execute(
+            "select id,trigger_text,trigger_message_json,input_provenance_json,input_compacted "
+            "from task_inputs where task_id=?", (task.id,),
+        ).fetchone())
+        assert repeated == first_compacted
+
+
+def test_native_reply_compaction_keeps_body_when_current_input_is_unavailable(tmp_path):
+    store = _target_store(tmp_path / "native-reply-compaction-no-current-input.sqlite3")
+    task = store.ensure_reply_task(**_creator_kwargs(_spec("compact-no-current-input")))
+    with store._connect() as db:
+        db.execute("update tasks set status='done',current_input_id=NULL where id=?", (task.id,))
+        before = db.execute(
+            "select trigger_text,trigger_message_json,input_compacted from task_inputs where task_id=?",
+            (task.id,),
+        ).fetchone()
+        assert not AutoReplyStore._compact_settled_reply_task_input(db, task.id)
+        after = db.execute(
+            "select trigger_text,trigger_message_json,input_compacted from task_inputs where task_id=?",
+            (task.id,),
+        ).fetchone()
+        assert tuple(after) == tuple(before)
+
+
+def test_native_reply_compaction_matches_each_input_hash_and_keeps_zero_sentinel(tmp_path):
+    store = _target_store(tmp_path / "native-reply-compaction-revisions.sqlite3")
+    task = store.ensure_reply_task(**_creator_kwargs(_spec("compact-revisions")))
+    from app.action_storage import insert_action
+
+    with store._connect() as db:
+        first = db.execute(
+            "select id,trigger_text from task_inputs where task_id=?",
+            (task.id,),
+        ).fetchone()
+        first_task_version = db.execute(
+            "select input_version from tasks where id=?", (task.id,),
+        ).fetchone()[0]
+        second, inserted = task_entity_storage.append_task_input(db, task_id=task.id, values={
+            "channel": task.channel, "conversation_id": task.conversation_id,
+            "conversation_title": task.conversation_title, "single_chat": int(task.single_chat),
+            "trigger_message_id": task.trigger_message_id,
+            "trigger_create_time": "newer", "trigger_sender": task.trigger_sender,
+            "trigger_text": "second revision body", "trigger_message_json": '{"revision":2}',
+            "oa_url": task.oa_url, "business_object_key": task.business_object_key,
+            "input_revision_key": "revision-2", "created_at": "newer",
+            "input_provenance_json": "{}", "input_compacted": 0,
+        })
+        assert inserted
+        bound = task_entity_storage.bind_current_input(
+            db, task_id=task.id, input_id=int(second["id"]),
+            expected_input_version=int(first_task_version),
+            input_version=int(first_task_version) + 1,
+        )
+        assert bound is not None
+        assert task_entity_storage.bind_claimed_input(
+            db, task_id=task.id, input_id=int(second["id"]), claimed_input_version=2,
+        ) is not None
+        for body in (str(first["trigger_text"]), "not-an-input-body"):
+            insert_action(db, "reply_attempts", {
+                "conversation_id": task.conversation_id,
+                "conversation_title": task.conversation_title,
+                "trigger_message_id": task.trigger_message_id,
+                "trigger_sender": task.trigger_sender, "trigger_text": body,
+                "action": "send_reply", "sensitivity_kind": "general",
+                "send_status": "sent", "channel": task.channel,
+            })
+        db.execute("update tasks set status='done' where id=?", (task.id,))
+        assert AutoReplyStore._compact_settled_reply_task_input(db, task.id)
+        rows = db.execute(
+            "select id,trigger_text,trigger_message_json,input_provenance_json,input_compacted "
+            "from task_inputs where task_id=? order by id", (task.id,),
+        ).fetchall()
+        assert [row["id"] for row in rows] == [first["id"], second["id"]]
+        assert all(row["trigger_text"] == row["trigger_message_json"] == "" for row in rows)
+        assert all(row["input_compacted"] == 1 for row in rows)
+        assert tuple(db.execute(
+            "select current_input_id,input_version,claimed_input_id,claimed_input_version "
+            "from tasks where id=?", (task.id,),
+        ).fetchone()) == (second["id"], 2, second["id"], 2)
+        generated = [json.loads(row[0]) for row in db.execute(
+            "select attempt_trigger_text_provenance_json from actions "
+            "where record_type='reply_attempts' order by id",
+        )]
+        assert generated[0]["matching_input_id"] == first["id"]
+        assert generated[1]["matching_input_id"] == 0
+
+
+def test_native_reply_compaction_database_failure_rolls_back_in_callers_transaction(tmp_path):
+    import sqlite3
+
+    store = _target_store(tmp_path / "native-reply-compaction-rollback.sqlite3")
+    task = store.ensure_reply_task(**_creator_kwargs(_spec("compact-rollback")))
+    with store._connect() as db:
+        db.execute("update tasks set status='skipped' where id=?", (task.id,))
+        db.execute("""create trigger reject_reply_input_compaction before update of input_compacted
+                      on task_inputs when new.input_compacted=1
+                      begin select raise(abort,'injected compaction write failure'); end""")
+        db.commit()
+        before = tuple(db.execute(
+            "select trigger_text,trigger_message_json,input_provenance_json,input_compacted "
+            "from task_inputs where task_id=?", (task.id,),
+        ).fetchone())
+        db.execute("begin")
+        with pytest.raises(sqlite3.IntegrityError, match="injected compaction write failure"):
+            AutoReplyStore._compact_settled_reply_task_input(db, task.id)
+        db.rollback()
+        after = tuple(db.execute(
+            "select trigger_text,trigger_message_json,input_provenance_json,input_compacted "
+            "from task_inputs where task_id=?", (task.id,),
+        ).fetchone())
+        assert after == before
+
+
+def _native_sent_action(db, *, external_key, business_key, channel, conversation_id,
+                        trigger_message_id):
+    action = create_action(db, values={
+        "operation": "send_reply_to_trigger", "status": "done",
+        "external_action_key": external_key, "business_object_key": business_key,
+        "action_identity": "reply-delivery", "delivery_channel": channel,
+        "delivery_key": f"{conversation_id}:{trigger_message_id}",
+        "conversation_id": conversation_id, "trigger_message_id": trigger_message_id,
+        "prepared_body": "settled reply",
+    })
+    body = append_action_receipt(db, action["id"], values={
+        "provider_result_json": '{"verification":{"state":"sent"}}',
+        "result_digest": "receipt-digest", "observed_at": "2026-10-23T00:00:00Z",
+    })
+    metadata = append_action_receipt(db, action["id"], values={
+        "operation": "send_reply_to_trigger", "target": f"{conversation_id}:{trigger_message_id}",
+        "result_digest": "receipt-digest", "agent_run_id": 1,
+        "created_at": "2026-10-23T00:00:00Z", "provider_receipt_id": body,
+    })
+    delivery = append_action_receipt(db, action["id"], values={
+        "operation": "send_reply_to_trigger", "target": f"{conversation_id}:{trigger_message_id}",
+        "status": "verified", "observed_at": "2026-10-23T00:00:00Z",
+    })
+    assert record_action_result(db, action["id"],
+                                expected={"delivery_receipt_id": None},
+                                changes={"delivery_receipt_id": delivery}) is not None
+    return metadata
+
+
+def test_native_failed_run_settlement_uses_current_input_business_key(tmp_path):
+    store = _target_store(tmp_path / "native-reply-settlement-current-key.sqlite3")
+    task = store.ensure_reply_task(**_creator_kwargs(_spec(
+        "settlement-current-key", business_key="business:current",
+    )))
+    with store._connect() as db:
+        task_entity_storage.associate_business_key(
+            db, task_id=task.id, business_key="business:other",
+        )
+        db.execute("update tasks set status='done' where id=?", (task.id,))
+        db.execute(
+            "insert into runs(task_id,execution_generation,role,proposal_revision,turn_attempt,"
+            "operation_id,status,session_id,transcript_start,transcript_end,structured_error_json,"
+            "lease_owner,lease_expires_at,started_at,completed_at,updated_at) "
+            "values(?,?,'consumer',0,0,'','failed','session',0,0,'{}','','','','','')",
+            (task.id, task.execution_generation),
+        )
+        input_key = db.execute(
+            "select business_object_key from task_inputs where id=("
+            "select current_input_id from tasks where id=?)", (task.id,),
+        ).fetchone()[0]
+        assert input_key == "business:current"
+        _native_sent_action(
+            db, external_key="settlement:current", business_key=input_key,
+            channel=task.channel, conversation_id=task.conversation_id,
+            trigger_message_id=task.trigger_message_id,
+        )
+        assert AutoReplyStore._compact_settled_reply_task_input(db, task.id)
+
+
+def test_native_failed_run_does_not_accept_another_task_business_key(tmp_path):
+    store = _target_store(tmp_path / "native-reply-settlement-other-key.sqlite3")
+    task = store.ensure_reply_task(**_creator_kwargs(_spec(
+        "settlement-other-key", business_key="business:current",
+    )))
+    with store._connect() as db:
+        task_entity_storage.associate_business_key(
+            db, task_id=task.id, business_key="business:other",
+        )
+        db.execute("update tasks set status='done' where id=?", (task.id,))
+        db.execute(
+            "insert into runs(task_id,execution_generation,role,proposal_revision,turn_attempt,"
+            "operation_id,status,session_id,transcript_start,transcript_end,structured_error_json,"
+            "lease_owner,lease_expires_at,started_at,completed_at,updated_at) "
+            "values(?,?,'consumer',0,0,'','failed','session',0,0,'{}','','','','','')",
+            (task.id, task.execution_generation),
+        )
+        _native_sent_action(
+            db, external_key="settlement:other", business_key="business:other",
+            channel=task.channel, conversation_id=task.conversation_id,
+            trigger_message_id=task.trigger_message_id,
+        )
+        original = db.execute(
+            "select trigger_text,input_compacted from task_inputs where task_id=?",
+            (task.id,),
+        ).fetchone()
+        assert not AutoReplyStore._compact_settled_reply_task_input(db, task.id)
+        after = db.execute(
+            "select trigger_text,input_compacted from task_inputs where task_id=?",
+            (task.id,),
+        ).fetchone()
+        assert tuple(after) == tuple(original)
+
+
+@pytest.mark.parametrize(
+    "blocker",
+    ("newer_unclaimed_input", "running_run", "running_audit_run", "runtime_attempt", "wechat_sending",
+     "task_lease", "unresolved_attempt", "other_active_task"),
+)
+def test_native_reply_compaction_preserves_each_source_settlement_blocker(tmp_path, blocker):
+    store = _target_store(tmp_path / f"native-reply-blocker-{blocker}.sqlite3")
+    task = store.ensure_reply_task(**_creator_kwargs(_spec(f"blocker-{blocker}")))
+    with store._connect() as db:
+        db.execute("update tasks set status='done' where id=?", (task.id,))
+        if blocker == "newer_unclaimed_input":
+            db.execute("update tasks set claimed_input_id=current_input_id,"
+                       "claimed_input_version=1,input_version=2 where id=?", (task.id,))
+        elif blocker in {"running_run", "running_audit_run"}:
+            role = "audit" if blocker == "running_audit_run" else "consumer"
+            db.execute(
+                "insert into runs(task_id,execution_generation,role,proposal_revision,turn_attempt,"
+                "operation_id,status,session_id,transcript_start,transcript_end,structured_error_json,"
+                "lease_owner,lease_expires_at,started_at,completed_at,updated_at) "
+                "values(?,?,?,0,0,'',?,'session',0,0,'{}','','','','','')",
+                (task.id, task.execution_generation, role, "running"),
+            )
+        elif blocker == "runtime_attempt":
+            parent = db.execute(
+                "insert into runs(task_id,execution_generation,role,proposal_revision,turn_attempt,"
+                "operation_id,status,session_id,transcript_start,transcript_end,structured_error_json,"
+                "lease_owner,lease_expires_at,started_at,completed_at,updated_at) "
+                "values(?,?,'consumer',0,0,'','completed','session',0,0,'{}','','','','','') returning id",
+                (task.id, task.execution_generation),
+            ).fetchone()[0]
+            db.execute(
+                "insert into runtime_attempts(parent_id,workload_kind,workload_key,attempt_number,route_name,"
+                "runtime_kind,credential_mode,model,session_mode,source_session_id,attempt_purpose,"
+                "validation_retry_policy_id,validation_result_schema_id,session_id,transcript_reference,"
+                "transcript_start,transcript_end,status,failure_class,failure_code,failover_permitted,"
+                "lease_owner,lease_expires_at,first_effect_started_at,result_schema_id,started_at,finished_at,"
+                "created_at,updated_at) values(?,'agent_run',?,1,'route','codex','oauth','model','fresh','',"
+                "'normal','','','','',0,0,'running','','',0,'owner','later','', 'schema','start','','created','updated')",
+                (parent, str(parent)),
+            )
+        elif blocker == "wechat_sending":
+            insert_task_delivery_action(db, "wechat_deliveries", {
+                "reply_task_id": task.id, "account_id": "account", "target_type": "direct",
+                "target_id": "target", "conversation_id": "conversation", "reply_text": "reply",
+                "execution_generation": task.execution_generation, "status": "sending",
+            })
+        elif blocker == "task_lease":
+            db.execute("update tasks set adapter_name='reply',lease_owner='owner' where id=?", (task.id,))
+        elif blocker == "unresolved_attempt":
+            insert_action(db, "reply_attempts", {
+                "conversation_id": "conversation", "conversation_title": "Conversation",
+                "trigger_message_id": task.trigger_message_id, "trigger_sender": "sender",
+                "trigger_text": "body", "action": "send_reply", "sensitivity_kind": "general",
+                "send_status": "pending", "channel": "dingtalk",
+            })
+        elif blocker == "other_active_task":
+            second = task_entity_storage.create_task(db, values={
+                "kind": "reply", "status": "queued", "available_at": "",
+                "attempts": 0, "error": "", "locked_at": None,
+                "lease_owner": "", "lease_expires_at": "", "owner_pid": None,
+                "generation": 0, "adapter_name": "reply",
+                "execution_generation": "initial", "input_version": 0,
+                "claimed_input_version": 0, "created_at": "created",
+                "updated_at": "created",
+            })
+            task_entity_storage.append_task_input(db, task_id=int(second["id"]), values={
+                "channel": task.channel, "conversation_id": task.conversation_id,
+                "conversation_title": "Second owner", "single_chat": 0,
+                "trigger_message_id": task.trigger_message_id,
+                "trigger_create_time": "created", "trigger_sender": "sender",
+                "trigger_text": "shared identity", "trigger_message_json": "{}",
+                "oa_url": "", "business_object_key": "other-business",
+                "input_revision_key": "second", "created_at": "created",
+                "input_provenance_json": "{}", "input_compacted": 0,
+            })
+            insert_action(db, "reply_attempts", {
+                "conversation_id": task.conversation_id, "conversation_title": "Conversation",
+                "trigger_message_id": task.trigger_message_id, "trigger_sender": "sender",
+                "trigger_text": "retained attempt body", "action": "send_reply",
+                "sensitivity_kind": "general", "send_status": "sent", "channel": task.channel,
+            })
+            assert AutoReplyStore._compact_settled_reply_task_input(db, task.id)
+            attempt_body = db.execute(
+                "select attempt_trigger_text from actions where record_type='reply_attempts'",
+            ).fetchone()[0]
+            assert attempt_body == "retained attempt body"
+            assert db.execute("select input_compacted from task_inputs where task_id=?",
+                              (task.id,)).fetchone()[0] == 1
+            return
+        assert not AutoReplyStore._compact_settled_reply_task_input(db, task.id)
+        row = db.execute(
+            "select trigger_text,input_compacted from task_inputs where task_id=?",
+            (task.id,),
+        ).fetchone()
+        assert row["trigger_text"] == f"message blocker-{blocker}"
+        assert row["input_compacted"] == 0
+
+
 def test_failed_reply_run_retry_uses_native_task_and_run_owners(tmp_path):
     store = _target_store(tmp_path / "native-retry.sqlite3")
     task = store.ensure_reply_task(**_creator_kwargs(_spec("retry-message", business_key="business:one")))

@@ -458,6 +458,19 @@ def retained_action_source_rows(db: sqlite3.Connection, source_metadata: dict, *
         if key in feedback_reference_exceptions:
             raise ValueError("duplicate unresolved Feedback transition reference marker")
         feedback_reference_exceptions[key] = marker["value"]
+    reply_reference_exceptions = {}
+    for marker in (forward_metadata or {}).get("reply_reference_exceptions", []):
+        if (type(marker) is not dict
+                or set(marker) != {"action_id", "field", "value", "type"}
+                or type(marker["action_id"]) is not int
+                or marker["field"] not in {"reply_task_id", "matching_input_id"}
+                or type(marker["value"]) is not int
+                or marker["type"] != "integer" or marker["value"] == 0):
+            raise ValueError("invalid unresolved Reply provenance reference marker")
+        key = (marker["action_id"], marker["field"])
+        if key in reply_reference_exceptions:
+            raise ValueError("duplicate unresolved Reply provenance reference marker")
+        reply_reference_exceptions[key] = marker["value"]
     result = []
     cursor = db.execute('select * from main.actions order by id')
     native_columns = tuple(item[0] for item in cursor.description)
@@ -501,6 +514,39 @@ def retained_action_source_rows(db: sqlite3.Connection, source_metadata: dict, *
                 data = db.execute("select jsonb_set(?, '$.agent_run_id', jsonb(?))",
                                   (data, str(value))).fetchone()[0]
             row["action_data"] = data
+        if native["record_type"] == "reply_attempts" and native.get("payload_json") is not None:
+            from app.run_adoption_schema import _reply_attempt_internal_references
+
+            def source_reply_reference(field, value):
+                if value == 0:
+                    return value
+                marker = reply_reference_exceptions.get((native["id"], field))
+                if marker == value:
+                    return value
+                if field == "reply_task_id":
+                    try:
+                        return _task_source_physical(
+                            db, task_owners, "reply_tasks", value)
+                    except ValueError:
+                        return value
+                try:
+                    physical = _task_source_physical(
+                        db, task_owners, "reply_task_inputs", value)
+                except ValueError:
+                    return value
+                source_input = db.execute(
+                    "select legacy_key from main.tasks where id=? and record_type='reply_task_inputs'",
+                    (physical,),
+                ).fetchone()
+                if source_input is None or source_input[0] is None:
+                    return value
+                try:
+                    return int(source_input[0])
+                except (TypeError, ValueError):
+                    return value
+
+            row["payload_json"] = _reply_attempt_internal_references(
+                db, native["payload_json"], translate=source_reply_reference)
         if (native["record_type"] == "feedback_processing_transitions"
                 and "payload_json" in native and native["payload_json"] is not None):
             data = native["payload_json"]
