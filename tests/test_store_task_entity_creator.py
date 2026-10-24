@@ -263,7 +263,7 @@ def test_native_reply_compaction_database_failure_rolls_back_in_callers_transact
 
 
 def _native_sent_action(db, *, external_key, business_key, channel, conversation_id,
-                        trigger_message_id):
+                        trigger_message_id, agent_run_id=1):
     action = create_action(db, values={
         "operation": "send_reply_to_trigger", "status": "done",
         "external_action_key": external_key, "business_object_key": business_key,
@@ -278,7 +278,7 @@ def _native_sent_action(db, *, external_key, business_key, channel, conversation
     })
     metadata = append_action_receipt(db, action["id"], values={
         "operation": "send_reply_to_trigger", "target": f"{conversation_id}:{trigger_message_id}",
-        "result_digest": "receipt-digest", "agent_run_id": 1,
+        "result_digest": "receipt-digest", "agent_run_id": agent_run_id,
         "created_at": "2026-10-23T00:00:00Z", "provider_receipt_id": body,
     })
     delivery = append_action_receipt(db, action["id"], values={
@@ -514,6 +514,272 @@ def test_native_source_revision_rerun_is_generation_bound_and_idempotent(tmp_pat
         task.id, expected_execution_generation=task.execution_generation,
         source_revision_key="current-source-revision",
     )
+
+
+def test_native_requeue_reply_task_fails_only_stale_unprovenanced_current_generation_runs(tmp_path):
+    store = _target_store(tmp_path / "native-requeue-reply.sqlite3")
+    task = store.ensure_reply_task(**_creator_kwargs(_spec("native-requeue-reply")))
+    with store._connect() as db:
+        db.execute(
+            "update tasks set status='processing',attempts=2,claimed_input_id=current_input_id,"
+            "claimed_input_version=input_version where id=?", (task.id,),
+        )
+        current_stale = db.execute(
+            "insert into runs(task_id,execution_generation,role,proposal_revision,turn_attempt,"
+            "operation_id,status,session_id,transcript_start,transcript_end,structured_error_json,"
+            "lease_owner,lease_expires_at,started_at,completed_at,updated_at) "
+            "values(?,?,'consumer',0,0,'','running','s',0,0,'{}','owner','',"
+            "'start','','2000-01-01 00:00:00') returning id",
+            (task.id, task.execution_generation),
+        ).fetchone()[0]
+        old_generation = db.execute(
+            "insert into runs(task_id,execution_generation,role,proposal_revision,turn_attempt,"
+            "operation_id,status,session_id,transcript_start,transcript_end,structured_error_json,"
+            "lease_owner,lease_expires_at,started_at,completed_at,updated_at) "
+            "values(?,?,'audit',0,0,'','running','s',0,0,'{}','owner','',"
+            "'start','','2000-01-01 00:00:00') returning id",
+            (task.id, "older-generation"),
+        ).fetchone()[0]
+        recent = db.execute(
+            "insert into runs(task_id,execution_generation,role,proposal_revision,turn_attempt,"
+            "operation_id,status,session_id,transcript_start,transcript_end,structured_error_json,"
+            "lease_owner,lease_expires_at,started_at,completed_at,updated_at) "
+            "values(?,?,'audit',0,0,'','running','s',0,0,'{}','owner','',"
+            "'start','','2099-01-01 00:00:00') returning id",
+            (task.id, task.execution_generation),
+        ).fetchone()[0]
+        unscoped = db.execute(
+            "insert into runs(task_id,execution_generation,role,proposal_revision,turn_attempt,"
+            "operation_id,status,session_id,transcript_start,transcript_end,structured_error_json,"
+            "lease_owner,lease_expires_at,started_at,completed_at,updated_at) "
+            "values(?,?,'task_agent',0,1,'','running','s',0,0,'{}','owner','',"
+            "'start','','2000-01-01 00:00:00') returning id",
+            (task.id, task.execution_generation),
+        ).fetchone()[0]
+    store.requeue_reply_task(
+        task.id, "stale attempt recovered",
+        expected_execution_generation=task.execution_generation,
+        available_at="2026-10-23 00:00:00",
+    )
+    with store._connect() as db:
+        owner = task_entity_storage.get_task_with_inputs(db, task.id)
+        assert owner["status"] == "pending"
+        assert owner["execution_generation"] == task.execution_generation
+        assert owner["attempts"] == 2
+        assert owner["error"] == "stale attempt recovered"
+        assert owner["parameters"]["force_new_decision"] == 1
+        stale = db.execute(
+            "select status,structured_error_json,lease_owner,lease_expires_at "
+            "from runs where id=?", (current_stale,),
+        ).fetchone()
+        assert stale["status"] == "failed"
+        assert json.loads(stale["structured_error_json"])["code"] == "stale_agent_turn_recovery"
+        assert stale["lease_owner"] == stale["lease_expires_at"] == ""
+        assert db.execute("select count(*) from run_failures where run_id=? and phase='terminal_failure'",
+                          (current_stale,)).fetchone()[0] == 1
+        assert db.execute("select status from runs where id=?", (old_generation,)).fetchone()[0] == "running"
+        assert db.execute("select status from runs where id=?", (recent,)).fetchone()[0] == "running"
+        assert db.execute("select status from runs where id=?", (unscoped,)).fetchone()[0] == "running"
+
+
+def test_native_reply_failure_result_and_receipt_survive_composed_portable_cycles():
+    from contextlib import contextmanager
+    from copy import deepcopy
+    import sqlite3
+
+    from app.run_adoption_inverse import restore_run_adoptions
+    from app.run_adoption_schema import capture_run_adoptions, migrate_run_adoptions
+    from app.run_entity_schema import capture_run_entities, migrate_run_entities, restore_run_entities
+    from app.task_entity_schema import capture_task_entities, migrate_task_entities, restore_task_entities
+    from tests.test_run_adoption_schema import _populated_source
+
+    db, context = _populated_source(remap_tasks=True, remap_runs=True, stop_before_adoption=True)
+    db.row_factory = sqlite3.Row
+    try:
+        adoption_forward = migrate_run_adoptions(
+            db, context["adoption_source"], task_metadata=context["task_metadata"],
+            run_metadata=context["run_metadata"],
+        )
+        db.commit()
+        task_id = next(
+            edge["target_id"] for edge in context["task_metadata"]["identity_edges"]
+            if edge["source_kind"] == "reply_tasks" and edge["physical_id"] == 201
+        )
+        consumer_run_id = next(
+            edge["target_id"] for edge in context["run_metadata"]["identity_edges"]
+            if edge["source_kind"] == "agent_runs" and edge["physical_id"] == 9006
+        )
+        task_entity_storage.update_task_cas(
+            db, task_id=task_id, expected={"status": "pending"},
+            changes={"status": "processing", "attempts": 1,
+                     "claimed_input_id": task_entity_storage.get_task(db, task_id)["current_input_id"],
+                     "claimed_input_version": 1},
+        )
+        db.commit()
+        store = AutoReplyStore.__new__(AutoReplyStore)
+
+        @contextmanager
+        def connection():
+            yield db
+
+        @contextmanager
+        def immediate_transaction():
+            db.execute("begin immediate")
+            try:
+                yield db
+                db.commit()
+            except BaseException:
+                db.rollback()
+                raise
+
+        store._connect = connection
+        store._immediate_write_transaction = immediate_transaction
+        task = task_entity_storage.get_task_with_inputs(db, task_id)
+        generation = str(task["execution_generation"])
+        current_input = task["current_input"]
+        attempt_id = store.finalize_orchestrated_reply_task(
+            task_id=task_id, expected_execution_generation=generation,
+            run_id=consumer_run_id, task_status="failed", task_error="codex_result_invalid",
+            available_at="", conversation_id=current_input["conversation_id"],
+            conversation_title=current_input["conversation_title"],
+            trigger_message_id=current_input["trigger_message_id"],
+            trigger_sender=current_input["trigger_sender"],
+            trigger_text=current_input["trigger_text"],
+            codex_reason="native composed result", codex_session_id="",
+            codex_transcript_start_line=0, codex_transcript_end_line=0,
+            audit_tool_events_json="[]", audit_summary="native composed result",
+            send_status="failed", send_error="codex_result_invalid",
+            channel=current_input["channel"],
+        )
+        _native_sent_action(
+            db, external_key="cycle-receipt:reply-201",
+            business_key=current_input["business_object_key"],
+            channel=current_input["channel"],
+            conversation_id=current_input["conversation_id"],
+            trigger_message_id=current_input["trigger_message_id"],
+            agent_run_id=consumer_run_id,
+        )
+        db.commit()
+        assert store.reconcile_failed_reply_tasks_with_recorded_deliveries() == 1
+        with immediate_transaction():
+            store._enqueue_task_memory_write_in_connection(
+                db, task_id=task_id, execution_generation=generation,
+            )
+
+        expected_candidate = db.execute(
+            "select candidate_json,candidate_digest from run_adopted_results "
+                "where consumer_run_id=?", (consumer_run_id,),
+        ).fetchone()
+        from app.action_storage import NATIVE_EXTERNAL_ACTION_RESULT_SQL
+        expected_receipt = db.execute(
+            f"select * from ({NATIVE_EXTERNAL_ACTION_RESULT_SQL}) "
+            "where external_action_key='cycle-receipt:reply-201'",
+        ).fetchall()
+        expected_task = task_entity_storage.get_task_with_inputs(db, task_id)
+        from app.store import REPLY_ATTEMPT_COMMON_SQL
+        attempt = db.execute(
+            f"select id,agent_run_id,send_status,send_error from ({REPLY_ATTEMPT_COMMON_SQL}) "
+            "where id=?", (attempt_id,),
+        ).fetchone()
+        assert expected_task["status"] == "done"
+        assert expected_task["error"] == ""
+        assert expected_task["attempts"] == 1
+        assert expected_task["current_input"]["business_object_key"] == "object"
+        assert expected_candidate["candidate_json"]
+        assert expected_receipt and expected_receipt[0]["result_digest"] == "receipt-digest"
+        assert attempt["agent_run_id"] == consumer_run_id
+        assert attempt["send_status"] == "failed"
+        assert attempt["send_error"] == "codex_result_invalid"
+
+        task_source = context["task_source_metadata"]
+        run_source = context["run_source_metadata"]
+        adoption_source = context["adoption_source"]
+        task_forward = context["task_metadata"]
+        run_forward = context["run_metadata"]
+        db.execute("pragma foreign_keys=off")
+        db.execute("begin immediate")
+        for cycle in range(2):
+            task_inverse = restore_task_entities(db, task_source, task_forward)
+            run_inverse = restore_run_entities(
+                db, run_source, run_forward, task_metadata=task_forward,
+                task_inverse_metadata=task_inverse,
+            )
+            restore_run_adoptions(
+                db, adoption_source, adoption_forward, task_metadata=task_forward,
+                task_inverse_metadata=task_inverse, run_inverse_metadata=run_inverse,
+            )
+            from app.task20_definitions import task20_projection
+            source_task = db.execute(
+                "select status,error,attempts,execution_generation from ("
+                + task20_projection("reply_tasks") + ") where id=201",
+            ).fetchone()
+            from app.action_storage import REVIEW_CANDIDATE_SQL
+            source_candidate = db.execute(
+                f"select candidate_json,candidate_digest from ({REVIEW_CANDIDATE_SQL}) "
+                "where task_id=201 order by id limit 1",
+            ).fetchone()
+            from app.action_storage import EXTERNAL_ACTION_RESULT_SQL
+            source_receipt = db.execute(
+                f"select * from ({EXTERNAL_ACTION_RESULT_SQL}) "
+                "where external_action_key='cycle-receipt:reply-201'",
+            ).fetchall()
+            assert source_task["status"] == "done"
+            assert source_task["error"] == ""
+            assert source_task["attempts"] == 1
+            source_input = db.execute(
+                "select business_object_key from (" + task20_projection("reply_task_inputs")
+                + ") where reply_task_id=201 and input_revision_key='' order by id limit 1",
+            ).fetchone()
+            assert source_input["business_object_key"] == "object"
+            assert tuple(source_candidate) == tuple(expected_candidate)
+            assert source_receipt
+            source_receipt_row = list(source_receipt[0])
+            native_receipt_row = list(expected_receipt[0])
+            assert source_receipt_row[7] == 9006
+            assert native_receipt_row[7] == consumer_run_id
+            source_receipt_row[7] = native_receipt_row[7]
+            assert source_receipt_row == native_receipt_row
+            task_source = capture_task_entities(db)
+            run_source = capture_run_entities(db)
+            adoption_source = capture_run_adoptions(db)
+            task_forward = migrate_task_entities(
+                db, task_source, source_context=task_inverse["source_context"],
+                inverse_identity=deepcopy(task_inverse["inverse_identity"]),
+            )
+            run_forward = migrate_run_entities(
+                db, run_source, task_metadata=task_forward,
+                run_handoff=deepcopy(run_inverse["run_handoff"]),
+            )
+            adoption_forward = migrate_run_adoptions(
+                db, adoption_source, task_metadata=task_forward, run_metadata=run_forward,
+            )
+            task_id = next(
+                edge["target_id"] for edge in task_forward["identity_edges"]
+                if edge["source_kind"] == "reply_tasks" and edge["physical_id"] == 201
+            )
+            assert task_entity_storage.get_task_with_inputs(db, task_id)["status"] == "done"
+            assert db.execute(
+                "select candidate_digest from run_adopted_results where consumer_run_id=("
+                "select id from runs where task_id=? and role='consumer' order by id limit 1)",
+                (task_id,),
+            ).fetchone()[0] == expected_candidate["candidate_digest"]
+            from app.action_storage import NATIVE_EXTERNAL_ACTION_RESULT_SQL
+            roundtrip_receipt = db.execute(
+                f"select * from ({NATIVE_EXTERNAL_ACTION_RESULT_SQL}) "
+                "where external_action_key='cycle-receipt:reply-201'",
+            ).fetchone()
+            assert roundtrip_receipt is not None
+            assert roundtrip_receipt["result_digest"] == "receipt-digest"
+        roundtrip_task = task_entity_storage.get_task_with_inputs(db, task_id)
+        assert roundtrip_task["status"] == "done"
+        assert roundtrip_task["current_input"]["business_object_key"] == "object"
+        assert db.execute(
+            "select candidate_digest from run_adopted_results where consumer_run_id=("
+            "select id from runs where task_id=? and role='consumer' order by id limit 1)",
+            (task_id,),
+        ).fetchone()[0] == expected_candidate["candidate_digest"]
+    finally:
+        db.close()
 
 
 @pytest.mark.parametrize(
