@@ -2528,3 +2528,186 @@ def test_orphaned_native_run_closure_records_run_failure(tmp_path):
         ).fetchone()
         assert failure[0] == "terminal_failure"
         assert json.loads(failure[1])["code"] == "orphaned_agent_run_parent_not_processing"
+
+
+def test_native_task_claim_switches_adapter_using_adapter_history_but_task_authority(tmp_path):
+    from datetime import datetime, timedelta, timezone
+    from app.dispatcher.models import DispatchEnvelope
+    from app.task_lifecycle_storage import acquire_claim, assert_claim, transition_claim
+
+    store = _target_store(tmp_path / "native-adapter-switch.sqlite3")
+    task = store.ensure_reply_task(**_creator_kwargs(_spec("adapter-switch")))
+    now = datetime(2026, 10, 23, 12, 0, tzinfo=timezone.utc)
+    now_text = now.strftime("%Y-%m-%d %H:%M:%S")
+    expires = (now + timedelta(minutes=5)).strftime("%Y-%m-%d %H:%M:%S")
+
+    def claim_and_release(adapter, owner):
+        with store._immediate_write_transaction() as db:
+            generation = acquire_claim(
+                db, adapter_name=adapter, source_id=str(task.id), owner=owner,
+                owner_pid=42, lease_expires_at=expires, now=now_text,
+            )
+            envelope = DispatchEnvelope(
+                adapter_name=adapter, source_id=str(task.id), available_at=now,
+                priority=0, attempt=generation, generation=generation,
+            )
+            assert_claim(db, envelope=envelope, owner=owner, now=now_text)
+            transition_claim(
+                db, envelope=envelope, owner=owner,
+                values={"lease_owner": "", "lease_expires_at": ""},
+                history={"owner": "", "lease_expires_at": "", "terminal_at": now_text,
+                         "updated_at": now_text},
+            )
+        return envelope
+
+    first_reply = claim_and_release("reply", "reply-worker-1")
+    scheduled = claim_and_release("scheduled_execution", "scheduled-worker")
+    assert first_reply.generation == 1
+    assert scheduled.generation == 1
+    with store._immediate_write_transaction() as db:
+        reply = acquire_claim(
+            db, adapter_name="reply", source_id=str(task.id), owner="reply-worker-2",
+            owner_pid=43, lease_expires_at=expires, now=now_text,
+        )
+        reply_again = DispatchEnvelope(
+            adapter_name="reply", source_id=str(task.id), available_at=now,
+            priority=0, attempt=reply, generation=reply,
+        )
+        assert reply == first_reply.generation + 1
+        assert_claim(db, envelope=reply_again, owner="reply-worker-2", now=now_text)
+        with pytest.raises(ValueError, match="no longer owned"):
+            assert_claim(db, envelope=scheduled, owner="scheduled-worker", now=now_text)
+        history = db.execute(
+            "select adapter_name,generation,owner from state "
+            "where record_type='dispatcher_claim_leases' and source_id=? "
+            "order by adapter_name", (str(task.id),),
+        ).fetchall()
+        assert [tuple(row) for row in history] == [
+            ("reply", reply, "reply-worker-2"),
+            ("scheduled_execution", scheduled.generation, ""),
+        ]
+        task_owner = db.execute(
+            "select adapter_name,lease_owner,generation from tasks where id=?", (task.id,),
+        ).fetchone()
+        assert tuple(task_owner) == ("reply", "reply-worker-2", reply)
+
+
+def test_native_task_let_go_requires_owner_and_generation_and_sets_exact_values(tmp_path):
+    from datetime import datetime, timedelta, timezone
+    from app.dispatcher.adapters import ReplyQueueAdapter, _let_go_of_lease
+    from app.dispatcher.models import DispatchEnvelope
+
+    store = _target_store(tmp_path / "native-let-go.sqlite3")
+    task = store.ensure_reply_task(**_creator_kwargs(_spec("let-go")))
+    now = datetime(2026, 10, 23, 12, 0, tzinfo=timezone.utc)
+    envelope = ReplyQueueAdapter(store).claim(
+        now, owner="worker", owner_pid=42, lease=timedelta(minutes=5),
+    )
+    assert envelope is not None and envelope.source_id == str(task.id)
+
+    def task_claim():
+        with store._connect() as db:
+            return tuple(db.execute(
+                "select adapter_name,lease_owner,owner_pid,generation,lease_expires_at "
+                "from tasks where id=?", (task.id,),
+            ).fetchone())
+
+    before = task_claim()
+    _let_go_of_lease(store, envelope=envelope, owner="other-worker")
+    wrong_generation = DispatchEnvelope(
+        adapter_name=envelope.adapter_name, source_id=envelope.source_id,
+        available_at=envelope.available_at, priority=envelope.priority,
+        attempt=envelope.attempt, generation=envelope.generation + 1,
+    )
+    _let_go_of_lease(store, envelope=wrong_generation, owner="worker")
+    assert task_claim() == before
+
+    _let_go_of_lease(store, envelope=envelope, owner="worker")
+    after = task_claim()
+    assert after == ("reply", "worker", 0, envelope.generation, "")
+    with store._connect() as db:
+        history = db.execute(
+            "select owner,owner_pid,generation,lease_expires_at from state "
+            "where record_type='dispatcher_claim_leases' and adapter_name='reply' and source_id=?",
+            (str(task.id),),
+        ).fetchone()
+        assert tuple(history) == ("worker", 0, envelope.generation, "")
+
+
+def test_native_task_claim_history_prune_keeps_exact_10000_and_fences_task_metadata(tmp_path):
+    from app.dispatcher.adapters import _prune_completed_claim_history
+    from app.state_storage import insert_state
+
+    store = _target_store(tmp_path / "native-claim-prune.sqlite3")
+    tasks = [
+        store.ensure_reply_task(**_creator_kwargs(_spec(f"prune-{name}")))
+        for name in ("older-generation", "other-adapter", "live-owner", "clear-match")
+    ]
+    older_generation, other_adapter, live_owner, clear_match = tasks
+    task_claims = (
+        (older_generation, "reply", None, 2, ""),
+        (other_adapter, "scheduled_execution", None, 8, ""),
+        (live_owner, "reply", "live-worker", 4, "2099-01-01 00:00:00"),
+        (clear_match, "reply", None, 6, ""),
+    )
+    with store._immediate_write_transaction() as db:
+        for task, adapter, owner, generation, expires in task_claims:
+            db.execute(
+                "update tasks set adapter_name=?,lease_owner=?,owner_pid=?,generation=?,lease_expires_at=? "
+                "where id=?", (adapter, owner, 123 if owner else None, generation, expires, task.id),
+            )
+
+        targets = [
+            ("reply", str(older_generation.id), 1),
+            ("reply", str(other_adapter.id), 7),
+            ("reply", str(live_owner.id), 4),
+            ("reply", str(clear_match.id), 6),
+        ]
+        for index, (adapter, source_id, generation) in enumerate(targets):
+            insert_state(db, "dispatcher_claim_leases", {
+                "adapter_name": adapter, "source_id": source_id, "generation": generation,
+                "owner": "", "owner_pid": 0, "lease_expires_at": "",
+                "terminal_at": f"2026-01-01 00:00:0{index}",
+            })
+        for index in range(10000):
+            insert_state(db, "dispatcher_claim_leases", {
+                "adapter_name": "reply", "source_id": f"filler-{index}", "generation": 1,
+                "terminal_at": f"2026-02-{index // 86400 + 1:02d} {index % 86400 // 3600:02d}:"
+                    f"{index % 3600 // 60:02d}:{index % 60:02d}",
+            })
+        insert_state(db, "dispatcher_claim_leases", {
+            "adapter_name": "scheduled_execution", "source_id": str(other_adapter.id),
+            "generation": 8, "owner": "", "owner_pid": 0, "lease_expires_at": "",
+            "terminal_at": "2026-03-01 00:00:00",
+        })
+        before = db.execute(
+            "select count(*) from state where record_type='dispatcher_claim_leases'",
+        ).fetchone()[0]
+        _prune_completed_claim_history(db)
+        after = db.execute(
+            "select count(*) from state where record_type='dispatcher_claim_leases'",
+        ).fetchone()[0]
+        assert before == 10005
+        assert after == 10000
+        remaining_targets = db.execute(
+            "select adapter_name,source_id from state where record_type='dispatcher_claim_leases' "
+            "and source_id in (?,?,?,?)",
+            tuple(str(task.id) for task in tasks),
+        ).fetchall()
+        # The four oldest target histories and one filler row were pruned;
+        # none of the test Task rows may be reset by stale history for another generation/adapter
+        # or while the lease is live. Only the matching released metadata resets.
+        assert [tuple(row) for row in remaining_targets] == [
+            ("scheduled_execution", str(other_adapter.id)),
+        ]
+        metadata = {
+            task.id: tuple(db.execute(
+                "select adapter_name,lease_owner,owner_pid,generation,lease_expires_at "
+                "from tasks where id=?", (task.id,),
+            ).fetchone())
+            for task in tasks
+        }
+        assert metadata[older_generation.id] == ("reply", None, None, 2, "")
+        assert metadata[other_adapter.id] == ("scheduled_execution", None, None, 8, "")
+        assert metadata[live_owner.id] == ("reply", "live-worker", 123, 4, "2099-01-01 00:00:00")
+        assert metadata[clear_match.id] == (None, None, None, None, None)

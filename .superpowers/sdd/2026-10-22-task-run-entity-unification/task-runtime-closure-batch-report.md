@@ -33,7 +33,7 @@ An early broad diagnostic on historical source-layout tests reported **41 failed
 
 - Direct current-versus-claimed input snapshot behavior is covered by `test_native_reply_queue_claim_and_input_refresh_keep_claimed_snapshot`.
 - Claim owner/generation CAS and two-connection contention are covered, as is transaction rollback when passive State history insertion fails.
-- This unit does not directly exercise an adapter switch on the same Task across two independent adapter-qualified histories; PID-zero/empty-expiry let-go behavior; or pruning a stale-generation history row while protecting a newer generation, another adapter's history, and a live Task lease. These are specific missing edge proofs for the changed claim helper and should be covered by the terminal/receipt follow-up or a narrowly targeted claim-state test before publication. The five-adapter claim test proves initial adapter ownership, not switching.
+- Review-fix tests now exercise same-Task Reply→ScheduledExecution→Reply history generations while Task fields remain authoritative; let-go no-ops on stale owner/generation and writes exact PID `0` plus empty expiry for the matching claim; and actual retention pruning from 10,005 to exactly 10,000 histories while preserving a newer generation, the current other-adapter claim, and a live owner and clearing only matching released metadata.
 
 ## Remaining immediate runtime closure
 
@@ -45,3 +45,20 @@ The next functional batch must cover terminal settlement/receipt/reconciliation/
 - source-shaped current Reply queries, revised-trigger/manual-rerun direct consumers, receipt/reconciliation projections, and other Task/Run consumers not converted by this unit.
 
 No constructor activation is claimed. Other WeChat, Attention, History, memory-write, publication, and unrelated runtime source projections remain outside this bounded unit and require their scheduled ownership batches.
+
+
+## Unit A review fix
+
+The SPEC/QUALITY review identified missing cross-adapter, let-go, and prune acceptance cases. No implementation defect was found, so this fix adds only native assembled-target tests in `tests/test_store_task_entity_creator.py`.
+
+- `test_native_task_claim_switches_adapter_using_adapter_history_but_task_authority`: the same Task claims Reply generation 1, then ScheduledExecution generation 1, then Reply generation 2. Both adapter State histories remain distinct; `assert_claim` accepts the Task's current Reply claim and rejects the old ScheduledExecution envelope.
+- `test_native_task_let_go_requires_owner_and_generation_and_sets_exact_values`: wrong owner and wrong generation leave Task fields unchanged. Matching owner/generation writes exactly `owner_pid=0` and `lease_expires_at=''` on Task and passive history while retaining the owner/generation.
+- `test_native_task_claim_history_prune_keeps_exact_10000_and_fences_task_metadata`: invokes the actual terminal history pruner with 10,005 valid State records, observes exactly 10,000 retained, and proves pruning an old same-adapter generation, a stale Reply history for a Task currently owned by ScheduledExecution, and a live matching claim does not clear Task metadata. Pruning a matching old row for an unowned Task clears its stale claim metadata. The current ScheduledExecution history row remains retained.
+
+Verification from FIX_BASE `ef16f94e9e1e1c7b4a6fc8a9f640b2f32633ce58`:
+
+- New named tests: `pytest -q tests/test_store_task_entity_creator.py -k 'native_task_claim_switches_adapter_using_adapter_history_but_task_authority or native_task_let_go_requires_owner_and_generation_and_sets_exact_values or native_task_claim_history_prune_keeps_exact_10000_and_fences_task_metadata' --maxfail=1` — **3 passed, 78 deselected in 4.64s**.
+- Native lifecycle regression selection including the three new cases: `pytest -q tests/test_store_task_entity_creator.py -k 'native_dispatcher_history_write_failure_rolls_back_task_lease or concurrent_native_reply_dispatcher_begin_claims_have_one_winner or native_reply_queue_claim_and_input_refresh_keep_claimed_snapshot or native_bulk_claim_rechecks_after_preview_loses_task or native_task_dispatcher_adapters_claim_canonical_task_ids or revised_terminal_reply_trigger_appends_native_input_and_rotates_task or reply_execution_generation_rotation_uses_native_task_cas or task_dispatcher_claim_history_uses_canonical_task_id or native_reply_dispatcher_claim_uses_task_owner or native_reply_recovery_updates_task_owner or orphaned_native_run_closure_records_run_failure or native_task_claim_switches_adapter_using_adapter_history_but_task_authority or native_task_let_go_requires_owner_and_generation_and_sets_exact_values or native_task_claim_history_prune_keeps_exact_10000_and_fences_task_metadata' --maxfail=1` — **19 passed, 62 deselected in 18.97s**.
+- `ruff check tests/test_store_task_entity_creator.py`, `python -m compileall -q tests/test_store_task_entity_creator.py`, and `git diff --check` — passed.
+
+The initial prune test attempt failed because its test data placed the matching current ScheduledExecution history among the oldest rows; ordering was corrected so the actual pruner removes the four intended old target histories plus one filler. This was a fixture correction, not an implementation change. No broader suites or runtime actions were run. The next mandatory Unit B terminal/receipt/reconciliation/error work remains open as listed above.
