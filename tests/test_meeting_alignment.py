@@ -39,7 +39,6 @@ from app.meeting_alignment_models import (
     MeetingAlignmentDecision,
     MeetingSource,
     meeting_alignment_decision_digest,
-    meeting_decision_audit_is_approved,
     persist_audited_meeting_decision,
 )
 from app.task8_storage import task8_set_parts

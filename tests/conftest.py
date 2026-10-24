@@ -44,7 +44,7 @@ os.environ["FAST_PATH_UNREAD_BACKOFF"] = "0s"
 
 
 # Derek, 2026-10-23: fixed on purpose, no environment variable or option.
-from tests.support.memory_limit import MemoryLimit
+from tests.support.memory_limit import MemoryLimit  # noqa: E402
 
 MEMORY_LIMIT = MemoryLimit(3 * 1024**3)
 

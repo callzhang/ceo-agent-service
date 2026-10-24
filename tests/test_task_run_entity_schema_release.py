@@ -253,7 +253,6 @@ def test_paired_task_run_inverse_handoff_is_durable_and_process_portable(tmp_pat
 
 
 def test_failed_handoff_write_rolls_back_and_release_rollback_accepts_source(tmp_path, monkeypatch):
-    from pathlib import Path
     from app.task_run_entity_schema_release import prepare_task_run_entity_release
 
     path = tmp_path / "failed-handoff-source.sqlite3"

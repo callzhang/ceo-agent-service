@@ -5,7 +5,6 @@ import json
 from typing import TYPE_CHECKING, Iterable
 
 if TYPE_CHECKING:
-    from app.task_models import WorkItem
     from app.business_source_reader import (
         BusinessTaskSignalFact,
         PreparedSources,
