@@ -5,7 +5,7 @@ from typing import Any, Protocol
 
 from pydantic import ValidationError
 
-from app.agent_result import agent_message_json_objects
+from app.agent_result import agent_message_json_objects, parse_agent_text_result
 from app.audit_rules import MESSAGE_AUDIENCE_CONTRACT
 from app.agent_runtime_router import (
     CodexCommandFactory,
@@ -396,7 +396,10 @@ class MeetingAlignmentCodexRunner:
 def _encode_meeting_alignment_audit_result(
     raw: str, *, expected_candidate_sha256: str,
 ) -> str:
-    payload = json.loads(raw)
+    try:
+        payload = json.loads(raw)
+    except json.JSONDecodeError:
+        payload = json.loads(parse_agent_text_result(raw))
     result = MeetingAlignmentAuditResult.model_validate(payload)
     if result.candidate_sha256 != expected_candidate_sha256:
         raise ValueError("Meeting Audit output candidate digest does not match input")
