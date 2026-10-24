@@ -1,0 +1,112 @@
+# Agent 优化最终验收对账
+
+核查日期：2026-10-24，America/Los_Angeles。本文是本次批准的六项目标对账，不是新一轮优化计划。
+
+**整体结论：不能宣布整轮完成。** 按任务装配与 Settings 输入可追溯已有实现、固定案例和发布证据；DWS 补丁当前未保持在运行路径、文档重复覆盖的自然行为验收、当前配置路线的完整输出验收及当前业务输入变化后的证据覆盖仍有缺口。以下区分历史验收、当前实现、生产发布和业务结果，不把它们互相替代。
+
+## 1. 基准、范围与状态口径
+
+- 本轮起始远端 main/隔离开发 HEAD：`8f35fb3ef52fb991c85cad7d492fbf64d6799ac5`；起始生产：`7a6caf762265003d6ae33cd8d5e738c87fab75b8`，生产源码工作树干净。
+- 核查期间其他会话发布并重启；本轮只读核对，未启动部署或干预进程。开发随后快进至 `878cfd723ebfb290e510b3a1c3028b1d6bc2a389`，生产也已到该版本。本文文档提交不需要重启服务。
+- 当前公共预览声明四条路线：`codex_oauth/gpt-6-luna`、`codex_api/gpt-5.6-luna`、`qwen_gpu4/qwen3.8-27b`、`claude_oauth/sonnet`。出现在配置中不代表路线已通过验收。
+- 状态仅使用：**已验收、已上线待行为验收、未完成、证据不足、已取消**。已验收项仍说明其限定范围，不推及所有模型、任务或未来配置。
+- 本轮未改运行代码、prompt、Skill、权限、Audit、重试或 session 策略；没有模型调用、真实文档写入、对外发送或生产任务重放。只读数据库连接使用 URI `mode=ro` 和 `query_only`，未构造生产 Store。
+
+## 2. 六项目标逐项对账
+
+| 目标 | 当前结论 | 已成立的部分 | 缺口及最小收尾动作 |
+| --- | --- | --- | --- |
+| 指令精简与按需注入 | **已验收**，限定为装配机制与已完成的固定对照 | 通用 Developer/角色/Profile 与每轮 Task 分开；任务流程由选定 Skill 承载，目录不预载依赖正文。原六场景有相同条件的前后对照和反馈闭环；后续 Consumer 原生 schema 去重也有独立验证。当前页面和预览仍使用分段来源。 | 不等于当前全部文字已最短、每条常识已删净，也不承诺当前任意任务的输入或费用都减少。当前业务变化的验证见第5项，不再为“更短”扩展改动。 |
+| Settings 输入可追溯 | **已验收** | 当前 UI 解释各 prompt 的用途和拼接关系；模板渲染、公共预览、任务绑定及历史输入有明确区分。本轮三个历史 API 输入与对应原生记录逐字节相等，两份任务绑定输入可定位到保存的 run。 | 本轮无新增缺口。历史缺失的配置细分与渲染时间仍明确未记录；公共预览不冒充实际执行或完整模型上下文。 |
+| session 与续跑 | **已上线待行为验收** | Consumer 按会话、路线、选定 Skill 和输出契约条件复用；Audit 有同任务/代次续会话。已有自然案例证明工件保留、反馈修订和最终投递；文档交接修复与“写入即成功”已发布。 | 服务回执修改已上线，但本轮发现 DWS 二进制已恢复官方原版；且尚无文档修复后自然 Agent 运行。按 G1 先明确 provider 修复当前不在运行的缺口，再验收相关自然轨迹。 |
+| 原生结构化输出 | **未完成**，针对“所有当前配置路线均完整验收”的原目标 | Codex Consumer 原生 schema、OAuth Audit 原生 schema、动态 JSON 无损还原及严格业务校验已在主线；OAuth 和 Claude 有分阶段匿名冷启动/续会话证据。 | API/Qwen 路线尚无覆盖当前 schema、工具调用、Consumer/Audit 冷启动和续会话的完整矩阵；API Audit 当前还不选用原生 schema。按 G2 收口，不能以 PR31 草稿或一次合法 JSON 代替。 |
+| 任务事实与业务行为 | **证据不足**，针对当前版本的完整覆盖 | 原固定矩阵覆盖日历跨时区/跨午夜、真实冲突、已处理邮件、文档冲突、已有工作事项和 Audit 反馈。自然定时任务有来源保留和修订证据；本轮当前来源投影与输出编解码定向检查通过。 | 这些分阶段证据不是当前四条路线/四类任务的统一无退化证明；Task 历史来源读取和当前结果模型已发生后续变化。按 G3 先复用对应已有证据，仅补受影响场景。 |
+| 发布与实际收益 | **已上线待行为验收** | 已有多个正式部署回读；文档修复在当前生产祖先链上。相同固定输入下的服务字符缩减有实测，见第6节。 | 已上线与字符减少不证明重复覆盖已停止，也不证明整体 token、费用或墙钟提速。G1/G3 关闭相应业务缺口；没有测得的收益保持“未测得”，不新增性能实验作为门槛。 |
+
+### 指令装配与固定对照的证据
+
+- [任务指令按需注入验收](task-scoped-prompts-validation.md)：实现审查 `adb23e1b`、测试修正 `ba3d5415`；联合70项、完整定时36项、前端85通过2跳过及发布器29项，分组有重叠，不能相加。匿名固定清单为 `evals/task_scoped_prompts/v1.json`。
+- 原14次模型结果全部通过 Pydantic，候选初审6通过/1部分通过；Audit 最初漏报一个字段缺陷的事实保留。后续直接使用真实反馈完成 Consumer 修订和同 Audit session 精确 digest/revision 审核，没有用改 prompt 覆盖原失败。
+- [冻结 Skill 续会话验证](frozen-skill-session-reuse-validation.md)记录 `dd9b587e` 的正式发布及当前/历史预览回读；它不证明自动压缩后完整内容永远可见。
+- [Consumer 原生契约去重](consumer-native-schema-prompt-validation.md)只移除已有原生输出通道的重复 wire 文本，不移除严格业务校验。当前 `consumer_developer_sections_by_runtime` 仍按路线装配；Task 专属内容通过现有任务元数据和 Skill 入口提供。
+
+## 3. Settings 本轮直接核对
+
+生产 GET `/api/console/settings/prompts` 的保存 Developer 模板，经现有渲染函数得到的文本与 API `preview.developer` 完全一致，`preview_errors` 为空。Consumer/Audit 共享 Developer 与 Profile，只有 Consumer 使用 User 模板。
+
+当前公共预览为 `mode=current/status=available/submission_state=preview`，明确未绑定任务、未运行或验证认证。一次快照 Consumer Developer 29,741字符、Audit 39,438字符，Task 均为24字符的未绑定说明；这些不是一次真实任务的完整输入基线，不能与不同版本/任务的历史长度直接相减。Consumer 的工作人格分段8,532字符、共同原则625字符、能力边界4,996字符；Audit 包含9,368字符的审核规则。长度用于解释来源，不用作必要性或质量评分。
+
+三份历史输入经对应 runtime attempt 的原生读取核对，Developer、Task、submitted_input 均与生产 API 脱敏后的文本相等：
+
+| run / attempt | Developer 字符 / SHA-256 | Task 字符 / SHA-256 | 来源结论 |
+| --- | --- | --- | --- |
+| 398794 / 398795 | 919 / `0e7daacc076ff478be3eb915c7adc6a446caf8ccad79d6bbb9cfa2b266a950d5` | 6,285 / `4c9098355cf820f7d7e8c5556ad37450b761dfd454f9cbceb3e815e88a62f22d` | 本轮原生 Developer/Task，`invoked` |
+| 398797 / 398798 | 451 / `f722b5a3c453ad2bff4205c3a49381baf65271a3460adbef88565bf5151110dd` | 3,297 / `d31387e71e73d4010165b42b762415bac8e1ef228ff856ffc1ccbc3a95478d9a` | 本轮原生 Developer/Task，`invoked` |
+| 396024 / 396025 | 29,319 / `effcb1f23a8f11c79e68bc63d8136011c3ce7a1bf470bbcce16b6000a5046b1c` | 5,101 / `d5c0db5ce0c66b9875c4f1728a4cb41e4d7905d586eb3487a433e8e4876941a8` | Developer 明确为 session 已保存内容，非本轮重新提交回执 |
+
+任务绑定预览417384引用保存 run398794、Task6,285字符；417176引用 run396135、Task6,332字符，均标 `preview`，不冒充历史调用。以上数字对应不同调用，不构成缩减对照。
+
+本轮还实际打开生产 Settings → Prompts：可见用途/顺序说明、Developer/User/Profile/运行输入入口；Rendered preview 明确只渲染保存模板。进入运行输入后，Consumer/codex_oauth/gpt-6-luna 公共预览加载完成，可见分段来源与顺序、未绑定任务和服务输入范围提示。仅切换只读页面，没有保存设置。历史 UI 的完整交互与五份跨 Codex/Claude 原生输入比对复用[历史输入发布验收](native-prompt-history-validation.md)，发布提交 `29e01567`。
+
+## 4. session、文档恢复与自然运行
+
+- [Consumer 契约兼容](consumer-wire-session-compatibility-validation.md)：`c4f33241` 已发布；自然 OA 任务416047的386421→386436→386446沿同一兼容 session 修订，两次后续 Task 独立提交，没有重复读取 Skill；最终 Audit approve。不据此声称外部动作成功。
+- [Audit 续会话](audit-revision-session-continuity-validation.md)：`b07bd987` 已发布，同任务/代次查找可续 session，最新不可续则新建；匿名原生冷启动/修订通过，现有自然业务结果未在该记录中验收。
+- [通用续跑核查](scheduled-continuation-closure-verification.md)：完整15个原生范围证明任务417176保留51/51来源工件、两次反馈进入新修订，最终服务回执有 provider `sendStatus=SUCCESS`；来源、修订和发送三项成立。Consumer396024的62次文档写入包含52次已写入但核验失败，11组产生24次额外相同内容覆盖，此缺口不能由最终 done 隐藏。
+- [文档修复验收](document-write-recovery-validation.md)：服务交接修复 `3638ea4a7`，成功语义 `b5028e7ef` 均已上线。确认写入即 `ok=true/status=success`，核验/读回失败独立保留 `verified=false`、目标和原始错误；未执行或提交未知仍报错。不生成虚假成功读回、不增加工具内部写重试。
+- DWS 原始样本51处比较差异中，50处来自 Markdown 导出省略对齐，1处为文本片段空格；完整 JSONML 仍有47处右对齐。修复要求完整 JSONML 证明对齐后再比较正文，真实缺失仍失败。历史上于06:25 UTC安装 v1.0.65 + `87ddde41`，114项文档模块顶层测试及子场景、原始离线样本与只读实际 JSONML 回读通过。**这仅是历史安装事实，不是当前仍生效的证据。** 上游PR1551仍未合并；本机源码修复不冒充官方发行版。
+
+**本轮新发现：DWS 补丁已不在当前运行路径。** 当前 `/Users/derek/.local/bin/dws --version` 为官方 `v1.0.65 (92c4f8c3...)`，SHA-256 为 `1d832e4fe77a8746e3546de026ffd3d21b0eaddcfcdea7f2027543989af83dd8`，与修复前原版一致，不是补丁的 `ec9a6d35f01cbc13ac5ae0fcc8608b282b807e2d135643c3c3963dcf669cf92d`。在内存中解析主进程88147的PATH，实际 `dws` 也解析至该文件；未输出完整环境或凭据。历史安装 receipt 仍记录06:25:06 UTC的补丁摘要，因此必须更正“DWS修复当前仍生效”的推断。替换发生时间、执行者和原因**未查实**；代码存在每日升级入口不等于证明本次由它替换。未重装二进制、修改升级策略或触发任务。
+
+**本轮只读截止快照：**从2026-10-24 06:54:46 UTC（10月23日23:54:46 PDT）至2026-10-24 07:11:29 UTC（10月24日00:11:29 PDT）本轮数据库查询，新增 Agent run 为0，没有可读的修复后自然文档写入调用。因此服务回执的自然行为仍为“已上线待行为验收”，同时G1增加DWS补丁当前未保持生效的实现发布缺口。没有以正常写入、服务健康或本地 fake DWS 测试替代失败恢复生产验收，也未人工触发报告。
+
+## 5. 当前路线与业务证据边界
+
+当前 `app/agent_turn_runner.py::_native_output_schema_for_route` 为 Codex Consumer 选择原生 schema；Codex Audit 仅 `local_oauth` 选择原生 schema，service API Audit 返回 None。Claude 使用自己的原生投影及后续完整 Pydantic 校验。此处是代码事实，不是对未验证 API 路线的兼容承诺。
+
+| 路线 | 已有证据 | 本轮只读的最近运行元数据 | 仍不能声称 |
+| --- | --- | --- | --- |
+| codex_oauth / gpt-6-luna | [Consumer](native-consumer-output-validation.md)有完整general/OA冷启动和续会话、假只读合同工具调用；[Audit](audit-native-output-validation.md)有return/approve冷启动和续会话 | Consumer398794/attempt398795、Audit398797/398798均completed，时间06:10 UTC，早于本次文档发布 | 当前所有业务场景、所有后续模型契约变化都已覆盖；Audit无工具探针也不能算带工具验收 |
+| codex_api / gpt-5.6-luna | 旧记录有429与传输失败，未取得所需完整矩阵 | Consumer378951/attempt378956、Audit386851/386903，最近状态superseded，failure_code均`codex_transport_disconnected` | 此刻仍429或其根因已查实；原生schema及工具兼容已经通过 |
+| qwen_gpu4 / qwen3.8-27b | 旧provider grammar/工具诊断与离线结果；Audit原生schema探针未通过 | Consumer392271/392272、Audit392269/392270均completed，时间10月22日08:50–08:51 UTC | 普通完成记录证明当前完整原生schema；API Audit 当前实际上未选择原生schema |
+| claude_oauth / sonnet | 原生投影、冷启动/续会话及严格解析有阶段性证据；历史输入有真实回读 | Consumer388579/388586与Audit391716/391727均completed，分别10月21日/22日 | 所有当前schema、工具及固定业务标准的统一矩阵已完成 |
+
+结果模型和 Task 来源读取已有后续变更：例如 `c0382cbb2` 移除服务记忆队列/相关输出字段；`878cfd723` 更新 Task 来源读取。当前本地Consumer general原生schema SHA为 `72ee10446972dde404f738df395701188a39d9d5e10005312a66fec3b11e9d7b`，Audit为 `ca522ed193ce692fae5a06177240203e4a3c0cf803b93b7e977382eebacd6937`。本轮85项定向测试证明当前装配、schema编解码、写入回执与来源投影的确定性行为；不将旧模型探针改标为这些当前字节的原生验收。
+
+原固定案例中，跨午夜/时区、真实冲突、已处理邮件、文档冲突、已有工作事项和Audit反馈已有受控证据；[原任务按需指令验收](task-scoped-prompts-validation.md)明确真实完整轨迹仅确认日历，403份输入快照不等于四类生产轨迹。本轮增加了跨角色历史输入、已有定时轨迹与来源投影验证，仍不足以宣布当前四类任务/所有配置路线的业务判断全面无退化。
+
+## 6. 可量化收益与取消项
+
+| 对照 | 实测 | 可以支持什么 |
+| --- | --- | --- |
+| 原六个冷启动固定场景，相同事实/配置/模型 | 服务 Developer+Task字符215,702→158,018，减少26.74% | 该固定矩阵的提交文本减少；不是当前任意任务的token、缓存、费用或耗时减少 |
+| Meeting PR132固定对照 | 每次减少17,415字符，约42%；18次原生运行，候选9/9业务检查通过，基线7/9 | [Meeting范围精简](meeting-managed-skill-scope-validation.md)及`01fbd2ff`发布成立；小样本不证明普遍质量提升 |
+| Consumer原生schema重复文本 | 当时Developer减少13,116字符 | [原生契约去重](consumer-native-schema-prompt-validation.md)的历史同实现对照；当前模型已变，不能把该旧绝对值当作最新输入计量 |
+
+当前生产总体 token、缓存/费用节省、端到端提速及节省的重复写入耗时：**未测得**。不把基线24次额外覆盖换算成节省时间，不把不同任务/版本的输入长度相减，不增加“必须测出整体提速”这个额外完成门槛。
+
+| 已取消/范围外事项 | 决定与定位 | 不作为遗留的原因 |
+| --- | --- | --- |
+| Codex harness 自动压缩及阈值机制 | 用户明确属于harness；[原通用续跑spec](superpowers/specs/2026-10-23-scheduled-continuation-closure-design.md)排除 | 不开发项目自己的压缩机制，不再追查未确认自动阈值作为本轮门槛 |
+| PR125 Task跨轮省略完整semantic context | PR已CLOSED且未merged；[no-go记录](trajectory-optimization-validation.md#task-semantic-context-reuse-draft-no-go-2026-10-18)31组相邻完成运行0组完整上下文指纹相同 | 候选没有通过收益/可用性前提，已撤回；不得重新激活。已独立发布的Consumer精确反馈修订机制不是该撤回Task候选 |
+| 依赖闭包预注入/整段历史已在session所以省略 | [按需指令验收](task-scoped-prompts-validation.md)拒绝41条/约1.45万字符闭包；[跨轮省略门槛](trajectory-optimization-validation.md#cross-turn-omission-gate-previous-input-is-not-a-durable-evidence-store-2026-10-19)明确no-go | 不为证明“优化”而复活被否决方案；session相同不证明完整规则或事实仍可见 |
+| DWS上游合并/官方发布 | 外部仓库[PR1551](https://github.com/DingTalk-Real-AI/dingtalk-workspace-cli/pull/1551)仍OPEN；用户明确我们只提PR | 由维护者处理；本机修复的运行/业务验收独立完成，不重复请求上游合并权限 |
+
+PR31本轮核实仍OPEN/draft、未merged。它不是“已取消”，也不是已发布的Consumer/Audit分阶段修复的替代证据；是否关闭草稿不作为产品行为验收门槛。
+
+## 7. 有限遗留与终点
+
+仅留下三组收尾项，按当前业务直接影响排列；本轮不执行新修复：
+
+1. **G1 文档写入恢复——provider修复未保持生效，服务回执已上线待行为验收。** 先以当前二进制及历史receipt核对替换记录，确定保留修复的最小发布动作；实现属于单独收尾，不能自动修改升级策略或拿上游PR等待代替当前状态。确认实际worker解析到经测试的修复版本后，有下一份自然相关运行时只读其完整trajectory，对齐同node、正文SHA、provider结果、服务回执、后续修订。通过条件：运行中的DWS确实包含已验证修复；遇到已写入但核验失败时准确返回写入成功/核验未通过，后续不再因把该状态当作写入失败而重复覆盖；正常写入只能关闭正常路径，不能代替此条件。没有样本则停在明确截止时间，不轮询制造进展。
+2. **G2 当前路线完整输出——未完成。** 先用现有配置与实际当前schema清单复用有效证据；service API Audit尚未选择原生schema这一实现缺口必须单独明确，不靠加prompt、切路线或放宽校验消除。对具备实现的缺失单元，最小补证为固定匿名材料+假只读MCP的Consumer/Audit冷启动及同session续会话，每个有效冷启动结果必须同时满足指定读取、严格业务解析和案例标准；没有有效冷启动就不验收续会话。429或传输失败记录真实错误，不作schema缺陷、不循环重试；沿已有session的continue/resume规则恢复。实现/提供商不具备条件时先报告具体缺口，再形成单独修复，不在本对账中部署。
+3. **G3 当前事实与判断覆盖——证据不足。** 对原四类任务逐项标明已有完整输入/工具返回/结果与其版本；优先复用当前可读取的保存轨迹。仅对后续输入/模型变化确实使旧证据失效的场景，复用原固定事实与判断标准补匿名对照；保持两臂同模型/事实/工具，检查时区/跨午夜、冲突、已处理事项、来源/引用及反馈修订。可与G2共用同一有效运行，不能重复调用。不得只看退出码/JSON，也不修改原始失败评分。通过条件是缺失场景有对应事实与业务判断证明，不要求遍历所有任务或制造生产动作。
+
+本次**对账交付**的终点为：六项均有结论和证据、取消项分开、文档项查询更新、此文提交主线。原始**整轮优化**仅在G1–G3的有效要求均关闭，或用户明确缩减原目标后，才能宣布完成。以后只更新这份对账的缺口与对应证据，不自动开始其他trajectory优化。
+
+## 8. 本轮验证与发布记录
+
+- 在隔离开发工作树运行 `pytest -q tests/test_prompt_composition.py tests/test_native_consumer_output.py tests/test_native_audit_output.py tests/test_document_write_recovery.py tests/test_task_source_documents.py --tb=short`：**85 passed，5.89秒**。这是当前确定性补证，没有重跑全量测试或已通过的模型实验。
+- Settings生产模板渲染等值、两个公共角色预览、两个任务绑定预览、三个历史原生输入对照与只读页面核对均通过；正文/Work Profile/凭据未复制进本文，只有长度、身份和摘要。
+- 文档修复生产加载与PID/健康/队列回读沿用[文档发布回读](document-write-recovery-validation.md#写入成功语义的生产发布回读2026-10-24-0656-utc)，本轮额外核实生产前进后仍包含修复；不是新部署。
+- 07:11:29–07:11:31 UTC最终运行快照：生产`878cfd723`、主进程PID88147，health/status/Attention/History均HTTP200；Attention9、History37931。Reply/Attempt失败均13、Meeting失败0、Meeting Memory失败9；邮件provider pending113/processing1。仅记录观察，不推断历史计数变化归因。其后核实实际DWS为原版摘要，见第4节。文档提交不冒充运行版本发布。
