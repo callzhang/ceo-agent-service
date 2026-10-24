@@ -70,6 +70,7 @@ class ExistingSchemaUpgradeStateStore:
         from app.email_metadata_schema_release import (
             SOURCE_EMAIL_VERSION as PREVIOUS_EMAIL_VERSION, TARGET_EMAIL_VERSION,
         )
+        from app.current_schema_manifest import EMAIL_VERSION as CURRENT_EMAIL_VERSION
         from app.current_publication_sources import TARGET_STORE_VERSION, PREVIOUS_STORE_VERSIONS
         from app.state_definitions import state_projection
 
@@ -89,10 +90,11 @@ class ExistingSchemaUpgradeStateStore:
             ).fetchone()[0] if ledger else None
             if version is not None:
                 if type(version) is not int or not (
-                    0 < version <= SOURCE_EMAIL_VERSION or version in (PREVIOUS_EMAIL_VERSION, TARGET_EMAIL_VERSION)
+                    0 < version <= SOURCE_EMAIL_VERSION
+                    or version in (PREVIOUS_EMAIL_VERSION, TARGET_EMAIL_VERSION, CURRENT_EMAIL_VERSION)
                 ):
                     raise ValueError("unsupported committed Email schema role")
-                current = version in (PREVIOUS_EMAIL_VERSION, TARGET_EMAIL_VERSION)
+                current = version in (PREVIOUS_EMAIL_VERSION, TARGET_EMAIL_VERSION, CURRENT_EMAIL_VERSION)
             elif db.execute(
                 "select 1 from main.sqlite_schema where name='state' collate nocase"
             ).fetchone():
