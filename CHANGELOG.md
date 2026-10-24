@@ -1,9 +1,12 @@
 # Changelog
 
-## 2026-10-24 — Task/Run 阶段 2 与最新 main 集成（尚未发布）
+## 2026-10-24 — Task/Run 阶段 2 发布（已部署）
 
 - 将 Task5 的 Task/Run 实体与 `origin/main` 最新的任务记忆退役、会议冻结候选复核和编号来源文档行为正常合并，并把仍支持的会议错误迁移和排空测试读取改到原生 Task 所有者。
-- 这只是开发分支集成记录；未推送、未部署，也不代表生产已切换到 Task/Run。Task5 历史宽测试结果仍为 316 通过、59 失败、3 个 setup 错误；失败节点清单未保存，不能据此宣称全绿。详见 `.superpowers/sdd/2026-10-22-task-run-entity-unification/latest-main-integration-report.md`。
+- 部署提交 `665ca943` 于 2026-10-24 09:45:03 UTC 在生产运行，PID 65521、NativeStore 23.1；09:46:26 的 System Health 为 healthy、violations=0（391 native-readable，13 unavailable），09:46:57 的 `/healthz` 为 OK。UI Status healthy，scheduler、dispatcher、Meeting delivery/heartbeat 均有新 tick。
+- Startup recovery 最终收口九个 Task：7 done（40679、384446、384447、384453、384454、384467、385946），2 skipped（41045、341173）；failed summary 从35回到基线26，processing为0。pending 78、retryable email backlog 6、Attention 5、History 20 是该次读数。当前 History Task 40679 和 Attempt 9689 API 均返回200，浏览器打开 History 与 Attempt detail；七段 Run chain 在 native data 中明确不可用。
+- 原生 FK finding `('runs', 190042, 'tasks', 1)` 未变。Email 为53个对象（47用户表加 `sqlite_sequence`）；物理 DB 514,969,600 bytes/free 15,656 pages，active inverse sidecar 30,771,892 bytes。39.72 MiB 是包含30,764,762-byte sidecar 的同数据 packed-net 比较；没有 VACUUM，也不声称物理文件收缩。最新正式备份 `auto-reply-2026-10-24.sqlite3` 的 `complete_application_marker=true`；活跃 inverse sidecar 不参与备份轮换。
+- Task5 宽测试历史结果仍为316通过、59失败、3个 setup 错误；确切失败节点列表未保存，不能据此宣称全绿。Task5、whole-branch 和 post-deploy scoped review 均按各自范围通过；13个 unavailable native checks、浏览器/native七段Run链缺失、原FK finding和未执行物理收缩仍是明确边界。较早的未部署、web-only健康、SQL错误和待读回状态都属于对应历史检查点，最终 worker startup 已按 full recovery 链验证。
 
 ## 2026-10-24 — 已执行的手动反馈不再让 Status 变 degraded
 
