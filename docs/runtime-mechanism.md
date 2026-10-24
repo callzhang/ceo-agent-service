@@ -252,11 +252,18 @@ human selection 及采用关系不变；effect step 从准确采用的不可变 
 Reviewed attempt 仍是 `(execution_id, action_index)` 的一个可变槽位，重派发不追加
 历史或计数。Direct Email plan 保留原版本、classification、account、完整原授权快照、
 动作及参数；重新分类只采用新版本，不把旧计划或回执改绑到新分类。Direct step 保留
-当前 status、next_attempt_at 和进行中 started_at；终态的开始／完成时间、provider
+同一不可变 plan 再次写入时，按 plan 与 operation 复用已有 Action owner；初始
+`created_at` 是来源事实，不参与身份冲突判断，也不会因重放而改写。
+Direct Email 的有序状态与回执投影继续按创建时间和原公开 source action ID 排列；
+Action owner 改用物理整数 ID 后，查询需按同一稳定 source identity 维持原顺序。
+Direct step 仍保留当前 status、next_attempt_at 和进行中 started_at；终态的开始／完成时间、provider
 operation／target／result ID、error 只由最新的有序 attempt 持有，attempt_count 从
 原 append-only ledger 计数。新 claim 的公开投影清空旧终态字段并显示本次 started_at，
 不泄露上一轮 attempt 的结果。Email attempt 保留原整数公开 ID、物理 ID 和独立 AUTO
 水位；Email provider 操作不生成 Consumer／Audit／AgentRun 或伪造 provider JSON。
+attempt 写入先用 owner 原生 `started_at` 做 CAS，再追加 receipt 并复核 owner 的状态、
+开始时间、重试时间与更新时间；NULL 不等同于投影空字符串。若追加期间观察到 owner 改动，
+整个事务回滚，避免成功 receipt 与已被并发改动的 Action owner 一起提交。
 A2 verified／NULL 正文与 A4 Sent receipt owner 继续使用原规则。
 
 B2a 的历史配对发布通过既有 prepare、publish、verify_loaded、rollback、finalize，准确地从

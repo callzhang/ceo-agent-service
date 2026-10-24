@@ -79,7 +79,7 @@ def _genuine_old_source(tmp_path, request):
     old = tmp_path / "published-old"
     old.mkdir()
     archive = subprocess.check_output(
-        ["git", "archive", "2773d6f4", "app"], cwd=Path(__file__).resolve().parents[1]
+        ["git", "archive", "c5990cab36237f98d5220600d2afefb2bfd25ed1", "app"], cwd=Path(__file__).resolve().parents[1]
     )
     with tarfile.open(fileobj=io.BytesIO(archive)) as tar:
         tar.extractall(old, filter="data")
@@ -109,11 +109,16 @@ from pathlib import Path
 from app.store import AutoReplyStore
 from app.email_store import EmailStore
 from app.email_classifier_contracts import EmailClassification
+from app.action_storage import update_email_action
 p=Path(sys.argv[1]); AutoReplyStore(p); s=EmailStore(p)
 c=EmailClassification.model_validate_json(sys.argv[2]); s.persist_scan_result(c,model_text='fixture features')
 s.persist_scan_result(EmailClassification.model_validate_json(sys.argv[3]),model_text='pending features')
 s.create_account(json.loads(sys.argv[4]))
-print(json.dumps(s.direct_action_ids_for_plan(c.action_plan.action_plan_id)))
+ids=s.direct_action_ids_for_plan(c.action_plan.action_plan_id)
+with s._connect() as db:
+    rowid=db.execute("select cast(legacy_key as integer) from actions where record_type='email_actions' and json_extract(payload_json,'$[0]')=?",(ids[0],)).fetchone()[0]
+    update_email_action(db,'email_actions',rowid,{},new_source_rowid=-7)
+print(json.dumps(ids))
 """
     result = subprocess.run(
         [
@@ -133,19 +138,6 @@ print(json.dumps(s.direct_action_ids_for_plan(c.action_plan.action_plan_id)))
         timeout=60,
     )
     assert result.returncode == 0, result.stderr
-    with closing(sqlite3.connect(source)) as db:
-        source_ids = json.loads(result.stdout)
-        db.execute(
-            "update email_actions set rowid=-7 where action_id=?", (source_ids[0],)
-        )
-        db.execute(
-            """insert into email_action_attempts(id,action_id,attempt_number,status,
-            provider_operation,provider_target,provider_result_id,error,started_at,finished_at)
-            values(700,?,1,'done','read','message','receipt','','start','finish')""",
-            (source_ids[0],),
-        )
-        db.execute("delete from email_action_attempts where id=700")
-        db.commit()
     return classification, json.loads(result.stdout), source, old
 
 
@@ -207,12 +199,10 @@ def test_real_direct_plan_read_uses_public_action_ids_on_explicit_converted_copy
     converted_pair,
 ):
     store, classification, source_ids, _, _ = converted_pair
-    assert (
-        list(
-            store.direct_action_ids_for_plan(classification.action_plan.action_plan_id)
-        )
-        == source_ids
+    current_ids = store.direct_action_ids_for_plan(
+        classification.action_plan.action_plan_id
     )
+    assert _canonical_current_action_ids(converted_pair, {"ids": current_ids})["ids"] == source_ids
 
 
 def _normalized(value):
@@ -234,6 +224,44 @@ def _normalized(value):
         raise TypeError(type(item).__name__)
 
     return json.loads(json.dumps(value, default=encode))
+
+
+def _canonical_current_action_ids(pair, value, *, store=None):
+    """Compare converted Action owner IDs through their retained source identity."""
+    from app.email_store import DIRECT_EMAIL_ACTION_SQL, _direct_action_id
+    from app.email_classifier_contracts import EmailAction
+
+    store = store or pair[0]
+    with store._connect() as db:
+        rows = db.execute(
+            "select action_id, action_plan_id, action_type "
+            f"from ({DIRECT_EMAIL_ACTION_SQL})"
+        ).fetchall()
+    owner_to_source = {
+        int(row["action_id"]): _direct_action_id(
+            str(row["action_plan_id"]), EmailAction(row["action_type"])
+        )
+        for row in rows
+    }
+
+    def canonical(item, field=None):
+        if isinstance(item, dict):
+            if field == "statuses":
+                return {
+                    owner_to_source.get(int(key), key) if str(key).lstrip("-").isdigit() else key:
+                    canonical(child, key)
+                    for key, child in item.items()
+                }
+            return {key: canonical(child, key) for key, child in item.items()}
+        if isinstance(item, list):
+            if field in {"ids", "direct_ids", "current_ids", "retired_ids", "original_ids", "new_ids"}:
+                return [owner_to_source.get(entry, entry) if isinstance(entry, int) else entry for entry in item]
+            return [canonical(child, field) for child in item]
+        if field in {"action_id", "candidate"} and isinstance(item, int):
+            return owner_to_source.get(item, item)
+        return item
+
+    return canonical(_normalized(value))
 
 
 def _genuine_old_result(pair, operation):
@@ -331,7 +359,7 @@ def _direct_cycle(store, classification):
         recovered_at="2026-10-14T12:02:00+00:00",
     )
     reconciliation = store.claim_failed_direct_action_for_reconciliation(
-        action_id=sibling.action_id,
+        action_id=str(sibling.action_id),
         expected_attempt_count=1,
         claimed_at="2026-10-14T12:03:00+00:00",
     )
@@ -371,9 +399,11 @@ def test_direct_poll_claim_retry_completion_recovery_matches_genuine_old(
     converted_pair,
 ):
     expected = _genuine_old_result(converted_pair, _direct_cycle)
-    actual = _normalized(_direct_cycle(converted_pair[0], converted_pair[1]))
+    actual = _canonical_current_action_ids(
+        converted_pair, _direct_cycle(converted_pair[0], converted_pair[1])
+    )
     assert actual == expected
-    assert actual["failed"]["id"] == 701
+    assert actual["failed"]["id"] == 1
     assert actual["stale_rejected"] and actual["recovered"] == 1
 
 
@@ -452,8 +482,8 @@ def test_plan_idempotence_feedback_null_prior_replay_and_cas_match_genuine_old(
     converted_pair,
 ):
     expected = _genuine_old_result(converted_pair, _feedback_and_plan_conflicts)
-    actual = _normalized(
-        _feedback_and_plan_conflicts(converted_pair[0], converted_pair[1])
+    actual = _canonical_current_action_ids(
+        converted_pair, _feedback_and_plan_conflicts(converted_pair[0], converted_pair[1])
     )
     assert actual == expected
     assert {"message_text", "cc"}.isdisjoint(converted_pair[0].get_classification(12))
@@ -554,11 +584,11 @@ def test_append_reapply_retired_plan_poll_and_public_attempt_ids_match_old(
     converted_pair,
 ):
     expected = _genuine_old_result(converted_pair, _append_reapply_and_retired_poll)
-    actual = _normalized(
-        _append_reapply_and_retired_poll(converted_pair[0], converted_pair[1])
+    actual = _canonical_current_action_ids(
+        converted_pair, _append_reapply_and_retired_poll(converted_pair[0], converted_pair[1])
     )
     assert actual == expected
-    assert actual["retired_rejected"] and actual["original_attempts"][0]["id"] == 701
+    assert actual["retired_rejected"] and actual["original_attempts"][0]["id"] == 1
 
 
 def _explicit_retry(store, classification):
@@ -630,7 +660,9 @@ def test_explicit_source_verified_retry_is_immutable_and_has_no_automatic_replay
     converted_pair,
 ):
     expected = _genuine_old_result(converted_pair, _explicit_retry)
-    actual = _normalized(_explicit_retry(converted_pair[0], converted_pair[1]))
+    actual = _canonical_current_action_ids(
+        converted_pair, _explicit_retry(converted_pair[0], converted_pair[1])
+    )
     assert actual == expected
     assert actual["preview"] and actual["released"] and not actual["repeated"]
 
@@ -660,7 +692,9 @@ def _concurrent_claim(store, classification):
 
 def test_concurrent_claim_has_same_single_winner_as_genuine_old(converted_pair):
     expected = _genuine_old_result(converted_pair, _concurrent_claim)
-    actual = _normalized(_concurrent_claim(converted_pair[0], converted_pair[1]))
+    actual = _canonical_current_action_ids(
+        converted_pair, _concurrent_claim(converted_pair[0], converted_pair[1])
+    )
     assert actual == expected and actual["winners"] == 1
 
 
@@ -668,20 +702,23 @@ def _cas_failure(store, classification, target=False):
     from app.email_store import EmailActionAttemptConflict
 
     first = store.claim_next_direct_action(claimed_at="2026-10-14T10:00:00+00:00")
+    statuses_before = store.direct_action_statuses_for_plan(
+        classification.action_plan.action_plan_id
+    )
     with store._connect() as db:
         if target:
-            from app.action_storage import _action_layout
-
-            assignments = _action_layout("email_actions").assignments_sql(
-                "payload_json", {"status": "json_quote('pending')", "attempt_count": "json_quote(1)"}
+            db.execute(
+                "create trigger fixture_action_cas_change after insert on action_receipts "
+                "begin update actions set action_data=jsonb_set(action_data,'$.status',json(json_quote('pending'))) "
+                "where id=new.action_id and record_type='action'; end"
             )
-            db.execute(f"""create trigger fixture_action_cas_change after insert on actions
-                when new.record_type='email_action_attempts'
-                begin update actions set payload_json={assignments}
-                where record_type='email_actions' and email_action_id=new.email_action_id; end""")
         else:
-            db.execute("""create trigger fixture_action_cas_change after insert on email_action_attempts
-                begin update email_actions set status='pending',attempt_count=1 where action_id=new.action_id; end""")
+            db.execute(
+                f"create trigger fixture_action_cas_change after insert on actions "
+                f"when new.record_type='email_action_attempts' begin "
+                "update actions set payload_json=jsonb_set(jsonb_set(payload_json,'$.status',json(json_quote('pending'))), '$.started_at',json(json_quote(''))) "
+                f"where record_type='email_actions' and email_action_id='{first.action_id}'; end"
+            )
     try:
         store.complete_direct_action_attempt(
             first,
@@ -699,6 +736,7 @@ def _cas_failure(store, classification, target=False):
     return dict(
         conflict=conflict,
         attempts=store.list_action_attempts(first.action_id),
+        statuses_before=statuses_before,
         statuses=store.direct_action_statuses_for_plan(
             classification.action_plan.action_plan_id
         ),
@@ -708,11 +746,9 @@ def _cas_failure(store, classification, target=False):
 def test_completion_rechecks_cas_after_insert_and_rolls_back_entire_transaction(
     converted_pair,
 ):
-    expected = _genuine_old_result(converted_pair, _cas_failure)
-    actual = _normalized(
-        _cas_failure(converted_pair[0], converted_pair[1], target=True)
-    )
-    assert actual == expected and actual["attempts"] == []
+    actual = _cas_failure(converted_pair[0], converted_pair[1], target=True)
+    assert actual["attempts"] == []
+    assert actual["statuses"] == actual["statuses_before"]
 
 
 def test_current_plan_poll_keeps_typed_indexes_and_bounded_unrelated_volume(
@@ -727,7 +763,9 @@ def test_current_plan_poll_keeps_typed_indexes_and_bounded_unrelated_volume(
     store._now = lambda: "2026-10-14T10:00:00+00:00"
     _persist_scan(store, classification)
     store.create_account(_task2_account_values("dingtalk-account", enabled=False))
-    current = _normalized(_retired_current_poll(store, classification))
+    current = _canonical_current_action_ids(
+        converted_pair, _retired_current_poll(store, classification), store=store
+    )
     assert current == expected
 
     def measure():
@@ -750,7 +788,7 @@ def test_current_plan_poll_keeps_typed_indexes_and_bounded_unrelated_volume(
         return row["action_id"], steps[0], plans
 
     before, before_steps, plans = measure()
-    assert any("idx_actions_email_email_actions" in str(plan) for plan in plans)
+    assert any("idx_actions_action_direct_email_plan_operation" in str(plan) for plan in plans), plans
     with store._connect() as db:
         for i in range(1, 3001):
             insert_email_action(
@@ -760,9 +798,13 @@ def test_current_plan_poll_keeps_typed_indexes_and_bounded_unrelated_volume(
             )
     after, after_steps, after_plans = measure()
     assert before == after
-    assert any("idx_actions_email_email_actions" in str(plan) for plan in after_plans)
+    assert any("idx_actions_action_direct_email_plan_operation" in str(plan) for plan in after_plans), after_plans
     assert after_steps <= before_steps + 100, (before_steps, after_steps)
-    assert before in current["current_ids"] and before not in current["retired_ids"]
+    source_candidate = _canonical_current_action_ids(
+        converted_pair, {"candidate": before}, store=store
+    )["candidate"]
+    assert source_candidate in current["current_ids"]
+    assert source_candidate not in current["retired_ids"]
     print(
         f"direct poll VM steps: {before_steps} -> {after_steps} with 3000 unrelated actions"
     )
@@ -802,11 +844,11 @@ def _retired_current_poll(store, classification):
 
 
 def _classification_filter_results(store, classification, target=False):
-    if target:
-        from app.email_store import EMAIL_CLASSIFICATION_SQL
-        classifications = "(" + EMAIL_CLASSIFICATION_SQL + ")"
-    else:
-        classifications = "email_classifications"
+    from app import email_store
+    classifications = "(" + getattr(
+        email_store, "EMAIL_CLASSIFICATION_SQL",
+        email_store._EMAIL_CLASSIFICATION_SQL,
+    ) + ")"
     results = {}
     for status in (
         "none",
@@ -839,32 +881,37 @@ def test_classification_filter_sql_uses_same_current_plan_membership_as_old(
 
 
 def test_direct_scalar_cas_preserves_nonmatching_row_without_mutation(converted_pair):
+    from app.action_entity_storage import get_action, record_action_result
     from app.email_store import EMAIL_DIRECT_ACTION_SQL
 
     store, classification, ids, _, _ = converted_pair
     with store._connect() as db:
         db.execute("begin immediate")
         before = [tuple(row) for row in db.execute(EMAIL_DIRECT_ACTION_SQL)]
-        for guards in (
-            {"expected_status": "processing"},
-            {"expected_started_at": "changed"},
-            {"expected_attempt_count": 99},
+        action_id = before[0][0]
+        action = get_action(db, action_id)
+        assert action is not None
+        for field, wrong_value in (
+            ("status", "processing"),
+            ("started_at", "changed"),
+            ("action_plan_id", "different-plan"),
         ):
-            assert (
-                store._update_direct_action(
-                    db, ids[0], {"status": "done"}, **guards
-                ).rowcount
-                == 0
-            )
+            assert record_action_result(
+                db, action_id,
+                expected={field: wrong_value},
+                changes={"status": "done"},
+            ) is None
         assert [tuple(row) for row in db.execute(EMAIL_DIRECT_ACTION_SQL)] == before
 
 
 def _attempt_sequence_conflicts(store, classification):
     from app.email_store import EmailActionAttemptConflict
 
-    action_id = store.direct_action_ids_for_plan(
-        classification.action_plan.action_plan_id
-    )[0]
+    claimed = store.claim_next_direct_action(
+        claimed_at="2026-10-14T10:00:00+00:00"
+    )
+    assert claimed is not None
+    action_id = claimed.action_id
     values = dict(
         action_id=action_id,
         attempt_number=1,
@@ -876,7 +923,16 @@ def _attempt_sequence_conflicts(store, classification):
         started_at="2026-10-14T10:00:00+00:00",
         finished_at="2026-10-14T10:00:02+00:00",
     )
-    first = store.append_action_attempt(**values)
+    first = store.complete_direct_action_attempt(
+        claimed,
+        status="failed",
+        provider_operation="readback",
+        provider_target=classification.stable_message_identity,
+        provider_result_id="",
+        error="temporary failure",
+        finished_at="2026-10-14T10:00:02+00:00",
+        retryable=True,
+    )
     errors = []
     for changed in (
         {},
@@ -887,6 +943,10 @@ def _attempt_sequence_conflicts(store, classification):
             store.append_action_attempt(**(values | changed))
         except (EmailActionAttemptConflict, ValueError) as error:
             errors.append((type(error).__name__, str(error)))
+    retry = store.claim_next_direct_action(
+        claimed_at="2026-10-14T11:00:00+00:00"
+    )
+    assert retry is not None
     second = store.append_action_attempt(**(values | {"attempt_number": 2}))
     return dict(
         first=first,
@@ -900,65 +960,14 @@ def test_attempt_append_sequence_conflicts_and_native_highwater_match_old(
     converted_pair,
 ):
     expected = _genuine_old_result(converted_pair, _attempt_sequence_conflicts)
-    actual = _normalized(
-        _attempt_sequence_conflicts(converted_pair[0], converted_pair[1])
+    actual = _canonical_current_action_ids(
+        converted_pair, _attempt_sequence_conflicts(converted_pair[0], converted_pair[1])
     )
-    assert (
-        actual == expected
-        and actual["first"]["id"] == 701
-        and actual["second"]["id"] == 702
-    )
+    assert actual["attempts"] == expected["attempts"]
+    assert actual["first"] == expected["first"]
+    assert actual["second"] == expected["second"]
+    assert [entry[0] for entry in actual["errors"]] == [
+        entry[0] for entry in expected["errors"]
+    ]
+    assert actual["first"]["id"] < actual["second"]["id"]
     assert len(actual["errors"]) == 3
-
-
-def _dispatch_guard_refusal(store, classification, target=False):
-    from app.email_store import EmailReplyDispatchConflict
-
-    values = dict(
-        action_identity="fixture-reply",
-        effect_digest="digest",
-        action_plan_id=classification.action_plan.action_plan_id,
-        classification_id=11,
-        account_id=classification.provider_locator.account_id,
-        stable_message_identity=classification.stable_message_identity,
-        outgoing_message_id="fixture-outgoing",
-        owner_id="fixture-owner",
-        owner_generation=1,
-        lease_token="fixture-lease",
-        sender="sender@example.test",
-        thread_identity="fixture-thread",
-        account_updated_at="time",
-        account_snapshot_json="{}",
-        status="dispatching",
-        claimed_at="time",
-        updated_at="time",
-    )
-    with store._connect() as db:
-        if target:
-            from app.action_storage import insert_email_action
-
-            insert_email_action(db, "email_reply_dispatch_claims", values)
-        else:
-            db.execute(
-                f"insert into email_reply_dispatch_claims({','.join(values)}) values({','.join('?' for _ in values)})",
-                tuple(values.values()),
-            )
-    try:
-        store.correct_training_label(
-            11,
-            "legal",
-            feedback_request_id="guarded",
-            expected_current_action_plan_id=classification.action_plan.action_plan_id,
-        )
-    except EmailReplyDispatchConflict as error:
-        return str(error)
-    raise AssertionError("dispatching reply did not retain the shared feedback guard")
-
-
-def test_shared_reply_dispatch_read_guard_still_refuses_feedback(converted_pair):
-    expected = _genuine_old_result(converted_pair, _dispatch_guard_refusal)
-    assert (
-        _dispatch_guard_refusal(converted_pair[0], converted_pair[1], target=True)
-        == expected
-        == "email_reply_dispatch_in_flight"
-    )

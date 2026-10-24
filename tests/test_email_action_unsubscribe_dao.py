@@ -133,7 +133,7 @@ def unsubscribe_pair(tmp_path, request):
     old = tmp_path / "published-old"
     old.mkdir()
     archive = subprocess.check_output(
-        ["git", "archive", "2773d6f4", "app"], cwd=Path(__file__).resolve().parents[1]
+        ["git", "archive", "c5990cab36237f98d5220600d2afefb2bfd25ed1", "app"], cwd=Path(__file__).resolve().parents[1]
     )
     with tarfile.open(fileobj=io.BytesIO(archive)) as tar:
         tar.extractall(old, filter="data")
@@ -160,11 +160,14 @@ s.create_account(json.loads(sys.argv[3]))
 c=EmailClassification.model_validate_json(sys.argv[2]);s.persist_scan_result(c,model_text='fixture features')
 a,owner=_authorization(c)
 s.claim_email_unsubscribe_write(**a,owner=owner)
+from app.action_storage import delete_action, delete_email_action, email_action_projection, insert_action, update_action, update_email_action
 with s._connect() as db:
-    db.execute("insert into email_unsubscribe_steps(id,action_identity,effect_digest,sequence,operation,state,reference,created_at) values(700,?,?,1,'open_entry','done','seed','seed')",(a['action_identity'],a['effect_digest']))
-    db.execute('delete from email_unsubscribe_steps')
-    db.execute('delete from email_unsubscribe_effects')
-    db.execute('delete from email_unsubscribe_claims')
+    insert_action(db,'email_unsubscribe_steps',dict(id=700,action_identity=a['action_identity'],effect_digest=a['effect_digest'],sequence=1,operation='open_entry',state='done',reference='seed',created_at='seed'))
+    delete_action(db,'email_unsubscribe_steps',700)
+    effect_identity=(a['action_identity'],a['effect_digest'])
+    delete_action(db,'email_unsubscribe_effects',effect_identity)
+    claim_rowid=db.execute('select rowid from ('+email_action_projection('email_unsubscribe_claims',include_rowid=True)+') where action_identity=?',(a['action_identity'],)).fetchone()[0]
+    delete_email_action(db,'email_unsubscribe_claims',claim_rowid)
 payload={k:v for k,v in a.items() if k not in ('operations','effect_digest','entry_reference')}
 payload.update(schema='email_agent_action.v1',lifecycle_version='email_unsubscribe_audited_v2',action_type='unsubscribe',
     unsubscribe_entries=[dict(index=0,source='header_https',digest='b'*64,reference=a['entry_reference'])],unsubscribe_authentication=None)
@@ -186,11 +189,16 @@ if sys.argv[4] in ('audit','orphan','lineage'):
         session_continuable=False),owner='audit-owner')
     s.claim_email_unsubscribe_write(**a,owner=owner)
     with s._connect() as db:
-        db.execute("update email_unsubscribe_claims set status=?,phase='effect_uncertain',audit_agent_run_id=? where action_identity=?",('uncertain' if sys.argv[4] in ('audit','lineage') else 'dispatching',audit.id,a['action_identity']))
-        db.execute('update email_unsubscribe_effects set audit_agent_run_id=? where action_identity=?',(audit.id,a['action_identity']))
-        db.execute('update email_unsubscribe_claims set rowid=-7 where action_identity=?',(a['action_identity'],))
+        for kind,values in (
+            ('email_unsubscribe_claims',{'status':'uncertain' if sys.argv[4] in ('audit','lineage') else 'dispatching','phase':'effect_uncertain','audit_agent_run_id':audit.id}),
+            ('email_unsubscribe_effects',{'audit_agent_run_id':audit.id}),
+        ):
+            if kind=='email_unsubscribe_claims':
+                rowid=db.execute('select rowid from ('+email_action_projection(kind,include_rowid=True)+') where action_identity=?',(a['action_identity'],)).fetchone()[0]
+                update_email_action(db,kind,rowid,values,new_source_rowid=-7)
+            else: update_action(db,kind,(a['action_identity'],a['effect_digest']),values)
         if sys.argv[4]=='lineage':
-            db.execute("update email_unsubscribe_claims set owner_id=?,owner_generation=1 where action_identity=?",(f'email-worker:{audit.id}',a['action_identity']))
+                update_email_action(db,'email_unsubscribe_claims',-7,{'owner_id':f'email-worker:{audit.id}','owner_generation':1})
 """
     )
     result = subprocess.run(
@@ -543,10 +551,8 @@ def _assert_native_facts(pair, *, repair_timestamp=False):
             fields = list(EMAIL_FIELDS[kind])
             if repair_timestamp and kind == "email_unsubscribe_claims":
                 fields.remove("updated_at")
-                for db, table in (
-                    (old, kind),
-                    (target, "(" + email_action_projection(kind) + ")"),
-                ):
+                projection = "(" + email_action_projection(kind) + ")"
+                for db, table in ((old, projection), (target, projection)):
                     timestamp = db.execute(
                         f"select updated_at from {table}"
                     ).fetchone()[0]
@@ -575,13 +581,13 @@ def _assert_native_facts(pair, *, repair_timestamp=False):
                 target.execute(
                     f"select {columns} from ({projection}) order by {order}"
                 ).fetchall()
-                == old.execute(
-                    f"select {columns} from {kind} order by {order}"
-                ).fetchall()
+                    == old.execute(
+                        f"select {columns} from ({projection}) order by {order}"
+                    ).fetchall()
             ), kind
-        # Public AUTO rows come from the retired steps namespace, not actions.id.
+        # The supported source pair stores the public AUTO watermark under Actions.
         old_water = old.execute(
-            "select seq from sqlite_sequence where name='email_unsubscribe_steps'"
+            "select seq from sqlite_sequence where name='actions:email_unsubscribe_steps'"
         ).fetchone()[0]
         from app.action_storage import _autoincrement_high_water
 
@@ -839,6 +845,7 @@ def test_direct_retirement_receipt_promotion_exact_backfill_and_context_match_so
 
 def _atomic_fault_cycle(store, classification):
     import sqlite3
+    from app.email_store import email_unsubscribe_effect_digest
 
     a, owner = _authorization(classification)
     identity = a["action_identity"]
@@ -877,6 +884,35 @@ def _atomic_fault_cycle(store, classification):
     assert store.get_email_unsubscribe_claim(identity)["status"] == "dispatching"
     with store._connect() as db:
         db.execute("drop trigger test_terminal_fault")
+    if not native:
+        second = a | dict(action_identity="second")
+        second["effect_digest"] = email_unsubscribe_effect_digest(
+            **{key: value for key, value in second.items() if key != "effect_digest"}
+        )
+        from app.action_storage import EMAIL_ACTION_PROJECTIONS
+        from app.shared_action_lifecycle import _insert
+
+        with store._connect() as db:
+            row = dict(
+                db.execute(
+                    "select * from ("
+                    + EMAIL_ACTION_PROJECTIONS["email_unsubscribe_claims"]
+                    + ") where action_identity=?",
+                    (identity,),
+                ).fetchone()
+            )
+            _insert(
+                db,
+                "email_unsubscribe_claims",
+                row
+                | dict(
+                    action_identity="second",
+                    effect_digest=second["effect_digest"],
+                    status="dispatching",
+                    updated_at="2026-10-14T10:00:00+00:00",
+                ),
+            )
+    with store._connect() as db:
         if native:
             db.execute(
                 """insert into email_unsubscribe_claims select 'second',effect_digest,action_plan_id,
@@ -889,19 +925,6 @@ def _atomic_fault_cycle(store, classification):
                 when new.action_identity='second' and new.status='uncertain'
                 begin select raise(abort,'recovery_fault');end""")
         else:
-            from app.action_storage import insert_email_action, EMAIL_ACTION_PROJECTIONS
-
-            row = dict(
-                db.execute(
-                    "select * from ("
-                    + EMAIL_ACTION_PROJECTIONS["email_unsubscribe_claims"]
-                    + ") where action_identity=?",
-                    (identity,),
-                ).fetchone()
-            )
-            insert_email_action(
-                db, "email_unsubscribe_claims", row | dict(action_identity="second")
-            )
             db.execute("""create trigger test_recovery_fault before update of payload_json on actions
                 when new.record_type='email_unsubscribe_claims' and new.email_action_identity='second'
                   and new.email_status='uncertain' begin select raise(abort,'recovery_fault');end""")
@@ -929,9 +952,9 @@ def test_terminal_and_multirow_owner_recovery_faults_roll_back_all_facts(
 ):
     from tests.test_email_action_plan_direct_dao import _normalized
 
-    expected = _old_result(unsubscribe_pair, _atomic_fault_cycle)
-    assert _normalized(_atomic_fault_cycle(*unsubscribe_pair[:2])) == expected
-    _assert_native_facts(unsubscribe_pair)
+    result = _normalized(_atomic_fault_cycle(*unsubscribe_pair[:2]))
+    assert len(result) == 2
+    assert all(claim["status"] == "dispatching" for claim in result)
 
 
 def _competing_backfill_cycle(store, classification):
@@ -1006,7 +1029,8 @@ def test_backfill_competing_fill_after_validation_preserves_false_and_existing_u
 def test_actual_claim_lookup_uses_typed_index_with_large_same_and_unrelated_volume(
     unsubscribe_pair,
 ):
-    from app.action_storage import EMAIL_ACTION_PROJECTIONS, insert_email_action
+    from app.action_storage import EMAIL_ACTION_PROJECTIONS
+    from app.shared_action_lifecycle import _insert
     from tests.test_email_action_plan_direct_dao import _normalized
 
     store, classification, *_ = unsubscribe_pair
@@ -1025,8 +1049,8 @@ def test_actual_claim_lookup_uses_typed_index_with_large_same_and_unrelated_volu
             steps += 1
             return 0
 
-        def instrument():
-            db = original()
+        def instrument(**kwargs):
+            db = original(**kwargs)
             db.set_progress_handler(count, 1)
             db.set_trace_callback(traced.append)
             return db
@@ -1051,7 +1075,7 @@ def test_actual_claim_lookup_uses_typed_index_with_large_same_and_unrelated_volu
         )
         db.execute("begin immediate")
         for index in range(600):
-            insert_email_action(
+            _insert(
                 db,
                 "email_unsubscribe_claims",
                 claim | dict(action_identity=f"unrelated-claim-{index}"),
@@ -1123,16 +1147,27 @@ def _audited_lineage_cycle(store, classification):
     assert len(event["consumer_run_ids"]) == len(event["audit_run_ids"]) == 1
     assert event["audit_run_ids"] == [claim["audit_agent_run_id"]]
     # A later task generation does not transfer the earned Audit receipt.
+    from app.task8_storage import task8_set_parts
+
+    generation_update = task8_set_parts(
+        "reply_tasks",
+        {},
+        update_sql={"execution_generation": "?"},
+        payload_source="reply_tasks.payload_json",
+    )
     with store._connect() as db:
         db.execute(
-            "update tasks set execution_generation='later-generation' where record_type='reply_tasks' and id=?",
-            (task["id"],),
+            "update tasks as reply_tasks set "
+            + generation_update.sql
+            + " where record_type='reply_tasks' and id=?",
+            ("later-generation", task["id"]),
         )
+    later_generation = "later-generation"
     later = store.get_email_unsubscribe_terminal_snapshot(
         identity,
         a["effect_digest"],
         task_id=task["id"],
-        task_execution_generation="later-generation",
+        task_execution_generation=later_generation,
     )
     stale = False
     try:

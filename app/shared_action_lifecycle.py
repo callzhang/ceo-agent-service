@@ -178,7 +178,7 @@ def create_direct_email_action(db, values):
     if old is not None:
         current = get_action(db, int(old['id']))
         if any(current[key] != value for key, value in fields.items()
-               if key not in {'status', 'next_attempt_at', 'started_at', 'updated_at'}):
+               if key not in {'status', 'next_attempt_at', 'started_at', 'created_at', 'updated_at'}):
             raise ValueError('direct email Action identity conflicts with existing owner')
         return current
     return create_action(db, values=fields)
@@ -253,13 +253,28 @@ def record_direct_email_action_outcome(db, *, action_id, expected_status, expect
                  'next_attempt_at': next_attempt_at, 'updated_at': updated_at})
     if updated is None:
         return None
-    return append_action_receipt(db, owner_id, values={
+    receipt_id = append_action_receipt(db, owner_id, values={
         'attempt_number': attempt_number, 'status': status,
         'operation': provider_operation, 'target': provider_target,
         'provider_result_id': provider_result_id or None,
         'error_text': error or None, 'started_at': started_at,
         'finished_at': finished_at, 'created_at': finished_at, 'updated_at': updated_at,
     })
+    saved = db.execute(
+        "select action_status,action_started_at,action_next_attempt_at,action_updated_at "
+        "from actions where record_type='action' and id=?",
+        (owner_id,),
+    ).fetchone()
+    if saved is None or tuple(saved) != (
+        status,
+        None if status != 'processing' else started_at,
+        next_attempt_at,
+        updated_at,
+    ):
+        from app.email_store import EmailActionAttemptConflict
+
+        raise EmailActionAttemptConflict(f'direct action changed for {action_id}')
+    return receipt_id
 
 
 def record_sent_action(db, *, operation=None, target_json=None, provider_json, result_digest,

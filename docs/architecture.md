@@ -1161,6 +1161,9 @@ Python 的 email 包无法解析的结构化邮件头）只跳过这一条、游
 Email worker 领取、执行动作，并以服务器的应答为结果（Derek, 2026-09-25：不需要回读，服务器接受就够了）。
 每次 provider observation scan 在同一 SQLite 事务中发布消息状态、authoritative folder 的缺失对账和 folder generation 时间；generation 时间单独按账号/文件夹保存，读取仍返回该文件夹最近一次完整扫描时间。相同消息状态不重复写消息行或其索引，扫描成员先写入连接级临时表再用索引对账，避免在共享数据库写锁期间构造超长身份列表。这样保留整代原子可见性，同时限制 Email worker 对共享 SQLite 的写锁占用。
 直接邮件动作领取先从状态索引找出 pending/failed 动作，并按分类主键核对它属于已处理分类的当前 ActionPlan，再通过 `(classification_id, action_plan_id)` 索引读取该分类的全部动作组。仅旧计划残留未完成动作的分类不会加载历史计划正文；同分类旧 processing 动作仍参与阻塞判断。候选探测与 `BEGIN IMMEDIATE` 内的重核都使用这条路径。状态、账号范围、重试时间、依赖、动作优先级和条件更新保持不变，不在写锁内遍历整张 `email_actions`。
+同一个不可变 ActionPlan 再次写入时，系统按 plan 与 operation 复用已有 Action owner；初始 `created_at` 保留为来源事实，不参与 owner 身份冲突判断，也不因重放而改写。
+Direct Email 状态与回执投影保留旧公开 source action ID 的顺序；迁移后使用 Action 物理整数 ID 时，按稳定 source identity 排列查询结果。
+Direct Email attempt 写入在 Action 状态 CAS 与 receipt 插入后再次核对 owner 状态、开始时间、重试时间和更新时间；若事务内观察到 owner 被改动，整笔 attempt 写入回滚。owner 原生 NULL 与公开投影空字符串保持区分。
 当前统一 `actions` 表上的动作投影无法把分类过滤下推到动作行，对每个候选分类各读一次会各扫一遍全部直接动作：2026-10-23 有约 600 个 pending 动作时，一次领取评估约 17 秒，且 `BEGIN IMMEDIATE` 内的重核会重复一遍并持有写锁。现在候选分类的同组动作按每批 500 个分类一次读出，再在内存中分组，选择结果与逐分类读取一致（用生产库副本逐行比对），评估降到约 0.3 秒。
 稳定 Message-ID 查找若在多个文件夹命中，通常属于确定性身份歧义：在只读状态定位阶段失败，不执行邮件写入，也不自动重试。若移动动作的原 UID/UIDVALIDITY 定位失效，执行器只读检查解析后的目标文件夹；仅当该文件夹恰有一条同一稳定消息身份且满足目标状态，才以 `readback_noop` 记录已发生的移动，不再派发 MOVE。目标文件夹没有唯一匹配或状态不满足时仍保留失败，不以其他文件夹的匹配推断成功；超时、DNS 和连接错误仍可重试。
 执行前仍先读一次当前状态，已满足就不写。改标记的动作（标已读、标星、贴标签）在服务器接受 STORE 后即完成；

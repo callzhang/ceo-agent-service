@@ -8166,7 +8166,8 @@ class EmailStore:
         with self._connect() as db:
             rows = db.execute(
                 f"""
-                select actions.classification_id, actions.action_type,
+                select actions.classification_id, actions.action_plan_id,
+                       actions.created_at, actions.action_type,
                        actions.status, actions.error, actions.attempt_count,
                        actions.next_attempt_at, actions.provider_operation,
                        exists(select 1 from ({EMAIL_RETRY_SQL}) r where r.action_id=actions.action_id and r.attempt_number=actions.attempt_count) as explicit_retry_attempt,
@@ -8179,10 +8180,18 @@ class EmailStore:
                 where actions.classification_id in ("""
                 + ",".join("?" for _ in ids)
                 + """)
-                order by actions.created_at, actions.action_id
                 """,
                 ids,
             ).fetchall()
+        rows = sorted(
+            rows,
+            key=lambda row: (
+                row["created_at"],
+                _direct_action_id(
+                    str(row["action_plan_id"]), EmailAction(row["action_type"])
+                ),
+            ),
+        )
         for row in rows:
             state = {
                 "type": str(row["action_type"]),
@@ -11070,9 +11079,15 @@ class EmailStore:
             owner = db.execute("select * from (" + DIRECT_EMAIL_ACTION_SQL + ") where action_id=?", (action_id,)).fetchone()
             if owner is None:
                 raise EmailActionAttemptConflict(f"unknown direct email action {action_id}")
+            action_started_at = db.execute(
+                "select action_started_at from actions where record_type='action' and id=?",
+                (action_id,),
+            ).fetchone()
+            if action_started_at is None:
+                raise EmailActionAttemptConflict(f"unknown direct email action {action_id}")
             receipt_id = shared_action_lifecycle.record_direct_email_action_outcome(
                 db, action_id=action_id, expected_status=owner['status'],
-                expected_started_at=owner['started_at'], expected_attempt_count=owner['attempt_count'],
+                expected_started_at=action_started_at[0], expected_attempt_count=owner['attempt_count'],
                 attempt_number=attempt_number, status=status,
                 provider_operation=provider_operation, provider_target=provider_target,
                 provider_result_id=provider_result_id, error=error,
@@ -11326,7 +11341,7 @@ class EmailStore:
         with self._connect() as db:
             rows = db.execute(
                 f"""
-                select a.action_id, a.action_type, a.status,
+                select a.action_id, a.action_plan_id, a.action_type, a.status,
                        t.provider_operation, t.provider_target,
                        t.provider_result_id, t.finished_at
                 from ({DIRECT_EMAIL_ACTION_SQL}) as a
@@ -11337,11 +11352,30 @@ class EmailStore:
                     where latest.action_id=a.action_id and latest.status='done'
                   )
                 where a.action_plan_id=? and a.status='done'
-                order by a.action_id
                 """,
                 (action_plan_id,),
             ).fetchall()
-        return tuple(dict(row) for row in rows)
+        rows = sorted(
+            rows,
+            key=lambda row: _direct_action_id(
+                str(row["action_plan_id"]), EmailAction(row["action_type"])
+            ),
+        )
+        return tuple(
+            {
+                key: row[key]
+                for key in (
+                    "action_id",
+                    "action_type",
+                    "status",
+                    "provider_operation",
+                    "provider_target",
+                    "provider_result_id",
+                    "finished_at",
+                )
+            }
+            for row in rows
+        )
 
     def list_missing_unsubscribe_action_tasks(
         self, *, classification_id: int | None = None

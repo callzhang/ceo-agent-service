@@ -65,6 +65,7 @@ def _consumer_result(case: EvalCase) -> ConsumerAgentResult:
         decision_options = [
             {
                 "key": "A",
+                "applies_to": "task_class",
                 "label": "Proceed with the first supported management choice",
                 "instruction": "Execute the first evidence-supported management choice.",
                 "consequence": "The agent will execute and verify that choice.",
@@ -84,6 +85,7 @@ def _consumer_result(case: EvalCase) -> ConsumerAgentResult:
             },
             {
                 "key": "B",
+                "applies_to": "task_class",
                 "label": "Proceed with the second supported management choice",
                 "instruction": "Execute the second evidence-supported management choice.",
                 "consequence": "The agent will execute and verify the alternative.",
@@ -192,7 +194,7 @@ class FixtureAudit:
             owner="fixture-audit",
         )
         assert claim.claimed
-        session_id = f"audit-session-{claim.run.id}"
+        session_id = claim.run.codex_session_id or f"audit-session-{claim.run.id}"
         self.store.set_agent_run_session(claim.run.id, session_id, owner="fixture-audit")
         if self.case.requires_oa_live_detail:
             self.live_oa_detail_reads.append(context.operation_id)
