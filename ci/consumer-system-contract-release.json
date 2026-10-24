@@ -35,9 +35,9 @@
     {
       "source": "ci/shared-skills/ceo-calendar-invite/SKILL.md",
       "target": "skills/ceo-calendar-invite/SKILL.md",
-      "old_sha256": "8fa06610ac6f272b3d9121167dd71da211ab7659d43e0f60f4f40f374a68137f",
+      "old_sha256": "b76b913b63c9b2f3eaba5e90eb64e5dd1a58cf123330815a07d7c32c01451175",
       "new_sha256": "b76b913b63c9b2f3eaba5e90eb64e5dd1a58cf123330815a07d7c32c01451175",
-      "old_managed_sha256": "8fa06610ac6f272b3d9121167dd71da211ab7659d43e0f60f4f40f374a68137f"
+      "old_managed_sha256": "b76b913b63c9b2f3eaba5e90eb64e5dd1a58cf123330815a07d7c32c01451175"
     },
     {
       "source": "ci/shared-skills/ceo-daily-report/SKILL.md",
