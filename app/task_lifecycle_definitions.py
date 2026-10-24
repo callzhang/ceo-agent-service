@@ -6,7 +6,7 @@ No affinity conversion or JSON decoding/re-encoding occurs during migration.
 """
 from app import task20_definitions as source
 from app.action_email_definitions import _encoded_value, _encoded_value_check
-from app.storage_payload import PayloadLayout, TASK_RECORD_TYPES
+from app.storage_payload import PayloadLayout
 from app.state_definitions import STATE_TYPES
 
 LIFECYCLE_FIELDS = (
@@ -70,6 +70,13 @@ DISPATCH_KINDS = {
     "work_summary": "work_summary_inputs",
     "okr_review": "okr_review_requests",
 }
+DISPATCH_TASK_KINDS = {
+    "reply": "reply",
+    "scheduled_execution": "reply",
+    "meeting": "meeting_alignment",
+    "work_summary": "work_summary",
+    "okr_review": "okr_review",
+}
 DISPATCH_FIELDS = ("lease_owner", "lease_expires_at", "owner_pid", "generation", "adapter_name")
 
 
@@ -131,18 +138,41 @@ def common_column(field, alias=""):
     return (alias + "." if alias else "") + '"lifecycle_' + field + '"'
 
 
-def dispatch_source_projection(kind):
-    """Source fields plus Task claim reads, scoped by the physical kind index."""
-    if kind not in DISPATCH_KINDS.values():
-        raise ValueError("not a dispatcher Task kind")
-    selection, tail = task20_projection(kind).rsplit(" from tasks ", 1)
-    fields = {"status": "task_status", "lease_owner": "claim_owner",
-              "owner_pid": "claim_owner_pid", "generation": "claim_generation",
-              "lease_expires_at": "claim_expires_at", "adapter_name": "claim_adapter"}
-    return (selection + "," + ",".join(common_column(field) + " as " + alias
-                                       for field, alias in fields.items())
-            + " from tasks indexed by idx_task_lifecycle_status " + tail
-            + " and _kind=" + str(TASK_RECORD_TYPES.code(kind)))
+def dispatch_task_projection(adapter_name):
+    """Build a native candidate projection for one existing dispatcher adapter."""
+    if adapter_name not in DISPATCH_TASK_KINDS:
+        raise ValueError("not a Task-backed dispatcher adapter")
+    task_kind = DISPATCH_TASK_KINDS[adapter_name]
+    columns = ["task.id", "task.status as task_status", "task.status", "task.available_at",
+               "task.attempts", "task.error", "task.created_at", "task.updated_at",
+               "task.locked_at", "task.lease_owner as claim_owner",
+               "task.owner_pid as claim_owner_pid", "task.generation as claim_generation",
+               "task.lease_expires_at as claim_expires_at", "task.adapter_name as claim_adapter"]
+    joins = " from tasks task"
+    if task_kind == "reply":
+        columns.extend(("input.channel", "input.conversation_id", "input.conversation_title",
+            "input.single_chat", "input.trigger_message_id", "input.trigger_create_time",
+            "input.trigger_sender", "input.trigger_text", "input.trigger_message_json",
+            "input.input_provenance_json", "input.input_compacted", "input.oa_url",
+            "input.business_object_key", "task.execution_generation", "task.current_input_id",
+            "task.claimed_input_id", "task.input_version", "task.claimed_input_version",
+            "json_extract(task.parameters_json,'$.force_new_decision') as force_new_decision",
+            "json_extract(task.parameters_json,'$.manual_rerun_attempt_id') as manual_rerun_attempt_id",
+            "json_extract(task.parameters_json,'$.manual_rerun_revision_key') as manual_rerun_revision_key",
+            "json_extract(task.parameters_json,'$.recovery_code') as recovery_code"))
+        joins += " join task_inputs input on input.id=task.current_input_id and input.task_id=task.id"
+    elif task_kind == "meeting_alignment":
+        columns.extend("json_extract(task.parameters_json,'$." + field + "') as " + field for field in (
+            "meeting_id", "title", "source_json", "participants_json", "ended_at", "eligible_at"))
+    elif task_kind == "work_summary":
+        columns.extend(("input.source_type", "input.source_ref", "input.payload_json",
+                        "input.source_created_at", "input.body_sha256", "input.body_bytes",
+                        "input.body_compacted"))
+        joins += " join work_summary_inputs input on input.task_id=task.id"
+    else:
+        columns.extend("json_extract(task.parameters_json,'$." + field + "') as " + field for field in (
+            "conversation_id", "trigger_message_id"))
+    return ("select " + ",".join(columns) + joins + " where task.kind=" + repr(task_kind))
 
 
 def eligible_adapter(alias="tasks"):

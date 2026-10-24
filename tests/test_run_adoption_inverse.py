@@ -388,6 +388,25 @@ def test_reply_provenance_task_and_input_references_survive_two_portable_cycles(
         remap_tasks=True, remap_runs=True, stop_before_adoption=True,
         reply_provenance=[provenance, unresolved_collision, blob_provenance],
     )
+    from app.state_storage import insert_state
+    insert_state(db, "dispatcher_claim_leases", {
+        "adapter_name": "reply", "source_id": "201", "owner": "source-owner",
+        "owner_pid": 71, "generation": 4, "lease_expires_at": "2099-01-01 00:00:00",
+        "terminal_at": "", "last_error": "", "created_at": "source-created",
+        "updated_at": "source-updated",
+    })
+    from app.task_entity_schema import resolve_dispatcher_claim_source_id
+    from app.state_storage import update_state
+    source_claim = db.execute(
+        "select cast(legacy_key as integer) from state where record_type='dispatcher_claim_leases' "
+        "and adapter_name='reply' and source_id='201'",
+    ).fetchone()[0]
+    canonical_claim = resolve_dispatcher_claim_source_id(
+        db, adapter_name="reply", source_id="201",
+    )
+    assert canonical_claim is not None
+    assert update_state(db, "dispatcher_claim_leases", source_claim,
+                        {"source_id": str(canonical_claim)}) == 1
     db.row_factory = __import__("sqlite3").Row
     task_inverse = None
     run_inverse = None
@@ -419,6 +438,14 @@ def test_reply_provenance_task_and_input_references_survive_two_portable_cycles(
                 assert { (marker["field"], marker["value"]) for marker in collision_markers } == {
                     ("reply_task_id", 1201), ("matching_input_id", 205),
                 }
+            existing_task_native = next(
+                edge["target_id"] for edge in task_forward["identity_edges"]
+                if edge["source_kind"] == "reply_tasks" and edge["physical_id"] == 201
+            )
+            assert db.execute(
+                "select source_id from state where record_type='dispatcher_claim_leases' "
+                "and adapter_name='reply' and source_id=?", (str(existing_task_native),),
+            ).fetchone() is not None
             if cycle == 0:
                 native_task = task_entity_storage.create_task(db, values={
                     "kind": "reply", "status": "done", "available_at": "",
@@ -459,6 +486,15 @@ def test_reply_provenance_task_and_input_references_survive_two_portable_cycles(
                 assert AutoReplyStore._compact_settled_reply_task_input(
                     db, int(native_task["id"]),
                 )
+                from app import task_lifecycle_storage
+                task_lifecycle_storage.acquire_claim(
+                    db, adapter_name="reply", source_id=str(native_task["id"]),
+                    owner="native-owner", owner_pid=72,
+                    lease_expires_at="2099-01-01 00:00:00", now="2026-10-22 12:00:00",
+                    domain_values={"status": "processing", "attempts": 1,
+                                   "claimed_input_version": 1},
+                    structural_sql={"claimed_input_id": "current_input_id"},
+                )
             task_native = next(edge["target_id"] for edge in task_forward["identity_edges"]
                                if edge["source_kind"] == "reply_tasks"
                                and edge["physical_id"] == 201)
@@ -490,6 +526,14 @@ def test_reply_provenance_task_and_input_references_survive_two_portable_cycles(
             task_inverse = restore_task_entities(
                 db, task_source, task_forward,
             )
+            restored_native_claim = db.execute(
+                "select source_id,owner,owner_pid,generation from state "
+                "where record_type='dispatcher_claim_leases' and adapter_name='reply' "
+                "and owner='native-owner'",
+            ).fetchone()
+            assert restored_native_claim is not None
+            assert restored_native_claim[0] == str(new_native_task)
+            assert restored_native_claim[1:] == ("native-owner", 72, 1)
             run_inverse = restore_run_entities(
                 db, run_source, run_forward, task_metadata=task_forward,
                 task_inverse_metadata=task_inverse,

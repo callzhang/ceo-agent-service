@@ -103,6 +103,14 @@ generation、清空的 owner、terminal/error 及各自时间均在同一事务�
 不能重新进入 Consumer claim；送达锁 `locked_at`、实际 send claim／receipt、
 quarantined 保护状态与原有取消、恢复、结果事务不变。
 Task 单一仲裁的范围是这些符合源 channel／adapter 条件的 dispatcher claim。
+原生 Task/Run 组合目标中的 claim helper 直接以 `(tasks.kind, tasks.id)` CAS 当前租约，
+并使用 canonical Task ID 更新对应 adapter 的被动 State 历史。Reply stale、无 Run 的
+pre-Agent orphan、服务重启和终态 orphan Run recovery 读取原生 Task、Run 与
+RuntimeAttempt；关闭服务中断的 Run 时把服务失败事实写入 `run_failures`。五类
+Task-backed adapter 的 State 引用在显式 Task 转换边界通过类型化身份映射双向转换，
+逆向保留 State 行 ID 和未知历史，含当前 State 编辑的两轮往返回归已覆盖。Reply
+terminal settlement／error reconciliation 与其余触达的 Reply 生命周期／查询 API 仍
+使用来源投影，尚待后续闭合。
 `EmailStore._unsubscribe_cancellation_decision` 仍读取 channel=email 的
 reply／scheduled_execution State 历史；该 channel 对两者都不 eligible，
 这条既有取消前置事实不迁成 Task 租约，也不据 owner／expiry 改变取消判定。

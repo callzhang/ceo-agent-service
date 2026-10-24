@@ -1143,6 +1143,54 @@ def test_new_message_resets_terminal_generation_and_retry_state(tmp_path):
     assert revised.input_version == first.input_version + 1
 
 
+def test_revised_terminal_reply_trigger_appends_native_input_and_rotates_task(tmp_path):
+    store = _target_store(tmp_path / "revised-trigger.sqlite3")
+    task = store.ensure_reply_task(**_creator_kwargs(_spec("revised", business_key="rev-key")))
+    with store._immediate_write_transaction() as db:
+        task_entity_storage.update_task_cas(
+            db, task_id=task.id, expected={"status": "pending"},
+            changes={"status": "done", "attempts": 2},
+        )
+
+    changed = store.requeue_terminal_reply_task_for_revised_trigger(
+        conversation_id="conversation", conversation_title="Updated title",
+        single_chat=True, trigger_message_id="revised",
+        trigger_create_time="2026-10-22T13:00:00Z", trigger_sender="new sender",
+        trigger_text="revised body", trigger_message_json='{"id":"revised","v":2}',
+    )
+
+    assert changed
+    revised = store.get_reply_task(task.id)
+    assert revised is not None
+    assert (revised.status, revised.attempts, revised.input_version) == (
+        "pending", 0, task.input_version + 1,
+    )
+    assert revised.current_input_id != task.current_input_id
+    assert revised.claimed_input_id == revised.current_input_id
+    assert revised.trigger_text == "revised body"
+    assert revised.conversation_title == "Updated title"
+    assert revised.single_chat is True
+    assert revised.execution_generation != task.execution_generation
+    assert revised.force_new_decision is True
+    assert len(store.list_reply_task_inputs(task.id)) == 2
+
+
+def test_reply_execution_generation_rotation_uses_native_task_cas(tmp_path):
+    store = _target_store(tmp_path / "rotate-generation.sqlite3")
+    task = store.ensure_reply_task(**_creator_kwargs(_spec("rotate")))
+
+    rotated = store.rotate_reply_task_execution_generation(task.id)
+
+    current = store.get_reply_task(task.id)
+    assert current is not None
+    assert current.execution_generation == rotated
+    assert current.execution_generation != task.execution_generation
+    assert (current.status, current.locked_at, current.available_at, current.error) == (
+        "pending", None, "", "execution_generation_rotated",
+    )
+    assert current.force_new_decision is True
+
+
 def test_append_rejects_full_key_byte_conflict_and_different_owner(tmp_path):
     store = _target_store(tmp_path / "target.sqlite3")
     first = store.ensure_reply_task(**_creator_kwargs(_spec("owner-1", business_key="owner-key-1")))
@@ -2272,3 +2320,211 @@ def test_native_feedback_needs_human_decision_remains_unresolvable(tmp_path):
         )
     assert store.get_feedback_processing_batch("needs-human-batch").status == "processing"
     assert store.get_feedback_processing_item("feedback-needs-human").status == "processing"
+
+
+def test_task_dispatcher_claim_history_uses_canonical_task_id(tmp_path):
+    from datetime import datetime, timedelta, timezone
+    from app.task_lifecycle_storage import acquire_claim, claim_projection, transition_claim
+
+    store = _target_store(tmp_path / "native-claim.sqlite3")
+    task = store.ensure_reply_task(**_creator_kwargs(_spec("native-claim")))
+    now = datetime(2026, 10, 23, 12, 0, tzinfo=timezone.utc)
+    now_text = now.strftime("%Y-%m-%d %H:%M:%S")
+    expires = (now + timedelta(minutes=5)).strftime("%Y-%m-%d %H:%M:%S")
+    with store._immediate_write_transaction() as db:
+        generation = acquire_claim(
+            db, adapter_name="reply", source_id=str(task.id), owner="worker",
+            owner_pid=42, lease_expires_at=expires, now=now_text,
+        )
+        claim = db.execute(
+            "select adapter_name,source_id,owner,generation from (" + claim_projection() + ")"
+        ).fetchone()
+        from app.state_definitions import state_projection
+        history = db.execute(
+            "select adapter_name,source_id,owner,generation from ("
+            + state_projection("dispatcher_claim_leases") + ")"
+        ).fetchone()
+        assert tuple(claim) == ("reply", str(task.id), "worker", generation)
+        assert tuple(history) == ("reply", str(task.id), "worker", generation)
+        from app.dispatcher.models import DispatchEnvelope
+        envelope = DispatchEnvelope(adapter_name="reply", source_id=str(task.id),
+            available_at=now, priority=0, attempt=1, generation=generation)
+        transition_claim(db, envelope=envelope, owner="worker",
+            values={"lease_owner": "", "lease_expires_at": ""},
+            history={"owner": "", "lease_expires_at": "", "updated_at": now_text})
+        native = db.execute("select lease_owner,lease_expires_at from tasks where id=?", (task.id,)).fetchone()
+        assert tuple(native) == ("", "")
+
+
+def test_native_dispatcher_history_write_failure_rolls_back_task_lease(tmp_path):
+    from datetime import datetime, timedelta, timezone
+    from app.task_lifecycle_storage import acquire_claim
+
+    store = _target_store(tmp_path / "native-claim-history-rollback.sqlite3")
+    task = store.ensure_reply_task(**_creator_kwargs(_spec("claim-rollback")))
+    with store._connect() as db:
+        db.execute("""create trigger fail_dispatcher_history before insert on state
+            when new.record_type='dispatcher_claim_leases'
+            begin select raise(abort,'history write rejected'); end""")
+    now = datetime(2026, 10, 23, 12, 0, tzinfo=timezone.utc)
+    now_text = now.strftime("%Y-%m-%d %H:%M:%S")
+    expires = (now + timedelta(minutes=5)).strftime("%Y-%m-%d %H:%M:%S")
+
+    with pytest.raises(sqlite3.IntegrityError, match="history write rejected"):
+        with store._immediate_write_transaction() as db:
+            acquire_claim(db, adapter_name="reply", source_id=str(task.id),
+                          owner="worker", owner_pid=42,
+                          lease_expires_at=expires, now=now_text)
+
+    with store._connect() as db:
+        assert tuple(db.execute(
+            "select lease_owner,lease_expires_at,adapter_name from tasks where id=?",
+            (task.id,),
+        ).fetchone()) == (None, None, None)
+        assert db.execute(
+            "select 1 from state where record_type='dispatcher_claim_leases' "
+            "and adapter_name='reply' and source_id=?", (str(task.id),),
+        ).fetchone() is None
+
+
+def test_native_reply_dispatcher_claim_uses_task_owner(tmp_path):
+    from datetime import datetime, timedelta, timezone
+    from app.dispatcher.adapters import ReplyQueueAdapter
+
+    store = _target_store(tmp_path / "native-reply-dispatcher.sqlite3")
+    task = store.ensure_reply_task(**_creator_kwargs(_spec("native-dispatcher")))
+    now = datetime(2026, 10, 23, 12, 0, tzinfo=timezone.utc)
+    envelope = ReplyQueueAdapter(store).claim(
+        now, owner="worker", owner_pid=42, lease=timedelta(minutes=5),
+    )
+    assert envelope is not None
+    assert envelope.source_id == str(task.id)
+    with store._connect() as db:
+        owner = db.execute("select status,adapter_name,lease_owner,generation from tasks where id=?",
+                           (task.id,)).fetchone()
+        assert tuple(owner) == ("processing", "reply", "worker", envelope.generation)
+
+
+@pytest.mark.parametrize("adapter_name", [
+    "reply", "scheduled_execution", "meeting", "work_summary", "okr_review",
+])
+def test_native_task_dispatcher_adapters_claim_canonical_task_ids(adapter_name, tmp_path):
+    from datetime import datetime, timedelta, timezone
+    from app.dispatcher.adapters import (
+        MeetingQueueAdapter, OkrReviewQueueAdapter, ReplyQueueAdapter,
+        ScheduledExecutionQueueAdapter, WorkSummaryQueueAdapter,
+    )
+
+    store = _target_store(tmp_path / f"native-{adapter_name}.sqlite3")
+    if adapter_name in {"reply", "scheduled_execution"}:
+        task = store.ensure_reply_task(**_creator_kwargs(_spec(
+            adapter_name, channel="scheduled" if adapter_name == "scheduled_execution" else "dingtalk")))
+        task_id = task.id
+        adapter_type = ScheduledExecutionQueueAdapter if adapter_name == "scheduled_execution" else ReplyQueueAdapter
+    elif adapter_name == "meeting":
+        task_id = store.upsert_meeting_alignment_job(
+            meeting_id="native-meeting", title="Native", source_json="{}",
+            participants_json="[]", ended_at="2026-10-23T11:00:00Z",
+            eligible_at="2026-10-23T11:00:00Z", status="pending",
+        )
+        adapter_type = MeetingQueueAdapter
+    elif adapter_name == "work_summary":
+        task_id = store.enqueue_work_summary_input("report", "native:report", "{}")
+        adapter_type = WorkSummaryQueueAdapter
+    else:
+        task_id = store.create_okr_review_request(
+            conversation_id="native-okr", conversation_title="Native OKR",
+            trigger_message_id="trigger", trigger_sender="sender", trigger_sender_user_id="uid",
+            trigger_text="Review this OKR", period_label="Q4", period_start="2026-10-01",
+            period_end="2026-12-31", okr_source_json="{}",
+        )
+        adapter_type = OkrReviewQueueAdapter
+
+    now = datetime(2026, 10, 23, 12, 0, tzinfo=timezone.utc)
+    envelope = adapter_type(store).claim(now, owner="worker", owner_pid=42,
+                                         lease=timedelta(minutes=5))
+    assert envelope is not None
+    assert envelope.adapter_name == adapter_name
+    assert envelope.source_id == str(task_id)
+    with store._connect() as db:
+        owner = db.execute("select kind,status,adapter_name,lease_owner,generation from tasks where id=?",
+                           (task_id,)).fetchone()
+        assert owner[2:] == (adapter_name, "worker", envelope.generation)
+
+
+def test_concurrent_native_reply_dispatcher_begin_claims_have_one_winner(tmp_path):
+    from concurrent.futures import ThreadPoolExecutor
+    from datetime import datetime, timedelta, timezone
+    from app.dispatcher.adapters import ReplyQueueAdapter
+
+    store = _target_store(tmp_path / "native-concurrent-claim.sqlite3")
+    task = store.ensure_reply_task(**_creator_kwargs(_spec("one-claim-winner")))
+    now = datetime(2026, 10, 23, 12, 0, tzinfo=timezone.utc)
+
+    def claim(owner):
+        return ReplyQueueAdapter(store).claim(
+            now, owner=owner, owner_pid=42, lease=timedelta(minutes=5),
+        )
+
+    with ThreadPoolExecutor(max_workers=2) as pool:
+        winners = list(pool.map(claim, ("worker-a", "worker-b")))
+
+    assert sum(envelope is not None for envelope in winners) == 1
+    winner = next(envelope for envelope in winners if envelope is not None)
+    with store._connect() as db:
+        owner = db.execute(
+            "select status,adapter_name,lease_owner,generation from tasks where id=?",
+            (task.id,),
+        ).fetchone()
+        assert owner[0:2] == ("processing", "reply")
+        assert owner[2] in {"worker-a", "worker-b"}
+        assert owner[3] == winner.generation
+
+
+@pytest.mark.parametrize("recovery", ["stale", "pre_agent_orphan"])
+def test_native_reply_recovery_updates_task_owner(recovery, tmp_path):
+    store = _target_store(tmp_path / f"native-{recovery}.sqlite3")
+    task = store.ensure_reply_task(**_creator_kwargs(_spec(recovery)))
+    with store._immediate_write_transaction() as db:
+        db.execute("update tasks set status='processing',attempts=2,locked_at='2000-01-01 00:00:00' where id=?",
+                   (task.id,))
+
+    if recovery == "stale":
+        recovered = store.recover_stale_processing_reply_tasks(stale_after_seconds=60)
+        assert [item.id for item in recovered] == [task.id]
+        expected_error = "stale_lease_recovered"
+    else:
+        recovered = store.recover_orphaned_processing_reply_tasks()
+        assert [item.id for item in recovered] == [task.id]
+        expected_error = "orphaned_before_agent_start"
+
+    with store._connect() as db:
+        native = db.execute("select status,attempts,locked_at,available_at,error from tasks where id=?",
+                             (task.id,)).fetchone()
+        assert tuple(native) == ("pending", 1 if recovery == "pre_agent_orphan" else 2,
+                                 None, "", expected_error)
+
+
+def test_orphaned_native_run_closure_records_run_failure(tmp_path):
+    from app.run_entity_storage import create_run
+
+    store = _target_store(tmp_path / "native-orphan-run.sqlite3")
+    task = store.ensure_reply_task(**_creator_kwargs(_spec("orphan-run")))
+    with store._immediate_write_transaction() as db:
+        run = create_run(db, values={
+            "task_id": task.id, "execution_generation": task.execution_generation,
+            "role": "consumer", "proposal_revision": 1, "turn_attempt": 1,
+            "status": "running", "lease_owner": "worker",
+            "lease_expires_at": "2099-01-01 00:00:00",
+        })
+        db.execute("update tasks set status='done' where id=?", (task.id,))
+
+    assert store.recover_orphaned_agent_runs_for_terminal_reply_tasks() == 1
+    with store._connect() as db:
+        assert db.execute("select status from runs where id=?", (run["id"],)).fetchone()[0] == "failed"
+        failure = db.execute(
+            "select phase,structured_error_json from run_failures where run_id=? order by id desc limit 1",
+            (run["id"],),
+        ).fetchone()
+        assert failure[0] == "terminal_failure"
+        assert json.loads(failure[1])["code"] == "orphaned_agent_run_parent_not_processing"

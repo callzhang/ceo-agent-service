@@ -315,8 +315,90 @@ def resolve_dispatcher_claim_source_id(
     if mapped:
         return int(mapped[0][0])
     expected_kind = _task_kind(source_kind)
+    remapped_native = db.execute(
+        "select 1 from task_run_identity_map where source_kind=? and target_id=? limit 1",
+        (source_kind, public_id),
+    ).fetchone()
+    if remapped_native is not None:
+        # The numeric value is a canonical ID owned by another public key;
+        # it cannot also be inferred as the missing source public identity.
+        return None
     row = db.execute("select id from tasks where id=? and kind=?", (public_id, expected_kind)).fetchone()
     return None if row is None else int(row[0])
+
+
+_DISPATCHER_TASK_KINDS = {
+    "reply": "reply_tasks", "scheduled_execution": "reply_tasks",
+    "meeting": "meeting_alignment_jobs", "work_summary": "work_summary_inputs",
+    "okr_review": "okr_review_requests",
+}
+
+
+def _dispatcher_claim_state_plan(db, translate, native_owner_exists):
+    """Validate passive Task references and return planned reference rewrites."""
+    if db.execute("select 1 from main.sqlite_schema where type='table' and name='state'").fetchone() is None:
+        return []
+    rows = [tuple(row) for row in db.execute(
+        "select cast(legacy_key as integer),adapter_name,source_id from main.state "
+        "where record_type='dispatcher_claim_leases' order by cast(legacy_key as integer)")]
+    planned = []
+    for rowid, adapter, source_id in rows:
+        if adapter not in _DISPATCHER_TASK_KINDS:
+            continue
+        target = translate(adapter, source_id)
+        if target is None:
+            try:
+                numeric_source = int(source_id)
+            except (TypeError, ValueError):
+                continue
+            if str(numeric_source) != str(source_id):
+                continue
+            if native_owner_exists(adapter, numeric_source):
+                raise ValueError("unresolved Task-backed State reference collides with a native owner")
+            continue
+        if type(target) is not int or target <= 0:
+            raise ValueError("Task-backed dispatcher State reference has no canonical owner")
+        planned.append((int(rowid), adapter, str(source_id), str(target)))
+    proposed = {int(rowid): str(source_id) for rowid, _adapter, source_id in rows}
+    row_adapters = {int(rowid): adapter for rowid, adapter, _source_id in rows}
+    for rowid, adapter, old, new in planned:
+        proposed[rowid] = new
+    final = {}
+    for rowid, source_id in proposed.items():
+        adapter = row_adapters[rowid]
+        key = (adapter, source_id)
+        previous = final.setdefault(key, rowid)
+        if previous != rowid:
+            raise ValueError("Task-backed dispatcher State references collide after translation")
+    return [(rowid, adapter, old, new) for rowid, adapter, old, new in planned if old != new]
+
+
+def _translate_dispatcher_claim_state(db, translate):
+    """Rekey only Task-backed passive State references, retaining State row IDs."""
+    def native_owner_exists(adapter, task_id):
+        expected_kind = _task_kind(_DISPATCHER_TASK_KINDS[adapter])
+        return db.execute("select 1 from main.tasks where id=? and kind=?",
+                          (task_id, expected_kind)).fetchone() is not None
+
+    changed = _dispatcher_claim_state_plan(db, translate, native_owner_exists)
+    from app.state_storage import update_state
+    # The State primary key is (adapter_name,source_id); stage permutations so
+    # valid swaps do not depend on row order. These sentinels exist only inside
+    # the caller's migration transaction and are never a persisted alias.
+    staged = []
+    for rowid, adapter, old, new in changed:
+        sentinel = "task-ref-stage:" + uuid4().hex
+        if update_state(db, "dispatcher_claim_leases", rowid,
+                        {"source_id": sentinel}, where_sql="adapter_name=? and source_id=?",
+                        parameters=(adapter, old)) != 1:
+            raise ValueError("Task-backed dispatcher State changed during translation")
+        staged.append((rowid, adapter, sentinel, new))
+    for rowid, adapter, sentinel, new in staged:
+        if update_state(db, "dispatcher_claim_leases", rowid,
+                        {"source_id": new}, where_sql="adapter_name=? and source_id=?",
+                        parameters=(adapter, sentinel)) != 1:
+            raise ValueError("Task-backed dispatcher State staging row disappeared")
+    return len(changed)
 
 
 def migrate_task_entities(
@@ -428,6 +510,28 @@ def migrate_task_entities(
                 public_rows.append({"source_kind": kind, "physical_id": int(row["_physical_id"]),
                                     "public_key": row[id_field], "target_id": target_id})
     indexes = owner_indexes(public_rows)
+
+    def planned_claim_owner(adapter, source_id):
+        try:
+            public_id = int(source_id)
+        except (TypeError, ValueError):
+            return None
+        if str(public_id) != str(source_id):
+            return None
+        return indexes["public"].get(
+            (_DISPATCHER_TASK_KINDS[adapter], _typed_key(public_id)))
+
+    planned_native_owners = {
+        (kind, target_ids[(kind, int(row["_physical_id"]))])
+        for kind, rows in all_rows.items() if kind in _TASK_TABLES for row in rows
+    }
+    # Reject unknown IDs that would numerically name a differently keyed
+    # native owner before the source Tasks declaration is replaced.
+    _dispatcher_claim_state_plan(
+        db, planned_claim_owner,
+        lambda adapter, task_id: (_DISPATCHER_TASK_KINDS[adapter], task_id)
+        in planned_native_owners,
+    )
 
     objects = task_run_entity_definitions.task_run_entity_objects()
     target_tables = {"tasks", "task_inputs", "task_business_keys", "workbench_tasks",
@@ -688,6 +792,11 @@ def migrate_task_entities(
         )
     for stage in staged.values():
         db.execute("drop table temp." + _quote(stage))
+    _translate_dispatcher_claim_state(
+        db, lambda adapter, source_id: resolve_dispatcher_claim_source_id(
+            db, adapter_name=adapter, source_id=source_id,
+        ),
+    )
     return {
         "counts": {kind: len(rows) for kind, rows in all_rows.items()},
         "identity_rows": len(identity_records),
@@ -1214,6 +1323,12 @@ def restore_task_entities(db: sqlite3.Connection, source_metadata: dict, forward
                               else source_physical_by_native[(kind, canonical_id)]
                               if kind == "reply_tasks" else canonical_id)
         source_public_by_native[(kind, canonical_id)] = public_key
+
+    _translate_dispatcher_claim_state(
+        db, lambda adapter, _source_id: source_public_by_native.get(
+            (_DISPATCHER_TASK_KINDS[adapter], int(_source_id))
+        ) if str(_source_id).isdecimal() else None,
+    )
 
     # Current native Workbench owners may have been created after the original
     # source capture. Their inverse public keys are generated above, so include

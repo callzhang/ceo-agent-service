@@ -271,6 +271,99 @@ def test_remapped_reply_task_rebinds_current_and_claimed_source_input_ids():
         }]
 
 
+def test_dispatcher_state_task_references_forward_inverse_and_preserve_unknown_rows():
+    from app.state_storage import create_state_schema, insert_state
+
+    with closing(_source()) as db:
+        db.row_factory = sqlite3.Row
+        db.execute("begin immediate")
+        create_state_schema(db)
+        for adapter, source_id in (("reply", "201"),
+                                   ("scheduled_execution", "201"),
+                                   ("reply", "999")):
+            insert_state(db, "dispatcher_claim_leases", {
+                "adapter_name": adapter, "source_id": source_id,
+                "owner": "owner", "owner_pid": 8, "generation": 3,
+                "lease_expires_at": "2099-01-01 00:00:00", "terminal_at": "",
+                "last_error": "", "created_at": "created", "updated_at": "updated",
+            })
+        before = [tuple(row) for row in db.execute(
+            "select cast(legacy_key as integer),adapter_name,source_id,payload_json "
+            "from state where record_type='dispatcher_claim_leases' order by adapter_name,source_id")]
+        source_metadata = capture_task_entities(db)
+        forward = migrate_task_entities(db, source_metadata, inverse_identity={
+            "version": 1,
+            "owners": [{"source_kind": "reply_tasks", "source_physical_id": 201,
+                        "canonical_id": 1201}],
+        })
+        current = [tuple(row) for row in db.execute(
+            "select cast(legacy_key as integer),adapter_name,source_id,payload_json "
+            "from state where record_type='dispatcher_claim_leases' order by adapter_name,source_id")]
+        assert [(row[0], row[1], row[2]) for row in current] == [
+            (row[0], row[1], "1201" if row[2] == "201" else row[2]) for row in before
+        ]
+        assert {row[0] for row in current} == {row[0] for row in before}
+        for rowid, _adapter, source_id, payload_json in current:
+            current_payload = json.loads(payload_json)
+            source_payload = json.loads(next(row[3] for row in before if row[0] == rowid))
+            assert current_payload["source_id"] == source_id
+            current_payload.pop("source_id")
+            source_payload.pop("source_id")
+            assert current_payload == source_payload
+        assert next(row[3] for row in current if row[2] == "999") == next(
+            row[3] for row in before if row[2] == "999")
+
+        restore_task_entities(db, source_metadata, forward)
+        restored = [tuple(row) for row in db.execute(
+            "select cast(legacy_key as integer),adapter_name,source_id,payload_json "
+            "from state where record_type='dispatcher_claim_leases' order by adapter_name,source_id")]
+        assert restored == before
+        from app.state_storage import update_state
+        assert update_state(db, "dispatcher_claim_leases", restored[0][0],
+                            {"owner": "changed-owner"}) == 1
+        second_source = capture_task_entities(db)
+        second_forward = migrate_task_entities(db, second_source, inverse_identity={
+            "version": 1,
+            "owners": [{"source_kind": "reply_tasks", "source_physical_id": 201,
+                        "canonical_id": 1201}],
+        })
+        assert [row[0] for row in db.execute(
+            "select source_id from state where record_type='dispatcher_claim_leases' "
+            "and adapter_name in ('reply','scheduled_execution') order by adapter_name")] == [
+                "1201", "999", "1201",
+            ]
+        restore_task_entities(db, second_source, second_forward)
+        assert tuple(db.execute(
+            "select owner,source_id from state where record_type='dispatcher_claim_leases' "
+            "and adapter_name='reply' and source_id='201'").fetchone()) == (
+                "changed-owner", "201",
+            )
+
+
+def test_dispatcher_state_unknown_reference_cannot_alias_remapped_native_task_id():
+    from app.state_storage import create_state_schema, insert_state
+
+    with closing(_source()) as db:
+        db.row_factory = sqlite3.Row
+        db.execute("begin immediate")
+        create_state_schema(db)
+        insert_state(db, "dispatcher_claim_leases", {
+            "adapter_name": "reply", "source_id": "42", "owner": "stale",
+            "owner_pid": 8, "generation": 3, "lease_expires_at": "",
+            "terminal_at": "", "last_error": "", "created_at": "created",
+            "updated_at": "updated",
+        })
+        metadata = capture_task_entities(db)
+        with pytest.raises(ValueError, match="collides with a native owner"):
+            migrate_task_entities(db, metadata, inverse_identity={
+                "version": 1,
+                "owners": [{"source_kind": "reply_tasks", "source_physical_id": 201,
+                            "canonical_id": 42}],
+            })
+        db.rollback()
+        assert db.execute("select record_type from tasks where id=201").fetchone()[0] == "reply_tasks"
+
+
 def test_feedback_workbench_and_current_round_refs_follow_typed_handoff_two_cycles():
     with closing(_source()) as db:
         from app.task12_storage import update_task12
