@@ -1380,6 +1380,11 @@ def _return_idle_connection(
     except sqlite3.Error:
         reusable = False
     if reusable:
+        # What is worth keeping is the parsed schema; the page cache (up to
+        # SQLITE_READ_CACHE_SIZE per connection) is not, and an idle connection
+        # per thread per database would otherwise hold it for good.
+        with suppress(sqlite3.Error):
+            connection.execute("pragma shrink_memory")
         pool[key] = (connection, identity, connection.total_changes)
     else:
         with suppress(sqlite3.Error):
