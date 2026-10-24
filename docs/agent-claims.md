@@ -510,7 +510,6 @@ reverts committed work they did not author.
 
 ## Current claims
 
-| claude-task-agent-read-own-sources-20261024 | `app/task_agent.py`, `app/task_retrieval.py`, `app/task_source_documents.py`, `app/task_source_projection_sharing.py`, `app/business_source_reader.py` (PreparedSources reads lazily only), `app/service_codex_config.py` (Task gets the ai_services tool approvals), `tests/test_task_agent.py` and the other Task input tests, `docs/architecture.md` and `docs/runtime-mechanism.md` (Task input paragraph); worktree ~/Projects/ceo-agent-service-wt-task-source-reader, branch claude/task-source-reader-20261023 | Derek 2026-10-23: the Task Agent reads historical source text itself (dws) instead of the service putting bodies in its input; no duplicate current_work_item, no source_metrics; Task requires the local_process_execution route capability (Friday no longer runs Task); transcript-unavailable hint with the ai_services ASR tool. Reply-task context assembly is not touched. | active 2026-10-24 |
 
 
 
