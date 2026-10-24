@@ -30,6 +30,15 @@ def test_historical_review_does_not_project_later_record_updates_back_to_decisio
     assert "do not use the later update to prove an applicant-resolvable gap or count an effective return" in text
 
 
+def test_return_threshold_reconciles_every_dws_redirect_to_effective_rounds() -> None:
+    text = GENERIC_SKILL.read_text(encoding="utf-8")
+
+    assert "先按来源时间顺序列出该流程的全部 DWS `REDIRECT_PROCESS` 记录" in text
+    assert "不能因本地没有执行回执就从 DWS 流水中省略一次已核实的退回" in text
+    assert "每条不计入的退回都要写明对应记录及不计数的证据理由" in text
+    assert "总退回条数与有效轮数不同时，明确解释差异" in text
+
+
 def test_verified_receiving_supervisor_comment_cannot_be_rejected_for_lacking_attachment() -> None:
     text = PEOPLE_SKILL.read_text(encoding="utf-8")
 
