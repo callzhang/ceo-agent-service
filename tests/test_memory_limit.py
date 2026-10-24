@@ -3,11 +3,20 @@ import sys
 import textwrap
 
 from tests.conftest import MEMORY_LIMIT
-from tests.support.memory_limit import EXIT_CODE
+from tests.support.memory_limit import EXIT_CODE, footprint_bytes
 
 
 def test_limit_is_three_gigabytes():
     assert MEMORY_LIMIT.limit_bytes == 3 * 1024**3
+
+
+def test_footprint_grows_when_memory_is_touched():
+    before = footprint_bytes()
+    block = bytearray(300 * 1024**2)
+    for offset in range(0, len(block), 4096):
+        block[offset] = 1
+    assert footprint_bytes() - before > 200 * 1024**2
+    del block
 
 
 def test_process_over_the_limit_is_ended_and_names_the_test(tmp_path):
