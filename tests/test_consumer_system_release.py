@@ -44,13 +44,11 @@ def test_repository_consumer_release_manifest_tracks_oa_skill_digest():
         if item["source"] == "ci/shared-skills/dingtalk-oa-approval/SKILL.md"
     )
 
-    # The old digest is a release-time precondition: the publisher requires it
-    # to equal the installed file. Once the Skill is installed it is re-baselined
-    # to the new digest, so only its shape is pinned here, not a historical value.
-    assert len(entry["old_sha256"]) == 64
-    assert all(char in "0123456789abcdef" for char in entry["old_sha256"])
+    installed = Path.home() / ".agents/skills/dingtalk-oa-approval/SKILL.md"
+    # The old digest is the release-time precondition and must match the
+    # currently installed target; the new digest tracks repository source.
+    assert entry["old_sha256"] == _digest(installed.read_bytes())
     assert entry["new_sha256"] == _digest((root / entry["source"]).read_bytes())
-    assert entry["new_sha256"] == "874778145a80f1dc0e97e6ae5f18a5492450fb73c7df81903dac5ffd03c34d49"
     assert "old_managed_sha256" not in entry
     skill = (root / entry["source"]).read_text(encoding="utf-8").lower()
     assert "可按本 skill 写明的准确路径通过 shell 调用本机 `dws`" in skill
