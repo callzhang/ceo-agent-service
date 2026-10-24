@@ -24,3 +24,11 @@ DWS 的 `docVerificationError` 生成 `doc.operation.v1/status=partial_success`�
 生产验收终点仍待：上线后首个自然相关运行的真实失败/成功结果及是否继续发生同机制重复覆盖。没有自然样本时只能声明已部署、生产行为待回读，不能据本地通过关闭全部目标。
 
 本地最终验证：初轮403项通过；创建后恢复修复后的文档/角色定向测试65项通过；新增回归最终14项通过（含不生成成功Audit文档回执的既有投影检查）。Ruff与diff检查通过。独立审查唯一发现已修复，复核无剩余问题。后续未重跑无变化的DWS客户端与编排测试。
+
+## 生产发布读回（2026-10-24 04:06 UTC）
+
+修复提交 `3638ea4a7` 经 `9cd3394d9` 合入 main；随后另一会话的正式部署将生产更新至 `d960fb9e6f7870ab036454cb8436a14cf802dc67`，祖先检查确认包含本修复。部署回执 `deploy-fe288dd7-4691-45fa-98fc-c8dbe64c5438` 为 succeeded、error为空、installed_commit与生产一致，完成时间04:05:14 UTC。本会话发现并发部署后撤下自己仍等待仓库锁的进程，未启动第二次发布、未强制中断任务。
+
+生产工作树干净，launchd PID由93450变为22671。healthz、console status、Attention、History均HTTP200；Attention6项，History37884项。dispatcher在途均0，scheduled排队5、Meeting排队4；Reply失败12/Attempts失败13/Meeting失败1/Meeting Memory失败4与部署前相同，未将既有失败误报为本次回归。Email provider恢复处理（pending225/processing1）。这些是运行健康与恢复读回，不证明文档业务结果。
+
+04:06 UTC只读查询：部署完成后新增Consumer运行0项，没有可用于该文档失败机制验收的自然样本。当前状态：**修复已部署；生产行为待自然样本回读，尚未确认24次额外覆盖问题在真实任务中消失。** 后续只检查首个自然相关运行的完整轨迹与文档结果；不人工重放历史任务。临时DWS源码、业务样本及诊断token文件已清理，未持久保存业务正文。
