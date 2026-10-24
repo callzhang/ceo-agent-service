@@ -3,10 +3,8 @@
 from __future__ import annotations
 
 import json
-import re
 import sys
 from collections.abc import Callable, Mapping
-from datetime import datetime
 from pathlib import Path
 from uuid import uuid4
 
@@ -72,7 +70,6 @@ def _trusted_agent_instruction_sections():
 
 def validate_audit_candidate_fields(result: AuditAgentResult, candidate: ConsumerAgentResult) -> None:
     validate_audit_candidate_decision_quality(candidate)
-    validate_oa_effective_return_assessment(result, candidate)
     if result.feedback is None:
         return
     document = candidate.model_dump(mode="json")
@@ -107,70 +104,6 @@ def validate_audit_candidate_fields(result: AuditAgentResult, candidate: Consume
             or json_value_type(assertion.value) != assertion.json_type
             or json.dumps(actual, sort_keys=True, ensure_ascii=False) != json.dumps(assertion.value, sort_keys=True, ensure_ascii=False)):
             raise ResultParseError("Audit candidate field assertion contradicts the bound candidate; correct Audit feedback, not the candidate")
-
-
-_EFFECTIVE_RETURN_THRESHOLD_RE = re.compile(
-    r"(?:三|3)\s*(?:次|轮)\s*(?:有效\s*)?(?:退回|返回)"
-    r"|three\s+(?:effective|valid)\s+returns?"
-    r"|fourth\s+review",
-    re.IGNORECASE,
-)
-
-
-def _candidate_uses_oa_effective_return_threshold(candidate: ConsumerAgentResult) -> bool:
-    if candidate.proposal is None:
-        return False
-    for action in candidate.proposal.actions:
-        if action.capability != "dingtalk-oa" or action.operation not in {"reject", "reject_task"}:
-            continue
-        text_parts = [action.description, candidate.summary, candidate.proposal.authored_judgment]
-        for key in ("remark", "reason", "comment"):
-            value = action.payload.get(key)
-            if isinstance(value, str):
-                text_parts.append(value)
-        if _EFFECTIVE_RETURN_THRESHOLD_RE.search("\n".join(text_parts)):
-            return True
-    return False
-
-
-def validate_oa_effective_return_assessment(
-    result: AuditAgentResult, candidate: ConsumerAgentResult,
-) -> None:
-    """Require a source-referenced round ledger before approving threshold-based OA rejection."""
-    if result.outcome.value != "approve" or not _candidate_uses_oa_effective_return_threshold(candidate):
-        return
-    assessment = result.oa_effective_return_assessment
-    if assessment is None:
-        raise ResultParseError(
-            "OA rejection citing three effective return rounds requires a complete Audit round ledger"
-        )
-    if not assessment.current_gap_unresolved:
-        raise ResultParseError("OA repeat-return threshold cannot approve a rejection after the gap was cured")
-    if any(not item.same_gap_unresolved_after_response for item in assessment.rounds):
-        raise ResultParseError("OA repeat-return threshold cannot count a round where the same gap was cured")
-    if any(response.cures_same_gap for item in assessment.rounds for response in item.responses):
-        raise ResultParseError("OA repeat-return threshold cannot approve after post-return evidence cured the gap")
-    referenced = {item for item in result.evidence_refs}
-    required_refs: set[str] = {assessment.current_evidence_ref}
-    for item in assessment.rounds:
-        required_refs.add(item.return_ref)
-        if item.no_response_readback_ref:
-            required_refs.add(item.no_response_readback_ref)
-        required_refs.update(response.source_ref for response in item.responses)
-        latest_response = max(
-            (datetime.fromisoformat(response.source_time.replace("Z", "+00:00"))
-             for response in item.responses),
-            default=None,
-        )
-        if latest_response is not None and datetime.fromisoformat(
-            assessment.current_evidence_time.replace("Z", "+00:00")
-        ) < latest_response:
-            raise ResultParseError("current unresolved evidence must be later than every return response")
-    missing = sorted(required_refs - referenced)
-    if missing:
-        raise ResultParseError(
-            "OA repeat-return ledger citations must all appear in Audit evidence_refs"
-        )
 
 
 def validate_audit_candidate_decision_quality(

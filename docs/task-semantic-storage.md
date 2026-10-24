@@ -158,25 +158,23 @@ current-context Signal IDs, rather than a growing full-history load. Task owner,
 suggestion, and saved Attention citations also retain their original Signals.
 
 `source_bundle` renders each exact source version once in `source_documents`.
-`source_signals` retains real Signal IDs, persistent `source_document_id`, source
-type/ref/time, actor, conversation, and context, but replaces each repeated body
-with `document_id`. `current_work_item` retains source/context/task-signals and
-scheduled metadata without its summary body or stale `skill_protocol`. Its
-document shares a persistent ID only when all source-version identity fields
-match; otherwise a `current:<identity hash>` is an input-only locator, not a
-new stored Signal or proof ID. The immutable WorkItem still validates decisions.
+`source_signals` retains real Signal IDs, source type/ref/time, actor,
+conversation, and context, and points each Signal at its `document_id`. The
+current Work Item is not part of this context: its text is the `summary` in the
+prompt's Work Item JSON, once.
 
-Documents show `full_length`, `truncated`, and exact half-open character
-`visible_ranges` with start/end/text. Historical bodies have the prior 2048
-character budget, retaining head/tail and cited raw spans. A decoded JSON quote
-is located in one actual string leaf via `decoded_excerpts` (path and leaf-local
-start/end/text), never joined across fields. Mandatory citations exceeding the
-budget are shown with `citation_budget_exceeded`, not silently cut or called
-full text. Current input keeps its pre-existing full-body visibility, including
-when it shares a historical document. Whole-prompt assembly does not echo its
-summary at the top a second time. `source_metrics` reports counts and full
-pre-sharing/unique-body/visible-body characters; metadata and quote repetition
-remain visible costs, so this is not a promised total-token reduction.
+A source whose binding keeps an external locator (a provider or native locator;
+its `source_ref` names the minutes id or the DingTalk document node) is not
+copied into the input. Its document is `{document_id, source_in_input: false,
+body_utf8_bytes, saved_quotations}`; the Agent reads the original itself with
+dws, and the service still reads the exact bound version only when a decision
+cites it, to check the quote (`PreparedSources` reads lazily). A source with no
+locator (a Console action record) has nowhere to be read from, so it keeps the
+projection: `full_length`, `truncated`, and exact half-open character
+`visible_ranges` with start/end/text, with a 2048 character budget for head/tail
+and cited raw spans, and `decoded_excerpts` for a decoded JSON quote located in
+one actual string leaf. Mandatory citations exceeding the budget are shown with
+`citation_budget_exceeded`. There is no `source_metrics` block.
 
 ## Display-only Task suggestions
 

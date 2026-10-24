@@ -1463,6 +1463,17 @@ Codex Consumer 可在 task-bound `/tmp` 工作区进行原生代码执行；Audi
 摘要不会生成 candidate execution、外部动作回执或 sent_replies。此规则不改变已有运行时风险拒绝、
 授权缺失或历史拒绝不可重放的处理。
 
+Codex Consumer 的工作工具面不是白名单（Derek 2026-10-24）：`make_role_agent_command` 对 Consumer 不再强制关闭
+`features.apps`、`features.plugins`、`features.remote_plugin`，也不再关闭 `~/.codex/config.toml` 里的其他 MCP server
+或限制它们的工具，而是沿用本机 CLI 的配置，并对这些 server 设置 `default_tools_approval_mode="approve"`
+（`approval_policy="never"` 下否则工具会被拒绝）。仍然关闭的是：服务 MCP 清单（Settings → MCP）的 `disabled_servers`、桌面控制类 server（`computer-use`、`computer-history`、`cua_repl`，代码常量 `CONSUMER_ALWAYS_DISABLED_SERVERS`）、
+`multi_agent`、`computer_use`、`browser_use*` 等原生功能。读取 Figma 这类外部信息属于处理过程中的工作工具，不走提议；
+只有发消息和发邮件等需要 Audit 的终态动作走 typed action，该约束仍是提示词约束（Consumer 不得经 shell 的 `dws` 发消息、发邮件）。
+Audit 的命令不变：仍关闭上述功能，只启用 `ROLE_MCP_READ_TOOLS` 列出的只读工具，并强制关闭其余 server。
+Runtime Context 对没有 `enabled_tools` 限制的 server 声明 `mcp__<server>__*`（全部工具，参数以本轮工具 schema 为准），不再逐个枚举。
+
+要求修改 CEO Agent 服务本身的请求（例如「请磊哥修一下分身」，任务 15810）不是回复或 Agent 能完成的事。`ceo-message-triage` Skill 规定 Consumer 只回复一次，引导发信人用回复末尾的「👎 需改进」反馈链接提交，使其进入用户反馈流程；会话里已有这条回复时用 `no_action`。同一 Skill 的 Audit 解释把这条回复（或之后的 `no_action`）视为已满足请求，不得因服务尚未修复而退回，重复发送同样的指引属于重复。此前 Consumer 在「再回复」与 `no_action` 之间被 Audit 反复退回，三轮用完以 `audit_revision_exhausted` 失败。
+
 Codex Consumer 命令按当前 `consumer_purpose` 选择 general/OA 原生输出 Schema，并在模型输出后
 把动态 JSON 键值条目无损还原，再交给现有严格 wire/Pydantic 解析器；OA 动作仍按原有
 action-specific target/payload 合同校验。已完成运行结果的 schema identity 绑定实际提交的 Schema
@@ -1942,9 +1953,16 @@ Task 且已确认关联同 Project；当前显示成员仍只取 open/waiting。
 Task 语义上下文用无损紧凑 JSON 序列化，省去排版缩进；字段、顺序、原文字符串、引用偏移和检索选择保持不变。
 source_documents 以完整来源绑定身份键提供精确版本的共享正文一次，source_signals 保留引用 ID、来源和业务元数据并指向正文；数据库内部 dedupe_key 不进入 Agent 输入，持久去重键及其查询行为不变。
 同一轮 Task semantic context 中完全相同的 `visible_ranges` 与 `decoded_excerpts` 只序列化一次，其余文档用 `duplicate_of_document_id` 指向首份投影；文档身份、元数据、信号和引用保持独立，展开后与原始 source bundle 完全一致。若压缩后的完整 bundle 不更短，则保留原始表示。
-当前 WorkItem 正文也只出现一次，immutable 输入不改。历史长文在 2048 字符预算内保留首尾及关键
-引文；原文可用时，visible_ranges/full_length/truncated 和引用超预算明确显示，JSON 解码引用有实际 leaf 路径/偏移。原文不可用时明确状态、定位元数据与已保存引文，未知字符数为 null。
-source_metrics 是正文字符观测，不是总 prompt token 保证；检索排名不证明身份、分工或业务重大性。
+Task 输入里，当前 WorkItem 的正文就是 Work Item JSON 里的 `summary`，只出现一次；语义上下文不再含
+`current_work_item`，也没有 `source_metrics`。来源绑定带外部定位信息（provider 或 native 定位，`source_ref`
+本身就写明听记 ID 或钉钉文档节点）的历史来源不再复制进输入：其文档只有 `document_id`、
+`source_in_input: false`、`body_utf8_bytes` 和已保存的引文 `saved_quotations`，Agent 自己用 dws 读取原文，
+Task 运行可见 `dingtalk-minutes`、`dingtalk-doc` 这两个 Skill，并可用 ai_services 的 `transcribe_audio`（听记转写
+不可用时的提示里说明）。服务只在决策引用某条来源时才读取其精确绑定版本来核对引文（`PreparedSources` 惰性读取），
+不再为拼提示而读取每条历史 Signal。没有定位信息的来源（Console 动作记录）无处可读，保持原有投影：
+2048 字符预算内保留首尾及关键引文，`visible_ranges`/`full_length`/`truncated` 和引用超预算明确显示，JSON 解码引用有实际 leaf 路径/偏移。
+Task 要求路线具备 `local_process_execution` 能力（Codex CLI 与 Claude CLI 具备，Friday Runtime 不具备，因此不再被选去执行 Task），
+调用方不按路线分支。回复任务（reply task）的上下文拼接不变。检索排名不证明身份、分工或业务重大性。
 
 Task Agent 共享 task-agent:work-tracking:v1 逻辑 session，各 route 保留各自原生 session，
 native CLI 自行 compact；每个 WorkItem 仍独立 workload/run。process-work-items 领取前持有 SQLite
@@ -3655,7 +3673,7 @@ ProcessingReaction 在现有 service_state 保存文字表情模板与每条源�
 重启后继续未确认的表情操作。只操作本功能记录的源消息与服务账号的「处理中」表情。
 该进度展示不改变 Consumer/Audit 生命周期、发送授权或现有业务效果检查。
 
-Meeting planner 的 `audit_summary` 不是审核回执。分析成功后，服务以独立 model-only Audit（无原生工具或 MCP）调用复核会议来源、群候选、准确收件人、正文与披露范围；输出绑定候选 SHA-256，并和候选及 Audit session 引用一并保存。只有通过该摘要绑定校验且 `outcome=approve` 的候选可转为 `ready_to_send`。`return` 必须提供 rule/observation/requested_revision，服务持久化反馈并创建新 Meeting run 做最多三轮修订；用尽仍未通过才转入 `needs_human`。`reject` 转人工；格式或结果验证失败按原 Meeting 失败规则处理，外部依赖不可用沿用原退避重试。新投递和人工重排都会检查审核绑定，旧的未审核候选、缺失审核、修改后的候选或错误摘要均不得产生新发送。已经有 provider 回执时的只读效果核实与状态恢复沿用原有回执、正文、收件目标验证，不要求为既成外部效果补造审核。不可变收件人准备绑定、同一投递键、provider 回执和原目标冲突保护保持原样。
+Meeting planner 的 `audit_summary` 不是审核回执。分析成功后，服务以独立 model-only Audit（无原生工具或 MCP）调用复核会议来源、群候选、准确收件人、正文与披露范围；运行器传来的 Codex JSONL 先提取最终 assistant 消息，路由器已规范化的纯 JSON 直接解析，然后对两种输入执行相同结果模型及候选 SHA-256 校验。审核输出绑定候选 SHA-256，并和候选及 Audit session 引用一并保存。只有通过该摘要绑定校验且 `outcome=approve` 的候选可转为 `ready_to_send`。`return` 必须提供 rule/observation/requested_revision，服务持久化反馈并创建新 Meeting run 做最多三轮修订；用尽仍未通过才转入 `needs_human`。`reject` 转人工；格式或结果验证失败按原 Meeting 失败规则处理，外部依赖不可用沿用原退避重试。新投递和人工重排都会检查审核绑定，旧的未审核候选、缺失审核、修改后的候选或错误摘要均不得产生新发送。已经有 provider 回执时的只读效果核实与状态恢复沿用原有回执、正文、收件目标验证，不要求为既成外部效果补造审核。不可变收件人准备绑定、同一投递键、provider 回执和原目标冲突保护保持原样。
 
 Meeting planner RuntimeAttempt 使用 `workload_kind='meeting'` 和准确 Meeting Run 的十进制 ID；独立 Audit 使用 `workload_kind='meeting_audit'` 和同一准确 Run 的十进制 ID。两者在 native `runtime_attempts.parent_id` 上都指向经 `meeting_alignment_runs` provenance 核实的那个 Run；Task ID 或无关 Run 不能代替该 owner。显式 source/native 转换分别保留新 source 的 `meeting_audit` 数字键，同时继续仅在转换器中处理历史 source `meeting` 键加 `:audit` 的记录。失败、启动恢复和回放检查同时覆盖两种 workload。
 

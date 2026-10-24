@@ -1,5 +1,13 @@
 # Changelog
 
+## 2026-10-24 — 服务改动类请求的回复规则
+
+- **「请修一下分身」这类请求不再卡死在审核循环里**：`ceo-message-triage` Skill 新增规则——请求要改 CEO Agent 服务本身时，Consumer 只回复一次，引导发信人用回复末尾的「👎 需改进」链接提交反馈；会话里已有时用 `no_action`。同一 Skill 的 Audit 解释把这条回复视为已满足请求，不因服务尚未修复而退回。此前任务 15810 在「再回复」与 `no_action` 之间被来回退回，三轮用完失败（`audit_revision_exhausted`）。该变更是 Skill 与 Audit 规则变更，需 `--publish-consumer-system-contracts` 发布后生效。
+
+## 2026-10-24 — Consumer 工作工具面改为黑名单
+
+- **Consumer 不再被白名单限制工具**：此前 `make_role_agent_command` 对 Consumer 与 Audit 一样固定关闭 `apps`、`plugins`、`remote_plugin`，只放行 4 个 MCP server 的写死只读工具，并强制关闭本机的其他 MCP server，所以 Figma 等外部读取（Figma 走 apps 通道）和本机其他工具对 Consumer 一律不可用，任务以 `operation_unavailable` 失败（如 15886）。现在 Consumer 沿用本机 CLI 配置：保留 `disabled_servers`、`multi_agent`、`computer_use`、`browser_use*` 关闭，其余 server 全部可用并自动批准。Audit 命令不变。
+
 ## 2026-10-23 — Attention 失败项修复
 
 - **邮件动作队列卡死已修复**：自 10-22 23:59 UTC 起没有邮件动作执行完，队列积压 615 条。领取动作时拿「视图里显示的 started_at」比对，而 10-22 11:33 UTC 之前写入的待处理动作库里存的是空字符串，每次领取都报 `EmailActionAttemptConflict`；最老的一条总是先被领取，于是后面全被堵住。现在改为按事务内读到的库里实际值比对，状态和尝试次数的检查不变，不改写任何已存数据。

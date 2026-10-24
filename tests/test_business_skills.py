@@ -69,6 +69,26 @@ def test_message_triage_skill_audit_respects_counterpart_owned_commitment():
     assert "direct request, decision, commitment, or next step from the principal" in skill
 
 
+def test_message_triage_skill_points_service_change_requests_to_feedback():
+    """15810: 'please fix the avatar' looped between a reply and no_action.
+
+    A reply cannot repair the service, so the Consumer points the sender to the
+    feedback link once and Audit accepts that (or no_action after it) instead of
+    returning it for lacking the repair.
+    """
+    skill = (
+        Path(__file__).resolve().parents[1]
+        / "ci/shared-skills/ceo-message-triage/SKILL.md"
+    ).read_text(encoding="utf-8")
+
+    assert "request to change, repair, or improve the CEO Agent service itself" in skill
+    assert "Reply once" in skill and "feedback" in skill
+    assert "`service_change_request`" in skill
+    assert "### Audit interpretation of service-change requests" in skill
+    assert "do not return `no_action` merely because the service has not been fixed" in skill
+    assert "A second reply that repeats the pointer is a duplicate, not progress." in skill
+
+
 def test_work_tracking_discovery_describes_the_existing_task_agent_role(monkeypatch):
     monkeypatch.setenv("CEO_SKILLS_ROOT", str(Path(__file__).resolve().parents[1] / "ci" / "shared-skills"))
     skill = next(item for item in load_bundled_business_skills() if item.name == "ceo-work-tracking")

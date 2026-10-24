@@ -1479,7 +1479,7 @@ meeting job ID 绑定模型、音频 SHA-256、分段时间和完整分块数，
 原失败运行；外部消息仍只能由原 Meeting 审查与投递流程产生。
 独立 Meeting Alignment planner/delivery 仍是独立路径；共享受众规则不代表迁入通用 Consumer/Audit 引擎。Meeting Alignment 没有任务内 Skill 读取能力。Codex 路线在本轮有冻结的托管会议 Skill 时，提交本轮定时任务提示和该托管 Skill 的完整规则，省去已由服务完成的操作 Skill 正文；原生 Skill 目录仅保留 `dingtalk-chat` 入口供 Agent 按需使用 DWS 核验群，其余重复 Skill 隐藏。其他路线仍提交全部冻结 Skill 正文。没有托管会议 Skill 或冻结材料时，沿用完整原输入及旧自定义 inline 约定。结果模型、受众核验及通过审核后的投递机制保持不变；新增独立审核门禁。
 
-Meeting planner 生成的 `audit_summary` 只是候选字段，不是 Audit。每个候选在进入 `ready_to_send` 前必须由独立、model-only（无原生工具或 MCP）的 Audit 调用复核会议来源、群候选证据、准确收件目标、正文事实和披露范围。审核结果以 `_service_audit` 元数据与原候选共同保存，并绑定候选 SHA-256；新投递与人工重排入口都要求重新验证该绑定且结果为 `approve`。`return` 携带 rule/observation/requested_revision 并进入最多三轮的反馈修订，新 Consumer revision 使用独立 Meeting run 与 Audit runtime workload；达到上限仍未通过才转 `needs_human`。`reject` 转人工，缺失、无效或摘要不匹配按失败关闭，均不得产生新投递。独立 Audit 的外部依赖暂时不可用时，沿用 Meeting 原有外部依赖退避重试；无效审核结果按失败处理。旧的未审核 `ready_to_send` 记录也会在投递前失败关闭。已存在 provider 回执的只读核实与状态恢复继续沿用原有回执、正文及目标校验，不要求为既成外部效果补造审核。收件人准备绑定仍不可变，不允许通过再次审核绕过已有目标冲突；provider 回执与幂等投递保护不变。
+Meeting planner 生成的 `audit_summary` 只是候选字段，不是 Audit。每个候选在进入 `ready_to_send` 前必须由独立、model-only（无原生工具或 MCP）的 Audit 调用复核会议来源、群候选证据、准确收件目标、正文事实和披露范围。运行器传来的 Codex JSONL 先提取最终 assistant 消息；路由器已规范化的纯 JSON 则直接解析，两种输入均执行相同结果模型校验和候选 SHA-256 绑定校验。审核结果以 `_service_audit` 元数据与原候选共同保存，并绑定候选 SHA-256；新投递与人工重排入口都要求重新验证该绑定且结果为 `approve`。`return` 携带 rule/observation/requested_revision 并进入最多三轮的反馈修订，新 Consumer revision 使用独立 Meeting run 与 Audit runtime workload；达到上限仍未通过才转 `needs_human`。`reject` 转人工，缺失、无效或摘要不匹配按失败关闭，均不得产生新投递。独立 Audit 的外部依赖暂时不可用时，沿用 Meeting 原有外部依赖退避重试；无效审核结果按失败处理。旧的未审核 `ready_to_send` 记录也会在投递前失败关闭。已存在 provider 回执的只读核实与状态恢复继续沿用原有回执、正文及目标校验，不要求为既成外部效果补造审核。收件人准备绑定仍不可变，不允许通过再次审核绕过已有目标冲突；provider 回执与幂等投递保护不变。
 
 定时 Meeting 重放仅重新开启没有结果、也没有已准备钉钉外发动作的失败或 `no_action` 任务。普通和敏感版本的 prepared outbound 都由原有投递恢复路径处理；重放不能清除后重新分析其既定动作，也不能改变已绑定收件人。
 
@@ -1952,9 +1952,16 @@ Task 且已确认关联同 Project；当前显示成员仍只取 open/waiting。
 Task 语义上下文用无损紧凑 JSON 序列化，省去排版缩进；字段、顺序、原文字符串、引用偏移和检索选择保持不变。
 source_documents 按完整绑定身份键提供精确版本的共享正文一次，source_signals 保留引用 ID、来源和业务元数据并指向正文；数据库内部 dedupe_key 不进入 Agent 输入，持久去重键及其查询行为不变。
 同一轮 Task semantic context 中完全相同的 `visible_ranges` 与 `decoded_excerpts` 只序列化一次，其余文档用 `duplicate_of_document_id` 指向首份投影；文档身份、元数据、信号和引用保持独立，展开后与原始 source bundle 完全一致。若压缩后的完整 bundle 不更短，则保留原始表示。
-当前 WorkItem 正文也只出现一次，immutable 输入不改。历史长文在 2048 字符预算内保留首尾及关键
-引文；原文可用时，visible_ranges/full_length/truncated 和引用超预算明确显示，JSON 解码引用有实际 leaf 路径/偏移。原文不可用时明确展示状态、定位元数据及已保存引文，未知字符数为 null。
-source_metrics 是正文字符观测，不是总 prompt token 保证；检索排名不证明身份、分工或业务重大性。
+Task 输入里，当前 WorkItem 的正文就是 Work Item JSON 里的 `summary`，只出现一次；语义上下文不再含
+`current_work_item`，也没有 `source_metrics`。来源绑定带外部定位信息（provider 或 native 定位，`source_ref`
+本身就写明听记 ID 或钉钉文档节点）的历史来源不再复制进输入：其文档只有 `document_id`、
+`source_in_input: false`、`body_utf8_bytes` 和已保存的引文 `saved_quotations`，Agent 自己用 dws 读取原文，
+Task 运行可见 `dingtalk-minutes`、`dingtalk-doc` 这两个 Skill，并可用 ai_services 的 `transcribe_audio`（听记转写
+不可用时的提示里说明）。服务只在决策引用某条来源时才读取其精确绑定版本来核对引文（`PreparedSources` 惰性读取），
+不再为拼提示而读取每条历史 Signal。没有定位信息的来源（Console 动作记录）无处可读，保持原有投影：
+2048 字符预算内保留首尾及关键引文，`visible_ranges`/`full_length`/`truncated` 和引用超预算明确显示，JSON 解码引用有实际 leaf 路径/偏移。
+Task 要求路线具备 `local_process_execution` 能力（Codex CLI 与 Claude CLI 具备，Friday Runtime 不具备，因此不再被选去执行 Task），
+调用方不按路线分支。回复任务（reply task）的上下文拼接不变。检索排名不证明身份、分工或业务重大性。
 
 Task Agent 共享 task-agent:work-tracking:v1 逻辑 session，各 route 保留各自原生 session，
 native CLI 自行 compact；每个 WorkItem 仍独立 workload/run。process-work-items 领取前持有 SQLite

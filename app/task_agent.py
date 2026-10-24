@@ -24,7 +24,6 @@ from app.agent_runtime_router import (
     RoutedResultValidationError,
     RoutedResultValidationRetry,
 )
-from app.agent_runtime_contracts import RuntimeKind
 from app.codex_runner import memory_connector_config_issue
 from app.external_retry import ExternalDependencyError
 from app.agent_result import agent_message_json_objects
@@ -84,6 +83,7 @@ from app.task_semantic_service import (
 from app.task_semantic_rules import FormalityEvidence, IdentityEvidence
 from app.task_business_resolution import BusinessResolutionService
 from app.task_attention_projection import AttentionProposal, BusinessAttentionProjection
+from app.service_codex_config import service_mcp_tool_approval_modes_for_agent_role
 from app.task_source_documents import (
     source_contains_quote,
     source_document_key,
@@ -117,8 +117,14 @@ TASK_RUNTIME_CAPABILITIES = frozenset(
     {
         "structured_output",
         "local_schema_validation",
+        # The Agent reads historical source text itself with dws, so the route
+        # must run local processes.
+        "local_process_execution",
     }
 )
+# The Agent reads historical sources itself, so it needs these dws Skills in the
+# harness's own Skill catalog.
+TASK_SOURCE_READING_SKILLS = ("dingtalk-minutes", "dingtalk-doc")
 TASK_RESULT_CODEC = RoutedResultCodec.text(
     schema_id="task_agent.decision.v2",
     allow_evidence_source_refs=True,
@@ -301,7 +307,6 @@ class TaskCodex(Protocol):
         self,
         *,
         prompt: str,
-        friday_prompt: str | None = None,
         workload_key: str,
         session_scope_id: str | None = None,
         continuation_prompt: str | None = None,
@@ -338,10 +343,6 @@ class TaskAgentRunner:
                 work_item, context, memory_issue=memory_issue,
                 current_time=effective_time,
             ),
-            friday_prompt=build_task_agent_prompt(
-                work_item, context, memory_issue=memory_issue,
-                current_time=effective_time, inline_skill=True,
-            ),
             workload_key=(
                 str(run_id) if repair_round == 0
                 else f"{run_id}:decision_repair.{repair_round}"
@@ -377,7 +378,6 @@ class TaskAgentCodexRunner:
         self,
         *,
         prompt: str,
-        friday_prompt: str | None = None,
         workload_key: str,
         session_scope_id: str | None = None,
         continuation_prompt: str | None = None,
@@ -393,18 +393,19 @@ class TaskAgentCodexRunner:
                 workload_kind="task",
                 workload_key=workload_key,
                 prompt=prompt,
-                **(
-                    {"route_prompt_overrides": {RuntimeKind.FRIDAY_RUNTIME: friday_prompt}}
-                    if friday_prompt is not None
-                    else {}
-                ),
                 command_factory=CodexCommandFactory.standard(
                     developer_instructions=(
                         "Return exactly one TaskAgentDecision JSON object.\n\n"
                         + BACKGROUND_AGENT_RUNTIME_BOUNDARY
                     ),
-                    skill_names=(WORK_TRACKING_SKILL_PATH.parent.name,),
+                    skill_names=(
+                        WORK_TRACKING_SKILL_PATH.parent.name,
+                        *TASK_SOURCE_READING_SKILLS,
+                    ),
                     inlined_skill_names=(WORK_TRACKING_SKILL_PATH.parent.name,),
+                    tool_approval_modes_by_server=(
+                        service_mcp_tool_approval_modes_for_agent_role("task")
+                    ),
                     output_schema_path=TASK_AGENT_DECISION_SCHEMA_PATH,
                     use_output_schema=True,
                 ),
@@ -573,7 +574,6 @@ def build_task_agent_prompt(
         else ""
     )
     work_item_payload = work_item.model_dump(mode="json")
-    work_item_payload.pop("summary")
     scheduled_payload = work_item_payload.get("scheduled_consumer")
     if isinstance(scheduled_payload, dict):
         scheduled_payload.pop("skill_protocol", None)
@@ -583,7 +583,11 @@ def build_task_agent_prompt(
         "The meeting transcript was unavailable for this source. Use only the "
         "explicit Todo and meeting-summary evidence that is present. Do not "
         "infer an individual owner, commitment, or assignment from missing "
-        "transcript context; leave unsupported ownership unresolved."
+        "transcript context; leave unsupported ownership unresolved. If you need "
+        "the spoken content to understand the meeting, you may transcribe the "
+        "recording yourself with the ai_services transcribe_audio tool (fetch the "
+        "recording with dws). Your own transcription is not part of the bound "
+        "source, so cite only quotes that appear in the source itself."
         if work_item.context.source_transcript_unavailable
         else ""
     )
@@ -624,11 +628,15 @@ sessions and the native CLI manages compaction. Current source authority takes p
 Current Work Item JSON:
 {work_item_json}
 {transcript_limitation}
-Source body: current_work_item.document_id and source_signals.document_id point
-to source_documents. If a document has duplicate_of_document_id, use that
-document's visible_ranges and decoded_excerpts; its source identity stays
-separate. Offsets are character ranges in that exact version, not a claim that
-an omitted middle or another version was read.
+The Work Item's summary above is its source text. Historical sources are in
+source_documents, one per Signal in source_signals. A document with
+source_in_input false is not copied here: read it yourself with dws from that
+Signal's source_type and source_ref (the ref names the minutes id or the
+document), using the matching dws Skill. A document with visible_ranges or
+decoded_excerpts carries its text here; if it has duplicate_of_document_id, use
+that document's ranges, its source identity stays separate. Offsets are character
+ranges in that exact version. A quote you cite must be exact text of the version
+the Signal is bound to; the service checks it when it applies your decision.
 Current semantic Project/Task context (rank is context, never authority):
 {candidate_prompt}
 
@@ -3538,9 +3546,7 @@ def process_work_item(
         work_item = WorkItem.model_validate_json(work_input.payload_json)
         source_reader = store.business_source_reader(provider_reader=dws)
         semantic_context = retrieve_task_semantic_context(store, work_item, source_reader=source_reader)
-        context_prompt = render_task_semantic_context(
-            semantic_context, work_item=work_item
-        )
+        context_prompt = render_task_semantic_context(semantic_context)
         active_run_id = store.claim_professional_run(work_input.id)
         memory_issue = memory_connector_config_issue()
         repair_context = None

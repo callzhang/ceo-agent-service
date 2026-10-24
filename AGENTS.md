@@ -72,6 +72,12 @@ console answering in 80 seconds. Run the test files that cover your change.
 If a full run is really needed, run it in parallel (`pytest -q -n 6`, about
 3 minutes) and not while a restart is in progress.
 
+Derek, 2026-10-23: every test process has a fixed 3 GB memory ceiling
+(`tests/conftest.py`, `tests/support/memory_limit.py`). A process that passes it
+is ended at once and names the test it was running. A parallel run had put six
+workers at 13-23 GB each (about 80 GB) and froze the machine. Do not raise the
+ceiling or add a way to change it; fix the test that reaches it.
+
 ## Production checkout and deploys
 
 Derek, 2026-09-25: the service does not run from this development tree. launchd
