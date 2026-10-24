@@ -1353,6 +1353,15 @@ Codex Consumer 可在 task-bound `/tmp` 工作区进行原生代码执行；Audi
 摘要不会生成 candidate execution、外部动作回执或 sent_replies。此规则不改变已有运行时风险拒绝、
 授权缺失或历史拒绝不可重放的处理。
 
+Codex Consumer 的工作工具面不是白名单（Derek 2026-10-24）：`make_role_agent_command` 对 Consumer 不再强制关闭
+`features.apps`、`features.plugins`、`features.remote_plugin`，也不再关闭 `~/.codex/config.toml` 里的其他 MCP server
+或限制它们的工具，而是沿用本机 CLI 的配置，并对这些 server 设置 `default_tools_approval_mode="approve"`
+（`approval_policy="never"` 下否则工具会被拒绝）。仍然关闭的是：服务 MCP 清单（Settings → MCP）的 `disabled_servers`、桌面控制类 server（`computer-use`、`computer-history`、`cua_repl`，代码常量 `CONSUMER_ALWAYS_DISABLED_SERVERS`）、
+`multi_agent`、`computer_use`、`browser_use*` 等原生功能。读取 Figma 这类外部信息属于处理过程中的工作工具，不走提议；
+只有发消息和发邮件等需要 Audit 的终态动作走 typed action，该约束仍是提示词约束（Consumer 不得经 shell 的 `dws` 发消息、发邮件）。
+Audit 的命令不变：仍关闭上述功能，只启用 `ROLE_MCP_READ_TOOLS` 列出的只读工具，并强制关闭其余 server。
+Runtime Context 对没有 `enabled_tools` 限制的 server 声明 `mcp__<server>__*`（全部工具，参数以本轮工具 schema 为准），不再逐个枚举。
+
 Codex Consumer 命令按当前 `consumer_purpose` 选择 general/OA 原生输出 Schema，并在模型输出后
 把动态 JSON 键值条目无损还原，再交给现有严格 wire/Pydantic 解析器；OA 动作仍按原有
 action-specific target/payload 合同校验。已完成运行结果的 schema identity 绑定实际提交的 Schema

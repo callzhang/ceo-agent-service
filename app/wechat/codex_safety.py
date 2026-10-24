@@ -120,6 +120,24 @@ ROLE_DISABLED_NATIVE_FEATURES = (
     "skill_mcp_dependency_install", "memories",
 )
 
+# Derek 2026-10-24: the Consumer works with whatever the local machine offers
+# (app connectors such as Figma, plugins, and every MCP server in the CLI home);
+# only sending messages and email is a terminal action that goes through a
+# proposal. These features are therefore left to the CLI's own configuration for
+# the Consumer instead of being forced off. Audit still receives them disabled.
+CONSUMER_INHERITED_NATIVE_FEATURES = frozenset({"apps", "plugins", "remote_plugin"})
+
+# Desktop-control servers stay off for the Consumer whatever the manifest says
+# (Derek 2026-10-24: computer use stays disabled).
+CONSUMER_ALWAYS_DISABLED_SERVERS = frozenset(
+    {"computer-use", "computer-history", "cua_repl"}
+)
+
+_MANIFEST_DISABLED_SERVER = re.compile(
+    r'^mcp_servers\.([A-Za-z0-9_-]+)=\{"enabled" = false'
+)
+
+
 @dataclass(frozen=True)
 class ControlledCliConfig:
     command: str
@@ -197,6 +215,18 @@ def configured_transport_server_names(command: list[str]) -> tuple[str, ...]:
     return tuple(sorted(names))
 
 
+def manifest_disabled_server_names(command: list[str]) -> tuple[str, ...]:
+    """Servers the service MCP manifest switched off (Settings -> MCP)."""
+    names: set[str] = set()
+    for index, value in enumerate(command[:-1]):
+        if value != "-c":
+            continue
+        match = _MANIFEST_DISABLED_SERVER.match(command[index + 1])
+        if match:
+            names.add(match.group(1))
+    return tuple(sorted(names))
+
+
 def inherited_native_server_names() -> tuple[str, ...]:
     """Inventory only server names from this CLI home's native config."""
     config_path = resolved_codex_home(os.environ) / "config.toml"
@@ -250,6 +280,8 @@ def make_role_agent_command(
         *(option for feature in ROLE_DISABLED_NATIVE_FEATURES
           if feature != "code_mode_host" and not (
               role == "consumer" and feature in {"shell_tool", "unified_exec"}
+          ) and not (
+              role == "consumer" and feature in CONSUMER_INHERITED_NATIVE_FEATURES
           )
           for option in ("-c", f"features.{feature}=false")),
         # Only OA Consumer/Audit compose source bytes and OCR inside CodeMode.
@@ -311,14 +343,34 @@ def make_role_agent_command(
                 del command[index:index + 2]
     for name in sorted(configured_names):
         if name != "agent_cli":
+            if role != "consumer":
+                options.extend([
+                    "-c", f"mcp_servers.{name}.enabled_tools="
+                    + json.dumps(list(ROLE_MCP_READ_TOOLS.get(name, ()))),
+                ])
             options.extend([
-                "-c", f"mcp_servers.{name}.enabled_tools="
-                + json.dumps(list(ROLE_MCP_READ_TOOLS.get(name, ()))),
                 "-c", f'mcp_servers.{name}.default_tools_approval_mode="approve"',
             ])
-    for name in sorted((set(inherited_native_server_names()) | configured_names)
-                       - ({"agent_cli"} | (configured_names & ROLE_MCP_READ_TOOLS.keys()))):
-        options.extend(("-c", f"mcp_servers.{name}.enabled=false"))
+    if role == "consumer":
+        # Every server in the CLI home stays available with all its tools; the
+        # manifest's disabled_servers are already switched off in `command`.
+        inherited = set(inherited_native_server_names())
+        manifest_disabled = set(manifest_disabled_server_names(command))
+        for name in sorted(
+            inherited & CONSUMER_ALWAYS_DISABLED_SERVERS - manifest_disabled
+        ):
+            options.extend(("-c", f"mcp_servers.{name}.enabled=false"))
+        for name in sorted(
+            inherited - {"agent_cli"} - configured_names - manifest_disabled
+            - CONSUMER_ALWAYS_DISABLED_SERVERS
+        ):
+            options.extend((
+                "-c", f'mcp_servers.{name}.default_tools_approval_mode="approve"',
+            ))
+    else:
+        for name in sorted((set(inherited_native_server_names()) | configured_names)
+                           - ({"agent_cli"} | (configured_names & ROLE_MCP_READ_TOOLS.keys()))):
+            options.extend(("-c", f"mcp_servers.{name}.enabled=false"))
     if controlled_cli is not None:
         options.extend(
             [
