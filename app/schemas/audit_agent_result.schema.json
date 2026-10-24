@@ -44,107 +44,6 @@
       "title": "AgentError",
       "type": "object"
     },
-    "AuditEffectiveReturnAssessment": {
-      "additionalProperties": false,
-      "properties": {
-        "rounds": {
-          "items": {
-            "$ref": "#/$defs/AuditEffectiveReturnRound"
-          },
-          "maxItems": 3,
-          "minItems": 3,
-          "title": "Rounds",
-          "type": "array"
-        },
-        "current_gap_unresolved": {
-          "title": "Current Gap Unresolved",
-          "type": "boolean"
-        },
-        "current_evidence_ref": {
-          "minLength": 1,
-          "title": "Current Evidence Ref",
-          "type": "string"
-        },
-        "current_evidence_time": {
-          "minLength": 1,
-          "title": "Current Evidence Time",
-          "type": "string"
-        },
-        "current_unresolved_basis": {
-          "minLength": 1,
-          "title": "Current Unresolved Basis",
-          "type": "string"
-        }
-      },
-      "required": [
-        "rounds",
-        "current_gap_unresolved",
-        "current_evidence_ref",
-        "current_evidence_time",
-        "current_unresolved_basis"
-      ],
-      "title": "AuditEffectiveReturnAssessment",
-      "type": "object"
-    },
-    "AuditEffectiveReturnRound": {
-      "additionalProperties": false,
-      "properties": {
-        "return_ref": {
-          "minLength": 1,
-          "title": "Return Ref",
-          "type": "string"
-        },
-        "return_time": {
-          "minLength": 1,
-          "title": "Return Time",
-          "type": "string"
-        },
-        "same_gap": {
-          "minLength": 1,
-          "title": "Same Gap",
-          "type": "string"
-        },
-        "actionable_request": {
-          "minLength": 1,
-          "title": "Actionable Request",
-          "type": "string"
-        },
-        "responses": {
-          "default": [],
-          "items": {
-            "$ref": "#/$defs/AuditReturnResponseEvidence"
-          },
-          "title": "Responses",
-          "type": "array"
-        },
-        "no_response_readback_ref": {
-          "anyOf": [
-            {
-              "minLength": 1,
-              "type": "string"
-            },
-            {
-              "type": "null"
-            }
-          ],
-          "default": null,
-          "title": "No Response Readback Ref"
-        },
-        "same_gap_unresolved_after_response": {
-          "title": "Same Gap Unresolved After Response",
-          "type": "boolean"
-        }
-      },
-      "required": [
-        "return_ref",
-        "return_time",
-        "same_gap",
-        "actionable_request",
-        "same_gap_unresolved_after_response"
-      ],
-      "title": "AuditEffectiveReturnRound",
-      "type": "object"
-    },
     "AuditFeedback": {
       "additionalProperties": false,
       "properties": {
@@ -200,49 +99,6 @@
       ],
       "title": "AuditOutcome",
       "type": "string"
-    },
-    "AuditReturnResponseEvidence": {
-      "additionalProperties": false,
-      "properties": {
-        "source_ref": {
-          "minLength": 1,
-          "title": "Source Ref",
-          "type": "string"
-        },
-        "source_time": {
-          "minLength": 1,
-          "title": "Source Time",
-          "type": "string"
-        },
-        "response_type": {
-          "enum": [
-            "applicant_reply",
-            "approver_comment",
-            "attachment",
-            "other"
-          ],
-          "title": "Response Type",
-          "type": "string"
-        },
-        "substantive_summary": {
-          "minLength": 1,
-          "title": "Substantive Summary",
-          "type": "string"
-        },
-        "cures_same_gap": {
-          "title": "Cures Same Gap",
-          "type": "boolean"
-        }
-      },
-      "required": [
-        "source_ref",
-        "source_time",
-        "response_type",
-        "substantive_summary",
-        "cures_same_gap"
-      ],
-      "title": "AuditReturnResponseEvidence",
-      "type": "object"
     },
     "CandidateFieldAssertion": {
       "additionalProperties": false,
@@ -367,18 +223,6 @@
       },
       "title": "Evidence Refs",
       "type": "array"
-    },
-    "oa_effective_return_assessment": {
-      "anyOf": [
-        {
-          "$ref": "#/$defs/AuditEffectiveReturnAssessment"
-        },
-        {
-          "type": "null"
-        }
-      ],
-      "default": null,
-      "description": "Required when approving an OA rejection whose rationale relies on three effective returns for the same gap. Include all three timestamped rounds, every post-return response or a complete negative readback reference, cure judgments and current unresolved evidence; cite every reference in evidence_refs."
     },
     "feedback": {
       "anyOf": [

@@ -689,105 +689,6 @@ class AuditFeedback(BaseModel):
         return self
 
 
-def _validate_audit_source_time(value: str) -> str:
-    try:
-        instant = datetime.fromisoformat(value.replace("Z", "+00:00"))
-    except ValueError as exc:
-        raise ValueError("source_time must be an ISO-8601 timestamp") from exc
-    if instant.tzinfo is None:
-        raise ValueError("source_time must include a timezone")
-    return value
-
-
-class AuditReturnResponseEvidence(BaseModel):
-    model_config = ConfigDict(extra="forbid", strict=True)
-
-    source_ref: str = Field(min_length=1)
-    source_time: str = Field(min_length=1)
-    response_type: Literal["applicant_reply", "approver_comment", "attachment", "other"]
-    substantive_summary: str = Field(min_length=1)
-    cures_same_gap: bool
-
-    @field_validator("source_time")
-    @classmethod
-    def validate_source_time(cls, value: str) -> str:
-        return _validate_audit_source_time(value)
-
-
-class AuditEffectiveReturnRound(BaseModel):
-    model_config = ConfigDict(extra="forbid", strict=True)
-
-    return_ref: str = Field(min_length=1)
-    return_time: str = Field(min_length=1)
-    same_gap: str = Field(min_length=1)
-    actionable_request: str = Field(min_length=1)
-    responses: tuple[AuditReturnResponseEvidence, ...] = ()
-    no_response_readback_ref: str | None = Field(default=None, min_length=1)
-    same_gap_unresolved_after_response: bool
-
-    @field_validator("return_time")
-    @classmethod
-    def validate_return_time(cls, value: str) -> str:
-        return _validate_audit_source_time(value)
-
-    @field_validator("responses", mode="before")
-    @classmethod
-    def accept_json_responses(cls, value: object) -> object:
-        return tuple(value) if isinstance(value, list) else value
-
-    @model_validator(mode="after")
-    def require_response_or_complete_negative_readback(self) -> "AuditEffectiveReturnRound":
-        if self.responses and self.no_response_readback_ref is not None:
-            raise ValueError("return round cannot claim both responses and no-response readback")
-        if not self.responses and not self.no_response_readback_ref:
-            raise ValueError("return round without responses requires a complete no-response readback reference")
-        returned_at = datetime.fromisoformat(self.return_time.replace("Z", "+00:00"))
-        for response in self.responses:
-            if datetime.fromisoformat(response.source_time.replace("Z", "+00:00")) < returned_at:
-                raise ValueError("post-return response source_time precedes its return")
-        if not self.responses and not self.same_gap_unresolved_after_response:
-            raise ValueError("no-response round must leave the requested gap unresolved")
-        return self
-
-
-class AuditEffectiveReturnAssessment(BaseModel):
-    model_config = ConfigDict(extra="forbid", strict=True)
-
-    rounds: tuple[AuditEffectiveReturnRound, ...] = Field(min_length=3, max_length=3)
-    current_gap_unresolved: bool
-    current_evidence_ref: str = Field(min_length=1)
-    current_evidence_time: str = Field(min_length=1)
-    current_unresolved_basis: str = Field(min_length=1)
-
-    @field_validator("rounds", mode="before")
-    @classmethod
-    def accept_json_rounds(cls, value: object) -> object:
-        return tuple(value) if isinstance(value, list) else value
-
-    @field_validator("current_evidence_time")
-    @classmethod
-    def validate_current_evidence_time(cls, value: str) -> str:
-        return _validate_audit_source_time(value)
-
-    @model_validator(mode="after")
-    def require_chronological_same_gap_rounds(self) -> "AuditEffectiveReturnAssessment":
-        normalized_gaps = {item.same_gap.strip().casefold() for item in self.rounds}
-        if len(normalized_gaps) != 1:
-            raise ValueError("effective return rounds must concern the same substantive gap")
-        return_times = [
-            datetime.fromisoformat(item.return_time.replace("Z", "+00:00"))
-            for item in self.rounds
-        ]
-        if return_times != sorted(return_times) or len(set(return_times)) != 3:
-            raise ValueError("effective return rounds must have unique chronological timestamps")
-        if len({item.return_ref for item in self.rounds}) != 3:
-            raise ValueError("effective return rounds require distinct return references")
-        current_time = datetime.fromisoformat(self.current_evidence_time.replace("Z", "+00:00"))
-        if current_time < return_times[-1]:
-            raise ValueError("current unresolved evidence must postdate the third return")
-        return self
-
-
 class AuditExternalResult(BaseModel):
     model_config = ConfigDict(extra="forbid", strict=True)
 
@@ -803,15 +704,6 @@ class AuditAgentResult(BaseModel):
     proposal_revision: int = Field(ge=0)
     candidate_digest: str = Field(pattern=r"^[0-9a-f]{64}$")
     evidence_refs: tuple[str, ...] = ()
-    oa_effective_return_assessment: AuditEffectiveReturnAssessment | None = Field(
-        default=None,
-        description=(
-            "Required when approving an OA rejection whose rationale relies on three effective "
-            "returns for the same gap. Include all three timestamped rounds, every post-return "
-            "response or a complete negative readback reference, cure judgments and current "
-            "unresolved evidence; cite every reference in evidence_refs."
-        ),
-    )
     feedback: AuditFeedback | None
     error: AgentError
     risk: RiskLevel
