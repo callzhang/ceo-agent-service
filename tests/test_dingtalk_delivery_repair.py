@@ -17,9 +17,9 @@ from app.dingtalk_delivery_repair import (
 )
 from app.action_storage import (
     AGENT_EFFECT_INTENT_SQL, NATIVE_CANDIDATE_ACTION_ATTEMPT_SQL,
-    NATIVE_EXTERNAL_ACTION_RESULT_SQL,
-    insert_error_action,
+    NATIVE_EXTERNAL_ACTION_RESULT_SQL, insert_action, insert_error_action,
 )
+from app.current_action_schema import current_reply_action_projection
 from app.store import NATIVE_REVIEW_CANDIDATE_SQL
 from app.system_executor import ActionOutcome, SystemExecutor
 from tests.test_agent_orchestrator import ScriptedAudit, ScriptedConsumer, candidate, task_and_context
@@ -229,6 +229,18 @@ def _legacy_native_readback_case(tmp_path, monkeypatch):
             "started_at": "historical-start", "completed_at": "historical-complete",
         })
         run_id = int(run["id"])
+        attempt = insert_action(db, "reply_attempts", {
+            "conversation_id": task.conversation_id,
+            "conversation_title": task.conversation_title,
+            "trigger_message_id": task.trigger_message_id,
+            "trigger_sender": task.trigger_sender,
+            "trigger_text": task.trigger_text,
+            "action": "reply", "sensitivity_kind": "none",
+            "send_status": "completed", "agent_run_id": run_id,
+            "channel": task.channel, "draft_reply_text": "Exact prepared advice",
+            "final_reply_text": "Exact prepared advice",
+        })
+        attempt_id = int(attempt.lastrowid)
         # This event predates candidate approval. It is retained historical
         # Action evidence and deliberately has no adopted candidate linkage.
         record_sent_action(
@@ -252,7 +264,7 @@ def _legacy_native_readback_case(tmp_path, monkeypatch):
         receipt = dict(receipt)
     sent = store.get_sent_reply(task.conversation_id, task.trigger_message_id)
     readback = _native_chat_proof(task, sent)
-    return store, task, receipt, readback
+    return store, task, receipt, readback, attempt_id
 
 
 def _legacy_delivery_facts(store, task, external_action_key):
@@ -284,17 +296,25 @@ def _legacy_delivery_facts(store, task, external_action_key):
             f"select id from ({NATIVE_CANDIDATE_ACTION_ATTEMPT_SQL}) where external_action_key=?",
             (external_action_key,),
         ).fetchall()
+        run_id = result[0][3]
+        attempts = db.execute(
+            f"select id,send_status,permission_action,reviewed_at,audit_tool_events_json,audit_documents_json "
+            f"from ({current_reply_action_projection('reply_attempts')}) "
+            "where agent_run_id=? and channel=? and conversation_id=? and trigger_message_id=?",
+            (run_id, task.channel, task.conversation_id, task.trigger_message_id),
+        ).fetchall()
     return {
         "action": tuple(tuple(row) for row in action),
         "result": tuple(tuple(row) for row in result),
         "sent": tuple(tuple(row) for row in sent),
         "candidate_ids": tuple(tuple(row) for row in candidates),
         "candidate_action_attempt_ids": tuple(tuple(row) for row in action_attempts),
+        "reply_attempts": tuple(tuple(row) for row in attempts),
     }
 
 
 def test_native_chat_readback_settles_legacy_completed_reply_without_inventing_audit(tmp_path, monkeypatch):
-    store, task, receipt, readback = _legacy_native_readback_case(tmp_path, monkeypatch)
+    store, task, receipt, readback, attempt_id = _legacy_native_readback_case(tmp_path, monkeypatch)
     original_provider = json.loads(receipt["provider_result_json"])
     sent_before = store.get_sent_reply(task.conversation_id, task.trigger_message_id)
     assert sent_before.reply_text == "Exact prepared advice"
@@ -304,6 +324,8 @@ def test_native_chat_readback_settles_legacy_completed_reply_without_inventing_a
     assert len(delivery_facts_before["sent"]) == 1
     assert delivery_facts_before["candidate_ids"] == ()
     assert delivery_facts_before["candidate_action_attempt_ids"] == ()
+    assert len(delivery_facts_before["reply_attempts"]) == 1
+    assert delivery_facts_before["reply_attempts"][0][0] == attempt_id
     with store._connect() as db:
         original_run = db.execute(
             "select id,task_id as reply_task_id,execution_generation,role,status from runs where id=?",
@@ -345,11 +367,45 @@ def test_native_chat_readback_settles_legacy_completed_reply_without_inventing_a
     assert not apply_native_chat_readback(store, readback)
 
 
-@pytest.mark.parametrize("mutation", ["permission", "receipt_target"])
+@pytest.mark.parametrize("mutation", [
+    "missing_attempt", "duplicate_attempt", "incomplete_attempt", "permission",
+    "reviewed", "audit_tools", "audit_documents", "effect_intent", "receipt_target",
+])
 def test_legacy_native_readback_requires_unreviewed_exact_historical_facts(tmp_path, mutation, monkeypatch):
-    store, task, receipt, readback = _legacy_native_readback_case(tmp_path, monkeypatch)
+    store, task, receipt, readback, attempt_id = _legacy_native_readback_case(tmp_path, monkeypatch)
     with store._immediate_write_transaction() as db:
-        if mutation == "permission":
+        if mutation == "missing_attempt":
+            from app.action_storage import delete_action
+
+            delete_action(db, "reply_attempts", attempt_id)
+        elif mutation == "duplicate_attempt":
+            insert_action(db, "reply_attempts", {
+                "conversation_id": task.conversation_id,
+                "conversation_title": task.conversation_title,
+                "trigger_message_id": task.trigger_message_id,
+                "trigger_sender": task.trigger_sender,
+                "trigger_text": task.trigger_text,
+                "action": "reply", "sensitivity_kind": "none",
+                "send_status": "completed", "agent_run_id": receipt["first_agent_run_id"],
+                "channel": task.channel,
+            })
+        elif mutation in {"incomplete_attempt", "permission", "audit_tools", "audit_documents"}:
+            from app.action_storage import update_action
+
+            changes = {
+                "incomplete_attempt": {"send_status": "failed"},
+                "permission": {"permission_action": "send"},
+                "audit_tools": {"audit_tool_events_json": '[{"tool":"audit_review","result":"queued"}]'},
+                "audit_documents": {"audit_documents_json": '[{"document_id":"reviewed"}]'},
+            }[mutation]
+            assert update_action(db, "reply_attempts", attempt_id, changes).rowcount == 1
+        elif mutation == "reviewed":
+            from app.action_storage import update_action
+
+            assert update_action(db, "reply_attempts", attempt_id, {
+                "reviewed_at": "reviewed-at", "reviewer_feedback": "reviewed",
+            }).rowcount == 1
+        elif mutation == "effect_intent":
             from app import action_storage
             from app.storage_payload import ACTION_RECORD_TYPES
 
@@ -370,7 +426,7 @@ def test_legacy_native_readback_requires_unreviewed_exact_historical_facts(tmp_p
                 (ACTION_RECORD_TYPES.code("agent_effect_intents"), "1",
                  receipt["first_agent_run_id"], payload),
             )
-        else:
+        elif mutation == "receipt_target":
             from app.action_entity_storage import update_sent_receipt
 
             action_id = db.execute(
@@ -408,6 +464,13 @@ def test_legacy_native_readback_requires_unreviewed_exact_historical_facts(tmp_p
             "where agent_run_id=? order by id",
             (receipt["first_agent_run_id"],),
         ).fetchall()
+        before_reply_attempts = db.execute(
+            f"select id,send_status,permission_action,reviewed_at,audit_tool_events_json,audit_documents_json "
+            f"from ({current_reply_action_projection('reply_attempts')}) "
+            "where agent_run_id=? and channel=? and conversation_id=? and trigger_message_id=? order by id",
+            (receipt["first_agent_run_id"], task.channel, task.conversation_id,
+             task.trigger_message_id),
+        ).fetchall()
     with pytest.raises(ValueError, match="legacy reply lacks"):
         apply_native_chat_readback(store, readback)
     assert store.get_reply_task(task.id).status == "failed"
@@ -426,6 +489,16 @@ def test_legacy_native_readback_requires_unreviewed_exact_historical_facts(tmp_p
             (receipt["first_agent_run_id"],),
         ).fetchall()
         assert [tuple(row) for row in after_attempt] == [tuple(row) for row in before_attempt]
+        after_reply_attempts = db.execute(
+            f"select id,send_status,permission_action,reviewed_at,audit_tool_events_json,audit_documents_json "
+            f"from ({current_reply_action_projection('reply_attempts')}) "
+            "where agent_run_id=? and channel=? and conversation_id=? and trigger_message_id=? order by id",
+            (receipt["first_agent_run_id"], task.channel, task.conversation_id,
+             task.trigger_message_id),
+        ).fetchall()
+        assert [tuple(row) for row in after_reply_attempts] == [
+            tuple(row) for row in before_reply_attempts
+        ]
         assert after_sent.reply_text == before_sent.reply_text
         assert after_sent.agent_run_id == before_sent.agent_run_id
 

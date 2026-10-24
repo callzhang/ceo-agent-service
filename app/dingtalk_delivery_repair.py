@@ -12,6 +12,7 @@ from app.action_storage import (
     NATIVE_EXTERNAL_ACTION_RESULT_SQL, candidate_action_attempt_row,
     SENT_REPLY_SQL,
 )
+from app.current_action_schema import current_reply_action_projection
 from app.agent_contracts import SystemExecutionResult
 from app.store import (
     NATIVE_AGENT_RUN_SQL, NATIVE_CANDIDATE_EXECUTION_SQL,
@@ -323,6 +324,12 @@ def apply_native_chat_readback(store, proof: dict) -> bool:
             historical_candidates = db.execute(
                 f"select id from ({NATIVE_REVIEW_CANDIDATE_SQL}) where task_id=?", (task_id,)
             ).fetchall()
+            attempts = db.execute(
+                f"select * from ({current_reply_action_projection('reply_attempts')}) "
+                "where agent_run_id=? and channel=? and conversation_id=? and trigger_message_id=?",
+                (receipt["first_agent_run_id"], task["channel"], task["conversation_id"],
+                 task["trigger_message_id"]),
+            ).fetchall()
             effect_intents = db.execute(
                 f"select * from ({AGENT_EFFECT_INTENT_SQL}) where agent_run_id=? "
                 "and capability='dingtalk-chat' and operation='reply_to_message'",
@@ -337,8 +344,13 @@ def apply_native_chat_readback(store, proof: dict) -> bool:
                 "conversation_id": task["conversation_id"],
                 "message_id": task["trigger_message_id"],
             }
-            if (historical_candidates or effect_intents or run is None
+            if (historical_candidates or effect_intents or len(attempts) != 1 or run is None
                     or run["status"] != "completed"
+                    or attempts[0]["send_status"] != "completed"
+                    or attempts[0]["permission_action"] != ""
+                    or attempts[0]["reviewed_at"] is not None
+                    or attempts[0]["audit_tool_events_json"] not in (None, "", "[]")
+                    or attempts[0]["audit_documents_json"] not in (None, "", "[]")
                     or json.loads(receipt["target_identifiers_json"]) != expected_target):
                 raise ValueError("legacy reply lacks one exact completed run and delivery record")
             source_digest = hashlib.sha256(original.encode()).hexdigest()
