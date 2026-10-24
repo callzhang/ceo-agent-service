@@ -131,7 +131,7 @@ def test_semantic_context_renders_pointer_and_prompt_explains_lookup(
     )
     context = retrieve_task_semantic_context(store, item)
 
-    rendered = render_task_semantic_context(context, work_item=item)
+    rendered = render_task_semantic_context(context)
     payload = json.loads(rendered)
     prompt = build_task_agent_prompt(item, rendered)
 

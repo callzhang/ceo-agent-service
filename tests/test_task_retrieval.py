@@ -87,10 +87,10 @@ def test_project_context_without_task_is_retrieved_from_its_own_sources(tmp_path
     assert context.project_contexts[0].project_id == project
     assert [p.signal_id for p in context.project_evidence] == [signal]
     assert [s.id for s in context.evidence_signals] == [signal]
-    payload = json.loads(render_task_semantic_context(context, work_item=item))
+    payload = json.loads(render_task_semantic_context(context))
     assert payload["project_contexts"][0]["context"]["overall_owner"]["person_name"] == "张三"
-    assert "summary" not in payload["current_work_item"]
-    assert len(payload["source_documents"]) == 2
+    assert "current_work_item" not in payload
+    assert len(payload["source_documents"]) == 1
     assert store.list_business_tasks() == ()
 
 
@@ -134,9 +134,9 @@ def test_shared_source_same_source_formal_tasks_are_not_lost_to_rank_limit(tmp_p
     )
     assert {task.id for task in context.formal_tasks} == set(own)
     assert [task.id for task in context.unverified_formal_tasks] == [unverified]
-    payload = json.loads(render_task_semantic_context(context, work_item=item))
+    payload = json.loads(render_task_semantic_context(context))
     assert len(payload["source_signals"]) == 4
-    assert len(payload["source_documents"]) == 2
+    assert len(payload["source_documents"]) == 1
 
 
 def test_semantic_context_stops_owner_reads_after_both_formal_buckets_are_full(tmp_path):
@@ -220,10 +220,10 @@ def test_shared_source_prompt_does_not_duplicate_current_work_item_body(tmp_path
     store = AutoReplyStore(tmp_path / "source-prompt.sqlite3")
     item = _work_item("唯一的本次正文 alpha-BODY-7749")
     context = retrieve_task_semantic_context(store, item)
-    rendered = render_task_semantic_context(context, work_item=item)
+    rendered = render_task_semantic_context(context)
     prompt = build_task_agent_prompt(item, rendered)
     assert prompt.count(item.summary) == 1
-    assert json.loads(rendered)["current_work_item"]["source"]["ref"] == item.source.ref
+    assert "current_work_item" not in json.loads(rendered)
     assert item.summary == "唯一的本次正文 alpha-BODY-7749"
 
 
@@ -261,8 +261,8 @@ def test_project_context_uses_bounded_recent_proof_but_keeps_old_role_citation(t
         proof = [p.signal_id for p in context.project_evidence if p.project_id == project]
         assert first in proof and len(proof) == 2
     assert len(context.evidence_signals) == 3
-    payload = json.loads(render_task_semantic_context(context, work_item=item))
-    assert len(payload["source_documents"]) == 4
+    payload = json.loads(render_task_semantic_context(context))
+    assert len(payload["source_documents"]) == 3
 
 
 def _sourced_formal_task(

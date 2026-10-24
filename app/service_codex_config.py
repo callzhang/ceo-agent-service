@@ -32,7 +32,7 @@ _AI_SERVICES_TOOL_NAMES = (
     "transcribe_audio",
     "synthesize_speech",
 )
-_AGENT_ROLES_WITH_AI_SERVICES = frozenset({"consumer", "audit"})
+_AGENT_ROLES_WITH_AI_SERVICES = frozenset({"consumer", "audit", "task"})
 _SERVER_FIELDS = frozenset(
     {
         "url",
