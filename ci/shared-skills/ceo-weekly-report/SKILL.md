@@ -15,8 +15,10 @@ requirements: assess them under this Skill and the normal Audit feedback
 cycle. Publication readiness is decided by this business review and Audit.
 The former service `publishable` flag and separate publication validator have
 been retired; historical validation output is not a current publication
-condition. Missing business-line submissions are disclosed and do not block the
-report. Do not ask Derek to supply materials already accessible to the Agent.
+condition. Missing business-line submissions and missing CRM, finance or
+telemetry actuals are disclosed as `无数据` with their coverage gaps and do not
+block the report: return `failed` only when a declared read or the document
+write itself fails, never because evidence is incomplete. Do not ask Derek to supply materials already accessible to the Agent.
 
 ## Inputs and dates
 
@@ -37,6 +39,16 @@ report. Do not ask Derek to supply materials already accessible to the Agent.
    `dingtalk-minutes`; missing archives are coverage gaps. Use `dingtalk-chat`
    to read relevant group messages in the same window. Read the previous
    report, the company OKR and the business-line materials as needed.
+4. Read CRM actuals (orders, Pipeline, Gate, expected signing) with the native
+   `sharecrm` CLI in the Consumer shell, following `fxiaoke-crm-cli` (load it
+   with `read_skill`). Read-only: authentication status, help, object
+   description, record reads and queries; never pass `--confirm` or `--yes`,
+   and never create, update, delete or follow up. `sharecrm` keeps its CRM
+   login in the macOS keychain, which the shell sandbox cannot read: run it
+   with escalated permissions (Codex `sandbox_permissions: "require_escalated"`,
+   Claude `dangerouslyDisableSandbox`) and a one-line justification. A query
+   that still fails leaves that metric `无数据` with the exact error in the
+   coverage gaps. Finance has no readable source here and stays `无数据`.
 
 ## Judgment and report data
 
