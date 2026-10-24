@@ -3,6 +3,7 @@ from unittest.mock import patch
 
 from app.codex_decision import append_signature
 from app.dingtalk_models import CodexAction, CodexDecision
+from app.external_retry import MAX_AUTOMATIC_RETRIES
 from app.store import AgentRole, AgentRunLeaseLostError, AutoReplyStore
 from app.wechat import service
 from app.wechat.audit import (
@@ -453,71 +454,41 @@ def test_unperformed_wechat_delivery_waits_five_minutes_before_retry(tmp_path):
     assert store.get_wechat_delivery_for_task(1).status == "failed"
 
 
-def test_unperformed_wechat_delivery_is_requeued_at_most_twice(tmp_path):
+def _fail_before_action(store, delivery_id, error="action_not_performed"):
+    store.mark_wechat_delivery_sending(delivery_id)
+    store.set_wechat_delivery_status(
+        delivery_id, "failed", error=error, pre_action_failure=True,
+    )
+
+
+def _exhaust_pre_action_retries(store, delivery_id, error="action_not_performed"):
+    """Fail before the action until the shared automatic-retry limit is used up."""
+    for _ in range(MAX_AUTOMATIC_RETRIES):
+        _fail_before_action(store, delivery_id, error)
+        assert store.requeue_unperformed_wechat_deliveries(retry_delay_seconds=0) == 1
+    _fail_before_action(store, delivery_id, error)
+    assert store.requeue_unperformed_wechat_deliveries(retry_delay_seconds=0) == 0
+
+
+def test_unperformed_wechat_delivery_is_requeued_at_most_the_shared_retry_limit(tmp_path):
     store = AutoReplyStore(tmp_path / "w.sqlite3")
     d, attempt_id = _seed_with_attempt(store)
-    store.mark_wechat_delivery_sending(d.id)
-    store.set_wechat_delivery_status(
-        d.id,
-        "failed",
-        error="action_not_performed",
-        pre_action_failure=True,
-    )
 
-    assert store.requeue_unperformed_wechat_deliveries(retry_delay_seconds=0) == 1
-    assert store.get_reply_attempt(attempt_id).retry_count == 1
+    for retry in range(1, MAX_AUTOMATIC_RETRIES + 1):
+        _fail_before_action(store, d.id)
+        assert store.requeue_unperformed_wechat_deliveries(retry_delay_seconds=0) == 1
+        assert store.get_reply_attempt(attempt_id).retry_count == retry
 
-    store.mark_wechat_delivery_sending(d.id)
-    store.set_wechat_delivery_status(
-        d.id,
-        "failed",
-        error="action_not_performed",
-        pre_action_failure=True,
-    )
-
-    assert store.requeue_unperformed_wechat_deliveries(retry_delay_seconds=0) == 1
-    assert store.get_reply_attempt(attempt_id).retry_count == 2
-
-    store.mark_wechat_delivery_sending(d.id)
-    store.set_wechat_delivery_status(
-        d.id,
-        "failed",
-        error="action_not_performed",
-        pre_action_failure=True,
-    )
-
+    _fail_before_action(store, d.id)
     assert store.requeue_unperformed_wechat_deliveries(retry_delay_seconds=0) == 0
     assert store.get_wechat_delivery_for_task(1).status == "failed"
-    assert store.get_reply_attempt(attempt_id).retry_count == 2
+    assert store.get_reply_attempt(attempt_id).retry_count == MAX_AUTOMATIC_RETRIES
 
 
 def test_user_can_retry_expired_pre_action_wechat_delivery(tmp_path):
     store = AutoReplyStore(tmp_path / "w.sqlite3")
     delivery, attempt_id = _seed_with_attempt(store)
-    store.mark_wechat_delivery_sending(delivery.id)
-    store.set_wechat_delivery_status(
-        delivery.id,
-        "failed",
-        error="target_open_failed",
-        pre_action_failure=True,
-    )
-    assert store.requeue_unperformed_wechat_deliveries(retry_delay_seconds=0) == 1
-    store.mark_wechat_delivery_sending(delivery.id)
-    store.set_wechat_delivery_status(
-        delivery.id,
-        "failed",
-        error="target_open_failed",
-        pre_action_failure=True,
-    )
-    assert store.requeue_unperformed_wechat_deliveries(retry_delay_seconds=0) == 1
-    store.mark_wechat_delivery_sending(delivery.id)
-    store.set_wechat_delivery_status(
-        delivery.id,
-        "failed",
-        error="target_open_failed",
-        pre_action_failure=True,
-    )
-    assert store.requeue_unperformed_wechat_deliveries(retry_delay_seconds=0) == 0
+    _exhaust_pre_action_retries(store, delivery.id, "target_open_failed")
     store.skip_exhausted_stale_wechat_delivery(
         delivery.id,
         expected_execution_generation=delivery.execution_generation,
@@ -588,24 +559,16 @@ def test_accessibility_permission_recovery_restores_exhausted_pre_action_deliver
     store = AutoReplyStore(tmp_path / "w.sqlite3")
     delivery, attempt_id = _seed_with_attempt(store)
 
-    for _ in range(3):
-        store.mark_wechat_delivery_sending(delivery.id)
-        store.set_wechat_delivery_status(
-            delivery.id,
-            "failed",
-            error="accessibility_not_trusted",
-            pre_action_failure=True,
-        )
-        store.requeue_unperformed_wechat_deliveries(retry_delay_seconds=0)
+    _exhaust_pre_action_retries(store, delivery.id, "accessibility_not_trusted")
 
     assert store.get_wechat_delivery_by_id(delivery.id).status == "failed"
-    assert store.get_reply_attempt(attempt_id).retry_count == 2
+    assert store.get_reply_attempt(attempt_id).retry_count == MAX_AUTOMATIC_RETRIES
 
     assert store.requeue_wechat_deliveries_after_accessibility_recovery() == 1
     restored = store.get_wechat_delivery_by_id(delivery.id)
     assert restored.status == "ready_to_send"
     assert restored.error == ""
-    assert store.get_reply_attempt(attempt_id).retry_count == 2
+    assert store.get_reply_attempt(attempt_id).retry_count == MAX_AUTOMATIC_RETRIES
 
 
 def test_sender_checks_accessibility_only_for_permission_blocked_delivery(tmp_path):
@@ -661,17 +624,11 @@ def test_recovery_keeps_missing_persisted_send_receipt_unknown(tmp_path):
     assert attempt.retry_count == 0
 
 
-def test_unperformed_delivery_without_attempt_is_requeued_at_most_twice(tmp_path):
+def test_unperformed_delivery_without_attempt_is_requeued_at_most_the_shared_retry_limit(tmp_path):
     store = AutoReplyStore(tmp_path / "w.sqlite3")
     delivery = _seed(store)
-    store.mark_wechat_delivery_sending(delivery.id)
-    store.set_wechat_delivery_status(
-        delivery.id,
-        "failed",
-        error="action_not_performed",
-        pre_action_failure=True,
-    )
 
+    _fail_before_action(store, delivery.id)
     assert store.requeue_unperformed_wechat_deliveries(retry_delay_seconds=0) == 1
     assert store.get_wechat_delivery_for_task(1).status == "ready_to_send"
     attempt = store.get_latest_reply_attempt_for_trigger("u9", "m1")
@@ -679,22 +636,10 @@ def test_unperformed_delivery_without_attempt_is_requeued_at_most_twice(tmp_path
     assert attempt.channel == "wechat"
     assert attempt.retry_count == 1
 
-    store.mark_wechat_delivery_sending(delivery.id)
-    store.set_wechat_delivery_status(
-        delivery.id,
-        "failed",
-        error="action_not_performed",
-        pre_action_failure=True,
-    )
-    assert store.requeue_unperformed_wechat_deliveries(retry_delay_seconds=0) == 1
-
-    store.mark_wechat_delivery_sending(delivery.id)
-    store.set_wechat_delivery_status(
-        delivery.id,
-        "failed",
-        error="action_not_performed",
-        pre_action_failure=True,
-    )
+    for _ in range(MAX_AUTOMATIC_RETRIES - 1):
+        _fail_before_action(store, delivery.id)
+        assert store.requeue_unperformed_wechat_deliveries(retry_delay_seconds=0) == 1
+    _fail_before_action(store, delivery.id)
     assert store.requeue_unperformed_wechat_deliveries(retry_delay_seconds=0) == 0
 
 

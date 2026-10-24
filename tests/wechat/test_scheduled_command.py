@@ -31,16 +31,12 @@ def _store(tmp_path, *, ready: bool = True) -> AutoReplyStore:
 
 
 def _error_kinds(store) -> list[str]:
-    with store._connect() as db:
-        return [row["kind"] for row in db.execute("select kind from errors order by id")]
+    return [error.kind for error in sorted(store.list_errors(), key=lambda error: error.id)]
 
 
 def _reader_health(store) -> dict:
-    with store._connect() as db:
-        row = db.execute(
-            "select value from service_state where key='service_health:wechat.reader'"
-        ).fetchone()
-    return json.loads(row["value"]) if row else {}
+    value = store.get_service_state("service_health:wechat.reader")
+    return json.loads(value) if value else {}
 
 
 def _command(store, *, produce, restarts=None, readers=None):
