@@ -131,6 +131,11 @@ def can_reopen_skipped_oa_review(attempt, task) -> bool:
     """
     if attempt is None or task is None:
         return False
+    if (
+        str(getattr(attempt, "resolved_at", "") or "").strip()
+        and str(getattr(attempt, "resolution", "") or "").strip()
+    ):
+        return False
     process_id = str(getattr(attempt, "oa_process_instance_id", "") or "").strip()
     oa_task_id = str(getattr(attempt, "oa_task_id", "") or "").strip()
     return bool(

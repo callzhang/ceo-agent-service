@@ -1411,6 +1411,75 @@ def test_failed_attempt_rerun_presentation_uses_structured_historical_refusal(
         assert db.execute(f'select count(*) from ({NATIVE_CANDIDATE_EXECUTION_SQL})').fetchone()[0] == 0
 
 
+def test_resolved_terminal_oa_attempt_has_no_history_rerun_action(tmp_path: Path):
+    store = AutoReplyStore(tmp_path / "terminal-oa-rerun.sqlite3")
+    process_id = "terminal-process"
+    task_id = "terminal-task"
+    conversation_id = f"oa_pending_scan:{process_id}"
+    trigger_id = f"oa-pending:{process_id}:revision-1:2026-10-24"
+    trigger = {
+        "open_conversation_id": conversation_id,
+        "open_message_id": trigger_id,
+        "conversation_title": "审批待办",
+        "single_chat": True,
+        "sender_name": "Derek OA",
+        "create_time": "2026-10-24T10:00:00Z",
+        "content": "Review this OA process.",
+    }
+    store.enqueue_reply_task(
+        conversation_id=conversation_id,
+        conversation_title="审批待办",
+        single_chat=True,
+        trigger_message_id=trigger_id,
+        trigger_create_time="2026-10-24T10:00:00Z",
+        trigger_sender="Derek OA",
+        trigger_text="Review this OA process.",
+        trigger_message_json=json.dumps(trigger),
+        oa_url=f"https://aflow.dingtalk.com/detail?procInstId={process_id}&taskId={task_id}",
+        business_object_key=f"oa:{process_id}:{task_id}",
+        execution_generation="terminal-review-generation",
+    )
+    task = store.claim_reply_task(1)
+    assert task is not None
+    store.complete_reply_task(
+        task.id, expected_execution_generation=task.execution_generation
+    )
+    with store._connect() as db:
+        db.execute("update tasks set status='skipped' where id=?", (task.id,))
+    attempt_id = store.record_reply_attempt(
+        conversation_id=conversation_id,
+        conversation_title="审批待办",
+        trigger_message_id=trigger_id,
+        trigger_sender="Derek OA",
+        trigger_text="Review this OA process.",
+        action="agent_run",
+        sensitivity_kind="general",
+        send_status="skipped",
+        channel="dingtalk",
+        oa_process_instance_id=process_id,
+        oa_task_id=task_id,
+        oa_url=f"https://aflow.dingtalk.com/detail?procInstId={process_id}&taskId={task_id}",
+        oa_action="review",
+    )
+    with store._connect() as db:
+        update_action(db, "reply_attempts", attempt_id, {
+            "reviewer_feedback": "Review again.",
+            "resolved_at": "2026-10-24 18:00:00",
+            "resolution": "The source OA task was verified terminal.",
+        })
+
+    status, item = build_attempt_detail(store, attempt_id)
+
+    assert status == 200
+    assert item is not None
+    assert item["status"]["raw"] == "skipped"
+    assert item["actions"]["can_rerun"] is False
+    assert item["actions"]["rerun_block_reason"] == "The source OA task was verified terminal."
+    response_status, _, response_body = handle_rerun_attempt_post(store, attempt_id)
+    assert response_status == 409
+    assert "The source OA task was verified terminal." in response_body
+
+
 def test_failed_attempt_does_not_inherit_another_business_objects_refusal(tmp_path: Path):
     store = AutoReplyStore(tmp_path / 'worker.sqlite3')
     task = _consumer_result_task(store)
