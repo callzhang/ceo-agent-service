@@ -4588,7 +4588,7 @@ def test_send_attempt_command_rotates_pending_task_with_previous_error(
         send_status="failed",
     )
     first = send_attempt_command(settings, attempt_id)
-    with sqlite3.connect(settings.db_path) as db:
+    with store._connect() as db:
         parts = task8_set_parts('reply_tasks', {
             'error': 'reviewed_write_not_authorized', 'available_at': '2099-01-01 00:00:00',
         })

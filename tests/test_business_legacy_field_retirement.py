@@ -326,6 +326,6 @@ def test_current_constructors_require_explicit_release_for_actual_old_source(arc
     seed_old(archived_sources["2026-10-19.10"], path, "fresh_memory_fk")
     before = hashlib.sha256(path.read_bytes()).hexdigest()
     for constructor in (AutoReplyStore, EmailStore, WorkbenchStore):
-        with pytest.raises(sqlite3.IntegrityError, match="unsupported or mixed Store/Email source schema"):
+        with pytest.raises(sqlite3.IntegrityError, match="unsupported or malformed Store source schema; explicit paired schema release required"):
             constructor(path)
         assert hashlib.sha256(path.read_bytes()).hexdigest() == before

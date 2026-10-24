@@ -12,8 +12,10 @@ import pytest
 from app.action_reply_storage import _source_declaration
 from app.business_storage import insert_business
 from app.action_feedback_storage import insert_feedback_action
+from app import store as store_module
 from app.store import AutoReplyStore
 from app.action_storage import _current_objects
+from app.business_definitions import BUSINESS_COMMON, BUSINESS_FRESH_FIELDS, _definitions
 from app.business_legacy_owner_storage import (
     capture_legacy_owner_source, migrate_legacy_owner, restore_legacy_owner,
     read_import_task, assign_import_task,
@@ -25,12 +27,22 @@ def _current12_bytes():
     with TemporaryDirectory(prefix="legacy-owner-current12-") as directory:
         path = Path(directory) / "source.sqlite"
         AutoReplyStore(path)
+        # The Store deliberately pools its thread-local WAL connection. This
+        # synthetic historical-source fixture must close it before switching
+        # SQLite out of WAL mode.
+        store_module._close_idle_connections()
         with sqlite3.connect(path) as source:
             source.execute("pragma journal_mode=delete")
-            # Reconstruct the exact historical selected12 declarations for
-            # component source tests; the current constructor now selects11.
+            # Rebuild the supported source declaration. The current constructor
+            # is still at the older 129-column release, while the exact source
+            # accepted by this component is the current 136-column declaration.
             source.execute("pragma foreign_keys=off")
-            source.execute("alter table business drop column import_task_id")
+            source.execute("drop table business")
+            business_table, business_indexes, business_triggers = _definitions(
+                include_candidates=True, include_business_actions=True,
+            )
+            for sql in (business_table, *business_indexes, *business_triggers):
+                source.execute(sql)
             frozen = json.loads((Path(__file__).parents[1] /
                 "docs/superpowers/specs/2026-10-17-email-canonical-current-copy.json").read_text())
             objects = frozen["post_target_remaining_business_declarations"]["business_legacy_links"]["objects"]
@@ -58,12 +70,41 @@ def source_db():
     })
     insert_business(db, "task", {"id": 31, "title": "task", "stage": "candidate"})
     insert_business(db, "task", {"id": 32, "title": "task", "stage": "candidate"})
-    insert_business(db, "work_project", {"id": 7, "title": "project"})
-    insert_business(db, "work_todo", {"id": 11, "project_id": 7, "title": "todo"})
-    insert_business(db, "work_todo", {"id": 12, "project_id": 7, "title": "todo"})
+    project = {
+        "id": 7, "title": "project", "category": "other", "tags_json": "[]",
+        "status": "active", "priority": "none", "risk_level": "none",
+        "needs_derek_attention": 0, "owner_user_id": "", "owner_name": "",
+        "owner_evidence_json": "{}", "related_people_json": "[]", "goal": "",
+        "background": "", "facts_json": "[]", "current_state": "", "blocker": "",
+        "next_step": "", "next_follow_up_at": "", "follow_up_mode": "none",
+        "source_conversations_json": "[]", "created_at": "", "updated_at": "",
+        "last_activity_at": "",
+    }
+    _insert_current_business(db, "work_project", project)
+    for todo_id in (11, 12):
+        todo = {
+            "id": todo_id, "project_id": 7, "title": "todo", "description": "",
+            "owner_user_id": "", "owner_name": "", "owner_evidence_json": "{}",
+            "status": "open", "priority": "none", "deadline_at": "",
+            "next_follow_up_at": "", "follow_up_question": "", "blocker": "",
+            "completion_evidence_json": "{}", "created_from_update_id": 0,
+            "created_at": "", "updated_at": "", "completed_at": "",
+        }
+        _insert_current_business(db, "work_todo", todo)
     db.commit()
     db.execute("begin")
     return db
+
+
+def _insert_current_business(db, kind, values):
+    payload = {key: values[key] for key in BUSINESS_FRESH_FIELDS[kind]
+               if key != "id" and key not in BUSINESS_COMMON}
+    db.execute(
+        "insert into business(record_type,legacy_key,title,status,created_at,updated_at,payload_json) "
+        "values(?,?,?,?,?,?,?)",
+        (kind, str(values["id"]), values.get("title", ""), values.get("status", ""),
+         values.get("created_at", ""), values.get("updated_at", ""), json.dumps(payload)),
+    )
 
 
 def test_empty_source_exact_inverse_and_new_mapping_roundtrip():
