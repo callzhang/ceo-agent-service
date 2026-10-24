@@ -53,7 +53,7 @@ five exact duplicates with the existing sorted compact serializer occupied
 length comparison only. It does not establish SQLite page reclamation or a
 physical database file reduction.
 
-The proposed Email 53→54 transform removes a locator property only when its
+The Email 53→54 transform removes a locator property only when its
 JSON type and value exactly match the corresponding scalar column. For
 reversible source semantics it fails closed if any of the five source
 properties is absent; a differing value remains in the JSON, including a
@@ -61,9 +61,14 @@ properties is absent; a differing value remains in the JSON, including a
 `threadId`, unknown keys, and all candidate state, hashes, timestamps, and
 provenance remain untouched. New writes use the same compact representation;
 the list reader reconstructs the public provider-message projection from
-current scalar owners while retaining any persisted mismatch. The focused
-in-memory forward/inverse/reforward checks pass. No current-data migration,
-publication, provider action, or physical shrink was performed by this work.
+current scalar owners while retaining any persisted mismatch. Email54 was
+deployed on 2026-10-24 at commit `a4154c03b`. Production readback confirmed
+Store `2026-10-23.1` / Email54, current schema manifest, `quick_check=ok`, 924
+candidate rows and 140,255 JSON bytes with no exact duplicate locator keys.
+The database file remains 514,969,600 bytes: the 182,907-byte logical JSON
+reduction did not reclaim SQLite pages because production was not VACUUMed.
+The same single foreign-key finding on `runs` row 190042 remains; this
+migration did not alter it.
 
 The 7.4 MB normalized-text, 8.5 MB model-text, and 7.8 MB preview figures are
 logical value lengths inside `emails`, not independently reclaimable SQLite
@@ -95,13 +100,12 @@ the per-row provider/source checks.
 
 ## Execution and release boundary
 
-This turn made no database or runtime change. The development worktree was
-read-only with respect to production, and no backup, database copy, or temporary
-artifact was created. A production schema or data migration still requires the
-project’s current-data forward/inverse acceptance and the standard release
-path. The deployment workflow automatically makes a database backup; because
-Derek has explicitly prohibited backups and temporary files, that release path
-cannot be run under the present instruction.
+The 53→54 production data migration and standard deployment completed after the
+current-data forward/inverse rehearsal. Post-deploy `/healthz`, queue, Attention
+and History endpoints returned HTTP 200. The verified deployment database
+backup and deployment staging files were removed after readback, per Derek's
+instruction; the production database was retained. The backup directory was
+cleared of its remaining backup artifacts.
 
 The separate A5b Reply-local-result work remains open in the broader plan; it is
 not an Email table migration. It should not be silently folded into this Email

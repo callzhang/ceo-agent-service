@@ -61,6 +61,29 @@ def test_initial_binding_uses_committed_role_without_writes(source, current, ver
     assert store.get_service_state("progress") == "after"
 
 
+def test_email54_release_target_binds_as_current_for_post_publish_progress(tmp_path):
+    from app.current_database_schema import create_current_database_schema
+    from app.current_schema_manifest import create_current_email_migration_ledger
+    from app.state_storage import insert_state as insert_current_state
+
+    path = tmp_path / "email54.sqlite3"
+    with closing(sqlite3.connect(path)) as db:
+        db.row_factory = sqlite3.Row
+        create_current_database_schema(db)
+        create_current_email_migration_ledger(db)
+        db.execute("begin")
+        insert_current_state(db, "service_state", {
+            "key": "store_schema_version", "value": "2026-10-23.1",
+        })
+        db.execute("insert into email_schema_migrations values(54,'target')")
+        db.commit()
+
+    store = updater.ExistingSchemaUpgradeStateStore(path)
+    assert store._state_schema_current is True
+    store.set_service_state("progress", "restarting")
+    assert store.get_service_state("progress") == "restarting"
+
+
 @pytest.mark.parametrize("version", (0, TARGET_EMAIL_VERSION + 1, "unknown", 51.5, b"52"))
 def test_unknown_ledger_refused_without_mutation(source, version):
     ledger(source, version)
