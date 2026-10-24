@@ -1055,14 +1055,10 @@ def _service_command_registry(
         )
 
     def scan_meetings_service_command() -> ServiceCommandResult:
-        created, memory_queued, memory_done = scan_meetings_once_command(
-            settings, return_counts=True,
-        )
+        created = scan_meetings_once_command(settings)
         return ServiceCommandResult(
             f"scan-meetings-once queued={created}",
-            (("meeting_jobs_queued", created),
-             ("memory_writes_queued", memory_queued),
-             ("memory_writes_done", memory_done)),
+            (("meeting_jobs_queued", created),),
             True,
         )
 
@@ -3518,8 +3514,7 @@ def scan_meetings_once_command(
     settings: WorkerSettings,
     *,
     now: datetime | None = None,
-    return_counts: bool = False,
-) -> int | tuple[int, int, int]:
+) -> int:
     """Discover eligible meetings once; Cron owns when this command runs."""
     current = now or datetime.now().astimezone()
     _initialize_meeting_discovery_on_service_start(settings, now=current)

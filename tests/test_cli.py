@@ -8155,6 +8155,28 @@ def test_service_command_registry_binds_the_catalog_to_service_operations(
     )
 
 
+def test_scan_meetings_service_command_returns_only_live_meeting_count(
+    monkeypatch, tmp_path
+):
+    from app.agent_cron.commands import ServiceCommandResult
+
+    monkeypatch.setattr(
+        cli, "_initialize_meeting_discovery_on_service_start", lambda *a, **k: None,
+    )
+    monkeypatch.setattr(cli, "_create_meeting_dws", lambda _settings: object())
+    monkeypatch.setattr(cli, "produce_meeting_alignment_jobs", lambda *a, **k: 2)
+    settings = WorkerSettings(db_path=tmp_path / "cron.sqlite3", max_batches=3)
+    registry = cli._service_command_registry(
+        AutoReplyStore(settings.db_path), object(), settings,
+    )
+
+    result = registry.run_with_result("scan-meetings-once")
+
+    assert result == ServiceCommandResult(
+        "scan-meetings-once queued=2", (("meeting_jobs_queued", 2),), True,
+    )
+
+
 def test_process_work_items_waits_for_paused_routes_without_spending_attempts(
     tmp_path,
     monkeypatch,

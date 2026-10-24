@@ -15871,7 +15871,7 @@ class AutoReplyStore(LogicalRunStoreMixin, ReviewedCandidateStoreMixin):
                         union all
                         select conversation_id, created_at as activity_at
                         from ({NATIVE_REPLY_TASK_CURRENT_SQL}) as reply_tasks
-                        where single_chat=1
+                        where single_chat=1 and input_compacted=0
                     )
                     group by conversation_id
                 )
@@ -15885,6 +15885,7 @@ class AutoReplyStore(LogicalRunStoreMixin, ReviewedCandidateStoreMixin):
                         from ({NATIVE_REPLY_TASK_CURRENT_SQL}) t
                         where t.conversation_id=c.conversation_id
                           and t.single_chat=1
+                          and t.input_compacted=0
                         order by t.id desc
                         limit 1
                     ), '') as direct_user_id,
@@ -15896,6 +15897,7 @@ class AutoReplyStore(LogicalRunStoreMixin, ReviewedCandidateStoreMixin):
                         from ({NATIVE_REPLY_TASK_CURRENT_SQL}) t
                         where t.conversation_id=c.conversation_id
                           and t.single_chat=1
+                          and t.input_compacted=0
                         order by t.id desc
                         limit 1
                     ), '') as direct_open_dingtalk_id,
