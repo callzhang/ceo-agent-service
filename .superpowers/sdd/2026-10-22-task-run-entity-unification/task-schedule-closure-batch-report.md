@@ -2,7 +2,7 @@
 
 Status: **implemented in the isolated candidate; independent full-base SPEC/QUALITY review and publication remain pending.** No constructor/manifest activation, production operation, provider call, push, or deploy was performed.
 
-Base: `48ef2164f931a68de6b98836d7767f83d23e9602`. Runtime checkpoint: `d3e09e0a8`.
+Base: `48ef2164f931a68de6b98836d7767f83d23e9602`. Runtime checkpoint: `d3e09e0a8`. Implementation commit: `f99294e8a`.
 
 ## Behavior delivered
 
