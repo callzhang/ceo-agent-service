@@ -1671,7 +1671,7 @@ def _write_document_artifact(
     expected_revision: int | None = None,
 ) -> dict[str, object]:
     """Submit an exact task artifact to an explicit provider target."""
-    from app.dws_client import DwsClient
+    from app.dws_client import DwsClient, DwsError
 
     material = _task_file_path(root, artifact_name)
     if not material.is_file() or material.stat().st_size > MAX_TASK_FILE_BYTES:
@@ -1690,65 +1690,97 @@ def _write_document_artifact(
         if assessment != "passed":
             raise ValueError("document JSONML parser did not pass")
     version = None
-    if node_id:
-        if parent_id:
-            raise ValueError("document update takes node_id, not parent_id")
-        if doc_format == "jsonml":
-            if type(expected_revision) is not int or expected_revision < 0:
-                raise ValueError("JSONML update requires expected_revision")
-            version = dws.save_report_document_version(node_id)
-        result = dws.overwrite_report_document(
-            node_id=node_id,
-            content=content,
-            doc_format=doc_format,
-            expected_revision=expected_revision,
-        )
-        operation = "updated"
-    else:
-        if not parent_id or not workspace_id or expected_revision is not None:
-            raise ValueError(
-                "document creation requires parent_id and workspace_id without revision"
+    operation = "updated" if node_id else "created"
+    result = None
+    try:
+        if node_id:
+            if parent_id:
+                raise ValueError("document update takes node_id, not parent_id")
+            if doc_format == "jsonml":
+                if type(expected_revision) is not int or expected_revision < 0:
+                    raise ValueError("JSONML update requires expected_revision")
+                version = dws.save_report_document_version(node_id)
+            result = dws.overwrite_report_document(
+                node_id=node_id,
+                content=content,
+                doc_format=doc_format,
+                expected_revision=expected_revision,
             )
+        else:
+            if not parent_id or not workspace_id or expected_revision is not None:
+                raise ValueError(
+                    "document creation requires parent_id and workspace_id without revision"
+                )
 
-        def matching_nodes():
-            payload = dws.run_json(
-                [
-                    dws.dws_bin,
-                    "wiki",
-                    "+node-list",
-                    "--workspace",
-                    workspace_id,
-                    "--folder",
-                    parent_id,
-                    "--page-all",
-                    "--format",
-                    "json",
-                ]
+            def matching_nodes():
+                payload = dws.run_json(
+                    [
+                        dws.dws_bin,
+                        "wiki",
+                        "+node-list",
+                        "--workspace",
+                        workspace_id,
+                        "--folder",
+                        parent_id,
+                        "--page-all",
+                        "--format",
+                        "json",
+                    ]
+                )
+                data = payload.get("data")
+                if (
+                    not isinstance(data, dict)
+                    or not isinstance(data.get("nodes"), list)
+                    or data.get("hasMore")
+                ):
+                    raise ValueError("document parent listing is incomplete")
+                return [item for item in data["nodes"] if item.get("name") == title]
+
+            if matching_nodes():
+                raise ValueError("document target appeared before creation; reread target")
+            result = dws.create_report_document(
+                name=title, content=content, doc_format=doc_format, folder_id=parent_id
             )
-            data = payload.get("data")
-            if (
-                not isinstance(data, dict)
-                or not isinstance(data.get("nodes"), list)
-                or data.get("hasMore")
-            ):
-                raise ValueError("document parent listing is incomplete")
-            return [item for item in data["nodes"] if item.get("name") == title]
-
-        if matching_nodes():
-            raise ValueError("document target appeared before creation; reread target")
-        result = dws.create_report_document(
-            name=title, content=content, doc_format=doc_format, folder_id=parent_id
+            created_data = result.get("data", {})
+            if isinstance(created_data, dict) and isinstance(created_data.get("nodeId"), str):
+                node_id = created_data["nodeId"]
+            found = matching_nodes()
+            if len(found) != 1:
+                raise ValueError("created document target is ambiguous")
+            node_id = found[0]["nodeId"]
+        readback = (
+            dws.fetch_report_document_full(node_id)
+            if doc_format == "jsonml"
+            else dws.read_doc(node_id)
         )
-        found = matching_nodes()
-        if len(found) != 1:
-            raise ValueError("created document target is ambiguous")
-        node_id = found[0]["nodeId"]
-        operation = "created"
-    readback = (
-        dws.fetch_report_document_full(node_id)
-        if doc_format == "jsonml"
-        else dws.read_doc(node_id)
-    )
+    except (DwsError, ValueError) as exc:
+        provider_error = exc.provider_error if isinstance(exc, DwsError) else {}
+        details = provider_error.get("details", {})
+        if not isinstance(details, dict):
+            details = {}
+        partial_write = (
+            details.get("contractVersion") == "doc.operation.v1"
+            and details.get("status") == "partial_success"
+            and provider_error.get("operation") == ("doc.update" if operation == "updated" else "doc.create")
+        )
+        if result is None and not partial_write:
+            raise
+        data = details.get("data", {})
+        if isinstance(data, dict) and isinstance(data.get("nodeId"), str):
+            node_id = data["nodeId"] or node_id
+        return {
+            "ok": False,
+            "status": "partial_success",
+            "verified": False,
+            "operation": operation,
+            "node_id": node_id,
+            "title": title,
+            "provider_result": result,
+            "error": provider_error or {"message": str(exc)},
+            "saved_version": version,
+            "content_sha256": hashlib.sha256(content.encode()).hexdigest(),
+            "readback": None,
+        }
     raw = json.dumps(readback, ensure_ascii=False).encode("utf-8")
     receipt_name = (
         hashlib.sha256(raw).hexdigest()
