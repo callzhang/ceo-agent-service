@@ -20,8 +20,7 @@ from app.agent_runtime_router import AgentRuntimeRouter, RoutedCodexExecution
 from app.codex_runtime_adapter import CodexRuntimeAdapter
 from app.config import load_env_file
 from app import native_trajectory
-from app.run_storage import RUNTIME_ATTEMPT_SQL
-from app.store import TASK_LOGICAL_RUN_SQL
+from app.store import NATIVE_TASK_RUN_SQL
 from app.store import AutoReplyStore
 from app.task_agent import (
     TASK_RUNTIME_CAPABILITIES,
@@ -139,8 +138,8 @@ def main():
     native = native_trajectory.find_codex_session_path(sid)
     assert native is not None
     with store._connect() as db:
-        runs = [dict(row) for row in db.execute(f"select * from ({TASK_LOGICAL_RUN_SQL}) order by id")]
-        attempts = [dict(row) for row in db.execute(f"select * from ({RUNTIME_ATTEMPT_SQL}) order by id")]
+        runs = [dict(row) for row in db.execute(f"select * from ({NATIVE_TASK_RUN_SQL}) order by id")]
+        attempts = [dict(row) for row in db.execute("select * from runtime_attempts order by id")]
         check = db.execute("pragma quick_check").fetchone()[0]
     receipt = {
         "phase": phase, "route_name": route.name, "model": route.model, "service_delivery": True, "input_id": input_id,

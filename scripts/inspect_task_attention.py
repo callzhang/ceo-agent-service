@@ -11,7 +11,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 from app.business_definitions import BUSINESS_PROJECTIONS
 from app.native_standalone import latest_task_ref, task_decision_value
-from app.store import TASK_LOGICAL_RUN_SQL, WORK_SUMMARY_INPUT_SQL
+from app.store import NATIVE_TASK_RUN_SQL, WORK_SUMMARY_INPUT_SQL
 
 
 def inspect_run(db, run, decision):
@@ -72,7 +72,7 @@ def main() -> int:
             return 1
         runs = db.execute(
             "select id, status, projection_json "
-            f"from ({TASK_LOGICAL_RUN_SQL}) where summary_input_id=? order by id",
+            f"from ({NATIVE_TASK_RUN_SQL}) where summary_input_id=? order by id",
             (args.input_id,),
         ).fetchall()
         refs = [latest_task_ref(db, run["id"]) for run in runs]

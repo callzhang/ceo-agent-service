@@ -524,6 +524,7 @@ def advance_sent_provider_reference(db, *, external_action_key, provider_receipt
         db, action['id'], receipt_id=action['delivery_receipt_id'],
         expected={'provider_receipt_id': fact['provider_receipt_id']},
         changes={'provider_receipt_id': provider_receipt_id},
+        execution_owner_column='execution_run_id',
     ) is None:
         raise ValueError('Sent provider reference changed during explicit repair')
     return True

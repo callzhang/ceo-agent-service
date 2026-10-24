@@ -1,9 +1,7 @@
 from app.current_action_schema import current_reply_action_projection
 from app.state_definitions import state_projection
 
-from app.task20_definitions import task20_column, task20_projection
 from app.business_legacy_fields import CURRENT_SYNC_PROJECTIONS as SYNC_ACTION_PROJECTIONS
-from app.task12_storage import task12_projection
 
 from app.store import (NATIVE_REPLY_TASK_CURRENT_SQL, NATIVE_AGENT_RUN_SQL, NATIVE_MEETING_TASK_SQL, NATIVE_REPLY_BUSINESS_KEY_SQL, WORK_SUMMARY_INPUT_SQL)
 from app.work_summary_payload import decode_work_summary_payload
@@ -2686,10 +2684,11 @@ def _work_summary_input_queue_snapshot(db: sqlite3.Connection) -> dict[str, obje
 
 
 def _meeting_job_queue_snapshot(db: sqlite3.Connection) -> dict[str, object]:
-    rows = db.execute(f"""select lower(coalesce({task20_column('meeting_alignment_jobs', 'status')},'')) as status, count(*) as count from tasks where record_type='meeting_alignment_jobs' group by lower(coalesce({task20_column('meeting_alignment_jobs', 'status')},''))""").fetchall()
+    rows = db.execute(f"""select lower(coalesce(status,'')) as status,count(*) as count
+        from ({NATIVE_MEETING_TASK_SQL}) group by lower(coalesce(status,''))""").fetchall()
     counts = {str(row["status"] or "-"): int(row["count"] or 0) for row in rows}
-    latest = db.execute(f"""select {task20_column('meeting_alignment_jobs', 'updated_at')} as updated_at from tasks where record_type='meeting_alignment_jobs' order by {task20_column('meeting_alignment_jobs', 'updated_at')} desc limit 1""").fetchone()
-    failed = db.execute(f"""select {task20_column('meeting_alignment_jobs', 'error')} as error from tasks where record_type='meeting_alignment_jobs' and lower({task20_column('meeting_alignment_jobs', 'status')})='failed' and trim(coalesce({task20_column('meeting_alignment_jobs', 'error')},''))<>'' order by {task20_column('meeting_alignment_jobs', 'updated_at')} desc, cast(legacy_key as integer) desc limit 1""").fetchone()
+    latest = db.execute(f"select updated_at from ({NATIVE_MEETING_TASK_SQL}) order by updated_at desc,id desc limit 1").fetchone()
+    failed = db.execute(f"select error from ({NATIVE_MEETING_TASK_SQL}) where lower(status)='failed' and trim(coalesce(error,''))<>'' order by updated_at desc,id desc limit 1").fetchone()
     return {
         "name": "Meeting jobs", "table": "meeting_alignment_jobs", "counts": counts,
         "pending": _queue_count_for(counts, {"pending", "draft", "approved", "waiting", "ready", "creating"}),
@@ -2701,10 +2700,10 @@ def _meeting_job_queue_snapshot(db: sqlite3.Connection) -> dict[str, object]:
 
 
 def _okr_review_queue_snapshot(db: sqlite3.Connection) -> dict[str, object]:
-    rows = db.execute(f"""select lower(coalesce({task20_column('okr_review_requests', 'status')},'')) as status, count(*) as count from tasks where record_type='okr_review_requests' group by lower(coalesce({task20_column('okr_review_requests', 'status')},''))""").fetchall()
+    rows = db.execute("select lower(coalesce(status,'')) as status,count(*) as count from tasks where kind='okr_review' group by lower(coalesce(status,''))").fetchall()
     counts = {str(row["status"] or "-"): int(row["count"] or 0) for row in rows}
-    latest = db.execute(f"""select {task20_column('okr_review_requests', 'updated_at')} as updated_at from tasks where record_type='okr_review_requests' order by {task20_column('okr_review_requests', 'updated_at')} desc limit 1""").fetchone()
-    failed = db.execute(f"""select {task20_column('okr_review_requests', 'error')} as error from tasks where record_type='okr_review_requests' and lower({task20_column('okr_review_requests', 'status')})='failed' and trim(coalesce({task20_column('okr_review_requests', 'error')},''))<>'' order by {task20_column('okr_review_requests', 'updated_at')} desc, cast(legacy_key as integer) desc limit 1""").fetchone()
+    latest = db.execute("select updated_at from tasks where kind='okr_review' order by updated_at desc,id desc limit 1").fetchone()
+    failed = db.execute("select error from tasks where kind='okr_review' and lower(status)='failed' and trim(coalesce(error,''))<>'' order by updated_at desc,id desc limit 1").fetchone()
     return {
         "name": "OKR reviews", "table": "okr_review_requests", "counts": counts,
         "pending": _queue_count_for(counts, {"pending", "draft", "approved", "waiting", "ready", "creating"}),
@@ -2760,11 +2759,11 @@ def _reply_task_queue_snapshot(db: sqlite3.Connection) -> dict[str, object]:
     """Summarize only the current task projection for each business object."""
 
     current_projection = f"""
-        from tasks as tasks
+        from ({NATIVE_REPLY_TASK_CURRENT_SQL}) as tasks
         left join ({NATIVE_REPLY_BUSINESS_KEY_SQL}) as current_business_object
-          on current_business_object.business_object_key=tasks.{task20_column('reply_tasks', 'business_object_key')}
-        where tasks.record_type='reply_tasks' and (
-            trim(tasks.{task20_column('reply_tasks', 'business_object_key')})=''
+          on current_business_object.business_object_key=tasks.business_object_key
+        where (
+            trim(tasks.business_object_key)=''
             or current_business_object.reply_task_id is null
             or current_business_object.reply_task_id=tasks.id
         )
@@ -2772,8 +2771,8 @@ def _reply_task_queue_snapshot(db: sqlite3.Connection) -> dict[str, object]:
     rows = db.execute(
         f"""
         with current as materialized (
-            select tasks.id, lower(coalesce(tasks.{task20_column('reply_tasks', 'status')}, '')) as status,
-                   tasks.{task20_column('reply_tasks', 'updated_at')} as updated_at, tasks.{task20_column('reply_tasks', 'error')} as error
+            select tasks.id, lower(coalesce(tasks.status, '')) as status,
+                   tasks.updated_at, tasks.error
             {current_projection}
         ), counts as (
             select status, count(*) as count from current group by status

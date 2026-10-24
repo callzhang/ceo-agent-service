@@ -106,6 +106,7 @@ def test_runtime_attempt_claim_and_agent_history_use_native_parent_owner(monkeyp
     assert store.get_agent_runtime_attempt(attempt.id) == attempt
     assert store.list_agent_runtime_attempts(run["id"]) == [attempt]
     assert store.list_runtime_operation_attempts("memory", "memory_write_event:1") == []
+
     row = db.execute("select parent_id,workload_kind,workload_key from runtime_attempts where id=?",
                      (attempt.id,)).fetchone()
     assert tuple(row) == (run["id"], "agent_run", str(run["id"]))
@@ -143,6 +144,27 @@ def test_runtime_attempt_claim_and_agent_history_use_native_parent_owner(monkeyp
     assert completed.status == "completed"
     assert tuple(db.execute("select status,transcript_end from runs where id=?", (run["id"],)).fetchone()) == ("completed", 9)
     assert store.adopted_candidate_for_consumer_run(run["id"])["candidate_json"] == result_json
+
+
+def test_approved_candidate_supplement_invalidates_native_adoption(monkeypatch):
+    store, db, task, consumer = _native_store(monkeypatch)
+    review = _approved_native_execution(store, db, task, consumer, _native_actions(1))
+    with db:
+        candidate = store._candidate_context(db, consumer["id"])
+        store._persist_candidate_supplement(db, candidate, "include the approved detail")
+
+    persisted = db.execute(
+        "select instruction,created_at from run_adopted_supplements where consumer_run_id=?",
+        (consumer["id"],),
+    ).fetchone()
+    invalidation = db.execute(
+        "select invalidated_at,invalidation_reason from run_adopted_results where consumer_run_id=?",
+        (consumer["id"],),
+    ).fetchone()
+    assert persisted["instruction"] == "include the approved detail"
+    assert persisted["created_at"] == invalidation["invalidated_at"]
+    assert invalidation["invalidation_reason"] == "supplement"
+    assert review["decision"] == "approve"
 
 
 def test_routed_execution_renews_native_agent_parent_lease(monkeypatch, tmp_path):

@@ -9,8 +9,6 @@ table as a failed check rather than silently dropping a queue from coverage.
 
 from __future__ import annotations
 from app.state_definitions import state_projection
-from app.task20_definitions import task20_projection
-from app.task12_storage import task12_projection
 from app.action_feedback_definitions import feedback_projection
 
 
@@ -29,7 +27,7 @@ from app.store import (
     NATIVE_AGENT_RUN_SQL, NATIVE_REPLY_TASK_CURRENT_SQL,
     NATIVE_REPLY_BUSINESS_KEY_SQL, NATIVE_MEETING_TASK_SQL,
     NATIVE_REVIEW_CANDIDATE_SQL, NATIVE_CANDIDATE_REVIEW_SQL,
-    NATIVE_CANDIDATE_SELECTION_SQL, NATIVE_CANDIDATE_EXECUTION_SQL,
+    NATIVE_CANDIDATE_SELECTION_SQL,
 )
 
 from app.action_storage import (
@@ -775,9 +773,8 @@ def _check_email_model_runtime(
     recent_outcomes = [
         str(row["outcome"] or "")
         for row in db.execute(
-            "select outcome from ("
-            + run11_projection("email_classifier_runtime_samples")
-            + ") where recorded_at >= ? order by recorded_at desc, id desc",
+            "select outcome from email_classifier_runtime_samples "
+            "where created_at >= ? order by created_at desc,id desc",
             (cutoff,),
         )
     ]
@@ -924,7 +921,8 @@ def _check_delivery_records(
     missing = 0
     unavailable = 0
     for row in rows:
-        native_result = read_native_result_json(db, row)
+        physical_run = db.execute("select * from runs where id=?", (row["id"],)).fetchone()
+        native_result = read_native_result_json(db, physical_run)
         if not native_result:
             unavailable += 1
             continue

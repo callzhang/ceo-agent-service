@@ -5,7 +5,8 @@ from datetime import datetime, timezone
 
 import pytest
 
-from app.store import AutoReplyStore, MEETING_JOB_SQL
+from app.store import AutoReplyStore
+from app.task_storage import MEETING_JOB_SQL
 from app.task_run_entity_assembly import task_run_entity_assembly_objects
 
 

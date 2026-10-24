@@ -45,7 +45,8 @@ from app.task8_storage import task8_set_parts
 from app.action_task_delivery_definitions import task_delivery_projection
 from app.store import MEETING_LOGICAL_RUN_SQL
 from app.runs11_definitions import run11_projection
-from app.store import AutoReplyStore, MEETING_JOB_SQL
+from app.store import AutoReplyStore
+from app.task_storage import MEETING_JOB_SQL
 from app.skill_features import FeatureRegistry
 
 NOW = datetime.fromisoformat("2026-07-14T10:10:00+08:00")

@@ -76,6 +76,24 @@ def _db_timestamp(db: sqlite3.Connection) -> str:
 
 
 class ReviewedCandidateStoreMixin:
+    @staticmethod
+    def _persist_candidate_supplement(db: sqlite3.Connection, candidate: sqlite3.Row,
+                                     instruction: str) -> None:
+        """Append one supplement and invalidate its exact native Consumer result."""
+        now = db.execute("select current_timestamp").fetchone()[0]
+        db.execute(
+            "insert into run_adopted_supplements(consumer_run_id,instruction,created_at) "
+            "values(?,?,?)",
+            (candidate["consumer_run_id"], instruction, now),
+        )
+        updated = db.execute(
+            "update run_adopted_results set invalidated_at=?,invalidation_reason=? "
+            "where consumer_run_id=? and candidate_digest=? and invalidated_at=''",
+            (now, "supplement", candidate["consumer_run_id"], candidate["candidate_digest"]),
+        )
+        if updated.rowcount != 1:
+            raise ValueError("reviewed candidate supplement mismatch")
+
     def _adopted_candidate_row(self, db: sqlite3.Connection, candidate_id: int) -> sqlite3.Row | None:
         """Read the stored adoption and its native owners without applying current eligibility."""
         return db.execute("""select c.consumer_run_id as id,c.consumer_run_id as consumer_run_id,

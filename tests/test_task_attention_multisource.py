@@ -13,14 +13,11 @@ from app.business_source_reader import AvailableSource, PreparedSources
 from app.business_candidate_storage import update_business_candidate
 from app.action_business_storage import update_business_action
 from app.store import BUSINESS_ACTION_SQL
-from app.task8_storage import task8_set_parts
-from app.task20_definitions import task20_column
 from app.task_models import TaskAgentDecision, WorkItem, WorkItemSourceType
 from app.task_semantic_models import ProjectContext
 from tests.support.task_native import apply_task_fixture_decision as apply_task_agent_decision
 from app.store import AutoReplyStore
 from app.store import TASK_LOGICAL_RUN_SQL
-from app.task_storage import task_physical_id
 from app.task_agent import process_work_item
 from app.task_attention_projection import BusinessAttentionProjection
 from tests.support.task_native import record_task_fixture_run
@@ -296,14 +293,9 @@ def test_compacted_replay_rejects_identity_and_length_without_mutation(tmp_path,
         }).model_dump_json()
     else:
         with store._connect() as db:
-            parts = task8_set_parts(
-                "work_summary_inputs", {}, update_sql={
-                    "body_bytes": task20_column("work_summary_inputs", "body_bytes") + "+1"
-                }
-            )
             db.execute(
-                f"update tasks set {parts.sql} where record_type='work_summary_inputs' and id=?",
-                (*parts.parameters, task_physical_id(db, "work_summary_inputs", target)),
+                "update work_summary_inputs set body_bytes=body_bytes+1 where task_id=?",
+                (target,),
             )
     before = store.get_work_summary_input(target)
     with pytest.raises(ValueError, match="identity|digest"):
@@ -325,18 +317,14 @@ def test_replay_cas_rejects_input_changed_after_verification(tmp_path, monkeypat
 
     def acquire_with_changed_input(current_store):
         with current_store._connect() as db:
-            parts = task8_set_parts(
-                "work_summary_inputs", {}, update_sql={"body_sha256": "?"},
-                update_parameters=("f" * 64,),
-            )
             db.execute(
-                f"update tasks set {parts.sql} where record_type='work_summary_inputs' and id=?",
-                (*parts.parameters, task_physical_id(db, "work_summary_inputs", target)),
+                "update work_summary_inputs set body_sha256=? where task_id=?",
+                ("f" * 64, target),
             )
         return original(current_store)
 
     monkeypatch.setattr(TaskAgentSessionLease, "try_acquire", acquire_with_changed_input)
-    with pytest.raises(ValueError, match="changed before exact replay"):
+    with pytest.raises(ValueError, match="fixed source version changed before replay"):
         tool.replay_input(store, None, target, source_ref=item.source.ref,
                           source_payload=item.model_dump_json())
     current = store.get_work_summary_input(target)
@@ -360,13 +348,9 @@ def test_fixed_source_version_cas_preserves_changed_prior_input(tmp_path, monkey
         calls.append(input_id)
         current_store.mark_work_summary_input_done(input_id)
         with current_store._connect() as db:
-            parts = task8_set_parts(
-                "work_summary_inputs", {}, update_sql={"body_sha256": "?"},
-                update_parameters=("e" * 64,),
-            )
             db.execute(
-                f"update tasks set {parts.sql} where record_type='work_summary_inputs' and id=?",
-                (*parts.parameters, task_physical_id(db, "work_summary_inputs", input_id)),
+                "update work_summary_inputs set body_sha256=? where task_id=?",
+                ("e" * 64, input_id),
             )
         return {"passed": True, "run_status": "completed", "failures": []}
 
@@ -404,8 +388,8 @@ def test_evaluation_replays_exact_input_without_claiming_pending_or_rewriting_ru
     with store._connect() as db:
         old = dict(
             db.execute(
-                "select * from runs where record_type='agent_runs' and source_type='task_agent_runs' and legacy_key=?",
-                (str(old_run),),
+                f"select * from ({TASK_LOGICAL_RUN_SQL}) where id=?",
+                (old_run,),
             ).fetchone()
         )
 
@@ -442,8 +426,8 @@ def test_evaluation_replays_exact_input_without_claiming_pending_or_rewriting_ru
         assert (
             dict(
                 db.execute(
-                    "select * from runs where record_type='agent_runs' and source_type='task_agent_runs' and legacy_key=?",
-                    (str(old_run),),
+                    f"select * from ({TASK_LOGICAL_RUN_SQL}) where id=?",
+                    (old_run,),
                 ).fetchone()
             )
             == old
@@ -780,15 +764,16 @@ def read_latest_decision(store):
 
 
 def rewrite_latest_run(store, *, decision=None, projection=None):
+    from app.run_entity_storage import set_run_projection
+
     with store._connect() as db:
         run = db.execute(
             f"select * from ({TASK_LOGICAL_RUN_SQL}) order by id desc limit 1"
         ).fetchone()
         if projection is not None:
-            db.execute(
-                "update runs set projection_json=? "
-                "where record_type='agent_runs' and source_type='task_agent_runs' and legacy_key=?",
-                (json.dumps(projection, ensure_ascii=False), str(run["id"])),
+            set_run_projection(
+                db, run_id=run["id"],
+                projection_json=json.dumps(projection, ensure_ascii=False),
             )
     if decision is not None:
         rewrite_task_fixture_decision(store, run["id"], decision)

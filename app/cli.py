@@ -1,4 +1,3 @@
-from app.task20_definitions import task20_projection
 from app.action_storage import REPLY_ATTEMPT_COMMON_SQL
 from app.action_storage import SENT_REPLY_SQL
 import argparse

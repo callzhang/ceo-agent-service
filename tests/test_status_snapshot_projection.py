@@ -7,8 +7,7 @@ from app.audit_web import _email_action_queue_snapshot, _reply_task_queue_snapsh
 from app.current_database_schema import create_current_database_schema
 from app.email_canonical_storage import insert_email_classification, insert_email_message
 from app.email_store import DIRECT_ACTION_MAX_ATTEMPTS
-from app.task12_storage import insert_task12
-from app.task8_storage import register_task8_functions, task8_insert_parts
+from app import task_entity_storage
 
 
 @pytest.fixture
@@ -16,7 +15,6 @@ def database():
     db = sqlite3.connect(":memory:")
     db.row_factory = sqlite3.Row
     create_current_database_schema(db)
-    register_task8_functions(db)
     try:
         yield db
     finally:
@@ -24,10 +22,42 @@ def database():
 
 
 def _insert_task8(db, kind, values):
-    parts = task8_insert_parts(kind, values)
-    return db.execute(
-        f"insert into tasks ({parts.columns}) values ({parts.values})", parts.parameters,
-    ).lastrowid
+    if kind == "reply_tasks":
+        if values.get("business_object_key", "") is None:
+            raise sqlite3.IntegrityError("business_object_key may not be NULL")
+        status = values.get("status", "pending")
+        task = task_entity_storage.create_task(db, values={
+            "kind": "reply", "status": status, "available_at": "",
+            "attempts": int(values.get("attempts", 0)), "error": values.get("error", ""),
+            "execution_generation": f"generation-{values.get('trigger_message_id', 'reply')}",
+            "created_at": values.get("created_at", "2026-10-11"),
+            "updated_at": values.get("updated_at", "2026-10-11"),
+        }, parameters={"force_new_decision": 0, "manual_rerun_attempt_id": 0,
+                       "manual_rerun_revision_key": "", "recovery_code": ""})
+        task_input, _ = task_entity_storage.append_task_input(db, task_id=task["id"], values={
+            "channel": values.get("channel", "dingtalk"),
+            "conversation_id": values["conversation_id"],
+            "conversation_title": values["conversation_title"],
+            "single_chat": values["single_chat"],
+            "trigger_message_id": values["trigger_message_id"],
+            "trigger_create_time": values["trigger_create_time"],
+            "trigger_sender": values["trigger_sender"], "trigger_text": "",
+            "business_object_key": values.get("business_object_key") or f"reply:{task['id']}",
+            "input_revision_key": f"input:{task['id']}",
+        })
+        assert task_entity_storage.bind_current_input(
+            db, task_id=task["id"], input_id=task_input["id"],
+            expected_input_version=None, input_version=1,
+        )
+        return int(task["id"])
+    task = task_entity_storage.create_task(db, values={
+        "kind": "work_summary", "status": values.get("status", "pending"),
+        "available_at": "", "attempts": 0, "error": "",
+        "created_at": "2026-10-11", "updated_at": "2026-10-11",
+    }, parameters={})
+    db.execute("insert into work_summary_inputs(task_id,source_type,source_ref,payload_json) values(?,?,?,?)",
+               (task["id"], "local_file", f"summary:{task['id']}", "{}"))
+    return int(task["id"])
 
 
 def _insert_reply_task(db, task_id, status, updated_at, error="", business_object_key=""):
@@ -154,9 +184,10 @@ def test_reply_summary_preserves_current_business_identity_and_latest_error(data
     ):
         task_id, status, business_key, updated_at, error = row
         _insert_reply_task(database, task_id, status, updated_at, error, business_key)
-    insert_task12(database, "business_object_tasks", {
-        "business_object_key": "object-a", "reply_task_id": 2,
-    })
+    task_entity_storage.associate_business_key(
+        database, task_id=2, business_key="object-a",
+        created_at="2026-10-11", updated_at="2026-10-11",
+    )
     result = _reply_task_queue_snapshot(database)
     assert result["counts"] == {"done": 1, "error": 1, "failed": 1}
     assert result["failed"] == 2

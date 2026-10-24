@@ -222,8 +222,34 @@ def _rebuild_actions(db, task_metadata, task_public_index, task_map, run_map, so
     columns = [name for name in target_columns if name in source_columns]
     feedback_reference_exceptions = []
     reply_reference_exceptions = []
+    from app.current_action_schema import current_action_payloads
+    error_message_path = current_action_payloads().path("errors", "message_id")
+    error_conversation_path = current_action_payloads().path("errors", "conversation_id")
+    error_kind_path = current_action_payloads().path("errors", "kind")
     for row in retained:
         values = {name: row[name] for name in columns}
+        if row["record_type"] == "errors" and values.get("payload_json") is not None:
+            payload = values["payload_json"]
+            conversation, kind, message, message_type = db.execute(
+                "select json_extract(?,?),json_extract(?,?),json_extract(?,?),json_type(?,?)",
+                (payload, error_conversation_path, payload, error_kind_path,
+                 payload, error_message_path, payload, error_message_path),
+            ).fetchone()
+            if conversation == "work_summary_input" and kind == "task_agent":
+                public_id = None
+                if type(message) is int:
+                    public_id = message
+                elif (message_type == "text" and isinstance(message, str)
+                      and message.isdecimal() and str(int(message)) == message):
+                    public_id = int(message)
+                if public_id is not None:
+                    native_id = task_public_index.get(
+                        ("work_summary_inputs", ("integer", public_id)))
+                    if native_id is not None:
+                        values["payload_json"] = db.execute(
+                            "select jsonb_set(?,?,jsonb(json_quote(?)))",
+                            (payload, error_message_path, str(native_id)),
+                        ).fetchone()[0]
         for field in ("agent_run_id", "audit_run_id", "consumer_run_id"):
             if field in values:
                 values[field] = _translate_weak_run_ref(run_map, values[field])

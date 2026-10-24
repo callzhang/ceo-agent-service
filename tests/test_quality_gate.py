@@ -1,17 +1,15 @@
 from tests.support.legacy_todo_facts import seed_legacy_todo_link, seed_legacy_todo_outbox, seed_legacy_work_project, seed_legacy_work_todo
 import json
 import sqlite3
+from types import SimpleNamespace
 
 import pytest
 from datetime import datetime, timedelta, timezone
 
-from app.run_storage import insert_run
-from app.runs11_storage import insert_run11_fact
 from app.state_storage import insert_state
 from app.action_storage import REPLY_ATTEMPT_COMMON_SQL, insert_action, update_action, update_sync_action, insert_error_action, error_set_parts
-from app.task8_storage import task8_insert_parts, task8_set_parts
-from app.task12_storage import insert_task12
-from app.task20_definitions import task20_column, task20_projection
+from app.run_entity_storage import create_run, create_runtime_attempt
+from app.task_entity_storage import append_task_input, bind_current_input, create_task, update_task_cas
 from app.quality_gate import (
     add_channel_health,
     required_live_channels,
@@ -25,7 +23,7 @@ from app.action_feedback_storage import resolve_feedback_events
 
 
 NOW = datetime(2026, 8, 7, 1, 0, tzinfo=timezone.utc)
-REPLY_TASK_SQL = task20_projection('reply_tasks')
+REPLY_TASK_SQL = "select * from (select tasks.id,tasks.status,tasks.available_at,tasks.attempts,tasks.error,tasks.updated_at,inputs.channel,inputs.conversation_id,inputs.conversation_title,inputs.single_chat,inputs.trigger_message_id,inputs.trigger_create_time,inputs.trigger_sender,inputs.trigger_text,inputs.trigger_message_json,inputs.business_object_key,inputs.oa_url from tasks join task_inputs inputs on inputs.id=tasks.current_input_id where tasks.kind='reply')"
 
 
 def test_feedback_quality_reads_selected_actions_and_resolution(tmp_path):
@@ -47,19 +45,72 @@ def test_feedback_quality_reads_selected_actions_and_resolution(tmp_path):
 
 
 def _insert_task(db, kind, values):
-    parts = task8_insert_parts(kind, values)
-    return db.execute(
-        f"insert into tasks({parts.columns}) values({parts.values})",
-        parts.parameters,
-    )
+    if kind == 'reply_tasks':
+        return _insert_canonical_reply_task(db, **values)
+    status = values.get('status', 'pending')
+    if kind == 'reply_task_inputs':
+        raise ValueError('Reply TaskInput fixtures are appended through the native owner')
+    task_kind = {
+        'meeting_alignment_jobs': 'meeting_alignment',
+        'work_summary_inputs': 'work_summary',
+        'okr_review_requests': 'okr_review',
+        'email_agent_classification_tasks': 'email_classification',
+    }.get(kind)
+    if task_kind is None:
+        raise ValueError(f"unsupported native quality fixture owner: {kind}")
+    task_parameters = ({
+        key: value for key, value in values.items()
+        if key in {'meeting_id', 'title', 'source_json', 'participants_json', 'ended_at', 'eligible_at',
+                   'conversation_id', 'conversation_title', 'trigger_message_id', 'trigger_sender',
+                   'trigger_sender_user_id', 'trigger_text', 'period_label', 'period_start',
+                   'period_end', 'okr_source_json', 'codex_session_id'}
+    } if task_kind in {'meeting_alignment', 'okr_review'} else {})
+    task = create_task(db, values={
+        'kind': task_kind, 'status': status, 'available_at': '',
+        'attempts': int(values.get('attempts', 0)), 'error': values.get('error', ''),
+        'created_at': values.get('created_at', '2026-08-07 00:00:00'),
+        'updated_at': values.get('updated_at', '2026-08-07 00:00:00'),
+    }, parameters=task_parameters)
+    if kind == 'work_summary_inputs':
+        db.execute(
+            "insert into work_summary_inputs(task_id,source_type,source_ref,payload_json) values(?,?,?,?)",
+            (task['id'], values['source_type'], values['source_ref'], values.get('payload_json', '{}')),
+        )
+    elif kind == 'email_agent_classification_tasks':
+        db.execute(
+            "insert into email_classification_inputs(task_id,channel,stable_message_identity,input_json) "
+            "values(?,?,?,?)",
+            (task['id'], values['channel'], values['stable_message_identity'], values['input_json']),
+        )
+    return SimpleNamespace(lastrowid=task['id'])
 
 
-def _update_task(db, kind, values, where, parameters=()):
-    parts = task8_set_parts(kind, values)
-    return db.execute(
-        f"update tasks set {parts.sql} where record_type=? and {where}",
-        (*parts.parameters, kind, *parameters),
-    )
+def insert_run(db, kind, values):
+    if kind == 'agent_runs':
+        row = create_run(db, values={
+            'execution_generation': '', 'proposal_revision': 0, 'turn_attempt': 0,
+            'operation_id': '', 'role': '', 'status': 'failed', 'session_id': '',
+            'transcript_start': 0, 'transcript_end': 0, 'structured_error_json': '',
+            'error': '', 'lease_owner': '', 'lease_expires_at': '',
+            'started_at': '2026-08-07 00:00:00', 'completed_at': '',
+            'updated_at': '2026-08-07 00:00:00', **values,
+        })
+        return SimpleNamespace(lastrowid=row['id'])
+    if kind != 'agent_runtime_attempts':
+        raise ValueError(f"unsupported native quality Run fixture owner: {kind}")
+    row = create_runtime_attempt(db, values={
+        'route_name': '', 'runtime_kind': '', 'credential_mode': '', 'model': '',
+        'session_mode': 'fresh', 'source_session_id': '', 'attempt_purpose': 'normal',
+        'validation_retry_policy_id': '', 'validation_result_schema_id': '',
+        'session_id': '', 'transcript_reference': '', 'transcript_start': 0,
+        'transcript_end': 0, 'status': 'failed', 'failure_class': '',
+        'failure_code': '', 'failover_permitted': 0, 'lease_owner': '',
+        'lease_expires_at': '', 'first_effect_started_at': '', 'result_schema_id': '',
+        'started_at': '2026-08-07 00:00:00', 'finished_at': '',
+        'created_at': '2026-08-07 00:00:00', 'updated_at': '2026-08-07 00:00:00',
+        **values,
+    })
+    return SimpleNamespace(lastrowid=row['id'])
 
 
 def test_reply_quality_counts_do_not_read_business_payloads(tmp_path):
@@ -125,7 +176,9 @@ def _insert_needs_human_projection(store, *, monkeypatch, result, status="needs_
         task_id = db.execute(
             f"select id from ({REPLY_TASK_SQL}) where conversation_id='conversation' and trigger_message_id='message'"
         ).fetchone()[0]
-        _update_task(db, 'reply_tasks', {'status': 'done'}, 'cast(legacy_key as integer)=?', (task_id,))
+        task_row = db.execute('select status from tasks where id=?', (task_id,)).fetchone()
+        assert update_task_cas(db, task_id=task_id, expected={'status': task_row[0]},
+                               changes={'status': 'done'}) is not None
         # Preserve each authored result as a native assistant final, without
         # adopting it as an approved candidate. Pretty JSON is a native format.
         native = store.path.with_suffix('.native.jsonl')
@@ -135,19 +188,37 @@ def _insert_needs_human_projection(store, *, monkeypatch, result, status="needs_
             ],
         }}) + "\n")
         monkeypatch.setattr("app.native_trajectory.find_codex_session_path", lambda *a, **k: native)
-        run = insert_run(
-            db, 'agent_runs', {
-                'task_id': task_id,
-                'execution_generation': 'generation',
-                'role': 'audit',
-                'status': 'completed',
-                'session_id': 'quality-native' if native_available else '',
-                'transcript_end': 1 if native_available else 0,
-            },
-        )
-        update_action(db, "reply_attempts", attempt_id, {"agent_run_id": run.lastrowid})
+        run = create_run(db, values={
+            'task_id': task_id, 'execution_generation': 'generation',
+            'proposal_revision': 0, 'turn_attempt': 0, 'operation_id': '',
+            'role': 'audit', 'status': 'completed',
+            'session_id': 'quality-native' if native_available else '',
+            'transcript_start': 0,
+            'transcript_end': 1 if native_available else 0,
+            'structured_error_json': '', 'error': '', 'lease_owner': '',
+            'lease_expires_at': '', 'started_at': '2026-08-07 00:00:00',
+            'completed_at': '2026-08-07 00:00:00', 'updated_at': '2026-08-07 00:00:00',
+        })
+        run_id = run['id']
+        if native_available:
+            create_runtime_attempt(db, values={
+                'parent_id': run_id, 'workload_kind': 'agent_run',
+                'workload_key': str(run_id), 'attempt_number': 1,
+                'route_name': 'codex_oauth', 'runtime_kind': 'codex_cli',
+                'credential_mode': 'local_oauth', 'model': 'quality-fixture',
+                'session_mode': 'fresh', 'source_session_id': '',
+                'attempt_purpose': 'normal', 'validation_retry_policy_id': '',
+                'validation_result_schema_id': '', 'session_id': 'quality-native',
+                'transcript_reference': '', 'transcript_start': 0, 'transcript_end': 1,
+                'status': 'completed', 'failure_class': '', 'failure_code': '',
+                'failover_permitted': 0, 'lease_owner': '', 'lease_expires_at': '',
+                'first_effect_started_at': '', 'result_schema_id': '',
+                'started_at': '2026-08-07 00:00:00', 'finished_at': '2026-08-07 00:00:00',
+                'created_at': '2026-08-07 00:00:00', 'updated_at': '2026-08-07 00:00:00',
+            })
+        update_action(db, "reply_attempts", attempt_id, {"agent_run_id": run_id})
     if native_available:
-        assert json.loads(store.get_agent_run(run.lastrowid).final_result_json) == result
+        assert json.loads(store.get_agent_run(run_id).final_result_json) == result
     return attempt_id
 
 
@@ -158,14 +229,24 @@ def _insert_canonical_reply_task(db, **overrides):
                   trigger_sender="sender", trigger_text="trigger", trigger_message_json="{}",
                   business_object_key="", oa_url="")
     fields.update(overrides)
-    parent = {key: value for key, value in fields.items()
-              if key not in {"trigger_text", "trigger_message_json"}}
-    cursor = _insert_task(db, 'reply_tasks', parent)
-    task_id = cursor.lastrowid
-    snapshot = {key: fields[key] for key in ("channel", "conversation_id", "conversation_title", "single_chat", "trigger_message_id", "trigger_create_time", "trigger_sender", "trigger_text", "trigger_message_json", "business_object_key", "oa_url")}
-    input_id = _insert_task(db, 'reply_task_inputs', {'parent_id': task_id, **snapshot}).lastrowid
-    db.execute("update tasks set current_input_id=? where id=?", (input_id, task_id))
-    return cursor
+    task = create_task(db, values={
+        'kind': 'reply', 'status': fields.get('status', 'pending'),
+        'available_at': fields.get('available_at', ''), 'attempts': fields.get('attempts', 0),
+        'error': fields.get('error', ''),
+        'execution_generation': fields.get('execution_generation', 'quality-fixture'),
+        'created_at': fields.get('created_at', '2026-08-07 00:00:00'),
+        'updated_at': fields.get('updated_at', '2026-08-07 00:00:00'),
+    }, parameters={})
+    snapshot = {key: fields[key] for key in (
+        'channel', 'conversation_id', 'conversation_title', 'single_chat',
+        'trigger_message_id', 'trigger_create_time', 'trigger_sender', 'trigger_text',
+        'trigger_message_json', 'business_object_key', 'oa_url')}
+    snapshot['business_object_key'] = snapshot['business_object_key'] or f"reply:{task['id']}"
+    snapshot['input_revision_key'] = f"quality:{task['id']}"
+    item, _ = append_task_input(db, task_id=task['id'], values=snapshot)
+    assert bind_current_input(db, task_id=task['id'], input_id=item['id'],
+                              expected_input_version=None, input_version=1)
+    return SimpleNamespace(lastrowid=task['id'])
 
 
 def _insert_reply_task(store, *, channel="dingtalk", status="pending", updated_at="2026-08-07 00:59:00"):
@@ -352,12 +433,12 @@ def test_required_live_channels_skips_unused_lark_but_includes_referenced_lark(
     assert required_live_channels(store.path) == frozenset({"codex", "dingtalk"})
 
     with store._connect() as db:
-        _update_task(
-            db, 'reply_task_inputs',
-            {'trigger_message_json': '{"link":"https://example.larksuite.com/docx/demo"}'},
-            'id=(select current_input_id from tasks where record_type=\'reply_tasks\' '
-            f"and {task20_column('reply_tasks', 'conversation_id')}='conversation')",
-        )
+        input_id = db.execute(
+            "select current_input_id from tasks join task_inputs on task_inputs.id=tasks.current_input_id "
+            "where tasks.kind='reply' and task_inputs.conversation_id='conversation'"
+        ).fetchone()[0]
+        db.execute('update task_inputs set trigger_message_json=? where id=?',
+                   ('{"link":"https://example.larksuite.com/docx/demo"}', input_id))
 
     assert required_live_channels(store.path) == frozenset(
         {"codex", "dingtalk", "lark"}
@@ -372,11 +453,10 @@ def test_quality_gate_detects_failed_queues_and_stale_processing(tmp_path):
     with store._connect() as db:
         _insert_task(db, 'meeting_alignment_jobs', {'meeting_id': 'meeting', 'status': 'failed', 'error': '', 'updated_at': stale})
         _insert_task(db, 'work_summary_inputs', {'source_type': 'message', 'source_ref': 'work', 'payload_json': '{}', 'status': 'failed', 'updated_at': stale})
-        insert_task12(db, 'email_agent_classification_tasks', {
-            'task_id': 'email-classification:failed', 'channel': 'email',
-            'stable_message_identity': 'account:inbox:1', 'status': 'failed',
-            'input_json': '{}', 'error': 'invalid classification input',
-            'updated_at': stale,
+        _insert_task(db, 'email_agent_classification_tasks', {
+            'channel': 'email', 'stable_message_identity': 'account:inbox:1',
+            'input_json': '{}', 'status': 'failed',
+            'error': 'invalid classification input', 'updated_at': stale,
         })
         insert_error_action(db, {
             "conversation_id": "conversation", "message_id": "message",
@@ -1026,10 +1106,8 @@ def test_quality_gate_excludes_needs_human_from_historical_business_object_task(
     with store._connect() as db:
         historical_task = _insert_canonical_reply_task(db, channel='dingtalk', conversation_id='work-notice', conversation_title='工作通知', single_chat=0, trigger_message_id='old-message', trigger_create_time='2026-08-07 00:00:00', trigger_sender='OA审批', trigger_text='旧审批通知', business_object_key='oa:process:task', status='done')
         current_task = _insert_canonical_reply_task(db, channel='dingtalk', conversation_id='oa-pending-scan', conversation_title='审批待办', single_chat=0, trigger_message_id='current-message', trigger_create_time='2026-08-07 00:30:00', trigger_sender='OA审批', trigger_text='当前审批任务', business_object_key='oa:process:task', status='done')
-        insert_task12(db, 'business_object_tasks', {
-            'business_object_key': 'oa:process:task',
-            'reply_task_id': current_task.lastrowid,
-        })
+        from app.task_entity_storage import associate_business_key
+        associate_business_key(db, task_id=current_task.lastrowid, business_key='oa:process:task')
         insert_action(db, "reply_attempts", {
             "channel": "dingtalk", "conversation_id": "work-notice",
             "conversation_title": "工作通知", "trigger_message_id": "old-message",
@@ -1234,10 +1312,13 @@ def test_quality_required_channels_skips_inactive_optional_channel(tmp_path):
     assert _quality_required_channels(store.path) == {"dingtalk", "lark"}
 
     with store._connect() as db:
-        _update_task(
-            db, 'reply_tasks', {'status': 'done'},
-            f"{task20_column('reply_tasks', 'channel')}='lark'",
-        )
+        task_id = db.execute(
+            "select tasks.id from tasks join task_inputs on task_inputs.id=tasks.current_input_id "
+            "where tasks.kind='reply' and task_inputs.channel='lark'"
+        ).fetchone()[0]
+        current = db.execute('select status from tasks where id=?', (task_id,)).fetchone()[0]
+        assert update_task_cas(db, task_id=task_id, expected={'status': current},
+                               changes={'status': 'done'}) is not None
 
     assert _quality_required_channels(store.path) == {"dingtalk"}
 
@@ -1383,12 +1464,13 @@ def test_missing_native_delivery_evidence_is_reported_as_coverage_not_success(tm
 
 def _runtime_sample(store, *, outcome, recorded_at, fallback_code=""):
     with store._connect() as db:
-        insert_run11_fact(db, 'email_classifier_runtime_samples', {
-            'model_id': 'email-model-1', 'outcome': outcome,
-            'fallback_code': fallback_code, 'cache_hit': 1, 'runtime_warm': 1,
-            'queue_ms': 0, 'http_ms': 0, 'embedding_ms': 0,
-            'head_ms': 1.0, 'total_ms': 1.0, 'recorded_at': recorded_at,
-        })
+        db.execute(
+            "insert into email_classifier_runtime_samples "
+            "(model_id,outcome,fallback_code,cache_hit,runtime_warm,queue_ms,http_ms,"
+            "embedding_ms,head_ms,total_ms,created_at) values(?,?,?,?,?,?,?,?,?,?,?)",
+            ('email-model-1', outcome, fallback_code, 1, 1, 0, 0, 0, 1.0, 1.0,
+             recorded_at),
+        )
 
 
 def test_an_email_model_that_raises_instead_of_deciding_is_a_violation(tmp_path):

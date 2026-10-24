@@ -22,14 +22,12 @@ if __name__ == "__main__":
 
 from app.business_definitions import BUSINESS_PROJECTIONS
 from app.store import (
-    BUSINESS_ACTION_SQL, RUNTIME_ATTEMPT_SQL, TASK_LOGICAL_RUN_SQL, WORK_SUMMARY_INPUT_SQL,
+    BUSINESS_ACTION_SQL, NATIVE_TASK_RUN_SQL,
 )
 from app.action_followup_sync_definitions import SYNC_ACTION_PROJECTIONS
 from app.business_candidate_definitions import candidate_projection
 from app.business_source_reader import AvailableSource, PreparedSources, SourceVersionBinding
 from app.provenance_storage import signals_for_source
-from app.task8_storage import task8_set_parts
-from app.task20_definitions import task20_column
 
 EVALUATION_SCOPE = "task-agent:attention-eval:v1"
 EVALUATION_INSTRUCTION = """Evaluation instruction (prompt guidance only):
@@ -482,15 +480,16 @@ def readback(store, *, input_id, before, expected=None, project_before=None, sou
     after = read_domain(store)
     with store._connect() as db:
         run = db.execute(
-            f"select * from ({TASK_LOGICAL_RUN_SQL}) where summary_input_id=? order by id desc limit 1",
+            f"select * from ({NATIVE_TASK_RUN_SQL}) where summary_input_id=? order by id desc limit 1",
             (input_id,),
         ).fetchone()
         native_ref = latest_task_ref(db, run["id"]) if run is not None else None
         attempts = [
             dict(row)
             for row in db.execute(
-                f"select id,route_name,runtime_kind,model,status,failure_code,attempt_purpose from ({RUNTIME_ATTEMPT_SQL}) as agent_runtime_attempts where workload_kind='task' and workload_key=? order by id",
-                (str(run["id"]) if run is not None else "",),
+                "select id,route_name,runtime_kind,model,status,failure_code,attempt_purpose "
+                "from runtime_attempts where parent_id=? and workload_kind='task' order by id",
+                (int(run["id"]) if run is not None else -1,),
             )
         ]
         links = [
@@ -1009,14 +1008,51 @@ def _prepare_replay_sources(store, prepared_sources, work_item):
             prepared_sources.add_current(fact, signal.evidence_text)
 
 
+def _replace_replay_input(store, item, payload, *, status):
+    """Restore one fixed evaluation input through its native Task/Input owners."""
+    from app.task_entity_storage import get_task, update_task_cas
+    from app.work_summary_payload import encode_work_summary_payload
+
+    source_created_at, body_sha256, body_bytes = store._work_summary_input_provenance(payload)
+    with store._immediate_write_transaction() as db:
+        task = get_task(db, item.id)
+        source = db.execute(
+            "select source_type,source_ref,payload_json,body_compacted,body_sha256,body_bytes "
+            "from work_summary_inputs where task_id=?",
+            (item.id,),
+        ).fetchone()
+        if (task is None or task["kind"] != "work_summary"
+                or task["status"] != item.status.value or source is None
+                or source["source_type"] != item.source_type.value
+                or source["source_ref"] != item.source_ref
+                or source["body_compacted"] != item.body_compacted
+                or source["body_sha256"] != item.body_sha256
+                or source["body_bytes"] != item.body_bytes):
+            raise ValueError("fixed source version changed before replay")
+        updated = update_task_cas(
+            db, task_id=item.id,
+            expected={"status": item.status.value, "updated_at": task["updated_at"]},
+            changes={"status": status, "error": "", "available_at": "",
+                     "updated_at": db.execute("select current_timestamp").fetchone()[0]},
+        )
+        if updated is None:
+            raise ValueError("fixed source version changed before replay")
+        changed = db.execute(
+            "update work_summary_inputs set payload_json=?,source_created_at=?,body_sha256=?,"
+            "body_bytes=?,body_compacted=0 where task_id=? and source_type=? and source_ref=? "
+            "and payload_json=? and body_compacted=? and body_sha256=? and body_bytes=?",
+            (encode_work_summary_payload(payload), source_created_at, body_sha256, body_bytes,
+             item.id, item.source_type.value, item.source_ref, source["payload_json"],
+             item.body_compacted, item.body_sha256, item.body_bytes),
+        ).rowcount
+        if changed != 1:
+            raise ValueError("fixed source version changed before replay")
+
+
 def replay_input(store, runner, input_id, *, source_ref, expected=None, source_payload=None, prepared_sources=None):
     from app.task_agent import process_work_item
     from app.task_models import WorkItem
     from app.task_agent_session import TaskAgentSessionLease
-    from app.work_summary_payload import (
-        decode_work_summary_payload,
-        encode_work_summary_payload,
-    )
 
     require_copy(store.path)
     item = store.get_work_summary_input(input_id)
@@ -1036,38 +1072,7 @@ def replay_input(store, runner, input_id, *, source_ref, expected=None, source_p
     delivery_start = len(getattr(runner, "context_deliveries", []))
     with lease:
         lease.assert_owned()
-        with store._connect() as db:
-            stored = db.execute(
-                f"select payload_json from ({WORK_SUMMARY_INPUT_SQL}) where id=?",
-                (input_id,),
-            ).fetchone()
-            if (
-                stored is None
-                or decode_work_summary_payload(stored[0]) != item.payload_json
-            ):
-                raise ValueError("input changed before exact replay")
-            raw_payload = stored[0]
-            kind = "work_summary_inputs"
-            parts = task8_set_parts(kind, {
-                "status": "processing", "error": "", "available_at": "",
-                "payload_json": encode_work_summary_payload(payload), "body_compacted": 0,
-            }, update_sql={"updated_at": "current_timestamp"})
-            predicates = " and ".join(
-                task20_column(kind, field) + "=?" for field in (
-                    "source_type", "source_ref", "status", "body_compacted",
-                    "body_sha256", "body_bytes", "payload_json",
-                )
-            )
-            updated = db.execute(
-                f"update tasks set {parts.sql} "
-                "where record_type='work_summary_inputs' and cast(legacy_key as integer)=? and "
-                + predicates,
-                (*parts.parameters, input_id,
-                 item.source_type.value, item.source_ref, item.status.value,
-                 item.body_compacted, item.body_sha256, item.body_bytes, raw_payload),
-            ).rowcount
-            if updated != 1:
-                raise ValueError("input changed before exact replay")
+        _replace_replay_input(store, item, payload, status="processing")
         try:
             process_work_item(
                 store,
@@ -1113,27 +1118,13 @@ def replay_case(store, runner, case):
         prior = prior_sources.get(source_key)
         if prior is not None and prior[1] != key:
             prior_id, prior_payload = prior
-            encoded = key.encode("utf-8")
-            with store._connect() as db:
-                kind = "work_summary_inputs"
-                parts = task8_set_parts(kind, {
-                    "status": "pending", "payload_json": key, "body_compacted": 0,
-                    "body_sha256": hashlib.sha256(encoded).hexdigest(),
-                    "body_bytes": len(encoded), "source_created_at": str(item.source.created_at),
-                    "error": "", "available_at": "",
-                })
-                changed = db.execute(
-                    f"update tasks set {parts.sql} "
-                    "where record_type='work_summary_inputs' and cast(legacy_key as integer)=? "
-                    f"and {task20_column(kind, 'status')} in ('done','skipped') "
-                    f"and {task20_column(kind, 'source_type')}=? "
-                    f"and {task20_column(kind, 'source_ref')}=? "
-                    f"and {task20_column(kind, 'body_sha256')}=?",
-                    (*parts.parameters, prior_id, *source_key,
-                     hashlib.sha256(prior_payload.encode("utf-8")).hexdigest()),
-                ).rowcount
-                if changed != 1:
-                    raise ValueError("fixed source version changed before next replay turn")
+            prior_item = store.get_work_summary_input(prior_id)
+            if prior_item is None or prior_item.status.value not in {"done", "skipped"}:
+                raise ValueError("fixed source version changed before next replay turn")
+            if (prior_item.body_sha256 != hashlib.sha256(prior_payload.encode("utf-8")).hexdigest()
+                    or prior_item.body_bytes != len(prior_payload.encode("utf-8"))):
+                raise ValueError("fixed source version changed before next replay turn")
+            _replace_replay_input(store, prior_item, key, status="pending")
         input_id = seed_case(store, {**case, "work_item": raw}, prepared_sources=prepared_sources) if index == 0 else store.enqueue_work_summary_input(
             item.source.type.value, item.source.ref, item.model_dump_json()
         )

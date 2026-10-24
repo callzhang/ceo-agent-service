@@ -7,7 +7,6 @@ provider and never creates Agent, Audit, reply-task, or run records.
 from __future__ import annotations
 
 from app.deployment_drain import claim_connection
-from app.task20_definitions import task20_projection
 from app.external_retry import MAX_AUTOMATIC_ATTEMPTS
 
 from app.store import (

@@ -2,8 +2,6 @@
 
 import json
 import hashlib
-import re
-import sqlite3
 from types import SimpleNamespace
 
 import pytest
@@ -17,10 +15,12 @@ from app.dingtalk_delivery_repair import (
     collect_native_chat_readback,
     native_reply_text_matches,
 )
-from app.action_storage import update_action, insert_error_action, REPLY_ATTEMPT_COMMON_SQL
-from app.action_storage import EXTERNAL_ACTION_RESULT_SQL
-from app.task8_storage import task8_set_parts
-from app.run_storage import AGENT_RUN_SQL
+from app.action_storage import (
+    AGENT_EFFECT_INTENT_SQL, NATIVE_CANDIDATE_ACTION_ATTEMPT_SQL,
+    NATIVE_EXTERNAL_ACTION_RESULT_SQL,
+    insert_error_action,
+)
+from app.store import NATIVE_REVIEW_CANDIDATE_SQL
 from app.system_executor import ActionOutcome, SystemExecutor
 from tests.test_agent_orchestrator import ScriptedAudit, ScriptedConsumer, candidate, task_and_context
 from tests.test_dingtalk_delivery_verification import reply_receipt
@@ -91,11 +91,16 @@ def test_restart_recovery_cannot_complete_unverified_recorded_delivery(tmp_path,
     with pytest.raises(ValueError, match="not recorded"):
         store.resolve_reconciled_failed_reply_task(task.id, external_action_key=receipt["external_action_key"])
     with store._connect() as db:
-        parts = task8_set_parts("reply_tasks", {"status": "done"})
-        db.execute(f"update tasks set {parts.sql} where record_type='reply_tasks' and id=?", (*parts.parameters, task.id))
-        db.execute("update runs set status='failed',structured_error_json=? where record_type='agent_runs' "
-                   f"and id=(select max(id) from ({AGENT_RUN_SQL}) where reply_task_id=?)",
-                   ('{"code":"later_failure"}', task.id))
+        from app.task_entity_storage import update_task_cas
+        # Reverification withdrew completion; restore the stale done projection
+        # to exercise startup repair against the same native generation.
+        assert update_task_cas(db, task_id=task.id, expected={"status": "failed"},
+                               changes={"status": "done"}) is not None
+        # Model a later failing current Run directly on its native physical owner.
+        db.execute("update runs set status='failed',structured_error_json=? "
+                   "where id=(select max(id) from runs where task_id=? and role in ('consumer','audit') "
+                   "and execution_generation=?)",
+                   ('{"code":"later_failure"}', task.id, task.execution_generation))
     assert store.reconcile_done_reply_tasks_with_failed_current_run() == 1
     assert store.get_reply_task(task.id).status == "failed"
 
@@ -104,8 +109,9 @@ def test_restart_recovery_keeps_confirmed_recorded_delivery(tmp_path):
     store, task, _context, _driver, _handler, receipt, _execution = historical_receipt(tmp_path)
     assert apply_delivery_reverification(store, proof(receipt, "sent"))
     with store._connect() as db:
-        parts = task8_set_parts("reply_tasks", {"status": "failed"})
-        db.execute(f"update tasks set {parts.sql} where record_type='reply_tasks' and id=?", (*parts.parameters, task.id))
+        from app.task_entity_storage import update_task_cas
+        assert update_task_cas(db, task_id=task.id, expected={"status": "done"},
+                               changes={"status": "failed"}) is not None
     assert store.reconcile_failed_reply_tasks_with_recorded_deliveries() == 1
     assert store.get_reply_task(task.id).status == "done"
 
@@ -182,138 +188,65 @@ def test_exact_complete_native_chat_readback_closes_without_resending(tmp_path):
 
 
 def _legacy_native_readback_case(tmp_path, monkeypatch):
-    from contextlib import closing
-
-    from app import action_storage
-    from app.action_entity_schema_release import (
-        prepare_action_entity_release,
-        publish_action_entity_release,
-    )
-    from app.current_action_schema_release import source_objects
-    from app.run_storage import insert_run
-    from app.state_storage import insert_state
+    """Seed historical delivery evidence on current native Task/Run/Action owners."""
+    from app.run_entity_storage import create_run
+    from app.shared_action_lifecycle import record_sent_action
     from app.store import AutoReplyStore
-    from app.task8_storage import register_task8_functions, task8_insert_parts, task8_set_parts
+    from app.task_entity_storage import update_task_cas
 
-    path = tmp_path / "historical-source.sqlite3"
-    with closing(sqlite3.connect(path)) as db:
-        register_task8_functions(db)
-        db.execute("pragma foreign_keys=off")
-        for _kind, _name, _table, sql in sorted(
-            source_objects("fresh_memory_fk"), key=lambda item: item[0] != "table"
-        ):
-            db.execute(sql)
-        db.execute("begin")
-        insert_state(db, "service_state", {
-            "key": "store_schema_version", "value": "2026-10-19.12",
-            "updated_at": "historical-source-marker",
-        })
-        db.execute(
-            "insert into email_schema_migrations(version,applied_at) values(53,'historical-email-marker')"
-        )
-
-        task_values = {
-            "channel": "dingtalk", "conversation_id": "conversation",
-            "conversation_title": "Test", "single_chat": 1,
-            "trigger_message_id": "trigger", "trigger_create_time": "2026-10-04 00:00:00",
-            "trigger_sender": "Derek", "status": "failed", "error": "external_action_uncertain",
-            "execution_generation": "historical-generation",
-            "business_object_key": "historical-reply-task",
-        }
-        task_parts = task8_insert_parts("reply_tasks", task_values)
-        task_id = db.execute(
-            f"insert into tasks({task_parts.columns}) values({task_parts.values}) returning id",
-            task_parts.parameters,
-        ).fetchone()[0]
-        input_parts = task8_insert_parts("reply_task_inputs", {
-            "parent_id": task_id, "channel": "dingtalk",
-            "conversation_id": "conversation", "conversation_title": "Test",
-            "single_chat": 1, "trigger_message_id": "trigger",
-            "trigger_create_time": "2026-10-04 00:00:00", "trigger_sender": "Derek",
-            "trigger_text": "Review", "trigger_message_json": "{}",
-            "business_object_key": "historical-reply-task",
-            "input_revision_key": "historical-input",
-        })
-        input_id = db.execute(
-            f"insert into tasks({input_parts.columns}) values({input_parts.values})",
-            input_parts.parameters,
-        ).lastrowid
-        pointer = task8_set_parts(
-            "reply_tasks", {}, structural_sql={
-                "current_input_id": "?", "claimed_input_id": "?",
-            }, structural_parameters=(input_id, input_id),
-        )
-        db.execute(
-            f"update tasks set {pointer.sql} where record_type='reply_tasks' and id=?",
-            (*pointer.parameters, task_id),
-        )
-        run_id = 42
-        insert_run(db, "agent_runs", {
-            "id": run_id, "task_id": task_id,
-            "execution_generation": "historical-generation", "role": "consumer",
-            "status": "completed", "started_at": "historical-start",
-            "completed_at": "historical-complete",
-        })
-
-        source_actions_sql = next(
-            sql for kind, name, _table, sql in source_objects("fresh_memory_fk")
-            if kind == "table" and name == "actions"
-        )
-        source_codes = {
-            name: int(code) for code, name in re.findall(
-                r"when (\d+) then '([^']+)'", source_actions_sql
-            )
-        }
-
-        class SourceRecordTypes:
-            def code(self, name):
-                return source_codes[name]
-
-        provider_json = json.dumps({
-            "provider_result": reply_receipt(),
-            "verification": {
-                "state": "ambiguous", "open_task_id": "send-task-1",
-                "status_result": {"success": True, "result": {"sendStatus": "SUCCESS"}},
-            },
-        }, ensure_ascii=False, sort_keys=True, separators=(",", ":"))
-        target_json = json.dumps({
-            "conversation_id": "conversation", "message_id": "trigger",
-        }, sort_keys=True, separators=(",", ":"))
-        with monkeypatch.context() as patch:
-            patch.setattr(action_storage, "ACTION_RECORD_TYPES", SourceRecordTypes())
-            action_storage.insert_action(db, "reply_attempts", {
-                "id": 71, "conversation_id": "conversation", "conversation_title": "Test",
-                "trigger_message_id": "trigger", "trigger_sender": "Derek",
-                "trigger_text": "Review", "action": "reply", "sensitivity_kind": "",
-                "send_status": "completed", "permission_action": "", "reviewed_at": None,
-                "audit_tool_events_json": "[]", "audit_documents_json": "[]",
-                "channel": "dingtalk", "agent_run_id": run_id,
-                "created_at": "historical-attempt-time",
-            })
-            action_storage.insert_action(db, "external_action_results", {
-                "external_action_key": "historical-provider-effect",
-                "business_object_key": "historical-reply-task",
-                "action_identity": "historical-reply-action",
-                "operation": "reply_to_message", "target_identifiers_json": target_json,
-                "provider_result_json": provider_json,
-                "result_digest": hashlib.sha256(provider_json.encode()).hexdigest(),
-                "first_agent_run_id": run_id, "created_at": "historical-receipt-time",
-            })
-            action_storage.insert_action(db, "sent_replies", {
-                "conversation_id": "conversation", "trigger_message_id": "trigger",
-                "reply_text": "Exact prepared advice", "sent_at": "2026-10-15 10:00:00",
-                "send_result_json": provider_json, "channel": "dingtalk",
-                "agent_run_id": run_id, "external_action_key": "historical-provider-effect",
-            })
-        db.commit()
-
-    contract = prepare_action_entity_release(path)
-    publish_action_entity_release(path, contract)
+    path = tmp_path / "historical-current.sqlite3"
     store = AutoReplyStore(path)
-    task = store.get_reply_task(task_id)
+    store.enqueue_reply_task(
+        channel="dingtalk", conversation_id="conversation",
+        conversation_title="Test", single_chat=True,
+        trigger_message_id="trigger", trigger_create_time="2026-10-04 00:00:00",
+        trigger_sender="Derek", trigger_text="Review",
+        trigger_message_json="{}", execution_generation="historical-generation",
+        business_object_key="historical-reply-task",
+    )
+    task = store.get_reply_task_for_message("conversation", "trigger")
+    assert task is not None
+
+    provider_json = json.dumps({
+        "provider_result": reply_receipt(),
+        "verification": {
+            "state": "ambiguous", "open_task_id": "send-task-1",
+            "status_result": {"success": True, "result": {"sendStatus": "SUCCESS"}},
+        },
+    }, ensure_ascii=False, sort_keys=True, separators=(",", ":"))
+    target_json = json.dumps({
+        "conversation_id": "conversation", "message_id": "trigger",
+    }, sort_keys=True, separators=(",", ":"))
+    digest = hashlib.sha256(provider_json.encode()).hexdigest()
+    with store._immediate_write_transaction() as db:
+        assert update_task_cas(
+            db, task_id=task.id, expected={"status": "pending"},
+            changes={"status": "failed", "error": "external_action_uncertain"},
+        ) is not None
+        run = create_run(db, values={
+            "task_id": task.id, "execution_generation": task.execution_generation,
+            "role": "consumer", "status": "completed",
+            "started_at": "historical-start", "completed_at": "historical-complete",
+        })
+        run_id = int(run["id"])
+        # This event predates candidate approval. It is retained historical
+        # Action evidence and deliberately has no adopted candidate linkage.
+        record_sent_action(
+            db, operation="reply_to_message", target_json=target_json,
+            provider_json=provider_json, result_digest=digest,
+            external_action_key="historical-provider-effect",
+            business_object_key="historical-reply-task",
+            action_identity="historical-reply-action", channel="dingtalk",
+            conversation_id="conversation", trigger_message_id="trigger",
+            reply_text="Exact prepared advice", feedback_token="",
+            agent_run_id=run_id, task_id=task.id,
+            observed_at="historical-receipt-time",
+        )
+
+    receipt = None
     with store._connect() as db:
         receipt = db.execute(
-            f"select * from ({EXTERNAL_ACTION_RESULT_SQL}) where external_action_key=?",
+            f"select * from ({NATIVE_EXTERNAL_ACTION_RESULT_SQL}) where external_action_key=?",
             ("historical-provider-effect",),
         ).fetchone()
         receipt = dict(receipt)
@@ -324,8 +257,6 @@ def _legacy_native_readback_case(tmp_path, monkeypatch):
 
 def _legacy_delivery_facts(store, task, external_action_key):
     from app.action_storage import (
-        CANDIDATE_ACTION_ATTEMPT_SQL,
-        REVIEW_CANDIDATE_SQL,
         SENT_REPLY_SQL,
     )
 
@@ -337,7 +268,7 @@ def _legacy_delivery_facts(store, task, external_action_key):
         ).fetchall()
         result = db.execute(
             f"select external_action_key,business_object_key,action_identity,first_agent_run_id "
-            f"from ({EXTERNAL_ACTION_RESULT_SQL}) where external_action_key=?",
+            f"from ({NATIVE_EXTERNAL_ACTION_RESULT_SQL}) where external_action_key=?",
             (external_action_key,),
         ).fetchall()
         sent = db.execute(
@@ -346,11 +277,11 @@ def _legacy_delivery_facts(store, task, external_action_key):
             (task.channel, task.conversation_id, task.trigger_message_id),
         ).fetchall()
         candidates = db.execute(
-            f"select id from ({REVIEW_CANDIDATE_SQL}) where task_id=?",
+            f"select id from ({NATIVE_REVIEW_CANDIDATE_SQL}) where task_id=?",
             (task.id,),
         ).fetchall()
         action_attempts = db.execute(
-            f"select id from ({CANDIDATE_ACTION_ATTEMPT_SQL}) where external_action_key=?",
+            f"select id from ({NATIVE_CANDIDATE_ACTION_ATTEMPT_SQL}) where external_action_key=?",
             (external_action_key,),
         ).fetchall()
     return {
@@ -373,11 +304,9 @@ def test_native_chat_readback_settles_legacy_completed_reply_without_inventing_a
     assert len(delivery_facts_before["sent"]) == 1
     assert delivery_facts_before["candidate_ids"] == ()
     assert delivery_facts_before["candidate_action_attempt_ids"] == ()
-    from app.logical_run_storage import AGENT_RUN_SQL
-
     with store._connect() as db:
         original_run = db.execute(
-            f"select id,reply_task_id,execution_generation,role,status from ({AGENT_RUN_SQL}) where id=?",
+            "select id,task_id as reply_task_id,execution_generation,role,status from runs where id=?",
             (receipt["first_agent_run_id"],),
         ).fetchone()
     assert apply_native_chat_readback(store, readback)
@@ -392,11 +321,11 @@ def test_native_chat_readback_settles_legacy_completed_reply_without_inventing_a
     assert result["verification_repair"]["native_chat_readback"]["quoted_trigger_id"] == task.trigger_message_id
     with store._connect() as db:
         settled_receipt = db.execute(
-            f"select * from ({EXTERNAL_ACTION_RESULT_SQL}) where external_action_key=?",
+            f"select * from ({NATIVE_EXTERNAL_ACTION_RESULT_SQL}) where external_action_key=?",
             (receipt["external_action_key"],),
         ).fetchone()
         settled_run = db.execute(
-            f"select id,reply_task_id,execution_generation,role,status from ({AGENT_RUN_SQL}) where id=?",
+            "select id,task_id as reply_task_id,execution_generation,role,status from runs where id=?",
             (receipt["first_agent_run_id"],),
         ).fetchone()
         assert settled_receipt["first_agent_run_id"] == receipt["first_agent_run_id"]
@@ -421,13 +350,26 @@ def test_legacy_native_readback_requires_unreviewed_exact_historical_facts(tmp_p
     store, task, receipt, readback = _legacy_native_readback_case(tmp_path, monkeypatch)
     with store._immediate_write_transaction() as db:
         if mutation == "permission":
-            attempt = db.execute(
-                f"select id from ({REPLY_ATTEMPT_COMMON_SQL}) where agent_run_id=?",
-                (receipt["first_agent_run_id"],),
-            ).fetchone()
-            update_action(db, "reply_attempts", int(attempt["id"]), {
-                "permission_action": "approve",
-            })
+            from app import action_storage
+            from app.storage_payload import ACTION_RECORD_TYPES
+
+            values = {
+                "authorization_id": "historical-authorization", "action_index": 0,
+                "receipt_operation_id": "historical-operation", "capability": "dingtalk-chat",
+                "operation": "reply_to_message", "operation_digest": "operation-digest",
+                "arguments_digest": "arguments-digest",
+                "target_identifiers_json": receipt["target_identifiers_json"],
+                "state": "acknowledged", "result_digest": "result-digest", "exit_code": 0,
+                "prepared_at": "historical-prepared", "dispatched_at": "historical-dispatched",
+                "acknowledged_at": "historical-acknowledged", "updated_at": "historical-updated",
+                "external_action_key": receipt["external_action_key"],
+            }
+            payload = action_storage._action_payload(db, "agent_effect_intents", values)
+            db.execute(
+                "insert into actions(_kind,legacy_key,agent_run_id,payload_json) values(?,?,?,?)",
+                (ACTION_RECORD_TYPES.code("agent_effect_intents"), "1",
+                 receipt["first_agent_run_id"], payload),
+            )
         else:
             from app.action_entity_storage import update_sent_receipt
 
@@ -438,17 +380,21 @@ def test_legacy_native_readback_requires_unreviewed_exact_historical_facts(tmp_p
             binding = db.execute(
                 "select id,target from action_receipts where action_id=? and provider_result_json is null "
                 "and provider_receipt_id is not null and status is null and attempt_number is null "
-                "and execution_id is null and action_index is null order by id limit 1",
-                (action_id,),
+                "and execution_run_id is null and action_index is null "
+                "and id is not (select action_delivery_receipt_id from actions where id=?) "
+                "and id is not (select action_prepared_receipt_id from actions where id=?) "
+                "order by id limit 1",
+                (action_id, action_id, action_id),
             ).fetchone()
             assert update_sent_receipt(
                 db, action_id, receipt_id=binding["id"],
                 expected={"target": binding["target"]}, changes={"target": "{}"},
+                execution_owner_column="execution_run_id",
             ) == binding["id"]
 
     with store._connect() as db:
         before_rejection = db.execute(
-            f"select * from ({EXTERNAL_ACTION_RESULT_SQL}) where external_action_key=?",
+            f"select * from ({NATIVE_EXTERNAL_ACTION_RESULT_SQL}) where external_action_key=?",
             (receipt["external_action_key"],),
         ).fetchone()
         expected_target = "{}" if mutation == "receipt_target" else receipt["target_identifiers_json"]
@@ -458,16 +404,16 @@ def test_legacy_native_readback_requires_unreviewed_exact_historical_facts(tmp_p
         before_target = before_rejection["target_identifiers_json"]
         before_sent = store.get_sent_reply(task.conversation_id, task.trigger_message_id)
         before_attempt = db.execute(
-            f"select permission_action,send_status,reviewed_at from ({REPLY_ATTEMPT_COMMON_SQL}) "
-            "where agent_run_id=?",
+            f"select authorization_id,capability,operation,state from ({AGENT_EFFECT_INTENT_SQL}) "
+            "where agent_run_id=? order by id",
             (receipt["first_agent_run_id"],),
-        ).fetchone()
+        ).fetchall()
     with pytest.raises(ValueError, match="legacy reply lacks"):
         apply_native_chat_readback(store, readback)
     assert store.get_reply_task(task.id).status == "failed"
     with store._connect() as db:
         after_rejection = db.execute(
-            f"select * from ({EXTERNAL_ACTION_RESULT_SQL}) where external_action_key=?",
+            f"select * from ({NATIVE_EXTERNAL_ACTION_RESULT_SQL}) where external_action_key=?",
             (receipt["external_action_key"],),
         ).fetchone()
         after_sent = store.get_sent_reply(task.conversation_id, task.trigger_message_id)
@@ -475,11 +421,11 @@ def test_legacy_native_readback_requires_unreviewed_exact_historical_facts(tmp_p
         assert after_rejection["first_agent_run_id"] == before_run
         assert after_rejection["target_identifiers_json"] == before_target
         after_attempt = db.execute(
-            f"select permission_action,send_status,reviewed_at from ({REPLY_ATTEMPT_COMMON_SQL}) "
-            "where agent_run_id=?",
+            f"select authorization_id,capability,operation,state from ({AGENT_EFFECT_INTENT_SQL}) "
+            "where agent_run_id=? order by id",
             (receipt["first_agent_run_id"],),
-        ).fetchone()
-        assert tuple(after_attempt) == tuple(before_attempt)
+        ).fetchall()
+        assert [tuple(row) for row in after_attempt] == [tuple(row) for row in before_attempt]
         assert after_sent.reply_text == before_sent.reply_text
         assert after_sent.agent_run_id == before_sent.agent_run_id
 

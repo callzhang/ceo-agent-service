@@ -1,7 +1,7 @@
 import json
 import pytest
 
-from app.run_storage import insert_run
+from app.run_entity_storage import create_runtime_attempt
 from app.store import MEETING_LOGICAL_RUN_SQL,TASK_LOGICAL_RUN_SQL
 from app import native_trajectory
 from app.agent_envelope import AgentEnvelope
@@ -18,8 +18,9 @@ def _message(text):
 
 
 def _attempt(db, run_id, workload_key, session, start, end, number, *, kind="task", status="completed"):
-    insert_run(
-        db, 'agent_runtime_attempts', {
+    create_runtime_attempt(
+        db, values={
+            'parent_id': run_id,
             'workload_kind': kind,
             'workload_key': workload_key,
             'attempt_number': number,
@@ -27,12 +28,18 @@ def _attempt(db, run_id, workload_key, session, start, end, number, *, kind="tas
             'runtime_kind': 'codex_cli',
             'credential_mode': 'local_oauth',
             'model': 'test',
+            'session_mode': 'fresh', 'source_session_id': '',
+            'attempt_purpose': 'normal', 'validation_retry_policy_id': '',
+            'validation_result_schema_id': '', 'transcript_reference': '',
             'session_id': session,
             'status': status,
             'transcript_start': start,
             'transcript_end': end,
             'lease_owner': 'test',
             'lease_expires_at': '2099-01-01 00:00:00',
+            'failure_class': '', 'failure_code': '', 'failover_permitted': 0,
+            'first_effect_started_at': '', 'result_schema_id': '',
+            'started_at': '', 'finished_at': '', 'created_at': '', 'updated_at': '',
         },
     )
 
@@ -59,24 +66,24 @@ def test_meeting_run_hydrates_only_exact_native_range_and_reports_unavailable(tm
         participants_json="[]", ended_at="2026-10-09", eligible_at="2026-10-09",
         status="no_action",
     )
-    run = store.create_logical_run('meeting_alignment_runs', task_public_id=job, codex_session_id="native-meeting", status="sent", error="", codex_transcript_start_line=1, codex_transcript_end_line=3)
+    run = store.create_professional_run(job, session_id="native-meeting", status="no_action", transcript_start=1, transcript_end=3)
     with store._connect() as db:
         _attempt(db, run, str(run), "native-meeting", 1, 3, 1, kind="meeting")
         row = db.execute(
             f"select * from ({MEETING_LOGICAL_RUN_SQL}) where id=?", (run,)
         ).fetchone()
     assert not {"decision_json", "audit_summary", "audit_tool_events_json"} & set(row.keys())
-    loaded = store.get_logical_run('meeting_alignment_runs', run)
-    assert loaded.native_available
-    assert json.loads(loaded.decision_json)["final_message"] == "current turn"
-    assert loaded.audit_summary == current.audit_summary
-    assert json.loads(loaded.audit_tool_events_json)[0]["command"] == "native evidence"
+    loaded = store.get_professional_run(run)
+    assert loaded["native_available"]
+    assert json.loads(loaded["decision_json"])["final_message"] == "current turn"
+    assert loaded["audit_summary"] == current.audit_summary
+    assert json.loads(loaded["audit_tool_events_json"])[0]["command"] == "native evidence"
 
     native.write_text(_message(old.model_dump_json()) + "\n")
-    missing = store.get_logical_run('meeting_alignment_runs', run)
-    assert not missing.native_available
-    assert missing.native_reason == "native_source_unavailable"
-    assert missing.decision_json == "{}"
+    missing = store.get_professional_run(run)
+    assert not missing["native_available"]
+    assert missing["native_reason"] == "native_source_unavailable"
+    assert missing["decision_json"] == "{}"
 
 
 def test_meeting_multiturn_reference_is_unavailable(tmp_path, monkeypatch):
@@ -105,8 +112,8 @@ def test_meeting_legacy_complete_range_is_read_without_attempt(tmp_path, monkeyp
         participants_json="[]", ended_at="2026-10-09", eligible_at="2026-10-09",
         status="no_action",
     )
-    run = store.create_logical_run('meeting_alignment_runs', task_public_id=job, codex_session_id="native-meeting", status="no_action", error="", codex_transcript_start_line=0, codex_transcript_end_line=1)
-    assert store.get_logical_run('meeting_alignment_runs', run).native_available
+    run = store.create_professional_run(job, session_id="native-meeting", status="no_action", transcript_start=0, transcript_end=1)
+    assert store.get_professional_run(run)["native_available"]
     store.upsert_codex_session_search_index(
         session_id="native-meeting", source_type="meeting_alignment",
         source_id=str(run), title="Legacy Planning",
@@ -116,9 +123,9 @@ def test_meeting_legacy_complete_range_is_read_without_attempt(tmp_path, monkeyp
                  kind="meeting", status="failed")
         _attempt(db, run, str(run), "native-meeting", 0, 1, 2,
                  kind="meeting", status="running")
-    unavailable = store.get_logical_run('meeting_alignment_runs', run)
-    assert not unavailable.native_available
-    assert unavailable.native_reason == "native_reference_unavailable"
+    unavailable = store.get_professional_run(run)
+    assert not unavailable["native_available"]
+    assert unavailable["native_reason"] == "native_reference_unavailable"
     [search] = store.search_codex_sessions(fts_query="Planning")
     assert search.summary_text == ""
     assert search.native_reason == "native_reference_unavailable"
@@ -153,10 +160,11 @@ def test_friday_original_artifact_read_uses_existing_adapter_and_reports_unavail
         participants_json="[]", ended_at="2026-10-09", eligible_at="2026-10-09",
         status="no_action",
     )
-    run = store.create_logical_run('meeting_alignment_runs', task_public_id=job, codex_session_id="friday_thread:native-thread", status="no_action", error="", codex_transcript_start_line=0, codex_transcript_end_line=0)
+    run = store.create_professional_run(job, session_id="friday_thread:native-thread", status="no_action", transcript_start=0, transcript_end=0)
     with store._connect() as db:
-        insert_run(
-            db, 'agent_runtime_attempts', {
+        create_runtime_attempt(
+            db, values={
+                'parent_id': run,
                 'workload_kind': 'meeting',
                 'workload_key': str(run),
                 'attempt_number': 1,
@@ -164,14 +172,22 @@ def test_friday_original_artifact_read_uses_existing_adapter_and_reports_unavail
                 'runtime_kind': 'friday_runtime',
                 'credential_mode': 'local_oauth',
                 'model': 'test',
+                'session_mode': 'fresh', 'source_session_id': '',
+                'attempt_purpose': 'normal', 'validation_retry_policy_id': '',
+                'validation_result_schema_id': '', 'transcript_reference': '',
                 'session_id': 'friday_thread:native-thread',
                 'status': 'completed',
+                'transcript_start': 0, 'transcript_end': 0,
+                'failure_class': '', 'failure_code': '', 'failover_permitted': 0,
+                'lease_owner': '', 'lease_expires_at': '', 'first_effect_started_at': '',
+                'result_schema_id': '', 'started_at': '', 'finished_at': '',
+                'created_at': '', 'updated_at': '',
             },
         )
-    loaded = store.get_logical_run('meeting_alignment_runs', run)
-    assert loaded.native_available
-    assert loaded.tool_events_available is False
-    assert loaded.tool_events_reason == "native_tool_stream_unavailable"
+    loaded = store.get_professional_run(run)
+    assert loaded["native_available"]
+    assert loaded["tool_events_available"] is False
+    assert loaded["tool_events_reason"] == "native_tool_stream_unavailable"
 
     def unavailable(self, thread_id):
         raise RuntimeError("Artifact unavailable")
@@ -240,7 +256,7 @@ def test_task_run_uses_latest_completed_exact_attempt_without_old_fallback(tmp_p
     )) + "\n")
     monkeypatch.setattr(native_trajectory, "find_codex_session_path", lambda *args, **kwargs: native)
     parent = store.enqueue_work_summary_input('local_file', 'native-task', '{}')
-    run = store.create_logical_run('task_agent_runs', task_public_id=parent, codex_session_id="native-task")
+    run = store.create_professional_run(parent, session_id="native-task")
     with store._connect() as db:
         _attempt(db, run, str(run), "native-task", 0, 1, 1)
         _attempt(db, run, f"{run}:decision_repair.1", "native-task", 1, 2, 1)
@@ -248,12 +264,12 @@ def test_task_run_uses_latest_completed_exact_attempt_without_old_fallback(tmp_p
             f"select * from ({TASK_LOGICAL_RUN_SQL}) where id=?", (run,)
         ).fetchone()
     assert not {"decision_json", "audit_summary", "memory_recall_used"} & set(stored.keys())
-    loaded = store.get_logical_run('task_agent_runs', run)
+    loaded = store.get_professional_run(run)
     assert loaded["native_available"] is True
     assert json.loads(loaded["decision_json"])["update_summary"] == "new decision"
 
     native.write_text(_message(first.model_dump_json()) + "\n")
-    missing = store.get_logical_run('task_agent_runs', run)
+    missing = store.get_professional_run(run)
     assert missing["native_available"] is False
     assert missing["decision_json"] == "{}"
 
@@ -271,7 +287,7 @@ def test_task_evaluation_reads_original_native_decision_without_sql_copy(tmp_pat
     native = tmp_path / "evaluation-native.jsonl"
     native.write_text(_message(json.dumps(decision)) + "\n")
     monkeypatch.setattr(native_trajectory, "find_codex_session_path", lambda *a, **k: native)
-    run = store.create_logical_run('task_agent_runs', task_public_id=input_id)
+    run = store.create_professional_run(input_id)
     with store._connect() as db:
         _attempt(db, run, str(run), "native-evaluation", 0, 1, 1)
         assert "decision_json" not in db.execute(f"select * from ({TASK_LOGICAL_RUN_SQL}) where id=?", (run,)).fetchone().keys()

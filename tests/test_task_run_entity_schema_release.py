@@ -26,7 +26,7 @@ def _source_database(path):
 
 
 def test_paired_task_run_release_publishes_inverses_and_reforwards(tmp_path):
-    from app.current_schema_manifest import require_current_pair, schema_objects
+    from app.current_schema_manifest import require_current_pair
     from app.predecessor_database_schema import PREDECESSOR_STORE_VERSION
     from app.store_schema_release import prepare_database_schema_release
     from app.task_run_entity_schema_release import TARGET_STORE_VERSION
@@ -116,7 +116,6 @@ def test_paired_task_run_release_publishes_inverses_and_reforwards(tmp_path):
         assert db.execute(f"select value from ({state_projection('service_state')}) "
                           "where key='store_schema_version'").fetchone()[0] == TARGET_STORE_VERSION
         assert not tuple(db.execute("pragma foreign_key_check"))
-
     first.rollback()
     with sqlite3.connect(path) as db:
         restored_catalog = tuple(tuple(row) for row in db.execute(
@@ -142,6 +141,62 @@ def test_paired_task_run_release_publishes_inverses_and_reforwards(tmp_path):
         assert db.execute("select count(*) from tasks where kind='reply'").fetchone()[0] == 1
         assert db.execute("select count(*) from runs where role in ('consumer','audit')").fetchone()[0] == 2
         assert db.execute("select count(*) from run_adopted_reviews where decision='approve'").fetchone()[0] == 1
+
+
+def test_work_summary_error_message_reference_follows_typed_task_inverse(tmp_path):
+    from app.current_action_schema import current_action_payloads
+    from app.action_storage import insert_error_action
+    from app.task8_storage import register_task8_functions, task8_insert_parts
+    from app.task_run_entity_schema_release import prepare_task_run_entity_release
+
+    path = tmp_path / "work-summary-error.sqlite3"
+    _source_database(path)
+    with sqlite3.connect(path) as db:
+        register_task8_functions(db)
+        parts = task8_insert_parts("work_summary_inputs", {
+            "legacy_key": "2", "source_type": "local_file", "source_ref": "input-2",
+            "payload_json": "{}", "status": "done", "attempts": 0,
+            "error": "", "created_at": "created", "updated_at": "updated",
+            "available_at": "", "source_created_at": "", "body_sha256": "",
+            "body_bytes": 0, "body_compacted": 0,
+        })
+        db.execute(f"insert into tasks ({parts.columns}) values ({parts.values})", parts.parameters)
+        insert_error_action(db, {
+            "conversation_id": "work_summary_input", "message_id": "2",
+            "kind": "task_agent", "detail": "retry", "created_at": "error-time",
+            "resolved_at": "", "resolution": "",
+        })
+        db.commit()
+    release = prepare_task_run_entity_release(path)
+    assert release is not None
+    release.publish()
+    path_to_message = current_action_payloads().path("errors", "message_id")
+    with sqlite3.connect(path) as db:
+        task_id = db.execute(
+            "select id from tasks where kind='work_summary'"
+        ).fetchone()[0]
+        assert task_id != 2, "fixture must exercise a changed canonical Task identity"
+        encoded = db.execute(
+            "select payload_json from actions where record_type='errors'"
+        ).fetchone()[0]
+        assert db.execute("select json_extract(?,?)", (encoded, path_to_message)).fetchone()[0] == str(task_id)
+    release.rollback()
+    with sqlite3.connect(path) as db:
+        encoded = db.execute(
+            "select payload_json from actions where record_type='errors'"
+        ).fetchone()[0]
+        assert db.execute("select json_extract(?,?)", (encoded, path_to_message)).fetchone()[0] == "2"
+    reforward = prepare_task_run_entity_release(path)
+    assert reforward is not None
+    reforward.publish()
+    with sqlite3.connect(path) as db:
+        native_id = db.execute("select id from tasks where kind='work_summary'").fetchone()[0]
+        encoded = db.execute(
+            "select payload_json from actions where record_type='errors'"
+        ).fetchone()[0]
+        assert db.execute("select json_extract(?,?)", (encoded, path_to_message)).fetchone()[0] == str(native_id)
+    reforward.rollback()
+
 
 
 
@@ -246,7 +301,6 @@ def test_paired_release_rejects_mixed_source_and_rechecks_before_writing(tmp_pat
 def test_paired_release_rollback_is_idempotent_before_and_after_failed_publish(tmp_path, monkeypatch):
     from pathlib import Path
     from app.current_schema_manifest import schema_objects
-    from app.run_entity_schema import migrate_run_entities
     from app.store_schema_release import prepare_database_schema_release
     import app.run_entity_schema as run_schema
 

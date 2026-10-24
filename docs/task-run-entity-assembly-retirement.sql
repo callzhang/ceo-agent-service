@@ -28,3 +28,6 @@
 -- Actions retain direct typed FKs to Feedback decisions, items and rounds.
 -- Conversion identity-map rows remain migration metadata, not native ownership.
 -- No runtime activation, copy, migration, or historical data repair is defined here.
+-- Current runtime caller selection is implemented separately from this DDL
+-- retirement inventory. The paired candidate remains unactivated until its
+-- aggregate review and full-copy/cold-reader/recovery/UI/capacity gates pass.

@@ -2,9 +2,6 @@
 from app.state_definitions import state_projection
 from app.state_storage import insert_state
 
-from app.task20_definitions import task20_projection
-from app.task12_storage import task12_projection
-
 import argparse
 import hashlib
 import json
@@ -19,16 +16,21 @@ from app.agent_contracts import DecisionBasis
 from app.agent_result import AgentError
 from app.config import worker_db_path
 from app.database_backup import backup_is_complete
-from app.store import AutoReplyStore
-from app.logical_run_storage import AGENT_RUN_SQL
+from app.store import (
+    AutoReplyStore, NATIVE_AGENT_RUN_SQL, NATIVE_REPLY_BUSINESS_KEY_SQL,
+    NATIVE_REPLY_TASK_CURRENT_SQL,
+    NATIVE_REVIEW_CANDIDATE_SQL,
+)
+from app.native_trajectory import read_native_result_json
 
 from app.action_storage import (
-    REVIEW_CANDIDATE_SQL,
     REPLY_ATTEMPT_COMMON_SQL,
     update_action,
 )
 
-REPLY_TASK_SQL = task20_projection('reply_tasks')
+REPLY_TASK_SQL = NATIVE_REPLY_TASK_CURRENT_SQL
+AGENT_RUN_SQL = NATIVE_AGENT_RUN_SQL
+REVIEW_CANDIDATE_SQL = NATIVE_REVIEW_CANDIDATE_SQL
 
 
 class _RuleOption(BaseModel):
@@ -69,7 +71,7 @@ def _retire_in_connection(db: sqlite3.Connection, attempt_id: int, *, authority:
                t.status as task_status, t.execution_generation as task_generation
         from ({REPLY_ATTEMPT_COMMON_SQL}) a join ({AGENT_RUN_SQL}) r on r.id=a.agent_run_id
         join ({REPLY_TASK_SQL}) t on t.id=r.reply_task_id
-        join ({task12_projection('business_object_tasks')}) current_object
+        join ({NATIVE_REPLY_BUSINESS_KEY_SQL}) current_object
           on current_object.business_object_key=t.business_object_key
          and current_object.reply_task_id=t.id
         where a.id=? and a.channel=t.channel
@@ -86,8 +88,7 @@ def _retire_in_connection(db: sqlite3.Connection, attempt_id: int, *, authority:
         and row["run_generation"] == row["task_generation"]
     ):
         raise ValueError("attempt is not an obsolete completed Consumer rule question")
-    from app.native_trajectory import read_native_result_json
-    run = db.execute(f'select * from ({AGENT_RUN_SQL}) as agent_runs where id=?', (row["agent_run_id"],)).fetchone()
+    run = db.execute("select * from runs where id=?", (row["agent_run_id"],)).fetchone()
     native_result = read_native_result_json(db, run)
     if not native_result:
         raise ValueError("original native Consumer result is unavailable")

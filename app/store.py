@@ -55,19 +55,9 @@ from app.schedules_storage import (
 from app.current_schema_manifest import require_current_pair, schema_is_current, schema_objects
 from app.current_publication_sources import current_email_actions_available
 from app.logical_run_store import LogicalRunStoreMixin
-from app.logical_run_storage import AGENT_RUN_SQL, logical_run_projection
 
-from app.runs11_definitions import run11_projection
-from app.runs11_storage import insert_run11_fact
-
-from app.task_lifecycle_definitions import (
-    task20_column, task20_projection,
-)
 from app import task_lifecycle_storage as task_claims
-from app.task8_storage import (
-    register_task8_functions, task8_set_parts,
-)
-from app.task12_storage import task12_projection
+from app.task8_storage import register_task8_functions
 from app.action_feedback_definitions import feedback_projection
 from app.action_feedback_storage import (insert_feedback_action,
     upsert_feedback_event, insert_feedback_decision_items,
@@ -239,10 +229,7 @@ from app.action_storage import (
     update_action,
     delete_action,
     insert_sync_action,
-    CANDIDATE_REVIEW_SQL,
-    CANDIDATE_SELECTION_SQL,
-    REVIEW_CANDIDATE_SQL,
-    EXTERNAL_ACTION_RESULT_SQL,
+    NATIVE_EXTERNAL_ACTION_RESULT_SQL as EXTERNAL_ACTION_RESULT_SQL,
     SENT_REPLY_SQL,
     REPLY_ATTEMPT_COMMON_SQL,
     AGENT_EFFECT_INTENT_SQL,
@@ -263,10 +250,6 @@ from app.action_task_delivery_definitions import TASK_DELIVERY_DEFAULTS
 from app.action_error_definitions import error_projection
 
 from app.shared_action_definitions import email_projection as email_action_projection
-
-TASK_LOGICAL_RUN_SQL = logical_run_projection("task_agent_runs")
-MEETING_LOGICAL_RUN_SQL = logical_run_projection("meeting_alignment_runs")
-OKR_LOGICAL_RUN_SQL = logical_run_projection("okr_review_runs")
 
 MEETING_MEMORY_WRITE_SQL = task_delivery_projection("meeting_memory_write_events")
 TASK_MEMORY_WRITE_SQL = task_delivery_projection("task_memory_write_events")
@@ -412,26 +395,11 @@ _SCHEDULED_TASK_RUN_ID_FROM_INPUT_SQL = (
 )
 SERVICE_HEALTH_STATES = frozenset({"healthy", "degraded"})
 REPLY_ATTEMPT_CLOSED_AFTER_REVIEW = "closed_after_review"
-REPLY_TASK_SQL = task20_projection('reply_tasks')
-REPLY_TASK_INPUT_SQL = task20_projection('reply_task_inputs')
 WORK_SUMMARY_INPUT_SQL = """select t.id, w.source_type, w.source_ref, w.payload_json,
     w.source_created_at, w.body_sha256, w.body_bytes, w.body_compacted,
     t.status, t.attempts, t.error, t.available_at, t.created_at, t.updated_at
     from tasks t join work_summary_inputs w on w.task_id=t.id
     where t.kind='work_summary'"""
-MEETING_JOB_SQL = task20_projection('meeting_alignment_jobs')
-OKR_REQUEST_SQL = task20_projection('okr_review_requests')
-
-# Current source facts are projected directly from their canonical input row.
-REPLY_TASK_CURRENT_SQL = f"""select parent.*, canonical.trigger_text,
-    case when canonical.input_compacted=1
-         then json_extract(canonical.input_provenance_json, '$.source')
-         else canonical.trigger_message_json end as trigger_message_json,
-    canonical.input_provenance_json, canonical.input_compacted
-    from ({REPLY_TASK_SQL}) as parent
-    join ({REPLY_TASK_INPUT_SQL}) as canonical
-      on canonical.id=parent.current_input_id and canonical.reply_task_id=parent.id"""
-
 # Native runtime projection for callers that need the current Reply facts.
 # The current business-object key and message identity belong to TaskInput.
 NATIVE_REPLY_TASK_CURRENT_SQL = """select tasks.id,tasks.status,tasks.available_at,
@@ -485,6 +453,16 @@ NATIVE_AGENT_RUN_SQL = """select runs.id, runs.task_id as reply_task_id,
     from runs left join run_projections projection on projection.run_id=runs.id
     where not exists (select 1 from run_provenance provenance where provenance.run_id=runs.id)"""
 
+NATIVE_TASK_RUN_SQL = """select runs.id, runs.task_id as summary_input_id,
+    runs.status, runs.error, runs.session_id as codex_session_id,
+    runs.completed_at as finished_at, runs.created_at, runs.updated_at,
+    projection.projection_json
+    from runs join run_provenance provenance on provenance.run_id=runs.id
+    left join run_projections projection on projection.run_id=runs.id
+    where provenance.source_type='task_agent_runs'"""
+
+# Runtime callers share the native owners. Frozen source declarations remain
+# in the explicit release/conversion modules only.
 NATIVE_MEETING_RUN_SQL = """select runs.id, runs.task_id as job_id,
     runs.status, runs.error, runs.created_at, runs.completed_at,
     runs.session_id as codex_session_id,
@@ -538,16 +516,16 @@ NATIVE_CANDIDATE_EXECUTION_SQL = """select progress.consumer_run_id as id,
     join run_adopted_reviews review on review.audit_run_id=progress.approved_audit_run_id
     left join run_adopted_selections selection on selection.id=progress.selection_id"""
 
-# Queue-claim source headers and bytes belong to the claimed snapshot.
-REPLY_TASK_CLAIMED_SQL = f"""select canonical.channel, canonical.conversation_id,
-                       canonical.conversation_title, canonical.single_chat,
-                       canonical.trigger_message_id, canonical.trigger_create_time,
-                       canonical.trigger_sender, canonical.oa_url, canonical.business_object_key,
-                       parent.*, canonical.trigger_text,
-                       canonical.trigger_message_json, canonical.input_provenance_json,
-                       canonical.input_compacted from ({REPLY_TASK_SQL}) parent
-                join ({REPLY_TASK_INPUT_SQL}) canonical on canonical.id=parent.claimed_input_id
-                  and canonical.reply_task_id=parent.id"""
+REPLY_TASK_SQL = NATIVE_REPLY_TASK_CURRENT_SQL
+REPLY_TASK_CURRENT_SQL = NATIVE_REPLY_TASK_CURRENT_SQL
+REPLY_TASK_CLAIMED_SQL = NATIVE_REPLY_TASK_CLAIMED_SQL
+AGENT_RUN_SQL = NATIVE_AGENT_RUN_SQL
+TASK_LOGICAL_RUN_SQL = NATIVE_TASK_RUN_SQL
+MEETING_LOGICAL_RUN_SQL = NATIVE_MEETING_RUN_SQL
+REVIEW_CANDIDATE_SQL = NATIVE_REVIEW_CANDIDATE_SQL
+CANDIDATE_REVIEW_SQL = NATIVE_CANDIDATE_REVIEW_SQL
+CANDIDATE_SELECTION_SQL = NATIVE_CANDIDATE_SELECTION_SQL
+CANDIDATE_EXECUTION_SQL = NATIVE_CANDIDATE_EXECUTION_SQL
 
 STORE_SCHEMA_VERSION_KEY = "store_schema_version"
 STORE_SCHEMA_VERSION = "2026-10-23.1"
@@ -8021,7 +7999,7 @@ class AutoReplyStore(LogicalRunStoreMixin, ReviewedCandidateStoreMixin):
                     "and status='approved' and memory_write_status='writing'"
                 ),
                 "wechat_memory_import_job": (
-                    f"select 1 from ({task12_projection('wechat_memory_import_jobs')}) where id=? and status='running'"
+                    "select 1 from tasks where id=? and kind='wechat_import' and status='running'"
                 ),
             }[source]
             args = (
@@ -10673,16 +10651,22 @@ class AutoReplyStore(LogicalRunStoreMixin, ReviewedCandidateStoreMixin):
     ) -> None:
         if not expected_execution_generation.strip():
             raise ValueError("expected_execution_generation must be non-empty")
-        with self._connect() as db:
-            cursor = db.execute(
-                f"""
-                update tasks as reply_tasks
-                set {task8_set_parts('reply_tasks', {}, update_sql={'error': "'wechat_read_only_decision_running'", 'updated_at': 'current_timestamp'}, payload_source='reply_tasks.payload_json').sql}  where reply_tasks.record_type='reply_tasks' and id=? and {task20_column('reply_tasks', 'channel')}='wechat' and {task20_column('reply_tasks', 'status')}='processing'
-                  and {task20_column('reply_tasks', 'execution_generation')}=?
-                """,
-                (task_id, expected_execution_generation),
+        from app import task_entity_storage
+        with self._immediate_write_transaction() as db:
+            task = task_entity_storage.get_task_with_inputs(db, task_id)
+            if (task is None or task["kind"] != "reply"
+                    or task["status"] != "processing"
+                    or task["execution_generation"] != expected_execution_generation
+                    or task["current_input"] is None
+                    or task["current_input"]["channel"] != "wechat"):
+                raise AgentRunLeaseLostError(f"reply task superseded: {task_id}")
+            updated = task_entity_storage.update_task_cas(
+                db, task_id=task_id,
+                expected={"status": "processing", "execution_generation": expected_execution_generation},
+                changes={"error": "wechat_read_only_decision_running",
+                         "updated_at": db.execute("select current_timestamp").fetchone()[0]},
             )
-            if cursor.rowcount != 1:
+            if updated is None:
                 raise AgentRunLeaseLostError(f"reply task superseded: {task_id}")
 
     #: Retryable failures in which no turn ran at all. They report
@@ -10987,39 +10971,30 @@ class AutoReplyStore(LogicalRunStoreMixin, ReviewedCandidateStoreMixin):
             raise ValueError("expected_execution_generation must be non-empty")
         if expected_status not in {"pending", "processing"}:
             raise ValueError("expected_status must be pending or processing")
+        from app import task_entity_storage
         with self._immediate_write_transaction() as db:
-            cursor = db.execute(
-                f"""
-                update tasks as reply_tasks
-                set {task8_set_parts('reply_tasks', {}, update_sql={'status': "'failed'", 'locked_at': 'null', 'error': "'legacy_email_unsubscribe_lifecycle'", 'available_at': "''", 'updated_at': 'current_timestamp'}, payload_source='reply_tasks.payload_json').sql}  where reply_tasks.record_type='reply_tasks' and id=?
-                  and {task20_column('reply_tasks', 'execution_generation')}=?
-                  and {task20_column('reply_tasks', 'channel')}='email'
-                  and {task20_column('reply_tasks', 'status')}=?
-                  and case
-                          when json_valid((select trigger_message_json from ({REPLY_TASK_CURRENT_SQL}) source where source.id=reply_tasks.id))
-                          then json_extract((select trigger_message_json from ({REPLY_TASK_CURRENT_SQL}) source where source.id=reply_tasks.id), '$.schema')
-                          else null
-                      end='email_agent_action.v1'
-                  and case
-                          when json_valid((select trigger_message_json from ({REPLY_TASK_CURRENT_SQL}) source where source.id=reply_tasks.id))
-                          then json_extract(
-                              (select trigger_message_json from ({REPLY_TASK_CURRENT_SQL}) source where source.id=reply_tasks.id),
-                              '$.action_type'
-                          )
-                          else null
-                      end='unsubscribe'
-                  and case
-                          when json_valid((select trigger_message_json from ({REPLY_TASK_CURRENT_SQL}) source where source.id=reply_tasks.id))
-                          then json_extract(
-                              (select trigger_message_json from ({REPLY_TASK_CURRENT_SQL}) source where source.id=reply_tasks.id),
-                              '$.lifecycle_version'
-                          )
-                          else null
-                      end='email_unsubscribe_consumer_direct_v1'
-                """,
-                (task_id, expected_execution_generation, expected_status),
-            )
-            return cursor.rowcount == 1
+            task = self._native_current_reply_task(db, task_id)
+            if (task is None or task["status"] != expected_status
+                    or task["execution_generation"] != expected_execution_generation
+                    or task["channel"] != "email"):
+                return False
+            try:
+                trigger = json.loads(task["trigger_message_json"] or "{}")
+            except (TypeError, json.JSONDecodeError):
+                return False
+            if (not isinstance(trigger, dict)
+                    or trigger.get("schema") != "email_agent_action.v1"
+                    or trigger.get("action_type") != "unsubscribe"
+                    or trigger.get("lifecycle_version") != "email_unsubscribe_consumer_direct_v1"):
+                return False
+            return task_entity_storage.update_task_cas(
+                db, task_id=task_id,
+                expected={"status": expected_status,
+                          "execution_generation": expected_execution_generation},
+                changes={"status": "failed", "locked_at": None,
+                         "error": "legacy_email_unsubscribe_lifecycle", "available_at": "",
+                         "updated_at": db.execute("select current_timestamp").fetchone()[0]},
+            ) is not None
 
     def skip_failed_legacy_email_unsubscribe_tasks(self) -> list[int]:
         """Close old direct-unsubscribe tasks that never reached an Agent run.
@@ -11064,18 +11039,24 @@ class AutoReplyStore(LogicalRunStoreMixin, ReviewedCandidateStoreMixin):
                 """
             ).fetchall()
             recovered: list[int] = []
+            from app import task_entity_storage
             for row in rows:
-                updated = db.execute(
-                    f"""
-                    update tasks as reply_tasks
-                    set {task8_set_parts('reply_tasks', {}, update_sql={'status': "'skipped'", 'locked_at': 'null', 'error': f"""'legacy_email_unsubscribe_recovery_skipped:' || {task20_column('reply_tasks', 'error')}""", 'available_at': "''", 'updated_at': 'current_timestamp'}, payload_source='reply_tasks.payload_json').sql}  where reply_tasks.record_type='reply_tasks' and id=?
-                      and {task20_column('reply_tasks', 'status')}='failed'
-                      and {task20_column('reply_tasks', 'error')}='email_consumer_runtime_error:EmailPersistenceCorruption'
-                    """,
-                    (int(row['id']),),
-                ).rowcount
-                if updated == 1:
-                    recovered.append(int(row['id']))
+                task_id = int(row["id"])
+                native = task_entity_storage.get_task(db, task_id)
+                if native is None:
+                    continue
+                updated = task_entity_storage.update_task_cas(
+                    db, task_id=task_id,
+                    expected={"status": "failed",
+                              "error": "email_consumer_runtime_error:EmailPersistenceCorruption"},
+                    changes={"status": "skipped", "locked_at": None,
+                             "error": "legacy_email_unsubscribe_recovery_skipped:" + str(native["error"]),
+                             "available_at": "",
+                             "updated_at": db.execute("select current_timestamp").fetchone()[0]},
+                    parameters=native["parameters"],
+                )
+                if updated is not None:
+                    recovered.append(task_id)
             return recovered
 
     def retry_failed_effect_free_email_unsubscribe_tasks(self) -> list[int]:
@@ -11123,17 +11104,27 @@ class AutoReplyStore(LogicalRunStoreMixin, ReviewedCandidateStoreMixin):
                 (retryable_errors[0], retryable_errors[1], retryable_errors[2]),
             ).fetchall()
             recovered: list[int] = []
+            from app import task_entity_storage
             for row in rows:
-                generation = uuid4().hex
-                updated = db.execute(
-                    f"""
-                    update tasks as reply_tasks
-                    set {task8_set_parts('reply_tasks', {}, update_sql={'status': "'pending'", 'attempts': '0', 'locked_at': 'null', 'available_at': "''", 'error': "'explicit_effect_free_unsubscribe_retry'", 'recovery_code': "'effect_free_unsubscribe_retry'", 'force_new_decision': '1', 'execution_generation': '?', 'updated_at': 'current_timestamp'}, payload_source='reply_tasks.payload_json').sql}  where reply_tasks.record_type='reply_tasks' and id=? and {task20_column('reply_tasks', 'status')}='failed' and {task20_column('reply_tasks', 'execution_generation')}=?
-                    """,
-                    (generation, int(row['id']), str(row['execution_generation'])),
-                ).rowcount
-                if updated == 1:
-                    recovered.append(int(row['id']))
+                task_id = int(row["id"])
+                native = task_entity_storage.get_task(db, task_id)
+                if native is None:
+                    continue
+                parameters = dict(native["parameters"])
+                parameters.update(force_new_decision=1,
+                                  recovery_code="effect_free_unsubscribe_retry")
+                updated = task_entity_storage.update_task_cas(
+                    db, task_id=task_id,
+                    expected={"status": "failed",
+                              "execution_generation": str(row["execution_generation"])},
+                    changes={"status": "pending", "attempts": 0, "locked_at": None,
+                             "available_at": "", "error": "explicit_effect_free_unsubscribe_retry",
+                             "execution_generation": uuid4().hex,
+                             "updated_at": db.execute("select current_timestamp").fetchone()[0]},
+                    parameters=parameters,
+                )
+                if updated is not None:
+                    recovered.append(task_id)
             return recovered
 
     def terminalize_exhausted_pending_reply_tasks(
@@ -11171,12 +11162,24 @@ class AutoReplyStore(LogicalRunStoreMixin, ReviewedCandidateStoreMixin):
             ids = [int(row["id"]) for row in rows]
             if not ids:
                 return []
-            placeholders = ",".join("?" for _ in ids)
-            db.execute(
-                f"""update tasks as reply_tasks set {task8_set_parts('reply_tasks', {}, update_sql={'status': "'failed'", 'available_at': "''", 'locked_at': 'null', 'error': f"""{task20_column('reply_tasks', 'error')} || '; retry_deadline_exhausted'""", 'updated_at': 'current_timestamp'}, payload_source='reply_tasks.payload_json').sql}  where reply_tasks.record_type='reply_tasks' and {task20_column('reply_tasks', 'status')}='pending' and id in ({placeholders})""",
-                ids,
-            )
-            return ids
+            from app import task_entity_storage
+            terminalized = []
+            for task_id in ids:
+                native = task_entity_storage.get_task(db, task_id)
+                if native is None:
+                    continue
+                updated = task_entity_storage.update_task_cas(
+                    db, task_id=task_id,
+                    expected={"status": "pending", "attempts": native["attempts"],
+                              "error": native["error"]},
+                    changes={"status": "failed", "available_at": "", "locked_at": None,
+                             "error": str(native["error"]) + "; retry_deadline_exhausted",
+                             "updated_at": db.execute("select current_timestamp").fetchone()[0]},
+                    parameters=native["parameters"],
+                )
+                if updated is not None:
+                    terminalized.append(task_id)
+            return terminalized
 
     def requeue_reply_task(
         self,
@@ -16582,7 +16585,7 @@ class AutoReplyStore(LogicalRunStoreMixin, ReviewedCandidateStoreMixin):
             raise ValueError("external_action_key must be non-empty")
         with self._immediate_write_transaction() as db:
             task = db.execute(
-                f"select business_object_key from ({REPLY_TASK_SQL}) as reply_tasks "
+                f"select business_object_key from ({NATIVE_REPLY_TASK_CURRENT_SQL}) as reply_tasks "
                 "where id=? and status='failed'",
                 (task_id,),
             ).fetchone()
@@ -16603,13 +16606,16 @@ class AutoReplyStore(LogicalRunStoreMixin, ReviewedCandidateStoreMixin):
             ).fetchone()
             if recorded is None or projected is None:
                 raise ValueError("reconciled delivery is not recorded for this task")
-            cursor = db.execute(
-                f"""update tasks as reply_tasks set {task8_set_parts('reply_tasks', {}, update_sql={'status': "'done'", 'error': "''", 'available_at': "''", 'locked_at': 'null', 'updated_at': 'current_timestamp'}, payload_source='reply_tasks.payload_json').sql}  where reply_tasks.record_type='reply_tasks' and id=? and {task20_column('reply_tasks', 'status')}='failed'""",
-                (task_id,),
+            from app import task_entity_storage
+            updated = task_entity_storage.update_task_cas(
+                db, task_id=task_id, expected={"status": "failed"},
+                changes={"status": "done", "error": "", "available_at": "",
+                         "locked_at": None,
+                         "updated_at": db.execute("select current_timestamp").fetchone()[0]},
             )
-            if cursor.rowcount == 1:
+            if updated is not None:
                 self._compact_settled_reply_task_input(db, task_id)
-            return cursor.rowcount == 1
+            return updated is not None
 
     def reconcile_failed_agent_message_delivery(
         self,
@@ -16792,10 +16798,25 @@ class AutoReplyStore(LogicalRunStoreMixin, ReviewedCandidateStoreMixin):
                     "human_decision_options_json": "[]",
                     "updated_at": db.execute("select current_timestamp").fetchone()[0],
                 })
-            db.execute(
-                f"""update tasks as reply_tasks set {task8_set_parts('reply_tasks', {}, update_sql={'status': "'done'", 'error': "''", 'available_at': "''", 'locked_at': 'null', 'updated_at': 'current_timestamp'}, payload_source='reply_tasks.payload_json').sql}  where reply_tasks.record_type='reply_tasks' and id=?""",
-                (send_run.reply_task_id,),
+            from app import task_entity_storage
+            current_task = self._native_current_reply_task(db, send_run.reply_task_id)
+            if (current_task is None
+                    or current_task["execution_generation"] != send_run.execution_generation):
+                raise AgentRunLeaseLostError(
+                    f"reply task superseded: {send_run.reply_task_id}"
+                )
+            updated_task = task_entity_storage.update_task_cas(
+                db, task_id=send_run.reply_task_id,
+                expected={"status": "failed",
+                          "execution_generation": send_run.execution_generation},
+                changes={"status": "done", "error": "", "available_at": "",
+                         "locked_at": None,
+                         "updated_at": db.execute("select current_timestamp").fetchone()[0]},
             )
+            if updated_task is None:
+                raise AgentRunLeaseLostError(
+                    f"reply task superseded: {send_run.reply_task_id}"
+                )
             self._compact_settled_reply_task_input(db, send_run.reply_task_id)
             return SentReply.model_validate(dict(sent))
 
@@ -16865,17 +16886,21 @@ class AutoReplyStore(LogicalRunStoreMixin, ReviewedCandidateStoreMixin):
                     result_digest=_canonical_json_sha256(json.loads(row["send_result_json"])),
                     agent_run_id=row["agent_run_id"], observed_at=row["sent_at"],
                 )
-            cursor = db.execute(
-                f"""
-                update tasks as reply_tasks set {task8_set_parts('reply_tasks', {}, update_sql={'status': "'done'", 'error': "''", 'available_at': "''", 'locked_at': 'null', 'updated_at': 'current_timestamp'}, payload_source='reply_tasks.payload_json').sql}  where reply_tasks.record_type='reply_tasks' and id=? and {task20_column('reply_tasks', 'status')}='failed' and {task20_column('reply_tasks', 'error')}='codex_result_invalid'
-                  and {task20_column('reply_tasks', 'execution_generation')}=? and ?=(
-                    select max(id) from ({AGENT_RUN_SQL}) as agent_runs where reply_task_id=?
-                      and execution_generation=?
-                  )
-                """,
-                (task_id, run.execution_generation, run_id, task_id, run.execution_generation),
-            )
-            if cursor.rowcount != 1:
+            latest = db.execute(
+                f"select max(id) from ({NATIVE_AGENT_RUN_SQL}) where reply_task_id=? "
+                "and execution_generation=?",
+                (task_id, run.execution_generation),
+            ).fetchone()[0]
+            from app import task_entity_storage
+            updated = task_entity_storage.update_task_cas(
+                db, task_id=task_id,
+                expected={"status": "failed", "error": "codex_result_invalid",
+                          "execution_generation": run.execution_generation},
+                changes={"status": "done", "error": "", "available_at": "",
+                         "locked_at": None,
+                         "updated_at": db.execute("select current_timestamp").fetchone()[0]},
+            ) if latest == run_id else None
+            if updated is None:
                 raise AgentRunLeaseLostError(f"failed Audit superseded: {run_id}")
             self._compact_settled_reply_task_input(db, task_id)
             return True
@@ -16956,34 +16981,39 @@ class AutoReplyStore(LogicalRunStoreMixin, ReviewedCandidateStoreMixin):
         terminal_outcomes = [*done_outcomes, *skipped_outcomes]
         if not terminal_outcomes:
             return 0
-        done_placeholders = ", ".join("?" for _ in done_outcomes)
         terminal_placeholders = ", ".join("?" for _ in terminal_outcomes)
         with self._immediate_write_transaction() as db:
             if not self._email_unsubscribe_receipts_table_exists(db):
                 return 0
-            compact_ids = db.execute(
+            compact_rows = db.execute(
                 f"""
-                update tasks as tasks
-                set {task8_set_parts('reply_tasks', {}, update_sql={'status': f"""case
-                        when receipts.outcome in ({done_placeholders}) then 'done'
-                        else 'skipped'
-                    end""", 'error': "''", 'available_at': "''", 'locked_at': 'null', 'updated_at': 'current_timestamp'}, payload_source='tasks.payload_json', source_alias='tasks').sql}  from ({email_action_projection('email_unsubscribe_receipts')}) as receipts
-                where tasks.record_type='reply_tasks' and tasks.id in (
-                    select current_tasks.id
-                    from ({REPLY_TASK_SQL}) as current_tasks
+                select current_tasks.id,current_tasks.status,current_tasks.execution_generation,
+                       receipts.outcome
+                from ({NATIVE_REPLY_TASK_CURRENT_SQL}) as current_tasks
                     join ({email_action_projection('email_unsubscribe_receipts')}) as current_receipts
                       on current_receipts.action_identity=current_tasks.trigger_message_id
-                    where current_tasks.channel='email'
-                      and current_tasks.status='failed'
-                      and current_receipts.outcome in ({terminal_placeholders})
-                )
-                  and receipts.action_identity=tasks.{task20_column('reply_tasks', 'trigger_message_id')}
-                returning id
+                where current_tasks.channel='email'
+                  and current_tasks.status='failed'
+                  and current_receipts.outcome in ({terminal_placeholders})
                 """,
-                [*done_outcomes, *terminal_outcomes],
+                terminal_outcomes,
             ).fetchall()
-            for row in compact_ids:
-                self._compact_settled_reply_task_input(db, int(row["id"]))
+            from app import task_entity_storage
+            compact_ids = []
+            for row in compact_rows:
+                task_id = int(row["id"])
+                status = "done" if row["outcome"] in done_outcomes else "skipped"
+                updated = task_entity_storage.update_task_cas(
+                    db, task_id=task_id,
+                    expected={"status": row["status"],
+                              "execution_generation": row["execution_generation"]},
+                    changes={"status": status, "error": "", "available_at": "",
+                             "locked_at": None,
+                             "updated_at": db.execute("select current_timestamp").fetchone()[0]},
+                )
+                if updated is not None:
+                    compact_ids.append(task_id)
+                    self._compact_settled_reply_task_input(db, task_id)
             return len(compact_ids)
 
     def resolve_failed_reply_attempt_already_settled(
@@ -17075,25 +17105,23 @@ class AutoReplyStore(LogicalRunStoreMixin, ReviewedCandidateStoreMixin):
                parameters=(process_id,))
             if cursor.rowcount != 1:
                 return False
-            db.execute(
-                f"""
-                update tasks as reply_tasks
-                set {task8_set_parts('reply_tasks', {}, update_sql={'status': "'done'", 'error': "''", 'available_at': "''", 'locked_at': 'null', 'updated_at': 'current_timestamp'}, payload_source='reply_tasks.payload_json').sql}  where reply_tasks.record_type='reply_tasks' and {task20_column('reply_tasks', 'channel')}=? and {task20_column('reply_tasks', 'conversation_id')}=? and {task20_column('reply_tasks', 'trigger_message_id')}=?
-                  and {task20_column('reply_tasks', 'status')} in ('needs_human', 'failed')
-                """,
-                (
-                    attempt["channel"],
-                    attempt["conversation_id"],
-                    attempt["trigger_message_id"],
-                ),
-            )
             task = db.execute(
-                f"select id from ({REPLY_TASK_SQL}) as reply_tasks where channel=? and conversation_id=? "
+                f"select id,status,execution_generation from ({NATIVE_REPLY_TASK_CURRENT_SQL}) as reply_tasks where channel=? and conversation_id=? "
                 "and trigger_message_id=?",
                 (attempt["channel"], attempt["conversation_id"], attempt["trigger_message_id"]),
             ).fetchone()
             if task is not None:
-                self._compact_settled_reply_task_input(db, int(task["id"]))
+                from app import task_entity_storage
+                updated = task_entity_storage.update_task_cas(
+                    db, task_id=int(task["id"]),
+                    expected={"status": task["status"],
+                              "execution_generation": task["execution_generation"]},
+                    changes={"status": "done", "error": "", "available_at": "",
+                             "locked_at": None,
+                             "updated_at": db.execute("select current_timestamp").fetchone()[0]},
+                ) if task["status"] in {"needs_human", "failed"} else None
+                if updated is not None:
+                    self._compact_settled_reply_task_input(db, int(task["id"]))
             return True
 
     def close_unresolved_reply_task_already_settled(
@@ -17211,21 +17239,23 @@ class AutoReplyStore(LogicalRunStoreMixin, ReviewedCandidateStoreMixin):
         business_object_key = f"oa:{process_id}:{source_task_id}"
         with self._immediate_write_transaction() as db:
             task = db.execute(
-                f"select conversation_id, trigger_message_id from ({REPLY_TASK_SQL}) "
+                f"select conversation_id, trigger_message_id, status, error, execution_generation from ({NATIVE_REPLY_TASK_CURRENT_SQL}) "
                 "where id=? and status='failed' and error='external_action_uncertain' "
                 "and execution_generation=? and business_object_key=?",
                 (task_id, generation, business_object_key),
             ).fetchone()
             if task is None:
                 return False
-            cursor = db.execute(
-                f"update tasks as reply_tasks set {task8_set_parts('reply_tasks', {}, update_sql={'status': "'skipped'", 'available_at': "''", 'locked_at': 'null', 'updated_at': 'current_timestamp'}, payload_source='reply_tasks.payload_json').sql} "
-                "where reply_tasks.record_type='reply_tasks' and id=? "
-                f"and {task20_column('reply_tasks', 'status')}='failed' and {task20_column('reply_tasks', 'error')}='external_action_uncertain' "
-                f"and {task20_column('reply_tasks', 'execution_generation')}=? and {task20_column('reply_tasks', 'business_object_key')}=?",
-                (task_id, generation, business_object_key),
+            from app import task_entity_storage
+            updated = task_entity_storage.update_task_cas(
+                db, task_id=task_id,
+                expected={"status": "failed", "error": "external_action_uncertain",
+                          "execution_generation": generation,
+                          "business_object_key": business_object_key},
+                changes={"status": "skipped", "available_at": "", "locked_at": None,
+                         "updated_at": db.execute("select current_timestamp").fetchone()[0]},
             )
-            if cursor.rowcount != 1:
+            if updated is None:
                 return False
             insert_error_action(db, {
                 "conversation_id": task["conversation_id"],
@@ -21457,14 +21487,19 @@ class AutoReplyStore(LogicalRunStoreMixin, ReviewedCandidateStoreMixin):
         if not decision:
             raise ValueError("decision must be non-empty")
         with self._immediate_write_transaction() as db:
-            cursor = db.execute(
-                f"""
-                update tasks as reply_tasks
-                set {task8_set_parts('reply_tasks', {}, update_sql={'status': "'done'", 'error': '?', 'available_at': "''", 'locked_at': 'null', 'updated_at': 'current_timestamp'}, payload_source='reply_tasks.payload_json').sql}  where reply_tasks.record_type='reply_tasks' and id=? and {task20_column('reply_tasks', 'status')}='needs_human'
-                """,
-                (f"human_decision:{decision}"[:500], task_id),
+            from app import task_entity_storage
+            task = task_entity_storage.get_task(db, task_id)
+            if task is None:
+                return False
+            updated = task_entity_storage.update_task_cas(
+                db, task_id=task_id,
+                expected={"kind": task["kind"], "status": "needs_human"},
+                changes={"status": "done", "error": f"human_decision:{decision}"[:500],
+                         "available_at": "", "locked_at": None,
+                         "updated_at": db.execute("select current_timestamp").fetchone()[0]},
+                parameters=task["parameters"],
             )
-            if cursor.rowcount != 1:
+            if updated is None:
                 return False
             # The attempt has to leave `failed` too. A reconciliation sweep
             # projects the task from its attempt, so a task closed here with
@@ -21524,13 +21559,7 @@ class AutoReplyStore(LogicalRunStoreMixin, ReviewedCandidateStoreMixin):
                     or db.execute(f"select 1 from ({CANDIDATE_SELECTION_SQL}) where candidate_id=?",
                                   (review_candidate_id,)).fetchone()):
                     raise ValueError("reviewed candidate supplement mismatch")
-                insert_action(db, "candidate_supplements", {
-                    "candidate_id": review_candidate_id, "instruction": supplement_instruction,
-                })
-                shared_action_lifecycle.update_plan(db, "reviewed", review_candidate_id, {
-                    "invalidated_at": db.execute("select current_timestamp").fetchone()[0],
-                    "invalidation_reason": "supplement",
-                })
+                self._persist_candidate_supplement(db, candidate, supplement_instruction)
             source_row = None
             if source_attempt_id > 0:
                 source_row = db.execute(

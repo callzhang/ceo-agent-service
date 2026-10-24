@@ -434,6 +434,11 @@ def retained_action_source_rows(db: sqlite3.Connection, source_metadata: dict, *
         raise ValueError("unsupported current native Action catalog")
     source_sql = next(sql for name, sql in target_objects.items()
                       if name == "actions")
+    from app.current_action_schema import current_action_payloads
+    error_payloads = current_action_payloads()
+    error_message_path = error_payloads.path("errors", "message_id")
+    error_conversation_path = error_payloads.path("errors", "conversation_id")
+    error_kind_path = error_payloads.path("errors", "kind")
     source_actions_sql = next(item["sql"] for item in source_objects if item["name"] == "actions")
     source_columns = _table_stored_columns(source_actions_sql)
     target_columns = _table_stored_columns(source_sql)
@@ -478,6 +483,35 @@ def retained_action_source_rows(db: sqlite3.Connection, source_metadata: dict, *
         native = dict(zip(native_columns, values, strict=True))
         row = {column: native[column] if column in native and column not in retired_columns
                else None for column in source_columns}
+        if native.get("record_type") == "errors" and native.get("payload_json") is not None:
+            payload = native["payload_json"]
+            conversation, kind, message, message_type = db.execute(
+                "select json_extract(?,?),json_extract(?,?),json_extract(?,?),json_type(?,?)",
+                (payload, error_conversation_path, payload, error_kind_path,
+                 payload, error_message_path, payload, error_message_path),
+            ).fetchone()
+            if conversation == "work_summary_input" and kind == "task_agent":
+                public_id = None
+                if type(message) is int:
+                    public_id = message
+                elif (message_type == "text" and isinstance(message, str)
+                      and message.isdecimal() and str(int(message)) == message):
+                    public_id = int(message)
+                if public_id is not None:
+                    source_physical = _task_source_physical(
+                        db, task_owners, "work_summary_inputs", public_id)
+                    from app.task20_definitions import task20_column
+                    source_id = db.execute(
+                        "select " + task20_column("work_summary_inputs", "id")
+                        + " from main.tasks where id=?",
+                        (source_physical,),
+                    ).fetchone()
+                    if source_id is None or source_id[0] is None:
+                        raise ValueError("missing source WorkSummary public identity")
+                    row["payload_json"] = db.execute(
+                        "select jsonb_set(?,?,jsonb(json_quote(?)))",
+                        (payload, error_message_path, str(source_id[0])),
+                    ).fetchone()[0]
         for field in ("agent_run_id",):
             if field in native and field in row:
                 value = native[field]
