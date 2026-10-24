@@ -1,5 +1,6 @@
 import sqlite3
 import json
+import pytest
 
 from app.email_historical_candidate_schema import (
     compact_candidate_locators,
@@ -13,6 +14,51 @@ from app.email_schema_release import (
     inverse_email_historical_candidate_transition,
 )
 from app.email_store import _historical_candidate_list_item
+
+
+def test_deployment_quiet_sources_accept_exact_email53_but_runtime_does_not():
+    from app.current_database_schema import create_current_database_schema
+    from app.email_historical_candidate_schema import SOURCE_VERSION as EMAIL_RELEASE_SOURCE_VERSION
+    from app.current_publication_sources import (
+        current_email_actions_available,
+        publication_deployment_task_sources,
+        publication_dispatcher_source,
+        publication_email_action_source,
+        publication_meeting_sources,
+        publication_run_sources,
+        publication_scheduled_source,
+        publication_task_sources,
+    )
+    from app.current_schema_manifest import create_current_email_migration_ledger, schema_is_current
+    from app.state_storage import insert_state
+
+    db = sqlite3.connect(":memory:")
+    db.row_factory = sqlite3.Row
+    create_current_database_schema(db)
+    create_current_email_migration_ledger(db)
+    db.execute("begin")
+    insert_state(db, "service_state", {
+        "key": "store_schema_version", "value": "2026-10-23.1",
+    })
+    db.execute("insert into email_schema_migrations values(53,'source')")
+    assert schema_is_current(db)
+
+    with pytest.raises(ValueError, match="unsupported mixed Email publication version"):
+        publication_run_sources(db)
+    with pytest.raises(ValueError, match="unsupported mixed Email publication version"):
+        current_email_actions_available(db)
+
+    quiet_sources = [
+        *publication_run_sources(db, release_source_email_version=EMAIL_RELEASE_SOURCE_VERSION),
+        *publication_task_sources(db, release_source_email_version=EMAIL_RELEASE_SOURCE_VERSION),
+        *publication_deployment_task_sources(db, release_source_email_version=EMAIL_RELEASE_SOURCE_VERSION),
+        *publication_meeting_sources(db, release_source_email_version=EMAIL_RELEASE_SOURCE_VERSION),
+        publication_scheduled_source(db, release_source_email_version=EMAIL_RELEASE_SOURCE_VERSION),
+        publication_dispatcher_source(db, release_source_email_version=EMAIL_RELEASE_SOURCE_VERSION),
+        publication_email_action_source(db, release_source_email_version=EMAIL_RELEASE_SOURCE_VERSION),
+    ]
+    for source in quiet_sources:
+        db.execute(f"select count(*) from ({source})").fetchone()
 
 
 def _db():

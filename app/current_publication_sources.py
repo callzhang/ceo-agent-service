@@ -12,12 +12,16 @@ PREVIOUS_STORE_VERSIONS = (PREVIOUS_STORE_VERSION,)
 PREVIOUS_STORE_SCHEMA_SHA256 = '920b7eedb6138439ab94d4fbf109e60258ce8842c212d3a2ee3eec56fb4ca290'
 
 
-def _version(db):
+def _version(db, *, release_source_email_version=None):
     marker = db.execute(f"select value from ({state_projection('service_state')}) "
                         "where key='store_schema_version'").fetchone()
     version = marker[0] if marker else None
     ledger = db.execute("select 1 from sqlite_schema where type='table' and name='email_schema_migrations'").fetchone()
-    if ledger and db.execute('select max(version) from email_schema_migrations').fetchone()[0] != TARGET_EMAIL_VERSION:
+    email_version = (
+        db.execute('select max(version) from email_schema_migrations').fetchone()[0]
+        if ledger else None
+    )
+    if ledger and email_version != TARGET_EMAIL_VERSION and email_version != release_source_email_version:
         raise ValueError('unsupported mixed Email publication version')
     if version == TARGET_STORE_VERSION and schema_is_current(db):
         return version
@@ -35,8 +39,8 @@ def current_email_actions_available(db):
     return db.execute("select 1 from sqlite_schema where type='table' and name='email_schema_migrations'").fetchone() is not None
 
 
-def publication_run_sources(db):
-    version = _version(db)
+def publication_run_sources(db, *, release_source_email_version=None):
+    version = _version(db, release_source_email_version=release_source_email_version)
     if version == TARGET_STORE_VERSION:
         from app.store import NATIVE_AGENT_RUN_SQL
         return NATIVE_AGENT_RUN_SQL, (
@@ -48,8 +52,8 @@ def publication_run_sources(db):
     return AGENT_RUN_SQL, RUNTIME_ATTEMPT_SQL
 
 
-def publication_task_sources(db):
-    version = _version(db)
+def publication_task_sources(db, *, release_source_email_version=None):
+    version = _version(db, release_source_email_version=release_source_email_version)
     if version == TARGET_STORE_VERSION:
         from app.store import NATIVE_REPLY_TASK_CURRENT_SQL, WORK_SUMMARY_INPUT_SQL
         return NATIVE_REPLY_TASK_CURRENT_SQL, WORK_SUMMARY_INPUT_SQL
@@ -57,9 +61,9 @@ def publication_task_sources(db):
     return task20_projection('reply_tasks'), task20_projection('work_summary_inputs')
 
 
-def publication_deployment_task_sources(db):
+def publication_deployment_task_sources(db, *, release_source_email_version=None):
     """Select quiet-window task sources for the declared Store release."""
-    version = _version(db)
+    version = _version(db, release_source_email_version=release_source_email_version)
     if version == TARGET_STORE_VERSION:
         return (
             "select id,status,lease_owner,lease_expires_at from tasks where kind='workbench_turn'",
@@ -74,8 +78,8 @@ def publication_deployment_task_sources(db):
             "from (" + email_classification_projection + ")")
 
 
-def publication_meeting_sources(db):
-    version = _version(db)
+def publication_meeting_sources(db, *, release_source_email_version=None):
+    version = _version(db, release_source_email_version=release_source_email_version)
     if version == TARGET_STORE_VERSION:
         from app.store import NATIVE_MEETING_RUN_SQL
         return (
@@ -88,8 +92,8 @@ def publication_meeting_sources(db):
     return task20_projection('meeting_alignment_jobs'), logical_run_projection('meeting_alignment_runs')
 
 
-def publication_scheduled_source(db):
-    version = _version(db)
+def publication_scheduled_source(db, *, release_source_email_version=None):
+    version = _version(db, release_source_email_version=release_source_email_version)
     if version == TARGET_STORE_VERSION:
         from app.scheduled_occurrence_storage import occurrence_query
         return occurrence_query()
@@ -98,7 +102,10 @@ def publication_scheduled_source(db):
 
 
 def publication_dispatcher_source(db, **_publication_options):
-    _version(db)
+    _version(
+        db,
+        release_source_email_version=_publication_options.get("release_source_email_version"),
+    )
     from app.task_lifecycle_storage import claim_projection
     from app.task_lifecycle_definitions import DISPATCH_KINDS
     fields = ('adapter_name','source_id','owner','owner_pid','generation','lease_expires_at',
@@ -142,8 +149,8 @@ def publication_delivery_sources(db):
     return {kind: canonical.get(kind, ACTION_PROJECTIONS[kind]) for kind in DELIVERY_ACTION_TYPES}
 
 
-def publication_email_action_source(db):
-    _version(db)
+def publication_email_action_source(db, *, release_source_email_version=None):
+    _version(db, release_source_email_version=release_source_email_version)
     return ("select action_status as status from actions where record_type='action' "
             "and action_action_plan_id is not null and action_operation in "
             "('archive','flag_important','mark_read','move','trash','label')")
