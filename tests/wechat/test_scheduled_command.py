@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 import errno
-import json
 
 import pytest
 
@@ -13,6 +12,7 @@ from app.wechat.scheduled_command import (
     WECHAT_READER_UNAVAILABLE,
     WechatProduceOnceCommand,
 )
+from tests.test_store_task_entity_creator import _target_store
 
 
 @pytest.fixture(autouse=True)
@@ -21,7 +21,7 @@ def _reader_enabled(monkeypatch):
 
 
 def _store(tmp_path, *, ready: bool = True) -> AutoReplyStore:
-    store = AutoReplyStore(tmp_path / "wechat-command.sqlite3")
+    store = _target_store(tmp_path / "wechat-command.sqlite3")
     if ready:
         store.upsert_wechat_read_state(
             account_id="a1", account_dir="/a1", db_dir="/a1/db_storage",
@@ -31,16 +31,15 @@ def _store(tmp_path, *, ready: bool = True) -> AutoReplyStore:
 
 
 def _error_kinds(store) -> list[str]:
-    with store._connect() as db:
-        return [row["kind"] for row in db.execute("select kind from errors order by id")]
+    return [row.kind for row in reversed(store.list_errors())]
 
 
 def _reader_health(store) -> dict:
-    with store._connect() as db:
-        row = db.execute(
-            "select value from service_state where key='service_health:wechat.reader'"
-        ).fetchone()
-    return json.loads(row["value"]) if row else {}
+    return next(
+        (row for row in store.list_service_health_components()
+         if row["component"] == "wechat.reader"),
+        {},
+    )
 
 
 def _command(store, *, produce, restarts=None, readers=None):
@@ -60,7 +59,8 @@ def test_disabled_reader_is_a_summary_and_never_touches_the_store(tmp_path, monk
 
     result = _command(object(), produce=None, restarts=[], readers=[])()
 
-    assert result == "wechat produce-once skipped: reader disabled"
+    assert result.summary == "wechat produce-once skipped: reader disabled"
+    assert result.producer_counts is None and not result.complete
 
 
 def test_missing_ready_account_is_a_summary_and_never_builds_a_reader(tmp_path, monkeypatch):
@@ -70,7 +70,8 @@ def test_missing_ready_account_is_a_summary_and_never_builds_a_reader(tmp_path, 
 
     result = _command(store, produce=None, restarts=restarts, readers=readers)()
 
-    assert result == "wechat produce-once skipped: no ready WeChat account"
+    assert result.summary == "wechat produce-once skipped: no ready WeChat account"
+    assert result.producer_counts is None and not result.complete
     assert readers == [] and restarts == [] and _error_kinds(store) == []
 
 
@@ -86,8 +87,11 @@ def test_successful_pass_reports_queued_count_and_marks_reader_healthy(tmp_path,
     restarts, readers = [], []
     command = _command(store, produce=None, restarts=restarts, readers=readers)
 
-    assert command() == "wechat produce-once queued=2"
-    assert command() == "wechat produce-once queued=2"
+    first = command()
+    second = command()
+    assert first.summary == second.summary == "wechat produce-once queued=2"
+    assert first.producer_counts == second.producer_counts == (("queued", 2),)
+    assert first.complete and second.complete
 
     assert len(readers) == 1
     assert calls == [(store, readers[0], "a1", "self-1")] * 2
@@ -113,14 +117,17 @@ def test_reader_ipc_failures_request_one_restart_after_three_passes(tmp_path, mo
 
     first, second, third, fourth = (command() for _ in range(4))
 
-    assert {first, second, third, fourth} == {
+    assert {result.summary for result in (first, second, third, fourth)} == {
         "wechat produce-once reader unavailable: helper timeout"
     }
     assert restarts == ["restart"]
     assert _error_kinds(store) == [WECHAT_READER_UNAVAILABLE]
     assert _reader_health(store)["state"] == "degraded"
 
-    assert command() == "wechat produce-once queued=1"
+    successful = command()
+    assert successful.summary == "wechat produce-once queued=1"
+    assert successful.producer_counts == (("queued", 1),)
+    assert successful.complete
     assert _reader_health(store)["state"] == "healthy"
 
     for _ in range(3):
@@ -148,8 +155,11 @@ def test_permission_problems_are_reported_once_and_do_not_fail_the_trigger(
     restarts, readers = [], []
     command = _command(store, produce=None, restarts=restarts, readers=readers)
 
-    assert command() == "wechat produce-once paused: data permission required"
-    assert command() == "wechat produce-once paused: data permission required"
+    first = command()
+    second = command()
+    assert first.summary == second.summary == "wechat produce-once paused: data permission required"
+    assert first.producer_counts is second.producer_counts is None
+    assert not first.complete and not second.complete
 
     assert _error_kinds(store) == [WECHAT_DATA_PERMISSION_REQUIRED]
     assert restarts == []

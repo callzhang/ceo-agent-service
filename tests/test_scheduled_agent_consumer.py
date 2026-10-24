@@ -15,6 +15,7 @@ from app.agent_cron.commands import (
     SERVICE_COMMAND_EXECUTION_KIND,
     ServiceCommandRegistry,
 )
+from tests.scheduled_command_results import unknown_service_result
 from app.agent_cron.consumer import (
     SERVICE_COMMAND_FAILED,
     ScheduledAgentConsumer,
@@ -129,19 +130,19 @@ def claim(adapter, source_id, owner, *, now=NOW):
     return envelope, ClaimGuard(adapter=adapter, envelope=envelope, owner=owner)
 
 
-def commands(produce_once=lambda: "produce-once queued=0"):
+def commands(produce_once=lambda: unknown_service_result("produce-once queued=0")):
     return ServiceCommandRegistry({
-        "email-message-check-once": lambda: "email-message-check-once discovered=0",
+        "email-message-check-once": lambda: unknown_service_result("email-message-check-once discovered=0"),
         "produce-once": produce_once,
-        "calendar-invites-once": lambda: "calendar-invites-once queued=0",
-        "recover-recent-messages": lambda: "recover-recent-messages queued=0",
-        "wechat-produce-once": lambda: "wechat produce-once queued=0",
-        "scan-meetings-once": lambda: "scan-meetings-once queued=0",
-        "scan-oa-approvals": lambda: "scan-oa-approvals queued=0",
-        "scan-meeting-todos-once": lambda: "scan-meeting-todos-once queued=0",
-        "request-minutes-access": lambda: "request-minutes-access requested=0",
-        "sync-minutes-once": lambda: "sync-minutes-once queued=0",
-        "sync-chrome-cookies": lambda: "sync-chrome-cookies copied=0",
+        "calendar-invites-once": lambda: unknown_service_result("calendar-invites-once queued=0"),
+        "recover-recent-messages": lambda: unknown_service_result("recover-recent-messages queued=0"),
+        "wechat-produce-once": lambda: unknown_service_result("wechat produce-once queued=0"),
+        "scan-meetings-once": lambda: unknown_service_result("scan-meetings-once queued=0"),
+        "scan-oa-approvals": lambda: unknown_service_result("scan-oa-approvals queued=0"),
+        "scan-meeting-todos-once": lambda: unknown_service_result("scan-meeting-todos-once queued=0"),
+        "request-minutes-access": lambda: unknown_service_result("request-minutes-access requested=0"),
+        "sync-minutes-once": lambda: unknown_service_result("sync-minutes-once queued=0"),
+        "sync-chrome-cookies": lambda: unknown_service_result("sync-chrome-cookies copied=0"),
     })
 
 
@@ -448,7 +449,7 @@ def test_command_trigger_runs_in_process_and_never_creates_an_agent_input(tmp_pa
 
     def produce_once():
         calls.append("produce-once")
-        return "produce-once queued=2"
+        return unknown_service_result("produce-once queued=2")
 
     persisted = dispatch(store, run, None, registry=commands(produce_once))
 
@@ -554,6 +555,14 @@ def test_command_trigger_passes_only_snapshot_consumer_prompt_and_skills(tmp_pat
             assert name == "produce-once"
             self.context = consumer_context
             return "produce-once queued=1"
+
+        def run_with_result(self, name, *, consumer_context):
+            from app.agent_cron.commands import ServiceCommandResult
+
+            self.run(name, consumer_context=consumer_context)
+            return ServiceCommandResult(
+                "produce-once queued=1", (("queued", 1),), True,
+            )
 
     registry = CapturingCommands()
     persisted = dispatch(store, run, options, registry=registry)

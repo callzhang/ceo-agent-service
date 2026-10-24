@@ -2906,9 +2906,18 @@ full-state claim 索引服务完整状态仲裁，pending-only dispatch 索引�
 Scheduled Tasks 页面按 API 返回的 `first_scheduled_for`、`scheduled_for` 和
 `occurrence_count` 展示已保存区间，不再按通用摘要计数合并历史行。此候选尚未激活；
 release-drain 在迁移前仍读冻结旧来源 `SCHEDULED_RUN_SQL`，不可改成无条件 native 查询；
-它是显式发布前检查，不是运行时 fallback。类型化命令计数、安全空跑归并、
-covered-instant 去重及 occurrence 内部引用的 forward/current-inverse 转换仍是 Task4
-未完成项，不能据此声称历史已压缩或可安全回退。
+它是显式发布前检查，不是运行时 fallback。每个 service-command producer 使用单一 typed
+`ServiceCommandResult`；瞬态 counters 不改变持久化摘要。Store 只在当前完整 typed counts
+全零、紧邻前一同 Task occurrence 的完整冻结旧摘要也证明零、冻结 command/config 相同、Cron
+下一时间点精确连续且当前和前一都没有 Task/Meeting 引用时，在一个写事务保留较新身份并更新
+区间/count，再删除较早 occurrence 与 identity mapping。只有 `occurrence_count>1` 不构成空跑
+证明；旧 Email grammar 完整校验 `accounts/discovered/failures`，仅以 discovered/failures 判空；
+旧 Meeting 扫描、Recovery 多计数和 cookie 维护均不作为历史空跑证据。Run forward migration
+在引用转成 native 后，同一事务一次预建保护集并按 UTC 时间/ID tie 顺序单遍退休可证明的历史
+相邻空跑，返回迁移统计且不新增持久字段。versioned scheduler create 仍阻止重启补派覆盖区间内
+的同配置时间点。Task/Meeting occurrence 引用在 forward/current-inverse 中只转换声明整数叶，
+保留其余原始 JSON 字节与 hash 证据。release-drain 在迁移前继续读取冻结旧来源
+`SCHEDULED_RUN_SQL`；候选仍未激活，尚待完整 Task4 独立 SPEC/QUALITY 审查。
 
 
 Phase4C 的初始化修复边界：旧分散 Workbench0.7/0.8/0.9表缺列后自动补

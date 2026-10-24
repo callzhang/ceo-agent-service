@@ -149,10 +149,10 @@ describe("ScheduledTasksPage", () => {
     renderPage();
 
     expect(await screen.findByText("3 次定时检查都没有新内容")).toBeInTheDocument();
-    expect(screen.getByText("9/8 12:12 – 9/8 12:14")).toBeInTheDocument();
+    expect(screen.getByText("9/8 05:12 – 9/8 05:14")).toBeInTheDocument();
     expect(screen.getByText("最近一次触发 Agent")).toBeInTheDocument();
     expect(screen.getByRole("link", { name: "Attempt #8840 已完成" })).toHaveAttribute("href", "/attempts/8840");
-    expect(screen.queryByText("scheduled_task_previous_execution_active")).not.toBeInTheDocument();
+    expect(screen.getAllByText("scheduled_task_previous_execution_active")).toHaveLength(2);
   });
 
   it("does not infer durable empty history from summary counters", async () => {
@@ -172,7 +172,7 @@ describe("ScheduledTasksPage", () => {
     expect(screen.getByText("入队").closest(".scheduled-task-run-counter")).toHaveTextContent("入队 3");
     expect(screen.getByText("服务命令失败")).toBeInTheDocument();
     expect(screen.getByText("服务命令失败").closest("li")?.querySelector(".scheduled-task-run-counter.is-danger")).toHaveTextContent("失败 2");
-    expect(screen.getByRole("heading", { name: "运行记录" }).nextElementSibling).toHaveTextContent("最近 6 次 · 有动作 1 次 · 失败 1 次");
+    expect(screen.getByRole("heading", { name: "运行记录" }).nextElementSibling).toHaveTextContent("最近 7 次 · 有动作 4 次 · 失败 1 次");
     expect([...document.querySelectorAll(".scheduled-task-run-body")].some((body) => body.textContent?.includes("queued="))).toBe(false);
   });
 

@@ -3961,8 +3961,25 @@ Dashboard、恢复和 reached History 查询直接放到 `schedule_occurrences`�
 `first_scheduled_for`、`scheduled_for`、`occurrence_count` 展示区间，不用通用摘要
 计数推导可退休行。迁移前的 release-drain 显式源检查仍使用冻结 `SCHEDULED_RUN_SQL`，
 否则发布安静窗口会在 native schema 建立前查询不存在的表；这不是普通 runtime fallback。
-该候选未激活；类型化命令结果、安全空跑聚合、覆盖区间去重和 occurrence JSON 内部
-引用的双向映射仍待完成，因此没有新的空跑退休或历史回退承诺。
+full/compacted TaskInput 和 Meeting source 的已声明 occurrence 引用在迁移时按
+source-public/native owner 映射双向转换；只替换整数 token，保留其余 JSON 字符、原 sha256
+与 bytes 证据。每个 service-command registry producer 使用单一 `ServiceCommandResult`；
+完整 counters 仅在当前进程传递，未知、维护、暂停或不可用返回
+`producer_counts=None, complete=False`，持久化 `result_summary` 不变。命令成功完成且
+trigger dispatched 后，Store 只在当前完整 typed counters 全零、冻结 command/config 相同、
+Cron 下一个时间点精确相邻、前一行摘要独立符合完整冻结历史零语法、且当前与前一 occurrence
+均无已声明 Task/Meeting 引用时，在同一写事务保留较新 occurrence 身份并更新 first/count，
+再删除较早行及其 identity mapping。前一 `occurrence_count>1` 本身不证明空跑。旧 Email
+grammar 完整要求 `accounts/discovered/failures` 且均非负，只以 `discovered/failures` 判空；
+旧 scan-meetings、Recovery 多计数和 cookie 维护不提供完整历史零证据。
+
+Run forward migration 在引用 owner 映射成 native 后，同一迁移事务一次预建 protected
+reference ID 集，再按真实 UTC 时间和 occurrence ID tie 顺序单遍扫描历史记录；只有完整冻结
+历史零语法、同 Task/snapshot/command 且 Cron 连续的相邻行会退休。迁移返回 scanned、candidate、
+excluded、retired 计数用于报告，不新增持久字段；时间无效时该 Task 不退休历史行。versioned
+scheduler create 入口仍检查同冻结配置已覆盖的时间点，避免重启补派已聚合 tick。release-drain
+在迁移前继续由显式 source checker 读取冻结 `SCHEDULED_RUN_SQL`；不能在 native 表建立前无条件
+查询 `schedule_occurrences`。候选仍未激活。
 
 
 Phase4C 的初始化修复边界：旧分散 Workbench0.7/0.8/0.9表缺列后自动补

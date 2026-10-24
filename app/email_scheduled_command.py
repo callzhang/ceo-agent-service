@@ -11,6 +11,7 @@ from dataclasses import dataclass
 from datetime import datetime, timezone
 from pathlib import Path
 
+from app.agent_cron.commands import ServiceCommandResult
 from app.email_classifier_scan import (
     advance_scan_progress,
     AgentScanContext,
@@ -292,13 +293,16 @@ class EmailMessageCheckOnceCommand:
     ] = build_email_discovery_dependencies
     sleep: Callable[[float], None] = time.sleep
 
-    def __call__(self) -> str:
+    def __call__(self) -> ServiceCommandResult:
         """Read each enabled account once and leave all consumers asynchronous."""
 
         bootstrap = self.dependency_builder(self.settings)
         accounts = tuple(bootstrap.load_enabled_accounts())
         if not accounts:
-            return "email-message-check-once accounts=0 discovered=0 failures=0"
+            return ServiceCommandResult(
+                "email-message-check-once accounts=0 discovered=0 failures=0",
+                (("discovered", 0), ("failures", 0)), True,
+            )
         active_model = bootstrap.load_active_model()
         account_errors: list[Exception] = []
 
@@ -339,9 +343,14 @@ class EmailMessageCheckOnceCommand:
                 "email discovery failed for "
                 f"{metrics['failures']} account operation(s)"
             )
-        return (
+        summary = (
             "email-message-check-once "
             f"accounts={metrics['accounts']} "
             f"discovered={metrics['discovered']} "
             f"failures={metrics['failures']}"
+        )
+        return ServiceCommandResult(
+            summary,
+            (("discovered", metrics["discovered"]), ("failures", metrics["failures"])),
+            True,
         )

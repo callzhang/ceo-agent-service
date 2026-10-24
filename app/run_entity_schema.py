@@ -332,6 +332,417 @@ def _canonical_json(value) -> bytes:
                       ensure_ascii=False).encode("utf-8")
 
 
+def _replace_json_integer_leaf(text: str, path: tuple[str, ...], translate) -> tuple[str, int]:
+    """Replace one declared integer leaf while preserving every other source byte.
+
+    The small tokenizer uses JSONDecoder.raw_decode for token boundaries. It
+    rejects duplicate keys on the traversed object path instead of guessing
+    which occurrence a SQL/JSON reader would select.
+    """
+    decoder = json.JSONDecoder()
+    edits = []
+
+    def whitespace(pos):
+        while pos < len(text) and text[pos] in " \t\r\n":
+            pos += 1
+        return pos
+
+    def parse(pos, current_path):
+        pos = whitespace(pos)
+        if pos >= len(text):
+            raise ValueError("truncated typed JSON reference payload")
+        if text[pos] == "{":
+            pos += 1
+            keys = set()
+            while True:
+                pos = whitespace(pos)
+                if pos < len(text) and text[pos] == "}":
+                    return pos + 1
+                key, key_end = decoder.raw_decode(text, pos)
+                if not isinstance(key, str):
+                    raise ValueError("invalid typed JSON object key")
+                if current_path == path[:len(current_path)]:
+                    if key in keys:
+                        raise ValueError("duplicate key on typed occurrence reference path")
+                    keys.add(key)
+                pos = whitespace(key_end)
+                if pos >= len(text) or text[pos] != ":":
+                    raise ValueError("invalid typed JSON object separator")
+                pos = whitespace(pos + 1)
+                child_path = current_path + (key,)
+                if child_path == path:
+                    value, end = decoder.raw_decode(text, pos)
+                    if type(value) is not int or value <= 0:
+                        raise ValueError("typed occurrence reference is not a positive integer")
+                    target = translate(value)
+                    if type(target) is not int or target <= 0:
+                        raise ValueError("typed occurrence reference has no owner mapping")
+                    if target != value:
+                        edits.append((pos, end, str(target)))
+                else:
+                    end = parse(pos, child_path)
+                pos = whitespace(end)
+                if pos < len(text) and text[pos] == ",":
+                    pos += 1
+                    continue
+                if pos < len(text) and text[pos] == "}":
+                    return pos + 1
+                raise ValueError("invalid typed JSON object ending")
+        if text[pos] == "[":
+            pos += 1
+            while True:
+                pos = whitespace(pos)
+                if pos < len(text) and text[pos] == "]":
+                    return pos + 1
+                pos = parse(pos, current_path + ("[]",))
+                pos = whitespace(pos)
+                if pos < len(text) and text[pos] == ",":
+                    pos += 1
+                    continue
+                if pos < len(text) and text[pos] == "]":
+                    return pos + 1
+                raise ValueError("invalid typed JSON array ending")
+        _value, end = decoder.raw_decode(text, pos)
+        return end
+
+    end = parse(0, ())
+    if whitespace(end) != len(text):
+        raise ValueError("trailing data in typed JSON reference payload")
+    for start, finish, replacement in reversed(edits):
+        text = text[:start] + replacement + text[finish:]
+    return text, len(edits)
+
+
+_SCHEDULED_CONSUMER_REF_PATHS = (
+    ("scheduled_consumer", "scheduled_task_run_id"),
+    ("raw_payload", "scheduled_consumer", "scheduled_task_run_id"),
+    ("context", "trigger_raw_payload", "scheduled_task_run_id"),
+)
+
+
+def _translate_schedule_input_refs(db, translate, *, native: bool) -> None:
+    """Translate only declared generated occurrence references in Task inputs."""
+    tables = {row[0] for row in db.execute(
+        "select name from main.sqlite_schema where type='table'")}
+    input_table = "task_inputs" if native else "reply_task_inputs"
+    if input_table in tables:
+        columns = {row[1] for row in db.execute(f'pragma main.table_info("{input_table}")')}
+        for row in db.execute(
+            f'select id,trigger_message_json,input_provenance_json from main."{input_table}"'
+        ).fetchall():
+            trigger = row[1]
+            provenance = row[2]
+            if isinstance(trigger, str):
+                for path in _SCHEDULED_CONSUMER_REF_PATHS:
+                    trigger, _ = _replace_json_integer_leaf(trigger, path, translate)
+            if isinstance(provenance, str):
+                provenance, _ = _replace_json_integer_leaf(
+                    provenance, ("source", "scheduled_task_run_id"), translate)
+            assignments = []
+            values = []
+            if "trigger_message_json" in columns and trigger != row[1]:
+                assignments.append('"trigger_message_json"=?')
+                values.append(trigger)
+            if "input_provenance_json" in columns and provenance != row[2]:
+                assignments.append('"input_provenance_json"=?')
+                values.append(provenance)
+            if assignments:
+                values.append(row[0])
+                db.execute(f'update main."{input_table}" set {",".join(assignments)} where id=?', values)
+    elif not native and "tasks" in tables:
+        from app import task20_definitions
+        from app.storage_payload import TASK_RECORD_TYPES
+        from app.task_lifecycle_storage import source_assignments
+
+        kind = "reply_task_inputs"
+        record_type = TASK_RECORD_TYPES.code(kind)
+        columns = ("trigger_message_json", "input_provenance_json")
+        expressions = ",".join(task20_definitions.task20_column(kind, field) for field in columns)
+        for row in db.execute(
+            f"select id,{expressions} from main.tasks where _kind=?",
+            (record_type,),
+        ).fetchall():
+            trigger, provenance = row[1], row[2]
+            if isinstance(trigger, str):
+                for path in _SCHEDULED_CONSUMER_REF_PATHS:
+                    trigger, _ = _replace_json_integer_leaf(trigger, path, translate)
+            if isinstance(provenance, str):
+                provenance, _ = _replace_json_integer_leaf(
+                    provenance, ("source", "scheduled_task_run_id"), translate)
+            values = {}
+            if trigger != row[1]:
+                values["trigger_message_json"] = trigger
+            if provenance != row[2]:
+                values["input_provenance_json"] = provenance
+            if values:
+                assignment = source_assignments(kind, values, {})
+                db.execute(
+                    f"update main.tasks set {assignment.sql} where id=? and _kind=?",
+                    (*assignment.parameters, row[0], record_type),
+                )
+
+    if native:
+        if "tasks" not in tables:
+            return
+        meeting_rows = db.execute(
+            "select id,json(parameters_json) from main.tasks where kind='meeting_alignment'"
+        ).fetchall()
+        for task_id, encoded in meeting_rows:
+            parameters = json.loads(encoded)
+            source_json = parameters.get("source_json") if isinstance(parameters, dict) else None
+            if not isinstance(source_json, str):
+                continue
+            changed, count = _replace_json_integer_leaf(
+                source_json, ("scheduled_consumer_reference", "scheduled_task_run_id"),
+                translate)
+            if count:
+                db.execute(
+                    "update main.tasks set parameters_json=jsonb_set(parameters_json, "
+                    "'$.source_json', json_quote(?)) where id=?",
+                    (changed, task_id),
+                )
+    elif "meeting_alignment_jobs" in tables:
+        columns = {row[1] for row in db.execute(
+            'pragma main.table_info("meeting_alignment_jobs")')}
+        if "source_json" in columns:
+            for task_id, source_json in db.execute(
+                "select id,source_json from main.meeting_alignment_jobs"
+            ).fetchall():
+                if not isinstance(source_json, str):
+                    continue
+                changed, count = _replace_json_integer_leaf(
+                    source_json, ("scheduled_consumer_reference", "scheduled_task_run_id"),
+                    translate)
+                if count:
+                    db.execute(
+                        "update main.meeting_alignment_jobs set source_json=? where id=?",
+                        (changed, task_id),
+                    )
+    elif not native and "tasks" in tables:
+        from app import task20_definitions
+        from app.storage_payload import TASK_RECORD_TYPES
+        from app.task_lifecycle_storage import source_assignments
+
+        kind = "meeting_alignment_jobs"
+        record_type = TASK_RECORD_TYPES.code(kind)
+        field = "source_json"
+        column = task20_definitions.task20_column(kind, field)
+        for task_id, source_json in db.execute(
+            f"select id,{column} from main.tasks where _kind=?", (record_type,)
+        ).fetchall():
+            if not isinstance(source_json, str):
+                continue
+            changed, count = _replace_json_integer_leaf(
+                source_json, ("scheduled_consumer_reference", "scheduled_task_run_id"),
+                translate)
+            if count:
+                assignment = source_assignments(kind, {field: changed}, {})
+                db.execute(
+                    f"update main.tasks set {assignment.sql} where id=? and _kind=?",
+                    (*assignment.parameters, task_id, record_type),
+                )
+
+
+def _scheduled_occurrence_public_map(rows, owner_maps):
+    result = {}
+    for kind, row in rows:
+        if kind != "scheduled_task_runs" or row.get("legacy_key") is None:
+            continue
+        try:
+            public_id = int(row["legacy_key"])
+        except (TypeError, ValueError) as exc:
+            raise ValueError("scheduled occurrence public identity is not an integer") from exc
+        target_id = int(_run_target_id(owner_maps, kind, int(row["id"])))
+        if public_id in result and result[public_id] != target_id:
+            raise ValueError(f"ambiguous scheduled occurrence public ID: {public_id}")
+        result[public_id] = target_id
+    return result
+
+
+def _scheduled_occurrence_native_map(identities):
+    result = {}
+    for identity in identities.values():
+        if identity["source_kind"] != "scheduled_task_runs":
+            continue
+        try:
+            public_id = int(identity["public_key"])
+        except (TypeError, ValueError) as exc:
+            raise ValueError("scheduled occurrence inverse public identity is not an integer") from exc
+        target_id = int(identity["target_id"])
+        if target_id in result and result[target_id] != public_id:
+            raise ValueError(f"ambiguous native scheduled occurrence ID: {target_id}")
+        result[target_id] = public_id
+    return result
+
+
+def _apply_scheduled_occurrence_reference_map(db, reference_map, *, native):
+    def translate(value):
+        try:
+            return reference_map[value]
+        except KeyError as exc:
+            raise ValueError(
+                f"unresolved scheduled occurrence reference: {value}"
+            ) from exc
+
+    _translate_schedule_input_refs(db, translate, native=native)
+
+
+def _coalesce_historical_empty_occurrences(db) -> dict[str, int]:
+    """One-transaction, one-pass retirement of strictly proven old empty ticks."""
+    from app.agent_cron.schedule import CronSchedule
+    from app.scheduled_occurrence_storage import historical_zero_result
+    from datetime import UTC, datetime
+
+    def unique_objects(pairs):
+        value = {}
+        for key, child in pairs:
+            if key in value:
+                raise ValueError("duplicate JSON object key in occurrence reference")
+            value[key] = child
+        return value
+
+    def read_path(value, path):
+        for part in path:
+            if not isinstance(value, dict):
+                return None
+            value = value.get(part)
+        return value
+
+    protected: set[int] = set()
+    reference_paths = (
+        ("scheduled_consumer", "scheduled_task_run_id"),
+        ("raw_payload", "scheduled_consumer", "scheduled_task_run_id"),
+        ("context", "trigger_raw_payload", "scheduled_task_run_id"),
+    )
+    for trigger, provenance in db.execute(
+        "select trigger_message_json,input_provenance_json from task_inputs"
+    ):
+        try:
+            for encoded, paths in (
+                (trigger, reference_paths),
+                (provenance, (("source", "scheduled_task_run_id"),)),
+            ):
+                if encoded is None:
+                    continue
+                parsed = json.loads(encoded, object_pairs_hook=unique_objects)
+                for path in paths:
+                    ref = read_path(parsed, path)
+                    if ref is not None:
+                        if type(ref) is not int or ref <= 0:
+                            raise ValueError("malformed typed occurrence reference in Task input")
+                        protected.add(ref)
+        except (TypeError, ValueError, json.JSONDecodeError) as exc:
+            if "scheduled_task_run_id" in str(trigger) or "scheduled_task_run_id" in str(provenance):
+                raise ValueError("cannot preflight Task occurrence references") from exc
+
+    for (encoded,) in db.execute(
+        "select json(parameters_json) from tasks where kind='meeting_alignment'"
+    ):
+        try:
+            parameters = json.loads(encoded, object_pairs_hook=unique_objects)
+            source = json.loads(parameters.get("source_json", "{}"),
+                                object_pairs_hook=unique_objects)
+        except (TypeError, ValueError, json.JSONDecodeError) as exc:
+            raise ValueError("cannot preflight Meeting occurrence references") from exc
+        ref = read_path(source, ("scheduled_consumer_reference", "scheduled_task_run_id"))
+        if ref is not None:
+            if type(ref) is not int or ref <= 0:
+                raise ValueError("malformed typed occurrence reference in Meeting source")
+            protected.add(ref)
+
+    cursor = db.execute(
+        "select run.id,run.scheduled_task_id,run.trigger_kind,run.scheduled_for,"
+        "run.first_scheduled_for,run.occurrence_count,run.dispatch_status,"
+        "run.execution_kind,run.execution_id,run.snapshot_id,run.result_summary,"
+        "config.schedule_config_snapshot_json "
+        "from schedule_occurrences as run left join configs as config "
+        "on config.schedule_snapshot_public_id=run.snapshot_id "
+        "order by run.scheduled_task_id,run.scheduled_for,run.id"
+    )
+    columns = tuple(column[0] for column in cursor.description)
+    rows = [dict(zip(columns, row, strict=True)) for row in cursor.fetchall()]
+    invalid_time_tasks = set()
+    for row in rows:
+        try:
+            scheduled_at = datetime.fromisoformat(
+                str(row["scheduled_for"]).replace("Z", "+00:00")
+            )
+            if scheduled_at.utcoffset() is None:
+                raise ValueError("scheduled occurrence timestamp has no timezone")
+            row["_scheduled_at_utc"] = scheduled_at.astimezone(UTC)
+        except (TypeError, ValueError):
+            invalid_time_tasks.add(row["scheduled_task_id"])
+    # Lexicographic ISO ordering does not represent chronology when source
+    # rows use different UTC offsets. Keep one bounded in-memory sort after the
+    # single table read; an unknown timestamp disables retirement for its task.
+    rows.sort(key=lambda row: (
+        int(row["scheduled_task_id"]),
+        row.get("_scheduled_at_utc", datetime.max.replace(tzinfo=UTC)),
+        int(row["id"]),
+    ))
+    retired = candidates = 0
+    previous_by_task = {}
+    for row in rows:
+        task_id = int(row["scheduled_task_id"])
+        eligible = False
+        command = None
+        config_payload = None
+        if (row["trigger_kind"] == "scheduled" and row["dispatch_status"] == "dispatched"
+                and row["execution_kind"] == "service_command" and int(row["id"]) not in protected
+                and row["scheduled_task_id"] not in invalid_time_tasks):
+            try:
+                config_payload = json.loads(row["schedule_config_snapshot_json"])
+                command = config_payload.get("command")
+                eligible = isinstance(command, str) and historical_zero_result(
+                    command, row["result_summary"]
+                )
+                candidates += int(eligible)
+            except (TypeError, ValueError, json.JSONDecodeError):
+                eligible = False
+        previous = previous_by_task.get(task_id)
+        merged = False
+        if eligible and previous is not None and previous["eligible"]:
+            try:
+                if previous["snapshot_id"] == row["snapshot_id"] and previous["command"] == command:
+                    schedule = CronSchedule.parse(
+                        config_payload["cron_expression"], config_payload["timezone_name"]
+                    )
+                    prior_at = datetime.fromisoformat(
+                        str(previous["scheduled_for"]).replace("Z", "+00:00")
+                    )
+                    current_at = datetime.fromisoformat(
+                        str(row["scheduled_for"]).replace("Z", "+00:00")
+                    )
+                    merged = schedule.next_after(prior_at).astimezone(UTC) == current_at.astimezone(UTC)
+            except (KeyError, TypeError, ValueError):
+                merged = False
+        if merged:
+            db.execute(
+                "update schedule_occurrences set first_scheduled_for=?,occurrence_count=? where id=?",
+                (previous["first_scheduled_for"],
+                 int(previous["occurrence_count"]) + int(row["occurrence_count"]),
+                 int(row["id"])),
+            )
+            db.execute(
+                "delete from run_entity_identity_map where source_kind='scheduled_task_runs' and target_id=?",
+                (int(previous["id"]),),
+            )
+            db.execute("delete from schedule_occurrences where id=?", (int(previous["id"]),))
+            retired += 1
+        previous_by_task[task_id] = {
+            "id": int(row["id"]), "scheduled_for": row["scheduled_for"],
+            "first_scheduled_for": previous["first_scheduled_for"] if merged else row["first_scheduled_for"],
+            "occurrence_count": (int(previous["occurrence_count"]) + int(row["occurrence_count"])) if merged else int(row["occurrence_count"]),
+            "snapshot_id": row["snapshot_id"], "command": command, "eligible": eligible,
+        }
+    return {
+        "scanned_occurrences": len(rows),
+        "historical_zero_candidates": candidates,
+        "excluded_occurrences": len(rows) - candidates,
+        "retired_occurrences": retired,
+    }
+
+
 def run_handoff_context(source_metadata: dict) -> str:
     """Bind a handoff to selected source DDL, not mutable rows or allocators."""
     return hashlib.sha256(_canonical_json(source_metadata["source_objects"])).hexdigest()
@@ -799,6 +1210,9 @@ def migrate_run_entities(db: sqlite3.Connection, source_metadata: dict, *,
         "and not exists(select 1 from main.tasks t where t.id=r.task_id)")}
     if actual_orphans != expected_orphans:
         raise ValueError("Run forward changed captured missing physical Task edges")
+    _apply_scheduled_occurrence_reference_map(
+        db, _scheduled_occurrence_public_map(rows, owner_maps), native=True)
+    scheduled_occurrence_aggregation = _coalesce_historical_empty_occurrences(db)
     db.execute(f"drop table temp.{_quote(_STAGE)}")
     identity_edges = [dict(zip(("source_kind", "physical_id", "public_key", "public_key_type",
                                 "public_key_order", "target_id"), row, strict=True))
@@ -808,7 +1222,8 @@ def migrate_run_entities(db: sqlite3.Connection, source_metadata: dict, *,
     return {"source_objects": source_metadata["source_objects"],
             "sequence_rows": source_metadata["sequence_rows"],
             "run_fk_findings": source_metadata["run_fk_findings"],
-            "identity_edges": identity_edges}
+            "identity_edges": identity_edges,
+            "scheduled_occurrence_aggregation": scheduled_occurrence_aggregation}
 
 
 def _run_identity_rows(db: sqlite3.Connection) -> dict:
@@ -1240,6 +1655,8 @@ def restore_run_entities(db: sqlite3.Connection, source_metadata: dict,
             identities[(kind, physical)] = identity
             by_kind[kind].append(identity)
             allocated.append((kind, physical, target))
+    _apply_scheduled_occurrence_reference_map(
+        db, _scheduled_occurrence_native_map(identities), native=False)
     run_identity_by_target = {row["target_id"]: row for row in identities.values()
                               if row["source_kind"] == "agent_runs"}
     attempt_identity_by_target = {row["target_id"]: row for row in identities.values()

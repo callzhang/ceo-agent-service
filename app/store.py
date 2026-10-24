@@ -4580,6 +4580,20 @@ class AutoReplyStore(LogicalRunStoreMixin, ReviewedCandidateStoreMixin):
             from app.scheduled_config_storage import intern_scheduled_config
             snapshot_id = intern_scheduled_config(db, snapshot_json)
             dispatch_status = "skipped" if reason else "pending"
+            covered = db.execute(
+                f"select {self._scheduled_task_run_columns()} "
+                "from schedule_occurrences as scheduled_task_runs "
+                "where scheduled_task_id=? and trigger_kind='scheduled' "
+                "and occurrence_count>1 and snapshot_id=? "
+                "and first_scheduled_for<=? and scheduled_for>=? "
+                "order by id desc limit 1",
+                (task_id, snapshot_id, scheduled_for_text, scheduled_for_text),
+            ).fetchone()
+            if covered is not None:
+                return ScheduledTaskRunCreateResult(
+                    ScheduledTaskRunCreateState.DUPLICATE,
+                    self._scheduled_task_run_from_row(covered),
+                )
             if reason == "scheduled_task_previous_execution_active":
                 duplicate = db.execute(
                     f"select {self._scheduled_task_run_columns()} "
@@ -5001,6 +5015,163 @@ class AutoReplyStore(LogicalRunStoreMixin, ReviewedCandidateStoreMixin):
             assert finished is not None
             return self._scheduled_task_run_from_row(finished)
 
+    @staticmethod
+    def _historical_zero_service_command(command: str, summary: str) -> bool:
+        """Recognize only frozen, complete historical zero-output grammars."""
+        from app.scheduled_occurrence_storage import historical_zero_result
+
+        return historical_zero_result(command, summary)
+
+    @staticmethod
+    def _scheduled_occurrence_has_task_reference(db, occurrence_id: int) -> bool:
+        def unique_objects(pairs):
+            value = {}
+            for key, child in pairs:
+                if key in value:
+                    raise ValueError("duplicate JSON object key")
+                value[key] = child
+            return value
+
+        for trigger, provenance in db.execute(
+            "select trigger_message_json,input_provenance_json from task_inputs "
+            "where trigger_message_json like '%scheduled_task_run_id%' "
+            "or input_provenance_json like '%scheduled_task_run_id%'"
+        ):
+            try:
+                if isinstance(trigger, str):
+                    json.loads(trigger, object_pairs_hook=unique_objects)
+                if isinstance(provenance, str):
+                    json.loads(provenance, object_pairs_hook=unique_objects)
+            except (TypeError, ValueError, json.JSONDecodeError):
+                return True
+        paths = (
+            "$.scheduled_consumer.scheduled_task_run_id",
+            "$.raw_payload.scheduled_consumer.scheduled_task_run_id",
+            "$.context.trigger_raw_payload.scheduled_task_run_id",
+        )
+        input_match = " or ".join(
+            f"cast(json_extract(trigger_message_json,'{path}') as integer)=?"
+            for path in paths
+        )
+        if db.execute(
+            "select 1 from task_inputs where "
+            "json_valid(trigger_message_json) and (" + input_match + ") limit 1",
+            (occurrence_id,) * len(paths),
+        ).fetchone():
+            return True
+        if db.execute(
+            "select 1 from task_inputs where json_valid(input_provenance_json) "
+            "and cast(json_extract(input_provenance_json,'$.source.scheduled_task_run_id') "
+            "as integer)=? limit 1", (occurrence_id,),
+        ).fetchone():
+            return True
+        for (encoded,) in db.execute(
+            "select json(parameters_json) from tasks where kind='meeting_alignment'"
+        ):
+            try:
+                if not isinstance(encoded, str):
+                    return True
+                parameters = json.loads(encoded, object_pairs_hook=unique_objects)
+                if not isinstance(parameters, dict):
+                    return True
+                source = json.loads(
+                    parameters.get("source_json", "{}"),
+                    object_pairs_hook=unique_objects,
+                )
+                if not isinstance(source, dict):
+                    return True
+            except (TypeError, ValueError, json.JSONDecodeError):
+                # A malformed historical source cannot prove the row is unrelated.
+                return True
+            reference = source.get("scheduled_consumer_reference") if isinstance(source, dict) else None
+            if (isinstance(reference, dict)
+                    and type(reference.get("scheduled_task_run_id")) is int
+                    and reference["scheduled_task_run_id"] == occurrence_id):
+                return True
+        return False
+
+    def coalesce_empty_scheduled_occurrence(self, run_id: int, *, command_result) -> bool:
+        """Retire one immediately preceding, proven-empty scheduled command tick."""
+        if not getattr(command_result, "zero_work", False):
+            return False
+        from app.agent_cron.schedule import CronSchedule
+        from datetime import UTC, datetime
+
+        with self._immediate_write_transaction() as db:
+            current = db.execute(
+                "select id,scheduled_task_id,trigger_kind,scheduled_for,first_scheduled_for,"
+                "occurrence_count,dispatch_status,execution_kind,execution_id,snapshot_id,result_summary "
+                "from schedule_occurrences where id=?", (run_id,),
+            ).fetchone()
+            if (current is None or current["trigger_kind"] != "scheduled"
+                    or current["dispatch_status"] != "dispatched"
+                    or current["execution_kind"] != "service_command"
+                    or self._scheduled_occurrence_has_task_reference(db, run_id)):
+                return False
+            snapshot = db.execute(
+                "select schedule_config_snapshot_json from configs "
+                "where schedule_snapshot_public_id=?", (current["snapshot_id"],),
+            ).fetchone()
+            if snapshot is None:
+                return False
+            try:
+                payload = json.loads(snapshot[0])
+            except (TypeError, json.JSONDecodeError):
+                return False
+            command = payload.get("command")
+            if not isinstance(command, str) or command != current["execution_id"]:
+                return False
+            typed_counts = getattr(command_result, "producer_counts", None)
+            if (command_result.summary != current["result_summary"]
+                or not isinstance(typed_counts, tuple)
+                    or len({name for name, _count in typed_counts}) != len(typed_counts)
+                    or any(type(count) is not int or count != 0 for _name, count in typed_counts)):
+                return False
+            prior = db.execute(
+                "select id,scheduled_task_id,trigger_kind,scheduled_for,first_scheduled_for,"
+                "occurrence_count,dispatch_status,execution_kind,execution_id,snapshot_id,result_summary "
+                "from schedule_occurrences where scheduled_task_id=? and ("
+                "julianday(scheduled_for)<julianday(?) or "
+                "(julianday(scheduled_for)=julianday(?) and id<?)) "
+                "order by julianday(scheduled_for) desc,id desc limit 1",
+                (current["scheduled_task_id"], current["scheduled_for"],
+                 current["scheduled_for"], run_id),
+            ).fetchone()
+            if (prior is None or prior["scheduled_task_id"] != current["scheduled_task_id"]
+                    or prior["trigger_kind"] != "scheduled"
+                    or prior["dispatch_status"] != "dispatched"
+                    or prior["execution_kind"] != "service_command"
+                    or prior["execution_id"] != command
+                    or prior["snapshot_id"] != current["snapshot_id"]
+                    or prior["occurrence_count"] < 1
+                    or self._scheduled_occurrence_has_task_reference(db, int(prior["id"]))):
+                return False
+            # Producer counts are transient. A coalesced row therefore remains
+            # eligible as a prior only when its persisted summary independently
+            # proves the complete frozen historical zero grammar.
+            if not self._historical_zero_service_command(command, prior["result_summary"]):
+                return False
+            try:
+                prior_end = datetime.fromisoformat(str(prior["scheduled_for"]).replace("Z", "+00:00"))
+                current_at = datetime.fromisoformat(str(current["scheduled_for"]).replace("Z", "+00:00"))
+                schedule = CronSchedule.parse(payload["cron_expression"], payload["timezone_name"])
+            except (KeyError, TypeError, ValueError):
+                return False
+            next_at = schedule.next_after(prior_end)
+            if next_at.astimezone(UTC) != current_at.astimezone(UTC):
+                return False
+            db.execute(
+                "update schedule_occurrences set first_scheduled_for=?,occurrence_count=? where id=?",
+                (prior["first_scheduled_for"],
+                 int(current["occurrence_count"]) + int(prior["occurrence_count"]), run_id),
+            )
+            db.execute(
+                "delete from run_entity_identity_map where source_kind='scheduled_task_runs' "
+                "and target_id=?", (int(prior["id"]),),
+            )
+            db.execute("delete from schedule_occurrences where id=?", (int(prior["id"]),))
+            return True
+
     def list_scheduled_task_runs(
         self,
         task_id: int,
@@ -5032,8 +5203,8 @@ class AutoReplyStore(LogicalRunStoreMixin, ReviewedCandidateStoreMixin):
             row = db.execute(
                 f"select {self._scheduled_task_run_columns()} "
                 f"from schedule_occurrences as scheduled_task_runs where execution_kind='reply_task' "
-                "and execution_id=? order by id desc limit 1",
-                (str(reply_task_id),),
+                "and cast(execution_id as integer)=? order by id desc limit 1",
+                (reply_task_id,),
             ).fetchone()
         return self._scheduled_task_run_from_row(row) if row is not None else None
 

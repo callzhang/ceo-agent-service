@@ -10,6 +10,7 @@ from app.agent_cron.commands import (
     ServiceCommandRegistry,
     ServiceCommandSkillMaterial,
 )
+from tests.scheduled_command_results import unknown_service_result
 from app.dws_client import DwsOaApprovalCandidate
 from app.audit_web import _queue_attention_rows
 from app.skill_features import FeatureRegistry
@@ -367,10 +368,13 @@ def test_scan_meeting_todos_carries_scheduled_consumer_context(tmp_path):
             ),
         ),
     )
-    implementations = {option.name: lambda: "unused" for option in SERVICE_COMMAND_OPTIONS}
+    implementations = {
+        option.name: lambda: unknown_service_result("unused")
+        for option in SERVICE_COMMAND_OPTIONS
+    }
     dws = FakeDws()
-    implementations["scan-meeting-todos-once"] = lambda: str(
-        scan_meeting_todos(store, dws)
+    implementations["scan-meeting-todos-once"] = lambda: unknown_service_result(
+        str(scan_meeting_todos(store, dws))
     )
 
     ServiceCommandRegistry(implementations).run(
@@ -943,7 +947,8 @@ def test_scan_pending_oa_approvals_enqueues_daily_review_task(tmp_path):
         ),
     )
     implementations = {
-        option.name: (lambda: "unused") for option in SERVICE_COMMAND_OPTIONS
+        option.name: (lambda: unknown_service_result("unused"))
+        for option in SERVICE_COMMAND_OPTIONS
     }
     skill_revision = 1
     class CurrentSkillOptions:
@@ -957,14 +962,14 @@ def test_scan_pending_oa_approvals_enqueues_daily_review_task(tmp_path):
                 content=f"current body for {name}, revision {skill_revision}",
             )
 
-    implementations["scan-oa-approvals"] = lambda: str(
+    implementations["scan-oa-approvals"] = lambda: unknown_service_result(str(
         scan_pending_oa_approvals(
             store,
             dws,
             now=datetime.fromisoformat("2026-07-27T09:30:00+08:00"),
             skill_options=CurrentSkillOptions(),
         )
-    )
+    ))
 
     queued = int(
         ServiceCommandRegistry(implementations).run(

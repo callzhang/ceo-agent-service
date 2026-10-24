@@ -65,13 +65,13 @@ def test_forward_requires_caller_transaction():
 
 
 def test_forward_source_catalog_change_rejects_before_mutation():
-    db, task_metadata = _run_source()
+    db, task_forward, task_source_metadata = _run_source(include_task_source_metadata=True)
     try:
         metadata = capture_run_entities(db)
         db.execute("drop index idx_agent_runs_status")
         original = tuple(db.execute("select id,record_type from runs order by id"))
         with pytest.raises(ValueError, match="selected-current"):
-            migrate_run_entities(db, metadata, task_metadata=task_metadata, run_handoff=_run_handoff(db, metadata))
+            migrate_run_entities(db, metadata, task_metadata=task_source_metadata, run_handoff=_run_handoff(db, metadata))
         assert tuple(db.execute("select id,record_type from runs order by id")) == original
         assert db.execute("select 1 from sqlite_schema where name='runs'").fetchone()
     finally:
@@ -254,7 +254,9 @@ def test_constructor_shaped_task_run_allocator_collision_survives_two_portable_c
         )) == unrelated_sequence
 
 
-def _run_source(*, orphan_task_id=None, include_task_source_metadata=False, workbench_artifact_public_id=None):
+def _run_source(*, orphan_task_id=None, include_task_source_metadata=False,
+                workbench_artifact_public_id=None, extra_scheduled_rows=(),
+                schedule_snapshot=None):
     from app.task_entity_schema import capture_task_entities, migrate_task_entities
     from tests.test_task_entity_schema import _source as task_source
 
@@ -285,6 +287,9 @@ def _run_source(*, orphan_task_id=None, include_task_source_metadata=False, work
     _target_prerequisites(db)
     objects = logical_run_current_schema.current_run11_objects()
     db.execute(objects["runs"])
+    if schedule_snapshot is not None:
+        from app.configs_storage import insert_config
+        insert_config(db, "scheduled_task_config_versions", schedule_snapshot)
     _source_row(db, "agent_runs", {
         "id": 1001, "legacy_key": "1001", "task_id": 201,
         "execution_generation": "consumer-g", "role": "consumer", "proposal_revision": 0,
@@ -375,6 +380,8 @@ def _run_source(*, orphan_task_id=None, include_task_source_metadata=False, work
         "result_summary": "", "lease_owner": "",
         "created_at": "created",
     })
+    for values in extra_scheduled_rows:
+        _source_row(db, "scheduled_task_runs", values)
     _source_row(db, "codex_session_search_index", {
         "id": 1309, "legacy_key": "1309", "session_id": "index-opaque",
         "source_type": "service_command", "source_id": "201", "title": "opaque title",
@@ -411,6 +418,145 @@ def _run_source(*, orphan_task_id=None, include_task_source_metadata=False, work
     db.execute("begin")
     return ((db, task_forward, task_source_metadata) if include_task_source_metadata
             else (db, task_forward))
+
+
+def test_forward_migration_coalesces_only_complete_adjacent_historical_empty_ticks():
+    from app.task_entity_schema import (
+        capture_task_entities, migrate_task_entities, restore_task_entities,
+    )
+
+    extra = []
+    for run_id, when, summary in (
+            # Offset text sorts after 01:01Z despite representing the earlier
+            # instant, so the sweep must order instants rather than strings.
+            (1310, "2026-10-22T03:00:00+02:00", "produce-once queued=0"),
+            (1311, "2026-10-22T01:01:00Z", "produce-once queued=0"),
+            # A complete but nonzero result is a barrier, even when the next
+            # tick is otherwise a proven empty result.
+            (1312, "2026-10-22T01:02:00Z", "produce-once queued=1"),
+            (1313, "2026-10-22T01:03:00Z", "produce-once queued=0"),
+            # A historical command with no complete frozen grammar stays put.
+            (1314, "2026-10-22T01:04:00Z", "recover-tasks closed=0 queued=0"),
+            (1315, "2026-10-22T01:05:00Z", "recover-tasks closed=0 queued=0"),
+            # A later otherwise-empty pair is protected by typed incoming refs.
+            (1316, "2026-10-22T01:06:00Z", "produce-once queued=0"),
+            (1317, "2026-10-22T01:07:00Z", "produce-once queued=0"),
+    ):
+        extra.append({
+                "id": run_id, "legacy_key": str(run_id), "scheduled_task_id": 55,
+                "trigger_kind": "scheduled", "scheduled_for": when,
+                "dispatch_status": "dispatched", "skip_or_error_reason": "",
+                "event_id": f"event-{run_id}", "execution_kind": "service_command",
+                "execution_id": "recover-tasks" if 1314 <= run_id <= 1315 else "produce-once",
+                "dispatched_at": "done", "first_scheduled_for": when,
+                "occurrence_count": 1, "result_summary": summary,
+                "snapshot_id": 801, "lease_owner": "", "lease_expires_at": None,
+                "created_at": "created",
+            })
+    db, task_metadata, task_source_metadata = _run_source(
+        include_task_source_metadata=True,
+        extra_scheduled_rows=extra,
+        schedule_snapshot={
+            "id": 801,
+            "snapshot_json": json.dumps({
+                "command": "produce-once", "cron_expression": "0 * * * * *",
+                "timezone_name": "UTC",
+            }),
+        },
+    )
+    try:
+        input_id = db.execute("select id from task_inputs order by id limit 1").fetchone()[0]
+        db.execute(
+            "update task_inputs set trigger_message_json=?,input_provenance_json=? where id=?",
+            ('{"scheduled_consumer":{"scheduled_task_run_id":1316}}',
+             '{"source":{"scheduled_task_run_id":1316}}', input_id),
+        )
+        meeting = db.execute(
+            "select id,json(parameters_json) from tasks where kind='meeting_alignment' limit 1"
+        ).fetchone()
+        meeting_parameters = json.loads(meeting[1])
+        meeting_parameters["source_json"] = json.dumps({
+            "scheduled_consumer_reference": {"scheduled_task_run_id": 1317},
+        })
+        db.execute(
+            "update tasks set parameters_json=jsonb(?) where id=?",
+            (json.dumps(meeting_parameters), meeting[0]),
+        )
+        source = capture_run_entities(db)
+        forward = migrate_run_entities(
+            db, source, task_metadata=task_metadata,
+            run_handoff=_run_handoff(db, source),
+        )
+        assert forward["scheduled_occurrence_aggregation"] == {
+            "scanned_occurrences": 10, "historical_zero_candidates": 3,
+            "excluded_occurrences": 7, "retired_occurrences": 1,
+        }
+        assert tuple(db.execute(
+            "select id,first_scheduled_for,occurrence_count from schedule_occurrences "
+            "where id between 1310 and 1317 order by id"
+        )) == (
+            (1311, "2026-10-22T03:00:00+02:00", 2),
+            (1312, "2026-10-22T01:02:00Z", 1),
+            (1313, "2026-10-22T01:03:00Z", 1),
+            (1314, "2026-10-22T01:04:00Z", 1),
+            (1315, "2026-10-22T01:05:00Z", 1),
+            (1316, "2026-10-22T01:06:00Z", 1),
+            (1317, "2026-10-22T01:07:00Z", 1),
+        )
+        assert db.execute(
+            "select 1 from run_entity_identity_map where source_kind='scheduled_task_runs' "
+            "and physical_id=1310"
+        ).fetchone() is None
+        assert db.execute(
+            "select 1 from run_entity_identity_map where source_kind='scheduled_task_runs' "
+            "and physical_id=1311"
+        ).fetchone()
+
+        db.execute("pragma foreign_keys=off")
+        task_inverse = restore_task_entities(db, task_source_metadata, task_metadata)
+        run_inverse = restore_run_entities(
+            db, source, forward, task_metadata=task_metadata,
+            task_inverse_metadata=task_inverse,
+        )
+        restored_aggregate = db.execute(
+            "select id,first_scheduled_for,occurrence_count from runs "
+            "where record_type='scheduled_task_runs' and id=1311"
+        ).fetchone()
+        assert tuple(restored_aggregate) == (
+            1311, "2026-10-22T03:00:00+02:00", 2,
+        )
+        assert db.execute(
+            "select 1 from runs where record_type='scheduled_task_runs' and id=1310"
+        ).fetchone() is None
+
+        second_task_source = capture_task_entities(db)
+        second_run_source = capture_run_entities(db)
+        second_task_forward = migrate_task_entities(
+            db, second_task_source,
+            source_context=task_inverse["source_context"],
+            inverse_identity=json.loads(json.dumps(task_inverse["inverse_identity"])),
+        )
+        second_run_forward = migrate_run_entities(
+            db, second_run_source, task_metadata=second_task_forward,
+            run_handoff=json.loads(json.dumps(run_inverse["run_handoff"])),
+        )
+        assert tuple(db.execute(
+            "select id,first_scheduled_for,occurrence_count from schedule_occurrences "
+            "where id between 1310 and 1317 order by id"
+        ))[0] == (1311, "2026-10-22T03:00:00+02:00", 2)
+        assert db.execute(
+            "select 1 from schedule_occurrences where id=1310"
+        ).fetchone() is None
+        second_task_inverse = restore_task_entities(
+            db, second_task_source, second_task_forward,
+        )
+        restore_run_entities(
+            db, second_run_source, second_run_forward,
+            task_metadata=second_task_forward,
+            task_inverse_metadata=second_task_inverse,
+        )
+    finally:
+        db.close()
 
 
 
@@ -2227,6 +2373,134 @@ def test_inverse_retires_deleted_mapped_occurrence_and_cache_without_resurrectio
         for owner, before_water in owner_waters.items():
             after_water = db.execute("select seq from sqlite_sequence where name=?", (owner,)).fetchone()
             assert after_water == before_water
+    finally:
+        db.close()
+
+
+def test_scheduled_consumer_input_references_follow_occurrence_owner_through_collision_inverse():
+    import json
+    from app import task20_definitions
+    from app.task_entity_schema import (
+        capture_task_entities, migrate_task_entities, restore_task_entities,
+    )
+    from app.run_entity_schema import capture_run_entities
+
+    db, task_forward, task_source_metadata = _run_source(include_task_source_metadata=True)
+    try:
+        input_row = db.execute("select id from task_inputs order by id limit 1").fetchone()
+        assert input_row is not None
+        original_trigger = (
+            '{  "scheduled_consumer" : { "scheduled_task_run_id" : 1303 }, '
+            '"raw_payload":{"scheduled_consumer":{"scheduled_task_run_id":1303}}, '
+            '"context":{"trigger_raw_payload":{"scheduled_task_run_id":1303}} }'
+        )
+        original_provenance = (
+            '{"source" : { "scheduled_task_run_id" : 1303 }, '
+            '"trigger_message_json":{"sha256":"source-digest","bytes":23}}'
+        )
+        db.execute(
+            "update task_inputs set trigger_message_json=?,input_provenance_json=? where id=?",
+            (original_trigger, original_provenance, input_row[0]),
+        )
+        meeting_row = db.execute(
+            "select id,json(parameters_json) from tasks where kind='meeting_alignment' limit 1"
+        ).fetchone()
+        assert meeting_row is not None
+        meeting_source = (
+            '{ "scheduled_consumer_reference" : { "scheduled_task_run_id" : 1303 }, '
+            '"input_sha256":"meeting-source-digest","input_bytes":17 }'
+        )
+        meeting_parameters = json.loads(meeting_row[1])
+        meeting_parameters["source_json"] = meeting_source
+        db.execute(
+            "update tasks set parameters_json=jsonb(?) where id=?",
+            (json.dumps(meeting_parameters, ensure_ascii=False), meeting_row[0]),
+        )
+        source = capture_run_entities(db)
+        handoff = _run_handoff(db, source, identity_edges=[
+            dict(source_kind="scheduled_task_runs", source_physical_id=1303,
+                 canonical_id=9503),
+            dict(source_kind="scheduled_task_runs", source_physical_id=1308,
+                 canonical_id=1303),
+        ])
+        forward = migrate_run_entities(
+            db, source, task_metadata=task_forward, run_handoff=handoff,
+        )
+        current = db.execute(
+            "select trigger_message_json,input_provenance_json from task_inputs where id=?",
+            (input_row[0],),
+        ).fetchone()
+        current_meeting_source = db.execute(
+            "select json_extract(parameters_json,'$.source_json') from tasks where id=?",
+            (meeting_row[0],),
+        ).fetchone()[0]
+        assert current[0].count("9503") == 3
+        assert current[0].count("1303") == 0
+        assert '"sha256":"source-digest","bytes":23' in current[1]
+        assert '"scheduled_task_run_id" : 9503' in current[1]
+        assert '"scheduled_task_run_id" : 9503' in current_meeting_source
+        assert '"input_sha256":"meeting-source-digest","input_bytes":17' in current_meeting_source
+
+        db.execute("pragma foreign_keys=off")
+        task_inverse = restore_task_entities(db, task_source_metadata, task_forward)
+        run_inverse = restore_run_entities(
+            db, source, forward, task_metadata=task_forward,
+            task_inverse_metadata=task_inverse,
+        )
+        restored = db.execute(
+            "select trigger_message_json,input_provenance_json from ("
+            + task20_definitions.task20_projection("reply_task_inputs")
+            + ") where reply_task_id=201 and input_revision_key='' order by id limit 1"
+        ).fetchone()
+        assert tuple(restored) == (original_trigger, original_provenance)
+        restored_meeting_source = db.execute(
+            "select source_json from ("
+            + task20_definitions.task20_projection("meeting_alignment_jobs")
+            + ") where meeting_id=?", (meeting_parameters["meeting_id"],),
+        ).fetchone()[0]
+        assert restored_meeting_source == meeting_source
+
+        second_task_source = capture_task_entities(db)
+        second_run_source = capture_run_entities(db)
+        second_task_forward = migrate_task_entities(
+            db, second_task_source,
+            source_context=task_inverse["source_context"],
+            inverse_identity=json.loads(json.dumps(task_inverse["inverse_identity"])),
+        )
+        second_run_forward = migrate_run_entities(
+            db, second_run_source, task_metadata=second_task_forward,
+            run_handoff=json.loads(json.dumps(run_inverse["run_handoff"])),
+        )
+        second_native = db.execute(
+            "select trigger_message_json,input_provenance_json from task_inputs where id=?",
+            (input_row[0],),
+        ).fetchone()
+        assert second_native[0].count("9503") == 3
+        assert '"scheduled_task_run_id" : 9503' in second_native[1]
+        assert '"input_sha256":"meeting-source-digest","input_bytes":17' in db.execute(
+            "select json_extract(parameters_json,'$.source_json') from tasks where id=?",
+            (meeting_row[0],),
+        ).fetchone()[0]
+        second_task_inverse = restore_task_entities(
+            db, second_task_source, second_task_forward,
+        )
+        restore_run_entities(
+            db, second_run_source, second_run_forward,
+            task_metadata=second_task_forward,
+            task_inverse_metadata=second_task_inverse,
+        )
+        final_input = db.execute(
+            "select trigger_message_json,input_provenance_json from ("
+            + task20_definitions.task20_projection("reply_task_inputs")
+            + ") where reply_task_id=201 and input_revision_key='' order by id limit 1"
+        ).fetchone()
+        assert tuple(final_input) == (original_trigger, original_provenance)
+        final_meeting_source = db.execute(
+            "select source_json from ("
+            + task20_definitions.task20_projection("meeting_alignment_jobs")
+            + ") where meeting_id=?", (meeting_parameters["meeting_id"],),
+        ).fetchone()[0]
+        assert final_meeting_source == meeting_source
     finally:
         db.close()
 

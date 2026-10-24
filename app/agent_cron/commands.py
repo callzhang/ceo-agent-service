@@ -49,6 +49,37 @@ class ServiceCommandSkillMaterial:
 
 
 @dataclass(frozen=True)
+class ServiceCommandResult:
+    """Persisted summary plus transient counts from the producer itself."""
+
+    summary: str
+    producer_counts: tuple[tuple[str, int], ...] | None = None
+    complete: bool = False
+
+    def __post_init__(self) -> None:
+        if not isinstance(self.summary, str):
+            raise ValueError("service command summary must be text")
+        if self.producer_counts is not None:
+            if type(self.producer_counts) is not tuple or any(
+                type(item) is not tuple or len(item) != 2
+                or not isinstance(item[0], str) or not item[0]
+                or type(item[1]) is not int or item[1] < 0
+                for item in self.producer_counts
+            ):
+                raise ValueError("service command producer counts are invalid")
+            if len({name for name, _count in self.producer_counts}) != len(self.producer_counts):
+                raise ValueError("service command producer count names are duplicated")
+        if type(self.complete) is not bool:
+            raise ValueError("service command completeness must be boolean")
+
+    @property
+    def zero_work(self) -> bool:
+        return bool(self.complete and self.producer_counts) and all(
+            count == 0 for _, count in self.producer_counts
+        )
+
+
+@dataclass(frozen=True)
 class ServiceCommandConsumerContext:
     """Immutable prompt and exact Skill material for outputs of one Cron run."""
 
@@ -263,7 +294,7 @@ def service_command_option(name: str) -> ServiceCommandOption:
 class ServiceCommandRegistry:
     """Bind every catalogued service command to one in-process implementation."""
 
-    def __init__(self, implementations: Mapping[str, Callable[[], str]]) -> None:
+    def __init__(self, implementations: Mapping[str, Callable[[], ServiceCommandResult]]) -> None:
         expected = {option.name for option in SERVICE_COMMAND_OPTIONS}
         if set(implementations) != expected:
             raise ValueError(
@@ -278,8 +309,22 @@ class ServiceCommandRegistry:
         consumer_context: ServiceCommandConsumerContext | None = None,
     ) -> str:
         """Run one catalogued command and return its one-line result summary."""
+        return self.run_with_result(
+            name, consumer_context=consumer_context,
+        ).summary
+
+    def run_with_result(
+        self,
+        name: str,
+        *,
+        consumer_context: ServiceCommandConsumerContext | None = None,
+    ) -> ServiceCommandResult:
+        """Return transient producer facts without changing persisted summaries."""
         token = _ACTIVE_CONSUMER_CONTEXT.set(consumer_context)
         try:
-            return self._implementations[service_command_option(name).name]()
+            result = self._implementations[service_command_option(name).name]()
+            if not isinstance(result, ServiceCommandResult):
+                raise TypeError("service command must return a typed result")
+            return result
         finally:
             _ACTIVE_CONSUMER_CONTEXT.reset(token)

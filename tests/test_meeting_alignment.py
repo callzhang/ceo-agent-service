@@ -15,6 +15,7 @@ from app.agent_cron.commands import (
     ServiceCommandRegistry,
     ServiceCommandSkillMaterial,
 )
+from tests.scheduled_command_results import unknown_service_result
 from app.agent_runtime_contracts import RuntimeFailureClass
 from app.agent_runtime_router import RoutedCodexExecutionError
 from app.dws_client import (
@@ -116,10 +117,13 @@ def test_meeting_producer_carries_scheduled_consumer_context(tmp_path):
         skill_names=("ceo-meeting-work",),
         skill_protocol="# Targeted Meeting Skill",
     )
-    implementations = {option.name: lambda: "unused" for option in SERVICE_COMMAND_OPTIONS}
-    implementations["scan-meetings-once"] = lambda: str(
+    implementations = {
+        option.name: lambda: unknown_service_result("unused")
+        for option in SERVICE_COMMAND_OPTIONS
+    }
+    implementations["scan-meetings-once"] = lambda: unknown_service_result(str(
         produce_meeting_alignment_jobs(store, FakeDws(), now=NOW)
-    )
+    ))
 
     ServiceCommandRegistry(implementations).run(
         "scan-meetings-once",
@@ -1636,11 +1640,12 @@ def test_tool_free_meeting_planner_preserves_all_frozen_skill_requirements(tmp_p
         ),
     )
     implementations = {
-        option.name: lambda: "unused" for option in SERVICE_COMMAND_OPTIONS
+        option.name: lambda: unknown_service_result("unused")
+        for option in SERVICE_COMMAND_OPTIONS
     }
-    implementations["scan-meetings-once"] = lambda: str(
+    implementations["scan-meetings-once"] = lambda: unknown_service_result(str(
         produce_meeting_alignment_jobs(store, dws, now=NOW)
-    )
+    ))
     ServiceCommandRegistry(implementations).run(
         "scan-meetings-once", consumer_context=context
     )

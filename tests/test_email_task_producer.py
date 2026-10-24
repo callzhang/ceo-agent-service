@@ -6,6 +6,7 @@ from app.agent_cron.commands import (
     ServiceCommandConsumerContext,
     ServiceCommandRegistry,
 )
+from tests.scheduled_command_results import unknown_service_result
 from app.email_classifier_contracts import (
     EmailAction,
     EmailCategory,
@@ -134,8 +135,11 @@ def test_classification_producer_captures_the_current_cron_consumer_context():
             unsubscribe_candidates=(),
         )
 
-    implementations = {option.name: (lambda: "unused") for option in SERVICE_COMMAND_OPTIONS}
-    implementations["produce-once"] = produce
+    implementations = {
+        option.name: (lambda: unknown_service_result("unused"))
+        for option in SERVICE_COMMAND_OPTIONS
+    }
+    implementations["produce-once"] = lambda: unknown_service_result(str(produce()))
     ServiceCommandRegistry(implementations).run(
         "produce-once", consumer_context=context
     )
