@@ -47,6 +47,7 @@ ceo-agent = "app.cli:main"
 [tool.pytest.ini_options]
 testpaths = ["tests"]
 pythonpath = ["."]
+tmp_path_retention_policy = "failed"
 markers = [
   "browser: real browser integration tests (set WORKBENCH_BROWSER_TESTS=1)",
   "live: explicit opt-in tests that may call real dws, Codex, or DingTalk"

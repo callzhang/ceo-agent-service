@@ -915,7 +915,7 @@ Chrome 登录态、申请读不到的钉钉 AI 听记，以及下载新增的钉
 
 产物 offset 是从0起的字符索引；每页统一返回 offset、total_chars、next_offset，sha256 始终对应整份文件。完整读取从0开始，按 next_offset 续读至 null，不能把非零起点的尾部当作全文。
 
-`consumer_document_write` 接受正文产物、标题和显式目标；更新使用 node_id，创建使用 parent_id 与 workspace_id。JSONML 由原生解析器检查，更新保留 revision 校验与版本保存，创建前核对同名目标。返回 provider 结果及完整读回产物的引用；Agent/Audit 读取全部分页或使用本地脚本比较。消息继续通过既有已审核投递通道发送，普通文档工作与受控消息动作沿用原角色契约。
+`consumer_document_write` 接受正文产物、标题和显式目标；更新使用 node_id，创建使用 parent_id 与 workspace_id。JSONML 由原生解析器检查，更新保留 revision 校验与版本保存。创建前通过 `dws doc +list --folder <parent_id> --page-all` 完整核对同名目标；创建后使用 provider 成功回执中的 nodeId 进行正文读回，不用 Wiki 节点列表解析文档 ID。返回 provider 结果及完整读回产物的引用；Agent/Audit 读取全部分页或使用本地脚本比较。DWS 命令失败诊断会隐藏 `--content` 和 `--content-file` 的值，不把文档正文或本地内容路径写入 trajectory。消息继续通过既有已审核投递通道发送，普通文档工作与受控消息动作沿用原角色契约。
 文档写入的 DWS `doc.operation.v1` 部分执行结果保留完整结构化错误：若 provider 已执行写入但核验失败，或写入返回后服务读回失败，工具返回 `ok=false/status=partial_success/verified=false`，保留 node、正文 SHA、provider 结果与错误详情，`readback=null`，不生成成功读回回执或自动重写。未执行及提交状态未知仍抛出原错误；核验失败不会转换为成功。
 
 日报窗口由 `ceo-daily-report/scripts/window.py` 按上次真实完成的历史事实计算，漏发并入下一份，同日重跑沿用原起点。日报位置与通知内容归该 Skill。Consumer 先读取服务事实和群消息；仅当会议管理细节仍缺失时，才读取本任务冻结的 `dingtalk-minutes` Skill 并查询听记摘要。管理周报的周一窗口、目标/上期文档、空白模板策略和三处内容更新归 `ceo-weekly-report` 的材料/渲染脚本；渲染器只检查实际读取字段与 JSONML，固定指标、材料覆盖与章节等业务要求由 Skill 和 Audit 判断。三处写入仍为 CEO 判断、公司指标和新增跟踪行。

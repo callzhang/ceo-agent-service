@@ -165,10 +165,21 @@ class FakeDws:
     def create_report_document(self, **kwargs):
         self.calls.append(("create", kwargs))
         self.nodes = [{"name": kwargs["name"], "nodeId": "new"}]
-        return {"ok": True}
+        return {
+            "status": "success",
+            "complete": True,
+            "data": {"nodeId": "new", "verified": True},
+        }
 
     def run_json(self, command):
-        return {"data": {"nodes": self.nodes, "hasMore": False}}
+        self.calls.append(("list", command))
+        return {
+            "status": "success",
+            "complete": True,
+            "documents": self.nodes,
+            "hasMore": False,
+            "failures": [],
+        }
 
     def fetch_report_document_full(self, node):
         return {
@@ -249,6 +260,11 @@ def test_generic_document_creation_and_large_body_readback(tmp_path, monkeypatch
     )
     assert next(x[1] for x in fake.calls if x[0] == "create")["content"] == content
     assert result["node_id"] == "new" and "content" not in result["readback"]
+    listing = next(x[1] for x in fake.calls if x[0] == "list")
+    assert listing == [
+        "dws", "doc", "+list", "--folder", "parent", "--page-all", "--format", "json"
+    ]
+    assert len([x for x in fake.calls if x[0] == "list"]) == 1
 
 
 def test_tool_catalog_has_no_named_report_gate_and_audit_is_read_only():

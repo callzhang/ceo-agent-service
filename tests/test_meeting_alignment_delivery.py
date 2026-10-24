@@ -1,4 +1,5 @@
 from hashlib import sha256
+import json
 
 import pytest
 from pydantic import ValidationError
@@ -22,6 +23,21 @@ class _MemoryPostfixStore:
         self.messages = {}
         self.receipts = {}
         self.targets = {}
+
+    def resolve_meeting_alignment_delivery_key(
+        self, delivery_key, *, target_kind, target_id
+    ):
+        key = ("dingtalk", delivery_key.strip())
+        target = (target_kind, target_id.strip())
+        if self.targets.get(key) == target and key in self.messages:
+            return delivery_key.strip()
+        if key in self.targets and key not in self.messages:
+            raise ValueError("meeting prepared target binding conflicts")
+        if key not in self.targets and (key in self.messages or key in self.receipts):
+            raise ValueError("meeting prepared target is unverified")
+        target_json = json.dumps({"kind": target_kind, "id": target_id.strip()}, sort_keys=True)
+        digest = sha256(target_json.encode("utf-8")).hexdigest()
+        return f"{delivery_key.strip()}:target:{digest}"
 
     def prepare_meeting_alignment_message(self, *, delivery_key, target_kind, target_id, body, original_text, **kwargs):
         key = ("dingtalk", delivery_key)
@@ -56,7 +72,10 @@ class _MemoryPostfixStore:
     def get_outbound_postfix_receipt(self, channel, delivery_key):
         return self.receipts.get((channel, delivery_key))
 
-    def record_outbound_postfix_receipt(self, channel, delivery_key, provider_result):
+    def record_outbound_postfix_receipt(
+        self, channel, delivery_key, provider_result, *, operation
+    ):
+        assert operation
         return self.receipts.setdefault((channel, delivery_key), provider_result)
 
 
@@ -511,7 +530,7 @@ def test_changed_prose_recovers_confirmed_primary_without_resending(tmp_path):
     prepared = sender.prepare_meeting_alignment(target_kind="user", target_id="u-a",
         delivery_key="confirmed-original", body="Original delivered body")
     store.record_outbound_postfix_receipt("dingtalk", "confirmed-original",
-        {"result": {"openMessageId": "original-message"}})
+        {"result": {"openMessageId": "original-message"}}, operation="send_message")
     result = deliver_meeting_alignment(decision, source, dws,
         message_sender=sender, delivery_key="confirmed-original")
     assert result.message_text == prepared.final_body
@@ -540,9 +559,22 @@ def test_different_audience_recovery_rejects_old_disclosure_before_any_effect(tm
         sender.prepare_meeting_alignment(target_kind="user", target_id="u-a", delivery_key=key, body=body)
     else:
         sender.prepare_meeting_alignment(target_kind="user", target_id="u-b", delivery_key=f"{key}:sensitive", body="Unexpected private content")
-    with pytest.raises(MeetingDeliveryError, match="prepared meeting body"):
-        deliver_meeting_alignment(decision, source, dws, message_sender=sender, delivery_key=key)
-    assert dws.sent == []
+    if bad_action == "primary":
+        with pytest.raises(MeetingDeliveryError, match="prepared meeting body"):
+            deliver_meeting_alignment(
+                decision, source, dws, message_sender=sender, delivery_key=key
+            )
+        assert dws.sent == []
+    else:
+        result = deliver_meeting_alignment(
+            decision, source, dws, message_sender=sender, delivery_key=key
+        )
+        assert result.sensitive_private_delivery is not None
+        assert len(dws.sent) == 2
+        assert "RESTRICTED_TO_B" not in dws.sent[0]["text"]
+        assert "RESTRICTED_TO_B" in dws.sent[1]["text"]
+        assert dws.sent[1]["text"] != "Unexpected private content"
+        assert dws.sent[1]["text"] == result.sensitive_private_delivery.message_text
 
 
 @pytest.mark.parametrize("slot", ["primary", "sensitive"])
@@ -557,15 +589,42 @@ def test_recovery_never_borrows_receipt_for_a_different_target(tmp_path, slot):
         "recipient_evidence": ["Verified current scope"],
     }
     first = MeetingAlignmentDecision.model_validate(payload)
-    deliver_meeting_alignment(first, meeting_source(), dws, message_sender=sender, delivery_key="target-binding")
+    base_key = "target-binding"
+    original_primary_key = sender.store.resolve_meeting_alignment_delivery_key(
+        base_key, target_kind="user", target_id="u-a"
+    )
+    first_result = deliver_meeting_alignment(
+        first, meeting_source(), dws, message_sender=sender, delivery_key=base_key
+    )
+    original_sensitive_key = original_primary_key + ":sensitive"
+    assert sender.store.get_outbound_postfix_receipt("dingtalk", original_primary_key)
+    assert sender.store.get_outbound_postfix_receipt("dingtalk", original_sensitive_key)
     if slot == "primary":
         payload["target"] = payload["sensitive_private_message"]["target"]
     else:
         payload["sensitive_private_message"]["target"] = payload["target"]
     changed = MeetingAlignmentDecision.model_validate(payload)
-    with pytest.raises(MeetingDeliveryError, match="target"):
-        deliver_meeting_alignment(changed, meeting_source(), dws, message_sender=sender, delivery_key="target-binding")
-    assert len(dws.sent) == 2
+    if slot == "sensitive":
+        with pytest.raises(MeetingDeliveryError, match="target binding"):
+            deliver_meeting_alignment(
+                changed, meeting_source(), dws,
+                message_sender=sender, delivery_key=base_key,
+            )
+        assert len(dws.sent) == 2
+    else:
+        changed_primary_target = payload["target"]["direct_user_id"]
+        changed_primary_key = sender.store.resolve_meeting_alignment_delivery_key(
+            base_key, target_kind="user", target_id=changed_primary_target
+        )
+        assert changed_primary_key != original_primary_key
+        changed_result = deliver_meeting_alignment(
+            changed, meeting_source(), dws,
+            message_sender=sender, delivery_key=base_key,
+        )
+        assert len(dws.sent) == 3
+        assert first_result.send_result == changed_result.send_result
+        assert changed_result.sensitive_private_merged is True
+        assert sender.store.get_outbound_postfix_receipt("dingtalk", changed_primary_key)
 
 
 def test_legacy_prepared_target_is_not_backfilled_from_a_new_decision(tmp_path):
@@ -1418,7 +1477,9 @@ def test_cross_version_prepared_title_is_never_resent(confirmed):
     )
     if confirmed:
         receipt = {"result": {"openMessageId": "original-confirmed"}}
-        store.record_outbound_postfix_receipt("dingtalk", key, receipt)
+        store.record_outbound_postfix_receipt(
+            "dingtalk", key, receipt, operation="send_message"
+        )
         result = deliver_meeting_alignment(decision, source, dws,
             message_sender=sender, delivery_key=key)
         assert result.send_result == receipt

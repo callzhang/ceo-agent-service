@@ -294,12 +294,12 @@ def deliver_meeting_alignment(
         "group" if target_kind == "group"
         else "user" if direct_user_id else "open_user"
     )
-    delivery_key = message_sender.store.resolve_meeting_alignment_delivery_key(
-        delivery_key,
-        target_kind=prepared_target_kind,
-        target_id=target_id,
-    )
     try:
+        delivery_key = message_sender.store.resolve_meeting_alignment_delivery_key(
+            delivery_key,
+            target_kind=prepared_target_kind,
+            target_id=target_id,
+        )
         prepared = message_sender.prepare_meeting_alignment(
             delivery_key=delivery_key, body=message_text, original_text=source.summary,
             target_kind=prepared_target_kind,

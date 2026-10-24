@@ -1,5 +1,5 @@
 {
-  "observed_at": "2026-10-22T19:31:00Z",
+  "observed_at": "2026-10-23T13:30:00Z",
   "scope": "Historical real publication readback; not new Agent natural-run acceptance",
   "natural_command_completion_facts": [
     {
@@ -354,6 +354,155 @@
       "root_cause": "The Skill allowed a source that was partly read to be disclosed and published, without distinguishing an actual failed/partial read from a read that was never attempted. Consumer skipped all message reads. Audit checked document and recipient but did not reject the explicitly disclosed unattempted group coverage.",
       "repair": "Skill now requires reading every accessible group conversation, treats only actual attempted provider failures/timeouts/incomplete pages as partial-source exceptions, and requires Audit to return unattempted coverage. Added a focused contract regression; daily-report facts/receipt and coverage tests pass 23/23, consumer-system release tests pass 27/27, changed-test Ruff and diff checks pass. Commit, Skill publication, production readback, and next natural task14 execution remain pending.",
       "replay_or_extra_send": false
+    },
+    {
+      "observed_at": "2026-10-23T13:40:00Z",
+      "scope": "Post-deploy natural CEO daily report; no manual trigger or replay",
+      "production_commit": "682c7893ee6393246f7fa3c9d923b31c5aad7c59",
+      "production_pid": 22383,
+      "healthz_ok": true,
+      "scheduled_task_id": 14,
+      "scheduled_task_run_id": 396111,
+      "reply_task_id": 417179,
+      "trigger_kind": "scheduled",
+      "scheduled_for": "2026-10-23T13:00:00Z",
+      "dispatch_status": "dispatched",
+      "snapshot_id": 260,
+      "terminal_status": "done",
+      "task_config_version": 58,
+      "task_timezone": "America/Los_Angeles",
+      "managed_skill": "ceo-daily-report",
+      "managed_skill_revision_id": 224,
+      "managed_skill_sha256": "32d24bb5f53b60bcf67b8a91582db258a05cac59c789391c862d3bd95719fc62",
+      "consumer_runs": [
+        {
+          "run_id": 396123,
+          "revision": 0,
+          "status": "completed"
+        },
+        {
+          "run_id": 396154,
+          "revision": 1,
+          "status": "completed"
+        },
+        {
+          "run_id": 396159,
+          "revision": 2,
+          "status": "completed"
+        }
+      ],
+      "audit_runs": [
+        {
+          "run_id": 396152,
+          "revision": 0,
+          "status": "completed_return",
+          "reason": "The first candidate used a 24-hour window that did not match the Beijing calendar date and overstated available group-read evidence."
+        },
+        {
+          "run_id": 396157,
+          "revision": 1,
+          "status": "completed_return",
+          "reason": "The corrected report window was verified; the report still claimed group coverage without durable per-group evidence."
+        },
+        {
+          "run_id": 396163,
+          "revision": 2,
+          "status": "completed_approve"
+        }
+      ],
+      "trajectory": {
+        "consumer_session_id": "01a168e6-da04-7a92-883a-54e37b3aefde",
+        "audit_session_id": "01a168ee-038d-7b41-8e9f-f8e70f450f38",
+        "full_consumer_and_audit_trajectory_read": true,
+        "report_revision_count": 2,
+        "first_window_script_output_utc": {
+          "start": "2026-10-22T13:00:00+00:00",
+          "end": "2026-10-23T13:00:00+00:00"
+        },
+        "final_read_service_activity_window_utc": {
+          "start": "2026-10-22T16:00:00Z",
+          "end": "2026-10-23T16:00:00Z"
+        },
+        "final_window_matches_beijing_calendar_day": true,
+        "latent_window_script_bug": "The script output was the intended rolling interval. Audit feedback incorrectly required Beijing-midnight bounds; Consumer changed to a future-ending calendar interval and Audit approved it. The final published result therefore does not satisfy the rolling-window contract.",
+        "first_script_window_utc": {
+          "start": "2026-10-22T13:00:00+00:00",
+          "end": "2026-10-23T13:00:00+00:00"
+        },
+        "loaded_skill_evidence": {
+          "consumer": {
+            "session_id": "01a168e6-da04-7a92-883a-54e37b3aefde",
+            "read_task_skill_envelope_sha256": "c6260fac389ac6ce7eae7bfb6e74a613fffd58ee1122af3832fe104e175df027",
+            "declared_revision_id": 224,
+            "declared_skill_sha256": "32d24bb5f53b60bcf67b8a91582db258a05cac59c789391c862d3bd95719fc62",
+            "skill_content_sha256_after_removing_four_line_metadata_header": "32d24bb5f53b60bcf67b8a91582db258a05cac59c789391c862d3bd95719fc62",
+            "matches_run_snapshot": true
+          },
+          "audit": {
+            "session_id": "01a168ee-038d-7b41-8e9f-f8e70f450f38",
+            "read_task_skill_envelope_sha256": "c6260fac389ac6ce7eae7bfb6e74a613fffd58ee1122af3832fe104e175df027",
+            "declared_revision_id": 224,
+            "declared_skill_sha256": "32d24bb5f53b60bcf67b8a91582db258a05cac59c789391c862d3bd95719fc62",
+            "skill_content_sha256_after_removing_four_line_metadata_header": "32d24bb5f53b60bcf67b8a91582db258a05cac59c789391c862d3bd95719fc62",
+            "matches_run_snapshot": true
+          },
+          "verification_method": "Compared the exact read_task_skill tool result in each native session with the immutable run snapshot and managed revision API. The tool prepends a four-line managed-Skill metadata header; after removing only that header, both Skill bodies hash to the frozen revision SHA."
+        },
+        "first_window_group_coverage": {
+          "inventory_groups": 47,
+          "unique_read_ids": 51,
+          "inventory_group_ids_all_read": true,
+          "read_calls": 53,
+          "all_reads_complete": true,
+          "partial": 0,
+          "truncated": 0,
+          "failed": 0,
+          "extra_read_ids": 4
+        },
+        "final_report_window_extends_past_trigger": true
+      },
+      "group_chat_coverage": {
+        "inventory_conversations": 67,
+        "inventory_complete": true,
+        "inventory_group_count": 47,
+        "message_window_read_calls": 48,
+        "unique_group_ids_read": 47,
+        "unique_read_ids_match_inventory_groups": true,
+        "duplicate_read_calls": 1,
+        "read_pages": 48,
+        "all_reads_complete": true,
+        "all_pagination_known_and_exhausted": true,
+        "partial_reads": 0,
+        "truncated_reads": 0,
+        "failed_message_reads": 0,
+        "report_disclosed_that_saved_per_group_receipts_were_not_present_in_the_report_artifact": true,
+        "trajectory_independently_proves_complete_group_coverage": true,
+        "accepted": false,
+        "comparison_to_run_392889": "Unlike 392889, all 47 accessible groups were actually read in the final report window.",
+        "failure_class": "Actual final publication used a calendar-day window ending three hours after the scheduled trigger, after Audit returned the script-selected rolling window. Complete reads were verified for both intervals, but the final published interval was wrong; not a source-read coverage failure."
+      },
+      "document": {
+        "node_id": "jb9Y4gmKWrEarRzjirlXn44X8GXn6lpz",
+        "title": "CEO 每日总结 2026-10-23",
+        "operation": "created_then_updated_through_two_audit_revisions",
+        "final_provider_readback": "complete_markdown",
+        "provider_readback_bytes": 12206,
+        "provider_readback_sha256": "7717bf2d4c524f46f08f9bf5de54a2aba253c4990a86e7f667933f42a4c6164d",
+        "provider_readback_log_id": "2101eeef17927623155195313e0a21"
+      },
+      "notification": {
+        "system_execution_id": 469,
+        "action_count": 1,
+        "verified_action_count": 1,
+        "persistent_receipt_id": 18811,
+        "persistent_receipt_state": "verified",
+        "provider_status_query": "sent",
+        "provider_open_message_id": "msgLBUcMEslUpzdonZK98leaw==",
+        "provider_open_conversation_id": "cidUfL7JeatD/8+eb118AhukQGnI308z0+dpCJE8TWFoUM="
+      },
+      "classification": "External publication completed, but this natural run fails business acceptance: Audit overrode the window script with a Beijing-midnight interval whose end was after the trigger, and the final published report used that incorrect interval. The 24-hour rolling-window script contract is unchanged; its Skill/Audit wording is clarified in this candidate. No report/message replay or extra send.",
+      "catchup_branch_exercised": false,
+      "report_body_included": false
     }
   ],
   "okr_real_children": {
@@ -955,5 +1104,535 @@
     "new_okr_report_created": false,
     "external_effects": false,
     "business_acceptance": "Skill publication/load verified only; no post-deploy real OKR report run has occurred."
+  },
+  "manual_authorized_run_395969": {
+    "run_id": 395969,
+    "reply_task_id": 417176,
+    "history_attempt_id": 15985,
+    "trigger_kind": "manual",
+    "status": "done",
+    "terminal_at": "2026-10-23T13:19:47Z",
+    "task_snapshot": {
+      "task_id": 6,
+      "version": 30,
+      "managed_skill": "ceo-weekly-okr-report",
+      "managed_skill_revision_id": 240,
+      "managed_skill_sha256": "49ba4b0bdafdd2ba54989f6bd1ad6b799417464f2dad2cbeefb721eb85a32f8e"
+    },
+    "trajectory": {
+      "consumer_attempt_ids": [
+        395970,
+        396024,
+        396112,
+        396135
+      ],
+      "audit_attempt_ids": [
+        396109,
+        396125,
+        396140
+      ],
+      "final_audit": "approve",
+      "verified_system_actions": 1,
+      "total_system_actions": 1
+    },
+    "provider_documents": {
+      "main_document_complete_readback": true,
+      "appendix_count": 18,
+      "appendices_complete_readback": 18,
+      "readback_status": "success",
+      "content_success": true,
+      "nonempty_markdown": true
+    },
+    "notification": {
+      "receipt_state": "sent",
+      "provider_open_message_id": "msg0PxuI5Ab9ITYNfkW5WSCmw==",
+      "provider_status_query_present": true,
+      "verified_actions": 1,
+      "total_actions": 1
+    },
+    "document_write_tool_trajectory": {
+      "calls": 62,
+      "completed": 9,
+      "failed": 53,
+      "dws_doc_write_verification_failed": 52,
+      "invalid_wiki_node_list_folder_id": 1,
+      "final_provider_readback_complete": true
+    },
+    "write_verification_investigation": {
+      "observed_at": "2026-10-23",
+      "method": "Mapped each failed update using its exact --node argument and each create using the exact document title, then matched writes against that document own ordered provider version history. Per-document write and version counts reconcile.",
+      "failure_population": {
+        "verification_failures": 52,
+        "write_format": "markdown",
+        "exact_provider_versions_mapped": 52,
+        "remaining_unmapped": 0,
+        "provider_jsonml_reads_succeeded": 52,
+        "provider_jsonml_read_errors": 0,
+        "normalized_visible_word_sequences_equal": 52,
+        "versions_preserving_table_structures": 52
+      },
+      "normalization_boundary": "Markdown serialization is not byte-identical. Comparison normalizes DWS Markdown and JSONML to visible text and compares word order; it does not assert exact punctuation, whitespace, or styling equivalence.",
+      "resolved_break_cell_case": {
+        "source_cell_html_break_tags": 6,
+        "exact_provider_jsonml_paragraphs_in_cell": 7,
+        "source_and_provider_visible_words_equal": true,
+        "statement_boundaries_preserved_as_paragraphs": true,
+        "classification": "The earlier claimed content loss came from associating the write with the wrong node/version; exact mapping shows preserved paragraph boundaries."
+      },
+      "classification": "DWS Markdown projection / write-verifier false positives. The 52 exact JSONML readbacks preserve normalized visible text order and table structures; this evidence does not claim byte-identical Markdown serialization.",
+      "candidate_fix": {
+        "report_formatter_semicolon_change": "withdrawn; no report behavior change is justified by the corrected provider evidence",
+        "report_formatter_regression_test": "removed",
+        "document_body_diagnostic_redaction": "separate candidate change; retained",
+        "status": "no report formatter change required"
+      }
+    },
+    "classification": "Manual business publication completed and was fully read back with a verified notification. The DWS tool reported 52 Markdown write-verification failures and one separate invalid folder-ID call. Exact per-document and per-version investigation mapped all 52 failures; JSONML readbacks preserved normalized visible text order and table structures, including the cell statement boundaries. The Markdown projection/verifier failures are evaluation/serialization mismatches, not confirmed report-content loss. This is not a natural scheduled-run acceptance result."
+  },
+  "follow_up_document_parent_listing_fix": {
+    "status": "candidate_tested_not_deployed",
+    "root_cause": "consumer_document_write used wiki +node-list for a document parent nodeId; that endpoint requires a dentryUuid. The successful doc +create provider receipt already contains a verified data.nodeId.",
+    "live_read_only_confirmation": {
+      "command": "dws doc +list --folder <parent_id> --page-all --format json",
+      "status": "success",
+      "complete": true,
+      "hasMore": false,
+      "child_count": 18,
+      "provider_create_receipt_fields": [
+        "status=success",
+        "complete=true",
+        "data.nodeId",
+        "data.verified=true"
+      ]
+    },
+    "candidate_behavior": "Use Doc +list for complete same-title precheck, then use the successful verified create receipt nodeId for readback.",
+    "verification": {
+      "tests": [
+        "tests/test_generic_scheduled_work.py",
+        "tests/test_agent_cli_report_receipt.py",
+        "tests/test_scheduled_okr_agent_eval.py"
+      ],
+      "passed": 77,
+      "ruff": "passed",
+      "diff_check": "passed",
+      "unrelated_stale_fixture_failures": 11,
+      "stale_fixture_error": "table tasks has no column named status"
+    },
+    "deployment": "not merged or deployed; a new task6 run has not validated this candidate.",
+    "scope_limit": "This resolves the invalid Wiki parent-list call and create nodeId lookup only. It does not explain the 52 DWS doc_write_verification_failed results in run 395969."
+  },
+  "release_artifact_convergence": {
+    "observed_at": "2026-10-23T13:41:27Z",
+    "production_commit": "682c7893ee6393246f7fa3c9d923b31c5aad7c59",
+    "production_runtime_skill_config_id": 370,
+    "daily_skill": {
+      "managed_revision_id": 224,
+      "source_sha256": "32d24bb5f53b60bcf67b8a91582db258a05cac59c789391c862d3bd95719fc62",
+      "installed_sha256": "32d24bb5f53b60bcf67b8a91582db258a05cac59c789391c862d3bd95719fc62",
+      "release_manifest_sha256_matches": true,
+      "precondition_sha256_matches": true
+    },
+    "okr_skill": {
+      "managed_revision_id": 240,
+      "source_sha256": "49ba4b0bdafdd2ba54989f6bd1ad6b799417464f2dad2cbeefb721eb85a32f8e",
+      "installed_sha256": "49ba4b0bdafdd2ba54989f6bd1ad6b799417464f2dad2cbeefb721eb85a32f8e",
+      "release_manifest_sha256_matches": true,
+      "precondition_sha256_matches": true
+    },
+    "okr_consumer_script_tree": {
+      "source_sha256": "7e8fb42e3d08d62d9506a1bfbb9187743f00c9ec62903c7de0a71980a203a626",
+      "installed_sha256": "7e8fb42e3d08d62d9506a1bfbb9187743f00c9ec62903c7de0a71980a203a626",
+      "consumer_scripts_manifest_sha256_matches": true
+    },
+    "correction": "Updated stale OKR release precondition from the former installed/managed revision235 digest d7584ca0… to live revision240 digest 49ba4b0b…. Source and installed script tree were already identical, so the consumer-scripts.json digest was verified without changing it; daily release and precondition hashes were already aligned.",
+    "daily_skill_candidate_sha256": "dd355212ba37f02ace76c1659e6a4449f376fd3045c97ff9f8a662ec5547fafb",
+    "daily_skill_installed_baseline_sha256": "32d24bb5f53b60bcf67b8a91582db258a05cac59c789391c862d3bd95719fc62",
+    "daily_skill_candidate_repair": "Clarify the existing rolling-window script contract and Audit check after run396111. The managed revision must be published before a later natural report can validate the repair."
+  },
+  "latest_production_readback_2026_10_23": {
+    "observed_at": "2026-10-23T18:45:21Z",
+    "source": "Read-only GET /healthz, GET /api/console/scheduled-tasks, GET /api/console/settings/runtime-skill-configs/current, production git HEAD, process IDs, SHA-256 of 25 installed managed Skill files plus the installed audit_rules target, and SHA-256 of all 26 approved candidate source files.",
+    "previous_observation": {
+      "observed_at": "2026-10-23T16:33:42Z",
+      "production_commit": "5a6a3d6fbe1243a451713add06387774042fdda6",
+      "runtime_skill_config_id": 372,
+      "task_versions": {
+        "6": 32,
+        "13": 53,
+        "14": 60
+      }
+    },
+    "production_commit": "75c5929deec3ac9e6771c012d571e1cbad62312a",
+    "runtime_skill_config": {
+      "id": 372,
+      "parent_id": 371
+    },
+    "healthz": {
+      "http_status": 200,
+      "status": "ok"
+    },
+    "processes": {
+      "supervisor_pid": 6581,
+      "service_worker_pid": 6585,
+      "audit_web_pid": 6586,
+      "email_worker_pid": 6587
+    },
+    "scheduled_task_count": 14,
+    "release_manifest_readback": {
+      "entries": 26,
+      "installed_old_sha_mismatches": 0,
+      "candidate_new_sha_mismatches": 0,
+      "verified_installed_targets": {
+        "managed_skill_files": 25,
+        "audit_rules": 1
+      }
+    },
+    "tasks": {
+      "6": {
+        "version": 32,
+        "enabled": true,
+        "cron_expression": "0 0 3 * * 0",
+        "timezone": "America/Los_Angeles",
+        "next_run_at": "2026-10-25T10:00:00Z",
+        "managed_skill": "ceo-weekly-okr-report",
+        "managed_revision_id": 240,
+        "managed_skill_sha256": "49ba4b0bdafdd2ba54989f6bd1ad6b799417464f2dad2cbeefb721eb85a32f8e",
+        "latest_run_id": 395969,
+        "latest_run_trigger_kind": "manual",
+        "latest_run_snapshot_task_version": 30,
+        "latest_run_attempt_id": 15985,
+        "latest_run_attempt_status": "completed",
+        "reply_task_id": 417176,
+        "reply_task_status": "done"
+      },
+      "13": {
+        "version": 53,
+        "enabled": true,
+        "cron_expression": "0 0 12 * * 6",
+        "timezone": "America/Los_Angeles",
+        "next_run_at": "2026-10-24T19:00:00Z",
+        "managed_skill": "ceo-weekly-report",
+        "managed_revision_id": 202,
+        "managed_skill_sha256": "ececf8bf22e740573b68c0a4e1f1d6cd7db166a2fb2c6991737cce03890d22a9",
+        "latest_run_id": 391278,
+        "latest_run_trigger_kind": "manual",
+        "latest_run_snapshot_task_version": 35,
+        "latest_run_attempt_id": 15867,
+        "latest_run_attempt_status": "skipped",
+        "reply_task_id": 416693,
+        "reply_task_status": "done"
+      },
+      "14": {
+        "version": 60,
+        "enabled": true,
+        "cron_expression": "0 0 6 * * *",
+        "timezone": "America/Los_Angeles",
+        "next_run_at": "2026-10-24T13:00:00Z",
+        "managed_skill": "ceo-daily-report",
+        "managed_revision_id": 224,
+        "managed_skill_sha256": "32d24bb5f53b60bcf67b8a91582db258a05cac59c789391c862d3bd95719fc62",
+        "latest_run_id": 396111,
+        "latest_run_trigger_kind": "scheduled",
+        "latest_run_snapshot_task_version": 58,
+        "latest_run_attempt_id": 15986,
+        "latest_run_attempt_status": "completed",
+        "reply_task_id": 417179,
+        "reply_task_status": "done",
+        "business_acceptance": "failed: final window ended three hours after scheduled_for; do not replay"
+      }
+    },
+    "acceptance_status": "Read-only live configuration/process and 26/26 installed/candidate asset digest readback. No new report run or external effect was created. Task6 post-deploy manual verification, qualifying task14/task13/task6 outcomes, and passive sleep-resume catch-up evidence remain outstanding. PR #294 remains unmerged and undeployed; exact-head Quality run 40003848416 is pending."
+  },
+  "production_readback_2026_10_23_16_33_42Z": {
+    "observed_at": "2026-10-23T16:33:42Z",
+    "source": "Read-only GET /api/console/scheduled-tasks and per-task /runs, GET /api/console/settings/runtime-skill-configs/current and managed revision hashes, GET /healthz, production git HEAD, process list, and installed Skill file hashes.",
+    "previous_observation": {
+      "observed_at": "2026-10-23T14:33:08Z",
+      "production_commit": "944138f6a4169a145d51b6f960ec778c2ae74e7d",
+      "task_versions": {
+        "6": 31,
+        "13": 52,
+        "14": 59
+      }
+    },
+    "production_commit": "5a6a3d6fbe1243a451713add06387774042fdda6",
+    "runtime_skill_config": {
+      "id": 372,
+      "parent_id": 371
+    },
+    "healthz": {
+      "http_status": 200,
+      "status": "ok"
+    },
+    "processes": {
+      "supervisor_pid": 86371,
+      "service_worker_pid": 86378,
+      "audit_web_pid": 86379,
+      "email_worker_pid": 86380
+    },
+    "scheduled_task_count": 14,
+    "release_manifest_readback": {
+      "entries": 26,
+      "installed_old_sha_mismatches": 0,
+      "candidate_new_sha_mismatches": 0,
+      "only_non_skill_target": "app/defaults/audit_rules.md -> audit_rules"
+    },
+    "tasks": {
+      "6": {
+        "version": 32,
+        "enabled": true,
+        "cron_expression": "0 0 3 * * 0",
+        "timezone": "America/Los_Angeles",
+        "next_run_at": "2026-10-25T10:00:00Z",
+        "managed_skill": "ceo-weekly-okr-report",
+        "managed_revision_id": 240,
+        "managed_skill_sha256": "49ba4b0bdafdd2ba54989f6bd1ad6b799417464f2dad2cbeefb721eb85a32f8e",
+        "latest_run_id": 395969,
+        "latest_run_trigger_kind": "manual",
+        "latest_run_snapshot_task_version": 30,
+        "latest_run_attempt_id": 15985,
+        "latest_run_attempt_status": "completed",
+        "reply_task_id": 417176,
+        "reply_task_status": "done"
+      },
+      "13": {
+        "version": 53,
+        "enabled": true,
+        "cron_expression": "0 0 12 * * 6",
+        "timezone": "America/Los_Angeles",
+        "next_run_at": "2026-10-24T19:00:00Z",
+        "managed_skill": "ceo-weekly-report",
+        "managed_revision_id": 202,
+        "managed_skill_sha256": "ececf8bf22e740573b68c0a4e1f1d6cd7db166a2fb2c6991737cce03890d22a9",
+        "latest_run_id": 391278,
+        "latest_run_trigger_kind": "manual",
+        "latest_run_snapshot_task_version": 35,
+        "latest_run_attempt_id": 15867,
+        "latest_run_attempt_status": "skipped",
+        "reply_task_id": 416693,
+        "reply_task_status": "done"
+      },
+      "14": {
+        "version": 60,
+        "enabled": true,
+        "cron_expression": "0 0 6 * * *",
+        "timezone": "America/Los_Angeles",
+        "next_run_at": "2026-10-24T13:00:00Z",
+        "managed_skill": "ceo-daily-report",
+        "managed_revision_id": 224,
+        "managed_skill_sha256": "32d24bb5f53b60bcf67b8a91582db258a05cac59c789391c862d3bd95719fc62",
+        "latest_run_id": 396111,
+        "latest_run_trigger_kind": "scheduled",
+        "latest_run_snapshot_task_version": 58,
+        "latest_run_attempt_id": 15986,
+        "latest_run_attempt_status": "completed",
+        "reply_task_id": 417179,
+        "reply_task_status": "done",
+        "business_acceptance": "failed: final window ended three hours after scheduled_for; do not replay"
+      }
+    },
+    "acceptance_status": "Live configuration/process readback only. No new report run or external effect was created. Task6 post-deploy manual verification, task14/task13/task6 qualifying report outcomes, and passive sleep-resume catch-up evidence remain outstanding. PR #294 remains unmerged and undeployed."
+  },
+  "production_readback_2026_10_23_19_42_35Z": {
+    "observed_at": "2026-10-23T19:42:35Z",
+    "source": "Read-only production checkout HEAD, launchctl/ps, GET /healthz, GET /api/console/scheduled-tasks/{6,13,14}/runs, current runtime Skill config, managed revision digests, and installed release target SHA-256 readback.",
+    "production_commit": "ce841e3826b62cddd068eb9eb36d17deb07de156",
+    "healthz_http_status": 200,
+    "supervisor_pid": 49517,
+    "task_count": 14,
+    "scheduled_tasks": {
+      "6": {
+        "version": 34,
+        "enabled": true,
+        "cron": "0 0 3 * * 0",
+        "timezone": "America/Los_Angeles",
+        "next_run_at": "2026-10-25T10:00:00Z",
+        "managed_skill": "ceo-weekly-okr-report",
+        "managed_revision_id": 245,
+        "managed_sha256": "038973933c0e8ff70f9c87b2912107a5d3ae0efcb53aeaf308e9bd3f091c01b9",
+        "latest_run_id": 395969,
+        "latest_run_kind": "manual"
+      },
+      "13": {
+        "version": 54,
+        "enabled": true,
+        "cron": "0 0 12 * * 6",
+        "timezone": "America/Los_Angeles",
+        "next_run_at": "2026-10-24T19:00:00Z",
+        "managed_skill": "ceo-weekly-report",
+        "managed_revision_id": 202,
+        "managed_sha256": "ececf8bf22e740573b68c0a4e1f1d6cd7db166a2fb2c6991737cce03890d22a9",
+        "latest_run_id": 391278,
+        "latest_run_kind": "manual",
+        "latest_run_status": "skipped"
+      },
+      "14": {
+        "version": 61,
+        "enabled": true,
+        "cron": "0 0 6 * * *",
+        "timezone": "America/Los_Angeles",
+        "next_run_at": "2026-10-24T13:00:00Z",
+        "managed_skill": "ceo-daily-report",
+        "managed_revision_id": 224,
+        "managed_sha256": "32d24bb5f53b60bcf67b8a91582db258a05cac59c789391c862d3bd95719fc62",
+        "latest_run_id": 396111,
+        "latest_run_kind": "scheduled",
+        "latest_run_status": "completed",
+        "business_acceptance": "failed: the final read window extended three hours past scheduled_for; do not replay"
+      }
+    },
+    "release_asset_readback": {
+      "entries": 26,
+      "installed_old_sha_mismatches": 0,
+      "candidate_new_sha_mismatches": 0,
+      "source_matches": {
+        "dingtalk-oa-approval/SKILL.md": "c8130e8dcfb4c6d40980d63a27b2d2c501eba7c4b89497339dcbbf8ead230ccb",
+        "ceo-weekly-okr-report/SKILL.md": "038973933c0e8ff70f9c87b2912107a5d3ae0efcb53aeaf308e9bd3f091c01b9"
+      }
+    },
+    "runtime_skill_config": {
+      "id": 376,
+      "parent_id": 375
+    },
+    "managed_skill_note": "Current task6 snapshot remains pinned to revision245; a newly imported identical repository revision247 exists but does not alter prior scheduled run snapshots.",
+    "acceptance_status": "Read-only current production snapshot only. No report was triggered and no external effect was created. PR #294 remains unmerged and undeployed; task14 qualifying natural outcome, task13 natural outcome, task6 post-deploy manual acceptance and passive sleep-resume catch-up evidence remain outstanding. PR #309 full Quality run 40011245295 was still in progress at this readback."
+  },
+  "production_recovery_2026_10_23_23_49_33Z": {
+    "observed_at": "2026-10-23T23:49:33Z",
+    "source": "Read-only production checkout HEAD, healthz, launchctl print-disabled/print, process list, in_flight_work() and the projected Email action status.",
+    "production_commit": "215802c21a1127bb9cd8aff9f7689b7828ecb5a6",
+    "healthz_http_status": 0,
+    "launch_agent": {
+      "enabled": true,
+      "loaded": false,
+      "service_process_present": false
+    },
+    "normal_restart_attempt": {
+      "command": "python -m app.deploy --restart",
+      "result": "stopped while wait_until_quiet was waiting; no restart/bootstrap was reached",
+      "in_flight_work_count": 1,
+      "drain_lock_released": true
+    },
+    "blocking_local_action": {
+      "kind": "email_action",
+      "id": 120060,
+      "operation": "move",
+      "status": "processing",
+      "started_at": "2026-10-23T23:18:11+00:00",
+      "updated_at": "2026-10-23T23:18:11+00:00",
+      "local_delivery_receipt_id": null,
+      "provider_effect_status": "not_checked"
+    },
+    "provider_query": {
+      "command": "dws mail mailbox list --format json",
+      "mailbox_count": 2,
+      "exact_local_account_id_match_count": 0,
+      "message_get_invoked": false,
+      "reason": "No exact source-account mapping; no mailbox or message ID was guessed."
+    },
+    "quality_run": {
+      "run_id": 40040357025,
+      "attempt": 2,
+      "head_sha": "6533329f00d2edcb5286250d2333407bc6e7c3e4",
+      "status": "failure",
+      "npm_test_step": "cancelled during pytest at about 4 percent; no pytest summary or cancellation actor in logs"
+    },
+    "acceptance_status": "Service remains unavailable. The initiating service stop and Email provider effect are unverified. Do not clear or replay the Email action; reconcile its source trajectory and provider state before retrying the normal restart. No report run or notification was created. Natural report acceptance and sleep-resume catch-up remain outstanding."
+  },
+  "production_recovery_2026_10_24_00_02Z": {
+    "observed_at": "2026-10-24T00:02:00Z",
+    "source": "Read-only Gmail metadata lookup by the exact configured account and local RFC Message-ID; service read-only IMAP reconciler; application status APIs; launchctl and healthz.",
+    "production_commit": "f9649ab6b1f65499a6b00492020025773a76941a",
+    "launch_agent": {
+      "loaded": true,
+      "state": "running",
+      "pid": 33577,
+      "healthz_http_status": 200
+    },
+    "email_action_recovery": {
+      "action_id": 120060,
+      "operation": "move",
+      "initial_status": "processing",
+      "only_processing_direct_action": true,
+      "stale_recovery_recorded": true,
+      "read_only_imap_result": "verified",
+      "reconciliation_recorded": true,
+      "terminal_status": "done",
+      "provider_operation": "reconciled_readback",
+      "attempts": [
+        {
+          "attempt_number": 1,
+          "status": "failed",
+          "provider_operation": "startup_recovery",
+          "error": "stale_processing_recovered"
+        },
+        {
+          "attempt_number": 2,
+          "status": "done",
+          "provider_operation": "reconciled_readback"
+        }
+      ],
+      "external_move_replayed": false
+    },
+    "provider_evidence": {
+      "gmail_query": "exact configured account plus exact RFC Message-ID",
+      "exact_message_match_count": 1,
+      "gmail_target_folder_label_present": true,
+      "gmail_inbox_label_present": false,
+      "message_body_read": false,
+      "service_imap_read_only_reconcile": "verified"
+    },
+    "post_restart_readback": {
+      "healthz_http_status": 200,
+      "history_total": 37782,
+      "attention_count": 13,
+      "system_health": "degraded",
+      "system_health_violations": 7,
+      "email_provider_actions": {
+        "pending": 615,
+        "processing": 0,
+        "failed": 0,
+        "retryable": 8
+      },
+      "scheduled_dispatcher": {
+        "pending": 0,
+        "due": 0,
+        "running": 0
+      },
+      "scheduled_tasks_total": 14,
+      "scheduled_tasks": {
+        "6": {
+          "version": 36,
+          "enabled": true,
+          "timezone": "America/Los_Angeles",
+          "next_run_at": "2026-10-25T10:00:00Z",
+          "managed_skill": "ceo-weekly-okr-report",
+          "managed_revision_id": 248
+        },
+        "13": {
+          "version": 56,
+          "enabled": true,
+          "timezone": "America/Los_Angeles",
+          "next_run_at": "2026-10-24T19:00:00Z",
+          "managed_skill": "ceo-weekly-report",
+          "managed_revision_id": 202
+        },
+        "14": {
+          "version": 63,
+          "enabled": true,
+          "timezone": "America/Los_Angeles",
+          "next_run_at": "2026-10-24T13:00:00Z",
+          "managed_skill": "ceo-daily-report",
+          "managed_revision_id": 250
+        }
+      }
+    },
+    "quality_run": {
+      "run_id": 40040357025,
+      "head_sha": "6533329f00d2edcb5286250d2333407bc6e7c3e4",
+      "conclusion": "failure",
+      "interpretation": "npm test cancelled during pytest without a pytest summary or cancellation actor; not a pass or verified test failure"
+    },
+    "acceptance_status": "The stalled local Email action was verified in its target folder and reconciled without repeating the external move. The service is healthy and the task configuration/queues were read back. System health remains degraded with 7 violations and 13 Attention entries. PR #294 exact-head Quality, new task14/task13/task6 business-report acceptance, and real sleep/resume catch-up remain outstanding. No report or extra notification was created."
   }
 }

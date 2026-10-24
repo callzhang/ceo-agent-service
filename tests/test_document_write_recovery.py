@@ -59,11 +59,25 @@ def test_applied_write_returns_unverified_result_without_replay(
         dws_bin = "dws"
 
         def run_json(self, command):
-            return {"data": {"nodes": [{"nodeId": "doc-1", "name": "Report"}]
-                            if writes else []}}
+            assert command[1:3] == ["doc", "+list"]
+            assert command[command.index("--folder") + 1] == "folder"
+            return {
+                "status": "success",
+                "complete": True,
+                "documents": [],
+                "hasMore": False,
+                "failures": [],
+            }
 
         def create_report_document(self, **kwargs):
-            return self.overwrite_report_document(**kwargs)
+            writes.append(kwargs)
+            if stage == "verify_write":
+                raise DwsError("provider failure", provider_error=error)
+            return {
+                "status": "success",
+                "complete": True,
+                "data": {"nodeId": "doc-1", "verified": True},
+            }
 
         def overwrite_report_document(self, **kwargs):
             writes.append(kwargs)
@@ -111,29 +125,29 @@ def test_unapplied_write_remains_an_error(tmp_path, monkeypatch, error):
     assert not list(tmp_path.glob("*.readback.json"))
 
 
-@pytest.mark.parametrize("listing", [
-    {"data": {"nodes": [], "hasMore": True}},
-    {"data": {"nodes": []}},
-    {"data": {"nodes": [{"name": "Report"}, {"name": "Report"}]}},
-    None,
-])
-def test_created_identity_survives_failed_target_listing(tmp_path, monkeypatch, listing):
+def test_partial_create_receipt_keeps_identity_without_post_write_listing(
+    tmp_path, monkeypatch
+):
     writes = []
-    provider_result = {"contractVersion": "doc.operation.v1", "data": {"nodeId": "created-doc"}}
+    listings = []
+    error = verification_error(node="created-doc", operation="doc.create")
 
     class Provider:
         dws_bin = "dws"
 
         def run_json(self, command):
-            if not writes:
-                return {"data": {"nodes": []}}
-            if listing is None:
-                raise DwsError("listing unavailable")
-            return listing
+            listings.append(command)
+            return {
+                "status": "success",
+                "complete": True,
+                "documents": [],
+                "hasMore": False,
+                "failures": [],
+            }
 
         def create_report_document(self, **kwargs):
             writes.append(kwargs)
-            return provider_result
+            raise DwsError("provider verification failed", provider_error=error)
 
     monkeypatch.setattr("app.dws_client.DwsClient", Provider)
     (tmp_path / "report.md").write_text("# Report")
@@ -144,9 +158,11 @@ def test_created_identity_survives_failed_target_listing(tmp_path, monkeypatch, 
     assert result["ok"] is False
     assert result["status"] == "partial_success"
     assert result["node_id"] == "created-doc"
-    assert result["provider_result"] == provider_result
+    assert result["provider_result"] is None
+    assert result["error"] == error
     assert result["readback"] is None
     assert len(writes) == 1
+    assert len(listings) == 1
 
 
 def test_unverified_document_result_is_not_a_successful_audit_receipt():
