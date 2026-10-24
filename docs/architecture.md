@@ -1210,6 +1210,9 @@ agent run 通过 `sent_reply_observers` 关联到它。History 因此既能显�
 含非授权成员或讨论针对具体个人时仍按脱敏群消息加敏感私聊处理。群消息与敏感私聊使用不同的稳定投递键，任一发送重试都会复用已成功的另一条，
 日历描述只写群消息版本。
 
+会议消息已有不可变发送回执时，日历摘要恢复先只读原事件。若描述中已完整包含同一冻结摘要正文，
+即记录 `already_present` 并结束日历阶段，不重复写日历或发送消息；不完整正文仍走现有标记块写入及严格读回。
+
 钉钉消息在交给 Audit 前生成带服务后缀的最终候选正文。这个准备记录按
 `execution_generation + proposal_revision` 区分：同一 revision 的进程重试复用同一正文，Audit
 要求修改后生成的下一 revision 使用修正后的新正文。外部动作的 `action_identity` 和
@@ -3022,6 +3025,8 @@ OA pending scans carry the complete scheduled Consumer wrapper, including exact 
 OA pending scan query bounds are normalized to `Asia/Shanghai` before DWS applies its start/end calendar-date filters. This keeps host-local midnight from excluding approvals created on the next DingTalk calendar day; lookback duration, pagination and current-user task verification stay unchanged. Review deduplication includes a digest of the selected Skill bodies, so changing an OA business rule creates one fresh review round for still-pending nodes even when provider records have not changed. An unchanged Skill snapshot remains deduplicated. If a review for that approval is still pending or processing, a changed Skill revision waits until that round settles before enqueueing the replacement review, preventing concurrent OA decisions. For org-structure approvals, applicant-correctable missing facts with a valid OA return path use a formal return; comments are reserved for missing return paths or genuine external-party waits. No document format is added as a requirement.
 
 An unchanged daily OA scan may revisit an approval whose prior review completed without a decision, so it remains visible to the reviewer. It must not reopen a terminally failed technical review for the same evidence and selected-Skill revision: doing so would rotate the reply-task execution generation and refund the Consumer/Audit retry budget. A new DWS evidence revision or selected-Skill revision starts a new review round with a fresh budget; a successful no-action review retains its normal daily revisit behavior.
+
+History may reopen a skipped OA review only when fresh reviewer feedback exists and the prior Attempt remains unresolved, has no OA effect, and matches the same OA task. Once the Attempt has a resolution timestamp and resolution evidence, the History rerun entry and POST route stay closed even if the local task row is still `done` or `skipped`; this preserves verified terminal or superseding-source readback. A still-actionable OA review can be reconsidered through a new pending scan when its source evidence or selected Skill changes.
 
 Each newly enqueued OA review round re-materializes the currently selected Skill references from the current scheduled-task configuration. For a selected managed Skill, it resolves the newest registered revision directly from the managed Skill store, including a revision absent from the worker's immutable startup snapshot (`managed_revision_not_loaded`); it does not fall back to an older loaded body. Disabled or otherwise unavailable latest revisions stop the scan instead of silently choosing older guidance. Operation Skills are read from their current authorized source. The resulting complete bodies are frozen in that new trigger's scheduled Consumer wrapper. Retries and corrections of an existing round continue to use that round's saved input, and previously saved trigger/run history is never rewritten. This changes which Skill revision a new OA review round receives; it does not change approval permissions, business thresholds, or action gates.
 

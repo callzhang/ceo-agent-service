@@ -383,6 +383,33 @@ def test_reviewer_feedback_can_reopen_skipped_oa_review_only_while_same_task_is_
     assert captured["expected_execution_generation"] == "generation-1"
 
 
+def test_resolved_terminal_oa_review_cannot_be_reopened_from_history():
+    from app.history_actions import can_reopen_skipped_oa_review
+
+    attempt = SimpleNamespace(
+        send_status="skipped",
+        reviewer_feedback="Review this again.",
+        action="agent_run",
+        oa_action="review",
+        oa_action_result_json="",
+        oa_process_instance_id="proc-1",
+        oa_task_id="task-1",
+        resolved_at="2026-10-24 18:00:00",
+        resolution=(
+            "Live DingTalk OA records verified process proc-1 terminal operation AGREE; "
+            "no further service action is permitted."
+        ),
+    )
+    task = SimpleNamespace(
+        channel="dingtalk",
+        conversation_id="oa_pending_scan:proc-1",
+        business_object_key="oa:proc-1:task-1",
+        status="done",
+    )
+
+    assert not can_reopen_skipped_oa_review(attempt, task)
+
+
 def test_skipped_oa_review_without_feedback_cannot_be_reopened():
     attempt = SimpleNamespace(
         id=15716, conversation_id="oa_pending_scan:proc-1",
