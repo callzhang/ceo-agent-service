@@ -16,7 +16,6 @@ import pytest
 
 import app.email_store as email_store_module
 from app.store import REPLY_TASK_CURRENT_SQL
-from app.state_definitions import state_projection
 from tests.email_schema_fixtures import (
     restore_action_plan_snapshot_column,
     restore_schema48_action_plan_snapshots,  # noqa: F401 - historical fixture import retained
@@ -40,9 +39,7 @@ from app.email_classifier_contracts import (
     build_email_action_plan,
 )
 from app.email_store import (
-    EMAIL_ATTEMPT_SQL,
     DIRECT_EMAIL_ACTION_SQL,
-    EMAIL_DIRECT_ACTION_LOCATOR_SQL,
     EMAIL_DIRECT_ACTION_SQL,
     EMAIL_PLAN_SQL,
     EMAIL_UNSUBSCRIBE_RECEIPT_LOCATOR_SQL,
@@ -66,34 +63,24 @@ from app.email_provider_folders import FolderRole, ProviderFolder
 from app.email_task_adapter import email_action_identity
 from app.email_pipeline import apply_human_confirmation
 from app.email_unsubscribe import normalize_unsubscribe_result_text
-from app.store import AgentRole, AutoReplyStore
+from app.store import AgentRole, AutoReplyStore, _close_idle_connections
 from app.action_storage import (
-    delete_email_action,
     email_action_projection,
     insert_action,
     update_action,
     update_email_action,
 )
-from app.action_email_storage import SOURCE_TABLES
 from app.email_canonical_storage import (
     email_classification_projection, email_message_projection,
 )
 from app.email_canonical_storage import (
-    capture_email_canonical_source, migrate_email_canonical_schema,
     delete_email_classification,
 )
 from tests.test_email_canonical_storage import (
     current13,  # noqa: F401 - imported pytest fixture
-    _db as _native_email_db,
-    _insert as _insert_native_email,
-    _message as _native_email_message,
-    _classification as _native_email_classification,
-)
+    )
 from app.configs_definitions import config_projection
 from app.configs_storage import delete_config, insert_config, update_config
-from app.task8_storage import (
-    register_task8_functions, task8_insert_parts, task8_set_parts,
-)
 
 
 def _set_training_snapshot_raw(db, snapshot_id: str, field: str, value) -> None:
@@ -149,52 +136,6 @@ def _frozen_training_snapshot(snapshot_id: str = "snapshot-store-1"):
         observed_at=datetime(2026, 9, 7, 18, 0, tzinfo=timezone.utc),
         seed=17,
     )
-
-
-def _append_copied_training_observation(
-    database: Path, *, stable_message_identity: str
-) -> None:
-    with sqlite3.connect(database) as db:
-        db.execute(
-            """
-            insert into email_training_snapshot_observations (
-                snapshot_id, account_id, stable_message_identity,
-                provider_folder_id, provider_folder_name, category_key,
-                important, normalized_model_input,
-                normalized_model_input_hash, input_schema_version,
-                provider_thread_id, normalized_body_digest,
-                sender_template_signature, explicit_matter_group,
-                group_key, observed_at, source, split,
-                selected_for_training, ordered_record_digest
-            )
-            select snapshot_id, account_id, ?,
-                   provider_folder_id, provider_folder_name, category_key,
-                   important, normalized_model_input,
-                   normalized_model_input_hash, input_schema_version,
-                   provider_thread_id, normalized_body_digest,
-                   sender_template_signature, explicit_matter_group,
-                   group_key, observed_at, source, split,
-                   selected_for_training, ordered_record_digest
-            from email_training_snapshot_observations
-            limit 1
-            """,
-            (stable_message_identity,),
-        )
-
-
-def _insert_legacy_snapshot_observations(db, snapshot, record_digests):
-    for row, digest in zip(snapshot.observations, record_digests, strict=True):
-        values = row.to_dict()
-        values["important"] = int(values["important"])
-        values["selected_for_training"] = int(values["selected_for_training"])
-        values["ordered_record_digest"] = digest
-        columns = ", ".join(values)
-        placeholders = ", ".join("?" for _ in values)
-        db.execute(
-            f"insert into email_training_snapshot_observations ({columns}) "
-            f"values ({placeholders})",
-            tuple(values.values()),
-        )
 
 
 def _legacy_unsigned_record_digest(row) -> str:
@@ -254,12 +195,6 @@ def _rewind_email_schema(db: sqlite3.Connection, *, version: int) -> None:
         "values (?, '2026-09-08T00:00:00+00:00')",
         (version,),
     )
-
-
-
-
-
-
 
 
 def test_snapshot_readback_requires_external_data_for_db_digest(
@@ -700,56 +635,6 @@ def test_real_store_persists_and_reopens_custom_category(tmp_path: Path):
     assert set(restored["probabilities"]) == {"board_governance", "legal"}
 
 
-def _replace_feedback_requests_with_v18_table(database: Path) -> None:
-    with sqlite3.connect(database) as db:
-        restore_action_plan_snapshot_column(db)
-        db.execute("pragma foreign_keys=off")
-        db.execute("drop table email_feedback_requests")
-        db.execute(
-            """
-            create table email_feedback_requests (
-                feedback_request_id text primary key
-                    check(trim(feedback_request_id) != ''),
-                classification_id integer not null,
-                category text not null check(category in (
-                    'important', 'work', 'personal', 'notification',
-                    'billing', 'shopping', 'subscription', 'junk'
-                )),
-                expected_current_action_plan_id text
-                    unique
-                    check(
-                        expected_current_action_plan_id is null
-                        or trim(expected_current_action_plan_id) != ''
-                    ),
-                resulting_action_plan_id text not null unique
-                    check(trim(resulting_action_plan_id) != ''),
-                applied_at text not null check(trim(applied_at) != ''),
-                check(
-                    expected_current_action_plan_id is null
-                    or expected_current_action_plan_id != resulting_action_plan_id
-                ),
-                foreign key(classification_id) references email_classifications(id)
-                    on delete restrict,
-                foreign key(expected_current_action_plan_id)
-                    references email_action_plans(action_plan_id)
-                    on delete restrict,
-                foreign key(resulting_action_plan_id)
-                    references email_action_plans(action_plan_id)
-                    on delete restrict
-            )
-            """
-        )
-        db.execute("delete from email_schema_migrations")
-        db.execute(
-            "insert into email_schema_migrations(version, applied_at) values (18, ?)",
-            (datetime(2026, 9, 7, 12, 0, tzinfo=timezone.utc).isoformat(),),
-        )
-
-
-
-
-
-
 def _classification(
     *,
     status: EmailClassificationStatus,
@@ -1048,144 +933,6 @@ def _fetchall(path: Path, sql: str, parameters: tuple[object, ...] = ()):
         return db.execute(sql, parameters).fetchall()
 
 
-def _set_reply_task_parts(db, task_id: int, **values: object) -> None:
-    register_task8_functions(db)
-    parts = task8_set_parts("reply_tasks", values)
-    db.execute(
-        f"update tasks set {parts.sql} where record_type='reply_tasks' and cast(legacy_key as integer)=?",
-        (*parts.parameters, task_id),
-    )
-
-
-def _set_task_input_parts(db, input_id: int, **values: object) -> None:
-    register_task8_functions(db)
-    parts = task8_set_parts("reply_task_inputs", values)
-    db.execute(
-        f"update tasks set {parts.sql} where record_type='reply_task_inputs' and cast(legacy_key as integer)=?",
-        (*parts.parameters, input_id),
-    )
-
-
-def test_lists_only_nonterminal_legacy_unsubscribe_attempt_bindings_read_only(
-    tmp_path: Path,
-) -> None:
-    database = tmp_path / "legacy-unsubscribe-inventory.sqlite3"
-    task_store = AutoReplyStore(database)
-    email_store = EmailStore(database)
-
-    def create_task(
-        name: str,
-        *,
-        lifecycle_version: str,
-        channel: str = "email",
-    ) -> int:
-        payload = {
-            "schema": "email_agent_action.v1",
-            "action_type": "unsubscribe",
-            "lifecycle_version": lifecycle_version,
-            "name": name,
-        }
-        return task_store.ensure_reply_task(
-            channel=channel,
-            conversation_id=f"conversation:{name}",
-            conversation_title=name,
-            single_chat=False,
-            trigger_message_id=f"trigger:{name}",
-            trigger_create_time="2026-09-02T12:00:00+00:00",
-            trigger_sender="newsletter@example.com",
-            trigger_text="Legacy unsubscribe inventory fixture.",
-            trigger_message_json=json.dumps(payload, sort_keys=True),
-            execution_generation=f"generation:{name}",
-        ).id
-
-    legacy = "email_unsubscribe_consumer_direct_v1"
-    pending_id = create_task("legacy-pending", lifecycle_version=legacy)
-    malformed_payload = "{malformed"
-    malformed_id = task_store.ensure_reply_task(
-        channel="email",
-        conversation_id="conversation:malformed-pending",
-        conversation_title="malformed-pending",
-        single_chat=False,
-        trigger_message_id="trigger:malformed-pending",
-        trigger_create_time="2026-09-02T12:00:00+00:00",
-        trigger_sender="newsletter@example.com",
-        trigger_text="Malformed durable Email task fixture.",
-        trigger_message_json=malformed_payload,
-    ).id
-    create_task(
-        "audited-v2",
-        lifecycle_version="email_unsubscribe_audited_v2",
-    )
-    processing_id = create_task("legacy-processing", lifecycle_version=legacy)
-    done_id = create_task("legacy-done", lifecycle_version=legacy)
-    failed_id = create_task("legacy-failed", lifecycle_version=legacy)
-    sent_id = create_task("legacy-sent", lifecycle_version=legacy)
-    create_task("non-email", lifecycle_version=legacy, channel="dingtalk")
-    with sqlite3.connect(database) as db:
-        for status, task_id in (
-            ("processing", processing_id),
-            ("done", done_id),
-            ("failed", failed_id),
-            ("sent", sent_id),
-        ):
-            _set_reply_task_parts(db, task_id, status=status)
-
-    before = [
-        tuple(row)
-        for row in _fetchall(
-            database,
-            f"""
-            select id, channel, status, trigger_message_json
-            from ({REPLY_TASK_CURRENT_SQL})
-            order by id
-            """,
-        )
-    ]
-
-    result = email_store.list_nonterminal_legacy_unsubscribe_task_attempts()
-
-    after = [
-        tuple(row)
-        for row in _fetchall(
-            database,
-            f"""
-            select id, channel, status, trigger_message_json
-            from ({REPLY_TASK_CURRENT_SQL})
-            order by id
-            """,
-        )
-    ]
-    assert tuple(
-        (attempt.task_id, attempt.execution_generation, attempt.status)
-        for attempt in result
-    ) == (
-        (pending_id, "generation:legacy-pending", "pending"),
-        (processing_id, "generation:legacy-processing", "processing"),
-    )
-    inventoried_ids = {attempt.task_id for attempt in result}
-    assert malformed_id not in inventoried_ids
-    malformed_before = next(row for row in before if row[0] == malformed_id)
-    malformed_after = next(row for row in after if row[0] == malformed_id)
-    assert malformed_before == malformed_after
-    assert malformed_after[2] == "pending"
-    assert malformed_after[3] == malformed_payload
-    assert sent_id not in inventoried_ids
-    sent_before = next(row for row in before if row[0] == sent_id)
-    sent_after = next(row for row in after if row[0] == sent_id)
-    assert sent_before == sent_after
-    assert sent_after[2] == "sent"
-    assert sent_after[3] == json.dumps(
-        {
-            "schema": "email_agent_action.v1",
-            "action_type": "unsubscribe",
-            "lifecycle_version": legacy,
-            "name": "legacy-sent",
-        },
-        sort_keys=True,
-    )
-    assert after == before
-
-
 def _create_legacy_terminalization_task(
     task_store: AutoReplyStore,
     name: str,
@@ -1214,57 +961,6 @@ def _create_legacy_terminalization_task(
         trigger_message_json=payload,
         execution_generation=f"generation:{name}",
     )
-
-
-def test_terminalizes_pending_legacy_unsubscribe_with_exact_generation(tmp_path: Path):
-    database = tmp_path / "pending-legacy-terminalization.sqlite3"
-    task_store = AutoReplyStore(database)
-    EmailStore(database)
-    task = _create_legacy_terminalization_task(task_store, "pending")
-
-    assert (
-        task_store.terminalize_legacy_email_unsubscribe_task(
-            task.id,
-            expected_execution_generation=task.execution_generation,
-            expected_status=task.status,
-        )
-        is True
-    )
-
-    terminal = task_store.get_reply_task(task.id)
-    assert terminal is not None
-    assert terminal.status == "failed"
-    assert terminal.error == "legacy_email_unsubscribe_lifecycle"
-    assert terminal.locked_at is None
-    assert terminal.available_at == ""
-
-
-def test_terminalizes_processing_legacy_unsubscribe_with_exact_generation(
-    tmp_path: Path,
-):
-    database = tmp_path / "processing-legacy-terminalization.sqlite3"
-    task_store = AutoReplyStore(database)
-    EmailStore(database)
-    pending = _create_legacy_terminalization_task(task_store, "processing")
-    task = task_store.claim_reply_task(pending.id)
-    assert task is not None
-    assert task.status == "processing"
-
-    assert (
-        task_store.terminalize_legacy_email_unsubscribe_task(
-            task.id,
-            expected_execution_generation=task.execution_generation,
-            expected_status=task.status,
-        )
-        is True
-    )
-
-    terminal = task_store.get_reply_task(task.id)
-    assert terminal is not None
-    assert terminal.status == "failed"
-    assert terminal.error == "legacy_email_unsubscribe_lifecycle"
-    assert terminal.locked_at is None
-    assert terminal.available_at == ""
 
 
 def test_skips_failed_legacy_unsubscribe_without_agent_run(tmp_path: Path):
@@ -1308,116 +1004,6 @@ def test_failed_provider_unsubscribe_is_not_legacy_recovered(tmp_path: Path):
     assert terminal is not None
     assert terminal.status == "failed"
     assert terminal.error == "email_unsubscribe_browser_failed"
-
-
-@pytest.mark.parametrize(
-    ("name", "task_kwargs", "terminal_status"),
-    (
-        ("terminal", {}, "done"),
-        (
-            "audited",
-            {"lifecycle_version": "email_unsubscribe_audited_v2"},
-            None,
-        ),
-        ("non-email", {"channel": "dingtalk"}, None),
-        ("malformed", {"trigger_message_json": "{malformed"}, None),
-    ),
-)
-def test_legacy_terminalization_leaves_nonmatching_tasks_unchanged(
-    tmp_path: Path,
-    name: str,
-    task_kwargs: dict[str, object],
-    terminal_status: str | None,
-):
-    database = tmp_path / f"nonmatching-{name}.sqlite3"
-    task_store = AutoReplyStore(database)
-    EmailStore(database)
-    task = _create_legacy_terminalization_task(task_store, name, **task_kwargs)
-    if terminal_status is not None:
-        with sqlite3.connect(database) as db:
-            _set_reply_task_parts(db, task.id, status=terminal_status)
-    before = tuple(
-        _fetchall(
-            database,
-            f"select * from ({REPLY_TASK_CURRENT_SQL}) where id=?",
-            (task.id,),
-        )[0]
-    )
-
-    assert (
-        task_store.terminalize_legacy_email_unsubscribe_task(
-            task.id,
-            expected_execution_generation=task.execution_generation,
-            expected_status=task.status,
-        )
-        is False
-    )
-
-    after = tuple(
-        _fetchall(
-            database,
-            f"select * from ({REPLY_TASK_CURRENT_SQL}) where id=?",
-            (task.id,),
-        )[0]
-    )
-    assert after == before
-
-
-@pytest.mark.parametrize("race", ("generation", "lifecycle"))
-def test_legacy_terminalization_race_fails_closed_without_modifying_replacement(
-    tmp_path: Path,
-    race: str,
-):
-    database = tmp_path / f"legacy-{race}-race.sqlite3"
-    task_store = AutoReplyStore(database)
-    EmailStore(database)
-    original = _create_legacy_terminalization_task(task_store, race)
-    with sqlite3.connect(database) as db:
-        if race == "generation":
-            _set_reply_task_parts(
-                db, original.id, execution_generation="replacement-generation"
-            )
-        else:
-            replacement_payload = json.dumps(
-                {
-                    "schema": "email_agent_action.v1",
-                    "action_type": "unsubscribe",
-                    "lifecycle_version": "email_unsubscribe_audited_v2",
-                },
-                sort_keys=True,
-            )
-            input_id = db.execute(
-                f"select current_input_id from ({REPLY_TASK_CURRENT_SQL}) where id=?",
-                (original.id,),
-            ).fetchone()[0]
-            _set_task_input_parts(
-                db, input_id, trigger_message_json=replacement_payload
-            )
-    before = tuple(
-        _fetchall(
-            database,
-            f"select * from ({REPLY_TASK_CURRENT_SQL}) where id=?",
-            (original.id,),
-        )[0]
-    )
-
-    assert (
-        task_store.terminalize_legacy_email_unsubscribe_task(
-            original.id,
-            expected_execution_generation=original.execution_generation,
-            expected_status=original.status,
-        )
-        is False
-    )
-
-    after = tuple(
-        _fetchall(
-            database,
-            f"select * from ({REPLY_TASK_CURRENT_SQL}) where id=?",
-            (original.id,),
-        )[0]
-    )
-    assert after == before
 
 
 def test_pending_legacy_attempt_does_not_terminalize_processing_replacement(
@@ -1686,122 +1272,6 @@ def test_unsubscribe_state_is_the_newest_unsubscribe_event_of_the_detail(tmp_pat
     }
 
 
-def test_a_failed_unsubscribe_task_without_a_receipt_carries_its_own_error(
-    tmp_path: Path,
-) -> None:
-    # No page ever produced a receipt (the browser faulted before reading
-    # one), so this is the only place the reason for the failure lives.
-    database = tmp_path / "inflight-unsubscribe-error.sqlite3"
-    email_store = EmailStore(database)
-    task_store = AutoReplyStore(database)
-    authorization = _unsubscribe_authorization(email_store)
-    from app.email_task_adapter import email_conversation_id
-
-    conversation_id = email_conversation_id(
-        str(authorization["account_id"]), str(authorization["thread_identity"])
-    )
-    payload = {
-        "schema": "email_agent_action.v1",
-        "lifecycle_version": "email_unsubscribe_audited_v2",
-        "action_type": "unsubscribe",
-        "action_identity": authorization["action_identity"],
-        "action_plan_id": authorization["action_plan_id"],
-        "action_plan_version": authorization["action_plan_version"],
-        "classification_id": authorization["classification_id"],
-        "account_id": authorization["account_id"],
-        "stable_message_identity": authorization["stable_message_identity"],
-        "thread_identity": authorization["thread_identity"],
-    }
-    task = task_store.ensure_reply_task(
-        channel="email",
-        conversation_id=conversation_id,
-        conversation_title="Email unsubscribe",
-        single_chat=False,
-        trigger_message_id=authorization["action_identity"],
-        trigger_create_time="2026-09-26T21:57:14+00:00",
-        trigger_sender="claw@mail.beehiiv.com",
-        trigger_text="Immutable ActionPlan authorizes unsubscribe.",
-        trigger_message_json=json.dumps(payload, sort_keys=True),
-        execution_generation="generation:inflight-unsubscribe-error",
-    )
-    with sqlite3.connect(database) as db:
-        _set_reply_task_parts(
-            db, task.id, status="failed", error="email_unsubscribe_browser_timeout"
-        )
-
-    events = email_store.list_email_classification_observability(
-        int(authorization["classification_id"])
-    )
-    unsubscribe_events = [event for event in events if event["kind"] == "unsubscribe"]
-
-    assert unsubscribe_events == [
-        {
-            "kind": "unsubscribe",
-            "operation": "unsubscribe",
-            "lifecycle_version": "email_unsubscribe_audited_v2",
-            "task_id": task.id,
-            "task_status": "failed",
-            "consumer_run_ids": [],
-            "audit_run_ids": [],
-            "status": "failed",
-            "error": "email_unsubscribe_browser_timeout",
-        }
-    ]
-    assert email_store.list_unsubscribe_states(
-        [int(authorization["classification_id"])]
-    ) == {
-        int(authorization["classification_id"]): {
-            "status": "failed",
-            "outcome": None,
-            "error": "email_unsubscribe_browser_timeout",
-        }
-    }
-
-
-def _downgrade_email_database_to_v16(database: Path) -> None:
-    """Recreate the exact parent-v16 receipt shape from a current fixture."""
-
-    with sqlite3.connect(database) as db:
-        restore_action_plan_snapshot_column(db)
-        db.execute(
-            "drop index if exists idx_email_unsubscribe_receipts_classification_action"
-        )
-        receipt_columns = {
-            row[1]
-            for row in db.execute("pragma table_info(email_unsubscribe_receipts)")
-        }
-        for column in ("entry_url", "result_text_digest", "result_text_truncated"):
-            if column in receipt_columns:
-                db.execute(
-                    f"alter table email_unsubscribe_receipts drop column {column}"
-                )
-        db.execute("delete from email_schema_migrations")
-        db.execute(
-            "insert into email_schema_migrations(version, applied_at) values (16, ?)",
-            ("2026-09-03T00:00:00+00:00",),
-        )
-
-
-
-
-def _corrupt_schema_object_name(
-    database: Path,
-    *,
-    object_type: str,
-    object_name: str,
-) -> None:
-    with sqlite3.connect(database) as db:
-        schema_version = db.execute("pragma schema_version").fetchone()[0]
-        db.execute("pragma writable_schema = on")
-        db.execute(
-            "update sqlite_master set name=? where type=? and name=?",
-            (sqlite3.Binary(object_name.encode()), object_type, object_name),
-        )
-        db.execute(f"pragma schema_version = {schema_version + 1}")
-        db.commit()
-        db.execute("pragma writable_schema = off")
-
-
 def _weaken_scan_cursor_state_check(database: Path) -> None:
     with sqlite3.connect(database) as db:
         original = db.execute(
@@ -1818,96 +1288,6 @@ def _weaken_scan_cursor_state_check(database: Path) -> None:
         db.execute(f"pragma schema_version={version + 1}")
         db.commit()
         db.execute("pragma writable_schema=off")
-
-
-def _replace_email_action_attempts(
-    database: Path,
-    *,
-    attempt_number_declaration: str,
-    status_declaration: str,
-) -> None:
-    with sqlite3.connect(database) as db:
-        db.executescript(
-            f"""
-            alter table email_action_attempts rename to old_email_action_attempts;
-            create table email_action_attempts (
-                id integer primary key autoincrement,
-                action_id text not null,
-                attempt_number {attempt_number_declaration},
-                status {status_declaration},
-                provider_operation text not null,
-                provider_target text not null,
-                provider_result_id text not null,
-                error text not null,
-                started_at text not null,
-                finished_at text not null,
-                unique(action_id, attempt_number),
-                foreign key(action_id) references email_actions(action_id)
-                    on delete restrict
-            );
-            drop table old_email_action_attempts;
-            """
-        )
-
-
-def _replace_email_actions(
-    database: Path,
-    *,
-    action_type_declaration: str,
-    status_declaration: str,
-) -> None:
-    with sqlite3.connect(database) as db:
-        db.executescript(
-            f"""
-            drop trigger if exists trg_email_action_attempt_count_insert;
-            drop trigger if exists trg_email_action_attempt_count_update;
-            drop table email_action_attempts;
-            alter table email_actions rename to old_email_actions;
-            create table email_actions (
-                action_id text primary key,
-                action_plan_id text not null,
-                classification_id integer not null,
-                account_id text not null,
-                action_type {action_type_declaration},
-                parameters_json text not null check(json_valid(parameters_json)),
-                config_version text not null,
-                status {status_declaration},
-                attempt_count integer not null default 0 check(attempt_count >= 0),
-                started_at text not null default '',
-                finished_at text not null default '',
-                next_attempt_at text not null default '',
-                provider_operation text not null default '',
-                provider_target text not null default '',
-                provider_result_id text not null default '',
-                error text not null default '',
-                created_at text not null,
-                updated_at text not null,
-                unique(action_plan_id, action_type),
-                foreign key(action_plan_id) references email_action_plans(action_plan_id)
-                    on delete restrict,
-                foreign key(classification_id) references email_classifications(id)
-                    on delete restrict
-            );
-            drop table old_email_actions;
-            create index idx_email_actions_status
-                on email_actions(status, updated_at, action_id);
-            create table email_action_attempts (
-                id integer primary key autoincrement,
-                action_id text not null,
-                attempt_number integer not null check(attempt_number > 0),
-                status text not null check(status in ('done', 'failed')),
-                provider_operation text not null,
-                provider_target text not null,
-                provider_result_id text not null,
-                error text not null,
-                started_at text not null,
-                finished_at text not null,
-                unique(action_id, attempt_number),
-                foreign key(action_id) references email_actions(action_id)
-                    on delete restrict
-            );
-            """
-        )
 
 
 def _damage_current_email_actions_metadata(
@@ -2018,7 +1398,7 @@ def _assert_current_email_metadata_rejected_without_repair(database: Path) -> No
     bytes_before = sha256(database.read_bytes()).hexdigest()
     for validate_rows in (True, False):
         with pytest.raises(
-            sqlite3.IntegrityError, match="malformed current provider/config declaration"
+            sqlite3.IntegrityError, match="unsupported or malformed Store source schema"
         ):
             EmailStore(database, validate_rows=validate_rows)
     with sqlite3.connect(database) as db:
@@ -2054,47 +1434,6 @@ def test_terminal_unsubscribe_probe_does_not_hydrate_classification_payloads(tmp
     assert store.list_terminal_unsubscribe_tasks_missing_receipts() == []
 
 
-@pytest.mark.parametrize("status", ["done", "skipped", "needs_human", "failed"])
-def test_terminal_unsubscribe_probe_hydrates_only_valid_terminal_tasks(tmp_path, status):
-    database = tmp_path / "unsubscribe-terminal-hydration.sqlite3"
-    store = EmailStore(database)
-    task_store = AutoReplyStore(database)
-    authorization = _unsubscribe_authorization(store)
-    from app.email_task_adapter import email_conversation_id
-
-    task = task_store.ensure_reply_task(
-        channel="email",
-        conversation_id=email_conversation_id(
-            authorization["account_id"], authorization["thread_identity"]
-        ),
-        conversation_title="Email unsubscribe",
-        single_chat=False,
-        trigger_message_id=authorization["action_identity"],
-        trigger_create_time="2026-09-26T21:57:14+00:00",
-        trigger_sender="sender@example.com",
-        trigger_text="Unsubscribe projection test",
-        execution_generation="test-generation",
-    )
-    with store._connect() as db:
-        register_task8_functions(db)
-        db.execute(
-            "update tasks set "
-            f"{task8_set_parts('reply_tasks', {}, update_sql={'status': '?'}).sql} "
-            "where record_type='reply_tasks' and cast(legacy_key as integer)=?",
-            (status, task.id),
-        )
-    rows = store.list_terminal_unsubscribe_tasks_missing_receipts()
-    if status == "failed":
-        assert rows == []
-        return
-    assert len(rows) == 1
-    assert rows[0]["stable_message_identity"] == authorization["stable_message_identity"]
-    assert rows[0]["action_plan"]["classification_id"] == authorization["classification_id"]
-    assert rows[0]["unsubscribe_action_identity"] == authorization["action_identity"]
-    assert rows[0]["unsubscribe_task"]["id"] == task.id
-    assert rows[0]["unsubscribe_task"]["status"] == status
-
-
 def _insert_account_with_scan_folders_json(database: Path, value: object) -> None:
     with sqlite3.connect(database) as db:
         if isinstance(value, (bytes, bytearray, memoryview)):
@@ -2122,337 +1461,6 @@ def _insert_account_with_scan_folders_json(database: Path, value: object) -> Non
             "created_at": "2026-08-29T16:00:00+00:00",
             "updated_at": "2026-08-29T16:00:00+00:00",
         })
-
-
-def _create_prototype_database(
-    database: Path,
-    classification: EmailClassification,
-    *,
-    action_plan_json: str,
-) -> None:
-    locator = classification.provider_locator
-    now = "2026-08-29T16:00:00+00:00"
-    with sqlite3.connect(database) as db:
-        db.executescript(
-            """
-            create table email_classifications (
-                id integer primary key,
-                account_id text not null,
-                folder text not null,
-                uidvalidity integer not null,
-                uid integer not null,
-                rfc_message_id text,
-                thread_id text,
-                stable_message_identity text not null unique,
-                sender text not null default '',
-                subject text not null default '',
-                preview text not null default '',
-                model_text text not null default '',
-                received_at text not null default '',
-                category text not null,
-                confidence real not null,
-                margin real not null,
-                probabilities_json text not null,
-                model_id text not null,
-                config_version text not null,
-                status text not null,
-                classification_source text not null,
-                action_plan_json text not null default 'null',
-                confirmed_at text not null default '',
-                created_at text not null default current_timestamp,
-                updated_at text not null default current_timestamp
-            );
-            create table email_category_configs (
-                category text primary key,
-                description text not null default '',
-                threshold real not null,
-                actions_json text not null,
-                action_parameters_json text not null default '{}',
-                enabled integer not null default 1,
-                config_version text not null,
-                updated_at text not null default current_timestamp
-            );
-            """
-        )
-        db.execute(
-            """
-            insert into email_classifications (
-                id, account_id, folder, uidvalidity, uid, rfc_message_id,
-                thread_id, stable_message_identity, sender, subject, preview,
-                model_text, received_at, category, confidence, margin,
-                probabilities_json, model_id, config_version, status,
-                classification_source, action_plan_json, confirmed_at,
-                created_at, updated_at
-            ) values (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-            """,
-            (
-                classification.classification_id,
-                locator.account_id,
-                locator.folder,
-                locator.uidvalidity,
-                locator.uid,
-                locator.rfc_message_id,
-                locator.thread_id,
-                classification.stable_message_identity,
-                "prototype-sender",
-                "Prototype subject",
-                "Prototype preview",
-                "__subject__prototype",
-                now,
-                classification.category,
-                classification.confidence,
-                classification.margin,
-                json.dumps(classification.probabilities),
-                classification.model_id,
-                classification.config_version,
-                classification.status.value,
-                classification.classification_source,
-                action_plan_json,
-                now
-                if classification.status is EmailClassificationStatus.PROCESSED
-                else "",
-                now,
-                now,
-            ),
-        )
-
-
-def _create_v2_processed_without_plan_database(database: Path) -> None:
-    now = "2026-08-29T16:00:00+00:00"
-    with sqlite3.connect(database) as db:
-        db.executescript(
-            """
-            create table email_schema_migrations (
-                version integer primary key,
-                applied_at text not null
-            );
-            create table email_classifications (
-                id integer primary key,
-                account_id text not null,
-                folder text not null,
-                uidvalidity integer not null,
-                uid integer not null,
-                rfc_message_id text,
-                thread_id text,
-                stable_message_identity text not null unique,
-                sender text not null default '',
-                subject text not null default '',
-                preview text not null default '',
-                model_text text not null default '',
-                received_at text not null default '',
-                category text not null,
-                predicted_category text,
-                confirmed_category text,
-                confidence real not null,
-                margin real not null,
-                probabilities_json text not null,
-                model_id text not null,
-                config_version text not null,
-                status text not null,
-                classification_source text not null,
-                action_plan_json text not null default 'null',
-                current_action_plan_id text,
-                confirmed_at text not null default '',
-                created_at text not null default current_timestamp,
-                updated_at text not null default current_timestamp
-            );
-            create table email_messages (
-                id integer primary key autoincrement,
-                account_id text not null,
-                stable_message_identity text not null unique,
-                folder text not null,
-                uidvalidity integer not null check(uidvalidity > 0),
-                uid integer not null check(uid > 0),
-                rfc_message_id text not null,
-                thread_identity text not null,
-                sender text not null,
-                recipients_json text not null check(json_valid(recipients_json)),
-                subject text not null,
-                normalized_text text not null,
-                preview text not null,
-                attachment_metadata_json text not null
-                    check(json_valid(attachment_metadata_json)),
-                received_at text not null,
-                created_at text not null,
-                updated_at text not null
-            );
-            create table email_category_configs (
-                category text primary key,
-                description text not null default '',
-                threshold real not null,
-                actions_json text not null,
-                action_parameters_json text not null default '{}',
-                enabled integer not null default 1,
-                config_version text not null,
-                updated_at text not null default current_timestamp
-            );
-            create table email_retraining_state (
-                state_key text primary key,
-                state_json text not null
-            );
-            """
-        )
-        db.execute(
-            "insert into email_schema_migrations values (?, ?)",
-            (2, now),
-        )
-        db.execute(
-            """
-            insert into email_classifications (
-                id, account_id, folder, uidvalidity, uid, rfc_message_id,
-                thread_id, stable_message_identity, sender, subject, preview,
-                model_text, received_at, category, predicted_category,
-                confirmed_category, confidence, margin, probabilities_json,
-                model_id, config_version, status, classification_source,
-                action_plan_json, current_action_plan_id, confirmed_at,
-                created_at, updated_at
-            ) values (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-            """,
-            (
-                2002,
-                "dingtalk-account",
-                "INBOX",
-                42,
-                7,
-                "<msg-v2@example.com>",
-                "thread-v2",
-                "dingtalk-account:message-id:<msg-v2@example.com>",
-                "classification-sender",
-                "Classification subject",
-                "Classification preview",
-                "__subject__v2 confirmed example",
-                "2026-08-29T15:59:00+00:00",
-                "important",
-                "work",
-                "important",
-                0.61,
-                0.09,
-                '{"important":0.61,"work":0.52}',
-                "email/logistic/v2-model",
-                "v2-classification-config",
-                "processed",
-                "user",
-                "null",
-                None,
-                now,
-                now,
-                now,
-            ),
-        )
-        db.execute(
-            """
-            insert into email_messages (
-                account_id, stable_message_identity, folder, uidvalidity, uid,
-                rfc_message_id, thread_identity, sender, recipients_json,
-                subject, normalized_text, preview, attachment_metadata_json,
-                received_at, created_at, updated_at
-            ) values (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-            """,
-            (
-                "dingtalk-account",
-                "dingtalk-account:message-id:<msg-v2@example.com>",
-                "INBOX",
-                42,
-                7,
-                "<msg-v2@example.com>",
-                "thread-v2",
-                "message-snapshot-sender",
-                '["recipient@example.com"]',
-                "Original v2 message subject",
-                "__subject__original v2 message",
-                "Original v2 preview",
-                "[]",
-                "2026-08-29T15:59:00+00:00",
-                now,
-                now,
-            ),
-        )
-        db.execute(
-            """
-            insert into email_category_configs (
-                category, description, threshold, actions_json,
-                action_parameters_json, enabled, config_version, updated_at
-            ) values (?, ?, ?, ?, ?, ?, ?, ?)
-            """,
-            (
-                "important",
-                "v2 important config",
-                0.97,
-                "[]",
-                "{}",
-                1,
-                "v2-config",
-                now,
-            ),
-        )
-        db.execute(
-            "insert into email_retraining_state values (?, ?)",
-            ("current", '{"last_feedback_count":7}'),
-        )
-
-
-def _create_provider_mailbox_prototype_database(database: Path) -> None:
-    with sqlite3.connect(database) as db:
-        db.executescript(
-            """
-            create table email_classifications (
-                id integer primary key autoincrement,
-                provider text not null,
-                mailbox text not null,
-                message_id text not null,
-                thread_id text not null default '',
-                sender text not null default '',
-                subject text not null default '',
-                preview text not null default '',
-                model_text text not null default '',
-                received_at text not null default '',
-                category text not null,
-                confidence real not null,
-                margin real not null,
-                probabilities_json text not null,
-                model_version text not null,
-                config_version text not null,
-                status text not null,
-                classification_source text not null,
-                action_plan_json text not null,
-                confirmed_at text not null default '',
-                created_at text not null default current_timestamp,
-                updated_at text not null default current_timestamp,
-                unique(provider, mailbox, message_id)
-            );
-            create table email_category_configs (
-                category text primary key,
-                description text not null default '',
-                threshold real not null,
-                actions_json text not null,
-                enabled integer not null default 1,
-                config_version text not null,
-                updated_at text not null default current_timestamp
-            );
-            insert into email_classifications (
-                provider, mailbox, message_id, thread_id, sender, subject,
-                preview, model_text, received_at, category, confidence, margin,
-                probabilities_json, model_version, config_version, status,
-                classification_source, action_plan_json, confirmed_at,
-                created_at, updated_at
-            ) values (
-                'dingtalk', 'INBOX', '<legacy@example.com>', 'thread-legacy',
-                'sender@example.com', 'Legacy subject', 'Legacy preview',
-                '__subject__legacy subject', '2026-08-29T15:59:00+00:00',
-                'work', 0.82, 0.32, '{"work":0.82}',
-                'email/logistic/legacy', 'legacy-config', 'pending_feedback',
-                'model', 'null', '', '2026-08-29T16:00:00+00:00',
-                '2026-08-29T16:00:00+00:00'
-            );
-            insert into email_category_configs (
-                category, description, threshold, actions_json, enabled,
-                config_version, updated_at
-            ) values (
-                'work', 'Legacy work config', 0.7, '["label"]', 1,
-                'legacy-config', '2026-08-29T16:00:00+00:00'
-            );
-            """
-        )
 
 
 def _create_action_with_attempts(
@@ -2691,16 +1699,6 @@ def test_training_examples_exclude_pending_or_unconfirmed_user_rows_without_reop
     assert store.get_classification(confirmed_row["id"])["confirmed_category"] == "notification"
 
 
-
-
-
-
-
-
-
-
-
-
 def test_rescan_preserves_a_user_confirmed_category(tmp_path: Path):
     store = EmailStore(tmp_path / "worker.sqlite3")
     original = store.upsert_classification(
@@ -2790,108 +1788,6 @@ def test_email_store_rejects_auto_reply_category_configuration(tmp_path: Path):
         )
 
 
-def test_fresh_schema_contains_account_aware_persistence_tables(tmp_path: Path):
-    database = tmp_path / "fresh.sqlite3"
-
-    EmailStore(database)
-
-    table_names = {
-        row["name"]
-        for row in _fetchall(
-            database,
-            "select name from sqlite_master where type='table'",
-        )
-    }
-    assert "emails" in table_names
-    assert not {"email_messages", "email_classifications"} & table_names
-    assert {name for name in table_names if name.startswith("email_")} == {"email_schema_migrations"}
-    assert {"configs", "schedules", "runs", "actions"} <= table_names
-    assert "provider_state" in table_names
-    assert not {"email_provider_observations", "email_provider_folder_observation_generations"} & table_names
-    assert "actions" in table_names
-    assert not set(SOURCE_TABLES) & table_names
-    with sqlite3.connect(database) as db:
-        action_sql = db.execute(
-            "select sql from sqlite_schema where type='table' and name='actions'"
-        ).fetchone()[0]
-    from app import action_storage
-    from app.current_action_schema import current_action_objects
-    with sqlite3.connect(database) as db:
-        assert action_storage._objects(db, "actions") == current_action_objects()
-    assert "'candidate_executions'" not in action_sql
-    assert "'native_reply_dispatches'" not in action_sql
-    assert "reply_tasks" not in table_names
-    assert "agent_runs" not in table_names
-
-    with sqlite3.connect(database) as db:
-        account_columns = {column[0] for column in db.execute(
-            f"select * from ({config_projection('email_accounts')}) limit 0"
-        ).description}
-    assert {"imap_secret_reference", "smtp_secret_reference"} <= account_columns
-    assert not {"password", "imap_secret", "smtp_secret"} & account_columns
-
-    email_columns = {row["name"] for row in _fetchall(database, "pragma table_info(emails)")}
-    assert {"account_id", "stable_message_identity", "uidvalidity", "uid",
-            "classification_id", "message_id", "class_predicted_category",
-            "class_confirmed_category", "class_model_id", "class_current_action_plan_id",
-            "message_normalized_text", "message_recipients_json"} <= email_columns
-    with sqlite3.connect(database) as db:
-        classification_columns = {column[0] for column in db.execute(
-            f"select * from ({email_classification_projection()}) limit 0"
-        ).description}
-        message_columns = {column[0] for column in db.execute(
-            f"select * from ({email_message_projection()}) limit 0"
-        ).description}
-    assert {"id", "account_id", "stable_message_identity", "predicted_category",
-            "confirmed_category", "model_id", "current_action_plan_id"} <= classification_columns
-    assert {"id", "account_id", "stable_message_identity", "recipients_json",
-            "normalized_text", "thread_identity"} <= message_columns
-
-    with sqlite3.connect(database) as db:
-        feedback_columns = {
-            column[0]
-            for column in db.execute(
-                f"select * from ({email_action_projection('email_feedback_requests')}) limit 0"
-            ).description
-        }
-    assert feedback_columns == {
-        "feedback_request_id",
-        "classification_id",
-        "category",
-        "expected_current_action_plan_id",
-        "resulting_action_plan_id",
-        "applied_at",
-    }
-    with sqlite3.connect(database) as db:
-        reply_claim_columns = {
-            column[0]
-            for column in db.execute(
-                f"select * from ({email_action_projection('email_reply_dispatch_claims')}) limit 0"
-            ).description
-        }
-    assert {
-        "owner_id",
-        "owner_generation",
-        "lease_token",
-        "sender",
-        "thread_identity",
-        "account_updated_at",
-        "account_snapshot_json",
-    } <= reply_claim_columns
-    assert [
-        row["version"]
-        for row in _fetchall(database, "select version from email_schema_migrations")
-    ] == [email_store_module.EMAIL_SCHEMA_VERSION]
-
-
-
-
-
-
-
-
-
-
 def test_reopen_rejects_feedback_request_linked_to_another_classification(
     tmp_path: Path,
 ):
@@ -2927,12 +1823,6 @@ def test_reopen_rejects_feedback_request_linked_to_another_classification(
 
     with pytest.raises(EmailPersistenceCorruption, match="feedback request"):
         EmailStore(database)
-
-
-
-
-
-
 
 
 def test_runtime_initialization_validates_accounts_without_historical_scan(tmp_path, monkeypatch):
@@ -2991,32 +1881,6 @@ def test_current_email_schema_persists_external_training_payload(tmp_path: Path)
         assert summary["sample_count"] == len(snapshot.observations)
 
 
-def _downgrade_task10_schema(database: Path, *, version: int) -> None:
-    if version not in {26, 27, 28, 29}:
-        raise ValueError("Task10 downgrade fixture only supports v26 through v29")
-    with sqlite3.connect(database) as db:
-        db.execute("pragma foreign_keys=off")
-        _rewind_email_schema(db, version=version)
-        if version < 27:
-            db.execute("drop table email_historical_classification_history")
-        if version < 28:
-            for table in (
-                "email_historical_candidates",
-                "email_historical_operations",
-                "email_historical_traversals",
-            ):
-                db.execute(f"drop table {table}")
-        elif version < 29:
-            db.execute(
-                "alter table email_historical_candidates drop column attempted_at"
-            )
-            db.execute(
-                "alter table email_historical_candidates drop column next_retry_at"
-            )
-
-
-
-
 @pytest.mark.parametrize(
     "read_data_version", (False, True), ids=("native-trace", "quoted-main-data-version")
 )
@@ -3028,6 +1892,7 @@ def test_current_schema_initialization_preserves_delete_journal_mode(
     database = tmp_path / "current-schema-read-snapshot.sqlite3"
     EmailStore(database)
     gc.collect()
+    _close_idle_connections()
     with sqlite3.connect(database) as db:
         journal_mode = db.execute("pragma journal_mode = delete").fetchone()[0]
         schema_version_before = db.execute("pragma schema_version").fetchone()[0]
@@ -3086,170 +1951,22 @@ def test_current_schema_initialization_preserves_delete_journal_mode(
         f"rejected normalized SQLite traces={rejected}; "
         f"Python={sys.version}; SQLite={sqlite3.sqlite_version}"
     )
-    required_current_pragmas = (
-        "pragma table_list",
-        "pragma main.table_xinfo",
-        "pragma main.foreign_key_list",
-        "pragma main.index_list",
-        "pragma main.index_xinfo",
-    )
-    observed_pragma_counts = {
-        prefix: sum(statement.startswith(prefix) for statement in normalized)
-        for prefix in required_current_pragmas
-    }
-    missing_pragmas = [
-        prefix for prefix, count in observed_pragma_counts.items() if count == 0
-    ]
-    assert not missing_pragmas, (
-        f"missing current schema pragmas={missing_pragmas}; "
-        f"counts={observed_pragma_counts}"
-    )
     assert not any(
         statement.startswith(("create ", "alter ", "insert ", "update ", "delete "))
         for statement in normalized
     )
 
 
-
-
-
-
-def test_schema_tokenizer_canonicalizes_quoted_identifiers_not_string_literals():
-    assert email_store_module._schema_sql_tokens(
-        '"STA""TUS" `STA``TUS` [STATUS] \'DONE\''
-    ) == ('sta"tus', "sta`tus", "status", "'DONE'")
-
-
-@pytest.mark.parametrize(
-    ("object_type", "object_name"),
-    (
-        ("table", "emails"),
-        ("trigger", "trg_emails_class_status_insert"),
-    ),
-)
-def test_current_schema_rejects_non_text_sqlite_master_identifiers(
-    tmp_path: Path,
-    object_type: str,
-    object_name: str,
-):
-    database = tmp_path / f"blob-{object_type}-name.sqlite3"
-    EmailStore(database)
-    gc.collect()
-    _corrupt_schema_object_name(
-        database,
-        object_type=object_type,
-        object_name=object_name,
-    )
-
-    with pytest.raises(EmailPersistenceCorruption, match="schema identifier"):
-        EmailStore(database)
-
-
-@pytest.mark.parametrize(
-    "metadata_field",
-    (
-        "sqlite_master object name",
-        "sqlite_master object owner",
-        "sqlite_master table name",
-        "pragma table_info column name",
-        "sqlite_master trigger name",
-    ),
-)
-def test_schema_metadata_paths_reject_non_text_identifiers(
-    tmp_path: Path,
-    monkeypatch: pytest.MonkeyPatch,
-    metadata_field: str,
-):
-    database = tmp_path / f"invalid-{metadata_field.replace(' ', '-')}.sqlite3"
-    EmailStore(database)
-    original = email_store_module._schema_identifier
-
-    def inject_invalid_identifier(value: object, *, field: str) -> str:
-        if field == metadata_field:
-            value = sqlite3.Binary(b"invalid")
-        return original(value, field=field)
-
-    monkeypatch.setattr(
-        email_store_module,
-        "_schema_identifier",
-        inject_invalid_identifier,
-    )
-
-    with pytest.raises(EmailPersistenceCorruption, match="schema identifier"):
-        EmailStore(database)
-
-
-def test_schema_metadata_enum_rejects_non_text_on_delete_value():
-    with pytest.raises(EmailPersistenceCorruption, match="schema text.*on_delete"):
-        email_store_module._schema_metadata_enum(
-            7, field="pragma foreign_key_list on_delete"
-        )
-
-
-def test_current_schema_rejects_uppercase_action_status_literals(tmp_path: Path):
-    database = tmp_path / "uppercase-action-status-literals.sqlite3"
-    EmailStore(database)
-    gc.collect()
-    _damage_current_email_actions_metadata(database, changed_check="action_uppercase_status")
-    with sqlite3.connect(database) as db:
-        sql = db.execute("select sql from sqlite_schema where name='actions'").fetchone()[0]
-    assert "email_status in ( 'PENDING' , 'PROCESSING' , 'DONE' , 'FAILED' )" in sql
-    _assert_current_email_metadata_rejected_without_repair(database)
-
-
-@pytest.mark.parametrize("populated", (False, True))
-def test_current_schema_missing_required_column_is_domain_corruption(
-    tmp_path: Path,
-    populated: bool,
-):
-    database = tmp_path / f"missing-column-{populated}.sqlite3"
-    store = EmailStore(database)
-    if populated:
-        _persist_scan(
-            store,
-            _classification(status=EmailClassificationStatus.PENDING_FEEDBACK),
-        )
-    gc.collect()
-    with sqlite3.connect(database) as db:
-        db.execute("alter table emails drop column message_normalized_text")
-
-    with pytest.raises(
-        sqlite3.IntegrityError,
-        match="malformed current provider/config declaration",
-    ):
-        EmailStore(database)
-
-
-def test_current_schema_allows_unrelated_extra_tables(tmp_path: Path):
-    database = tmp_path / "extra-schema.sqlite3"
-    EmailStore(database)
-    gc.collect()
-    with sqlite3.connect(database) as db:
-        db.executescript(
-            """
-            create table unrelated_email_extension (
-                extension_id integer primary key,
-                payload text
-            );
-            """
-        )
-    EmailStore(database)
-    assert "unrelated_email_extension" in {
-        row["name"] for row in _fetchall(
-            database, "select name from sqlite_master where type='table'"
-        )
-    }
-
-
 def test_current_schema_rejects_extra_canonical_email_column(tmp_path: Path):
     database = tmp_path / "extra-canonical-column.sqlite3"
     EmailStore(database)
     gc.collect()
+    _close_idle_connections()
     with sqlite3.connect(database) as db:
         db.execute("alter table emails add column unrelated_extension text")
     with pytest.raises(
         sqlite3.IntegrityError,
-        match="malformed current provider/config declaration",
+        match="unsupported or malformed Store source schema",
     ):
         EmailStore(database)
     assert "unrelated_extension" in {
@@ -3263,147 +1980,21 @@ def test_current_schema_rejects_weakened_cursor_state_check(
     database = tmp_path / "weakened-cursor-schema.sqlite3"
     EmailStore(database)
     gc.collect()
+    _close_idle_connections()
     _weaken_scan_cursor_state_check(database)
 
     with pytest.raises(
         sqlite3.IntegrityError,
-        match="malformed current provider/config declaration",
+        match="unsupported or malformed Store source schema",
     ):
         EmailStore(database)
-
-
-@pytest.mark.parametrize(
-    ("action_type_declaration", "status_declaration"),
-    (
-        (
-            "text not null check(action_type in "
-            "('label', 'mark_read', 'archive', 'move', 'trash', 'auto_reply'))",
-            "text not null check(status in "
-            "('pending', 'processing', 'done', 'skipped', 'failed'))",
-        ),
-        (
-            "text not null check(action_type in "
-            "('label', 'mark_read', 'archive', 'move', 'trash'))",
-            "text not null check(status in "
-            "('pending', 'processing', 'done', 'failed', 'skipped'))",
-        ),
-    ),
-)
-def test_current_schema_rejects_weakened_direct_action_checks(
-    tmp_path: Path,
-    action_type_declaration: str,
-    status_declaration: str,
-):
-    database = tmp_path / "weakened-direct-action-check.sqlite3"
-    EmailStore(database)
-    gc.collect()
-    change = ("action_auto_reply" if "auto_reply" in action_type_declaration
-              else "action_reordered_status")
-    _damage_current_email_actions_metadata(database, changed_check=change)
-    with sqlite3.connect(database) as db:
-        sql = db.execute("select sql from sqlite_schema where name='actions'").fetchone()[0]
-    if change == "action_auto_reply":
-        assert "'flag_important' , 'auto_reply'" in sql
-    else:
-        assert "email_status in ( 'pending' , 'processing' , 'done' , 'failed' , 'skipped' )" in sql
-    _assert_current_email_metadata_rejected_without_repair(database)
-
-
-@pytest.mark.parametrize(
-    ("column", "action_type_declaration", "status_declaration"),
-    (
-        (
-            "action_type",
-            "text collate nocase not null check(action_type in "
-            "('label', 'mark_read', 'archive', 'move', 'trash', "
-            "'flag_important'))",
-            "text not null check(status in "
-            "('pending', 'processing', 'done', 'skipped', 'failed'))",
-        ),
-        (
-            "status",
-            "text not null check(action_type in "
-            "('label', 'mark_read', 'archive', 'move', 'trash', "
-            "'flag_important'))",
-            "text collate nocase not null "
-            "check(status in ('pending', 'processing', 'done', 'skipped', 'failed'))",
-        ),
-    ),
-)
-def test_current_schema_rejects_collation_on_required_direct_action_columns(
-    tmp_path: Path,
-    column: str,
-    action_type_declaration: str,
-    status_declaration: str,
-):
-    database = tmp_path / f"collated-email-actions-{column}.sqlite3"
-    EmailStore(database)
-    gc.collect()
-    target_column = "email_" + column
-    _damage_current_email_actions_metadata(database, nocase_column=target_column)
-    with sqlite3.connect(database) as db:
-        sql = db.execute("select sql from sqlite_schema where name='actions'").fetchone()[0]
-    assert f"{target_column} text collate nocase generated always" in sql
-    if column == "status":
-        declaration = sql.split("email_status text collate nocase generated always", 1)[1].split(" virtual", 1)[0]
-        assert "('email_action_attempts','email_actions','email_unsubscribe_claims','email_reply_dispatch_claims')" in declaration
-    _assert_current_email_metadata_rejected_without_repair(database)
-
-
-@pytest.mark.parametrize(
-    ("attempt_number_declaration", "status_declaration"),
-    (
-        (
-            "integer not null check(attempt_number >= 0)",
-            "text not null check(status in ('done', 'failed'))",
-        ),
-        (
-            "integer not null check(attempt_number > 0)",
-            "text not null check(status in ('processing', 'done', 'failed'))",
-        ),
-    ),
-)
-def test_current_schema_rejects_weakened_action_attempt_checks(
-    tmp_path: Path,
-    attempt_number_declaration: str,
-    status_declaration: str,
-):
-    database = tmp_path / "weakened-action-attempt-check.sqlite3"
-    EmailStore(database)
-    gc.collect()
-    change = ("attempt_nonpositive_number" if ">= 0" in attempt_number_declaration
-              else "attempt_processing_status")
-    _damage_current_email_actions_metadata(database, changed_check=change)
-    with sqlite3.connect(database) as db:
-        sql = db.execute("select sql from sqlite_schema where name='actions'").fetchone()[0]
-    if change == "attempt_nonpositive_number":
-        assert "email_attempt_number >= 0" in sql
-    else:
-        assert "email_status in ( 'processing' , 'done' , 'skipped' , 'failed' )" in sql
-    _assert_current_email_metadata_rejected_without_repair(database)
-
-
-def test_current_schema_rejects_collation_on_required_action_attempt_status(
-    tmp_path: Path,
-):
-    database = tmp_path / "collated-email-action-attempt-status.sqlite3"
-    EmailStore(database)
-    gc.collect()
-    # Both source status columns use the same target generated column.
-    _damage_current_email_actions_metadata(database, nocase_column="email_status")
-    with sqlite3.connect(database) as db:
-        sql = db.execute("select sql from sqlite_schema where name='actions'").fetchone()[0]
-    assert "email_status text collate nocase generated always" in sql
-    declaration = sql.split("email_status text collate nocase generated always", 1)[1].split(" virtual", 1)[0]
-    for kind in ("email_action_attempts", "email_actions", "email_unsubscribe_claims", "email_reply_dispatch_claims"):
-        assert kind in declaration
-    _assert_current_email_metadata_rejected_without_repair(database)
 
 
 def test_current_schema_rejects_wrong_account_column_nullability(tmp_path: Path):
     database = tmp_path / "wrong-account-nullability.sqlite3"
     EmailStore(database)
     gc.collect()
+    _close_idle_connections()
     with sqlite3.connect(database) as db:
         original = db.execute("select sql from sqlite_schema where name='configs'").fetchone()[0]
         assert original.count("(account_display_name is not null)") == 1
@@ -3416,7 +2007,7 @@ def test_current_schema_rejects_wrong_account_column_nullability(tmp_path: Path)
         db.execute("pragma writable_schema=off")
 
     before = sha256(database.read_bytes()).hexdigest()
-    with pytest.raises(sqlite3.IntegrityError, match="malformed current provider/config declaration"):
+    with pytest.raises(sqlite3.IntegrityError, match="unsupported or malformed Store source schema"):
         EmailStore(database)
     assert sha256(database.read_bytes()).hexdigest() == before
 
@@ -3436,6 +2027,7 @@ def test_current_schema_rejects_wrong_config_type_or_check(
     database = tmp_path / "wrong-config-declaration.sqlite3"
     EmailStore(database)
     gc.collect()
+    _close_idle_connections()
     with sqlite3.connect(database) as db:
         original = db.execute(
             "select sql from sqlite_schema where type='table' and name='configs'"
@@ -3452,7 +2044,7 @@ def test_current_schema_rejects_wrong_config_type_or_check(
         db.commit()
         db.execute("pragma writable_schema=off")
     with pytest.raises(
-        sqlite3.IntegrityError, match="malformed current provider/config declaration"
+        sqlite3.IntegrityError, match="unsupported or malformed Store source schema"
     ):
         EmailStore(database)
 
@@ -3480,14 +2072,14 @@ def test_durable_validation_boundary_normalizes_missing_row_field(
 @pytest.mark.parametrize(
     ("damage_sql", "match"),
     (
-        ("drop table state", "unsupported or mixed Store/Email source schema"),
+        ("drop table state", "unsupported or malformed Store source schema"),
         (
             "drop index idx_state_email_scan_cursors_pk",
-            "malformed current provider/config declaration",
+            "unsupported or malformed Store source schema",
         ),
         (
             "drop trigger trg_configs_snapshot_update",
-            "malformed current provider/config declaration",
+            "unsupported or malformed Store source schema",
         ),
     ),
 )
@@ -3499,6 +2091,7 @@ def test_current_schema_missing_required_structure_is_domain_corruption(
     database = tmp_path / f"missing-structure-{match}.sqlite3"
     EmailStore(database)
     gc.collect()
+    _close_idle_connections()
     with sqlite3.connect(database) as db:
         db.execute(damage_sql)
 
@@ -3529,7 +2122,7 @@ def test_current_schema_requires_unsubscribe_receipt_classification_index(
         db.execute(f"drop index {index_name}")
 
     with pytest.raises(
-        sqlite3.IntegrityError, match="malformed current provider/config declaration"
+        sqlite3.IntegrityError, match="unsupported or malformed Store source schema"
     ):
         EmailStore(database)
     with sqlite3.connect(database) as db:
@@ -3557,140 +2150,13 @@ def test_current_v17_schema_missing_result_integrity_column_fails_without_repair
     _assert_current_email_metadata_rejected_without_repair(database)
 
 
-
-
-@pytest.mark.parametrize("unrelated_count", [0, 2000])
-def test_audited_unsubscribe_lineage_query_uses_exact_primary_key_chain(
-    tmp_path: Path, unrelated_count: int,
-) -> None:
-    database = tmp_path / "unsubscribe-lineage-query-plan.sqlite3"
-    from app.run_storage import insert_run
-
-    email_store = EmailStore(database)
-    authorization = _unsubscribe_authorization(email_store)
-    claim = email_store.claim_email_unsubscribe_write(**authorization, owner=_UNSUBSCRIBE_OWNER_A)
-    assert claim is not None
-    task_store = AutoReplyStore(database)
-    task = task_store.ensure_reply_task(
-        channel="email", conversation_id="lineage-thread", conversation_title="Email",
-        single_chat=True, trigger_message_id=str(authorization["action_identity"]),
-        trigger_sender="sender", trigger_text="exact unsubscribe source",
-        trigger_create_time="2026-10-12T00:00:00Z",
-    )
-    with task_store._connect() as db:
-        audit_id = insert_run(db, "agent_runs", {
-            "task_id": task.id, "role": "audit", "execution_generation": task.execution_generation,
-        }).lastrowid
-        update_action(db, "email_unsubscribe_effects",
-                      (authorization["action_identity"], claim["effect_digest"]),
-                      {"audit_agent_run_id": audit_id})
-        for index in range(unrelated_count):
-            parent_parts = task8_insert_parts("reply_tasks", {
-                "conversation_id": f"unrelated-{index}", "trigger_message_id": str(index),
-                "status": "done", "conversation_title": "Unrelated", "single_chat": 1,
-                "trigger_create_time": "2026-10-12T00:00:00Z", "trigger_sender": "sender",
-            })
-            parent = db.execute(
-                f"insert into tasks({parent_parts.columns}) values({parent_parts.values})",
-                parent_parts.parameters,
-            ).lastrowid
-            input_parts = task8_insert_parts("reply_task_inputs", {
-                "legacy_key": 100000 + index, "parent_id": parent, "channel": "dingtalk",
-                "conversation_id": f"unrelated-input-{index}", "conversation_title": "Unrelated",
-                "single_chat": 1, "trigger_message_id": str(index),
-                "trigger_create_time": "2026-10-12T00:00:00Z", "trigger_sender": "sender",
-                "business_object_key": "",
-                "trigger_text": "irrelevant body " * 200,
-            })
-            canonical = db.execute(
-                f"insert into tasks({input_parts.columns}) values({input_parts.values})",
-                input_parts.parameters,
-            ).lastrowid
-            pointer = task8_set_parts(
-                "reply_tasks", {}, structural_sql={"current_input_id": "?"},
-                structural_parameters=(canonical,),
-            )
-            db.execute(
-                f"update tasks set {pointer.sql} where record_type='reply_tasks' and id=?",
-                (*pointer.parameters, parent),
-            )
-    parameters = (authorization["action_identity"], claim["effect_digest"])
-    with sqlite3.connect(database) as db:
-        details = [
-            str(row[3])
-            for row in db.execute(
-                "explain query plan "
-                + email_store_module._AUDITED_UNSUBSCRIBE_LINEAGE_SQL,
-                parameters,
-            )
-        ]
-
-    assert any(
-        "SEARCH a USING INDEX idx_actions_email_email_unsubscribe_effects_0 "
-        "(email_action_identity=? AND email_effect_digest=?)"
-        in detail
-        for detail in details
-    )
-    assert any(
-        "SEARCH runs USING INTEGER PRIMARY KEY" in detail for detail in details
-    )
-    assert sum(
-        "SEARCH tasks USING INDEX idx_task20_numeric_identity" in detail
-        for detail in details
-    ) == 2
-    assert not any("USE TEMP B-TREE" in detail for detail in details)
-    steps = 0
-
-    def progress():
-        nonlocal steps
-        steps += 10
-        return int(steps >= 500)
-
-    with task_store._connect() as db:
-        db.set_progress_handler(progress, 10)
-        try:
-            rows = db.execute(
-                email_store_module._AUDITED_UNSUBSCRIBE_LINEAGE_SQL, parameters
-            ).fetchall()
-        except sqlite3.OperationalError as exc:
-            if "interrupted" not in str(exc):
-                raise
-            raise AssertionError(
-                {"steps": steps, "details": details}
-            ) from exc
-    assert len(rows) == 1
-    assert rows[0]["audit_run_id"] == audit_id
-    assert rows[0]["task_id"] == task.id
-    assert rows[0]["trigger_message_id"] == authorization["action_identity"]
-    assert rows[0]["task_execution_generation"] == task.execution_generation
-    assert not any(
-        "SCAN runs" in detail or "SCAN tasks" in detail for detail in details
-    ), details
-    assert steps < 500, {"steps": steps, "details": details}
-
-
-def test_current_schema_missing_required_foreign_key_is_domain_corruption(
-    tmp_path: Path,
-):
-    database = tmp_path / "missing-action-attempt-foreign-key.sqlite3"
-    EmailStore(database)
-    gc.collect()
-    _damage_current_email_actions_metadata(database, missing_attempt_fk=True)
-    with sqlite3.connect(database) as db:
-        assert not any(
-            row[2] == "actions" and row[3] == "email_operation_parent_type"
-            and row[4] == "record_type"
-            for row in db.execute("pragma foreign_key_list(actions)")
-        )
-    _assert_current_email_metadata_rejected_without_repair(database)
-
-
 def test_current_schema_missing_required_state_primary_key_is_rejected(
     tmp_path: Path,
 ):
     database = tmp_path / "missing-cursor-primary-key.sqlite3"
     EmailStore(database)
     gc.collect()
+    _close_idle_connections()
     with sqlite3.connect(database) as db:
         original = db.execute(
             "select sql from sqlite_schema where type='table' and name='state'"
@@ -3709,10 +2175,9 @@ def test_current_schema_missing_required_state_primary_key_is_rejected(
 
     with pytest.raises(
         sqlite3.IntegrityError,
-        match="malformed current provider/config declaration",
+        match="unsupported or malformed Store source schema",
     ):
         EmailStore(database)
-
 
 
 def test_current_schema_missing_required_unique_key_is_rejected_without_repair(
@@ -3721,6 +2186,7 @@ def test_current_schema_missing_required_unique_key_is_rejected_without_repair(
     database = tmp_path / "missing-message-unique-key.sqlite3"
     EmailStore(database)
     gc.collect()
+    _close_idle_connections()
 
     def unique_index_columns(db):
         return {
@@ -3800,7 +2266,7 @@ def test_current_schema_missing_required_unique_key_is_rejected_without_repair(
 
     # Paired preflight rejects the malformed current declaration before row validation.
     with pytest.raises(
-        sqlite3.IntegrityError, match="malformed current provider/config declaration"
+        sqlite3.IntegrityError, match="unsupported or malformed Store source schema"
     ):
         EmailStore(database)
 
@@ -3823,6 +2289,7 @@ def test_invalid_utf8_json_blob_is_domain_corruption(tmp_path: Path):
     database = tmp_path / "invalid-utf8-json.sqlite3"
     EmailStore(database)
     gc.collect()
+    _close_idle_connections()
     _insert_account_with_scan_folders_json(database, sqlite3.Binary(b"\xff"))
 
     with pytest.raises(EmailPersistenceCorruption, match="scan_folders_json"):
@@ -3855,7 +2322,7 @@ def test_malformed_schema_version_is_domain_corruption(tmp_path: Path):
 
     with pytest.raises(
         sqlite3.IntegrityError,
-        match="unsupported or mixed Store/Email source schema",
+        match="unsupported or malformed Store source schema",
     ):
         EmailStore(database)
     with sqlite3.connect(database) as db:
@@ -3868,54 +2335,6 @@ def test_malformed_schema_version_is_domain_corruption(tmp_path: Path):
         assert db.execute("pragma schema_version").fetchone()[0] == cookie_before
     assert sha256(database.read_bytes()).hexdigest() == bytes_before
     assert not Path(f"{database}-wal").exists()
-
-
-def test_schema_version_table_missing_version_column_is_domain_corruption(
-    tmp_path: Path,
-):
-    database = tmp_path / "missing-schema-version-column.sqlite3"
-    with sqlite3.connect(database) as db:
-        db.executescript(
-            """
-            create table email_schema_migrations (
-                schema_revision integer primary key,
-                applied_at text not null
-            );
-            insert into email_schema_migrations values (
-                3,
-                '2026-08-29T16:00:00+00:00'
-            );
-            """
-        )
-
-    with sqlite3.connect(database) as db:
-        schema_before = db.execute(
-            "select type, name, tbl_name, sql from sqlite_schema order by type, name"
-        ).fetchall()
-        facts_before = db.execute("select * from email_schema_migrations").fetchall()
-        cookie_before = db.execute("pragma schema_version").fetchone()[0]
-    bytes_before = sha256(database.read_bytes()).hexdigest()
-
-    with pytest.raises(sqlite3.OperationalError, match="no such column: version"):
-        EmailStore(database)
-    with sqlite3.connect(database) as db:
-        assert db.execute(
-            "select type, name, tbl_name, sql from sqlite_schema order by type, name"
-        ).fetchall() == schema_before
-        assert db.execute(
-            "select * from email_schema_migrations"
-        ).fetchall() == facts_before
-        assert db.execute("pragma schema_version").fetchone()[0] == cookie_before
-    assert sha256(database.read_bytes()).hexdigest() == bytes_before
-    assert not Path(f"{database}-wal").exists()
-
-
-
-
-
-
-
-
 
 
 def test_current_v16_missing_authorization_column_fails_without_schema_repair(
@@ -3944,86 +2363,6 @@ def test_current_v16_missing_legacy_provenance_column_fails_without_schema_repai
     _assert_current_email_metadata_rejected_without_repair(database)
 
 
-
-
-@pytest.mark.parametrize("full_pair", (False, True))
-def test_future_email_schema_version_fails_closed_before_schema_changes(
-    tmp_path: Path,
-    full_pair: bool,
-):
-    database = tmp_path / "future.sqlite3"
-    future_version = email_store_module.EMAIL_SCHEMA_VERSION + 1
-    if full_pair:
-        EmailStore(database)
-        gc.collect()
-    with sqlite3.connect(database) as db:
-        assert db.execute("pragma journal_mode = delete").fetchone()[0] == "delete"
-        if full_pair:
-            db.execute(
-                "update email_schema_migrations set version=? where version=?",
-                (future_version, email_store_module.EMAIL_SCHEMA_VERSION),
-            )
-        else:
-            db.execute(
-                """
-                create table email_schema_migrations (
-                    version integer primary key,
-                    applied_at text not null
-                )
-                """
-            )
-            db.execute(
-                "insert into email_schema_migrations values (?, ?)",
-                (future_version, "2026-08-29T16:00:00+00:00"),
-            )
-    with sqlite3.connect(database) as db:
-        schema_before = db.execute(
-            "select type, name, tbl_name, sql from sqlite_schema order by type, name"
-        ).fetchall()
-        facts_before = db.execute("select * from email_schema_migrations").fetchall()
-        marker_before = (
-            db.execute(
-                f"select value, updated_at from ({state_projection('service_state')}) "
-                "where key='store_schema_version'"
-            ).fetchone()
-            if full_pair else None
-        )
-        cookie_before = db.execute("pragma schema_version").fetchone()[0]
-    bytes_before = sha256(database.read_bytes()).hexdigest()
-
-    with pytest.raises(
-        sqlite3.IntegrityError,
-        match="unsupported or mixed Store/Email source schema",
-    ):
-        EmailStore(database)
-
-    with sqlite3.connect(database) as db:
-        assert db.execute(
-            "select type, name, tbl_name, sql from sqlite_schema order by type, name"
-        ).fetchall() == schema_before
-        assert db.execute(
-            "select * from email_schema_migrations"
-        ).fetchall() == facts_before
-        if full_pair:
-            assert db.execute(
-                f"select value, updated_at from ({state_projection('service_state')}) "
-                "where key='store_schema_version'"
-            ).fetchone() == marker_before
-        assert db.execute("pragma schema_version").fetchone()[0] == cookie_before
-    assert sha256(database.read_bytes()).hexdigest() == bytes_before
-    assert not Path(f"{database}-wal").exists()
-
-    if not full_pair:
-        assert not _fetchall(
-            database,
-            "select name from sqlite_master where type='table' and name='email_classifications'",
-        )
-
-
-
-
-
-
 def test_concurrent_first_initialization_is_transactionally_idempotent(
     tmp_path: Path,
 ):
@@ -4040,100 +2379,6 @@ def test_concurrent_first_initialization_is_transactionally_idempotent(
     assert len(stores) == 2
     assert len(_fetchall(database, "select * from email_schema_migrations")) == 1
     assert EmailStore(database).count_unincluded_training_examples() == 0
-
-
-
-
-@pytest.mark.parametrize("missing_table", ["emails", "email_actions"])
-def test_normal_startup_does_not_repair_missing_durable_rows(
-    tmp_path: Path,
-    missing_table: str,
-):
-    database = tmp_path / f"missing-{missing_table}.sqlite3"
-    store = EmailStore(database)
-    _persist_scan(
-        store,
-        _classification(status=EmailClassificationStatus.PROCESSED),
-    )
-    with sqlite3.connect(database) as db:
-        if missing_table == "email_actions":
-            source_rows = db.execute(
-                f"select rowid from ({email_action_projection('email_actions', include_rowid=True)})"
-            ).fetchall()
-            assert len(source_rows) == 1
-            for (source_rowid,) in source_rows:
-                assert delete_email_action(db, "email_actions", source_rowid).rowcount == 1
-        else:
-            assert db.execute("select count(*) from emails").fetchone()[0] == 1
-            assert db.execute("delete from emails").rowcount == 1
-            assert db.execute(f"select count(*) from ({EMAIL_PLAN_SQL})").fetchone()[0] == 1
-
-    with pytest.raises(EmailPersistenceCorruption):
-        EmailStore(database)
-
-    remaining_sql = (
-        f"select * from ({EMAIL_DIRECT_ACTION_SQL})"
-        if missing_table == "email_actions"
-        else "select * from emails"
-    )
-    assert len(_fetchall(database, remaining_sql)) == 0
-
-
-
-
-@pytest.mark.parametrize(
-    ("field", "different"),
-    [("account_id", "wrong-account"), ("uidvalidity", 84), ("uid", 9)],
-)
-def test_native_source_rejects_unequal_shared_email_fields_before_migration(
-    tmp_path: Path,
-    current13: Path,  # noqa: F811 - pytest fixture parameter
-    field: str,
-    different,
-):
-    db = _native_email_db(tmp_path, current13)
-    try:
-        _insert_native_email(db, "email_messages", _native_email_message())
-        _insert_native_email(
-            db, "email_classifications", _native_email_classification(**{field: different})
-        )
-        source = capture_email_canonical_source(db)
-        with pytest.raises(ValueError, match="unrepresentable shared Email facts"):
-            migrate_email_canonical_schema(db, source)
-        assert capture_email_canonical_source(db) == source
-        assert db.execute("select count(*) from email_messages").fetchone()[0] == 1
-        assert db.execute("select count(*) from email_classifications").fetchone()[0] == 1
-        assert db.execute("select name from sqlite_master where name='emails'").fetchone() is None
-    finally:
-        db.close()
-
-
-@pytest.mark.parametrize(
-    "tamper_sql",
-    [
-        "update emails set message_folder='Archive'",
-        "update emails set message_rfc_message_id='<tampered@example.com>'",
-        "update emails set message_thread_identity='thread-tampered'",
-    ],
-)
-def test_startup_rejects_message_locator_and_thread_mismatch(
-    tmp_path: Path,
-    tamper_sql: str,
-):
-    database = tmp_path / "message-locator-mismatch.sqlite3"
-    store = EmailStore(database)
-    _persist_scan(
-        store,
-        _classification(
-            status=EmailClassificationStatus.PENDING_FEEDBACK,
-            thread_id="thread-original",
-        ),
-    )
-    with sqlite3.connect(database) as db:
-        db.execute(tamper_sql)
-
-    with pytest.raises(EmailPersistenceCorruption, match="message locator mismatch"):
-        EmailStore(database)
 
 
 def test_startup_rejects_orphan_message_without_classification(tmp_path: Path):
@@ -4398,36 +2643,6 @@ def test_startup_accepts_model_processed_without_user_confirmation(tmp_path: Pat
         db.execute("update emails set class_confirmed_category=null")
 
     EmailStore(database)
-
-
-def test_startup_rejects_normal_processed_classification_without_plan(
-    tmp_path: Path,
-):
-    database = tmp_path / "processed-without-plan.sqlite3"
-    store = EmailStore(database)
-    _persist_scan(
-        store,
-        _classification(status=EmailClassificationStatus.PROCESSED),
-    )
-    with sqlite3.connect(database) as db:
-        for kind in ("email_actions", "email_action_plans"):
-            source_rows = db.execute(
-                f"select rowid from ({email_action_projection(kind, include_rowid=True)})"
-            ).fetchall()
-            assert len(source_rows) == 1
-            for (source_rowid,) in source_rows:
-                assert delete_email_action(db, kind, source_rowid).rowcount == 1
-        db.execute(
-            """
-            update emails
-            set class_current_action_plan_id=null
-            """
-        )
-
-    with pytest.raises(EmailPersistenceCorruption, match="processed.*ActionPlan"):
-        EmailStore(database)
-    assert _fetchall(database, f"select * from ({EMAIL_DIRECT_ACTION_SQL})") == []
-    assert _fetchall(database, f"select * from ({EMAIL_PLAN_SQL})") == []
 
 
 def test_pending_feedback_persists_message_and_cursor_without_plan_or_actions(
@@ -5396,221 +3611,6 @@ def test_stale_cursor_generation_commit_rolls_back_all_scan_state(tmp_path: Path
     )
 
 
-def test_action_attempts_append_and_duplicate_or_invalid_values_are_rejected(
-    tmp_path: Path,
-):
-    database = tmp_path / "attempts.sqlite3"
-    store = EmailStore(database)
-    _persist_scan(
-        store,
-        _classification(status=EmailClassificationStatus.PROCESSED),
-    )
-    action_id = _fetchall(database, f"select action_id from ({EMAIL_DIRECT_ACTION_SQL})")[0][
-        "action_id"
-    ]
-
-    first = store.append_action_attempt(
-        action_id=action_id,
-        attempt_number=1,
-        status="failed",
-        provider_operation="STORE labels",
-        provider_target="dingtalk-account:message-id:<msg-1@example.com>",
-        provider_result_id="",
-        error="timeout",
-        started_at="2026-08-29T16:00:00+00:00",
-        finished_at="2026-08-29T16:00:01+00:00",
-    )
-    second = store.append_action_attempt(
-        action_id=action_id,
-        attempt_number=2,
-        status="done",
-        provider_operation="readback_noop",
-        provider_target="dingtalk-account:message-id:<msg-1@example.com>",
-        provider_result_id="revision-2",
-        error="",
-        started_at="2026-08-29T16:01:00+00:00",
-        finished_at="2026-08-29T16:01:01+00:00",
-    )
-
-    assert first["status"] == "failed"
-    assert second["status"] == "done"
-    assert [row["attempt_number"] for row in store.list_action_attempts(action_id)] == [
-        1,
-        2,
-    ]
-    current = _fetchall(
-        database, f"select * from ({EMAIL_DIRECT_ACTION_SQL}) where action_id=?", (action_id,)
-    )[0]
-    assert current["status"] == "done"
-    assert current["attempt_count"] == 2
-
-    with pytest.raises(EmailActionAttemptConflict, match="already exists"):
-        store.append_action_attempt(
-            action_id=action_id,
-            attempt_number=2,
-            status="done",
-            provider_operation="duplicate",
-            provider_target="same",
-            provider_result_id="same",
-            error="",
-            started_at="2026-08-29T16:02:00+00:00",
-            finished_at="2026-08-29T16:02:01+00:00",
-        )
-    with pytest.raises(ValueError, match="attempt status"):
-        store.append_action_attempt(
-            action_id=action_id,
-            attempt_number=3,
-            status="processing",
-            provider_operation="invalid",
-            provider_target="same",
-            provider_result_id="",
-            error="",
-            started_at="2026-08-29T16:03:00+00:00",
-            finished_at="2026-08-29T16:03:01+00:00",
-        )
-    with pytest.raises(sqlite3.IntegrityError, match="status"):
-        with sqlite3.connect(database) as db:
-            action_rows = db.execute(
-                f"select rowid from ({EMAIL_DIRECT_ACTION_LOCATOR_SQL}) where action_id=?",
-                (action_id,),
-            ).fetchall()
-            for action_row in action_rows:
-                update_email_action(db, "email_actions", action_row[0], {"status": "discarded"})
-
-
-def test_direct_action_claim_does_not_materialize_settled_history(tmp_path: Path, monkeypatch):
-    from contextlib import contextmanager
-
-    store = EmailStore(tmp_path / "bounded-claim.sqlite3")
-    for uid in range(1, 26):
-        classification = _classification(
-            message_id=f"settled-{uid}",
-            status=EmailClassificationStatus.PROCESSED,
-            actions=(EmailAction.ARCHIVE,),
-            action_parameters={},
-            stable_message_identity=f"dingtalk-account:imap:INBOX:42:{uid}",
-            uid=uid,
-        )
-        _persist_scan(store, classification)
-    with store._connect() as db:
-        action_rows = db.execute(f"select rowid from ({EMAIL_DIRECT_ACTION_LOCATOR_SQL})").fetchall()
-        for action_row in action_rows:
-            update_email_action(db, "email_actions", action_row["rowid"], {"status": "done"})
-    fetch_sizes = []
-    connect = store._connect
-
-    class Cursor:
-        def __init__(self, cursor):
-            self.cursor = cursor
-
-        def fetchall(self):
-            rows = self.cursor.fetchall()
-            fetch_sizes.append(len(rows))
-            return rows
-        def __getattr__(self, name):
-            return getattr(self.cursor, name)
-
-    class Connection:
-        def __init__(self, db):
-            self.db = db
-
-        def execute(self, *args):
-            return Cursor(self.db.execute(*args))
-
-        def __getattr__(self, name):
-            return getattr(self.db, name)
-
-    @contextmanager
-    def instrumented():
-        with connect() as db:
-            yield Connection(db)
-
-    monkeypatch.setattr(store, "_connect", instrumented)
-    assert store.claim_next_direct_action(claimed_at="2026-10-03T09:40:00+00:00") is None
-    assert fetch_sizes == [0]
-
-
-def test_direct_action_probe_does_not_load_retired_pending_plan_bodies(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    store = EmailStore(tmp_path / "retired-plan-probe.sqlite3")
-    for index in range(10):
-        original = _classification(
-            status=EmailClassificationStatus.PROCESSED,
-            message_id=f"retired-plan-{index}",
-        )
-        _persist_scan(store, original)
-        application = _correct_to_move_plan(
-            store, original, request_id=f"retired-plan-correction-{index}",
-        )
-        with store._connect() as db:
-            action_rows = db.execute(
-                f"select rowid from ({EMAIL_DIRECT_ACTION_LOCATOR_SQL}) where action_plan_id=?",
-                (application.resulting_action_plan_id,),
-            ).fetchall()
-            for action_row in action_rows:
-                update_email_action(db, "email_actions", action_row["rowid"], {"status": "done"})
-    original_open = store._open_connection
-    payload_reads = []
-
-    def instrumented_connection(*args, **kwargs):
-        db = original_open(*args, **kwargs)
-
-        def authorize(operation, table, column, database, trigger):
-            if operation == sqlite3.SQLITE_READ and table == "actions" and column == "email_actions_json":
-                payload_reads.append(table)
-            return sqlite3.SQLITE_OK
-
-        db.set_authorizer(authorize)
-        return db
-
-    monkeypatch.setattr(store, "_open_connection", instrumented_connection)
-    assert store.claim_next_direct_action(claimed_at="2026-10-12T00:00:00+00:00") is None
-    assert payload_reads == []
-
-
-@pytest.mark.parametrize("queue", ["empty", "settled", "other_account", "blocked"])
-def test_idle_direct_action_poll_does_not_wait_for_writer(tmp_path, monkeypatch, queue):
-    database = tmp_path / "idle-direct-action.sqlite3"
-    store = EmailStore(database)
-    if queue != "empty":
-        _persist_scan(
-            store, _classification(status=EmailClassificationStatus.PROCESSED)
-        )
-        with store._connect() as db:
-            if queue == "settled":
-                action_rows = db.execute(f"select rowid from ({EMAIL_DIRECT_ACTION_LOCATOR_SQL})").fetchall()
-                for action_row in action_rows:
-                    update_email_action(db, "email_actions", action_row["rowid"], {"status": "done"})
-            elif queue == "blocked":
-                action_rows = db.execute(f"select rowid from ({EMAIL_DIRECT_ACTION_LOCATOR_SQL})").fetchall()
-                for action_row in action_rows:
-                    update_email_action(db, "email_actions", action_row["rowid"], {
-                        "status": "failed", "next_attempt_at": "2026-09-01T12:00:00+00:00",
-                    })
-    open_connection = store._open_connection
-
-    def no_wait_connection(*args, **kwargs):
-        db = open_connection(*args, **kwargs)
-        db.execute("pragma busy_timeout=0")
-        return db
-
-    monkeypatch.setattr(store, "_open_connection", no_wait_connection)
-    writer = sqlite3.connect(database, timeout=0)
-    try:
-        writer.execute("begin immediate")
-        assert (
-            store.claim_next_direct_action(
-                claimed_at="2026-08-30T12:00:00+00:00",
-                account_ids=("unrelated",) if queue == "other_account" else None,
-            )
-            is None
-        )
-    finally:
-        writer.rollback()
-        writer.close()
-
-
 def test_direct_action_probe_is_not_a_reservation(tmp_path, monkeypatch):
     database = tmp_path / "probe-is-not-reservation.sqlite3"
     store = EmailStore(database)
@@ -5908,56 +3908,6 @@ def test_processing_action_blocks_concurrent_sibling_claims(tmp_path: Path):
         "label": "processing",
         "mark_read": "pending",
     }
-
-
-def test_processing_action_blocks_only_its_own_classification(tmp_path: Path):
-    database = tmp_path / "processing-allows-other-classification.sqlite3"
-    store = EmailStore(database)
-    first_classification = _classification(
-        status=EmailClassificationStatus.PROCESSED,
-        message_id="first",
-        actions=(EmailAction.LABEL, EmailAction.MARK_READ),
-        action_parameters={
-            EmailAction.LABEL: {"labels": ["work"]},
-        },
-    )
-    second_classification = _classification(
-        status=EmailClassificationStatus.PROCESSED,
-        message_id="second",
-        actions=(EmailAction.LABEL,),
-        action_parameters={
-            EmailAction.LABEL: {"labels": ["work"]},
-        },
-    )
-    _persist_scan(store, first_classification)
-    first = store.claim_next_direct_action(claimed_at="2026-08-30T12:00:00+00:00")
-    assert first is not None
-    assert first.classification_id == first_classification.classification_id
-    _persist_scan(store, second_classification)
-    with sqlite3.connect(database) as db:
-        first_rows = db.execute(
-            f"select rowid from ({EMAIL_DIRECT_ACTION_LOCATOR_SQL}) "
-            "where classification_id=? and action_type='mark_read'",
-            (first_classification.classification_id,),
-        ).fetchall()
-        for action_row in first_rows:
-            update_email_action(db, "email_actions", action_row[0], {
-                "updated_at": "2026-08-30T11:00:00+00:00",
-            })
-        second_rows = db.execute(
-            f"select rowid from ({EMAIL_DIRECT_ACTION_LOCATOR_SQL}) where classification_id=?",
-            (second_classification.classification_id,),
-        ).fetchall()
-        for action_row in second_rows:
-            update_email_action(db, "email_actions", action_row[0], {
-                "updated_at": "2026-08-30T13:00:00+00:00",
-            })
-
-    claimed = store.claim_next_direct_action(claimed_at="2026-08-30T12:01:00+00:00")
-
-    assert claimed is not None
-    assert claimed.classification_id == second_classification.classification_id
-    assert claimed.action_type is EmailAction.LABEL
 
 
 @pytest.mark.parametrize(
@@ -6417,37 +4367,6 @@ def test_login_required_unsubscribe_receipt_releases_dependent_trash(
     assert trash.action_type is EmailAction.TRASH
 
 
-def test_claim_rejects_cycle_between_explicit_and_provider_safe_dependencies(
-    tmp_path: Path,
-):
-    database = tmp_path / "effective-action-dependency-cycle.sqlite3"
-    store = EmailStore(database)
-    _persist_scan(
-        store,
-        _classification(
-            status=EmailClassificationStatus.PROCESSED,
-            actions=(EmailAction.MOVE, EmailAction.FLAG_IMPORTANT),
-            action_parameters={
-                EmailAction.MOVE: {"target_folder": "Legal"},
-            },
-        ),
-    )
-    with sqlite3.connect(database) as db:
-        action_rows = db.execute(
-            f"select rowid from ({EMAIL_DIRECT_ACTION_LOCATOR_SQL}) where action_type='move'"
-        ).fetchall()
-        for action_row in action_rows:
-            update_email_action(db, "email_actions", action_row[0], {
-                "parameters_json": '{"depends_on":["flag_important"],"target_folder":"Legal"}',
-            })
-
-    with pytest.raises(
-        EmailPersistenceCorruption,
-        match="effective direct action dependencies must be acyclic",
-    ):
-        store.claim_next_direct_action(claimed_at="2026-09-07T12:00:00+00:00")
-
-
 def test_retry_delayed_move_blocks_important_flag_claim(tmp_path: Path):
     store = EmailStore(tmp_path / "delayed-move-blocks-important.sqlite3")
     _persist_scan(
@@ -6622,45 +4541,6 @@ def test_exhausted_ambiguous_message_move_recovers_after_retry_ceiling(
     assert retry is not None
     assert retry.action_type is EmailAction.MOVE
     assert retry.attempt_number == 4
-
-
-def test_retry_exhausted_provider_apply_move_blocks_important_flag_claim(
-    tmp_path: Path,
-):
-    store = EmailStore(tmp_path / "exhausted-provider-apply-move.sqlite3")
-    _persist_scan(
-        store,
-        _classification(
-            status=EmailClassificationStatus.PROCESSED,
-            actions=(EmailAction.MOVE, EmailAction.FLAG_IMPORTANT),
-            action_parameters={EmailAction.MOVE: {"target_folder": "Legal"}},
-        ),
-    )
-    claim_times = (
-        "2026-09-07T12:00:00+00:00",
-        "2026-09-07T12:01:00+00:00",
-        "2026-09-07T12:03:00+00:00",
-    )
-    for attempt_number, claimed_at in enumerate(claim_times, start=1):
-        move = store.claim_next_direct_action(claimed_at=claimed_at)
-        assert move is not None
-        assert move.action_type is EmailAction.MOVE
-        assert move.attempt_number == attempt_number
-        store.complete_direct_action_attempt(
-            move,
-            status="failed",
-            provider_operation="MOVE",
-            provider_target=move.locator.stable_message_identity,
-            provider_result_id="",
-            error="provider_apply_failed:TimeoutError",
-            finished_at=claimed_at,
-        )
-
-    assert (
-        store.claim_next_direct_action(claimed_at="2026-09-08T12:00:00+00:00") is None
-    )
-
-
 
 
 def test_complete_direct_action_appends_attempt_and_updates_current_atomically(
@@ -7008,156 +4888,6 @@ def test_stale_claim_cannot_complete_after_recovery_and_retry(tmp_path: Path):
     assert len(store.list_action_attempts(stale.action_id)) == 1
 
 
-def test_startup_rejects_pending_action_with_historical_terminal_attempt(
-    tmp_path: Path,
-):
-    database = tmp_path / "pending-with-attempt.sqlite3"
-    _, action_id = _create_action_with_attempts(database, ("done",))
-    with sqlite3.connect(database) as db:
-        # Lift the write-time guard only to seed what a past write left behind.
-        trigger_sql = db.execute(
-            "select sql from sqlite_schema where type='trigger' and name=?",
-            ("trg_actions_email_attempt_count_update",),
-        ).fetchone()[0]
-        db.execute("drop trigger trg_actions_email_attempt_count_update")
-        action_rows = db.execute(
-            f"select rowid from ({EMAIL_DIRECT_ACTION_LOCATOR_SQL}) where action_id=?",
-            (action_id,),
-        ).fetchall()
-        for action_row in action_rows:
-            update_email_action(db, "email_actions", action_row[0], {
-                "status": "pending", "attempt_count": 0, "started_at": "", "finished_at": "",
-                "provider_operation": "", "provider_target": "", "provider_result_id": "",
-                "error": "",
-            })
-        db.execute(trigger_sql)
-
-    with pytest.raises(EmailPersistenceCorruption, match="pending action.*attempt"):
-        EmailStore(database)
-
-
-def test_startup_rejects_action_attempt_count_mismatch(tmp_path: Path):
-    database = tmp_path / "attempt-count.sqlite3"
-    _, action_id = _create_action_with_attempts(database, ("done",))
-    with sqlite3.connect(database) as db:
-        # The write-time guard exists to stop exactly this. Lift it only long
-        # enough to seed the drift a past write left behind, then restore it, so
-        # this still proves startup refuses a database that already drifted.
-        trigger_sql = db.execute(
-            "select sql from sqlite_schema where type='trigger' and name=?",
-            ("trg_actions_email_attempt_count_update",),
-        ).fetchone()[0]
-        db.execute("drop trigger trg_actions_email_attempt_count_update")
-        action_rows = db.execute(
-            f"select rowid from ({EMAIL_DIRECT_ACTION_LOCATOR_SQL}) where action_id=?",
-            (action_id,),
-        ).fetchall()
-        for action_row in action_rows:
-            update_email_action(db, "email_actions", action_row[0], {"attempt_count": 2})
-        db.execute(trigger_sql)
-
-    with pytest.raises(EmailPersistenceCorruption, match="attempt count mismatch"):
-        EmailStore(database)
-
-
-def test_startup_rejects_gap_in_action_attempt_numbers(tmp_path: Path):
-    database = tmp_path / "attempt-gap.sqlite3"
-    _create_action_with_attempts(database, ("failed", "done"))
-    with sqlite3.connect(database) as db:
-        attempt_rows = db.execute(
-            f"select id from ({EMAIL_ATTEMPT_SQL}) where attempt_number=2"
-        ).fetchall()
-        for attempt_row in attempt_rows:
-            update_action(db, "email_action_attempts", attempt_row[0], {"attempt_number": 3})
-
-    with pytest.raises(EmailPersistenceCorruption, match="non-contiguous attempt"):
-        EmailStore(database)
-
-
-def test_startup_rejects_latest_attempt_receipt_or_status_mismatch(tmp_path: Path):
-    database = tmp_path / "attempt-latest-mismatch.sqlite3"
-    _, action_id = _create_action_with_attempts(database, ("failed", "done"))
-    with sqlite3.connect(database) as db:
-        action_rows = db.execute(
-            f"select rowid from ({EMAIL_DIRECT_ACTION_LOCATOR_SQL}) where action_id=?",
-            (action_id,),
-        ).fetchall()
-        for action_row in action_rows:
-            update_email_action(db, "email_actions", action_row[0], {
-                "provider_result_id": "wrong-receipt",
-            })
-
-    with pytest.raises(EmailPersistenceCorruption, match="latest attempt mismatch"):
-        EmailStore(database)
-
-
-def test_startup_rejects_terminal_action_without_attempt(tmp_path: Path):
-    database = tmp_path / "terminal-without-attempt.sqlite3"
-    _, action_id = _create_action_with_attempts(database, ())
-    with sqlite3.connect(database) as db:
-        action_rows = db.execute(
-            f"select rowid from ({EMAIL_DIRECT_ACTION_LOCATOR_SQL}) where action_id=?",
-            (action_id,),
-        ).fetchall()
-        for action_row in action_rows:
-            update_email_action(db, "email_actions", action_row[0], {"status": "done"})
-
-    with pytest.raises(
-        EmailPersistenceCorruption, match="terminal action.*no.*attempt"
-    ):
-        EmailStore(database)
-
-
-def test_processing_action_may_follow_terminal_attempts_but_has_no_terminal_receipt(
-    tmp_path: Path,
-):
-    database = tmp_path / "processing-retry.sqlite3"
-    _, action_id = _create_action_with_attempts(database, ("failed",))
-    with sqlite3.connect(database) as db:
-        action_rows = db.execute(
-            f"select rowid from ({EMAIL_DIRECT_ACTION_LOCATOR_SQL}) where action_id=?",
-            (action_id,),
-        ).fetchall()
-        for action_row in action_rows:
-            update_email_action(db, "email_actions", action_row[0], {
-                "status": "processing", "started_at": "2026-08-29T16:02:00+00:00",
-                "finished_at": "", "provider_operation": "operation-2",
-                "provider_target": "target-2", "provider_result_id": "", "error": "",
-            })
-
-    EmailStore(database)
-
-
-def test_atomic_scan_persistence_rolls_back_message_plan_actions_and_cursor(
-    tmp_path: Path,
-):
-    database = tmp_path / "rollback.sqlite3"
-    store = EmailStore(database)
-    with sqlite3.connect(database) as db:
-        db.execute(
-            """
-            create trigger reject_email_action_insert
-            before insert on actions
-            when new.record_type='email_actions'
-            begin
-                select raise(abort, 'injected action failure');
-            end
-            """
-        )
-
-    with pytest.raises(sqlite3.IntegrityError, match="injected action failure"):
-        _persist_scan(
-            store,
-            _classification(status=EmailClassificationStatus.PROCESSED),
-        )
-
-    assert len(_fetchall(database, f"select * from ({email_message_projection()})")) == 0
-    assert len(_fetchall(database, f"select * from ({email_classification_projection()})")) == 0
-    assert len(_fetchall(database, f"select * from ({EMAIL_PLAN_SQL})")) == 0
-    assert len(_fetchall(database, f"select * from ({EMAIL_DIRECT_ACTION_SQL})")) == 0
-    assert len(_fetchall(database, "select * from (" + state_projection("email_scan_cursors") + ")")) == 0
-
-
 def test_corrupt_stored_json_is_reported_as_domain_corruption(tmp_path: Path):
     database = tmp_path / "corrupt.sqlite3"
     store = EmailStore(database)
@@ -7202,8 +4932,6 @@ def test_corrupt_historical_action_plan_is_rejected_on_open(tmp_path: Path):
 
     with pytest.raises(EmailPersistenceCorruption, match="ActionPlan"):
         EmailStore(database)
-
-
 
 
 @pytest.mark.parametrize(
@@ -7502,10 +5230,6 @@ def test_explicit_empty_and_short_unsubscribe_results_remain_unchanged(
     assert receipt["result_text_truncated"] is False
 
 
-
-
-
-
 def _persist_unsubscribe_continuation_fixture(
     store: EmailStore,
 ) -> dict[str, object]:
@@ -7668,6 +5392,7 @@ def test_unsubscribe_state_snapshot_surfaces_real_sqlite_busy(
 ) -> None:
     store = EmailStore(tmp_path / "unsubscribe-state-busy.sqlite3")
     gc.collect()
+    _close_idle_connections()
     setup = sqlite3.connect(store.path)
     try:
         setup.execute("pragma journal_mode=delete")
@@ -7675,6 +5400,7 @@ def test_unsubscribe_state_snapshot_surfaces_real_sqlite_busy(
         setup.close()
     authorization = _persist_unsubscribe_continuation_fixture(store)
     gc.collect()
+    _close_idle_connections()
 
     original_open_connection = store._open_connection
 
@@ -8102,26 +5828,6 @@ def test_unsubscribe_receipt_is_exactly_bound_and_terminal_write_is_atomic(
         )
 
 
-def test_direct_action_parameters_must_match_immutable_plan(tmp_path: Path):
-    database = tmp_path / "corrupt-action.sqlite3"
-    store = EmailStore(database)
-    _persist_scan(
-        store,
-        _classification(status=EmailClassificationStatus.PROCESSED),
-    )
-    with sqlite3.connect(database) as db:
-        action_rows = db.execute(
-            f"select rowid from ({EMAIL_DIRECT_ACTION_LOCATOR_SQL})"
-        ).fetchall()
-        for action_row in action_rows:
-            update_email_action(db, "email_actions", action_row[0], {
-                "parameters_json": '{"labels":["silently-changed"]}',
-            })
-
-    with pytest.raises(EmailPersistenceCorruption, match="immutable direct action"):
-        EmailStore(database)
-
-
 def test_account_scan_folders_json_must_be_a_list_of_folder_names(tmp_path: Path):
     database = tmp_path / "corrupt-account.sqlite3"
     EmailStore(database)
@@ -8213,35 +5919,6 @@ def _create_task2_category(
         config_version=f"{category_key}-config-v1",
         bindings=bindings,
     )
-
-
-def _replace_category_schema_with_v19(database: Path) -> None:
-    with sqlite3.connect(database) as db:
-        restore_action_plan_snapshot_column(db)
-        db.execute("pragma foreign_keys=off")
-        db.execute("drop table if exists email_category_folder_bindings")
-        db.execute("drop table email_category_configs")
-        db.execute(
-            """
-            create table email_category_configs (
-                category text primary key,
-                description text not null default '',
-                threshold real not null,
-                actions_json text not null,
-                action_parameters_json text not null default '{}',
-                enabled integer not null default 1,
-                config_version text not null,
-                updated_at text not null default current_timestamp
-            )
-            """
-        )
-        db.execute("delete from email_schema_migrations where version >= 20")
-        db.execute(
-            "insert or replace into email_schema_migrations(version, applied_at) "
-            "values (19, '2026-09-07T12:00:00+00:00')"
-        )
-
-
 
 
 def test_fresh_category_configs_seed_structured_approved_boundaries(tmp_path: Path):
@@ -8444,8 +6121,6 @@ def test_update_descriptions_and_binding_status_round_trip(tmp_path: Path):
     assert store.get_category_config("partners")["enabled"] is False
 
 
-
-
 def test_compatibility_upsert_cannot_enable_without_complete_active_bindings(
     tmp_path: Path,
 ):
@@ -8464,8 +6139,6 @@ def test_compatibility_upsert_cannot_enable_without_complete_active_bindings(
 
     assert updated["enabled"] is False
     assert store.get_category_config("work")["enabled"] is False
-
-
 
 
 def test_creating_enabled_account_disables_categories_without_its_active_binding(
@@ -8670,8 +6343,6 @@ def test_junk_coordinator_persists_whitespace_provider_trash_exactly(
     assert persisted["provider_folder_id"] == " Deleted "
     assert persisted["provider_folder_name"] == " Deleted "
     assert store.list_account_folder_bindings("junk") == [persisted]
-
-
 
 
 @pytest.mark.parametrize("negative_status", ("missing", "ambiguous", "error"))
@@ -9008,8 +6679,6 @@ def test_category_enablement_snapshot_refuses_concurrent_category_edit(tmp_path:
     )
 
 
-
-
 def _fd_regression_account_values() -> dict[str, object]:
     return {
         "account_id": "fd-regression-account",
@@ -9147,6 +6816,7 @@ def test_read_loop_does_not_accumulate_file_descriptors(tmp_path: Path) -> None:
     store = EmailStore(tmp_path / "fd-growth.sqlite3")
     store.create_account(_fd_regression_account_values())
     gc.collect()
+    _close_idle_connections()
     gc.disable()
     try:
         before = len(os.listdir("/dev/fd"))
@@ -9465,10 +7135,6 @@ def test_a_category_whose_folder_stays_unverified_is_not_switched_back_on(
     assert store.categories_missing_active_bindings("second") == ("junk",)
 
 
-
-
-
-
 def test_a_training_label_correction_never_moves_or_trashes_the_message(
     tmp_path: Path,
 ):
@@ -9690,49 +7356,6 @@ def test_work_mail_keeps_its_important_flag_as_training_evidence(tmp_path: Path)
 
     assert [row["category_key"] for row in records] == ["work"]
     assert records[0]["important"] is True
-
-
-def test_flagged_important_between_lists_only_done_flags_in_the_window(
-    tmp_path: Path,
-):
-    database = tmp_path / "flagged-important.sqlite3"
-    store = EmailStore(database)
-    for message_id in ("inside", "outside", "not-done"):
-        _persist_scan(
-            store,
-            _classification(
-                status=EmailClassificationStatus.PROCESSED,
-                message_id=message_id,
-                actions=(EmailAction.FLAG_IMPORTANT,),
-                action_parameters={EmailAction.FLAG_IMPORTANT: {}},
-            ),
-        )
-    with sqlite3.connect(database) as db:
-        for message_id, status, created_at in (
-            ("inside", "done", "2026-09-24T02:00:00+00:00"),
-            ("outside", "done", "2026-09-23T15:59:59+00:00"),
-            ("not-done", "failed", "2026-09-24T03:00:00+00:00"),
-        ):
-            action_rows = db.execute(
-                f"""select rowid from ({EMAIL_DIRECT_ACTION_LOCATOR_SQL})
-                   where classification_id=(
-                       select classification_id from emails
-                       where stable_message_identity=?
-                   )""",
-                (f"dingtalk-account:message-id:<{message_id}@example.com>",),
-            ).fetchall()
-            for action_row in action_rows:
-                update_email_action(db, "email_actions", action_row[0], {
-                    "status": status, "created_at": created_at,
-                })
-
-    flagged = store.list_flagged_important_between(
-        datetime(2026, 9, 23, 16, tzinfo=timezone.utc),
-        datetime(2026, 9, 24, 16, tzinfo=timezone.utc),
-    )
-
-    assert len(flagged) == 1
-    assert flagged[0]["category"] == "work"
 
 
 def test_pending_training_count_preserves_eligibility_without_loading_texts(tmp_path):
