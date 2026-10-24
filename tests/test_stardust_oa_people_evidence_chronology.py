@@ -21,6 +21,15 @@ def test_org_change_uses_timestamped_evidence_and_counts_only_valid_same_gap_ret
     assert "concrete, verifiable substantive statements in approval comments as evidence" in text
 
 
+def test_historical_review_does_not_project_later_record_updates_back_to_decision_time() -> None:
+    text = GENERIC_SKILL.read_text(encoding="utf-8")
+
+    assert "For historical OA review, use only evidence demonstrably available at the original decision or return time." in text
+    assert "A record updated after that point cannot establish its earlier value" in text
+    assert "mark the earlier state as unknown" in text
+    assert "do not use the later update to prove an applicant-resolvable gap or count an effective return" in text
+
+
 def test_verified_receiving_supervisor_comment_cannot_be_rejected_for_lacking_attachment() -> None:
     text = PEOPLE_SKILL.read_text(encoding="utf-8")
 

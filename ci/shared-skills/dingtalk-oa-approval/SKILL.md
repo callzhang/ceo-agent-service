@@ -557,6 +557,8 @@ dws sheet range read --node "<nodeId>" --sheet-id "<sheetId>" --range "A1:Z80" -
 
 以下是要检查的**证据类别**，不是可直接执行的公司规则。每个类型的阈值、例外和授权人由对应业务 Skill 提供；动作一律按本 Skill 的决策表。
 
+For historical OA review, use only evidence demonstrably available at the original decision or return time. A record updated after that point cannot establish its earlier value unless version history or another timestamped source reconstructs it. If the earlier state cannot be reconstructed, mark the earlier state as unknown; do not use the later update to prove an applicant-resolvable gap or count an effective return. A fact may have existed earlier than its recorded update, but that alone does not establish what the reviewer could verify then.
+
 | 审批类型 | 需读证据 | 规则必须补齐的内容 |
 |---|---|---|
 | 项目/特批 | 商业理由、项目测算、战略/客户价值、管理意见、历史/会议依据 | 收益或毛利门槛、特批条件、授权人、低于门槛后的动作 |
