@@ -71,8 +71,7 @@
       "source": "ci/shared-skills/ceo-wechat/SKILL.md",
       "target": "skills/ceo-wechat/SKILL.md",
       "old_sha256": "dc2ae1f5aa4b3466d9fa03bf7bb608cba6734b84b7eeb64b8491c1e465472fae",
-      "new_sha256": "dc2ae1f5aa4b3466d9fa03bf7bb608cba6734b84b7eeb64b8491c1e465472fae",
-      "old_managed_sha256": "76a726dff7d5a4a9ee47029c385edb8bea177d114f7377b4db6ad76f532c489d"
+      "new_sha256": "dc2ae1f5aa4b3466d9fa03bf7bb608cba6734b84b7eeb64b8491c1e465472fae"
     },
     {
       "source": "ci/shared-skills/dingtalk-oa-approval/SKILL.md",
