@@ -7,7 +7,7 @@ import pytest
 
 from app import repository_updater as updater
 from app.action_email_schema_release import (
-    SOURCE_EMAIL_VERSION, SOURCE_STORE_VERSION, TARGET_EMAIL_VERSION, TARGET_STORE_VERSION,
+    SOURCE_STORE_VERSION, TARGET_EMAIL_VERSION, TARGET_STORE_VERSION,
 )
 from app.state_storage import upsert_state
 from app.state_schema_release import capture_state_source, migrate_state_schema, restore_state_schema
@@ -45,7 +45,7 @@ def to_current(path, *, email=True):
 
 
 @pytest.mark.parametrize("current,version", (
-    (False, None), (False, 1), (False, SOURCE_EMAIL_VERSION),
+    (False, None),
     (True, None), (True, TARGET_EMAIL_VERSION),
 ))
 def test_initial_binding_uses_committed_role_without_writes(source, current, version):
@@ -119,7 +119,7 @@ def test_new_instance_loads_current_persisted_operation(source):
 
 
 def test_getter_does_not_rebind_or_retry_a_different_layout(source):
-    ledger(source, SOURCE_EMAIL_VERSION)
+    ledger(source, None)
     store = updater.ExistingSchemaUpgradeStateStore(source)
     store.set_service_state("progress", "before")
     to_current(source)
@@ -131,7 +131,7 @@ def test_getter_does_not_rebind_or_retry_a_different_layout(source):
 
 @pytest.mark.parametrize("failure", ("none", "postcommit", "inverse"))
 def test_updater_persists_using_actual_committed_schema(source, tmp_path, failure):
-    ledger(source, SOURCE_EMAIL_VERSION)
+    ledger(source, None)
     local, operation = _repo(tmp_path)
     store = updater.ExistingSchemaUpgradeStateStore(source)
 
@@ -153,7 +153,6 @@ def test_updater_persists_using_actual_committed_schema(source, tmp_path, failur
                 db.execute("update service_state set value=? where key='store_schema_version'",
                            (SOURCE_STORE_VERSION,))
                 db.execute("delete from email_schema_migrations")
-                db.execute("insert into email_schema_migrations values(?,'source')", (SOURCE_EMAIL_VERSION,))
                 db.commit()
 
         def finalize(self):

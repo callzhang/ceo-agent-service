@@ -66,7 +66,6 @@ class ExistingSchemaUpgradeStateStore:
 
     def bind_committed_schema(self) -> None:
         """Select the progress backend from one committed, read-only snapshot."""
-        from app.action_email_schema_release import SOURCE_EMAIL_VERSION
         from app.email_metadata_schema_release import (
             SOURCE_EMAIL_VERSION as PREVIOUS_EMAIL_VERSION, TARGET_EMAIL_VERSION,
         )
@@ -89,12 +88,11 @@ class ExistingSchemaUpgradeStateStore:
                 "select max(version) from main.email_schema_migrations"
             ).fetchone()[0] if ledger else None
             if version is not None:
-                if type(version) is not int or not (
-                    0 < version <= SOURCE_EMAIL_VERSION
-                    or version in (PREVIOUS_EMAIL_VERSION, TARGET_EMAIL_VERSION, CURRENT_EMAIL_VERSION)
+                if type(version) is not int or version not in (
+                    PREVIOUS_EMAIL_VERSION, TARGET_EMAIL_VERSION, CURRENT_EMAIL_VERSION
                 ):
                     raise ValueError("unsupported committed Email schema role")
-                current = version in (PREVIOUS_EMAIL_VERSION, TARGET_EMAIL_VERSION, CURRENT_EMAIL_VERSION)
+                current = True
             elif db.execute(
                 "select 1 from main.sqlite_schema where name='state' collate nocase"
             ).fetchone():
