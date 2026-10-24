@@ -1368,6 +1368,8 @@ Runtime Context 对没有 `enabled_tools` 限制的 server 声明 `mcp__<server>
 
 要求修改 CEO Agent 服务本身的请求（例如「请磊哥修一下分身」，任务 15810）不是回复或 Agent 能完成的事。`ceo-message-triage` Skill 规定 Consumer 只回复一次，引导发信人用回复末尾的「👎 需改进」反馈链接提交，使其进入用户反馈流程；会话里已有这条回复时用 `no_action`。同一 Skill 的 Audit 解释把这条回复（或之后的 `no_action`）视为已满足请求，不得因服务尚未修复而退回，重复发送同样的指引属于重复。此前 Consumer 在「再回复」与 `no_action` 之间被 Audit 反复退回，三轮用完以 `audit_revision_exhausted` 失败。
 
+微信统一路径阶段 1（Derek 2026-10-24，微信 Consumer 与其他频道使用相同工具面）：Consumer 与 Audit 的 `agent_cli` 读取工具新增 `read_wechat_messages(limit)`，读取当前认领的微信任务自己的会话（最新消息在后，链接带文章正文）。工具不接受会话参数，会话 ID 和单聊/群聊类型取自认领任务，任务不是微信频道、执行代变化或没有就绪账号都会拒绝。微信目前仍走自己的流水线，所以只有微信任务才会用到它；其他频道的任务调用它会得到「不是微信会话」的拒绝。
+
 Codex Consumer 命令按当前 `consumer_purpose` 选择 general/OA 原生输出 Schema，并在模型输出后
 把动态 JSON 键值条目无损还原，再交给现有严格 wire/Pydantic 解析器；OA 动作仍按原有
 action-specific target/payload 合同校验。已完成运行结果的 schema identity 绑定实际提交的 Schema

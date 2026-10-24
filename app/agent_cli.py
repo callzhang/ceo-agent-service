@@ -1407,6 +1407,31 @@ def _current_task_generation(db_path: Path | None, task_id: int | None) -> str:
     return row[0]
 
 
+def _bound_wechat_conversation(
+    db_path: Path | None, task_id: int | None, generation: str | None,
+) -> tuple[str, str]:
+    """The conversation id and type of the claimed WeChat task.
+
+    A WeChat task may read only its own conversation, so the tool takes no
+    conversation argument.
+    """
+    if db_path is None or task_id is None:
+        raise ValueError("a WeChat read needs a claimed WeChat task")
+    database = Path(db_path).resolve()
+    with closing(sqlite3.connect(f"file:{quote(str(database))}?mode=ro", uri=True)) as connection:
+        row = connection.execute(
+            "select tasks.execution_generation, tasks.channel, tasks.single_chat, "
+            "tasks.conversation_id "
+            f"from ({REPLY_TASK_SQL}) tasks where tasks.id=?",
+            (task_id,),
+        ).fetchone()
+    if row is None or row[0] != generation:
+        raise ValueError("bound task generation or input changed")
+    if row[1] != "wechat" or not row[3]:
+        raise ValueError("the bound task is not a WeChat conversation")
+    return row[3], "direct" if row[2] else "group"
+
+
 def _bound_direct_chat_sender(
     db_path: Path | None,
     task_id: int | None,
@@ -2294,6 +2319,47 @@ def build_role_server(
         matches = DwsClient().search_documents(query, page_size)
         return {"documents": [item.model_dump(mode="json") for item in matches]}
 
+    def read_wechat_messages(limit: int = 20) -> dict[str, object]:
+        """Read the recent messages of the WeChat conversation this task is bound to.
+
+        Messages are oldest first. The conversation cannot be chosen: a WeChat
+        task reads only its own. Links in recent messages carry the article text.
+        """
+        from app.wechat import service
+        from app.wechat.article import enrich_context
+
+        if type(limit) is not int or not 1 <= limit <= 100:
+            raise ValueError("message read limit is invalid")
+        conversation_id, conversation_type = _bound_wechat_conversation(
+            db_path, task_id, artifact_generation,
+        )
+        from app.store import AutoReplyStore
+
+        state = service.ready_account_state(AutoReplyStore(db_path))
+        if state is None:
+            raise ValueError("no ready WeChat account")
+        messages = service.build_reader().read_messages(
+            service.account_from_state(state),
+            conversation_id=conversation_id,
+            conversation_type=conversation_type,
+            limit=limit,
+        )
+        return {
+            "conversation_id": conversation_id,
+            "conversation_type": conversation_type,
+            "messages": [
+                {
+                    "message_id": item.message_id,
+                    "sender": item.sender_display_name,
+                    "direction": item.direction,
+                    "sent_at": item.sent_at,
+                    "kind": item.kind,
+                    "text": item.text,
+                }
+                for item in enrich_context(messages)
+            ],
+        }
+
     def read_dingtalk_messages(
         conversation_id: str, title: str = "", single_chat: bool = False,
         limit: int = 50, direct_open_dingtalk_id: str = "",
@@ -2672,6 +2738,7 @@ def build_role_server(
         ("read_dingtalk_user_profiles", read_dingtalk_user_profiles),
         ("search_dingtalk_documents", search_dingtalk_documents),
         ("read_dingtalk_messages", read_dingtalk_messages),
+        ("read_wechat_messages", read_wechat_messages),
         ("search_dingtalk_messages", search_dingtalk_messages),
         ("read_dingtalk_thread_replies", read_dingtalk_thread_replies),
         ("search_dingtalk_conversations", search_dingtalk_conversations),
