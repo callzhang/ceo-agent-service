@@ -1,5 +1,9 @@
 # Changelog
 
+## 2026-10-24 — 设计文档：Consumer 权限模型是 auto 模式
+
+- 只改文档（Derek 2026-10-24）：Consumer 应运行在 CLI 原生 auto 模式，不用只读／工作区写沙箱限制能力；外发动作仍走 Audit，Audit 仍只读。当前实现（Codex `workspace-write`、Claude shell 沙箱）尚未达到，差距、原因（沙箱挡住钥匙串，周报读不到 CRM）和切换前提都写在 `docs/architecture.md`「Consumer 权限模型」一节。没有改任何运行代码。
+
 ## 2026-10-24 — 新增 OA 加签动作 `append_task`
 
 - **系统可以给当前审批加一个审批人**（Derek 2026-10-24：审批缺必需的审批关系时在审批里加上，而不是退回）：新增 `dingtalk-oa / append_task`，目标是流程实例、任务和被加签人的 userId，`type` 只支持 `before`（前加签）和 `parallel`（并加签）；固定依次审批、必须同意。Consumer 的 OA 输出新增 `add_approver`。

@@ -2096,6 +2096,18 @@ Audit 当前任务除完整候选外，还收到服务从同一候选 JSON 确�
 
 Audit 返回或拒绝后，Consumer 必须提交当前阶段的完整修订候选。服务以当前编排上下文绑定 `stage_index` 与 `predecessor_review_id`，不把模型复述这两个 lineage 字段的准确性作为候选业务结果的前置条件。返回反馈不会推进阶段；仅当前阶段审核通过且其动作有已验证的完成回执，后续阶段才会开放。候选的阶段、前置审核、代际及执行验证仍由服务严格校验。
 
+### Consumer 权限模型：auto 模式，不是只读／工作区写沙箱（Derek 2026-10-24）
+
+Derek 的设计决定：Consumer 运行在各 CLI 的原生 auto 模式里（Codex 的 `auto_review` 审批、Claude 的 auto permission mode），能力由 CLI 自带的自动审批逐动作把关，**不用只读或只写工作区的沙箱来限制它能做什么**。理由：沙箱是静态的，会挡住合法的本机工具。2026-10-24 的实例：`sharecrm` 的登录凭据放在 macOS 钥匙串，沙箱里 `SecItemCopyMatching failed -50`，CEO 周报于是读不到 CRM；这与「本机的所有环境都可以给 Agent 使用」相矛盾。
+
+不变的边界与沙箱无关：终态外发动作（发消息、发邮件）仍只走 proposal → Audit → SystemExecutor；Audit 仍是只读；Consumer 的禁用工具清单（Settings → MCP 的 `disabled_servers`、桌面控制类 server）仍然有效。
+
+**当前实现还没有达到这个设计**，文档如实记录差距：
+- Codex Consumer 仍是 `sandbox_mode="workspace-write"`（自 2026-10-05 提交 `5e88aaafb`；2026-10-23 起为 `dws` 开了网络并让 `~/.dws` 可写）。
+- Claude 线路 Consumer 的 shell 带自己的沙箱（`app/claude_runtime_adapter.py` 的 `_consumer_shell_sandbox()`：只写任务目录和 `~/.dws`，网络只放行 `*.dingtalk.com`、`*.aliyuncs.com`）。
+- 切换到 auto 模式是单独的变更，要先逐个 CLI 确认 auto 模式的实际行为，并处理两点：`service_api` 路由没有 `codex-auto-review` 模型（见「主页面执行入口」一节）；auto 模式下 Consumer 能间接使用钥匙串里的凭据，这是要明确接受的后果。
+- 在切换之前，需要沙箱外权限（钥匙串等）的读取走服务端的只读工具，不靠放开沙箱。
+
 ### 任务长期记忆
 
 Derek 2026-10-24：任务的长期记忆由执行 Agent A 自己在回合内调用 `memory_connector.memory_write`
