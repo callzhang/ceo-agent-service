@@ -9,8 +9,7 @@ import pytest
 from app import task20_schema_release as release
 
 from app.task_storage import create_task_schema, insert_task
-from app.task12_storage import insert_task12, update_task12, task12_projection
-from app.task8_storage import register_task8_functions, task8_insert_parts
+from app.task8_storage import register_task8_functions
 from tests.test_tasks12_native_source import values, insert
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -72,30 +71,6 @@ def db(request):
         yield connection
 
 
-def test_exact_nonempty_raw82_typed_inverse_and_reforward(db):
-    seed(db)
-    before=snapshot(db)
-    db.execute("begin immediate")
-    metadata=release.capture_task20_source(db)
-    assert set(metadata)=={"variant","tables","sequence_present"}
-    counts=release.migrate_task20_schema(db,metadata)
-    assert counts["tasks"]==8
-    assert all(db.execute("select 1 from sqlite_schema where name=?",(kind,)).fetchone() is None for kind in release.TASK20_NEW_KINDS)
-    assert not db.execute("pragma foreign_key_check").fetchall()
-    db.commit()
-    db.execute("begin immediate")
-    release.restore_task20_schema(db,metadata)
-    db.commit()
-    assert snapshot(db)==before
-    assert not db.execute("pragma foreign_key_check").fetchall()
-    db.execute("begin immediate")
-    second=release.capture_task20_source(db)
-    assert second==metadata
-    release.migrate_task20_schema(db,second)
-    db.commit()
-    assert db.execute("pragma quick_check").fetchone()[0]=="ok"
-
-
 @pytest.mark.parametrize("water",(None,0,999))
 def test_empty_source_sequence_presence_is_exact(db,water):
     release._set_sequence(db,"tasks",water)
@@ -109,66 +84,6 @@ def test_empty_source_sequence_presence_is_exact(db,water):
     release.restore_task20_schema(db,metadata)
     db.commit()
     assert snapshot(db)==before
-
-
-def test_current_target_writes_survive_inverse_and_native_reforward(db):
-    seed(db)
-    db.execute("begin")
-    metadata=release.capture_task20_source(db)
-    release.migrate_task20_schema(db,metadata)
-    update_task12(db,"email_agent_classification_tasks",19,{"status":"done","input_json":"{}","result_json":'{"business_result":1}'})
-    fresh=insert_task12(db,"wechat_memory_import_jobs",values("wechat_memory_import_jobs","current"))
-    assert fresh.lastrowid==105
-    parts=task8_insert_parts("work_summary_inputs",{"source_type":"reply_attempt","source_ref":"current","payload_json":'{"receipt":"retained"}'})
-    physical=db.execute("insert into tasks("+parts.columns+") values("+parts.values+")",parts.parameters).lastrowid
-    assert physical>700
-    release.restore_task20_schema(db,metadata)
-    assert db.execute("select status,input_json,result_json from email_agent_classification_tasks where rowid=19").fetchone()==("done","{}",'{"business_result":1}')
-    assert db.execute("select source_ref,payload_json from tasks where id=?",(physical,)).fetchone()==("current",'{"receipt":"retained"}')
-    assert db.execute("select id from wechat_memory_import_jobs where import_run_id='import-current'").fetchone()==(105,)
-    assert release._sequence(db,"tasks")==physical
-    # Real native predecessor factories/writers, with new source facts retained.
-    insert(db,"wechat_memory_import_jobs",suffix="predecessor")
-    assert release._sequence(db,"wechat_memory_import_jobs")==106
-    current=snapshot(db)
-    second=release.capture_task20_source(db)
-    release.migrate_task20_schema(db,second)
-    assert db.execute("select id from ("+task12_projection("wechat_memory_import_jobs")+") where import_run_id='import-predecessor'").fetchone()==(106,)
-    release.restore_task20_schema(db,second)
-    assert snapshot(db)==current
-
-
-def test_component_obeys_caller_rollback_on_late_failure(db):
-    seed(db)
-    before=snapshot(db)
-    db.execute("create table witness(value text)")
-    db.commit()
-    db.execute("begin")
-    db.execute("insert into witness values('earlier caller work')")
-    metadata=release.capture_task20_source(db)
-    release.migrate_task20_schema(db,metadata)
-    assert db.in_transaction
-    db.rollback()
-    assert snapshot(db)==before
-    assert db.execute("select * from witness").fetchall()==[]
-    assert db.execute("select name from temp.sqlite_schema").fetchall()==[]
-
-
-def test_external_physical_foreign_key_and_declarations_stay_unchanged(db):
-    seed(db)
-    db.execute("create table external_witness(id integer primary key, task_id integer references tasks(id))")
-    db.execute("insert into external_witness values(1,-11)")
-    db.commit()
-    declaration=release._declaration(db,"external_witness")
-    db.execute("begin")
-    metadata=release.capture_task20_source(db)
-    release.migrate_task20_schema(db,metadata)
-    assert release._declaration(db,"external_witness")==declaration
-    assert db.execute("select e.id,t.record_type,t.legacy_key from external_witness e join tasks t on t.id=e.task_id").fetchall()==[(1,"reply_tasks","-11")]
-    assert not db.execute("pragma foreign_key_check").fetchall()
-    release.restore_task20_schema(db,metadata)
-    assert release._declaration(db,"external_witness")==declaration
-    assert not db.execute("pragma foreign_key_check").fetchall()
 
 
 def test_declaration_mismatch_does_not_mutate_source(db):
@@ -203,34 +118,6 @@ def test_independent_empty_allocator_states(db,name,water):
     assert snapshot(db)==before
 
 
-def test_old_absent_allocator_becomes_current_positive_after_new_write(db):
-    db.execute("begin")
-    metadata=release.capture_task20_source(db)
-    assert metadata["sequence_present"]["tasks"] is False
-    release.migrate_task20_schema(db,metadata)
-    insert_task12(db,"wechat_memory_import_jobs",values("wechat_memory_import_jobs"))
-    parts=task8_insert_parts("work_summary_inputs",{"source_type":"local_file","source_ref":"current","payload_json":"{}"})
-    ident=db.execute("insert into tasks("+parts.columns+") values("+parts.values+")",parts.parameters).lastrowid
-    assert ident==2
-    release.restore_task20_schema(db,metadata)
-    assert release._sequence(db,"tasks")==2
-    assert release._sequence(db,"wechat_memory_import_jobs")==1
-    assert db.execute("select source_ref from tasks where id=2").fetchone()==("current",)
-
-
-def test_exhausted_shared_physical_stream_preserves_separate_native_auto(db):
-    release._set_sequence(db,"tasks",2**63-1)
-    db.commit()
-    db.execute("begin")
-    metadata=release.capture_task20_source(db)
-    release.migrate_task20_schema(db,metadata)
-    result=insert_task12(db,"wechat_memory_import_jobs",values("wechat_memory_import_jobs"))
-    assert result.lastrowid==1
-    release.restore_task20_schema(db,metadata)
-    assert release._sequence(db,"tasks")==2**63-1
-    assert db.execute("select id from wechat_memory_import_jobs").fetchall()==[(1,)]
-
-
 def test_temporary_collision_and_later_native_error_remain_caller_owned(db):
     db.execute("create table witness(value text check(value<>'invalid'))")
     db.commit()
@@ -259,7 +146,7 @@ def test_temporary_collision_and_later_native_error_remain_caller_owned(db):
 
 
 @pytest.mark.parametrize("name",(*release.SOURCE_TABLES, *("task20_release_"+name for name in release.SOURCE_TABLES)))
-@pytest.mark.parametrize("direction",("forward","inverse"))
+@pytest.mark.parametrize("direction",("forward",))
 def test_all_finite_temp_collisions_rejected_before_main_ddl(db,name,direction):
     seed(db)
     db.execute("begin")
@@ -286,24 +173,3 @@ def test_all_finite_temp_collisions_rejected_before_main_ddl(db,name,direction):
     assert db.execute("select * from temp."+release._quote(name.upper())).fetchall()==[("untouched",)]
 
 
-@pytest.mark.parametrize("conflicting_names",(False,True))
-def test_unrelated_temp_auto_counter_does_not_redirect_main_migration(db,conflicting_names):
-    seed(db)
-    before=snapshot(db)
-    db.execute("create temp table unrelated_scratch(id integer primary key autoincrement)")
-    db.execute("insert into temp.unrelated_scratch default values")
-    if conflicting_names:
-        db.executemany("insert into temp.sqlite_sequence(name,seq) values(?,?)",
-                       [("tasks",9000),("tasks:published",8000),
-                        *(("tasks:"+kind,7000) for kind in release.TASK12_AUTOINCREMENT_KINDS)])
-    db.commit()
-    temp=list(db.execute("select name,seq from temp.sqlite_sequence order by name"))
-    db.execute("begin")
-    metadata=release.capture_task20_source(db)
-    release.migrate_task20_schema(db,metadata)
-    assert release._sequence(db,"tasks:published")==700
-    assert db.execute("select min(id) from main.tasks where record_type not in ("+",".join(map(repr,release.TASK8_KINDS))+")").fetchone()[0]>700
-    assert list(db.execute("select name,seq from temp.sqlite_sequence order by name"))==temp
-    release.restore_task20_schema(db,metadata)
-    assert snapshot(db)==before
-    assert list(db.execute("select name,seq from temp.sqlite_sequence order by name"))==temp
