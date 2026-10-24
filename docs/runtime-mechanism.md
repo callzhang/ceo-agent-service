@@ -762,7 +762,11 @@ and source digests are not rewritten.
 `reconcile-confirmed-meeting-delivery --job-id ...` previews an existing primary
 delivery receipt using provider readback without sending. `--apply` restores
 only the exact prepared body and original receipt under a transaction CAS,
-then resumes the existing calendar-only tail. It requires an unchanged failed,
+then resumes the existing calendar-only tail. If the persisted decision carries
+`_service_audit`, recovery verifies the approved result's candidate digest
+binding before parsing the original business decision; an invalid or mismatched
+envelope blocks restoration. The legacy unwrapped path remains available for
+receipt-only historical recovery. It requires an unchanged failed,
 unlocked job, immutable same-target binding, no active dispatch claim and no
 sensitive split preparation. Revised unsent prose is not presented as sent;
 unconfirmed receipts, changed targets or split actions are not reconciled.

@@ -13752,10 +13752,26 @@ class AutoReplyStore(LogicalRunStoreMixin, ReviewedCandidateStoreMixin):
     ) -> bool:
         """CAS restore of an already-delivered primary; preserve its exact body."""
         from app.meeting_alignment_delivery import MeetingDeliveryResult
+        from app.meeting_alignment_models import (
+            load_persisted_meeting_alignment_decision,
+            meeting_decision_audit_is_approved,
+        )
+
         result = MeetingDeliveryResult.model_validate_json(result_json)
         if (result.message_text != prepared.final_body or result.send_result != receipt
                 or result.target_kind != job.target_kind or result.target_id != job.target_id
                 or result.sensitive_private_delivery is not None or result.sensitive_private_merged):
+            return False
+        try:
+            stored_decision = json.loads(job.decision_json)
+            if (
+                isinstance(stored_decision, dict)
+                and "_service_audit" in stored_decision
+                and not meeting_decision_audit_is_approved(job.decision_json)
+            ):
+                return False
+            decision, _ = load_persisted_meeting_alignment_decision(job.decision_json)
+        except (TypeError, ValueError, json.JSONDecodeError):
             return False
         with self._immediate_write_transaction() as db:
             body = db.execute(f"select final_body from ({OUTBOUND_POSTFIX_SQL}) where channel='dingtalk' and delivery_key=?", (key,)).fetchone()
@@ -13764,7 +13780,6 @@ class AutoReplyStore(LogicalRunStoreMixin, ReviewedCandidateStoreMixin):
                 return False
             target = db.execute(f"select value from ({state_projection('service_state')}) where key=?",
                 (f"meeting_delivery_target:v1:dingtalk:{key}",)).fetchone()
-            decision = MeetingAlignmentDecision.model_validate_json(job.decision_json)
             if decision.target is None:
                 return False
             binding_target_kind = (
@@ -13960,7 +13975,6 @@ class AutoReplyStore(LogicalRunStoreMixin, ReviewedCandidateStoreMixin):
     ) -> MeetingAlignmentJob | None:
         """CAS the exact audit-only result; approve alone re-enters delivery."""
         from app.meeting_alignment_models import (
-            MeetingAlignmentDecision,
             meeting_alignment_decision_digest,
             meeting_decision_audit_is_approved,
         )
