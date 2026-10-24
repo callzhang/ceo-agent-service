@@ -72,8 +72,8 @@ def scoped_runner(runner_type, codex):
                 "notice": "Actual delivered context ranges, not proof of what the Agent read.",
                 "source_metrics": payload.get("source_metrics"),
                 "source_documents": [{
-                    **{key: document[key] for key in ("document_id", "full_length", "truncated", "citation_budget_exceeded") if key in document},
-                    "visible_ranges": [{"start": span["start"], "end": span["end"]} for span in document["visible_ranges"]],
+                    **{key: document[key] for key in ("document_id", "source_in_input", "full_length", "truncated", "citation_budget_exceeded") if key in document},
+                    "visible_ranges": [{"start": span["start"], "end": span["end"]} for span in document.get("visible_ranges", [])],
                     "decoded_excerpts": [{key: value for key, value in span.items() if key != "text"} for span in document.get("decoded_excerpts", [])],
                 } for document in documents] if documents is not None else None,
             })
