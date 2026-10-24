@@ -828,3 +828,15 @@ PR #294 的 exact-head Quality run `40040357025`（head `6533329f00d2edcb5286250
 之后 `python -m app.deploy --restart` 正常完成；LaunchAgent 为 running，PID 33577，healthz HTTP 200。生产 HEAD 为 `f9649ab6b1f65499a6b00492020025773a76941a`。部署读回包含 14 个启用定时任务；task6 v36 / managed Skill revision 248，下次 2026-10-25 10:00 UTC；task13 v56 / revision 202，下次 2026-10-24 19:00 UTC；task14 v63 / revision 250，下次 2026-10-24 13:00 UTC。Workers API 的队列快照显示 Email provider actions 615 pending、0 processing、0 failed、8 retryable；scheduled 与 scheduled_execution 队列 pending/due/running 均为 0。History 总数 37,782。Attention 共 13 条；系统健康为 degraded、7 项 violations，仍有原有异常需要单独跟进。这些是恢复时读数，不表示 13 条 Attention 均由本次恢复造成。
 
 本次只修复已有邮件动作的本地状态并恢复服务，没有创建或发送报告、邮件或额外通知。PR #294 仍未合并；exact-head Quality 尚无 uncancelled 通过结果。task14/task13/task6 新版自然或授权手动报告验收、真实睡眠恢复补跑分支及完整 Quality 均未完成。
+
+### 2026-10-24 task13 自然运行 401164：提前以 operation_unavailable 失败
+
+task13 自然运行 **401164** 在 2026-10-24T19:00Z 触发，使用不可变任务配置 v64 / managed `ceo-weekly-report` revision 202，派发到 reply task 417411；Consumer attempt 16010 对应 consumer run 399303，终态 failed。完整 Consumer trajectory 表明，它读取了计划窗口、会议活动和文档定位材料，但在未调用分钟清单、群聊窗口或业务材料搜索/读取工具的情况下，把缺少 CRM、财务、业务线报告与群聊证据报成 `operation_unavailable` 并停止。
+
+相关工具已注册在 Consumer 能力集合中：`list_dingtalk_minutes`、`read_dingtalk_minutes`、`recent_dingtalk_conversations`、`read_dingtalk_messages_in_window`、`search_dingtalk_documents`、`read_dingtalk_document_full`。轨迹里没有这些查询的 provider 错误或调用记录。因此这是实际执行过早终止，不是工具不可用，也不是 Audit/验收器误报。运行未写周报文档、未获 Audit 批准、没有通知提案或持久发送回执；保持 run 401164 原终态，不重放、不补发。
+
+修复把完整来源核查顺序和缺口分类写入周报 Skill：分别记录未搜索、搜索无结果、实际读取失败和成功读取；要求先查分钟、会话及业务文档来源，只有工具返回的具体错误才算读取失败；材料缺失按现有报告契约继续评估（缺证据实际值仍写 `无数据`，业务线未提交披露但不因此阻塞）。新增 eval case 17 和定向契约测试，防止再出现“未调用工具即 operation_unavailable”。本修复没有改变来源覆盖、评分、审核、文档完整读回或投递标准。
+
+当前生产只读快照（2026-10-24 约20:30 UTC）：healthz HTTP 200，worker PID 51240，task13 v65，managed Skill revision 202，下次触发 2026-10-31T19:00Z。修复尚未正式发布；不得以本地文本或定向测试代替托管 revision 读回。发布后仍需等下一次自然运行验证工具调用、来源覆盖、Consumer/Audit 终态、完整文档读回及通知回执；不手动创建或触发替代报告。
+
+无正文证据：[task13 run 401164](../evals/scheduled_task_generic/task13-run401164-evidence.json)。
