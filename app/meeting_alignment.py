@@ -779,18 +779,32 @@ def reconcile_confirmed_meeting_delivery(
     decision, _ = load_persisted_meeting_alignment_decision(job.decision_json)
     if decision.sensitive_private_message is not None or decision.target is None:
         return report
-    key = f"meeting-alignment:{job.id}:{job.meeting_id}"
+    if decision.target.kind != job.target_kind:
+        return report
+    target_kind = "group" if job.target_kind == "group" else "user"
+    target_id = (
+        decision.target.conversation_id
+        if target_kind == "group"
+        else decision.target.direct_user_id or decision.target.open_dingtalk_id
+    )
+    binding_target_kind = (
+        "group" if target_kind == "group"
+        else "user" if decision.target.direct_user_id
+        else "open_user"
+    )
+    if target_id != job.target_id:
+        return report
+    legacy_key = f"meeting-alignment:{job.id}:{job.meeting_id}"
+    key = store.resolve_meeting_alignment_delivery_key(
+        legacy_key, target_kind=binding_target_kind, target_id=target_id
+    )
     prepared = store.get_outbound_postfix("dingtalk", key)
     receipt = store.get_outbound_postfix_receipt("dingtalk", key)
     if prepared is None or receipt is None or store.get_outbound_postfix("dingtalk", f"{key}:sensitive"):
         return report
-    target_kind = "group" if job.target_kind == "group" else "user"
-    if decision.target.kind != job.target_kind:
-        return report
-    target_id = decision.target.conversation_id if target_kind == "group" else decision.target.direct_user_id
-    if target_id != job.target_id:
-        return report
-    store.verify_meeting_alignment_target(key, target_kind=target_kind, target_id=target_id)
+    store.verify_meeting_alignment_target(
+        key, target_kind=binding_target_kind, target_id=target_id
+    )
     verification = dws.verify_message_send_result(receipt)
     if verification.get("state") != "sent":
         return report

@@ -63,9 +63,9 @@
     {
       "source": "ci/shared-skills/ceo-message-triage/SKILL.md",
       "target": "skills/ceo-message-triage/SKILL.md",
-      "old_sha256": "507c611982e259cd66d96a68fe012e9658bef762294065f95b0efa30d8dc004f",
+      "old_sha256": "8a19820f1644638c3c007c59809d730985405325c3333a9ac1b089eab332ae43",
       "new_sha256": "8a19820f1644638c3c007c59809d730985405325c3333a9ac1b089eab332ae43",
-      "old_managed_sha256": "507c611982e259cd66d96a68fe012e9658bef762294065f95b0efa30d8dc004f"
+      "old_managed_sha256": "8a19820f1644638c3c007c59809d730985405325c3333a9ac1b089eab332ae43"
     },
     {
       "source": "ci/shared-skills/ceo-wechat/SKILL.md",
@@ -77,7 +77,7 @@
       "source": "ci/shared-skills/dingtalk-oa-approval/SKILL.md",
       "target": "skills/dingtalk-oa-approval/SKILL.md",
       "old_sha256": "89532e6cfaea23e5acf8c1417a866e4a0d2edc35304d8070fdd65accf416f6f6",
-      "new_sha256": "89532e6cfaea23e5acf8c1417a866e4a0d2edc35304d8070fdd65accf416f6f6"
+      "new_sha256": "28fab09e626c45d866b2623f85db2005118e39751df21d66bbcfe69b9faf81bb"
     },
     {
       "source": "ci/shared-skills/stardust-oa-finance-review/SKILL.md",

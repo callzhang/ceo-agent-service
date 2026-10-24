@@ -140,6 +140,7 @@ class DwsError(RuntimeError):
         idempotency_duplicate: bool = False,
         business_message: str = "",
         server_key: str = "",
+        provider_error: dict[str, Any] | None = None,
     ):
         super().__init__(message)
         self.code = code
@@ -150,6 +151,7 @@ class DwsError(RuntimeError):
         # re-parsed out of the formatted text by every caller.
         self.business_message = business_message
         self.server_key = server_key
+        self.provider_error = provider_error or {}
         self.required_scopes = tuple(
             scope.strip()
             for scope in required_scopes
@@ -4337,8 +4339,8 @@ class DwsClient:
         return False
 
     @classmethod
-    def _structured_business_error(cls, stdout: str, stderr: str) -> dict[str, str]:
-        """Return the provider's own ``message``/``server_key`` for this error."""
+    def _structured_business_error(cls, stdout: str, stderr: str) -> dict[str, Any]:
+        """Keep the provider error separate from the sanitized display message."""
         for raw_output in (stderr, stdout):
             try:
                 payload = json.loads(raw_output)
@@ -4352,6 +4354,7 @@ class DwsClient:
             return {
                 "business_message": message.strip() if isinstance(message, str) else "",
                 "server_key": server_key.strip() if isinstance(server_key, str) else "",
+                "provider_error": error,
             }
         return {"business_message": "", "server_key": ""}
 

@@ -50,7 +50,7 @@ def test_repository_consumer_release_manifest_tracks_oa_skill_digest():
     assert len(entry["old_sha256"]) == 64
     assert all(char in "0123456789abcdef" for char in entry["old_sha256"])
     assert entry["new_sha256"] == _digest((root / entry["source"]).read_bytes())
-    assert entry["new_sha256"] == "89532e6cfaea23e5acf8c1417a866e4a0d2edc35304d8070fdd65accf416f6f6"
+    assert entry["new_sha256"] == "28fab09e626c45d866b2623f85db2005118e39751df21d66bbcfe69b9faf81bb"
     assert "old_managed_sha256" not in entry
     skill = (root / entry["source"]).read_text(encoding="utf-8").lower()
     assert "可按本 skill 写明的准确路径通过 shell 调用本机 `dws`" in skill
@@ -119,7 +119,7 @@ def test_release_manifest_pins_current_finance_card_and_active_managed_skill_has
         )
     } == {
         "ci/shared-skills/ceo-calendar-invite/SKILL.md": "8fa06610ac6f272b3d9121167dd71da211ab7659d43e0f60f4f40f374a68137f",
-        "ci/shared-skills/ceo-message-triage/SKILL.md": "507c611982e259cd66d96a68fe012e9658bef762294065f95b0efa30d8dc004f",
+        "ci/shared-skills/ceo-message-triage/SKILL.md": "8a19820f1644638c3c007c59809d730985405325c3333a9ac1b089eab332ae43",
         "ci/shared-skills/ceo-weekly-report/SKILL.md": "ececf8bf22e740573b68c0a4e1f1d6cd7db166a2fb2c6991737cce03890d22a9",
     }
 
@@ -182,6 +182,7 @@ def test_repository_consumer_release_manifest_tracks_message_triage_skill_digest
     )
 
     assert entry["new_sha256"] == _digest((root / entry["source"]).read_bytes())
+    assert entry["old_sha256"] == entry["new_sha256"]
 
 
 def test_repository_consumer_release_manifest_tracks_every_source_digest():
