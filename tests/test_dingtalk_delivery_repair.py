@@ -187,7 +187,38 @@ def test_exact_complete_native_chat_readback_closes_without_resending(tmp_path):
     assert not apply_native_chat_readback(store, readback)
 
 
-def _legacy_native_readback_case(tmp_path, monkeypatch):
+def _insert_effect_intent(db, receipt):
+    from app import action_storage
+    from app.storage_payload import ACTION_RECORD_TYPES
+
+    values = {
+        "authorization_id": "historical-authorization", "action_index": 0,
+        "receipt_operation_id": "historical-operation", "capability": "dingtalk-chat",
+        "operation": "reply_to_message", "operation_digest": "operation-digest",
+        "arguments_digest": "arguments-digest",
+        "target_identifiers_json": receipt["target_identifiers_json"],
+        "state": "acknowledged", "result_digest": "result-digest", "exit_code": 0,
+        "prepared_at": "historical-prepared", "dispatched_at": "historical-dispatched",
+        "acknowledged_at": "historical-acknowledged", "updated_at": "historical-updated",
+        "external_action_key": receipt["external_action_key"],
+    }
+    payload = action_storage._action_payload(db, "agent_effect_intents", values)
+    db.execute(
+        "insert into actions(_kind,legacy_key,agent_run_id,payload_json) values(?,?,?,?)",
+        (ACTION_RECORD_TYPES.code("agent_effect_intents"), "1",
+         receipt["first_agent_run_id"], payload),
+    )
+
+
+def _effect_intent_rows(db, run_id):
+    return db.execute(
+        "select id,_kind,legacy_key,agent_run_id,payload_json from actions "
+        "where record_type='agent_effect_intents' and agent_run_id=? order by id",
+        (run_id,),
+    ).fetchall()
+
+
+def _legacy_native_readback_case(tmp_path, monkeypatch, *, with_effect_intent=False):
     """Seed historical delivery evidence on current native Task/Run/Action owners."""
     from app.run_entity_storage import create_run
     from app.shared_action_lifecycle import record_sent_action
@@ -254,6 +285,12 @@ def _legacy_native_readback_case(tmp_path, monkeypatch):
             agent_run_id=run_id, task_id=task.id,
             observed_at="historical-receipt-time",
         )
+        if with_effect_intent:
+            _insert_effect_intent(db, {
+                "target_identifiers_json": target_json,
+                "external_action_key": "historical-provider-effect",
+                "first_agent_run_id": run_id,
+            })
 
     receipt = None
     with store._connect() as db:
@@ -313,8 +350,13 @@ def _legacy_delivery_facts(store, task, external_action_key):
     }
 
 
-def test_native_chat_readback_settles_legacy_completed_reply_without_inventing_audit(tmp_path, monkeypatch):
-    store, task, receipt, readback, attempt_id = _legacy_native_readback_case(tmp_path, monkeypatch)
+@pytest.mark.parametrize("with_effect_intent", [False, True])
+def test_native_chat_readback_settles_legacy_completed_reply_without_inventing_audit(
+    tmp_path, monkeypatch, with_effect_intent,
+):
+    store, task, receipt, readback, attempt_id = _legacy_native_readback_case(
+        tmp_path, monkeypatch, with_effect_intent=with_effect_intent,
+    )
     original_provider = json.loads(receipt["provider_result_json"])
     sent_before = store.get_sent_reply(task.conversation_id, task.trigger_message_id)
     assert sent_before.reply_text == "Exact prepared advice"
@@ -331,6 +373,8 @@ def test_native_chat_readback_settles_legacy_completed_reply_without_inventing_a
             "select id,task_id as reply_task_id,execution_generation,role,status from runs where id=?",
             (receipt["first_agent_run_id"],),
         ).fetchone()
+        before_intents = _effect_intent_rows(db, receipt["first_agent_run_id"])
+    assert len(before_intents) == (1 if with_effect_intent else 0)
     assert apply_native_chat_readback(store, readback)
     assert store.get_reply_task(task.id).status == "done"
     result = json.loads(store.get_candidate_external_action(receipt["external_action_key"])["provider_result_json"])
@@ -354,6 +398,8 @@ def test_native_chat_readback_settles_legacy_completed_reply_without_inventing_a
         assert tuple(settled_run) == tuple(original_run)
         settled_sent = store.get_sent_reply(task.conversation_id, task.trigger_message_id)
         assert settled_sent.reply_text == sent_before.reply_text
+        after_intents = _effect_intent_rows(db, receipt["first_agent_run_id"])
+        assert [tuple(row) for row in after_intents] == [tuple(row) for row in before_intents]
     delivery_facts_after = _legacy_delivery_facts(store, task, receipt["external_action_key"])
     assert delivery_facts_after == delivery_facts_before
     assert result["verification"]["source"] == "native_chat_readback"
@@ -369,7 +415,7 @@ def test_native_chat_readback_settles_legacy_completed_reply_without_inventing_a
 
 @pytest.mark.parametrize("mutation", [
     "missing_attempt", "duplicate_attempt", "incomplete_attempt", "permission",
-    "reviewed", "audit_tools", "audit_documents", "effect_intent", "receipt_target",
+    "reviewed", "audit_tools", "audit_documents", "receipt_target",
 ])
 def test_legacy_native_readback_requires_unreviewed_exact_historical_facts(tmp_path, mutation, monkeypatch):
     store, task, receipt, readback, attempt_id = _legacy_native_readback_case(tmp_path, monkeypatch)
@@ -405,27 +451,6 @@ def test_legacy_native_readback_requires_unreviewed_exact_historical_facts(tmp_p
             assert update_action(db, "reply_attempts", attempt_id, {
                 "reviewed_at": "reviewed-at", "reviewer_feedback": "reviewed",
             }).rowcount == 1
-        elif mutation == "effect_intent":
-            from app import action_storage
-            from app.storage_payload import ACTION_RECORD_TYPES
-
-            values = {
-                "authorization_id": "historical-authorization", "action_index": 0,
-                "receipt_operation_id": "historical-operation", "capability": "dingtalk-chat",
-                "operation": "reply_to_message", "operation_digest": "operation-digest",
-                "arguments_digest": "arguments-digest",
-                "target_identifiers_json": receipt["target_identifiers_json"],
-                "state": "acknowledged", "result_digest": "result-digest", "exit_code": 0,
-                "prepared_at": "historical-prepared", "dispatched_at": "historical-dispatched",
-                "acknowledged_at": "historical-acknowledged", "updated_at": "historical-updated",
-                "external_action_key": receipt["external_action_key"],
-            }
-            payload = action_storage._action_payload(db, "agent_effect_intents", values)
-            db.execute(
-                "insert into actions(_kind,legacy_key,agent_run_id,payload_json) values(?,?,?,?)",
-                (ACTION_RECORD_TYPES.code("agent_effect_intents"), "1",
-                 receipt["first_agent_run_id"], payload),
-            )
         elif mutation == "receipt_target":
             from app.action_entity_storage import update_sent_receipt
 

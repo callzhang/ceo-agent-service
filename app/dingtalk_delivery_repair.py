@@ -8,7 +8,7 @@ import json
 from datetime import datetime, timedelta, timezone
 
 from app.action_storage import (
-    AGENT_EFFECT_INTENT_SQL, NATIVE_CANDIDATE_ACTION_ATTEMPT_SQL,
+    NATIVE_CANDIDATE_ACTION_ATTEMPT_SQL,
     NATIVE_EXTERNAL_ACTION_RESULT_SQL, candidate_action_attempt_row,
     SENT_REPLY_SQL,
 )
@@ -330,11 +330,6 @@ def apply_native_chat_readback(store, proof: dict) -> bool:
                 (receipt["first_agent_run_id"], task["channel"], task["conversation_id"],
                  task["trigger_message_id"]),
             ).fetchall()
-            effect_intents = db.execute(
-                f"select * from ({AGENT_EFFECT_INTENT_SQL}) where agent_run_id=? "
-                "and capability='dingtalk-chat' and operation='reply_to_message'",
-                (receipt["first_agent_run_id"],),
-            ).fetchall()
             run = db.execute(
                 f"select * from ({AGENT_RUN_SQL}) where id=? and reply_task_id=? "
                 "and execution_generation=?",
@@ -344,7 +339,7 @@ def apply_native_chat_readback(store, proof: dict) -> bool:
                 "conversation_id": task["conversation_id"],
                 "message_id": task["trigger_message_id"],
             }
-            if (historical_candidates or effect_intents or len(attempts) != 1 or run is None
+            if (historical_candidates or len(attempts) != 1 or run is None
                     or run["status"] != "completed"
                     or attempts[0]["send_status"] != "completed"
                     or attempts[0]["permission_action"] != ""
