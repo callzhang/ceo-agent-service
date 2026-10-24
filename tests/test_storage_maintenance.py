@@ -2,10 +2,6 @@ from tests.support.legacy_todo_facts import seed_legacy_work_project, seed_legac
 import hashlib
 import json
 
-from app.logical_run_storage import logical_run_projection
-from app.task8_storage import task8_set_parts
-from app.business_definitions import BUSINESS_PROJECTIONS
-from app.action_storage import SYNC_ACTION_PROJECTIONS
 
 from app.storage_maintenance import (
     compact_done_email_classification_inputs,
@@ -39,15 +35,13 @@ def test_historical_work_input_compaction_is_idempotent_and_preserves_adopted_ro
                 "updated_at": "2026-02-02 02:00:00",
             }),
         ):
-            parts = task8_set_parts("work_summary_inputs", values)
             db.execute(
-                f"update tasks set {parts.sql} "
-                "where record_type='work_summary_inputs' and cast(legacy_key as integer)=?",
-                (*parts.parameters, input_id),
+                "update tasks set " + ",".join(f"{column}=?" for column in values)
+                + " where kind='work_summary' and id=?",
+                (*values.values(), input_id),
             )
-    store.create_logical_run(
-        "task_agent_runs", terminal_id, codex_session_id="native-session",
-        status="completed",
+    native_run_id = store.create_professional_run(
+        terminal_id, session_id="native-session", status="completed",
     )
     pending_id = store.enqueue_work_summary_input("local_file", "file#pending", payload)
     failed_id = store.enqueue_work_summary_input("local_file", "file#failed", payload)
@@ -71,9 +65,11 @@ def test_historical_work_input_compaction_is_idempotent_and_preserves_adopted_ro
     assert store.get_work_summary_input(pending_id).payload_json == payload
     assert store.get_work_summary_input(failed_id).payload_json == payload
     with store._connect() as db:
-        assert db.execute(f"select title from ({BUSINESS_PROJECTIONS['work_project']}) where id=?", (project_id,)).fetchone()[0] == "Adopted project"
-        assert db.execute(f"select summary from ({SYNC_ACTION_PROJECTIONS['work_updates']}) where id=?", (update_id,)).fetchone()[0] == "Adopted business result"
-        assert db.execute(f"select codex_session_id from ({logical_run_projection('task_agent_runs')}) where summary_input_id=?", (terminal_id,)).fetchone()[0] == "native-session"
+        assert db.execute("select title from business where record_type='work_project' "
+                          "and cast(legacy_key as integer)=?", (project_id,)).fetchone()[0] == "Adopted project"
+        assert db.execute("select sync_summary from actions where record_type='work_updates' "
+                          "and cast(legacy_key as integer)=?", (update_id,)).fetchone()[0] == "Adopted business result"
+    assert store.get_professional_run(native_run_id, load_native=False)["session_id"] == "native-session"
 
 
 def test_historical_reply_input_compaction_preserves_unsettled_rows(tmp_path):
@@ -89,7 +85,7 @@ def test_historical_reply_input_compaction_preserves_unsettled_rows(tmp_path):
         )
         ids[status] = task.id
         with store._connect() as db:
-            db.execute("update tasks set status=? where record_type='reply_tasks' and id=?", (status, task.id))
+            db.execute("update tasks set status=? where kind='reply' and id=?", (status, task.id))
     first = compact_settled_reply_inputs(store.path)
     second = compact_settled_reply_inputs(store.path)
     assert first["tasks_compacted"] == 2
@@ -126,8 +122,7 @@ def test_historical_done_email_classification_compaction_is_idempotent(tmp_path)
         tasks[status] = task
         with store._connect() as db:
             db.execute(
-                "update email_agent_classification_tasks set status=?, owner=?, "
-                "lease_expires_at=? where task_id=?",
+                "update tasks set status=?, lease_owner=?, lease_expires_at=? where id=?",
                 (status, "worker" if status == "running" else "",
                  "2099-01-01T00:00:00+00:00" if status == "running" else "",
                  task.task_id),
