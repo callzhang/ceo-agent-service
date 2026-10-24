@@ -1,5 +1,11 @@
 # Changelog
 
+## 2026-10-24 — 会议结论不再由服务写 Memory
+
+- **去掉会议结论的服务写入**（Derek 2026-10-24：任务那一路去掉后，会议这一路不应是另一条路径）：删除 `app/meeting_memory_write.py`、服务自己注册的 OAuth 客户端 `app/memory_connector_client.py` 和 `authorize-memory-connector` 命令、`meeting-memory-write` 健康组件、`--meeting-memory-workers` / `CEO_MEETING_MEMORY_WORKERS`、`scan-meetings-once` 里的入队与写入、控制台 Status 的 `meeting_memory_health` 卡片、Attention 的 `meeting_memory_write_failed` 和部署排空对会议 Memory 租约的计数。
+- **原因**：服务的凭据与 Agent 读 memory 的不是同一份，后端对它返回 500 `FRIDAY_INTROSPECTION_FAILED`，昨天 07:51 UTC 之后 9 条会议结论写入全部失败；任务那一路已改成 Agent 自己写。
+- 9 条失败行与历史 `meeting_memory_write_events` 记录保留不动，不再出现在 Attention；这 9 场会议的结论由人工补写进 Memory。
+
 ## 2026-10-24 — 任务长期记忆改回 Agent 自己写
 
 - **去掉任务记忆的服务层**（Derek 2026-10-24）：Consumer 结果不再有 `durable_memories`，任务结束不再入队 `task_memory_write_events`，删除 `app/task_memory_write.py`、`TaskMemoryWriteQueueAdapter`、Attention 里的 `task_memory_write_failed` 和控制台的「任务 Memory 写入」队列。Consumer 提示要求它在结束前检查本轮是否确认了应长期保留的信息，有则自己调用 `memory_connector.memory_write`。

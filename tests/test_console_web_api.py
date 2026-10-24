@@ -1325,7 +1325,6 @@ def test_console_status_accepts_live_native_delivery_coverage(
     health = audit_web_module._system_health_snapshot(
         store,
         {"ok": True},
-        meeting_memory_health={"delayed": 0, "ghost_runtime_attempts": 0},
     )
     assert SystemHealth.model_validate(health).native_delivery_coverage.model_dump() == {
         "checked": 2, "unavailable": 3,
@@ -1506,20 +1505,6 @@ def test_console_status_is_json_serializable_and_has_snapshot(monkeypatch, tmp_p
                 "runtime_loops": [],
                 "accounts": [],
                 "checks": [],
-            },
-            "meeting_memory_health": {
-                "pending": 0,
-                "due": 0,
-                "delayed": 0,
-                "processing": 0,
-                "retryable": 0,
-                "failed": 0,
-                "oldest_due_at": "",
-                "oldest_due_seconds": 0,
-                "completed_last_hour": 0,
-                "active_agents": 0,
-                "ghost_runtime_attempts": 0,
-                "delayed_after_seconds": 30 * 60,
             },
             "queues": [],
             "dispatcher_queues": [],

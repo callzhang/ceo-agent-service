@@ -285,22 +285,23 @@ def test_independent_claims_count_before_any_native_runtime_starts(tmp_path):
     assert in_flight_work(store.path) == 3
 
 
-def test_meeting_delivery_and_memory_claims_pause_and_stay_pending(tmp_path):
+def test_meeting_delivery_claims_pause_and_stay_pending(tmp_path):
     from app.deployment_drain import deployment_drain
-    from app.meeting_memory_write import enqueue_sent_meeting_memory_writes
-    from tests.test_meeting_memory_write import _store_sent_job
 
     store = AutoReplyStore(tmp_path / "worker.db")
-    job_id = _store_sent_job(store)
-    assert enqueue_sent_meeting_memory_writes(store) == 1
-    store.update_meeting_alignment_job(job_id, status="ready_to_send")
+    job_id = store.upsert_meeting_alignment_job(
+        meeting_id="minutes-7",
+        title="经营复盘",
+        source_json="{}",
+        participants_json="[]",
+        ended_at="2026-09-14T09:30:00+08:00",
+        eligible_at="2026-09-14T09:40:00+08:00",
+        status="pending",
+    )
+    store.update_meeting_alignment_job(
+        job_id, status="ready_to_send", final_message="【经营复盘结论】"
+    )
     with deployment_drain(store.path):
-        assert (
-            store.claim_due_meeting_memory_write_events(
-                now=NOW.isoformat(), limit=1, owner="memory", lease_seconds=30
-            )
-            == []
-        )
         assert (
             store.claim_ready_to_send_meeting_alignment_jobs(
                 limit=1, now=NOW.isoformat()
@@ -311,10 +312,6 @@ def test_meeting_delivery_and_memory_claims_pause_and_stay_pending(tmp_path):
             store.claim_ready_to_send_meeting_alignment_job(job_id, now=NOW.isoformat())
             is None
         )
-    events = store.claim_due_meeting_memory_write_events(
-        now=NOW.isoformat(), limit=1, owner="memory", lease_seconds=30
-    )
-    assert len(events) == 1
     assert (
         len(
             store.claim_ready_to_send_meeting_alignment_jobs(

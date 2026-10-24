@@ -3984,7 +3984,6 @@ def test_system_health_reports_native_delivery_coverage_without_changing_state(
     health = audit_web_module._system_health_snapshot(
         store,
         {"ok": True},
-        meeting_memory_health={"delayed": 0, "ghost_runtime_attempts": 0},
     )
 
     assert health["state"] == "healthy"
@@ -8067,109 +8066,6 @@ def test_reply_attempt_queue_hides_failed_history_when_its_task_has_a_terminal_s
     assert reply_attempt_queue["counts"].get("recovered", 0) == 1
 
 
-def test_status_reports_lease_backed_meeting_memory_health_and_degrades_for_backlog(
-    tmp_path: Path,
-    monkeypatch,
-) -> None:
-    monkeypatch.setattr(
-        audit_web_module,
-        "_launchd_service_status",
-        lambda label: {
-            "label": label,
-            "target": "gui/501/com.ceo-agent-service.main",
-            "ok": True,
-            "state": "running",
-            "detail": "running",
-            "pid": "123",
-            "runs": "1",
-            "initialized": "1",
-            "last_terminating_signal": "",
-            "returncode": 0,
-        },
-    )
-    monkeypatch.setattr(
-        audit_web_module,
-        "scan_hourly_quality",
-        lambda _path: SimpleNamespace(violations=(), checked_at="2026-09-15T12:00:00+00:00"),
-    )
-    store = AutoReplyStore(tmp_path / "meeting-memory-status.sqlite3")
-    meeting_ids = []
-    for meeting_id in ("overdue-memory", "ghost-memory"):
-        job_id = store.upsert_meeting_alignment_job(
-            meeting_id=meeting_id,
-            title=meeting_id,
-            source_json="{}",
-            participants_json="[]",
-            ended_at="2026-09-15T12:00:00+00:00",
-            eligible_at="2026-09-15T12:00:00+00:00",
-            status="waiting",
-        )
-        store.update_meeting_alignment_job(job_id, status="sent", final_message="summary")
-        meeting_ids.append(job_id)
-    with store._connect() as db:
-        physical_meeting_ids = [
-            task_physical_id(db, "meeting_alignment_jobs", job_id)
-            for job_id in meeting_ids
-        ]
-        insert_task_delivery_action(db, "meeting_memory_write_events", {
-            "id": 1, "meeting_job_id": physical_meeting_ids[0],
-            "execution_generation": "due", "payload_json": "{}",
-            "status": "pending", "available_at": "2020-01-01T00:00:00+00:00",
-            "created_at": "2020-01-01T00:00:00+00:00",
-            "updated_at": "2020-01-01T00:00:00+00:00",
-        })
-        insert_task_delivery_action(db, "meeting_memory_write_events", {
-            "id": 2, "meeting_job_id": physical_meeting_ids[1],
-            "execution_generation": "ghost", "payload_json": "{}",
-            "status": "processing", "lease_owner": "event-owner",
-            "lease_expires_at": "2020-01-01T00:00:00+00:00",
-            "created_at": "2020-01-01T00:00:00+00:00",
-            "updated_at": "2020-01-01T00:00:00+00:00",
-        })
-        insert_run(
-            db, 'agent_runtime_attempts', {
-                'workload_kind': 'memory',
-                'workload_key': 'meeting_memory_write_event:2:ghost',
-                'attempt_number': 1,
-                'route_name': 'codex_oauth',
-                'runtime_kind': 'codex_cli',
-                'credential_mode': 'local_oauth',
-                'model': 'gpt-5.6-sol',
-                'status': 'running',
-                'lease_owner': 'event-owner',
-                'lease_expires_at': '2030-01-01T00:00:00+00:00',
-            },
-        )
-
-    payload = build_worker_status_payload(store)
-
-    meeting_memory_health = payload["meeting_memory_health"]
-    assert {
-        key: value
-        for key, value in meeting_memory_health.items()
-        if key != "oldest_due_seconds"
-    } == {
-        "pending": 1,
-        "due": 1,
-        "delayed": 1,
-        "processing": 1,
-        "retryable": 0,
-        "failed": 0,
-        "oldest_due_at": "2020-01-01T00:00:00+00:00",
-        "completed_last_hour": 0,
-        "active_agents": 0,
-        "ghost_runtime_attempts": 1,
-        "delayed_after_seconds": 30 * 60,
-    }
-    assert meeting_memory_health["oldest_due_seconds"] > 30 * 60
-    assert {component["name"] for component in payload["components"]} >= {
-        "meeting-delivery",
-        "meeting-memory-write",
-    }
-    assert payload["system_health"]["state"] == "degraded"
-    assert "Meeting Memory" in payload["system_health"]["detail"]
-
-
 def test_attention_hides_historical_failed_task_when_business_object_is_done(
     tmp_path: Path,
 ):
@@ -8853,58 +8749,6 @@ def test_attention_includes_current_failed_attempt_waiting_for_retry(tmp_path: P
     assert [(row["category"], row["id"]) for row in rows] == [
         ("Reply", str(attempt_id))
     ]
-
-
-def test_worker_attention_includes_failed_meeting_memory_writes(tmp_path: Path):
-    store = AutoReplyStore(tmp_path / "worker.sqlite3")
-    meeting_id = store.upsert_meeting_alignment_job(
-        meeting_id="meeting-memory-attention",
-        title="Leadership alignment",
-        source_json="{}",
-        participants_json="[]",
-        ended_at="2026-09-14T09:30:00+00:00",
-        eligible_at="2026-09-14T09:40:00+00:00",
-        status="sent",
-    )
-    store.update_meeting_alignment_job(
-        meeting_id,
-        status="sent",
-        final_message="Delivered conclusion",
-    )
-    assert store.create_meeting_memory_write_event(meeting_id) is True
-    with store._connect() as db:
-        event_id = int(
-            db.execute(
-                f"select id from ({task_delivery_projection('meeting_memory_write_events')}) "
-                "where meeting_job_id=?",
-                (meeting_id,),
-            ).fetchone()["id"]
-        )
-    claimed = store.claim_due_meeting_memory_write_events(
-        now="2026-09-15T10:00:00+00:00",
-        limit=1,
-        owner="test-meeting-memory-attention",
-        lease_seconds=30,
-    )
-    assert [event.id for event in claimed] == [event_id]
-    assert store.fail_meeting_memory_write_event(
-        event_id,
-        owner="test-meeting-memory-attention",
-        error="provider unavailable",
-        now=datetime.fromisoformat("2026-09-15T10:00:01+00:00"),
-    )
-
-    rows = audit_web_module._queue_attention_rows(store)
-
-    row = next(
-        row
-        for row in rows
-        if row.get("root_cause") == "meeting_memory_write_failed"
-    )
-    assert row["id"] == f"meeting-memory-{event_id}"
-    assert row["status"] == "failed"
-    assert row["context"] == "Meeting Memory: Leadership alignment"
-    assert row["error"] == "provider unavailable"
 
 
 def test_worker_attention_uses_local_file_title_as_work_item_context(
