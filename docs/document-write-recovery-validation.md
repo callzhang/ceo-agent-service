@@ -42,3 +42,19 @@ DWS 的 `docVerificationError` 生成 `doc.operation.v1/status=partial_success`�
 因此，这份样本的50处对齐token差异反映Markdown读回省略属性，而非已证明写入丢失对齐。DWS `executeVerifiedDocContentMutation` 对Markdown写入只用`get_document_content(format=markdown)`核验，无法从该输出区分真实对齐缺失与导出省略。剩余1处文本空格差异还需要独立核对；不能由47处对齐存在推断整篇已完全匹配。
 
 已核对DWS上游main，仍采用相同Markdown核验路径；没有找到已发布的对应修复。后续DWS修复必须以完整JSONML核对Markdown无法表达回来的属性，并保留真正对齐缺失、正文数值变化、正文缺失的失败检测；禁止简单忽略对齐token或把本样本改判成功。本轮未改DWS、未切换生产文档写入格式、未重放报告。服务交接已上线，实际重复覆盖是否收敛仍待首个相关自然样本。
+
+## DWS核验修复与本机安装（2026-10-24 06:25 UTC）
+
+用户明确要求修复DWS、用完整JSONML核对对齐，并按现有计划验证上线。本次变更在DWS所属仓库完成：上游候选提交 `4e79e33a`，PR [DingTalk-Real-AI/dingtalk-workspace-cli#1551](https://github.com/DingTalk-Real-AI/dingtalk-workspace-cli/pull/1551)；本机安装以原v1.0.65的 `92c4f8c3` 为基线，仅带入同一修复，发布提交为 `87ddde4130bd3aa7080b7528f2c2324f5e6c2112`（已推送callzhang fork的 `codex/doc-jsonml-alignment-v1.0.65`）。上游PR尚未合入；这是本机源码修复版，不冒充官方新版本，原生源码安装的version输出为dev。
+
+机制：Markdown包含显式表格对齐时，每个既有核验轮次读取Markdown与完整JSONML，核对表/行/列数量及每个目标单元格段落的jc属性；只有JSONML证明对齐正确，才恢复比较AST中的对齐token，继续执行原有渲染等价及结构/内容比较。缺失或错误对齐、缺失正文、数值变化、不完整/损坏/片段JSONML、读回失败均不能成功。没有增加写入重试；compact回执保留JSONML对齐证据摘要，不返回第二份完整正文。
+
+原始样本剩余的1处空格差异确认为结构指纹将转义文本AST片段的边界误当作空格；现改为先拼接原片段再归一化实际空白，显式换行和真实词间空格保留。匿名失败回归已证明该缺陷。原始完整样本离线核验由失败变为通过；不存在生产写入或任务重放。
+
+验证：上游main基线和安装用v1.0.65基线的完整文档模块测试均通过；安装分支包含114项顶层测试及子场景，go vet通过。新增先失败的用例覆盖导出省略对齐仍成功、真实对齐缺失/错误仍失败、数值和正文变化、JSONML缺失/损坏/非root/不完整、多个表格、追加、创建、一次写入、JSONML读取失败、实体转义和空正文覆盖。独立审查发现的空正文及HTML实体两项退化均以失败回归复现并修复，复核无剩余问题。
+
+通过仓库原生 `make build` 和 `scripts/install.sh` 的源码安装路径安装到 `/Users/derek/.local/bin/dws`（`DWS_NO_SKILLS=1`，保留原有5份Skill备份）；runtime payload校验、签名校验通过。安装文件与构建产物一致，SHA-256为 `ec9a6d35f01cbc13ac5ae0fcc8608b282b807e2d135643c3c3963dcf669cf92d`。原文件SHA为 `1d832e4fe77a8746e3546de026ffd3d21b0eaddcfcdea7f2027543989af83dd8`，备份及校验回执保存在本机 `Library/Application Support/ceo-agent-service/backups/dws-doc-jsonml-87ddde41/`；未修改CEO服务生产checkout或Skill正文。
+
+安装后使用该DWS二进制只读fetch原目标，exit0，完整JSONML为3张表、47处右对齐；响应SHA为 `72a275cfecce5f4935c21268fdb9e1e64f3628627e3f2630283e1cea8dc400f2`，不保存正文。已检查实际进程环境，服务主进程37209及worker37212/37213/37214均将dws解析到已更新的文件；DWS为逐次启动CLI，新调用加载新二进制，无须为本次CLI安装重启CEO Python服务。healthz、status、Attention和History均HTTP200，Attention10项、History37920项；这些是观测值，不宣称既有错误已清零或其增长与本次变更有关。
+
+截至安装后查询，新增Consumer自然运行0项：**DWS修复已在本机运行路径上线，原始离线样本通过，实际自然文档写入是否停止重复覆盖仍待业务轨迹验收。** 不人工触发报告制造样本，不将只读fetch成功当作写入行为已验证。
