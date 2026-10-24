@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-identity="${CEO_WECHAT_READER_LOCAL_SIGNING_IDENTITY:-CEO WeChat Reader Local Signing}"
+identity="${CEO_WECHAT_READER_LOCAL_SIGNING_IDENTITY:-CEO Agent Local Signing}"
 keychain="${CEO_WECHAT_READER_SIGNING_KEYCHAIN:-$(
   security default-keychain -d user \
     | sed -e 's/^[[:space:]\"]*//' -e 's/[[:space:]\"]*$//'
@@ -38,7 +38,7 @@ else
   "${openssl_bin}" req -x509 -newkey rsa:3072 -sha256 -days 3650 -nodes \
     -keyout "${key_path}" \
     -out "${cert_path}" \
-    -subj "/CN=${identity}/O=Stardust Local Development" \
+    -subj "/CN=${identity}/O=Stardust CEO Agent" \
     -addext 'basicConstraints=critical,CA:FALSE' \
     -addext 'keyUsage=critical,digitalSignature' \
     -addext 'extendedKeyUsage=critical,codeSigning'
