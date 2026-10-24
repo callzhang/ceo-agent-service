@@ -1,6 +1,7 @@
 # Task/Input merge and remaining runtime exits — Unit C
 
 BASE: `479bfd68448284711002c75df0abe1dc70c3d958`
+Implementation tree (code, tests, behavior docs, and report before self-identification): `6496c10161cc5f2d523f9636afa5406b04934908`
 
 This is a local, unactivated Task/Run candidate. The assembled Store constructor, global manifest, History/Attention/session-search publication, production checkout, `main`, and provider/runtime activation were not changed.
 
