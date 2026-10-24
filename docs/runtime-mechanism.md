@@ -3702,8 +3702,11 @@ database file was replaced, or the store's `_open_connection` differs. The
 "close" time in the slow-context diagnostics is therefore the time to return
 the connection to the idle slot. Code that registers functions, handlers or
 pragmas on a `_connect` connection must undo them, because the next call in
-that thread sees the same connection. No query, schema, retry, audit or
-safety-policy change.
+that thread sees the same connection. A connection going idle releases its
+page cache (`pragma shrink_memory`) and keeps only the parsed schema: with the
+64 MB read cache per connection, four warm idle connections held about 230 MB
+more than four released ones, and the service keeps one per thread per database.
+No query, schema, retry, audit or safety-policy change.
 
 ## Unified core run storage (Store 2026-10-11.2)
 
