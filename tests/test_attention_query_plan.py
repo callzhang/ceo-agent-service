@@ -468,3 +468,26 @@ def test_attention_counts_only_the_latest_dispatched_run_of_a_scheduled_task(
         assert str(newest_attempt_id) not in attempt_ids
     else:
         assert str(newest_task.id) in task_ids or str(newest_attempt_id) in attempt_ids
+
+
+def test_attention_ignores_orphan_scheduled_run_read_errors_but_keeps_history(
+    tmp_path: Path,
+):
+    store = AutoReplyStore(tmp_path / "worker.sqlite3")
+    store.record_error(
+        "scheduled-task-run:99776",
+        None,
+        "read_recent_messages_rerun",
+        "invalid_request: openCid or cid is required",
+    )
+
+    rows = _queue_attention_rows(store)
+
+    assert not any(
+        row.get("category") == "Service error"
+        and row.get("context") == "read_recent_messages_rerun"
+        for row in rows
+    )
+    error = store.list_errors()[0]
+    assert error.conversation_id == "scheduled-task-run:99776"
+    assert error.resolved_at == ""

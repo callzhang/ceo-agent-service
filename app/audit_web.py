@@ -3793,6 +3793,19 @@ def _queue_attention_rows(store: AutoReplyStore, *, limit: int | None = None) ->
                       and datetime(recovery.updated_at) >= datetime(error_event.created_at)
                       and lower(recovery.send_status) in ({recovered_placeholders})
                   )
+                  and not (
+                    error_event.conversation_id like 'scheduled-task-run:%'
+                    and not exists (
+                      select 1
+                      from schedule_occurrences as source_run
+                      where source_run.id=cast(substr(
+                          error_event.conversation_id,
+                          length('scheduled-task-run:') + 1
+                      ) as integer)
+                        and error_event.conversation_id=
+                            'scheduled-task-run:' || cast(source_run.id as text)
+                    )
+                  )
                   and not exists (
                     select 1
                     from (
