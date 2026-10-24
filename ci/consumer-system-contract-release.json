@@ -50,7 +50,7 @@
       "source": "ci/shared-skills/ceo-document-review/SKILL.md",
       "target": "skills/ceo-document-review/SKILL.md",
       "old_sha256": "112826bef758efa9f495697624769bf42ee265d92628cca662450f16ccea16a7",
-      "new_sha256": "112826bef758efa9f495697624769bf42ee265d92628cca662450f16ccea16a7",
+      "new_sha256": "b6b87c3d1ca32bb2e9a9c53675b22dd0a8932aa808205734c8725d9a3eb09d77",
       "old_managed_sha256": "112826bef758efa9f495697624769bf42ee265d92628cca662450f16ccea16a7"
     },
     {

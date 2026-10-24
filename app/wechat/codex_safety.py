@@ -53,6 +53,9 @@ AGENT_CLI_READ_TOOLS = (
     "list_dingtalk_sheets",
     "read_dingtalk_sheet_info",
     "read_dingtalk_sheet_range",
+    "read_dingtalk_aitable_base",
+    "read_dingtalk_aitable_tables",
+    "read_dingtalk_aitable_records",
     "read_dingtalk_oa",
     "list_dingtalk_pending_oa",
     "read_dingtalk_oa_records",
@@ -320,6 +323,8 @@ def make_role_agent_command(
         "mcp_servers.agent_cli.tools.read_dingtalk_document_full.output_token_limit=30000",
         "-c",
         "mcp_servers.agent_cli.tools.read_dingtalk_messages.output_token_limit=30000",
+        "-c",
+        "mcp_servers.agent_cli.tools.read_dingtalk_aitable_records.output_token_limit=30000",
         "-c",
         'approval_policy="never"',
     ]

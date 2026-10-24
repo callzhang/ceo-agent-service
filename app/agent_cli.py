@@ -2203,6 +2203,44 @@ def build_role_server(
             "--sheet-id", sheet_id, "--range", cell_range, "--format", "json",
         ]))
 
+    def read_dingtalk_aitable_base(base_id: str):
+        """Read one DingTalk AI table Base as compact JSON text."""
+        from app.dws_client import DwsClient
+        if not base_id.strip():
+            raise ValueError("AI table base ID is required")
+        return json.dumps(
+            DwsClient().get_aitable_base(base_id), ensure_ascii=False,
+            separators=(",", ":"),
+        )
+
+    def read_dingtalk_aitable_tables(
+        base_id: str, table_ids: list[str] | None = None,
+    ):
+        """Read selected table metadata from one DingTalk AI table Base."""
+        from app.dws_client import DwsClient
+        if not base_id.strip():
+            raise ValueError("AI table base ID is required")
+        if table_ids is not None and any(not item.strip() for item in table_ids):
+            raise ValueError("AI table IDs must be non-empty")
+        return json.dumps(
+            DwsClient().get_aitable_tables(base_id, table_ids), ensure_ascii=False,
+            separators=(",", ":"),
+        )
+
+    def read_dingtalk_aitable_records(
+        base_id: str, table_id: str, limit: int = 10,
+    ):
+        """Read a bounded page of records from one DingTalk AI table."""
+        from app.dws_client import DwsClient
+        if not base_id.strip() or not table_id.strip():
+            raise ValueError("AI table base and table IDs are required")
+        if type(limit) is not int or limit < 1:
+            raise ValueError("AI table record limit must be a positive integer")
+        return json.dumps(
+            DwsClient().query_aitable_records(base_id, table_id, limit),
+            ensure_ascii=False, separators=(",", ":"),
+        )
+
     def read_dingtalk_oa(process_instance_id: str) -> dict[str, object]:
         """Read the live DingTalk OA process and its current facts."""
         from app.dws_client import DwsClient
@@ -2734,6 +2772,9 @@ def build_role_server(
         ("list_dingtalk_sheets", list_dingtalk_sheets),
         ("read_dingtalk_sheet_info", read_dingtalk_sheet_info),
         ("read_dingtalk_sheet_range", read_dingtalk_sheet_range),
+        ("read_dingtalk_aitable_base", read_dingtalk_aitable_base),
+        ("read_dingtalk_aitable_tables", read_dingtalk_aitable_tables),
+        ("read_dingtalk_aitable_records", read_dingtalk_aitable_records),
         ("read_dingtalk_oa", read_dingtalk_oa),
         ("list_dingtalk_pending_oa", list_dingtalk_pending_oa),
         ("read_dingtalk_oa_records", read_dingtalk_oa_records),

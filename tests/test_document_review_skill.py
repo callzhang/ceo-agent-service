@@ -15,7 +15,7 @@ SKILLS_ROOT = bundled_business_skills_root()
 
 
 ROOT = Path(__file__).resolve().parents[1]
-SKILL_PATH = SKILLS_ROOT / "ceo-document-review" / "SKILL.md"
+SKILL_PATH = ROOT / "ci" / "shared-skills" / "ceo-document-review" / "SKILL.md"
 
 
 def _skill_text() -> str:
@@ -26,7 +26,11 @@ def _skill_text() -> str:
     ("material", "operation_guidance", "read_rule"),
     [
         ("DingTalk document", "`dingtalk-doc`", "read current content"),
-        ("DingTalk AI table", "`dingtalk-aitable`", "never use document read"),
+        (
+            "DingTalk AI table",
+            "General tasks: `dingtalk-aitable`; CEO Agent Service Consumer/Audit: use the read-only `agent_cli` route below",
+            "never use document read",
+        ),
         (
             "ordinary file",
             "`matching drive Skill`",
@@ -52,7 +56,7 @@ def test_document_review_skill_defines_complete_review_workflow():
     text = _skill_text()
 
     for required in (
-        "Load the operation Skill that matches the actual material type",
+        "Load the operation Skill that matches the actual material type before a business operation",
         "The agent chooses and performs every content read",
         "The service exposes references and exact read commands but does not interpret business content",
         "Reread the current material when the sender says it changed",
@@ -65,6 +69,17 @@ def test_document_review_skill_defines_complete_review_workflow():
         "otherwise deliver the review in the source conversation",
     ):
         assert required in text
+
+
+def test_document_review_skill_routes_aitables_through_service_read_mcp():
+    text = _skill_text()
+
+    assert "read_dingtalk_aitable_base" in text
+    assert "read_dingtalk_aitable_tables" in text
+    assert "read_dingtalk_aitable_records" in text
+    assert "Do not use document/workbook readers or shell DWS calls for an AITable" in text
+    assert "If these MCP tools are unavailable, report a dependency failure" in text
+    assert "do not load the full operation Skill just to choose the reader" in text
 
 
 def test_document_review_skill_uses_executable_image_inspection_guidance():
