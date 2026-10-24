@@ -6,8 +6,8 @@ ceiling is ended at once, with the test it was running in the message, so the
 run fails loudly instead of taking the machine down.
 """
 
+import ctypes
 import os
-import resource
 import sys
 import threading
 import time
@@ -16,9 +16,24 @@ POLL_SECONDS = 0.2
 EXIT_CODE = 70
 
 
-def peak_rss_bytes() -> int:
-    peak = resource.getrusage(resource.RUSAGE_SELF).ru_maxrss
-    return peak if sys.platform == "darwin" else peak * 1024
+def footprint_bytes() -> int:
+    """Memory this process holds, including pages the system compressed or swapped out.
+
+    RSS is not enough: under memory pressure macOS compresses a process, its RSS
+    drops to a few hundred MB, and a 2026-10-23 run held gigabytes the RSS never showed.
+    """
+    if sys.platform == "darwin":
+        # rusage_info_v0: ri_uuid (2 words), then 7 counters; word 9 is ri_phys_footprint.
+        info = (ctypes.c_uint64 * 32)()
+        if ctypes.CDLL(None).proc_pid_rusage(os.getpid(), 0, info) != 0:
+            raise OSError(ctypes.get_errno(), "proc_pid_rusage failed")
+        return info[9]
+    status = {}
+    with open("/proc/self/status", encoding="utf-8") as handle:
+        for line in handle:
+            name, _, value = line.partition(":")
+            status[name] = value
+    return sum(int(status[key].split()[0]) * 1024 for key in ("VmRSS", "VmSwap"))
 
 
 class MemoryLimit:
@@ -32,10 +47,10 @@ class MemoryLimit:
     def _watch(self) -> None:
         while True:
             time.sleep(POLL_SECONDS)
-            peak = peak_rss_bytes()
-            if peak > self.limit_bytes:
+            held = footprint_bytes()
+            if held > self.limit_bytes:
                 message = (
-                    f"\nMEMORY LIMIT EXCEEDED: this test process reached {peak / 2**30:.1f} GB "
+                    f"\nMEMORY LIMIT EXCEEDED: this test process reached {held / 2**30:.1f} GB "
                     f"(limit {self.limit_bytes / 2**30:.0f} GB) while running {self.current_test}.\n"
                     "The limit is fixed and must not be raised. Fix the test, or the code it runs, "
                     "so it stays under the limit.\n"

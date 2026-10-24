@@ -6,7 +6,11 @@ from typing import TYPE_CHECKING, Iterable
 
 if TYPE_CHECKING:
     from app.task_models import WorkItem
-    from app.business_source_reader import BusinessTaskSignalFact, PreparedSources
+    from app.business_source_reader import (
+        BusinessTaskSignalFact,
+        PreparedSources,
+        SourceVersionBinding,
+    )
     from app.task_semantic_models import SourceCitation
 
 
@@ -136,29 +140,38 @@ def _document_projection(body: str, quotes: Iterable[str], *, full: bool) -> dic
     }
 
 
+def source_has_external_locator(binding: "SourceVersionBinding") -> bool:
+    """Whether the Agent can fetch this source version itself.
+
+    Such a binding keeps a provider or native locator, and the Signal's
+    `source_ref` names the minutes or document. A source without one (a Console
+    action record) exists only as the service's own record.
+    """
+    return bool(binding.native_provenance_json or binding.provider_locator_json)
+
+
 def source_bundle(
     signals: Iterable["BusinessTaskSignalFact"],
     *,
     prepared_sources: "PreparedSources",
-    current_work_item: "WorkItem | None" = None,
     citations: Iterable["SourceCitation"] = (),
 ) -> dict:
-    """One exact version key per original, with bounded visible source text."""
+    """One exact version key per original; text only where the Agent cannot fetch it.
+
+    A source with an external locator (its `source_ref` names the minutes or
+    document, and the binding keeps a provider or native locator) is not
+    copied into the input: the Agent reads it itself and the service checks
+    every cited quote against the exact bound version when a decision is
+    applied. A source with no locator has nowhere to be read from, so its text
+    is projected as before.
+    """
     from app.business_source_reader import AvailableSource
 
     documents: dict[str, dict] = {}
     signal_documents: dict[int, str] = {}
     references: list[dict] = []
-    before = 0
-    unknown_length = False
     for signal in signals:
         key = signal.source.identity_key
-        reading = prepared_sources.reading_for(signal)
-        body = reading.body if isinstance(reading, AvailableSource) else None
-        if body is None:
-            unknown_length = True
-        else:
-            before += len(body)
         references.append({
             "id": signal.id, "document_id": key,
             "source_type": signal.source_type, "source_ref": signal.source_ref,
@@ -169,14 +182,12 @@ def source_bundle(
             "author_name": signal.author_name,
             "author_kind": signal.author_kind.value,
             "context_json": signal.context_json, "created_at": signal.created_at,
-            "source_available": body is not None,
-            "source_unavailable_reason": None if body is not None else reading.reason.value,
         })
         signal_documents[signal.id] = key
-        documents.setdefault(key, {
-            "body": body, "quotes": [], "full": False, "binding": signal.source,
-            "reason": None if body is not None else reading.reason.value,
-        })
+        doc = documents.setdefault(key, {"quotes": [], "signal": signal, "conflict": False})
+        if signal.source != doc["signal"].source:
+            # Two bindings claim one version key: neither may stand for it.
+            doc["conflict"] = True
     for citation in citations:
         key = signal_documents.get(citation.signal_id)
         if key is not None and any(
@@ -184,67 +195,44 @@ def source_bundle(
             for ref in references
         ):
             documents[key]["quotes"].append(citation.source_excerpt)
-    current = None
-    if current_work_item is not None:
-        item = current_work_item
-        key = source_document_key(
-            source_type=item.source.type.value,
-            source_ref=item.source.ref,
-            source_time=item.source.created_at,
-            conversation_id=item.source.conversation_id,
-            author_user_id=item.context.sender_user_id,
-            author_name=item.context.sender,
-            author_kind="human" if item.context.sender_user_id else "unknown",
-            evidence_text=item.summary,
-        )
-        documents.setdefault(key, {
-            "body": item.summary, "quotes": [], "full": True,
-            "binding": None, "reason": None,
-        })["full"] = True
-        if documents[key]["body"] is None:
-            documents[key]["body"] = item.summary
-            documents[key]["reason"] = None
-        before += len(item.summary)
-        current = item.model_dump(mode="json")
-        current.pop("summary")
-        current["scheduled_consumer"].pop("skill_protocol", None)
-        current["scheduled_consumer"].pop("skill_materials", None)
-        current["document_id"] = key
     rendered = []
     for key, doc in documents.items():
-        body = doc["body"]
-        if body is None:
-            binding = doc["binding"]
+        signal = doc["signal"]
+        binding = signal.source
+        quotes = list(dict.fromkeys(doc["quotes"]))
+        if doc["conflict"]:
             rendered.append({
                 "document_id": key, "source_available": False,
-                "source_unavailable_reason": doc["reason"],
+                "source_unavailable_reason": "binding_conflict",
                 "body_utf8_bytes": binding.body_utf8_bytes,
-                "source_locator": (binding.native_provenance_json
-                                   or binding.provider_locator_json),
-                "saved_quotations": list(dict.fromkeys(doc["quotes"])),
+                "saved_quotations": quotes,
                 "full_length": None, "truncated": None,
                 "visible_ranges": [], "decoded_excerpts": [],
                 "citation_budget_exceeded": None,
             })
-        else:
+            continue
+        if source_has_external_locator(binding):
             rendered.append({
-                "document_id": key, "source_available": True,
-                "source_unavailable_reason": None,
-                **_document_projection(body, doc["quotes"], full=doc["full"]),
+                "document_id": key, "source_in_input": False,
+                "body_utf8_bytes": binding.body_utf8_bytes,
+                "saved_quotations": quotes,
             })
-    return {
-        "source_documents": rendered,
-        "source_signals": references,
-        **({"current_work_item": current} if current is not None else {}),
-        "source_metrics": {
-            "signal_count": len(references),
-            "document_count": len(rendered),
-            "body_chars_before_sharing": None if unknown_length else before,
-            "unique_body_chars": None if any(doc["full_length"] is None for doc in rendered)
-                                 else sum(doc["full_length"] for doc in rendered),
-            "visible_body_chars": sum(
-                len(span["text"]) for doc in rendered
-                for span in (*doc["visible_ranges"], *doc["decoded_excerpts"])
-            ),
-        },
-    }
+            continue
+        reading = prepared_sources.reading_for(signal)
+        if not isinstance(reading, AvailableSource):
+            rendered.append({
+                "document_id": key, "source_available": False,
+                "source_unavailable_reason": reading.reason.value,
+                "body_utf8_bytes": binding.body_utf8_bytes,
+                "saved_quotations": quotes,
+                "full_length": None, "truncated": None,
+                "visible_ranges": [], "decoded_excerpts": [],
+                "citation_budget_exceeded": None,
+            })
+            continue
+        rendered.append({
+            "document_id": key, "source_available": True,
+            "source_unavailable_reason": None,
+            **_document_projection(reading.body, quotes, full=False),
+        })
+    return {"source_documents": rendered, "source_signals": references}

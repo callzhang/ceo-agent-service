@@ -14,7 +14,11 @@ from app.task_semantic_models import (
     BusinessWorkCluster, BusinessWorkClusterTask, BusinessRelationStatus, FormalTaskBasis,
     BusinessProjectContextRevision, BusinessProjectEvidence, SourceCitation,
 )
-from app.task_source_documents import source_bundle, source_contains_quote
+from app.task_source_documents import (
+    source_bundle,
+    source_contains_quote,
+    source_has_external_locator,
+)
 from app.business_source_reader import (
     AvailableSource, BusinessTaskSignalFact, PreparedSources, RequestSourceReader,
 )
@@ -370,8 +374,11 @@ def retrieve_task_semantic_context(
         signal for signal_id in sorted(signal_ids)
         if (signal := store.get_business_task_signal(signal_id)) is not None
     )
+    # Only a source the Agent cannot fetch itself is read to build the input;
+    # decisions read the sources they cite when they are prepared, before writing.
     for signal in signals:
-        prepared_sources.add(signal)
+        if not source_has_external_locator(signal.source):
+            prepared_sources.add(signal)
     return TaskSemanticContext(
         task_candidates=candidates,
         formal_tasks=formal,
@@ -392,7 +399,7 @@ def retrieve_task_semantic_context(
     )
 
 
-def render_task_semantic_context(context: TaskSemanticContext, *, work_item: WorkItem | None = None) -> str:
+def render_task_semantic_context(context: TaskSemanticContext) -> str:
     citations = _semantic_citations(
         context.project_contexts,
         context.task_candidates + context.formal_tasks + context.unverified_formal_tasks,
@@ -416,7 +423,6 @@ def render_task_semantic_context(context: TaskSemanticContext, *, work_item: Wor
             source_bundle(
                 context.evidence_signals,
                 prepared_sources=context.prepared_sources,
-                current_work_item=work_item,
                 citations=citations,
             )
         ),

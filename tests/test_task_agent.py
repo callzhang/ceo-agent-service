@@ -1936,8 +1936,8 @@ def test_task_agent_prompt_does_not_embed_candidate_specific_workflow():
     from app.business_source_reader import PreparedSources, RequestSourceReader
 
     prompt = build_task_agent_prompt(
-        item, json.dumps(source_bundle((), prepared_sources=PreparedSources(RequestSourceReader()),
-                                current_work_item=item), ensure_ascii=False)
+        item, json.dumps(source_bundle((), prepared_sources=PreparedSources(RequestSourceReader())),
+                         ensure_ascii=False)
     )
 
     assert "xiaoqing_interview" not in prompt
@@ -2019,9 +2019,31 @@ def test_task_agent_codex_runner_uses_standard_runtime_factory():
     assert isinstance(routed.calls[0]["command_factory"], CodexCommandFactory)
 
 
-def test_task_agent_keeps_full_skill_for_remote_text_runtime():
-    from app.agent_runtime_contracts import RuntimeKind
-    from app.task_agent import WORK_TRACKING_SKILL_PATH
+def test_task_prompt_keeps_the_work_item_text_and_tells_the_agent_how_to_read_history():
+    prompt = build_task_agent_prompt(_work_item(), "{}")
+
+    assert _work_item().summary in prompt
+    assert "source_in_input false" in prompt
+    assert "read it yourself with dws" in prompt
+    assert "current_work_item" not in prompt
+
+
+def test_task_prompt_offers_asr_only_when_the_transcript_is_missing():
+    item = _work_item()
+    missing = item.model_copy(
+        update={
+            "context": item.context.model_copy(
+                update={"source_transcript_unavailable": True}
+            )
+        }
+    )
+
+    assert "transcribe_audio" in build_task_agent_prompt(missing, "{}")
+    assert "transcribe_audio" not in build_task_agent_prompt(item, "{}")
+
+
+def test_task_runner_has_the_dws_skills_and_asr_tool_without_a_route_flag():
+    from app.task_agent import TASK_SOURCE_READING_SKILLS
 
     routed = FakeRoutedTaskExecution(json.dumps({
         "project_decisions": [], "project_assessments": [],
@@ -2029,71 +2051,13 @@ def test_task_agent_keeps_full_skill_for_remote_text_runtime():
         "task_decisions": [{"action": "skip", "transition": "none",
                             "skip_reason": "No source-grounded task."}],
     }))
-    short_prompt = build_task_agent_prompt(_work_item(), "bounded context")
-    remote_prompt = build_task_agent_prompt(
-        _work_item(), "bounded context", inline_skill=True
-    )
 
-    TaskAgentCodexRunner(routed_execution=routed).decide(
-        prompt=short_prompt, friday_prompt=remote_prompt, workload_key="1"
-    )
+    TaskAgentCodexRunner(routed_execution=routed).decide(prompt="P", workload_key="1")
 
-    call = routed.calls[0]
-    assert WORK_TRACKING_SKILL_PATH.read_text().strip() not in call["prompt"]
-    assert call["route_prompt_overrides"][RuntimeKind.FRIDAY_RUNTIME] == remote_prompt
-    assert WORK_TRACKING_SKILL_PATH.read_text().strip() in remote_prompt
-    assert "SHA-256:" not in remote_prompt
-    assert "bounded context" in remote_prompt
-
-
-def test_task_runner_passes_matching_short_and_remote_skill_prompts():
-    from app.task_agent import WORK_TRACKING_SKILL_PATH
-
-    codex = FakeCodex({
-        "project_decisions": [], "project_assessments": [],
-        "update_summary": "No durable item.",
-        "task_decisions": [{"action": "skip", "transition": "none",
-                            "skip_reason": "No source-grounded task."}],
-    })
-    TaskAgentRunner(codex).decide(
-        _work_item(), "bounded context", run_id=1,
-        session_scope_id="task-agent:work-tracking:v1",
-    )
-
-    short_prompt = codex.prompts[0]
-    remote_prompt = codex.calls[0]["friday_prompt"]
-    assert remote_prompt is not None
-    assert WORK_TRACKING_SKILL_PATH.read_text().strip() not in short_prompt
-    assert WORK_TRACKING_SKILL_PATH.read_text().strip() in remote_prompt
-    for marker in ("Current execution time:", "Current Work Item JSON:", "bounded context"):
-        assert short_prompt.split(marker, 1)[1].split("\n", 1)[0] == remote_prompt.split(marker, 1)[1].split("\n", 1)[0]
-
-
-def test_friday_task_prompt_preserves_scheduled_scope_containing_skill_marker():
-    payload = _work_item().model_dump(mode="json")
-    payload["scheduled_consumer"] = {
-        "schema": "scheduled_consumer.v1",
-        "scheduled_task_id": 7,
-        "scheduled_task_run_id": 11,
-        "skill_names": ["ceo-work-tracking"],
-        "skill_protocol": "# Historical snapshot excluded from current Task prompt",
-        "prompt": (
-            "SCHEDULED_SCOPE_BEFORE_MARKER\n"
-            "CEO Work Tracking Skill (complete current protocol): quoted text\n"
-            "SCHEDULED_SCOPE_AFTER_MARKER"
-        ),
-    }
-    item = WorkItem.model_validate(payload)
-
-    short_prompt = build_task_agent_prompt(item, "bounded context")
-    full_prompt = build_task_agent_prompt(item, "bounded context", inline_skill=True)
-
-    for prompt in (short_prompt, full_prompt):
-        assert "SCHEDULED_SCOPE_BEFORE_MARKER" in prompt
-        assert "SCHEDULED_SCOPE_AFTER_MARKER" in prompt
-        assert "bounded context" in prompt
-    assert "SHA-256:" in short_prompt
-    assert "SHA-256:" not in full_prompt
+    factory = routed.calls[0]["command_factory"]
+    assert set(TASK_SOURCE_READING_SKILLS) <= set(factory.skill_names)
+    assert factory.tool_approval_modes_by_server["ai_services"]["transcribe_audio"] == "approve"
+    assert "route_prompt_overrides" not in routed.calls[0]
 
 
 def test_task_agent_prompt_loads_work_tracking_skill_and_schema_contract(monkeypatch):
@@ -2839,7 +2803,9 @@ def test_task_agent_codex_runner_uses_routed_execution_contract():
     assert routed.calls[0]["workload_key"] == "9"
     assert routed.calls[0]["conversation_id"] is None
     command_factory = routed.calls[0]["command_factory"]
-    assert command_factory.skill_names == ("ceo-work-tracking",)
+    assert command_factory.skill_names == (
+        "ceo-work-tracking", "dingtalk-minutes", "dingtalk-doc",
+    )
     assert command_factory.inlined_skill_names == ("ceo-work-tracking",)
     assert command_factory.use_output_schema is True
     assert command_factory.output_schema_path == (
@@ -2852,6 +2818,7 @@ def test_task_agent_codex_runner_uses_routed_execution_contract():
         {
             "structured_output",
             "local_schema_validation",
+            "local_process_execution",
         }
     )
 

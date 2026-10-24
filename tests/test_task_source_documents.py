@@ -63,8 +63,7 @@ def test_unavailable_original_keeps_saved_quote_and_unknown_character_length():
     assert doc["saved_quotations"] == ["李四负责材料"]
     assert doc["full_length"] is None
     assert doc["body_utf8_bytes"] == len(signal.evidence_text.encode("utf-8"))
-    assert result["source_metrics"]["unique_body_chars"] is None
-    assert result["source_metrics"]["body_chars_before_sharing"] is None
+    assert "source_metrics" not in result
 
 
 def test_conflicting_bindings_with_same_key_cannot_borrow_first_original():
@@ -88,9 +87,10 @@ def test_conflicting_bindings_with_same_key_cannot_borrow_first_original():
         (fact, conflicting), prepared_sources=prepared
     )
 
-    assert documents["source_signals"][0]["source_available"] is False
-    assert documents["source_signals"][1]["source_available"] is False
-    assert documents["source_signals"][1]["source_unavailable_reason"] == "binding_conflict"
+    (document,) = documents["source_documents"]
+    assert document["source_available"] is False
+    assert document["source_unavailable_reason"] == "binding_conflict"
+    assert document["visible_ranges"] == []
 
 
 def test_source_document_key_is_exact_utf8_json_identity():
@@ -163,10 +163,7 @@ def test_shared_source_bundle_keeps_every_signal_and_one_body_per_exact_version(
         assert reference["author_name"] == "张三"
         assert reference["source_time"] == SOURCE["source_time"]
         assert reference["context_json"] == signal.context_json
-    assert result["source_metrics"]["body_chars_before_sharing"] == 80 * len(
-        SOURCE["evidence_text"]
-    )
-    assert result["source_metrics"]["unique_body_chars"] == len(SOURCE["evidence_text"])
+    assert "source_metrics" not in result
 
 
 def test_shared_source_bundle_separates_versions_and_provenance(tmp_path):
@@ -199,36 +196,15 @@ def test_agent_source_projection_preserves_provenance_without_storage_dedupe_key
     assert "dedupe_key" not in reference
     assert reference["document_id"] == signal.source.identity_key
     assert reference["source_ref"] == signal.source_ref
-    assert reference["source_available"] is True
+    assert result["source_documents"][0]["source_available"] is True
     assert result["source_documents"][0]["visible_ranges"][0]["text"] == SOURCE["evidence_text"]
     with store._connect() as db:
         assert store.get_business_task_signal_by_dedupe_key(dedupe_key=dedupe_key, _db=db).id == signal_id
     assert store.get_business_task_signal(signal_id).dedupe_key == dedupe_key
 
 
-def test_shared_source_bundle_includes_current_source_once_and_preserves_metadata(
-    tmp_path,
-):
+def test_the_current_work_item_is_not_a_source_document_of_its_own(tmp_path):
     store = AutoReplyStore(tmp_path / "current.sqlite3")
-    item = WorkItem.model_validate(
-        {
-            "source": {
-                "type": "reply_attempt",
-                "ref": "m:1",
-                "created_at": "t1",
-                "conversation_id": "c1",
-            },
-            "summary": "本次原文唯一正文",
-            "context": {
-                "source_conversation_kind": "group",
-                "sender_user_id": "u1",
-                "sender": "张三",
-            },
-            "task_signals": {"possible_task_update": True},
-            "scheduled_consumer": {"prompt": "业务范围", "skill_protocol": "旧契约",
-                "skill_materials": [{"name": "ceo-work-tracking", "content": "FROZEN SKILL BODY"}]},
-        }
-    )
     id = store.create_business_task_signal(
         source_type="reply_attempt",
         source_ref="m:1",
@@ -237,31 +213,45 @@ def test_shared_source_bundle_includes_current_source_once_and_preserves_metadat
         author_user_id="u1",
         author_name="张三",
         author_kind="human",
-        evidence_text=item.summary,
+        evidence_text="本次原文唯一正文",
         dedupe_key="one",
     )
     signal = store.get_business_task_signal(id)
-    result = _bundle(store, (signal,), current_work_item=item)
+
+    result = _bundle(store, (signal,), bodies={signal.id: "本次原文唯一正文"})
+
+    # The Work Item's text travels in the Work Item JSON; the bundle only holds
+    # sources some Signal cites, once each, and never a second copy of the item.
+    assert "current_work_item" not in result
     assert len(result["source_documents"]) == 1
-    current = result["current_work_item"]
-    assert "summary" not in current
-    assert current["document_id"] == signal.source.identity_key
-    assert current["source"] == item.source.model_dump(mode="json")
-    assert current["context"] == item.context.model_dump(mode="json")
-    assert current["task_signals"]["possible_task_update"] is True
-    assert current["scheduled_consumer"] == {"prompt": "业务范围"}
-    assert json.dumps(result, ensure_ascii=False).count(item.summary) == 1
-    assert item.scheduled_consumer["skill_protocol"] == "旧契约"
-    assert item.scheduled_consumer["skill_materials"][0]["content"] == "FROZEN SKILL BODY"
-    later = item.model_copy(update={"summary": "本次不同版本正文"})
-    assert (
-        len(
-            _bundle(store, (signal,), current_work_item=later)[
-                "source_documents"
-            ]
-        )
-        == 2
+    assert result["source_documents"][0]["document_id"] == signal.source.identity_key
+
+
+def test_a_source_with_an_external_locator_is_left_for_the_agent_to_read(tmp_path):
+    store = AutoReplyStore(tmp_path / "located.sqlite3")
+    id = store.create_business_task_signal(**SOURCE, dedupe_key="located")
+    signal = store.get_business_task_signal(id)
+    located = replace(
+        signal, source=replace(signal.source, provider_locator_json='{"kind":"ai_minutes"}')
     )
+    prepared = PreparedSources(RequestSourceReader())
+
+    result = task_source_documents.source_bundle(
+        (located,), prepared_sources=prepared,
+        citations=(SourceCitation(signal_id=id, source_ref="m:1", source_excerpt="李四负责材料"),),
+    )
+
+    (document,) = result["source_documents"]
+    assert document == {
+        "document_id": located.source.identity_key,
+        "source_in_input": False,
+        "body_utf8_bytes": located.source.body_utf8_bytes,
+        "saved_quotations": ["李四负责材料"],
+    }
+    # Nothing was read to build it: the service reads a source only when a
+    # decision cites it, before it writes.
+    assert prepared.readings == {}
+    assert result["source_signals"][0]["source_ref"] == "m:1"
 
 
 def test_shared_source_bundle_reports_real_ranges_and_pins_middle_citation(tmp_path):

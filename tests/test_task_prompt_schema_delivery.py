@@ -5,8 +5,7 @@ from types import SimpleNamespace
 
 import pytest
 
-from app.agent_runtime_router import _claude_turn_text, _friday_turn_text
-from app.agent_runtime_contracts import RuntimeKind
+from app.agent_runtime_router import _claude_turn_text
 from app.task_agent import TaskAgentCodexRunner, build_task_agent_prompt
 from app.task_models import WorkItem, task_agent_output_schema
 
@@ -47,13 +46,9 @@ def prompt_and_factory(monkeypatch):
     prompt = build_task_agent_prompt(
         work, "CURRENT_SEMANTIC_FACT", current_time="2026-10-12T10:00:00Z"
     )
-    friday_prompt = build_task_agent_prompt(
-        work, "CURRENT_SEMANTIC_FACT", current_time="2026-10-12T10:00:00Z",
-        inline_skill=True,
-    )
     recorder = RecordingExecution()
     TaskAgentCodexRunner(routed_execution=recorder).decide(
-        prompt=prompt, friday_prompt=friday_prompt, workload_key="synthetic"
+        prompt=prompt, workload_key="synthetic"
     )
     return prompt, recorder.call
 
@@ -72,20 +67,14 @@ def schema_occurrences(text, schema):
     return count
 
 
-@pytest.mark.parametrize("bridge,runtime_kind", [
-    (_claude_turn_text, RuntimeKind.CLAUDE_CLI),
-    (_friday_turn_text, RuntimeKind.FRIDAY_RUNTIME),
-])
-def test_single_message_task_routes_receive_one_complete_schema(monkeypatch, bridge, runtime_kind):
+def test_single_message_task_route_receives_one_complete_schema(monkeypatch):
     prompt, call = prompt_and_factory(monkeypatch)
     factory = call["command_factory"]
     schema = task_agent_output_schema()
     assert json.loads(factory.output_schema_path.read_text()) == schema
     assert factory.use_output_schema is True
-    submitted = bridge(
-        factory, call.get("route_prompt_overrides", {}).get(runtime_kind, prompt)
-    )
-    assert ("FULL_SKILL_RULE" in submitted) is (runtime_kind is RuntimeKind.FRIDAY_RUNTIME)
+    submitted = _claude_turn_text(factory, prompt)
+    assert "FULL_SKILL_RULE" not in submitted
     assert "CURRENT_SEMANTIC_FACT" in submitted
     assert schema_occurrences(submitted, schema) == 1
 
@@ -117,4 +106,6 @@ def test_task_factory_forwards_its_native_skill_selection(monkeypatch):
         prompt=prompt,
         session_id=None,
     )
-    assert calls[0]["skill_names"] == ("ceo-work-tracking",)
+    assert calls[0]["skill_names"] == (
+        "ceo-work-tracking", "dingtalk-minutes", "dingtalk-doc",
+    )
