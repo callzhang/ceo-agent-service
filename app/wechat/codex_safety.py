@@ -61,6 +61,7 @@ AGENT_CLI_READ_TOOLS = (
     "read_dingtalk_oa_tasks",
     "read_dingtalk_oa_revert_activities",
     "read_dingtalk_calendar_event",
+    "convert_dingtalk_calendar_time",
     "list_dingtalk_mailboxes",
     "read_dingtalk_mail_thread",
     "read_dingtalk_mail_message",

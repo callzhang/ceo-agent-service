@@ -2064,6 +2064,8 @@ Codex 后台角色固定 `features.plugins=false`；`codex exec` 固定带 `--di
 
 Agent 不执行 `auth login`、`reset` 或 `logout`。MCP 实际返回未授权时，任务保留认证失败，不把它解释为材料缺失。
 
+Consumer 与 Audit 的只读 `convert_dingtalk_calendar_time` 工具使用 IANA 时区数据库按日期换算本地墙钟时间，返回源区偏移、UTC instant 和目标区本地时间。重复或不存在的本地时刻分别返回 `ambiguous` 或 `nonexistent`，不能静默选 fold 或构造时刻；一次结果已列出可复用的全部时间表示，不要为同一 instant 再反向调用。该工具只换算时间，不证明参与者空闲、会议已创建或动作已发送；只有时区名和时间得到来源支持时才使用它。
+
 Agent 不得把嵌套 shell 里的 `codex mcp list` 或 `codex exec` 结果当成当前父 Agent session 的
 MCP 注入证明。需要 Xiaoqing、Memory、Exa、Lark 等 MCP 时，Consumer/Audit 必须直接调用当前
 session 中的对应 MCP 工具；只有直接工具调用或 provider 操作失败，才形成可持久化依赖失败。

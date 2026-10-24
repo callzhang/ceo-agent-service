@@ -2246,6 +2246,18 @@ def build_role_server(
         events = DwsClient().list_calendar_events(start, end)
         return {"events": [item.model_dump(mode="json") for item in events]}
 
+    def convert_dingtalk_calendar_time(
+        local_time: str, source_timezone: str, target_timezone: str
+    ) -> dict[str, object]:
+        """Convert one local wall time using IANA zones and date-specific offsets.
+
+        Pass an ISO local datetime without an offset and explicit IANA timezone
+        names. Ambiguous and nonexistent local times need clarification. This
+        conversion does not check calendar or participant availability.
+        """
+        from app.calendar_timezone import convert_calendar_timezone
+        return convert_calendar_timezone(local_time, source_timezone, target_timezone)
+
     def list_dingtalk_mailboxes() -> dict[str, object]:
         """Read the current identity's DingTalk mailboxes."""
         from app.dws_client import DwsClient
@@ -2733,6 +2745,7 @@ def build_role_server(
         ("read_dingtalk_mail_message", read_dingtalk_mail_message),
         ("read_dingtalk_mail_sent_status", read_dingtalk_mail_sent_status),
         ("list_dingtalk_calendar_events", list_dingtalk_calendar_events),
+        ("convert_dingtalk_calendar_time", convert_dingtalk_calendar_time),
         ("search_dingtalk_contacts", search_dingtalk_contacts),
         ("read_dingtalk_group_members", read_dingtalk_group_members),
         ("read_dingtalk_user_profiles", read_dingtalk_user_profiles),

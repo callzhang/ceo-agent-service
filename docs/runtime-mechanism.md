@@ -3445,6 +3445,8 @@ role server 描述，仅证明本轮声明的入口，不证明连接/认证/读
 暂定窗口，不称双方均合适；已知时区也不证明对方空闲。结构化来源字段可投影到环境说明，
 文本事实由 Agent 按原材料理解，不把机器时区或钉钉时间戳解析规则当成参与者时区。
 
+Consumer 与 Audit 可以使用只读 `convert_dingtalk_calendar_time` 按 IANA 时区数据库
+
 每次 invocation 在现有事件流保存 `runtime.prompt`（准备输入）及适配器正常返回后的
 `runtime.prompt.invoked`（适配器调用记录）。前者可能出现在启动失败前，后者也不代表模型已
 接收或任务成功；两者不是工具进展、外部动作或 provider receipt。记录完整服务 developer/task
