@@ -22,9 +22,9 @@ from app.database_backup import _backup_directory_lock, create_database_backup
 from app.external_retry import MAX_AUTOMATIC_ATTEMPTS
 from app.repository_upgrade import GitRepository
 from app.current_publication_sources import (
-    EMAIL_RELEASE_SOURCE_VERSION,
     publication_run_sources,
 )
+from app.email_historical_candidate_schema import SOURCE_VERSION as EMAIL_RELEASE_SOURCE_VERSION
 from app.current_publication_sources import publication_meeting_sources, publication_task_sources
 from app.current_publication_sources import publication_deployment_task_sources
 from app.current_publication_sources import publication_email_action_source
