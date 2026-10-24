@@ -182,6 +182,7 @@ def test_repository_consumer_release_manifest_tracks_message_triage_skill_digest
     )
 
     assert entry["new_sha256"] == _digest((root / entry["source"]).read_bytes())
+    assert entry["old_sha256"] == entry["new_sha256"]
 
 
 def test_repository_consumer_release_manifest_tracks_every_source_digest():
