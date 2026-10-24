@@ -11,12 +11,17 @@ deletion or additional schema merge among those owners. The only immediately
 supported content reduction is the existing explicit compaction of completed
 classification inputs; it was not run in this turn.
 
-No database, runtime, or schema mutation was made, and no backup, database copy,
-or temporary artifact was created. A production migration was not attempted:
-the required current-data forward/inverse acceptance is not available under the
-instruction to create no backup or temporary database, and the normal deploy
-path itself makes a database backup. The exact ownership and reduction boundary
-is recorded in [Email phase audit](business-model-email-phase3-audit.md).
+Email 53→54 was migrated and deployed on 2026-10-24 at `a4154c03b` through the
+standard release path. The full current-data forward/inverse/reforward rehearsal
+passed before deployment. Production now reads Store `2026-10-23.1` / Email54;
+schema manifest and `quick_check` pass, and health, active/queued dashboard,
+Attention and History endpoints returned HTTP 200. One pre-existing
+`runs(190042) -> tasks(1)` foreign-key finding remains unchanged. The 182,907-byte
+reduction is the candidate JSON logical payload only; the 514,969,600-byte
+production SQLite file was not VACUUMed and did not shrink. After successful
+readback, the verified deployment backup and remaining backup-directory
+artifacts were cleared as requested. Exact ownership and reduction evidence is
+recorded in [Email phase audit](business-model-email-phase3-audit.md).
 
 This Email audit does not close the separate A5b Reply-local-result item or
 claim that the broader business-model program is complete.
