@@ -1,6 +1,5 @@
 from app.current_action_schema import current_reply_action_projection
 from app.state_definitions import state_projection
-from app.run_storage import SCHEDULED_RUN_SQL
 
 from app.task20_definitions import task20_column, task20_projection
 from app.business_legacy_fields import CURRENT_SYNC_PROJECTIONS as SYNC_ACTION_PROJECTIONS
@@ -3591,7 +3590,7 @@ def _queue_attention_rows(store: AutoReplyStore, *, limit: int | None = None) ->
                   )
                   -- Failed for a reason outside this service: History keeps it,
                   -- Attention does not (Derek 2026-09-25).
-                  and not """ + external_task_error_sql() + f"""
+                  and not """ + external_task_error_sql() + """
                   -- Email unsubscribe failures stay visible in History and
                   -- follow their own retry/reconciliation path, never manager
                   -- Attention, including unresolved execution-fence errors.
@@ -3604,12 +3603,12 @@ def _queue_attention_rows(store: AutoReplyStore, *, limit: int | None = None) ->
                   -- Older failed Reply tasks remain in History, regardless of outcome.
                   and not exists (
                       select 1
-                      from ({SCHEDULED_RUN_SQL}) as stale_run
+                      from schedule_occurrences as stale_run
                      where stale_run.execution_kind='reply_task'
                        and cast(stale_run.execution_id as integer)=reply_tasks.id
                        and exists (
                            select 1
-                           from ({SCHEDULED_RUN_SQL}) as later_run
+                           from schedule_occurrences as later_run
                            where later_run.scheduled_task_id=stale_run.scheduled_task_id
                              and later_run.id>stale_run.id
                              and later_run.dispatch_status='dispatched'
@@ -3914,11 +3913,11 @@ def _queue_attention_rows(store: AutoReplyStore, *, limit: int | None = None) ->
                     select 1
                     from (
                         select event_run.id, event_run.scheduled_task_id
-                        from ({SCHEDULED_RUN_SQL}) as event_run
+                        from schedule_occurrences as event_run
                         where event_run.event_id=error_event.message_id
                         union all
                         select identity_run.id, identity_run.scheduled_task_id
-                        from ({SCHEDULED_RUN_SQL}) as identity_run
+                        from schedule_occurrences as identity_run
                         where identity_run.id=cast(substr(
                             error_event.conversation_id,
                             length('scheduled-task-run:') + 1
@@ -3928,7 +3927,7 @@ def _queue_attention_rows(store: AutoReplyStore, *, limit: int | None = None) ->
                     ) as stale_run
                     where exists (
                          select 1
-                         from ({SCHEDULED_RUN_SQL}) as later_run
+                         from schedule_occurrences as later_run
                          join ({REPLY_TASK_SQL}) as later_task
                            on later_run.execution_kind='reply_task'
                           and cast(later_run.execution_id as integer)=later_task.id
@@ -3983,12 +3982,12 @@ def _queue_attention_rows(store: AutoReplyStore, *, limit: int | None = None) ->
                     select attempts.id
                     from ({REPLY_ATTEMPT_COMMON_SQL}) attempts
                     join ({AGENT_RUN_SQL}) attempt_run on attempt_run.id=attempts.agent_run_id
-                    join ({SCHEDULED_RUN_SQL}) old_run
+                    join schedule_occurrences old_run
                       on old_run.execution_kind='reply_task'
                      and cast(old_run.execution_id as integer)=attempt_run.reply_task_id
                     where attempts.id in ({placeholders})
                       and exists (
-                          select 1 from ({SCHEDULED_RUN_SQL}) latest_run
+                          select 1 from schedule_occurrences latest_run
                           where latest_run.scheduled_task_id=old_run.scheduled_task_id
                             and latest_run.id>old_run.id
                             and latest_run.dispatch_status='dispatched'

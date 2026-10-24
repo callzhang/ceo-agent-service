@@ -110,7 +110,7 @@ describe("ScheduledTasksPage", () => {
     expect(await screen.findByText("未产生 Attempt")).toBeInTheDocument();
   });
 
-  it("coalesces no-attempt Cron checks and keeps the latest effective Trigger visible", async () => {
+  it("renders the stored empty-run range and keeps the latest effective Trigger visible", async () => {
     const latestAttemptRun = {
       ...commandRun,
       id: 8,
@@ -118,13 +118,15 @@ describe("ScheduledTasksPage", () => {
       scheduled_for: "2026-09-08T11:55:00Z",
       attempts: [{ id: 8840, status: "completed" }],
     };
-    const noAttemptChecks = [14, 13, 12].map((id) => ({
+    const noAttemptChecks = [{
       ...commandRun,
-      id,
+      id: 14,
       trigger_kind: "scheduled" as const,
-      scheduled_for: `2026-09-08T12:${String(id).padStart(2, "0")}:00Z`,
+      scheduled_for: "2026-09-08T12:14:00Z",
+      first_scheduled_for: "2026-09-08T12:12:00Z",
+      occurrence_count: 3,
       attempts: [],
-    }));
+    }];
     const overlapSkips = [11, 10].map((id) => ({
       ...commandRun,
       id,
@@ -146,25 +148,27 @@ describe("ScheduledTasksPage", () => {
 
     renderPage();
 
-    expect(await screen.findByText("5 次定时检查都没有新内容，其中 2 次因上一轮未结束而跳过")).toBeInTheDocument();
+    expect(await screen.findByText("3 次定时检查都没有新内容")).toBeInTheDocument();
+    expect(screen.getByText("9/8 12:12 – 9/8 12:14")).toBeInTheDocument();
     expect(screen.getByText("最近一次触发 Agent")).toBeInTheDocument();
     expect(screen.getByRole("link", { name: "Attempt #8840 已完成" })).toHaveAttribute("href", "/attempts/8840");
     expect(screen.queryByText("scheduled_task_previous_execution_active")).not.toBeInTheDocument();
   });
 
-  it("merges scheduled checks whose counters are all zero and spells out the ones that found work", async () => {
+  it("does not infer durable empty history from summary counters", async () => {
     const check = (id: number, summary: string) => ({ ...commandRun, id, trigger_kind: "scheduled" as const, scheduled_for: `2026-09-08T12:${String(id).padStart(2, "0")}:00Z`, result_summary: summary, attempts: [] });
     const failed = { ...check(10, ""), dispatch_status: "failed" as const, execution_kind: "", execution_id: "", skip_or_error_reason: "scheduled_task_service_command_failed: sync-minutes-once incomplete: discovered=3 synced=1 failed=2" };
     setup([commandTask]);
+    const aggregate = { ...check(15, "produce-once queued=0"), occurrence_count: 2, first_scheduled_for: "2026-09-08T12:14:00Z" };
     api.listScheduledTaskRuns.mockResolvedValue({
       scheduled_task: commandTask,
-      items: [check(15, "email-message-check-once accounts=1 discovered=0 failures=0"), check(14, "produce-once queued=0"), check(13, "produce-once queued=3"), check(12, "produce-once queued=0"), check(11, "produce-once queued=0"), failed],
+      items: [aggregate, check(14, "produce-once queued=0"), check(13, "produce-once queued=3"), check(12, "produce-once queued=0"), check(11, "produce-once queued=0"), failed],
       meta: { snapshot_at: "now", page_size: 20, next_cursor: "", has_more: false },
     });
 
     renderPage();
 
-    expect(await screen.findAllByText("2 次定时检查都没有新内容")).toHaveLength(2);
+    expect(await screen.findAllByText("2 次定时检查都没有新内容")).toHaveLength(1);
     expect(screen.getByText("入队").closest(".scheduled-task-run-counter")).toHaveTextContent("入队 3");
     expect(screen.getByText("服务命令失败")).toBeInTheDocument();
     expect(screen.getByText("服务命令失败").closest("li")?.querySelector(".scheduled-task-run-counter.is-danger")).toHaveTextContent("失败 2");

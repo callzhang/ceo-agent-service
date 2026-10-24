@@ -3954,6 +3954,16 @@ typed 父引用。历史 Attempt 和 skipped 快照不因运行路由改名而�
 只读检查不修改行、schema 或数据库 bytes。Workbench CRUD/native/API 仍是后续单元，
 本段不表示完整 C 已发布。
 
+Task/Run Phase2 Task4 的隔离候选将 scheduled trigger CRUD、claim/lease、Dispatcher、
+Dashboard、恢复和 reached History 查询直接放到 `schedule_occurrences`；冻结配置仍由
+`configs` 持有，`snapshot_id` 继续引用 schedule snapshot 的公开 ID。完整 claim 索引
+保留所有状态，dispatch 索引只包含 pending。Scheduled Tasks 页面只按服务返回的
+`first_scheduled_for`、`scheduled_for`、`occurrence_count` 展示区间，不用通用摘要
+计数推导可退休行。迁移前的 release-drain 显式源检查仍使用冻结 `SCHEDULED_RUN_SQL`，
+否则发布安静窗口会在 native schema 建立前查询不存在的表；这不是普通 runtime fallback。
+该候选未激活；类型化命令结果、安全空跑聚合、覆盖区间去重和 occurrence JSON 内部
+引用的双向映射仍待完成，因此没有新的空跑退休或历史回退承诺。
+
 
 Phase4C 的初始化修复边界：旧分散 Workbench0.7/0.8/0.9表缺列后自动补
 resume_context、task_sequence、turn控制和附件client_request_id/content_sha256的路径

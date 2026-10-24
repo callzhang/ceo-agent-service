@@ -261,32 +261,21 @@ function isWorkCounter(counter: RunCounter) {
 
 /** A scheduled run that set nothing in motion: an empty check, or a tick skipped while the previous run was still going. */
 function runTriggeredNothing(run: ScheduledTaskRun) {
-  if (run.trigger_kind !== "scheduled" || run.attempts.length > 0) return false;
-  if (run.dispatch_status === "skipped") return run.skip_or_error_reason === PREVIOUS_EXECUTION_ACTIVE;
-  if (run.dispatch_status !== "dispatched" || run.execution_kind !== "service_command") return false;
-  const summary = run.result_summary?.trim() || "";
-  if (!summary) return true;
-  const counters = runCounters(summary);
-  return counters.length > 0 && !counters.some(isWorkCounter);
+  return run.trigger_kind === "scheduled"
+    && run.dispatch_status === "dispatched"
+    && run.execution_kind === "service_command"
+    && run.occurrence_count > 1;
 }
 
 function coalescedRunHistory(runs: ScheduledTaskRun[], latestAttemptRun: ScheduledTaskRun | null): RunHistoryEntry[] {
   const unique = new Map(runs.map((run) => [run.id, run]));
   if (latestAttemptRun) unique.set(latestAttemptRun.id, latestAttemptRun);
   const ordered = [...unique.values()].sort((left, right) => right.id - left.id);
-  return ordered.reduce<RunHistoryEntry[]>((entries, run) => {
+  return ordered.map((run) => {
     const idle = runTriggeredNothing(run);
     const skipped = run.dispatch_status === "skipped" ? run.occurrence_count : 0;
-    const previous = entries[entries.length - 1];
-    if (idle && previous?.idle) {
-      previous.count += run.occurrence_count;
-      previous.skipped += skipped;
-      previous.oldest = run;
-      return entries;
-    }
-    entries.push({ run, oldest: run, count: run.occurrence_count, skipped, idle, latestAttempt: latestAttemptRun?.id === run.id });
-    return entries;
-  }, []);
+    return { run, oldest: run, count: run.occurrence_count, skipped, idle, latestAttempt: latestAttemptRun?.id === run.id };
+  });
 }
 
 function runTimeLabel(value: string | null) {

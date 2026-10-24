@@ -10,7 +10,7 @@ import sqlite3
 
 from fastapi import FastAPI, Query
 
-from app.run_storage import MEETING_RUN_SQL, SCHEDULED_RUN_SQL
+from app.run_storage import MEETING_RUN_SQL
 from app.external_retry import MAX_AUTOMATIC_ATTEMPTS
 from app.action_storage import REPLY_ATTEMPT_COMMON_SQL
 from app.action_storage import (
@@ -305,7 +305,7 @@ def _append_auxiliary_queues(db, queues, now_text):
         json_extract(config.snapshot_json,'$.name') as title,
         json_extract(config.snapshot_json,'$.command') as command,
         '/scheduled-tasks?id='||run.scheduled_task_id as detail_url
-        from ({SCHEDULED_RUN_SQL}) run
+        from schedule_occurrences run
         join ({config_projection('scheduled_task_config_versions')}) config on config.id=run.snapshot_id
         left join ({state_projection('dispatcher_claim_leases')}) claim
           on claim.adapter_name='scheduled' and claim.source_id=cast(run.id as text)
