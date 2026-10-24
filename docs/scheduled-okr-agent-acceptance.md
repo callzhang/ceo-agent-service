@@ -691,3 +691,17 @@ v76 后的定向测试为 `tests/test_weekly_okr_report.py` 与 `tests/test_sche
 ### PR #277 的远端检查结果
 
 PR #277 已打开，固定 v75/v76 case、模型/CLI 和 grader 对照及本地回归均附在 PR/无正文证据中。GitHub Quality 在 `npm test` 的首步全仓 Ruff lint 中失败，报 **16 项**、位于 7 个测试文件；逐个确认这 7 个文件与 `origin/main` 字节相同，单独在当前代码和这些原样文件上复现同一 lint 错误。后续 npm、workbench 和浏览器步骤因此未运行。Vercel 预览因账号额度限制失败，平台提示 24 小时后可重试。改动文件 Ruff、OKR 定向测试、Consumer 脚本审核测试及 release-manifest 测试均通过；没有为清绿而改动无关测试、降低门槛或跳过 OKR 验收。production 尚未部署；需先处理或获准接受上述远端基线阻塞，再继续正式合并/部署和新 task6 运行。
+
+### 2026-10-23 18 人空搜索验收复核
+
+匿名冻结案例 `empty-search-18-managers-incremental-analysis`：18 人中 15 人有 live OKR、3 人成功读取但目标列表为空；15 次独立文档搜索均无匹配。v82 完整轨迹发现，Consumer 写入第 1 位成员分析后先读取了第 2 位成员 source/schema，之后才读回第 1 位；Audit 仍批准候选。根因是 Skill 同时要求逐人读回和 prepare 后预读所有成员材料。现已改为按名册逐人延迟读取，grader 也会拦查下一位的 source/schema、搜索是否早于当前分析读回。
+
+修订后 [v83 合成验收](../evals/scheduled_task_generic/okr_results.v83.json) 通过：15/15 成员顺序断言通过、3 位无目标成员保持未评分；最终 Audit approve，2 轮修订后完整报告、provider 读回和摘要候选均通过。全部使用隔离合成数据和工具，没有真实报告重放或外发。`tests/test_scheduled_okr_agent_eval.py tests/test_consumer_system_release.py` 为 **81 passed**，Ruff 与差异检查通过。Skill 发布摘要和候选摘要前置条件已同步；当时正式发布仍待 PR 合并，后续发布及生产回读见本文末。
+
+### 2026-10-23 PR #311 周 OKR 顺序分析正式发布
+
+PR #311 合入 `c4bfea2` 后，第一次自然空闲发布在 Consumer/Skill 预检处安全回滚：清单将生产已安装的周 OKR Skill 旧摘要记为 `49ba4b0b…`，但实际文件与绑定 managed revision 均为 `03897393…`。PR #312 只修正该旧目标摘要并增加回归断言，未改 OKR Skill 内容或报告行为；合并提交为 `93a66535f14f5706dc28785a9698821bcde0fb14`。
+
+第二次使用正常静默等待发布成功，deploy operation `deploy-4bf5d989-3b81-4ef8-bd38-542e62ffc422` 的 Consumer/Skill 回执为 `verified`。生产 checkout 位于该提交且干净；launchd supervisor PID `99938`，service worker `99942`，Audit web `99943`，email worker `99944`；`/healthz` 返回 HTTP 200。运行配置 `377` 为 active（父配置 `376`），task6 的 managed `ceo-weekly-okr-report` 引用更新到 revision `248`，其数据库与安装文件 SHA-256 均为 `54d3e45e…`。当前 worker 对配置 377 的加载回执无错误，26 项发布资产全部摘要匹配，task6 任务引用读回一致。没有新建 task6 运行，也没有重放失败 run。
+
+发布后只读运行快照：所有业务任务 processing 为 0，email provider 队列 pending 599；Attention 14；History 的 failed 筛选共 29 项。`/healthz` 正常之外，System Health 页面显示 degraded（7 项违规，native delivery 结果 378 项可读、48 项不可读）；该健康告警与本次 Skill 发布分开记录，不能用 HTTP 200 覆盖。

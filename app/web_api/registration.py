@@ -49,6 +49,7 @@ from app.web_api.tasks import (
 from app.web_api.settings import info_payload
 from app.web_api.status import StatusEnvelope, StatusMeta, WorkerStatus
 from app.web_api.email import register_email_routes
+from app.web_api.history_tasks import annotate_task_identity, register_history_task_routes
 from app.web_api.scheduled_tasks import register_scheduled_task_routes
 from app.agent_cron.options import ScheduledTaskOptionService
 from app import history_types
@@ -786,6 +787,7 @@ def register_console_routes(
         total = log_total + len(queue_items)
         start = (page - 1) * page_size
         items = all_items[start:start + page_size]
+        annotate_task_identity(store, items)
         response = list_envelope(items, page=page, page_size=page_size, total=total)
         render_chart = (
             include_chart
@@ -839,6 +841,8 @@ def register_console_routes(
                 "message_id": error.message_id or "",
             },
         })
+
+    register_history_task_routes(app, store_factory)
 
     @app.get("/api/console/history/{attempt_id}")
     def console_history_detail(attempt_id: int):

@@ -182,16 +182,21 @@ def test_service_agent_instructions_use_native_dingtalk_read_tools() -> None:
         section.text for section in consumer_developer_sections(purpose_name="oa")
     )
 
-    for instructions in (AGENT_CAPABILITY_INSTRUCTIONS, audit):
-        normalized = " ".join(instructions.replace("`", "").split()).lower()
-        assert "call" in normalized
-        assert "mcp__agent_cli" in normalized
-        assert "never run local dws commands through" in normalized
-        assert "interactive sessions" in normalized
-        assert "ai_services.ocr_document" in normalized
-        assert "call the native" in normalized
-        assert "do not infer" in normalized
-        assert "all_tools" in normalized
+    consumer_normalized = " ".join(AGENT_CAPABILITY_INSTRUCTIONS.replace("`", "").split()).lower()
+    assert "mcp__agent_cli" in consumer_normalized
+    assert "consumer may use local dws commands through shell for source reads" in consumer_normalized
+    assert "never use dws through shell to send dingtalk messages or email" in consumer_normalized
+    assert "oa approve, reject, return, or comment actions" in consumer_normalized
+
+    audit_normalized = " ".join(audit.replace("`", "").split()).lower()
+    assert "call" in audit_normalized
+    assert "mcp__agent_cli" in audit_normalized
+    assert "audit must use declared read tools only" in audit_normalized
+    assert "must not use shell or local dws commands" in audit_normalized
+    assert "ai_services.ocr_document" in audit_normalized
+    assert "call the native" in audit_normalized
+    assert "do not infer" in audit_normalized
+    assert "all_tools" in audit_normalized
 
     oa_normalized = " ".join(oa_consumer.replace("`", "").split()).lower()
     assert "functions.exec" in oa_normalized
@@ -202,13 +207,22 @@ def test_service_agent_instructions_use_native_dingtalk_read_tools() -> None:
     assert "do not pass its original pdf page number as ocr page_numbers" in oa_normalized
     assert "confidence, warnings" in oa_normalized
     assert "call the native ai_services.ocr_document mcp directly" not in oa_normalized
+    assert "only the oa consumer may use shell for the exact attachment fallback" in oa_normalized
+    assert "authorize-preview" in oa_normalized
+    assert "oa consumer may also use dws through shell for other source reads" in oa_normalized
+    assert "never use dws to send dingtalk messages or email" in oa_normalized
+    assert "or for oa approve, reject, return, or comment actions" in oa_normalized
+    assert "never run local dws commands through shell" not in oa_normalized
 
     oa_audit = " ".join(
-        section.text for section in audit_developer_sections("rules", purpose_name="oa")
+        " ".join(section.text.split())
+        for section in audit_developer_sections("rules", purpose_name="oa")
     ).replace("`", "").lower()
     assert "same js cell" in oa_audit
     assert "mcp__ai_services__ocr_document" in oa_audit
     assert "call the native ai_services.ocr_document mcp directly" not in oa_audit
+    assert "audit must not use shell or local dws commands" in oa_audit
+    assert "never use dws to send dingtalk messages or email" in oa_audit
 
 
 def test_codex_manifest_restricts_direct_third_party_tools() -> None:

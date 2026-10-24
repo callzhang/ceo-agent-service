@@ -47,14 +47,39 @@ def test_repository_consumer_release_manifest_tracks_oa_skill_digest():
     # The old digest is a release-time precondition. After a successful
     # deployment the installed file has the new digest, so do not compare the
     # old digest with mutable machine state in this repository-level test.
-    assert entry["old_sha256"] == "981e443dcb739bf95cd349db42c1af18c42d900188fb975c2907df8fe550ea54"
+    assert entry["old_sha256"] == "c8130e8dcfb4c6d40980d63a27b2d2c501eba7c4b89497339dcbbf8ead230ccb"
     assert len(entry["old_sha256"]) == 64
     assert all(char in "0123456789abcdef" for char in entry["old_sha256"])
     assert entry["new_sha256"] == _digest((root / entry["source"]).read_bytes())
+    assert entry["new_sha256"] == "89532e6cfaea23e5acf8c1417a866e4a0d2edc35304d8070fdd65accf416f6f6"
     assert "old_managed_sha256" not in entry
+    skill = (root / entry["source"]).read_text(encoding="utf-8").lower()
+    assert "可按本 skill 写明的准确路径通过 shell 调用本机 `dws`" in skill
+    assert "不得通过 shell 用 `dws` 发送钉钉消息、发邮件" in skill
+    assert "audit 只能使用具名只读工具，不运行 shell 或本机 `dws`" in skill
+    assert "服务 consumer/audit 必须直接调用" not in skill
     audit_source = "app/defaults/audit_rules.md"
     audit_entry = next(item for item in manifest["files"] if item["source"] == audit_source)
     assert audit_entry["old_sha256"] == "5dcfd33f48d23268296da5d89346eaf3a76ffec665e5d9a353c33654a5de8237"
+
+
+def test_repository_consumer_release_manifest_tracks_installed_daily_report_baseline():
+    root = Path(__file__).resolve().parents[1]
+    manifest = json.loads(
+        (root / "ci/consumer-system-contract-release.json").read_text(encoding="utf-8")
+    )
+    entries = {item["source"]: item for item in manifest["files"]}
+    skill_source = "ci/shared-skills/ceo-daily-report/SKILL.md"
+    script_source = "ci/shared-skills/ceo-daily-report/scripts/window.py"
+
+    skill = entries[skill_source]
+    assert skill["new_sha256"] == _digest((root / skill_source).read_bytes())
+    assert skill["old_sha256"] == skill["new_sha256"]
+    assert skill["old_managed_sha256"] == skill["new_sha256"]
+
+    script = entries[script_source]
+    assert script["new_sha256"] == _digest((root / script_source).read_bytes())
+    assert script["old_sha256"] == script["new_sha256"]
 
 
 def test_release_manifest_pins_current_finance_card_and_active_managed_skill_hashes():
@@ -109,11 +134,25 @@ def test_okr_release_baseline_matches_already_installed_skill():
         item for item in manifest["files"]
         if item["source"] == "ci/shared-skills/ceo-weekly-okr-report/SKILL.md"
     )
-    # The repository source carries the revision that is already bound in the
-    # runtime (Derek 2026-10-23: runtime edits are absorbed into the repository).
+    # The installed and managed Skill are already at the candidate revision.
     source_digest = _digest((root / entry["source"]).read_bytes())
     assert entry["new_sha256"] == source_digest
     assert entry["old_managed_sha256"] == source_digest
+    assert entry["old_sha256"] == entry["old_managed_sha256"]
+
+
+def test_people_review_release_file_baseline_matches_installed_candidate():
+    root = Path(__file__).resolve().parents[1]
+    manifest = json.loads(
+        (root / "ci/consumer-system-contract-release.json").read_text(encoding="utf-8")
+    )
+    entry = next(
+        item for item in manifest["files"]
+        if item["source"] == "ci/shared-skills/stardust-oa-people-review/SKILL.md"
+    )
+    source_digest = _digest((root / entry["source"]).read_bytes())
+    assert entry["new_sha256"] == source_digest
+    assert entry["old_sha256"] == source_digest
 
 
 def test_finance_rule_card_counts_only_valid_applicant_resolvable_returns():
@@ -178,8 +217,8 @@ def test_repository_consumer_release_manifest_includes_people_review_skill():
     entry = next(item for item in manifest["files"] if item["source"] == source)
 
     assert entry["target"] == "skills/stardust-oa-people-review/SKILL.md"
-    assert entry["old_sha256"] == "4f71dc707f22f784fb7e0f4d4f43c22ea003262884112081a595a10bb329e651"
     assert entry["new_sha256"] == _digest((root / source).read_bytes())
+    assert entry["old_sha256"] == entry["new_sha256"]
 
 
 def test_repository_consumer_release_manifest_includes_current_attendance_review_skill():

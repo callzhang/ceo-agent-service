@@ -143,7 +143,7 @@ export function HistoryPage({embedded=false}: {embedded?:boolean} = {}) {
     <span className={`history-type-badge history-type-${row.kind || row.type}`}>{typeName}</span>
     <span className="history-row-status"><StatusBadge value={row.status} /></span>
     <span className="history-row-actor" title={row.actor}>{row.actor || "未提供"}</span>
-    <span className="history-row-content"><strong>{row.title}</strong>{copy && <span className="history-row-preview">{copy}</span>}{code && <code className="attempt-copy-code" title={code}>{code}</code>}</span>
+    <span className="history-row-content"><strong>{row.title}</strong>{copy && <span className="history-row-preview">{copy}</span>}{code && <code className="attempt-copy-code" title={code}>{code}</code>}{(row.run_count ?? 0) > 1 && <span className="history-row-preview">· {row.run_count} 次执行</span>}</span>
     <time dateTime={row.occurred_at} title={when}>{shortTime(row.occurred_at)}</time>
   </Link>;
 })}</section><Pagination page={page} pageSize={pageSize} total={total} onPageChange={(nextPage) => update("page", nextPage)} /></>}</section></div>;

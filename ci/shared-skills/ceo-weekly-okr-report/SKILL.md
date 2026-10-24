@@ -169,9 +169,10 @@ through the correction and verify their digests before finishing.
    `script=scripts/report.py`, and arguments:
    `prepare --roster-file okr-roster.json --members-dir . --period-label <YYYY Qn> --report-date <YYYY-MM-DD> --output-dir .`.
    The directory may contain other files; prepare selects exact userId records.
-   After `prepare`, call `list_task_artifacts` and read `plan.json`, each schema,
-   and each required manager source with `read_task_artifact`; use offset
-   pagination until the full file is read. Do not try to open the Python script
+   After `prepare`, call `list_task_artifacts` and read `plan.json`. Read each
+   manager's schema and source only when beginning that manager's analysis; do
+   not preload a later manager's files. Use offset pagination until each file
+   is fully read. Do not try to open the Python script
    source or task artifacts with `read_text_file`: read frozen Skills with
    `read_task_skill`, task-generation files with `read_task_artifact`, and run
    only reviewed script entrypoints through `consumer_run_skill_script`. A
@@ -200,11 +201,11 @@ including a changed report date. On a same-run retry, reuse the exact source
 readbacks already recorded for that generation and search only for an
 Audit-identified missing or mismatched source.
 
-Process live-OKR managers sequentially. For each manager, search and read that
-manager's independent evidence, then write and verify the complete schema-valid
-analysis artifact before requesting evidence for another manager. Never batch
-searches across managers. Do not call search for manager N+1 until manager N's
-analysis artifact has been written and read back. An empty search is an evidence
+Process live-OKR managers in roster order. For each manager, read that manager's
+source and schema, search and read that manager's independent evidence, then
+write and read back the complete schema-valid analysis artifact. Do not read
+the next manager's source or schema, or search their evidence, until this
+readback succeeds. Never batch searches across managers. An empty search is an evidence
 gap, not a reason to stop: record that no matching document was found, do not
 invent corroboration, and continue using admissible evidence already available. Score KR progress and outcomes
 from the live source and other verified material; score behavioral dimensions

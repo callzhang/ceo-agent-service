@@ -342,6 +342,15 @@ class EmailActionAttemptConflict(RuntimeError):
     """A direct-action attempt conflicts with append-only history."""
 
 
+def _stored_action_started_at(db: sqlite3.Connection, action_id: int) -> str | None:
+    """The Action owner's own started_at, which the direct-action view hides for pending rows."""
+
+    from app.action_entity_storage import get_action
+
+    action = get_action(db, int(action_id))
+    return None if action is None else action["started_at"]
+
+
 class EmailReplyReceiptConflict(RuntimeError):
     """A stable automatic-reply identity conflicts with durable provider evidence."""
 
@@ -11104,7 +11113,7 @@ class EmailStore:
                     attempt_number = int(row["attempt_count"]) + 1
                     updated = shared_action_lifecycle.claim_direct_email_action(
                         db, action_id=row["action_id"], expected_status=row["status"],
-                        expected_started_at=(row["started_at"] if row["status"] == "processing" else None),
+                        expected_started_at=_stored_action_started_at(db, row["action_id"]),
                         attempt_count=row["attempt_count"], claimed_at=claimed_at)
                     if updated is None:
                         raise EmailActionAttemptConflict(
@@ -11157,8 +11166,20 @@ class EmailStore:
               and c.current_action_plan_id=a.action_plan_id
             """
         ).fetchall()
-        for candidate_classification in candidate_classifications:
-            siblings = db.execute(
+        # One batched read per 500 classifications. The projection cannot push
+        # a classification filter down to the action rows, so each lookup scans
+        # every direct action; one lookup per candidate made a single claim cost
+        # about 17 s with ~600 pending actions, and the locked recheck repeated
+        # it while holding the SQLite writer lock.
+        candidate_ids = [
+            int(candidate["classification_id"])
+            for candidate in candidate_classifications
+        ]
+        siblings_by_classification: dict[int, list[sqlite3.Row]] = {}
+        for offset in range(0, len(candidate_ids), 500):
+            batch = candidate_ids[offset : offset + 500]
+            placeholders = ",".join("?" for _ in batch)
+            for sibling in db.execute(
                 f"""
                 select a.*, c.folder, c.uidvalidity, c.uid, c.rfc_message_id,
                        c.thread_id, c.stable_message_identity,
@@ -11169,11 +11190,16 @@ class EmailStore:
                 from ({DIRECT_EMAIL_ACTION_SQL}) as a
                 join ({EMAIL_CLASSIFICATION_SQL}) as c on c.id=a.classification_id
                 join ({EMAIL_PLAN_SQL}) as p on p.action_plan_id=a.action_plan_id
-                where a.classification_id=?
+                where a.classification_id in ({placeholders})
                   and c.status='processed'
                 """,
-                (candidate_classification["classification_id"],),
-            ).fetchall()
+                batch,
+            ).fetchall():
+                siblings_by_classification.setdefault(
+                    int(sibling["classification_id"]), []
+                ).append(sibling)
+        for classification_id in candidate_ids:
+            siblings = siblings_by_classification.get(classification_id)
             if not siblings:
                 continue
             if any(sibling["status"] == "processing" for sibling in siblings):
@@ -11670,7 +11696,7 @@ class EmailStore:
             attempt_number = int(row["attempt_count"]) + 1
             updated = shared_action_lifecycle.claim_direct_email_action(
                 db, action_id=row["action_id"], expected_status=row["status"],
-                expected_started_at=(row["started_at"] if row["status"] == "processing" else None),
+                expected_started_at=_stored_action_started_at(db, row["action_id"]),
                 attempt_count=row["attempt_count"], claimed_at=claimed_at)
             if updated is None:
                 raise EmailActionAttemptConflict(

@@ -30,6 +30,7 @@ def run_process_with_idle_timeout(
     total_timeout_seconds: float,
     idle_timeout_seconds: float,
     on_stdout_line: Callable[[str], None] | None = None,
+    cwd: str | None = None,
 ) -> ProcessRunResult:
     started_at = time.monotonic()
     last_output_at = started_at
@@ -51,6 +52,7 @@ def run_process_with_idle_timeout(
         stdout=subprocess.PIPE,
         stderr=subprocess.PIPE,
         env=env,
+        cwd=cwd,
         start_new_session=True,
     )
     assert process.stdin is not None

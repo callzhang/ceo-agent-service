@@ -1007,7 +1007,7 @@ OKR 报告的应用层只读取明确群名的稳定名单和明确人员/周期
 
 OKR 报告的进展标题使用“已核实进展”并以报告日为截止，不能将没有来源日期的期间结果标作“本周”新增进展；管理者表格列同样只陈述进展与证据。
 
-发布时，现有 Consumer system contract publication 原子发布 Skill 文件、新脚本与新 managed revision，在服务停止窗口迁移三项报告任务定义，记录完整前后配置和版本；启动 seed 再运行保持幂等。待恢复的旧报告执行必须先自然结束；核查未完成执行的原始快照，不依赖当前任务仍保留旧命令或 Skill 引用。失败回滚按精确版本恢复任务配置、runtime config 和既有文件，并移除本次新建文件；任务 ID、历史触发快照、周期、时区和用户自定义文本保留。
+发布时，现有 Consumer system contract publication 原子发布 Skill 文件、新脚本与新 managed revision，在服务停止窗口迁移三项报告任务定义，记录完整前后配置和版本；启动 seed 再运行保持幂等。待恢复的旧报告执行必须先自然结束；核查未完成执行的原始快照，不依赖当前任务仍保留旧命令或 Skill 引用。发布清单的 `old_sha256` 必须对应当前已安装文件；若文件已经与候选版本一致，可将 old/new 摘要都记为该版本，以便校验与精确回滚继续成立，不提供宽松的旧版本匹配。失败回滚按精确版本恢复任务配置、runtime config 和既有文件，并移除本次新建文件；任务 ID、历史触发快照、周期、时区和用户自定义文本保留。
 
 定时任务的固定 Agent 验收使用独立离线合成案例；Consumer、Audit 和修订共享同一评测传输契约，业务规则仍来自选定 Skill。评测字段不能混用生产动作名称，也不能把排除说明的来源追踪当作最终管理内容。案例与评分函数保持冻结，失败历史、首轮与一次审核修订结果分别保留。正文/动作草稿与真实外部回执独立核查，详见 [Agent 验收记录](scheduled-task-generic-agent-validation.md)。此评测契约不注入生产运行。
 
@@ -1112,6 +1112,8 @@ Attempt 详情页默认展示 `reply_attempt` 的 current projection，并允许
 （没有时使用 `code`）、来源与明确标注为「Agent 说明」的 `reported_summary`。旧代或无法
 解析的诊断不替换任务自己的错误。展示这些字段不证明外部操作已执行，不改变拒绝、重试、
 人工决定或任务状态。
+
+定时 Agent task 的 Attention 以同一 scheduled task 最新的已派发 run 为当前状态。较早 run 的失败 Reply task 和绑定它的失败 Reply Attempt 继续保留在 History，但不增加 Attention；最新 run 失败时仍显示其失败记录。尚未派发的触发不覆盖当前 run，pending/processing/needs_human 本身仍不构成 Attention。
 
 如果同一业务对象的 History 出现多个旧 task，模式迁移可以重建 `business_object_tasks` 的当前映射，
 但不得删除旧输入、run、session、tool event、provider 结果或错误事件。当前投影修正不能被解释为
@@ -1242,6 +1244,7 @@ Python 的 email 包无法解析的结构化邮件头）只跳过这一条、游
 Email worker 领取、执行动作，并以服务器的应答为结果（Derek, 2026-09-25：不需要回读，服务器接受就够了）。
 每次 provider observation scan 在同一 SQLite 事务中发布消息状态、authoritative folder 的缺失对账和 folder generation 时间；generation 时间单独按账号/文件夹保存，读取仍返回该文件夹最近一次完整扫描时间。相同消息状态不重复写消息行或其索引，扫描成员先写入连接级临时表再用索引对账，避免在共享数据库写锁期间构造超长身份列表。这样保留整代原子可见性，同时限制 Email worker 对共享 SQLite 的写锁占用。
 直接邮件动作领取先从状态索引找出 pending/failed 动作，并按分类主键核对它属于已处理分类的当前 ActionPlan，再通过 `(classification_id, action_plan_id)` 索引读取该分类的全部动作组。仅旧计划残留未完成动作的分类不会加载历史计划正文；同分类旧 processing 动作仍参与阻塞判断。候选探测与 `BEGIN IMMEDIATE` 内的重核都使用这条路径。状态、账号范围、重试时间、依赖、动作优先级和条件更新保持不变，不在写锁内遍历整张 `email_actions`。
+当前统一 `actions` 表上的动作投影无法把分类过滤下推到动作行，对每个候选分类各读一次会各扫一遍全部直接动作：2026-10-23 有约 600 个 pending 动作时，一次领取评估约 17 秒，且 `BEGIN IMMEDIATE` 内的重核会重复一遍并持有写锁。现在候选分类的同组动作按每批 500 个分类一次读出，再在内存中分组，选择结果与逐分类读取一致（用生产库副本逐行比对），评估降到约 0.3 秒。
 稳定 Message-ID 查找若在多个文件夹命中，通常属于确定性身份歧义：在只读状态定位阶段失败，不执行邮件写入，也不自动重试。若移动动作的原 UID/UIDVALIDITY 定位失效，执行器只读检查解析后的目标文件夹；仅当该文件夹恰有一条同一稳定消息身份且满足目标状态，才以 `readback_noop` 记录已发生的移动，不再派发 MOVE。目标文件夹没有唯一匹配或状态不满足时仍保留失败，不以其他文件夹的匹配推断成功；超时、DNS 和连接错误仍可重试。
 执行前仍先读一次当前状态，已满足就不写。改标记的动作（标已读、标星、贴标签）在服务器接受 STORE 后即完成；
 移动、归档、删除在服务器回了 `COPYUID`（新位置已知）时同样即完成。只有服务器没说邮件去了哪里时，
@@ -1556,6 +1559,12 @@ History 是任务和执行记录的单一展示入口。同一个任务不得被
   `/scheduled-tasks?id=<任务>`（映射来自 `scheduled_task_runs` 里 `execution_kind='reply_task'`
   且 `execution_id` 等于该 reply task id 的那一行，`AutoReplyStore.scheduled_task_ids_for_reply_tasks`），
   其余渠道链到 `/workers`（Derek 2026-09-27：点开原来一律落到 Status 页，看起来像详情坏了）。
+- History 以 task 为核心（Derek 2026-10-23）：回复类记录的每一行带它所属的 `task_id` 和该 task 的
+  `run_count`（Agent run 总数），行内链接指向 `/history/tasks/<task_id>`，而不是直接指向某个
+  Attempt。task 页（`GET /api/console/history/tasks/<task_id>`，`app/web_api/history_tasks.py`）
+  展示 task 的当前状态，并列出它的全部 Attempt（各自链到 `/attempts/<id>`）和全部 Agent run
+  （按执行代标明「当前代」或「历史代」）。Attempt 详情页不变；这是对已存行的只读投影，不改状态、
+  不改任务生命周期。队列行、会议、定时和邮件动作行没有 task 页，仍按各自规则链接。
 - History 在页面可见时每十秒读取当前快照；已经进入终态的队列任务不得因页面保持打开而继续
   显示为 `processing`。
 - 微信候选任务的 `done` 不证明消息已投递。同一任务、会话和当前执行代的最新投递为
@@ -2985,15 +2994,13 @@ Manual OA rerun compares the refreshed trigger payload with the current task inp
 Supplementing a reviewed OA `needs_human` candidate also starts a new reviewed generation. Before queueing it, the service refreshes the currently selected OA Skills from the scheduled task, exactly as for a manual rerun; it must not silently reuse the old candidate's frozen business-rule snapshot. If the selected current Skill or task configuration cannot be resolved, the supplement is rejected without queueing. The prior candidate, review, and evidence remain immutable; the new generation still goes through Consumer, Audit, and the existing System action gates.
 
 For organization-change approvals, the people Skill treats missing business rationale and affected-work details as facts to clarify with a verified submitter or responsible party while the OA remains pending. Derek's ordinary final approval node alone does not turn that clarification into a reserved `needs_human` decision; only an explicit discretionary choice outside the normal approval decision or a genuine policy/authority gap uses that outcome.
-For the same substantive, applicant- or responsible-party-resolvable fact gap, count only verified, actionable returns supported by evidence readable at the time and followed by a fair opportunity to correct it. Order DWS approval/return operations and source-verified evidence by their source timestamps; only post-return evidence can answer that cycle, while concrete, verifiable statements in OA comments remain evidence in their own right. After three valid returns for the same gap, the fourth review at Derek's authorized node rejects only when current readable, source-verified evidence still proves that gap unresolved; the reason must identify the gap and the three valid correction rounds. Do not reject by count alone. Reviewer-side access, parsing, OCR, or client read failures, unsupported or non-actionable requests, distinct gaps, and gaps cured by post-return evidence do not count. Do not repeat a settled request absent a distinct new gap. See the people-review Skill for the case review criteria.
-
-When Audit approves an OA rejection whose rationale invokes the three-effective-return threshold, its typed result must include a three-round evidence ledger. Each round binds the return timestamp and actionable request to the same substantive gap, includes every source-timestamped post-return reply, attachment, or approver comment (or a complete readback reference proving no response), and records whether the response cured that gap. The ledger also cites current evidence after the third return showing the gap remains unresolved. Service validation checks the chronology, same-gap and cure fields, and that every ledger reference appears in Audit `evidence_refs`; missing or inconsistent data fails Audit-result validation before System execution. This enforces the existing Skill threshold and does not change the threshold or ordinary OA decisions.
+For the same substantive, applicant- or responsible-party-resolvable fact gap, count only verified, actionable returns supported by evidence readable at the time and followed by a fair opportunity to correct it. Order DWS approval/return operations and source-verified evidence by their source timestamps; only post-return evidence can answer that cycle, while concrete, verifiable statements in OA comments remain evidence in their own right. A source-verified, post-return statement by the verified receiving supervisor that explicitly confirms a reporting or handover fact is evidence for the fact stated; do not count that fact as unresolved or demand a separate attachment or confirmation record solely because the statement is in an OA comment. Ask only about a distinct material fact that remains unsupported or contradicted. After three valid returns for the same gap, the fourth review at Derek's authorized node rejects only when current readable, source-verified evidence still proves that gap unresolved; the reason must identify the gap and the three valid correction rounds. Do not reject by count alone. Reviewer-side access, parsing, OCR, or client read failures, unsupported or non-actionable requests, distinct gaps, and gaps cured by post-return evidence do not count. Do not repeat a settled request absent a distinct new gap. See the people-review Skill for the case review criteria.
 
 OA Attention keeps process instances present in the latest successful pending scan visible even after the local Consumer task has completed a comment or return action. Its fallback detail states only that the latest scan still sees the DingTalk process pending; it does not infer that no return receipt exists. History/System Execution and live DWS readback remain the sources for action receipt and active-node detail.
 
 The scheduled OA Consumer prompt names the available operation and business Skills and directs the Agent to use their rules and the generic OA action table. Business thresholds and case-routing policy live in the selected Skills. Startup migrates only the exact known stale OA prompt; later administrator edits remain untouched.
 
-Service Consumer/Audit turns perform DingTalk reads through their declared `mcp__agent_cli` MCP tools. Material command strings are reference hints for interactive sessions; these service roles do not invoke local `dws` commands through shell. OA instance/task identifiers passed to read tools come verbatim from the current pending/detail fields; parameter or response-shape errors trigger source-value verification before a safe same-target read retry, and are not treated as missing applicant evidence. Missing native read capabilities remain explicit dependency failures; the runtime does not broaden shell sandbox access to DWS credential files. Document search exposes its existing page-size limit of 1–20 in the native tool schema and retains the same service-side guard.
+Service Consumer turns prefer their declared `mcp__agent_cli` tools for DingTalk reads and may use local `dws` commands through shell for source reads when appropriate. The OA Consumer may use the selected OA Skill's `dws oa approval attachment authorize-preview` and same-file read/download steps when native preview permission is missing. Consumer must not use `dws` through shell to send DingTalk messages or email, or to perform OA approve, reject, return, or comment actions; those effects use the reviewed typed-action path. Audit uses declared read tools only and must not use shell or local `dws` commands. OA instance/task identifiers passed to read tools come verbatim from the current pending/detail fields; parameter or response-shape errors trigger source-value verification before a safe same-target read retry, and are not treated as missing applicant evidence. Missing native read capabilities remain explicit dependency failures. Document search exposes its existing page-size limit of 1–20 in the native tool schema and retains the same service-side guard.
 
 For the bound DingTalk direct-chat task, the message readers take the counterparty's stable openDingTalkId from the exact claimed trigger when the Agent supplies only its conversation ID. They verify the trigger message and conversation identities before reading; a mismatched or compacted source fails rather than guessing from the contact name. `read_dingtalk_messages_in_window` uses the existing complete, bounded direct-chat window reader for that task, while unrelated group reads retain their command and response. This repairs Audit source access without changing candidate review or outbound execution.
 

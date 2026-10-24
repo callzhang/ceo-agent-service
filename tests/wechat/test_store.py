@@ -1415,3 +1415,82 @@ def test_principal_superseded_delivery_cannot_requeue_expired_candidate(tmp_path
     with pytest.raises(AgentRunLeaseLostError, match="superseded"):
         store.requeue_expired_wechat_delivery_for_user(delivery_id)
     assert _wechat_delivery_and_attempt_state(store, delivery_id) == before
+
+
+def _seed_failed_pre_action_delivery(tmp_path, *, error, action_started_at, pre_action=True):
+    """A delivery in the persisted state a pre-action send failure leaves.
+
+    Written directly: claiming a delivery needs an approved independent Audit,
+    which these store transitions do not exercise.
+    """
+    store = _store(tmp_path)
+    store.enqueue_reply_task(
+        channel="wechat", conversation_id="u1", conversation_title="Alex",
+        single_chat=True, trigger_message_id="m1",
+        trigger_create_time="2026-07-30T10:00:00",
+        trigger_sender="Alex", trigger_text="hi",
+    )
+    attempt_id = store.record_reply_attempt(
+        conversation_id="u1", conversation_title="Alex",
+        trigger_message_id="m1", trigger_sender="Alex", trigger_text="hi",
+        action="send_reply", sensitivity_kind="normal",
+        send_status="pending", channel="wechat",
+    )
+    delivery_id = store.create_wechat_delivery(
+        reply_task_id=1, account_id="acct-1", target_type="direct",
+        target_id="u1", conversation_id="u1", reply_text="reply",
+    )
+    with store._connect() as db:
+        _update_delivery(db, delivery_id, {
+            "status": "failed", "error": error,
+            "pre_action_failure": int(pre_action),
+            "action_started_at": action_started_at,
+        })
+        update_action(db, "reply_attempts", attempt_id, {"retry_count": 3})
+    return store, delivery_id, attempt_id
+
+
+def test_user_can_retry_a_failed_pre_action_delivery_without_the_cli_skip(tmp_path):
+    """Delivery 140 ran out of retries on wechat_ui_not_ready and stayed failed.
+
+    Only a manual CLI command moved an exhausted delivery to skipped, and
+    skipped is the only state that offered a retry, so the failed ones that
+    most needed a resend could not get one.
+    """
+    store, delivery_id, attempt_id = _seed_failed_pre_action_delivery(
+        tmp_path, error="wechat_ui_not_ready",
+        action_started_at="2026-07-30 10:00:00",
+    )
+
+    delivery = store.requeue_expired_wechat_delivery_for_user(delivery_id)
+
+    assert delivery.status == "ready_to_send"
+    assert delivery.pre_action_failure is False
+    assert store.get_wechat_delivery_by_id(delivery_id).status == "ready_to_send"
+    assert store.get_reply_attempt(attempt_id).send_error == "wechat_delivery_ready_to_send"
+
+
+def test_failed_delivery_never_claimed_cannot_be_retried_by_the_user(tmp_path):
+    """An Audit rejection fails the delivery before any claim, so no action start."""
+    store, delivery_id, _ = _seed_failed_pre_action_delivery(
+        tmp_path, error="wechat_audit_rejected", action_started_at="",
+    )
+    before = _wechat_delivery_and_attempt_state(store, delivery_id)
+
+    with pytest.raises(AgentRunLeaseLostError, match="pre-action retry"):
+        store.requeue_expired_wechat_delivery_for_user(delivery_id)
+
+    assert _wechat_delivery_and_attempt_state(store, delivery_id) == before
+
+
+def test_failed_delivery_that_was_not_a_pre_action_failure_cannot_be_retried(tmp_path):
+    store, delivery_id, _ = _seed_failed_pre_action_delivery(
+        tmp_path, error="send_failed_after_dispatch",
+        action_started_at="2026-07-30 10:00:00", pre_action=False,
+    )
+    before = _wechat_delivery_and_attempt_state(store, delivery_id)
+
+    with pytest.raises(AgentRunLeaseLostError, match="pre-action retry"):
+        store.requeue_expired_wechat_delivery_for_user(delivery_id)
+
+    assert _wechat_delivery_and_attempt_state(store, delivery_id) == before

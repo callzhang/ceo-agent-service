@@ -21,6 +21,19 @@ def test_org_change_uses_timestamped_evidence_and_counts_only_valid_same_gap_ret
     assert "concrete, verifiable substantive statements in approval comments as evidence" in text
 
 
+def test_verified_receiving_supervisor_comment_cannot_be_rejected_for_lacking_attachment() -> None:
+    text = PEOPLE_SKILL.read_text(encoding="utf-8")
+
+    assert "verified receiving supervisor" in text
+    assert "post-return statement" in text
+    normalized = text.lower()
+    assert (
+        "do not count that fact as unresolved or demand a separate attachment or confirmation record "
+        "solely because the statement is in an oa comment"
+    ) in normalized
+    assert "if a concrete material fact remains unsupported or contradicted, ask only for that fact" in normalized
+
+
 def test_generic_repeat_return_rule_rejects_only_after_three_valid_same_gap_returns() -> None:
     text = GENERIC_SKILL.read_text(encoding="utf-8")
     assert "三次有效退回" in text
