@@ -109,17 +109,19 @@ class ClaudeCommandPolicy:
 
 CLAUDE_INPUT_MAX_BYTES = 1024 * 1024
 
-# The Consumer's Bash tool, confined like the Codex workspace-write sandbox:
-# writes only in the task directory (the process cwd) and the dws state
-# directory, network only to DingTalk and its file storage, and no way to run a
-# command outside the sandbox or to start without it. `dws` is a Go program and
-# needs the macOS trust service to verify TLS inside the sandbox
-# (`enableWeakerNetworkIsolation`); without it every dws call fails verification.
+# The Consumer's Bash tool runs in the CLI sandbox by default: writes only in
+# the task directory (the process cwd) and the dws state directory, network only
+# to DingTalk and its file storage. Derek 2026-10-24: the sandbox is not the
+# capability limit. A command the sandbox breaks (`sharecrm` reads its CRM login
+# from the macOS keychain) is retried unsandboxed, and the CLI's auto permission
+# mode decides each such request. `dws` is a Go program and needs the macOS trust
+# service to verify TLS inside the sandbox (`enableWeakerNetworkIsolation`);
+# without it every dws call fails verification.
 def _consumer_shell_sandbox() -> dict[str, object]:
     return {
         "enabled": True,
         "failIfUnavailable": True,
-        "allowUnsandboxedCommands": False,
+        "allowUnsandboxedCommands": True,
         "autoAllowBashIfSandboxed": True,
         "enableWeakerNetworkIsolation": True,
         "filesystem": {"allowWrite": [str(Path.home() / ".dws")]},

@@ -2102,11 +2102,12 @@ Derek 的设计决定：Consumer 运行在各 CLI 的原生 auto 模式里（Cod
 
 不变的边界与沙箱无关：终态外发动作（发消息、发邮件）仍只走 proposal → Audit → SystemExecutor；Audit 仍是只读；Consumer 的禁用工具清单（Settings → MCP 的 `disabled_servers`、桌面控制类 server）仍然有效。
 
-**当前实现还没有达到这个设计**，文档如实记录差距：
-- Codex Consumer 仍是 `sandbox_mode="workspace-write"`（自 2026-10-05 提交 `5e88aaafb`；2026-10-23 起为 `dws` 开了网络并让 `~/.dws` 可写）。
-- Claude 线路 Consumer 的 shell 带自己的沙箱（`app/claude_runtime_adapter.py` 的 `_consumer_shell_sandbox()`：只写任务目录和 `~/.dws`，网络只放行 `*.dingtalk.com`、`*.aliyuncs.com`）。
-- 切换到 auto 模式是单独的变更，要先逐个 CLI 确认 auto 模式的实际行为，并处理两点：`service_api` 路由没有 `codex-auto-review` 模型（见「主页面执行入口」一节）；auto 模式下 Consumer 能间接使用钥匙串里的凭据，这是要明确接受的后果。
-- 在切换之前，需要沙箱外权限（钥匙串等）的读取走服务端的只读工具，不靠放开沙箱。
+**当前实现（Derek 2026-10-24 批准切换，已按两个 CLI 实测）：**
+- Codex Consumer 保留 `workspace-write` 沙箱，但审批改为 CLI 原生 auto：`approval_policy="on-failure"`（Codex 实际按 on-request 运行）加 `approvals_reviewer="auto_review"`，由 turn 构造方设置，`make_role_agent_command` 对 Consumer 不再覆盖成 `never`。命令在沙箱里失败后，Agent 以 `sandbox_permissions="require_escalated"` 加理由重新请求，自动审查（`codex-auto-review` 模型）放行后在沙箱外执行。Audit 仍是 `read-only` 加 `never`。
+- Claude Consumer 的 shell 沙箱把 `allowUnsandboxedCommands` 设为 `true`，权限模式本来就是 `auto`；沙箱内失败的命令可由 Agent 以 `dangerouslyDisableSandbox` 重试，由 auto 模式的分类器逐次决定。
+- 实测（2026-10-24，同一条只读命令 `sharecrm data record query-by-name`，Codex 0.163.0、Claude Code 2.1.310）：两个 CLI 在沙箱内都报 `Failed to read session file.`（登录凭据在钥匙串，`sharecrm auth status` 只读元数据所以仍成功，不能当作可用证据）；允许提权后重试都成功。Agent 不会自己发现要提权：两个 CLI 都是在提示里明说「失败就提权重试」才这样做，所以需要钥匙串的工具必须由对应 Skill 写明运行方式（这是后续的单独变更，本次未改任何 Skill）。
+- `service_api` 路由（第三方 OpenAI 兼容 provider）没有 `codex-auto-review` 模型，`disable_automatic_review` 仍把它的 `approval_policy` 设为 `never`：该路由上的 Consumer 仍被沙箱限制，不能提权。需要沙箱外权限的任务不应路由到该路由，这是该路由已声明的能力差距，不在本次变更里绕过。
+- 不变：终态外发动作仍走 proposal → Audit → SystemExecutor，Audit 只读，Consumer 禁用工具清单有效；`dws` 仍用沙箱内的 `~/.dws` 和网络设置。
 
 ### 微信发送放行：同时认原审核和标准审核（Derek 2026-10-24，方案 G2）
 

@@ -270,7 +270,10 @@ def make_role_agent_command(
     _remove_config_options(
         command,
         prefixes=(
-            "approval_policy=", "approvals_reviewer=", "tools.enabled_tools=",
+            # Derek 2026-10-24: the Consumer keeps the turn's native auto-review
+            # approval (set by the caller); only Audit is pinned to never.
+            *(() if role == "consumer" else ("approval_policy=", "approvals_reviewer=")),
+            "tools.enabled_tools=",
             "sandbox_mode=", "sandbox_workspace_write.", "default_permissions=",
             *(f"features.{feature}=" for feature in ROLE_DISABLED_NATIVE_FEATURES),
             "features.code_mode=", "features.code_mode_only=",
@@ -325,8 +328,7 @@ def make_role_agent_command(
         "mcp_servers.agent_cli.tools.read_dingtalk_messages.output_token_limit=30000",
         "-c",
         "mcp_servers.agent_cli.tools.read_dingtalk_aitable_records.output_token_limit=30000",
-        "-c",
-        'approval_policy="never"',
+        *(() if role == "consumer" else ("-c", 'approval_policy="never"')),
     ]
     skill_override = codex_skill_config_override(())
     if skill_override:

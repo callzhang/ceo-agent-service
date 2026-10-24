@@ -120,7 +120,9 @@ def test_role_command_uses_only_task_bound_agent_cli(adapter, route):
     sandbox = json.loads(command[command.index("--settings") + 1])["sandbox"]
     assert sandbox["enabled"] is True
     assert sandbox["failIfUnavailable"] is True
-    assert sandbox["allowUnsandboxedCommands"] is False
+    # Derek 2026-10-24: a command the sandbox breaks may be retried unsandboxed;
+    # the CLI's auto permission mode decides each request.
+    assert sandbox["allowUnsandboxedCommands"] is True
     assert sandbox["filesystem"] == {"allowWrite": [str(Path.home() / ".dws")]}
     assert sandbox["network"]["strictAllowlist"] is True
     audit = adapter.build_command(
