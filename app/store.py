@@ -20190,7 +20190,7 @@ class AutoReplyStore(LogicalRunStoreMixin, ReviewedCandidateStoreMixin):
         """
         with self._immediate_write_transaction() as db:
             rows = db.execute(
-                """
+                f"""
                 select tasks.id, tasks.execution_generation, runs.id as run_id,
                        runs.structured_error_json
                 from ({NATIVE_REPLY_TASK_CURRENT_SQL}) as tasks

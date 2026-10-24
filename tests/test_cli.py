@@ -383,6 +383,20 @@ def test_service_start_reconciles_invalid_human_projections(monkeypatch):
     assert recovered == 2
 
 
+def test_service_start_recovery_runs_native_reply_queries_on_disposable_store(
+    tmp_path, monkeypatch
+):
+    """Exercise every startup recovery query without provider boundaries."""
+    store = AutoReplyStore(tmp_path / "startup-recovery.sqlite3")
+    monkeypatch.setattr(cli, "AutoReplyStore", lambda path: store)
+
+    recovered = cli._recover_orphaned_reply_tasks_on_service_start(
+        SimpleNamespace(db_path=tmp_path / "startup-recovery.sqlite3")
+    )
+
+    assert recovered == 0
+
+
 def seed_exhausted_stale_wechat_delivery(store: AutoReplyStore) -> tuple[int, int]:
     store.enqueue_reply_task(
         channel="wechat",
