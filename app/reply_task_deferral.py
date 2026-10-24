@@ -6,8 +6,8 @@ never constructs AutoReplyStore and cannot initialize or migrate a database.
 
 from __future__ import annotations
 from app.task_lifecycle_storage import claim_projection
-from app.task20_definitions import task20_column, task20_projection
-from app.task8_storage import register_task8_functions, task8_set_parts
+from app.task8_storage import register_task8_functions
+from app.store import (NATIVE_REPLY_TASK_CURRENT_SQL, NATIVE_AGENT_RUN_SQL, NATIVE_REPLY_BUSINESS_KEY_SQL, NATIVE_REVIEW_CANDIDATE_SQL, NATIVE_CANDIDATE_SELECTION_SQL, NATIVE_CANDIDATE_EXECUTION_SQL)
 from app.deferral_receipt_storage import receipt_projection, find_receipt, insert_receipt, update_receipt
 
 import argparse
@@ -19,20 +19,26 @@ from contextlib import contextmanager
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from typing import Any
-from app.logical_run_storage import AGENT_RUN_SQL
-from app.run_storage import RUNTIME_ATTEMPT_SQL
 
 from app.action_storage import (
     AGENT_EFFECT_INTENT_SQL,
     AGENT_EXECUTION_RECEIPT_SQL,
-    CANDIDATE_ACTION_ATTEMPT_SQL,
-    CANDIDATE_EXECUTION_SQL,
-    EXTERNAL_ACTION_RESULT_SQL,
-    REVIEW_CANDIDATE_SQL, SENT_REPLY_SQL,
+    NATIVE_CANDIDATE_ACTION_ATTEMPT_SQL,
+    NATIVE_EXTERNAL_ACTION_RESULT_SQL,
+    AGENT_EFFECT_INTENT_SQL,
+    AGENT_EXECUTION_RECEIPT_SQL,
+    SENT_REPLY_SQL,
 )
 
 
-REPLY_TASK_SQL = task20_projection('reply_tasks')
+REPLY_TASK_SQL = NATIVE_REPLY_TASK_CURRENT_SQL
+RUNTIME_ATTEMPT_SQL = "select id,parent_id as agent_run_id,workload_kind,workload_key,status,first_effect_started_at,lease_owner,lease_expires_at from runtime_attempts"
+REVIEW_CANDIDATE_SQL = NATIVE_REVIEW_CANDIDATE_SQL
+CANDIDATE_EXECUTION_SQL = NATIVE_CANDIDATE_EXECUTION_SQL
+CANDIDATE_SELECTION_SQL = NATIVE_CANDIDATE_SELECTION_SQL
+CANDIDATE_ACTION_ATTEMPT_SQL = NATIVE_CANDIDATE_ACTION_ATTEMPT_SQL
+EXTERNAL_ACTION_RESULT_SQL = NATIVE_EXTERNAL_ACTION_RESULT_SQL
+AGENT_RUN_SQL = NATIVE_AGENT_RUN_SQL
 
 
 
@@ -81,8 +87,9 @@ def _connect(path: Path | str, *, readonly: bool):
 def _fingerprint(run: sqlite3.Row) -> str:
     fields = {name: run[name] for name in (
         'id', 'reply_task_id', 'execution_generation', 'role', 'proposal_revision',
-        'turn_attempt', 'status', 'final_result_json', 'structured_error_json',
+        'turn_attempt', 'status', 'structured_error_json',
     )}
+    fields['final_result_json'] = ''
     return hashlib.sha256(json.dumps(fields, sort_keys=True, separators=(',', ':')).encode()).hexdigest()
 
 
@@ -123,7 +130,7 @@ def _snapshot(
     active = db.execute('select id from (' + receipt_projection() + ") where task_id=? and status='paused'", (task_id,)).fetchall()
     if any(row['id'] != ignored_receipt_id for row in active):
         blocked.append('already_paused')
-    current = db.execute(f"select reply_task_id from ({task20_projection('business_object_tasks')}) where business_object_key=?",
+    current = db.execute(f"select reply_task_id from ({NATIVE_REPLY_BUSINESS_KEY_SQL}) where business_object_key=?",
                          (task['business_object_key'],)).fetchone()
     if current is None or current[0] != task_id:
         blocked.append('business_object_binding_changed')
@@ -171,8 +178,10 @@ def _snapshot(
         (task['conversation_id'], task['trigger_message_id'])).fetchone():
         blocked.append('sent_reply_projection')
     from app.native_trajectory import read_run_event_evidence
-    for event_run in db.execute(f"""select r.* from ({AGENT_RUN_SQL}) r
-        join ({REPLY_TASK_SQL}) t on t.id=r.reply_task_id where t.business_object_key=?""",
+    for event_run in db.execute("""select runs.* from runs
+        join tasks on tasks.id=runs.task_id and tasks.kind='reply'
+        join task_business_keys on task_business_keys.task_id=tasks.id
+        where task_business_keys.business_key=?""",
         (task['business_object_key'],)).fetchall():
         events, available = read_run_event_evidence(db, event_run)
         if any(_legacy_event_may_have_effect(json.dumps(event)) for event in events):
@@ -276,7 +285,7 @@ def apply_deferral(
             until = _stamp(instant + timedelta(seconds=duration_seconds))
             if snap['available_at'] and snap['available_at'] >= until:
                 raise ValueError('existing deferral is later')
-            db.execute(f"""update tasks set {task8_set_parts('reply_tasks', {}, update_sql={'status': "'pending'", 'available_at': '?', 'locked_at': 'null', 'updated_at': '?'}).sql} where record_type='reply_tasks' and id=? and {task20_column('reply_tasks', 'status')} in ('pending','processing')""",
+            db.execute(f"""update tasks set status='pending',available_at=?,locked_at=null,updated_at=? where id=? and kind='reply' and status in ('pending','processing')""",
                 (until, _stamp(instant), task_id))
             receipt_id = insert_receipt(db, dict(
                 request_id=request_id, task_id=task_id, business_object_key=snap['business_object_key'],
@@ -324,7 +333,7 @@ def resume_deferral(
                 row['latest_failed_run_id'],row['latest_failed_run_fingerprint'],
                 'pending',row['deferred_until']):
                 raise ValueError('deferral state changed')
-            db.execute(f"""update tasks set {task8_set_parts('reply_tasks', {}, update_sql={'available_at': '?', 'updated_at': '?'}).sql} where record_type='reply_tasks' and id=? and {task20_column('reply_tasks', 'status')}='pending'""",
+            db.execute(f"""update tasks set available_at=?,updated_at=? where id=? and kind='reply' and status='pending'""",
                        (row['original_available_at'],_stamp(instant),task_id))
             update_receipt(db, receipt_id, dict(status='resumed', resume_request_id=request_id, resumed_at=_stamp(instant)))
             saved = _receipt(db, receipt_id)

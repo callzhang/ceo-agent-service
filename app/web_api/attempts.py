@@ -13,13 +13,8 @@ from app.attempt_projection import terminal_oa_source_closure_is_skipped
 from app.attempt_what_happened import build_what_happened, stopped_because
 from app.history_actions import can_reopen_skipped_oa_review
 from app.web_api.common import json_safe, normalize_display_value
-from app.logical_run_storage import AGENT_RUN_SQL
 from app.agent_contracts import parse_persisted_consumer_result
 
-from app.action_storage import (
-    CANDIDATE_REVIEW_SQL,
-    REVIEW_CANDIDATE_SQL,
-)
 
 
 def _stored_json(value: str, fallback: Any) -> Any:
@@ -872,6 +867,9 @@ def build_attempt_detail(
     # case the Attempt key still identifies the owning task, so load its runs
     # directly instead of incorrectly rendering "no Consumer run".
     if reply_task is not None and not agent_runs and hasattr(store, "_connect"):
+        from app.store import (
+            NATIVE_CANDIDATE_REVIEW_SQL, NATIVE_REVIEW_CANDIDATE_SQL,
+        )
         with store._connect() as db:
             rows = db.execute(
                 f"""select agent_runs.*,
@@ -879,10 +877,10 @@ def build_attempt_detail(
                             when 'consumer' then candidate.candidate_json
                             when 'audit' then review.result_json
                           end as adopted_result_json
-                   from ({AGENT_RUN_SQL}) as agent_runs
-                   left join ({REVIEW_CANDIDATE_SQL}) candidate on candidate.consumer_run_id=agent_runs.id
-                   left join ({CANDIDATE_REVIEW_SQL}) review on review.audit_run_id=agent_runs.id
-                   where agent_runs.reply_task_id=? order by agent_runs.id""",
+                   from runs agent_runs
+                   left join ({NATIVE_REVIEW_CANDIDATE_SQL}) candidate on candidate.candidate_id=agent_runs.id
+                   left join ({NATIVE_CANDIDATE_REVIEW_SQL}) review on review.audit_run_id=agent_runs.id
+                   where agent_runs.task_id=? order by agent_runs.id""",
                 (reply_task.id,),
             ).fetchall()
             agent_runs = [

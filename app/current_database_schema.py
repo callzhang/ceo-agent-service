@@ -5,20 +5,6 @@ part of blank construction. Existing current declarations are the source of
 truth; source factories remain available only to explicit forward/inverse work.
 """
 
-from app.business_legacy_fields import current_business_declaration
-from app.current_action_schema import create_current_action_schema
-from app.business_schema_release import _create_auxiliary
-from app.configs_storage import create_configs_schema
-from app.schedules_storage import create_schedules_schema
-from app.provider_state_storage import create_provider_state_schema
-from app.state_storage import create_state_schema
-from app.task_lifecycle_current_schema import create_current_task20_schema, install_current_task_child_guards
-from app.logical_run_current_schema import create_current_run11_schema
-from app.run_storage import install_run_child_guards
-from app.email_canonical_storage import _create_emails
-from app.provenance_storage import create_provenance_schema
-
-
 FINAL_ACTION_OPTIONS = dict(include_reply=True, include_email=True,
     include_skill_config_receipts=True, include_followup_sync=True,
     include_business_sync=True, include_task_delivery=True, include_errors=True,
@@ -28,17 +14,14 @@ FINAL_ACTION_OPTIONS = dict(include_reply=True, include_email=True,
 
 
 def create_current_database_schema(db):
-    create_schedules_schema(db)
-    create_configs_schema(db)
-    create_state_schema(db)
-    create_provider_state_schema(db)
-    create_current_task20_schema(db)
-    create_current_run11_schema(db)
-    create_provenance_schema(db)
-    _create_emails(db, metadata_owner=True, action_owner=True)
-    create_current_action_schema(db)
-    business = current_business_declaration()
-    db.execute(business["sql"])
-    _create_auxiliary(db, business)
-    install_run_child_guards(db)
-    install_current_task_child_guards(db)
+    from app.task8_storage import register_task8_functions
+    from app.task_run_entity_assembly import task_run_entity_assembly_objects
+
+    register_task8_functions(db)
+    declarations = task_run_entity_assembly_objects()
+    for sql in declarations.values():
+        if sql.lstrip().lower().startswith("create table "):
+            db.execute(sql)
+    for sql in declarations.values():
+        if not sql.lstrip().lower().startswith("create table "):
+            db.execute(sql)

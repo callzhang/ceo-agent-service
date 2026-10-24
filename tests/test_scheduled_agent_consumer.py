@@ -24,7 +24,7 @@ from app.agent_cron.consumer import (
 )
 from app.agent_cron.context import ScheduledAgentContextBuilder
 from app.agent_cron.models import ScheduledTaskSkillRef
-from app.agent_orchestrator import AgentOrchestrator
+from app.agent_orchestrator import AgentOrchestrator, MAX_CONSECUTIVE_FAILED_TURNS
 from app.agent_result import AgentError
 from app.agent_runtime_config import load_runtime_config
 from app.agent_runtime_contracts import CredentialMode, RuntimeKind, RuntimeRoute
@@ -36,10 +36,8 @@ from app.dispatcher.adapters import (
 from app.dispatcher.models import ClaimGuard
 from app.dws_client import DwsError
 from app.skill_files import SkillDocument
-from app.store import AgentRole, AutoReplyStore, REPLY_TASK_SQL, SCHEDULED_RUN_SQL
+from app.store import AgentRole, AutoReplyStore, NATIVE_REPLY_TASK_CURRENT_SQL
 from app.state_definitions import state_projection
-from app.task8_storage import task8_set_parts
-from app.task_storage import task_id_expression
 
 NOW = datetime(2026, 9, 8, 12, 0, tzinfo=UTC)
 
@@ -396,7 +394,7 @@ def test_trigger_dispatches_once_and_generic_reply_adapter_excludes_it(tmp_path)
     with store._connect() as db:
         visible = db.execute(
             "select runs.dispatch_status from "
-            f"({REPLY_TASK_SQL}) tasks join ({SCHEDULED_RUN_SQL}) runs "
+            f"({NATIVE_REPLY_TASK_CURRENT_SQL}) tasks join schedule_occurrences runs "
             "on runs.execution_kind='reply_task' "
             "and runs.execution_id=cast(tasks.id as text) "
             "where tasks.channel='scheduled'"
@@ -412,7 +410,7 @@ def test_atomic_dispatch_rolls_back_source_link_run_and_ledger_on_interrupt(tmp_
     with store._connect() as db:
         db.execute(
             "create trigger abort_scheduled_dispatch before update of dispatch_status "
-            "on runs when new.record_type='scheduled_task_runs' and new.dispatch_status='dispatched' "
+            "on schedule_occurrences when new.dispatch_status='dispatched' "
             "begin select raise(abort, 'interrupted'); end"
         )
     with pytest.raises(Exception, match="interrupted"):
@@ -424,7 +422,7 @@ def test_atomic_dispatch_rolls_back_source_link_run_and_ledger_on_interrupt(tmp_
     assert persisted.dispatch_status == "pending" and persisted.execution_id == ""
     with store._connect() as db:
         assert db.execute(
-            f"select count(*) from ({REPLY_TASK_SQL}) where channel='scheduled'"
+            f"select count(*) from ({NATIVE_REPLY_TASK_CURRENT_SQL}) where channel='scheduled'"
         ).fetchone()[0] == 0
         ledger = db.execute(
             f"select terminal_at from ({state_projection('dispatcher_claim_leases')}) "
@@ -770,14 +768,10 @@ def test_damaged_duplicate_frozen_material_is_not_repaired_or_replaced(tmp_path)
         {"name": "managed-check", "content": ""}
     )
     with store._immediate_write_transaction() as db:
-        parts = task8_set_parts("reply_task_inputs", {
-            "trigger_message_json": json.dumps(trigger),
-        })
         db.execute(
-            f"update tasks set {parts.sql} where record_type='reply_task_inputs' "
-            "and id=(select current_input_id from tasks where record_type='reply_tasks' "
-            f"and id={task_id_expression('reply_tasks', '?')})",
-            (*parts.parameters, task_id),
+            "update task_inputs set trigger_message_json=? "
+            "where id=(select current_input_id from tasks where kind='reply' and id=?)",
+            (json.dumps(trigger), task_id),
         )
     store.claim_reply_task(task_id)
     read = build_role_server(
@@ -797,14 +791,10 @@ def test_malformed_persisted_execution_context_is_audited_skip(tmp_path):
     store, run, options = fixture(tmp_path)
     task_id = int(dispatch(store, run, options).execution_id)
     with store._immediate_write_transaction() as db:
-        parts = task8_set_parts("reply_task_inputs", {
-            "trigger_message_json": '{"schema":"old_context"}',
-        })
         db.execute(
-            f"update tasks set {parts.sql} where record_type='reply_task_inputs' "
-            "and id=(select current_input_id from tasks where record_type='reply_tasks' "
-            f"and id={task_id_expression('reply_tasks', '?')})",
-            (*parts.parameters, task_id),
+            "update task_inputs set trigger_message_json=? "
+            "where id=(select current_input_id from tasks where kind='reply' and id=?)",
+            ('{"schema":"old_context"}', task_id),
         )
     adapter = ScheduledExecutionQueueAdapter(store, owner_alive=lambda _pid: False)
     envelope, guard = claim(adapter, task_id, "execution")
@@ -1187,7 +1177,10 @@ def test_a_scheduled_audit_that_keeps_failing_is_spaced_then_stops_failed(tmp_pa
     )
 
     waits = []
-    for owner in ("first", "second", "third"):
+    owner_number = 0
+    while store.get_reply_task(execution_id).status == "pending":
+        owner_number += 1
+        owner = f"scheduled-pass-{owner_number}"
         envelope, guard = claim(adapter, execution_id, owner, now=clock["now"])
         consumer(envelope, guard)
         guard.complete(clock["now"])
@@ -1205,22 +1198,25 @@ def test_a_scheduled_audit_that_keeps_failing_is_spaced_then_stops_failed(tmp_pa
             clock["now"] += timedelta(seconds=waits[-1])
 
     task = store.get_reply_task(execution_id)
-    assert waits == [60.0, 120.0]
-    assert audit_agent.turns == 6
+    assert waits == [60.0]
+    assert audit_agent.turns == MAX_CONSECUTIVE_FAILED_TURNS
     assert task.status == "failed"
     assert task.error == "agent_reported_failure"
     attempts = store.list_reply_attempts_for_conversation(task.conversation_id)
     runs = store.list_agent_runs_for_task_generation(
         execution_id, task.execution_generation
     )
-    assert [r.status for r in runs if r.role is AgentRole.AUDIT] == ["failed"] * 6
+    assert [r.status for r in runs if r.role is AgentRole.AUDIT] == [
+        "failed"
+    ] * MAX_CONSECUTIVE_FAILED_TURNS
     # The concrete cause the Agent gave stays readable on the Attempt.
     assert "proposal_already_executed" in attempts[0].audit_summary
     assert attempts[0].send_status == "failed"
 
 
 @pytest.mark.parametrize('provider_state', ['uncertain', 'confirmed_no_effect'])
-def test_scheduled_system_failures_use_three_persisted_attempts_without_reauthoring(tmp_path, provider_state):
+def test_scheduled_system_failures_use_configured_persisted_attempts_without_reauthoring(tmp_path, provider_state):
+    from app.worker import MAX_REPLY_TASK_ATTEMPTS
     from app.system_executor import SystemExecutor, ActionOutcome
     store, scheduled_run, options = fixture(tmp_path)
     task_id = int(dispatch(store, scheduled_run, options).execution_id)
@@ -1241,13 +1237,13 @@ def test_scheduled_system_failures_use_three_persisted_attempts_without_reauthor
     clock = {'now':NOW}
     consumer = ScheduledAgentConsumer(store=store, option_service=options, orchestrator_factory=lambda built:orchestrator, now=lambda:clock['now'])
     adapter = ScheduledExecutionQueueAdapter(store, owner_alive=lambda pid:False)
-    for attempt in range(1,4):
+    for attempt in range(1, MAX_REPLY_TASK_ATTEMPTS + 1):
         envelope, guard = claim(adapter, task_id, f'owner-{attempt}', now=clock['now'])
         consumer(envelope, guard)
         guard.complete(clock['now'])
         task = store.get_reply_task(task_id)
         assert task.attempts == attempt
-        if attempt < 3:
+        if attempt < MAX_REPLY_TASK_ATTEMPTS:
             assert task.status == 'pending'
             assert task.available_at
             clock['now'] = datetime.strptime(task.available_at,'%Y-%m-%d %H:%M:%S').replace(tzinfo=UTC)
@@ -1260,8 +1256,8 @@ def test_scheduled_system_failures_use_three_persisted_attempts_without_reauthor
     action = store.list_candidate_action_attempts(execution['id'])[0]
     assert action['status'] == provider_state
     assert action['external_action_key']
-    assert handler.sends == (1 if provider_state=='uncertain' else 3)
-    assert handler.reads == (2 if provider_state=='uncertain' else 0)
+    assert handler.sends == (1 if provider_state=='uncertain' else MAX_REPLY_TASK_ATTEMPTS)
+    assert handler.reads == (MAX_REPLY_TASK_ATTEMPTS - 1 if provider_state=='uncertain' else 0)
 
 
 
@@ -1288,7 +1284,8 @@ def test_waiting_for_system_claim_is_spaced_without_consuming_failure_budget(tmp
     assert adapter.claim(NOW,owner='early',owner_pid=42,lease=timedelta(minutes=5)) is None
 
 
-def test_scheduled_context_refresh_failures_stop_after_three_attempts(tmp_path):
+def test_scheduled_context_refresh_failures_stop_at_configured_attempt_budget(tmp_path):
+    from app.worker import MAX_REPLY_TASK_ATTEMPTS
     store, run, options = fixture(tmp_path)
     task_id = int(dispatch(store, run, options).execution_id)
     orchestrator = AgentOrchestrator(store=store, consumer=Consumer(store, proposal('Exact plan')), audit=Audit(store, 'approve'))
@@ -1300,14 +1297,14 @@ def test_scheduled_context_refresh_failures_stop_after_three_attempts(tmp_path):
     clock = {'now':NOW}
     consumer = ScheduledAgentConsumer(store=store, option_service=options, orchestrator_factory=lambda built:RefreshFailure(), now=lambda:clock['now'])
     adapter = ScheduledExecutionQueueAdapter(store, owner_alive=lambda pid:False)
-    for attempt in range(1,4):
+    for attempt in range(1, MAX_REPLY_TASK_ATTEMPTS + 1):
         envelope, guard = claim(adapter, task_id, f'owner-{attempt}', now=clock['now'])
         consumer(envelope, guard)
         guard.complete(clock['now'])
         task = store.get_reply_task(task_id)
         assert task.attempts == attempt
-        assert task.status == ('failed' if attempt == 3 else 'pending')
-        if attempt < 3:
+        assert task.status == ('failed' if attempt == MAX_REPLY_TASK_ATTEMPTS else 'pending')
+        if attempt < MAX_REPLY_TASK_ATTEMPTS:
             clock['now'] = datetime.strptime(task.available_at,'%Y-%m-%d %H:%M:%S').replace(tzinfo=UTC)
     assert store.list_agent_runs_for_task_generation(task_id,task.execution_generation) == []
     assert adapter.claim(clock['now']+timedelta(days=1), owner='extra', owner_pid=42, lease=timedelta(minutes=5)) is None

@@ -6,9 +6,8 @@ import pytest
 
 from app.audit_web import _queue_attention_rows
 from app.action_storage import insert_action
-from app.run_storage import insert_run
+from app.run_entity_storage import create_run
 from app.store import AutoReplyStore
-from app.task8_storage import task8_set_parts
 
 
 def reply(store, key, *, generation="initial", status="failed", business_key=""):
@@ -23,28 +22,23 @@ def reply(store, key, *, generation="initial", status="failed", business_key="")
         business_object_key=business_key,
     )
     with store._connect() as db:
-        parts = task8_set_parts(
-            "reply_tasks", {"status": status, "updated_at": "2026-10-01 00:00:00"}
-        )
         db.execute(
-            "update tasks set " + parts.sql + " where id=?",
-            (*parts.parameters, task.id),
+            "update tasks set status=?,updated_at=? where id=? and kind='reply'",
+            (status, "2026-10-01 00:00:00", task.id),
         )
-        run = insert_run(
-            db,
-            "agent_runs",
-            dict(
-                task_id=task.id,
-                execution_generation=generation,
-                role="consumer",
-                status="failed",
-            ),
-        )
+        run = create_run(db, values=dict(
+            task_id=task.id, execution_generation=generation, role="consumer",
+            status="failed", proposal_revision=0, turn_attempt=0, parent_id=None,
+            operation_id="", session_id="", transcript_start=0, transcript_end=0,
+            structured_error_json="{}", error=None, lease_owner="", lease_expires_at="",
+            started_at="2026-10-01 00:00:00", completed_at="2026-10-01 00:00:00",
+            created_at="2026-10-01 00:00:00", updated_at="2026-10-01 00:00:00",
+        ))
         attempt = insert_action(
             db,
             "reply_attempts",
             dict(
-                agent_run_id=run.lastrowid,
+                agent_run_id=run["id"],
                 conversation_id=key,
                 conversation_title=key,
                 trigger_message_id=key,
@@ -55,9 +49,7 @@ def reply(store, key, *, generation="initial", status="failed", business_key="")
                 send_status="failed",
             ),
         )
-        attempt_id = db.execute(
-            "select legacy_key from actions where id=?", (attempt.lastrowid,)
-        ).fetchone()[0]
+        attempt_id = attempt.lastrowid
     return task, attempt_id
 
 
@@ -113,9 +105,13 @@ def test_meeting_links_latest_meeting_attempt_not_job_id(tmp_path):
         eligible_at="",
         status="processing",
     )
-    store.claim_logical_run("meeting_alignment_runs", job)
-    latest_id = store.create_logical_run(
-        "meeting_alignment_runs", job, status="failed"
+    with store._connect() as db:
+        native_job_id = db.execute(
+            "select id from tasks where kind='meeting_alignment' and json_extract(parameters_json,'$.meeting_id')='meeting'"
+        ).fetchone()[0]
+    store.create_professional_run(native_job_id, status="ready_to_send")
+    latest_id = store.create_professional_run(
+        native_job_id, status="failed", error="meeting target missing"
     )
     store.update_meeting_alignment_job(
         job, status="failed", error="meeting target missing"
@@ -145,19 +141,15 @@ def test_task_link_selects_latest_current_attempt_without_mutating_facts(tmp_pat
     store = AutoReplyStore(tmp_path / "links.db")
     task, _ = reply(store, "current")
     with store._connect() as db:
-        run = insert_run(
-            db,
-            "agent_runs",
-            dict(
-                task_id=task.id,
-                execution_generation="initial",
-                role="audit",
-                status="failed",
-            ),
-        )
-        run_id = db.execute(
-            "select legacy_key from runs where id=?", (run.lastrowid,)
-        ).fetchone()[0]
+        run = create_run(db, values=dict(
+            task_id=task.id, execution_generation="initial", role="audit", status="failed",
+            proposal_revision=0, turn_attempt=0, parent_id=None, operation_id="audit",
+            session_id="", transcript_start=0, transcript_end=0, structured_error_json="{}",
+            error=None, lease_owner="", lease_expires_at="", started_at="2026-10-01 00:00:00",
+            completed_at="2026-10-01 00:00:00", created_at="2026-10-01 00:00:00",
+            updated_at="2026-10-01 00:00:00",
+        ))
+        run_id = run["id"]
         latest = insert_action(
             db,
             "reply_attempts",
@@ -173,22 +165,16 @@ def test_task_link_selects_latest_current_attempt_without_mutating_facts(tmp_pat
                 send_status="failed",
             ),
         )
-        latest_id = db.execute(
-            "select legacy_key from actions where id=?", (latest.lastrowid,)
-        ).fetchone()[0]
-        old = insert_run(
-            db,
-            "agent_runs",
-            dict(
-                task_id=task.id,
-                execution_generation="previous",
-                role="audit",
-                status="failed",
-            ),
-        )
-        old_id = db.execute(
-            "select legacy_key from runs where id=?", (old.lastrowid,)
-        ).fetchone()[0]
+        latest_id = latest.lastrowid
+        old = create_run(db, values=dict(
+            task_id=task.id, execution_generation="previous", role="audit", status="failed",
+            proposal_revision=0, turn_attempt=0, parent_id=None, operation_id="audit-old",
+            session_id="", transcript_start=0, transcript_end=0, structured_error_json="{}",
+            error=None, lease_owner="", lease_expires_at="", started_at="2026-10-01 00:00:00",
+            completed_at="2026-10-01 00:00:00", created_at="2026-10-01 00:00:00",
+            updated_at="2026-10-01 00:00:00",
+        ))
+        old_id = old["id"]
         insert_action(
             db,
             "reply_attempts",

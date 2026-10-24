@@ -97,7 +97,10 @@ from app.org_cache import (
     refresh_org_cache,
 )
 from app.scheduled_task_recovery import close_superseded_scheduled_reply_tasks
-from app.store import AgentRunLeaseLostError, AutoReplyStore
+from app.store import (
+    AgentRunLeaseLostError, AutoReplyStore,
+    NATIVE_MEETING_TASK_SQL, NATIVE_REPLY_TASK_CURRENT_SQL,
+)
 from app.task_agent_session import TaskAgentSessionLease, TaskAgentSessionLeaseLost
 from app.task_agent import (
     TaskAgentCodexRunner,
@@ -135,7 +138,7 @@ from app.weekly_okr_report import (
     refresh_company_okr_archive_command,
 )
 
-REPLY_TASK_SQL = task20_projection("reply_tasks")
+REPLY_TASK_SQL = NATIVE_REPLY_TASK_CURRENT_SQL
 
 
 def run_consumer_dispatcher_loop(
@@ -3595,8 +3598,11 @@ def import_meeting_asr_transcript_command(
         with sqlite3.connect(f"file:{settings.db_path.resolve()}?mode=ro", uri=True) as db:
             db.row_factory = sqlite3.Row
             row = db.execute(
-                f"""select meeting_id, status, locked_at, send_result_json
-                   from ({task20_projection('meeting_alignment_jobs')}) where id=?""",
+                f"""select meeting.meeting_id, meeting.status, tasks.locked_at,
+                          meeting.send_result_json
+                   from ({NATIVE_MEETING_TASK_SQL}) meeting
+                   join tasks on tasks.id=meeting.id and tasks.kind='meeting_alignment'
+                   where meeting.id=?""",
                 (job_id,),
             ).fetchone()
         if row is None:

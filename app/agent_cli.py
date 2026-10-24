@@ -1,5 +1,4 @@
 from __future__ import annotations
-from app.task20_definitions import task20_projection
 
 import asyncio
 import atexit
@@ -63,8 +62,6 @@ from app.native_cli_metadata import (
 )
 from app.task_artifacts import migrate_legacy_task_artifacts, task_artifact_directory
 
-REPLY_TASK_INPUT_SQL = task20_projection("reply_task_inputs")
-REPLY_TASK_SQL = task20_projection("reply_tasks")
 
 # Codex truncates one MCP text block at 1 MiB. Keep command output below that
 # boundary even after JSON escaping so the controlled receipt remains valid.
@@ -1398,7 +1395,7 @@ def _current_task_generation(db_path: Path | None, task_id: int | None) -> str:
     try:
         with closing(sqlite3.connect(f"file:{quote(str(database))}?mode=ro", uri=True)) as connection:
             row = connection.execute(
-                f"select execution_generation from ({REPLY_TASK_SQL}) where id=?", (task_id,)
+                "select execution_generation from tasks where id=? and kind='reply'", (task_id,)
             ).fetchone()
     except sqlite3.Error as exc:
         raise ValueError("task file binding is unavailable") from exc
@@ -1419,12 +1416,12 @@ def _bound_direct_chat_sender(
     database = Path(db_path).resolve()
     with closing(sqlite3.connect(f"file:{quote(str(database))}?mode=ro", uri=True)) as connection:
         row = connection.execute(
-            "select tasks.execution_generation, tasks.channel, tasks.single_chat, "
-            "tasks.conversation_id, tasks.trigger_message_id, "
+            "select tasks.execution_generation, inputs.channel, inputs.single_chat, "
+            "inputs.conversation_id, inputs.trigger_message_id, "
             "inputs.trigger_message_json, inputs.input_compacted "
-            f"from ({REPLY_TASK_SQL}) tasks join ({REPLY_TASK_INPUT_SQL}) inputs "
-            "on inputs.id=tasks.claimed_input_id and inputs.reply_task_id=tasks.id "
-            "where tasks.id=?",
+            "from tasks join task_inputs inputs "
+            "on inputs.id=tasks.claimed_input_id and inputs.task_id=tasks.id "
+            "where tasks.id=? and tasks.kind='reply'",
             (task_id,),
         ).fetchone()
     if row is None or row[0] != generation:
@@ -1462,10 +1459,13 @@ def _read_bound_task_skill(
             sqlite3.connect(f"file:{quote(str(database))}?mode=ro", uri=True)
         ) as connection:
             row = connection.execute(
-                "select tasks.execution_generation, inputs.trigger_message_json "
-                f"from ({REPLY_TASK_SQL}) tasks join ({REPLY_TASK_INPUT_SQL}) inputs "
-                "on inputs.id=tasks.claimed_input_id and inputs.reply_task_id=tasks.id "
-                "where tasks.id=?",
+                "select tasks.execution_generation, "
+                "case when inputs.input_compacted=1 "
+                "then json_extract(inputs.input_provenance_json,'$.source') "
+                "else inputs.trigger_message_json end "
+                "from tasks join task_inputs inputs "
+                "on inputs.id=tasks.claimed_input_id and inputs.task_id=tasks.id "
+                "where tasks.id=? and tasks.kind='reply'",
                 (task_id,),
             ).fetchone()
     except sqlite3.Error as exc:

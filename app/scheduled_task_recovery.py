@@ -1,17 +1,14 @@
 from __future__ import annotations
-from app.task20_definitions import task20_column, task20_projection
-from app.task8_storage import task8_set_parts
-from app.action_storage import EXTERNAL_ACTION_RESULT_SQL, SENT_REPLY_SQL, REPLY_ATTEMPT_COMMON_SQL, update_action
+from app.store import NATIVE_AGENT_RUN_SQL, NATIVE_REPLY_TASK_CURRENT_SQL
+from app.configs_definitions import config_projection
+from app.action_storage import NATIVE_EXTERNAL_ACTION_RESULT_SQL, SENT_REPLY_SQL, REPLY_ATTEMPT_COMMON_SQL, update_action
 
 from datetime import datetime, timezone
 
 from app.store import AutoReplyStore
-from app.logical_run_storage import AGENT_RUN_SQL
-from app.configs_definitions import config_projection
 from app.schedules_definitions import schedule_projection
 
 
-REPLY_TASK_SQL = task20_projection('reply_tasks')
 
 
 _LEGACY_AGENT_FAILURES = (
@@ -54,7 +51,7 @@ def close_superseded_scheduled_reply_tasks(
                 run.scheduled_task_id as scheduled_task_id,
                 current_task.version as current_version,
                 latest_attempt.id as attempt_id
-            from ({REPLY_TASK_SQL}) as task
+            from ({NATIVE_REPLY_TASK_CURRENT_SQL}) as task
             join schedule_occurrences as run
               on run.event_id=task.trigger_message_id
              and run.execution_kind='reply_task'
@@ -88,7 +85,7 @@ def close_superseded_scheduled_reply_tasks(
               and trim(coalesce(latest_attempt.resolved_at, ''))=''
               and not exists (
                   select 1
-                  from ({AGENT_RUN_SQL}) as active_run
+                  from ({NATIVE_AGENT_RUN_SQL}) as active_run
                   where active_run.reply_task_id=task.id
                     and active_run.execution_generation=task.execution_generation
                     and active_run.status in ('pending', 'running')
@@ -113,7 +110,7 @@ def close_superseded_scheduled_reply_tasks(
               )
               and not exists (
                   select 1
-                  from ({EXTERNAL_ACTION_RESULT_SQL}) as external_result
+                  from ({NATIVE_EXTERNAL_ACTION_RESULT_SQL}) as external_result
                   where external_result.business_object_key=task.business_object_key
               )
             order by task.id
@@ -124,12 +121,12 @@ def close_superseded_scheduled_reply_tasks(
         closed = 0
         for row in rows:
             task_cursor = db.execute(
-                f"""
-                update tasks
-                   set {task8_set_parts('reply_tasks', {}, update_sql={'status': "'done'", 'error': "''", 'available_at': "''", 'locked_at': 'null', 'recovery_code': "'superseded_by_service_command'", 'updated_at': '?'}).sql}
-                 where record_type='reply_tasks' and id=? and {task20_column('reply_tasks', 'status')}='failed'
+                """
+                update tasks set status='done',error='',available_at='',locked_at=null,
+                    parameters_json=jsonb_set(parameters_json,'$.recovery_code',json(?)),updated_at=?
+                 where id=? and kind='reply' and status='failed'
                 """,
-                (now_text, int(row["task_id"])),
+                ('"superseded_by_service_command"', now_text, int(row["task_id"])),
             )
             if task_cursor.rowcount != 1:
                 continue

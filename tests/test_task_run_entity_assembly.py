@@ -1,5 +1,6 @@
 import sqlite3
 import json
+import hashlib
 from pathlib import Path
 
 import pytest
@@ -69,8 +70,32 @@ def test_retained_native_owner_declarations_match_current_source_oracle():
     target = task_run_entity_assembly_objects()
     source = {name: (table, sql) for _kind, name, table, sql in current_objects(email_ledger=True)}
     target_owned_tables = {"tasks", "runs", "actions", "run_provenance", "action_receipts"}
-    retained = {name: sql for name, (table, sql) in source.items() if table not in target_owned_tables}
+    retained = {name: sql for name, (table, sql) in source.items()
+                if table not in target_owned_tables and name != "email_schema_migrations"}
     assert {name: target[name] for name in retained} == retained
+
+
+def test_optional_email_ledger_is_present_only_in_the_paired_manifest():
+    from app.current_schema_manifest import EMAIL_LEDGER_SQL
+
+    bare = task_run_entity_assembly_objects()
+    paired = task_run_entity_assembly_objects(email_ledger=True)
+    assert "email_schema_migrations" not in bare
+    assert paired["email_schema_migrations"] == EMAIL_LEDGER_SQL
+
+
+def test_frozen_predecessor_matches_the_confirmed_production_catalog():
+    from app.current_schema_manifest import create_current_email_migration_ledger, schema_objects
+    from app.predecessor_database_schema import create_store_2026_10_21_1_schema
+
+    db = sqlite3.connect(":memory:")
+    create_store_2026_10_21_1_schema(db)
+    create_current_email_migration_ledger(db)
+    catalog = schema_objects(db)
+    assert len(catalog) == 505
+    assert hashlib.sha256(repr(catalog).encode()).hexdigest() == (
+        "920b7eedb6138439ab94d4fbf109e60258ce8842c212d3a2ee3eec56fb4ca290"
+    )
 
 
 def test_run_source_metadata_matches_current_native_factory_oracle():

@@ -75,7 +75,7 @@ def _populated_source(*, remap_runs=False, feedback=False, pre_capture_unknown=F
 
     from app.action_entity_storage import add_action_observer, append_action_receipt, create_action
     from app.action_storage import insert_action
-    from app.current_database_schema import create_current_database_schema
+    from app.predecessor_database_schema import create_store_2026_10_21_1_schema as create_current_database_schema
     from app.execution_owner_storage import create_plan_execution
     from app.run_adoption_schema import capture_run_adoptions, migrate_run_adoptions
     from app.run_entity_schema import capture_run_entities, migrate_run_entities

@@ -47,11 +47,6 @@ CREATE TABLE email_classifier_runtime_samples (
 
 CREATE TABLE email_historical_candidates (id INTEGER PRIMARY KEY,"account_id" TEXT NOT NULL,"folder" TEXT NOT NULL,"model_id" TEXT NOT NULL,"stable_message_identity" TEXT NOT NULL,"normalized_text" TEXT NOT NULL,"provider_message_json" TEXT NOT NULL,"uidvalidity" INTEGER NOT NULL,"uid" INTEGER NOT NULL,"state" TEXT NOT NULL,"reason" TEXT NOT NULL DEFAULT '',"attempted_at" TEXT NOT NULL DEFAULT '',"next_retry_at" TEXT NOT NULL DEFAULT '',"updated_at" TEXT NOT NULL);
 
-CREATE TABLE email_schema_migrations (
-                version integer primary key,
-                applied_at text not null
-            );
-
 CREATE TABLE emails (
     id integer primary key,
     classification_id integer unique,
@@ -318,7 +313,7 @@ CREATE TABLE work_summary_inputs (task_id INTEGER PRIMARY KEY REFERENCES tasks(i
 
 CREATE TABLE workbench_artifacts (id INTEGER PRIMARY KEY,"workbench_turn_id" INTEGER NOT NULL REFERENCES workbench_turns(task_id),"label" TEXT NOT NULL,"path" TEXT NOT NULL,"media_type" TEXT NOT NULL,"created_at" TEXT NOT NULL DEFAULT current_timestamp);
 
-CREATE TABLE workbench_attachments (id INTEGER PRIMARY KEY,"workbench_task_id" INTEGER NOT NULL REFERENCES workbench_tasks(id),"client_request_id" TEXT NOT NULL,"filename" TEXT NOT NULL,"media_type" TEXT NOT NULL,"size_bytes" INTEGER NOT NULL,"content_sha256" TEXT NOT NULL,"storage_path" TEXT NOT NULL,"created_at" TEXT NOT NULL DEFAULT current_timestamp);
+CREATE TABLE workbench_attachments (id INTEGER PRIMARY KEY AUTOINCREMENT,"workbench_task_id" INTEGER NOT NULL REFERENCES workbench_tasks(id),"client_request_id" TEXT NOT NULL,"filename" TEXT NOT NULL,"media_type" TEXT NOT NULL,"size_bytes" INTEGER NOT NULL,"content_sha256" TEXT NOT NULL,"storage_path" TEXT NOT NULL,"created_at" TEXT NOT NULL DEFAULT current_timestamp);
 
 CREATE TABLE workbench_events (
  id INTEGER PRIMARY KEY AUTOINCREMENT, task_id INTEGER NOT NULL REFERENCES tasks(id),
@@ -731,6 +726,8 @@ CREATE INDEX idx_runtime_attempts_run_order ON runtime_attempts(parent_id,attemp
 
 CREATE INDEX idx_schedule_occurrences_claim ON schedule_occurrences(dispatch_status,scheduled_for,id);
 
+CREATE INDEX idx_schedule_occurrences_covered_range ON schedule_occurrences(scheduled_task_id,snapshot_id,julianday(first_scheduled_for),julianday(scheduled_for),id) WHERE trigger_kind='scheduled' AND occurrence_count>1;
+
 CREATE INDEX idx_schedule_occurrences_dispatch ON schedule_occurrences(dispatch_status,lease_expires_at,scheduled_for,id) WHERE dispatch_status='pending';
 
 CREATE INDEX idx_schedule_occurrences_latest ON schedule_occurrences(scheduled_task_id,id DESC);
@@ -738,6 +735,8 @@ CREATE INDEX idx_schedule_occurrences_latest ON schedule_occurrences(scheduled_t
 CREATE INDEX idx_schedule_occurrences_reply_execution ON schedule_occurrences(CAST(execution_id AS INTEGER),scheduled_task_id,id) WHERE execution_kind='reply_task';
 
 CREATE UNIQUE INDEX idx_schedule_occurrences_scheduled_instant ON schedule_occurrences(scheduled_task_id,scheduled_for) WHERE trigger_kind='scheduled';
+
+CREATE INDEX idx_schedule_occurrences_task_chronology ON schedule_occurrences(scheduled_task_id,julianday(scheduled_for),id);
 
 CREATE INDEX idx_schedules_enabled on schedules(enabled,deleted_at,id);
 

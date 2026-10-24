@@ -164,7 +164,7 @@ def _action_objects():
     return dict(rows)
 
 
-def task_run_entity_assembly_objects():
+def task_run_entity_assembly_objects(*, email_ledger=False):
     """Return target DDL plus actual retained-owner declarations.
 
     The scratch schema uses only target Task/Run declarations and the native
@@ -208,7 +208,8 @@ def task_run_entity_assembly_objects():
     business = current_business_declaration()
     db.execute(business["sql"])
     _create_auxiliary(db, business)
-    db.execute(EMAIL_LEDGER_SQL)
+    if email_ledger:
+        db.execute(EMAIL_LEDGER_SQL)
     # Install the target-owned indexes and triggers after every owner exists.
     for name, sql in declarations.items():
         if not sql.lstrip().lower().startswith("create table "):

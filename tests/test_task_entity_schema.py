@@ -2189,7 +2189,7 @@ def test_source_resolved_feedback_receipt_validates_then_native_reopens_and_clai
         FeedbackIterationAcceptance, FeedbackIterationDecision, ResolutionEvidence,
     )
     from app.store import AutoReplyStore
-    from app.current_database_schema import create_current_database_schema
+    from app.predecessor_database_schema import create_store_2026_10_21_1_schema as create_current_database_schema
     from app.run_adoption_schema import capture_run_adoptions, migrate_run_adoptions
     from app.run_entity_schema import capture_run_entities, migrate_run_entities
     from app.task_run_entity_assembly import task_run_entity_assembly_objects

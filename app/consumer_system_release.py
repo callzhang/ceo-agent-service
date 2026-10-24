@@ -19,9 +19,7 @@ from app.managed_skills import (
     RUNTIME_EDIT_SOURCE,
     RuntimeSkillBinding,
 )
-from app.run_storage import SCHEDULED_RUN_SQL
-from app.store import AutoReplyStore
-from app.task_storage import REPLY_TASK_SQL
+from app.store import AutoReplyStore, NATIVE_REPLY_TASK_CURRENT_SQL
 
 
 MANAGED_NAMES = (
@@ -571,10 +569,10 @@ def prepare_consumer_system_contracts(
     # describes the entrypoints an interrupted execution will resume with.
     with store._connect() as db:
         active_runs = db.execute(
-            f"select scheduled.id from ({SCHEDULED_RUN_SQL}) scheduled "
+            "select scheduled.id from schedule_occurrences scheduled "
             "where scheduled.dispatch_status='pending' or "
             "(scheduled.execution_kind='reply_task' and scheduled.execution_id in "
-            f"(select cast(id as text) from ({REPLY_TASK_SQL}) "
+            f"(select cast(id as text) from ({NATIVE_REPLY_TASK_CURRENT_SQL}) "
             "where channel='scheduled' and status in ('pending','processing')))"
         ).fetchall()
     for row in active_runs:

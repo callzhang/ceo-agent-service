@@ -1,7 +1,5 @@
 """Durable, generation-bound Consumer candidates and system execution progress."""
 
-from app.task20_definitions import task20_column, task20_projection
-from app.task8_storage import task8_set_parts
 import hashlib
 import json
 import sqlite3
@@ -19,7 +17,23 @@ from app.action_storage import (
 )
 
 
-REPLY_TASK_SQL = task20_projection('reply_tasks')
+def _native_reply_task(db, task_id):
+    return db.execute("""select tasks.id,tasks.status,tasks.available_at,
+        tasks.attempts,tasks.error,tasks.locked_at,tasks.execution_generation,
+        tasks.current_input_id,tasks.claimed_input_id,tasks.input_version,
+        tasks.claimed_input_version,tasks.created_at,tasks.updated_at,
+        inputs.channel,inputs.conversation_id,inputs.conversation_title,
+        inputs.single_chat,inputs.trigger_message_id,inputs.trigger_create_time,
+        inputs.trigger_sender,inputs.trigger_text,inputs.trigger_message_json,
+        inputs.oa_url,inputs.business_object_key,inputs.input_provenance_json,
+        inputs.input_compacted,
+        coalesce(json_extract(tasks.parameters_json,'$.force_new_decision'),0) as force_new_decision,
+        coalesce(json_extract(tasks.parameters_json,'$.manual_rerun_attempt_id'),0) as manual_rerun_attempt_id,
+        coalesce(json_extract(tasks.parameters_json,'$.manual_rerun_revision_key'),'') as manual_rerun_revision_key,
+        coalesce(json_extract(tasks.parameters_json,'$.recovery_code'),'') as recovery_code
+        from tasks join task_inputs inputs on inputs.id=tasks.current_input_id
+          and inputs.task_id=tasks.id
+        where tasks.id=? and tasks.kind='reply'""", (task_id,)).fetchone()
 
 
 
@@ -257,7 +271,8 @@ class ReviewedCandidateStoreMixin:
     def current_reviewed_candidate(self, task_id: int, generation: str) -> dict[str, Any] | None:
         with self._connect() as db:
             row = db.execute("""select c.consumer_run_id as id,c.consumer_run_id as candidate_id,
-                owner.execution_generation as execution_generation,
+                owner.task_id as task_id,owner.execution_generation as execution_generation,
+                owner.proposal_revision as proposal_revision,
                 r.id as review_id,r.audit_run_id,r.decision,r.candidate_digest as review_digest,
                 c.stage_index,c.predecessor_review_id,
                 c.candidate_json,c.candidate_digest,
@@ -381,13 +396,15 @@ class ReviewedCandidateStoreMixin:
                 (candidate["task_id"], candidate["execution_generation"])).fetchone()[0]
             if latest_id != candidate_id:
                 raise ValueError("stale candidate")
-            task = db.execute(f"select * from ({REPLY_TASK_SQL}) where id=?", (candidate["task_id"],)).fetchone()
+            task = _native_reply_task(db, candidate["task_id"])
             if task["status"] == "needs_human":
-                db.execute(f"""update tasks set {task8_set_parts('reply_tasks', {}, update_sql={'status': "'pending'", 'available_at': "''", 'locked_at': 'null', 'updated_at': 'current_timestamp'}).sql} where record_type='reply_tasks' and id=? and {task20_column('reply_tasks', 'execution_generation')}=? and {task20_column('reply_tasks', 'status')}='needs_human'""",
+                db.execute("""update tasks set status='pending',available_at='',locked_at=null,
+                    updated_at=current_timestamp where id=? and kind='reply'
+                    and execution_generation=? and status='needs_human'""",
                     (candidate["task_id"],candidate["execution_generation"]))
             elif task["status"] not in ("pending", "processing", "done", "skipped"):
                 raise ValueError("selected candidate task is unavailable")
-            return dict(db.execute(f"select * from ({REPLY_TASK_SQL}) where id=?", (candidate["task_id"],)).fetchone())
+            return dict(_native_reply_task(db, candidate["task_id"]))
 
     def claim_candidate_execution(self, candidate_id: int, review_id: int, owner: str, lease_seconds: int) -> dict[str, Any] | None:
         if not owner.strip() or lease_seconds <= 0:
@@ -754,7 +771,10 @@ class ReviewedCandidateStoreMixin:
         to execute it after the candidate has changed or been invalidated.
         """
         with self._connect() as db:
-            task = db.execute(f"select business_object_key from ({REPLY_TASK_SQL}) where id=?", (task_id,)).fetchone()
+            task = db.execute("""select inputs.business_object_key from tasks
+                join task_inputs inputs on inputs.id=tasks.current_input_id
+                  and inputs.task_id=tasks.id
+                where tasks.id=? and tasks.kind='reply'""", (task_id,)).fetchone()
             if task is None:
                 raise ValueError("task does not exist")
             rows = db.execute("""select * from (

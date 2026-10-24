@@ -7,12 +7,10 @@ from urllib.parse import quote
 
 import pytest
 
-from app.run_storage import insert_run
 from app.action_storage import REVIEW_CANDIDATE_SQL, update_action
 from app.audit_web import handle_rerun_attempt_post
 from app.store import AgentRole, AutoReplyStore
 from app.task8_storage import task8_set_parts
-from app.task20_definitions import task20_column
 from app.web_api.attempts import (
     _consumer_result_payload as build_consumer_result_payload,
     _linked_consumer_run,
@@ -694,24 +692,29 @@ def _seed_email_attempt(store: AutoReplyStore, *, with_agent_runs: bool) -> int:
     )
     if not with_agent_runs:
         return attempt_id
+    task = next(
+        task for task in store.list_reply_tasks(limit=10)
+        if task.conversation_id == CONVERSATION
+        and task.trigger_message_id == TRIGGER
+    )
+    consumer = store.claim_agent_run(
+        task.id, task.execution_generation, role=AgentRole.CONSUMER,
+        proposal_revision=0, turn_attempt=0, parent_agent_run_id=None,
+        operation_id="", owner="history-fixture",
+    ).run
+    candidate_body = {"outcome": "proposal", "proposal": {"actions": []}}
+    store.complete_agent_run(consumer.id, candidate_body, owner="history-fixture")
+    candidate = store.persist_review_candidate(task, consumer, candidate_body)
+    audit = store.claim_agent_run(
+        task.id, task.execution_generation, role=AgentRole.AUDIT,
+        proposal_revision=0, turn_attempt=0, parent_agent_run_id=consumer.id,
+        operation_id="history-fixture-audit", owner="history-fixture",
+    ).run
+    audit_body = {"outcome": "approve", "candidate_digest": candidate["candidate_digest"]}
+    store.complete_agent_run(audit.id, audit_body, owner="history-fixture")
+    store.record_candidate_review(candidate["id"], audit.id, audit_body)
     with store._connect() as db:
-        task_id = db.execute(
-            "select id from tasks where record_type='reply_tasks' and "
-            f"{task20_column('reply_tasks', 'conversation_id')}=? and "
-            f"{task20_column('reply_tasks', 'trigger_message_id')}=?",
-            (CONVERSATION, TRIGGER),
-        ).fetchone()[0]
-        consumer = insert_run(db, 'agent_runs', {
-            'task_id': task_id, 'execution_generation': 'initial',
-            'role': 'consumer', 'status': 'completed', 'session_id': 'session-consumer',
-            'transcript_start': 0, 'transcript_end': 42,
-        }).lastrowid
-        audit = insert_run(db, 'agent_runs', {
-            'task_id': task_id, 'execution_generation': 'initial',
-            'role': 'audit', 'status': 'completed', 'parent_id': consumer,
-            'session_id': 'session-audit', 'transcript_start': 0, 'transcript_end': 59,
-        }).lastrowid
-        update_action(db, "reply_attempts", attempt_id, {"agent_run_id": audit})
+        update_action(db, "reply_attempts", attempt_id, {"agent_run_id": audit.id})
     return attempt_id
 
 

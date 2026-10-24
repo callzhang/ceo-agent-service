@@ -62,7 +62,7 @@ def test_runtime_metadata_supports_deployed_runs_schema_without_summary_input_id
 
 
 def seed(store, key, *, status="pending", attempts=0, lease=""):
-    store.enqueue_reply_task(
+    task = store.ensure_reply_task(
         conversation_id=key,
         conversation_title=f"Task {key}",
         single_chat=True,
@@ -72,32 +72,18 @@ def seed(store, key, *, status="pending", attempts=0, lease=""):
         trigger_text="input",
     )
     with store._connect() as db:
-        task_id = db.execute(
-            "select max(id) from tasks where record_type='reply_tasks'"
-        ).fetchone()[0]
-        parts = task8_set_parts(
-            "reply_tasks",
-            {
-                "status": status,
-                "attempts": attempts,
-                "created_at": "2026-10-20 16:00:00",
-                "updated_at": "2026-10-20 16:59:00",
-                "available_at": "2026-10-20 17:05:00"
-                if attempts and status == "pending"
-                else "",
-                "locked_at": "2026-10-20 16:58:00" if status == "processing" else None,
-            },
-        )
         db.execute(
-            "update tasks set " + parts.sql + " where id=?",
-            (*parts.parameters, task_id),
+            "update tasks set status=?,attempts=?,created_at=?,updated_at=?,available_at=?,locked_at=? where id=? and kind='reply'",
+            (status, attempts, "2026-10-20 16:00:00", "2026-10-20 16:59:00",
+             "2026-10-20 17:05:00" if attempts and status == "pending" else "",
+             "2026-10-20 16:58:00" if status == "processing" else None, task.id),
         )
         if lease:
             db.execute(
-                "update tasks set lease_owner=jsonb(?),lease_expires_at=jsonb(?) where id=?",
-                (encoded("worker"), encoded(lease), task_id),
+                "update tasks set lease_owner=?,lease_expires_at=? where id=? and kind='reply'",
+                ("worker", lease, task.id),
             )
-    return task_id
+    return task.id
 
 
 def test_initial_retry_and_active_are_distinct_and_reads_do_not_write(tmp_path):
@@ -197,22 +183,12 @@ def test_endpoint_pages_queue_without_exposing_payloads(tmp_path):
 
 def test_superseded_business_object_is_not_in_queue(tmp_path):
     from app.web_api.dashboard import read_dashboard_queues
-    from app.task20_definitions import task20_column
-
     store = AutoReplyStore(tmp_path / "test.db")
     old = seed(store, "old")
     new = seed(store, "new")
     with store._connect() as db:
-        key = db.execute(
-            "select "
-            + task20_column("reply_tasks", "business_object_key")
-            + " from tasks where id=?",
-            (new,),
-        ).fetchone()[0]
-        parts = task8_set_parts("reply_tasks", {"business_object_key": key})
-        db.execute(
-            "update tasks set " + parts.sql + " where id=?", (*parts.parameters, old)
-        )
+        key = db.execute("select business_object_key from task_inputs where task_id=?", (new,)).fetchone()[0]
+        db.execute("update task_inputs set business_object_key=? where task_id=?", (key, old))
         result = read_dashboard_queues(db, now=NOW)
     assert [r["id"] for r in result["queued"]] == [f"reply_tasks:{new}"]
 
@@ -346,20 +322,15 @@ def test_active_direct_email_retry_counts_completed_attempts(tmp_path):
 
     with store._connect() as db:
         db.execute("BEGIN IMMEDIATE")
-        assert (
-            shared_action_lifecycle.transition(
-                db,
-                "email",
-                "claim",
-                identity=action_id,
-                values={
-                    "started_at": "2026-10-20T17:00:00+00:00",
-                    "updated_at": "2026-10-20T17:00:00+00:00",
-                },
-                expected={"status": "failed", "attempt_count": 1},
-            ).rowcount
-            == 1
+        from app.action_entity_storage import get_action
+        action = get_action(db, int(action_id))
+        assert action is not None
+        claimed = shared_action_lifecycle.claim_direct_email_action(
+            db, action_id=action_id, expected_status="failed",
+            expected_started_at=action["started_at"], attempt_count=1,
+            claimed_at="2026-10-20T17:00:00+00:00",
         )
+        assert claimed is not None
     with store._connect() as db:
         result = read_dashboard_queues(db, now=NOW)
     rows = [r for r in result["active"] if r["id"] == f"email_actions:{action_id}"]

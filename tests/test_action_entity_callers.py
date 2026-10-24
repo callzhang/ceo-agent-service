@@ -358,7 +358,7 @@ def test_selected_reviewed_message_uses_prepared_action_through_sent(tmp_path, m
             (owner["action_prepared_receipt_id"], owner["id"]),
         ).fetchone()
         observation = db.execute(
-            "select * from action_receipts where action_id=? and execution_id=? and action_index=0",
+            "select * from action_receipts where action_id=? and execution_run_id=? and action_index=0",
             (owner["id"], store.get_candidate_execution(candidate["id"])["id"]),
         ).fetchone()
         canonical_receipt = db.execute(
@@ -445,7 +445,7 @@ def test_selected_reviewed_message_uses_prepared_action_through_sent(tmp_path, m
     with store._connect() as db:
         recovered_observation = db.execute(
             "select action_id,status,provider_receipt_id from action_receipts "
-            "where execution_id=? and action_index=0",
+            "where execution_run_id=? and action_index=0",
             (later_execution["id"],),
         ).fetchone()
         later_preparation = db.execute(

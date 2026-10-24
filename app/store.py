@@ -241,7 +241,6 @@ from app.action_storage import (
     insert_sync_action,
     CANDIDATE_REVIEW_SQL,
     CANDIDATE_SELECTION_SQL,
-    CANDIDATE_EXECUTION_SQL,
     REVIEW_CANDIDATE_SQL,
     EXTERNAL_ACTION_RESULT_SQL,
     SENT_REPLY_SQL,
@@ -443,10 +442,101 @@ NATIVE_REPLY_TASK_CURRENT_SQL = """select tasks.id,tasks.status,tasks.available_
     inputs.single_chat,inputs.trigger_message_id,inputs.trigger_create_time,
     inputs.trigger_sender,inputs.trigger_text,inputs.trigger_message_json,
     inputs.oa_url,inputs.business_object_key,inputs.input_provenance_json,
-    inputs.input_compacted
+    inputs.input_compacted,
+    coalesce(json_extract(tasks.parameters_json,'$.force_new_decision'),0) as force_new_decision,
+    coalesce(json_extract(tasks.parameters_json,'$.manual_rerun_attempt_id'),0) as manual_rerun_attempt_id,
+    coalesce(json_extract(tasks.parameters_json,'$.manual_rerun_revision_key'),'') as manual_rerun_revision_key,
+    coalesce(json_extract(tasks.parameters_json,'$.recovery_code'),'') as recovery_code
     from tasks join task_inputs inputs on inputs.id=tasks.current_input_id
       and inputs.task_id=tasks.id
     where tasks.kind='reply'"""
+
+# Delivery execution must retain the exact snapshot bound by the claim, even
+# when a newer trigger input becomes current while the worker is running.
+NATIVE_REPLY_TASK_CLAIMED_SQL = """select tasks.id,tasks.status,tasks.available_at,
+    tasks.attempts,tasks.error,tasks.locked_at,tasks.execution_generation,
+    tasks.current_input_id,tasks.claimed_input_id,tasks.input_version,
+    tasks.claimed_input_version,tasks.created_at,tasks.updated_at,
+    inputs.channel,inputs.conversation_id,inputs.conversation_title,
+    inputs.single_chat,inputs.trigger_message_id,inputs.trigger_create_time,
+    inputs.trigger_sender,inputs.trigger_text,inputs.trigger_message_json,
+    inputs.oa_url,inputs.business_object_key,inputs.input_provenance_json,
+    inputs.input_compacted,
+    coalesce(json_extract(tasks.parameters_json,'$.force_new_decision'),0) as force_new_decision,
+    coalesce(json_extract(tasks.parameters_json,'$.manual_rerun_attempt_id'),0) as manual_rerun_attempt_id,
+    coalesce(json_extract(tasks.parameters_json,'$.manual_rerun_revision_key'),'') as manual_rerun_revision_key,
+    coalesce(json_extract(tasks.parameters_json,'$.recovery_code'),'') as recovery_code
+    from tasks join task_inputs inputs on inputs.id=tasks.claimed_input_id
+      and inputs.task_id=tasks.id
+    where tasks.kind='reply'"""
+
+NATIVE_REPLY_BUSINESS_KEY_SQL = """select business_key as business_object_key,
+    task_id as reply_task_id from task_business_keys"""
+
+NATIVE_AGENT_RUN_SQL = """select runs.id, runs.task_id as reply_task_id,
+    runs.parent_id as parent_agent_run_id, runs.execution_generation, runs.role,
+    runs.proposal_revision, runs.turn_attempt, runs.operation_id, runs.status,
+    runs.session_id as codex_session_id,
+    runs.transcript_start as codex_transcript_start_line,
+    runs.transcript_end as codex_transcript_end_line,
+    runs.structured_error_json, runs.error, runs.lease_owner, runs.lease_expires_at,
+    runs.started_at, runs.completed_at, runs.created_at, runs.updated_at,
+    projection.projection_json
+    from runs left join run_projections projection on projection.run_id=runs.id
+    where not exists (select 1 from run_provenance provenance where provenance.run_id=runs.id)"""
+
+NATIVE_MEETING_RUN_SQL = """select runs.id, runs.task_id as job_id,
+    runs.status, runs.error, runs.created_at, runs.completed_at,
+    runs.session_id as codex_session_id,
+    runs.transcript_start, runs.transcript_end
+    from runs join run_provenance provenance on provenance.run_id=runs.id
+    where provenance.source_type='meeting_alignment_runs'"""
+
+NATIVE_MEETING_TASK_SQL = """select tasks.id,tasks.status,tasks.created_at,tasks.updated_at,
+    coalesce(json_extract(tasks.parameters_json,'$.meeting_id'),'') as meeting_id,
+    coalesce(json_extract(tasks.parameters_json,'$.title'),'') as title,
+    coalesce(json_extract(tasks.parameters_json,'$.source_json'),'{}') as source_json,
+    coalesce(json_extract(tasks.parameters_json,'$.participants_json'),'[]') as participants_json,
+    coalesce(result.decision_json,'{}') as decision_json,
+    coalesce(result.target_kind,'') as target_kind,
+    coalesce(result.target_id,'') as target_id,
+    coalesce(result.target_title,'') as target_title,
+    coalesce(result.mentions_json,'[]') as mentions_json,
+    coalesce(result.final_message,'') as final_message,
+    coalesce(result.send_result_json,'{}') as send_result_json,
+    coalesce(result.calendar_summary_status,'not_started') as calendar_summary_status,
+    coalesce(result.calendar_summary_result_json,'{}') as calendar_summary_result_json,
+    tasks.error as error
+    from tasks left join task_results result
+      on result.task_id=tasks.id and result.result_kind='meeting_alignment'
+    where tasks.kind='meeting_alignment'"""
+
+NATIVE_REVIEW_CANDIDATE_SQL = """select adopted.consumer_run_id as id,
+    adopted.consumer_run_id as candidate_id, owner.task_id, owner.execution_generation,
+    owner.proposal_revision, adopted.stage_index, adopted.predecessor_review_id,
+    adopted.candidate_digest, adopted.candidate_json, adopted.invalidated_at,
+    adopted.invalidation_reason, adopted.created_at
+    from run_adopted_results adopted join runs owner on owner.id=adopted.consumer_run_id"""
+
+NATIVE_CANDIDATE_REVIEW_SQL = """select id, consumer_run_id as candidate_id,
+    audit_run_id, decision, candidate_digest, result_json, created_at
+    from run_adopted_reviews"""
+
+NATIVE_CANDIDATE_SELECTION_SQL = """select selection.id,
+    selection.consumer_run_id as candidate_id, review.id as review_id,
+    selection.audit_run_id, selection.option_key, selection.status,
+    selection.created_at
+    from run_adopted_selections selection
+    join run_adopted_reviews review on review.audit_run_id=selection.audit_run_id"""
+
+NATIVE_CANDIDATE_EXECUTION_SQL = """select progress.consumer_run_id as id,
+    progress.consumer_run_id as candidate_id, review.id as review_id,
+    progress.approved_audit_run_id as audit_run_id, selection.id as selection_id,
+    progress.status, progress.lease_owner, progress.lease_expires_at,
+    progress.result_json, progress.created_at, progress.updated_at
+    from run_execution_progress progress
+    join run_adopted_reviews review on review.audit_run_id=progress.approved_audit_run_id
+    left join run_adopted_selections selection on selection.id=progress.selection_id"""
 
 # Queue-claim source headers and bytes belong to the claimed snapshot.
 REPLY_TASK_CLAIMED_SQL = f"""select canonical.channel, canonical.conversation_id,
@@ -460,7 +550,7 @@ REPLY_TASK_CLAIMED_SQL = f"""select canonical.channel, canonical.conversation_id
                   and canonical.reply_task_id=parent.id"""
 
 STORE_SCHEMA_VERSION_KEY = "store_schema_version"
-STORE_SCHEMA_VERSION = "2026-10-21.1"
+STORE_SCHEMA_VERSION = "2026-10-23.1"
 BUSINESS_ACTION_SQL = {kind: (signal_projection() if kind == "business_task_signals" else business_action_projection(kind))
                        for kind in BUSINESS_ACTION_KINDS}
 BUSINESS_ACTION_ID_SQL = {kind: (signal_projection() if kind == "business_task_signals" else business_action_projection(kind, public_id_index=True))
@@ -1504,9 +1594,9 @@ class AutoReplyStore(LogicalRunStoreMixin, ReviewedCandidateStoreMixin):
     ) -> bool:
         return (
             db.execute(
-                f"""
+                """
                 select 1
-                  from ({task12_projection("feedback_processing_rounds")})
+                  from feedback_processing_rounds
                  where typeof(round_number) <> 'integer'
                     or round_number <= 0
                  limit 1
@@ -5301,7 +5391,7 @@ class AutoReplyStore(LogicalRunStoreMixin, ReviewedCandidateStoreMixin):
                            as scheduled_task_run_id,
                        attempts.id as attempt_id,
                        attempts.send_status as attempt_status
-                  from ({REPLY_TASK_INPUT_SQL}) as inputs
+                  from task_inputs as inputs
                   join ({REPLY_ATTEMPT_COMMON_SQL}) as attempts
                     on attempts.channel=inputs.channel
                    and attempts.conversation_id=inputs.conversation_id
@@ -5333,7 +5423,7 @@ class AutoReplyStore(LogicalRunStoreMixin, ReviewedCandidateStoreMixin):
             row = db.execute(
                 f"""
                 select run.*, config.snapshot_json
-                  from ({REPLY_TASK_INPUT_SQL}) as inputs
+                  from task_inputs as inputs
                   join schedule_occurrences as run
                     on run.id=cast(
                         {_SCHEDULED_TASK_RUN_ID_FROM_INPUT_SQL} as integer
@@ -6442,8 +6532,10 @@ class AutoReplyStore(LogicalRunStoreMixin, ReviewedCandidateStoreMixin):
                         "delete from task_business_keys where task_id=? and business_key=?",
                         (task_id, provisional_key),
                     )
+                    promotion_time = str(db.execute("select current_timestamp").fetchone()[0])
                     task_entity_storage.associate_business_key(
                         db, task_id=task_id, business_key=key,
+                        created_at=promotion_time, updated_at=promotion_time,
                     )
                     mapping = provisional
         if mapping is None:
@@ -6472,6 +6564,7 @@ class AutoReplyStore(LogicalRunStoreMixin, ReviewedCandidateStoreMixin):
             task_id = int(task["id"])
             task_entity_storage.associate_business_key(
                 db, task_id=task_id, business_key=key,
+                created_at=now, updated_at=now,
             )
         else:
             task_id = int(mapping["task_id"])
@@ -9302,7 +9395,7 @@ class AutoReplyStore(LogicalRunStoreMixin, ReviewedCandidateStoreMixin):
                 (task_id,execution_generation,role,proposal_revision,turn_attempt,parent_id,
                  operation_id,session_id,lease_owner,lease_expires_at,started_at,created_at,
                  updated_at,status,transcript_start,transcript_end,structured_error_json,error,completed_at)
-                values (?,?,?,?,?,?,?,?,?,?,?,?,?,'running',0,0,'','','')""",
+                values (?,?,?,?,?,?,?,?,?,?,?,?,?,'running',0,0,'',NULL,'')""",
                 (reply_task_id, execution_generation, role.value, proposal_revision,
                  turn_attempt, parent_agent_run_id, operation_id, codex_session_id,
                  owner, lease_expires_at, now_text, now_text, now_text),
@@ -10087,7 +10180,7 @@ class AutoReplyStore(LogicalRunStoreMixin, ReviewedCandidateStoreMixin):
             rows = db.execute(
                 f"""
                 select *
-                from ({REPLY_TASK_CURRENT_SQL}) as tasks
+                from ({NATIVE_REPLY_TASK_CURRENT_SQL}) as tasks
                 where tasks.status='processing'
                   and tasks.locked_at is not null
                   and (
@@ -10095,7 +10188,7 @@ class AutoReplyStore(LogicalRunStoreMixin, ReviewedCandidateStoreMixin):
                           datetime(tasks.locked_at) <= datetime('now', ?)
                           and not exists (
                               select 1
-                              from ({AGENT_RUN_SQL}) as runs
+                              from ({NATIVE_AGENT_RUN_SQL}) as runs
                               where runs.reply_task_id=tasks.id
                                 and runs.execution_generation=tasks.execution_generation
                                 and runs.status='running'
@@ -10941,7 +11034,7 @@ class AutoReplyStore(LogicalRunStoreMixin, ReviewedCandidateStoreMixin):
             rows = db.execute(
                 f"""
                 select tasks.id, tasks.error
-                from ({REPLY_TASK_CURRENT_SQL}) as tasks
+                from ({NATIVE_REPLY_TASK_CURRENT_SQL}) as tasks
                 where tasks.channel='email'
                   and tasks.status='failed'
                   and tasks.error='email_consumer_runtime_error:EmailPersistenceCorruption'
@@ -11604,7 +11697,7 @@ class AutoReplyStore(LogicalRunStoreMixin, ReviewedCandidateStoreMixin):
         where = f" where {' and '.join(clauses)}" if clauses else ""
         with self._connect() as db:
             row = db.execute(
-                f"select count(*) as count from ({REPLY_TASK_SQL}) as reply_tasks{where}", args
+                f"select count(*) as count from ({NATIVE_REPLY_TASK_CURRENT_SQL}) as reply_tasks{where}", args
             ).fetchone()
             return int(row["count"])
 
@@ -11618,7 +11711,7 @@ class AutoReplyStore(LogicalRunStoreMixin, ReviewedCandidateStoreMixin):
         with self._connect() as db:
             query = f"""
                 select *
-                from ({REPLY_TASK_CURRENT_SQL}) as reply_tasks
+                from ({NATIVE_REPLY_TASK_CURRENT_SQL}) as reply_tasks
             """
             args: list[str | int] = []
             clauses: list[str] = []
@@ -11646,7 +11739,7 @@ class AutoReplyStore(LogicalRunStoreMixin, ReviewedCandidateStoreMixin):
             row = db.execute(
                 f"""
                 select *
-                from ({REPLY_TASK_CURRENT_SQL}) as reply_tasks
+                from ({NATIVE_REPLY_TASK_CURRENT_SQL}) as reply_tasks
                 where channel=? and conversation_id=? and trigger_message_id=?
                 order by id desc
                 limit 1
@@ -11665,7 +11758,7 @@ class AutoReplyStore(LogicalRunStoreMixin, ReviewedCandidateStoreMixin):
             row = db.execute(
                 f"""
                 select *
-                from ({REPLY_TASK_CURRENT_SQL}) as reply_tasks
+                from ({NATIVE_REPLY_TASK_CURRENT_SQL}) as reply_tasks
                 where channel=? and trigger_message_id=?
                 order by id desc
                 limit 1
@@ -11681,12 +11774,9 @@ class AutoReplyStore(LogicalRunStoreMixin, ReviewedCandidateStoreMixin):
     ) -> ReplyTask | None:
         with self._connect() as db:
             row = db.execute(
-                f"""
-                select tasks.* from ({task12_projection('business_object_tasks')}) as current_object
-                join ({REPLY_TASK_CURRENT_SQL}) as tasks
-                  on tasks.id=current_object.reply_task_id
-                where current_object.business_object_key=?
-                """,
+                "select tasks.* from task_business_keys current_object "
+                "join (" + NATIVE_REPLY_TASK_CURRENT_SQL + ") tasks "
+                "on tasks.id=current_object.task_id where current_object.business_key=?",
                 (business_object_key,),
             ).fetchone()
             return self._reply_task_from_row(row) if row is not None else None
@@ -12008,7 +12098,7 @@ class AutoReplyStore(LogicalRunStoreMixin, ReviewedCandidateStoreMixin):
             raise ValueError("WeChat Audit fields are service-owned")
         with self._immediate_write_transaction() as db:
             task = db.execute(
-                f"select * from ({REPLY_TASK_CLAIMED_SQL}) as reply_tasks where id=? and status='processing' "
+                f"select * from ({NATIVE_REPLY_TASK_CLAIMED_SQL}) as reply_tasks where id=? and status='processing' "
                 "and execution_generation=? and channel='wechat'",
                 (task_id, expected_execution_generation),
             ).fetchone()
@@ -12074,15 +12164,19 @@ class AutoReplyStore(LogicalRunStoreMixin, ReviewedCandidateStoreMixin):
                         f"WeChat delivery preparation lost: {delivery_id}"
                     )
             task_cursor = db.execute(
-                f"""
-                update tasks as reply_tasks
-                set {task8_set_parts('reply_tasks', {}, update_sql={'status': '?', 'locked_at': 'null', 'available_at': '?', 'error': '?', 'recovery_code': '?', 'updated_at': 'current_timestamp'}, payload_source='reply_tasks.payload_json').sql}  where reply_tasks.record_type='reply_tasks' and id=? and {task20_column('reply_tasks', 'status')}='processing' and {task20_column('reply_tasks', 'execution_generation')}=?
+                """
+                update tasks
+                   set status=?, locked_at=null, available_at=?, error=?,
+                       parameters_json=jsonb_set(parameters_json,'$.recovery_code',json(?)),
+                       updated_at=current_timestamp
+                 where id=? and kind='reply' and status='processing'
+                   and execution_generation=?
                 """,
                 (
                     task_status,
                     available_at if task_status == "pending" else "",
                     send_error if task_status in {"failed", "pending"} else "",
-                    recovery_code if task_status in {"failed", "pending"} else "",
+                    json.dumps(recovery_code if task_status in {"failed", "pending"} else ""),
                     task_id,
                     expected_execution_generation,
                 ),
@@ -12105,7 +12199,7 @@ class AutoReplyStore(LogicalRunStoreMixin, ReviewedCandidateStoreMixin):
             raise ValueError("WeChat Audit fields are service-owned")
         with self._immediate_write_transaction() as db:
             task = db.execute(
-                f"""select execution_generation, trigger_text from ({REPLY_TASK_CURRENT_SQL}) as reply_tasks
+                f"""select execution_generation, trigger_text from ({NATIVE_REPLY_TASK_CURRENT_SQL}) as reply_tasks
                    where id=? and channel='wechat'""",
                 (reply_task_id,),
             ).fetchone()
@@ -12174,7 +12268,7 @@ class AutoReplyStore(LogicalRunStoreMixin, ReviewedCandidateStoreMixin):
         with self._connect() as db:
             row = db.execute(
                 f"""select deliveries.* from ({WECHAT_DELIVERY_SQL}) as deliveries
-                   join ({REPLY_TASK_CURRENT_SQL}) as tasks on tasks.id=deliveries.reply_task_id
+                   join ({NATIVE_REPLY_TASK_CURRENT_SQL}) as tasks on tasks.id=deliveries.reply_task_id
                    where deliveries.reply_task_id=?
                    order by (deliveries.execution_generation=tasks.execution_generation)
                             desc, deliveries.id desc
@@ -12200,7 +12294,7 @@ class AutoReplyStore(LogicalRunStoreMixin, ReviewedCandidateStoreMixin):
             rows = db.execute(
                 f"""
                 select wechat_deliveries.* from ({WECHAT_DELIVERY_SQL}) as wechat_deliveries
-                join ({REPLY_TASK_CURRENT_SQL}) as reply_tasks on reply_tasks.id=wechat_deliveries.reply_task_id
+                join ({NATIVE_REPLY_TASK_CURRENT_SQL}) as reply_tasks on reply_tasks.id=wechat_deliveries.reply_task_id
                 where wechat_deliveries.status=?
                   and wechat_deliveries.execution_generation=
                       reply_tasks.execution_generation
@@ -12238,7 +12332,7 @@ class AutoReplyStore(LogicalRunStoreMixin, ReviewedCandidateStoreMixin):
                     reply_tasks.trigger_message_id,
                     wechat_deliveries.id as delivery_id
                 from ({WECHAT_DELIVERY_SQL}) as wechat_deliveries
-                join ({REPLY_TASK_SQL}) as reply_tasks on reply_tasks.id=wechat_deliveries.reply_task_id
+                join ({NATIVE_REPLY_TASK_CURRENT_SQL}) as reply_tasks on reply_tasks.id=wechat_deliveries.reply_task_id
                 where wechat_deliveries.status='ready_to_send'
                   and wechat_deliveries.execution_generation=
                       reply_tasks.execution_generation
@@ -12278,7 +12372,7 @@ class AutoReplyStore(LogicalRunStoreMixin, ReviewedCandidateStoreMixin):
                     limit 1
                 ) as attempt_id
                 from ({WECHAT_DELIVERY_SQL}) as deliveries
-                join ({REPLY_TASK_SQL}) as tasks on tasks.id=deliveries.reply_task_id
+                join ({NATIVE_REPLY_TASK_CURRENT_SQL}) as tasks on tasks.id=deliveries.reply_task_id
                 where deliveries.status='failed'
                   and deliveries.pre_action_failure=1
                   and deliveries.action_started_at<>''
@@ -12313,7 +12407,7 @@ class AutoReplyStore(LogicalRunStoreMixin, ReviewedCandidateStoreMixin):
                       and wechat_deliveries.td_status='failed'
                       and wechat_deliveries.td_pre_action_failure=1
                       and exists (
-                      select 1 from ({REPLY_TASK_SQL}) as reply_tasks
+                      select 1 from ({NATIVE_REPLY_TASK_CURRENT_SQL}) as reply_tasks
                       where reply_tasks.id=wechat_deliveries.td_reply_task_id
                         and reply_tasks.execution_generation=
                             wechat_deliveries.td_execution_generation
@@ -12334,7 +12428,7 @@ class AutoReplyStore(LogicalRunStoreMixin, ReviewedCandidateStoreMixin):
                         f"""
                         select conversation_id, conversation_title,
                                trigger_message_id, trigger_sender, trigger_text
-                        from ({REPLY_TASK_CURRENT_SQL}) as reply_tasks
+                        from ({NATIVE_REPLY_TASK_CURRENT_SQL}) as reply_tasks
                         where id=(
                             select reply_task_id from ({WECHAT_DELIVERY_SQL}) where id=?
                         )
@@ -12380,7 +12474,7 @@ class AutoReplyStore(LogicalRunStoreMixin, ReviewedCandidateStoreMixin):
                 f"""
                 select deliveries.id as delivery_id
                 from ({WECHAT_DELIVERY_SQL}) as deliveries
-                join ({REPLY_TASK_SQL}) as tasks on tasks.id=deliveries.reply_task_id
+                join ({NATIVE_REPLY_TASK_CURRENT_SQL}) as tasks on tasks.id=deliveries.reply_task_id
                 where deliveries.status='failed'
                   and deliveries.error='accessibility_not_trusted'
                   and deliveries.pre_action_failure=1
@@ -12405,7 +12499,7 @@ class AutoReplyStore(LogicalRunStoreMixin, ReviewedCandidateStoreMixin):
                       and wechat_deliveries.td_error='accessibility_not_trusted'
                       and wechat_deliveries.td_pre_action_failure=1
                       and exists (
-                          select 1 from ({REPLY_TASK_SQL}) as reply_tasks
+                          select 1 from ({NATIVE_REPLY_TASK_CURRENT_SQL}) as reply_tasks
                           where reply_tasks.id=wechat_deliveries.td_reply_task_id
                             and reply_tasks.execution_generation=
                                 wechat_deliveries.td_execution_generation
@@ -12461,7 +12555,7 @@ class AutoReplyStore(LogicalRunStoreMixin, ReviewedCandidateStoreMixin):
                   )
                   and trim(wechat_deliveries.td_action_started_at)<>''
                   and exists (
-                      select 1 from ({REPLY_TASK_SQL}) as tasks
+                      select 1 from ({NATIVE_REPLY_TASK_CURRENT_SQL}) as tasks
                       where tasks.id=wechat_deliveries.td_reply_task_id
                         and tasks.execution_generation=
                             wechat_deliveries.td_execution_generation
@@ -12519,7 +12613,7 @@ class AutoReplyStore(LogicalRunStoreMixin, ReviewedCandidateStoreMixin):
                   and wechat_deliveries.td_error='read_only_reconciliation_inconclusive'
                   and trim(wechat_deliveries.td_action_started_at)<>''
                   and exists (
-                      select 1 from ({REPLY_TASK_SQL}) as tasks
+                      select 1 from ({NATIVE_REPLY_TASK_CURRENT_SQL}) as tasks
                       where tasks.id=wechat_deliveries.td_reply_task_id
                         and tasks.execution_generation=
                             wechat_deliveries.td_execution_generation
@@ -12567,7 +12661,7 @@ class AutoReplyStore(LogicalRunStoreMixin, ReviewedCandidateStoreMixin):
             if review_delivery is None:
                 return None
             review_task = db.execute(
-                f"select * from ({REPLY_TASK_CURRENT_SQL}) where id=?",
+                f"select * from ({NATIVE_REPLY_TASK_CURRENT_SQL}) where id=?",
                 (review_delivery["reply_task_id"],),
             ).fetchone()
             if (review_task is None
@@ -12593,7 +12687,7 @@ class AutoReplyStore(LogicalRunStoreMixin, ReviewedCandidateStoreMixin):
                   and wechat_deliveries.td_status='ready_to_send'
                   and wechat_deliveries.td_execution_generation=?
                   and exists (
-                      select 1 from ({REPLY_TASK_SQL}) as reply_tasks
+                      select 1 from ({NATIVE_REPLY_TASK_CURRENT_SQL}) as reply_tasks
                       where reply_tasks.id=wechat_deliveries.td_reply_task_id
                         and reply_tasks.execution_generation=?
                   )
@@ -12787,7 +12881,7 @@ class AutoReplyStore(LogicalRunStoreMixin, ReviewedCandidateStoreMixin):
         expected_statuses = self._wechat_delivery_source_statuses(status, error)
         placeholders = ",".join("?" for _ in expected_statuses)
         generation_guard = (
-            f"and exists (select 1 from ({REPLY_TASK_SQL}) as reply_tasks "
+            f"and exists (select 1 from ({NATIVE_REPLY_TASK_CURRENT_SQL}) as reply_tasks "
             "where reply_tasks.id=wechat_deliveries.td_reply_task_id "
             "and reply_tasks.execution_generation="
             "wechat_deliveries.td_execution_generation)"
@@ -16220,7 +16314,7 @@ class AutoReplyStore(LogicalRunStoreMixin, ReviewedCandidateStoreMixin):
                         from {seen_projection}
                         union all
                         select conversation_id, created_at as activity_at
-                        from ({REPLY_TASK_CURRENT_SQL}) as reply_tasks
+                        from ({NATIVE_REPLY_TASK_CURRENT_SQL}) as reply_tasks
                         where single_chat=1
                     )
                     group by conversation_id
@@ -16232,7 +16326,7 @@ class AutoReplyStore(LogicalRunStoreMixin, ReviewedCandidateStoreMixin):
                     c.codex_session_id,
                     coalesce((
                         select json_extract(t.trigger_message_json, '$.sender_user_id')
-                        from ({REPLY_TASK_CURRENT_SQL}) t
+                        from ({NATIVE_REPLY_TASK_CURRENT_SQL}) t
                         where t.conversation_id=c.conversation_id
                           and t.single_chat=1
                         order by t.id desc
@@ -16243,7 +16337,7 @@ class AutoReplyStore(LogicalRunStoreMixin, ReviewedCandidateStoreMixin):
                             t.trigger_message_json,
                             '$.sender_open_dingtalk_id'
                         )
-                        from ({REPLY_TASK_CURRENT_SQL}) t
+                        from ({NATIVE_REPLY_TASK_CURRENT_SQL}) t
                         where t.conversation_id=c.conversation_id
                           and t.single_chat=1
                         order by t.id desc
@@ -16442,7 +16536,7 @@ class AutoReplyStore(LogicalRunStoreMixin, ReviewedCandidateStoreMixin):
             # the receipt.  Who is allowed to deliver is enforced before the
             # call, not by declining to remember a delivery that happened.
             run = db.execute(
-                f"select agent_runs.reply_task_id, reply_tasks.business_object_key from ({AGENT_RUN_SQL}) as agent_runs join ({REPLY_TASK_SQL}) as reply_tasks on reply_tasks.id=agent_runs.reply_task_id where agent_runs.id=? and agent_runs.role in ('audit', 'consumer') and agent_runs.status='completed'",
+                f"select agent_runs.reply_task_id, reply_tasks.business_object_key from ({NATIVE_AGENT_RUN_SQL}) as agent_runs join ({NATIVE_REPLY_TASK_CURRENT_SQL}) as reply_tasks on reply_tasks.id=agent_runs.reply_task_id where agent_runs.id=? and agent_runs.role in ('audit', 'consumer') and agent_runs.status='completed'",
                 (agent_run_id,),
             ).fetchone()
             if run is None or run["business_object_key"] != business_object_key:
@@ -17027,14 +17121,16 @@ class AutoReplyStore(LogicalRunStoreMixin, ReviewedCandidateStoreMixin):
             raise ValueError("execution generation is required")
         with self._immediate_write_transaction() as db:
             task = db.execute(
-                f"select conversation_id, trigger_message_id from ({REPLY_TASK_SQL}) as reply_tasks "
+                f"select conversation_id, trigger_message_id from ({NATIVE_REPLY_TASK_CURRENT_SQL}) as reply_tasks "
                 "where id=? and status in ('failed', 'needs_human') and execution_generation=?",
                 (task_id, generation),
             ).fetchone()
             if task is None:
                 return False
             cursor = db.execute(
-                f"""update tasks as reply_tasks set {task8_set_parts('reply_tasks', {}, update_sql={'status': "'done'", 'error': "''", 'available_at': "''", 'locked_at': 'null', 'updated_at': 'current_timestamp'}, payload_source='reply_tasks.payload_json').sql}  where reply_tasks.record_type='reply_tasks' and id=? and {task20_column('reply_tasks', 'status')} in ('failed', 'needs_human') and {task20_column('reply_tasks', 'execution_generation')}=?""",
+                "update tasks set status='done',error='',available_at='',locked_at=null,"
+                "updated_at=current_timestamp where id=? and kind='reply' "
+                "and status in ('failed','needs_human') and execution_generation=?",
                 (task_id, generation),
             )
             if cursor.rowcount == 1:
@@ -17076,10 +17172,9 @@ class AutoReplyStore(LogicalRunStoreMixin, ReviewedCandidateStoreMixin):
             if task is None or str(task["error"] or "") != "external_action_uncertain":
                 return False
             cursor = db.execute(
-                f"update tasks as reply_tasks set {task8_set_parts('reply_tasks', {}, update_sql={'status': "'skipped'", 'available_at': "''", 'locked_at': 'null', 'updated_at': 'current_timestamp'}, payload_source='reply_tasks.payload_json').sql} "
-                "where reply_tasks.record_type='reply_tasks' and id=? "
-                f"and {task20_column('reply_tasks', 'status')}='failed' and {task20_column('reply_tasks', 'error')}='external_action_uncertain' "
-                f"and {task20_column('reply_tasks', 'execution_generation')}=?",
+                "update tasks set status='skipped',available_at='',locked_at=null,"
+                "updated_at=current_timestamp where id=? and kind='reply' and status='failed' "
+                "and error='external_action_uncertain' and execution_generation=?",
                 (task_id, generation),
             )
             if cursor.rowcount != 1:
@@ -21699,7 +21794,7 @@ class AutoReplyStore(LogicalRunStoreMixin, ReviewedCandidateStoreMixin):
         from app.external_failures import external_task_error_sql
 
         return (
-            f"not exists (select 1 from ({REPLY_TASK_SQL}) as external_task "
+            f"not exists (select 1 from ({NATIVE_REPLY_TASK_CURRENT_SQL}) as external_task "
             "where external_task.channel=attempts.channel "
             "and external_task.conversation_id=attempts.conversation_id "
             "and external_task.trigger_message_id=attempts.trigger_message_id "
@@ -21718,8 +21813,8 @@ class AutoReplyStore(LogicalRunStoreMixin, ReviewedCandidateStoreMixin):
                 where attempts.send_status in ('needs_human', 'blocked', 'failed')
                   and __NOT_EXTERNAL__
                   and not exists (
-                      select 1 from ({AGENT_RUN_SQL}) as attempt_run
-                      join ({REPLY_TASK_CURRENT_SQL}) as current_task
+                      select 1 from ({NATIVE_AGENT_RUN_SQL}) as attempt_run
+                      join ({NATIVE_REPLY_TASK_CURRENT_SQL}) as current_task
                         on current_task.id=attempt_run.reply_task_id
                       where attempt_run.id=attempts.agent_run_id
                         and (
@@ -21729,8 +21824,8 @@ class AutoReplyStore(LogicalRunStoreMixin, ReviewedCandidateStoreMixin):
                   )
                   and not exists (
                       select 1
-                      from ({REPLY_TASK_CURRENT_SQL}) as historical_task
-                      join ({task12_projection('business_object_tasks')}) as current_business_object
+                      from ({NATIVE_REPLY_TASK_CURRENT_SQL}) as historical_task
+                      join ({NATIVE_REPLY_BUSINESS_KEY_SQL}) as current_business_object
                         on current_business_object.business_object_key=historical_task.business_object_key
                       where historical_task.channel=attempts.channel
                         and historical_task.conversation_id=attempts.conversation_id
@@ -21739,8 +21834,8 @@ class AutoReplyStore(LogicalRunStoreMixin, ReviewedCandidateStoreMixin):
                   )
                   and not exists (
                       select 1
-                      from ({task12_projection('business_object_tasks')}) as current_business_object
-                      join ({REPLY_TASK_CURRENT_SQL}) as current_task
+                      from ({NATIVE_REPLY_BUSINESS_KEY_SQL}) as current_business_object
+                      join ({NATIVE_REPLY_TASK_CURRENT_SQL}) as current_task
                         on current_task.id=current_business_object.reply_task_id
                       where current_business_object.business_object_key=(
                           'message:' || attempts.channel || ':' ||
@@ -21757,7 +21852,7 @@ class AutoReplyStore(LogicalRunStoreMixin, ReviewedCandidateStoreMixin):
                           and attempts.reviewed_at is null
                           and not exists (
                               select 1
-                              from ({REPLY_TASK_CURRENT_SQL}) as tasks
+                              from ({NATIVE_REPLY_TASK_CURRENT_SQL}) as tasks
                               where tasks.channel=attempts.channel
                                 and tasks.conversation_id=attempts.conversation_id
                                 and tasks.trigger_message_id=attempts.trigger_message_id
@@ -21767,13 +21862,13 @@ class AutoReplyStore(LogicalRunStoreMixin, ReviewedCandidateStoreMixin):
                       or (
                           attempts.send_status != 'needs_human'
                           and not exists (
-                              select 1 from ({REPLY_TASK_CURRENT_SQL}) as pending_task
+                              select 1 from ({NATIVE_REPLY_TASK_CURRENT_SQL}) as pending_task
                               where pending_task.channel=attempts.channel
                                 and pending_task.conversation_id=attempts.conversation_id
                                 and pending_task.trigger_message_id=attempts.trigger_message_id
                                 and pending_task.status='pending'
                                 and not exists (
-                                    select 1 from ({AGENT_RUN_SQL}) as failed_run
+                                    select 1 from ({NATIVE_AGENT_RUN_SQL}) as failed_run
                                     where failed_run.id=attempts.agent_run_id
                                       and failed_run.reply_task_id=pending_task.id
                                       and failed_run.execution_generation=pending_task.execution_generation
@@ -21782,7 +21877,7 @@ class AutoReplyStore(LogicalRunStoreMixin, ReviewedCandidateStoreMixin):
                           )
                           and not exists (
                               select 1
-                              from ({REPLY_TASK_CURRENT_SQL}) as tasks
+                              from ({NATIVE_REPLY_TASK_CURRENT_SQL}) as tasks
                               where tasks.channel=attempts.channel
                                 and tasks.conversation_id=attempts.conversation_id
                                 and tasks.trigger_message_id=attempts.trigger_message_id
@@ -21813,15 +21908,15 @@ class AutoReplyStore(LogicalRunStoreMixin, ReviewedCandidateStoreMixin):
                 attempt = ReplyAttempt.model_validate(values)
                 if (
                     attempt.send_status == "needs_human"
-                    and not db.execute(f"""select 1 from ({REPLY_TASK_SQL}) t
-                        join ({REVIEW_CANDIDATE_SQL}) c on c.task_id=t.id
+                    and not db.execute(f"""select 1 from ({NATIVE_REPLY_TASK_CURRENT_SQL}) t
+                        join ({NATIVE_REVIEW_CANDIDATE_SQL}) c on c.task_id=t.id
                           and c.execution_generation=t.execution_generation and c.invalidated_at=''
-                        join ({CANDIDATE_REVIEW_SQL}) r on r.candidate_id=c.id
+                        join ({NATIVE_CANDIDATE_REVIEW_SQL}) r on r.candidate_id=c.id
                           and r.decision='approve' and r.candidate_digest=c.candidate_digest
-                        left join ({CANDIDATE_SELECTION_SQL}) choice on choice.candidate_id=c.id
+                        left join ({NATIVE_CANDIDATE_SELECTION_SQL}) choice on choice.candidate_id=c.id
                         where t.channel=? and t.conversation_id=? and t.trigger_message_id=?
                           and t.status='needs_human' and r.audit_run_id=? and choice.id is null
-                          and c.id=(select max(id) from ({REVIEW_CANDIDATE_SQL})
+                          and c.id=(select max(id) from ({NATIVE_REVIEW_CANDIDATE_SQL})
                             where task_id=t.id and execution_generation=t.execution_generation)
                           and json_extract(c.candidate_json,'$.outcome')='needs_human'
                         limit 1""", (
@@ -21848,8 +21943,8 @@ class AutoReplyStore(LogicalRunStoreMixin, ReviewedCandidateStoreMixin):
                 where attempts.send_status in ('needs_human', 'blocked', 'failed')
                   and __NOT_EXTERNAL__
                   and not exists (
-                      select 1 from ({AGENT_RUN_SQL}) as attempt_run
-                      join ({REPLY_TASK_CURRENT_SQL}) as current_task
+                      select 1 from ({NATIVE_AGENT_RUN_SQL}) as attempt_run
+                      join ({NATIVE_REPLY_TASK_CURRENT_SQL}) as current_task
                         on current_task.id=attempt_run.reply_task_id
                       where attempt_run.id=attempts.agent_run_id
                         and (
@@ -21859,8 +21954,8 @@ class AutoReplyStore(LogicalRunStoreMixin, ReviewedCandidateStoreMixin):
                   )
                   and not exists (
                       select 1
-                      from ({REPLY_TASK_CURRENT_SQL}) as historical_task
-                      join ({task12_projection('business_object_tasks')}) as current_business_object
+                      from ({NATIVE_REPLY_TASK_CURRENT_SQL}) as historical_task
+                      join ({NATIVE_REPLY_BUSINESS_KEY_SQL}) as current_business_object
                         on current_business_object.business_object_key=historical_task.business_object_key
                       where historical_task.channel=attempts.channel
                         and historical_task.conversation_id=attempts.conversation_id
@@ -21869,8 +21964,8 @@ class AutoReplyStore(LogicalRunStoreMixin, ReviewedCandidateStoreMixin):
                   )
                   and not exists (
                       select 1
-                      from ({task12_projection('business_object_tasks')}) as current_business_object
-                      join ({REPLY_TASK_CURRENT_SQL}) as current_task
+                      from ({NATIVE_REPLY_BUSINESS_KEY_SQL}) as current_business_object
+                      join ({NATIVE_REPLY_TASK_CURRENT_SQL}) as current_task
                         on current_task.id=current_business_object.reply_task_id
                       where current_business_object.business_object_key=(
                           'message:' || attempts.channel || ':' ||
@@ -21887,7 +21982,7 @@ class AutoReplyStore(LogicalRunStoreMixin, ReviewedCandidateStoreMixin):
                           and attempts.reviewed_at is null
                           and not exists (
                               select 1
-                              from ({REPLY_TASK_CURRENT_SQL}) as tasks
+                              from ({NATIVE_REPLY_TASK_CURRENT_SQL}) as tasks
                               where tasks.channel=attempts.channel
                                 and tasks.conversation_id=attempts.conversation_id
                                 and tasks.trigger_message_id=attempts.trigger_message_id
@@ -21897,13 +21992,13 @@ class AutoReplyStore(LogicalRunStoreMixin, ReviewedCandidateStoreMixin):
                       or (
                           attempts.send_status != 'needs_human'
                           and not exists (
-                              select 1 from ({REPLY_TASK_CURRENT_SQL}) as pending_task
+                              select 1 from ({NATIVE_REPLY_TASK_CURRENT_SQL}) as pending_task
                               where pending_task.channel=attempts.channel
                                 and pending_task.conversation_id=attempts.conversation_id
                                 and pending_task.trigger_message_id=attempts.trigger_message_id
                                 and pending_task.status='pending'
                                 and not exists (
-                                    select 1 from ({AGENT_RUN_SQL}) as failed_run
+                                    select 1 from ({NATIVE_AGENT_RUN_SQL}) as failed_run
                                     where failed_run.id=attempts.agent_run_id
                                       and failed_run.reply_task_id=pending_task.id
                                       and failed_run.execution_generation=pending_task.execution_generation
@@ -21912,7 +22007,7 @@ class AutoReplyStore(LogicalRunStoreMixin, ReviewedCandidateStoreMixin):
                           )
                           and not exists (
                               select 1
-                              from ({REPLY_TASK_CURRENT_SQL}) as tasks
+                              from ({NATIVE_REPLY_TASK_CURRENT_SQL}) as tasks
                               where tasks.channel=attempts.channel
                                 and tasks.conversation_id=attempts.conversation_id
                                 and tasks.trigger_message_id=attempts.trigger_message_id
@@ -21963,8 +22058,8 @@ class AutoReplyStore(LogicalRunStoreMixin, ReviewedCandidateStoreMixin):
                 where attempts.send_status in ('needs_human', 'blocked', 'failed')
                   and __NOT_EXTERNAL__
                   and not exists (
-                      select 1 from ({AGENT_RUN_SQL}) as attempt_run
-                      join ({REPLY_TASK_SQL}) as current_task
+                      select 1 from ({NATIVE_AGENT_RUN_SQL}) as attempt_run
+                      join ({NATIVE_REPLY_TASK_CURRENT_SQL}) as current_task
                         on current_task.id=attempt_run.reply_task_id
                       where attempt_run.id=attempts.agent_run_id
                         and (
@@ -21974,8 +22069,8 @@ class AutoReplyStore(LogicalRunStoreMixin, ReviewedCandidateStoreMixin):
                   )
                   and not exists (
                       select 1
-                      from ({REPLY_TASK_SQL}) as historical_task
-                      join ({task12_projection('business_object_tasks')}) as current_business_object
+                      from ({NATIVE_REPLY_TASK_CURRENT_SQL}) as historical_task
+                      join ({NATIVE_REPLY_BUSINESS_KEY_SQL}) as current_business_object
                         on current_business_object.business_object_key=historical_task.business_object_key
                       where historical_task.channel=attempts.channel
                         and historical_task.conversation_id=attempts.conversation_id
@@ -21984,8 +22079,8 @@ class AutoReplyStore(LogicalRunStoreMixin, ReviewedCandidateStoreMixin):
                   )
                   and not exists (
                       select 1
-                      from ({task12_projection('business_object_tasks')}) as current_business_object
-                      join ({REPLY_TASK_SQL}) as current_task
+                      from ({NATIVE_REPLY_BUSINESS_KEY_SQL}) as current_business_object
+                      join ({NATIVE_REPLY_TASK_CURRENT_SQL}) as current_task
                         on current_task.id=current_business_object.reply_task_id
                       where current_business_object.business_object_key=(
                           'message:' || attempts.channel || ':' ||
@@ -22002,7 +22097,7 @@ class AutoReplyStore(LogicalRunStoreMixin, ReviewedCandidateStoreMixin):
                           and attempts.reviewed_at is null
                           and not exists (
                               select 1
-                              from ({REPLY_TASK_SQL}) as tasks
+                              from ({NATIVE_REPLY_TASK_CURRENT_SQL}) as tasks
                               where tasks.channel=attempts.channel
                                 and tasks.conversation_id=attempts.conversation_id
                                 and tasks.trigger_message_id=attempts.trigger_message_id
@@ -22012,13 +22107,13 @@ class AutoReplyStore(LogicalRunStoreMixin, ReviewedCandidateStoreMixin):
                       or (
                           attempts.send_status != 'needs_human'
                           and not exists (
-                              select 1 from ({REPLY_TASK_SQL}) as pending_task
+                              select 1 from ({NATIVE_REPLY_TASK_CURRENT_SQL}) as pending_task
                               where pending_task.channel=attempts.channel
                                 and pending_task.conversation_id=attempts.conversation_id
                                 and pending_task.trigger_message_id=attempts.trigger_message_id
                                 and pending_task.status='pending'
                                 and not exists (
-                                    select 1 from ({AGENT_RUN_SQL}) as failed_run
+                                    select 1 from ({NATIVE_AGENT_RUN_SQL}) as failed_run
                                     where failed_run.id=attempts.agent_run_id
                                       and failed_run.reply_task_id=pending_task.id
                                       and failed_run.execution_generation=pending_task.execution_generation
@@ -22027,7 +22122,7 @@ class AutoReplyStore(LogicalRunStoreMixin, ReviewedCandidateStoreMixin):
                           )
                           and not exists (
                               select 1
-                              from ({REPLY_TASK_SQL}) as tasks
+                              from ({NATIVE_REPLY_TASK_CURRENT_SQL}) as tasks
                               where tasks.channel=attempts.channel
                                 and tasks.conversation_id=attempts.conversation_id
                                 and tasks.trigger_message_id=attempts.trigger_message_id
@@ -22179,7 +22274,7 @@ class AutoReplyStore(LogicalRunStoreMixin, ReviewedCandidateStoreMixin):
                                 end
                                 else deliveries.status
                             end
-                            from ({REPLY_TASK_CURRENT_SQL}) as tasks
+                            from ({NATIVE_REPLY_TASK_CURRENT_SQL}) as tasks
                             join ({WECHAT_DELIVERY_SQL}) as deliveries
                                 on deliveries.reply_task_id=tasks.id
                             where tasks.channel='wechat'
@@ -22190,10 +22285,10 @@ class AutoReplyStore(LogicalRunStoreMixin, ReviewedCandidateStoreMixin):
                         when send_status in ('failed', 'blocked', 'pending', 'dry_run', 'needs_human')
                              and exists (
                                 select 1
-                                from ({AGENT_RUN_SQL}) as attempt_run
-                                join ({REPLY_TASK_CURRENT_SQL}) as current_task
+                                from ({NATIVE_AGENT_RUN_SQL}) as attempt_run
+                                join ({NATIVE_REPLY_TASK_CURRENT_SQL}) as current_task
                                   on current_task.id=attempt_run.reply_task_id
-                                join ({AGENT_RUN_SQL}) as latest_run
+                                join ({NATIVE_AGENT_RUN_SQL}) as latest_run
                                   on latest_run.reply_task_id=current_task.id
                                  and latest_run.execution_generation=current_task.execution_generation
                                 where attempt_run.id=reply_attempts.agent_run_id
@@ -22202,7 +22297,7 @@ class AutoReplyStore(LogicalRunStoreMixin, ReviewedCandidateStoreMixin):
                                   and latest_run.status in ('pending', 'running', 'completed')
                                   and latest_run.id=(
                                       select max(candidate.id)
-                                      from ({AGENT_RUN_SQL}) as candidate
+                                      from ({NATIVE_AGENT_RUN_SQL}) as candidate
                                       where candidate.reply_task_id=current_task.id
                                         and candidate.execution_generation=current_task.execution_generation
                                   )
@@ -22277,8 +22372,8 @@ class AutoReplyStore(LogicalRunStoreMixin, ReviewedCandidateStoreMixin):
                     )
                 )
                   and not exists (
-                    select 1 from ({AGENT_RUN_SQL}) as attempt_run
-                    join ({REPLY_TASK_CURRENT_SQL}) as current_task
+                    select 1 from ({NATIVE_AGENT_RUN_SQL}) as attempt_run
+                    join ({NATIVE_REPLY_TASK_CURRENT_SQL}) as current_task
                       on current_task.id=attempt_run.reply_task_id
                     where attempt_run.id=reply_attempts.agent_run_id
                       and attempt_run.execution_generation<>current_task.execution_generation
@@ -22288,10 +22383,10 @@ class AutoReplyStore(LogicalRunStoreMixin, ReviewedCandidateStoreMixin):
                   -- the task's newest business-result projection in History.
                   and not exists (
                     select 1
-                    from ({AGENT_RUN_SQL}) as historical_run
+                    from ({NATIVE_AGENT_RUN_SQL}) as historical_run
                     join ({REPLY_ATTEMPT_COMMON_SQL}) as newer_attempt
                       on newer_attempt.id > reply_attempts.id
-                    join ({AGENT_RUN_SQL}) as newer_run
+                    join ({NATIVE_AGENT_RUN_SQL}) as newer_run
                       on newer_run.id = newer_attempt.agent_run_id
                     where historical_run.id = reply_attempts.agent_run_id
                       and newer_run.reply_task_id = historical_run.reply_task_id
@@ -22323,7 +22418,7 @@ class AutoReplyStore(LogicalRunStoreMixin, ReviewedCandidateStoreMixin):
                         when runs.status in ('retry', 'failed') then 'failed'
                         when runs.status='ready_to_send' and jobs.status='sent' then 'sent'
                         when runs.status='ready_to_send' and exists (
-                            select 1 from ({MEETING_LOGICAL_RUN_SQL}) as later_runs
+                            select 1 from ({NATIVE_MEETING_RUN_SQL}) as later_runs
                             where later_runs.job_id=runs.job_id and later_runs.id>runs.id
                         ) then 'skipped'
                         when runs.status='ready_to_send' and jobs.status in ('retry', 'failed') then 'failed'
@@ -22344,8 +22439,8 @@ class AutoReplyStore(LogicalRunStoreMixin, ReviewedCandidateStoreMixin):
                     runs.error || ' ' ||
                     runs.codex_session_id || ' ' || runs.status
                     , '') as search_text
-                from ({MEETING_LOGICAL_RUN_SQL}) as runs
-                join ({MEETING_JOB_SQL}) as jobs on jobs.id=runs.job_id
+                from ({NATIVE_MEETING_RUN_SQL}) as runs
+                join ({NATIVE_MEETING_TASK_SQL}) as jobs on jobs.id=runs.job_id
                 union all
                 select
                     'task' as kind,
@@ -22590,7 +22685,7 @@ class AutoReplyStore(LogicalRunStoreMixin, ReviewedCandidateStoreMixin):
                   )
                   and not exists (
                       select 1
-                      from ({REPLY_TASK_CURRENT_SQL}) as tasks
+                      from ({NATIVE_REPLY_TASK_CURRENT_SQL}) as tasks
                       where tasks.channel=attempts.channel
                         and tasks.status in ('pending', 'processing', 'needs_human', 'failed')
                         and ((tasks.conversation_id=attempts.conversation_id
@@ -22600,7 +22695,7 @@ class AutoReplyStore(LogicalRunStoreMixin, ReviewedCandidateStoreMixin):
                   )
                 order by case when exists (
                     select 1
-                    from ({REPLY_TASK_CURRENT_SQL}) as terminal_tasks
+                    from ({NATIVE_REPLY_TASK_CURRENT_SQL}) as terminal_tasks
                     where terminal_tasks.channel=attempts.channel
                       and terminal_tasks.business_object_key='oa:'
                           || attempts.oa_process_instance_id || ':' || attempts.oa_task_id
@@ -22649,7 +22744,7 @@ class AutoReplyStore(LogicalRunStoreMixin, ReviewedCandidateStoreMixin):
             if int(latest or 0) != attempt_id:
                 return False
             owner = db.execute(
-                f"""select 1 from ({REPLY_TASK_CURRENT_SQL}) tasks
+                f"""select 1 from ({NATIVE_REPLY_TASK_CURRENT_SQL}) tasks
                     where tasks.channel=?
                       and tasks.status in ('pending', 'processing', 'needs_human', 'failed')
                       and ((tasks.conversation_id=? and tasks.trigger_message_id=?)
@@ -22711,7 +22806,7 @@ class AutoReplyStore(LogicalRunStoreMixin, ReviewedCandidateStoreMixin):
                             attempts.send_status='failed'
                             and exists (
                                 select 1
-                                from ({REPLY_TASK_CURRENT_SQL}) stale_tasks
+                                from ({NATIVE_REPLY_TASK_CURRENT_SQL}) stale_tasks
                                 where stale_tasks.channel=attempts.channel
                                   and stale_tasks.conversation_id=attempts.conversation_id
                                   and stale_tasks.trigger_message_id=attempts.trigger_message_id
@@ -22730,7 +22825,7 @@ class AutoReplyStore(LogicalRunStoreMixin, ReviewedCandidateStoreMixin):
                   )
                   and not exists (
                       select 1
-                      from ({REPLY_TASK_CURRENT_SQL}) tasks
+                      from ({NATIVE_REPLY_TASK_CURRENT_SQL}) tasks
                       where tasks.channel=attempts.channel
                         and tasks.conversation_id=attempts.conversation_id
                         and tasks.trigger_message_id=attempts.trigger_message_id
@@ -22868,7 +22963,7 @@ class AutoReplyStore(LogicalRunStoreMixin, ReviewedCandidateStoreMixin):
                 select reply_attempts.id, reply_attempts.oa_action, reply_tasks.oa_url,
                        reply_tasks.business_object_key
                 from ({REPLY_ATTEMPT_COMMON_SQL}) as reply_attempts
-                join ({REPLY_TASK_SQL}) as reply_tasks on reply_tasks.conversation_id=reply_attempts.conversation_id
+                join ({NATIVE_REPLY_TASK_CURRENT_SQL}) as reply_tasks on reply_tasks.conversation_id=reply_attempts.conversation_id
                     and reply_tasks.trigger_message_id=reply_attempts.trigger_message_id
                 where reply_attempts.action='agent_run'
                     and reply_attempts.oa_process_instance_id=''
@@ -22959,7 +23054,7 @@ class AutoReplyStore(LogicalRunStoreMixin, ReviewedCandidateStoreMixin):
             runs = db.execute(
                 f"""
                 select reply_task_id, execution_generation, role
-                from ({AGENT_RUN_SQL}) as agent_runs
+                from ({NATIVE_AGENT_RUN_SQL}) as agent_runs
                 where codex_session_id=?
                 order by id desc
                 """,
@@ -22973,7 +23068,7 @@ class AutoReplyStore(LogicalRunStoreMixin, ReviewedCandidateStoreMixin):
                     f"""
                     select attempt.id as id, attempt.send_status as send_status
                     from ({REPLY_ATTEMPT_COMMON_SQL}) as attempt
-                    join ({AGENT_RUN_SQL}) run on run.id = attempt.agent_run_id
+                    join ({NATIVE_AGENT_RUN_SQL}) run on run.id = attempt.agent_run_id
                     where run.reply_task_id = ?
                       and run.execution_generation = ?
                     order by attempt.id desc
@@ -23003,24 +23098,15 @@ class AutoReplyStore(LogicalRunStoreMixin, ReviewedCandidateStoreMixin):
     ) -> None:
         if not session_id.strip():
             return
-        projection = "(" + run11_projection("codex_session_search_index") + ")"
         with self._connect() as db:
-            row = db.execute(
-                f"select id from {projection} where session_id=?", (session_id,)
-            ).fetchone()
-            if row is None:
-                insert_run11_fact(
-                    db, "codex_session_search_index",
-                    {"session_id": session_id, "source_type": source_type,
-                     "source_id": source_id, "title": title},
-                )
-            else:
-                db.execute(
-                    "update runs set source_type=?,source_id=?,title=?,updated_at=current_timestamp "
-                    "where record_type='codex_session_search_index' "
-                    "and cast(legacy_key as integer)=?",
-                    (source_type, source_id, title, int(row["id"])),
-                )
+            db.execute(
+                "insert into codex_session_search_index "
+                "(session_id,source_type,source_id,title,created_at,updated_at) "
+                "values(?,?,?,?,current_timestamp,current_timestamp) "
+                "on conflict(session_id) do update set source_type=excluded.source_type,"
+                "source_id=excluded.source_id,title=excluded.title,updated_at=current_timestamp",
+                (session_id, source_type, source_id, title),
+            )
             # Native-derived corpus is assembled only for an in-memory search.
 
     def search_codex_sessions(
@@ -23055,9 +23141,9 @@ class AutoReplyStore(LogicalRunStoreMixin, ReviewedCandidateStoreMixin):
                         "meeting_id": row["meeting_id"], "title": row["title"],
                     }
             else:
-                projection = "(" + run11_projection("codex_session_search_index") + ")"
                 rows = db.execute(
-                    f"select * from {projection} order by updated_at desc,id asc"
+                    "select * from codex_session_search_index "
+                    "order by updated_at desc,id asc"
                 ).fetchall()
                 source_ids = [str(row["source_id"]) for row in rows
                               if row["source_type"] == "meeting_alignment"]
@@ -23065,11 +23151,15 @@ class AutoReplyStore(LogicalRunStoreMixin, ReviewedCandidateStoreMixin):
                 if source_ids:
                     placeholders = ",".join("?" for _ in source_ids)
                     runs = {str(run["id"]): run for run in db.execute(
-                        f"select run.id, run.codex_session_id, run.codex_transcript_start_line, "
-                        "run.codex_transcript_end_line, job.meeting_id, job.title "
-                        f"from ({MEETING_LOGICAL_RUN_SQL}) run "
-                        f"join ({MEETING_JOB_SQL}) job on job.id=run.job_id "
-                        f"where run.id in ({placeholders})", source_ids,
+                        "select run.id,run.session_id as codex_session_id,"
+                        "run.transcript_start as codex_transcript_start_line,"
+                        "run.transcript_end as codex_transcript_end_line,"
+                        "json_extract(task.parameters_json,'$.meeting_id') as meeting_id,"
+                        "json_extract(task.parameters_json,'$.title') as title "
+                        "from runs run join run_provenance provenance on provenance.run_id=run.id "
+                        "join tasks task on task.id=run.task_id and task.kind='meeting_alignment' "
+                        f"where provenance.source_type='meeting_alignment_runs' and run.id in ({placeholders})",
+                        source_ids,
                     ).fetchall()}
                 references = {
                     source_id: latest_standalone_ref(
@@ -23375,7 +23465,9 @@ class AutoReplyStore(LogicalRunStoreMixin, ReviewedCandidateStoreMixin):
         db: sqlite3.Connection, input_id: int, *, status: str, error: str
     ) -> None:
         row = db.execute(
-            f"select id from ({WORK_SUMMARY_INPUT_SQL}) where id=? and status not in ('done', 'skipped') and body_compacted=0",
+            "select tasks.id from tasks join work_summary_inputs on work_summary_inputs.task_id=tasks.id "
+            "where tasks.id=? and tasks.kind='work_summary' "
+            "and tasks.status not in ('done', 'skipped') and work_summary_inputs.body_compacted=0",
             (input_id,),
         ).fetchone()
         if row is None:
@@ -26004,12 +26096,12 @@ class AutoReplyStore(LogicalRunStoreMixin, ReviewedCandidateStoreMixin):
                   and incident.error_kind='task_agent'
                   and incident.error_conversation_id='work_summary_input'
                   and exists (
-                      select 1
-                      from ({WORK_SUMMARY_INPUT_SQL}) as work_input
-                      where cast(work_input.id as text)=incident.error_message_id
-                        and lower(work_input.status) in ('done', 'skipped')
-                        and datetime(work_input.updated_at) >=
-                            datetime(incident.created_at)
+                      select 1 from tasks work_task
+                      join work_summary_inputs work_input on work_input.task_id=work_task.id
+                      where cast(work_task.id as text)=incident.error_message_id
+                        and work_task.kind='work_summary'
+                        and lower(work_task.status) in ('done', 'skipped')
+                        and datetime(work_task.updated_at) >= datetime(incident.created_at)
                   )
                 """,
                 ("recovered by terminal work summary input",),
@@ -26233,7 +26325,7 @@ class AutoReplyStore(LogicalRunStoreMixin, ReviewedCandidateStoreMixin):
         candidate_queries = {
             "reply_tasks": (
                 f"select id as source_id, updated_at as occurred_at "
-                f"from ({REPLY_TASK_CURRENT_SQL}) where status='failed'"
+                f"from ({NATIVE_REPLY_TASK_CURRENT_SQL}) where status='failed'"
             ),
             "reply_attempts": (
                 "select source_id, occurred_at from ("
@@ -26242,16 +26334,17 @@ class AutoReplyStore(LogicalRunStoreMixin, ReviewedCandidateStoreMixin):
             ),
             "meeting_alignment_runs": f"""
                 select runs.id as source_id, runs.created_at as occurred_at
-                from ({MEETING_LOGICAL_RUN_SQL}) as runs
-                join ({MEETING_JOB_SQL}) as jobs on jobs.id=runs.job_id
+                from ({NATIVE_MEETING_RUN_SQL}) as runs
+                join ({NATIVE_MEETING_TASK_SQL}) as jobs on jobs.id=runs.job_id
                 where (
                     runs.status in ('retry', 'failed')
                     and jobs.status not in ('sent', 'no_action', 'skipped', 'done')
                 ) or (runs.status='ready_to_send' and jobs.status in ('retry', 'failed'))
             """,
             "work_summary_inputs": (
-                f"select id as source_id, updated_at as occurred_at "
-                f"from ({WORK_SUMMARY_INPUT_SQL}) where status='failed'"
+                "select tasks.id as source_id, tasks.updated_at as occurred_at "
+                "from tasks join work_summary_inputs on work_summary_inputs.task_id=tasks.id "
+                "where tasks.kind='work_summary' and tasks.status='failed'"
             ),
             "todo_evidence_candidates": (
                 "select id as source_id, updated_at as occurred_at "
@@ -26475,7 +26568,7 @@ class AutoReplyStore(LogicalRunStoreMixin, ReviewedCandidateStoreMixin):
                     0 as project_id,
                     0 as todo_id,
                     0 as follow_up_id
-                from ({REPLY_TASK_CURRENT_SQL})
+                from ({NATIVE_REPLY_TASK_CURRENT_SQL})
                 union all
                 select
                     'reply:' || id as id,
@@ -26493,22 +26586,22 @@ class AutoReplyStore(LogicalRunStoreMixin, ReviewedCandidateStoreMixin):
                         -- keep their existing resolution projection.
                         when send_status<>'skipped' and exists (
                             select 1
-                            from ({AGENT_RUN_SQL}) as uncertain_attempt_run
-                            join ({CANDIDATE_REVIEW_SQL}) as uncertain_review
+                            from ({NATIVE_AGENT_RUN_SQL}) as uncertain_attempt_run
+                            join ({NATIVE_CANDIDATE_REVIEW_SQL}) as uncertain_review
                               on uncertain_review.audit_run_id=uncertain_attempt_run.id
-                            join ({REVIEW_CANDIDATE_SQL}) as uncertain_candidate
+                            join ({NATIVE_REVIEW_CANDIDATE_SQL}) as uncertain_candidate
                               on uncertain_candidate.id=uncertain_review.candidate_id
-                            join ({REPLY_TASK_CURRENT_SQL}) as uncertain_task
+                            join ({NATIVE_REPLY_TASK_CURRENT_SQL}) as uncertain_task
                               on uncertain_task.id=uncertain_candidate.task_id
                              and uncertain_task.execution_generation=uncertain_candidate.execution_generation
-                            join ({CANDIDATE_EXECUTION_SQL}) as uncertain_execution
+                            join ({NATIVE_CANDIDATE_EXECUTION_SQL}) as uncertain_execution
                               on uncertain_execution.candidate_id=uncertain_candidate.id
                             where uncertain_attempt_run.id=reply_attempts.agent_run_id
                               and uncertain_task.execution_generation=uncertain_attempt_run.execution_generation
                               and uncertain_execution.status='uncertain'
                               and uncertain_candidate.id=(
                                   select max(current_candidate.id)
-                                  from ({REVIEW_CANDIDATE_SQL}) as current_candidate
+                                  from ({NATIVE_REVIEW_CANDIDATE_SQL}) as current_candidate
                                   where current_candidate.task_id=uncertain_task.id
                                     and current_candidate.execution_generation=uncertain_task.execution_generation
                               )
@@ -26521,7 +26614,7 @@ class AutoReplyStore(LogicalRunStoreMixin, ReviewedCandidateStoreMixin):
                         -- task's terminal failure below.
                         when {oa_status_projection} and send_status='failed' and exists (
                             select 1
-                            from ({REPLY_TASK_CURRENT_SQL}) as uncertain_message_task
+                            from ({NATIVE_REPLY_TASK_CURRENT_SQL}) as uncertain_message_task
                             where uncertain_message_task.channel=reply_attempts.channel
                               and uncertain_message_task.conversation_id=reply_attempts.conversation_id
                               and uncertain_message_task.trigger_message_id=reply_attempts.trigger_message_id
@@ -26536,8 +26629,8 @@ class AutoReplyStore(LogicalRunStoreMixin, ReviewedCandidateStoreMixin):
                         -- Attempt labels such as completed/commented.
                         when {oa_status_projection} and exists (
                             select 1
-                            from ({AGENT_RUN_SQL}) as projected_run
-                            join ({REPLY_TASK_CURRENT_SQL}) as projected_task
+                            from ({NATIVE_AGENT_RUN_SQL}) as projected_run
+                            join ({NATIVE_REPLY_TASK_CURRENT_SQL}) as projected_task
                               on projected_task.id=projected_run.reply_task_id
                             where projected_run.id=reply_attempts.agent_run_id
                               and projected_run.execution_generation=projected_task.execution_generation
@@ -26550,7 +26643,7 @@ class AutoReplyStore(LogicalRunStoreMixin, ReviewedCandidateStoreMixin):
                                  and projected_run.status='completed'
                                  and projected_run.id=(
                                      select latest_current_run.id
-                                     from ({AGENT_RUN_SQL}) as latest_current_run
+                                     from ({NATIVE_AGENT_RUN_SQL}) as latest_current_run
                                      where latest_current_run.reply_task_id=projected_task.id
                                        and latest_current_run.execution_generation=projected_task.execution_generation
                                      order by coalesce(latest_current_run.proposal_revision, 0) desc,
@@ -26563,8 +26656,8 @@ class AutoReplyStore(LogicalRunStoreMixin, ReviewedCandidateStoreMixin):
                                 then 'skipped'
                                 else projected_task.status
                             end
-                            from ({AGENT_RUN_SQL}) as projected_run
-                            join ({REPLY_TASK_CURRENT_SQL}) as projected_task
+                            from ({NATIVE_AGENT_RUN_SQL}) as projected_run
+                            join ({NATIVE_REPLY_TASK_CURRENT_SQL}) as projected_task
                               on projected_task.id=projected_run.reply_task_id
                             where projected_run.id=reply_attempts.agent_run_id
                               and projected_run.execution_generation=projected_task.execution_generation
@@ -26575,11 +26668,11 @@ class AutoReplyStore(LogicalRunStoreMixin, ReviewedCandidateStoreMixin):
                         when {oa_status_projection}
                          and not exists (
                             select 1
-                            from ({AGENT_RUN_SQL}) as bound_attempt_run
+                            from ({NATIVE_AGENT_RUN_SQL}) as bound_attempt_run
                             where bound_attempt_run.id=reply_attempts.agent_run_id
                          ) and exists (
                             select 1
-                            from ({REPLY_TASK_CURRENT_SQL}) as message_task
+                            from ({NATIVE_REPLY_TASK_CURRENT_SQL}) as message_task
                             where message_task.channel=reply_attempts.channel
                               and message_task.conversation_id=reply_attempts.conversation_id
                               and message_task.trigger_message_id=reply_attempts.trigger_message_id
@@ -26587,7 +26680,7 @@ class AutoReplyStore(LogicalRunStoreMixin, ReviewedCandidateStoreMixin):
                               and coalesce(message_task.error, '')<>'external_action_uncertain'
                         ) then (
                             select message_task.status
-                            from ({REPLY_TASK_CURRENT_SQL}) as message_task
+                            from ({NATIVE_REPLY_TASK_CURRENT_SQL}) as message_task
                             where message_task.channel=reply_attempts.channel
                               and message_task.conversation_id=reply_attempts.conversation_id
                               and message_task.trigger_message_id=reply_attempts.trigger_message_id
@@ -26598,15 +26691,15 @@ class AutoReplyStore(LogicalRunStoreMixin, ReviewedCandidateStoreMixin):
                         )
                         when {oa_status_projection} and exists (
                             select 1
-                            from ({AGENT_RUN_SQL}) as projected_run
-                            join ({REPLY_TASK_CURRENT_SQL}) as projected_task
+                            from ({NATIVE_AGENT_RUN_SQL}) as projected_run
+                            join ({NATIVE_REPLY_TASK_CURRENT_SQL}) as projected_task
                               on projected_task.id=projected_run.reply_task_id
                             where projected_run.id=reply_attempts.agent_run_id
                               and projected_run.execution_generation=projected_task.execution_generation
                               and coalesce(projected_task.error, '')<>'external_action_uncertain'
                               and (
                                   select latest_current_run.status
-                                  from ({AGENT_RUN_SQL}) as latest_current_run
+                                  from ({NATIVE_AGENT_RUN_SQL}) as latest_current_run
                                   where latest_current_run.reply_task_id=projected_task.id
                                     and latest_current_run.execution_generation=projected_task.execution_generation
                                   order by coalesce(latest_current_run.proposal_revision, 0) desc,
@@ -26618,7 +26711,7 @@ class AutoReplyStore(LogicalRunStoreMixin, ReviewedCandidateStoreMixin):
                         ) then (
                             select (
                                 select latest_current_run.status
-                                from ({AGENT_RUN_SQL}) as latest_current_run
+                                from ({NATIVE_AGENT_RUN_SQL}) as latest_current_run
                                 where latest_current_run.reply_task_id=projected_task.id
                                   and latest_current_run.execution_generation=projected_task.execution_generation
                                 order by coalesce(latest_current_run.proposal_revision, 0) desc,
@@ -26627,8 +26720,8 @@ class AutoReplyStore(LogicalRunStoreMixin, ReviewedCandidateStoreMixin):
                                          latest_current_run.id desc
                                 limit 1
                             )
-                            from ({AGENT_RUN_SQL}) as projected_run
-                            join ({REPLY_TASK_CURRENT_SQL}) as projected_task
+                            from ({NATIVE_AGENT_RUN_SQL}) as projected_run
+                            join ({NATIVE_REPLY_TASK_CURRENT_SQL}) as projected_task
                               on projected_task.id=projected_run.reply_task_id
                             where projected_run.id=reply_attempts.agent_run_id
                               and projected_run.execution_generation=projected_task.execution_generation
@@ -26637,8 +26730,8 @@ class AutoReplyStore(LogicalRunStoreMixin, ReviewedCandidateStoreMixin):
                         )
                         when {oa_status_projection} and exists (
                             select 1
-                            from ({AGENT_RUN_SQL}) as projected_run
-                            join ({REPLY_TASK_CURRENT_SQL}) as projected_task
+                            from ({NATIVE_AGENT_RUN_SQL}) as projected_run
+                            join ({NATIVE_REPLY_TASK_CURRENT_SQL}) as projected_task
                               on projected_task.id=projected_run.reply_task_id
                             where projected_run.id=reply_attempts.agent_run_id
                               and projected_run.execution_generation=projected_task.execution_generation
@@ -26646,18 +26739,18 @@ class AutoReplyStore(LogicalRunStoreMixin, ReviewedCandidateStoreMixin):
                                   coalesce(projected_task.error, '')<>'external_action_uncertain'
                                   or exists (
                                       select 1
-                                      from ({REVIEW_CANDIDATE_SQL}) as verified_candidate
-                                      join ({CANDIDATE_REVIEW_SQL}) as verified_review
+                                      from ({NATIVE_REVIEW_CANDIDATE_SQL}) as verified_candidate
+                                      join ({NATIVE_CANDIDATE_REVIEW_SQL}) as verified_review
                                         on verified_review.candidate_id=verified_candidate.id
                                        and verified_review.audit_run_id=projected_run.id
-                                      join ({CANDIDATE_EXECUTION_SQL}) as verified_execution
+                                      join ({NATIVE_CANDIDATE_EXECUTION_SQL}) as verified_execution
                                         on verified_execution.candidate_id=verified_candidate.id
                                        and verified_execution.review_id=verified_review.id
                                       where verified_candidate.task_id=projected_task.id
                                         and verified_candidate.execution_generation=projected_task.execution_generation
                                         and verified_candidate.id=(
                                             select max(latest_candidate.id)
-                                            from ({REVIEW_CANDIDATE_SQL}) as latest_candidate
+                                            from ({NATIVE_REVIEW_CANDIDATE_SQL}) as latest_candidate
                                             where latest_candidate.task_id=projected_task.id
                                               and latest_candidate.execution_generation=projected_task.execution_generation
                                         )
@@ -26668,8 +26761,8 @@ class AutoReplyStore(LogicalRunStoreMixin, ReviewedCandidateStoreMixin):
                         ) then (
                             select case when projected_task.status='processing' then 'running'
                                         else projected_task.status end
-                            from ({AGENT_RUN_SQL}) as projected_run
-                            join ({REPLY_TASK_CURRENT_SQL}) as projected_task
+                            from ({NATIVE_AGENT_RUN_SQL}) as projected_run
+                            join ({NATIVE_REPLY_TASK_CURRENT_SQL}) as projected_task
                               on projected_task.id=projected_run.reply_task_id
                             where projected_run.id=reply_attempts.agent_run_id
                               and projected_run.execution_generation=projected_task.execution_generation
@@ -26677,18 +26770,18 @@ class AutoReplyStore(LogicalRunStoreMixin, ReviewedCandidateStoreMixin):
                                   coalesce(projected_task.error, '')<>'external_action_uncertain'
                                   or exists (
                                       select 1
-                                      from ({REVIEW_CANDIDATE_SQL}) as verified_candidate
-                                      join ({CANDIDATE_REVIEW_SQL}) as verified_review
+                                      from ({NATIVE_REVIEW_CANDIDATE_SQL}) as verified_candidate
+                                      join ({NATIVE_CANDIDATE_REVIEW_SQL}) as verified_review
                                         on verified_review.candidate_id=verified_candidate.id
                                        and verified_review.audit_run_id=projected_run.id
-                                      join ({CANDIDATE_EXECUTION_SQL}) as verified_execution
+                                      join ({NATIVE_CANDIDATE_EXECUTION_SQL}) as verified_execution
                                         on verified_execution.candidate_id=verified_candidate.id
                                        and verified_execution.review_id=verified_review.id
                                       where verified_candidate.task_id=projected_task.id
                                         and verified_candidate.execution_generation=projected_task.execution_generation
                                         and verified_candidate.id=(
                                             select max(latest_candidate.id)
-                                            from ({REVIEW_CANDIDATE_SQL}) as latest_candidate
+                                            from ({NATIVE_REVIEW_CANDIDATE_SQL}) as latest_candidate
                                             where latest_candidate.task_id=projected_task.id
                                               and latest_candidate.execution_generation=projected_task.execution_generation
                                         )
@@ -26709,7 +26802,7 @@ class AutoReplyStore(LogicalRunStoreMixin, ReviewedCandidateStoreMixin):
                         -- owning task generation supplies its send outcome.
                         when channel='wechat' and send_status='failed' and exists (
                             select 1 from ({WECHAT_DELIVERY_SQL}) as delivery
-                            join ({REPLY_TASK_CURRENT_SQL}) as delivery_task
+                            join ({NATIVE_REPLY_TASK_CURRENT_SQL}) as delivery_task
                               on delivery_task.id=delivery.reply_task_id
                             where delivery_task.channel=reply_attempts.channel
                               and delivery.conversation_id=reply_attempts.conversation_id
@@ -26729,24 +26822,24 @@ class AutoReplyStore(LogicalRunStoreMixin, ReviewedCandidateStoreMixin):
                         -- inferred only from the historical message key.
                         when send_status='failed' and exists (
                             select 1
-                            from ({AGENT_RUN_SQL}) as bound_attempt_run
-                            join ({REPLY_TASK_CURRENT_SQL}) as bound_current_task
+                            from ({NATIVE_AGENT_RUN_SQL}) as bound_attempt_run
+                            join ({NATIVE_REPLY_TASK_CURRENT_SQL}) as bound_current_task
                               on bound_current_task.id=bound_attempt_run.reply_task_id
                             where bound_attempt_run.id=reply_attempts.agent_run_id
                               and coalesce(bound_current_task.error, '')='external_action_uncertain'
                         ) then 'uncertain'
                         when send_status='failed' and exists (
                             select 1
-                            from ({AGENT_RUN_SQL}) as bound_attempt_run
-                            join ({REPLY_TASK_CURRENT_SQL}) as bound_current_task
+                            from ({NATIVE_AGENT_RUN_SQL}) as bound_attempt_run
+                            join ({NATIVE_REPLY_TASK_CURRENT_SQL}) as bound_current_task
                               on bound_current_task.id=bound_attempt_run.reply_task_id
                             where bound_attempt_run.id=reply_attempts.agent_run_id
                               and bound_current_task.status in ('done', 'skipped', 'needs_human')
                               and coalesce(bound_current_task.error, '')<>'external_action_uncertain'
                         ) then (
                             select bound_current_task.status
-                            from ({AGENT_RUN_SQL}) as bound_attempt_run
-                            join ({REPLY_TASK_CURRENT_SQL}) as bound_current_task
+                            from ({NATIVE_AGENT_RUN_SQL}) as bound_attempt_run
+                            join ({NATIVE_REPLY_TASK_CURRENT_SQL}) as bound_current_task
                               on bound_current_task.id=bound_attempt_run.reply_task_id
                             where bound_attempt_run.id=reply_attempts.agent_run_id
                               and coalesce(bound_current_task.error, '')<>'external_action_uncertain'
@@ -26763,8 +26856,8 @@ class AutoReplyStore(LogicalRunStoreMixin, ReviewedCandidateStoreMixin):
                         -- inventing one would be fabricating an answer.
                         when send_status='failed' and exists (
                             select 1
-                            from ({AGENT_RUN_SQL}) as handed_over_runs
-                            join ({REPLY_TASK_CURRENT_SQL}) as handed_over_tasks
+                            from ({NATIVE_AGENT_RUN_SQL}) as handed_over_runs
+                            join ({NATIVE_REPLY_TASK_CURRENT_SQL}) as handed_over_tasks
                               on handed_over_tasks.id=handed_over_runs.reply_task_id
                             where handed_over_runs.id=reply_attempts.agent_run_id
                               and handed_over_tasks.status='needs_human'
@@ -26775,7 +26868,7 @@ class AutoReplyStore(LogicalRunStoreMixin, ReviewedCandidateStoreMixin):
                             reply_attempts.terminal_id>reply_attempts.id
                             or exists (
                                 select 1
-                                from ({REPLY_TASK_CURRENT_SQL}) as terminal_tasks
+                                from ({NATIVE_REPLY_TASK_CURRENT_SQL}) as terminal_tasks
                                 where terminal_tasks.channel=reply_attempts.channel
                                   and terminal_tasks.conversation_id=reply_attempts.conversation_id
                                   and terminal_tasks.trigger_message_id=reply_attempts.trigger_message_id
@@ -26783,8 +26876,8 @@ class AutoReplyStore(LogicalRunStoreMixin, ReviewedCandidateStoreMixin):
                             )
                             or exists (
                                 select 1
-                                from ({task12_projection('business_object_tasks')}) as current_business_object
-                                join ({REPLY_TASK_CURRENT_SQL}) as current_task
+                                from ({NATIVE_REPLY_BUSINESS_KEY_SQL}) as current_business_object
+                                join ({NATIVE_REPLY_TASK_CURRENT_SQL}) as current_task
                                   on current_task.id=current_business_object.reply_task_id
                                 where current_business_object.business_object_key=(
                                     'message:' || reply_attempts.channel || ':' ||
@@ -26863,24 +26956,23 @@ class AutoReplyStore(LogicalRunStoreMixin, ReviewedCandidateStoreMixin):
                 else ""
             )
         }not exists (
-                    select 1 from ({AGENT_RUN_SQL}) as attempt_run
-                    join ({REPLY_TASK_SQL}) as current_task
+                    select 1 from ({NATIVE_AGENT_RUN_SQL}) as attempt_run
+                    join ({NATIVE_REPLY_TASK_CURRENT_SQL}) as current_task
                       on current_task.id=attempt_run.reply_task_id
                     where attempt_run.id=reply_attempts.agent_run_id
                       and attempt_run.execution_generation<>current_task.execution_generation
                 )
                   and not exists (
                     with latest_task_attempt as materialized (
-                        select runs.task_id,
-                               max(cast(attempts.legacy_key as integer)) as attempt_id
-                        from actions as attempts
-                        join runs on runs.id=attempts.attempt_agent_run_id
-                                 and runs.record_type='agent_runs' and runs.source_type is null
-                        where attempts.record_type='reply_attempts'
-                        group by runs.task_id
+                        select runs.reply_task_id as task_id,
+                               max(attempts.id) as attempt_id
+                        from ({REPLY_ATTEMPT_COMMON_SQL}) as attempts
+                        join ({NATIVE_AGENT_RUN_SQL}) as runs
+                          on runs.id=attempts.agent_run_id
+                        group by runs.reply_task_id
                     )
                     select 1
-                    from ({AGENT_RUN_SQL}) as historical_run
+                    from ({NATIVE_AGENT_RUN_SQL}) as historical_run
                     join latest_task_attempt as latest
                       on latest.task_id=historical_run.reply_task_id
                     where historical_run.id = reply_attempts.agent_run_id
@@ -26919,8 +27011,8 @@ class AutoReplyStore(LogicalRunStoreMixin, ReviewedCandidateStoreMixin):
                     0 as project_id,
                     0 as todo_id,
                     0 as follow_up_id
-                from ({MEETING_LOGICAL_RUN_SQL}) as runs
-                join ({MEETING_JOB_SQL}) as jobs on jobs.id=runs.job_id
+                from ({NATIVE_MEETING_RUN_SQL}) as runs
+                join ({NATIVE_MEETING_TASK_SQL}) as jobs on jobs.id=runs.job_id
                 union all
                 select
                     'task-input:' || id as id,
@@ -26936,13 +27028,15 @@ class AutoReplyStore(LogicalRunStoreMixin, ReviewedCandidateStoreMixin):
                     'Original input source: ' || source_type || ':' || source_ref ||
                     case when body_sha256<>'' then '; SHA-256 ' || body_sha256 ||
                         '; ' || body_bytes || ' bytes' else '' end as summary,
-                    error as detail,
+                    work_summary_tasks.error as detail,
                     '' as conversation_id,
                     '' as message_id,
                     0 as project_id,
                     0 as todo_id,
                     0 as follow_up_id
-                from ({WORK_SUMMARY_INPUT_SQL}) as work_summary_inputs
+                from tasks as work_summary_tasks
+                join work_summary_inputs on work_summary_inputs.task_id=work_summary_tasks.id
+                where work_summary_tasks.kind='work_summary'
                 union all
                 select
                     'task-update:' || updates.id as id,
@@ -27654,21 +27748,12 @@ class AutoReplyStore(LogicalRunStoreMixin, ReviewedCandidateStoreMixin):
         stderr_excerpt: str = "",
     ) -> int:
         with self._connect() as db:
-            result = insert_run11_fact(
-                db, "setup_wizard_events",
-                {
-                    "step_id": step_id,
-                    "action_id": action_id,
-                    "status": status,
-                    "summary": summary,
-                    "evidence_json": evidence_json,
-                    "stdout_excerpt": stdout_excerpt,
-                    "stderr_excerpt": stderr_excerpt,
-                },
-                insert_sql={
-                    "finished_at": "case when ? = 'running' then '' else current_timestamp end"
-                },
-                insert_parameters=(status,),
+            result = db.execute(
+                "insert into setup_wizard_events "
+                "(step_id,action_id,status,summary,evidence_json,stdout_excerpt,stderr_excerpt,created_at,finished_at) "
+                "values(?,?,?,?,?,?,?,current_timestamp,case when ?='running' then '' else current_timestamp end)",
+                (step_id, action_id, status, summary, evidence_json, stdout_excerpt,
+                 stderr_excerpt, status),
             )
             return int(result.lastrowid)
 
@@ -27679,7 +27764,6 @@ class AutoReplyStore(LogicalRunStoreMixin, ReviewedCandidateStoreMixin):
         action_id: str | None = None,
         limit: int = 20,
     ) -> list[dict[str, str | int]]:
-        projection = "(" + run11_projection("setup_wizard_events") + ")"
         with self._connect() as db:
             args: list[str | int] = []
             conditions: list[str] = []
@@ -27694,8 +27778,8 @@ class AutoReplyStore(LogicalRunStoreMixin, ReviewedCandidateStoreMixin):
             rows = db.execute(
                 f"""
                 select id, step_id, action_id, status, summary, evidence_json,
-                       stdout_excerpt, stderr_excerpt, started_at, finished_at
-                from {projection}
+                       stdout_excerpt, stderr_excerpt, created_at as started_at, finished_at
+                from setup_wizard_events
                 {where}
                 order by id desc
                 limit ?

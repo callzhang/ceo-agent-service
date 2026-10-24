@@ -57,15 +57,24 @@ def typed_runtime(request, tmp_path, monkeypatch, published_source):
         advance_source17_to_current_store(path, published_source)
         AutoReplyStore(path)  # Publish the complete source before observing typed readers.
 
-    accesses = set()
+    # Initialize the current declaration before installing the runtime reader
+    # fence. work_summary_inputs remains a narrow native domain owner; its
+    # identity metadata is readable, while the captured body stays excluded.
+    store = AutoReplyStore(path)
     retired_accesses = []
+    body_accesses = []
+    check_body_reads = [False]
+    retired_runtime_tables = set(RETIRED_TASK_TABLES) - {"work_summary_inputs"}
     original_open = AutoReplyStore._open_connection
 
     def observe(action, table, column, *_):
         if action in {sqlite3.SQLITE_READ, sqlite3.SQLITE_INSERT, sqlite3.SQLITE_UPDATE}:
-            accesses.add(table)
-            if table in RETIRED_TASK_TABLES:
+            if table in retired_runtime_tables:
                 retired_accesses.append((action, table, column))
+                return sqlite3.SQLITE_DENY
+            if (check_body_reads[0] and action == sqlite3.SQLITE_READ
+                    and table == "work_summary_inputs" and column == "payload_json"):
+                body_accesses.append((action, table, column))
                 return sqlite3.SQLITE_DENY
         return sqlite3.SQLITE_OK
 
@@ -75,13 +84,13 @@ def typed_runtime(request, tmp_path, monkeypatch, published_source):
         return db
 
     monkeypatch.setattr(AutoReplyStore, "_open_connection", monitored_open)
-    store = AutoReplyStore(path)
     with store._connect() as db:
         names = {row[0] for row in db.execute("select name from sqlite_master")}
-        assert not names.intersection(RETIRED_TASK_TABLES)
-    yield store, request.param
-    assert "tasks" in accesses
+        assert not names.intersection(retired_runtime_tables)
+        assert "work_summary_inputs" in names
+    yield store, request.param, check_body_reads
     assert retired_accesses == []
+    assert body_accesses == []
 
 
 def _reply(store, suffix="one"):
@@ -117,7 +126,7 @@ def _pre_run_failure(store, task, *, generation=None):
 
 
 def test_history_and_work_input_recovery_use_original_public_ids(typed_runtime):
-    store, layout = typed_runtime
+    store, layout, check_body_reads = typed_runtime
     if layout == "migrated":
         input_id = 2
         with store._connect() as db:
@@ -132,7 +141,11 @@ def test_history_and_work_input_recovery_use_original_public_ids(typed_runtime):
     assert store.resolve_errors_recovered_by_terminal_work_summary_inputs() == 1
     assert store.list_errors()[0].resolved_at
     assert store.get_work_summary_input(input_id).body_compacted == 1
-    history = store.list_operation_logs(source_tables=("work_summary_inputs",))
+    check_body_reads[0] = True
+    try:
+        history = store.list_operation_logs(source_tables=("work_summary_inputs",))
+    finally:
+        check_body_reads[0] = False
     assert input_id in [item.source_id for item in history]
     if layout == "migrated":
         assert {item.source_id for item in history} == {1, 2}
@@ -142,7 +155,7 @@ def test_history_and_work_input_recovery_use_original_public_ids(typed_runtime):
 
 
 def test_pre_run_failure_retry_and_settlement_keep_generation_and_history(typed_runtime):
-    store, _ = typed_runtime
+    store, _, _ = typed_runtime
     task = store.claim_reply_task(_reply(store).id)
     attempt_id = _pre_run_failure(store, task)
     assert store.count_current_unresolved_problem_attempts() == 1
@@ -175,7 +188,7 @@ def test_pre_run_failure_retry_and_settlement_keep_generation_and_history(typed_
 
 
 def test_stale_pre_run_finalization_rolls_back_attempt_write(typed_runtime):
-    store, _ = typed_runtime
+    store, _, _ = typed_runtime
     task = store.claim_reply_task(_reply(store, "stale").id)
     next_generation = store.rotate_reply_task_execution_generation(task.id)
     current = store.claim_reply_task(task.id)

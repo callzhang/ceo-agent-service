@@ -10,7 +10,7 @@ import sqlite3
 
 from fastapi import FastAPI, Query
 
-from app.run_storage import MEETING_RUN_SQL
+from app.store import NATIVE_MEETING_RUN_SQL, NATIVE_MEETING_TASK_SQL
 from app.external_retry import MAX_AUTOMATIC_ATTEMPTS
 from app.action_storage import REPLY_ATTEMPT_COMMON_SQL
 from app.action_storage import (
@@ -21,20 +21,19 @@ from app.configs_definitions import config_projection
 from app.state_definitions import state_projection
 from app.email_canonical_storage import email_classification_projection
 from app.storage_payload import TASK_RECORD_TYPES
-from app.task20_definitions import TASK20_FIELDS, task20_column, task20_projection
 
 
 # Only executable sources; parent projects, saved inputs and completed history
 # are not queue items. These expressions use the current source-owned fields.
 TASK_SOURCES = {
-    "reply_tasks": ("消息 / 审批", "conversation_title"),
-    "work_summary_inputs": ("任务提取", "source_ref"),
-    "meeting_alignment_jobs": ("会议同步", "title"),
-    "okr_review_requests": ("OKR 审阅", "conversation_title"),
-    "weekly_okr_analysis_jobs": ("每周 OKR", "week_end"),
-    "email_agent_classification_tasks": ("邮件分类", "stable_message_identity"),
-    "workbench_turns": ("Agent 工作台", "client_request_id"),
-    "wechat_memory_import_jobs": ("微信 Memory 导入", "account_id"),
+    "reply": ("reply_tasks", "消息 / 审批"),
+    "work_summary": ("work_summary_inputs", "任务提取"),
+    "meeting_alignment": ("meeting_alignment_jobs", "会议同步"),
+    "okr_review": ("okr_review_requests", "OKR 审阅"),
+    "okr_analysis": ("weekly_okr_analysis_jobs", "每周 OKR"),
+    "email_classification": ("email_agent_classification_tasks", "邮件分类"),
+    "workbench_turn": ("workbench_turns", "Agent 工作台"),
+    "wechat_import": ("wechat_memory_import_jobs", "微信 Memory 导入"),
 }
 
 
@@ -50,98 +49,52 @@ def _time(value: str | None) -> str:
 
 
 def _runtime_metadata(db: sqlite3.Connection, now: str) -> dict[int, dict]:
-    """Live runtime metadata, tied to the current parent generation/run only."""
-    generation = task20_column("reply_tasks", "execution_generation")
-    run_columns = {row[1] for row in db.execute("pragma table_info(runs)")}
-    summary_input_id = (
-        "domain.summary_input_id" if "summary_input_id" in run_columns else "NULL"
-    )
+    """Current native runtime metadata keyed by the owning Task ID."""
     rows = db.execute(
-        f"""
-        select runtime.legacy_key as runtime_id, runtime.workload_kind,
-               runtime.workload_key, runtime.runtime_kind, runtime.model,
-               runtime.started_at, runtime.updated_at, runtime.status, runtime.lease_owner,
-               parent.role, parent.task_id as reply_task_id,
-               domain.task_id as domain_task_id, {summary_input_id} as summary_input_id
-        from runs runtime
-        left join runs parent on parent.id=runtime.parent_id
-          and parent.record_type='agent_runs' and parent.status='running'
-          and exists(select 1 from tasks task where task.id=parent.task_id
-            and task.record_type='reply_tasks' and task.lifecycle_status='processing'
-            and task.{generation}=parent.execution_generation)
-        left join runs domain on runtime.parent_id is null
-          and runtime.workload_key=domain.legacy_key and domain.status='running'
-          and ((runtime.workload_kind='meeting' and domain.record_type='meeting_alignment_runs')
-            or (runtime.workload_kind='task' and domain.record_type='task_agent_runs'))
-        where runtime.record_type='agent_runtime_attempts'
-          and runtime.status in ('starting','running')
-          and ((runtime.lease_owner<>'' and datetime(runtime.lease_expires_at)>datetime(?))
-            or (parent.task_id is not null and exists(
-              select 1 from tasks live where live.id=parent.task_id
-                and live.lifecycle_lease_owner<>''
-                and datetime(live.lifecycle_lease_expires_at)>datetime(?))))
-        order by runtime.id
-    """,
+        """select runtime.id as runtime_id, runtime.workload_kind,
+                  runtime.workload_key, runtime.runtime_kind, runtime.model,
+                  runtime.started_at, runtime.updated_at, runtime.status,
+                  runtime.lease_owner, parent.role, parent.task_id,
+                  domain.task_id as domain_task_id
+           from runtime_attempts runtime
+           left join runs parent on parent.id=runtime.parent_id
+             and parent.status='running'
+             and not exists(select 1 from run_provenance p where p.run_id=parent.id)
+           left join runs domain on runtime.parent_id is null
+             and domain.id=case when runtime.workload_key glob '[0-9]*'
+                                then cast(runtime.workload_key as integer) else -1 end
+             and exists(select 1 from run_provenance p where p.run_id=domain.id
+                        and p.source_type in ('meeting_alignment_runs','task_agent_runs'))
+           where runtime.status in ('starting','running')
+             and ((runtime.lease_owner<>'' and datetime(runtime.lease_expires_at)>datetime(?))
+               or (parent.task_id is not null and exists(
+                   select 1 from tasks live where live.id=parent.task_id
+                     and live.kind='reply' and live.status='processing'
+                     and live.execution_generation=parent.execution_generation
+                     and live.lease_owner<>''
+                     and datetime(live.lease_expires_at)>datetime(?))))
+           order by runtime.id""",
         (now, now),
     ).fetchall()
-    result = {}
+    result: dict[int, dict] = {}
     for row in rows:
-        task_id = row["reply_task_id"] or row["domain_task_id"]
-        if task_id is None and row["summary_input_id"] is not None:
-            task = db.execute(
-                "select id from tasks where record_type='work_summary_inputs' and legacy_key=?",
-                (str(row["summary_input_id"]),),
-            ).fetchone()
-            task_id = task["id"] if task else None
+        task_id = row["task_id"] or row["domain_task_id"]
         if task_id is None and row["workload_kind"] in (
-            "email_classification",
-            "workbench",
+            "email_classification", "workbench", "structured", "weekly_okr", "memory",
         ):
-            kind = (
-                "email_agent_classification_tasks"
-                if row["workload_kind"] == "email_classification"
-                else "workbench_turns"
-            )
-            identity = task20_column(
-                kind,
-                "task_id" if kind == "email_agent_classification_tasks" else "id",
-            )
-            # The task worker and native router own independent leases.
-            task = db.execute(
-                f"select id from tasks where record_type=? and {identity}=? "
-                "and lifecycle_status='processing' and lifecycle_lease_owner<>'' "
-                "and datetime(lifecycle_lease_expires_at)>datetime(?)",
-                (kind, row["workload_key"], now),
-            ).fetchone()
-            task_id = task["id"] if task else None
-        if task_id is None and row["workload_kind"] in (
-            "structured",
-            "weekly_okr",
-            "memory",
-        ):
-            task = None
-            if row["workload_kind"] == "structured":
+            kind = {
+                "email_classification": "email_classification",
+                "workbench": "workbench_turn",
+                "structured": "okr_review",
+                "weekly_okr": "okr_analysis",
+                "memory": "wechat_import",
+            }[row["workload_kind"]]
+            if str(row["workload_key"]).isdigit():
                 task = db.execute(
-                    "select id from tasks where record_type='okr_review_requests' and legacy_key=? and lifecycle_status='processing'",
-                    (row["workload_key"],),
+                    "select id from tasks where id=? and kind=? and status='processing'",
+                    (int(row["workload_key"]), kind),
                 ).fetchone()
-            elif row["workload_kind"] == "weekly_okr":
-                from app.store import AutoReplyStore
-
-                if AutoReplyStore._runtime_operation_parent_exists(
-                    db, row["workload_kind"], row["workload_key"]
-                ):
-                    week_end, manager, digest = row["workload_key"].split(":")[:3]
-                    task = db.execute(
-                        f"select id from tasks where record_type='weekly_okr_analysis_jobs' and {task20_column('weekly_okr_analysis_jobs', 'week_end')}=? and {task20_column('weekly_okr_analysis_jobs', 'manager_user_id')}=? and {task20_column('weekly_okr_analysis_jobs', 'source_digest')}=? and lifecycle_status='processing'",
-                        (week_end, manager, digest),
-                    ).fetchone()
-            elif row["workload_key"].startswith("wechat_memory_import_job:"):
-                task = db.execute(
-                    "select id from tasks where record_type='wechat_memory_import_jobs' and legacy_key=? and lifecycle_status='processing'",
-                    (row["workload_key"].split(":")[1],),
-                ).fetchone()
-            task_id = task["id"] if task else None
+                task_id = task["id"] if task else None
         if task_id is not None:
             result[int(task_id)] = dict(row)
     return result
@@ -153,107 +106,70 @@ def read_dashboard_queues(
     now_text = now.astimezone(UTC).isoformat()
     runtime = _runtime_metadata(db, now_text)
     queues: dict[str, list[dict]] = {"active": [], "queued": []}
-    objects = task20_projection("business_object_tasks")
-    for kind, (label, title_field) in TASK_SOURCES.items():
-        title = "task." + task20_column(kind, title_field)
-        if kind == "email_agent_classification_tasks":
-            body = task20_column(kind, "input_json")
-            title = f"coalesce(nullif(json_extract(task.{body}, '$.message.subject'),''), {title})"
-        available = "task.lifecycle_available_at"
-        started = "task.lifecycle_locked_at"
-        phase = "task.lifecycle_status"
-        if kind == "workbench_turns":
-            parent_title = task20_column("workbench_tasks", "title")
-            title = f"(select p.{parent_title} from tasks p where p.id=task.parent_id)"
-            started = "task." + task20_column(kind, "started_at")
-        if kind == "meeting_alignment_jobs":
-            phase = "task.meeting_phase"
-        if kind == "meeting_alignment_jobs":
-            eligible = "task." + task20_column(kind, "eligible_at")
-            available = f"case when coalesce(datetime(task.lifecycle_available_at),'')>coalesce(datetime({eligible}),'') then task.lifecycle_available_at else {eligible} end"
+    sources = {
+        "reply": ("join task_inputs input on input.id=task.current_input_id and input.task_id=task.id", "input.conversation_title"),
+        "work_summary": ("join work_summary_inputs summary on summary.task_id=task.id", "summary.source_ref"),
+        "meeting_alignment": ("", "coalesce(json_extract(task.parameters_json,'$.title'),'')"),
+        "okr_review": ("", "coalesce(json_extract(task.parameters_json,'$.conversation_title'),'')"),
+        "okr_analysis": ("", "coalesce(json_extract(task.parameters_json,'$.week_end'),'')"),
+        "email_classification": ("join email_classification_inputs email on email.task_id=task.id", "coalesce(nullif(json_extract(email.input_json,'$.message.subject'),''),email.stable_message_identity)"),
+        "workbench_turn": ("join workbench_turns turn on turn.task_id=task.id join workbench_tasks workbench on workbench.id=turn.workbench_task_id", "workbench.title"),
+        "wechat_import": ("", "coalesce(json_extract(task.parameters_json,'$.account_id'),'')"),
+    }
+    for kind, (display_kind, label) in TASK_SOURCES.items():
+        join, title = sources[kind]
+        delivery = kind == "meeting_alignment"
+        states = "('waiting','pending','processing','ready_to_send','retry')" if delivery else "('pending','processing')"
+        available = "task.available_at"
+        if delivery:
+            eligible = "coalesce(json_extract(task.parameters_json,'$.eligible_at'),'')"
+            available = f"case when coalesce(datetime(task.available_at),'')>coalesce(datetime({eligible}),'') then task.available_at else {eligible} end"
         current = ""
-        if kind == "reply_tasks":
-            key = task20_column(kind, "business_object_key")
-            current = f"""and not exists(select 1 from ({objects}) current_object
-                where current_object.business_object_key=task.{key}
-                  and current_object.reply_task_id<>task.id)"""
+        if kind == "reply":
+            current = """and not exists(select 1 from task_business_keys current_object
+                join tasks owner on owner.id=current_object.task_id and owner.kind='reply'
+                where current_object.business_key=input.business_object_key and owner.id<>task.id)"""
         rows = db.execute(
-            f"""
-            select task.id, task.legacy_key, task.lifecycle_status as status,
-                   task.lifecycle_attempts as attempts, task.lifecycle_generation as generation,
-                   task.lifecycle_error as error, {available} as available_at,
-                   task.lifecycle_created_at as created_at, task.lifecycle_updated_at as updated_at,
-                   {started} as locked_at, {phase} as phase, task.lifecycle_lease_owner as owner,
-                   task.lifecycle_lease_expires_at as lease_expires_at, {title} as title
-            from tasks task indexed by idx_task_lifecycle_status
-            where task._kind=? and task.lifecycle_status in ('pending','processing') {current}
-        """,
-            (TASK_RECORD_TYPES.code(kind),),
+            f"""select task.id,task.status,task.attempts,task.error,{available} as available_at,
+                       task.created_at,task.updated_at,task.locked_at,task.lease_owner as owner,
+                       task.lease_expires_at,{title} as title
+                from tasks task {join}
+                where task.kind=? and task.status in {states} {current}""",
+            (kind,),
         ).fetchall()
         for raw in rows:
             row = dict(raw)
             native = runtime.get(row["id"])
             lease_active = bool(
-                row["owner"]
-                and row["lease_expires_at"]
+                row["owner"] and row["lease_expires_at"]
                 and _time(row["lease_expires_at"]) > now_text
             )
-            delivery = (
-                kind == "meeting_alignment_jobs" and row["phase"] == "ready_to_send"
-            )
-            state = (
-                "queued"
-                if row["status"] == "pending" or (delivery and not row["locked_at"])
-                else "active"
-            )
-            if state == "active" and not (
-                native or lease_active or (delivery and row["locked_at"])
-            ):
+            is_delivery = kind == "meeting_alignment" and row["status"] == "ready_to_send"
+            state = "queued" if row["status"] in ("pending", "waiting", "retry") or (is_delivery and not row["locked_at"]) else "active"
+            if state == "active" and not (native or lease_active or (is_delivery and row["locked_at"])):
                 continue
-            has_counter = {"attempts", "attempt_count"}.intersection(
-                TASK20_FIELDS[kind]
-            )
-            attempts = row["attempts"] if has_counter and not delivery else None
-            retry = (
-                None
-                if attempts is None
-                else max(0, int(attempts) - (state == "active"))
-            )
-            public_id = row["legacy_key"] or str(row["id"])
-            queues[state].append(
-                {
-                    "id": f"{kind}:{public_id}",
-                    "source": label,
-                    "title": str(row["title"] or f"{label} #{public_id}"),
-                    "status": row["phase"],
-                    "retry_number": retry,
-                    "agent": native["role"] or native["workload_kind"]
-                    if native
-                    else "",
-                    "runtime_kind": native["runtime_kind"] if native else "",
-                    "model": native["model"] if native else "",
-                    "stage": (native["status"] if native else row["phase"]),
-                    "started_at": _time(
-                        native["started_at"] if native else row["locked_at"]
-                    ),
-                    "updated_at": _time(
-                        native["updated_at"] if native else row["updated_at"]
-                    ),
-                    "created_at": _time(row["created_at"]),
-                    "available_at": _time(row["available_at"]),
-                    "error": str(row["error"] or ""),
-                    "detail_url": _detail_url(db, kind, public_id, row["id"]),
-                }
-            )
+            attempts = row["attempts"]
+            retry = None if attempts is None or is_delivery else max(0, int(attempts) - (state == "active"))
+            public_id = str(row["id"])
+            queues[state].append({
+                "id": f"{display_kind}:{public_id}", "source": label,
+                "title": str(row["title"] or f"{label} #{public_id}"),
+                "status": row["status"], "retry_number": retry,
+                "agent": (native["role"] or native["workload_kind"]) if native else "",
+                "runtime_kind": native["runtime_kind"] if native else "",
+                "model": native["model"] if native else "",
+                "stage": native["status"] if native else row["status"],
+                "started_at": _time(native["started_at"] if native else row["locked_at"]),
+                "updated_at": _time(native["updated_at"] if native else row["updated_at"]),
+                "created_at": _time(row["created_at"]),
+                "available_at": _time(row["available_at"]),
+                "error": str(row["error"] or ""),
+                "detail_url": _detail_url(db, kind, public_id, row["id"]),
+            })
     _append_auxiliary_queues(db, queues, now_text)
     for name, rows in queues.items():
-        rows.sort(
-            key=lambda item: (
-                (item["available_at"] or item["created_at"], item["id"])
-                if name == "queued"
-                else (item["started_at"], item["id"])
-            )
-        )
+        rows.sort(key=lambda item: ((item["available_at"] or item["created_at"], item["id"])
+                                    if name == "queued" else (item["started_at"], item["id"])))
     return queues
 
 
@@ -266,8 +182,7 @@ def _append_auxiliary_queues(db, queues, now_text):
         projection = task_delivery_projection(kind)
         current = ""
         if kind == "task_memory_write_events":
-            generation = task20_column("reply_tasks", "execution_generation")
-            current = f"and exists(select 1 from tasks t where t.id=a.{parent} and t.record_type='reply_tasks' and t.{generation}=a.execution_generation)"
+            current = f"and exists(select 1 from tasks t where t.id=a.{parent} and t.kind='reply' and t.execution_generation=a.execution_generation)"
         sources.append(
             (
                 kind,
@@ -386,22 +301,21 @@ def _append_auxiliary_queues(db, queues, now_text):
 
 
 def _detail_url(db, kind: str, public_id: str, physical_id: int) -> str:
-    if kind == "reply_tasks":
-        generation = task20_column("reply_tasks", "execution_generation")
+    if kind == "reply":
         attempt = db.execute(
-            f"select a.id from ({REPLY_ATTEMPT_COMMON_SQL}) a "
-            "join runs g on g.record_type='agent_runs' and cast(g.legacy_key as integer)=a.agent_run_id "
-            f"join tasks t on t.id=g.task_id and t.{generation}=g.execution_generation "
-            "where g.task_id=? order by a.id desc limit 1",
+            f"""select attempts.id from ({REPLY_ATTEMPT_COMMON_SQL}) attempts
+                join runs run on run.id=attempts.agent_run_id
+                  and not exists(select 1 from run_provenance p where p.run_id=run.id)
+                join tasks task on task.id=run.task_id
+                  and task.execution_generation=run.execution_generation
+                where run.task_id=? order by attempts.id desc limit 1""",
             (physical_id,),
         ).fetchone()
         return f"/attempts/{attempt[0]}" if attempt else ""
-    if kind == "meeting_alignment_jobs":
+    if kind == "meeting_alignment":
         run = db.execute(
-            "select id from ("
-            + MEETING_RUN_SQL
-            + ") where job_id=? order by id desc limit 1",
-            (public_id,),
+            f"select id from ({NATIVE_MEETING_RUN_SQL}) where job_id=? order by id desc limit 1",
+            (physical_id,),
         ).fetchone()
         return f"/meeting-attempts/{run[0]}" if run else ""
     return ""
