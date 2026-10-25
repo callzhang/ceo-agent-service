@@ -34,22 +34,42 @@ input. With the body comparison, the replay file passes 29/29. Ruff, Python
 parse and compile checks pass. This scoped code cleanup is not yet deployed,
 or a completion of A5b or the remaining Project/Todo/Update model review.
 
-The A5b production-data preflight found 276 non-empty Reply OA result snapshots
-(91,758 JSON characters). Exactly 46 currently have a unique matching provider
-receipt with byte-identical JSON (28,080 characters). The match is based on the
-exact linked Run lineage, operation, process-instance ID, and task ID. These
-records are not yet safe to convert to a live/current receipt projection:
-verified receipt correction can retire an older provider body, while a Reply
-Attempt must keep the result it recorded at that time. Before retiring these
-bodies, the model needs a durable reference to the exact immutable receipt and
-retirement must preserve referenced historical receipts. The other 230
-snapshots remain local Attempt facts unless exact ownership is proven. The
-original A5 native acceptance conflict remains a separate unresolved gate.
+## A5b exact Reply receipt ownership — candidate validation, 2026-10-25
 
-No schema migration, production write, push, or deployment has occurred for
-this continuation. The next work is the exact immutable A5b receipt reference
-and its inverse, then finish the source-backed Project/Todo/Update ownership
-review. Do not count logical JSON bytes as physical database shrinkage.
+The read-only production preflight found 276 non-empty Reply OA result
+snapshots (91,758 SQLite characters / 99,292 UTF-8 bytes). Exactly 46 have one
+byte-identical provider result receipt on the same Run ancestor chain and exact
+operation, process-instance ID, and task ID (28,080 UTF-8 bytes); the remaining
+230 stay local Attempt facts. This is logical duplicate payload only, not a
+physical SQLite file-size reduction claim.
+
+The local Store `2026-10-23.1` / Email54 → `2026-10-25.1` / Email54 release now
+stores those exact links in `reply_attempt_receipt_refs`. New completion writes
+receive the receipt ID from the verified candidate action, validate the exact
+body, write the reference and clear the duplicate Attempt body atomically.
+History/detail projection hydrates the referenced immutable receipt; unlinked
+local values remain inline, and provider receipt retirement checks the new FK.
+The inverse hydrates referenced bodies before dropping the relation and restores
+the original marker and declaration.
+
+Validation: a fresh online-backup copy of the current production database
+forwarded 46 unique references and retained identical projected Reply fields,
+the original single `foreign_key_check` finding, and `quick_check=ok`; inverse
+restored the exact Store23.1/Email54 schema and all raw Attempt result bodies;
+reforward again produced 46 references and passed integrity. Focused release,
+publication selector, store writer, worker receipt handoff, Email54 marker and
+state binding checks pass (14 tests in the recorded focused selection). Ruff
+with only pre-existing F401/E402 categories excluded, Python compile and
+`git diff --check` pass. The original A5 native acceptance conflict remains a
+separate gate and is not fixed or superseded by this storage work.
+
+At this checkpoint the candidate is not deployed. Remaining in this plan:
+independent QUALITY review, normal upstream integration, real Codex CLI
+copy-path acceptance with external-send substitute, standard deployment and
+production readback, then clear the verified deployment backup as Derek
+approved. The old Project/Todo/Update review remains read-only: their old write
+paths have already been retired; history readers still have consumers and no
+safe whole-row deletion or source-backed replacement owner has been proven.
 
 ## Email business-model phase audit — 2026-10-24
 

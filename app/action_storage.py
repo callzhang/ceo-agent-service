@@ -905,7 +905,8 @@ ACTION_PROJECTIONS = {kind: _projection(kind, payloads=action_payloads("actual_n
                       for kind in ALL_ACTION_TYPES_WITH_DELIVERY}
 
 
-def reply_action_projection(kind, reply_variant, *, canonical_attempt_fields=False):
+def reply_action_projection(kind, reply_variant, *, canonical_attempt_fields=False,
+                            receipt_references=False):
     if kind not in REPLY_ACTION_TYPES or reply_variant not in REPLY_VARIANTS:
         raise ValueError("unsupported reply projection")
     order = (_FRESH_ATTEMPT_ORDER if reply_variant == "fresh_memory_fk" and not canonical_attempt_fields else _ATTEMPT_ORDER) if kind == "reply_attempts" else _MEMORY_ORDER
@@ -919,6 +920,11 @@ def reply_action_projection(kind, reply_variant, *, canonical_attempt_fields=Fal
             expression = "'{}'"
         elif kind == "memory_write_events" and field == "attempt_id" and reply_variant == "fresh_memory_fk":
             expression = "cast(p.legacy_key as integer)"
+        elif kind == "reply_attempts" and field == "oa_action_result_json" and receipt_references:
+            expression = ("coalesce((select receipt.provider_result_json from "
+                          "reply_attempt_receipt_refs ref join action_receipts receipt "
+                          "on receipt.id=ref.receipt_id where ref.attempt_id=a.id),"
+                          "a.attempt_oa_action_result_json)")
         else:
             expression = "a." + ("attempt_" if kind == "reply_attempts" else "memory_") + field
         fields.append(expression + " as " + field)
@@ -928,7 +934,9 @@ def reply_action_projection(kind, reply_variant, *, canonical_attempt_fields=Fal
 
 # Both canonical E declarations contain the 54 current Attempt fields. This
 # explicit projection omits only the four preserved actual-source history fields.
-REPLY_ATTEMPT_COMMON_SQL = reply_action_projection("reply_attempts", "fresh_memory_fk")
+REPLY_ATTEMPT_COMMON_SQL = reply_action_projection(
+    "reply_attempts", "fresh_memory_fk", receipt_references=True
+)
 
 # Read candidate status from its existing index before resolving virtual
 # identity fields from the full Attempt payload.

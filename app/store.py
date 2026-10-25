@@ -527,7 +527,7 @@ CANDIDATE_SELECTION_SQL = NATIVE_CANDIDATE_SELECTION_SQL
 CANDIDATE_EXECUTION_SQL = NATIVE_CANDIDATE_EXECUTION_SQL
 
 STORE_SCHEMA_VERSION_KEY = "store_schema_version"
-STORE_SCHEMA_VERSION = "2026-10-23.1"
+STORE_SCHEMA_VERSION = "2026-10-25.1"
 BUSINESS_ACTION_SQL = {kind: (signal_projection() if kind == "business_task_signals" else business_action_projection(kind))
                        for kind in BUSINESS_ACTION_KINDS}
 BUSINESS_ACTION_ID_SQL = {kind: (signal_projection() if kind == "business_task_signals" else business_action_projection(kind, public_id_index=True))
@@ -20012,6 +20012,7 @@ class AutoReplyStore(LogicalRunStoreMixin, ReviewedCandidateStoreMixin):
         oa_action: str = "",
         oa_remark: str = "",
         oa_action_result_json: str = "",
+        oa_action_receipt_id: int | None = None,
     ) -> int:
         """Persist one orchestration result and its task transition atomically.
 
@@ -20130,6 +20131,13 @@ class AutoReplyStore(LogicalRunStoreMixin, ReviewedCandidateStoreMixin):
                     "permission_reason": "", "retry_count": 0,
                     "updated_at": db.execute("select current_timestamp").fetchone()[0],
                 })
+            from app.reply_receipt_reference import delete_reference
+            delete_reference(db, attempt_id=attempt_id)
+            if oa_action_receipt_id is not None:
+                from app.reply_receipt_reference import add_reference
+                add_reference(db, attempt_id=attempt_id, receipt_id=oa_action_receipt_id,
+                              expected_body=oa_action_result_json)
+                update_action(db, "reply_attempts", attempt_id, {"oa_action_result_json": ""})
             self._record_memory_write_events_in_connection(
                 db,
                 attempt_id,

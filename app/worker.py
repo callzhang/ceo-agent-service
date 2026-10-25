@@ -2822,7 +2822,7 @@ class DingTalkAutoReplyWorker:
 
     def _orchestration_oa_metadata(
         self, task: ReplyTask, result: OrchestrationResult,
-    ) -> dict[str, str]:
+    ) -> dict[str, str | int]:
         execution = result.execution_result
         if execution is None or execution.external_result is None:
             return {}
@@ -2854,6 +2854,7 @@ class DingTalkAutoReplyWorker:
                 "oa_action": action.operation,
                 "oa_remark": str(action.payload.get("remark") or ""),
                 "oa_action_result_json": receipt["provider_result_json"],
+                "oa_action_receipt_id": receipt["provider_receipt_id"],
             }
         return {}
 

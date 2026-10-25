@@ -395,6 +395,16 @@ C1 和 A5a 的发布状态分别以各自验收记录及生产回读为准。
 局部测试、实际 archived Store19.6／Email53 冷启动和 source freeze 范围见
 [专有 Email 动作归属验收](database-redesign-specialized-actions-validation.md)。
 
+Store `2026-10-25.1`／Email54 的 A5b 将 Reply Attempt 中能按同一 Agent Run
+祖先链、operation、OA process/task identity 和完全相同 provider JSON 唯一对应的
+历史结果改为 `reply_attempt_receipt_refs` 外键，provider receipt 仍是正文唯一 owner。
+未匹配或有多个候选 receipt 的 Attempt 保留原本地结果；新完成流程只在收到已核验
+receipt ID 且正文完全相等时建立引用，并在同一事务清空重复正文。History、详情、重开
+读取通过引用投影得到同一结果；receipt 退休会检查该引用。来源 Store `2026-10-23.1`／
+Email54 到目标的显式迁移只处理唯一精确匹配，逆迁先把引用正文还原到 Attempt 再删除
+关系并恢复原 schema marker。该存储归属不改变 Audit、审批、授权、重试或外部动作策略。
+A5 原生验收冲突仍是单独问题，不由这项存储变更关闭。
+
 最终紧凑 Tasks／Actions 的既有触发器在生成 schema 时把类型判别和类型不可改写的 UPDATE OF 事件绑定到实际 `_kind`；公开 `record_type` 仍是只读名称。这样避免 SQLite 在仅更新其他列的 BEFORE UPDATE 中遗漏虚拟 NEW 类型值。历史 TEXT 来源工厂不改写。Tasks 声明为数值 legacy_key 的来源身份直接投影其整数表达式（NULL 保持 NULL），来源投影显式包含现有 numeric identity 部分索引的准确谓词。父任务和 canonical 输入均使用现有身份索引定位，避免审查链路扫描无关输入；不新增索引或字段。
 
 Runs 包含原八类执行及搜索会话元数据、分类运行样本、设置事件，共十一种既有类型。

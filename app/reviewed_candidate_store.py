@@ -770,7 +770,7 @@ class ReviewedCandidateStoreMixin:
             rows = db.execute(f"""select a.*, owner.task_id, c.stage_index,
                 c.consumer_run_id as candidate_id, owner.execution_generation,
                 r.operation, r.action_identity,
-                r.target_identifiers_json, r.provider_result_json,
+                r.target_identifiers_json, r.provider_result_json, r.provider_receipt_id,
                 r.first_agent_run_id as receipt_first_agent_run_id
                 from ({NATIVE_CANDIDATE_ACTION_ATTEMPT_SQL}) a
                 join run_execution_progress e on e.consumer_run_id=a.execution_id

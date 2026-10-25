@@ -83,19 +83,25 @@ def prepare_database_schema_release(root: Path, path: Path, *, recovery_source_p
             TARGET_STORE_VERSION as TASK_RUN_TARGET_VERSION,
             prepare_task_run_entity_release,
         )
-        if (CURRENT_STORE_VERSION == TASK_RUN_TARGET_VERSION):
-            from app.state_definitions import state_projection
-            with closing(sqlite3.connect(path.resolve().as_uri() + "?mode=ro", uri=True)) as db:
-                db.execute("begin")
-                tables = {row[0] for row in db.execute(
-                    "select name from main.sqlite_schema where type='table'")}
-                marker = db.execute(
-                    f"select value from ({state_projection('service_state')}) where key=?",
-                    (VERSION_KEY,),
-                ).fetchone() if "state" in tables else None
-            if marker is not None and marker[0] == PREDECESSOR_STORE_VERSION:
-                return prepare_task_run_entity_release(
-                    path, recovery_source_path=recovery_source_path)
+        from app.reply_receipt_reference_schema_release import (
+            SOURCE_STORE_VERSION as REPLY_RECEIPT_SOURCE_VERSION,
+            prepare_reply_receipt_reference_release,
+        )
+        from app.state_definitions import state_projection
+        with closing(sqlite3.connect(path.resolve().as_uri() + "?mode=ro", uri=True)) as db:
+            db.execute("begin")
+            tables = {row[0] for row in db.execute(
+                "select name from main.sqlite_schema where type='table'")}
+            marker = db.execute(
+                f"select value from ({state_projection('service_state')}) where key=?",
+                (VERSION_KEY,),
+            ).fetchone() if "state" in tables else None
+        if marker is not None and marker[0] == REPLY_RECEIPT_SOURCE_VERSION:
+            return prepare_reply_receipt_reference_release(path)
+        if (CURRENT_STORE_VERSION == TASK_RUN_TARGET_VERSION
+                and marker is not None and marker[0] == PREDECESSOR_STORE_VERSION):
+            return prepare_task_run_entity_release(
+                path, recovery_source_path=recovery_source_path)
         from app.action_entity_schema_release import (
             SOURCE_STORE_VERSION as ACTION_ENTITY_SOURCE_VERSION,
             ActionEntitySchemaRelease,
