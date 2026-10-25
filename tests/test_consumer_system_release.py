@@ -118,11 +118,11 @@ def test_release_manifest_pins_current_finance_card_and_active_managed_skill_has
     } == {
         "ci/shared-skills/ceo-calendar-invite/SKILL.md": "b76b913b63c9b2f3eaba5e90eb64e5dd1a58cf123330815a07d7c32c01451175",
         "ci/shared-skills/ceo-message-triage/SKILL.md": "8a19820f1644638c3c007c59809d730985405325c3333a9ac1b089eab332ae43",
-        "ci/shared-skills/ceo-weekly-report/SKILL.md": "a4f4fe22401c5e119715cda1d34d278f7c679d4605e0ec542e4d80b4f6209a8b",
+        "ci/shared-skills/ceo-weekly-report/SKILL.md": "98882f8bfd4e30076a643021f000d5bbb092113f3fff34251b9f379201ff3a50",
     }
 
 
-def test_okr_release_baseline_matches_already_installed_skill():
+def test_okr_release_manifest_publishes_the_repository_skill_over_one_baseline():
     root = Path(__file__).resolve().parents[1]
     manifest = json.loads(
         (root / "ci/consumer-system-contract-release.json").read_text(encoding="utf-8")
@@ -131,10 +131,10 @@ def test_okr_release_baseline_matches_already_installed_skill():
         item for item in manifest["files"]
         if item["source"] == "ci/shared-skills/ceo-weekly-okr-report/SKILL.md"
     )
-    # The installed and managed Skill are already at the candidate revision.
+    # The manifest publishes the repository Skill over the installed baseline,
+    # and the installed and managed baselines are the same file.
     source_digest = _digest((root / entry["source"]).read_bytes())
     assert entry["new_sha256"] == source_digest
-    assert entry["old_managed_sha256"] == source_digest
     assert entry["old_sha256"] == entry["old_managed_sha256"]
 
 
