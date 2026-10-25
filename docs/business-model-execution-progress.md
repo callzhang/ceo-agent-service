@@ -1,5 +1,31 @@
 # Business model simplification: current completion and closeout
 
+## Artifact cleanup authorization and recheck — 2026-10-25
+
+Derek explicitly renewed authorization to delete this round's test copies and
+verified backup together with earlier task-owned test directories. The bounded
+inventory found **10 test roots, one workflow backup and four temporary API
+outputs**, totaling **11,346,504,616 logical bytes (10.57 GiB)**. This is an
+artifact inventory, not a physical database-space reduction or APFS reclaimed
+space measurement. The previously reported 4.8 GB task root is now measured at
+6,179,786,995 bytes; the current inventory supersedes that earlier size.
+
+Every listed directory was resolved to an explicit path, had no symlinks, and
+had no open files according to the combined lsof check. The backup passed a
+fresh read-only SQLite quick_check (`ok`); its earlier deployment verification
+is recorded below. Production data, native trajectories, repository regression
+tests and the unrelated `backups/dws-doc-jsonml-87ddde41` directory are excluded.
+
+The exact rm command was **rejected before execution** by platform approval:
+`approval required by policy, but AskForApproval is set to Never`. The subsequent
+existence check confirmed all 15 targets remain. No alternate deletion path was
+used. User authorization is already present; the remaining step requires an
+execution environment that permits this authorized deletion, followed by an
+absence check. Production health remained `ok`. No runtime code, database or
+service restart was changed in this cleanup attempt.
+
+The complete target list is in the [trigger retirement closeout](action-reference-trigger-retirement-validation.md#renewed-cleanup-attempt--2026-10-25).
+
 ## Dangling Action trigger retirement — 2026-10-25
 
 The exact Store25.1 declaration retained one invalid candidate-reference trigger.

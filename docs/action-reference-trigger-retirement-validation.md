@@ -98,3 +98,45 @@ cleanup. The exact rm command was rejected before execution by automatic
 approval policy: “approval required by policy, AskForApproval is Never”. Both
 paths remain, and no alternate deletion mechanism was used. The earlier A5b
 copy cleanup blocker is separately recorded in the business-model progress page.
+
+## Renewed cleanup attempt — 2026-10-25
+
+Derek explicitly authorized both current and previously retained test artifacts.
+Fresh inventory: 10 directories, one verified workflow backup and four API
+outputs, totaling 11,346,504,616 logical bytes (10.57 GiB). All directories are
+free of symlinks; combined lsof found no open files; backup quick_check is OK.
+The exact rm command was rejected before execution by platform automatic
+approval (`approval required by policy, but AskForApproval is set to Never`).
+Post-attempt checks confirmed every target below still exists. No files were
+removed, no alternate deletion mechanism was used, and production health is OK.
+Authorization remains valid; cleanup is pending platform execution permission.
+
+Explicit directory targets:
+
+```text
+/private/tmp/ceo-business-model-20261025.1qvjsC
+/private/tmp/ceo-action-trigger.JOEnAc
+/private/tmp/ceo-a5b-copy-pl_1udbh
+/private/tmp/ceo-a5b-copy2-lru2bzml
+/private/tmp/ceo-a5b-copy3-n83k8pvy
+/var/folders/74/yj2lxqs162q7rqzm0mj8nv1c0000gn/T/ceo-a5b-diff-24yohzpc
+/var/folders/74/yj2lxqs162q7rqzm0mj8nv1c0000gn/T/ceo-a5b-projdiag-3382srw3
+/var/folders/74/yj2lxqs162q7rqzm0mj8nv1c0000gn/T/ceo-a5b-release-copy-5e_sfrx5
+/var/folders/74/yj2lxqs162q7rqzm0mj8nv1c0000gn/T/ceo-a5b-roundtrip-bxz4xgph
+/var/folders/74/yj2lxqs162q7rqzm0mj8nv1c0000gn/T/ceo-a5b-roundtrip-final-9h6zrq21
+```
+
+Explicit file targets:
+
+```text
+/Users/derek/Library/Application Support/ceo-agent-service/backups/auto-reply-2026-10-25.sqlite3
+/private/tmp/ceo-prod-status.json
+/private/tmp/ceo-prod-attention.json
+/private/tmp/ceo-prod-history.json
+/private/tmp/a5b-detail.json
+```
+
+The unrelated `backups/dws-doc-jsonml-87ddde41` directory, production database
+and native trajectories are outside these deletion targets. Historical test
+paths from earlier phases not found in the bounded inventory were not treated
+as present or as successfully deleted. No broad pytest/cache cleanup was run.
