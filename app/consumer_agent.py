@@ -1153,6 +1153,8 @@ def _prepare_reviewable_candidate(parsed, *, store, task, context, proposal_revi
         raise ResultParseError(str(exc)) from exc
     prepared = _prepare_outgoing_dingtalk_messages(parsed, store=store, task=task,
         context=context, proposal_revision=proposal_revision)
+    prepared = _prepare_outgoing_wechat_messages(prepared, store=store, task=task,
+        context=context, proposal_revision=proposal_revision)
     if prepared.outcome is ConsumerOutcome.FAILED:
         return prepared
     return capture_candidate_sources(prepared, context, source_client)
@@ -1190,6 +1192,78 @@ def _prepare_outgoing_dingtalk_messages(
     return result.model_copy(update={
         "proposal": prepare_plan(result.proposal),
         "decision_options": tuple(option.model_copy(update={"plan": prepare_plan(option.plan, option.key)}) for option in result.decision_options),
+    })
+
+
+def _prepare_outgoing_wechat_messages(
+    result: ConsumerAgentResult,
+    *,
+    store: AutoReplyStore,
+    task: ReplyTask,
+    context: AgentTaskContext,
+    proposal_revision: int,
+) -> ConsumerAgentResult:
+    """Bind a WeChat reply to its task and apply the service-owned suffix.
+
+    A WeChat task may send exactly one message, to the conversation that
+    triggered it: the target the service put in the task-bound contract is the
+    only one accepted, so a model-typed account or conversation can never
+    reach Audit. The body is prepared here so Audit reviews the final text.
+    """
+    if context.channel != "wechat":
+        return result
+    expected = context.required_proposal_action.get("target")
+    sender = ServiceMessageSender(store=store)
+
+    def prepare_plan(proposal, option_key=""):
+        if proposal is None:
+            return None
+        if len(proposal.actions) != 1:
+            raise ResultParseError(
+                "A WeChat task proposes exactly one action: a single "
+                "wechat / send_message to the triggering conversation."
+            )
+        action = proposal.actions[0]
+        if (action.capability, action.operation) != ("wechat", "send_message"):
+            raise ResultParseError(
+                "A WeChat task may only propose wechat / send_message; "
+                f"{action.capability} / {action.operation} is not available here."
+            )
+        if dict(action.target) != expected:
+            raise ResultParseError(
+                "The wechat / send_message target must be exactly the task-bound "
+                f"target {expected}; do not change or add target fields."
+            )
+        text = action.payload.get("text")
+        try:
+            prepared = sender.prepare(
+                channel="wechat",
+                delivery_key=agent_message_delivery_key(
+                    business_object_key=task.business_object_key,
+                    action_identity=action.action_identity + (":" + option_key if option_key else ""),
+                    execution_generation=task.execution_generation,
+                    proposal_revision=proposal_revision,
+                ),
+                body=text,
+                original_text=context.trigger_text,
+            )
+        except ValueError as exc:
+            if str(exc) != "feedback_callback_pair_invalid":
+                raise
+            raise ResultParseError(
+                "Do not put feedback links or a service signature in the message "
+                "body: the service appends them. Propose the message text alone."
+            ) from exc
+        return proposal.model_copy(update={"actions": (
+            action.model_copy(update={"payload": {"text": prepared.final_body}}),
+        )})
+
+    return result.model_copy(update={
+        "proposal": prepare_plan(result.proposal),
+        "decision_options": tuple(
+            option.model_copy(update={"plan": prepare_plan(option.plan, option.key)})
+            for option in result.decision_options
+        ),
     })
 
 

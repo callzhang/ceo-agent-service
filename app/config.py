@@ -588,6 +588,17 @@ def wechat_send_mode() -> str:
     return mode if mode in ("confirm", "auto") else "confirm"
 
 
+def wechat_standard_pipeline_targets() -> frozenset[str]:
+    """WeChat targets whose reply tasks run on the standard Consumer -> Audit path.
+
+    A temporary migration switch (Derek 2026-10-24): empty by default, so every
+    task keeps the original WeChat pipeline. Removed once the original pipeline
+    is retired.
+    """
+    raw = os.getenv("CEO_WECHAT_STANDARD_PIPELINE_TARGETS", "")
+    return frozenset(item.strip() for item in raw.split(",") if item.strip())
+
+
 def wechat_fetch_articles() -> bool:
     """Fetch shared-article bodies to enrich Codex context (default on)."""
     return os.getenv("CEO_WECHAT_FETCH_ARTICLES", "1").strip().lower() in ("1", "true", "yes", "on")

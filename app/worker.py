@@ -2456,6 +2456,33 @@ class DingTalkAutoReplyWorker:
         )
         return self._process_queued_task(conversation, task)
 
+    def process_claimed_wechat_task(
+        self, task: ReplyTask, *, reader, account, claim_guard: ClaimGuard | None = None
+    ) -> bool:
+        """Run a claimed WeChat task through the standard Consumer -> Audit flow.
+
+        Only the context differs from DingTalk: it is built from the persisted
+        WeChat trigger and the Reader. The orchestrator, Audit, system
+        execution and result handling are the shared ones.
+        """
+        from app.wechat.standard_context import build_wechat_task_context
+
+        if task.status != "processing" or task.channel != "wechat":
+            raise ValueError("a claimed WeChat reply task is required")
+        if claim_guard is not None:
+            claim_guard.assert_current(self._now().astimezone(timezone.utc))
+
+        def build() -> AgentTaskContext:
+            return build_wechat_task_context(task, reader=reader, account=account)
+
+        result = self._agent_orchestrator().process(
+            task, build(), refresh_context=build,
+        )
+        try:
+            return self._apply_orchestration_result(task, result)
+        except AgentRunLeaseLostError:
+            return False
+
     def _process_agent_queued_task(
         self,
         conversation: DingTalkConversation,
