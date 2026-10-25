@@ -70,10 +70,13 @@ and one receipt. In each case 48 existing table contents remained unchanged.
 No production send occurred. One first-run harness setup attempt failed only
 its raw-file hash check because separately backed-up SQLite files had different
 physical bytes; the successful runs used an exact closed-file baseline and also
-checked semantic row preservation.
+checked semantic row preservation. After the latest `origin/main` integration,
+the `revision` case passed again against the updated native CLI output reader:
+Audit `return` then `approve`, four CLI calls, one substitute send and receipt,
+and the same 48-table preservation check.
 
 A5b implementation, copy inverse and native CLI acceptance are locally
-complete; latest upstream integration, deployment, production readback and
+complete and integrated with `origin/main`; deployment, production readback and
 post-readback cleanup remain. The original A5 native acceptance conflict is a
 separate issue and remains open. The old Project/Todo/Update write paths have
 already been retired, while their history readers still have consumers. No
