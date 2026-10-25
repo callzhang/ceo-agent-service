@@ -3794,7 +3794,7 @@ def _queue_attention_rows(store: AutoReplyStore, *, limit: int | None = None) ->
                       and lower(recovery.send_status) in ({recovered_placeholders})
                   )
                   and not (
-                    error_event.conversation_id like 'scheduled-task-run:%'
+                    coalesce(error_event.conversation_id, '') like 'scheduled-task-run:%'
                     and not exists (
                       select 1
                       from schedule_occurrences as source_run
