@@ -866,6 +866,14 @@ identity, malformed ownership/status, and source-read failures retain prior
 keys because they cannot prove that Derek's responsibility ended. Non-OA
 pending/processing/needs_human status alone remains excluded.
 
+After a verified append-task, DingTalk may keep the overall process RUNNING,
+mark Derek's original task PAUSED, and create a new RUNNING task for the added
+approver. A PAUSED task is not actionable by its prior owner: exclude it when
+building current-user pending task IDs and remove its exact old key from
+`pending_business_object_keys` after a complete, successful source read. If the
+scan is partial or the source cannot be read, keep the prior key as an
+unverified reminder until a later successful read confirms the task status.
+
 Current Attention also hides an older failed OA Reply Attempt only when a
 newer attempt for the same process is bound to its current Audit-approved
 candidate and the current `revert_task` execution is `done` with a verified DWS

@@ -1390,7 +1390,7 @@ def _oa_task_is_open(task: dict[str, Any]) -> bool:
         return True
     return status not in {
         "COMPLETED", "FINISHED", "CANCELED", "CANCELLED", "CLOSED",
-        "REVOKED", "TERMINATED", "RETURNED", "REJECTED",
+        "REVOKED", "TERMINATED", "RETURNED", "REJECTED", "PAUSED",
     }
 
 
@@ -1417,10 +1417,12 @@ def _oa_task_is_no_longer_current_user_action(
         status = _oa_task_field(task, ("status", "taskStatus", "task_status")).upper()
         if owner == current_user_id and status not in {
             "COMPLETED", "CANCELED", "CANCELLED", "FINISHED", "TERMINATED",
+            "PAUSED",
         }:
             return False
         if owner != current_user_id and status not in {
             "COMPLETED", "CANCELED", "CANCELLED", "FINISHED", "TERMINATED",
+            "PAUSED",
         } and not owner:
             no_longer_owned = False
     return no_longer_owned
