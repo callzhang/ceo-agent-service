@@ -31,10 +31,11 @@ backfill file 9 passed. The affected replay file exposed and now covers a
 fixed-input payload CAS omission: replay had checked the source identity and
 digest metadata but not the decoded stored body before restoring the frozen
 input. With the body comparison, the replay file passes 29/29. Ruff, Python
-parse and compile checks pass. This scoped code cleanup is not yet deployed,
-or a completion of A5b or the remaining Project/Todo/Update model review.
+parse and compile checks pass. This scoped code cleanup was included in
+`4bae03e41` and deployed. It does not delete these historical records or prove
+a replacement owner for their remaining readers.
 
-## A5b exact Reply receipt ownership — candidate validation, 2026-10-25
+## A5b exact Reply receipt ownership — production acceptance, 2026-10-25
 
 The read-only production preflight found 276 non-empty Reply OA result
 snapshots (91,758 SQLite characters / 99,292 UTF-8 bytes). Exactly 46 have one
@@ -75,21 +76,39 @@ the `revision` case passed again against the updated native CLI output reader:
 Audit `return` then `approve`, four CLI calls, one substitute send and receipt,
 and the same 48-table preservation check.
 
-A5b implementation, copy inverse and native CLI acceptance are locally
-complete and integrated with `origin/main`; deployment, production readback and
-post-readback cleanup remain. The original A5 native acceptance conflict is a
-separate issue and remains open. The old Project/Todo/Update write paths have
+A5b implementation, copy inverse, native CLI acceptance and production
+deployment/readback are complete. The original A5 native acceptance conflict is
+a separate issue and remains open. The old Project/Todo/Update write paths have
 already been retired, while their history readers still have consumers. No
 safe whole-row deletion or source-backed replacement owner has been proven, so
 that cleanup has no authorized data-deletion change in this phase.
 
-The first standard deployment attempt restarted the service and then failed its
-publication interface check because this release object lacked the required
-`verify_loaded()` method. The deployer's automatic inverse and checkout rollback
-completed; production remains Store23.1/Email54 with the original FK finding
-and `quick_check=ok`, and health recovered. Added the missing loaded-database
-readback and a regression call to the release test; 31 focused release and
-deployment-drain tests pass. A second standard deployment and readback remain.
+Production deployment completed on 2026-10-25 at commit
+`4bae03e41e4d67aa8b759e5d782db4cea784be59`; the running service PID was 9910
+and `/healthz` returned OK. The Store marker is `2026-10-25.1`, Email remains
+54, there are 46 receipt references, `quick_check=ok`, and the sole existing FK
+finding `runs(190042) -> tasks(1)` is unchanged. The SQLite file remains
+514,969,600 bytes; no physical shrink is claimed. Status, Attention, History,
+`/history`, `/scheduled-tasks`, and Attempt #15369 detail returned successfully.
+The Attempt detail rendered the referenced provider receipt after expanding
+“已核验回执”; the scheduled-task screen listed 14 tasks and recent run history.
+No production send occurred during acceptance.
+
+The first standard deployment attempt failed after restart because the release
+object lacked the required `verify_loaded()` method. Automatic inverse and
+checkout rollback completed, restoring Store23.1/Email54 with health recovered.
+The missing readback method and its regression were added; 31 focused release
+and deployment-drain tests passed before the successful second deployment.
+
+The successful deployment backup was verified (`complete` marker, `quick_check`
+and the original FK finding), and is at
+`backups/auto-reply-2026-10-25.sqlite3`. Cleanup of this backup and the 4.8 GB
+task-owned copy directory was authorized by Derek but the file-deletion command
+was rejected by the current automatic approval policy (“approval required,
+AskForApproval is Never”). They remain the only closeout blocker; no alternate
+deletion mechanism was used. Remove them when deletion is enabled, then verify
+both paths are absent. Keep the original A5 native-acceptance conflict and the
+unproven Project/Todo/Update historical-owner mapping as separate open items.
 
 ## Email business-model phase audit — 2026-10-24
 
