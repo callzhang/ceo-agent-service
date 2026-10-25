@@ -13,3 +13,16 @@ Audit 使用现有 `AuditAgentWireResult` 生成 Codex 原生 Schema。为满足
 - 生产配置的 `qwen_gpu4 / qwen3.8-27b / medium` 对照探针：三次使用原生 Schema 的隔离运行都未产生结果，完整轨迹显示模型调用 `exec_command`、`node_repl` 只读仓库查询，以及 Codex 未提供的 `request_user_input` / `update_goal`；没有连接业务 MCP 或执行外部动作。移除 Schema 并隔离用户工具后，同一服务 API 路线返回普通 JSON 并完成。结论是该服务 API 提供商尚未通过原生 Schema 验证；Audit 只在已验证的本地 OAuth 路线上选用原生 Schema，API 路线继续沿用原解析方式。
 
 这证明 Codex OAuth / gpt-6-luna 的原生 schema 接受、冷启动和续会话格式；尚未证明其他 service API 提供商兼容性，也不是生产部署或生产回读证据。
+
+
+## G2 认证无关原生格式候选（2026-10-25）
+
+用户最新指示允许G1待自然行为验收时先继续G2。候选只移除Codex Audit在schema选择、native解码、结果恢复指纹上的认证方式排除及多余内部参数；无审核规则、权限、prompt、session机制、配置或历史数据变更。
+
+服务API实际AuditRunner的approve/return回归先失败于命令缺少--output-schema；恢复指纹回归先失败于schema改变而指纹不变。修复后5项定向测试通过、70项未运行，涵盖真实角色命令、完整native解码、revision/digest绑定及schema选择/恢复指纹。随后只补一项中断恢复集成：真实角色运行保存完成的原生结果后模拟服务中断，使用完全相同的提交契约恢复，执行器不得再次调用，revision/digest仍绑定当前候选；1项通过、31项未运行。合计6项定向测试通过，先前5项未重跑。Ruff与diff检查通过。
+
+复用Qwen完整角色Audit session01a16f62-9cfd-7951-9809-d66c12895639的58/184行cold/resume，保存摘要重新核对一致；schema仍ca522ed1…，CLI仍0.163.0，提供商parser仍9bcfe249…；没有模型重跑。此格式证据不推广为当前全部业务规则验收。
+
+对原API失败Consumer session只补一次continue仍429（0工具调用），累计38行SHA4abecfeaf92a5229366fff007752793c9e309f9cbc2b86dd7b6787baad082132。无有效cold/resume结果，不继续重试。另确认现有AgentTurnProcess._session_for_route只为codex_oauth保留Audit请求session；qwen_gpu4匿名只读诊断返回None，CLI续跑成功不能代替服务续会话验收。
+
+**本候选未合并、未部署。** API容量恢复后补缺失API有效冷/续；非OAuth Audit服务接续需按既有路线/session绑定单独修正和验证，本候选不悄悄改变session机制。发布仍须满足原计划的配置路线验收及正式部署测试门禁，不做Qwen特例、不增加fallback或宽松解析。完整证据见[g2_native_audit_wiring.results.v1.json](../evals/trajectory_optimization/g2_native_audit_wiring.results.v1.json)。

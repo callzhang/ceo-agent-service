@@ -1,0 +1,71 @@
+{
+  "scope": "G2 Codex Audit native-format wiring candidate only. G1 remains pending natural behavior acceptance; latest user explicitly authorized proceeding with G2. No policy/tools/prompts/session changes.",
+  "source_base": "a15dc205f5ed63bd9ebe913b9b9bf79a1df42c1f",
+  "candidate_changes": [
+    "remove credential-specific native Audit schema exclusion",
+    "decode native Audit on every Codex credential mode",
+    "bind native Audit recovery fingerprint to current schema bytes"
+  ],
+  "local_tests": {
+    "fail_first": [
+      "service API approve missing --output-schema",
+      "service API return missing --output-schema",
+      "Audit recovery fingerprint did not change with schema bytes"
+    ],
+    "focused_result": "5 passed,70 deselected; actual API runner command + strict native decoder + candidate revision/digest binding + schema/recovery selectors",
+    "ruff": "pass",
+    "diff_check": "pass",
+    "independent_review": "No correctness blocker in native format candidate; approved for draft only. Followup read-only review confirms new completed-attempt recovery integration closes the local coverage gap. Reviewer reran no tests or models.",
+    "completed_attempt_recovery": "1 passed,31 deselected in 1.89s; full AgentTurnProcess.execute recovers completed native API Audit using identical submitted contract, original candidate binding and exact saved stream; model executor forbidden. Previous 5 tests not rerun.",
+    "total_passed": 6
+  },
+  "reused_evidence": {
+    "qwen_consumer": "final acceptance sections12-13; no rerun",
+    "oauth_and_G3": "previous passed cases; no rerun",
+    "qwen_audit_full_role": {
+      "session": "01a16f62-9cfd-7951-9809-d66c12895639",
+      "cold": {
+        "lines": 58,
+        "sha256": "846b2cd18a9593cdf422302d926f7fdc7f6a8df0f177313b2cfa6b7c7ca61309",
+        "tool_calls": 6
+      },
+      "resume": {
+        "lines": 184,
+        "sha256": "4c4cd21a66390301a4c34fb9c4a1f7943051120adb19efa17f715c4ac2a6e9d9",
+        "tool_calls": 19
+      },
+      "scope": "isolated CLI full native schema; not proof of service session selection or production activation"
+    },
+    "audit_schema_sha256": "ca522ed193ce692fae5a06177240203e4a3c0cf803b93b7e977382eebacd6937",
+    "current_codex_cli": "0.163.0",
+    "current_qwen_parser_sha256": "9bcfe24914a52cb4f4cd2fc45f47cdc0f62f1c4695172b0815f953a4b2d2be5f",
+    "parser_hash_matches_previously_verified_fix": true
+  },
+  "api_capacity_check": {
+    "phase": "continue",
+    "session_id": "01a16f8f-b637-7cc1-9686-315a03e40aeb",
+    "exit_code": 1,
+    "canonical_valid": false,
+    "native_lines": 38,
+    "native_sha256": "4abecfeaf92a5229366fff007752793c9e309f9cbc2b86dd7b6787baad082132",
+    "tool_calls": 0,
+    "terminal_error": "exceeded retry limit, last status: 429 Too Many Requests",
+    "codex_error_info": {
+      "response_too_many_failed_attempts": {
+        "http_status_code": 429
+      }
+    },
+    "scope": "one original failed Consumer session continue only; no valid cold-start or resume pass; no repeated role/route calls"
+  },
+  "existing_service_session_gap": {
+    "function": "AgentTurnProcess._session_for_route",
+    "fact": "For Audit, requested session is returned only when route.name == codex_oauth; all other routes return None. Candidate does not alter this mechanism.",
+    "read_only_diagnostic": {
+      "route": "qwen_gpu4",
+      "requested": "anonymous-existing-session",
+      "selected": null
+    },
+    "consequence": "Previously passed CLI same-session probes do not establish production non-OAuth Audit continuation."
+  },
+  "release_status": "Draft candidate, not merged/deployed. API route validation still capacity blocked; production non-OAuth Audit same-session wiring also remains an explicitly identified gap. No provider fallback, permissive parser or partial-route publish."
+}

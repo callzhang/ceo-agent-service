@@ -155,6 +155,7 @@ class CapturingExecutor:
         self.commands: list[list[str]] = []
         self.prompts: list[str] = []
         self.environments: list[dict[str, str]] = []
+        self.outputs: list[str] = []
 
     def __call__(self, command, *, on_stdout_line, **kwargs):
         if getattr(self, 'capture_active_events', None):
@@ -179,6 +180,7 @@ class CapturingExecutor:
                 item["text"] = json.dumps(output)
                 lines[index] = json.dumps(event)
             stdout = "\n".join(lines)
+        self.outputs.append(stdout)
         for line in stdout.splitlines():
             on_stdout_line(line)
         return ProcessRunResult(0, stdout, "")
@@ -830,3 +832,76 @@ def test_audit_builds_native_role_skill_config_once(setup, tmp_path, monkeypatch
     executor = CapturingExecutor(_wire())
     _runner(setup, executor).run(task, context, turn_attempt=0, parent_agent_run_id=parent.id)
     assert_single_role_skill_build(calls, expected, executor)
+
+
+@pytest.mark.parametrize("outcome", ["approve", "return"])
+def test_service_api_audit_uses_native_schema_and_bound_decoder(setup, outcome):
+    store, task, parent, context, config, _router = setup
+    executor = CapturingExecutor(_wire(outcome=outcome))
+    runner = _runner(setup, executor)
+    runner.forced_runtime_route = next(route for route in config.routes if route.name == "codex_api")
+    result = runner.run(task, context, turn_attempt=0, parent_agent_run_id=parent.id)
+    command = executor.commands[0]
+    assert "--output-schema" in command
+    assert command[command.index("--output-schema") + 1].endswith("audit_agent_native_output.schema.json")
+    assert result.result.outcome.value == outcome
+    assert result.result.proposal_revision == context.proposal_revision
+    assert result.result.candidate_digest == context.candidate_digest
+    assert store.get_agent_run(result.run_id).status == "completed"
+
+
+def test_completed_api_native_audit_recovers_without_running_executor(setup, monkeypatch):
+    import app.agent_turn_runner as turn_runner
+
+    store, task, parent, context, config, _router = setup
+    executor = CapturingExecutor(_wire())
+    runner = _runner(setup, executor)
+    runner.forced_runtime_route = next(route for route in config.routes if route.name == "codex_api")
+    complete = store.complete_agent_run
+    execute = turn_runner.AgentTurnProcess.execute
+    invocation = {}
+
+    def capture_execute(process, **kwargs):
+        invocation.update(process=process, kwargs=kwargs)
+        return execute(process, **kwargs)
+
+    monkeypatch.setattr(turn_runner.AgentTurnProcess, "execute", capture_execute)
+
+    class InterruptedAfterCompletedAttempt(RuntimeError):
+        pass
+
+    def interrupt(*_args, **_kwargs):
+        raise InterruptedAfterCompletedAttempt
+
+    monkeypatch.setattr(store, "complete_agent_run", interrupt)
+    with pytest.raises(InterruptedAfterCompletedAttempt):
+        runner.run(task, context, turn_attempt=0, parent_agent_run_id=parent.id)
+    run = store.get_agent_run_for_turn(task.id, task.execution_generation,
+        role=AgentRole.AUDIT, proposal_revision=0, turn_attempt=0)
+    attempts = store.list_agent_runtime_attempts(run.id)
+    assert len(attempts) == 1 and attempts[0].status == "completed"
+    assert attempts[0].route_name == "codex_api"
+    assert "decision" in json.loads(json.loads(executor.outputs[0].splitlines()[-1])["item"]["text"])
+
+    monkeypatch.setattr(store, "complete_agent_run", complete)
+
+    def saved_native(kind, session_id, start, end):
+        assert kind == attempts[0].runtime_kind
+        assert session_id == attempts[0].session_id
+        assert (start, end) == (attempts[0].transcript_start, attempts[0].transcript_end)
+        return executor.outputs[0]
+
+    monkeypatch.setattr(turn_runner, "read_native_result_stream", saved_native)
+
+    def forbidden_executor(*_args, **_kwargs):
+        pytest.fail("completed native Audit must recover without another model invocation")
+
+    # Recovery must use the identical submitted contract, rather than assemble
+    # a new prompt after the first attempt has changed the stored context.
+    invocation["process"].executor = forbidden_executor
+    recovered = execute(invocation["process"], **invocation["kwargs"])
+    assert recovered.result.outcome is AuditOutcome.APPROVE
+    assert recovered.result.proposal_revision == context.proposal_revision
+    assert recovered.result.candidate_digest == context.candidate_digest
+    assert store.get_agent_run(run.id).status == "completed"
+    assert len(store.list_agent_runtime_attempts(run.id)) == 1
