@@ -427,7 +427,7 @@ def test_replay_reopens_only_unsent_terminal_job(tmp_path, replay_status):
     assert store.get_meeting_alignment_job(sent_id).status == "sent"
 
 
-@pytest.mark.parametrize("delivery_suffix", ["", ":sensitive"])
+@pytest.mark.parametrize("delivery_suffix", ["", ":sensitive", ":target:targethash"])
 def test_replay_does_not_reopen_job_with_prepared_outbound(tmp_path, delivery_suffix):
     store = AutoReplyStore(tmp_path / "worker.sqlite3")
     job_id = seed_job(store, meeting_id="prepared-replay", status="failed")

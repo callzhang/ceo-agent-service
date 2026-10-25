@@ -14388,7 +14388,7 @@ class AutoReplyStore(LogicalRunStoreMixin, ReviewedCandidateStoreMixin):
             delivery_key = get_meeting_delivery_key(db, job_id)
             target_key_prefix = delivery_key + ":target:"
             if db.execute(
-                f"select 1 from ({OUTBOUND_POSTFIX_RECEIPT_SQL}) outbound "
+                f"select 1 from ({OUTBOUND_POSTFIX_SQL}) outbound "
                 "where outbound.channel='dingtalk' and (outbound.delivery_key in (?,?) "
                 "or substr(outbound.delivery_key,1,length(?))=?) limit 1",
                 (delivery_key, delivery_key + ":sensitive", target_key_prefix, target_key_prefix),

@@ -1508,9 +1508,9 @@ meeting job ID 绑定模型、音频 SHA-256、分段时间和完整分块数，
 
 Meeting planner 生成的 `audit_summary` 只是候选字段，不是 Audit。每个候选在进入 `ready_to_send` 前必须由独立、model-only（无原生工具或 MCP）的 Audit 调用复核会议来源、群候选证据、准确收件目标、正文事实和披露范围。会议原文明确把后续工作分配给精确收件人时，该分工本身可证明向其分享完成任务所需的简要结论和必要背景；不要求另有逐字发送指示，也不能据此扩大到无关或敏感内容，职位本身不构成授权。运行器传来的 Codex JSONL 先提取最终 assistant 消息；路由器已规范化的纯 JSON 则直接解析，两种输入均执行相同结果模型校验和候选 SHA-256 绑定校验。审核结果以 `_service_audit` 元数据与原候选共同保存，并绑定候选 SHA-256；新投递与人工重排入口都要求重新验证该绑定且结果为 `approve`。没有发送回执、没有活动领取，且因候选与既有收件目标绑定冲突失败的旧任务，可由最新 Attempt 通过明确的 audit-only 恢复入口重新读取会议来源并审核原冻结候选；若上一次 Audit 为 `return`，同一入口可在用户明确请求后再次复核。入口要求精确候选 SHA-256，不重新生成或改写目标/正文，并先剥离旧审核封套再解析候选。只有同一候选的新独立 Audit `approve` 才以 CAS 重新进入原投递 worker；`return`、`reject`、Audit 错误或候选变化均保留失败，不触发发送。`return` 携带 rule/observation/requested_revision 并进入最多三轮的反馈修订，新 Consumer revision 使用独立 Meeting run 与 Audit runtime workload；达到上限仍未通过才转 `needs_human`。`reject` 转人工，缺失、无效或摘要不匹配按失败关闭，均不得产生新投递。独立 Audit 的外部依赖暂时不可用时，沿用 Meeting 原有外部依赖退避重试；无效审核结果按失败处理。旧的未审核 `ready_to_send` 记录也会在投递前失败关闭。已存在 provider 回执的只读核实与状态恢复继续沿用原有回执、正文及目标校验，不要求为既成外部效果补造审核。收件人准备绑定仍不可变；新会议投递键按规范化收件目标区分，旧键只有在已绑定目标与本次目标完全一致时才复用，避免跨目标误用回执。重跑与来源恢复仍会拦截已有准备动作；provider 回执与幂等投递保护不变。
 
-定时 Meeting 重放仅重新开启没有结果、也没有已准备钉钉外发动作的失败或 `no_action` 任务。普通和敏感版本的 prepared outbound 都由原有投递恢复路径处理；重放不能清除后重新分析其既定动作，也不能改变已绑定收件人。
+定时 Meeting 重放仅重新开启没有结果、也没有已准备钉钉外发动作的失败或 `no_action` 任务。普通、敏感和目标绑定版本的 prepared outbound 即使还没有 provider 回执，也会阻止重放；这些动作由原有投递恢复路径处理，重放不能清除后重新分析其既定动作，也不能改变已绑定收件人。
 
-Meeting planner 与 Audit 的 RuntimeAttempt 分别使用 `meeting` 和 `meeting_audit` workload kind，并以准确 Meeting Run 十进制 ID 为 key；native `parent_id` 都指向该 Run。显式迁移转换器保留新 source 的数字 `meeting_audit` key，也只在转换中处理历史 `meeting` 加 `:audit` key。重放检查读取 TaskBusinessKey 中已保存的公开投递键及敏感版本，确保 Task ID 重映射后仍识别已有 prepared outbound。
+Meeting planner 与 Audit 的 RuntimeAttempt 分别使用 `meeting` 和 `meeting_audit` workload kind，并以准确 Meeting Run 十进制 ID 为 key；native `parent_id` 都指向该 Run。显式迁移转换器保留新 source 的数字 `meeting_audit` key，也只在转换中处理历史 `meeting` 加 `:audit` key。重放检查读取 TaskBusinessKey 中已保存的公开投递键，以及对应的敏感和目标派生版本，确保 Task ID 重映射后仍识别已有 prepared outbound。
 
 Meeting Codex 命令设置原生 `project_doc_max_bytes=0`，不再额外注入工作区 `AGENTS.md`。会议来源、工作人格和本轮冻结的托管 Skill 仍由服务提交；全局原生指令、Schema 和独立会话保持原样。
 
