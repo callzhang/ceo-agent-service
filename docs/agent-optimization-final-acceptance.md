@@ -306,3 +306,10 @@ Qwen Consumer直接复用第13节同案例cold/resume、按需schema完整读回
 **生产回读与终点：**主进程PID6533未变，实际PATH解析到上述二进制且SHA相等；DWS逐次启动，未重启CEO。healthz正常，Attention4、History38236；安装前后system_health既有finding均2项，未扩展修复。生产HEAD为`dc07ddcbed7ee48896879db37b06d162a97a98d5`。单次只读查询截至2026-10-25 22:40:12 UTC，安装后新增Consumer/Audit Run为0，因此**代码已发布，生产非重复行为待回读，G1尚不能宣布最终完成**。等待首个自然相关样本，不人工生成、重放或无限轮询。G1交付前不进入G2；API429及非OAuth Audit启用缺口维持原记录，G3不重开。
 
 版本、回归、安装和生产摘要见[发布证据](../evals/trajectory_optimization/g1_highlight_semantics_release.results.v1.json)。
+
+
+### G1 自然样本续查（2026-10-25 15:52 PDT）
+
+单次只读检查截至22:52:06 UTC，安装后新增Consumer/Audit Run仍为0，最新完成Run399428在19:11:14 UTC，早于22:39:26安装。进一步核对正在调度的定时项：没有active RuntimeAttempt或running Agent Run；occurrence406331/406332尚为pending且execution_id为空，不将调度租约计作已执行文档样本。DWS二进制仍为发布SHA3105fda3…，生产HEADdc07ddcbe，服务PID6533运行、healthz正常，既有system_health finding仍2项。
+
+**G1保持已发布、生产非重复行为待验收；没有证据证明问题已消失或仍然发生。** 本轮未触发任务、回放、写文档、调用模型或重跑已通过验证；未进入G2。后续仅核对首个实际发生的自然文档写入及后续行为，具体检查摘要追加于现有发布证据natural_followup_checks。
