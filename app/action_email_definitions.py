@@ -587,8 +587,11 @@ EMAIL_COMPOSITE_KEYS = {
 POSTFIX_ACTION_TYPES = (
     "outbound_postfixes", "outbound_postfix_receipts", "native_reply_dispatches",
 )
+# idx_actions_public_id is partial on record_type<>'action' as well. SQLite cannot derive
+# that from record_type='<kind>', so a reader that omits it never matches the index and
+# falls back to a scan of the kind through idx_actions_email_public_key.
 EMAIL_NUMERIC_SCOPE = (
-    "record_type<>'external_action_results' "
+    "record_type<>'action' and record_type<>'external_action_results' "
     "and record_type not in (" + ",".join(repr(kind) for kind in POSTFIX_ACTION_TYPES) + ") "
     "and record_type<>'sent_reply_observers' "
     "and record_type not in (" + ",".join(repr(kind) for kind in EMAIL_COMPOSITE_KEYS) + ")"

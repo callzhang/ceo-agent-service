@@ -1,3 +1,4 @@
+from tests.support.native_task_fields import set_native_task_fields
 import errno
 from datetime import datetime, timezone
 from datetime import timedelta
@@ -59,7 +60,6 @@ from app.outbound_postfix import compose_outbound_postfix
 from app.action_storage import insert_action, update_action
 from app.store import AgentRole, AutoReplyStore, REPLY_TASK_SQL
 from app.task12_storage import task12_projection
-from app.task8_storage import register_task8_functions, task8_set_parts
 from app.skill_features import FeatureRegistry
 from app.runtime_environment import central_python
 from app.worker import (
@@ -80,15 +80,10 @@ CONTEXT_HEADER = "上下文消息（自上次回复后的新信息，最多 20 �
 
 def _update_reply_task(db, task_id, *, values=None, update_sql=None):
     """Mutate one current reply task through its Task8 payload projection."""
-    register_task8_functions(db)
-    parts = task8_set_parts(
-        "reply_tasks", values or {}, update_sql=update_sql or {}
-    )
-    return db.execute(
-        f"update tasks set {parts.sql} "
-        "where record_type='reply_tasks' and cast(legacy_key as integer)=?",
-        (*parts.parameters, task_id),
-    )
+    if values:
+        set_native_task_fields(db, "reply_tasks", task_id, values)
+    for column, expression in (update_sql or {}).items():
+        db.execute(f"update tasks set {column}={expression} where id=?", (task_id,))
 
 
 def test_oa_group_trigger_uses_cached_applicant_open_id(tmp_path):

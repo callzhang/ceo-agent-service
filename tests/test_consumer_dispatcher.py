@@ -1,5 +1,7 @@
 from __future__ import annotations
+from tests.support.native_task_fields import set_native_task_fields
 from app.run_storage import SCHEDULED_RUN_SQL
+from app.store import REPLY_TASK_SQL
 
 from concurrent.futures import Future, ThreadPoolExecutor
 from datetime import UTC, datetime, timedelta, timezone
@@ -158,14 +160,7 @@ def _okr_review(store: AutoReplyStore, *, index: int = 1) -> int:
 
 
 def _update_task_facts(db, kind: str, public_id: int, values: dict[str, object]) -> None:
-    from app.task8_storage import task8_set_parts
-    from app.task_storage import task_id_expression
-
-    parts = task8_set_parts(kind, values, payload_source="tasks.payload_json")
-    db.execute(
-        f"update tasks set {parts.sql} where id={task_id_expression(kind, '?')}",
-        (*parts.parameters, public_id),
-    )
+    set_native_task_fields(db, kind, public_id, values)
 
 
 def _insert_claim_lease(
@@ -1943,13 +1938,12 @@ def test_expired_live_owner_hides_dispatcher_error_until_owner_is_dead(
     now_text = NOW.strftime("%Y-%m-%d %H:%M:%S")
     expired = (NOW - timedelta(seconds=1)).strftime("%Y-%m-%d %H:%M:%S")
     with store._immediate_write_transaction() as db:
-        from app.task20_definitions import task20_projection
 
         reply_id = db.execute(
-            f"select id from ({task20_projection('reply_tasks')}) where channel='dingtalk'"
+            f"select id from ({REPLY_TASK_SQL}) where channel='dingtalk'"
         ).fetchone()[0]
         scheduled_execution_id = db.execute(
-            f"select id from ({task20_projection('reply_tasks')}) where channel='scheduled'"
+            f"select id from ({REPLY_TASK_SQL}) where channel='scheduled'"
         ).fetchone()[0]
         db.execute(
             "update runs set skip_or_error_reason='scheduled error' where record_type='scheduled_task_runs' and cast(legacy_key as integer)=?",
@@ -2049,12 +2043,11 @@ def test_error_metrics_skip_owner_checks_and_payload_projection_for_no_error_bac
     expired = (NOW - timedelta(seconds=1)).strftime("%Y-%m-%d %H:%M:%S")
     now_text = NOW.strftime("%Y-%m-%d %H:%M:%S")
     with store._immediate_write_transaction() as db:
-        from app.task20_definitions import task20_projection
 
         ids = [
             row[0]
             for row in db.execute(
-                f"select id from ({task20_projection('reply_tasks')})"
+                f"select id from ({REPLY_TASK_SQL})"
             ).fetchall()
         ]
         for source_id in ids:
@@ -2124,11 +2117,10 @@ def test_dispatcher_metrics_only_report_errors_from_actionable_sources(
             "update runs set dispatch_status='failed', skip_or_error_reason='terminal scheduled failure' where record_type='scheduled_task_runs' and cast(legacy_key as integer)=?",
             (scheduled.id,),
         )
-        from app.task20_definitions import task20_projection
 
         reply_ids = {
             str(row["id"]): str(row["channel"])
-            for row in db.execute(task20_projection("reply_tasks"))
+            for row in db.execute(REPLY_TASK_SQL)
         }
         for public_id, channel in reply_ids.items():
             _update_task_facts(
