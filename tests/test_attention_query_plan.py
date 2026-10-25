@@ -1,5 +1,6 @@
 from pathlib import Path
 import json
+from app.store import REPLY_TASK_SQL
 import sqlite3
 from datetime import datetime, timezone
 
@@ -9,9 +10,10 @@ from app.audit_web import _queue_attention_rows, _reply_task_queue_snapshot, _wo
 from app.action_storage import update_action
 import app.store as store_module
 from app.store import AgentRole, AutoReplyStore
-from app.task8_storage import task8_insert_parts, task8_set_parts
-from app.task20_definitions import task20_column, task20_projection
+from app.task8_storage import task8_insert_parts
+from app.task20_definitions import task20_column
 from app.work_summary_payload import decode_work_summary_payload
+from tests.support.native_task_fields import _TASK_KINDS, set_native_task_fields
 
 
 
@@ -21,9 +23,11 @@ def insert_task(db, kind, values):
 
 
 def _update_task(db, kind, values, where="1", parameters=()):
-    parts = task8_set_parts(kind, values)
-    return db.execute(f"update tasks set {parts.sql} where record_type=? and {where}",
-                      (*parts.parameters, kind, *parameters))
+    ids = [row[0] for row in db.execute(
+        f"select id from tasks where kind=? and {where}", (_TASK_KINDS[kind], *parameters))]
+    for task_id in ids:
+        set_native_task_fields(db, kind, task_id, values)
+    return len(ids)
 
 
 def _failed_task(store: AutoReplyStore, status: str):
@@ -168,7 +172,7 @@ def test_attention_excludes_typed_unsubscribe_failures_but_keeps_failed_history(
     }
     with store._connect() as db:
         row = db.execute(
-            f"select status,error from ({task20_projection('reply_tasks')}) where id=?",
+            f"select status,error from ({REPLY_TASK_SQL}) where id=?",
             (unsubscribe.id,),
         ).fetchone()
         assert tuple(row) == ("failed", "unsubscribe_operation_rejected:ValueError")

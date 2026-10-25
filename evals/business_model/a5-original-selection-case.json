@@ -1,0 +1,29 @@
+{
+  "case": "business-model-specialized-actions-native.v1",
+  "instruction": "这是隔离数据库副本中的真实CLI验收，材料均为合成测试数据。请用read_task_artifact(name=\"case-input.json\")核对记录数量和units总和。材料明确没有约定本类离线验收的结果发布规则，请提交一项可复用的task_class规则选择：execute表示以后本类验收通过后向当前来源测试群发送带verification_tag、条目数和总和的简短汇总；stop表示本类验收只保留本地结果、不发送通知。请输出真实的needs_human候选和完整依据，先通过read_system_action_contract读取dingtalk-chat的send_group_message契约，再给execute绑定可执行方案，给stop绑定skipped终态。人尚未选择，不要自行执行。系统只会用内存替身执行所选方案，绝不真实发送。所有规则仅适用本合成验收任务，不写用户偏好或Memory；不读真实消息、不访问网络、不调用其他工具。",
+  "material": {
+    "verification_tag": "NATIVE_SELECTION_cf6595fcdc",
+    "records": [
+      {
+        "units": 23
+      },
+      {
+        "units": 27
+      },
+      {
+        "units": 50
+      }
+    ],
+    "task_class": "isolated_copy_acceptance_notifications",
+    "notification_policy": null,
+    "policy_scope": "This synthetic acceptance only; never real user preferences or external delivery."
+  },
+  "evidence": {
+    "trajectory": "/Users/derek/.codex/sessions/2026/10/19/rollout-2026-10-19T20-47-58-01a1576c-50d7-7a62-a69e-8e39799b98e5.jsonl",
+    "trajectory_sha256": "b60070998a580e861bf8c99ff4340cb0d91f44d4670c57a742d32235e51df4b6",
+    "trigger_line": 7,
+    "material_line": 30,
+    "instruction_sha256": "a2463b32f9770d0c550a0932033732493737922f117aa1c6391b58012aa08164",
+    "material_sha256": "61540eeeab07bcd80622c3fbdaec840f403f9b7721943bd57941fe1b99584f48"
+  }
+}

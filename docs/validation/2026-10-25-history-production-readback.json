@@ -1,0 +1,94 @@
+{
+  "health": {
+    "ok": true,
+    "status": "ok"
+  },
+  "service": {
+    "state": "running",
+    "pid": "79189"
+  },
+  "summary": {
+    "queue_count": 11,
+    "pending": 6,
+    "processing": 0,
+    "failed": 28,
+    "retryable": 0,
+    "attention": 4
+  },
+  "attention_keys": [
+    "items",
+    "meta"
+  ],
+  "history_count": 20,
+  "legacy_project_id": 140,
+  "legacy_todo_count": 84,
+  "historical_receipt1_present": true,
+  "/api/task-management/search": 404,
+  "/api/task-management/projects/140": 404,
+  "attention_returned_items": 4,
+  "attention_meta_total": 4,
+  "deployed_commit": "a6ab02a77be6da0c7e64e3db1e9a145e35f437f3",
+  "store_version": "2026-10-25.2",
+  "email_version": 54,
+  "quick_check": "ok",
+  "foreign_key_findings": [
+    [
+      "runs",
+      190042,
+      "tasks",
+      1
+    ]
+  ],
+  "reply_receipt_references": 46,
+  "predeploy_summary": {
+    "queue_count": 11,
+    "pending": 6,
+    "processing": 0,
+    "failed": 28,
+    "retryable": 0,
+    "attention": 4
+  },
+  "schema_changed": false,
+  "database_file_bytes": 514969600,
+  "code_rollback_copy": {
+    "source": "2fb17e859",
+    "new_business_task_id": 852,
+    "read_new_native_task": 4503599627929214,
+    "history_readable": true,
+    "current_code_reopen": true
+  },
+  "copy_schema_preservation": [
+    {
+      "file": "baseline.sqlite3",
+      "schema_sha256": "dd4a93fd2094a96b18717ed8cdf99fd7c5cdb0ecbc06ba7ded3ad498b7aec609",
+      "current": true,
+      "fk": [
+        [
+          "runs",
+          190042,
+          "tasks",
+          1
+        ]
+      ]
+    },
+    {
+      "file": "candidate.sqlite3",
+      "schema_sha256": "dd4a93fd2094a96b18717ed8cdf99fd7c5cdb0ecbc06ba7ded3ad498b7aec609",
+      "current": true,
+      "fk": [
+        [
+          "runs",
+          190042,
+          "tasks",
+          1
+        ]
+      ]
+    }
+  ],
+  "backup_verified": {
+    "path": "/Users/derek/Library/Application Support/ceo-agent-service/backups/auto-reply-2026-10-25.sqlite3",
+    "complete": true,
+    "quick_check": "ok"
+  },
+  "native_test_task_absent_in_production": true
+}

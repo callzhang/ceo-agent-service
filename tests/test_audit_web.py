@@ -55,7 +55,6 @@ from app.audit_web import (
     render_log_list,
     render_oa_approval_detail,
     render_task_project_detail,
-    render_tasks_page,
     render_tutorial_page,
     render_settings_page,
     render_workers_page,
@@ -1998,16 +1997,16 @@ def test_render_attempt_list_links_task_history_to_task_detail(tmp_path: Path):
     assert "task-history-item" not in html
     assert (
         'class="attempt-item history-kind-task" role="link" tabindex="0" '
-        f'data-history-detail-href="/tasks/{project_id}#follow-up-{follow_up_id}"'
+        f'data-history-detail-href="/tasks/legacy-project/{project_id}#follow-up-{follow_up_id}"'
         in html
     )
     assert '<span class="history-type-badge history-type-task">Task</span>' in html
     assert (
-        f'data-history-detail-href="/tasks/{project_id}#follow-up-{follow_up_id}"'
+        f'data-history-detail-href="/tasks/legacy-project/{project_id}#follow-up-{follow_up_id}"'
         in html
     )
     assert "onclick=\"if (!event.target.closest('a'))" not in html
-    assert f"/tasks/{project_id}#follow-up-{follow_up_id}" in html
+    assert f"/tasks/legacy-project/{project_id}#follow-up-{follow_up_id}" in html
     assert "查看 task" in html
     assert f'id="todo-{todo_id}"' in detail
     assert f'id="follow-up-{follow_up_id}"' in detail
@@ -2033,7 +2032,7 @@ def test_render_attempt_list_shows_draft_follow_up_as_scheduled(tmp_path: Path):
 
     assert f"#follow-up-{follow_up_id}" in html
     assert (
-        f'data-history-detail-href="/tasks/{project_id}#follow-up-{follow_up_id}"'
+        f'data-history-detail-href="/tasks/legacy-project/{project_id}#follow-up-{follow_up_id}"'
         in html
     )
     assert '<span class="history-type-badge history-type-task">Task</span>' in html
@@ -2844,19 +2843,15 @@ def test_table_toolbar_uses_shared_component_and_live_search(tmp_path: Path):
     store = AutoReplyStore(tmp_path / "worker.sqlite3")
 
     history_html = render_attempt_list(store)
-    tasks_html = render_tasks_page(store)
     logs_html = render_log_list(store)
 
     assert 'data-table-toolbar="history"' in history_html
-    assert 'data-table-toolbar="tasks"' in tasks_html
     assert 'data-table-toolbar="logs"' in logs_html
     assert 'data-live-search="server"' in history_html
     assert 'data-live-search="server"' in logs_html
-    assert 'data-live-search="server"' not in tasks_html
     assert history_html.count("data-table-toolbar-live-search") == 1
     assert logs_html.count("data-table-toolbar-live-search") == 1
     assert 'data-live-search-input' in history_html
-    assert 'data-live-search-input' in tasks_html
     assert 'data-live-search-input' in logs_html
     assert 'params.delete("page")' in history_html
     assert 'setTimeout(submitSearch, 250)' in logs_html
@@ -3553,7 +3548,6 @@ def test_top_nav_highlights_current_page_and_disables_current_link(
     user_feedback_html = render_user_feedback_list(store)
     config_html = render_config_page(db_path=store.path)
     errors_html = render_error_list(store)
-    tasks_html = render_tasks_page(store)
     workers_html = render_workers_page(store)
 
     assert history_html.index('<a class="nav-item" href="/">Agent</a>') < history_html.index(
@@ -3580,9 +3574,6 @@ def test_top_nav_highlights_current_page_and_disables_current_link(
     assert "Codex Sessions" not in history_html
 
     assert '<span class="nav-item active" aria-current="page">Settings</span>' in errors_html
-
-    assert '<span class="nav-item active" aria-current="page">Tasks</span>' in tasks_html
-    assert '<a class="nav-item" href="/tasks">Tasks</a>' not in tasks_html
 
     assert '<span class="nav-item active" aria-current="page">Settings</span>' in workers_html
 
@@ -4156,438 +4147,6 @@ def test_tutorial_confirm_route_rejects_non_confirmable_step(tmp_path: Path):
     assert response.status_code == 404
 
 
-def test_tasks_page_renders_projects_and_todos_without_global_followups(tmp_path: Path):
-    store = AutoReplyStore(tmp_path / "task.sqlite3")
-    project_id = seed_legacy_work_project(store,
-        title="售前知识库建设",
-        category="sales",
-        status="active",
-        background="销售支持项目。",
-        current_state="整理中",
-        next_step="补齐来源链接",
-    )
-    todo_id = seed_legacy_work_todo(store,
-        project_id=project_id,
-        title="补齐来源链接",
-        status="open",
-        deadline_at="2099-06-20 18:00:00",
-    )
-    seed_legacy_work_todo(store,
-        project_id=project_id,
-        title="整理销售材料",
-        status="done",
-        deadline_at="2026-06-11 18:00:00",
-    )
-    store.create_follow_up_draft(
-        project_id=project_id,
-        todo_id=todo_id,
-        owner_name="Alex",
-        target_conversation_id="cid-1",
-        target_kind="group",
-        question_text="来源链接补齐到哪一步了？",
-        status="draft",
-    )
-
-    html = render_tasks_page(store)
-
-    assert "售前知识库建设" in html
-    assert "补齐来源链接" in html
-    assert "来源链接补齐到哪一步了" not in html
-    assert "Pending follow-ups" not in html
-    assert f"/tasks/{project_id}" in html
-    assert '<section class="tasks-page">' in html
-    assert '<section class="card">' not in html
-    assert '<span id="tasks-count" class="tasks-count">1 tasks</span>' in html
-    assert 'id="task-search-input"' in html
-    assert "Search</button>" not in html
-    assert 'id="tasks-table"' in html
-    assert "tabulator-tables@6.4.0/dist/css/tabulator.min.css" in html
-    assert "tabulator-tables@6.4.0/dist/js/tabulator.min.js" in html
-    assert 'headerFilter: "select"' in html
-    assert ".tabulator-row.tabulator-selectable:hover" in html
-    assert "background-color:#f5faff" in html
-    assert 'layout: "fitColumns"' in html
-    assert 'layout: "fitDataStretch"' not in html
-    assert "variableHeight: true" in html
-    assert 'title: "Status"' in html
-    assert 'title: "Category"' in html
-    assert 'id="task-sort"' not in html
-    assert 'class="task-sort-link' not in html
-
-    rows = task_script_json(html, "tasks-data")
-    assert len(rows) == 1
-    row = rows[0]
-    assert row["title"] == "售前知识库建设"
-    assert row["status"] == "in progress"
-    assert row["category"] == "sales"
-    assert "priority" not in row
-    assert "riskLevel" not in row
-    assert row["progressSummary"] == "1/2 (50%)"
-    assert row["detailUrl"] == f"/tasks/{project_id}"
-    assert row["todos"][0]["title"] == "补齐来源链接"
-    assert row["todos"][0]["due"].startswith("2099-06-21")
-    assert row["todos"][0]["done"] is False
-    assert row["todos"][1]["title"] == "整理销售材料"
-    assert row["todos"][1]["done"] is True
-    assert 'title: "Progress"' in html
-    assert "progress-bar" in html
-    assert 'title: "Open"' not in html
-    assert 'table.on("rowClick"' in html
-    assert "window.location.href = row.getData().detailUrl" in html
-    assert "<a class=\"task-project-title\"" not in html
-    assert 'title: "ToDos", field: "todoCount", minWidth: 320, widthGrow: 2' in html
-
-
-def test_tasks_page_todo_cell_limits_visible_items(tmp_path: Path):
-    store = AutoReplyStore(tmp_path / "task.sqlite3")
-    project_id = seed_legacy_work_project(store,
-        title="多待办项目",
-        category="projects",
-        status="active",
-    )
-    for index in range(5):
-        seed_legacy_work_todo(store,
-            project_id=project_id,
-            title=f"待办 {index + 1}",
-            status="open",
-        )
-
-    html = render_tasks_page(store)
-    rows = task_script_json(html, "tasks-data")
-
-    assert len(rows[0]["todos"]) == 5
-    assert "todos.slice(0, 3)" in html
-    assert "todo-total" in html
-    assert "总共 ${todos.length} 条" in html
-
-
-def test_tasks_page_renders_sent_todos_with_owner_project_filters(tmp_path: Path):
-    store = AutoReplyStore(tmp_path / "task.sqlite3")
-    project_id = seed_legacy_work_project(store,
-        title="客户交付",
-        category="projects",
-        status="active",
-    )
-    todo_id = seed_legacy_work_todo(store,
-        project_id=project_id,
-        title="给客户同步验收 ETA",
-        description="确认交付验收时间和阻塞。",
-        owner_user_id="owner-1",
-        owner_name="Alex",
-        status="open",
-        deadline_at="2026-07-01 18:00:00",
-    )
-    seed_legacy_todo_link(store,
-        work_todo_id=todo_id,
-        dingtalk_task_id="dt-task-1",
-        executor_user_id="owner-1",
-        executor_name="Alex",
-        title_snapshot="给客户同步验收 ETA：来源于客户群红灯风险",
-        deadline_at_snapshot="2026-07-01 18:00:00",
-        priority_snapshot="P1",
-        status="active",
-        last_push_at="2026-06-27 09:00:00",
-    )
-    store.create_follow_up_draft(
-        project_id=project_id,
-        todo_id=todo_id,
-        owner_user_id="owner-1",
-        owner_name="Alex",
-        target_conversation_id="cid-1",
-        target_kind="group",
-        question_text="基于客户群红灯风险，请确认验收 ETA。",
-        status="sent",
-        sent_at="2026-06-27 10:00:00",
-    )
-
-    html = render_tasks_page(store)
-    rows = task_script_json(html, "sent-todos-data")
-    filters = task_script_json(html, "sent-todos-filters")
-
-    assert "Sent TODOs" in html
-    assert 'id="sent-todos-table"' in html
-    assert 'id="sent-todo-owner-filter"' in html
-    assert 'id="sent-todo-project-filter"' in html
-    assert 'title: "Original Text"' in html
-    assert "sent-todo-search-input" in html
-    assert "typeFilter.addEventListener" in html
-    assert "ownerFilter.addEventListener" in html
-    assert "projectFilter.addEventListener" in html
-    assert len(rows) == 2
-    assert rows[0]["kindLabel"] == "Follow-up"
-    assert rows[0]["originalText"] == "基于客户群红灯风险，请确认验收 ETA。"
-    assert rows[0]["detailUrl"] == f"/tasks/{project_id}#todo-{todo_id}"
-    assert rows[1]["kindLabel"] == "DingTalk Todo"
-    assert rows[1]["originalText"] == "给客户同步验收 ETA：来源于客户群红灯风险"
-    assert filters["owners"] == ["Alex"]
-    assert filters["projects"] == ["客户交付"]
-    assert filters["types"] == ["DingTalk Todo", "Follow-up"]
-
-
-def test_tasks_page_filters_projects_by_full_text_query(tmp_path: Path):
-    store = AutoReplyStore(tmp_path / "task.sqlite3")
-    matching_project_id = seed_legacy_work_project(store,
-        title="售前知识库建设",
-        category="sales",
-        status="active",
-        owner_name="Alex",
-        background="销售支持项目。",
-        facts_json=json.dumps(
-            [
-                {
-                    "description": "需要补齐来源链接",
-                    "source": "reply_attempt:7",
-                    "created": "2026-06-07",
-                    "updated": "2026-06-07",
-                }
-            ],
-            ensure_ascii=False,
-        ),
-    )
-    seed_legacy_work_todo(store,
-        project_id=matching_project_id,
-        title="补齐来源链接",
-        owner_name="Alex",
-        status="open",
-    )
-    seed_legacy_work_project(store,
-        title="招聘专员圆桌",
-        category="recruiting",
-        status="active",
-        owner_name="Bea",
-        background="候选人流程讨论。",
-    )
-
-    html = render_tasks_page(store, query="来源链接 Alex")
-
-    assert "售前知识库建设" in html
-    assert "补齐来源链接" in html
-    assert 'value="来源链接 Alex"' in html
-    assert '<span id="tasks-count" class="tasks-count">2 tasks</span>' in html
-    initial = task_script_json(html, "tasks-initial-state")
-    rows = task_script_json(html, "tasks-data")
-    assert initial["query"] == "来源链接 Alex"
-    assert {row["title"] for row in rows} == {"售前知识库建设", "招聘专员圆桌"}
-    assert "来源链接" in next(row for row in rows if row["title"] == "售前知识库建设")["search"]
-    assert "alex" in next(row for row in rows if row["title"] == "售前知识库建设")["search"]
-
-
-def test_tasks_page_paginates_and_preserves_search_params(tmp_path: Path):
-    store = AutoReplyStore(tmp_path / "task.sqlite3")
-    for index in range(25):
-        project_id = seed_legacy_work_project(store,
-            title=f"候选人项目 {index + 1:02d}",
-            category="recruiting",
-            status="active",
-            background="候选人流程。",
-        )
-        seed_legacy_work_todo(store,
-            project_id=project_id,
-            title=f"补齐候选人材料 {index + 1:02d}",
-            status="open",
-        )
-
-    html = render_tasks_page(store, query="候选人", page=2, page_size=20)
-
-    assert '<span id="tasks-count" class="tasks-count">25 tasks</span>' in html
-    assert 'class="table-toolbar"' in html
-    assert 'class="table-toolbar-search"' in html
-    assert '<select id="task-type-filter"' in html
-    assert 'id="tasks-pages"' in html
-    assert '<option value="20" selected>20/页</option>' in html
-    assert '<span id="tasks-total" class="table-toolbar-total">共 25 条</span>' in html
-    initial = task_script_json(html, "tasks-initial-state")
-    rows = task_script_json(html, "tasks-data")
-    assert initial["query"] == "候选人"
-    assert initial["page"] == 2
-    assert initial["pageSize"] == 20
-    assert "候选人项目 05" in html
-    assert "候选人项目 25" in html
-    assert len(rows) == 25
-
-
-def test_tasks_page_respects_page_size(tmp_path: Path):
-    store = AutoReplyStore(tmp_path / "task.sqlite3")
-    for index in range(25):
-        seed_legacy_work_project(store,
-            title=f"项目 {index + 1:02d}",
-            category="projects",
-            status="active",
-        )
-
-    html = render_tasks_page(store, page_size=50)
-
-    assert '<span id="tasks-count" class="tasks-count">25 tasks</span>' in html
-    assert '<option value="50" selected>50/页</option>' in html
-    assert task_script_json(html, "tasks-initial-state")["pageSize"] == 50
-    assert "项目 01" in html
-    assert "项目 25" in html
-
-
-def test_tasks_page_filters_by_category(tmp_path: Path):
-    store = AutoReplyStore(tmp_path / "task.sqlite3")
-    seed_legacy_work_project(store,
-        title="招聘项目",
-        category="recruiting",
-        status="active",
-    )
-    seed_legacy_work_project(store,
-        title="销售项目",
-        category="sales",
-        status="active",
-    )
-
-    html = render_tasks_page(store, category="recruiting")
-
-    assert "招聘项目" in html
-    assert "销售项目" in html
-    assert task_script_json(html, "tasks-initial-state")["category"] == "recruiting"
-    assert task_script_json(html, "tasks-categories") == ["recruiting", "sales"]
-    assert '<span id="tasks-count" class="tasks-count">2 tasks</span>' in html
-    assert 'headerFilterValue: initial.category || ""' in html
-
-
-def test_tasks_page_removes_retired_priority_and_risk_columns_and_sorts(tmp_path: Path):
-    store = AutoReplyStore(tmp_path / "task.sqlite3")
-    project_id = seed_legacy_work_project(store, title="Historical project", category="projects", status="active")
-    for retired_sort in ("priority_desc", "risk_desc"):
-        html = render_tasks_page(store, sort=retired_sort)
-        rows = task_script_json(html, "tasks-data")
-        assert [row["id"] for row in rows] == [project_id]
-        assert task_script_json(html, "tasks-initial-state")["sort"] == ""
-        assert not {"priority", "riskLevel", "priorityRank", "riskRank"}.intersection(rows[0])
-        assert 'title: "Priority"' not in html and 'title: "Risk"' not in html
-
-
-def test_tasks_page_filters_by_status_and_sorts_by_other_columns(tmp_path: Path):
-    store = AutoReplyStore(tmp_path / "task.sqlite3")
-    project_a = seed_legacy_work_project(store,
-        title="Alpha",
-        category="projects",
-        status="active",
-        owner_name="Zoe",
-        current_state="beta",
-        next_step="call owner",
-    )
-    project_b = seed_legacy_work_project(store,
-        title="Bravo",
-        category="projects",
-        status="active",
-        owner_name="Ada",
-        current_state="alpha",
-        next_step="brief team",
-    )
-    seed_legacy_work_todo(store,
-        project_id=project_a,
-        title="Alpha todo",
-        status="open",
-    )
-    seed_legacy_work_todo(store,
-        project_id=project_b,
-        title="Bravo done",
-        status="done",
-    )
-    seed_legacy_work_todo(store,
-        project_id=project_b,
-        title="Bravo cancelled",
-        status="cancelled",
-    )
-
-    filtered_html = render_tasks_page(store, task_state="completed")
-    owner_html = render_tasks_page(store, sort="owner_asc")
-    progress_html = render_tasks_page(store, sort="progress_desc")
-    todos_html = render_tasks_page(store, sort="todos_desc")
-
-    assert "Bravo" in filtered_html
-    assert "Alpha" in filtered_html
-    assert task_script_json(filtered_html, "tasks-initial-state")["taskState"] == "completed"
-    assert task_script_json(filtered_html, "tasks-states") == ["in progress", "completed"]
-    assert 'headerFilterValue: initial.taskState || ""' in filtered_html
-    assert task_script_json(owner_html, "tasks-initial-state")["sort"] == "owner_asc"
-    assert task_script_json(progress_html, "tasks-initial-state")["sort"] == "progress_desc"
-    assert task_script_json(todos_html, "tasks-initial-state")["sort"] == "todos_desc"
-    assert '"owner_asc": ["owner", "asc"]' in owner_html
-    assert '"progress_desc": ["progressRatio", "desc"]' in progress_html
-    assert '"todos_desc": ["todoCount", "desc"]' in todos_html
-
-
-def test_tasks_page_uses_todo_owner_as_fallback_when_project_owner_is_missing(tmp_path: Path):
-    store = AutoReplyStore(tmp_path / "task.sqlite3")
-    project_id = seed_legacy_work_project(store,
-        title="Owner fallback project",
-        category="projects",
-        status="active",
-    )
-    seed_legacy_work_todo(store,
-        project_id=project_id,
-        title="Confirm owner fallback",
-        owner_user_id="owner-1",
-        owner_name="Avery",
-        status="open",
-    )
-
-    html = render_tasks_page(store)
-    rows = task_script_json(html, "tasks-data")
-    row = next(row for row in rows if row["id"] == project_id)
-
-    assert row["owner"] == "Avery"
-    assert "Avery" in html
-
-
-def test_tasks_page_computes_table_statuses(tmp_path: Path):
-    store = AutoReplyStore(tmp_path / "task.sqlite3")
-    completed_id = seed_legacy_work_project(store,
-        title="完成项目",
-        category="projects",
-        status="active",
-    )
-    overdue_id = seed_legacy_work_project(store,
-        title="逾期项目",
-        category="projects",
-        status="active",
-    )
-    in_progress_id = seed_legacy_work_project(store,
-        title="推进项目",
-        category="projects",
-        status="active",
-    )
-    seed_legacy_work_project(store,
-        title="未开始项目",
-        category="projects",
-        status="active",
-    )
-    seed_legacy_work_todo(store,
-        project_id=completed_id,
-        title="已经完成",
-        status="done",
-    )
-    seed_legacy_work_todo(store,
-        project_id=overdue_id,
-        title="已经逾期",
-        status="open",
-        deadline_at="2020-01-01 00:00:00",
-    )
-    seed_legacy_work_todo(store,
-        project_id=in_progress_id,
-        title="正在推进",
-        status="open",
-        deadline_at="2099-01-01 00:00:00",
-    )
-
-    html = render_tasks_page(store, page_size=50)
-
-    rows = {row["title"]: row for row in task_script_json(html, "tasks-data")}
-    assert rows["完成项目"]["status"] == "completed"
-    assert rows["逾期项目"]["status"] == "over due"
-    assert rows["推进项目"]["status"] == "in progress"
-    assert rows["未开始项目"]["status"] == "not started"
-    assert task_script_json(html, "tasks-states") == [
-        "over due",
-        "in progress",
-        "not started",
-        "completed",
-    ]
-    assert 'class="task-state ${escapeHtml(cssClass)}"' in html
 
 
 def test_task_project_detail_renders_project_todos_and_sources(tmp_path: Path):
@@ -4753,95 +4312,6 @@ def test_task_project_detail_renders_dingtalk_todo_link(tmp_path: Path):
     assert "2026-06-27" in html
 
 
-def test_tasks_route_renders_page(tmp_path: Path):
-    db_path = tmp_path / "worker.sqlite3"
-    store = AutoReplyStore(db_path)
-    seed_legacy_work_project(store,
-        title="售前知识库建设",
-        category="sales",
-        status="active",
-    )
-    client = TestClient(create_audit_app(db_path))
-
-    response = client.get("/tasks")
-
-    assert response.status_code == 200
-    assert "售前知识库建设" in response.text
-    assert '<span class="nav-item active" aria-current="page">Tasks</span>' in response.text
-
-
-def test_tasks_route_applies_search_query(tmp_path: Path):
-    db_path = tmp_path / "worker.sqlite3"
-    store = AutoReplyStore(db_path)
-    seed_legacy_work_project(store,
-        title="售前知识库建设",
-        category="sales",
-        status="active",
-        background="销售支持项目。",
-    )
-    seed_legacy_work_project(store,
-        title="招聘专员圆桌",
-        category="recruiting",
-        status="active",
-    )
-    client = TestClient(create_audit_app(db_path))
-
-    response = client.get("/tasks?q=销售支持")
-
-    assert response.status_code == 200
-    assert "售前知识库建设" in response.text
-    assert "招聘专员圆桌" in response.text
-    assert task_script_json(response.text, "tasks-initial-state")["query"] == "销售支持"
-
-
-def test_tasks_route_applies_pagination_params(tmp_path: Path):
-    db_path = tmp_path / "worker.sqlite3"
-    store = AutoReplyStore(db_path)
-    for index in range(25):
-        seed_legacy_work_project(store,
-            title=f"候选人项目 {index + 1:02d}",
-            category="recruiting",
-            status="active",
-            background="候选人流程。",
-        )
-    client = TestClient(create_audit_app(db_path))
-
-    response = client.get("/tasks?q=候选人&page=2&page_size=20")
-
-    assert response.status_code == 200
-    assert "候选人项目 05" in response.text
-    assert "候选人项目 25" in response.text
-    assert '<option value="20" selected>20/页</option>' in response.text
-    initial = task_script_json(response.text, "tasks-initial-state")
-    assert initial["query"] == "候选人"
-    assert initial["page"] == 2
-    assert initial["pageSize"] == 20
-
-
-def test_tasks_route_applies_category_and_sort_params(tmp_path: Path):
-    db_path = tmp_path / "worker.sqlite3"
-    store = AutoReplyStore(db_path)
-    seed_legacy_work_project(store,
-        title="招聘项目",
-        category="recruiting",
-        status="active",
-    )
-    seed_legacy_work_project(store,
-        title="销售项目",
-        category="sales",
-        status="active",
-    )
-    client = TestClient(create_audit_app(db_path))
-
-    response = client.get("/tasks?category=recruiting&sort=owner_asc")
-
-    assert response.status_code == 200
-    assert "招聘项目" in response.text
-    assert "销售项目" in response.text
-    initial = task_script_json(response.text, "tasks-initial-state")
-    assert initial["category"] == "recruiting"
-    assert initial["sort"] == "owner_asc"
-    assert '"owner_asc": ["owner", "asc"]' in response.text
 
 
 def test_task_project_detail_route_renders_project(tmp_path: Path):
@@ -4860,7 +4330,7 @@ def test_task_project_detail_route_renders_project(tmp_path: Path):
     )
     client = TestClient(create_audit_app(db_path))
 
-    response = client.get(f"/tasks/{project_id}")
+    response = client.get(f"/tasks/legacy-project/{project_id}")
 
     assert response.status_code == 200
     assert "售前知识库建设" in response.text
@@ -4870,101 +4340,12 @@ def test_task_project_detail_route_renders_project(tmp_path: Path):
 def test_task_project_detail_route_returns_404_for_missing_project(tmp_path: Path):
     client = loopback_test_client(create_audit_app(tmp_path / "worker.sqlite3"))
 
-    response = client.get("/tasks/999")
+    response = client.get("/tasks/legacy-project/999")
 
     assert response.status_code == 404
     assert "Project not found" in response.text
 
 
-def test_task_management_search_api_returns_task_context(tmp_path: Path):
-    db_path = tmp_path / "worker.sqlite3"
-    store = AutoReplyStore(db_path)
-    project_id = seed_legacy_work_project(store,
-        title="技术部招聘",
-        category="recruiting",
-        status="active",
-        owner_user_id="owner-1",
-        owner_name="Avery",
-        current_state="候选人评估中",
-        next_step="确认 Colin 复试结论",
-        source_conversations_json=json.dumps(
-            [{"id": "cid-hiring", "title": "技术部招聘群"}],
-            ensure_ascii=False,
-        ),
-    )
-    todo_id = seed_legacy_work_todo(store,
-        project_id=project_id,
-        title="评估 Colin 售前解决方案候选人",
-        description="确认候选人的技术面、售前方案能力和下一轮安排。",
-        owner_user_id="owner-1",
-        owner_name="Avery",
-        deadline_at="2026-07-25 18:00:00",
-    )
-    follow_up_id = store.create_follow_up_draft(
-        project_id=project_id,
-        todo_id=todo_id,
-        owner_user_id="owner-1",
-        owner_name="Avery",
-        target_conversation_id="cid-hiring",
-        target_kind="group",
-        question_text="Colin 的复试结论定了吗？",
-        scheduled_at="2026-07-24 15:00:00",
-    )
-    client = TestClient(create_audit_app(db_path))
-
-    response = client.get(
-        "/api/task-management/search",
-        params={
-            "q": "这个任务现在是什么状态？",
-            "conversation_id": "cid-hiring",
-            "owner_user_id": "owner-1",
-            "limit": "3",
-        },
-    )
-
-    assert response.status_code == 200
-    payload = response.json()
-    assert payload["ok"] is True
-    assert payload["count"] == 1
-    item = payload["items"][0]
-    assert item["project"]["id"] == project_id
-    assert item["project"]["detail_url"] == f"/tasks/{project_id}"
-    assert "source_conversation_match" in item["match"]["reasons"]
-    assert item["todos"][0]["id"] == todo_id
-    assert item["todos"][0]["detail_url"] == f"/tasks/{project_id}#todo-{todo_id}"
-    assert item["todos"][0]["deadline_at"] == "2026-07-25 18:00:00"
-    assert item["todos"][0]["follow_ups"][0]["id"] == follow_up_id
-    assert item["todos"][0]["follow_ups"][0]["detail_url"] == (
-        f"/tasks/{project_id}#follow-up-{follow_up_id}"
-    )
-
-
-def test_task_management_project_api_returns_detail_and_404(tmp_path: Path):
-    db_path = tmp_path / "worker.sqlite3"
-    store = AutoReplyStore(db_path)
-    project_id = seed_legacy_work_project(store,
-        title="售前知识库建设",
-        category="sales",
-        status="active",
-    )
-    seed_legacy_work_todo(store,
-        project_id=project_id,
-        title="补齐来源链接",
-        owner_name="Alex",
-        status="open",
-    )
-    client = TestClient(create_audit_app(db_path))
-
-    response = client.get(f"/api/task-management/projects/{project_id}")
-    missing = client.get("/api/task-management/projects/999")
-
-    assert response.status_code == 200
-    payload = response.json()
-    assert payload["ok"] is True
-    assert payload["item"]["project"]["id"] == project_id
-    assert payload["item"]["todos"][0]["title"] == "补齐来源链接"
-    assert missing.status_code == 404
-    assert missing.json()["error"] == "project_not_found"
 
 
 def test_non_history_pages_do_not_auto_refresh(tmp_path: Path):
@@ -7759,7 +7140,7 @@ def test_failed_meeting_and_follow_up_expose_reason_and_safe_choices(
     assert f'href="/meeting-attempts/{meeting_run_id}">人工处理</a>' in html
     assert "Follow-up delivery failed" in html
     assert (
-        f'href="/tasks/{project_id}#follow-up-{follow_up_id}">人工处理</a>'
+        f'href="/tasks/legacy-project/{project_id}#follow-up-{follow_up_id}">人工处理</a>'
         in html
     )
 

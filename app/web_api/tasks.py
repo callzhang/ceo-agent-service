@@ -4,19 +4,12 @@ from app.business_candidate_definitions import candidate_projection
 from app.action_business_definitions import business_action_projection
 
 import json
-from datetime import datetime, timezone
-from types import SimpleNamespace
 from typing import Any
 
 from pydantic import BaseModel, ConfigDict, Field, model_validator
 
-from app.task_progress import (
-    task_progress_summary,
-    task_state as resolved_task_state,
-    todo_is_done,
-    todo_is_open,
-)
-from app.task_retrieval import load_project_task_detail, resolve_task_owner_display
+from app.task_progress import todo_is_done
+from app.task_retrieval import load_project_task_detail
 from app.task_semantic_models import (
     BusinessAttentionEvent,
     BusinessProjectCandidate,
@@ -47,29 +40,6 @@ from app.web_api.common import (
     normalize_display_value,
     snapshot_at,
 )
-
-
-class ConsoleTaskSummary(BaseModel):
-    model_config = ConfigDict(extra="forbid")
-
-    id: int
-    title: str
-    status: str
-    project_status: str
-    category: str
-    owner_user_id: str
-    owner_name: str
-    owner: str = ""
-    current_state: str
-    next_step: str
-    open_count: int
-    open_ratio: int
-    progress_count: int
-    progress_total: int
-    progress_ratio: int
-    todo_count: int
-    detail_url: str
-    integrity_issues: list[str] = Field(default_factory=list)
 
 
 class ConsoleFact(BaseModel):
@@ -169,18 +139,6 @@ class ConsoleTaskDetail(BaseModel):
     unlinked_follow_ups: list[dict[str, Any]] = Field(default_factory=list)
 
 
-class ConsoleTaskFilters(BaseModel):
-    model_config = ConfigDict(extra="forbid")
-
-    categories: list[str] = Field(default_factory=list)
-    task_states: list[str] = Field(default_factory=list)
-
-
-class ConsoleTaskListEnvelope(ApiListEnvelope):
-    items: list[ConsoleTaskSummary] = Field(default_factory=list)
-    filters: ConsoleTaskFilters = Field(default_factory=ConsoleTaskFilters)
-
-
 class ConsoleTaskDetailEnvelope(ApiItemEnvelope):
     item: ConsoleTaskDetail
 
@@ -238,91 +196,6 @@ def _todo_done(
     dingtalk_links: list[Any] | tuple[Any, ...] = (),
 ) -> bool:
     return todo_is_done(todo, follow_ups=follow_ups, dingtalk_links=dingtalk_links)
-
-
-def _todo_open(
-    todo: Any,
-    *,
-    follow_ups: list[Any] | tuple[Any, ...] = (),
-    dingtalk_links: list[Any] | tuple[Any, ...] = (),
-) -> bool:
-    return todo_is_open(todo, follow_ups=follow_ups, dingtalk_links=dingtalk_links)
-
-
-def _todo_overdue(
-    todo: Any,
-    *,
-    follow_ups: list[Any] | tuple[Any, ...] = (),
-    dingtalk_links: list[Any] | tuple[Any, ...] = (),
-) -> bool:
-    if not _todo_open(todo, follow_ups=follow_ups, dingtalk_links=dingtalk_links) or not todo.deadline_at:
-        return False
-    try:
-        deadline = datetime.fromisoformat(todo.deadline_at.replace("Z", "+00:00"))
-    except ValueError:
-        return False
-    if deadline.tzinfo is None:
-        deadline = deadline.replace(tzinfo=timezone.utc)
-    return deadline < datetime.now(timezone.utc)
-
-
-def _task_state(
-    project: Any,
-    todos: list[Any],
-    *,
-    follow_ups_by_todo: dict[int, tuple[Any, ...]] | None = None,
-    dingtalk_links_by_todo: dict[int, tuple[Any, ...]] | None = None,
-) -> str:
-    return resolved_task_state(
-        project,
-        todos,
-        follow_ups_by_todo=follow_ups_by_todo,
-        dingtalk_links_by_todo=dingtalk_links_by_todo,
-        overdue_checker=lambda todo: _todo_overdue(
-            todo,
-            follow_ups=(follow_ups_by_todo or {}).get(todo.id, ()),
-            dingtalk_links=(dingtalk_links_by_todo or {}).get(todo.id, ()),
-        ),
-    )
-
-
-def task_summary(
-    project: Any,
-    todos: list[Any],
-    *,
-    follow_ups_by_todo: dict[int, tuple[Any, ...]] | None = None,
-    dingtalk_links_by_todo: dict[int, tuple[Any, ...]] | None = None,
-) -> dict[str, Any]:
-    progress = task_progress_summary(
-        todos,
-        follow_ups_by_todo=follow_ups_by_todo,
-        dingtalk_links_by_todo=dingtalk_links_by_todo,
-    )
-    state = _task_state(
-        project,
-        todos,
-        follow_ups_by_todo=follow_ups_by_todo,
-        dingtalk_links_by_todo=dingtalk_links_by_todo,
-    )
-    return {
-        "id": project.id,
-        "title": normalize_display_value(project.title),
-        "status": state,
-        "project_status": _enum_text(project.status),
-        "category": _enum_text(project.category),
-        "owner_user_id": normalize_display_value(project.owner_user_id),
-        "owner_name": normalize_display_value(project.owner_name),
-        "owner": resolve_task_owner_display(project, todos),
-        "current_state": normalize_display_value(project.current_state),
-        "next_step": normalize_display_value(project.next_step),
-        "open_count": progress["open_count"],
-        "open_ratio": progress["open_ratio"],
-        "progress_count": progress["done_count"],
-        "progress_total": progress["total"],
-        "progress_ratio": progress["done_ratio"],
-        "todo_count": progress["total"],
-        "detail_url": f"/tasks/legacy-project/{project.id}",
-    }
 
 
 def _fact_payload(value: Any) -> dict[str, str]:
@@ -443,177 +316,6 @@ def task_detail(store: Any, project_id: int) -> dict[str, Any] | None:
             if follow_up.todo_id not in todo_ids
         ],
     }
-
-
-def task_list_response(
-    store: Any,
-    *,
-    page: int,
-    page_size: int,
-    query: str = "",
-    category: str = "",
-    task_state: str = "",
-    sort: str = "",
-    row_builder=None,
-) -> ConsoleTaskListEnvelope:
-    rows = []
-    categories: set[str] = set()
-    task_states: set[str] = set()
-    needle = query.strip().casefold()
-    projects = store.list_work_projects(limit=None)
-    project_ids = [project.id for project in projects]
-    todos_by_project = store.list_work_todos_for_projects(project_ids)
-    all_todo_ids = [
-        todo.id
-        for todos in todos_by_project.values()
-        for todo in todos
-    ]
-    all_completed_follow_ups_by_todo = {
-        todo_id: tuple(follow_ups)
-        for todo_id, follow_ups in store.list_follow_up_drafts_for_todos(
-            all_todo_ids,
-            statuses=("completed",),
-        ).items()
-    }
-    all_dingtalk_links_by_todo = {
-        todo_id: tuple(links)
-        for todo_id, links in store.list_work_todo_dingtalk_links_for_todos(
-            all_todo_ids
-        ).items()
-    }
-    for project in projects:
-        todos = todos_by_project.get(project.id, [])
-        todo_ids = [todo.id for todo in todos]
-        follow_ups_by_todo = {
-            todo_id: all_completed_follow_ups_by_todo.get(todo_id, ())
-            for todo_id in todo_ids
-        }
-        dingtalk_links_by_todo = {
-            todo_id: all_dingtalk_links_by_todo.get(todo_id, ())
-            for todo_id in todo_ids
-        }
-        row_detail = SimpleNamespace(
-            follow_ups_by_todo=follow_ups_by_todo,
-            dingtalk_links_by_todo=dingtalk_links_by_todo,
-        )
-        row = task_summary(
-            project,
-            todos,
-            follow_ups_by_todo=follow_ups_by_todo,
-            dingtalk_links_by_todo=dingtalk_links_by_todo,
-        )
-        if row_builder is not None:
-            built = json_safe(row_builder(project, todos, row_detail))
-            if isinstance(built, dict):
-                row.update(
-                    {
-                        "title": normalize_display_value(built.get("title", row["title"])),
-                        "status": normalize_display_value(built.get("status", row["status"])),
-                        "category": normalize_display_value(built.get("category", row["category"])),
-                        "owner": normalize_display_value(built.get("owner") or row["owner"]),
-                        "owner_name": row["owner_name"],
-                        "current_state": normalize_display_value(built.get("currentState", row["current_state"])),
-                        "next_step": normalize_display_value(built.get("nextStep", row["next_step"])),
-                        "open_count": int(built.get("openCount", row["open_count"])),
-                        "open_ratio": int(built.get("openRatio", row["open_ratio"])),
-                        "progress_count": int(built.get("progressCount", row["progress_count"])),
-                        "progress_total": int(built.get("progressTotal", row["progress_total"])),
-                        "progress_ratio": int(built.get("progressRatio", row["progress_ratio"])),
-                        "todo_count": int(built.get("todoCount", row["todo_count"])),
-                    }
-                )
-        integrity_issues: list[str] = []
-        if not normalize_display_value(project.title).strip():
-            integrity_issues.append("missing_title")
-            row["title"] = f"[数据异常：标题缺失，Project {row['id']}]"
-        else:
-            row["title"] = row["title"].strip()
-        row["integrity_issues"] = integrity_issues
-        if row["project_status"] == "archived":
-            row["status"] = "archived"
-        if row["category"].strip():
-            categories.add(row["category"])
-        if row["status"].strip():
-            task_states.add(row["status"])
-        haystack = " ".join(
-            [
-                row["title"], row["category"], row["project_status"], row["owner_name"],
-                row["current_state"], row["next_step"],
-                *[normalize_display_value(todo.title) for todo in todos],
-            ]
-        ).casefold()
-        if needle and needle not in haystack:
-            continue
-        if category.strip() and row["category"] != category.strip():
-            continue
-        if task_state.strip() and row["status"] != task_state.strip():
-            continue
-        if not task_state.strip() and row["project_status"] == "archived":
-            continue
-        rows.append(row)
-    if sort == "project_asc":
-        rows.sort(
-            key=lambda row: (
-                bool(row["integrity_issues"]),
-                row["title"].casefold(),
-            )
-        )
-    elif sort == "project_desc":
-        rows.sort(
-            key=lambda row: (
-                not bool(row["integrity_issues"]),
-                row["title"].casefold(),
-            ),
-            reverse=True,
-        )
-    elif sort == "priority_desc":
-        priority_rank = {
-            "p0": 60,
-            "critical": 60,
-            "urgent": 50,
-            "high": 40,
-            "p1": 40,
-            "medium": 30,
-            "p2": 30,
-            "low": 20,
-            "p3": 20,
-        }
-        rows.sort(
-            key=lambda row: (
-                priority_rank.get(row["priority"].strip().casefold(), 0),
-                row["title"].casefold(),
-            ),
-            reverse=True,
-        )
-    elif sort == "progress_desc":
-        rows.sort(
-            key=lambda row: (row["progress_ratio"], row["title"].casefold()),
-            reverse=True,
-        )
-    elif sort == "todos_desc":
-        rows.sort(
-            key=lambda row: (row["todo_count"], row["title"].casefold()),
-            reverse=True,
-        )
-    total = len(rows)
-    start = (page - 1) * page_size
-    page_rows = rows[start : start + page_size]
-    has_more = start + page_size < total
-    return ConsoleTaskListEnvelope(
-        items=[ConsoleTaskSummary.model_validate(row) for row in page_rows],
-        filters=ConsoleTaskFilters(
-            categories=sorted(categories, key=str.casefold),
-            task_states=sorted(task_states, key=str.casefold),
-        ),
-        meta=ApiListMeta(
-            snapshot_at=snapshot_at(),
-            page=page,
-            page_size=page_size,
-            total=total,
-            next_cursor=str(page + 1) if has_more else "",
-            has_more=has_more,
-        ),
-    )
 
 
 def sent_todo_payload(record: Any) -> dict[str, str]:

@@ -10,7 +10,7 @@ from pathlib import Path
 
 import pytest
 
-from app.run_storage import AGENT_RUN_SQL
+from app.store import AGENT_RUN_SQL
 from app.agent_context import AgentTaskContext, AuditTurnContext
 from app.agent_cron.commands import (
     ServiceCommandConsumerContext,

@@ -102,7 +102,6 @@ def register_console_routes(
     connector_status_factory: Callable[[], Any] | None = None,
     feedback_backlog_factory: Callable[[], Any],
     attention_rows_factory: Callable[[], Any],
-    task_row_builder: Callable[..., Any] | None = None,
     history_chart_factory: Callable[[int], Any] | None = None,
     email_store_factory: Callable[[], Any] | None = None,
     email_learning_factory: Callable[[], Any] | None = None,

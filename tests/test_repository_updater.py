@@ -616,6 +616,17 @@ def test_quiet_store_only_database_has_no_email_action_contribution(tmp_path):
     assert in_flight_work(path) == 0
 
 
+def _meeting_job(store, meeting_id, status, locked_at):
+    """One native Meeting Task in the given state."""
+    job_id = store.upsert_meeting_alignment_job(
+        meeting_id=meeting_id, title="Meeting", source_json="{}", participants_json="[]",
+        ended_at="2026-01-01T00:00:00", eligible_at="2026-01-01T00:00:00", status="pending",
+    )
+    with store._connect() as db:
+        db.execute("update tasks set status=?, locked_at=? where id=?", (status, locked_at, job_id))
+    return job_id
+
+
 @pytest.mark.parametrize("status,locked_at,expected", [
     ("processing", "2026-01-01 00:00:00", 1),
     ("ready_to_send", "2026-01-01 00:00:00", 1),
@@ -629,17 +640,9 @@ def test_quiet_counts_meeting_preparation_and_claimed_delivery(tmp_path, status,
 
     path = tmp_path / "meeting-quiet.sqlite3"
     store = AutoReplyStore(path)
-    with sqlite3.connect(path) as db:
-        from app.task8_storage import task8_insert_parts, register_task8_functions
-
-        register_task8_functions(db)
-        parts = task8_insert_parts("meeting_alignment_jobs", {
-            "legacy_key": 42, "meeting_id": "meeting", "status": status,
-            "locked_at": locked_at,
-        })
-        db.execute(f"insert into tasks({parts.columns}) values({parts.values})", parts.parameters)
+    job_id = _meeting_job(store, "meeting", status, locked_at)
     if status == "processing":
-        store.claim_logical_run("meeting_alignment_runs", 42)
+        store.claim_professional_run(job_id)
     assert in_flight_work(path) == expected
 
 
@@ -648,16 +651,8 @@ def test_quiet_does_not_count_unclaimed_historical_meeting_processing(tmp_path):
     from app.store import AutoReplyStore
 
     path = tmp_path / "historical-meeting.sqlite3"
-    AutoReplyStore(path)
-    with sqlite3.connect(path) as db:
-        from app.task8_storage import task8_insert_parts, register_task8_functions
-
-        register_task8_functions(db)
-        parts = task8_insert_parts("meeting_alignment_jobs", {
-            "legacy_key": 42, "meeting_id": "historical", "status": "processing",
-            "locked_at": "2026-01-01 00:00:00",
-        })
-        db.execute(f"insert into tasks({parts.columns}) values({parts.values})", parts.parameters)
+    store = AutoReplyStore(path)
+    _meeting_job(store, "historical", "processing", "2026-01-01 00:00:00")
     assert in_flight_work(path) == 0
 
 
@@ -671,24 +666,19 @@ def test_quiet_counts_live_dispatcher_claim_before_runtime_exists(tmp_path, leas
     from app.store import AutoReplyStore
 
     path = tmp_path / "claim-quiet.sqlite3"
-    AutoReplyStore(path)
+    store = AutoReplyStore(path)
+    job_id = _meeting_job(store, "claim-quiet", "pending", None)
     with sqlite3.connect(path) as db:
         from app.state_storage import insert_state
-        from app.task8_storage import register_task8_functions, task8_insert_parts
         from app.task_lifecycle_storage import acquire_claim
-        register_task8_functions(db)
         db.execute("begin")
-        parts = task8_insert_parts("meeting_alignment_jobs", {
-            "legacy_key": 42, "meeting_id": "claim-quiet", "status": "pending",
-        })
-        db.execute(f"insert into tasks({parts.columns}) values({parts.values})", parts.parameters)
         if terminal:
             insert_state(db, "dispatcher_claim_leases", {
-                "adapter_name": "meeting", "source_id": "42",
+                "adapter_name": "meeting", "source_id": str(job_id),
                 "lease_expires_at": lease, "terminal_at": terminal,
             })
         else:
-            acquire_claim(db, adapter_name="meeting", source_id="42", owner="",
+            acquire_claim(db, adapter_name="meeting", source_id=str(job_id), owner="",
                 owner_pid=0, lease_expires_at=lease, now="1999-01-01 00:00:00")
     assert in_flight_work(path) == expected
 

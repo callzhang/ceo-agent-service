@@ -8,7 +8,7 @@ from pathlib import Path
 import pytest
 
 from app.action_business_definitions import BUSINESS_ACTION_KINDS
-from app.action_email_definitions import EMAIL_NUMERIC_SCOPE
+from app.action_business_definitions import BUSINESS_NUMERIC_SCOPE
 from app.action_business_storage import (
     copy_business_action_date_evidence, insert_business_action,
     upsert_business_action_anchor_link,
@@ -437,7 +437,7 @@ def test_selected_business_public_ids_use_existing_numeric_index(tmp_path):
                 projection = ("select cast(a.legacy_key as integer) as _source_rowid, "
                               "cast(a.legacy_key as integer) as id from actions a "
                               "where a.record_type='business_task_signals' and "
-                              + EMAIL_NUMERIC_SCOPE)
+                              + BUSINESS_NUMERIC_SCOPE)
             else:
                 projection = business_action_projection(
                     kind, include_rowid=True, public_id_index=True)

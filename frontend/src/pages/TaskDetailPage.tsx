@@ -72,6 +72,89 @@ function followUpFailure(row: Record<string, unknown>) {
   } catch { return ""; }
 }
 
+function legacyValue(value: unknown): string {
+  if (typeof value === "string" || typeof value === "number" || typeof value === "boolean") return String(value);
+  return "";
+}
+
+function LegacyRawRecord({ label, value }: { label: string; value: unknown }) {
+  if (value === undefined || value === null || value === "") return null;
+  const content = typeof value === "string" ? parseJson(value) ?? value : value;
+  return <details className="business-source-raw"><summary>{label}</summary><pre>{typeof content === "string" ? content : JSON.stringify(content, null, 2)}</pre></details>;
+}
+
+function LegacyProjectHistory({ detail }: { detail: TaskDetail }) {
+  return <>
+    <SourceRecordList title="历史事实" rows={detail.facts.map((fact) => ({
+      id: fact.id,
+      evidence_text: legacyValue(fact.description),
+      source_ref: legacyValue(fact.source),
+      source_time: fact.created,
+    }))} />
+    {!!detail.source_conversations.length && <DetailSection title="历史来源会话" count={detail.source_conversations.length} open={false}>
+      <ol className="business-source-list">{detail.source_conversations.map((conversation, index) => {
+        const record = conversation && typeof conversation === "object" ? conversation as Record<string, unknown> : null;
+        const label = legacyValue(record?.title) || legacyValue(record?.summary) || legacyValue(record?.source_ref) || legacyValue(conversation) || "历史来源会话";
+        return <li key={legacyValue(record?.id) || index}>
+          <span className="business-source-text">{label}</span>
+          <LegacyRawRecord label="查看来源会话记录" value={conversation} />
+        </li>;
+      })}</ol>
+    </DetailSection>}
+    {!!detail.todos.length && <DetailSection title="历史待办" count={detail.todos.length}>
+      <ol className="business-source-list">{detail.todos.map((todo, index) => {
+        const id = legacyValue(todo.id) || String(index);
+        const status = legacyValue(todo.status);
+        return <li id={`todo-${id}`} key={id}>
+          <span className="business-source-text">{legacyValue(todo.title) || "历史待办"}</span>
+          <small>记录状态（历史）：{status || "未提供"}{legacyValue(todo.owner_name) ? ` · 负责人：${legacyValue(todo.owner_name)}` : ""}</small>
+          {legacyValue(todo.description) && <p>{legacyValue(todo.description)}</p>}
+          {todo.completion_evidence !== undefined && todo.completion_evidence !== null && <LegacyRawRecord label="查看历史完成依据" value={todo.completion_evidence} />}
+          {!!(Array.isArray(todo.follow_ups) ? todo.follow_ups : []).length && <ol className="business-source-list">{(todo.follow_ups as Array<Record<string, unknown>>).map((followUp, followIndex) => <LegacyFollowUp key={legacyValue(followUp.id) || followIndex} row={followUp} />)}</ol>}
+          {!!(Array.isArray(todo.dingtalk_todos) ? todo.dingtalk_todos : []).length && <ol className="business-source-list">{(todo.dingtalk_todos as Array<Record<string, unknown>>).map((receipt, receiptIndex) => <LegacyDingTalkReceipt key={legacyValue(receipt.id) || receiptIndex} row={receipt} />)}</ol>}
+        </li>;
+      })}</ol>
+    </DetailSection>}
+    {!!detail.updates.length && <DetailSection title="历史更新" count={detail.updates.length} open={false}>
+      <ol className="business-source-list">{detail.updates.map((update, index) => <li key={legacyValue(update.id) || index}>
+        <span className="business-source-text">{legacyValue(update.summary) || "历史更新"}</span>
+        <small>{[legacyValue(update.source_type), legacyValue(update.source_ref), legacyValue(update.created_at)].filter(Boolean).join(" · ")}</small>
+        <LegacyRawRecord label="查看历史变更字段" value={update.changes} />
+      </li>)}</ol>
+    </DetailSection>}
+    {!!detail.evidence_candidates.length && <DetailSection title="历史依据记录" count={detail.evidence_candidates.length}>
+      <ol className="business-source-list">{detail.evidence_candidates.map((candidate, index) => <li id={`evidence-${legacyValue(candidate.id) || index}`} key={legacyValue(candidate.id) || index}>
+        <span className="business-source-text">{legacyValue(candidate.evidence_text) || "历史依据记录"}</span>
+        <small>{[legacyValue(candidate.source_type), legacyValue(candidate.source_ref), legacyValue(candidate.source_created_at), legacyValue(candidate.reason)].filter(Boolean).join(" · ")}</small>
+        <small>记录状态（历史）：{legacyValue(candidate.status) || "未提供"}</small>
+        <LegacyRawRecord label="查看历史依据记录" value={candidate.decision} />
+      </li>)}</ol>
+    </DetailSection>}
+    {!!detail.unlinked_follow_ups.length && <DetailSection title="未关联任务的历史催办" count={detail.unlinked_follow_ups.length}>
+      <ol className="business-source-list">{detail.unlinked_follow_ups.map((followUp, index) => <LegacyFollowUp key={legacyValue(followUp.id) || index} row={followUp} />)}</ol>
+    </DetailSection>}
+  </>;
+}
+
+function LegacyFollowUp({ row }: { row: Record<string, unknown> }) {
+  const id = legacyValue(row.id);
+  return <li id={id ? `follow-up-${id}` : undefined}>
+    <span className="business-source-text">{legacyValue(row.question_text || row.title) || "历史催办"}</span>
+    <small>记录状态（历史）：{legacyValue(row.status) || "未提供"}</small>
+    <LegacyRawRecord label="查看历史发送回执" value={row.send_result_json} />
+  </li>;
+}
+
+function LegacyDingTalkReceipt({ row }: { row: Record<string, unknown> }) {
+  const id = legacyValue(row.id);
+  return <li>
+    <span className="business-source-text">钉钉待办回执{id ? ` ${id}` : ""}{legacyValue(row.title_snapshot) ? ` · ${legacyValue(row.title_snapshot)}` : ""}</span>
+    <small>记录状态（历史）：{legacyValue(row.status) || "未提供"}{legacyValue(row.dingtalk_task_id) ? ` · 钉钉待办 ID：${legacyValue(row.dingtalk_task_id)}` : ""}{legacyValue(row.executor_name) ? ` · 执行人：${legacyValue(row.executor_name)}` : ""}</small>
+    {legacyValue(row.last_error) && <small>历史同步错误：{legacyValue(row.last_error)}</small>}
+    <LegacyRawRecord label="查看钉钉待办同步回执" value={row.last_dingtalk_payload_json} />
+  </li>;
+}
+
 /**
  * 催办 on this Task. Derek, 2026-09-25: nothing is sent automatically; he
  * decides with one click, and new information that updates the Task
@@ -164,10 +247,10 @@ export function LegacyProjectDetailPage({ legacyProjectId }: { legacyProjectId: 
   return <ConsolePageLayout title={title} breadcrumb={[{ label: "Tasks", to: "/tasks" }, { label: "正式项目", to: "/tasks?view=projects" }, { label: "历史项目记录" }]}>
     <div className="task-domain-page business-detail-page">
       {error ? <div className="page-state page-state-error" role="alert">{error}</div> : !detail ? <TaskSkeleton /> : <>
-        <section className="console-card business-detail-section"><div className="business-detail-badges"><span className="business-stage candidate">历史记录 · 非正式项目</span><span>{labelOf(legacyStatusLabels, detail.status)}</span></div>
+        <section className="console-card business-detail-section"><div className="business-detail-badges"><span className="business-stage candidate">历史记录 · 非正式项目</span><span>记录状态（历史）：{labelOf(legacyStatusLabels, detail.status)}</span></div>
           {detail.description && <p className="business-detail-description">{detail.description}</p>}
           <dl className="business-detail-facts"><div><dt>负责人</dt><dd>{detail.owner || "未提供"}</dd></div></dl></section>
-        <SourceRecordList title="历史事实" rows={detail.facts.map((fact) => ({ ...fact, evidence_text: String(fact.description) }))} />
+        <LegacyProjectHistory detail={detail} />
       </>}
     </div>
   </ConsolePageLayout>;
