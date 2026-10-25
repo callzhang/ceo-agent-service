@@ -222,3 +222,14 @@ Qwen完整读取124行：第28行已明确判断邮件已处理、应no_action�
 本轮终点：已补缺失的自然报告和可运行路线证据，G3不重开；**G1仍缺指定自然失败状态，G2明确因Qwen Consumer无有效结果、API429和API Audit未启用而不能验收。** 整轮仍不能宣布完成。无新增性能实验或其他trajectory优化。
 
 独立审查核对自然文档两次回执、原生摘要、Qwen18次调用与API两次429，认可上述边界。评测新增continue入口的Audit候选查找改用source_phase，避免不存在的continue事实阶段；实际Consumer探针不受影响，无需重跑。Ruff、fixture检查和diff检查通过。收尾集成的OA append_task主线增量未改变通用Consumer原生schema、Audit schema或文档写入路径，不为无关改动重复验收。
+
+
+## 12. Qwen Consumer定向修复与发布
+
+只处理第11节确认的Qwen Consumer原生收尾问题。API429保持阻塞，G1等自然样本，已通过的G3/OAuth/Qwen Audit未重跑。
+
+原生格式传达与provider grammar各有独立证据缺陷：前者只给指纹、模型仍按扁平wire准备；后者把reasoning前缀绑在required-tool分支，排除了思考后的最终JSON。最终组合保留完整业务schema/严格校验和相同路线，通过显示实际native格式与修正provider组合解决，不加Qwen专属任务逻辑、停止提示、fallback或重试。
+
+同一匿名邮件案例在私有canary的冷/续均no_action，当前来源读取完整，无重复回复提案；57/79行原生摘要和5/1次工具调用见[完整修复记录](qwen-final-output-investigation.md#最终根因与组合修复)。失败诊断和连接不可达运行分开保留，不把基础设施失败计为模型退化；两项单独候选均未作为发布依据。general服务输入为精确格式增加约1.17万字符，不声称继续精简或提速；必需协议不能由哈希替代。
+
+当前状态：**组合候选已验收；生产加载及回读待完成。** provider安装并不等于进程已更新，CEO变更也必须经正式部署；完成回读前不将该缺口关闭。其后仍不宣称G2整体完成，API及API Audit原生启用缺口保持独立。

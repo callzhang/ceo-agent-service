@@ -1,0 +1,343 @@
+{
+  "scope": "Current six-case acceptance, not original A/B; fake reads only",
+  "source_commit": "a6a39251ce58354b71ec0655ce4a6793ae2aa513",
+  "case_manifest_sha256": "9e6bb578a321cee3865c20051f47762de12710c1076b2e4fbf1c333008a192af",
+  "harness_sha256": "37fcaabdf75d5364a5723e248876a64ee168b1b5a0fe4c9b4a15c2bf4443598e",
+  "route": "qwen_gpu4",
+  "model": "qwen3.8-27b",
+  "fixed_clock": "2026-10-08T10:00:00-07:00",
+  "results": [
+    {
+      "case": "mail-already-handled",
+      "phase": "cold",
+      "role": "consumer",
+      "developer_sha256": "88726efa0dda2d8e6d2031e09b9a2a968702eb80d6b80166cb27d453c2d603ff",
+      "task_sha256": "654cdcfd32b35eb8639be4224ffc057c5dfdc071b252b741fc1ad3f33c02b016",
+      "schema_sha256": "72ee10446972dde404f738df395701188a39d9d5e10005312a66fec3b11e9d7b",
+      "criteria": [
+        "use the complete thread rather than the truncated card",
+        "recognize the renewal is already approved and the provider confirmation requests no reply",
+        "return no_action with no duplicate chat or mail action"
+      ],
+      "exit_code": 0,
+      "session_id": "01a171e0-a846-7762-bbf9-6c6c0ba5730a",
+      "reused_session": false,
+      "tool_trace": [
+        {
+          "tool": "read_task_skill",
+          "arguments": {
+            "name": "ceo-mail-review"
+          },
+          "result": {
+            "name": "ceo-mail-review",
+            "path": "/synthetic/ceo-mail-review/SKILL.md",
+            "sha256": "108e258426ec8f66a0907722d4a1034fba48c8628544eccc69aa5e0162163b9d",
+            "characters": 11918
+          }
+        },
+        {
+          "tool": "read_skill",
+          "arguments": {
+            "name": "dingtalk-mail",
+            "path": ""
+          },
+          "result": {
+            "name": "dingtalk-mail",
+            "path": "/synthetic/dingtalk-mail/SKILL.md",
+            "sha256": "664f31a00f46245c270049129da4d25475ccc561b04d9897e7cd634b2c4a6f18",
+            "characters": 5719
+          }
+        },
+        {
+          "tool": "read_skill",
+          "arguments": {
+            "name": "dingtalk-shared",
+            "path": ""
+          },
+          "result": {
+            "name": "dingtalk-shared",
+            "path": "/synthetic/dingtalk-shared/SKILL.md",
+            "sha256": "7c3f6231072cd0e038b69a94b94957e99a1b1b82b961882413e08a1cf56336fb",
+            "characters": 4064
+          }
+        },
+        {
+          "tool": "read_dingtalk_messages",
+          "arguments": {
+            "conversation_id": "eval-mail-conversation"
+          },
+          "result": {
+            "messages": [
+              {
+                "message_id": "mail-original",
+                "sender": "Synthetic vendor",
+                "create_time": "2026-10-08T08:00:00-07:00",
+                "text": "Renewal was approved and recorded under receipt renew-77. This is a confirmation only; no reply is requested."
+              },
+              {
+                "message_id": "mail-principal-sent",
+                "sender": "Principal",
+                "create_time": "2026-10-08T07:30:00-07:00",
+                "text": "Approved subject to the recorded legal terms."
+              }
+            ]
+          }
+        },
+        {
+          "tool": "read_dingtalk_messages",
+          "arguments": {
+            "conversation_id": "eval-mail-conversation"
+          },
+          "result": {
+            "messages": [
+              {
+                "message_id": "mail-original",
+                "sender": "Synthetic vendor",
+                "create_time": "2026-10-08T08:00:00-07:00",
+                "text": "Renewal was approved and recorded under receipt renew-77. This is a confirmation only; no reply is requested."
+              },
+              {
+                "message_id": "mail-principal-sent",
+                "sender": "Principal",
+                "create_time": "2026-10-08T07:30:00-07:00",
+                "text": "Approved subject to the recorded legal terms."
+              }
+            ]
+          }
+        }
+      ],
+      "result": {
+        "outcome": "no_action",
+        "summary": "Read the complete thread in conversation eval-mail-conversation (two messages). mail-principal-sent (07:30): principal already replied 'Approved subject to the recorded legal terms.' mail-original (08:00): vendor confirms the renewal was recorded under receipt renew-77 and states this is a confirmation only with no reply requested. Per ceo-mail-review, an equivalent reply already in the thread means no mail effect remains; a no-reply-requested confirmation needs no draft, reply, or other action. No external action taken; current business state is renewal closed under receipt renew-77.",
+        "proposal": null,
+        "decision_options": [],
+        "error": {
+          "code": "",
+          "retryable": false,
+          "authorization_required": false,
+          "stage": "",
+          "source": "",
+          "source_code": "",
+          "session_continuable": false
+        },
+        "risk": "low",
+        "confidence": 0.9,
+        "rule_coverage": 0.9,
+        "information_completeness": 0.9,
+        "needs_human_reason": null,
+        "decision_basis": null,
+        "requested_input": null,
+        "stage_index": 0,
+        "predecessor_review_id": null,
+        "continue_after_execution": false,
+        "purpose_output": {
+          "action": "no_action",
+          "reason": "Complete thread shows the principal's approval already sent and the vendor's latest message is a confirmation-only note that explicitly requests no reply, so no remaining mail action exists.",
+          "target": {},
+          "payload": {},
+          "evidence_refs": [
+            "dingtalk:eval-mail-conversation/mail-principal-sent",
+            "dingtalk:eval-mail-conversation/mail-original",
+            "dingtalk:eval-mail-conversation/trigger-mail-review"
+          ],
+          "purpose": "general"
+        },
+        "source_bindings": []
+      },
+      "canonical_valid": true,
+      "native_lines": 57,
+      "native_sha256": "81482acf3fdf946a33fb4257b9127f41eb3a628d77951c954a641dce5b73cb03",
+      "stderr": ""
+    },
+    {
+      "case": "mail-already-handled",
+      "phase": "resume",
+      "role": "consumer",
+      "developer_sha256": "88726efa0dda2d8e6d2031e09b9a2a968702eb80d6b80166cb27d453c2d603ff",
+      "task_sha256": "ac0783a61edd6d01a2577807e7a76d06c8fcb1a11b5f071f8ce722818b56dabc",
+      "schema_sha256": "72ee10446972dde404f738df395701188a39d9d5e10005312a66fec3b11e9d7b",
+      "criteria": [
+        "use the complete thread rather than the truncated card",
+        "recognize the renewal is already approved and the provider confirmation requests no reply",
+        "return no_action with no duplicate chat or mail action"
+      ],
+      "exit_code": 0,
+      "session_id": "01a171e0-a846-7762-bbf9-6c6c0ba5730a",
+      "reused_session": true,
+      "tool_trace": [
+        {
+          "tool": "read_dingtalk_messages",
+          "arguments": {
+            "conversation_id": "eval-mail-conversation"
+          },
+          "result": {
+            "messages": [
+              {
+                "message_id": "mail-original",
+                "sender": "Synthetic vendor",
+                "create_time": "2026-10-08T08:00:00-07:00",
+                "text": "Renewal was approved and recorded under receipt renew-77. This is a confirmation only; no reply is requested."
+              },
+              {
+                "message_id": "mail-principal-sent",
+                "sender": "Principal",
+                "create_time": "2026-10-08T07:30:00-07:00",
+                "text": "Approved subject to the recorded legal terms."
+              }
+            ]
+          }
+        }
+      ],
+      "result": {
+        "outcome": "no_action",
+        "summary": "Reread current state of eval-mail-conversation (limit 50): unchanged since the prior check. mail-principal-sent (07:30) is the principal's approval already sent; mail-original (08:00) confirms the renewal was recorded under receipt renew-77 and states no reply is requested. Renewal is closed; per ceo-mail-review an equivalent reply already in the thread means no mail effect remains. Nothing left to do; no external action taken in this turn.",
+        "proposal": null,
+        "decision_options": [],
+        "error": {
+          "code": "",
+          "retryable": false,
+          "authorization_required": false,
+          "stage": "",
+          "source": "",
+          "source_code": "",
+          "session_continuable": false
+        },
+        "risk": "low",
+        "confidence": 0.95,
+        "rule_coverage": 0.9,
+        "information_completeness": 0.95,
+        "needs_human_reason": null,
+        "decision_basis": null,
+        "requested_input": null,
+        "stage_index": 0,
+        "predecessor_review_id": null,
+        "continue_after_execution": false,
+        "purpose_output": {
+          "action": "no_action",
+          "reason": "Fresh reread of the thread shows no new activity: the vendor's latest message remains a confirmation-only note requesting no reply, and the principal's approval reply is already in the thread, so no remaining work exists.",
+          "target": {},
+          "payload": {},
+          "evidence_refs": [
+            "dingtalk:eval-mail-conversation/mail-principal-sent",
+            "dingtalk:eval-mail-conversation/mail-original",
+            "dingtalk:eval-mail-conversation/trigger-mail-review"
+          ],
+          "purpose": "general"
+        },
+        "source_bindings": []
+      },
+      "canonical_valid": true,
+      "native_lines": 79,
+      "native_sha256": "b8d38173618759f04e325e0f61a749af58cbb5b520947b6e2d83b6b13840e761",
+      "stderr": ""
+    }
+  ],
+  "skill_sha256": {
+    "dingtalk-doc": "9f64d7a84c8daa8a622d027a6a7b23cee7515d3d49ea54b9427f446e6726f07e",
+    "ceo-mail-review": "108e258426ec8f66a0907722d4a1034fba48c8628544eccc69aa5e0162163b9d",
+    "dingtalk-chat": "e1ffcc8c47a45333a0f268b1479ed98daecd8b105da4d99e2f328172ca653e91",
+    "ceo-calendar-invite": "b76b913b63c9b2f3eaba5e90eb64e5dd1a58cf123330815a07d7c32c01451175",
+    "ceo-document-review": "b6b87c3d1ca32bb2e9a9c53675b22dd0a8932aa808205734c8725d9a3eb09d77",
+    "dingtalk-calendar": "f42f6fe6433656a1ae3dd5ff3f040bfc44e2d6b1bd0ce760aeb2d151b900dd1c",
+    "dingtalk-shared": "7c3f6231072cd0e038b69a94b94957e99a1b1b82b961882413e08a1cf56336fb",
+    "ceo-work-tracking": "2db7c6bfb1a8dc8f64863d2e97f78fc3378400b3ff3df43ed22414a47d7edd3e",
+    "dingtalk-mail": "664f31a00f46245c270049129da4d25475ccc561b04d9897e7cd634b2c4a6f18"
+  },
+  "completed_at": "2026-10-25T00:06:22.910827-07:00",
+  "provider_endpoint": "private candidate GPU0:9020",
+  "provider_parser_sha256": "9bcfe24914a52cb4f4cd2fc45f47cdc0f62f1c4695172b0815f953a4b2d2be5f",
+  "provider_source_commit": "fce6e9f",
+  "diagnostics_retained": [
+    {
+      "source": "ceo-qwen-envelope-diagnostic.json",
+      "results": [
+        {
+          "session_id": "01a171c9-3300-73b3-82d5-542510b3a08b",
+          "phase": "cold",
+          "canonical_valid": false,
+          "timeout": null,
+          "error": "native result failed current Consumer wire contract",
+          "native_lines": 42,
+          "native_sha256": "1c29acf7878ce3b745f7c3be333abd27be9ac86af4e287e939444165770fdce2",
+          "developer_sha256": "a92a9ef45c260621403d35ccedc00293100b72b2cd1df59ec43ec327689be9ff",
+          "schema_sha256": "72ee10446972dde404f738df395701188a39d9d5e10005312a66fec3b11e9d7b"
+        }
+      ]
+    },
+    {
+      "source": "ceo-qwen-schema-diagnostic.json",
+      "results": [
+        {
+          "session_id": "01a171cb-9941-7c33-8c54-d618dd66b042",
+          "phase": "cold",
+          "canonical_valid": true,
+          "timeout": null,
+          "error": null,
+          "native_lines": 44,
+          "native_sha256": "5e40dba5207f540ec78a01a5a06e30653293659c273a121d8ab6e0037ec45b07",
+          "developer_sha256": "d2ea66da1c441f0e4cc8e2b2589591164e4f627c2140905b7bfb4ffcf97c7b1c",
+          "schema_sha256": "72ee10446972dde404f738df395701188a39d9d5e10005312a66fec3b11e9d7b"
+        },
+        {
+          "session_id": "01a171cb-9941-7c33-8c54-d618dd66b042",
+          "phase": "resume",
+          "canonical_valid": true,
+          "timeout": null,
+          "error": null,
+          "native_lines": 66,
+          "native_sha256": "a6112988a297627266e67d7e036cabd4ef101f93ac2dbcabcc0e60d592ff8490",
+          "developer_sha256": "d2ea66da1c441f0e4cc8e2b2589591164e4f627c2140905b7bfb4ffcf97c7b1c",
+          "schema_sha256": "72ee10446972dde404f738df395701188a39d9d5e10005312a66fec3b11e9d7b"
+        }
+      ]
+    },
+    {
+      "source": "ceo-qwen-consumer-native-fixed.json",
+      "results": [
+        {
+          "session_id": "01a171cd-46c2-7e51-bb96-9df46d36b263",
+          "phase": "cold",
+          "canonical_valid": false,
+          "timeout": null,
+          "error": "no valid typed result JSON found in Codex JSONL",
+          "native_lines": 31,
+          "native_sha256": "bcf7c869131b1f1d2b6f9658b99b7d86a49c516a4ec6110f3ec64e2ec009a674",
+          "developer_sha256": "80bf3999716196f504d90c68502bc2aeacadce90da01937a20487d03d5dbe3ce",
+          "schema_sha256": "72ee10446972dde404f738df395701188a39d9d5e10005312a66fec3b11e9d7b"
+        }
+      ]
+    },
+    {
+      "source": "transport-only.results.json",
+      "results": [
+        {
+          "session_id": "01a171da-45fa-7ae3-8737-ca1ce9968907",
+          "phase": "cold",
+          "canonical_valid": false,
+          "timeout": true,
+          "error": "no valid typed result JSON found in Codex JSONL",
+          "native_lines": 9,
+          "native_sha256": "1e3c5cad8eee1afa0f142abb95a787e34ff8ce5a1fcd5d2c10325b8d44a2b8ff",
+          "developer_sha256": "21ab069744fbe46db656ccc21ed21f29e3dfd07732c00469596527d968a64778",
+          "schema_sha256": "72ee10446972dde404f738df395701188a39d9d5e10005312a66fec3b11e9d7b"
+        }
+      ]
+    },
+    {
+      "source": "grammar-only.results.json",
+      "results": [
+        {
+          "session_id": "01a171dd-c912-77a2-81ad-bce72ca5e23e",
+          "phase": "cold",
+          "canonical_valid": false,
+          "timeout": true,
+          "error": "no valid typed result JSON found in Codex JSONL",
+          "native_lines": 292,
+          "native_sha256": "3ba4ac25b24da325a24855cb7c548538f7e174dc5a308edc16f345c1ed2048f7",
+          "developer_sha256": "21ab069744fbe46db656ccc21ed21f29e3dfd07732c00469596527d968a64778",
+          "schema_sha256": "72ee10446972dde404f738df395701188a39d9d5e10005312a66fec3b11e9d7b"
+        }
+      ]
+    }
+  ]
+}

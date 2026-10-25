@@ -133,3 +133,30 @@ def test_native_consumer_rejects_malformed_suffix_instead_of_salvaging_it():
     native = _consumer()
     with pytest.raises(ResultParseError):
         parse_native_output(_event(native)[:-2] + "}")
+
+
+@pytest.mark.parametrize("purpose", ["general", "oa"])
+def test_native_developer_exposes_decoder_format_and_keeps_session_fingerprint(purpose, tmp_path, monkeypatch):
+    from hashlib import sha256
+    from app.consumer_agent import consumer_developer_sections_by_runtime
+    from app import native_prompt_input
+
+    sections = consumer_developer_sections_by_runtime(
+        purpose_name=purpose, runtime_context="Anonymous", work_profile="",
+    )["codex_cli"]
+    native = next(s.text for s in sections if s.name == "原生输出契约指纹")
+    assert "## Native Output Format\n" in native
+    supplied = json.loads(native.split("## Native Output Format\n", 1)[1])
+    assert supplied == json.loads(native_output_schema_path(purpose=purpose).read_text())
+    assert Draft202012Validator(supplied).is_valid(_consumer(purpose=purpose))
+    flat = _consumer(purpose=purpose)
+    flat.update(flat.pop("decision"))
+    assert not Draft202012Validator(supplied).is_valid(flat)
+    saved = tmp_path / "session.jsonl"
+    saved.write_text(json.dumps({"type":"response_item", "payload":{
+        "type":"message", "role":"developer", "content":[{"type":"input_text","text":native}],
+        "internal_chat_message_metadata_passthrough":{"content_item_kinds":["generic.developer_instructions"]},
+    }}) + "\n")
+    monkeypatch.setattr(native_prompt_input.native, "find_codex_session_path", lambda *args, **kwargs: saved)
+    assert native_prompt_input.codex_session_wire_schema("saved") == {
+        "$native_output_schema_sha256":sha256(native_output_schema_path(purpose=purpose).read_bytes()).hexdigest()}
