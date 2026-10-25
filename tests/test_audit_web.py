@@ -2048,6 +2048,19 @@ def test_render_attempt_list_shows_draft_follow_up_as_scheduled(tmp_path: Path):
     assert ">Processing</span>" not in html
 
 
+def test_related_meeting_history_marks_runs_without_a_meeting_task_unavailable(tmp_path):
+    store = AutoReplyStore(tmp_path / "worker.sqlite3")
+    orphan = SimpleNamespace(
+        id=7, task_id=None, job_id=4908, created_at="2026-07-14 10:00:00",
+        status="retry", audit_summary="orphan",
+    )
+
+    html = audit_web_module._meeting_related_history_card([orphan], store)
+
+    assert "#meeting-7" in html
+    assert html.count("unavailable") == 2
+
+
 def test_meeting_history_uses_reply_card_and_detail_contract(tmp_path: Path, monkeypatch):
     def read_native_events(session_id, **_bounds):
         assert session_id == "meeting-session-history-1"

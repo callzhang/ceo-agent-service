@@ -12942,13 +12942,24 @@ def _meeting_related_history_card(runs, store: AutoReplyStore) -> str:
         return ""
     rows = []
     for run in runs:
-        job = store.get_meeting_alignment_job(run.job_id)
+        # The Run's Task is the Meeting job; run.job_id is provenance for orphan Runs only.
+        try:
+            job = None if run.task_id is None else store.get_meeting_alignment_job(run.task_id)
+        except ValueError:
+            job = None
+        title = "unavailable" if job is None else job.title
+        result = (
+            "unavailable" if job is None else _meeting_run_display_status(
+                run.status, job.status,
+                has_later_run=store.has_later_meeting_alignment_run(run.task_id, run.id),
+            )
+        )
         rows.append(
             "<tr>"
             f'<td><a href="/meeting-attempts/{run.id}">#meeting-{run.id}</a></td>'
             f"<td>{escape(_format_local_time(run.created_at))}</td>"
-            f"<td>{escape(job.title)}</td>"
-            f"<td>{escape(_meeting_run_display_status(run.status, job.status, has_later_run=store.has_later_meeting_alignment_run(run.job_id, run.id)))}</td>"
+            f"<td>{escape(title)}</td>"
+            f"<td>{escape(result)}</td>"
             f"<td>{escape(_excerpt(run.audit_summary, 120))}</td>"
             "</tr>"
         )
