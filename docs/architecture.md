@@ -495,6 +495,8 @@ legacy-project 深链接保留。D1b 不改变物理声明或旧记录。独立 
 Project CRM 搜索、确认和清除关联仍在原业务写事务中；搜索只存本地候选，
 不替代已确认关联，也不写外部 CRM。
 
+前端只保留专用 `LegacyProjectDetail` 历史详情适配器，不再把正式 Task 列表映射为旧 Project 摘要，也不从历史 Todo 推算当前进度。无调用的三个 Work Project/Todo 批量列表 Store API 已退休；精确历史 getter、来源、事实与回执读取保留。
+
 原 `business_source_documents` 正文表及数字容器 ID 退休。Signal DAO 仅持久化
 来源身份、精确版本、hash／字节数及 locator；一个 owner 直接内联，第二个 owner
 在原 savepoint 中把同一精确来源提升到共享 provenance，保留 Signal ID 和事实。

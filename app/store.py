@@ -23480,28 +23480,6 @@ class AutoReplyStore(LogicalRunStoreMixin, ReviewedCandidateStoreMixin):
                              (project_id,)).fetchone()
             return None if row is None else WorkProject.model_validate(dict(row))
 
-    def list_work_projects(
-        self,
-        statuses: tuple[str, ...] | None = None,
-        limit: int | None = None,
-    ) -> list[WorkProject]:
-        query = f"select * from ({BUSINESS_PROJECTIONS['work_project']})"
-        args: list[str | int] = []
-        if statuses:
-            placeholders = ",".join("?" for _ in statuses)
-            query = f"{query} where status in ({placeholders})"
-            args.extend(statuses)
-        query = f"{query} order by last_activity_at desc, id desc"
-        if limit is not None:
-            query = f"{query} limit ?"
-            args.append(limit)
-        with self._connect() as db:
-            return [
-                WorkProject.model_validate(dict(row)) for row in db.execute(query, args)
-            ]
-
-
-
     def get_work_todo(
         self, todo_id: int, *, _db: sqlite3.Connection | None = None
     ) -> WorkTodo | None:
@@ -23530,56 +23508,6 @@ class AutoReplyStore(LogicalRunStoreMixin, ReviewedCandidateStoreMixin):
         query = f"{query} order by id"
         with self._connect() as db:
             return [WorkTodo.model_validate(dict(row)) for row in db.execute(query, args)]
-
-    def list_work_todos_for_projects(
-        self,
-        project_ids: list[int],
-        *,
-        statuses: tuple[str, ...] | None = None,
-    ) -> dict[int, list[WorkTodo]]:
-        if not project_ids:
-            return {}
-        placeholders = ",".join("?" for _ in project_ids)
-        query = f"select * from ({BUSINESS_PROJECTIONS['work_todo']}) where project_id in ({placeholders})"
-        args: list[str | int] = list(project_ids)
-        if statuses:
-            query = f"{query} and status in ({','.join('?' for _ in statuses)})"
-            args.extend(statuses)
-        query = f"{query} order by project_id, id"
-        with self._connect() as db:
-            rows = db.execute(query, args).fetchall()
-        result: dict[int, list[WorkTodo]] = {}
-        for row in rows:
-            todo = WorkTodo.model_validate(dict(row))
-            result.setdefault(todo.project_id, []).append(todo)
-        return result
-
-    def list_work_project_ids_for_todo_owner(
-        self,
-        owner_user_id: str,
-        *,
-        project_statuses: tuple[str, ...] = ("active", "waiting"),
-        limit: int = 500,
-    ) -> set[int]:
-        owner_user_id = owner_user_id.strip()
-        if not owner_user_id or limit <= 0:
-            return set()
-        placeholders = ",".join("?" for _ in project_statuses)
-        query = f"""
-            select distinct todos.project_id
-            from ({BUSINESS_PROJECTIONS['work_todo']}) todos
-            join ({BUSINESS_PROJECTIONS['work_project']}) projects on projects.id=todos.project_id
-            where todos.owner_user_id=?
-              and projects.status in ({placeholders})
-            order by projects.last_activity_at desc, projects.id desc
-            limit ?
-        """
-        with self._connect() as db:
-            rows = db.execute(
-                query,
-                [owner_user_id, *project_statuses, limit],
-            ).fetchall()
-            return {int(row["project_id"]) for row in rows}
 
     @staticmethod
     def _normalize_dingtalk_todo_link_status(status: object) -> str:

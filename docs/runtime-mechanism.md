@@ -5398,3 +5398,7 @@ End of historical Task/Run Phase 2 candidate notes. The following sections descr
 ### 原生输出格式与解码契约一致
 
 Consumer 的原生输出段仅保留 schema 指纹、JSON/decision 包装说明及 `agent_cli.read_consumer_output_schema(purpose=...)` 按需查询入口，不全量注入 native 或 Pydantic 业务 schema。该 Consumer metadata 查询通过现有 agent_cli 传输返回与解码器同一文件的完整紧凑 JSON，单一文本块、无重复 structured output；仅接受声明 purpose，不扩大任意文件、shell 或 Audit 权限。业务模型、无损还原、严格校验、路线、重试和 session 选择保持不变。公共/任务预览与实际提交复用同一装配；每轮保留当前入口与可解析指纹，不假设压缩后的 session 永久保有完整规则。冷启动查询仍占工具上下文，默认 prompt 减少不代表总 token 或耗时减少。
+
+### Historical console adapter ownership — 2026-10-25
+
+The console uses the dedicated `LegacyProjectDetail` adapter for retained legacy project details. It does not map the current Business Task list to old Project summaries or compute operational progress from historical Todos. Callerless Work Project/Todo batch-list Store methods are retired; exact historical project/todo getters and the source/fact/receipt detail path remain. This cleanup has no schema or data migration.
