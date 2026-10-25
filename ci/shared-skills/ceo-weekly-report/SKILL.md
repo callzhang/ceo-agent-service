@@ -16,9 +16,11 @@ cycle. Publication readiness is decided by this business review and Audit.
 The former service `publishable` flag and separate publication validator have
 been retired; historical validation output is not a current publication
 condition. Missing business-line submissions and missing CRM, finance or
-telemetry actuals are disclosed as `无数据` with their coverage gaps and do not
-block the report: return `failed` only when a declared read or the document
-write itself fails, never because evidence is incomplete. Do not ask Derek to supply materials already accessible to the Agent.
+telemetry actuals do not block the report, but a metric may be `无数据` only
+after its source was actually tried: cite the query it came back empty from, or
+the exact error, in the coverage gaps. Return `failed` only when a declared
+read or the document write itself fails, never because evidence is incomplete.
+Do not ask Derek to supply materials already accessible to the Agent.
 
 ## Inputs and dates
 
@@ -39,8 +41,8 @@ write itself fails, never because evidence is incomplete. Do not ask Derek to su
    `dingtalk-minutes`; missing archives are coverage gaps. Use `dingtalk-chat`
    to read relevant group messages in the same window. Read the previous
    report, the company OKR and the business-line materials as needed.
-4. Read CRM actuals (orders, Pipeline, Gate, expected signing) with the native
-   `sharecrm` CLI in the Consumer shell, following `fxiaoke-crm-cli` (load it
+4. Required, not optional: read CRM actuals (orders, Pipeline, Gate, expected
+   signing) with the native `sharecrm` CLI in the Consumer shell, following `fxiaoke-crm-cli` (load it
    with `read_skill`). Read-only: authentication status, help, object
    description, record reads and queries; never pass `--confirm` or `--yes`,
    and never create, update, delete or follow up. `sharecrm` keeps its CRM
