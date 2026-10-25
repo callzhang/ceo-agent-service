@@ -9,7 +9,7 @@ import pytest
 
 from app.external_retry import MAX_AUTOMATIC_RETRIES
 from app.store import AgentRunLeaseLostError, AutoReplyStore
-from app.task8_storage import task8_insert_parts, task8_set_parts
+from app.task8_storage import task8_insert_parts
 from app.task12_storage import insert_task12, task12_projection
 from app.task20_definitions import task20_column
 from app.configs_definitions import config_projection

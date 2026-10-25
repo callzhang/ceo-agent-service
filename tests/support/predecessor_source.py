@@ -21,4 +21,3 @@ def source_database(path):
                  {"value": "json_quote(excluded.value)"})
     db.commit()
     db.close()
-

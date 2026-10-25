@@ -707,7 +707,7 @@ cd /path/to/ceo-agent-service
 npm test
 ```
 
-`npm test` 使用统一的 `$HOME/miniforge3/bin/python -m pytest` 运行 Python 测试，并先运行 Ruff，再运行 Workbench 前端测试。仓库不创建或依赖私有 `.venv`。修改 Workbench 后的本地集成流程是：
+`npm test` 使用统一的 `$HOME/miniforge3/bin/python -m pytest` 运行完整 Python 测试，并先运行 Ruff，再运行 Workbench 前端测试。GitHub Quality 将 Python 用例按收集顺序分到六个独立 runner，每个 runner 使用两个 pytest worker；所有分片、Ruff、前端测试、构建和浏览器测试都通过才算完整检查通过。仓库不创建或依赖私有 `.venv`。修改 Workbench 后的本地集成流程是：
 
 ```bash
 npm install --prefix frontend

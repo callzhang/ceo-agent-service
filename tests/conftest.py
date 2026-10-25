@@ -1,5 +1,6 @@
 import json
 import os
+import re
 from pathlib import Path
 import sys
 
@@ -68,13 +69,28 @@ def pytest_addoption(parser):
 
 
 def pytest_collection_modifyitems(config, items):
-    if config.getoption("--run-live"):
-        return
-    live_items = [item for item in items if item.get_closest_marker("live")]
-    if not live_items:
-        return
-    items[:] = [item for item in items if item not in live_items]
-    config.hook.pytest_deselected(items=live_items)
+    deselected = []
+    if not config.getoption("--run-live"):
+        deselected.extend(item for item in items if item.get_closest_marker("live"))
+
+    shard = os.environ.get("CEO_PYTEST_SHARD")
+    if shard:
+        match = re.fullmatch(r"(\d+)/(\d+)", shard)
+        if match is None:
+            raise pytest.UsageError("CEO_PYTEST_SHARD must be INDEX/COUNT")
+        index, count = map(int, match.groups())
+        if count < 2 or not 0 <= index < count:
+            raise pytest.UsageError("CEO_PYTEST_SHARD index must be in [0, COUNT), COUNT >= 2")
+        remaining = sorted(
+            (item for item in items if item not in deselected),
+            key=lambda item: item.nodeid,
+        )
+        deselected.extend(item for position, item in enumerate(remaining) if position % count != index)
+
+    if deselected:
+        deselected_ids = {id(item) for item in deselected}
+        items[:] = [item for item in items if id(item) not in deselected_ids]
+        config.hook.pytest_deselected(items=deselected)
 
 
 @pytest.fixture(autouse=True)
