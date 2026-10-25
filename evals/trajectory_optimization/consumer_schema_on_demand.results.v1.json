@@ -251,5 +251,22 @@
         }
       ]
     }
-  ]
+  ],
+  "production_readback": {
+    "commit": "7db7db8a77ad07e3443ebd82c81509e980d8fb12",
+    "deployment_receipt": "deployed ed7380e5 -> 7db7db8a",
+    "observed_at": "2026-10-25T01:12:26.488882-07:00",
+    "pid": 1046,
+    "healthz": "ok",
+    "attention_total": 5,
+    "history_total": 38138,
+    "schema_pointer_present": true,
+    "full_schema_absent": true,
+    "schema_fingerprint_present": true,
+    "developer_characters": 30306,
+    "developer_sha256": "06eb1b2425d2b2d45776bfa8fee28cfd6cd49b4eba1c2259f44ba6ce2f692819",
+    "production_app_files_equal_reviewed": true,
+    "system_health": "degraded: one existing meeting-progress finding; native delivery unavailable=0",
+    "scope": "Anonymous cold/resume evaluated before release against current provider; production version, source identity and Settings read back. No production business replay."
+  }
 }

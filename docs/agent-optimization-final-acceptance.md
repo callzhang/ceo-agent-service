@@ -257,3 +257,8 @@ Qwen完整读取124行：第28行已明确判断邮件已处理、应no_action�
 验收结果：复用第12节已有效的全量基线，仅补本次按需方案。原生段从11909降至373字符（减少11536，96.9%）；不是删除必要格式，而是通过现有agent_cli查询完整契约。同一匿名邮件session `01a17215-b732-7902-a831-b5aa8068d441`：cold调用Skill、schema查询和当前消息，共3次；resume只读当前消息1次；两轮均严格解析no_action、无重复回复。cold第18行模型可见schema完整11656字符，与decoder文件等值；原生33/55行摘要及哈希见[按需验收记录](../evals/trajectory_optimization/consumer_schema_on_demand.results.v1.json)。本案例未测总token节省或提速，也不证明任意长会话始终无需重读。
 
 定向测试50项通过；另一次角色/续跑选择34项通过，1项既有外发约束字面量断言失败（`test_consumer_and_audit_share_direct_external_delivery_boundary`，未改的plain builder不含其期望旧句），未扩展修改该策略。独立审查验证其中16项及实际原生轨迹，无功能阻塞；指出canonical文档仍说全量注入，已同步修正。API429、G1自然样本及其他任务不重跑。
+
+
+第13节发布收口：修复提交 `6bc49ded2`，经 `7db7db8a77ad07e3443ebd82c81509e980d8fb12` 合入main。正式默认部署回执 `deployed ed7380e5 -> 7db7db8a`；随后另一会话通过正常部署发布Skill，最终生产源码仍为同一提交，新服务PID1046。生产相关3文件与验收候选字节一致，源码工作树干净。healthz正常，Attention5、History38138、Reply/Attempt既有失败13/13、Meeting失败0；dispatcher无running，scheduled pending6。system_health保留一项既有Meeting停止推进finding，native delivery不可读降为0；没有把此记录声称为全系统健康。
+
+Settings general Consumer / qwen_gpu4公共预览确认完整schema不在Developer中、短查询入口及当前指纹存在；Developer30306字符，SHA `06eb1b2425d2b2d45776bfa8fee28cfd6cd49b4eba1c2259f44ba6ce2f692819`。总Developer还包含同期其他变更，不用前后整段差值冒充本次节省；可比数字仅为同一native段11909→373。未新增OA绑定预览或生产业务重放。**本次按需读取纠偏已测试、审查、上线并完成版本/Settings回读；原生冷/续行为依据为上述同案例记录。** G1/API等整体验收缺口保留，本轮到此结束。
