@@ -52,24 +52,33 @@ local values remain inline, and provider receipt retirement checks the new FK.
 The inverse hydrates referenced bodies before dropping the relation and restores
 the original marker and declaration.
 
-Validation: a fresh online-backup copy of the current production database
-forwarded 46 unique references and retained identical projected Reply fields,
-the original single `foreign_key_check` finding, and `quick_check=ok`; inverse
-restored the exact Store23.1/Email54 schema and all raw Attempt result bodies;
-reforward again produced 46 references and passed integrity. Focused release,
-publication selector, store writer, worker receipt handoff, Email54 marker and
-state binding checks pass (14 tests in the recorded focused selection). Ruff
-with only pre-existing F401/E402 categories excluded, Python compile and
-`git diff --check` pass. The original A5 native acceptance conflict remains a
-separate gate and is not fixed or superseded by this storage work.
+Validation: the current-production-derived Store23.1/Email54 copy forwarded 46
+references, preserved the single existing FK finding and passed `quick_check`;
+schema inverse restored the source declaration/marker, and reforward again
+published 46 references. Earlier focused release and writer coverage verified
+all original raw Attempt result bodies through inverse. The post-merge scoped
+selection passed 43 tests, including A5b release, projection, writer, worker,
+Email54 marker, state binding and current deployment-drain fixtures. Fresh Luna
+SPEC and QUALITY reviews both approved.
 
-At this checkpoint the candidate is not deployed. Remaining in this plan:
-independent QUALITY review, normal upstream integration, real Codex CLI
-copy-path acceptance with external-send substitute, standard deployment and
-production readback, then clear the verified deployment backup as Derek
-approved. The old Project/Todo/Update review remains read-only: their old write
-paths have already been retired; history readers still have consumers and no
-safe whole-row deletion or source-backed replacement owner has been proven.
+Real Codex CLI on the migrated copy passed both `approve` and `revision` cases
+with the external provider substituted in memory. The approve case completed
+three Consumer/Audit revisions (6 CLI calls); the revision case recorded
+Audit `return` at revision 0 and `approve` at revision 1 (4 CLI calls). Each
+finished `done` with one business Attempt, one substitute send, one verification
+and one receipt. In each case 48 existing table contents remained unchanged.
+No production send occurred. One first-run harness setup attempt failed only
+its raw-file hash check because separately backed-up SQLite files had different
+physical bytes; the successful runs used an exact closed-file baseline and also
+checked semantic row preservation.
+
+A5b implementation, copy inverse and native CLI acceptance are locally
+complete; latest upstream integration, deployment, production readback and
+post-readback cleanup remain. The original A5 native acceptance conflict is a
+separate issue and remains open. The old Project/Todo/Update write paths have
+already been retired, while their history readers still have consumers. No
+safe whole-row deletion or source-backed replacement owner has been proven, so
+that cleanup has no authorized data-deletion change in this phase.
 
 ## Email business-model phase audit — 2026-10-24
 
