@@ -170,6 +170,7 @@ def test_current_store_release_backfills_reference_and_inverse_restores_body(tmp
         ))
     release = prepare_reply_receipt_reference_release(path)
     release.publish()
+    release.verify_loaded()
     with sqlite3.connect(path) as db:
         assert schema_is_current(db, email_ledger=True)
         from app.state_definitions import state_projection

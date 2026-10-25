@@ -120,8 +120,17 @@ class ReplyReceiptReferenceRelease:
                 raise
 
     def finalize(self):
+        self.verify_loaded()
+
+    def verify_loaded(self):
         from app.current_schema_manifest import require_current_pair
         require_current_pair(self.database_path)
+        with closing(sqlite3.connect(self.database_path.as_uri() + "?mode=ro", uri=True)) as db:
+            db.execute("begin")
+            if (_marker(db) is None or _marker(db)[0] != TARGET_STORE_VERSION
+                    or _foreign_keys(db) != self.source_fk
+                    or db.execute("pragma quick_check").fetchone()[0] != "ok"):
+                raise ValueError("Reply receipt release loaded-database readback mismatch")
 
     def rollback(self):
         if not self.published:

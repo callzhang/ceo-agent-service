@@ -83,6 +83,14 @@ already been retired, while their history readers still have consumers. No
 safe whole-row deletion or source-backed replacement owner has been proven, so
 that cleanup has no authorized data-deletion change in this phase.
 
+The first standard deployment attempt restarted the service and then failed its
+publication interface check because this release object lacked the required
+`verify_loaded()` method. The deployer's automatic inverse and checkout rollback
+completed; production remains Store23.1/Email54 with the original FK finding
+and `quick_check=ok`, and health recovered. Added the missing loaded-database
+readback and a regression call to the release test; 31 focused release and
+deployment-drain tests pass. A second standard deployment and readback remain.
+
 ## Email business-model phase audit — 2026-10-24
 
 The current source already contains the accepted Email B1/B2 model: `emails`
