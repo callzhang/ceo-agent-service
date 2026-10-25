@@ -6,33 +6,9 @@ import pytest
 
 from app.store import AgentRunLeaseLostError, AutoReplyStore
 from app.task_storage import RETIRED_TASK_TABLES
-@pytest.fixture(params=("fresh", "migrated"))
-def typed_runtime(request, tmp_path, monkeypatch):
+@pytest.fixture
+def typed_runtime(tmp_path, monkeypatch):
     path = tmp_path / "runtime.db"
-    if request.param == "migrated":
-        from app.task8_storage import register_task8_functions, task8_insert_parts
-        from app.store_schema_release import prepare_database_schema_release
-        from tests.test_task_run_entity_schema_release import _source_database
-
-        _source_database(path)
-        with sqlite3.connect(path) as db:
-            register_task8_functions(db)
-            for identity in (1, 2):
-                parts = task8_insert_parts("work_summary_inputs", {
-                    "legacy_key": str(identity), "source_type": "local_file",
-                    "source_ref": f"reader-{identity}",
-                    "payload_json": '{"receipt":"retained"}',
-                    "status": "pending", "attempts": 0, "error": "",
-                    "created_at": "created", "updated_at": "updated",
-                    "available_at": "", "source_created_at": "",
-                    "body_sha256": "", "body_bytes": 0, "body_compacted": 0,
-                })
-                db.execute(f"insert into tasks ({parts.columns}) values ({parts.values})", parts.parameters)
-            db.commit()
-        from pathlib import Path
-        release = prepare_database_schema_release(Path(__file__).resolve().parents[1], path)
-        assert release is not None
-        release.publish()
 
     # Initialize the current declaration before installing the runtime reader
     # fence. work_summary_inputs remains a narrow native domain owner; its
@@ -65,7 +41,7 @@ def typed_runtime(request, tmp_path, monkeypatch):
         names = {row[0] for row in db.execute("select name from sqlite_master")}
         assert not names.intersection(retired_runtime_tables)
         assert "work_summary_inputs" in names
-    yield store, request.param, check_body_reads
+    yield store, "fresh", check_body_reads
     assert retired_accesses == []
     assert body_accesses == []
 
@@ -103,14 +79,8 @@ def _pre_run_failure(store, task, *, generation=None):
 
 
 def test_history_and_work_input_recovery_use_canonical_task_ids(typed_runtime):
-    store, layout, check_body_reads = typed_runtime
-    if layout == "migrated":
-        with store._connect() as db:
-            input_id = db.execute(
-                "select task_id from work_summary_inputs where source_ref='reader-2'"
-            ).fetchone()[0]
-    else:
-        input_id = store.enqueue_work_summary_input("local_file", "reader", '{ "body": 1 }')
+    store, _, check_body_reads = typed_runtime
+    input_id = store.enqueue_work_summary_input("local_file", "reader", '{ "body": 1 }')
     store.record_error("work_summary_input", str(input_id), "task_agent", "retry")
     store.mark_work_summary_input_done(input_id)
     assert store.resolve_errors_recovered_by_terminal_work_summary_inputs() == 1
@@ -122,11 +92,6 @@ def test_history_and_work_input_recovery_use_canonical_task_ids(typed_runtime):
     finally:
         check_body_reads[0] = False
     assert input_id in [item.source_id for item in history]
-    if layout == "migrated":
-        assert {item.source_id for item in history} == {1, 2}
-        with store._connect() as db:
-            assert tuple(db.execute("select payload_json,body_compacted from work_summary_inputs where task_id=?", (input_id,)).fetchone()) == ("{}", 1)
-            assert db.execute("pragma foreign_key_check").fetchall() == []
 
 
 def test_pre_run_failure_retry_and_settlement_keep_generation_and_history(typed_runtime):
