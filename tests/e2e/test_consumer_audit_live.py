@@ -18,12 +18,14 @@ from app.audit_agent import AuditAgentRunner
 from app.codex_runner import CodexRunner, _config_string
 from app.consumer_agent import ConsumerAgentRunner
 from app.native_cli_metadata import describe_native_command
+from app.native_agent_output import native_output_schema_path
 from app.process_runner import run_process_with_idle_timeout
 from app.process_runner import ProcessRunResult
 from app.store import AgentRole, AutoReplyStore
 from app.system_executor import SystemExecutor
 from app.wechat.codex_safety import make_audit_agent_command
 from tests.support.audit_sink_mcp import AuditSink
+from tests.support.native_consumer_output_fixture import native_consumer_stream_for_command
 from tests.support.native_protocol import install_protocol_native_trajectories
 
 
@@ -224,18 +226,20 @@ def _reviewed_records(
 
 def _consumer_result_record(proposal: dict[str, object]) -> dict[str, object]:
     wire = {
-        "outcome": "proposal",
+        "action": "plan",
+        "reason": proposal["authored_judgment"],
+        "target": {},
+        "payload": proposal,
+        "evidence_refs": [],
         "risk": "low",
         "confidence": 1.0,
         "rule_coverage": 1.0,
         "information_completeness": 1.0,
         "summary": "Prepared one source-group clarification.",
-        "proposal": proposal,
         "decision_options": [],
         "error_code": "",
         "error_retryable": False,
         "error_authorization_required": False,
-        "durable_memories": [],
     }
     return {
         "type": "item.completed",
@@ -245,14 +249,13 @@ def _consumer_result_record(proposal: dict[str, object]) -> dict[str, object]:
 
 def _audit_result_record(candidate: dict[str, object]) -> dict[str, object]:
     wire = {
-        "outcome": "approve",
         "risk": "low",
         "confidence": 1.0,
         "rule_coverage": 1.0,
         "information_completeness": 1.0,
         "summary": "The candidate and source evidence were reviewed.",
         "evidence_refs": [],
-        "feedback": None,
+        "decision": {"outcome": "approve", "feedback": None},
         "error_code": "",
         "error_retryable": False,
         "error_authorization_required": False,
@@ -282,6 +285,8 @@ class CalendarRunnerContractExecutor:
 
 
         stdout = "\n".join(lines)
+        if not audit_turn:
+            stdout = native_consumer_stream_for_command(stdout, list(command))
         for line in lines:
             on_stdout_line(line)
         return ProcessRunResult(0, stdout, "")
@@ -570,7 +575,13 @@ def test_deterministic_native_runner_calendar_clarification_contract(
     assert system_dws.sent[0][0] == "cid-1"
     assert system_dws.sent[0][1].startswith(MESSAGE_TEXT)
     assert len(executor.commands) == 2
-    assert all("--output-schema" not in command for command in executor.commands)
+    assert all("--output-schema" in command for command in executor.commands)
+    assert executor.commands[0][executor.commands[0].index("--output-schema") + 1] == str(
+        native_output_schema_path("consumer", purpose="general")
+    )
+    assert executor.commands[1][executor.commands[1].index("--output-schema") + 1].endswith(
+        "audit_agent_native_output.schema.json"
+    )
     assert "tools.enabled_tools" not in " ".join(executor.commands[0])
     assert "codex" == executor.commands[1][0]
     assert "Raw material references and exact read commands" in executor.prompts[0]
