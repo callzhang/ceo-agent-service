@@ -4,13 +4,11 @@ import pytest
 
 from app.audit_web import _queue_attention_rows
 from app.store import AutoReplyStore, ERROR_SQL
-from app.run_storage import insert_run
-from app.task_storage import task_physical_id
+from app.scheduled_occurrence_storage import insert_occurrence
 from app.schedules_storage import insert_schedule
 from app.scheduled_config_storage import intern_scheduled_config
-from app.task8_storage import task8_set_parts
-from app.task20_definitions import task20_projection
 from app.action_storage import insert_error_action
+from app.task_entity_storage import get_task, update_task_cas
 
 
 def _schedule(db, identity):
@@ -19,9 +17,30 @@ def _schedule(db, identity):
 
 
 def _set_reply_task(db, public_id, values):
-    parts = task8_set_parts("reply_tasks", values, payload_source="tasks.payload_json")
-    db.execute(f"update tasks set {parts.sql} where record_type='reply_tasks' and id=?",
-               (*parts.parameters, task_physical_id(db, "reply_tasks", public_id)))
+    assert update_task_cas(
+        db, task_id=public_id, expected={"status": "pending"}, changes=values,
+    ) is not None
+
+
+def _insert_occurrence(db, *, occurrence_id, event_id, scheduled_task_id, snapshot_id,
+                       execution_kind, execution_id, dispatch_status="dispatched"):
+    insert_occurrence(db, {
+        "id": occurrence_id,
+        "event_id": event_id,
+        "scheduled_task_id": scheduled_task_id,
+        "trigger_kind": "manual",
+        "scheduled_for": "2026-10-07T10:00:00Z",
+        "first_scheduled_for": "2026-10-07T10:00:00Z",
+        "occurrence_count": 1,
+        "dispatch_status": dispatch_status,
+        "skip_or_error_reason": "",
+        "snapshot_id": snapshot_id,
+        "execution_kind": execution_kind,
+        "execution_id": execution_id,
+        "lease_owner": "",
+        "result_summary": "",
+        "created_at": "2026-10-07 10:00:00",
+    })
 
 
 @pytest.mark.parametrize("source", ["reply", "error"])
@@ -59,17 +78,11 @@ def test_attention_recovery_does_not_search_unrelated_successes_first(
         _schedule(db, 1)
         snapshot_id = intern_scheduled_config(db, "{}")
         for index in range(20000):
-            insert_run(db, 'scheduled_task_runs', {
-                'event_id': f"event-{index}",
-                'scheduled_task_id': 1,
-                'trigger_kind': 'manual',
-                'scheduled_for': '2026-10-07T10:00:00Z',
-                'first_scheduled_for': '2026-10-07T10:00:00Z',
-                'dispatch_status': 'dispatched',
-                'snapshot_id': snapshot_id,
-                'execution_kind': 'reply_task',
-                'execution_id': str(completed.id),
-            })
+            _insert_occurrence(
+                db, occurrence_id=index + 1, event_id=f"event-{index}", scheduled_task_id=1,
+                snapshot_id=snapshot_id, execution_kind="reply_task",
+                execution_id=str(completed.id),
+            )
     steps = 0
 
     def progress():
@@ -93,19 +106,20 @@ def test_attention_recovery_does_not_search_unrelated_successes_first(
 
 @pytest.mark.parametrize("source", ["reply", "error"])
 @pytest.mark.parametrize(
-    ("schedule_id", "later_id", "status", "dispatch", "kind", "covered"),
+    ("schedule_id", "later_id", "status", "dispatch", "kind", "reply_superseded", "error_superseded"),
     [
-        (1, 11, "done", "dispatched", "reply_task", True),
-        (1, 11, "skipped", "dispatched", "reply_task", True),
-        (2, 11, "done", "dispatched", "reply_task", False),
-        (1, 9, "done", "dispatched", "reply_task", False),
-        (1, 11, "failed", "dispatched", "reply_task", False),
-        (1, 11, "done", "failed", "reply_task", False),
-        (1, 11, "done", "dispatched", "service_command", False),
+        (1, 11, "done", "dispatched", "reply_task", True, True),
+        (1, 11, "skipped", "dispatched", "reply_task", True, True),
+        (2, 11, "done", "dispatched", "reply_task", False, False),
+        (1, 9, "done", "dispatched", "reply_task", False, False),
+        (1, 11, "failed", "dispatched", "reply_task", True, False),
+        (1, 11, "done", "failed", "reply_task", False, False),
+        (1, 11, "done", "dispatched", "service_command", True, False),
     ],
 )
 def test_attention_recovery_keeps_same_schedule_terminal_evidence(
-    tmp_path, source, schedule_id, later_id, status, dispatch, kind, covered
+    tmp_path, source, schedule_id, later_id, status, dispatch, kind,
+    reply_superseded, error_superseded,
 ):
     store = AutoReplyStore(tmp_path / "worker.sqlite3")
     tasks = [
@@ -134,18 +148,11 @@ def test_attention_recovery_keeps_same_schedule_terminal_evidence(
             (10, 'event-10', 1, 'dispatched', 'reply_task', str(tasks[0].id)),
             (later_id, f'event-{later_id}', schedule_id, dispatch, kind, str(tasks[1].id)),
         ):
-            insert_run(db, 'scheduled_task_runs', {
-                'event_id': event_id,
-                'scheduled_task_id': scheduled_id,
-                'trigger_kind': 'manual',
-                'scheduled_for': '2026-10-07T10:00:00Z',
-                'first_scheduled_for': '2026-10-07T10:00:00Z',
-                'legacy_key': run_id,
-                'dispatch_status': dispatch_status,
-                'snapshot_id': snapshot_id,
-                'execution_kind': execution_kind,
-                'execution_id': execution_id,
-            })
+            _insert_occurrence(
+                db, occurrence_id=run_id, event_id=event_id, scheduled_task_id=scheduled_id,
+                snapshot_id=snapshot_id, execution_kind=execution_kind,
+                execution_id=execution_id, dispatch_status=dispatch_status,
+            )
     rows = _queue_attention_rows(store)
     category = "Reply task" if source == "reply" else "Service error"
     matches = [
@@ -154,10 +161,16 @@ def test_attention_recovery_keeps_same_schedule_terminal_evidence(
         if row["category"] == category
         and (row["id"] == str(tasks[0].id) if source == "reply" else row["id"] == "1")
     ]
-    assert bool(matches) is not covered
+    superseded = reply_superseded if source == "reply" else error_superseded
+    assert bool(matches) is not superseded
+    if source == "reply" and status == "failed" and dispatch == "dispatched":
+        assert any(
+            row["category"] == "Reply task" and row["id"] == str(tasks[1].id)
+            for row in rows
+        )
     with store._connect() as db:
-        assert db.execute(
-            f"select status from ({task20_projection('reply_tasks')}) where id=?", (tasks[0].id,)
-        ).fetchone()[0] == ("failed" if source == "reply" else "done")
+        assert get_task(db, tasks[0].id)["status"] == (
+            "failed" if source == "reply" else "done"
+        )
         if source == "error":
             assert db.execute(f"select resolved_at from ({ERROR_SQL})").fetchone()[0] == ""
