@@ -1011,7 +1011,7 @@ def _prepare_replay_sources(store, prepared_sources, work_item):
 def _replace_replay_input(store, item, payload, *, status):
     """Restore one fixed evaluation input through its native Task/Input owners."""
     from app.task_entity_storage import get_task, update_task_cas
-    from app.work_summary_payload import encode_work_summary_payload
+    from app.work_summary_payload import decode_work_summary_payload, encode_work_summary_payload
 
     source_created_at, body_sha256, body_bytes = store._work_summary_input_provenance(payload)
     with store._immediate_write_transaction() as db:
@@ -1025,6 +1025,7 @@ def _replace_replay_input(store, item, payload, *, status):
                 or task["status"] != item.status.value or source is None
                 or source["source_type"] != item.source_type.value
                 or source["source_ref"] != item.source_ref
+                or decode_work_summary_payload(source["payload_json"]) != item.payload_json
                 or source["body_compacted"] != item.body_compacted
                 or source["body_sha256"] != item.body_sha256
                 or source["body_bytes"] != item.body_bytes):

@@ -27,9 +27,12 @@ readers' dependence on the Task20 compatibility projection. A related point
 lookup in the legacy Project/Todo/Update importer now uses the existing unique
 public-ID index directly and avoids its unnecessary scalar sort. Focused local
 validation on 2026-10-25: semantic-import file 25 passed; minutes owner
-backfill file 9 passed; Ruff and Python parse checks passed. This scoped code
-cleanup is not yet merged, deployed, or a completion of A5b or the remaining
-Project/Todo/Update model review.
+backfill file 9 passed. The affected replay file exposed and now covers a
+fixed-input payload CAS omission: replay had checked the source identity and
+digest metadata but not the decoded stored body before restoring the frozen
+input. With the body comparison, the replay file passes 29/29. Ruff, Python
+parse and compile checks pass. This scoped code cleanup is not yet deployed,
+or a completion of A5b or the remaining Project/Todo/Update model review.
 
 The A5b production-data preflight found 276 non-empty Reply OA result snapshots
 (91,758 JSON characters). Exactly 46 currently have a unique matching provider
