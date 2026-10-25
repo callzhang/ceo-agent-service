@@ -956,6 +956,149 @@ class TextEmotionCreateHandler:
         return None
 
 
+class WechatSendMessageHandler:
+    """Send one reviewed WeChat message and report the delivery's outcome.
+
+    The reviewed text is already the final prepared body (as for DingTalk), so
+    the handler checks it against the persisted prepared message, creates the
+    delivery from the approved action, and drives the existing Sender. The send
+    gate in the store re-checks that the standard review approved exactly this
+    target and text. Outcomes come from the delivery's own status, so a send the
+    Sender could not confirm stays uncertain and is settled by the existing
+    read-only reconciliation, never re-sent.
+    """
+
+    def __init__(self, store: object, *, sender_factory=None, reader_factory=None,
+                 account_factory=None, send_enabled=None) -> None:
+        self.store = store
+        self._sender_factory = sender_factory
+        self._reader_factory = reader_factory
+        self._account_factory = account_factory
+        self._send_enabled = send_enabled
+
+    def _sending_allowed(self) -> bool:
+        if self._send_enabled is not None:
+            return bool(self._send_enabled())
+        from app import config
+
+        return config.wechat_sender_enabled() and config.wechat_send_mode() == "auto"
+
+    def _runtime(self):
+        from app.wechat import service as wechat_service
+
+        account = (self._account_factory() if self._account_factory
+                   else _wechat_account(self.store, wechat_service))
+        reader = self._reader_factory() if self._reader_factory else wechat_service.build_reader()
+        runner = self._sender_factory() if self._sender_factory else wechat_service.build_sender()
+        return account, reader, runner
+
+    def _task_and_prepared(self, action: ProposedAction, candidate: dict[str, object]):
+        task = self.store.get_reply_task_for_execution(
+            candidate["task_id"], candidate["execution_generation"]
+        )
+        if task is None or task.channel != "wechat":
+            return None, None
+        delivery_key = agent_message_delivery_key(
+            business_object_key=task.business_object_key,
+            action_identity=action.action_identity,
+            execution_generation=task.execution_generation,
+            proposal_revision=candidate["proposal_revision"],
+        )
+        prepared = self.store.get_outbound_postfix("wechat", delivery_key)
+        body = action.payload.get("text")
+        if prepared is None or not isinstance(body, str) or body != prepared.final_body:
+            return task, None
+        return task, prepared
+
+    @staticmethod
+    def _from_delivery(delivery) -> ActionOutcome:
+        status = delivery.status
+        if status == "sent":
+            return ActionOutcome("verified", {"delivery_id": delivery.id})
+        if status == "superseded":
+            return ActionOutcome("business_state_changed", {
+                "reason": "wechat_delivery_superseded", "error": delivery.error})
+        if status in ("sending", "send_unknown"):
+            return ActionOutcome("uncertain", {
+                "reason": delivery.error or "wechat_send_unconfirmed", "delivery_id": delivery.id})
+        if status == "failed" and delivery.pre_action_failure:
+            return ActionOutcome("failed", {
+                "reason": delivery.error or "wechat_send_failed_before_action",
+                "delivery_id": delivery.id})
+        if status == "failed":
+            return ActionOutcome("uncertain", {
+                "reason": delivery.error or "wechat_send_failed", "delivery_id": delivery.id})
+        return ActionOutcome("uncertain", {"reason": f"wechat_delivery_{status}", "delivery_id": delivery.id})
+
+    def dispatch(self, action: ProposedAction, *, action_key: str, candidate: dict[str, object]) -> ActionOutcome:
+        from app.wechat import service as wechat_service
+        from app.wechat.accessibility import WechatSender
+
+        task, prepared = self._task_and_prepared(action, candidate)
+        if task is None:
+            return ActionOutcome("failed", {"reason": "wechat_task_unavailable"})
+        if prepared is None:
+            return ActionOutcome("failed", {"reason": "reviewed_message_preparation_mismatch"})
+        if not self._sending_allowed():
+            return ActionOutcome("failed", {"reason": "wechat_sending_not_enabled"})
+        try:
+            delivery_id = self.store.create_standard_wechat_delivery(
+                candidate_id=candidate["candidate_id"], review_id=candidate["review_id"],
+                action_identity=action.action_identity,
+            )
+        except ValueError as exc:
+            return ActionOutcome("failed", {"reason": "wechat_delivery_not_creatable", "detail": str(exc)})
+        delivery = self.store.get_wechat_delivery_by_id(delivery_id)
+        if delivery is None:
+            return ActionOutcome("failed", {"reason": "wechat_delivery_missing"})
+        if delivery.status != "ready_to_send":
+            return self._from_delivery(delivery)
+        if not self.store.wechat_delivery_review_approved(delivery_id):
+            return ActionOutcome("failed", {"reason": "wechat_delivery_not_approved", "delivery_id": delivery_id})
+        scope = self.store.get_wechat_reply_scope(delivery.account_id, delivery.target_type, delivery.target_id)
+        if scope is None:
+            return ActionOutcome("failed", {"reason": "wechat_reply_scope_missing", "delivery_id": delivery_id})
+        try:
+            account, reader, runner = self._runtime()
+            if account is None:
+                return ActionOutcome("failed", {"reason": "wechat_account_not_ready", "delivery_id": delivery_id})
+            refreshed = wechat_service._refresh_direct_binding_evidence(delivery, reader, account)
+            if refreshed is None:
+                return ActionOutcome("failed", {"reason": "wechat_current_conversation_unreadable", "delivery_id": delivery_id})
+            if (scope.target_type == "direct" and scope.binding_status == "unverified"
+                    and runner is not None):
+                wechat_service.verify_wechat_binding(
+                    self.store, scope, runner=runner, is_unique=True,
+                    expected_recent_text=refreshed.evidence.get("trigger_text") or "",
+                )
+                scope = self.store.get_wechat_reply_scope(
+                    delivery.account_id, delivery.target_type, delivery.target_id)
+                if scope is None:
+                    return ActionOutcome("failed", {"reason": "wechat_reply_scope_missing", "delivery_id": delivery_id})
+            WechatSender(self.store, runner).send(refreshed, scope, prepared=prepared)
+        except ValueError as exc:
+            return ActionOutcome("failed", {"reason": "wechat_send_preconditions_failed", "detail": str(exc)})
+        except Exception as exc:
+            # Whether anything reached WeChat is unknown; reconciliation settles it.
+            return ActionOutcome("uncertain", {"reason": "wechat_send_interrupted", "detail": str(exc)[:200],
+                                               "delivery_id": delivery_id})
+        return self._from_delivery(self.store.get_wechat_delivery_by_id(delivery_id))
+
+    def reconcile(self, action: ProposedAction, *, action_key: str, candidate: dict[str, object]) -> ActionOutcome | None:
+        delivery = self.store.get_wechat_delivery_for_task(candidate["task_id"])
+        if delivery is None or delivery.execution_generation != candidate["execution_generation"]:
+            return None
+        outcome = self._from_delivery(delivery)
+        if delivery.status == "ready_to_send":
+            return ActionOutcome("confirmed_no_effect", {"delivery_id": delivery.id})
+        return outcome
+
+
+def _wechat_account(store: object, wechat_service: object):
+    state = wechat_service.ready_account_state(store)
+    return wechat_service.account_from_state(state) if state is not None else None
+
+
 def native_dws_handlers(store: object, dws: object) -> dict[tuple[str, str], object]:
     from app.dingtang_okr_action import DingtangOkrScoreHandler
 
@@ -968,6 +1111,7 @@ def native_dws_handlers(store: object, dws: object) -> dict[tuple[str, str], obj
     handlers[("dingtalk-oa", "revert_task")] = OaRevertHandler(dws)
     handlers[("dingtalk-oa", "redirect_task")] = OaRedirectHandler(dws)
     handlers[("dingtalk-oa", "append_task")] = OaAppendApproverHandler(dws)
+    handlers[("wechat", "send_message")] = WechatSendMessageHandler(store)
     handlers[("dingtalk-oa", "comment")] = OaCommentHandler(dws)
     handlers[("dingtalk-chat", "add_message_emoji")] = MessageEmotionHandler(dws)
     handlers[("dingtalk-chat", "add_message_text_emotion")] = MessageEmotionHandler(dws)

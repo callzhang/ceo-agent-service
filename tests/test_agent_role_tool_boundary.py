@@ -57,8 +57,12 @@ def test_codex_roles_scope_native_execution_and_select_service_tools(tmp_path, m
         encoding="utf-8",
     )
     monkeypatch.setenv("CODEX_HOME", str(home))
+    # The turn builder gives every role the native auto-review approval.
+    approval = ["-c", 'approval_policy="on-failure"', "-c", 'approvals_reviewer="auto_review"']
     consumer = _codex_command()
     audit = _codex_command()
+    consumer[2:2] = approval
+    audit[2:2] = approval
     make_consumer_agent_command(consumer, task_workspace=str(tmp_path / "task-workspace"))
     make_audit_agent_command(audit)
 
@@ -86,7 +90,6 @@ def test_codex_roles_scope_native_execution_and_select_service_tools(tmp_path, m
         assert 'features.code_mode.direct_only_tool_namespaces=["mcp__agent_cli", "mcp__ai_services"]' in command
         assert sum(option.startswith("features.code_mode.direct_only_tool_namespaces=") for option in command) == 1
         assert "mcp_servers.memory_connector.enabled=false" not in command
-        assert 'approval_policy="never"' in command
         assert "mcp_servers.ai_services.enabled=false" not in command
         assert not any(option.startswith("tools.enabled_tools=") for option in command)
         assert "--dangerously-bypass-approvals-and-sandbox" not in command
@@ -102,6 +105,14 @@ def test_codex_roles_scope_native_execution_and_select_service_tools(tmp_path, m
                    for o in consumer)
     for name in ("memory_connector", "xiaoqing_interview", "ai_services"):
         assert f'mcp_servers.{name}.default_tools_approval_mode="approve"' in consumer
+    # Derek 2026-10-24: the Consumer runs in the CLI's native auto mode, so a
+    # command the sandbox breaks can ask for escalation and the automatic
+    # reviewer decides; Audit never asks.
+    assert 'approval_policy="on-failure"' in consumer
+    assert 'approvals_reviewer="auto_review"' in consumer
+    assert 'approval_policy="never"' not in consumer
+    assert 'approval_policy="never"' in audit
+    assert 'approvals_reviewer="auto_review"' not in audit
     assert "--skip-git-repo-check" in consumer
     assert "features.shell_tool=true" in consumer
     assert "features.unified_exec=true" in consumer

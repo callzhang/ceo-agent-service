@@ -5,7 +5,7 @@
       "source": "ci/shared-skills/ceo-weekly-report/SKILL.md",
       "target": "skills/ceo-weekly-report/SKILL.md",
       "old_sha256": "ececf8bf22e740573b68c0a4e1f1d6cd7db166a2fb2c6991737cce03890d22a9",
-      "new_sha256": "1a59a4761e0af4f0fec80eed8eebc288fea98e7a4d586fcb8ed19255fb3b21b6",
+      "new_sha256": "f86a628fe4336074144978d9816de08931551486d27503e447c15ba8b12c2030",
       "old_managed_sha256": "ececf8bf22e740573b68c0a4e1f1d6cd7db166a2fb2c6991737cce03890d22a9"
     },
     {
@@ -76,8 +76,8 @@
     {
       "source": "ci/shared-skills/dingtalk-oa-approval/SKILL.md",
       "target": "skills/dingtalk-oa-approval/SKILL.md",
-      "old_sha256": "f2c113065b9714e91194dcf31e273520ae2e3d887233c5d1a43ca7ac0e76013b",
-      "new_sha256": "36d2b7d6329683db3105f60e619ae9e4db72c8b43cc7697a18921a899f49d3ba"
+      "old_sha256": "8329de8d9066411138cc1c17fac473e335e2136fd0dded2492321d58c0529337",
+      "new_sha256": "8329de8d9066411138cc1c17fac473e335e2136fd0dded2492321d58c0529337"
     },
     {
       "source": "ci/shared-skills/stardust-oa-finance-review/SKILL.md",
@@ -94,7 +94,7 @@
     {
       "source": "ci/shared-skills/stardust-oa-people-review/SKILL.md",
       "target": "skills/stardust-oa-people-review/SKILL.md",
-      "old_sha256": "4eb05afec2760acff5b4993fd1eb0f9960de2ef202995600316f4773331adbd4",
+      "old_sha256": "69678b983cb12ef002eb3702db716be5526708a1fe5ff46aaa8c62467016ee81",
       "new_sha256": "69678b983cb12ef002eb3702db716be5526708a1fe5ff46aaa8c62467016ee81"
     },
     {

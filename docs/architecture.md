@@ -2,6 +2,8 @@
 
 ## 数据库结构与迁移合同
 
+Derek于2026-10-24批准分阶段退役历史迁移链：部署路径 `prepare_database_schema_release` 只处理当前 Store／Email 版本、其上一版本（Store `2026-10-19.12` 经 `action_entity` 与 `task_run_entity` 发布）以及仅 Email 变化的发布；面向更旧目标版本的分支和 `prepare_store_schema_release` 里的 Run／Task／Workbench／Action 旧转换已删除，遇到这些版本一律以 `Store schema release needs a verified inverse for this transition` 拒绝。部署进度 DAO（`ExistingSchemaUpgradeStateStore`）只接受 Email 账本版本 52／53／54，Email 51 及更早的账本报 `unsupported committed Email schema role`。生产已于 Store `2026-10-23.1`／Email54，不受影响；回滚到比上一版本更旧的提交不再有自动逆迁。
+
 以下生产数据是 2026-10-22 Phase 1 验收时的历史读回：Store `2026-10-21.1`／Email53，共 14 张普通表；运行时代码 `87a34d299d5749af1af454bfdd01c48a936799a4`，PID 2903；健康、状态、队列、Attention 和 History 均返回 HTTP 200；Action、Receipt、Observer 分别为 15,472、18,621、506 条，七个已退休来源类型为零。本轮没有重新读取生产状态，Task/Run Phase 2 也没有部署。该次读回保留了 `foreign_key_check` finding `('runs', 190042, 'tasks', 1)`；末项 `1` 是 `foreign_key_list` 的约束序号，不是 Task ID。2026-10-23 对冻结 `source.sqlite3` 的只读核对发现 runs 190042 的 `task_id=404225`、`source_type='meeting_alignment_runs'`、`legacy_key='2298'`、`job_id=4908`，而 Task 404225 不存在；这是该冻结快照中的真实缺失 Task，不等于 finding 末项。此证据不是当前生产读回，也不授权修复、伪造 Task、置空或删除事实。准确 Phase 1 发布边界见[Phase 1 生产验收](action-entity-production-acceptance.md)。
 显式 Store19.11／Email53 → Store19.12／Email53 工具重建 Actions，逐值保留四字段、类型、公开／物理身份、其他业务事实与回执及分配水位；schema inverse 恢复捕获的原声明与版本时钟并保留当前数据。fresh 来源没有四字段的所有权，若迁移后新增非中性值，逆迁明确拒绝而不删除事实。生产实际来源为 actual，具有这四字段。
 历史 D 九字段退休工具仍供明确旧版本迁移与逆迁调用，已批准的九字段逆迁仍填中性默认值，原评估值不再保存。Email48→49、49→50 的必要历史 DDL／校验已移至显式 history 模块，不由正常构造器加载。Workbench 附件文件维护属于业务行为，保留。
@@ -1005,7 +1007,7 @@ Chrome 登录态、申请读不到的钉钉 AI 听记，以及下载新增的钉
 `consumer_document_write` 接受正文产物、标题和显式目标；更新使用 node_id，创建使用 parent_id 与 workspace_id。JSONML 由原生解析器检查，更新保留 revision 校验与版本保存。创建前通过 `dws doc +list --folder <parent_id> --page-all` 完整核对同名目标；创建后使用 provider 成功回执中的 nodeId 进行正文读回，不用 Wiki 节点列表解析文档 ID。返回 provider 结果及完整读回产物的引用；Agent/Audit 读取全部分页或使用本地脚本比较。DWS 命令失败诊断会隐藏 `--content` 和 `--content-file` 的值，不把文档正文或本地内容路径写入 trajectory。消息继续通过既有已审核投递通道发送，普通文档工作与受控消息动作沿用原角色契约。
 文档写入的 DWS `doc.operation.v1` 部分执行结果保留完整结构化错误：若 provider 已执行写入但核验失败，或写入返回后服务读回失败，工具返回 `ok=false/status=partial_success/verified=false`，保留 node、正文 SHA、provider 结果与错误详情，`readback=null`，不生成成功读回回执或自动重写。未执行及提交状态未知仍抛出原错误；核验失败不会转换为成功。
 
-日报窗口由 `ceo-daily-report/scripts/window.py` 按上次真实完成的历史事实计算，漏发并入下一份，同日重跑沿用原起点。日报位置与通知内容归该 Skill。Consumer 先读取服务事实和群消息；仅当会议管理细节仍缺失时，才读取本任务冻结的 `dingtalk-minutes` Skill 并查询听记摘要。管理周报的周一窗口、目标/上期文档、空白模板策略和三处内容更新归 `ceo-weekly-report` 的材料/渲染脚本；渲染器只检查实际读取字段与 JSONML，固定指标、材料覆盖与章节等业务要求由 Skill 和 Audit 判断。三处写入仍为 CEO 判断、公司指标和新增跟踪行。
+日报窗口由 `ceo-daily-report/scripts/window.py` 按上次真实完成的历史事实计算，漏发并入下一份，同日重跑沿用原起点。日报位置与通知内容归该 Skill。Consumer 先读取服务事实和群消息；仅当会议管理细节仍缺失时，才读取本任务冻结的 `dingtalk-minutes` Skill 并查询听记摘要。管理周报的周一窗口、目标/上期文档、空白模板策略和三处内容更新归 `ceo-weekly-report` 的材料/渲染脚本；渲染器只检查实际读取字段与 JSONML，固定指标、材料覆盖与章节等业务要求由 Skill 和 Audit 判断。三处写入仍为 CEO 判断、公司指标和新增跟踪行。管理周报缺 CRM、财务、遥测或业务线材料时写「无数据」并披露覆盖缺口，照常发布；只有已声明的读取或文档写入本身失败才报 `failed`，不能因证据不全报 `operation_unavailable`（2026-10-24 周报任务 417411 曾这样自行终止，没有经过 Audit）。CRM 实际用 Consumer shell 里的 `sharecrm` 只读命令读取，其钥匙串登录需按 Consumer 权限模型请求提权；财务暂无可读来源。
 
 OKR 报告的应用层只读取明确群名的稳定名单和明确人员/周期的实时数据及来源回执。每人一次读取、单次最多 240 秒，模型可见真实步骤结果；纯本地 `ceo-weekly-okr-report/scripts/report.py` 按稳定 userId 准备输入、计算原有精确公式并渲染。Agent 保存成员产物以恢复进度，发布管理报告、成员子页并提出群摘要消息。Skill 的 prepare 在计划中标记来源摘要匹配且已完成分析的 `analysis_reusable`；`analysis_failure` 占位不算完成且不会复用。任何恢复的 Consumer turn 先读取最新 Audit 与任务产物，再刷新当前名单和每位成员来源各一次；当前没有独立的来源摘要查询接口，因此只有读取成员来源才能发现来源是否变化。prepare 按新摘要保留未变化成员的完整分析，只重做来源已变或分析未完成的成员；同一 turn 内不得重复成功的成员读取。未完成本轮分析时必须保留有效产物并以可重试结果继续，使用正常有界重试。零进度不是结果证据；每个 KR 都按原规则检索独立证据并评分，未找到佐证时说明证据缺口，不能用 `analysis_failure` 代替未完成分析。领导力和文化的每项分数须由该维度自身的行为证据支持，不能跨维度借用；创新须有具体改进、验证和观察效果，AI能力须有具体AI使用和工作效果。Audit 逐人核对全部七项维度、证据与分数。未评分成员保留已知职级与逐人来源缺口，不生成分数。业务 KR 的完成档位与领导力/文化行为档位分别应用；行为评分使用正式维度，70–79 为符合标准，80 分及以上须有明确超出当前职级标准的具体效果（经理日常辅导、总监在团队内复用方法本身仍可属于本职标准），90 分及以上须具备对应榜样范围证据；显示分数保留一位小数并采用通常四舍五入。每次渲染后必须按当前 manifest 写入或更新并完整读回全部主文档和附录，即使某成员分析未变，日期、标题、链接仍可能变化；旧标题或旧读回不能满足本次 manifest。最终群提案逐字使用 summary.md；这些步骤由 Skill 与现有 Audit 承担，未新增服务发布门槛。原独立周报 Agent 子任务、租约/缓存编排和星期日重复调度逻辑退出当前执行路径；历史记录保留。
 
@@ -1475,7 +1477,7 @@ updater 正常停止服务后才备份和切换检出，重启时由既有任务
 群不可发送时保留失败，不能静默换成组织者或本人。私聊入口拒绝本人及已核验别名；
 职务、HR 身份和私聊本身均不构成披露授权，身份检查也不替模型证明业务理由真实。
 群标题相似、部分参会人重合或近期活跃本身不构成业务承接证据。
-裁员、减员和人员优化的存在、进展、时间及执行安排本身就是人员敏感信息；没有姓名、名单或人数不构成脱敏。共享消息受众合同和会议/人员 Skill 对人员敏感内容要求逐一核对完整群成员（含未参会者）对实际正文的披露权限（2026-10-24 起，普通业务内容不要求逐成员授权，核验为该工作线业务承接群即可：近期讨论同一工作线、承接行动的人在群内、完整名单可读、群可发送；不得为发送而选宽泛群）；业务相关、历史讨论、职务、参会人重合和人员准确率均不授予权限。任何成员未授权或权限未知时，业务群正文、标题、问题及任务提及均排除该敏感内容及其间接暗示；只有独立核验的授权受众才能接收，找不到时保留人员事项未解决，不转发本人兜底。敏感分类和内容授权由 Agent 根据证据判断，不增加运行时关键词过滤或比例授权阈值。
+裁员、减员和人员优化的存在、进展、时间及执行安排本身就是人员敏感信息；没有姓名、名单或人数不构成脱敏。共享消息受众合同和会议/人员 Skill 对人员敏感内容要求逐一核对完整群成员（含未参会者）对实际正文的披露权限（2026-10-24 起，普通业务内容不要求逐成员授权，核验为该工作线业务承接群即可：群讨论涉及同一工作线、承接行动的人在群内、完整名单可读；不要求讨论时间戳和群可发送证明，群是否可发送由服务在投递时核验，不可发送则失败且不改投；不得为发送而选宽泛群）；业务相关、历史讨论、职务、参会人重合和人员准确率均不授予权限。任何成员未授权或权限未知时，业务群正文、标题、问题及任务提及均排除该敏感内容及其间接暗示；只有独立核验的授权受众才能接收，找不到时保留人员事项未解决，不转发本人兜底。敏感分类和内容授权由 Agent 根据证据判断，不增加运行时关键词过滤或比例授权阈值。
 找群先核对会议材料里明确提及的讨论群，再从结论、行动和负责人提炼主题，分别以原文中文
 业务词、英文术语、会议标题和核心议题查群及群内消息。预置候选或首次搜索零命中不等于穷尽；
 候选须核对近期同工作线讨论、行动承接人、受众和可发送性，并在决策中说明来源与业务承接关系。
@@ -2100,6 +2102,31 @@ Audit 当前任务除完整候选外，还收到服务从同一候选 JSON 确�
 多动作按声明顺序执行，前置结果验证后才执行依赖动作。每个阶段是一份新完整候选和审核，`stage_index`、`predecessor_review_id` 绑定前一已完成阶段的回执；阶段上限独立于每阶段三次内容修订预算。Consumer wire 仍包含这两个字段，但服务在解析时以编排器提供的阶段上下文覆盖模型回传值，再持久化和绑定候选。Audit 返回后的修订因此保持当前阶段及原前置审核；该同阶段修订由编排器从上一份候选的 adopted metadata 恢复阶段和前置审核，immediate parent Audit 则审核上一份同阶段候选。仅前一阶段 Audit 批准且该阶段动作已核验完成后，编排器才提供下一阶段绑定。候选存储按现有契约验证非空的前置 Audit Run ID 是否对应同一任务/代际、前一阶段、批准结论及已完成动作回执；迁移保留的历史 JSON 和摘要保持原样，关系以 adopted result 的 Audit Run 外键为准。
 
 Audit 返回或拒绝后，Consumer 必须提交当前阶段的完整修订候选。服务以当前编排上下文绑定 `stage_index` 与 `predecessor_review_id`，不把模型复述这两个 lineage 字段的准确性作为候选业务结果的前置条件。返回反馈不会推进阶段；仅当前阶段审核通过且其动作有已验证的完成回执，后续阶段才会开放。候选的阶段、前置审核、代际及执行验证仍由服务严格校验。
+
+### Consumer 权限模型：auto 模式，不是只读／工作区写沙箱（Derek 2026-10-24）
+
+Derek 的设计决定：Consumer 运行在各 CLI 的原生 auto 模式里（Codex 的 `auto_review` 审批、Claude 的 auto permission mode），能力由 CLI 自带的自动审批逐动作把关，**不用只读或只写工作区的沙箱来限制它能做什么**。理由：沙箱是静态的，会挡住合法的本机工具。2026-10-24 的实例：`sharecrm` 的登录凭据放在 macOS 钥匙串，沙箱里 `SecItemCopyMatching failed -50`，CEO 周报于是读不到 CRM；这与「本机的所有环境都可以给 Agent 使用」相矛盾。
+
+不变的边界与沙箱无关：终态外发动作（发消息、发邮件）仍只走 proposal → Audit → SystemExecutor；Audit 仍是只读；Consumer 的禁用工具清单（Settings → MCP 的 `disabled_servers`、桌面控制类 server）仍然有效。
+
+**当前实现（Derek 2026-10-24 批准切换，已按两个 CLI 实测）：**
+- Codex Consumer 保留 `workspace-write` 沙箱，但审批改为 CLI 原生 auto：`approval_policy="on-failure"`（Codex 实际按 on-request 运行）加 `approvals_reviewer="auto_review"`，由 turn 构造方设置，`make_role_agent_command` 对 Consumer 不再覆盖成 `never`。命令在沙箱里失败后，Agent 以 `sandbox_permissions="require_escalated"` 加理由重新请求，自动审查（`codex-auto-review` 模型）放行后在沙箱外执行。Audit 仍是 `read-only` 加 `never`。
+- Claude Consumer 的 shell 沙箱把 `allowUnsandboxedCommands` 设为 `true`，权限模式本来就是 `auto`；沙箱内失败的命令可由 Agent 以 `dangerouslyDisableSandbox` 重试，由 auto 模式的分类器逐次决定。
+- 实测（2026-10-24，同一条只读命令 `sharecrm data record query-by-name`，Codex 0.163.0、Claude Code 2.1.310）：两个 CLI 在沙箱内都报 `Failed to read session file.`（登录凭据在钥匙串，`sharecrm auth status` 只读元数据所以仍成功，不能当作可用证据）；允许提权后重试都成功。Agent 不会自己发现要提权：两个 CLI 都是在提示里明说「失败就提权重试」才这样做，所以需要钥匙串的工具必须由对应 Skill 写明运行方式（这是后续的单独变更，本次未改任何 Skill）。
+- `service_api` 路由（第三方 OpenAI 兼容 provider）没有 `codex-auto-review` 模型，`disable_automatic_review` 仍把它的 `approval_policy` 设为 `never`：该路由上的 Consumer 仍被沙箱限制，不能提权。需要沙箱外权限的任务不应路由到该路由，这是该路由已声明的能力差距，不在本次变更里绕过。
+- 不变：终态外发动作仍走 proposal → Audit → SystemExecutor，Audit 只读，Consumer 禁用工具清单有效；`dws` 仍用沙箱内的 `~/.dws` 和网络设置。
+
+### 微信发送放行：同时认原审核和标准审核（Derek 2026-10-24，方案 G2）
+
+微信投递只有在独立审核批准了「完全相同的目标和文本」之后才能被领取发送。放行判定现在认两种证据，二选一，不能混用：
+- 原微信流水线：投递证据里的 `audit_run_id` 等，绑定 `wechat-delivery:<id>` 的 Audit 运行（`WechatDeliveryAuditor`，阶段 4 前保持不变）。
+- 标准流水线：投递证据里的 `standard_candidate_id`、`standard_review_id`、`standard_action_identity`，指向被采纳的候选、它的 Audit 批准和候选里的 `wechat / send_message` 动作。
+
+标准证据按失败即关闭的方式逐项核对，任何一项对不上都视为未放行：审核是 `approve` 且摘要等于候选摘要、候选未失效、候选属于已完成的 Consumer 运行、Audit 运行已完成且其父运行就是该候选、两者的任务与代次与投递一致、候选是普通 `proposal`、按 `action_identity` 唯一找到该动作、动作的账号／会话类型／对象／会话 ID 与投递完全一致、动作的 `payload.text` 与投递的 `reply_text` 逐字相等。`AutoReplyStore.create_standard_wechat_delivery` 从被批准的动作本身取目标和文本（不取调用方参数），审批文本已是最终正文，因此不再追加发送后缀。原流水线的 `create_wechat_delivery` 与 `finalize_wechat_reply_task` 不能写入这三个标准字段。本项只改放行判定和投递创建；`wechat / send_message` 动作登记、处理器和路由在后续提交。
+
+### 微信发送动作 `wechat / send_message`（阶段 2，Derek 2026-10-24）
+
+标准流水线通过 `wechat / send_message` 动作发微信：目标是 `account_id`、`target_type`（`direct` 或 `group`）、`target_id`、`conversation_id`，参数只有 `text`，且 `text` 必须逐字等于已持久化的预备正文（与钉钉一致，渠道为 `wechat`，投递键由 `agent_message_delivery_key` 生成）。`WechatSendMessageHandler` 的 `dispatch`：确认任务是微信任务 → 核对预备正文 → 发送开关（`CEO_WECHAT_SENDER_ENABLED` 且 `CEO_WECHAT_SEND_MODE=auto`，否则直接 `failed` 且不创建投递）→ 用 `create_standard_wechat_delivery` 从被批准的动作创建投递 → 放行判定复核标准审核 → 沿用现有的当前会话取证、绑定核对和 `WechatSender.send`（可传入预备消息）。结果完全取自投递状态：`sent`→verified，`sending`／`send_unknown`→uncertain（交给现有的只读对账，从不重发），发送前失败→failed（重试可再次发送），被取代→business_state_changed。发送循环保留，只负责恢复和对账。本阶段没有任何路径提议这个动作，线上行为不变；候选的预备正文、微信 Consumer 和路由在阶段 3。
 
 ### 任务长期记忆
 

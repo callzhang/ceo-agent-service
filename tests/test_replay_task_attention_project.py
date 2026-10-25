@@ -11,9 +11,6 @@ from app.action_business_storage import delete_business_action
 from app.business_source_reader import (
     AvailableSource, SourceUnavailableReason, UnavailableSource,
 )
-from app.logical_run_storage import create_logical_run
-from app.task8_storage import task8_set_parts
-from app.task20_definitions import task20_column
 from app.project_context_service import ProjectContextService
 from app.store import AutoReplyStore, WORK_SUMMARY_INPUT_SQL
 from app.task_attention_projection import AttentionProposal, BusinessAttentionProjection
@@ -21,7 +18,7 @@ from app.task_business_resolution import BusinessResolutionService
 from app.task_semantic_models import AttentionCategory
 from app.task_models import TaskAgentDecision
 from app.task_source_documents import source_contains_quote
-from tests.support.task_native import task_native_records  # noqa: F401
+from tests.support.task_native import record_task_fixture_run, task_native_records  # noqa: F401
 
 
 @pytest.fixture(autouse=True)
@@ -81,29 +78,27 @@ def _delete_project_evidence(store, project_id):
             delete_business_action(db, "business_project_evidence", source_rowid)
 
 
-def _physical_work_input_id(db, public_id):
-    return db.execute(
-        "select id from tasks where record_type='work_summary_inputs' and "
-        + task20_column("work_summary_inputs", "id") + "=?", (public_id,),
-    ).fetchone()[0]
+_TASK_FIELDS = frozenset({"status"})
 
 
-def _set_work_input_fields(db, public_id, values):
-    parts = task8_set_parts("work_summary_inputs", values)
-    cursor = db.execute(
-        f"update tasks set {parts.sql} where record_type='work_summary_inputs' and "
-        + task20_column("work_summary_inputs", "id") + "=?",
-        (*parts.parameters, public_id),
-    )
-    assert cursor.rowcount == 1
+def _set_work_input_fields(db, task_id, values):
+    for table, key, fields in (
+        ("tasks", "id", {k: v for k, v in values.items() if k in _TASK_FIELDS}),
+        ("work_summary_inputs", "task_id", {k: v for k, v in values.items() if k not in _TASK_FIELDS}),
+    ):
+        if not fields:
+            continue
+        cursor = db.execute(
+            f"update {table} set " + ",".join(f"{name}=?" for name in fields)
+            + f" where {key}=?", (*fields.values(), task_id),
+        )
+        assert cursor.rowcount == 1
 
 
-def _set_work_input_physical_id(db, public_id, physical_id):
-    cursor = db.execute(
-        "update tasks set id=? where record_type='work_summary_inputs' and "
-        + task20_column("work_summary_inputs", "id") + "=?", (physical_id, public_id),
-    )
-    assert cursor.rowcount == 1
+NO_PROJECT_DECISION = json.dumps({
+    "project_decisions": [], "task_decisions": [], "project_assessments": [],
+    "update_summary": "No relevant Project in this fixture.",
+})
 
 
 def _assessment(*, proposal=False, anchor_id=1, evidence=None):
@@ -229,7 +224,7 @@ def test_domain_snapshot_includes_project_evidence_relations(tmp_path):
 def test_readback_counts_project_owned_proposal_and_rejects_no_proposal_receipt(tmp_path, save_receipt):
     store = AutoReplyStore(tmp_path / "proposal.sqlite3")
     input_id = store.enqueue_work_summary_input("reply_attempt", "m:proposal", "{}")
-    run_id = store.create_logical_run('task_agent_runs', input_id)
+    run_id = record_task_fixture_run(store, input_id, decision_json=json.dumps({"project_decisions": [], "task_decisions": [], "project_assessments": [_assessment(proposal=True)]}))
     if save_receipt:
         store.record_task_agent_projection(run_id, json.dumps({
             "status": "no_proposal", "outcomes": [], "recompute_error": "",
@@ -256,7 +251,8 @@ def test_readback_not_needed_receipt_uses_project_proof_without_task_or_card(tmp
                                    ("signal_id", "source_ref", "source_excerpt")})
     TaskAgentDecision.model_validate({"project_decisions": [], "task_decisions": [],
                                      "project_assessments": [assessment]})
-    run_id = store.create_logical_run('task_agent_runs', input_id)
+    run_id = record_task_fixture_run(store, input_id, decision_json=json.dumps({
+        "project_decisions": [], "task_decisions": [], "project_assessments": [assessment]}))
     receipt = {
         "assessment_index": 0, "status": "recorded", "task_ids": [],
         "anchor_id": anchor_id, "attention_id": None, "evidence": [citation],
@@ -287,7 +283,7 @@ def test_readback_not_needed_receipt_uses_project_proof_without_task_or_card(tmp
 def test_completed_receipt_does_not_prove_a_missing_attention_result(tmp_path, outcomes):
     store = AutoReplyStore(tmp_path / "missing-card.sqlite3")
     input_id = store.enqueue_work_summary_input("reply_attempt", "m:missing-card", "{}")
-    run_id = store.create_logical_run('task_agent_runs', input_id)
+    run_id = record_task_fixture_run(store, input_id, decision_json=json.dumps({"project_decisions": [], "task_decisions": [], "project_assessments": [_assessment(proposal=True)]}))
     store.record_task_agent_projection(run_id, json.dumps({
         "status": "completed", "proposal_count": 1, "applied_count": len(outcomes),
         "outcomes": outcomes, "recompute_error": "", "project_assessments": [],
@@ -301,7 +297,7 @@ def test_completed_receipt_does_not_prove_a_missing_attention_result(tmp_path, o
 def test_current_negative_assessment_requires_a_saved_receipt_without_oracle_labels(tmp_path):
     store = AutoReplyStore(tmp_path / "missing-assessment.sqlite3")
     input_id = store.enqueue_work_summary_input("reply_attempt", "m:no-receipt", "{}")
-    store.create_logical_run('task_agent_runs', input_id)
+    record_task_fixture_run(store, input_id, decision_json=json.dumps({"project_decisions": [], "task_decisions": [], "project_assessments": [_assessment(proposal=False)]}))
     tool = _tool()
     result = tool.readback(store, input_id=input_id, before=tool.read_domain(store))
     assert "project_assessment_receipt_mismatch" in result["failures"]
@@ -389,17 +385,6 @@ def test_case_replay_enqueues_each_source_version_only_when_its_turn_begins(
     second = {"source": {"type": "ai_minutes", "ref": "m:same", "created_at": "2026-10-02T10:00:00Z"},
               "context": {"source_conversation_kind": "group"}, "summary": "会议确定交付项目，目标完成一期验收，材料已经收齐。"}
     unrelated_id = store.enqueue_work_summary_input("ai_minutes", "m:unrelated", "{}")
-    with store._connect() as db:
-        _set_work_input_physical_id(db, unrelated_id, 1000)
-    enqueue = store.enqueue_work_summary_input
-
-    def enqueue_with_distinct_physical_id(*args, **kwargs):
-        public_id = enqueue(*args, **kwargs)
-        with store._connect() as db:
-            _set_work_input_physical_id(db, public_id, public_id + 10000)
-        return public_id
-
-    monkeypatch.setattr(store, "enqueue_work_summary_input", enqueue_with_distinct_physical_id)
     seen = []
 
     class Runner:
@@ -412,7 +397,7 @@ def test_case_replay_enqueues_each_source_version_only_when_its_turn_begins(
                     "title": "交付项目", "authority": "meeting_decision", "source_excerpt": "会议确定交付项目", "reason": "会议明确项目目标",
             }}
             quote = {"source_ref": item.source.ref, "source_excerpt": item.summary}
-            return TaskAgentDecision.model_validate({
+            decision = TaskAgentDecision.model_validate({
                 "project_decisions": [{**identity, "context": {"goal": "完成一期验收", "scope": "一期",
                     "overall_owner": None, "responsibilities": [], "facts": [{"key": "进展", "text": item.summary, "evidence": [quote]}]},
                     "evidence": [quote], "reason": "保存来源中的项目进展"}],
@@ -420,6 +405,12 @@ def test_case_replay_enqueues_each_source_version_only_when_its_turn_begins(
                     "outcome": "not_needed", "reason": "当前按计划推进", "assessment_basis": "current_observation", "evidence": [quote]}],
                 "update_summary": "保存明确项目进展，没有新增任务",
             })
+            with store._connect() as db:
+                [run_id] = [row[0] for row in db.execute(
+                    "select r.id from runs r join run_provenance p on p.run_id=r.id "
+                    "where p.source_type='task_agent_runs' and r.status='running'")]
+            store._write_test_native_decision(run_id, decision.model_dump_json())
+            return decision
 
     case = {"source_inputs": [first, second], "work_item": second,
             "existing_context": {"projects": [], "tasks": [], "attention": []},
@@ -436,11 +427,7 @@ def test_case_replay_enqueues_each_source_version_only_when_its_turn_begins(
         assert "project_centered_storage_missing" in result["failures"]
     assert len(result["source_steps"]) == 2
     with store._connect() as db:
-        for step in result["source_steps"]:
-            assert db.execute(
-                "select id from tasks where record_type='work_summary_inputs' and legacy_key=?",
-                (str(step["input_id"]),),
-            ).fetchone()[0] != step["input_id"]
+        assert unrelated_id not in {step["input_id"] for step in result["source_steps"]}
         assert db.execute(
             f"select payload_json,status from ({WORK_SUMMARY_INPUT_SQL}) where source_ref='m:unrelated'"
         ).fetchone()[:] == ("{}", "pending")
@@ -499,24 +486,22 @@ def test_baseline_missing_project_storage_is_an_explicit_comparison_failure(tmp_
     path = tmp_path / "missing-provenance.sqlite3"
     store = AutoReplyStore(path)
     input_id = store.enqueue_work_summary_input("reply_attempt", "m:missing-provenance", "{}")
-    with store._connect() as db:
-        created = create_logical_run(db, "task_agent_runs", input_id, status="completed")
-        db.execute("update runs set id=?,legacy_key=?,projection_json=? where id=?",
-                   (1001, "1", json.dumps({
-                       "status": "no_proposal", "outcomes": [], "recompute_error": "",
-                   }), created))
-        created = create_logical_run(db, "task_agent_runs", input_id, status="completed")
-        db.execute("update runs set id=?,legacy_key=?,projection_json=? where id=?",
-                   (1000, "2", json.dumps({
-                       "status": "no_proposal", "outcomes": [], "recompute_error": "",
-                   }), created))
+    projection = json.dumps({
+        "status": "no_proposal", "outcomes": [], "recompute_error": "",
+        "source_type": "reply_attempt", "task_decision_count": 0,
+        "project_link_count": 0, "proposal_count": 0,
+    })
+    run_ids = [record_task_fixture_run(store, input_id, decision_json=NO_PROJECT_DECISION) for _ in range(2)]
+    latest_run_id = max(run_ids)
+    for run_id in run_ids:
+        store.record_task_agent_projection(run_id, projection)
     tool = _tool()
     before_domain = tool.read_domain(store)
     with store._connect() as db:
         db.execute("drop table provenance")
     before = path.read_bytes()
     result = tool.readback(store, input_id=input_id, before=before_domain)
-    assert result["run_id"] == 2  # latest public ID, despite descending physical IDs
+    assert result["run_id"] == latest_run_id
     assert "project_centered_storage_missing" in result["failures"]
     assert result["comparison_capabilities"]["missing_tables"] == ["provenance"]
     assert not result["passed"]
@@ -549,15 +534,8 @@ def test_replay_exact_cas_accepts_actual_plain_or_compressed_storage_and_keeps_c
     )
     with store._connect() as db:
         _set_work_input_fields(db, input_id, {"payload_json": encoded if stored_as_blob else payload})
-        _set_work_input_physical_id(db, input_id, 1001)
-        assert db.execute(
-            "select id from tasks where record_type='work_summary_inputs' and "
-            + task20_column("work_summary_inputs", "id") + "=?", (input_id,),
-        ).fetchone()[0] != input_id
     unrelated_id = store.enqueue_work_summary_input("ai_minutes", "m:unrelated", "{}")
-    with store._connect() as db:
-        _set_work_input_physical_id(db, unrelated_id, input_id)
-        assert _physical_work_input_id(db, unrelated_id) == input_id
+    assert unrelated_id != input_id
     observed = []
 
     class Runner:
@@ -610,9 +588,7 @@ def test_replay_exact_cas_rejects_each_changed_source_field(tmp_path, monkeypatc
     })
     payload = item.model_dump_json()
     input_id = store.enqueue_work_summary_input(item.source.type.value, item.source.ref, payload)
-    with store._connect() as db:
-        _set_work_input_physical_id(db, input_id, 1001)
-        physical_id = _physical_work_input_id(db, input_id)
+    input_row = f"select * from ({WORK_SUMMARY_INPUT_SQL}) where id=?"
     acquire = TaskAgentSessionLease.try_acquire
     snapshots = []
 
@@ -621,7 +597,7 @@ def test_replay_exact_cas_rejects_each_changed_source_field(tmp_path, monkeypatc
         assert lease is not None
         with store._connect() as db:
             _set_work_input_fields(db, input_id, {field: value})
-            snapshots.append(tuple(db.execute("select * from tasks where id=?", (physical_id,)).fetchone()))
+            snapshots.append(tuple(db.execute(input_row, (input_id,)).fetchone()))
         return lease
 
     monkeypatch.setattr(TaskAgentSessionLease, "try_acquire", staticmethod(change_after_snapshot))
@@ -630,10 +606,10 @@ def test_replay_exact_cas_rejects_each_changed_source_field(tmp_path, monkeypatc
         def decide(self, *args, **kwargs):
             pytest.fail("CAS failure must occur before runner execution")
 
-    with pytest.raises(ValueError, match="input changed before exact replay"):
+    with pytest.raises(ValueError, match="fixed source version changed before replay"):
         _tool().replay_input(store, Runner(), input_id, source_ref=item.source.ref, source_payload=payload)
     with store._connect() as db:
-        assert tuple(db.execute("select * from tasks where id=?", (physical_id,)).fetchone()) == snapshots[0]
+        assert tuple(db.execute(input_row, (input_id,)).fetchone()) == snapshots[0]
     lease = acquire(store)
     assert lease is not None
     lease.close()

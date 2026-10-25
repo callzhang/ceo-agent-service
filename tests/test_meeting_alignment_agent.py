@@ -393,6 +393,14 @@ def test_prompt_asks_member_authorization_only_for_personnel_sensitive_content()
     assert "仍须核验本次完整群成员、实际内容及每位成员的授权" not in prompt
 
 
+def test_prompt_does_not_make_timestamps_or_send_status_a_group_selection_condition():
+    prompt = build_meeting_alignment_prompt(
+        source(), work_profile="", work_profile_source="profile"
+    )
+    assert "讨论摘录没有时间戳、群是否可发送（服务在投递时核验）都不是选群条件" in prompt
+    assert "完整群成员名单是否可读，以及群当前是否可发送" not in prompt
+
+
 def test_prompt_schema_does_not_override_generic_audience_policy():
     from app.meeting_alignment_models import MeetingAlignmentDecision
 
@@ -604,7 +612,7 @@ def test_prompt_requires_content_based_group_discovery_before_direct_fallback():
     assert "从会议结论、行动项和负责人提炼业务主题" in prompt
     assert "使用原文中的中文业务词与英文术语分别搜索" in prompt
     assert "搜索会议标题和核心议题对应的群消息" in prompt
-    assert "核对群内近期消息是否讨论同一工作线" in prompt
+    assert "核对群内讨论是否涉及同一工作线" in prompt
     assert "写清候选群的来源、业务承接关系和受众证据" in prompt
     assert "排除仅名称相似、成员重合但业务不符的群" in prompt
     assert "没有预置候选或首次搜索零命中，不等于业务群发现失败" in prompt

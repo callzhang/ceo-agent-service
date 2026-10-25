@@ -393,3 +393,11 @@ def test_member_authorization_is_required_only_for_personnel_sensitive_group_con
     assert "authorized for the exact disclosed content, including nonparticipants" in (
         MESSAGE_AUDIENCE_CONTRACT[sensitive:]
     )
+
+
+def test_ordinary_group_content_needs_neither_discussion_timestamps_nor_send_status_proof():
+    contract = MESSAGE_AUDIENCE_CONTRACT
+
+    assert "Do not require discussion timestamps or proof that the group can be sent to" in contract
+    assert "the service checks send status at delivery and fails without redirecting" in contract
+    assert "recent group discussion covers the same work line" not in contract

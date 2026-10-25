@@ -19,14 +19,16 @@ from fastapi.testclient import TestClient
 import app.audit_web as audit_web_module
 from tests.run_reader_fixtures import insert_native_run_fixture
 from tests.feedback_processing_fixtures import resolve_feedback_fixture
-from app.run_storage import insert_run
+from tests.support.native_run_rows import (
+    insert_run_row, insert_runtime_attempt_row, insert_scheduled_occurrence,
+)
 from app.action_storage import (
-    REPLY_ATTEMPT_COMMON_SQL, update_action, insert_error_action,
+    REPLY_ATTEMPT_COMMON_SQL, update_action, insert_task_delivery_action,
+    task_delivery_projection, insert_error_action,
 )
 from app.action_error_definitions import error_projection
-from app.task12_storage import insert_task12
-from app.task20_definitions import task20_projection
-from app.task8_storage import task8_set_parts
+from app.task_storage import task_physical_id
+from app.store import REPLY_TASK_SQL, WORK_SUMMARY_INPUT_SQL
 from app.email_store import EmailStore
 from app.audit_web import (
     create_audit_app,
@@ -75,17 +77,15 @@ from app.store import (
 )
 from app.wechat.models import WechatMessage
 from tests.support.candidate_review import complete_synthetic_approval
+from app.meeting_alignment import DEFAULT_MEETING_MAX_ATTEMPTS
+from app.worker import MAX_REPLY_TASK_ATTEMPTS
+from tests.support.native_task_fields import set_native_task_fields
+from tests.wechat.support import approve_delivery
 
-WORK_SUMMARY_INPUT_SQL = task20_projection("work_summary_inputs")
 
 
 def _set_task_fields(db, kind: str, task_id: int, values: dict[str, object]) -> None:
-    parts = task8_set_parts(kind, values)
-    db.execute(
-        f"update tasks set {parts.sql} "
-        "where record_type=? and cast(legacy_key as integer)=?",
-        (*parts.parameters, kind, task_id),
-    )
+    set_native_task_fields(db, kind, task_id, values)
 
 
 def test_attempt_detail_reply_text_falls_back_to_persisted_sent_reply():
@@ -385,7 +385,7 @@ def test_attempt_detail_marks_missing_linked_consumer_result_unavailable(tmp_pat
     attempt_id = _finalize_consumer_result_attempt(store, task, audit)
     with store._immediate_write_transaction() as db:
         db.execute(
-            "update runs set parent_id=null where record_type='agent_runs' and cast(legacy_key as integer)=?",
+            "update runs set parent_id=null where id=?",
             (audit.id,),
         )
 
@@ -418,7 +418,7 @@ def test_attempt_detail_rejects_non_consumer_audit_parent(tmp_path: Path):
     attempt_id = _finalize_consumer_result_attempt(store, task, terminal_audit)
     with store._immediate_write_transaction() as db:
         db.execute(
-            "update runs set parent_id=? where record_type='agent_runs' and cast(legacy_key as integer)=?",
+            "update runs set parent_id=? where id=?",
             (first_audit.id, terminal_audit.id),
         )
 
@@ -436,11 +436,10 @@ def test_attempt_detail_marks_malformed_consumer_result_unavailable(tmp_path: Pa
     consumer = _complete_consumer_run(store, task)
     attempt_id = _finalize_consumer_result_attempt(store, task, consumer)
     with store._immediate_write_transaction() as db:
-        from app.action_storage import REVIEW_CANDIDATE_SQL, update_action
-        public_id = db.execute(f"select id from ({REVIEW_CANDIDATE_SQL}) where consumer_run_id=?", (consumer.id,)).fetchone()[0]
-        update_action(db, 'review_candidates', public_id, {
-            'candidate_json': '{"outcome":"proposal","raw_marker":"raw-malformed-marker"}',
-        })
+        assert db.execute(
+            "update run_adopted_results set candidate_json=? where consumer_run_id=?",
+            ('{"outcome":"proposal","raw_marker":"raw-malformed-marker"}', consumer.id),
+        ).rowcount == 1
 
     status, detail = render_attempt_detail(store, attempt_id)
 
@@ -682,6 +681,8 @@ def test_orchestrated_attempt_detail_links_consumer_and_execution_sessions(
             audit.id,
             f"audit-session-{revision}",
             owner=f"audit-{revision}",
+            # A later revision's Audit run resumes the previous revision's session.
+            allow_session_handoff=True,
         )
         terminal_run = complete_synthetic_approval(store, audit, owner=f"audit-{revision}")
         parent_id = terminal_run.id
@@ -918,9 +919,10 @@ def _seed_confirmed_approval_attempt(
     # Simulate a grandfathered, service-adopted historical Audit review. Its
     # completed native wire body is separate from the business review row.
     with store._connect() as db:
-        from app.action_storage import CANDIDATE_REVIEW_SQL, update_action
-        public_id = db.execute(f"select id from ({CANDIDATE_REVIEW_SQL}) where audit_run_id=?", (audit.id,)).fetchone()[0]
-        update_action(db, 'candidate_reviews', public_id, {'result_json': json.dumps(historical_result)})
+        assert db.execute(
+            "update run_adopted_reviews set result_json=? where audit_run_id=?",
+            (json.dumps(historical_result), audit.id),
+        ).rowcount == 1
     return store.finalize_orchestrated_reply_task(
         task_id=task.id,
         expected_execution_generation=task.execution_generation,
@@ -968,7 +970,7 @@ def seed_meeting_attempt(store: AutoReplyStore) -> int:
         final_message="会后对齐：@Avery 请确认风险预算。",
         send_result_json='{"status":"sent"}',
     )
-    return store.create_logical_run('meeting_alignment_runs', task_public_id=job_id, codex_session_id="meeting-session-history-1", status="sent", error="")
+    return store.create_professional_run(job_id, session_id="meeting-session-history-1", status="sent", error="")
 
 
 def _seed_native_meeting_search(
@@ -1004,8 +1006,7 @@ def _seed_native_meeting_search(
     )) + "\n")
     monkeypatch.setattr(native_trajectory, "find_codex_session_path", lambda *args, **kwargs: native)
     with store._connect() as db:
-        insert_run(
-            db, 'agent_runtime_attempts', {
+        insert_runtime_attempt_row(db, {
                 'workload_kind': 'meeting',
                 'workload_key': str(run_id),
                 'attempt_number': 1,
@@ -2121,8 +2122,8 @@ def test_meeting_attempt_detail_keeps_ready_run_sent_after_later_run(tmp_path: P
         eligible_at="2026-07-22T10:22:44+00:00",
         status="pending",
     )
-    first_run = store.create_logical_run('meeting_alignment_runs', task_public_id=job_id, codex_session_id="meeting-session-first", status="ready_to_send", error="")
-    store.create_logical_run('meeting_alignment_runs', task_public_id=job_id, codex_session_id="meeting-session-second", status="ready_to_send", error="")
+    first_run = store.create_professional_run(job_id, session_id="meeting-session-first", status="ready_to_send", error="")
+    store.create_professional_run(job_id, session_id="meeting-session-second", status="ready_to_send", error="")
     store.update_meeting_alignment_job(
         job_id,
         status="sent",
@@ -2702,8 +2703,7 @@ def test_history_chart_projects_hidden_legacy_attempts_through_terminal_task(
     ]
     with store._connect() as db:
         for generation, attempt_id in enumerate(attempt_ids):
-            run = insert_run(
-                db, 'agent_runs', {
+            run = insert_run_row(db, {
                     'task_id': task.id,
                     'execution_generation': task.execution_generation if generation == len(attempt_ids) - 1
                         else f"legacy-chart-generation-{generation}",
@@ -2809,8 +2809,8 @@ def test_history_chart_marks_recovered_meeting_retries_without_failed_red_series
         eligible_at="2026-08-08T01:10:00+00:00",
         status="pending",
     )
-    store.create_logical_run('meeting_alignment_runs', task_public_id=job_id, codex_session_id="meeting-chart-retry", status="retry", error="codex_provider_unavailable")
-    store.create_logical_run('meeting_alignment_runs', task_public_id=job_id, codex_session_id="meeting-chart-sent", status="ready_to_send", error="")
+    store.create_professional_run(job_id, session_id="meeting-chart-retry", status="retry", error="codex_provider_unavailable")
+    store.create_professional_run(job_id, session_id="meeting-chart-sent", status="ready_to_send", error="")
     store.update_meeting_alignment_job(job_id, status="sent")
 
     payload = audit_web_module._history_chart_payload(store)
@@ -6522,8 +6522,7 @@ def test_runtime_attempt_history_renders_only_safe_allowlisted_evidence(tmp_path
     )
     with store._connect() as db:
         update_action(db, "reply_attempts", attempt_id, {"agent_run_id": run.id})
-        insert_run(
-            db, 'agent_runtime_attempts', {
+        insert_runtime_attempt_row(db, {
                 'parent_id': run.id,
                 'workload_kind': 'agent_run',
                 'workload_key': str(run.id),
@@ -7386,7 +7385,8 @@ def test_history_failed_attempts_do_not_hide_each_other(tmp_path: Path):
     html = render_attempt_list(store, include_chart=False)
 
     assert html.count(">重试当前任务</button>") == 2
-    assert html.count(">暂不处理</a>") == 2
+    # An execution failure offers retry and technical detail, never a human decision.
+    assert ">暂不处理</a>" not in html
     assert f"#{old_id}" in html
     assert latest_id
     assert "接管，无需操作" not in html
@@ -7430,7 +7430,7 @@ def test_history_retrying_item_shows_persisted_plan_without_human_choices(
     html = render_attempt_list(store, include_chart=False)
 
     assert "状态：</strong>系统失败，正在自动恢复" in html
-    assert f"第 {persisted_task.attempts}/3 次" in html
+    assert f"第 {persisted_task.attempts}/{MAX_REPLY_TASK_ATTEMPTS} 次" in html
     assert audit_web_module._format_local_time(retry_at) in html
     assert ">重试当前任务</button>" not in html
     assert ">暂不处理</button>" not in html
@@ -7668,7 +7668,7 @@ def test_attempt_detail_uses_same_attention_reason_and_effect_as_history(
     assert status == 200
     assert "事项：</strong>Please complete this task." in html
     assert "需要你决策：</strong>否" in html
-    assert "状态：</strong>需要你处理" in html
+    assert "状态：</strong>处理失败，尚未完成" in html
     assert "原因：</strong>Current task did not complete" in html
     assert "外部副作用：</strong>外部动作是否完成由当前结果和业务系统状态决定" in html
 
@@ -7696,13 +7696,13 @@ def test_retrying_meeting_shows_persisted_plan_without_manager_actions(
         "Meeting provider unavailable",
         available_at=retry_at,
     )
-    run_id = store.create_logical_run('meeting_alignment_runs', task_public_id=job_id, codex_session_id="meeting-retry-session", status="retry", error="Meeting provider unavailable")
+    run_id = store.create_professional_run(job_id, session_id="meeting-retry-session", status="retry", error="Meeting provider unavailable")
 
     html = render_attempt_list(store, include_chart=False)
 
     assert f"#meeting-{run_id}" in html
     assert "状态：</strong>系统失败，正在自动恢复" in html
-    assert f"第 {claimed_job.attempts}/3 次" in html
+    assert f"第 {claimed_job.attempts}/{DEFAULT_MEETING_MAX_ATTEMPTS} 次" in html
     assert audit_web_module._format_local_time(retry_at) in html
     assert f'href="/meeting-attempts/{run_id}">技术详情</a>' in html
     assert ">重试当前任务</button>" not in html
@@ -7726,7 +7726,7 @@ def test_failed_meeting_and_follow_up_expose_reason_and_safe_choices(
         status="failed",
         error="Meeting delivery failed",
     )
-    meeting_run_id = store.create_logical_run('meeting_alignment_runs', task_public_id=job_id, codex_session_id="meeting-failed-session", status="failed", error="Meeting delivery failed")
+    meeting_run_id = store.create_professional_run(job_id, session_id="meeting-failed-session", status="failed", error="Meeting delivery failed")
     project_id = seed_legacy_work_project(store,
         title="Hiring",
         category="people",
@@ -7987,8 +7987,7 @@ def test_reply_attempt_queue_excludes_prior_generation_after_trigger_revision(
         business_object_key="oa:process-1:task-1",
     )
     with store._connect() as db:
-        old_run = insert_run(
-            db, 'agent_runs', {
+        old_run = insert_run_row(db, {
                 'task_id': task.id,
                 'execution_generation': task.execution_generation,
                 'role': 'consumer',
@@ -8671,11 +8670,7 @@ def test_worker_attention_includes_oa_pending_node_stalled_over_one_hour(
         business_object_key="oa:stale-process:task-1",
     )
     with store._connect() as db:
-        parts = task8_set_parts('reply_tasks', {'updated_at': '2000-01-01 00:00:00'})
-        db.execute(
-            f"update tasks set {parts.sql} where record_type='reply_tasks' and id=?",
-            (*parts.parameters, task.id),
-        )
+        _set_task_fields(db, "reply_tasks", task.id, {"updated_at": "2000-01-01 00:00:00"})
     assert store.get_reply_task(task.id).updated_at == '2000-01-01 00:00:00'
     store.set_daily_scan_state(
         "oa_pending",
@@ -8862,6 +8857,7 @@ def test_worker_status_uses_wechat_delivery_outcome_not_raw_failed_status(
 
     unknown_store = AutoReplyStore(tmp_path / "unknown.sqlite3")
     unknown_delivery_id = _seed_wechat_pending(unknown_store)
+    approve_delivery(unknown_store, unknown_delivery_id)
     unknown_store.mark_wechat_delivery_sending(unknown_delivery_id)
     unknown_store.set_wechat_delivery_status(
         unknown_delivery_id,
@@ -8946,6 +8942,7 @@ def test_worker_status_ignores_wechat_delivery_from_old_execution_generation(
 ):
     store = AutoReplyStore(tmp_path / "worker.sqlite3")
     delivery_id = _seed_wechat_pending(store)
+    approve_delivery(store, delivery_id)
     store.mark_wechat_delivery_sending(delivery_id)
     store.set_wechat_delivery_status(
         delivery_id,
@@ -11422,17 +11419,24 @@ def test_render_workers_page_shows_service_and_queue_status(
         send_status="failed",
         send_error="retryable reply failure",
     )
+    from app.email_task_adapter import EmailClassificationTaskAdapter, EmailClassificationTaskInput
+
+    classification = EmailClassificationTaskAdapter(EmailStore(store.path)).ensure_task(
+        EmailClassificationTaskInput.from_message(
+            {"accountId": "account", "folder": "inbox", "uidValidity": 1, "uid": 1,
+             "providerUnread": True, "messageId": "<failed@example.com>",
+             "subject": "Quarterly renewal", "textBody": "body"},
+            allowed_category_keys=("work",),
+            category_descriptions={"work": {"core": "Business."}},
+            folder_targets={"work": "Work"}, config_version="config-v1",
+            unsubscribe_candidates=(),
+        )
+    )
     with store._connect() as db:
-        db.execute("begin immediate")
-        insert_task12(db, "email_agent_classification_tasks", {
-            "task_id": "email-classification:failed",
-            "channel": "email",
-            "stable_message_identity": "account:inbox:1",
-            "status": "failed",
-            "input_json": '{"message":{"subject":"Quarterly renewal"}}',
-            "error": "invalid classification input",
-            "updated_at": "2026-07-01 17:00:00",
-        })
+        db.execute(
+            "update tasks set status='failed', error='invalid classification input', "
+            "updated_at='2026-07-01 17:00:00' where id=?", (classification.task_id,),
+        )
 
     payload = build_worker_status_payload(store)
     html = render_workers_page(store)
@@ -11983,7 +11987,7 @@ def test_attention_skips_all_typed_unsubscribe_failures(tmp_path: Path):
     assert store.count_current_unresolved_problem_attempts() == 2
     with store._connect() as db:
         assert db.execute(
-            f"select count(*) from ({task20_projection('reply_tasks')}) where status='failed'"
+            f"select count(*) from ({REPLY_TASK_SQL}) where status='failed'"
         ).fetchone()[0] == 7
 
 
@@ -12010,7 +12014,7 @@ def test_attention_skips_an_expired_dingteam_okr_login(tmp_path: Path):
     assert not any(row["category"] in {"Reply task", "Reply"} for row in rows)
     with store._connect() as db:
         assert db.execute(
-            f"select count(*) from ({task20_projection('reply_tasks')}) where status='failed'"
+            f"select count(*) from ({REPLY_TASK_SQL}) where status='failed'"
         ).fetchone()[0] == 1
 
 
@@ -12052,13 +12056,12 @@ def test_attention_keeps_old_scheduled_failure_in_history_after_later_success(
         db.execute("begin immediate")
         snapshot_id = intern_scheduled_config(db, '{}')
         for run_id, event_id, task_id in ((100, "event-old", old.id), (101, "event-new", new.id)):
-            insert_run(db, 'scheduled_task_runs', {
+            insert_scheduled_occurrence(db, {
                 'event_id': event_id,
                 'scheduled_task_id': scheduled_task.id,
                 'trigger_kind': 'manual',
                 'scheduled_for': f"2026-09-28T{run_id-87:02d}:00:00Z",
                 'first_scheduled_for': f"2026-09-28T{run_id-87:02d}:00:00Z",
-                'legacy_key': run_id,
                 'dispatch_status': 'dispatched',
                 'snapshot_id': snapshot_id,
                 'execution_kind': 'reply_task',
@@ -12077,7 +12080,7 @@ def test_attention_keeps_old_scheduled_failure_in_history_after_later_success(
     assert not any(row["category"] == "Service error" for row in rows)
     with store._connect() as db:
         assert db.execute(
-            f"select status from ({task20_projection('reply_tasks')}) where id=?", (old.id,)
+            f"select status from ({REPLY_TASK_SQL}) where id=?", (old.id,)
         ).fetchone()[0] == "failed"
         assert db.execute(f"select count(*) from ({error_projection(unresolved=True)})").fetchone()[0] == 2
 
@@ -12148,9 +12151,9 @@ def test_failed_reply_attention_does_not_use_stale_or_malformed_run(tmp_path, ol
     store.fail_agent_run(run.id, {'code':'agent_reported_failure','source':'agent','source_code':'foreign_diagnostic','retryable':False}, owner='test')
     with store._connect() as db:
         if old_generation:
-            db.execute("update runs set execution_generation='old' where record_type='agent_runs' and cast(legacy_key as integer)=?", (run.id,))
+            db.execute("update runs set execution_generation='old' where id=?", (run.id,))
         if bad_json:
-            db.execute("update runs set structured_error_json='invalid-json' where record_type='agent_runs' and cast(legacy_key as integer)=?", (run.id,))
+            db.execute("update runs set structured_error_json='invalid-json' where id=?", (run.id,))
     store.fail_reply_task(task.id, 'task_fallback_error', expected_execution_generation=task.execution_generation)
     [row] = [r for r in audit_web_module._queue_attention_rows(store) if r['category']=='Reply task']
     assert row['error'] == 'task_fallback_error'
@@ -12183,20 +12186,12 @@ def test_work_item_attention_codec_preserves_failed_filter_order_limit_and_store
         assert isinstance(encoded, bytes)
         input_id = store.enqueue_work_summary_input("local_file", ref, payload)
         ids.append(input_id)
-        parts = task8_set_parts(
-            "work_summary_inputs",
-            {
+        with store._immediate_write_transaction() as db:
+            _set_task_fields(db, "work_summary_inputs", input_id, {
                 "payload_json": encoded if stored_as_blob else payload,
                 "status": status,
                 "updated_at": f"2026-10-11 03:0{index}:00",
-            },
-        )
-        with store._immediate_write_transaction() as db:
-            db.execute(
-                f"update tasks set {parts.sql} "
-                "where record_type='work_summary_inputs' and legacy_key=?",
-                (*parts.parameters, str(input_id)),
-            )
+            })
     with store._connect() as db:
         before = [
             tuple(row)

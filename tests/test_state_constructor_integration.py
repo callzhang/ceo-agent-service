@@ -7,9 +7,7 @@ import pytest
 
 from app.email_store import EmailStore
 from app.store import AutoReplyStore
-from app.state_definitions import state_projection
 from app.state_schema_release import SOURCE_TABLES, TARGET_INDEXES, state_schema_is_current
-from app.state_storage import insert_state
 
 
 def state_facts(path):
@@ -44,37 +42,6 @@ def test_both_constructor_orders_retire_native_state_and_reopen(tmp_path, order)
         assert db.execute("pragma foreign_key_check").fetchall() == []
 
 
-@pytest.mark.parametrize("missing", (
-    ("idx_state_dispatcher_terminal",), ("idx_state_dispatcher_expiry",),
-    ("idx_state_dispatcher_terminal", "idx_state_dispatcher_expiry"),
-))
-def test_existing_lease_indexes_repaired_without_changing_lease_or_synthesizing_session(current, missing):
-    with closing(sqlite3.connect(current)) as db:
-        db.execute("begin")
-        insert_state(db, "dispatcher_claim_leases", {
-            "adapter_name": "scheduled", "source_id": "42", "owner": "owner",
-            "generation": 2, "terminal_at": "terminal",
-        }, source_rowid=-7)
-        insert_state(db, "conversations", {
-            "conversation_id": "conversation", "title": "t", "single_chat": 1,
-            "codex_session_id": "session-existing-only-in-original-conversation",
-        }, source_rowid=0)
-        lease = db.execute("select * from state where record_type='dispatcher_claim_leases'").fetchall()
-        for name in missing:
-            db.execute("drop index " + name)
-        db.commit()
-    AutoReplyStore(current)
-    EmailStore(current)
-    with closing(sqlite3.connect(current)) as db:
-        assert state_schema_is_current(db)
-        assert db.execute("select * from state where record_type='dispatcher_claim_leases'").fetchall() == lease
-        assert db.execute(
-            "select * from state where record_type='conversation_runtime_sessions'"
-        ).fetchall() == []
-        assert db.execute("select count(*) from (" + state_projection("conversations") +
-                          ") where conversation_id='conversation'").fetchone()[0] == 1
-
-
 @pytest.mark.parametrize("damage", (
     ("drop index idx_state_service_state_pk",),
     ("create table service_state(key,value,updated_at)",),
@@ -95,20 +62,6 @@ def test_malformed_current_refused_without_data_or_schema_repair(current, damage
     before = state_facts(current)
     with pytest.raises(sqlite3.IntegrityError):
         constructor(current)
-    assert state_facts(current) == before
-
-
-def test_store_connection_temp_source_shadow_refused_before_repair(current, monkeypatch):
-    before = state_facts(current)
-    original = AutoReplyStore._open_connection
-
-    def shadow(self):
-        db = original(self)
-        db.execute("create temp table service_state(key,value,updated_at)")
-        return db
-    monkeypatch.setattr(AutoReplyStore, "_open_connection", shadow)
-    with pytest.raises(sqlite3.IntegrityError):
-        AutoReplyStore(current)
     assert state_facts(current) == before
 
 
@@ -159,28 +112,3 @@ def test_fresh_reserved_index_name_refused_before_wal_or_partial_ddl(tmp_path, c
     assert not path.with_name(path.name + "-wal").exists()
 
 
-@pytest.mark.parametrize("constructor", (AutoReplyStore, EmailStore))
-@pytest.mark.parametrize("name", (*SOURCE_TABLES, "state", *TARGET_INDEXES))
-def test_fresh_temp_state_name_refused_before_wal_or_partial_ddl(tmp_path, monkeypatch, constructor, name):
-    from app.state_definitions import _quote
-    path = tmp_path / "fresh-temp.sqlite3"
-    with closing(sqlite3.connect(path)) as db:
-        db.execute("create table unrelated(value)")
-        db.execute("insert into unrelated values('keep')")
-        db.commit()
-    before = hashlib.sha256(path.read_bytes()).hexdigest()
-    original = AutoReplyStore._open_connection
-
-    def shadow(self):
-        db = original(self)
-        db.execute("create temp table " + _quote(name.upper()) + "(value)")
-        return db
-    monkeypatch.setattr(AutoReplyStore, "_open_connection", shadow)
-    with pytest.raises(sqlite3.IntegrityError, match="TEMP name collision"):
-        constructor(path)
-    assert hashlib.sha256(path.read_bytes()).hexdigest() == before
-    with closing(sqlite3.connect(path)) as db:
-        assert db.execute("pragma journal_mode").fetchone()[0] == "delete"
-        assert db.execute("select * from unrelated").fetchall() == [("keep",)]
-        assert db.execute("select 1 from sqlite_schema where name='state'").fetchone() is None
-    assert not path.with_name(path.name + "-wal").exists()

@@ -37,9 +37,9 @@ from app.email_store import EmailStore
 from app.email_classifier_learning import EmailClassifierLearningService
 from app.email_model_registry import EmailModelRegistry
 from app.store import AutoReplyStore
-from app.run_storage import insert_run
-from app.task20_definitions import task20_column
-from app.task8_storage import task8_set_parts
+from tests.support.native_run_rows import insert_scheduled_occurrence
+from tests.support.native_task_fields import set_native_task_fields
+from tests.wechat.conftest import approved_sends  # noqa: F401
 from app.action_task_delivery_definitions import task_delivery_projection
 from app.setup_wizard_models import SetupWizardEvent
 from app.wechat.models import WechatMessage, WechatReplyScope
@@ -646,13 +646,13 @@ def test_feedback_claim_returns_associated_item_receipts(tmp_path: Path):
     with _client(tmp_path) as client:
         response = client.post(
             "/api/console/feedback/batches",
-            json={"feedback_keys": ["feedback-1"], "workbench_task_id": "task-1", "workbench_turn_id": "turn-1"},
+            json={"feedback_keys": ["feedback-1"], "workbench_task_id": "1", "workbench_turn_id": "2"},
         )
 
     assert response.status_code == 200
     receipt = response.json()["item"]["items"][0]
-    assert receipt["workbench_task_id"] == "task-1"
-    assert receipt["workbench_turn_id"] == "turn-1"
+    assert receipt["workbench_task_id"] == "1"
+    assert receipt["workbench_turn_id"] == "2"
 
 
 def test_attention_grouping_keeps_records_and_uses_root_cause_context_key():
@@ -1028,7 +1028,7 @@ def test_console_history_sends_a_running_scheduled_task_to_its_own_run_history(
         from app.scheduled_config_storage import intern_scheduled_config
 
         snapshot_id = intern_scheduled_config(db, '{}')
-        insert_run(db, 'scheduled_task_runs', {
+        insert_scheduled_occurrence(db, {
             'event_id': 'event-91606',
             'scheduled_task_id': scheduled_task.id,
             'trigger_kind': 'scheduled',
@@ -1083,7 +1083,7 @@ def test_console_history_uses_operation_logs_for_task_and_meeting_links(tmp_path
         status="sent",
         final_message="会后对齐：请确认需求。",
     )
-    meeting_run_id = store.create_logical_run('meeting_alignment_runs', task_public_id=job_id, codex_session_id="history-session", status="sent", error="")
+    meeting_run_id = store.create_professional_run(job_id, session_id="history-session", status="sent", error="")
 
     with _client(tmp_path) as client:
         task_response = client.get("/api/console/history?page=1&page_size=20&object_type=task")
@@ -1125,7 +1125,7 @@ def test_meeting_history_page_uses_adopted_message_without_reading_native_run(
             store.update_meeting_alignment_job(
                 job_id, status="sent", final_message=final_message,
             )
-        run_ids.append(store.create_logical_run('meeting_alignment_runs', task_public_id=job_id, codex_session_id=f"meeting-history-session-{index}", status="sent", error=""))
+        run_ids.append(store.create_professional_run(job_id, session_id=f"meeting-history-session-{index}", status="sent", error=""))
 
     def reject_native_run(*_args, **_kwargs):
         raise AssertionError("History list must not hydrate a native meeting run")
@@ -1167,7 +1167,7 @@ def test_console_meeting_detail_uses_meeting_run_id(tmp_path: Path):
         target_id="cid-meeting-console",
         final_message="会后对齐：请确认上线范围。",
     )
-    run_id = store.create_logical_run('meeting_alignment_runs', task_public_id=job_id, codex_session_id="internal-session-must-not-leak", status="sent", error="")
+    run_id = store.create_professional_run(job_id, session_id="internal-session-must-not-leak", status="sent", error="")
 
     with _client(tmp_path) as client:
         response = client.get(f"/api/console/meeting-attempts/{run_id}")
@@ -2824,14 +2824,11 @@ def test_queue_attention_rows_excludes_legacy_audit_revision_needs_human(tmp_pat
     )
     with store._connect() as db:
         task_id = db.execute(
-            f"select id from tasks where record_type='reply_tasks' and {task20_column('reply_tasks', 'conversation_id')}=? and {task20_column('reply_tasks', 'trigger_message_id')}=?",
+            "select tasks.id from tasks join task_inputs i on i.id=tasks.current_input_id "
+            "where tasks.kind='reply' and i.conversation_id=? and i.trigger_message_id=?",
             ("audit-revision-conversation", "audit-revision-message"),
         ).fetchone()[0]
-        parts = task8_set_parts("reply_tasks", {"status": "done"})
-        db.execute(
-            f"update tasks set {parts.sql} where record_type='reply_tasks' and id=?",
-            (*parts.parameters, task_id),
-        )
+        set_native_task_fields(db, "reply_tasks", task_id, {"status": "done"})
         run = insert_native_run_fixture(
             db, {
                 'task_id': task_id,
@@ -2891,14 +2888,11 @@ def test_queue_attention_rows_excludes_actionable_structured_needs_human_attempt
     }
     with store._connect() as db:
         task_id = db.execute(
-            f"select id from tasks where record_type='reply_tasks' and {task20_column('reply_tasks', 'conversation_id')}=? and {task20_column('reply_tasks', 'trigger_message_id')}=?",
+            "select tasks.id from tasks join task_inputs i on i.id=tasks.current_input_id "
+            "where tasks.kind='reply' and i.conversation_id=? and i.trigger_message_id=?",
             ("needs-human-conversation", "needs-human-message"),
         ).fetchone()[0]
-        parts = task8_set_parts("reply_tasks", {"status": "done"})
-        db.execute(
-            f"update tasks set {parts.sql} where record_type='reply_tasks' and id=?",
-            (*parts.parameters, task_id),
-        )
+        set_native_task_fields(db, "reply_tasks", task_id, {"status": "done"})
         run = insert_native_run_fixture(
             db, {
                 'task_id': task_id,
@@ -3547,11 +3541,7 @@ def test_current_wechat_delivery_failure_remains_in_history_after_candidate_done
         sensitivity_kind="normal", send_status="failed", channel="wechat",
     )
     with store._connect() as db:
-        parts = task8_set_parts("reply_tasks", {"status": "done"})
-        db.execute(
-            f"update tasks set {parts.sql} where record_type='reply_tasks' and id=?",
-            (*parts.parameters, task.id),
-        )
+        set_native_task_fields(db, "reply_tasks", task.id, {"status": "done"})
         update_task_delivery_action(
             db,
             "wechat_deliveries",
@@ -3585,6 +3575,7 @@ def test_current_wechat_delivery_failure_remains_in_history_after_candidate_done
     assert store.get_reply_attempt(attempt_id).send_status == "failed"
 
 
+@pytest.mark.usefixtures("approved_sends")
 def test_principal_superseded_wechat_delivery_is_terminal_in_detail_and_retry_api(tmp_path, monkeypatch):
     from tests.wechat.test_store import _seed_exhausted_target_open_failure, _wechat_delivery_and_attempt_state
 
@@ -3599,11 +3590,7 @@ def test_principal_superseded_wechat_delivery_is_terminal_in_detail_and_retry_ap
         inactive_before="2026-07-30 10:10:00",
     )
     with store._connect() as db:
-        parts = task8_set_parts("reply_tasks", {"status": "done"})
-        db.execute(
-            f"update tasks set {parts.sql} where record_type='reply_tasks' and cast(legacy_key as integer)=1",
-            parts.parameters,
-        )
+        set_native_task_fields(db, "reply_tasks", 1, {"status": "done"})
     before = _wechat_delivery_and_attempt_state(store, delivery_id)
     sends = []
     monkeypatch.setattr("app.wechat.service.build_sender", lambda: SimpleNamespace())
@@ -3624,6 +3611,7 @@ def test_principal_superseded_wechat_delivery_is_terminal_in_detail_and_retry_ap
     assert store.get_reply_task(1).status == "done"
 
 
+@pytest.mark.usefixtures("approved_sends")
 @pytest.mark.parametrize("generation,conversation", [("new-generation", "u1"), ("initial", "other")])
 def test_old_principal_supersession_does_not_describe_current_pending_task(tmp_path, generation, conversation):
     from tests.wechat.test_store import _seed_exhausted_target_open_failure, _wechat_delivery_and_attempt_state
@@ -3635,11 +3623,7 @@ def test_old_principal_supersession_does_not_describe_current_pending_task(tmp_p
         inactive_before="2026-07-30 10:10:00",
     )
     with store._connect() as db:
-        parts = task8_set_parts("reply_tasks", {"execution_generation": generation, "status": "pending"})
-        db.execute(
-            f"update tasks set {parts.sql} where record_type='reply_tasks' and cast(legacy_key as integer)=1",
-            parts.parameters,
-        )
+        set_native_task_fields(db, "reply_tasks", 1, {"execution_generation": generation, "status": "pending"})
         update_task_delivery_action(db, "wechat_deliveries", delivery_id, {"conversation_id": conversation})
     before = _wechat_delivery_and_attempt_state(store, delivery_id)
     with _client(tmp_path) as client:
@@ -3690,11 +3674,7 @@ def test_sent_wechat_history_has_separate_exact_message_resend_route(tmp_path: P
     task = store.get_reply_task_for_message("melody115", "wx-1", channel="wechat")
     assert task is not None
     with store._connect() as db:
-        parts = task8_set_parts("reply_tasks", {"status": "done"})
-        db.execute(
-            f"update tasks set {parts.sql} where record_type='reply_tasks' and id=?",
-            (*parts.parameters, task.id),
-        )
+        set_native_task_fields(db, "reply_tasks", task.id, {"status": "done"})
     attempt_id = store.record_reply_attempt(
         channel="wechat", conversation_id=trigger.conversation_id,
         conversation_title="Melody", trigger_message_id=trigger.message_id,

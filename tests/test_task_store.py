@@ -8,9 +8,9 @@ from threading import Barrier
 
 import pytest
 
-from app.store import TASK_LOGICAL_RUN_SQL
+from app.state_storage import update_state_rows
+from app.store import TASK_LOGICAL_RUN_SQL, REPLY_TASK_SQL, WORK_SUMMARY_INPUT_SQL
 from app.store import AgentRole, AutoReplyStore
-from app.task_storage import REPLY_TASK_SQL, WORK_SUMMARY_INPUT_SQL, task_id_expression
 from app.task_models import WorkItem
 
 
@@ -187,9 +187,8 @@ def test_ensure_reply_tasks_rolls_back_group_on_database_error(tmp_path: Path):
         db.execute(
             """
             create trigger fail_second_email_task
-            before insert on tasks
-            when new.record_type='reply_tasks'
-             and new.trigger_message_id='email-action:second'
+            before insert on task_inputs
+            when new.trigger_message_id='email-action:second'
             begin
                 select raise(abort, 'injected batch failure');
             end
@@ -416,7 +415,7 @@ def test_reset_stale_processing_work_summary_inputs_requeues_orphans(tmp_path: P
     with sqlite3.connect(db_path) as db:
         db.execute(
             "update tasks set updated_at=datetime('now', '-31 minutes') "
-            f"where record_type='work_summary_inputs' and id={task_id_expression('work_summary_inputs', '?')}",
+            "where kind='work_summary' and id=?",
             (claimed[0].id,),
         )
 
@@ -459,7 +458,7 @@ def test_work_summary_retry_backoff_delays_claim_until_available(tmp_path: Path)
     with sqlite3.connect(tmp_path / "task.sqlite3") as db:
         db.execute(
             "update tasks set available_at=datetime('now', '-1 second') "
-            f"where record_type='work_summary_inputs' and id={task_id_expression('work_summary_inputs', '?')}",
+            "where kind='work_summary' and id=?",
             (input_id,),
         )
 
@@ -602,7 +601,7 @@ def test_list_follow_up_drafts_due_before_handles_iso_timezone(tmp_path: Path):
     assert future_id not in [draft.id for draft in drafts]
 
     parent = store.enqueue_work_summary_input("local_file", "follow-up", "{}")
-    run_id = store.create_logical_run("task_agent_runs", parent, codex_session_id="sid")
+    run_id = store.create_professional_run(parent, session_id="sid")
     with sqlite3.connect(tmp_path / "task.sqlite3") as db:
         columns = {column[0] for column in db.execute(
             f"select * from ({TASK_LOGICAL_RUN_SQL}) where id=?", (run_id,),
@@ -1155,9 +1154,10 @@ def test_recent_single_chat_recovery_uses_task_activity_when_seen_row_is_old(
     )
     store.mark_seen("msg-old", "cid-mina")
     with store._connect() as db:
-        db.execute(
-            "update seen_messages set seen_at='2026-01-01 00:00:00' "
-            "where message_id='msg-old'"
+        db.execute("begin immediate")
+        update_state_rows(
+            db, "seen_messages", {"seen_at": "2026-01-01 00:00:00"},
+            where_sql="message_id=?", parameters=("msg-old",),
         )
     task_id = store.enqueue_reply_task(
         conversation_id="cid-mina",
@@ -1640,7 +1640,7 @@ def test_operation_logs_project_recovered_meeting_failures(tmp_path: Path):
         eligible_at="2026-09-01T00:10:00Z",
         status="pending",
     )
-    failed_id = store.create_logical_run('meeting_alignment_runs', task_public_id=job_id, codex_session_id="meeting-failed", status="failed", error="provider unavailable")
+    failed_id = store.create_professional_run(job_id, session_id="meeting-failed", status="failed", error="provider unavailable")
     store.update_meeting_alignment_job(job_id, status="sent")
 
     recovered = store.list_operation_logs(
