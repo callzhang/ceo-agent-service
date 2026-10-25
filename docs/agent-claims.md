@@ -510,7 +510,6 @@ reverts committed work they did not author.
 
 ## Current claims
 
-| claude-action-test-port-20261025 | tests/test_action_entity_storage.py, tests/test_shared_action_lifecycle.py, tests/test_email_action_storage.py, tests/test_action_email_history_storage.py (test-only unless a clear app regression is found) | Port the four red Action storage test files to the native Task/Run/Action storage, or delete tests of removed behaviour; one file per commit | 2026-10-25 |
 
 
 
