@@ -7,7 +7,7 @@ from contextlib import closing
 from functools import lru_cache
 import sqlite3
 
-from app.runs11_schema_release import _target_objects as source_run_objects
+from app.runs11_schema_helpers import _target_objects as source_run_objects
 
 SOURCE_TASKS = {
     "task_agent_runs": "work_summary_inputs",

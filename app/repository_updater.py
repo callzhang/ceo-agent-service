@@ -66,9 +66,7 @@ class ExistingSchemaUpgradeStateStore:
 
     def bind_committed_schema(self) -> None:
         """Select the progress backend from one committed, read-only snapshot."""
-        from app.email_metadata_schema_release import (
-            SOURCE_EMAIL_VERSION as PREVIOUS_EMAIL_VERSION, TARGET_EMAIL_VERSION,
-        )
+        PREVIOUS_EMAIL_VERSION, TARGET_EMAIL_VERSION = 52, 53
         from app.current_schema_manifest import EMAIL_VERSION as CURRENT_EMAIL_VERSION
         from app.current_publication_sources import TARGET_STORE_VERSION, PREVIOUS_STORE_VERSIONS
         from app.state_definitions import state_projection

@@ -7,7 +7,7 @@ from app.configs_run_schema import _objects
 from app.logical_run_definitions import SOURCE_TASKS, logical_run_objects, logical_action_objects
 from app import action_storage as actions
 from app.prepared_action_schema import prepared_action_objects
-from app.runs11_schema_release import _target_objects as source_run_objects
+from app.runs11_schema_helpers import _target_objects as source_run_objects
 from app.task_storage import validate_meeting_run_references
 
 _ROWS = "_logical_run_rows"

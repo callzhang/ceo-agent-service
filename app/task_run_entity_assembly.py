@@ -175,7 +175,7 @@ def task_run_entity_assembly_objects(*, email_ledger=False):
     import sqlite3
     from app.action_entity_definitions import ACTION_IDENTITY_MAP_DDL
     from app.business_legacy_fields import current_business_declaration
-    from app.business_schema_release import _create_auxiliary
+    from app.business_schema_helpers import _create_auxiliary
     from app.configs_storage import create_configs_schema
     from app.email_canonical_storage import _create_emails
     from app.current_schema_manifest import EMAIL_LEDGER_SQL

@@ -2,7 +2,7 @@
 import sqlite3
 
 from app.state_definitions import state_projection
-from app.state_schema_release import state_schema_is_current
+from app.state_schema_current import state_schema_is_current
 
 
 def publication_store_version(db: sqlite3.Connection, *, current_version: str,

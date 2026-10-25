@@ -12,8 +12,8 @@ from app.action_email_storage import (
 from app.action_business_storage import SOURCE_OPTIONS
 from app.action_followup_sync_storage import _exact_email_blockers, _require_fk_off
 from app.action_task_delivery_storage import _exact_sync_legacy_triggers, _hash, _quote, _source_declaration
-from app.business_schema_release import _restore_rows, _snapshot
-from app.task_schema_release import _foreign_keys
+from app.business_schema_helpers import _restore_rows, _snapshot
+from app.result_schema_helpers import _foreign_keys
 
 
 SOURCE_HASHES = {
@@ -107,7 +107,7 @@ def _capture(db, *, target):
     if any(_sequence(db, "actions:" + kind) is not None for kind in HISTORY_KINDS):
         raise ValueError("unsupported Email history allocator alias")
     configs, external = _external_trigger_rows(db)
-    from app.configs_schema_release import configs_content_schema_is_current
+    from app.configs_schema_current import configs_content_schema_is_current
     if not configs_content_schema_is_current(
         db, action_variant=variant, include_followup_sync=True,
         include_business_sync=True, include_task_delivery=True,

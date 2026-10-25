@@ -2,10 +2,10 @@
 import sqlite3
 
 from app.configs_run_schema import _objects
-from app.configs_schema_release import configs_content_schema_is_current
+from app.configs_schema_current import configs_content_schema_is_current
 from app.run_storage import RETIRED_RUN_TABLES
 from app.runs11_definitions import RUN11_NEW_KINDS
-from app.runs11_schema_release import _target_objects, _fts_objects
+from app.runs11_schema_helpers import _target_objects, _fts_objects
 
 RETIRED_RUN11_NAMES = tuple(dict.fromkeys((
     *RETIRED_RUN_TABLES, 'scheduled_task_runs', 'workbench_events',

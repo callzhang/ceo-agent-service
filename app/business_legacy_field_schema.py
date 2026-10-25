@@ -95,7 +95,7 @@ def _update_payload(db, *, inverse):
 
 
 def _rebuild(db, variant, *, inverse):
-    from app.business_schema_release import _create_auxiliary
+    from app.business_schema_helpers import _create_auxiliary
     before = _retained_facts(db)
     findings = tuple(sorted(tuple(row) for row in db.execute("pragma foreign_key_check")))
     columns = {table: _columns(db, table) for table in STAGES}

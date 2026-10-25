@@ -5,7 +5,7 @@ Task/Run declaration in ``current_database_schema``.
 """
 from app.business_legacy_fields import current_business_declaration
 from app.current_action_schema import create_current_action_schema
-from app.business_schema_release import _create_auxiliary
+from app.business_schema_helpers import _create_auxiliary
 from app.configs_storage import create_configs_schema
 from app.schedules_storage import create_schedules_schema
 from app.provider_state_storage import create_provider_state_schema
