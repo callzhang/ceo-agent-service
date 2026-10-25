@@ -344,11 +344,11 @@ def test_startup_recovery_closes_interrupted_meeting_run_and_runtime_attempt(tmp
     assert runtime_attempt.finished_at
     with store._connect() as db:
         lease = db.execute(
-            f"select owner, lease_expires_at from ({task_claims.claim_projection()}) "
+            f"select owner, owner_pid, lease_expires_at from ({task_claims.claim_projection()}) "
             "where adapter_name='meeting' and source_id=?",
             (str(job_id),),
         ).fetchone()
-    assert tuple(lease) == ("", "")
+    assert tuple(lease) == ("", 0, "")
 
 
 def test_activation_baseline_silences_unsent_historical_jobs(tmp_path):

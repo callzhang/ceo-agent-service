@@ -14182,8 +14182,8 @@ class AutoReplyStore(LogicalRunStoreMixin, ReviewedCandidateStoreMixin):
                 changed = update_task_cas(db, task_id=task_id,
                     expected={"status": "processing", "locked_at": task["locked_at"]},
                     changes={"status": "retry", "attempts": max((task["attempts"] or 0) - 1, 0),
-                             "locked_at": None, "lease_owner": "", "lease_expires_at": "",
-                             "updated_at": now_text})
+                             "locked_at": None, "lease_owner": "", "owner_pid": 0,
+                             "lease_expires_at": "", "updated_at": now_text})
                 if changed is not None:
                     job = self._native_meeting_alignment_job(db, task_id)
                     if job is not None:
