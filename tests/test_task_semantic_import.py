@@ -14,7 +14,6 @@ from app.business_legacy_fields import CURRENT_BUSINESS_PROJECTIONS as BUSINESS_
 from app.business_storage import update_business
 from app.action_storage import update_sync_action
 from app.store import AutoReplyStore
-from app.task8_storage import task8_set_parts
 from app.task_business_resolution import BusinessResolutionService
 from app.task_semantic_import import (
     apply_task_semantic_import_manifest,
@@ -239,7 +238,7 @@ def test_agent_written_evidence_without_source_input_stays_unresolved(tmp_path):
         author_user_id="assigner",
     )
     with sqlite3.connect(store.path) as db:
-        db.execute("delete from tasks where record_type='work_summary_inputs'")
+        db.execute("delete from work_summary_inputs")
     manifest = build_task_semantic_import_manifest(store.path)
     item = next(item for item in manifest.items if item.legacy_kind == "work_todos")
     assert item.legacy_row_id == todo_id
@@ -463,7 +462,7 @@ def test_apply_rechecks_each_source_by_point_lookup_after_preflight(tmp_path, mo
             assert any("SEARCH" in step and index in step for step in steps), (item.legacy_kind, steps)
             if item.legacy_kind == "work_updates":
                 assert any("<expr>=?" in step for step in steps), steps
-                assert any("USE TEMP B-TREE FOR ORDER BY" in step for step in steps), steps
+                assert not any("USE TEMP B-TREE FOR ORDER BY" in step for step in steps), steps
         db.execute("begin immediate")
         update_sync_action(db, "work_updates", 1, {"project_id": 0.375})
         db.commit()
@@ -503,10 +502,9 @@ def test_per_item_transaction_rechecks_supporting_source_before_write(
             if changed_source == "work_updates":
                 update_sync_action(db, "work_updates", 1, {"summary": "changed"})
             else:
-                parts = task8_set_parts("work_summary_inputs", {"source_ref": "changed"})
                 db.execute(
-                    f"update tasks set {parts.sql} where record_type='work_summary_inputs' and legacy_key=?",
-                    (*parts.parameters, "1"),
+                    "update work_summary_inputs set source_ref='changed' "
+                    "where task_id=(select task_id from work_summary_inputs where source_ref='source-1')"
                 )
 
     monkeypatch.setattr(semantic_import, "_check_manifest", change_source_after_preflight)

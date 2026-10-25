@@ -1,5 +1,53 @@
 # Business model simplification: current completion and closeout
 
+## Refreshed production baseline and next business-model work — 2026-10-25
+
+The prior Task/Run table below is a dated 2026-10-23 checkpoint and is
+superseded by this readback. Production checkout is `a9694da3696e946ad410b58bd3393ddc3f7dae18`;
+`/healthz` returned `{"ok":true,"status":"ok"}`. The live database is
+Store `2026-10-23.1` / Email54 and already has the common `tasks`, `runs`,
+`runtime_attempts`, `task_inputs`, `task_business_keys`, and `work_summary_inputs`
+owners. Counts at read time were 19,672 Tasks, 38,194 Runs, 26,389 Runtime
+Attempts, 8,869 TaskInputs, 8,647 TaskBusinessKeys, and 9,140 WorkSummaryInputs.
+The only `foreign_key_check` result remains `runs(190042) -> tasks` ordinal 1;
+it is preserved and was not repaired. The live database size was 514,969,600
+bytes, with 14,407 free pages (about 56.3 MiB), so reclaimable pages remain an
+optional maintenance opportunity rather than the main business-model goal.
+
+Read-only owner inspection found 975 `work_project`, 3,327 `work_todo`, and
+5,468 `work_updates` facts. The current semantic importer promotes only records
+with its existing source-backed formality evidence; other records remain
+history-only. Their old status values are not current provider readbacks and do
+not authorize bulk promotion, cancellation, or merging. Further retirement
+requires a producer/reader/use crosswalk and a proven owner for each retained
+fact.
+
+The current source removes the two remaining manual `work_summary_inputs`
+readers' dependence on the Task20 compatibility projection. A related point
+lookup in the legacy Project/Todo/Update importer now uses the existing unique
+public-ID index directly and avoids its unnecessary scalar sort. Focused local
+validation on 2026-10-25: semantic-import file 25 passed; minutes owner
+backfill file 9 passed; Ruff and Python parse checks passed. This scoped code
+cleanup is not yet merged, deployed, or a completion of A5b or the remaining
+Project/Todo/Update model review.
+
+The A5b production-data preflight found 276 non-empty Reply OA result snapshots
+(91,758 JSON characters). Exactly 46 currently have a unique matching provider
+receipt with byte-identical JSON (28,080 characters). The match is based on the
+exact linked Run lineage, operation, process-instance ID, and task ID. These
+records are not yet safe to convert to a live/current receipt projection:
+verified receipt correction can retire an older provider body, while a Reply
+Attempt must keep the result it recorded at that time. Before retiring these
+bodies, the model needs a durable reference to the exact immutable receipt and
+retirement must preserve referenced historical receipts. The other 230
+snapshots remain local Attempt facts unless exact ownership is proven. The
+original A5 native acceptance conflict remains a separate unresolved gate.
+
+No schema migration, production write, push, or deployment has occurred for
+this continuation. The next work is the exact immutable A5b receipt reference
+and its inverse, then finish the source-backed Project/Todo/Update ownership
+review. Do not count logical JSON bytes as physical database shrinkage.
+
 ## Email business-model phase audit — 2026-10-24
 
 The current source already contains the accepted Email B1/B2 model: `emails`

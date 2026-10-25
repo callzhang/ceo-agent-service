@@ -821,7 +821,11 @@ def sync_action_projection(kind, *, source_variant="actual", indexed_public_id=F
         columns.append(f"{expression} as {field}")
     join = ("join actions p on p.id=a.sync_draft_action_id "
             "and p.record_type='business_task_follow_ups'" if kind == "business_task_follow_up_send_attempts" else "")
-    source = (f"(select * from actions where {EMAIL_NUMERIC_SCOPE})"
+    # This option serves the unique integer public-ID point lookup. Keep the
+    # complete partial-index predicate inside the source query so SQLite can
+    # prove that idx_actions_public_id applies before it plans the outer view.
+    source = (f"(select * from actions indexed by idx_actions_public_id where "
+              f"{EMAIL_NUMERIC_SCOPE} and record_type<>'action')"
               if indexed_public_id else "actions")
     return f"select {','.join(columns)} from {source} a {join} where a.record_type='{kind}'"
 

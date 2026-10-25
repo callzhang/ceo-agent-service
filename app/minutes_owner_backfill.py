@@ -17,14 +17,13 @@ the second time.
 from __future__ import annotations
 from app.provenance_storage import signal_projection
 from app.business_definitions import BUSINESS_PROJECTIONS
-from app.task20_definitions import task20_projection
 from app.action_business_definitions import business_action_projection
 
 from dataclasses import dataclass, field
 from typing import Any
 
 from app.minutes_todo_context import minutes_full_summary, todo_transcript_excerpts
-from app.store import AutoReplyStore
+from app.store import AutoReplyStore, WORK_SUMMARY_INPUT_SQL
 from app.task_scanners import (
     _actions_digest,
     _canonical_minutes_todos_payload,
@@ -32,9 +31,6 @@ from app.task_scanners import (
     _minutes_todo_actions,
     minutes_work_item,
 )
-
-WORK_SUMMARY_INPUT_SQL = task20_projection('work_summary_inputs')
-
 
 # Bump when what the Agent is asked to do with the excerpts changes (their format, the prompt's
 # owner rules, the checks a decision passes), so meetings whose earlier attempt ended without an
