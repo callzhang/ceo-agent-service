@@ -145,11 +145,15 @@ def _update_current_task8(db, kind, values, *, where_sql="", parameters=(), upda
 
 
 def test_unsubscribe_page_parent_allows_only_retryable_terminal_receipts(tmp_path):
-    from tests.test_email_action_external_consumers import _two_failed_actions
+    from app.email_store import EmailStore
     from tests.test_email_action_storage import _cases
 
-    store = _two_failed_actions(tmp_path / "unsubscribe-parent.sqlite3")
+    path = tmp_path / "unsubscribe-parent.sqlite3"
+    store = AutoReplyStore(path)
+    EmailStore(path)
     with store._connect() as db:
+        # The parent check under test reads the Task and its receipt, not the plan ancestry.
+        db.execute("pragma foreign_keys=off")
         identity = "email-action:" + "a" * 64
         key = "email-unsubscribe-page:" + identity + ":" + "b" * 64
         _insert_current_task8(db, "reply_tasks", {

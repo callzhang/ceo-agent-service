@@ -1,6 +1,5 @@
 """Attention selects compact current Email actions before classification payloads."""
 
-from app.action_storage import insert_action
 from app.audit_web import _queue_attention_rows
 from tests.test_email_action_external_consumers import _two_failed_actions
 
@@ -11,10 +10,7 @@ def test_attention_selects_failed_action_ids_before_loading_classifications(
     store = _two_failed_actions(tmp_path / "worker.sqlite3")
     with store._connect() as db:
         for number in range(1200):
-            insert_action(db, "sent_replies", dict(
-                conversation_id=f"unrelated-{number}",
-                trigger_message_id=f"message-{number}", reply_text="sent",
-            ))
+            store.record_sent_reply(f"unrelated-{number}", f"message-{number}", "sent")
     statements = []
     original_open = store._open_connection
 
@@ -51,9 +47,10 @@ def test_attention_selects_failed_action_ids_before_loading_classifications(
     assert steps < 300_000
 
 
-def test_attention_does_not_hide_nullable_public_action_ids(tmp_path):
+def test_attention_lists_every_failed_action_with_its_native_id(tmp_path):
     store = _two_failed_actions(tmp_path / "worker.sqlite3")
     rows = [row for row in _queue_attention_rows(store)
             if row["category"] == "Email action"]
     assert len(rows) == 2
-    assert [row["id"] for row in rows] == ["None", "None"]
+    assert all(row["id"].isdigit() for row in rows)
+    assert len({row["id"] for row in rows}) == 2

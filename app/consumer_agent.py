@@ -1383,7 +1383,14 @@ def consumer_developer_sections_by_runtime(
                     "原生输出契约指纹",
                     "服务结构化输出 Schema",
                     "developer",
-                    f"## Native Output Schema SHA-256\n{schema_fingerprint}",
+                    f"## Native Output Schema SHA-256\n{schema_fingerprint}\n\n"
+                    "## Native Output Transport\n"
+                    "The final result uses this native transport format; the service "
+                    "decodes it before business validation.\n\n"
+                    "## Native Output Format\n" + json.dumps(
+                        json.loads(native_output_schema_path("consumer", purpose=purpose_name).read_text()),
+                        ensure_ascii=False, separators=(",", ":"),
+                    ),
                 ),
             )
         sections_by_runtime[runtime.value] = sections

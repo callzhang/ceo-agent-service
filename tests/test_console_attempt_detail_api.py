@@ -619,6 +619,95 @@ def test_provider_risk_rejection_is_blocked_at_the_rerun_handler(tmp_path: Path)
     assert unchanged_task.manual_rerun_attempt_id == 0
 
 
+def test_same_attempt_and_reviewer_revision_allow_only_three_manual_reruns(
+    tmp_path: Path,
+):
+    from app.store import ManualRerunConflict
+
+    store = AutoReplyStore(tmp_path / "manual-rerun-budget.sqlite3")
+    original = _consumer_result_task(store)
+    consumer = _complete_consumer_run(store, original, owner="manual-budget-original")
+    attempt_id = store.finalize_orchestrated_reply_task(
+        task_id=original.id,
+        expected_execution_generation=original.execution_generation,
+        run_id=consumer.id,
+        task_status="failed",
+        task_error="consumer_source_failed",
+        available_at="",
+        conversation_id=original.conversation_id,
+        conversation_title=original.conversation_title,
+        trigger_message_id=original.trigger_message_id,
+        trigger_sender=original.trigger_sender,
+        trigger_text=original.trigger_text,
+        codex_reason="Source read failed.",
+        codex_session_id="",
+        codex_transcript_start_line=0,
+        codex_transcript_end_line=0,
+        audit_tool_events_json="[]",
+        audit_summary="Source read failed.",
+        send_status="failed",
+        send_error="consumer_source_failed",
+        channel="dingtalk",
+    )
+
+    def rerun(source_attempt_id: int):
+        return store.enqueue_manual_rerun_reply_task(
+            conversation_id=original.conversation_id,
+            conversation_title=original.conversation_title,
+            single_chat=original.single_chat,
+            trigger_message_id=original.trigger_message_id,
+            trigger_create_time=original.trigger_create_time,
+            trigger_sender=original.trigger_sender,
+            trigger_text=original.trigger_text,
+            trigger_message_json=original.trigger_message_json,
+            oa_url=original.oa_url,
+            attempt_id=source_attempt_id,
+            channel=original.channel,
+        )
+
+    task = None
+    for _ in range(3):
+        task = rerun(attempt_id)
+        duplicate = rerun(attempt_id)
+        assert duplicate.execution_generation == task.execution_generation
+        assert duplicate.input_version == task.input_version
+        claimed = store.claim_reply_task(task.id)
+        assert claimed is not None
+        store.fail_reply_task(
+            task.id,
+            "consumer_source_failed",
+            expected_execution_generation=claimed.execution_generation,
+        )
+
+    assert task is not None
+    before_exhausted_rerun = store.get_reply_task(task.id)
+    assert before_exhausted_rerun is not None
+    with pytest.raises(ManualRerunConflict, match="three manual retries"):
+        rerun(attempt_id)
+    after_exhausted_rerun = store.get_reply_task(task.id)
+    assert after_exhausted_rerun is not None
+    assert (
+        after_exhausted_rerun.execution_generation
+        == before_exhausted_rerun.execution_generation
+    )
+    assert after_exhausted_rerun.input_version == before_exhausted_rerun.input_version
+
+    new_attempt_id = store.record_reply_attempt(
+        conversation_id=original.conversation_id,
+        conversation_title=original.conversation_title,
+        trigger_message_id=original.trigger_message_id,
+        trigger_sender=original.trigger_sender,
+        trigger_text=original.trigger_text,
+        action="agent_run",
+        sensitivity_kind="low",
+        codex_reason="A new reviewer correction is available.",
+        send_status="failed",
+        channel=original.channel,
+    )
+    revised_task = rerun(new_attempt_id)
+    assert revised_task.status == "pending"
+
+
 class _FakeEmailStore:
     """The two email reads the Attempt DTO needs, with real row shapes."""
 

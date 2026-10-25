@@ -475,7 +475,7 @@ def test_direct_email_reply_claim_is_paused_and_counted_before_runtime(
 
 
 def test_quiet_reads_supported_pre_lifecycle_publication_source(tmp_path):
-    from tests.test_task_run_entity_schema_release import _source_database
+    from tests.support.predecessor_source import source_database as _source_database
     from app.repository_updater import in_flight_work
 
     path = tmp_path / "store21-1.db"
