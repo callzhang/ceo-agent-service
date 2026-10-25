@@ -118,9 +118,9 @@
     {
       "source": "ci/shared-skills/ceo-weekly-okr-report/SKILL.md",
       "target": "skills/ceo-weekly-okr-report/SKILL.md",
-      "old_sha256": "54d3e45e58cdf819d21d9ad4c3973030a5a70de75b0f8d583995a5a496464d5e",
-      "new_sha256": "e9e82621fabf9c5d1387b63f99930605c729a8473d3f06c4626505b1c54e1eca",
-      "old_managed_sha256": "54d3e45e58cdf819d21d9ad4c3973030a5a70de75b0f8d583995a5a496464d5e"
+      "old_sha256": "e9e82621fabf9c5d1387b63f99930605c729a8473d3f06c4626505b1c54e1eca",
+      "new_sha256": "54d3e45e58cdf819d21d9ad4c3973030a5a70de75b0f8d583995a5a496464d5e",
+      "old_managed_sha256": "e9e82621fabf9c5d1387b63f99930605c729a8473d3f06c4626505b1c54e1eca"
     },
     {
       "source": "ci/shared-skills/ceo-weekly-okr-report/scripts/analysis.schema.json",

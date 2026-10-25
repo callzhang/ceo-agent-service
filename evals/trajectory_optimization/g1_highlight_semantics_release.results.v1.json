@@ -1,0 +1,262 @@
+{
+  "scope": "Approved G1 common DWS format verification only; no CEO runtime/prompt/Audit/session/retry changes, no business writes or replay, no G2/G3 model calls",
+  "upstream_pr": "https://github.com/DingTalk-Real-AI/dingtalk-workspace-cli/pull/1551",
+  "upstream_state": "OPEN, not merged",
+  "upstream_commit": "fd7b27cb4d0b08b003e00981c21bca323591d1b1",
+  "local_release": {
+    "version": "v1.0.65+ceo-docfmt.6747c671",
+    "commit": "6747c6711b78cfa6781d4fcd6e68ee12660e0c70",
+    "build_time": "2026-10-25T22:33:57Z",
+    "flags": "-s -w -X github.com/DingTalk-Real-AI/dingtalk-workspace-cli/internal/app.version=v1.0.65+ceo-docfmt.6747c671 -X github.com/DingTalk-Real-AI/dingtalk-workspace-cli/internal/app.gitCommit=6747c6711b78cfa6781d4fcd6e68ee12660e0c70 -X github.com/DingTalk-Real-AI/dingtalk-workspace-cli/internal/app.buildTime=2026-10-25T22:33:57Z"
+  },
+  "installed_at_utc": "2026-10-25T22:39:26.025392+00:00",
+  "binary_sha256": "3105fda34b277732a91070c38b677ad37162b8f3e70804fbec378bcbab74e97c",
+  "skill_before_sha256": "9f64d7a84c8daa8a622d027a6a7b23cee7515d3d49ea54b9427f446e6726f07e",
+  "skill_after_sha256": "9cb92373c5b29b931d3d2765266d08c2b86d848029ba0f534ee735f929aedf41",
+  "backup_verified": true,
+  "frozen_source": {
+    "session_id": "01a17281-1d0e-78a2-9839-8328ca88d31f",
+    "artifact_read_call_lines": [
+      6533,
+      6540
+    ],
+    "write_call_lines": [
+      6579,
+      6643
+    ],
+    "markdown_output_line": 6593,
+    "full_jsonml_output_line": 6620,
+    "expected_characters": 17834,
+    "expected_sha256": "17bcacc84afcca01eb598164b4fbbf8d4dc6040fc05d2ac5917fa6313b3c2630",
+    "markdown_characters": 18053,
+    "markdown_sha256": "952f3cc45620e5e5a72d71432503955ac1645d15f828d1b7f144f8649d4232a8",
+    "jsonml_characters": 94785,
+    "jsonml_sha256": "7e9ad9c6cd03255b2eb8d8a65376e5745d3e5c58d56ad70678e0d2ae7c8364d6"
+  },
+  "behavior": {
+    "submitted_artifact_unchanged": true,
+    "authored_highlight_verified_against_complete_jsonml": true,
+    "ordered_ranges_color_text_and_word_boundaries_checked": true,
+    "code_and_escape_literals_preserved": true,
+    "unescaped_historical_identifiers_not_claimed_literal_preserved": true,
+    "normal_markdown_jsonml_exact_paths_preserved": true,
+    "no_tool_internal_rewrite": true,
+    "public_result_fields_unchanged": true
+  },
+  "tests": {
+    "new_top_level_functions": 8,
+    "nested_subcases": 18,
+    "upstream_focused": "pass",
+    "installed_base_focused": "pass",
+    "old_source_overlay_control": "same new tests reject valid highlight/create/update/append on original code",
+    "private_fixture": "original highlighted variant and explicit-literal variant pass offline; highlights 2/2; visible text equal",
+    "review_fail_first": [
+      "dropped/inserted word boundary",
+      "highlighted append after highlighted old paragraph",
+      "semicolonless/escaped entities",
+      "unrelated >2MiB exact paths"
+    ],
+    "independent_review": "initial five findings addressed and re-reviewed; no remaining blockers in scoped review",
+    "go_vet": "pass",
+    "diff_check": "pass",
+    "runtime_payload": "5 libraries, 6 targets verified; darwin/arm64 attached",
+    "codesign": "strict verification pass",
+    "native_upgrade_check": "cached latest v1.0.65, needs_upgrade=false; SemVer build metadata, no upgrade policy change"
+  },
+  "production_readback": {
+    "checked_at": "2026-10-25T22:40:04.470924+00:00",
+    "production_head": "dc07ddcbed7ee48896879db37b06d162a97a98d5",
+    "health": {
+      "ok": true,
+      "status": "ok"
+    },
+    "status": {
+      "service": {
+        "label": "com.ceo-agent-service.main",
+        "target": "gui/501/com.ceo-agent-service.main",
+        "ok": true,
+        "state": "running",
+        "detail": "running",
+        "pid": "6533",
+        "runs": "1",
+        "initialized": "1",
+        "last_terminating_signal": "",
+        "returncode": 0
+      },
+      "system_health": {
+        "state": "degraded",
+        "detail": "meeting alignment job stopped progressing Native delivery results readable: 425; unavailable: 0.",
+        "checked_at": "2026-10-25T22:36:33.997649+00:00",
+        "violations": 2,
+        "components": [],
+        "native_delivery_coverage": {
+          "checked": 425,
+          "unavailable": 0
+        }
+      },
+      "queues": [
+        {
+          "name": "Reply tasks",
+          "pending": 0,
+          "processing": 0,
+          "failed": 14,
+          "retryable": 0
+        },
+        {
+          "name": "Reply attempts",
+          "pending": 0,
+          "processing": 0,
+          "failed": 14,
+          "retryable": 0
+        },
+        {
+          "name": "Work items",
+          "pending": 0,
+          "processing": 0,
+          "failed": 0,
+          "retryable": 0
+        },
+        {
+          "name": "Email classifications",
+          "pending": 0,
+          "processing": 0,
+          "failed": 0,
+          "retryable": 0
+        },
+        {
+          "name": "Follow-ups",
+          "pending": 0,
+          "processing": 0,
+          "failed": 0,
+          "retryable": 0
+        },
+        {
+          "name": "Meeting jobs",
+          "pending": 0,
+          "processing": 0,
+          "failed": 0,
+          "retryable": 0
+        },
+        {
+          "name": "OKR reviews",
+          "pending": 0,
+          "processing": 0,
+          "failed": 0,
+          "retryable": 0
+        },
+        {
+          "name": "Memory writes",
+          "pending": 0,
+          "processing": 0,
+          "failed": 0,
+          "retryable": 0
+        },
+        {
+          "name": "WeChat deliveries",
+          "pending": 0,
+          "processing": 0,
+          "failed": 0,
+          "retryable": 0
+        },
+        {
+          "name": "Email provider actions",
+          "pending": 6,
+          "processing": 0,
+          "failed": 0,
+          "retryable": 0
+        },
+        {
+          "name": "Email unsubscribe tasks",
+          "pending": 0,
+          "processing": 0,
+          "failed": 3,
+          "retryable": 0
+        }
+      ],
+      "dispatcher": [
+        {
+          "name": "scheduled",
+          "pending": 2,
+          "due": 2,
+          "oldest_available_at": "2026-10-25T22:40:00+00:00",
+          "running": 2,
+          "latest_error": ""
+        },
+        {
+          "name": "scheduled_execution",
+          "pending": 0,
+          "due": 0,
+          "oldest_available_at": null,
+          "running": 0,
+          "latest_error": ""
+        },
+        {
+          "name": "reply",
+          "pending": 0,
+          "due": 0,
+          "oldest_available_at": null,
+          "running": 0,
+          "latest_error": ""
+        },
+        {
+          "name": "meeting",
+          "pending": 0,
+          "due": 0,
+          "oldest_available_at": null,
+          "running": 0,
+          "latest_error": ""
+        },
+        {
+          "name": "work_summary",
+          "pending": 0,
+          "due": 0,
+          "oldest_available_at": null,
+          "running": 0,
+          "latest_error": ""
+        },
+        {
+          "name": "okr_review",
+          "pending": 0,
+          "due": 0,
+          "oldest_available_at": null,
+          "running": 0,
+          "latest_error": ""
+        },
+        {
+          "name": "business_task_todo_sync_outbox",
+          "pending": 0,
+          "due": 0,
+          "oldest_available_at": null,
+          "running": 0,
+          "latest_error": ""
+        }
+      ]
+    },
+    "attention": {
+      "snapshot_at": "2026-10-25T22:40:09.123796Z",
+      "page": null,
+      "page_size": null,
+      "total": 4,
+      "next_cursor": "",
+      "has_more": false
+    },
+    "history": {
+      "snapshot_at": "2026-10-25T22:40:12.126389Z",
+      "page": 1,
+      "page_size": 1,
+      "total": 38236,
+      "next_cursor": "2",
+      "has_more": true
+    },
+    "process_dws": {
+      "pid": 6533,
+      "path": "/Users/derek/.local/bin/dws",
+      "sha256": "3105fda34b277732a91070c38b677ad37162b8f3e70804fbec378bcbab74e97c"
+    },
+    "query_cutoff_utc": "2026-10-25 22:40:12",
+    "natural_runs_since_install": []
+  },
+  "acceptance": "Code tested/reviewed; upstream PR updated; local CLI installed and process path verified. No new natural Consumer/Audit run between install and single readback cutoff, so production non-repetition remains pending. No infinite polling or artificial replay.",
+  "backup_retention": "Newest verified rollback binary and original Skill kept at backups/dws-docfmt-6747c671; previous official-binary backup retired after digest checks, old receipt metadata retained.",
+  "pr_attachment_note": "Codex attachment tool called; attachment capacity exceeds 100. PR remains accessible through direct URL."
+}

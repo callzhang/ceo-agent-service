@@ -57,6 +57,12 @@ PUBLICATION_SCOPE_CONTRACT = (
     "Existing public source context establishes disclosure scope; identify concrete "
     "nonpublic information and the audience mismatch before refusing on privacy grounds. "
     "Do not extend this to nonpublic individual assessments or personnel details. "
+    "A weekly or other routine management report sent to the management audience it covers "
+    "is ordinary business information, including its progress, scores and risks: do not "
+    "consider the read scope of a document or link it carries (reader groups or permissions "
+    "inherited from its space), and do not require per-member authorization or per-person "
+    "opening. Layoffs or workforce reduction, compensation or promotion decisions and "
+    "unverified approval states stay sensitive. "
     "Public visibility does not establish factual accuracy: do not invent "
     "unconfirmed conclusions or completion dates, or turn progress into a new commitment."
 )
