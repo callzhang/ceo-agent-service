@@ -5336,4 +5336,4 @@ For this paired Task/Run candidate, the release writes its actual forward captur
 
 ### 原生输出格式与解码契约一致
 
-Consumer 的原生输出段除保留 schema 指纹外，还从实际提交给解码器的同一文件提供紧凑 JSON 格式契约。该契约说明 decision 包装、必填根字段和动态 JSON 的 entries 编码；哈希只能校对身份，不能代替模型可见的字段定义。此处仍不重复 Pydantic 业务 wire schema，不改变业务模型、无损还原、严格校验、路线、工具、权限、重试或 session 选择。公共/任务预览与实际提交复用这套装配；续跑继续提交当前装配，指纹标记保持可解析。
+Consumer 的原生输出段仅保留 schema 指纹、JSON/decision 包装说明及 `agent_cli.read_consumer_output_schema(purpose=...)` 按需查询入口，不全量注入 native 或 Pydantic 业务 schema。该 Consumer metadata 查询通过现有 agent_cli 传输返回与解码器同一文件的完整紧凑 JSON，单一文本块、无重复 structured output；仅接受声明 purpose，不扩大任意文件、shell 或 Audit 权限。业务模型、无损还原、严格校验、路线、重试和 session 选择保持不变。公共/任务预览与实际提交复用同一装配；每轮保留当前入口与可解析指纹，不假设压缩后的 session 永久保有完整规则。冷启动查询仍占工具上下文，默认 prompt 减少不代表总 token 或耗时减少。

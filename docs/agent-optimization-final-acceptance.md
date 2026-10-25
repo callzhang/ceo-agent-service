@@ -243,3 +243,17 @@ Qwen完整读取124行：第28行已明确判断邮件已处理、应no_action�
 - 最后仅通过当前配置的生产入口补一次原匿名邮件cold回读，没有再次跑已通过cold/resume矩阵：session `01a171f1-acc3-7b62-9074-53cf042d5a75`，70行SHA `01d95910cadcc8dfec5237806d3a90422cc9ed23cde106a3275da86302274275`，5次成功只读调用，完整解析no_action，无回复提案。这是生产提供商/新代码的匿名回读，不是真实业务任务重放，也不替代G1自然失败恢复。
 
 **本次用户指定的Qwen Consumer修复已完成。** 私有canary、SSH转发及临时目录已清理；provider回滚源码保留，CLI原生证据与精简验收摘要保留。G2剩余仍是API429阻塞和API Audit原生启用缺口；G1继续等指定自然样本。没有开启其他trajectory优化。
+
+
+## 13. 恢复按需契约读取（用户纠偏）
+
+第12节恢复输出的全量native schema注入偏离精简目标。已验证provider grammar保留；本项改为极简格式说明、同一schema指纹和agent_cli按需查询。验收要求：默认段落不含完整schema；Consumer查询返回实际decoder schema且单一文本块、不扩大任意文件或Audit权限；原匿名邮件cold/resume均读取当前业务事实并完整解析no_action；记录实际schema查询、输入长度及完整轨迹，未通过不发布。API/G1和其他任务不扩展。
+
+直接给shell文件路径的候选已失败：完整轨迹中没有可用exec，provider的iter_response_function_tool_dicts过滤了CodeMode自定义工具。现有read_text_file又明确禁止仓库文件读取，因此不放宽其授权范围、不修整个custom-tool传输。采用现有agent_cli服务增加仅可读取声明Consumer schema的查询；这是一项metadata读取，不是任意shell命令入口。失败的纯路径提示及首轮查询结果保留；没有以退出码或读取成功代替最终业务结果。
+
+注意：按需查询让冷启动仍可能读取整份schema，不能把prompt减少直接宣称为总token/耗时减少。续会话是否重读以实际轨迹为准，不实现服务端“session相同所以永远省略”的缓存或compaction假设。
+
+
+验收结果：复用第12节已有效的全量基线，仅补本次按需方案。原生段从11909降至373字符（减少11536，96.9%）；不是删除必要格式，而是通过现有agent_cli查询完整契约。同一匿名邮件session `01a17215-b732-7902-a831-b5aa8068d441`：cold调用Skill、schema查询和当前消息，共3次；resume只读当前消息1次；两轮均严格解析no_action、无重复回复。cold第18行模型可见schema完整11656字符，与decoder文件等值；原生33/55行摘要及哈希见[按需验收记录](../evals/trajectory_optimization/consumer_schema_on_demand.results.v1.json)。本案例未测总token节省或提速，也不证明任意长会话始终无需重读。
+
+定向测试50项通过；另一次角色/续跑选择34项通过，1项既有外发约束字面量断言失败（`test_consumer_and_audit_share_direct_external_delivery_boundary`，未改的plain builder不含其期望旧句），未扩展修改该策略。独立审查验证其中16项及实际原生轨迹，无功能阻塞；指出canonical文档仍说全量注入，已同步修正。API429、G1自然样本及其他任务不重跑。

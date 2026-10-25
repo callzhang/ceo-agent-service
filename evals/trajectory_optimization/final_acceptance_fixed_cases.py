@@ -44,6 +44,17 @@ def serve(snapshot: Path, trace: Path) -> None:
     def state():
         return json.loads(snapshot.read_text())
 
+    @server.tool(annotations=read, structured_output=False)
+    def read_consumer_output_schema(purpose: str = "general") -> str:
+        from app.agent_cli import read_consumer_output_schema as read_schema
+        from app.native_agent_output import native_output_schema_path
+        result = read_schema(purpose)
+        record("read_consumer_output_schema", {"purpose": purpose}, {
+            "characters": len(result), "sha256": sha256(result.encode()).hexdigest(),
+            "file_sha256": sha256(native_output_schema_path(purpose=purpose).read_bytes()).hexdigest(),
+        })
+        return result
+
     @server.tool(annotations=read)
     def read_task_skill(name: str) -> dict:
         current = state()
