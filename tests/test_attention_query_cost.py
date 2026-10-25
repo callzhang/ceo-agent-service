@@ -90,19 +90,21 @@ def test_attention_recovery_does_not_search_unrelated_successes_first(
 
 @pytest.mark.parametrize("source", ["reply", "error"])
 @pytest.mark.parametrize(
-    ("schedule_id", "later_id", "status", "dispatch", "kind", "covered"),
+    ("schedule_id", "later_id", "status", "dispatch", "kind", "covered", "reply_visible"),
     [
-        (1, 11, "done", "dispatched", "reply_task", True),
-        (1, 11, "skipped", "dispatched", "reply_task", True),
-        (2, 11, "done", "dispatched", "reply_task", False),
-        (1, 9, "done", "dispatched", "reply_task", False),
-        (1, 11, "failed", "dispatched", "reply_task", False),
-        (1, 11, "done", "failed", "reply_task", False),
-        (1, 11, "done", "dispatched", "service_command", False),
+        (1, 11, "done", "dispatched", "reply_task", True, "none"),
+        (1, 11, "skipped", "dispatched", "reply_task", True, "none"),
+        (2, 11, "done", "dispatched", "reply_task", False, "earlier"),
+        (1, 9, "done", "dispatched", "reply_task", False, "earlier"),
+        # Only the latest run of a schedule is listed: a failed earlier run is
+        # history once a later run exists, and the later failed one replaces it.
+        (1, 11, "failed", "dispatched", "reply_task", False, "later"),
+        (1, 11, "done", "failed", "reply_task", False, "earlier"),
+        (1, 11, "done", "dispatched", "service_command", False, "none"),
     ],
 )
 def test_attention_recovery_keeps_same_schedule_terminal_evidence(
-    tmp_path, source, schedule_id, later_id, status, dispatch, kind, covered
+    tmp_path, source, schedule_id, later_id, status, dispatch, kind, covered, reply_visible
 ):
     store = AutoReplyStore(tmp_path / "worker.sqlite3")
     tasks = [
@@ -145,13 +147,15 @@ def test_attention_recovery_keeps_same_schedule_terminal_evidence(
             })
     rows = _queue_attention_rows(store)
     category = "Reply task" if source == "reply" else "Service error"
-    matches = [
-        row
-        for row in rows
-        if row["category"] == category
-        and (row["id"] == str(tasks[0].id) if source == "reply" else row["id"] == "1")
-    ]
-    assert bool(matches) is not covered
+    if source == "reply":
+        visible = {row["id"] for row in rows if row["category"] == category}
+        expected = {
+            "earlier": {str(tasks[0].id)}, "later": {str(tasks[1].id)}, "none": set(),
+        }[reply_visible]
+        assert visible == expected
+    else:
+        matches = [row for row in rows if row["category"] == category and row["id"] == "1"]
+        assert bool(matches) is not covered
     with store._connect() as db:
         assert db.execute(
             f"select status from ({REPLY_TASK_SQL}) where id=?", (tasks[0].id,)
