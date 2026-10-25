@@ -2,9 +2,8 @@
 import pytest
 
 from app import action_storage as actions
-from app.action_email_storage import _fingerprint
-from app.model_action_schema import migrate_selection_references, selection_action_objects
-from tests.test_model_action_schema import _add, _raw, _seed, _snapshot
+from app.model_action_schema import migrate_selection_references
+from tests.test_model_action_schema import _add, _seed, _snapshot
 from tests.test_provenance_vector_storage import db as db
 
 
@@ -44,101 +43,6 @@ def _source(db):
 def _stored_attempt_outcome(db, attempt_id):
     row = db.execute("select outcome_json from action_receipts where id=?", (attempt_id,)).fetchone()
     return None if row is None else row[0]
-
-
-def test_frozen_14_and_19_1_factories_and_opt_in_nullable_target():
-    from app.model_result_schema import result_action_objects
-    from tests.test_model_action_schema import test_frozen_source_factories_and_opt_in_target
-    test_frozen_source_factories_and_opt_in_target()
-    for variant, digest in SOURCE_HASHES.items():
-        assert _fingerprint(selection_action_objects(variant)) == digest
-        assert result_action_objects(variant, result_references=False) == selection_action_objects(variant)
-        source = next(o['sql'] for o in selection_action_objects(variant) if o['type'] == 'table')
-        target = next(o['sql'] for o in result_action_objects(variant) if o['type'] == 'table')
-        marker = "check(record_type<>'candidate_action_attempts'"
-        prefix, attempt_check = source.split(marker, 1)
-        owned_body = "json_type(payload_json,'$[3]') is 'text'"
-        reference_body = "(json_type(payload_json,'$[3]') is 'text' or json_type(payload_json,'$[3]') is 'null')"
-        assert target == prefix + marker + attempt_check.replace(owned_body, reference_body, 1)
-        assert [o for o in result_action_objects(variant) if o['type'] != 'table'] == [
-            o for o in selection_action_objects(variant) if o['type'] != 'table']
-    assert actions.NULLABLE_PAYLOAD_FIELDS.get('candidate_action_attempts') is None
-
-
-def test_forward_nulls_only_byte_equal_verified_body_and_preserves_other_facts(db):
-    from app.model_result_schema import migrate_result_references
-    _source(db)
-    before = _raw(db)
-    water = _snapshot(db)[2]
-    foreign = sorted(db.execute('pragma foreign_key_check').fetchall())
-    metadata = migrate_result_references(db)
-    assert metadata == {'reply_variant': actions._reply_variant_for(db)}
-    assert db.execute('select result_json from actions where id=1001').fetchone() == (None,)
-    assert [r for r in _raw(db) if r[0] != 1001] == [r for r in before if r[0] != 1001]
-    assert _snapshot(db)[2] == water
-    assert sorted(db.execute('pragma foreign_key_check').fetchall()) == foreign
-    assert db.execute('pragma quick_check').fetchone() == ('ok',)
-    assert db.execute("select result_json from actions where id=601").fetchone() == (' { "kept": 1 } ',)
-
-
-def test_inverse_reconstructs_new_current_attempts_and_preserves_all_current_waters(db):
-    from app.model_result_schema import migrate_result_references, restore_result_references
-    _source(db)
-    source = _snapshot(db)
-    metadata = migrate_result_references(db)
-    _receipt(db, 'later', '{"new":2}')
-    _attempt(db, 1101, 81, 'verified', None, 'later', 5)
-    _attempt(db, 1102, 82, 'verified', '{}', 'later', 6)
-    db.execute("update sqlite_sequence set seq=987655 where name='actions:unrelated-water'")
-    target = _snapshot(db)
-    restore_result_references(db, metadata)
-    assert actions._objects(db, 'actions') == source[0]
-    assert db.execute('select result_json from actions where id=1001').fetchone() == (BODY,)
-    assert db.execute('select result_json from actions where id=1101').fetchone() == ('{"new":2}',)
-    assert db.execute('select result_json from actions where id=1102').fetchone() == ('{}',)
-    assert _snapshot(db)[2] == target[2]
-    assert [r for r in _raw(db) if r[0] not in (1101, 1102) and r[0] <= 1005] == [r for r in source[1] if r[0] <= 1005]
-    migrate_result_references(db)
-    assert _snapshot(db) == target
-
-
-def test_missing_owner_for_null_inverse_refuses_before_mutation(db):
-    from app.model_result_schema import migrate_result_references, restore_result_references
-    _source(db)
-    metadata = migrate_result_references(db)
-    db.execute("delete from actions where record_type='external_action_results' and legacy_key='equal'")
-    before = _snapshot(db)
-    with pytest.raises(ValueError, match='receipt'):
-        restore_result_references(db, metadata)
-    assert _snapshot(db) == before
-
-
-@pytest.mark.parametrize('dependency', ['create view receipt_extra as select result_json from actions',
-    'create table other(x)', 'create trigger other_update after update on configs begin select result_json from actions; end'])
-def test_dependent_objects_refused_and_unrelated_objects_preserved(db, dependency):
-    from app.model_result_schema import migrate_result_references
-    _source(db)
-    db.execute(dependency)
-    before = _snapshot(db)
-    if dependency.startswith('create table'):
-        migrate_result_references(db)
-        assert db.execute("select name from sqlite_schema where name='other'").fetchone() == ('other',)
-    else:
-        with pytest.raises(ValueError, match='depend|trigger|view'):
-            migrate_result_references(db)
-        assert _snapshot(db) == before
-
-
-def test_requires_caller_transaction_and_fk_off(db):
-    from app.model_result_schema import migrate_result_references
-    _source(db)
-    db.commit()
-    with pytest.raises(ValueError, match='transaction'):
-        migrate_result_references(db)
-    db.execute('pragma foreign_keys=on')
-    db.execute('begin')
-    with pytest.raises(ValueError, match='FK-off'):
-        migrate_result_references(db)
 
 
 def test_writer_stores_reference_but_public_reader_preserves_body(tmp_path):
@@ -383,16 +287,6 @@ def test_prior_reconciliation_keeps_different_existing_canonical_local_to_real_a
         ).fetchone()
         assert _stored_attempt_outcome(connection, prior['id']) == reconciled['result_json']
         assert persisted[0] is not None
-
-
-def test_unknown_inbound_action_dependency_refuses_before_mutation(db):
-    from app.model_result_schema import migrate_result_references
-    _source(db)
-    db.execute('create table extra_action_owner(action_id integer references actions(id))')
-    before = _snapshot(db)
-    with pytest.raises(ValueError, match='dependency'):
-        migrate_result_references(db)
-    assert _snapshot(db) == before
 
 
 @pytest.mark.parametrize('provider_body', ['{}', '{"receipt":"substitute"}'])

@@ -39,7 +39,7 @@ from app.store import AutoReplyStore
 from datetime import datetime
 
 from app.email_classifier_contracts import (
-    EmailAction, EmailCategory, EmailClassificationStatus,
+    EmailAction,
 )
 from app.email_pipeline import apply_human_confirmation
 from tests.support.native_email_actions import (

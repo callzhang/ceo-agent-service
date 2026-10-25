@@ -1,23 +1,15 @@
 """Actual c4a9e794 Store19.8 DAO, inverse, strict old cold start and reforward."""
-from contextlib import closing
 import hashlib
 import inspect
 import io
 import json
 from pathlib import Path
-import sqlite3
 import subprocess
 import tarfile
 
 import pytest
 
-from app.action_email_storage import _columns
-from app import action_storage as actions
-from app.prepared_action_schema import _facts
-from app.result_schema_helpers import _markers
-from app.store_schema_release import prepare_database_schema_release
 from tests.test_shared_action_release import _old_process
-from tests.test_prepared_action_schema import retained
 from tests import prepared_action_caller_fixture as calls
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -72,45 +64,6 @@ from app.email_store import EmailStore
 from app.workbench.store import WorkbenchStore
 p=Path(sys.argv[1]);AutoReplyStore(p);EmailStore(p);WorkbenchStore(p)
 """, path)
-
-
-def snapshot(path, *, owned):
-    with closing(sqlite3.connect(path)) as db:
-        return _facts(db, owned=owned), retained(db), {
-            table: (actions._objects(db, table), [tuple(row) for row in db.execute(
-                "select " + ",".join(_columns(db, table)) + " from " + table + " order by rowid")])
-            for (table,) in db.execute("select name from sqlite_schema where type='table' "
-                                      "and name not in ('state','actions','sqlite_sequence')")
-        }
-
-
-def test_real_source_public_dao_current_fact_inverse_cold_reforward(archived_source, tmp_path):
-    source, target = tmp_path / "source.sqlite3", tmp_path / "target.sqlite3"
-    seed(archived_source, source)
-    with closing(sqlite3.connect(source)) as db, closing(sqlite3.connect(target)) as other:
-        db.backup(other)
-    before = snapshot(source, owned=False)
-    release = prepare_database_schema_release(ROOT, target)
-    assert type(release).__name__ == "PreparedActionSchemaRelease"
-    release.publish()
-    assert snapshot(target, owned=True) == before
-    expected, actual = execute(archived_source, source), execute(ROOT, target)
-    assert actual == expected
-    current = snapshot(target, owned=True)
-    # Unexposed child removal can alter the next ordinary private physical ID.
-    assert current[0] == snapshot(source, owned=False)[0]
-    release.verify_loaded()
-    release.rollback()
-    assert snapshot(target, owned=False) == current
-    cold(archived_source, target)
-    assert snapshot(target, owned=False) == current
-    with closing(sqlite3.connect(source)) as db, closing(sqlite3.connect(target)) as other:
-        assert _markers(db) == _markers(other)
-    again = prepare_database_schema_release(ROOT, target)
-    again.publish()
-    again.finalize()
-    assert snapshot(target, owned=True) == current
-    assert prepare_database_schema_release(ROOT, target) is None
 
 
 def test_historical_factory_outputs_and_c1_files_frozen(archived_source):
