@@ -1375,22 +1375,19 @@ def consumer_developer_sections_by_runtime(
             include_wire_contract=runtime not in native_schema_runtimes,
         )
         if runtime is RuntimeKind.CODEX_CLI:
-            schema_fingerprint = sha256(
-                native_output_schema_path("consumer", purpose=purpose_name).read_bytes()
-            ).hexdigest()
+            schema_path = native_output_schema_path("consumer", purpose=purpose_name)
+            schema_fingerprint = sha256(schema_path.read_bytes()).hexdigest()
             sections += (
                 PromptSection(
                     "原生输出契约指纹",
                     "服务结构化输出 Schema",
                     "developer",
                     f"## Native Output Schema SHA-256\n{schema_fingerprint}\n\n"
-                    "## Native Output Transport\n"
-                    "The final result uses this native transport format; the service "
-                    "decodes it before business validation.\n\n"
-                    "## Native Output Format\n" + json.dumps(
-                        json.loads(native_output_schema_path("consumer", purpose=purpose_name).read_text()),
-                        ensure_ascii=False, separators=(",", ":"),
-                    ),
+                    "## Native Output Format\n"
+                    "Return only the native JSON object, with action, target and payload "
+                    "inside decision. Read current field definitions on demand with "
+                    f'agent_cli.read_consumer_output_schema(purpose="{purpose_name}"). '
+                    "The service decodes this transport before business validation.",
                 ),
             )
         sections_by_runtime[runtime.value] = sections

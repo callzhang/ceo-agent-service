@@ -93,6 +93,7 @@ AGENT_CLI_READ_TOOLS = (
     "list_task_artifacts",
 )
 AGENT_CLI_CONSUMER_TOOLS = AGENT_CLI_READ_TOOLS + (
+    "read_consumer_output_schema",
     "consumer_document_write",
     "consumer_artifact_write",
     "consumer_run_skill_script",
