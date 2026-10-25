@@ -1,0 +1,26 @@
+{
+  "status": "blocked_before_execution",
+  "reason": "approval required by policy, but AskForApproval is set to Never",
+  "user_authorization": "already explicitly granted",
+  "targets": [
+    "/private/tmp/ceo-history-unification.2w425K",
+    "/private/tmp/ceo-business-model-20261025.1qvjsC",
+    "/private/tmp/ceo-action-trigger.JOEnAc",
+    "/private/tmp/ceo-a5b-copy-pl_1udbh",
+    "/private/tmp/ceo-a5b-copy2-lru2bzml",
+    "/private/tmp/ceo-a5b-copy3-n83k8pvy",
+    "/var/folders/74/yj2lxqs162q7rqzm0mj8nv1c0000gn/T/ceo-a5b-diff-24yohzpc",
+    "/var/folders/74/yj2lxqs162q7rqzm0mj8nv1c0000gn/T/ceo-a5b-projdiag-3382srw3",
+    "/var/folders/74/yj2lxqs162q7rqzm0mj8nv1c0000gn/T/ceo-a5b-release-copy-5e_sfrx5",
+    "/var/folders/74/yj2lxqs162q7rqzm0mj8nv1c0000gn/T/ceo-a5b-roundtrip-bxz4xgph",
+    "/var/folders/74/yj2lxqs162q7rqzm0mj8nv1c0000gn/T/ceo-a5b-roundtrip-final-9h6zrq21",
+    "/Users/derek/Library/Application Support/ceo-agent-service/backups/auto-reply-2026-10-25.sqlite3",
+    "/private/tmp/ceo-prod-status.json",
+    "/private/tmp/ceo-prod-attention.json",
+    "/private/tmp/ceo-prod-history.json",
+    "/private/tmp/a5b-detail.json"
+  ],
+  "all_targets_still_exist": true,
+  "production_and_native_trajectories_excluded": true,
+  "copy_web_server_stopped": true
+}

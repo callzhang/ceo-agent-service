@@ -58,6 +58,7 @@ before asserting the pre-selection contract. The concise result is in
 Native CLI session IDs and transcript coordinates are in that file; native
 trajectory bodies are not copied into the database or retained in this report.
 
-Scoped formatting, exact candidate assertion and semantic API tests, production
-publication/readback and artifact cleanup are recorded in the overall read-model
-closeout after their own checks finish.
+Scoped formatting, exact candidate assertion and semantic API checks passed in the
+96-test combined selection. The read-model release is deployed and read back;
+artifact cleanup remains blocked by platform approval. See the
+[overall read-model closeout](business-model-history-read-unification.md).

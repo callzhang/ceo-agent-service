@@ -1,16 +1,24 @@
 # Business model simplification: current completion and closeout
 
-## Current authoritative status — 2026-10-25
+## Current authoritative status — production readback, 2026-10-25
 
-| Area | Current status | Evidence boundary |
+| Area | Verified state | Evidence / remaining boundary |
 |---|---|---|
-| Production | Current checkout `2fb17e859`; `/healthz` healthy. | Production status readback supplied for this phase. No fresh queue, Attention, History, or UI readback is claimed here. |
-| Task/Run model | Native Task/Run unification is deployed; the active production schema is Store `2026-10-25.2` / Email54, including A5b Reply receipt references and Store25.2 trigger retirement. | Earlier statements that Task/Run activation or deployment remained pending are historical checkpoints, not current status. |
-| Remaining work | The supplied acceptance evidence does not establish that every business-model workstream or failed node is closed. | Keep outstanding/failed nodes open until separately evidenced; no claim that they were rerun or closed. |
-| Open acceptance items | The exact original A5 input and selection pass current native revalidation; its 2026-10-19 failure remains preserved. The known FK finding `runs(190042) -> tasks` remains unrepaired; trigger-retirement cleanup targets remain present. | On a current production-derived Store25.2/Email54 copy, real GPT-6 Luna/high made two CLI calls; before selection there were zero provider calls, then selecting the exact reviewed option caused one substitute send, verification, and receipt. Original persisted rows across all 48 existing tables remained unchanged; new fixture rows were allowed. This validates this input and selection only, not every future output, and changed no Consumer/Audit behavior. See [A5 original revalidation](business-model-a5-original-revalidation.md). The latest cited FK readback said unchanged; this phase did not freshly read production or retry cleanup. |
-| Test and browser evidence | No tests or UI checks were rerun for this documentation reconciliation. | Historical results remain attributed to their original dates and scopes. |
+| Production release | Standard deploy completed `41404b469 → a6ab02a77`; PID79189 running, health OK; Store25.2/Email54 unchanged. | [Production readback](validation/2026-10-25-history-production-readback.json). These are dated readback facts, not a permanent live-state assertion. |
+| Task/Run, Email and Action ownership | Previously deployed native Task/Run, Email54, A5b exact receipt references and Store25.2 trigger retirement remain in use. | Not reimplemented in this phase; 46 receipt references remain. |
+| Legacy business reads | Parallel operational list/search/DTO/ranking removed. Current inventory uses Business Tasks; exact historical detail preserves all42 fields, provenance, updates and receipts. | [Field/caller and retirement contract](business-model-history-read-unification.md). No schema or historical row deletion; same-number domains remain separate. |
+| A5 native acceptance | Original trigger and material passed current real GPT-6 Luna/high Consumer/Audit and reviewed option selection; zero sends before selection, then one substitute send/verification/receipt. | [Original-case revalidation](business-model-a5-original-revalidation.md). The old failed run remains recorded; no Consumer/Audit runtime change or universal model-success claim. |
+| Tests and UI | Backend combined96pass, post-merge focused17pass, two harness argument tests; frontend four files58pass; TypeScript/build/Ruff/compile/diff checks pass. | Scoped evidence only, no full-suite-green claim. Copy and production Chrome formal-list/history/receipt readback completed. |
+| Current queues | Pending6, processing0, failed28, retryable0, Attention4; History returned20 items. | Failed28 and Attention4 match the pre-deploy snapshot; no real test send or production fixture task was created. |
+| Known data exception | Original sole FK finding `('runs',190042,'tasks',1)` remains unchanged. | Last value is FK ordinal; no inferred Task, NULL repair or deletion. Separate from this read-model change. |
+| Artifact cleanup | Latest workflow backup verified complete/quick_check OK; exact cleanup still blocked by platform approval Never. | 11 owned test roots, one backup and four API files rechecked present; about11.86GiB. Authorization already exists; no alternate deletion mechanism. |
 
-This table is the current status source for this document. Sections below that describe earlier production baselines, pending deployment gates, or unactivated Task/Run candidates are dated historical evidence and must not be read as the current runtime state.
+This table is the current status source. Sections below retain dated checkpoints;
+old production versions, unactivated constructors and pending release statements
+must not be read as current state. Scope implementation, reviews, copy checks,
+native acceptance and release/readback are complete; artifact cleanup is the
+remaining closeout blocker. The broader historical non-green test result is not
+rewritten by this scoped acceptance.
 
 ## Artifact cleanup authorization and recheck — 2026-10-25
 

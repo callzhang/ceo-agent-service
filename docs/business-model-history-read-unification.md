@@ -138,4 +138,37 @@ were visible. No provider operation was executed. The in-app browser control
 was unavailable; Chrome was used for these observations.
 
 The native CLI case has its own original input/source/trajectory evidence;
-UI acceptance is separate. Publication/readback is pending until recorded below.
+UI acceptance is separate. Publication and readback completed as recorded below.
+
+## Production publication and closeout
+
+The standard deploy completed `41404b469 → a6ab02a77` on 2026-10-25. It rebuilt
+production assets and restarted through the established service lifecycle.
+The first invocation supplied a short SHA and was rejected before any deployment
+step; the full40-character invocation succeeded. Production PID79189 and health
+are OK. Current exact schema remains Store25.2/Email54; quick_check is OK,
+46 Reply receipt references remain, and the sole historical FK finding is
+unchanged. The main SQLite file remains514,969,600bytes; no VACUUM or file-size
+saving is claimed.
+
+Post-release status is pending6 / processing0 / failed28 / retryable0 /
+Attention4; the pre-release failed and Attention values were also28 and4.
+Attention returned4 items and History20. Retired task-management endpoints
+return404. Production Chrome loaded the formal inventory (396 formal Tasks),
+opened canonical Project140 and expanded original Todo2496's stored sync
+receipt1; provider identity/readback remained visible. No send/replay was
+triggered. The copy-only native Task is absent in production.
+
+The latest workflow backup was verified complete and quick_check OK. The
+temporary web server and its browser tab are closed; port18775 has no listener.
+After checking ownership and no open handles, the exact cleanup command for
+11 owned test roots, the latest backup and four API outputs was rejected before
+execution: `approval required by policy, but AskForApproval is set to Never`.
+All16 targets remain, approximately11.86GiB of logical file bytes. All97 symlinks
+inside the current owned test root resolve inside it; production/native
+trajectories/unrelated backup directories are excluded. No alternate deletion
+mechanism was used. This is an execution-policy blocker, not missing user
+permission and not a database capacity saving.
+
+Concise [production evidence](validation/2026-10-25-history-production-readback.json)
+includes code rollback copy, schema hashes, queues and retained reference checks.
