@@ -136,7 +136,7 @@ def test_native_consumer_rejects_malformed_suffix_instead_of_salvaging_it():
 
 
 @pytest.mark.parametrize("purpose", ["general", "oa"])
-def test_native_developer_exposes_decoder_format_and_keeps_session_fingerprint(purpose, tmp_path, monkeypatch):
+def test_native_developer_points_to_cli_schema_and_keeps_session_fingerprint(purpose, tmp_path, monkeypatch):
     from hashlib import sha256
     from app.consumer_agent import consumer_developer_sections_by_runtime
     from app import native_prompt_input
@@ -146,8 +146,10 @@ def test_native_developer_exposes_decoder_format_and_keeps_session_fingerprint(p
     )["codex_cli"]
     native = next(s.text for s in sections if s.name == "原生输出契约指纹")
     assert "## Native Output Format\n" in native
-    supplied = json.loads(native.split("## Native Output Format\n", 1)[1])
-    assert supplied == json.loads(native_output_schema_path(purpose=purpose).read_text())
+    assert len(native) < 1000
+    assert f'agent_cli.read_consumer_output_schema(purpose="{purpose}")' in native
+    supplied = json.loads(native_output_schema_path(purpose=purpose).read_text())
+    assert json.dumps(supplied, separators=(",", ":")) not in native
     assert Draft202012Validator(supplied).is_valid(_consumer(purpose=purpose))
     flat = _consumer(purpose=purpose)
     flat.update(flat.pop("decision"))

@@ -3682,7 +3682,7 @@ Prompts 设置读取先返回 Developer/User 的已保存原文；某份模板�
 
 Developer 保存先以现有渲染器验证，未知变量或不可渲染内容返回具体错误且不覆盖已保存正文；该检查属于配置格式合同。
 
-默认共同工作原则要求先识别原请求要向谁交付什么、按本轮声明入口取证、交付可核实部分并说明剩余协调责任。日历时区与候选日期偏移规则位于 `ceo-calendar-invite` Skill，只在适用任务按需读取；共同 Developer 不再全量携带该专项流程。两者都不改变已有角色、审核或执行合同。
+默认共同工作原则要求先识别原请求要向谁交付什么、按本轮声明入口取证、交付可核实部分并说明剩余协调责任。消息处理以原始触发为目标；后续排查建议用于补充上下文，不替换原请求。若建议的操作不在当前能力范围内，但已核实信息仍能回答原询问，应回复观察结果、具体限制及继续所需信息，不因该操作不可用而直接失败。日历时区与候选日期偏移规则位于 `ceo-calendar-invite` Skill，只在适用任务按需读取；共同 Developer 不再全量携带该专项流程。两者都不改变已有角色、审核或执行合同。
 
 配置回执同时记录 Developer 模板原文和渲染后共同原则正文的 SHA；相同模板引用的变量/文件/代码展开改变时，静态契约指纹也改变。静态指纹仍不是 session 身份；历史记录缺正文 SHA 时只显示未记录，不以当前值补造。
 
@@ -5346,4 +5346,4 @@ For this paired Task/Run candidate, the release writes its actual forward captur
 
 ### 原生输出格式与解码契约一致
 
-Consumer 的原生输出段除保留 schema 指纹外，还从实际提交给解码器的同一文件提供紧凑 JSON 格式契约。该契约说明 decision 包装、必填根字段和动态 JSON 的 entries 编码；哈希只能校对身份，不能代替模型可见的字段定义。此处仍不重复 Pydantic 业务 wire schema，不改变业务模型、无损还原、严格校验、路线、工具、权限、重试或 session 选择。公共/任务预览与实际提交复用这套装配；续跑继续提交当前装配，指纹标记保持可解析。
+Consumer 的原生输出段仅保留 schema 指纹、JSON/decision 包装说明及 `agent_cli.read_consumer_output_schema(purpose=...)` 按需查询入口，不全量注入 native 或 Pydantic 业务 schema。该 Consumer metadata 查询通过现有 agent_cli 传输返回与解码器同一文件的完整紧凑 JSON，单一文本块、无重复 structured output；仅接受声明 purpose，不扩大任意文件、shell 或 Audit 权限。业务模型、无损还原、严格校验、路线、重试和 session 选择保持不变。公共/任务预览与实际提交复用同一装配；每轮保留当前入口与可解析指纹，不假设压缩后的 session 永久保有完整规则。冷启动查询仍占工具上下文，默认 prompt 减少不代表总 token 或耗时减少。

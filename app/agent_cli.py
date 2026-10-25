@@ -51,6 +51,7 @@ from app.dingtalk_message_payload_sharing import share_message_raw_payload
 from app.dingtalk_sheet_style_sharing import share_sheet_cell_styles
 from app.feedback_spike import sanitize_configured_feedback_links
 from app.leak_check import contains_credential, is_sensitive_field_name
+from app.native_agent_output import native_output_schema_path
 from app.native_cli_metadata import (
     AgentReadOnlyViolationError,
     NativeCliCommand,
@@ -418,6 +419,12 @@ def read_spreadsheet(
             raise AgentReadOnlyViolationError("spreadsheet_file_invalid") from exc
         except ElementTree.ParseError as exc:
             raise AgentReadOnlyViolationError("spreadsheet_xml_invalid") from exc
+
+
+def read_consumer_output_schema(purpose: str = "general") -> str:
+    """Read the exact native Consumer transport schema for a declared purpose."""
+    path = native_output_schema_path("consumer", purpose=purpose)
+    return json.dumps(json.loads(path.read_text()), ensure_ascii=False, separators=(",", ":"))
 
 
 def read_text_file(path: str) -> dict[str, object]:
@@ -2812,6 +2819,10 @@ def build_role_server(
         bound.add_tool(tool, name=name, annotations=read)
 
     if role == "consumer":
+        bound.add_tool(
+            read_consumer_output_schema, name="read_consumer_output_schema",
+            annotations=read, structured_output=False,
+        )
 
         def consumer_artifact_write(name: str, content: str) -> dict[str, object]:
             """Write a text artifact only in this task's current workspace generation."""

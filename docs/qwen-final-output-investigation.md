@@ -61,3 +61,8 @@ session `01a16f62-9cfd-7951-9809-d66c12895639`：
 CEO正式部署到3fb2ce3ad，新PID33493，general Consumer预览中的完整native格式与实际schema文件等值。提供商在已知请求与等待数均0后通过现有管理器切换slot1一次；周期请求使最初自然卸载方案无法收口，未新增排空机制。操作不保证原子阻断新请求，竞态在执行前明确披露；检查窗口内未见推理5xx。旧PID2362797退出，新PID2861779在安装候选后启动并就绪。
 
 当前生产入口额外一次匿名同案例回读严格no_action：session01a171f1-acc3-7b62-9074-53cf042d5a75，70行SHA01d95910cadcc8dfec5237806d3a90422cc9ed23cde106a3275da86302274275。冷/续验收已在隔离canary通过，此处只补生产加载证据，没有全矩阵重跑。Qwen Consumer本项已完成；API429、API Audit启用和G1自然失败样本仍各自保留。
+
+
+## 按需契约替代全量注入
+
+此前格式可见性修复为历史发布记录；后续用户要求恢复精简，当前采用简短JSON/decision说明、同一指纹及Consumer-only `agent_cli.read_consumer_output_schema`查询。provider grammar修复保持不变。直接shell路径候选因custom exec未传达而失败；首轮仅查询提示也未收尾，均未发布。最终方案使用完整当前schema查询，同案例cold/resume均严格no_action。默认段11909→373字符；cold读取11656字符完整schema、resume本次未重读。不是总token/提速结论。详见[最终对账第13节](agent-optimization-final-acceptance.md#13-恢复按需契约读取用户纠偏)与对应版本化结果。
