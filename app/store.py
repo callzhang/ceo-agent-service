@@ -16937,9 +16937,10 @@ class AutoReplyStore(LogicalRunStoreMixin, ReviewedCandidateStoreMixin):
             from app import task_entity_storage
             updated = task_entity_storage.update_task_cas(
                 db, task_id=task_id,
+                # The business object key was matched above, inside this immediate
+                # transaction; it is a TaskInput field, not a Task compare field.
                 expected={"status": "failed", "error": "external_action_uncertain",
-                          "execution_generation": generation,
-                          "business_object_key": business_object_key},
+                          "execution_generation": generation},
                 changes={"status": "skipped", "available_at": "", "locked_at": None,
                          "updated_at": db.execute("select current_timestamp").fetchone()[0]},
             )
