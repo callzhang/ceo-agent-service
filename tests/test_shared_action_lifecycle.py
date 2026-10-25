@@ -27,7 +27,10 @@ def _email(store, *, action=EmailAction.ARCHIVE, classification_id=11):
 
 def test_prepared_receipt_is_pinned_separately_from_sent_and_canonical_bodies(tmp_path):
     from app.action_entity_storage import append_action_receipt, create_action, record_action_result
-    from app.action_storage import EXTERNAL_ACTION_RESULT_SQL, OUTBOUND_POSTFIX_RECEIPT_SQL, SENT_REPLY_SQL
+    from app.action_storage import (
+        NATIVE_EXTERNAL_ACTION_RESULT_SQL as EXTERNAL_ACTION_RESULT_SQL,
+        OUTBOUND_POSTFIX_RECEIPT_SQL, SENT_REPLY_SQL,
+    )
 
     path = tmp_path / 'receipt-roles.sqlite3'
     AutoReplyStore(path)
@@ -111,7 +114,10 @@ def test_reviewed_and_email_callers_write_common_action_without_origin_dispatch(
         assert db.execute("select count(*) from actions where record_type='action'").fetchone()[0] == 2
         assert db.execute("select count(*) from actions where record_type='action_attempts'").fetchone()[0] == 0
         assert db.execute('pragma foreign_key_check').fetchall() == []
-    assert attempt['action_owner_id'] != attempt['id']
+    with sqlite3.connect(path) as db:
+        # The attempt is a receipt owned by the candidate's Action, not the Action row.
+        assert db.execute('select action_id from action_receipts where id=?',
+                          (attempt['id'],)).fetchone()[0] == attempt['action_owner_id']
 
 
 def test_retry_claim_projection_does_not_reuse_previous_terminal_result(tmp_path):
@@ -219,7 +225,7 @@ def test_all_six_direct_operations_and_existing_provider_results_use_shared_atte
             for field in shared.DIRECT_TERMINAL_FIELDS:
                 assert row[field] == attempt[field]
             assert db.execute("select count(*) from action_receipts r where r.action_id=? and r.attempt_number is not null", (action_id,)).fetchone()[0] == 1
-            assert db.execute("select count(*) from runs where record_type='agent_runs'").fetchone()[0] == 0
+            assert db.execute("select count(*) from runs").fetchone()[0] == 0
     EmailStore(path)
 
 
@@ -328,7 +334,7 @@ def test_direct_email_owner_and_important_listing_read_current_attempt_fields(tm
     )
     assert rows[0].history_type == history_types.EMAIL_ACTION
     attention = [row for row in _queue_attention_rows(store) if row['category'] == 'Email action']
-    assert len(attention) == 1 and attention[0]['id'] == action_id
+    assert len(attention) == 1 and attention[0]['id'] == str(action_id)
     with store._connect() as db:
         assert _email_action_queue_snapshot(db)['failed'] == 1
     important = _classification(status=EmailClassificationStatus.PROCESSED, message_id='important-fixture',
