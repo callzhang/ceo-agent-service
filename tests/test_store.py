@@ -1,6 +1,5 @@
 from tests.sent_fixtures import historical_sent_delivery
 
-from app.task8_storage import register_task8_functions, task8_insert_parts, task8_set_parts
 from tests.test_email_legacy_schema import published_source as published_source
 import errno
 import hashlib
@@ -33,7 +32,6 @@ from app.action_storage import NATIVE_EXTERNAL_ACTION_RESULT_SQL as EXTERNAL_ACT
 from app.action_storage import insert_email_action, update_email_action, error_set_parts, insert_error_action
 from app.store import AGENT_RUN_SQL, TASK_LOGICAL_RUN_SQL
 
-RUNTIME_ATTEMPT_SQL = "select *, parent_id as agent_run_id from runtime_attempts"
 from app.store import ERROR_SQL, WORK_SUMMARY_INPUT_SQL
 from app.state_storage import update_state_rows, insert_state
 from app import task_lifecycle_storage as task_claims
@@ -47,6 +45,8 @@ from app.store import (
     AgentRunLeaseLostError,
     AutoReplyStore,
 )
+
+RUNTIME_ATTEMPT_SQL = "select *, parent_id as agent_run_id from runtime_attempts"
 
 
 class _Inserted:

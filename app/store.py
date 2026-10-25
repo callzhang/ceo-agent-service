@@ -14844,7 +14844,7 @@ class AutoReplyStore(LogicalRunStoreMixin, ReviewedCandidateStoreMixin):
         with self._connect() as db:
             rows = db.execute(
                 """
-                select r.*, p.job_id from runs r
+                select r.*, r.task_id as job_id from runs r
                 join run_provenance p on p.run_id=r.id and p.source_type='meeting_alignment_runs'
                 where r.session_id=? order by r.id desc
                 """,

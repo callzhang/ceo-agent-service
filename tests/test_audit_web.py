@@ -23,11 +23,9 @@ from tests.support.native_run_rows import (
     insert_run_row, insert_runtime_attempt_row, insert_scheduled_occurrence,
 )
 from app.action_storage import (
-    REPLY_ATTEMPT_COMMON_SQL, update_action, insert_task_delivery_action,
-    task_delivery_projection, insert_error_action,
+    REPLY_ATTEMPT_COMMON_SQL, update_action, insert_error_action,
 )
 from app.action_error_definitions import error_projection
-from app.task_storage import task_physical_id
 from app.store import REPLY_TASK_SQL, WORK_SUMMARY_INPUT_SQL
 from app.email_store import EmailStore
 from app.audit_web import (
@@ -11859,19 +11857,28 @@ def _failed_email_action(
         received_at="Mon, 08 Sep 2025 12:08:13 +0000",
     )
     action_id = email_store.direct_action_ids_for_plan(plan_id)[0]
+    attempt_time = datetime.now(timezone.utc).replace(microsecond=0)
     for number in range(1, attempt_count + 1):
+        started_at = attempt_time + timedelta(seconds=number * 2)
+        finished_at = started_at + timedelta(seconds=1)
         email_store.append_action_attempt(
             action_id=action_id, attempt_number=number, status="failed",
             provider_operation="READ", provider_target="acct:mid",
             provider_result_id="", error="provider_read_failed:ImapMessageUnavailable",
-            started_at="2026-09-16T07:27:13+00:00",
-            finished_at="2026-09-16T07:28:28+00:00",
+            started_at=started_at.isoformat(),
+            finished_at=finished_at.isoformat(),
         )
     if next_attempt_at:
+        import app.shared_action_lifecycle as shared_action_lifecycle
+
         with store._connect() as db:
-            email_store._update_direct_action(
-                db, action_id, {"next_attempt_at": next_attempt_at}
-            )
+            assert shared_action_lifecycle.schedule_direct_email_action(
+                db,
+                action_id=action_id,
+                expected_status="failed",
+                next_attempt_at=next_attempt_at,
+                updated_at=attempt_time.isoformat(),
+            ) is not None
     return action_id
 
 
@@ -11883,7 +11890,7 @@ def test_attention_includes_an_exhausted_failed_email_action(tmp_path: Path):
 
     action_rows = [row for row in rows if row["category"] == "Email action"]
     assert len(action_rows) == 1
-    assert action_rows[0]["id"] == action_id
+    assert action_rows[0]["id"] == str(action_id)
     assert action_rows[0]["status"] == "failed"
     assert action_rows[0]["context"] == "daniela@example.com"
     assert action_rows[0]["summary"] == "MorningStar Technical Deepdive"
@@ -11894,9 +11901,8 @@ def test_attention_excludes_an_email_action_still_inside_its_retry_window(
     tmp_path: Path,
 ):
     store = AutoReplyStore(tmp_path / "worker.sqlite3")
-    _failed_email_action(
-        store, attempt_count=1, next_attempt_at="2026-09-16T07:40:00+00:00"
-    )
+    retry_at = (datetime.now(timezone.utc) + timedelta(minutes=5)).isoformat()
+    _failed_email_action(store, attempt_count=1, next_attempt_at=retry_at)
 
     rows = audit_web_module._queue_attention_rows(store)
 

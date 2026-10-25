@@ -840,3 +840,16 @@ task13 自然运行 **401164** 在 2026-10-24T19:00Z 触发，使用不可变任
 当前生产只读快照（2026-10-24 约20:30 UTC）：healthz HTTP 200，worker PID 51240，task13 v65，managed Skill revision 202，下次触发 2026-10-31T19:00Z。修复尚未正式发布；不得以本地文本或定向测试代替托管 revision 读回。发布后仍需等下一次自然运行验证工具调用、来源覆盖、Consumer/Audit 终态、完整文档读回及通知回执；不手动创建或触发替代报告。
 
 无正文证据：[task13 run 401164](../evals/scheduled_task_generic/task13-run401164-evidence.json)。
+
+
+### 2026-10-24/25 task13 手动运行与 task14 自然日报复核
+
+只读 API 在 2026-10-25 00:38 UTC 确认：生产 healthz HTTP 200、14 项定时任务仍在；task6 v47 下次 10:00 UTC，task13 v67 下次 10月31日 19:00 UTC，task14 v74 下次 13:00 UTC。最新运行 ID 分别为 task6 395969、task13 401579、task14 399936。
+
+task14 自然运行 **399936**（10月24日 13:00 UTC）使用冻结配置 v71 / `ceo-daily-report` managed revision250，Consumer/Audit 两轮均完成，最终终态 `done`。Consumer 完整读回一次，Audit 在最终版本上完整读回两次；持久通知回执状态 `done`，provider 查询确认 `sendStatus=SUCCESS`、状态 `sent` 和真实消息 ID。因此本次 task14 自然链路通过；正文不写入证据。
+
+task13 运行 **401579** 是另一位操作者触发的手动运行，不是自然调度，也不是本 Agent 重放。不可变快照为 task13 v67、managed `ceo-weekly-report` revision262、SHA-256 `a4f4fe22401c5e119715cda1d34d278f7c679d4605e0ec542e4d80b4f6209a8b`。报告文档确实写入并完整读回，但 Consumer 未完成 CRM、财务和产品遥测等来源核查；Audit 读取材料不能替代 Consumer 来源覆盖。没有通知要求。故该运行的业务验收失败，不得重放。其使用的是 PR 候选修复前的 revision262（SHA 与当前 PR candidate 不同），不能用来判断候选修复有效或无效。
+
+PR #294 的远端仍未合并；远端 head `bd5cc63dd5dc54ac669675ce10b057265948af17` 对应 Quality `40131731034` 失败。此次将工作分支与 origin/main `ae92ebef` 合并后，Ruff 已通过；定向报告/发布、Task/Run reader 与 Audit suites 的首轮共有 397 项通过，余下两项都在 meeting replay 的 prepared outbound 防重放断言。该失败涉及已有外发安全行为，保留原断言，不作弱化；当前功能修复与这一安全范围分开处理。origin/main 后续已推进至 `82ac79f7`，仍需先同步最新主线并完成 PR 当前 head 的完整 Quality，才可合并部署。
+
+无正文运行证据见 [`okr-production-readback.json`](../evals/scheduled_task_generic/okr-production-readback.json) 中的 `natural_task14_run_399936`、`manual_task13_run_401579` 和 `latest_live_task_schedule_readback_2026_10_25`。自然日报、他人手动周报、合成测试和代码门禁继续分开计数。

@@ -1634,5 +1634,164 @@
       "interpretation": "npm test cancelled during pytest without a pytest summary or cancellation actor; not a pass or verified test failure"
     },
     "acceptance_status": "The stalled local Email action was verified in its target folder and reconciled without repeating the external move. The service is healthy and the task configuration/queues were read back. System health remains degraded with 7 violations and 13 Attention entries. PR #294 exact-head Quality, new task14/task13/task6 business-report acceptance, and real sleep/resume catch-up remain outstanding. No report or extra notification was created."
+  },
+  "natural_task14_run_399936": {
+    "observed_at": "2026-10-25T00:38:25Z",
+    "scheduled_for": "2026-10-24T13:00:00Z",
+    "run_kind": "natural_schedule",
+    "immutable_snapshot": {
+      "task_id": 14,
+      "task_version": 71,
+      "timezone": "America/Los_Angeles",
+      "runtime_id": "codex_oauth",
+      "managed_skill": "ceo-daily-report",
+      "managed_skill_revision": 250,
+      "cron_expression": "0 0 6 * * *",
+      "reply_task_id": 417405
+    },
+    "consumer_audit_trajectory": [
+      {
+        "run_id": 399294,
+        "role": "Consumer",
+        "revision": 0,
+        "terminal": "completed"
+      },
+      {
+        "run_id": 399295,
+        "role": "Audit",
+        "revision": 0,
+        "terminal": "completed"
+      },
+      {
+        "run_id": 399296,
+        "role": "Consumer",
+        "revision": 1,
+        "terminal": "completed"
+      },
+      {
+        "run_id": 399297,
+        "role": "Audit",
+        "revision": 1,
+        "terminal": "completed"
+      }
+    ],
+    "terminal_state": "done",
+    "document": {
+      "report_date": "2026-10-24",
+      "provider_write_count": 2,
+      "consumer_full_readback": {
+        "status": "success",
+        "complete": true,
+        "count": 1
+      },
+      "audit_full_readbacks": {
+        "status": "success",
+        "complete": true,
+        "count": 2
+      }
+    },
+    "notification": {
+      "persistent_receipt": "done",
+      "provider_send_status": "SUCCESS",
+      "provider_status": "sent",
+      "provider_message_id": "msg95rFHppPwuN4LQxOzxo34w==",
+      "provider_query_confirmed": true
+    },
+    "acceptance": "passed",
+    "replayed_or_created_by_this_agent": false
+  },
+  "manual_task13_run_401579": {
+    "observed_at": "2026-10-25T00:38:25Z",
+    "scheduled_for": "2026-10-24T21:44:00Z",
+    "run_kind": "manual_other_operator",
+    "immutable_snapshot": {
+      "task_id": 13,
+      "task_version": 67,
+      "timezone": "America/Los_Angeles",
+      "runtime_id": "codex_oauth",
+      "managed_skill": "ceo-weekly-report",
+      "managed_skill_revision": 262,
+      "managed_skill_sha256": "a4f4fe22401c5e119715cda1d34d278f7c679d4605e0ec542e4d80b4f6209a8b",
+      "reply_task_id": 417413
+    },
+    "consumer_audit_trajectory": [
+      {
+        "run_id": 399304,
+        "role": "Consumer",
+        "revision": 0,
+        "terminal": "failed"
+      },
+      {
+        "run_id": 399305,
+        "role": "Consumer",
+        "revision": 0,
+        "terminal": "completed"
+      },
+      {
+        "run_id": 399306,
+        "role": "Audit",
+        "revision": 0,
+        "terminal": "completed"
+      },
+      {
+        "run_id": 399307,
+        "role": "Consumer",
+        "revision": 1,
+        "terminal": "completed"
+      },
+      {
+        "run_id": 399308,
+        "role": "Audit",
+        "revision": 1,
+        "terminal": "completed"
+      }
+    ],
+    "system_attempt": {
+      "id": 16015,
+      "status": "skipped"
+    },
+    "document": {
+      "written": true,
+      "complete_readback": true
+    },
+    "required_notification": false,
+    "consumer_source_coverage": {
+      "result": "failed",
+      "reason": "CRM, finance and product-telemetry evidence was not read; Consumer did not complete required source searches/reads.",
+      "audit_source_reads_do_not_substitute_for_consumer_coverage": true
+    },
+    "classification": "actual_business_execution_failure_on_pre-fix_skill",
+    "candidate_fix_validation": "not_tested_by_this_run",
+    "why_not_candidate_validation": "The frozen run used managed revision 262 SHA a4f4fe..., matching the pre-fix origin/main Skill and not the PR candidate.",
+    "replayed_or_created_by_this_agent": false
+  },
+  "latest_live_task_schedule_readback_2026_10_25": {
+    "observed_at": "2026-10-25T00:38:25.603054Z",
+    "healthz_http_status": 200,
+    "scheduled_task_count": 14,
+    "tasks": {
+      "6": {
+        "version": 47,
+        "enabled": true,
+        "timezone": "America/Los_Angeles",
+        "next_run_at": "2026-10-25T10:00:00Z",
+        "latest_run_id": 395969
+      },
+      "13": {
+        "version": 67,
+        "enabled": true,
+        "timezone": "America/Los_Angeles",
+        "next_run_at": "2026-10-31T19:00:00Z",
+        "latest_run_id": 401579
+      },
+      "14": {
+        "version": 74,
+        "enabled": true,
+        "timezone": "America/Los_Angeles",
+        "next_run_at": "2026-10-25T13:00:00Z",
+        "latest_run_id": 399936
+      }
+    },
+    "next_step": "Wait for natural task6 at 2026-10-25T10:00Z and task14 at 2026-10-25T13:00Z; do not create another task13 run. Verify task13 candidate only after it is formally published and used by its next natural run."
   }
 }
