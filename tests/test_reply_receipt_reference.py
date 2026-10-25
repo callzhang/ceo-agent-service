@@ -1,14 +1,16 @@
 import sqlite3
+import pytest
 
 from app import action_entity_storage, action_storage, shared_action_lifecycle
 from app.current_schema_manifest import (
     create_current_email_migration_ledger,
-    schema_is_current,
+    schema_objects,
 )
 from app.reply_receipt_reference import add_reference
 from app.reply_receipt_reference_schema_release import (
     SOURCE_STORE_VERSION,
     prepare_reply_receipt_reference_release,
+    target_objects,
 )
 from app.store import AutoReplyStore
 from app.store import AgentRole
@@ -145,6 +147,8 @@ def test_current_store_release_backfills_reference_and_inverse_restores_body(tmp
         db.execute("insert into email_schema_migrations(version,applied_at) values(54,'source-clock')")
         _set_marker(db, SOURCE_STORE_VERSION)
         db.execute("drop table reply_attempt_receipt_refs")
+        from app.action_reference_trigger_schema_release import RETIRED_TRIGGER_SQL
+        db.execute(RETIRED_TRIGGER_SQL)
         _decoy_action(db)
         target = '{"process_instance_id":"test-process","task_id":"test-task"}'
         matched_receipt = _seed_provider_action(
@@ -172,7 +176,7 @@ def test_current_store_release_backfills_reference_and_inverse_restores_body(tmp
     release.publish()
     release.verify_loaded()
     with sqlite3.connect(path) as db:
-        assert schema_is_current(db, email_ledger=True)
+        assert schema_objects(db) == target_objects()
         from app.state_definitions import state_projection
         assert db.execute(
             f"select value from ({state_projection('service_state')}) where key='store_schema_version'"
@@ -203,7 +207,7 @@ def test_current_store_release_backfills_reference_and_inverse_restores_body(tmp
         ))
         assert restored_bodies == original_bodies
         assert db.execute("pragma quick_check").fetchone()[0] == "ok"
-        from app.current_publication_sources import _version, publication_task_sources
-        from app.store import NATIVE_REPLY_TASK_CURRENT_SQL, WORK_SUMMARY_INPUT_SQL
-        assert _version(db) == SOURCE_STORE_VERSION
-        assert publication_task_sources(db) == (NATIVE_REPLY_TASK_CURRENT_SQL, WORK_SUMMARY_INPUT_SQL)
+        from app.current_publication_sources import publication_task_sources
+        assert db.execute("select value from state where key='store_schema_version'").fetchone()[0] == SOURCE_STORE_VERSION
+        with pytest.raises(ValueError, match="unsupported current publication"):
+            publication_task_sources(db)

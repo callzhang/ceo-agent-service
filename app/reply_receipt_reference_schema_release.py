@@ -5,7 +5,8 @@ from datetime import datetime, timezone
 from pathlib import Path
 import sqlite3
 
-from app.current_schema_manifest import current_objects, schema_objects
+from app.current_schema_manifest import schema_objects
+from app.action_reference_trigger_schema_release import source_objects as target_objects
 from app.reply_receipt_reference import DDL, add_reference
 
 SOURCE_STORE_VERSION = "2026-10-23.1"
@@ -21,7 +22,7 @@ _OWNED_OBJECTS = {
 
 
 def source_objects():
-    return tuple(obj for obj in current_objects(email_ledger=True) if obj[1] not in _OWNED_OBJECTS)
+    return tuple(obj for obj in target_objects() if obj[1] not in _OWNED_OBJECTS)
 
 
 def _marker(db):
@@ -108,8 +109,7 @@ class ReplyReceiptReferenceRelease:
                     add_reference(db, attempt_id=attempt_id, receipt_id=receipt_id, expected_body=body)
                     update_action(db, "reply_attempts", attempt_id, {"oa_action_result_json": ""})
                 _write_marker(db, TARGET_STORE_VERSION, datetime.now(timezone.utc).isoformat())
-                from app.current_schema_manifest import schema_is_current
-                if (not schema_is_current(db)
+                if (schema_objects(db) != target_objects()
                         or _foreign_keys(db) != self.source_fk
                         or db.execute("pragma quick_check").fetchone()[0] != "ok"):
                     raise ValueError("Reply receipt release target schema or integrity mismatch")
@@ -123,11 +123,11 @@ class ReplyReceiptReferenceRelease:
         self.verify_loaded()
 
     def verify_loaded(self):
-        from app.current_schema_manifest import require_current_pair
-        require_current_pair(self.database_path)
         with closing(sqlite3.connect(self.database_path.as_uri() + "?mode=ro", uri=True)) as db:
             db.execute("begin")
             if (_marker(db) is None or _marker(db)[0] != TARGET_STORE_VERSION
+                    or schema_objects(db) != target_objects()
+                    or db.execute("select max(version) from email_schema_migrations").fetchone()[0] != EMAIL_VERSION
                     or _foreign_keys(db) != self.source_fk
                     or db.execute("pragma quick_check").fetchone()[0] != "ok"):
                 raise ValueError("Reply receipt release loaded-database readback mismatch")
@@ -148,8 +148,8 @@ class ReplyReceiptReferenceRelease:
             db.execute("pragma foreign_keys=off")
             db.execute("begin immediate")
             try:
-                from app.current_schema_manifest import schema_is_current
-                if _marker(db) is None or _marker(db)[0] != TARGET_STORE_VERSION or not schema_is_current(db):
+                if (_marker(db) is None or _marker(db)[0] != TARGET_STORE_VERSION
+                        or schema_objects(db) != target_objects()):
                     raise ValueError("Reply receipt inverse requires the exact published target")
                 refs = db.execute("""select cast(attempt.legacy_key as integer) as attempt_id,
                     receipt.provider_result_json

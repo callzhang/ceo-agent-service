@@ -78,9 +78,9 @@ def prepare_database_schema_release(root: Path, path: Path, *, recovery_source_p
     target = (_target_store_version(root), email_schema_release._target_schema_version(root) if (root / "app" / "email_store.py").exists() else None)
     from app.current_schema_manifest import STORE_VERSION as CURRENT_STORE_VERSION, EMAIL_VERSION as CURRENT_EMAIL_VERSION, require_current_pair
     if target == (CURRENT_STORE_VERSION, CURRENT_EMAIL_VERSION) and path.exists():
-        from app.reply_receipt_reference_schema_release import (
-            SOURCE_STORE_VERSION as REPLY_RECEIPT_SOURCE_VERSION,
-            prepare_reply_receipt_reference_release,
+        from app.action_reference_trigger_schema_release import (
+            SOURCE_STORE_VERSION as ACTION_TRIGGER_SOURCE_VERSION,
+            prepare_action_reference_trigger_release,
         )
         from app.state_definitions import state_projection
         with closing(sqlite3.connect(path.resolve().as_uri() + "?mode=ro", uri=True)) as db:
@@ -91,8 +91,8 @@ def prepare_database_schema_release(root: Path, path: Path, *, recovery_source_p
                 f"select value from ({state_projection('service_state')}) where key=?",
                 (VERSION_KEY,),
             ).fetchone() if "state" in tables else None
-        if marker is not None and marker[0] == REPLY_RECEIPT_SOURCE_VERSION:
-            return prepare_reply_receipt_reference_release(path)
+        if marker is not None and marker[0] == ACTION_TRIGGER_SOURCE_VERSION:
+            return prepare_action_reference_trigger_release(path)
         from app.action_entity_schema_release import (
             SOURCE_STORE_VERSION as ACTION_ENTITY_SOURCE_VERSION,
             ActionEntitySchemaRelease,
