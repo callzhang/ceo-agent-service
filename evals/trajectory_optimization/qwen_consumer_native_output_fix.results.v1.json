@@ -339,5 +339,189 @@
         }
       ]
     }
-  ]
+  ],
+  "production_readback": {
+    "scope": "Current six-case acceptance, not original A/B; fake reads only",
+    "source_commit": "3fb2ce3ad3a43795a9d8970ae6fd08181626ba40",
+    "case_manifest_sha256": "9e6bb578a321cee3865c20051f47762de12710c1076b2e4fbf1c333008a192af",
+    "harness_sha256": "37fcaabdf75d5364a5723e248876a64ee168b1b5a0fe4c9b4a15c2bf4443598e",
+    "route": "qwen_gpu4",
+    "model": "qwen3.8-27b",
+    "fixed_clock": "2026-10-08T10:00:00-07:00",
+    "results": [
+      {
+        "case": "mail-already-handled",
+        "phase": "cold",
+        "role": "consumer",
+        "developer_sha256": "88726efa0dda2d8e6d2031e09b9a2a968702eb80d6b80166cb27d453c2d603ff",
+        "task_sha256": "654cdcfd32b35eb8639be4224ffc057c5dfdc071b252b741fc1ad3f33c02b016",
+        "schema_sha256": "72ee10446972dde404f738df395701188a39d9d5e10005312a66fec3b11e9d7b",
+        "criteria": [
+          "use the complete thread rather than the truncated card",
+          "recognize the renewal is already approved and the provider confirmation requests no reply",
+          "return no_action with no duplicate chat or mail action"
+        ],
+        "exit_code": 0,
+        "session_id": "01a171f1-acc3-7b62-9074-53cf042d5a75",
+        "reused_session": false,
+        "tool_trace": [
+          {
+            "tool": "read_task_skill",
+            "arguments": {
+              "name": "ceo-mail-review"
+            },
+            "result": {
+              "name": "ceo-mail-review",
+              "path": "/synthetic/ceo-mail-review/SKILL.md",
+              "sha256": "108e258426ec8f66a0907722d4a1034fba48c8628544eccc69aa5e0162163b9d",
+              "characters": 11918
+            }
+          },
+          {
+            "tool": "read_skill",
+            "arguments": {
+              "name": "dingtalk-mail",
+              "path": ""
+            },
+            "result": {
+              "name": "dingtalk-mail",
+              "path": "/synthetic/dingtalk-mail/SKILL.md",
+              "sha256": "664f31a00f46245c270049129da4d25475ccc561b04d9897e7cd634b2c4a6f18",
+              "characters": 5719
+            }
+          },
+          {
+            "tool": "read_dingtalk_messages",
+            "arguments": {
+              "conversation_id": "eval-mail-conversation"
+            },
+            "result": {
+              "messages": [
+                {
+                  "message_id": "mail-original",
+                  "sender": "Synthetic vendor",
+                  "create_time": "2026-10-08T08:00:00-07:00",
+                  "text": "Renewal was approved and recorded under receipt renew-77. This is a confirmation only; no reply is requested."
+                },
+                {
+                  "message_id": "mail-principal-sent",
+                  "sender": "Principal",
+                  "create_time": "2026-10-08T07:30:00-07:00",
+                  "text": "Approved subject to the recorded legal terms."
+                }
+              ]
+            }
+          },
+          {
+            "tool": "read_dingtalk_messages",
+            "arguments": {
+              "conversation_id": "eval-mail-conversation"
+            },
+            "result": {
+              "messages": [
+                {
+                  "message_id": "mail-original",
+                  "sender": "Synthetic vendor",
+                  "create_time": "2026-10-08T08:00:00-07:00",
+                  "text": "Renewal was approved and recorded under receipt renew-77. This is a confirmation only; no reply is requested."
+                },
+                {
+                  "message_id": "mail-principal-sent",
+                  "sender": "Principal",
+                  "create_time": "2026-10-08T07:30:00-07:00",
+                  "text": "Approved subject to the recorded legal terms."
+                }
+              ]
+            }
+          },
+          {
+            "tool": "read_skill",
+            "arguments": {
+              "name": "ceo-mail-review",
+              "path": ""
+            },
+            "result": {
+              "name": "ceo-mail-review",
+              "path": "/synthetic/ceo-mail-review/SKILL.md",
+              "sha256": "108e258426ec8f66a0907722d4a1034fba48c8628544eccc69aa5e0162163b9d",
+              "characters": 11918
+            }
+          }
+        ],
+        "result": {
+          "outcome": "no_action",
+          "summary": "Renewal thread is closed: the principal's approval was already sent under the recorded legal terms, the vendor confirmed the renewal recorded under receipt renew-77 and requested no reply, so no remaining mail or chat action exists; canonical no_action with verified thread state reported.",
+          "proposal": null,
+          "decision_options": [],
+          "error": {
+            "code": "",
+            "retryable": false,
+            "authorization_required": false,
+            "stage": "",
+            "source": "",
+            "source_code": "",
+            "session_continuable": false
+          },
+          "risk": "low",
+          "confidence": 0.95,
+          "rule_coverage": 0.95,
+          "information_completeness": 0.95,
+          "needs_human_reason": null,
+          "decision_basis": null,
+          "requested_input": null,
+          "stage_index": 0,
+          "predecessor_review_id": null,
+          "continue_after_execution": false,
+          "purpose_output": {
+            "action": "no_action",
+            "reason": "Complete thread read: Principal already sent the renewal approval ('Approved subject to the recorded legal terms', 2026-10-08 07:30), and the vendor's 2026-10-08 08:00 confirmation records the renewal under receipt renew-77 and explicitly states it is confirmation-only with no reply requested. Per ceo-mail-review, when the complete current thread shows an equivalent reply already sent, the canonical result is no_action for the mail effect; a reply or chat acknowledgment would be an unrequested duplicate effect. The verified state is reported in this typed result because the card asked for a judgment after opening the thread.",
+            "target": {},
+            "payload": {},
+            "evidence_refs": [
+              "dingtalk:eval-mail-conversation/mail-principal-sent",
+              "dingtalk:eval-mail-conversation/mail-original",
+              "trigger:eval-mail-conversation/trigger-mail-review",
+              "skill:ceo-mail-review/Authorization-And-Outcome"
+            ],
+            "purpose": "general"
+          },
+          "source_bindings": []
+        },
+        "canonical_valid": true,
+        "native_lines": 70,
+        "native_sha256": "01d95910cadcc8dfec5237806d3a90422cc9ed23cde106a3275da86302274275",
+        "stderr": ""
+      }
+    ],
+    "skill_sha256": {
+      "dingtalk-calendar": "f42f6fe6433656a1ae3dd5ff3f040bfc44e2d6b1bd0ce760aeb2d151b900dd1c",
+      "dingtalk-doc": "9f64d7a84c8daa8a622d027a6a7b23cee7515d3d49ea54b9427f446e6726f07e",
+      "ceo-work-tracking": "2db7c6bfb1a8dc8f64863d2e97f78fc3378400b3ff3df43ed22414a47d7edd3e",
+      "ceo-calendar-invite": "b76b913b63c9b2f3eaba5e90eb64e5dd1a58cf123330815a07d7c32c01451175",
+      "dingtalk-mail": "664f31a00f46245c270049129da4d25475ccc561b04d9897e7cd634b2c4a6f18",
+      "ceo-document-review": "b6b87c3d1ca32bb2e9a9c53675b22dd0a8932aa808205734c8725d9a3eb09d77",
+      "ceo-mail-review": "108e258426ec8f66a0907722d4a1034fba48c8628544eccc69aa5e0162163b9d",
+      "dingtalk-chat": "e1ffcc8c47a45333a0f268b1479ed98daecd8b105da4d99e2f328172ca653e91",
+      "dingtalk-shared": "7c3f6231072cd0e038b69a94b94957e99a1b1b82b961882413e08a1cf56336fb"
+    },
+    "completed_at": "2026-10-25T00:24:46.534114-07:00"
+  },
+  "release": {
+    "ceo_commit": "3fb2ce3ad3a43795a9d8970ae6fd08181626ba40",
+    "ceo_pid": 33493,
+    "qwen_old_pid": 2362797,
+    "qwen_pid": 2861779,
+    "provider_commit": "fce6e9f",
+    "provider_sha256": "9bcfe24914a52cb4f4cd2fc45f47cdc0f62f1c4695172b0815f953a4b2d2be5f",
+    "healthz_http": 200,
+    "preview_schema_exact": true,
+    "native_format_added_characters_general": 11813,
+    "attention_total": 5,
+    "history_total": 38125,
+    "post_switch_inference_5xx_at_check": 0,
+    "existing_quality_finding": "Meeting alignment stopped progressing; native delivery unavailable1. Not repaired in this scope."
+  },
+  "application_candidate_commit": "37415c6cd6d0a116c6e937a89afaa5a485dace1b",
+  "application_source_sha256": "5ac079a16ad5139fca696d211184c551c55b0e36c8ab44baacefbde226a7f259",
+  "source_commit_note": "Canary source_commit names checkout base; tested uncommitted Consumer file is byte-identical to application_candidate_commit. Actual Developer/schema/Skill digests are recorded per invocation."
 }

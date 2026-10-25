@@ -53,4 +53,11 @@ session `01a16f62-9cfd-7951-9809-d66c12895639`：
 
 测试：两个purpose的新增契约可见性回归先失败；指纹段落解析回归发现并纠正候选格式问题。native Consumer/保存会话/装配47项通过，实际Consumer续会话路径1项通过；独立审查另核对其中19项（重叠，不相加）。provider三项CPU测试先红后绿，涵盖正向工具/JSON和严格负例。旧Settings native-preview测试12例仍在fixture建库时因不存在record_type列失败，未到达本改动、文件未改；未顺手修数据库测试。没有重跑其他业务模型案例。
 
-发布：provider已备份并安装候选源码SHA `9bcfe24914a52cb4f4cd2fc45f47cdc0f62f1c4695172b0815f953a4b2d2be5f`，旧文件SHA `fe609579...` 保存在 `/home/derek/.local/state/llm-gateway/qwen-native-output-20261025/`；当前已载入的旧进程沿自然空闲卸载后才更新，不能由文件安装宣称已加载。CEO提示提交/正式部署及最终生产回读另行追加。API429仍阻塞，API Audit原生启用和G1自然失败样本不属于本次变更。
+发布：provider已备份并安装候选源码SHA `9bcfe24914a52cb4f4cd2fc45f47cdc0f62f1c4695172b0815f953a4b2d2be5f`，旧文件SHA `fe609579...` 保存在 `/home/derek/.local/state/llm-gateway/qwen-native-output-20261025/`；这是文件安装阶段的记录，不代表当时已加载；实际切换与CEO部署见下方及最终对账第12节。API429仍阻塞，API Audit原生启用和G1自然失败样本不属于本次变更。
+
+
+## 最终上线回读
+
+CEO正式部署到3fb2ce3ad，新PID33493，general Consumer预览中的完整native格式与实际schema文件等值。提供商在已知请求与等待数均0后通过现有管理器切换slot1一次；周期请求使最初自然卸载方案无法收口，未新增排空机制。操作不保证原子阻断新请求，竞态在执行前明确披露；检查窗口内未见推理5xx。旧PID2362797退出，新PID2861779在安装候选后启动并就绪。
+
+当前生产入口额外一次匿名同案例回读严格no_action：session01a171f1-acc3-7b62-9074-53cf042d5a75，70行SHA01d95910cadcc8dfec5237806d3a90422cc9ed23cde106a3275da86302274275。冷/续验收已在隔离canary通过，此处只补生产加载证据，没有全矩阵重跑。Qwen Consumer本项已完成；API429、API Audit启用和G1自然失败样本仍各自保留。
