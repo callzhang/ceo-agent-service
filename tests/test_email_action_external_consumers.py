@@ -7,7 +7,7 @@ from app.audit_web import _email_action_queue_snapshot, _queue_attention_rows, _
 from app.email_canonical_storage import (
     insert_email_classification, insert_email_message, update_email_classification,
 )
-from app.email_store import EmailStore
+from app.email_store import DIRECT_ACTION_MAX_ATTEMPTS, EmailStore
 from app.store import AutoReplyStore
 from app.web_api.dashboard import register_dashboard_routes
 from app.web_api.registration import register_console_routes
@@ -18,42 +18,19 @@ pytest_plugins = ("tests.test_email_action_plan_direct_dao",)
 
 
 def _two_failed_actions(path):
+    """Two current processed classifications whose direct Actions failed for good."""
+    from app.email_classifier_contracts import EmailAction, EmailClassificationStatus
+    from tests.support.native_email_actions import fail_action, persist_classification
+
     store = AutoReplyStore(path)
-    EmailStore(path)
-    with store._connect() as db:
-        insert_email_message(db, dict(
-            account_id="account", stable_message_identity="message", folder="INBOX",
-            uidvalidity=1, uid=1, rfc_message_id="", in_reply_to="",
-            references_json="[]", thread_identity="", sender="Sender",
-            recipients_json="[]", subject="Subject", normalized_text="",
-            preview="", attachment_metadata_json="[]", received_at="",
-            created_at="", updated_at="",
-        ))
-        insert_email_classification(db, dict(
-            id=11, account_id="account", folder="INBOX", uidvalidity=1, uid=1,
-            stable_message_identity="message", confidence=0.5, margin=0.1,
-            probabilities_json="{}", model_id="model", config_version="config",
-            status="processed", classification_source="model",
-            current_action_plan_id="plan", sender="Sender", subject="Subject",
-        ))
-        insert_email_action(db, "email_action_plans", dict(
-            action_plan_id="plan", action_plan_version=1, classification_id=11,
-            account_id="account", category="work", classification_source="model",
-            confidence=0.5, model_id="model", config_version="config",
-            actions_json='["archive","move"]', action_parameters_json="{}",
-            created_at="2026-10-14T00:00:00+00:00",
-        ))
-        for rowid, action_type, stamp in (
-            (-7, "archive", "2026-10-14T01:00:00+00:00"),
-            (42, "move", "2026-10-14T02:00:00+00:00"),
-        ):
-            insert_email_action(db, "email_actions", dict(
-                action_id=None, action_plan_id="plan", classification_id=11,
-                account_id="account", action_type=action_type,
-                parameters_json="{}", config_version="config", status="failed",
-                attempt_count=0, error="provider_failed", created_at=stamp,
-                updated_at=stamp,
-            ), source_rowid=rowid)
+    email = EmailStore(path)
+    for classification_id, action in ((11, EmailAction.ARCHIVE), (12, EmailAction.FLAG_IMPORTANT)):
+        plan_id = persist_classification(
+            email, classification_id=classification_id,
+            status=EmailClassificationStatus.PROCESSED, action=action, account_id="account",
+        )
+        fail_action(email, email.direct_action_ids_for_plan(plan_id)[0],
+                    attempts=1, retryable_last=False)
     return store
 
 
@@ -92,7 +69,7 @@ def _current_direct_action_store(path):
             next_attempt_at="2026-10-20T16:59:00+00:00",
             updated_at="2026-10-20T16:58:00+00:00",
         )
-        for attempt_number in range(1, 4):
+        for attempt_number in range(1, DIRECT_ACTION_MAX_ATTEMPTS + 1):
             record_direct_email_action_outcome(
                 db, action_id=ids[2],
                 expected_status="pending" if attempt_number == 1 else "failed",
@@ -175,28 +152,19 @@ def test_direct_email_history_locator_uses_current_action_owner_id(tmp_path):
     assert all(row.id == f"action:{row.source_id}" for row in logs)
 
 
-def test_history_keeps_native_signed_rowid_and_nullable_public_id(tmp_path):
+def test_history_lists_failed_email_actions_by_native_id_and_pages_them(tmp_path):
     store = _two_failed_actions(tmp_path / "history.sqlite3")
-    total, page = store.list_operation_logs_with_count(
-        limit=1, source_tables=("email_actions",),
+    total, everything = store.list_operation_logs_with_count(
+        limit=10, source_tables=("actions",), statuses=("failed",),
     )
     assert total == 2
-    assert [(item.id, item.source_id, item.status) for item in page] == [
-        ("email-action:42", 42, "failed")
-    ]
+    assert all(item.id == f"action:{item.source_id}" for item in everything)
+    assert all(item.status == "failed" for item in everything)
     total, page = store.list_operation_logs_with_count(
-        limit=1, offset=1, statuses=("failed",),
-        source_tables=("email_actions",),
+        limit=1, offset=1, statuses=("failed",), source_tables=("actions",),
     )
     assert total == 2
-    assert [(item.id, item.source_id) for item in page] == [("email-action:-7", -7)]
-    with store._connect() as db:
-        update_email_action(db, "email_actions", 42, {"status": "done"})
-    total, page = store.list_operation_logs_with_count(
-        limit=10, statuses=("failed",), source_tables=("email_actions",),
-    )
-    assert total == 1
-    assert [item.source_id for item in page] == [-7]
+    assert [item.source_id for item in page] == [everything[1].source_id]
 
 
 def test_complete_status_and_maintenance_paths_accept_current_target(tmp_path):
@@ -280,20 +248,20 @@ def test_current_plan_poll_and_retry_window_on_target(tmp_path, monkeypatch):
     )
     email.persist_scan_result(classification, model_text="synthetic")
     action_id = email.direct_action_ids_for_plan(classification.action_plan.action_plan_id)[0]
+    from app.shared_action_lifecycle import record_direct_email_action_outcome
+
     with email._connect() as db:
-        rowid = db.execute(
-            "select cast(legacy_key as integer) from actions "
-            "where record_type='email_actions' and email_action_id=?", (action_id,)
-        ).fetchone()[0]
-        update_email_action(db, "email_actions", rowid, {
-            "status": "failed", "next_attempt_at": "2026-10-14T12:00:00+00:00",
-            "error": "provider_failed",
-        })
-        for number in range(1200):
-            insert_action(db, "sent_replies", dict(
-                conversation_id=f"unrelated-{number}",
-                trigger_message_id=f"message-{number}", reply_text="sent",
-            ))
+        record_direct_email_action_outcome(
+            db, action_id=action_id, expected_status="pending",
+            expected_started_at=None, expected_attempt_count=0, attempt_number=1,
+            status="failed", provider_operation="archive", provider_target="INBOX",
+            provider_result_id=None, error="provider_failed",
+            started_at="2026-10-14T11:00:00+00:00", finished_at="2026-10-14T11:01:00+00:00",
+            next_attempt_at="2026-10-14T12:00:00+00:00", updated_at="2026-10-14T11:01:00+00:00",
+        )
+    store = AutoReplyStore(path)
+    for number in range(1200):
+        store.record_sent_reply(f"unrelated-{number}", f"message-{number}", "sent")
     statements = []
     original_open = email._open_connection
 
@@ -319,7 +287,7 @@ def test_current_plan_poll_and_retry_window_on_target(tmp_path, monkeypatch):
             assert len(db.execute(poll).fetchall()) == 1
         finally:
             db.set_progress_handler(None, 0)
-    assert any("idx_actions_postfix_identity (record_type=?)" in step for step in plan), plan
+    assert any("idx_actions_email_public_key (record_type=?)" in step for step in plan), plan
     assert any("sqlite_autoindex_emails_1 (classification_id=?)" in step for step in plan), plan
     assert not any(step.startswith("SCAN c") for step in plan), plan
     assert steps < 300_000

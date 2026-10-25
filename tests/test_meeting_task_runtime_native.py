@@ -176,8 +176,13 @@ def test_meeting_sender_receipt_interruption_retries_same_saved_key_and_uuid_onc
         deliver_meeting_alignment(send_decision(), meeting_source(), dws,
                                   message_sender=sender, delivery_key=key)
     assert len(dws.effects) == 1
-    assert store.get_outbound_postfix_receipt("dingtalk", key) is None
-    prepared = store.get_outbound_postfix("dingtalk", key)
+    # The prepared message is bound to its recipient: the saved key plus ':target:<digest>'.
+    [(scoped,)] = store.db.execute(
+        "select action_delivery_key from actions where action_delivery_key like ?",
+        (key + ":target:%",),
+    ).fetchall()
+    assert store.get_outbound_postfix_receipt("dingtalk", scoped) is None
+    prepared = store.get_outbound_postfix("dingtalk", scoped)
     assert prepared is not None
     store.db.execute("drop trigger interrupt_meeting_receipt")
 
@@ -185,10 +190,10 @@ def test_meeting_sender_receipt_interruption_retries_same_saved_key_and_uuid_onc
                                           message_sender=sender, delivery_key=key)
     replay = deliver_meeting_alignment(send_decision(), meeting_source(), dws,
                                        message_sender=sender, delivery_key=key)
-    expected_uuid = str(uuid5(NAMESPACE_URL, f"dingtalk:{key}"))
+    expected_uuid = str(uuid5(NAMESPACE_URL, f"dingtalk:{scoped}"))
     assert [call[0] for call in dws.calls] == [expected_uuid, expected_uuid]
     assert len(dws.effects) == 1
-    assert store.get_outbound_postfix_receipt("dingtalk", key) == delivered.send_result == replay.send_result
+    assert store.get_outbound_postfix_receipt("dingtalk", scoped) == delivered.send_result == replay.send_result
     assert delivered.message_text == replay.message_text == prepared.final_body
 
 
@@ -218,7 +223,7 @@ def test_failed_delivery_requeue_uses_native_saved_key_and_preserves_review(tmp_
         ),
     )
     store.update_meeting_alignment_job(task_id, decision_json=saved_decision,
-        target_kind="group", target_id="group-native", target_title="Group",
+        target_kind="group", target_id=decision.target.conversation_id, target_title="Group",
         final_message=decision.final_message, error="provider unavailable")
     key = store.get_meeting_delivery_key(task_id)
     assert key == f"meeting-alignment:{task_id}:meeting-requeue"
@@ -226,7 +231,7 @@ def test_failed_delivery_requeue_uses_native_saved_key_and_preserves_review(tmp_
     assert reopened is not None and reopened.status == "ready_to_send"
     assert reopened.decision_json == saved_decision
     assert (reopened.target_kind, reopened.target_id, reopened.final_message) == (
-        "group", "group-native", decision.final_message,
+        "group", decision.target.conversation_id, decision.final_message,
     )
     assert store.requeue_failed_meeting_delivery(task_id) is None
 

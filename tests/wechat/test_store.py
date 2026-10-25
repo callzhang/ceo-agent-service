@@ -864,12 +864,11 @@ def test_exhausted_stale_wechat_delivery_rejects_ineligible_state_unchanged(
         elif invalid_state == "delivery_generation_mismatch":
             expected_generation = "different-generation"
         elif invalid_state == "task_generation_mismatch":
-            parts = task8_set_parts("reply_tasks", {"execution_generation": "new-generation"})
             changed = db.execute(
-                f"update tasks set {parts.sql} "
-                "where record_type='reply_tasks' and id=(select reply_task_id "
+                "update tasks set execution_generation='new-generation' where kind='reply' "
+                "and id=(select reply_task_id "
                 f"from ({WECHAT_SQL}) where id=?)",
-                (*parts.parameters, delivery_id),
+                (delivery_id,),
             )
             assert changed.rowcount == 1
         elif invalid_state == "missing_matching_attempt":
