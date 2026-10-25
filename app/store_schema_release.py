@@ -78,11 +78,6 @@ def prepare_database_schema_release(root: Path, path: Path, *, recovery_source_p
     target = (_target_store_version(root), email_schema_release._target_schema_version(root) if (root / "app" / "email_store.py").exists() else None)
     from app.current_schema_manifest import STORE_VERSION as CURRENT_STORE_VERSION, EMAIL_VERSION as CURRENT_EMAIL_VERSION, require_current_pair
     if target == (CURRENT_STORE_VERSION, CURRENT_EMAIL_VERSION) and path.exists():
-        from app.predecessor_database_schema import PREDECESSOR_STORE_VERSION
-        from app.task_run_entity_schema_release import (
-            TARGET_STORE_VERSION as TASK_RUN_TARGET_VERSION,
-            prepare_task_run_entity_release,
-        )
         from app.reply_receipt_reference_schema_release import (
             SOURCE_STORE_VERSION as REPLY_RECEIPT_SOURCE_VERSION,
             prepare_reply_receipt_reference_release,
@@ -98,10 +93,6 @@ def prepare_database_schema_release(root: Path, path: Path, *, recovery_source_p
             ).fetchone() if "state" in tables else None
         if marker is not None and marker[0] == REPLY_RECEIPT_SOURCE_VERSION:
             return prepare_reply_receipt_reference_release(path)
-        if (CURRENT_STORE_VERSION == TASK_RUN_TARGET_VERSION
-                and marker is not None and marker[0] == PREDECESSOR_STORE_VERSION):
-            return prepare_task_run_entity_release(
-                path, recovery_source_path=recovery_source_path)
         from app.action_entity_schema_release import (
             SOURCE_STORE_VERSION as ACTION_ENTITY_SOURCE_VERSION,
             ActionEntitySchemaRelease,

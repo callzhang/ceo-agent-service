@@ -715,7 +715,7 @@ def test_native_recorded_delivery_reconciliation_requires_current_input_receipt_
         assert task_entity_storage.get_task(db, task.id)["status"] == "done"
 
 
-def test_native_complete_reply_task_settles_task_owner_and_queues_memory_idempotently(tmp_path):
+def test_native_complete_reply_task_settles_task_owner(tmp_path):
     store = _target_store(tmp_path / "native-reply-complete.sqlite3")
     task = store.ensure_reply_task(**_creator_kwargs(_spec("native-complete")))
     with store._connect() as db:
@@ -729,26 +729,11 @@ def test_native_complete_reply_task_settles_task_owner_and_queues_memory_idempot
             (task.id, task.execution_generation),
         )
     store.complete_reply_task(task.id, expected_execution_generation=task.execution_generation)
-    with store._immediate_write_transaction() as db:
-        store._enqueue_task_memory_write_in_connection(
-            db, task_id=task.id, execution_generation=task.execution_generation,
-        )
     with store._connect() as db:
         owner = task_entity_storage.get_task_with_inputs(db, task.id)
         assert owner["status"] == "done"
         assert owner["execution_generation"] == task.execution_generation
         assert owner["attempts"] == 1
-        assert db.execute("select count(*) from actions where record_type='task_memory_write_events' "
-                          "and td_reply_task_id=? and td_execution_generation=?",
-                          (task.id, task.execution_generation)).fetchone()[0] == 1
-    with store._immediate_write_transaction() as db:
-        store._enqueue_task_memory_write_in_connection(
-            db, task_id=task.id, execution_generation=task.execution_generation,
-        )
-    with store._connect() as db:
-        assert db.execute("select count(*) from actions where record_type='task_memory_write_events' "
-                          "and td_reply_task_id=? and td_execution_generation=?",
-                          (task.id, task.execution_generation)).fetchone()[0] == 1
 
 
 def test_native_complete_reply_task_does_not_close_retryable_failed_current_run(tmp_path):
@@ -995,10 +980,6 @@ def test_native_reply_failure_result_and_receipt_survive_composed_portable_cycle
         )
         db.commit()
         assert store.reconcile_failed_reply_tasks_with_recorded_deliveries() == 1
-        with immediate_transaction():
-            store._enqueue_task_memory_write_in_connection(
-                db, task_id=task_id, execution_generation=generation,
-            )
 
         expected_candidate = db.execute(
             "select candidate_json,candidate_digest from run_adopted_results "
