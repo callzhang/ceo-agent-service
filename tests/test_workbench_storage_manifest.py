@@ -4,50 +4,8 @@ import sqlite3
 import pytest
 
 from app.store import AutoReplyStore, _INITIALIZED_STORE_PATHS
-from app.workbench_storage import migrate_workbench_schema
 from app.task20_current_schema import task20_workbench_schema_is_current
-from tests.workbench_schema_fixtures import full_source_database, fingerprint, SOURCE
-
-
-def test_source13_auxiliary_copy_preserves_fresh_business_declarations(
-    tmp_path, published_source,
-):
-    from app.action_reply_storage import _fingerprint
-    from app.business_schema_release import (
-        CORE_SOURCE_PARENTS, PARENT_HASHES, SOURCE_CHILD_FULL_HASHES, SOURCE_PARENTS,
-        SERVICE_BUGFIX_SOURCE, SERVICE_BUGFIX_SOURCE_FINGERPRINT,
-        capture_business_source,
-    )
-
-    with full_source_database(
-        tmp_path / "source.db", tmp_path / "auxiliary.db", published_source,
-    ) as db:
-        captured = capture_business_source(db)
-        assert captured["variant"] == "fresh"
-        assert len(captured["parents"]) == 9
-        assert set(captured["parents"]) == set(SOURCE_PARENTS.values())
-        assert len(captured["children"]) == 15
-        assert tuple(_fingerprint(captured["parents"][name]) for name in CORE_SOURCE_PARENTS.values()) == PARENT_HASHES["fresh"]
-        assert _fingerprint(captured["parents"][SERVICE_BUGFIX_SOURCE]) == SERVICE_BUGFIX_SOURCE_FINGERPRINT
-        assert _fingerprint(captured["children"]) == SOURCE_CHILD_FULL_HASHES["fresh"]
-
-
-def test_nonempty_canceled_confirmation_source_refuses_before_mutation(tmp_path, published_source):
-    # Exercise this retained historical tool against its exact source, rather
-    # than asking the current-only release to accept an obsolete source pair.
-    from app.confirmation_schema_release import capture_confirmation_source
-    path = tmp_path / "source.db"
-    with full_source_database(path, tmp_path / "auxiliary.db", published_source) as db:
-        db.execute("pragma foreign_keys=off")
-        db.execute("begin immediate")
-        migrate_workbench_schema(db)
-        db.commit()
-        before = fingerprint(db)
-        db.execute("begin immediate")
-        with pytest.raises(ValueError, match="canceled confirmation source is nonempty"):
-            capture_confirmation_source(db)
-        db.rollback()
-        assert fingerprint(db) == before
+from tests.workbench_schema_fixtures import fingerprint, SOURCE
 
 
 @pytest.mark.parametrize(

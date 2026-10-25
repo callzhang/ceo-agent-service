@@ -1,7 +1,6 @@
 """Migration-only current selected dataset preparation, without model execution."""
 
 from datetime import datetime, timezone
-import json
 from types import SimpleNamespace
 
 import pytest
@@ -99,65 +98,3 @@ def test_label_change_while_capturing_input_aborts_without_publishing(
     )
 
 
-def test_real_child_prepares_data_after_commit_and_cold_open_with_inverse_already_emitted(
-    monkeypatch, capsys, tmp_path
-):
-    import io
-    import app.action_email_schema_release as release_module
-    import app.email_training_migration as training
-
-    fields = [field for _, field in release_module._PAIR_INVERSE]
-    events = []
-    path = tmp_path / "not-opened.sqlite3"
-    release = SimpleNamespace(
-        database_path=path, source_schema={field: {} for field in fields}
-    )
-
-    def apply(*, on_prepared):
-        on_prepared()
-        events.append("committed")
-
-    release.apply = apply
-    payload = dict(
-        root=str(tmp_path),
-        database_path=str(path),
-        original_version=["source", "stamp"],
-        versions=[[51, "stamp"]],
-        source_schema={},
-        source_fk=[],
-        target_store_version="target",
-        target_email_version=52,
-        source_bindings={},
-        recovery_source_path=None,
-    )
-    monkeypatch.setattr(
-        release_module, "ActionEmailSchemaRelease", lambda *args, **kwargs: release
-    )
-    monkeypatch.setattr(release_module.sys, "stdin", io.StringIO(json.dumps(payload)))
-    monkeypatch.setattr(
-        "app.store.AutoReplyStore", lambda path: events.append("store_cold_open") or SimpleNamespace(
-            compact_terminal_meeting_consumer_inputs=lambda: events.append("meeting_inputs_compacted")
-        )
-    )
-    store = SimpleNamespace(path=path)
-    monkeypatch.setattr(
-        "app.email_store.EmailStore",
-        lambda path: events.append("email_cold_open") or store,
-    )
-
-    def prepare(actual_store):
-        assert actual_store is store
-        events.append("data_prepared")
-        raise OSError("synthetic publication failure")
-
-    monkeypatch.setattr(training, "refresh_current_selected_baseline", prepare)
-    with pytest.raises(OSError, match="synthetic publication failure"):
-        release_module._paired_initializer()
-    assert events == [
-        "committed",
-        "store_cold_open",
-        "meeting_inputs_compacted",
-        "email_cold_open",
-        "data_prepared",
-    ]
-    assert len(capsys.readouterr().out.splitlines()) == len(fields)

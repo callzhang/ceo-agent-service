@@ -80,25 +80,3 @@ def test_previous_and_mixed_sources_refuse_without_writes(tmp_path, constructor)
     assert path.read_bytes() == before
 
 
-def test_cold_failure_rolls_back_via_existing_release(tmp_path, monkeypatch):
-    from app import store_schema_release
-    from app.action_schema_release import publication_candidate_source
-    from app.email_publication_sources import publication_email_action_source
-    from app.repository_updater import in_flight_work
-    path, _, _ = _source(tmp_path)
-    with sqlite3.connect(path) as db:
-        old = _markers(db)
-        db.execute(publication_candidate_source(db)).fetchall()
-        db.execute(publication_email_action_source(db)).fetchall()
-    assert in_flight_work(path) >= 0
-    release = prepare_database_schema_release(ROOT, path)
-    def fail(root, path):
-        assert in_flight_work(path) >= 0
-        raise RuntimeError('cold failure')
-    monkeypatch.setattr(store_schema_release, '_migrate_store', fail)
-    with pytest.raises(RuntimeError, match='cold failure'):
-        release.publish()
-    release.rollback()
-    with sqlite3.connect(path) as db:
-        assert _markers(db) == old
-

@@ -23,11 +23,9 @@ from tests.support.native_run_rows import (
     insert_run_row, insert_runtime_attempt_row, insert_scheduled_occurrence,
 )
 from app.action_storage import (
-    REPLY_ATTEMPT_COMMON_SQL, update_action, insert_task_delivery_action,
-    task_delivery_projection, insert_error_action,
+    REPLY_ATTEMPT_COMMON_SQL, update_action, insert_error_action,
 )
 from app.action_error_definitions import error_projection
-from app.task_storage import task_physical_id
 from app.store import REPLY_TASK_SQL, WORK_SUMMARY_INPUT_SQL
 from app.email_store import EmailStore
 from app.audit_web import (

@@ -118,38 +118,3 @@ def test_fresh_target_is_noop_and_mixed_marker_refuses(tmp_path):
         prepare_database_schema_release(ROOT,path)
 
 
-def test_publication_readers_and_cold_failure_rollback(tmp_path,monkeypatch):
-    from app import store_schema_release
-    from app.action_schema_release import publication_candidate_source
-    from app.action_receipt_schema_release import publication_receipt_sources
-    from app.action_postfix_schema_release import publication_postfix_sources
-    from app.action_delivery_schema_release import publication_delivery_sources
-    from app.email_publication_sources import publication_email_action_source
-    from app.repository_updater import in_flight_work
-    from app.scheduled_config_storage import publication_scheduled_source
-    from app.task_schema_release import publication_task_sources,publication_meeting_sources
-    path,*_ = _source(tmp_path)
-    def read_all():
-        with sqlite3.connect(path) as db:
-            for sql in (publication_candidate_source(db),publication_email_action_source(db),
-                publication_scheduled_source(db),*publication_task_sources(db),*publication_meeting_sources(db),
-                *publication_delivery_sources(db).values(),*publication_postfix_sources(db).values(),
-                *publication_receipt_sources(db).values()):
-                db.execute(sql).fetchall()
-        # The queued reply task is intentionally still processing; assert the
-        # publication reader can compute its real count on either declaration.
-        assert in_flight_work(path) >= 0
-    read_all()
-    with sqlite3.connect(path) as db:
-        original = _markers(db)
-    release = prepare_database_schema_release(ROOT,path)
-    def fail(root,path):
-        read_all()
-        raise RuntimeError('target cold startup failed')
-    monkeypatch.setattr(store_schema_release,'_migrate_store',fail)
-    with pytest.raises(RuntimeError,match='cold startup'):
-        release.publish()
-    release.rollback()
-    with sqlite3.connect(path) as db:
-        assert _markers(db) == original
-    read_all()

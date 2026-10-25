@@ -14,8 +14,6 @@ from app import action_storage as actions
 from app.email_classifier_contracts import EmailAction, EmailClassificationStatus
 from app.email_store import EmailStore
 from app.shared_action_definitions import email_projection
-from app.specialized_action_schema_release import prepare_specialized_action_schema_release
-from app.store import AutoReplyStore
 from app.store_schema_release import prepare_database_schema_release
 from tests.test_shared_action_release import _old_process
 from tests.test_email_action_reply_dao import _reply_arguments, _receipt_arguments
@@ -162,35 +160,3 @@ def test_current_dao_source_parity_inverse_old_cold_reforward(old_source, tmp_pa
     assert prepare_database_schema_release(ROOT, target) is None
 
 
-def test_wrong_pair_refusal_and_failed_load_restores_exact_blob_clock(old_source, tmp_path, monkeypatch):
-    from app import store_schema_release
-    from app.result_schema_release import _markers
-    from app.state_storage import update_state_rows
-    from tests.test_shared_action_lifecycle import _read_publication
-    path = tmp_path / 'source.sqlite3'
-    _seed(old_source, path)
-    before = path.read_bytes()
-    for constructor in (AutoReplyStore, EmailStore):
-        with pytest.raises(sqlite3.IntegrityError, match='unsupported or mixed'):
-            constructor(path)
-        assert path.read_bytes() == before
-    with closing(sqlite3.connect(path)) as db:
-        db.execute('begin immediate')
-        update_state_rows(db, 'service_state', {'updated_at':b'original-source-clock'}, where_sql='key=?',parameters=('store_schema_version',))
-        db.commit()
-        markers = _markers(db)
-    before = _facts(path)
-    assert _read_publication(path) >= 0
-    release = prepare_specialized_action_schema_release(ROOT, path)
-    def fail(root, database):
-        assert _read_publication(database) >= 0
-        raise RuntimeError('injected target cold-load failure')
-    monkeypatch.setattr(store_schema_release, '_migrate_store', fail)
-    with pytest.raises(RuntimeError, match='injected target cold-load'):
-        release.publish()
-    release.rollback()
-    release.rollback()
-    assert _facts(path) == before
-    with closing(sqlite3.connect(path)) as db:
-        assert _markers(db) == markers
-    _cold(old_source, path)

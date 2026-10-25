@@ -15,17 +15,6 @@ from app.action_storage import (
 from app import action_storage as storage
 
 
-@pytest.fixture(autouse=True)
-def _historical_text_action_dml(monkeypatch):
-    """Keep this pre-final sent-delivery storage contract on its TEXT layout."""
-    from tests.historical_action_text_fixture import install
-
-    install(monkeypatch)
-    # This module imported the projection mapping by value before the fixture.
-    monkeypatch.setitem(globals(), "ACTION_PROJECTIONS", storage.ACTION_PROJECTIONS)
-    monkeypatch.setitem(globals(), "update_action", storage.update_action)
-
-
 @pytest.fixture
 def db():
     with closing(sqlite3.connect(":memory:")) as conn:

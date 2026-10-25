@@ -89,28 +89,6 @@ def test_explicit_11_2_release_keeps_new_records_and_deleted_allocations(tmp_pat
     release.rollback()
 
 
-def test_inverse_failure_is_atomic(tmp_path, monkeypatch):
-    import app.task_schema_release as module
-
-    root, path = target_and_source(tmp_path)
-    release = prepare_store_schema_release(root, path)
-    release.migrate = migrate
-    release.publish()
-    with closing(sqlite3.connect(path)) as db:
-        before = fingerprint(db)
-    original = module.restore_task_schema
-
-    def interrupted(db, state):
-        original(db, state)
-        raise RuntimeError("interrupted")
-
-    monkeypatch.setattr(module, "restore_task_schema", interrupted)
-    with pytest.raises(RuntimeError, match="interrupted"):
-        release.rollback()
-    with closing(sqlite3.connect(path)) as db:
-        assert fingerprint(db) == before
-
-
 @pytest.mark.parametrize(
     "alteration",
     [

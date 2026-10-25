@@ -13,7 +13,7 @@ from app.action_email_history_storage import (
     restore_email_history_schema, insert_email_history, _projected_snapshot,
 )
 from app.action_task_delivery_storage import _hash
-from app.business_schema_release import _snapshot
+from app.business_schema_helpers import _snapshot
 from app.business_storage import insert_business
 from app.store import AutoReplyStore
 from app.email_store import EmailStore

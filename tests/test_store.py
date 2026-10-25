@@ -1,6 +1,5 @@
 from tests.sent_fixtures import historical_sent_delivery
 
-from app.task8_storage import register_task8_functions, task8_insert_parts, task8_set_parts
 from tests.test_email_legacy_schema import published_source as published_source
 import errno
 import hashlib
@@ -41,8 +40,6 @@ from app.state_definitions import state_projection
 from app.business_storage import insert_business
 from app.business_candidate_storage import insert_business_candidate
 from app.business_candidate_definitions import candidate_projection
-from app.action_storage import insert_task_delivery_action, task_delivery_set_parts
-from app.action_task_delivery_definitions import task_delivery_projection
 from app.store import (
     REPLY_ATTEMPT_CLOSED_AFTER_REVIEW,
     AgentRole,

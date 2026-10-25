@@ -7,7 +7,6 @@ import pytest
 from app.task_source_documents import source_contains_quote, source_document_key
 from app import task_source_documents
 from app.store import AutoReplyStore
-from app.task_models import WorkItem
 from app.task_semantic_models import SourceCitation
 from app.business_source_reader import (
     BusinessTaskSignalFact, PreparedSources, RequestSourceReader,

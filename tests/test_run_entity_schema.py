@@ -18,7 +18,6 @@ def _create(objects, db):
         db.execute(sql)
 
 
-
 def _run_handoff(db, source_metadata, *, identity_edges=(), owner_highwaters=None):
     from app.run_entity_schema import run_handoff_context, run_handoff_digest
 
@@ -50,7 +49,7 @@ def test_capture_rejects_historical_runs11_factory():
     db = sqlite3.connect(":memory:")
     db.execute("pragma foreign_keys=off")
     db.execute("begin")
-    from app.runs11_schema_release import _target_objects
+    from app.runs11_schema_helpers import _target_objects
     _create(_target_objects(), db)
     assert runs11_current_schema.current_run11_schema_is_current(db)
     assert not logical_run_current_schema.current_run11_schema_is_current(db)
@@ -415,7 +414,6 @@ def test_forward_migration_coalesces_only_complete_adjacent_historical_empty_tic
         )
     finally:
         db.close()
-
 
 
 def test_artifact_created_uuid_reference_survives_native_forward_and_inverse():

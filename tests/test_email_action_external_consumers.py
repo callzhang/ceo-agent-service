@@ -8,7 +8,6 @@ from app.email_canonical_storage import (
     insert_email_classification, insert_email_message, update_email_classification,
 )
 from app.email_store import EmailStore
-from app.email_publication_sources import current_email_actions_available
 from app.store import AutoReplyStore
 from app.web_api.dashboard import register_dashboard_routes
 from app.web_api.registration import register_console_routes
@@ -110,7 +109,6 @@ def _current_direct_action_store(path):
 
 
 def test_dashboard_queue_reads_current_actions_and_preserves_email_contract(tmp_path):
-    from app.audit_web import _email_action_queue_snapshot
 
     store, action_ids = _current_direct_action_store(tmp_path / "dashboard.sqlite3")
     with store._connect() as db:
@@ -201,35 +199,6 @@ def test_history_keeps_native_signed_rowid_and_nullable_public_id(tmp_path):
     assert [item.source_id for item in page] == [-7]
 
 
-def test_attention_and_status_keep_nullable_failed_actions(tmp_path):
-    store = _two_failed_actions(tmp_path / "attention.sqlite3")
-    rows = [row for row in _queue_attention_rows(store) if row["category"] == "Email action"]
-    assert len(rows) == 2
-    assert [row["id"] for row in rows] == ["None", "None"]
-    with store._connect() as db:
-        assert current_email_actions_available(db)
-        assert _email_action_queue_snapshot(db)["failed"] == 2
-
-
-def test_store_only_does_not_advertise_email_history_or_queue(tmp_path):
-    store = AutoReplyStore(tmp_path / "store-only.sqlite3")
-    assert store.count_operation_logs(source_tables=("email_actions",)) == 0
-    with store._connect() as db:
-        assert not current_email_actions_available(db)
-    assert not [row for row in _queue_attention_rows(store)
-                if row["category"] == "Email action"]
-
-
-def test_maintenance_reads_current_email_action_source(tmp_path):
-    from app.email_publication_sources import publication_email_action_source
-
-    path = tmp_path / "maintenance.sqlite3"
-    _two_failed_actions(path)
-    with sqlite3.connect(path) as db:
-        source = publication_email_action_source(db)
-        assert db.execute(f"select count(*) from ({source}) where status='failed'").fetchone() == (2,)
-
-
 def test_complete_status_and_maintenance_paths_accept_current_target(tmp_path):
     from app.deploy_maintenance import check_maintenance
     from app.quality_gate import scan_hourly_quality
@@ -240,35 +209,6 @@ def test_complete_status_and_maintenance_paths_accept_current_target(tmp_path):
     assert next(row for row in snapshots if row["name"] == "Email provider actions")["failed"] == 2
     assert check_maintenance(path, ()) is not None
     assert scan_hourly_quality(path).missing_sources == ()
-
-
-def test_generic_publication_readers_accept_store_only_target(tmp_path):
-    from app.action_postfix_schema_release import publication_postfix_sources
-    from app.action_delivery_schema_release import publication_delivery_sources
-    from app.action_receipt_schema_release import publication_receipt_sources
-    from app.action_schema_release import publication_candidate_source
-    from app.scheduled_config_storage import publication_scheduled_source
-    from app.task_schema_release import publication_meeting_sources, publication_task_sources
-
-    path = tmp_path / "store-only.sqlite3"
-    AutoReplyStore(path)
-    with sqlite3.connect(path) as db:
-        assert db.execute(f"select count(*) from ({publication_task_sources(db)[0]})").fetchone() == (0,)
-        assert db.execute(f"select count(*) from ({publication_meeting_sources(db)[0]})").fetchone() == (0,)
-        assert db.execute(f"select count(*) from ({publication_candidate_source(db)})").fetchone() == (0,)
-        assert db.execute(f"select count(*) from ({publication_scheduled_source(db)})").fetchone() == (0,)
-        for sources in (publication_receipt_sources(db), publication_delivery_sources(db), publication_postfix_sources(db)):
-            assert all(db.execute(f"select count(*) from ({sql})").fetchone() == (0,)
-                       for sql in sources.values())
-
-
-def test_publication_email_quiet_source_accepts_genuine_old_pair(converted_pair):
-    from app.email_publication_sources import publication_email_action_source
-
-    _converted, _classification, action_ids, original, _old_code = converted_pair
-    with sqlite3.connect(original) as db:
-        source = publication_email_action_source(db)
-        assert db.execute(f"select count(*) from ({source})").fetchone() == (len(action_ids),)
 
 
 def test_genuine_source_history_rowids_survive_real_pair_and_mixed_pagination(converted_pair):

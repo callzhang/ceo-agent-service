@@ -17,7 +17,7 @@ from tests.test_email_action_storage import _cases
 from app.store import AutoReplyStore
 from app.store import STORE_SCHEMA_VERSION
 from app.state_definitions import state_projection
-from app.provider_state_schema_release import provider_state_schema_is_current
+from app.provider_state_schema_current import provider_state_schema_is_current
 
 
 _ORACLE = json.loads(

@@ -10,7 +10,6 @@ import tarfile
 import pytest
 
 from app.store_schema_release import prepare_database_schema_release
-from app.task_lifecycle_schema_release import prepare_task_lifecycle_schema_release
 from tests.test_shared_action_release import _old_process
 from tests import task_lifecycle_caller_fixture as calls
 
@@ -84,52 +83,6 @@ def test_all_nine_actual_dao_paths_current_inverse_cold_and_reforward(archived_s
     next_release.finalize()
     assert calls.facts(target) == current
     assert prepare_database_schema_release(ROOT, target) is None
-
-
-def test_unknown_source_and_wrong_pair_refuse_before_write(archived_source, tmp_path):
-    from app.store import AutoReplyStore
-    from app.email_store import EmailStore
-    path = tmp_path / "source.sqlite3"
-    seed(archived_source, path)
-    before = path.read_bytes()
-    for constructor in (AutoReplyStore, EmailStore):
-        with pytest.raises(sqlite3.IntegrityError):
-            constructor(path)
-        assert path.read_bytes() == before
-    with closing(sqlite3.connect(path)) as db:
-        db.execute("create index unknown_task_index on tasks(legacy_key)")
-        db.commit()
-    before = path.read_bytes()
-    with pytest.raises(ValueError, match="declaration"):
-        prepare_task_lifecycle_schema_release(ROOT, path)
-    assert path.read_bytes() == before
-
-
-def test_failed_target_load_inverse_keeps_new_facts_and_original_clock(archived_source, tmp_path, monkeypatch):
-    from app import store_schema_release
-    from app.result_schema_release import _markers
-    path = tmp_path / "source.sqlite3"
-    seed(archived_source, path)
-    with closing(sqlite3.connect(path)) as db:
-        markers = _markers(db)
-    release = prepare_task_lifecycle_schema_release(ROOT, path)
-    current = None
-
-    def fail_after_new_facts(root, database):
-        nonlocal current
-        execute(ROOT, database)
-        current = calls.facts(database)
-        raise RuntimeError("injected post-publication load failure")
-
-    monkeypatch.setattr(store_schema_release, "_migrate_store", fail_after_new_facts)
-    with pytest.raises(RuntimeError, match="injected post-publication"):
-        release.publish()
-    release.rollback()
-    release.rollback()
-    assert calls.facts(path) == current
-    with closing(sqlite3.connect(path)) as db:
-        assert _markers(db) == markers
-    cold(archived_source, path)
 
 
 def test_pruned_claim_absence_inverse_reforward_and_source_generation_reset(archived_source, tmp_path):

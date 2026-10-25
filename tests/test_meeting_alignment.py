@@ -6,7 +6,6 @@ from datetime import datetime, timedelta
 from types import SimpleNamespace
 
 import pytest
-from pydantic import ConfigDict, create_model
 
 import app.meeting_alignment as meeting_alignment
 from app.agent_cron.commands import (
@@ -39,14 +38,12 @@ from app.meeting_alignment_models import (
     MeetingAlignmentDecision,
     MeetingSource,
     meeting_alignment_decision_digest,
-    meeting_decision_audit_is_approved,
     persist_audited_meeting_decision,
 )
 from tests.support.native_task_fields import set_native_task_fields
 from app.action_task_delivery_definitions import task_delivery_projection
 from app.store import MEETING_LOGICAL_RUN_SQL
 from app.store import AutoReplyStore
-from app.task_storage import MEETING_JOB_SQL
 from app.skill_features import FeatureRegistry
 
 NOW = datetime.fromisoformat("2026-07-14T10:10:00+08:00")

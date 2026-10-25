@@ -347,36 +347,6 @@ def test_cold_failure_can_restore_exact_predecessor(tmp_path, monkeypatch):
         assert (_markers(db), _source_declaration(db, "emails"), _facts(db, "emails")) == before
 
 
-def test_publication_quiet_and_progress_readers_bind_both_pairs(tmp_path):
-    from app.action_schema_release import publication_candidate_source
-    from app.action_receipt_schema_release import publication_receipt_sources
-    from app.action_postfix_schema_release import publication_postfix_sources
-    from app.action_delivery_schema_release import publication_delivery_sources
-    from app.email_publication_sources import publication_email_action_source, current_email_actions_available
-    from app.repository_updater import ExistingSchemaUpgradeStateStore, in_flight_work
-    from app.scheduled_config_storage import publication_scheduled_source
-    from app.task_schema_release import publication_task_sources, publication_meeting_sources
-
-    path = _source(tmp_path)
-    def read_all(*, target):
-        with closing(sqlite3.connect(path)) as db:
-            for sql in (publication_candidate_source(db), publication_email_action_source(db),
-                        publication_scheduled_source(db), *publication_task_sources(db), *publication_meeting_sources(db),
-                        *publication_delivery_sources(db).values(), *publication_postfix_sources(db).values(),
-                        *publication_receipt_sources(db).values()):
-                db.execute(sql).fetchall()
-            assert current_email_actions_available(db) == target
-        assert in_flight_work(path) >= 0
-        progress = ExistingSchemaUpgradeStateStore(path)
-        assert progress.get_service_state("store_schema_version") == ("2026-10-19.3" if target else "2026-10-19.2")
-    read_all(target=False)
-    release = prepare_database_schema_release(ROOT, path)
-    release.publish()
-    read_all(target=True)
-    release.rollback()
-    read_all(target=False)
-
-
 def test_metadata_inverse_keeps_retired_inputs_without_source_reads(tmp_path, monkeypatch):
     from app import email_body_source, native_trajectory
 

@@ -13,11 +13,7 @@ from app.repository_updater import in_flight_work
 from app.audit_web import _queue_attention_rows, _queue_status_snapshots
 from app.action_storage import insert_task_delivery_action, task_delivery_projection
 from app.store import AutoReplyStore
-from app.task_schema_release import publication_meeting_sources
-from app.task_storage import MEETING_JOB_SQL
 from app.task_entity_storage import update_task_cas
-from app.run_storage import MEETING_RUN_SQL
-from tests.test_meeting_task_storage import forward, meeting_source
 
 
 NOW = datetime(2026, 10, 12, tzinfo=timezone.utc)
@@ -64,29 +60,6 @@ def test_current_meeting_quiet_count_follows_native_task_parent(tmp_path):
     task_id = _job(store, status="processing")
     store.create_professional_run(task_id, status="running")
     assert in_flight_work(store.path) > 0
-
-
-def test_meeting_publication_sources_accept_exact_old_and_current(tmp_path):
-    path = tmp_path / "source.db"
-    with meeting_source(path) as db:
-        assert publication_meeting_sources(db) == (
-            "select * from meeting_alignment_jobs", "select * from meeting_alignment_runs")
-        db.row_factory = sqlite3.Row
-        assert publication_meeting_sources(db) == (
-            "select * from meeting_alignment_jobs", "select * from meeting_alignment_runs")
-        db.row_factory = None
-        forward(db)
-        expected_target = (MEETING_JOB_SQL, MEETING_RUN_SQL)
-        assert publication_meeting_sources(db) == expected_target
-        db.row_factory = sqlite3.Row
-        assert publication_meeting_sources(db) == expected_target
-        db.execute("update service_state set value='unknown' where key='store_schema_version'")
-        with pytest.raises(ValueError, match="unknown"):
-            publication_meeting_sources(db)
-        db.execute("update service_state set value='2026-10-11.3' where key='store_schema_version'")
-        db.execute("create table meeting_alignment_jobs (id integer)")
-        with pytest.raises(ValueError, match="mixed"):
-            publication_meeting_sources(db)
 
 
 def test_quality_meeting_projection_reads_only_meeting_type(tmp_path):

@@ -14,8 +14,7 @@ import pytest
 from app.action_email_storage import _columns
 from app import action_storage as actions
 from app.prepared_action_schema import _facts
-from app.prepared_action_schema_release import prepare_prepared_action_schema_release
-from app.result_schema_release import _markers
+from app.result_schema_helpers import _markers
 from app.store_schema_release import prepare_database_schema_release
 from tests.test_shared_action_release import _old_process
 from tests.test_prepared_action_schema import retained
@@ -112,52 +111,6 @@ def test_real_source_public_dao_current_fact_inverse_cold_reforward(archived_sou
     again.finalize()
     assert snapshot(target, owned=True) == current
     assert prepare_database_schema_release(ROOT, target) is None
-
-
-def test_failed_target_load_inverse_keeps_new_facts_and_marker(archived_source, tmp_path, monkeypatch):
-    from app import store_schema_release
-    path = tmp_path / "failed-load.sqlite3"
-    seed(archived_source, path)
-    with closing(sqlite3.connect(path)) as db:
-        original_markers = _markers(db)
-    release = prepare_prepared_action_schema_release(ROOT, path)
-    current = None
-
-    def failed_load(root, database):
-        nonlocal current
-        execute(ROOT, database)
-        current = snapshot(database, owned=True)
-        raise RuntimeError("injected target load failure")
-
-    monkeypatch.setattr(store_schema_release, "_migrate_store", failed_load)
-    with pytest.raises(RuntimeError, match="injected target load"):
-        release.publish()
-    release.rollback()
-    release.rollback()
-    assert snapshot(path, owned=False) == current
-    with closing(sqlite3.connect(path)) as db:
-        assert _markers(db) == original_markers
-    cold(archived_source, path)
-
-
-def test_predecessor_mixed_and_unknown_declaration_refuse_before_write(archived_source, tmp_path):
-    from app.store import AutoReplyStore
-    from app.email_store import EmailStore
-    from app.workbench.store import WorkbenchStore
-    path = tmp_path / "refuse.sqlite3"
-    seed(archived_source, path)
-    before = path.read_bytes()
-    for constructor in (AutoReplyStore, EmailStore, WorkbenchStore):
-        with pytest.raises(sqlite3.IntegrityError):
-            constructor(path)
-        assert path.read_bytes() == before
-    with closing(sqlite3.connect(path)) as db:
-        db.execute("create index unknown_prepared_index on actions(legacy_key)")
-        db.commit()
-    before = path.read_bytes()
-    with pytest.raises((ValueError, sqlite3.IntegrityError), match="declaration"):
-        prepare_prepared_action_schema_release(ROOT, path)
-    assert path.read_bytes() == before
 
 
 def test_historical_factory_outputs_and_c1_files_frozen(archived_source):

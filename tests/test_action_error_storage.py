@@ -36,14 +36,6 @@ INDEX_SQL = (
 )
 
 
-@pytest.fixture(autouse=True)
-def _historical_text_action_dml(monkeypatch):
-    """Keep this module's historical TEXT Actions DML off the compact writer."""
-    from tests.historical_action_text_fixture import install
-
-    install(monkeypatch)
-
-
 def _db(path, *, fresh=False):
     db = sqlite3.connect(path)
     db.execute("create table tasks(id integer primary key,record_type text,task_public_id integer)")
