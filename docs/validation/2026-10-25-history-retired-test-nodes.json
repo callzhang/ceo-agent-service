@@ -1,0 +1,37 @@
+{
+  "reason": "Deleted operational readers and retired automatic old19.8-.10 release dispatch only; current history, formal Task and fail-closed tests retained",
+  "retired_functions": {
+    "tests/test_audit_web.py": [
+      "test_task_management_project_api_returns_detail_and_404",
+      "test_task_management_search_api_returns_task_context",
+      "test_tasks_page_computes_table_statuses",
+      "test_tasks_page_filters_by_category",
+      "test_tasks_page_filters_by_status_and_sorts_by_other_columns",
+      "test_tasks_page_filters_projects_by_full_text_query",
+      "test_tasks_page_paginates_and_preserves_search_params",
+      "test_tasks_page_removes_retired_priority_and_risk_columns_and_sorts",
+      "test_tasks_page_renders_projects_and_todos_without_global_followups",
+      "test_tasks_page_renders_sent_todos_with_owner_project_filters",
+      "test_tasks_page_respects_page_size",
+      "test_tasks_page_todo_cell_limits_visible_items",
+      "test_tasks_page_uses_todo_owner_as_fallback_when_project_owner_is_missing",
+      "test_tasks_route_applies_category_and_sort_params",
+      "test_tasks_route_applies_pagination_params",
+      "test_tasks_route_applies_search_query",
+      "test_tasks_route_renders_page"
+    ],
+    "tests/test_task_retrieval.py": [
+      "test_render_candidate_prompt_uses_persisted_project_facts_only",
+      "test_retrieve_project_candidates_excludes_archived_and_done_projects",
+      "test_retrieve_project_candidates_prioritizes_structured_project_id",
+      "test_retrieve_project_candidates_returns_empty_for_empty_query_or_no_projects",
+      "test_retrieve_project_candidates_searches_all_active_projects",
+      "test_retrieve_project_candidates_uses_summary_and_project_name",
+      "test_retrieve_project_task_details_expands_group_matched_project"
+    ],
+    "tests/test_business_legacy_field_retirement.py": [
+      "test_19_10_current_facts_inverse_old_cold_read_reforward",
+      "test_known_predecessor_chain_uses_only_final_constructor"
+    ]
+  }
+}

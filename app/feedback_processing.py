@@ -367,7 +367,7 @@ def detail_references(item: "UserFeedbackItem") -> list[dict[str, str]]:
 
     project_id = int(getattr(item, "project_id", 0) or 0)
     if project_id > 0:
-        add(f"task#{project_id}", f"/tasks/{project_id}")
+        add(f"task#{project_id}", f"/tasks/legacy-project/{project_id}")
     return refs
 
 

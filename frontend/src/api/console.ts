@@ -260,7 +260,7 @@ export interface BusinessProjectDetail {
 }
 export interface TaskFilters { categories: string[]; task_states: string[]; }
 export interface TaskList extends ConsoleList<TaskSummary> { filters: TaskFilters; }
-export interface TaskDetail extends TaskSummary { description: string; background: string; blocker: string; tags: string[]; facts: Array<{ id: string; description: unknown; source: unknown; created: string; updated: string }>; todos: Array<Record<string, unknown>>; updates: Array<Record<string, unknown>>; evidence_candidates: Array<Record<string, unknown>>; unlinked_follow_ups: Array<Record<string, unknown>>; }
+export interface TaskDetail extends TaskSummary { description: string; background: string; blocker: string; tags: string[]; facts: Array<{ id: string; description: unknown; source: unknown; created: string; updated: string }>; source_conversations: unknown[]; todos: Array<Record<string, unknown>>; updates: Array<Record<string, unknown>>; evidence_candidates: Array<Record<string, unknown>>; unlinked_follow_ups: Array<Record<string, unknown>>; }
 export interface HistoryItem { id: string; occurred_at: string; title: string; type: string; status: string; summary: unknown; actor: string; detail_url: string; kind?: string; input?: string; output?: string; action?: string; task_id?: number; run_count?: number; }
 /** One History type as the service names it (Derek 2026-09-25: the filter lists every kind of work the service runs). */
 export interface HistoryTypeOption { value: string; label: string; }
@@ -852,6 +852,7 @@ function mapTaskDetail(value: unknown): TaskDetail {
     background: displayValue(project.background), blocker: displayValue(project.blocker),
     tags: Array.isArray(project.tags) ? project.tags.map(displayValue) : [],
     facts: facts.map((fact, index) => { const item = asRecord(fact); return { id: String(item.id ?? index), description: item.description, source: item.source, created: displayValue(item.created || item.created_at), updated: displayValue(item.updated || item.updated_at) }; }),
+    source_conversations: Array.isArray(project.source_conversations) ? project.source_conversations : [],
     todos,
     updates: Array.isArray(payload.updates) ? payload.updates.map(asRecord) : [],
     evidence_candidates: Array.isArray(payload.evidence_candidates) ? payload.evidence_candidates.map(asRecord) : [],

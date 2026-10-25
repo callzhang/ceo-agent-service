@@ -15,15 +15,24 @@ from tests.test_task_storage import fingerprint
 
 @pytest.mark.parametrize("source_version", ["2026-10-10.2", "2026-10-11.1", "future"])
 def test_current_store_factory_rejects_unverified_sources_without_mutation(tmp_path, source_version):
-    root, path = target_and_source(tmp_path)
+    from pathlib import Path
+
+    from app.state_storage import upsert_state
+    from app.store import AutoReplyStore
+
+    root = Path(__file__).resolve().parents[1]
+    path = tmp_path / "unverified.sqlite3"
+    AutoReplyStore(path)
     with sqlite3.connect(path) as db:
-        db.execute("update service_state set value=? where key='store_schema_version'", (source_version,))
-    with sqlite3.connect(path) as db:
-        before = fingerprint(db)
+        db.execute("begin")
+        upsert_state(db, "service_state", {"key": "store_schema_version", "value": source_version},
+                     {"value": "json_quote(excluded.value)"})
+        db.commit()
+        before = tuple(db.iterdump())
     with pytest.raises(ValueError, match="verified inverse"):
         prepare_store_schema_release(root, path)
     with sqlite3.connect(path) as db:
-        assert fingerprint(db) == before
+        assert tuple(db.iterdump()) == before
 
 
 def test_current_store_factory_noops_for_already_current_marker(tmp_path):

@@ -1,6 +1,7 @@
 from tests.support.legacy_todo_facts import seed_legacy_work_project
+from tests.support.native_task_fields import set_native_task_fields
+from app.task8_storage import task8_set_parts
 from app.store import WORK_SUMMARY_INPUT_SQL
-from app.task_entity_storage import get_task, update_task_cas
 from app.action_error_definitions import error_projection
 from app.action_storage import error_set_parts, update_action
 import json
@@ -89,22 +90,10 @@ def _verified_reply_fixture(conversation, trigger, text):
     }
 
 
-def _update_task_fixture(db, task_id, values):
-    """Mutate one existing generic Task through the native CAS writer."""
-    db.row_factory = sqlite3.Row
-    task = get_task(db, task_id)
-    if task is None:
-        raise AssertionError(f"expected fixture Task {task_id} to exist")
-    updated = update_task_cas(
-        db,
-        task_id=task_id,
-        expected={"kind": task["kind"], "status": task["status"]},
-        changes=values,
-    )
-    if updated is None:
-        raise AssertionError(f"fixture Task {task_id} changed before update")
+def _update_task_fixture(db, kind, public_id, values):
+    """Set existing native-shaped fixture fields using the current typed writer."""
+    set_native_task_fields(db, kind, public_id, values)
     return 1
-
 
 def test_email_unsubscribe_cancellation_requires_exact_identity_and_explicit_apply():
     arguments = [
@@ -452,7 +441,6 @@ def seed_exhausted_stale_wechat_delivery(store: AutoReplyStore) -> tuple[int, in
         trigger_sender="Alex",
         trigger_text="hi",
     )
-    reply_task = store.claim_reply_tasks(1, channel="wechat")[0]
     attempt_id = store.record_reply_attempt(
         conversation_id="wechat-user-1",
         conversation_title="Alex",
@@ -465,15 +453,13 @@ def seed_exhausted_stale_wechat_delivery(store: AutoReplyStore) -> tuple[int, in
         channel="wechat",
     )
     delivery_id = store.create_wechat_delivery(
-        reply_task_id=reply_task.id,
+        reply_task_id=1,
         account_id="wechat-account-1",
         target_type="direct",
         target_id="wechat-user-1",
         conversation_id="wechat-user-1",
         reply_text="reply",
     )
-    from tests.wechat.support import approve_delivery
-    approve_delivery(store, delivery_id)
     store.mark_wechat_delivery_sending(
         delivery_id,
         now="2026-08-30 17:07:23",
@@ -2279,16 +2265,7 @@ def test_process_okr_reviews_command_does_not_reclaim_active_dispatcher_owner(
     )
     assert claimed is not None
     with store._connect() as db:
-        update_task_cas(
-            db,
-            task_id=request_id,
-            expected={"kind": "okr_review", "status": "processing"},
-            changes={
-                "updated_at": db.execute(
-                    "select datetime('now', '-31 minutes')"
-                ).fetchone()[0]
-            },
-        )
+        _update_task_fixture(db, 'okr_review_requests', ((request_id,))[0], {'updated_at': db.execute("select datetime('now', '-31 minutes')").fetchone()[0]})
     monkeypatch.setattr(cli, "_build_okr_review_runner", lambda *_args: object())
     monkeypatch.setattr(
         "app.okr_review.process_okr_review_request",
@@ -2365,7 +2342,7 @@ def test_process_okr_reviews_command_requeues_stale_processing_request(
     store.claim_okr_review_requests(limit=1)
     assert store.acquire_codex_session_lock("cid-1", f"okr_review:{request_id}")
     with sqlite3.connect(db_path) as db:
-        _update_task_fixture(db, request_id, {'updated_at': db.execute("select datetime('now', '-31 minutes')").fetchone()[0]})
+        _update_task_fixture(db, 'okr_review_requests', ((request_id,))[0], {'updated_at': db.execute("select datetime('now', '-31 minutes')").fetchone()[0]})
 
     processed = process_okr_reviews_command(
         WorkerSettings(db_path=db_path, workspace=tmp_path)
@@ -2985,7 +2962,7 @@ def test_process_work_items_command_reclaims_stale_processing_input(
     )
     claimed = store.claim_work_summary_inputs(limit=1)
     with store._connect() as db:
-        _update_task_fixture(db, claimed[0].id, {'updated_at': db.execute("select datetime('now', '-25 minutes')").fetchone()[0]})
+        _update_task_fixture(db, 'work_summary_inputs', ((claimed[0].id,))[0], {'updated_at': db.execute("select datetime('now', '-25 minutes')").fetchone()[0]})
 
     processed = process_work_items_command(
         WorkerSettings(db_path=db_path, workspace=tmp_path, max_batches=5)
@@ -3250,7 +3227,7 @@ def test_process_work_items_command_keeps_native_missing_header_terminal_after_l
         item.model_dump_json(),
     )
     with store._connect() as db:
-        _update_task_fixture(db, input_id, {'attempts': 3})
+        _update_task_fixture(db, 'work_summary_inputs', ((input_id,))[0], {'attempts': 3})
 
     processed = process_work_items_command(
         WorkerSettings(db_path=db_path, workspace=tmp_path, max_batches=1)
@@ -3311,7 +3288,7 @@ def test_process_work_items_command_fails_codex_transport_failure_after_limit(
         item.model_dump_json(),
     )
     with store._connect() as db:
-        _update_task_fixture(db, input_id, {'attempts': 3})
+        _update_task_fixture(db, 'work_summary_inputs', ((input_id,))[0], {'attempts': 3})
 
     processed = process_work_items_command(
         WorkerSettings(db_path=db_path, workspace=tmp_path, max_batches=1)
@@ -3377,7 +3354,7 @@ def test_process_work_items_pauses_after_codex_capacity_exhaustion(
         [row] = db.execute(
             f"select id from ({WORK_SUMMARY_INPUT_SQL}) where source_ref='1'"
         ).fetchall()
-        _update_task_fixture(db, row['id'], {'attempts': 3})
+        _update_task_fixture(db, 'work_summary_inputs', row['id'], {'attempts': 3})
 
     assert process_work_items_command(
         WorkerSettings(db_path=db_path, workspace=tmp_path, max_batches=5)
@@ -3438,7 +3415,7 @@ def test_work_summary_process_failure_continues_prior_capacity_wait(
         ).model_dump_json(),
     )
     with store._connect() as db:
-        _update_task_fixture(db, input_id, {'attempts': 3})
+        _update_task_fixture(db, 'work_summary_inputs', ((input_id,))[0], {'attempts': 3})
 
     settings = WorkerSettings(db_path=db_path, workspace=tmp_path, max_batches=1)
     assert process_work_items_command(settings) == 0
@@ -3447,7 +3424,7 @@ def test_work_summary_process_failure_continues_prior_capacity_wait(
     state["retry_at"] = "2000-01-01T00:00:00+00:00"
     store.set_service_state("codex_capacity_pause", json.dumps(state))
     with store._connect() as db:
-        _update_task_fixture(db, input_id, {'available_at': ''})
+        _update_task_fixture(db, 'work_summary_inputs', ((input_id,))[0], {'available_at': ''})
 
     assert process_work_items_command(settings) == 0
     capsys.readouterr()
@@ -3507,7 +3484,7 @@ def test_process_work_items_command_fails_typed_external_failure_after_limit(
         item.model_dump_json(),
     )
     with store._connect() as db:
-        _update_task_fixture(db, input_id, {'attempts': 3})
+        _update_task_fixture(db, 'work_summary_inputs', ((input_id,))[0], {'attempts': 3})
 
     processed = process_work_items_command(
         WorkerSettings(db_path=db_path, workspace=tmp_path, max_batches=1)
@@ -4394,18 +4371,18 @@ def test_send_attempt_command_refuses_unavailable_original_without_queue(
             original = store.get_reply_task_for_message("cid-1", "msg-1")
             provenance = store._reply_input_provenance(original.trigger_text, original.trigger_message_json)
             with sqlite3.connect(settings.db_path) as db:
-                db.execute(
-                    "update task_inputs set input_compacted=1,trigger_text='',"
-                    "trigger_message_json='',input_provenance_json=? where id=?",
-                    (provenance, original.current_input_id),
-                )
+                parts = task8_set_parts('reply_task_inputs', {
+                    'input_compacted': 1, 'trigger_text': '',
+                    'trigger_message_json': '', 'input_provenance_json': provenance,
+                })
+                db.execute(f"update tasks set {parts.sql} where id=?",
+                           (*parts.parameters, original.current_input_id))
         else:
             with sqlite3.connect(settings.db_path) as db:
                 original = store.get_reply_task_for_message('cid-1', 'msg-1')
-                db.execute(
-                    "update task_inputs set trigger_message_json='{}' where id=?",
-                    (original.current_input_id,),
-                )
+                parts = task8_set_parts('reply_task_inputs', {'trigger_message_json': '{}'})
+                db.execute(f"update tasks set {parts.sql} where id=?",
+                           (*parts.parameters, original.current_input_id))
     attempt_id = store.record_reply_attempt(
         conversation_id="cid-1", conversation_title="Friday",
         trigger_message_id="msg-1", trigger_sender="Phina",
@@ -4467,11 +4444,12 @@ def test_send_attempt_email_requires_exact_uncompacted_action_payload(
         original = store.get_reply_task_for_message(conversation_id, action_identity, channel="email")
         provenance = store._reply_input_provenance(original.trigger_text, original.trigger_message_json)
         with sqlite3.connect(settings.db_path) as db:
-            db.execute(
-                "update task_inputs set input_compacted=1,trigger_text='',"
-                "trigger_message_json='',input_provenance_json=? where id=?",
-                (provenance, original.current_input_id),
-            )
+            parts = task8_set_parts('reply_task_inputs', {
+                'input_compacted': 1, 'trigger_text': '',
+                'trigger_message_json': '', 'input_provenance_json': provenance,
+            })
+            db.execute(f"update tasks set {parts.sql} where id=?",
+                       (*parts.parameters, original.current_input_id))
         with pytest.raises(SystemExit, match="original trigger is unavailable"):
             send_attempt_command(settings, attempt_id)
         assert store.get_reply_task_for_message(
@@ -4654,19 +4632,12 @@ def test_send_attempt_command_rotates_pending_task_with_previous_error(
         send_status="failed",
     )
     first = send_attempt_command(settings, attempt_id)
-    with store._connect() as db:
-        task = get_task(db, int(first["task_id"]))
-        assert task is not None
-        updated = update_task_cas(
-            db,
-            task_id=int(first["task_id"]),
-            expected={"kind": task["kind"], "status": task["status"]},
-            changes={
-                "error": "reviewed_write_not_authorized",
-                "available_at": "2099-01-01 00:00:00",
-            },
-        )
-        assert updated is not None
+    with sqlite3.connect(settings.db_path) as db:
+        parts = task8_set_parts('reply_tasks', {
+            'error': 'reviewed_write_not_authorized', 'available_at': '2099-01-01 00:00:00',
+        })
+        db.execute(f"update tasks set {parts.sql} where record_type='reply_tasks' and id=?",
+                   (*parts.parameters, first['task_id']))
     second = send_attempt_command(settings, attempt_id)
     updated = store.get_reply_task(int(second["task_id"]))
 
@@ -7966,7 +7937,7 @@ def _wechat_sender_loop_store(tmp_path, monkeypatch):
     )
     monkeypatch.setattr("app.wechat.service.build_reader", lambda *a, **k: object())
     monkeypatch.setattr("app.wechat.service.build_sender", lambda *a, **k: object())
-    return store, WorkerSettings(db_path=db)
+    return store, SimpleNamespace(db_path=db)
 
 
 class _StopLoop(Exception):
@@ -7977,12 +7948,8 @@ def _stop_after(monkeypatch, count):
     import time
 
     sleeps = []
-    target_thread = threading.current_thread()
-    real_sleep = time.sleep
 
     def sleep(seconds):
-        if threading.current_thread() is not target_thread:
-            return real_sleep(seconds)
         sleeps.append(seconds)
         if len(sleeps) >= count:
             raise _StopLoop
@@ -8254,7 +8221,7 @@ def test_process_work_items_waits_for_paused_routes_without_spending_attempts(
         ).model_dump_json(),
     )
     with store._connect() as db:
-        _update_task_fixture(db, input_id, {'attempts': 3})
+        _update_task_fixture(db, 'work_summary_inputs', ((input_id,))[0], {'attempts': 3})
 
     settings = WorkerSettings(db_path=db_path, workspace=tmp_path, max_batches=1)
     assert process_work_items_command(settings) == 0
@@ -8334,7 +8301,7 @@ def test_process_work_items_waits_for_provider_outage_after_failed_attempt_witho
     store = AutoReplyStore(db_path)
     input_id = _route_outage_work_input(store)
     with store._connect() as db:
-        _update_task_fixture(db, input_id, {'attempts': 3})
+        _update_task_fixture(db, 'work_summary_inputs', ((input_id,))[0], {'attempts': 3})
 
     settings = WorkerSettings(db_path=db_path, workspace=tmp_path, max_batches=1)
     assert process_work_items_command(settings) == 0
@@ -8389,7 +8356,7 @@ def test_process_work_items_keeps_execution_failures_bounded(
     store = AutoReplyStore(db_path)
     input_id = _route_outage_work_input(store)
     with store._connect() as db:
-        _update_task_fixture(db, input_id, {'attempts': 3})
+        _update_task_fixture(db, 'work_summary_inputs', ((input_id,))[0], {'attempts': 3})
 
     settings = WorkerSettings(db_path=db_path, workspace=tmp_path, max_batches=1)
     assert process_work_items_command(settings) == 0

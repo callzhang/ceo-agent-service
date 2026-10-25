@@ -2,6 +2,19 @@
 
 ## 数据库结构与迁移合同
 
+### 历史业务读取归一（2026-10-25）
+
+当前业务库存与筛选只使用已有 Business Task／正式项目模型；旧 Project／Todo／Update
+不再提供独立的运营列表或排名检索。两条 `/api/task-management` 旧查询接口和非 SPA
+的旧 `/tasks` 列表已退休；React `/tasks` 与正式 Task API 保留。
+历史详情统一使用 `/tasks/legacy-project/{id}` 及现有 JSON API，HTML 与 JSON 共用
+`load_project_task_detail`，History／反馈／跟进链接使用同一明确身份路径。
+历史页面只读展示来源、事实、待办、更新、跟进结果和钉钉回执，标明历史状态；
+不按旧 active 状态创建任务、不重发待办、不按相同整数 ID 合并正式 Task。
+此变更不修改 schema 或历史行，42 个保留字段仍由原有历史事实 owner 持有。
+逐字段与退休清单见[历史读取归一](business-model-history-read-unification.md)。
+
+
 Store `2026-10-25.2`／Email54 退休唯一失效触发器
 `trg_actions_public_reference_update`：其引用的 candidate/review 公开身份列已随
 Task/Run 统一退出 `actions`。当前声明保留全部实际外键和其他父引用触发器。
@@ -12,6 +25,8 @@ Store25.1→25.2 是显式事务迁移，仅删除该触发器并更新版本标
 复现、逐表事实核对、真实旧代码冷启动和发布读回见
 [触发器退休验收](action-reference-trigger-retirement-validation.md)。
 
+
+### 历史发布阶段记录（均为当时状态，当前状态见本文后续当前合同）
 
 Derek于2026-10-24批准分阶段退役历史迁移链：部署路径 `prepare_database_schema_release` 只处理当前 Store／Email 版本、其上一版本（Store `2026-10-19.12` 经 `action_entity` 与 `task_run_entity` 发布）以及仅 Email 变化的发布；面向更旧目标版本的分支和 `prepare_store_schema_release` 里的 Run／Task／Workbench／Action 旧转换已删除，遇到这些版本一律以 `Store schema release needs a verified inverse for this transition` 拒绝。部署进度 DAO（`ExistingSchemaUpgradeStateStore`）只接受 Email 账本版本 52／53／54，Email 51 及更早的账本报 `unsupported committed Email schema role`。生产已于 Store `2026-10-23.1`／Email54，不受影响；回滚到比上一版本更旧的提交不再有自动逆迁。
 
@@ -32,15 +47,27 @@ C1 来源证据见[C1 生命周期验收](business-model-task-lifecycle-validati
 当前 C1／C2、A5 及 D 的范围见[业务简化计划](superpowers/plans/2026-10-19-business-model-simplification.md)，
 不能据此前阶段结案推断本轮全部完成或容量已通过。
 
+以下 Phase 1 及旧 Store 版本说明是其验收时的历史记录，不能用于推断当前生产版本。
+
 Action Entity Phase 1 已部署，当前生产即使用统一 Action owner：`actions` 的 `_kind=70` 保存共同 Action，`action_receipts` 保存逐次 provider/execution 事实，`action_observers` 保存多个 Run 的观察关系，typed identity map 保留精确旧身份。生产 Store `2026-10-21.1`／Email53 有 14 张普通表；创建、CAS 领取和结果更新由 `app.action_entity_storage` 提供，调用方持有事务。生产读回、准确退休清单、copy 容量结果和剩余路线见[Phase 1 生产验收](action-entity-production-acceptance.md)。这只表示第一外部 Action 单元完成，不表示全部 Actions 或数据库已统一。
 字段映射见 `docs/action-entity-field-map.json`；`docs/action-entity-target.sql` 是初始字段合同夹具，当前完整 Store/Email 目标声明见 `docs/action-entity-current-target.sql`。
 
-Tasks 合并二十种已有任务。七个结构列和十二个生命周期物理列可写；
-`payload_json` 只保存当前 `TASK20_PAYLOAD_FIELDS`／`TASK20_LAYOUTS` 的业务值数组。
-`_kind` 是唯一存储的类型，`record_type` 是只读生成名称；原公开字段、过滤、
-唯一性和类型约束由生成列及既有索引提供。当前／claimed 输入指针和真实物理父子
-关系保留；公开 ID、源 ROWID、独立分配水位、SQLite REAL/BLOB、负零及业务字段
-内的 JSON 文本不改变。历史 `task_storage` 是迁移来源 oracle，不是运行时兼容层。
+当前 native `tasks` 表的 `kind` 合同包含九类：`reply`、`work_summary`、
+`meeting_alignment`、`okr_review`、`okr_analysis`、`workbench_turn`、
+`email_classification`、`feedback_processing` 和 `wechat_import`。Task 的生命周期
+字段与 `parameters_json` 由 `tasks` 持有；Reply 输入由 `task_inputs` 持有，
+WorkSummary、Email classification、Feedback processing 和 Workbench turn 的
+类型化明细由各自 owner 表持有。原来源类型及迁移结构不是当前运行时 kind 或
+兼容层。当前字段、约束和类型定义见 `app/task_run_entity_definitions.py`。
+
+截至 2026-10-25，Task/Run 统一已部署并构成当前生产运行时。下方按 Task2D、Task3E
+等阶段记录的“未启用”“仍待后续验收”“候选”等状态，是各阶段当时的历史实现边界，
+不表示当前 constructor、dispatcher 或生产部署仍待启用。当前部署和证据边界见
+[业务模型当前进度](business-model-execution-progress.md)。
+
+### Historical Task2D0/Task2D10A/Task2D1 implementation notes (superseded)
+
+The following task-phase notes preserve their original scoped implementation evidence. Statements that constructor activation, dispatcher integration, readers, or runtime cutover remained pending describe that historical checkpoint and are not current service status. The current native Task contract and deployment status are stated above.
 
 Task2D0 将 Reply 的 queue peek/max/get、单条与批量 claim、TaskInput 列表及 pending
 trigger refresh 改为直接读写 `tasks`／`task_inputs` 原生 owner。claim 在同一写事务内
@@ -83,6 +110,8 @@ SQL NULL，另外十一种记录保持原业务状态且没有通用生命周期
 和 `meeting_phase` 只读派生。原始非最小 JSONB 标头同样保留；共同写入器在一次
 Task UPDATE 内瞬时重建源数组、调用原生 jsonb_set，再拆回各唯一 owner。
 该临时数组不落库，业务 payload 的根标头只保留自身 framing。
+
+End of historical Task/Run phase notes. The following section describes the current Task lifecycle contract.
 
 Reply／ScheduledExecution、WorkSummary、Meeting、OKR 的 claim、续租、release、
 当前 owner 判定和 metrics 读取 Task；两个 Reply adapter 的 ledger 身份与 channel
@@ -4195,7 +4224,10 @@ supply a UID attribute. This supports real multipart filename literals and UID
 attributes after a literal without changing account, generation or message
 identity checks. See `docs/email-classification-source-repair-validation.md`.
 
-### Task/Run entity Phase 2 candidate (status through 2026-10-23)
+### Historical Task/Run Phase 2 candidate notes (checkpoint through 2026-10-24; superseded)
+
+The following phase-by-phase implementation and validation notes preserve their original evidence. Statements that a constructor was unactivated, production deployment had not occurred, or acceptance gates remained open describe that historical checkpoint only; consult the current Task/Run contract above and the progress table at the top of `business-model-execution-progress.md` for current status.
+
 
 Task1 is complete at the independently reviewed local schema-contract scope, including later SQL artifact and Run parity repairs (`progress.md:92`); the candidate remains unactivated. Accepted bounded Task owners now include the earlier Reply queue/input slice and later WorkSummary, Meeting, OKR, weekly, WeChat, Email-classifier, and Workbench parent/attachment paths. Accepted Run work includes the professional Run/RuntimeAttempt owner, adoption/receipt and converter handoffs; Workbench Turn/event/artifact handling (Task2D7B/J) and Feedback reference conversion (Task2D8R) are accepted at bounded scope through `2980895e1`. Task2D8A implements native Feedback batch/item creation, batch/item/round reads, and atomic claim. Task2D8B moves association, evidence, typed iteration decision, resolve, reopen and reached processing-lineage validators to actual native Task and Feedback owners. Task2D8C moves event intake, public feedback list/by-key reads and pending counts to native Task, Feedback, Reply Attempt and Run owners. Item status and lifecycle timestamps live on the Task; current association/evidence live on the Feedback item; historical rounds, decisions and transitions remain on their domain owners. Scope receipt conversion maps only decision_id and Workbench task/turn leaves under evidence.associations, preserving independent attempt/run numbers, other JSON and current native edits through inverse/reforward. Receipt policy, legacy receipt versions, capability checks and atomic Task/detail/round/batch/Action/event updates are unchanged. The candidate remains unactivated. Full browser UI acceptance and complete Task2/3 caller cutover remain outside these bounded slices. No Phase 2 production write, integration into `main`, push or deployment occurred. The only fresh production observation recorded for this phase is the read-only weekly-count query at `2026-10-23T13:46:56Z`, which found no active weekly Tasks or attempts; it is not a full current production readback or release snapshot. Adjacent Phase 1 values remain dated observations.
 
@@ -4287,6 +4319,8 @@ The final shared-reader and publication candidate targets Store `2026-10-23.1` w
 
 Task-then-Run forward conversion preserves every captured source `sqlite_sequence` rowid, name, and water value. If a newly created native Run owner occupies a captured source rowid, the converter relocates only that owner's technical sequence rowid before restoring source facts; the owner name and AUTOINCREMENT high-water remain intact. The same narrow handling applies during Run inverse restoration, and unrelated sequence rows are never renumbered. The paired Task/Run inverse also writes the sparse Task identity/context returned by the inverse as an adjacent source continuation. The next forward consumes and validates it, preserving Meeting delivery-key IDs across a cold source interval; it contains no source bodies and is replaced by the new current-target inverse handoff on success.
 
+
+End of historical Task/Run Phase 2 candidate notes. The following sections describe current service contracts unless they identify another dated historical checkpoint.
 
 ### 原生输出格式与解码契约一致
 

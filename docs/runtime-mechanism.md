@@ -2,6 +2,19 @@
 
 ## 数据库结构与迁移合同
 
+### 历史业务读取归一（2026-10-25）
+
+当前业务库存与筛选只使用已有 Business Task／正式项目模型；旧 Project／Todo／Update
+不再提供独立的运营列表或排名检索。两条 `/api/task-management` 旧查询接口和非 SPA
+的旧 `/tasks` 列表已退休；React `/tasks` 与正式 Task API 保留。
+历史详情统一使用 `/tasks/legacy-project/{id}` 及现有 JSON API，HTML 与 JSON 共用
+`load_project_task_detail`，History／反馈／跟进链接使用同一明确身份路径。
+历史页面只读展示来源、事实、待办、更新、跟进结果和钉钉回执，标明历史状态；
+不按旧 active 状态创建任务、不重发待办、不按相同整数 ID 合并正式 Task。
+此变更不修改 schema 或历史行，42 个保留字段仍由原有历史事实 owner 持有。
+逐字段与退休清单见[历史读取归一](business-model-history-read-unification.md)。
+
+
 Store `2026-10-25.2`／Email54 通过显式发布退休
 `trg_actions_public_reference_update`；该触发器引用的旧 candidate/review 列已不在
 `actions`。当前声明保留实际 FK 和其他父引用触发器，恢复 SQLite 的 schema
@@ -37,12 +50,22 @@ Email historical-candidate locator refinement: target Email54 removes only exact
 Action Entity Phase 1 已部署，当前生产即使用统一 Action owner：`actions` 的 `_kind=70` 保存共同 Action，`action_receipts` 保存逐次 provider/execution 事实，`action_observers` 保存多个 Run 的观察关系，typed identity map 保留精确旧身份。创建、CAS 领取和结果更新由 `app.action_entity_storage` 提供，调用方持有事务。生产读回、准确退休清单、copy 容量结果和剩余路线见[Phase 1 生产验收](action-entity-production-acceptance.md)。这只表示第一外部 Action 单元完成，不表示全部 Actions 或数据库已统一。
 字段映射见 `docs/action-entity-field-map.json`；`docs/action-entity-target.sql` 是初始字段合同夹具，当前完整 Store/Email 目标声明见 `docs/action-entity-current-target.sql`。
 
-Tasks 合并二十种已有任务。七个结构列和十二个生命周期物理列可写；
-`payload_json` 只保存当前 `TASK20_PAYLOAD_FIELDS`／`TASK20_LAYOUTS` 的业务值数组。
-`_kind` 是唯一存储的类型，`record_type` 是只读生成名称；原公开字段、过滤、
-唯一性和类型约束由生成列及既有索引提供。当前／claimed 输入指针和真实物理父子
-关系保留；公开 ID、源 ROWID、独立分配水位、SQLite REAL/BLOB、负零及业务字段
-内的 JSON 文本不改变。历史 `task_storage` 是迁移来源 oracle，不是运行时兼容层。
+当前 native `tasks` 表的 `kind` 合同包含九类：`reply`、`work_summary`、
+`meeting_alignment`、`okr_review`、`okr_analysis`、`workbench_turn`、
+`email_classification`、`feedback_processing` 和 `wechat_import`。Task 的生命周期
+字段与 `parameters_json` 由 `tasks` 持有；Reply 输入由 `task_inputs` 持有，
+WorkSummary、Email classification、Feedback processing 和 Workbench turn 的
+类型化明细由各自 owner 表持有。原来源类型及迁移结构不是当前运行时 kind 或
+兼容层。当前字段、约束和类型定义见 `app/task_run_entity_definitions.py`.
+
+截至 2026-10-25，Task/Run 统一已部署并构成当前生产运行时。下方按 Task2D、Task3E
+等阶段记录的“未启用”“仍待后续验收”“候选”等状态，是各阶段当时的历史实现边界，
+不表示当前 constructor、dispatcher 或生产部署仍待启用。当前部署和证据边界见
+[业务模型当前进度](business-model-execution-progress.md)。
+
+### Historical Task2D0/Task2D10A/Task2D1 implementation notes (superseded)
+
+The following task-phase notes preserve their original scoped implementation evidence. Statements that constructor activation, dispatcher integration, readers, or runtime cutover remained pending describe that historical checkpoint and are not current service status. The current native Task contract and deployment status are stated above.
 
 Task2D0 将 Reply 的 queue peek/max/get、单条与批量 claim、TaskInput 列表及 pending
 trigger refresh 改为直接读写 `tasks`／`task_inputs` 原生 owner。claim 在同一写事务内
@@ -112,6 +135,8 @@ SQL NULL，另外十一种记录保持原业务状态且没有通用生命周期
 和 `meeting_phase` 只读派生。原始非最小 JSONB 标头同样保留；共同写入器在一次
 Task UPDATE 内瞬时重建源数组、调用原生 jsonb_set，再拆回各唯一 owner。
 该临时数组不落库，业务 payload 的根标头只保留自身 framing。
+
+End of historical Task/Run phase notes. The following section describes the current Task lifecycle contract.
 
 Reply／ScheduledExecution、WorkSummary、Meeting、OKR 的 claim、续租、release、
 当前 owner 判定和 metrics 读取 Task；两个 Reply adapter 的 ledger 身份与 channel
@@ -872,6 +897,14 @@ node's key and preserves the historical task/attempt. Partial scans, missing
 identity, malformed ownership/status, and source-read failures retain prior
 keys because they cannot prove that Derek's responsibility ended. Non-OA
 pending/processing/needs_human status alone remains excluded.
+
+After a verified append-task, DingTalk may keep the overall process RUNNING,
+mark Derek's original task PAUSED, and create a new RUNNING task for the added
+approver. A PAUSED task is not actionable by its prior owner: exclude it when
+building current-user pending task IDs and remove its exact old key from
+`pending_business_object_keys` after a complete, successful source read. If the
+scan is partial or the source cannot be read, keep the prior key as an
+unverified reminder until a later successful read confirms the task status.
 
 Current Attention also hides an older failed OA Reply Attempt only when a
 newer attempt for the same process is bound to its current Audit-approved
@@ -5295,7 +5328,10 @@ supply a UID attribute. This supports real multipart filename literals and UID
 attributes after a literal without changing account, generation or message
 identity checks. See `docs/email-classification-source-repair-validation.md`.
 
-### Task/Run entity Phase 2 candidate (status through 2026-10-23)
+### Historical Task/Run Phase 2 candidate notes (checkpoint through 2026-10-24; superseded)
+
+The following phase-by-phase implementation and validation notes preserve their original evidence. Statements that a constructor was unactivated, production deployment had not occurred, or acceptance gates remained open describe that historical checkpoint only; consult the current Task/Run contract above and the progress table at the top of `business-model-execution-progress.md` for current status.
+
 
 Task1 is complete at the independently reviewed local schema-contract scope, including later SQL artifact and Run parity repairs (`progress.md:92`); the candidate remains unactivated. Accepted bounded Task owners span Reply queue/input refresh and later WorkSummary, Meeting, OKR, weekly, WeChat, Email-classifier, and Workbench parent/attachment paths. Accepted Run work covers the professional Run/RuntimeAttempt owner, adoption/receipt and converter handoffs; Workbench Turn/event/artifact handling (Task2D7B/J) and Feedback reference conversion (Task2D8R) are accepted at bounded scope through `2980895e1`. Task2D8A implements native Feedback batch/item creation and reads, atomic claim, and the reached processing-lineage readers. Task2D8B moves association, evidence, typed iteration decision, resolve, reopen and reached validators to native Task status and Feedback item/batch/round/decision owners. Item status/timestamps are Task facts; current association/evidence are Feedback item facts; rounds, decisions and transitions remain domain facts. Scope receipt conversion maps only decision_id and Workbench task/turn leaves in evidence.associations, preserving independent attempt/run numbers, other JSON and current native edits across inverse/reforward. Existing receipt policy, legacy versions, capability checks and atomic Task/detail/round/batch/Action/event updates remain in force. The constructor is unactivated; backlog/UI list readers and complete Task2/3 caller cutover remain open. A configured-production read-only query at `2026-10-23T13:46:56Z` checked weekly counts and found no active weekly Tasks or attempts; it is not a full current production readback or release snapshot. No Phase 2 production write or deployment occurred. The frozen `source.sqlite3` read and orphan finding remain historical snapshot-scoped evidence, not a current production assertion.
 
@@ -5367,6 +5403,8 @@ The paired publication read selectors distinguish the exact frozen Store `2026-1
 
 For this paired Task/Run candidate, the release writes its actual forward capture as strict portable JSON beside the active database before committing the schema marker. The file contains declarations, typed identity mappings, allocator waters and captured FK findings, not Task or Run bodies. Because it is adjacent to the active database, normal backup rotation can retire an older SQLite backup without removing the current inverse handoff. The explicit `scripts/inverse_task_run_entity.py` command loads that handoff in a cold process and applies the current-fact inverse. On success it atomically replaces the target handoff with a content-free source-identity continuation containing the native identity/context returned by the inverse. The next paired forward reads that continuation even when no backup path is supplied, validates its digest through the existing Task converter and writes the new current-target handoff; failed inverse leaves the current-target handoff available. This remains part of the unactivated candidate and is not production behavior until the complete acceptance and release gates pass.
 
+
+End of historical Task/Run Phase 2 candidate notes. The following sections describe current service contracts unless they identify another dated historical checkpoint.
 
 ### 原生输出格式与解码契约一致
 

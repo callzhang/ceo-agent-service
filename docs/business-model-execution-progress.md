@@ -1,5 +1,51 @@
 # Business model simplification: current completion and closeout
 
+## Current authoritative status — production readback, 2026-10-25
+
+| Area | Verified state | Evidence / remaining boundary |
+|---|---|---|
+| Production release | Standard deploy completed `41404b469 → a6ab02a77`; PID79189 running, health OK; Store25.2/Email54 unchanged. | [Production readback](validation/2026-10-25-history-production-readback.json). These are dated readback facts, not a permanent live-state assertion. |
+| Task/Run, Email and Action ownership | Previously deployed native Task/Run, Email54, A5b exact receipt references and Store25.2 trigger retirement remain in use. | Not reimplemented in this phase; 46 receipt references remain. |
+| Legacy business reads | Parallel operational list/search/DTO/ranking removed. Current inventory uses Business Tasks; exact historical detail preserves all42 fields, provenance, updates and receipts. | [Field/caller and retirement contract](business-model-history-read-unification.md). No schema or historical row deletion; same-number domains remain separate. |
+| A5 native acceptance | Original trigger and material passed current real GPT-6 Luna/high Consumer/Audit and reviewed option selection; zero sends before selection, then one substitute send/verification/receipt. | [Original-case revalidation](business-model-a5-original-revalidation.md). The old failed run remains recorded; no Consumer/Audit runtime change or universal model-success claim. |
+| Tests and UI | Backend combined96pass, post-merge focused17pass, two harness argument tests; frontend four files58pass; TypeScript/build/Ruff/compile/diff checks pass. | Scoped evidence only, no full-suite-green claim. Copy and production Chrome formal-list/history/receipt readback completed. |
+| Current queues | Pending6, processing0, failed28, retryable0, Attention4; History returned20 items. | Failed28 and Attention4 match the pre-deploy snapshot; no real test send or production fixture task was created. |
+| Known data exception | Original sole FK finding `('runs',190042,'tasks',1)` remains unchanged. | Last value is FK ordinal; no inferred Task, NULL repair or deletion. Separate from this read-model change. |
+| Artifact cleanup | Latest workflow backup verified complete/quick_check OK; exact cleanup still blocked by platform approval Never. | 11 owned test roots, one backup and four API files rechecked present; about11.86GiB. Authorization already exists; no alternate deletion mechanism. |
+
+This table is the current status source. Sections below retain dated checkpoints;
+old production versions, unactivated constructors and pending release statements
+must not be read as current state. Scope implementation, reviews, copy checks,
+native acceptance and release/readback are complete; artifact cleanup is the
+remaining closeout blocker. The broader historical non-green test result is not
+rewritten by this scoped acceptance.
+
+## Artifact cleanup authorization and recheck — 2026-10-25
+
+Derek explicitly renewed authorization to delete this round's test copies and
+verified backup together with earlier task-owned test directories. The bounded
+inventory found **10 test roots, one workflow backup and four temporary API
+outputs**, totaling **11,346,504,616 logical bytes (10.57 GiB)**. This is an
+artifact inventory, not a physical database-space reduction or APFS reclaimed
+space measurement. The previously reported 4.8 GB task root is now measured at
+6,179,786,995 bytes; the current inventory supersedes that earlier size.
+
+Every listed directory was resolved to an explicit path, had no symlinks, and
+had no open files according to the combined lsof check. The backup passed a
+fresh read-only SQLite quick_check (`ok`); its earlier deployment verification
+is recorded below. Production data, native trajectories, repository regression
+tests and the unrelated `backups/dws-doc-jsonml-87ddde41` directory are excluded.
+
+The exact rm command was **rejected before execution** by platform approval:
+`approval required by policy, but AskForApproval is set to Never`. The subsequent
+existence check confirmed all 15 targets remain. No alternate deletion path was
+used. User authorization is already present; the remaining step requires an
+execution environment that permits this authorized deletion, followed by an
+absence check. Production health remained `ok`. No runtime code, database or
+service restart was changed in this cleanup attempt.
+
+The complete target list is in the [trigger retirement closeout](action-reference-trigger-retirement-validation.md#renewed-cleanup-attempt--2026-10-25).
+
 ## Dangling Action trigger retirement — 2026-10-25
 
 The exact Store25.1 declaration retained one invalid candidate-reference trigger.
@@ -17,21 +63,23 @@ readback passed. Cleanup of the new 508 MiB validation root and the verified
 those files remain. Details and the exact scope are in
 [trigger retirement validation](action-reference-trigger-retirement-validation.md).
 
-## Refreshed production baseline and next business-model work — 2026-10-25
+## Historical production baseline — 2026-10-25 (superseded)
 
-The prior Task/Run table below is a dated 2026-10-23 checkpoint and is
-superseded by this readback. Production checkout is `a9694da3696e946ad410b58bd3393ddc3f7dae18`;
-`/healthz` returned `{"ok":true,"status":"ok"}`. The live database is
-Store `2026-10-23.1` / Email54 and already has the common `tasks`, `runs`,
+This section records a production checkpoint before the later Store25.2
+publication. It is superseded by the authoritative current status at the top
+of this document; its earlier Store version is not the current production schema.
+At that readback,
+production checkout was `a9694da3696e946ad410b58bd3393ddc3f7dae18`;
+`/healthz` returned `{"ok":true,"status":"ok"}`. The database then read
+Store `2026-10-23.1` / Email54 and had the common `tasks`, `runs`,
 `runtime_attempts`, `task_inputs`, `task_business_keys`, and `work_summary_inputs`
 owners. Counts at read time were 19,672 Tasks, 38,194 Runs, 26,389 Runtime
 Attempts, 8,869 TaskInputs, 8,647 TaskBusinessKeys, and 9,140 WorkSummaryInputs.
-The only `foreign_key_check` result remains `runs(190042) -> tasks` ordinal 1;
-it is preserved and was not repaired. The live database size was 514,969,600
-bytes, with 14,407 free pages (about 56.3 MiB), so reclaimable pages remain an
-optional maintenance opportunity rather than the main business-model goal.
+At that readback, the only `foreign_key_check` result was `runs(190042) -> tasks` ordinal 1;
+it is preserved and was not repaired. The database file at that readback was 514,969,600
+bytes, with 14,407 free pages (about 56.3 MiB).
 
-Read-only owner inspection found 975 `work_project`, 3,327 `work_todo`, and
+The read-only owner inspection found 975 `work_project`, 3,327 `work_todo`, and
 5,468 `work_updates` facts. The current semantic importer promotes only records
 with its existing source-backed formality evidence; other records remain
 history-only. Their old status values are not current provider readbacks and do
@@ -94,8 +142,9 @@ Audit `return` then `approve`, four CLI calls, one substitute send and receipt,
 and the same 48-table preservation check.
 
 A5b implementation, copy inverse, native CLI acceptance and production
-deployment/readback are complete. The original A5 native acceptance conflict is
-a separate issue and remains open. The old Project/Todo/Update write paths have
+deployment/readback are complete. The original A5 native failure remains preserved, while the exact original input
+and selection now pass current native revalidation. This does not claim all future
+model outputs pass or change Consumer/Audit behavior; see [A5 original revalidation](business-model-a5-original-revalidation.md). The old Project/Todo/Update write paths have
 already been retired, while their history readers still have consumers. No
 safe whole-row deletion or source-backed replacement owner has been proven, so
 that cleanup has no authorized data-deletion change in this phase.
@@ -124,8 +173,9 @@ task-owned copy directory was authorized by Derek but the file-deletion command
 was rejected by the current automatic approval policy (“approval required,
 AskForApproval is Never”). They remain the only closeout blocker; no alternate
 deletion mechanism was used. Remove them when deletion is enabled, then verify
-both paths are absent. Keep the original A5 native-acceptance conflict and the
-unproven Project/Todo/Update historical-owner mapping as separate open items.
+both paths are absent. The original A5 historical failure remains preserved despite the current input
+revalidation; this does not generalize to every model output or change Consumer/Audit behavior. See [A5 original revalidation](business-model-a5-original-revalidation.md). The Project/Todo/Update
+historical-owner mapping remains separately unproven.
 
 ## Email business-model phase audit — 2026-10-24
 
@@ -241,7 +291,7 @@ SPEC/QUALITY approval; fresh productionpreflight/backup/publicationpending.
 C1nine-kind raw-byte/old-code inverse checks have passed during implementation;
 source not frozen/reviewed/live. A5/C2/fullDremainopen.
 
-## Task/Run unification status (through 2026-10-23)
+## Historical Task/Run unification phase status (checkpoint through 2026-10-24; source observations through 2026-10-23)
 
 The Phase 1 production values, PID, counts and health readbacks above describe their recorded 2026-10-22 inspection only. A configured-production read-only query at 2026-10-23T13:46:56Z checked weekly counts and found no active weekly Tasks or attempts. This narrow observation is not a full current production readback or a fresh production-derived release snapshot. No Phase 2 production write, activation, push or deployment occurred. The frozen 2026-10-23 read-only `source.sqlite3` snapshot confirms the specific orphan: `runs` row 190042 has `task_id=404225`, `source_type='meeting_alignment_runs'`, `legacy_key='2298'`, and `job_id=4908`; Task 404225 is absent in that snapshot. The finding tuple `('runs', 190042, 'tasks', 1)` ends with foreign-key ordinal 1, not referenced Task ID 1. This snapshot evidence does not establish current production state or authorize a data repair, synthetic Task, NULL conversion, or deletion.
 

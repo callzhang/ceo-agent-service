@@ -228,6 +228,10 @@ def business_action_schema_parts(*, physical_provenance=False, outer_columns=(),
     return columns, checks, indexes, triggers
 
 
+# The shared numeric scope now carries record_type<>'action' (see EMAIL_NUMERIC_SCOPE).
+BUSINESS_NUMERIC_SCOPE = EMAIL_NUMERIC_SCOPE
+
+
 def business_action_projection(kind, *, source_variant="actual", include_rowid=False,
                                public_id_index=False):
     if kind not in BUSINESS_ACTION_KINDS or source_variant not in ("actual", "fresh"):
@@ -236,5 +240,8 @@ def business_action_projection(kind, *, source_variant="actual", include_rowid=F
     select = (["cast(a.legacy_key as integer) as _source_rowid"] if include_rowid else [])
     select.extend(("cast(a.legacy_key as integer) as id" if field == "id" and kind in BUSINESS_ACTION_AUTO
                    else f"a.{business_action_column(kind, field)} as {field}") for field in fields)
-    return ("select " + ",".join(select) + f" from actions a where a.record_type='{kind}'"
-            + (" and " + EMAIL_NUMERIC_SCOPE if public_id_index else ""))
+    # The numeric public-id readers must use the partial expression index; without
+    # statistics SQLite otherwise prefers idx_actions_email_public_key and sorts.
+    source = "actions a indexed by idx_actions_public_id" if public_id_index else "actions a"
+    return ("select " + ",".join(select) + f" from {source} where a.record_type='{kind}'"
+            + (" and " + BUSINESS_NUMERIC_SCOPE if public_id_index else ""))

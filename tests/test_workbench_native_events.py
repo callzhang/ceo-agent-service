@@ -4,7 +4,7 @@ from pathlib import Path
 
 import pytest
 
-from app.run_storage import insert_run
+from tests.support.native_run_rows import insert_runtime_attempt_row
 from app.workbench import native_events
 from app.task_storage import task_id_expression
 from app.task20_definitions import task20_projection
@@ -70,8 +70,7 @@ def test_workbench_tool_rows_store_only_native_ordinal_and_replay_exact_native_r
         }}},
     ]) + "\n")
     with store._connect() as db:
-        insert_run(
-            db, 'agent_runtime_attempts', {
+        insert_runtime_attempt_row(db, {
                 'workload_kind': 'workbench',
                 'workload_key': turn_id,
                 'attempt_number': 1,
@@ -108,8 +107,7 @@ def test_workbench_replay_marks_missing_or_mismatched_native_detail(
         }}})
     native_path.write_text("\n".join(json.dumps(row) for row in rows) + "\n")
     with store._connect() as db:
-        insert_run(
-            db, 'agent_runtime_attempts', {
+        insert_runtime_attempt_row(db, {
                 'workload_kind': 'workbench',
                 'workload_key': turn_id,
                 'attempt_number': 1,
@@ -184,8 +182,7 @@ def test_out_of_order_completed_tools_replay_from_native_completion_ordinals(tmp
         {"type": "event_msg", "payload": {"type": "task_complete"}},
     ]) + "\n")
     with store._connect() as db:
-        insert_run(
-            db, 'agent_runtime_attempts', {
+        insert_runtime_attempt_row(db, {
                 'workload_kind': 'workbench',
                 'workload_key': turn.id,
                 'attempt_number': 1,
@@ -247,8 +244,7 @@ def test_native_tool_start_inputs_survive_completion_with_only_outputs(tmp_path:
     ]
     native_path.write_text("\n".join(json.dumps(record) for record in records) + "\n")
     with store._connect() as db:
-        insert_run(
-            db, 'agent_runtime_attempts', {
+        insert_runtime_attempt_row(db, {
                 'workload_kind': 'workbench',
                 'workload_key': turn.id,
                 'attempt_number': 1,
@@ -299,8 +295,7 @@ def test_native_messages_replay_as_completed_messages_with_stable_event_pages(tm
         {"type": "event_msg", "payload": {"type": "task_complete"}},
     ]) + "\n")
     with store._connect() as db:
-        insert_run(
-            db, 'agent_runtime_attempts', {
+        insert_runtime_attempt_row(db, {
                 'workload_kind': 'workbench',
                 'workload_key': turn.id,
                 'attempt_number': 1,
@@ -368,8 +363,7 @@ def test_completed_turn_keeps_business_status_and_marks_native_unavailable(
                            json.dumps({"type": "event_msg", "payload": {"type": "task_started"}}) + "\n")
     end = 2 if source == "truncated" else 1
     with store._connect() as db:
-        insert_run(
-            db, 'agent_runtime_attempts', {
+        insert_runtime_attempt_row(db, {
                 'workload_kind': 'workbench',
                 'workload_key': turn.id,
                 'attempt_number': 1,
@@ -401,8 +395,7 @@ def test_friday_final_artifact_is_read_after_sqlite_snapshot(tmp_path: Path, mon
     turn = store.create_turn(task.id, user_text="Inspect", client_request_id="r1")
     assert store.claim_next_turn(owner="worker") is not None
     with store._connect() as db:
-        insert_run(
-            db, 'agent_runtime_attempts', {
+        insert_runtime_attempt_row(db, {
                 'workload_kind': 'workbench',
                 'workload_key': turn.id,
                 'attempt_number': 1,
@@ -449,8 +442,7 @@ def test_native_reasoning_and_file_change_recover_without_sqlite_copy(tmp_path: 
         {"type": "event_msg", "payload": {"type": "task_complete"}},
     ]) + "\n")
     with store._connect() as db:
-        insert_run(
-            db, 'agent_runtime_attempts', {
+        insert_runtime_attempt_row(db, {
                 'workload_kind': 'workbench',
                 'workload_key': turn.id,
                 'attempt_number': 1,
