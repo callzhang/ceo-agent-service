@@ -1792,6 +1792,9 @@
         "latest_run_id": 399936
       }
     },
-    "next_step": "Wait for natural task6 at 2026-10-25T10:00Z and task14 at 2026-10-25T13:00Z; do not create another task13 run. Verify task13 candidate only after it is formally published and used by its next natural run."
+    "next_step": "Wait for natural task6 at 2026-10-25T10:00Z and task14 at 2026-10-25T13:00Z; do not create another task13 run. Verify task13 candidate only after it is formally published and used by its next natural run.",
+    "task13_managed_revision_sha256": "a4f4fe22401c5e119715cda1d34d278f7c679d4605e0ec542e4d80b4f6209a8b",
+    "task13_installed_skill_sha256": "a4f4fe22401c5e119715cda1d34d278f7c679d4605e0ec542e4d80b4f6209a8b",
+    "release_manifest_old_baseline_verified": true
   }
 }
