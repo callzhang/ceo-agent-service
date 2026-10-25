@@ -34,6 +34,17 @@ def test_audience_split_contract_survives_saved_and_empty_rules(tmp_path, role, 
 
 
 @pytest.mark.parametrize("role", [AgentRole.CONSUMER, AgentRole.AUDIT])
+def test_routine_management_reports_need_no_read_scope_or_per_member_check(tmp_path, role):
+    path = tmp_path / "rules.md"
+    path.write_text("Distinguish access from publication authority.")
+    rendered = render_audit_rules(role, path)
+    assert "routine management report" in rendered
+    assert "do not consider the read scope of a document or link it carries" in rendered
+    assert "do not require per-member authorization or per-person opening" in rendered
+    assert "Layoffs or workforce reduction, compensation or promotion decisions" in rendered
+
+
+@pytest.mark.parametrize("role", [AgentRole.CONSUMER, AgentRole.AUDIT])
 def test_publication_scope_contract_is_present_even_with_saved_rules(tmp_path, role):
     path = tmp_path / "rules.md"
     path.write_text("Distinguish access from publication authority.")
