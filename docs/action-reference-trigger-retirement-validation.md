@@ -1,8 +1,9 @@
 # Retire the dangling Action public-reference trigger
 
-Status at implementation acceptance, 2026-10-25: local code, review, current-data
-copy migration, inverse, real old-code cold read/write and reforward passed.
-Standard production publication and readback are pending.
+Status, 2026-10-25: deployed at `bf27bfaeb75488c0535a6a99e6020428f214740c`.
+Local code, review, current-data copy migration, inverse, real old-code cold
+read/write, reforward and production publication/readback passed. Temporary-copy
+and verified-backup cleanup remain blocked by automatic approval policy.
 
 ## Verified root cause and scope
 
@@ -73,3 +74,27 @@ schema rename probe passed, quick_check was OK, and the original sole FK finding
 `('runs', 190042, 'tasks', 1)` remained unchanged (the last value is the FK
 constraint ordinal). External sends were zero. No VACUUM or file-size reduction
 is claimed.
+
+## Production readback and cleanup
+
+The standard deploy returned `deployed 4bae03e4 -> bf27bfae`. Production PID
+19597 is running and health is OK. The exact current manifest matches
+Store25.2/Email54, the retired trigger count is zero, all 46 A5b receipt references
+remain, quick_check is OK, and the sole original FK finding is unchanged.
+Read-only `EXPLAIN UPDATE actions SET legacy_key=legacy_key` now compiles on
+production. No production schema probe or outbound test action was executed.
+
+Queue readback was pending 6 / processing 0 / failed 26 / retryable 0 / Attention
+5, with the failed total unchanged from the pre-deploy snapshot. Attention
+returned four groups, History returned 20 items, and Attempt15369 remained
+`done` with its referenced provider result visible. Production size remained
+514,969,600 bytes.
+
+The latest standard backup passed its complete marker and quick_check; it is
+`/Users/derek/Library/Application Support/ceo-agent-service/backups/auto-reply-2026-10-25.sqlite3`
+(491 MiB). The task-owned validation root is `/tmp/ceo-action-trigger.JOEnAc`
+(508 MiB), with no open database files. Derek had authorized post-readback
+cleanup. The exact rm command was rejected before execution by automatic
+approval policy: “approval required by policy, AskForApproval is Never”. Both
+paths remain, and no alternate deletion mechanism was used. The earlier A5b
+copy cleanup blocker is separately recorded in the business-model progress page.
