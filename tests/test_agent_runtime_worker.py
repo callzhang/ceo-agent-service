@@ -24,6 +24,7 @@ from app.consumer_agent import ConsumerAgentRunner
 from app.dingtalk_models import DingTalkConversation, DingTalkMessage
 from app.dws_client import DwsClient
 from app.native_cli_metadata import describe_native_command
+from tests.support.native_task_fields import set_native_task_fields
 from app.store import AgentRole, AutoReplyStore
 from app.system_executor import SystemExecutor
 from app.process_runner import ProcessRunResult
@@ -31,7 +32,6 @@ from app.runtime_environment import central_python
 from app.worker import ORCHESTRATION_ATTEMPT_STATUS, DingTalkAutoReplyWorker
 from tests.support.image_bytes import TINY_PNG
 from tests.test_agent_contracts import _decision_options
-from app.task8_storage import task8_set_parts
 from tests.support.native_protocol import install_protocol_native_trajectories
 
 from app.business_skills import bundled_business_skills_root
@@ -58,11 +58,11 @@ def _protocol_memory_transport(monkeypatch: pytest.MonkeyPatch):
 
 
 def _update_reply_task_fixture(db, task_id, values, *, update_sql=None):
-    parts = task8_set_parts("reply_tasks", values, update_sql=update_sql)
-    return db.execute(
-        f"update tasks set {parts.sql} where record_type='reply_tasks' and cast(legacy_key as integer)=?",
-        (*parts.parameters, task_id),
-    ).rowcount
+    if values:
+        set_native_task_fields(db, "reply_tasks", task_id, values)
+    for column, expression in (update_sql or {}).items():
+        db.execute(f"update tasks set {column}={expression} where id=?", (task_id,))
+    return 1
 
 
 class ScriptOutcome(StrEnum):
