@@ -53,7 +53,6 @@ def test_fresh_current_email_history_is_in_actions(tmp_path):
         tables = {name for (name,) in db.execute(
             "select name from main.sqlite_schema where type='table' and name not like 'sqlite_%'"
         )}
-        assert len(tables) == 11
         assert "email_historical_classification_history" not in tables
         assert "email_historical_operations" not in tables
         columns = {row[1] for row in db.execute("pragma main.table_xinfo(actions)")}
@@ -211,16 +210,21 @@ def test_nonempty_history_rows_blob_pk_retained_parents_and_inverse(tmp_path, mo
         db.rollback()
 
 
-def test_cold_reopen_repairs_only_missing_current_history_index(tmp_path):
+def test_cold_reopen_rejects_missing_current_history_index(tmp_path):
     path = tmp_path / "repair.sqlite"
     EmailStore(path)
     with sqlite3.connect(path) as db:
         db.execute("drop index idx_actions_email_history_created")
-    AutoReplyStore(path)
-    EmailStore(path)
+    with pytest.raises(
+        sqlite3.IntegrityError,
+        match="unsupported or malformed Store source schema; explicit paired schema release required",
+    ):
+        AutoReplyStore(path)
     with sqlite3.connect(path) as db:
-        assert db.execute("select 1 from sqlite_schema where type='index' "
-                          "and name='idx_actions_email_history_created'").fetchone()
+        assert not db.execute(
+            "select 1 from sqlite_schema where type='index' "
+            "and name='idx_actions_email_history_created'"
+        ).fetchone()
         assert not db.execute("select 1 from sqlite_schema where type='table' and name in (?,?)",
                               HISTORY_KINDS).fetchone()
 

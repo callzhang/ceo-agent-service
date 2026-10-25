@@ -4394,18 +4394,18 @@ def test_send_attempt_command_refuses_unavailable_original_without_queue(
             original = store.get_reply_task_for_message("cid-1", "msg-1")
             provenance = store._reply_input_provenance(original.trigger_text, original.trigger_message_json)
             with sqlite3.connect(settings.db_path) as db:
-                parts = task8_set_parts('reply_task_inputs', {
-                    'input_compacted': 1, 'trigger_text': '',
-                    'trigger_message_json': '', 'input_provenance_json': provenance,
-                })
-                db.execute(f"update tasks set {parts.sql} where id=?",
-                           (*parts.parameters, original.current_input_id))
+                db.execute(
+                    "update task_inputs set input_compacted=1,trigger_text='',"
+                    "trigger_message_json='',input_provenance_json=? where id=?",
+                    (provenance, original.current_input_id),
+                )
         else:
             with sqlite3.connect(settings.db_path) as db:
                 original = store.get_reply_task_for_message('cid-1', 'msg-1')
-                parts = task8_set_parts('reply_task_inputs', {'trigger_message_json': '{}'})
-                db.execute(f"update tasks set {parts.sql} where id=?",
-                           (*parts.parameters, original.current_input_id))
+                db.execute(
+                    "update task_inputs set trigger_message_json='{}' where id=?",
+                    (original.current_input_id,),
+                )
     attempt_id = store.record_reply_attempt(
         conversation_id="cid-1", conversation_title="Friday",
         trigger_message_id="msg-1", trigger_sender="Phina",
@@ -4467,12 +4467,11 @@ def test_send_attempt_email_requires_exact_uncompacted_action_payload(
         original = store.get_reply_task_for_message(conversation_id, action_identity, channel="email")
         provenance = store._reply_input_provenance(original.trigger_text, original.trigger_message_json)
         with sqlite3.connect(settings.db_path) as db:
-            parts = task8_set_parts('reply_task_inputs', {
-                'input_compacted': 1, 'trigger_text': '',
-                'trigger_message_json': '', 'input_provenance_json': provenance,
-            })
-            db.execute(f"update tasks set {parts.sql} where id=?",
-                       (*parts.parameters, original.current_input_id))
+            db.execute(
+                "update task_inputs set input_compacted=1,trigger_text='',"
+                "trigger_message_json='',input_provenance_json=? where id=?",
+                (provenance, original.current_input_id),
+            )
         with pytest.raises(SystemExit, match="original trigger is unavailable"):
             send_attempt_command(settings, attempt_id)
         assert store.get_reply_task_for_message(
@@ -4656,11 +4655,18 @@ def test_send_attempt_command_rotates_pending_task_with_previous_error(
     )
     first = send_attempt_command(settings, attempt_id)
     with store._connect() as db:
-        parts = task8_set_parts('reply_tasks', {
-            'error': 'reviewed_write_not_authorized', 'available_at': '2099-01-01 00:00:00',
-        })
-        db.execute(f"update tasks set {parts.sql} where record_type='reply_tasks' and id=?",
-                   (*parts.parameters, first['task_id']))
+        task = get_task(db, int(first["task_id"]))
+        assert task is not None
+        updated = update_task_cas(
+            db,
+            task_id=int(first["task_id"]),
+            expected={"kind": task["kind"], "status": task["status"]},
+            changes={
+                "error": "reviewed_write_not_authorized",
+                "available_at": "2099-01-01 00:00:00",
+            },
+        )
+        assert updated is not None
     second = send_attempt_command(settings, attempt_id)
     updated = store.get_reply_task(int(second["task_id"]))
 
@@ -7960,7 +7966,7 @@ def _wechat_sender_loop_store(tmp_path, monkeypatch):
     )
     monkeypatch.setattr("app.wechat.service.build_reader", lambda *a, **k: object())
     monkeypatch.setattr("app.wechat.service.build_sender", lambda *a, **k: object())
-    return store, SimpleNamespace(db_path=db)
+    return store, WorkerSettings(db_path=db)
 
 
 class _StopLoop(Exception):
@@ -7971,8 +7977,12 @@ def _stop_after(monkeypatch, count):
     import time
 
     sleeps = []
+    target_thread = threading.current_thread()
+    real_sleep = time.sleep
 
     def sleep(seconds):
+        if threading.current_thread() is not target_thread:
+            return real_sleep(seconds)
         sleeps.append(seconds)
         if len(sleeps) >= count:
             raise _StopLoop
