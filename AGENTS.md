@@ -117,6 +117,12 @@ production to `origin/main`. Committed-but-unpushed
 work never goes live, so a restart no longer carries another session's
 half-written edits.
 
+Derek, 2026-10-25: `python -m app.deploy` first runs the whole test suite
+(`pytest -n 2`, about 70 minutes) at the commit it is going to install, in a
+throwaway clone with a clean environment, and refuses to deploy if any test
+fails. There is no bypass option. A red suite is fixed first, then deployed.
+`--restart` runs no new code and is not gated.
+
 After a deploy, read back the new PID, healthz, queues, Attention and History
 before reporting completion. Never paste the settings API's secret fields.
 

@@ -16,6 +16,10 @@ without it, the ordinary current-main deployment behavior is unchanged.
 Two sessions deploying at
 once are serialized by the repository lock; the second finds the checkout
 already moved and stops.
+
+Before it stops or changes anything, a deploy runs the whole test suite at the
+target commit in a throwaway clone and is refused if a single test fails
+(Derek, 2026-10-25); ``--restart`` runs no new code and is not gated.
 """
 
 from __future__ import annotations
@@ -25,7 +29,11 @@ import os
 from pathlib import Path
 import plistlib
 import re
+import shutil
 import stat
+import subprocess
+import sys
+import tempfile
 import time
 from uuid import uuid4
 
@@ -185,6 +193,61 @@ def _target_matching_doc_changes(
     return paths
 
 
+#: Derek, 2026-10-25: a deploy is refused unless the whole test suite passes at
+#: the commit being deployed. There is no bypass option. The suite runs in a
+#: throwaway clone, never in the production checkout, with a clean environment
+#: so it cannot reach the service database or credentials.
+TEST_GATE_ARGS = (
+    "-m", "pytest", "-q", "-n", "2", "-p", "no:cacheprovider",
+    "tests", "--ignore=tests/browser", "--ignore=tests/e2e",
+)
+TEST_GATE_TIMEOUT_SECONDS = 3 * 60 * 60
+_TEST_GATE_ENV_KEYS = ("PATH", "HOME", "USER", "LANG", "LC_ALL", "TMPDIR", "VIRTUAL_ENV")
+
+
+def require_green_suite(root: Path, commit: str, *, run=subprocess.run) -> None:
+    """Run the whole test suite at ``commit``; stop the deploy unless it passes."""
+    workdir = Path(tempfile.mkdtemp(prefix="deploy-test-gate."))
+    log_path = workdir / "pytest.log"
+    clone = workdir / "checkout"
+    env = {key: os.environ[key] for key in _TEST_GATE_ENV_KEYS if key in os.environ}
+    keep = False
+    try:
+        for command in (
+            ["git", "clone", "--quiet", "--shared", "--no-checkout", str(root), str(clone)],
+            ["git", "-C", str(clone), "checkout", "--quiet", "--detach", commit],
+        ):
+            done = run(command, capture_output=True, env=env)
+            if done.returncode != 0:
+                keep = True
+                raise SystemExit(
+                    f"could not check out {commit[:8]} to run the tests; nothing was deployed: "
+                    + done.stderr.decode(errors="replace").strip()
+                )
+        with log_path.open("wb") as log:
+            try:
+                done = run(
+                    [sys.executable, *TEST_GATE_ARGS], cwd=clone, env=env, stdout=log,
+                    stderr=subprocess.STDOUT, timeout=TEST_GATE_TIMEOUT_SECONDS,
+                )
+            except subprocess.TimeoutExpired:
+                keep = True
+                raise SystemExit(
+                    f"the test suite did not finish in {TEST_GATE_TIMEOUT_SECONDS // 60} minutes "
+                    f"at {commit[:8]}; nothing was deployed. Log: {log_path}"
+                ) from None
+        if done.returncode != 0:
+            keep = True
+            summary = log_path.read_text(errors="replace").strip().splitlines()[-1:] or ["no output"]
+            raise SystemExit(
+                f"the test suite fails at {commit[:8]} ({summary[0]}); nothing was deployed. "
+                f"Fix the tests, then deploy again. Log: {log_path}"
+            )
+    finally:
+        if not keep:
+            shutil.rmtree(workdir, ignore_errors=True)
+
+
 class _ProductionMoved(Exception):
     """Another session deployed first, but this run still has a publication to make."""
 
@@ -263,6 +326,7 @@ def _deploy_once(
             f"{root} has diverged from origin/{BRANCH}; nothing was deployed. "
             f"Commits only in production (move them to main, then reset production to origin/{BRANCH}):\n{stray}"
         )
+    require_green_suite(root, target)
     operation = UpgradeOperation(
         operation_id=operation_id or f"deploy-{uuid4()}",
         expected_fingerprint=repository.fingerprint(BRANCH, current, target, records),

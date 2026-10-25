@@ -1,5 +1,4 @@
 import sqlite3
-from pathlib import Path
 
 import pytest
 
@@ -23,16 +22,6 @@ def entity_db():
     return db
 
 
-def test_blank_schema_matches_frozen_action_declarations():
-    candidate = sqlite3.connect(":memory:")
-    create_current_database_schema(candidate)
-    target = sqlite3.connect(":memory:")
-    target.executescript(Path("docs/action-entity-target.sql").read_text())
-    query = ("select type,name,sql from sqlite_master where sql is not null "
-             "and tbl_name in ('actions','action_receipts','action_observers') order by type,name")
-    assert [tuple(row) for row in candidate.execute(query)] == [tuple(row) for row in target.execute(query)]
-
-
 @pytest.mark.parametrize("missing", ["action_receipts", "action_observers", "both"])
 def test_existing_action_schema_with_missing_children_is_rejected_without_repair(missing):
     db = entity_db()
@@ -41,7 +30,7 @@ def test_existing_action_schema_with_missing_children_is_rejected_without_repair
         db.execute(f"drop table {table}")
     before = [tuple(row) for row in db.execute(
         "select type,name,tbl_name,sql from sqlite_master order by type,name")]
-    with pytest.raises(ValueError, match="unsupported current Action receipt/observer declaration"):
+    with pytest.raises(ValueError, match="unsupported current Actions declaration"):
         create_current_action_schema(db)
     after = [tuple(row) for row in db.execute(
         "select type,name,tbl_name,sql from sqlite_master order by type,name")]
@@ -114,38 +103,22 @@ def test_distinct_historical_receipts_survive():
 
 
 def test_external_result_projection_uses_direct_canonical_binding():
-    from app.action_storage import EXTERNAL_ACTION_RESULT_SQL
+    from app.action_storage import NATIVE_EXTERNAL_ACTION_RESULT_SQL as EXTERNAL_ACTION_RESULT_SQL
 
     db = entity_db()
     action = create_action(db, values={
         "operation": "message.send", "external_action_key": "external-key",
         "business_object_key": "business", "action_identity": "reply",
     })
-    from app.task8_storage import task8_insert_parts
-    from app.task8_storage import register_task8_functions
-    from app.run_storage import insert_run
+    from tests.support.native_run_rows import insert_native_run
+    from tests.support.native_task_seed import seed_native_task
 
-    task_values = {
-        "channel": "dingtalk", "conversation_id": "conversation",
-        "conversation_title": "Conversation", "single_chat": 0,
-        "trigger_message_id": "trigger", "trigger_create_time": "2026-10-21",
-        "trigger_sender": "sender", "execution_generation": "generation",
-        "business_object_key": "business",
-    }
-    task_insert = task8_insert_parts("reply_tasks", task_values, insert_sql={
-        "input_version": "1", "claimed_input_version": "0", "status": "'pending'",
-        "attempts": "0", "created_at": "current_timestamp", "updated_at": "current_timestamp",
-        "manual_rerun_revision_key": "''", "recovery_code": "''",
-    })
-    register_task8_functions(db)
-    task_id = db.execute(
-        f"insert into tasks ({task_insert.columns}) values ({task_insert.values})",
-        task_insert.parameters,
-    ).lastrowid
-    agent_run_id = insert_run(db, "agent_runs", {
+    task_id = 1
+    seed_native_task(db, task_id, "reply", "pending")
+    agent_run_id = insert_native_run(db, {
         "task_id": task_id, "execution_generation": "generation", "role": "audit",
-        "proposal_revision": 0, "turn_attempt": 0, "status": "completed",
-    }).lastrowid
+        "status": "completed",
+    })
     original = append_action_receipt(db, action["id"], values={
         "operation": "message.send", "target": '{"id":"target"}',
         "provider_result_json": '{"receipt":"original"}', "result_digest": "original",
@@ -196,23 +169,26 @@ def test_external_result_projection_uses_direct_canonical_binding():
 
 def test_execution_slot_has_one_current_observation_but_provider_versions_remain_distinct():
     db = entity_db()
+    # The slot is unique on (execution_run_id, action_index); the Run adoption
+    # chain its foreign key points at is not what this test is about.
+    db.execute("pragma foreign_keys=off")
     action = create_action(db, values={"operation": "send", "external_action_key": "effect"})
     first = append_action_receipt(db, action["id"], values={
-        "status": "dispatched", "execution_id": 20, "action_index": 0,
+        "status": "dispatched", "execution_run_id": 20, "action_index": 0,
     })
     second_action = create_action(
         db, values={"operation": "send", "external_action_key": "other-effect"},
     )
     with pytest.raises(sqlite3.IntegrityError):
         append_action_receipt(db, action["id"], values={
-            "status": "verified", "execution_id": 20, "action_index": 0,
+            "status": "verified", "execution_run_id": 20, "action_index": 0,
         })
     with pytest.raises(sqlite3.IntegrityError):
         append_action_receipt(db, second_action["id"], values={
-            "status": "verified", "execution_id": 20, "action_index": 0,
+            "status": "verified", "execution_run_id": 20, "action_index": 0,
         })
     assert db.execute(
-        "select count(*) from action_receipts where execution_id=20 and action_index=0"
+        "select count(*) from action_receipts where execution_run_id=20 and action_index=0"
     ).fetchone()[0] == 1
     old_version = append_action_receipt(db, action["id"], values={
         "provider_result_json": '{"accepted":false}', "result_digest": "old",

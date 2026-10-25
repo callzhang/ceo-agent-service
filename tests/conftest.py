@@ -103,6 +103,18 @@ def close_idle_store_connections_after_each_test():
 
 
 @pytest.fixture(autouse=True)
+def deploy_test_gate_does_not_run_the_suite_inside_the_suite(monkeypatch):
+    """Tests of the deploy flow must not start a second full test run.
+
+    tests/test_deploy_test_gate.py imports the real gate before this stub is
+    applied and exercises it with a fake runner.
+    """
+    import app.deploy as deploy_module
+
+    monkeypatch.setattr(deploy_module, "require_green_suite", lambda root, commit: None)
+
+
+@pytest.fixture(autouse=True)
 def block_real_notifications_in_tests(monkeypatch, request):
     if request.path.name == "test_notification.py":
         return
