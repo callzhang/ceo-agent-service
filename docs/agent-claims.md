@@ -511,7 +511,6 @@ reverts committed work they did not author.
 ## Current claims
 
 | claude-action-test-port-20261025 | tests/test_action_entity_storage.py, tests/test_shared_action_lifecycle.py, tests/test_email_action_storage.py, tests/test_action_email_history_storage.py (test-only unless a clear app regression is found) | Port the four red Action storage test files to the native Task/Run/Action storage, or delete tests of removed behaviour; one file per commit | 2026-10-25 |
-| claude-okr-report-audience-20261025 | ci/shared-skills/ceo-weekly-okr-report/SKILL.md (one audience paragraph), ci/consumer-system-contract-release.json (that Skill's new digest only), a Skill-text assertion in the OKR report tests | Derek 2026-10-25: the CEO-2 weekly OKR report is not sensitive; no per-member authorization check and no per-person opening of the report document before sending to the CEO-2 group. Separate Skill-only commit; publish through the consumer contract release. | 2026-10-25 |
 
 
 
