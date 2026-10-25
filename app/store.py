@@ -7296,6 +7296,18 @@ class AutoReplyStore(LogicalRunStoreMixin, ReviewedCandidateStoreMixin):
             and str(existing_parameters.get("manual_rerun_revision_key") or "") == revision_key
         ):
             return cls._reply_task_from_native(existing)
+        if attempt_id > 0:
+            manual_reruns = int(
+                db.execute(
+                    "select count(*) from task_inputs where input_revision_key like ?",
+                    (f"manual:%:{revision_key}",),
+                ).fetchone()[0]
+            )
+            if manual_reruns >= MAX_AUTOMATIC_RETRIES:
+                raise ManualRerunConflict(
+                    f"three manual retries already used for source Attempt {attempt_id} "
+                    "and this reviewer revision"
+                )
         execution_generation = uuid4().hex
         if existing is not None:
             now_text = str(db.execute("select current_timestamp").fetchone()[0])
