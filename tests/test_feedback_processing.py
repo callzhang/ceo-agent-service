@@ -1699,6 +1699,9 @@ def test_summary_and_references_are_deterministic_and_persisted_only():
     refs = detail_references(item)
     assert {ref["label"] for ref in refs} == {"attempt#12", "run#34", "codex#session-1", "task#56"}
     assert all(ref["route"] == "" or ref["route"].startswith(("/attempts/", "/codex/", "/tasks/")) for ref in refs)
+    assert {ref["route"] for ref in refs if ref["label"] == "task#56"} == {
+        "/tasks/legacy-project/56"
+    }
     assert "/attempts/34/execution/run" not in {ref["route"] for ref in refs}
 
 

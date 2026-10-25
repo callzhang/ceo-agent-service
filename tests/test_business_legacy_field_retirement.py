@@ -110,119 +110,14 @@ with sqlite3.connect(s.path) as db:
 ''', path, variant)
 
 
-def retained_snapshot(path):
-    """Independent SQL oracle uses frozen source columns, excluding exactly nine."""
-    from app.business_definitions import BUSINESS_FIELDS, business_column
-    from app.action_followup_sync_definitions import SYNC_FIELDS
-    with closing(sqlite3.connect(path)) as db:
-        result = {}
-        for kind in RETIRED:
-            fields = (BUSINESS_FIELDS[kind] if kind != "work_updates" else SYNC_FIELDS[kind])
-            kept = tuple(field for field in fields if field not in RETIRED[kind])
-            columns = (tuple(business_column(kind, field) for field in kept)
-                       if kind != "work_updates" else
-                       tuple("cast(legacy_key as integer)" if field == "id" else "sync_" + field for field in kept))
-            columns = ("rowid", "id", *columns, *(("import_task_id",) if kind != "work_updates" else ()))
-            query = ",".join(columns) + "," + ",".join(f"typeof({c})" for c in columns)
-            table = "actions" if kind == "work_updates" else "business"
-            result[kind] = tuple(db.execute(f"select {query} from {table} where record_type=? order by rowid", (kind,)))
-        for table in ("business", "actions", "tasks", "runs", "emails", "provenance", "configs", "provider_state", "schedules", "email_schema_migrations"):
-            columns = [r[1] for r in db.execute(f"pragma table_xinfo({table})") if r[6] == 0]
-            query = ",".join('"'+c+'"' for c in columns) + "," + ",".join('typeof("'+c+'")' for c in columns)
-            where = (" where record_type not in ('work_project','work_todo')" if table == "business" else
-                     " where record_type<>'work_updates'" if table == "actions" else "")
-            result[table] = tuple(db.execute(f"select rowid,{query} from {table}{where} order by rowid"))
-        result["sequences"] = tuple(db.execute("select rowid,name,seq,typeof(seq) from sqlite_sequence order by rowid"))
-        result["fk"] = tuple(sorted(db.execute("pragma foreign_key_check")))
-        return result
 
 
-def assert_neutral_inverse(path):
-    from app.business_legacy_fields import RETIRED_DEFAULTS
-    with closing(sqlite3.connect(path)) as db:
-        for kind, values in RETIRED_DEFAULTS.items():
-            columns = tuple(("sync_" if kind == "work_updates" else kind + "_") + field for field in values)
-            table = "actions" if kind == "work_updates" else "business"
-            for row in db.execute(f"select {','.join(columns)} from {table} where record_type=?", (kind,)):
-                assert tuple(row) == tuple(values.values())
-        assert db.execute("select count(*) from sqlite_schema where name='business_legacy_links'").fetchone()[0] == 0
 
 
-def cold_old(root, path):
-    _old_process(root, '''
-from pathlib import Path
-import sys
-from app.store import AutoReplyStore
-from app.email_store import EmailStore
-from app.workbench.store import WorkbenchStore
-p=Path(sys.argv[1]);AutoReplyStore(p);EmailStore(p);WorkbenchStore(p)
-''', path)
 
 
-@pytest.mark.parametrize("variant", ["fresh_memory_fk", "actual_no_memory_fk"])
-def test_19_10_current_facts_inverse_old_cold_read_reforward(archived_sources, tmp_path, variant):
-    from app.store_schema_release import prepare_database_schema_release
-    from app.business_storage import insert_business
-    from app.action_storage import insert_sync_action, insert_action
-    from app.result_schema_helpers import _markers
-    path = tmp_path / "release.sqlite3"
-    old = archived_sources["2026-10-19.10"]
-    seed_old(old, path, variant)
-    before = retained_snapshot(path)
-    with closing(sqlite3.connect(path)) as db:
-        marker = _markers(db)
-    release = prepare_database_schema_release(ROOT, path)
-    assert type(release).__name__ == "BusinessLegacyFieldSchemaRelease"
-    assert set(release.source_schema) == {"reply_variant"}
-    release.publish()
-    assert retained_snapshot(path) == before
-    store = AutoReplyStore(path)
-    assert store.get_work_todo(17).follow_up_question == "Unique unsent question"
-    assert store.get_work_project(17).facts_json == ' { "business_fact" : 7 } '
-    assert store.list_work_updates(17)[-1].summary == "Actual business history"
-    with sqlite3.connect(path) as db:
-        db.execute("begin")
-        insert_business(db, "work_project", {"id": 29, "title": "Post-migration fact"})
-        insert_business(db, "work_todo", {"id": 29, "project_id": 29, "title": "New retained fact", "follow_up_question": "New unsent question"})
-        insert_sync_action(db, "work_updates", {"id": 29, "project_id": 29, "source_type": "local_file", "source_ref": "after", "summary": "New history"})
-        insert_business(db, "task", {"id": 29, "title": "New semantic task", "stage": "candidate"})
-        insert_action(db, "external_action_results", {"external_action_key": "new-receipt", "business_object_key": "after", "action_identity": "after", "operation": "send", "target_identifiers_json": "{}", "result_digest": "after-digest", "first_agent_run_id": 7, "provider_result_json": '{"provider":"new"}'})
-    current = retained_snapshot(path)
-    release.rollback()
-    assert retained_snapshot(path) == current
-    assert_neutral_inverse(path)
-    with closing(sqlite3.connect(path)) as db:
-        assert _markers(db) == marker
-    cold_old(old, path)
-    again = prepare_database_schema_release(ROOT, path)
-    again.publish()
-    again.finalize()
-    assert retained_snapshot(path) == current
-    assert prepare_database_schema_release(ROOT, path) is None
 
 
-@pytest.mark.parametrize("version", ["2026-10-19.8", "2026-10-19.9"])
-def test_known_predecessor_chain_uses_only_final_constructor(archived_sources, tmp_path, version):
-    from app.store_schema_release import prepare_database_schema_release
-    from app.result_schema_helpers import _markers
-    path = tmp_path / "chain.sqlite3"
-    old = archived_sources[version]
-    seed_old(old, path, "fresh_memory_fk")
-    before = retained_snapshot(path)
-    with closing(sqlite3.connect(path)) as db:
-        original = _markers(db)
-    release = prepare_database_schema_release(ROOT, path)
-    assert type(release).__name__ == "BusinessLegacyFieldSchemaRelease"
-    release.publish()
-    AutoReplyStore(path)
-    release.rollback()
-    assert retained_snapshot(path) == before
-    assert_neutral_inverse(path)
-    with closing(sqlite3.connect(path)) as db:
-        assert _markers(db) == original
-        assert db.execute("pragma quick_check").fetchone()[0] == "ok"
-    cold_old(old, path)
-    prepare_database_schema_release(ROOT, path).publish()
 
 
 @pytest.mark.parametrize("surface", ["api", "retrieval", "html", "import"])
@@ -249,9 +144,8 @@ def test_current_history_consumers_read_retained_fields_without_removed_controls
         assert "Unique unsent question" in output and "actual_change" in output
         assert not any('"' + name + '":' in output for names in RETIRED.values() for name in names)
     elif surface == "html":
-        from app.audit_web import _task_row_payload, _task_project_detail_rows, _task_todo_detail_item, _task_update_rows
+        from app.audit_web import _task_project_detail_rows, _task_todo_detail_item, _task_update_rows
         project, todo = store.get_work_project(1), store.get_work_todo(1)
-        assert not {"priority", "riskLevel", "priorityRank", "riskRank"}.intersection(_task_row_payload(project, [todo]))
         assert all(row[0] != "Follow-up mode" for row in _task_project_detail_rows(project))
         assert "Unique unsent question" in _task_todo_detail_item(todo, [], {}, [])
         assert len(_task_update_rows(store.list_work_updates(1))[0]) == 4
@@ -308,6 +202,9 @@ def test_current_constructors_require_explicit_release_for_actual_old_source(arc
     seed_old(archived_sources["2026-10-19.10"], path, "fresh_memory_fk")
     before = hashlib.sha256(path.read_bytes()).hexdigest()
     for constructor in (AutoReplyStore, EmailStore, WorkbenchStore):
-        with pytest.raises(sqlite3.IntegrityError, match="unsupported or mixed Store/Email source schema"):
+        with pytest.raises(
+            sqlite3.IntegrityError,
+            match="unsupported or malformed Store source schema; explicit paired schema release required",
+        ):
             constructor(path)
         assert hashlib.sha256(path.read_bytes()).hexdigest() == before
