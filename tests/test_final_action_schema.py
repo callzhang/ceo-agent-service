@@ -1,6 +1,6 @@
 """One final Action/provenance transition and current-data inverse."""
 
-from dataclasses import replace
+from dataclasses import fields, replace
 import hashlib
 import json
 import math
@@ -8,12 +8,121 @@ import sqlite3
 
 import pytest
 
-from tests.test_provenance_vector_storage import db as db, binding as binding
+from tests.support.historical_action_storage import binding as binding, db as db
 from app import action_storage as actions
+from app.action_business_storage import _next_source_rowid
+from app.business_source_reader import SourceVersionBinding
 from app.email_canonical_storage import _action_objects
-from app.provenance_definitions import SOURCE_FIELDS
-from app.provenance_storage import insert_signal_version, signal_binding
+from app.provenance_definitions import SOURCE_FIELDS, SIGNAL_FACT_FIELDS, SIGNAL_FIELDS
 from app.task_source_documents import source_document_key
+
+
+_SIGNAL = "business_task_signals"
+_COLUMN = "ba_task_signals_"
+
+
+def historical_signal_projection():
+    select = ["cast(a.legacy_key as integer) as id",
+              f"a.{_COLUMN}provenance_id as provenance_id"]
+    select += [f"coalesce(p.{field},a.{_COLUMN}{field}) as {field}" for field in SOURCE_FIELDS]
+    select += [f"a.{_COLUMN}{field} as {field}" for field in SIGNAL_FACT_FIELDS]
+    return ("select " + ",".join(select) + " from actions a left join provenance p "
+            f"on p.id=a.{_COLUMN}provenance_id where a.record_type='{_SIGNAL}'")
+
+
+def historical_signal_row(db, clause, arguments):
+    cursor = db.execute(historical_signal_projection() + " and " + clause, arguments)
+    row = cursor.fetchone()
+    return dict(zip((item[0] for item in cursor.description), row, strict=True)) if row else None
+
+
+def historical_binding(row):
+    if row is None:
+        return None
+    names = tuple(field.name for field in fields(SourceVersionBinding))
+    return SourceVersionBinding(**{name: row[name] for name in names})
+
+
+def signal_binding(db, public_id):
+    return historical_binding(historical_signal_row(
+        db, "a.business_signal_public_id=?", (public_id,),
+    ))
+
+
+def insert_signal_version(db, binding, *, dedupe_key, conversation_title="", context_json="{}",
+                          created_at=None):
+    if not db.in_transaction:
+        raise ValueError("Signal insertion requires caller-owned transaction")
+    independent = {"conversation_title": conversation_title, "context_json": context_json,
+                   "dedupe_key": dedupe_key,
+                   "created_at": created_at or db.execute("select current_timestamp").fetchone()[0]}
+    owner = historical_signal_row(
+        db, f"a.{_COLUMN}identity_key=? and a.{_COLUMN}provenance_id is null",
+        (binding.identity_key,),
+    )
+    if owner is None:
+        parent = db.execute("select id from provenance where identity_key=?", (binding.identity_key,)).fetchone()
+        if parent is not None:
+            owner = historical_signal_row(db, f"a.{_COLUMN}provenance_id=?", (parent[0],))
+    if owner is not None:
+        raise AssertionError("the historical fixture only appends a new sole-owner source")
+    public_id = _next_source_rowid(db, _SIGNAL)
+    layout = actions.action_payloads(
+        actions._reply_variant_for(db), physical_provenance=True,
+    ).layouts[_SIGNAL]
+    payload = dict.fromkeys(SIGNAL_FIELDS)
+    payload.update({name: getattr(binding, name) for name in SOURCE_FIELDS})
+    payload.update(independent)
+    db.execute(
+        "insert into actions(_kind,legacy_key,payload_json) values(?,?,jsonb(?))",
+        (actions.ACTION_RECORD_TYPES.code(_SIGNAL), str(public_id), layout.pack(
+            payload, scalar_codec=actions._encoded_native_sqlite_value,
+        )),
+    )
+    return public_id
+
+
+def seed_historical_task(db):
+    from app.run_storage import insert_run
+    from app.storage_payload import TASK_RECORD_TYPES
+    from app.task20_definitions import TASK20_DEFAULTS, TASK20_LAYOUTS
+    from app.task8_storage import register_task8_functions
+
+    register_task8_functions(db)
+    kind = "reply_tasks"
+    values = dict(conversation_id="chat", conversation_title="title", single_chat=0,
+                  trigger_message_id="message", trigger_create_time="time", trigger_sender="author")
+    for field in TASK20_LAYOUTS[kind].fields:
+        if field not in values:
+            expression = TASK20_DEFAULTS[kind].get(field, "null")
+            values[field] = db.execute("select " + expression).fetchone()[0]
+    payload = TASK20_LAYOUTS[kind].pack(
+        values, scalar_codec=actions._encoded_native_sqlite_value,
+    )
+    db.execute(
+        "insert into tasks(_kind,legacy_key,payload_json) values(?,?,jsonb(?))",
+        (TASK_RECORD_TYPES.code(kind), "1", payload),
+    )
+    insert_run(db, "agent_runs", dict(
+        id=1, task_id=1, execution_generation="generation", role="consumer",
+    ))
+
+
+def insert_historical_reply(db, values):
+    kind = "reply_attempts"
+    now = db.execute("select current_timestamp").fetchone()[0]
+    layout = actions.action_payloads(
+        actions._reply_variant_for(db), physical_provenance=True,
+    ).layouts[kind]
+    data = dict.fromkeys(layout.fields)
+    data.update({field: value for field, value in (
+        actions._ATTEMPT_DEFAULTS | {"created_at": now, "updated_at": now} | values
+    ).items() if field in data})
+    payload = layout.pack(data, scalar_codec=actions._encoded_native_sqlite_value)
+    db.execute(
+        "insert into actions(_kind,legacy_key,payload_json) values(?,?,jsonb(?))",
+        (actions.ACTION_RECORD_TYPES.code(kind), "1", payload),
+    )
 
 
 def test_reply_inverse_finite_real_json_keeps_sqlite_value():
@@ -92,10 +201,9 @@ def test_current_new_facts_survive_inverse_and_reforward(db, binding):
     from app.task8_storage import register_task8_functions
     bindings, bodies = source(db, binding)
     metadata = migrate_final_actions(db, bindings=bindings)
-    from tests.test_action_vector_writes import seed_task
     from tests.test_action_receipt_source import source_values
-    seed_task(db)
-    actions.insert_action(db, "reply_attempts", dict(conversation_id="chat", conversation_title="title",
+    seed_historical_task(db)
+    insert_historical_reply(db, dict(conversation_id="chat", conversation_title="title",
         trigger_message_id="message", trigger_sender="author", trigger_text="input", action="reply",
         sensitivity_kind="none", send_status="pending", draft_reply_text="revision",
         retry_count=math.nextafter(.68, 1)))
@@ -122,6 +230,9 @@ def test_current_new_facts_survive_inverse_and_reforward(db, binding):
     assert receipts(False) == expected_receipts
     assert db.execute("select id,record_type,legacy_key from actions order by id").fetchall() == before
     assert db.execute("select id,created_at from business_source_documents where identity_key=?", (new.identity_key,)).fetchone() == (41, "new-clock")
+    assert dict(db.execute(
+        "select identity_key,body from business_source_documents"
+    ).fetchall()) == bodies
     assert db.execute("select body from business_source_documents where id=1").fetchone() == ("source α",)
     assert db.execute("select name from sqlite_schema where name='provenance'").fetchone() is None
     migrate_final_actions(db, bindings=bindings)

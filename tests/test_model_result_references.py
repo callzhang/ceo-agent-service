@@ -4,7 +4,6 @@ import pytest
 from app import action_storage as actions
 from app.model_action_schema import migrate_selection_references
 from tests.test_model_action_schema import _add, _seed, _snapshot
-from tests.test_provenance_vector_storage import db as db
 
 
 SOURCE_HASHES = {

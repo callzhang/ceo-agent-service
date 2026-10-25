@@ -11,7 +11,7 @@ from app.action_email_storage import _columns, _fingerprint
 from app.email_canonical_storage import _action_objects
 from app.reviewed_candidate_store import _json
 from app.storage_payload import ACTION_RECORD_TYPES
-from tests.test_provenance_vector_storage import db as db
+from tests.support.historical_action_storage import db as db
 
 
 SOURCE_HASHES = {

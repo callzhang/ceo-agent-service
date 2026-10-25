@@ -8,7 +8,7 @@ import pytest
 from app import action_storage as actions
 from app.store import AutoReplyStore
 from tests.test_agent_turn_store import _claim_consumer, _task
-from tests.test_provenance_vector_storage import db as db
+from tests.support.historical_action_storage import db as db
 
 
 def test_completed_delivery_keeps_one_provider_body_and_public_projection(tmp_path):

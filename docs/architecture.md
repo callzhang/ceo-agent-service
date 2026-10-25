@@ -505,6 +505,9 @@ Project CRM 搜索、确认和清除关联仍在原业务写事务中；搜索�
 兼容或 promotion。显式25.2→25.3发布与当前数据 inverse 保留来源值/类型、公开与物理
 身份、关联和回执；旧17槽仅供迁移/回退工具。该目标尚待副本验收和标准发布，基线生产仍是25.2。
 证据引语、来源关系和已采用业务事实保持原义。详见[Signal来源归属](signal-source-owner-unification.md)。
+历史正文退休工具 `final_action_schema` 的17槽投影固定在工具内部，不能借用当前5槽 reader；
+它仍按原精确 binding/read_body 合同逆迁共享与内联来源。历史 Action ABI 测试使用独立
+Task20/Run11 fixture，当前 Signal/来源接口测试使用实际 current schema，不混用两者。
 TaskAgent 按实际生成任务的 runtime attempt、session 和记录范围检查完整原生输入；
 定位器验证 CLI 原始行 hash、JSON leaf、字符范围、完整 UTF-8 hash／字节数。
 单独直接注入的文本仅在明确选择 `plain_utf8` 时按该格式读取；通常来源使用

@@ -122,3 +122,34 @@ remain pending.
 All completed writes above were confined to disposable copies; no real outbound
 send occurred. The previous A5 native acceptance evidence is retained separately
 and is not replaced by this storage verification.
+
+## Follow-up historical-tool dependency boundary
+
+The active Signal vector fixture now uses the actual current schema. A final
+importer scan found that six historical Action ABI/migration files borrowed its
+old two-variant Task20/Run11 graph. That graph is now explicitly frozen in
+`tests/support/historical_action_storage.py` using the unchanged original
+`d2dc7c6c3` constructor. Current Signal/provider/TaskAgent tests keep the current
+fixture; the current Business evidence case passed with that fixture. The unused
+fixture import in model-result tests was removed.
+
+The retained `final_action_schema` inverse also borrowed the current runtime
+projection. With its historical fixture restored, both variants reproduced a
+real `KeyError:30`: the current inner join omitted a sole inline historical
+Signal. Its17-slot LEFT JOIN/COALESCE projection is now private to that explicit
+tool. Current5-slot runtime code and the frozen25.2/25.3 manifests are unchanged.
+All six original nodes and assertions remain; eleven executions passed, with an
+added complete identity-to-body map for shared, original-inline and post-forward
+new-inline sources. Independent SPEC/QUALITY approved this thin correction.
+
+A bounded25-node sweep of the other fixture consumers returned32 pass/31 fail;
+one current-fixture Row/tuple assertion was corrected without changing expected
+values and passed separately. The other30 are not claimed green:26 are old
+Task20 fixtures using a newer task writer's physical status column; two old
+Work Update fixtures expect the retired8-slot control fields; two old Email
+fixtures expect removed classification正文 facts. Representative tests from all
+three groups independently fail identically in the untouched `dc07ddcbe`
+checkout. Existing failure assertions were not deleted, weakened or hidden.
+These broader historical validation debts are recorded for the publication
+owner and still prevent a full-green claim. The two current source-provider/Task
+Agent files additionally pass7 executions; providers are substitutes.
