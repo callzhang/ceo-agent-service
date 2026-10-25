@@ -168,7 +168,7 @@ def _configs_action_triggers(db, action_variant, *, include_followup_sync=False,
     """Return the exact Config trigger declarations around an Actions rebuild."""
     if _declaration(db, "configs")["sql"] is None:
         return ()
-    from app.configs_schema_release import configs_content_schema_is_current
+    from app.configs_schema_current import configs_content_schema_is_current
 
     if not configs_content_schema_is_current(
         db,

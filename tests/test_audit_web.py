@@ -2046,6 +2046,19 @@ def test_render_attempt_list_shows_draft_follow_up_as_scheduled(tmp_path: Path):
     assert ">Processing</span>" not in html
 
 
+def test_related_meeting_history_marks_runs_without_a_meeting_task_unavailable(tmp_path):
+    store = AutoReplyStore(tmp_path / "worker.sqlite3")
+    orphan = SimpleNamespace(
+        id=7, task_id=None, job_id=4908, created_at="2026-07-14 10:00:00",
+        status="retry", audit_summary="orphan",
+    )
+
+    html = audit_web_module._meeting_related_history_card([orphan], store)
+
+    assert "#meeting-7" in html
+    assert html.count("unavailable") == 2
+
+
 def test_meeting_history_uses_reply_card_and_detail_contract(tmp_path: Path, monkeypatch):
     def read_native_events(session_id, **_bounds):
         assert session_id == "meeting-session-history-1"
@@ -11857,28 +11870,22 @@ def _failed_email_action(
         received_at="Mon, 08 Sep 2025 12:08:13 +0000",
     )
     action_id = email_store.direct_action_ids_for_plan(plan_id)[0]
-    attempt_time = datetime.now(timezone.utc).replace(microsecond=0)
+    base = datetime.fromisoformat("2026-09-16T07:00:00+00:00")
     for number in range(1, attempt_count + 1):
-        started_at = attempt_time + timedelta(seconds=number * 2)
-        finished_at = started_at + timedelta(seconds=1)
-        email_store.append_action_attempt(
-            action_id=action_id, attempt_number=number, status="failed",
-            provider_operation="READ", provider_target="acct:mid",
-            provider_result_id="", error="provider_read_failed:ImapMessageUnavailable",
-            started_at=started_at.isoformat(),
-            finished_at=finished_at.isoformat(),
+        # Production order: claim the action, then complete that claimed attempt.
+        claimed_at = base + timedelta(days=number)
+        action = email_store.claim_direct_action(
+            action_id=action_id, claimed_at=claimed_at.isoformat(),
         )
-    if next_attempt_at:
-        import app.shared_action_lifecycle as shared_action_lifecycle
-
-        with store._connect() as db:
-            assert shared_action_lifecycle.schedule_direct_email_action(
-                db,
-                action_id=action_id,
-                expected_status="failed",
-                next_attempt_at=next_attempt_at,
-                updated_at=attempt_time.isoformat(),
-            ) is not None
+        assert action is not None and action.attempt_number == number
+        email_store.complete_direct_action_attempt(
+            action, status="failed", provider_operation="READ",
+            provider_target=stable_identity, provider_result_id="",
+            error="provider_read_failed:ImapMessageUnavailable",
+            finished_at=(claimed_at + timedelta(seconds=75)).isoformat(),
+            # Only the last attempt decides whether a retry stays scheduled.
+            retryable=number < attempt_count or bool(next_attempt_at),
+        )
     return action_id
 
 
@@ -11901,8 +11908,9 @@ def test_attention_excludes_an_email_action_still_inside_its_retry_window(
     tmp_path: Path,
 ):
     store = AutoReplyStore(tmp_path / "worker.sqlite3")
-    retry_at = (datetime.now(timezone.utc) + timedelta(minutes=5)).isoformat()
-    _failed_email_action(store, attempt_count=1, next_attempt_at=retry_at)
+    _failed_email_action(
+        store, attempt_count=1, next_attempt_at="2026-09-16T07:40:00+00:00"
+    )
 
     rows = audit_web_module._queue_attention_rows(store)
 

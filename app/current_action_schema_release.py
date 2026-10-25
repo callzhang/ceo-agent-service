@@ -10,7 +10,7 @@ from app import action_storage as actions
 from app.action_email_storage import _columns, _quote
 from app.business_legacy_fields import retained_action_payloads
 from app.current_schema_manifest import STORE_VERSION, EMAIL_VERSION, current_objects, schema_objects, require_current_pair
-from app.result_schema_release import _markers, _foreign_keys
+from app.result_schema_helpers import _markers, _foreign_keys
 from app.state_storage import update_state_rows
 from app.task_lifecycle_jsonb import _array, _framed
 

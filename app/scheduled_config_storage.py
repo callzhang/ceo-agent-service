@@ -1,5 +1,4 @@
 """One immutable configuration body shared by scheduled trigger records."""
-from app.state_publication_sources import publication_store_version
 
 import json
 import sqlite3
@@ -47,42 +46,3 @@ def migrate_scheduled_configs(db: sqlite3.Connection) -> None:
         db.execute("update runs set snapshot_id=? where record_type='scheduled_task_runs' and snapshot_id=?",
                    (config_id, row[0]))
         db.execute("delete from scheduled_task_config_versions where id=?", (row[0],))
-
-
-def publication_scheduled_source(db: sqlite3.Connection) -> str:
-    """Read the exact scheduled layout for the paired publication quiet wait."""
-    from app.run_storage import SCHEDULED_RUN_SQL
-    from app.business_legacy_field_schema_release import (
-        TARGET_STORE_VERSION, PREVIOUS_STORE_VERSIONS, publication_action_schema_is_current,
-    )
-    from app.action_storage import action_schema_is_current, reply_schema_is_current
-
-    version = publication_store_version(db, current_version=TARGET_STORE_VERSION,
-                                        previous_versions=PREVIOUS_STORE_VERSIONS)
-    tables = {
-        row[0]
-        for row in db.execute("select name from sqlite_master where type='table'")
-    }
-    if (
-        version in ("2026-10-12.1", "2026-10-13.1", "2026-10-13.2", "2026-10-13.3", "2026-10-13.4", "2026-10-13.5")
-        and (reply_schema_is_current(db) if version == "2026-10-13.5" else version == "2026-10-12.1" or action_schema_is_current(db, include_receipts=version in ("2026-10-13.2", "2026-10-13.3", "2026-10-13.4"), include_postfix=version in ("2026-10-13.3", "2026-10-13.4"), include_delivery=version == "2026-10-13.4"))
-        and {"tasks", "runs"} <= tables
-        and not {
-            "scheduled_task_runs",
-            "workbench_tasks",
-            "workbench_turns",
-            "workbench_events",
-        }.intersection(tables)
-    ):
-        return SCHEDULED_RUN_SQL
-    if (publication_action_schema_is_current(db, version)
-            and {"tasks", "runs"} <= tables
-            and not {"scheduled_task_runs", "workbench_tasks", "workbench_turns", "workbench_events"}.intersection(tables)):
-        return SCHEDULED_RUN_SQL
-    if version in ("2026-10-11.2", "2026-10-11.3") and "scheduled_task_runs" in tables:
-        # The C run declaration includes its scheduled parent scalar even when
-        # it holds no scheduled facts. An old marker cannot make it a source.
-        run_columns = {row[1] for row in db.execute("pragma table_info(runs)")}
-        if "scheduled_task_id" not in run_columns:
-            return "select dispatch_status, lease_owner, lease_expires_at from scheduled_task_runs"
-    raise ValueError("unknown or mixed scheduled publication source schema")

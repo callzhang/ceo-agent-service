@@ -1,6 +1,5 @@
 from tests.support.legacy_todo_facts import seed_legacy_work_project, seed_legacy_work_todo, seed_legacy_work_update
 from app.action_storage import (
-    insert_email_action,
     error_set_parts,
     update_action,
     update_sync_action,
@@ -37,6 +36,16 @@ from app.email_store import EmailStore
 from app.email_classifier_learning import EmailClassifierLearningService
 from app.email_model_registry import EmailModelRegistry
 from app.store import AutoReplyStore
+from datetime import datetime
+
+from app.email_classifier_contracts import (
+    EmailAction,
+)
+from app.email_pipeline import apply_human_confirmation
+from tests.support.native_email_actions import (
+    fail_action as fail_email_action,
+    persist_classification as persist_email_classification,
+)
 from tests.support.native_run_rows import insert_scheduled_occurrence
 from tests.support.native_task_fields import set_native_task_fields
 from tests.wechat.conftest import approved_sends  # noqa: F401
@@ -1540,11 +1549,6 @@ def test_worker_status_projects_email_health_and_queues_without_double_counting(
 ):
     database = tmp_path / "worker.sqlite3"
     EmailStore(database)
-    _seed_email_queue_classification(
-        database,
-        classification_id=1,
-        current_action_plan_id="email-plan:test",
-    )
     store = AutoReplyStore(database)
     store.set_service_state(
         "email_worker_health:process:email-worker",
@@ -1595,21 +1599,11 @@ def test_worker_status_projects_email_health_and_queues_without_double_counting(
             }
         ),
     )
-    with sqlite3.connect(database) as db:
-        insert_email_action(db, "email_actions", {
-            "action_id": "email-action:test-label",
-            "action_plan_id": "email-plan:test",
-            "classification_id": 1,
-            "account_id": "account-a",
-            "action_type": "label",
-            "parameters_json": "{}",
-            "config_version": "email-config:test",
-            "status": "pending",
-            "attempt_count": 0,
-            "error": "",
-            "created_at": "2026-09-05T00:00:00+00:00",
-            "updated_at": "2026-09-05T00:00:00+00:00",
-        })
+    persist_email_classification(
+        EmailStore(database), classification_id=1,
+        status=EmailClassificationStatus.PROCESSED, action=EmailAction.MARK_READ,
+        account_id="account-a",
+    )
     store.ensure_reply_task(
         channel="email",
         conversation_id="email:account-a:thread-a",
@@ -1695,57 +1689,22 @@ def test_worker_status_projects_email_health_and_queues_without_double_counting(
     assert payload["summary"]["pending"] == 2
 
 
-def _seed_email_queue_classification(
-    database: Path,
-    *,
-    classification_id: int,
-    current_action_plan_id: str,
-    status: str = "processed",
-) -> None:
-    from app.email_canonical_storage import upsert_email_message, insert_email_classification
-    from tests.test_email_canonical_storage import _message, _classification
-
-    identity = f"message-{classification_id}"
-    with sqlite3.connect(database) as db:
-        upsert_email_message(db, _message(
-            identity, account_id="account-a", folder="INBOX", uidvalidity=1,
-            uid=classification_id,
-        ))
-        insert_email_classification(db, _classification(
-            identity, id=classification_id, account_id="account-a", folder="INBOX",
-            uidvalidity=1, uid=classification_id, category="work", confidence=0.9,
-            margin=0.8, probabilities_json="{}", model_id="model-a", config_version="config-a",
-            status=status, classification_source="model", current_action_plan_id=current_action_plan_id,
-        ))
-
-
 def test_worker_status_counts_retryable_email_action_separately_from_failed(
     monkeypatch, tmp_path: Path
 ):
     database = tmp_path / "worker.sqlite3"
     EmailStore(database)
-    _seed_email_queue_classification(
-        database,
-        classification_id=1,
-        current_action_plan_id="email-plan:current",
+    email_store = EmailStore(database)
+    plan_id = persist_email_classification(
+        email_store, classification_id=1,
+        status=EmailClassificationStatus.PROCESSED, action=EmailAction.MARK_READ,
+        account_id="account-a",
     )
     store = AutoReplyStore(database)
-    with sqlite3.connect(database) as db:
-        insert_email_action(db, "email_actions", {
-            "action_id": "email-action:retryable",
-            "action_plan_id": "email-plan:current",
-            "classification_id": 1,
-            "account_id": "account-a",
-            "action_type": "mark_read",
-            "parameters_json": "{}",
-            "config_version": "config-a",
-            "status": "failed",
-            "attempt_count": 1,
-            "next_attempt_at": "2026-09-05T01:00:00+00:00",
-            "error": "imap_timeout",
-            "created_at": "2026-09-05T00:00:00+00:00",
-            "updated_at": "2026-09-05T00:30:00+00:00",
-        })
+    fail_email_action(
+        email_store, email_store.direct_action_ids_for_plan(plan_id)[0],
+        attempts=1, retryable_last=True,
+    )
     monkeypatch.setattr(
         audit_web_module,
         "_launchd_service_status",
@@ -1772,43 +1731,28 @@ def test_worker_status_excludes_actions_from_superseded_email_action_plan(
 ):
     database = tmp_path / "worker.sqlite3"
     EmailStore(database)
-    _seed_email_queue_classification(
-        database,
-        classification_id=1,
-        current_action_plan_id="email-plan:current",
+    email_store = EmailStore(database)
+    stale_plan_id = persist_email_classification(
+        email_store, classification_id=1,
+        status=EmailClassificationStatus.PROCESSED, action=EmailAction.TRASH,
+        account_id="account-a",
     )
     store = AutoReplyStore(database)
-    with sqlite3.connect(database) as db:
-        for action_id, action_plan_id, action_type, status, attempt_count, next_attempt_at, error, updated_at in (
-            (
-                "email-action:current", "email-plan:current", "mark_read",
-                "pending", 0, "", "", "2026-09-05T00:30:00+00:00",
-            ),
-            (
-                "email-action:stale-pending", "email-plan:stale", "label",
-                "pending", 0, "", "", "2026-09-05T00:20:00+00:00",
-            ),
-            (
-                "email-action:stale-failed", "email-plan:stale", "trash",
-                "failed", 1, "2026-09-05T01:00:00+00:00", "imap_timeout",
-                "2026-09-05T00:25:00+00:00",
-            ),
-        ):
-            insert_email_action(db, "email_actions", {
-                "action_id": action_id,
-                "action_plan_id": action_plan_id,
-                "classification_id": 1,
-                "account_id": "account-a",
-                "action_type": action_type,
-                "parameters_json": "{}",
-                "config_version": "config-a",
-                "status": status,
-                "attempt_count": attempt_count,
-                "next_attempt_at": next_attempt_at,
-                "error": error,
-                "created_at": "2026-09-05T00:00:00+00:00",
-                "updated_at": updated_at,
-            })
+    fail_email_action(
+        email_store, email_store.direct_action_ids_for_plan(stale_plan_id)[0],
+        attempts=1, retryable_last=True,
+    )
+    # A human correction supersedes the plan: only the new plan's Action is current.
+    email_store.upsert_config(
+        category=EmailCategory("personal"), description="personal", threshold=0.97,
+        actions=(EmailAction.ARCHIVE,), action_parameters={}, enabled=True,
+        config_version="personal-v4",
+    )
+    assert apply_human_confirmation(
+        email_store, 1, "personal", feedback_request_id="feedback-supersede",
+        expected_current_action_plan_id=stale_plan_id,
+        now=datetime.fromisoformat("2026-09-17T00:00:00+00:00"),
+    ) is not None
     monkeypatch.setattr(
         audit_web_module,
         "_launchd_service_status",
@@ -1835,29 +1779,12 @@ def test_worker_status_excludes_current_plan_until_classification_is_processed(
 ):
     database = tmp_path / "worker.sqlite3"
     EmailStore(database)
-    _seed_email_queue_classification(
-        database,
-        classification_id=1,
-        current_action_plan_id="email-plan:current",
-        status="pending_feedback",
+    # Direct Actions exist only for a processed classification's ActionPlan.
+    persist_email_classification(
+        EmailStore(database), classification_id=1,
+        status=EmailClassificationStatus.PENDING_FEEDBACK, account_id="account-a",
     )
     store = AutoReplyStore(database)
-    with sqlite3.connect(database) as db:
-        insert_email_action(db, "email_actions", {
-            "action_id": "email-action:not-ready",
-            "action_plan_id": "email-plan:current",
-            "classification_id": 1,
-            "account_id": "account-a",
-            "action_type": "mark_read",
-            "parameters_json": "{}",
-            "config_version": "config-a",
-            "status": "pending",
-            "attempt_count": 0,
-            "next_attempt_at": "",
-            "error": "",
-            "created_at": "2026-09-05T00:00:00+00:00",
-            "updated_at": "2026-09-05T00:30:00+00:00",
-        })
     monkeypatch.setattr(
         audit_web_module,
         "_launchd_service_status",

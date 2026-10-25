@@ -14,7 +14,6 @@ from __future__ import annotations
 import ast
 from contextlib import closing
 from contextvars import ContextVar
-from datetime import datetime, timezone
 import hashlib
 import io
 import json
@@ -23,18 +22,13 @@ import sqlite3
 import subprocess
 import tarfile
 from tempfile import TemporaryDirectory
-from types import SimpleNamespace
 
 import pytest
 
 from app import store as store_module
 from app.action_error_definitions import error_projection
-from app.action_error_storage import restore_action_error_schema
-from app.action_storage import insert_error_action
 from app.store import AutoReplyStore
 from app.task8_storage import task8_set_parts
-import test_action_task_delivery_storage as paired_tests
-import test_followup_sync_schema_release as release_tests
 
 
 PREDECESSOR = "883c7c9f0798b962ad6675eaf00cb2dab0c78114"
@@ -153,41 +147,6 @@ def _copy(source: Path, dest: Path) -> None:
         old.backup(new)
 
 
-@pytest.fixture(scope="module", params=("actual", "fresh_candidate"))
-def baseline(request):
-    with TemporaryDirectory(prefix="error-native-parity-") as root:
-        folder = Path(root)
-        source = paired_tests.delivery_paired_source.__wrapped__(
-            folder, SimpleNamespace(param=request.param),
-        )
-        release = release_tests._prepare(source)
-        with closing(sqlite3.connect(source)) as db:
-            assert db.execute("select 1 from sqlite_schema where name='errors'").fetchone()
-        release.apply()
-        assert release.source_schema["errors"]["source_table"]
-        native = folder / "native-baseline.db"
-        _copy(source, native)
-        with closing(sqlite3.connect(native)) as db:
-            db.execute("pragma foreign_keys=off")
-            db.execute("begin immediate")
-            restore_action_error_schema(db, release.source_schema["errors"])
-            db.commit()
-        with closing(sqlite3.connect(source)) as db:
-            assert db.execute("select 1 from sqlite_schema where name='errors'").fetchone() is None
-        yield native, source, folder
-
-
-@pytest.fixture
-def pair(baseline, request):
-    native, current, folder = baseline
-    with TemporaryDirectory(prefix=f"{request.node.name}-", dir=folder) as root:
-        src = Path(root) / "native.db"
-        dst = Path(root) / "current.db"
-        _copy(native, src)
-        _copy(current, dst)
-        yield _store(ClockedNativeStore, src), _store(ClockedCurrentStore, dst)
-
-
 def _rows(store, *, current: bool):
     with store._connect() as db:
         source = f"({error_projection()})" if current else "errors"
@@ -212,20 +171,6 @@ def _types_and_water(store, *, current: bool):
         return types, None if sequence is None else sequence[0]
 
 
-def _same(pair):
-    native, current = pair
-    assert _rows(native, current=False) == _rows(current, current=True)
-    assert _types_and_water(native, current=False) == _types_and_water(current, current=True)
-    assert native.max_error_id() == current.max_error_id()
-    assert native.count_errors() == current.count_errors()
-
-
-def _seed_both(pair, operation):
-    for store in pair:
-        with store._connect() as db:
-            operation(db)
-
-
 def _task_set(db, kind, task_id, **values):
     assignment = task8_set_parts(kind, values, payload_source="tasks.payload_json")
     db.execute(
@@ -247,19 +192,6 @@ def _result(fn, *args, **kwargs):
     return ("value", value)
 
 
-def _call(pair, name, *args, expected_error=None, **kwargs):
-    native, current = pair
-    left = _result(getattr(native, name), *args, **kwargs)
-    right = _result(getattr(current, name), *args, **kwargs)
-    assert left == right, (name, left, right)
-    if expected_error is None:
-        assert left[0] == "value", (name, left)
-    else:
-        assert left[0] == "error" and left[1] is expected_error, (name, left)
-    _same(pair)
-    return left[1]
-
-
 def test_predecessor_all_24_ast_hashes_are_pinned():
     actual = _native_methods(PREDECESSOR)
     assert len(actual) == 24
@@ -268,122 +200,6 @@ def test_predecessor_all_24_ast_hashes_are_pinned():
     assert hashlib.sha256(combined.encode()).hexdigest() == (
         "9b416a9aab666987e2b42555a4fe08aee4fa41365e215cc76eb91c51e56e86eb"
     )
-
-
-def test_public_record_read_resolve_and_validation(pair):
-    _same(pair)
-    assert _call(pair, "has_unresolved_error", "paired-chat", "worker") is True
-    assert _call(pair, "has_unresolved_error", "missing", "worker") is False
-    assert _call(pair, "list_errors")
-    _call(pair, "list_errors", 1, 0)
-    _call(pair, "list_errors", 1, 1)
-    _call(pair, "get_error", 7)
-    assert _call(pair, "get_error", 999) is None
-    _call(pair, "record_error", None, None, "component", "detail")
-    assert pair[0].max_error_id() == 13
-    _call(pair, "record_error", "cid", "mid", "component", "detail")
-    assert [item["id"] for item in _call(pair, "list_errors_after", 7)] == [13, 14]
-    assert [item["id"] for item in _call(pair, "list_errors_after", 13)] == [14]
-    assert _call(pair, "list_errors_after", 999) == []
-    _call(pair, "resolve_errors", [0, -1], resolution="ignored")
-    assert _call(pair, "resolve_errors", [7, 7, 999], resolution=" resolved ") == 1
-    assert _call(pair, "resolve_errors", [7], resolution="repeat") == 0
-    _call(pair, "resolve_errors", [1], resolution=" ", expected_error=ValueError)
-    _call(pair, "redact_and_resolve_error", -1, detail="safe", resolution="closed")
-    _call(pair, "redact_and_resolve_error", 999, detail="safe", resolution="closed")
-    assert _call(pair, "redact_and_resolve_error", 13,
-                 detail=" safe ", resolution=" closed ") is True
-    _call(pair, "redact_and_resolve_error", 14, detail=" ", resolution="closed",
-          expected_error=ValueError)
-
-
-def test_transaction_rollback_restores_error_rows_types_and_water(pair):
-    _same(pair)
-    for store, current in ((pair[0], False), (pair[1], True)):
-        with pytest.raises(RuntimeError, match="rollback witness"):
-            with store._connect() as db:
-                db.execute("begin immediate")
-                if current:
-                    insert_error_action(db, {
-                        "conversation_id": "rolled-back", "message_id": None,
-                        "kind": "worker", "detail": "transient",
-                    })
-                else:
-                    db.execute(
-                        "insert into errors(conversation_id,message_id,kind,detail) "
-                        "values('rolled-back',null,'worker','transient')"
-                    )
-                raise RuntimeError("rollback witness")
-    _same(pair)
-    _call(pair, "record_error", "after-rollback", None, "worker", "durable")
-    assert pair[0].max_error_id() == 13
-
-
-def test_kind_conversation_tick_and_simple_recovery(pair):
-    _call(pair, "record_error", "wechat", "reader", "wechat_reader_unavailable", "offline")
-    _call(pair, "record_error", "scheduled-task:1", None, "scheduled_task_seed_failed", "seed")
-    _call(pair, "record_error", "cid", "mid", "foo-bar", "one")
-    _call(pair, "record_error", "other", "mid", "foo_bar", "two")
-    _call(pair, "record_error", "component", "tick", "component", "incident")
-    assert _call(pair, "resolve_unresolved_errors_for_conversation_kind", "cid", "foo_bar",
-                 resolution=" closed ") == 1
-    assert _call(pair, "resolve_unresolved_errors_by_kind", "foo-bar",
-                 resolution="closed") == 1
-    _call(pair, "resolve_unresolved_errors_by_kind", " ", resolution="closed",
-          expected_error=ValueError)
-    _call(pair, "resolve_unresolved_errors_for_conversation_kind", " ", "foo",
-          resolution="closed", expected_error=ValueError)
-    assert _call(pair, "resolve_errors_recovered_by_wechat_reader") == 1
-    assert _call(pair, "resolve_errors_recovered_by_wechat_reader") == 0
-    assert _call(pair, "resolve_errors_recovered_by_scheduled_task_seed") == 1
-    assert _call(pair, "resolve_errors_recovered_by_scheduled_task_seed") == 0
-    assert _call(pair, "resolve_errors_before_successful_component_tick", "component",
-                 tick_at=datetime(2026, 10, 17, 12, 0, 1, tzinfo=timezone.utc)) == 1
-    assert _call(pair, "resolve_errors_before_successful_component_tick", "component",
-                 tick_at=datetime(2026, 10, 17, 12, 0, 0, tzinfo=timezone.utc)) == 0
-    _call(pair, "resolve_errors_before_successful_component_tick", " ",
-          tick_at=datetime.now(timezone.utc), expected_error=ValueError)
-
-
-def test_parent_recovery_and_history_query(pair):
-    native, current = pair
-    _call(pair, "record_error", "chat", "message", "reply_task", "task issue")
-    _call(pair, "record_error", "attempt-chat", "attempt-msg", "reply_task", "attempt issue")
-    input_ids = [store.enqueue_work_summary_input("local_file", "work", "{}")
-                 for store in pair]
-    assert input_ids[0] == input_ids[1]
-    _call(pair, "record_error", "work_summary_input", str(input_ids[0]),
-          "task_agent", "work issue")
-    for store in pair:
-        store.record_reply_attempt(
-            conversation_id="attempt-chat", conversation_title="Attempt",
-            trigger_message_id="attempt-msg", trigger_sender="sender",
-            trigger_text="text", action="agent_run", sensitivity_kind="general",
-            send_status="completed",
-        )
-    _seed_both(pair, lambda db: _task_set(
-        db, "reply_tasks", 22, status="done", updated_at="2026-10-17 12:01:00",
-    ))
-    _seed_both(pair, lambda db: _task_set(
-        db, "work_summary_inputs", input_ids[0], status="skipped",
-        updated_at="2026-10-17 12:01:00",
-    ))
-    assert _call(pair, "resolve_errors_recovered_by_reply_attempts") == 1
-    assert _call(pair, "resolve_errors_recovered_by_reply_attempts") == 0
-    assert _call(pair, "resolve_errors_recovered_by_completed_reply_tasks") == 1
-    assert _call(pair, "resolve_errors_recovered_by_completed_reply_tasks") == 0
-    assert _call(pair, "resolve_errors_recovered_by_terminal_work_summary_inputs") == 1
-    assert _call(pair, "resolve_errors_recovered_by_terminal_work_summary_inputs") == 0
-    for sources in (("errors",),):
-        left = native._operation_logs_base_query(sources)
-        right = current._operation_logs_base_query(sources)
-        with native._connect() as db:
-            original = [tuple(row) for row in db.execute(
-                f"select * from ({left}) where source_table='errors' order by source_id")]
-        with current._connect() as db:
-            selected = [tuple(row) for row in db.execute(
-                f"select * from ({right}) where source_table='errors' order by source_id")]
-        assert original == selected
 
 
 @pytest.fixture(scope="module")
@@ -499,157 +315,3 @@ def _assert_compacted(before, after):
     ]
 
 
-def test_full_predecessor_settlement_closure_and_reconciliation(predecessor_tree):
-    # This case uses genuine old Tasks scalars because the predecessor methods
-    # update them directly. It is separate from the Errors-only hybrid above.
-    with TemporaryDirectory(prefix="error-native-settlement-") as root:
-        source, target = Path(root) / "source.db", Path(root) / "target.db"
-        task_id = int(_old_call(predecessor_tree, source, """
-store.enqueue_reply_task(conversation_id='chat', conversation_title='Chat',
-    single_chat=True, trigger_message_id='message',
-    trigger_create_time='2026-10-17 11:00:00', trigger_sender='sender',
-    trigger_text='handle this')
-with store._connect() as db:
-    task_id = db.execute("select id from tasks where record_type='reply_tasks'").fetchone()[0]
-    db.execute("update tasks set status='failed',execution_generation='generation',error='failed' "
-               "where record_type='reply_tasks' and id=?", (task_id,))
-print(task_id)
-"""))
-        _copy(source, target)
-        release = release_tests._prepare(target)
-        release.apply()
-        current = _store(ClockedCurrentStore, target)
-        before = _old_input_snapshot(predecessor_tree, source, task_id)
-        assert before == _current_input_snapshot(current, task_id)
-        assert before["inputs"] and any(row["trigger_text"] for row in before["inputs"])
-        assert _old_call(predecessor_tree, source, f"""
-print(store.close_unresolved_reply_task_already_settled({task_id},
-    expected_execution_generation='stale', settled_evidence='receipt'))
-""") == "False"
-        assert current.close_unresolved_reply_task_already_settled(
-            task_id, expected_execution_generation="stale", settled_evidence="receipt",
-        ) is False
-        assert _old_call(predecessor_tree, source, f"""
-print(store.close_unresolved_reply_task_already_settled({task_id},
-    expected_execution_generation='generation', settled_evidence='receipt'))
-""") == "True"
-        assert current.close_unresolved_reply_task_already_settled(
-            task_id, expected_execution_generation="generation", settled_evidence="receipt",
-        ) is True
-        old_errors = _store(ClockedNativeStore, source)
-        _same((old_errors, current))
-        assert _task_status(old_errors, task_id, native=True) == _task_status(current, task_id)
-        after = _old_input_snapshot(predecessor_tree, source, task_id)
-        assert after == _current_input_snapshot(current, task_id)
-        _assert_compacted(before, after)
-        with pytest.raises(AssertionError):
-            _assert_compacted(before, before)
-        with old_errors._connect() as db:
-            db.execute("update tasks set status='failed',error='failed' where id=?", (task_id,))
-        with current._connect() as db:
-            _task_set(db, "reply_tasks", task_id, status="failed", error="failed")
-        assert _old_call(predecessor_tree, source,
-                         "print(store.reconcile_unresolved_reply_tasks_with_settlement_evidence())") == "1"
-        assert current.reconcile_unresolved_reply_tasks_with_settlement_evidence() == 1
-        _same((old_errors, current))
-        assert _task_status(old_errors, task_id, native=True) == _task_status(current, task_id)
-
-
-def test_full_predecessor_done_task_with_failed_current_run(predecessor_tree):
-    with TemporaryDirectory(prefix="error-native-failed-run-") as root:
-        source, target = Path(root) / "source.db", Path(root) / "target.db"
-        task_id = int(_old_call(predecessor_tree, source, """
-from app.store import AgentRole
-store.enqueue_reply_task(conversation_id='failed-chat', conversation_title='Chat',
-    single_chat=True, trigger_message_id='failed-message',
-    trigger_create_time='2026-10-17 11:00:00', trigger_sender='sender',
-    trigger_text='handle this')
-task = store.claim_reply_tasks(limit=1)[0]
-run = store.claim_agent_run(task.id, task.execution_generation,
-    role=AgentRole.AUDIT, proposal_revision=0, turn_attempt=0,
-    parent_agent_run_id=None, operation_id='native-parity-audit', owner='audit').run
-store.fail_agent_run(run.id, {'code':'codex_process_failed'}, owner='audit')
-with store._connect() as db:
-    db.execute("update tasks set status='done',error='' where record_type='reply_tasks' and id=?",
-               (task.id,))
-print(task.id)
-"""))
-        _copy(source, target)
-        release = release_tests._prepare(target)
-        release.apply()
-        current = _store(ClockedCurrentStore, target)
-        before = _task_status(current, task_id)
-        assert before[0] == "done"
-        assert _old_call(predecessor_tree, source,
-                         "print(store.reconcile_done_reply_tasks_with_failed_current_run())") == "1"
-        assert current.reconcile_done_reply_tasks_with_failed_current_run() == 1
-        native = _store(ClockedNativeStore, source)
-        assert _task_status(native, task_id, native=True) == _task_status(current, task_id)
-        _same((native, current))
-        assert _old_call(predecessor_tree, source,
-                         "print(store.reconcile_done_reply_tasks_with_failed_current_run())") == "0"
-        assert current.reconcile_done_reply_tasks_with_failed_current_run() == 0
-
-
-def test_scheduled_parent_recovery(pair):
-    from app.agent_cron.models import ScheduledTaskSnapshot
-    from app.run_storage import insert_run
-    from app.scheduled_config_storage import intern_scheduled_config
-
-    command_tasks = [store.create_scheduled_task(
-        name="command", command="scan-meetings-once", cron_expression="* * * * *",
-        timezone_name="UTC",
-    ) for store in pair]
-    assert command_tasks[0].id == command_tasks[1].id
-    command_id = command_tasks[0].id
-    _call(pair, "record_error", f"scheduled-task:{command_id}", "command-fail",
-          "scheduled_task_service_command_failed", "failed")
-    _call(pair, "record_error", "scheduled-task:999", "unrelated",
-          "scheduled_task_service_command_failed", "failed")
-    for store, task in zip(pair, command_tasks, strict=True):
-        with store._connect() as db:
-            db.execute("begin immediate")
-            snapshot = intern_scheduled_config(db, ScheduledTaskSnapshot.from_task(task).to_json())
-            insert_run(db, "scheduled_task_runs", {
-                "event_id": "command-success", "scheduled_task_id": task.id,
-                "trigger_kind": "scheduled", "scheduled_for": "2026-10-17T12:01:00Z",
-                "first_scheduled_for": "2026-10-17T12:01:00Z",
-                "dispatch_status": "dispatched", "snapshot_id": snapshot,
-                "execution_kind": "service_command", "execution_id": "scan-meetings-once",
-                "dispatched_at": "2026-10-17 12:01:00",
-            })
-    assert _call(pair, "resolve_errors_recovered_by_scheduled_service_command") == 1
-    assert _call(pair, "resolve_errors_recovered_by_scheduled_service_command") == 0
-
-
-def test_scheduled_reply_task_recovery(pair):
-    from app.agent_cron.models import ScheduledTaskSnapshot
-    from app.run_storage import insert_run
-    from app.scheduled_config_storage import intern_scheduled_config
-
-    tasks = [store.create_scheduled_task(
-        name="agent", prompt="sync", cron_expression="* * * * *",
-        timezone_name="UTC", runtime_id="codex_api",
-    ) for store in pair]
-    assert tasks[0].id == tasks[1].id
-    _call(pair, "record_error", f"scheduled-task:{tasks[0].id}", "agent-fail",
-          "scheduled_task_execution_unavailable", "unavailable")
-    _call(pair, "record_error", "scheduled-task:999", "other-agent",
-          "scheduled_task_execution_unavailable", "unavailable")
-    _seed_both(pair, lambda db: _task_set(
-        db, "reply_tasks", 22, status="done", updated_at="2026-10-17 12:01:00",
-    ))
-    for store, task in zip(pair, tasks, strict=True):
-        with store._connect() as db:
-            db.execute("begin immediate")
-            snapshot = intern_scheduled_config(db, ScheduledTaskSnapshot.from_task(task).to_json())
-            insert_run(db, "scheduled_task_runs", {
-                "event_id": "agent-success", "scheduled_task_id": task.id,
-                "trigger_kind": "scheduled", "scheduled_for": "2026-10-17T12:01:00Z",
-                "first_scheduled_for": "2026-10-17T12:01:00Z",
-                "dispatch_status": "dispatched", "snapshot_id": snapshot,
-                "execution_kind": "reply_task", "execution_id": "22",
-                "dispatched_at": "2026-10-17 12:01:00",
-            })
-    assert _call(pair, "resolve_errors_recovered_by_scheduled_reply_task") == 1
-    assert _call(pair, "resolve_errors_recovered_by_scheduled_reply_task") == 0

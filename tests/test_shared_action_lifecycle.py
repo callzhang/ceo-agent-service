@@ -249,25 +249,6 @@ def test_one_claim_winner_and_original_cross_table_guards_with_new_step_kind(tmp
         assert db.execute('pragma foreign_key_check').fetchall() == []
 
 
-def _read_publication(path):
-    from app.action_schema_release import publication_candidate_source
-    from app.action_receipt_schema_release import publication_receipt_sources
-    from app.action_postfix_schema_release import publication_postfix_sources
-    from app.action_delivery_schema_release import publication_delivery_sources
-    from app.email_publication_sources import publication_email_action_source
-    from app.repository_updater import in_flight_work
-    from app.scheduled_config_storage import publication_scheduled_source
-    from app.task_schema_release import publication_task_sources, publication_meeting_sources
-
-    with sqlite3.connect(path) as db:
-        for query in (publication_candidate_source(db), publication_email_action_source(db),
-            publication_scheduled_source(db), *publication_task_sources(db), *publication_meeting_sources(db),
-            *publication_receipt_sources(db).values(), *publication_postfix_sources(db).values(),
-            *publication_delivery_sources(db).values()):
-            db.execute(query).fetchall()
-    return in_flight_work(path)
-
-
 def test_current_publication_readers_use_shared_schema(tmp_path):
     path = tmp_path / 'publication.sqlite3'
     store, email = AutoReplyStore(path), EmailStore(path)

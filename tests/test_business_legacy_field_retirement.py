@@ -164,7 +164,7 @@ def test_19_10_current_facts_inverse_old_cold_read_reforward(archived_sources, t
     from app.store_schema_release import prepare_database_schema_release
     from app.business_storage import insert_business
     from app.action_storage import insert_sync_action, insert_action
-    from app.result_schema_release import _markers
+    from app.result_schema_helpers import _markers
     path = tmp_path / "release.sqlite3"
     old = archived_sources["2026-10-19.10"]
     seed_old(old, path, variant)
@@ -204,7 +204,7 @@ def test_19_10_current_facts_inverse_old_cold_read_reforward(archived_sources, t
 @pytest.mark.parametrize("version", ["2026-10-19.8", "2026-10-19.9"])
 def test_known_predecessor_chain_uses_only_final_constructor(archived_sources, tmp_path, version):
     from app.store_schema_release import prepare_database_schema_release
-    from app.result_schema_release import _markers
+    from app.result_schema_helpers import _markers
     path = tmp_path / "chain.sqlite3"
     old = archived_sources[version]
     seed_old(old, path, "fresh_memory_fk")
@@ -299,24 +299,6 @@ def test_current_writers_and_payload_constraints_reject_retired_fields(tmp_path)
         assert db.execute("select json_array_length(payload_json) from actions where record_type='work_updates'").fetchone()[0] == 6
         with pytest.raises(sqlite3.IntegrityError):
             db.execute("update actions set payload_json=jsonb_insert(payload_json,'$[#]','retired') where record_type='work_updates'")
-
-
-def test_interrupted_forward_rolls_back_the_entire_composite_transaction(archived_sources, tmp_path, monkeypatch):
-    from app.store_schema_release import prepare_database_schema_release
-    from app import business_legacy_field_schema_release as release_module
-    path = tmp_path / "atomic.sqlite3"
-    seed_old(archived_sources["2026-10-19.8"], path, "fresh_memory_fk")
-    before = hashlib.sha256(path.read_bytes()).hexdigest()
-    release = prepare_database_schema_release(ROOT, path)
-    original = release_module.migrate_legacy_business_fields
-    def interrupt(db):
-        original(db)
-        raise RuntimeError("fixture interruption after retirement")
-    monkeypatch.setattr(release_module, "migrate_legacy_business_fields", interrupt)
-    with pytest.raises(RuntimeError, match="fixture interruption"):
-        release.publish()
-    assert hashlib.sha256(path.read_bytes()).hexdigest() == before
-    cold_old(archived_sources["2026-10-19.8"], path)
 
 
 def test_current_constructors_require_explicit_release_for_actual_old_source(archived_sources, tmp_path):

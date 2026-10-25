@@ -7045,7 +7045,8 @@ class AutoReplyStore(LogicalRunStoreMixin, ReviewedCandidateStoreMixin):
                     from app.action_storage import NATIVE_EXTERNAL_ACTION_RESULT_SQL
                     effect_receipt = db.execute(
                         f"select 1 from ({NATIVE_EXTERNAL_ACTION_RESULT_SQL}) actions "
-                        "where task_id=? limit 1", (current["id"],),
+                        "where first_agent_run_id in (select id from runs where task_id=?) limit 1",
+                        (current["id"],),
                     ).fetchone()
                     reopenable = bool(
                         allow_skipped_oa_review
@@ -14176,8 +14177,8 @@ class AutoReplyStore(LogicalRunStoreMixin, ReviewedCandidateStoreMixin):
                 changed = update_task_cas(db, task_id=task_id,
                     expected={"status": "processing", "locked_at": task["locked_at"]},
                     changes={"status": "retry", "attempts": max((task["attempts"] or 0) - 1, 0),
-                             "locked_at": None, "lease_owner": "", "lease_expires_at": "",
-                             "updated_at": now_text})
+                             "locked_at": None, "lease_owner": "", "owner_pid": 0,
+                             "lease_expires_at": "", "updated_at": now_text})
                 if changed is not None:
                     job = self._native_meeting_alignment_job(db, task_id)
                     if job is not None:
@@ -16946,9 +16947,10 @@ class AutoReplyStore(LogicalRunStoreMixin, ReviewedCandidateStoreMixin):
             from app import task_entity_storage
             updated = task_entity_storage.update_task_cas(
                 db, task_id=task_id,
+                # The business object key was matched above, inside this immediate
+                # transaction; it is a TaskInput field, not a Task compare field.
                 expected={"status": "failed", "error": "external_action_uncertain",
-                          "execution_generation": generation,
-                          "business_object_key": business_object_key},
+                          "execution_generation": generation},
                 changes={"status": "skipped", "available_at": "", "locked_at": None,
                          "updated_at": db.execute("select current_timestamp").fetchone()[0]},
             )

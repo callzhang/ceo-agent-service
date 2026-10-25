@@ -172,7 +172,3 @@ def install(monkeypatch):
         ("native_reply_dispatches", "NATIVE_REPLY_DISPATCH_SQL"),
     ):
         monkeypatch.setattr(storage, name, projections[kind])
-    # This module imports the mapping by value; keep its historical boundary
-    # queries aligned with the fixture while normal runtime imports stay intact.
-    from app import action_delivery_schema_release
-    monkeypatch.setattr(action_delivery_schema_release, "ACTION_PROJECTIONS", projections)

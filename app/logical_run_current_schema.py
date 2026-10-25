@@ -1,6 +1,6 @@
 """Selected common logical Run declarations; the 19.9 factory stays frozen."""
 from app.configs_run_schema import _objects
-from app.configs_schema_release import configs_content_schema_is_current
+from app.configs_schema_current import configs_content_schema_is_current
 from app.logical_run_definitions import logical_run_objects
 from app.runs11_current_schema import RETIRED_RUN11_NAMES
 

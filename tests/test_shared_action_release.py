@@ -15,7 +15,6 @@ from app import action_storage as actions
 from app.email_classifier_contracts import EmailAction, EmailClassificationStatus
 from app.email_store import EmailStore
 from app.shared_action_definitions import email_projection
-from app.shared_action_schema_release import prepare_shared_action_schema_release
 from app.store import AutoReplyStore
 from app.store_schema_release import prepare_database_schema_release
 from tests.test_email_store import _classification, _task2_account_values
@@ -97,38 +96,12 @@ def _facts(path, *, shared):
         )
 
 
-def test_staging_step_updates_seek_physical_id_in_both_directions(source_path):
-    from app.shared_action_schema import migrate_shared_actions, restore_shared_actions
-
-    plans = []
-
-    class ObservedConnection(sqlite3.Connection):
-        def execute(self, sql, parameters=()):
-            if sql.startswith('update temp._shared_action_rows set payload_json='):
-                plans.extend(row[3] for row in super().execute('explain query plan ' + sql, parameters))
-            return super().execute(sql, parameters)
-
-    _, path = source_path
-    with closing(sqlite3.connect(path, factory=ObservedConnection)) as db:
-        db.execute('pragma foreign_keys=off')
-        db.execute('begin immediate')
-        metadata = migrate_shared_actions(db)
-        assert db.execute("select name from sqlite_temp_master where tbl_name='_shared_action_rows'").fetchall() == []
-        restore_shared_actions(db, metadata)
-        assert db.execute("select name from sqlite_temp_master where tbl_name='_shared_action_rows'").fetchall() == []
-        db.rollback()
-    # The archived source has one direct step, transformed once each way.
-    assert len(plans) == 2
-    assert all(plan.startswith('SEARCH temp._shared_action_rows USING INDEX ') and '(id=?)' in plan
-               for plan in plans), plans
-
-
 def test_archived_source_new_attempt_plan_and_claim_inverse_cold_and_reforward(source_path, monkeypatch):
     original, path = source_path
     before = _facts(path, shared=False)
     with sqlite3.connect(path) as db:
         source_schema = actions._objects(db, 'actions')
-        from app.result_schema_release import _markers
+        from app.result_schema_helpers import _markers
         markers = _markers(db)
     release = prepare_database_schema_release(ROOT, path)
     assert type(release).__name__ == 'SharedActionSchemaRelease'
@@ -187,40 +160,6 @@ AutoReplyStore(Path(sys.argv[1])); EmailStore(Path(sys.argv[1]))
     assert prepare_database_schema_release(ROOT, path) is None
 
 
-@pytest.mark.parametrize('mutation', ['mirror', 'ordering', 'count', 'processing_terminal', 'processing_operation'])
-def test_source_exception_refuses_before_any_write(source_path, mutation):
-    original, path = source_path
-    with sqlite3.connect(path) as db:
-        layout = actions.action_payloads('fresh_memory_fk').layouts['email_actions']
-        if mutation == 'mirror':
-            db.execute("update actions set payload_json=jsonb_set(payload_json,?,'different') where record_type='email_actions'", (layout.path('provider_operation'),))
-        elif mutation == 'ordering':
-            attempt = actions.action_payloads('fresh_memory_fk').layouts['email_action_attempts']
-            db.execute("update actions set payload_json=jsonb_set(payload_json,?,2) where record_type='email_action_attempts'", (attempt.path('attempt_number'),))
-        elif mutation == 'count':
-            db.execute("delete from actions where record_type='email_action_attempts'")
-        elif mutation == 'processing_operation':
-            fields = {'status': 'processing', 'finished_at': '', 'provider_result_id': '', 'error': ''}
-            parts = layout.assignments_sql('payload_json', {field: 'json_quote(' + repr(value) + ')' for field, value in fields.items()})
-            db.execute("update actions set payload_json=" + parts + " where record_type='email_actions'")
-        else:
-            db.execute("update actions set payload_json=jsonb_set(payload_json,?,'processing') where record_type='email_actions'", (layout.path('status'),))
-    if mutation == 'processing_operation':
-        # The source cold validator permits this old in-flight operation/target.
-        # They cannot be discarded or mistaken for the prior attempt's result.
-        _old_process(original, '''
-import sys
-from pathlib import Path
-from app.store import AutoReplyStore
-from app.email_store import EmailStore
-AutoReplyStore(Path(sys.argv[1])); EmailStore(Path(sys.argv[1]))
-''', path)
-    before = path.read_bytes()
-    with pytest.raises(ValueError, match='direct source'):
-        prepare_shared_action_schema_release(ROOT, path)
-    assert path.read_bytes() == before
-
-
 def test_wrong_pair_constructor_refuses_without_writes(source_path):
     _, path = source_path
     before = path.read_bytes()
@@ -228,41 +167,6 @@ def test_wrong_pair_constructor_refuses_without_writes(source_path):
         with pytest.raises(sqlite3.IntegrityError, match='unsupported or mixed'):
             constructor(path)
         assert path.read_bytes() == before
-
-
-def test_all_publication_sources_and_failed_cold_load_restore_original_clock(source_path, monkeypatch):
-    from app import store_schema_release
-    from app.result_schema_release import _markers
-    from app.state_storage import update_state_rows
-    from tests.test_shared_action_lifecycle import _read_publication
-
-    original, path = source_path
-    with sqlite3.connect(path) as db:
-        db.execute('begin immediate')
-        update_state_rows(db, 'service_state', {'updated_at': b'original-source-clock'},
-            where_sql='key=?', parameters=('store_schema_version',))
-        markers = _markers(db)
-    before = _facts(path, shared=False)
-    assert _read_publication(path) >= 0
-    release = prepare_database_schema_release(ROOT, path)
-    def fail(root, database):
-        assert _read_publication(database) >= 0
-        raise RuntimeError('injected target cold-load failure')
-    monkeypatch.setattr(store_schema_release, '_migrate_store', fail)
-    with pytest.raises(RuntimeError, match='injected target cold-load'):
-        release.publish()
-    release.rollback()
-    release.rollback()
-    assert _facts(path, shared=False) == before
-    with sqlite3.connect(path) as db:
-        assert _markers(db) == markers
-    _old_process(original, '''
-import sys
-from pathlib import Path
-from app.store import AutoReplyStore
-from app.email_store import EmailStore
-AutoReplyStore(Path(sys.argv[1])); EmailStore(Path(sys.argv[1]))
-''', path)
 
 
 @pytest.mark.parametrize('operation,trash', [

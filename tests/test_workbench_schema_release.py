@@ -1,7 +1,6 @@
 from contextlib import closing
 import sqlite3
 
-import pytest
 
 from app.store_schema_release import prepare_store_schema_release
 from app.task_storage import insert_task
@@ -170,39 +169,6 @@ def test_release_inverse_keeps_new_facts_and_deleted_allocation_watermarks(tmp_p
         assert fingerprint(db) == before
     release.publish()
     release.verify_loaded()
-
-
-def test_inverse_failure_rolls_back_and_stale_inverse_refuses_other_version(
-    tmp_path, monkeypatch
-):
-    import app.workbench_schema_release as module
-
-    root, path = target_and_source(tmp_path)
-    release = prepare_store_schema_release(root, path)
-    release.migrate = migrate
-    release.publish()
-    with closing(sqlite3.connect(path)) as db:
-        before = fingerprint(db)
-    original = module.restore_workbench_schema
-
-    def interrupted(db, state):
-        original(db, state)
-        raise RuntimeError("interrupted")
-
-    monkeypatch.setattr(module, "restore_workbench_schema", interrupted)
-    with pytest.raises(RuntimeError, match="interrupted"):
-        release.rollback()
-    with closing(sqlite3.connect(path)) as db, db:
-        assert fingerprint(db) == before
-        db.execute(
-            "update service_state set value='future' where key='store_schema_version'"
-        )
-        db.commit()
-        altered = fingerprint(db)
-    with pytest.raises(ValueError, match="version"):
-        release.rollback()
-    with closing(sqlite3.connect(path)) as db:
-        assert fingerprint(db) == altered
 
 
 def test_fts_inverse_keeps_mixed_original_index_state_and_new_metadata(tmp_path):

@@ -12,7 +12,7 @@ from app.action_storage import _action_definitions, _create_action_objects
 from app.business_definitions import _definitions
 from app.business_storage import insert_business
 from app.business_candidate_storage import insert_business_candidate
-from app.business_schema_release import _snapshot
+from app.business_schema_helpers import _snapshot
 from app.action_business_definitions import BUSINESS_ACTION_KINDS, BUSINESS_ACTION_AUTO
 from app.action_feedback_storage import _insert_feedback_row, _materialize
 from app.action_feedback_definitions import FEEDBACK_FIELDS
@@ -186,7 +186,6 @@ def test_fresh_current25_empty_business_actions_roundtrip(tmp_path, monkeypatch)
         restore_business_action_schema(db, json.loads(json.dumps(source)))
         assert capture_business_action_source(db) == source
         db.rollback()
-
 
 
 def _seed_source_feedback(db, values):

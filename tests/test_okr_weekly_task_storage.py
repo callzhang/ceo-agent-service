@@ -283,47 +283,6 @@ def test_new_or_missing_source_fields_and_objects_reject_atomically(tmp_path, st
         db.rollback()
 
 
-def test_paired_publication_inverse_keeps_new_records_items_and_deleted_id_watermarks(tmp_path):
-    from app.run_storage import insert_run
-    from app.task_storage import insert_task
-    from app.task_schema_release import prepare_task_schema_release
-
-    path = tmp_path / "release.db"
-    with closing(okr_weekly_source(path, meeting=True)) as db:
-        original = fingerprint(db)
-    release = prepare_task_schema_release(tmp_path, path, ("2026-10-11.2", "source-time"))
-    def migrate(_root, path):
-        with closing(sqlite3.connect(path)) as db:
-            forward(db)
-    release.migrate = migrate
-    release.publish()
-    with closing(sqlite3.connect(path)) as db, db:
-        request = insert_task(db, "okr_review_requests", request_values("replacement") | dict(status="skipped", okr_source_json=b"\x00\xff")).lastrowid
-        job = insert_task(db, "weekly_okr_analysis_jobs", dict(week_end="replacement", manager_user_id="manager", source_digest="digest", status="completed", error="superseded retained error", finished_at="exact-finish")).lastrowid
-        run = insert_run(db, "okr_review_runs", dict(request_id=request, session_id="new-native", transcript_start=17, transcript_end=29)).lastrowid
-        missing = insert_run(db, "okr_review_runs", dict(request_id=999999999)).lastrowid
-        item = db.execute("insert into okr_review_items(request_id,objective_title,kr_title,item_json) values(?,'new adopted objective','KR',?)", (request, b"\x00\xff")).lastrowid
-        deleted_task = insert_task(db, "weekly_okr_analysis_jobs", dict(week_end="deleted", manager_user_id="manager", source_digest="digest")).lastrowid
-        deleted_run = insert_run(db, "okr_review_runs", dict(request_id=request)).lastrowid
-        db.execute("delete from tasks where id=?", (deleted_task,))
-        db.execute("delete from runs where id=?", (deleted_run,))
-    release.verify_loaded()
-    release.rollback()
-    release.rollback()
-    with closing(sqlite3.connect(path)) as db:
-        assert fingerprint(db)["schema"] == original["schema"]
-        assert fingerprint(db)["version"] == original["version"]
-        assert db.execute("select status,okr_source_json from okr_review_requests where id=?", (request,)).fetchone() == ("skipped", b"\x00\xff")
-        assert db.execute("select request_id,codex_session_id,codex_transcript_start_line,codex_transcript_end_line from okr_review_runs where id=?", (run,)).fetchone() == (request, "new-native", 17, 29)
-        assert db.execute("select request_id from okr_review_runs where id=?", (missing,)).fetchone() == (999999999,)
-        assert db.execute("select status,error,finished_at from weekly_okr_analysis_jobs where id=?", (job,)).fetchone() == ("completed", "superseded retained error", "exact-finish")
-        assert db.execute("select request_id,item_json from okr_review_items where id=?", (item,)).fetchone() == (request, b"\x00\xff")
-        assert db.execute("select seq from sqlite_sequence where name='weekly_okr_analysis_jobs'").fetchone()[0] >= max(718, deleted_task)
-        assert db.execute("select seq from sqlite_sequence where name='okr_review_requests'").fetchone()[0] >= deleted_task
-        assert db.execute("select seq from sqlite_sequence where name='okr_review_runs'").fetchone()[0] >= deleted_run
-        assert len(db.execute("pragma foreign_key_check").fetchall()) == 1
-
-
 def test_forward_failure_after_domain_conversion_rolls_back_every_source(tmp_path):
     from app.task_storage import migrate_task_schema
 
@@ -344,28 +303,6 @@ def test_forward_failure_after_domain_conversion_rolls_back_every_source(tmp_pat
         db.set_authorizer(None)
         assert denied == ["okr_review_runs"]
         db.rollback()
-        assert fingerprint(db) == before
-
-
-def test_inverse_failure_restores_complete_replacement_layout(tmp_path, monkeypatch):
-    import app.task_schema_release as module
-
-    path = tmp_path / "inverse-failure.db"
-    okr_weekly_source(path, meeting=True).close()
-    release = module.prepare_task_schema_release(tmp_path, path, ("2026-10-11.2", "source-time"))
-    with closing(sqlite3.connect(path)) as db:
-        forward(db)
-        before = fingerprint(db)
-    restore = module.restore_task_schema
-
-    def interrupt(db, state):
-        restore(db, state)
-        raise RuntimeError("inverse interrupted after restoring all sources")
-
-    monkeypatch.setattr(module, "restore_task_schema", interrupt)
-    with pytest.raises(RuntimeError, match="inverse interrupted"):
-        release.rollback()
-    with closing(sqlite3.connect(path)) as db:
         assert fingerprint(db) == before
 
 

@@ -224,44 +224,6 @@ def test_actual_source_declarations_are_required_before_any_write(tmp_path, kind
         db.rollback()
 
 
-def test_release_normalizes_only_original_orphan_and_inverse_keeps_new_facts(tmp_path):
-    from app.run_storage import insert_run
-    from app.task_storage import insert_task
-    from app.task_schema_release import prepare_task_schema_release
-    path = tmp_path / "release.db"
-    meeting_source(path).close()
-    release = prepare_task_schema_release(tmp_path, path, ("2026-10-11.2", "source-time"))
-    def migrate(_root, path):
-        with closing(sqlite3.connect(path)) as db:
-            forward(db)
-    release.migrate = migrate
-    release.publish()
-    with closing(sqlite3.connect(path)) as db, db:
-        job = insert_task(db, "meeting_alignment_jobs", dict(meeting_id="replacement", status="sent", final_message="new adopted message", send_result_json=' {"messageId": "new receipt"} ', calendar_summary_status="updated", calendar_summary_result_json=' {"calendar": "new receipt"} ')).lastrowid
-        run = insert_run(db, "meeting_alignment_runs", dict(task_id=job, status="sent", session_id="replacement-session", transcript_start=4, transcript_end=21)).lastrowid
-        db.execute("insert into meeting_memory_write_events(meeting_job_id,payload_json,memory_id,execution_generation) values(?,'{}','new-memory','replacement-generation')", (job,))
-        db.execute("insert into meeting_alignment_delivery_claims values(?,'replacement-token')", (job,))
-        removed_run = insert_run(db, "meeting_alignment_runs", dict(task_id=job, status="failed")).lastrowid
-        db.execute("delete from runs where id=?", (removed_run,))
-        removed_job = insert_task(db, "meeting_alignment_jobs", dict(meeting_id="deleted allocation")).lastrowid
-        db.execute("delete from tasks where id=?", (removed_job,))
-    release.verify_loaded()
-    release.rollback()
-    release.rollback()
-    with closing(sqlite3.connect(path)) as db:
-        assert db.execute("select final_message,send_result_json,calendar_summary_status,calendar_summary_result_json from meeting_alignment_jobs where id=?", (job,)).fetchone() == ("new adopted message", ' {"messageId": "new receipt"} ', "updated", ' {"calendar": "new receipt"} ')
-        assert db.execute("select job_id,codex_session_id,codex_transcript_start_line,codex_transcript_end_line from meeting_alignment_runs where id=?", (run,)).fetchone() == (job, "replacement-session", 4, 21)
-        assert db.execute("select memory_id from meeting_memory_write_events where meeting_job_id=?", (job,)).fetchone() == ("new-memory",)
-        assert db.execute("select claim_token from meeting_alignment_delivery_claims where job_id=?", (job,)).fetchone() == ("replacement-token",)
-        assert db.execute("pragma foreign_key_check").fetchall() == [("meeting_alignment_runs", 2298, "meeting_alignment_jobs", 0)]
-        assert db.execute("select job_id from meeting_alignment_runs where id=2298").fetchone() == (4908,)
-        assert db.execute("insert into meeting_alignment_jobs(meeting_id) values('after rollback')").lastrowid > removed_job
-        assert db.execute("insert into meeting_alignment_runs(job_id,status) values(?,'new')", (job,)).lastrowid > removed_run
-        db.commit()
-        forward(db)
-        release.verify_loaded()
-
-
 def test_fresh_current_and_missing_index_repair_preserve_adopted_meeting_values(tmp_path):
     from app.store import AutoReplyStore
     from app.run_storage import insert_run
@@ -308,37 +270,6 @@ def test_fresh_current_and_missing_index_repair_preserve_adopted_meeting_values(
             "('meeting_alignment_jobs','meeting_alignment_runs')"
         ).fetchone()
     assert store._schema_is_current()
-
-
-@pytest.mark.parametrize("alteration", ["orphan_parent", "additional_child_fk"])
-def test_publication_refuses_changed_or_additional_orphan_semantics(tmp_path, alteration):
-    from app.task_schema_release import prepare_task_schema_release
-
-    path = tmp_path / "invalid-target.db"
-    meeting_source(path).close()
-    release = prepare_task_schema_release(
-        tmp_path, path, ("2026-10-11.2", "source-time")
-    )
-    with closing(sqlite3.connect(path)) as db:
-        forward(db)
-        if alteration == "orphan_parent":
-            db.execute(
-                "update runs set job_id=7 where "
-                "record_type='meeting_alignment_runs' and legacy_key='2298'"
-            )
-        else:
-            db.execute(
-                "insert into meeting_memory_write_events(meeting_job_id,payload_json) "
-                "values(999999,'{}')"
-            )
-        db.commit()
-        before = fingerprint(db)
-    with pytest.raises(ValueError, match="integrity/FK mismatch"):
-        release.verify_loaded()
-    with pytest.raises(ValueError, match="integrity/FK mismatch"):
-        release.rollback()
-    with closing(sqlite3.connect(path)) as db:
-        assert fingerprint(db) == before
 
 
 @pytest.mark.parametrize("allow_missing", [False, True])

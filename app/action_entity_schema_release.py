@@ -25,7 +25,7 @@ from app.current_schema_manifest import (
     schema_objects,
     require_current_pair,
 )
-from app.result_schema_release import _markers
+from app.result_schema_helpers import _markers
 from app.state_storage import update_state_rows
 
 SOURCE_STORE_VERSION = "2026-10-19.12"

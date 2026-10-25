@@ -128,20 +128,5 @@ def prepare_database_schema_release(root: Path, path: Path, *, recovery_source_p
         if marker == (ACTION_ENTITY_SOURCE_VERSION,):
             return ActionEntitySchemaRelease(root, path, prepare_action_entity_release(path))
         raise ValueError("unsupported current Action source schema; explicit paired release required")
-    from app.business_legacy_field_schema_release import (
-        TARGET_STORE_VERSION as LEGACY_FIELD_STORE_VERSION, EMAIL_VERSION as LEGACY_FIELD_EMAIL_VERSION,
-        prepare_legacy_business_field_schema_release, require_target_pair,
-    )
-    if target == (LEGACY_FIELD_STORE_VERSION, LEGACY_FIELD_EMAIL_VERSION) and path.exists():
-        from app.state_definitions import state_projection
-        with closing(sqlite3.connect(path.resolve().as_uri() + "?mode=ro", uri=True)) as db:
-            db.execute("begin")
-            tables = {row[0] for row in db.execute("select name from main.sqlite_schema where type='table'")}
-            marker = db.execute(f"select value from ({state_projection('service_state')}) "
-                                "where key=?", (VERSION_KEY,)).fetchone() if "state" in tables else None
-        if "state" not in tables or marker == (LEGACY_FIELD_STORE_VERSION,):
-            require_target_pair(path)
-            return None
-        return prepare_legacy_business_field_schema_release(root, path)
     prepare_store_schema_release(root, path)
     return email_schema_release.prepare_email_schema_release(root, path)

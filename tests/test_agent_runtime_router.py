@@ -15,9 +15,9 @@ from app.agent_runtime_router import (
     AgentRuntimeRouter,
     _parse_timestamp,
 )
+from tests.support.native_task_fields import set_native_task_fields
+from tests.support.native_task_seed import seed_okr_review_task
 from app.store import AgentRole, AutoReplyStore
-from app.task_storage import task_id_expression
-from app.task8_storage import task8_insert_parts, task8_set_parts
 
 NOW = datetime(2026, 8, 20, 10, 0, tzinfo=UTC)
 
@@ -101,13 +101,10 @@ def session_incompatible_failure() -> RuntimeFailure:
 
 def seed_structured_operation(store: AutoReplyStore, request_id: int = 12) -> str:
     with store._connect() as db:
-        parts = task8_insert_parts("okr_review_requests", {
-            "legacy_key": str(request_id), "conversation_id": f"cid-{request_id}",
-            "conversation_title": "title", "trigger_message_id": f"msg-{request_id}",
-            "trigger_sender": "sender", "trigger_text": "text", "period_label": "period",
-            "period_start": "start", "period_end": "end", "status": "processing",
-        })
-        db.execute(f"insert into tasks({parts.columns}) values({parts.values})", parts.parameters)
+        seed_okr_review_task(
+            db, request_id, conversation_id=f"cid-{request_id}",
+            trigger_message_id=f"msg-{request_id}",
+        )
     return str(request_id)
 
 
@@ -281,11 +278,7 @@ def test_operation_failover_requires_runnable_parent_and_sealed_read_only_policy
         required_capabilities=frozenset({"structured_output"}),
     )
     with store._connect() as db:
-        parts = task8_set_parts("okr_review_requests", {"status": "failed"})
-        db.execute(
-            f"update tasks set {parts.sql} where record_type='okr_review_requests' and id={task_id_expression('okr_review_requests', '?')}",
-            (*parts.parameters, int(workload_key)),
-        )
+        set_native_task_fields(db, "okr_review_requests", int(workload_key), {"status": "failed"})
     terminal_parent = router.next_operation_route(
         workload_kind="structured",
         workload_key=workload_key,
@@ -472,7 +465,7 @@ def next_route(
             requested_failure.failover_permitted,
         )
     return router.next_route(
-        run=store.get_agent_run(attempt.agent_run_id),
+        run=store.get_agent_run(attempt.parent_id),
         failed_attempt=persisted_attempt,
         failure=requested_failure,
         required_capabilities=capabilities,
@@ -512,7 +505,7 @@ def test_infrastructure_process_failure_can_failover_to_api(
     )
 
     decision = router.next_route(
-        run=store.get_agent_run(running_attempt.agent_run_id),
+        run=store.get_agent_run(running_attempt.parent_id),
         failed_attempt=failed_attempt,
         failure=failure,
         required_capabilities=frozenset({"structured_output"}),
@@ -541,7 +534,7 @@ def test_infrastructure_failure_can_failover_after_effect_started(
     )
 
     decision = router.next_route(
-        run=store.get_agent_run(running_attempt.agent_run_id),
+        run=store.get_agent_run(running_attempt.parent_id),
         failed_attempt=failed_attempt,
         failure=failure,
         required_capabilities=frozenset({"structured_output"}),
@@ -569,11 +562,11 @@ def test_router_uses_current_persisted_run_status(
         failure.code,
         failure.failover_permitted,
     )
-    stale_run = store.get_agent_run(running_attempt.agent_run_id)
+    stale_run = store.get_agent_run(running_attempt.parent_id)
     with store._connect() as db:
         assignments = ", ".join(f"{field}=?" for field in persisted_update)
         db.execute(
-            f"update runs set {assignments} where record_type='agent_runs' and cast(legacy_key as integer)=?",
+            f"update runs set {assignments} where id=?",
             (*persisted_update.values(), stale_run.id),
         )
 
@@ -601,7 +594,7 @@ def test_router_rejects_caller_run_with_forged_turn_identity(
         failure.code,
         failure.failover_permitted,
     )
-    forged_run = store.get_agent_run(running_attempt.agent_run_id).model_copy(
+    forged_run = store.get_agent_run(running_attempt.parent_id).model_copy(
         update={"execution_generation": "forged-generation"}
     )
 
@@ -624,7 +617,7 @@ def test_router_rejects_a_missing_persisted_run(router, store, running_attempt):
         failure.code,
         failure.failover_permitted,
     )
-    missing_run = store.get_agent_run(running_attempt.agent_run_id).model_copy(
+    missing_run = store.get_agent_run(running_attempt.parent_id).model_copy(
         update={"id": 999999}
     )
 
@@ -656,7 +649,7 @@ def test_router_requires_a_persisted_failed_attempt(
             failure.failover_permitted,
         )
         store.claim_agent_runtime_attempt(
-            running_attempt.agent_run_id,
+            running_attempt.parent_id,
             "codex_api",
             "codex_cli",
             "service_api",
@@ -667,7 +660,7 @@ def test_router_requires_a_persisted_failed_attempt(
         attempt = store.get_agent_runtime_attempt(running_attempt.id)
 
     decision = router.next_route(
-        run=store.get_agent_run(running_attempt.agent_run_id),
+        run=store.get_agent_run(running_attempt.parent_id),
         failed_attempt=attempt,
         failure=failure,
         required_capabilities=frozenset({"structured_output"}),
@@ -694,7 +687,7 @@ def test_router_rejects_external_failure_that_conflicts_with_persisted_ledger(
     )
 
     decision = router.next_route(
-        run=store.get_agent_run(running_attempt.agent_run_id),
+        run=store.get_agent_run(running_attempt.parent_id),
         failed_attempt=failed_attempt,
         failure=failover_failure(),
         required_capabilities=frozenset({"structured_output"}),
@@ -739,7 +732,7 @@ def test_router_requires_each_persisted_failure_authorization_field(
     )
 
     decision = router.next_route(
-        run=store.get_agent_run(running_attempt.agent_run_id),
+        run=store.get_agent_run(running_attempt.parent_id),
         failed_attempt=failed_attempt,
         failure=external_failure,
         required_capabilities=frozenset({"structured_output"}),
@@ -760,7 +753,7 @@ def test_fake_session_incompatible_failure_cannot_authorize_fresh_retry(
         original_failure.failover_permitted,
     )
     api = store.claim_agent_runtime_attempt(
-        running_attempt.agent_run_id,
+        running_attempt.parent_id,
         "codex_api",
         "codex_cli",
         "service_api",
@@ -776,7 +769,7 @@ def test_fake_session_incompatible_failure_cannot_authorize_fresh_retry(
     )
 
     decision = make_router(store).next_route(
-        run=store.get_agent_run(running_attempt.agent_run_id),
+        run=store.get_agent_run(running_attempt.parent_id),
         failed_attempt=failed_api,
         failure=failover_failure("session_route_incompatible"),
         required_capabilities=frozenset({"structured_output"}),
@@ -801,7 +794,7 @@ def test_attempted_routes_are_never_selected_again(router, store, running_attemp
         running_attempt.id, "authentication", "codex_login_required", True
     )
     api = store.claim_agent_runtime_attempt(
-        running_attempt.agent_run_id, "codex_api", "codex_cli", "service_api", "gpt-5.5"
+        running_attempt.parent_id, "codex_api", "codex_cli", "service_api", "gpt-5.5"
     )
 
     decision = next_route(router, store, api)
@@ -897,7 +890,7 @@ def test_resumed_codex_api_session_incompatibility_gets_one_fresh_retry(
         running_attempt.id, "authentication", "codex_login_required", True
     )
     api = store.claim_agent_runtime_attempt(
-        running_attempt.agent_run_id,
+        running_attempt.parent_id,
         "codex_api",
         "codex_cli",
         "service_api",
@@ -960,7 +953,7 @@ def test_fresh_session_retry_follows_the_route_kind_not_its_name(
         model=model,
     )
     resumed = store.claim_agent_runtime_attempt(
-        running_attempt.agent_run_id,
+        running_attempt.parent_id,
         renamed.name,
         renamed.runtime_kind.value,
         renamed.credential_mode.value,
@@ -992,7 +985,7 @@ def test_a_local_login_route_gets_the_bounded_cli_fresh_retry(store, running_att
         model="gpt-5.5",
     )
     resumed = store.claim_agent_runtime_attempt(
-        running_attempt.agent_run_id,
+        running_attempt.parent_id,
         login.name,
         login.runtime_kind.value,
         login.credential_mode.value,
@@ -1021,7 +1014,7 @@ def test_resumed_claude_session_incompatibility_gets_one_fresh_retry(
     )
     claude = route("claude_api")
     resumed = store.claim_agent_runtime_attempt(
-        running_attempt.agent_run_id,
+        running_attempt.parent_id,
         claude.name,
         claude.runtime_kind.value,
         claude.credential_mode.value,
@@ -1050,7 +1043,7 @@ def test_claude_session_retry_does_not_depend_on_effect_counters(
     )
     claude = route("claude_api")
     resumed = store.claim_agent_runtime_attempt(
-        running_attempt.agent_run_id,
+        running_attempt.parent_id,
         claude.name,
         claude.runtime_kind.value,
         claude.credential_mode.value,
@@ -1080,7 +1073,7 @@ def test_fresh_or_conflicting_claude_session_evidence_cannot_retry(
     )
     claude = route("claude_api")
     fresh = store.claim_agent_runtime_attempt(
-        running_attempt.agent_run_id,
+        running_attempt.parent_id,
         claude.name,
         claude.runtime_kind.value,
         claude.credential_mode.value,
@@ -1094,7 +1087,7 @@ def test_fresh_or_conflicting_claude_session_evidence_cannot_retry(
     assert persisted is not None
     conflicting = persisted.model_copy(update={"source_session_id": "forged-session"})
     conflicting_decision = router.next_route(
-        run=store.get_agent_run(running_attempt.agent_run_id),
+        run=store.get_agent_run(running_attempt.parent_id),
         failed_attempt=conflicting,
         failure=session_incompatible_failure(),
         required_capabilities=frozenset({"structured_output"}),
@@ -1134,7 +1127,7 @@ def test_fresh_session_retry_requires_the_normal_route_eligibility_gate(
         running_attempt.id, "authentication", "codex_login_required", True
     )
     api = store.claim_agent_runtime_attempt(
-        running_attempt.agent_run_id,
+        running_attempt.parent_id,
         "codex_api",
         "codex_cli",
         "service_api",
@@ -1164,7 +1157,7 @@ def test_fresh_session_retry_requires_the_normal_route_eligibility_gate(
 @pytest.mark.parametrize(
     "failed_attempt",
     [
-        lambda attempt: attempt.model_copy(update={"agent_run_id": 999999}),
+        lambda attempt: attempt.model_copy(update={"parent_id": 999999}),
         lambda attempt: attempt.model_copy(
             update={"source_session_id": "different-ledger-evidence"}
         ),
@@ -1174,7 +1167,7 @@ def test_router_rejects_foreign_or_nonledger_failed_attempt(
     router, store, running_attempt, failed_attempt
 ):
     decision = router.next_route(
-        run=store.get_agent_run(running_attempt.agent_run_id),
+        run=store.get_agent_run(running_attempt.parent_id),
         failed_attempt=failed_attempt(running_attempt),
         failure=failover_failure(),
         required_capabilities=frozenset({"structured_output"}),
@@ -1192,7 +1185,7 @@ def test_fresh_codex_api_session_incompatibility_does_not_repeat(
         running_attempt.id, "authentication", "codex_login_required", True
     )
     api = store.claim_agent_runtime_attempt(
-        running_attempt.agent_run_id, "codex_api", "codex_cli", "service_api", "gpt-5.5"
+        running_attempt.parent_id, "codex_api", "codex_cli", "service_api", "gpt-5.5"
     )
     router = make_router(store)
 
@@ -1210,13 +1203,13 @@ def test_prior_fresh_codex_api_attempt_blocks_another_fresh_retry(
         running_attempt.id, "authentication", "codex_login_required", True
     )
     first_api = store.claim_agent_runtime_attempt(
-        running_attempt.agent_run_id, "codex_api", "codex_cli", "service_api", "gpt-5.5"
+        running_attempt.parent_id, "codex_api", "codex_cli", "service_api", "gpt-5.5"
     )
     store.fail_agent_runtime_attempt(
         first_api.id, "session", "session_route_incompatible", True
     )
     second_api = store.claim_agent_runtime_attempt(
-        running_attempt.agent_run_id,
+        running_attempt.parent_id,
         "codex_api",
         "codex_cli",
         "service_api",
@@ -1249,7 +1242,7 @@ def test_non_session_failure_with_session_incompatible_code_cannot_fresh_retry(
         initial_failure.failover_permitted,
     )
     api = store.claim_agent_runtime_attempt(
-        running_attempt.agent_run_id,
+        running_attempt.parent_id,
         "codex_api",
         "codex_cli",
         "service_api",

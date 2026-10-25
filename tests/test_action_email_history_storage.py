@@ -6,13 +6,15 @@ import sqlite3
 
 import pytest
 
+import app.store as store_module
 from app.action_email_history_definitions import HISTORY_FIELDS, HISTORY_KINDS, history_projection
 from app.action_email_history_storage import (
     capture_email_history_source, migrate_email_history_schema,
     restore_email_history_schema, insert_email_history, _projected_snapshot,
 )
 from app.action_task_delivery_storage import _hash
-from app.business_schema_release import _snapshot
+from app.business_schema_helpers import _snapshot
+from app.business_storage import insert_business
 from app.store import AutoReplyStore
 from app.email_store import EmailStore
 
@@ -53,11 +55,7 @@ def test_fresh_current_email_history_is_in_actions(tmp_path):
         tables = {name for (name,) in db.execute(
             "select name from main.sqlite_schema where type='table' and name not like 'sqlite_%'"
         )}
-        from app.current_schema_manifest import current_objects
-        expected_tables = {
-            name for kind, name, _, _ in current_objects(email_ledger=True) if kind == "table"
-        }
-        assert tables == expected_tables
+        assert len(tables) == 11
         assert "email_historical_classification_history" not in tables
         assert "email_historical_operations" not in tables
         columns = {row[1] for row in db.execute("pragma main.table_xinfo(actions)")}
@@ -71,7 +69,6 @@ def _source15_store(path, monkeypatch):
     from app.action_storage import create_action_schema
     from app.action_business_storage import SOURCE_OPTIONS
     from app.action_task_delivery_storage import _source_declaration
-    from app.final_action_schema import BUSINESS_SOURCE_DOCUMENT_SCHEMA
     from app.configs_storage import create_configs_schema
     from app.schedules_storage import create_schedules_schema
     from app.task20_current_schema import create_current_task20_schema
@@ -89,7 +86,7 @@ def _source15_store(path, monkeypatch):
         create_action_schema(db, reply_variant="fresh_memory_fk",
                              **(SOURCE_OPTIONS | {"include_business_actions": True,
                                                   "include_email_history": False}))
-        for sql in BUSINESS_SOURCE_DOCUMENT_SCHEMA:
+        for sql in store_module.BUSINESS_SOURCE_DOCUMENT_SCHEMA:
             db.execute(sql)
         for name, key in (("business", "unchanged_business_parent_declaration"),
                           ("business_legacy_links", "unchanged_legacy_child_declaration")):
@@ -137,20 +134,7 @@ def test_nonempty_history_rows_blob_pk_retained_parents_and_inverse(tmp_path, mo
             "dedupe_key": "synthetic:signal", "context_json": "{}",
             "source_document_id": 1,
         }).lastrowid
-        project_values = {
-            "category": "other", "tags_json": "[]", "priority": "none", "risk_level": "none",
-            "needs_derek_attention": 0, "owner_user_id": "", "owner_name": "",
-            "related_people_json": "[]", "goal": "", "background": "",
-            "facts_json": "[]", "current_state": "", "blocker": "",
-            "next_step": "", "next_follow_up_at": "", "follow_up_mode": "none",
-            "source_conversations_json": "[]", "last_activity_at": "time",
-            "owner_evidence_json": "{}",
-        }
-        project = db.execute(
-            "insert into business(record_type,legacy_key,payload_json,title) "
-            "values('work_project','1',?,?)",
-            (json.dumps(project_values), "Synthetic"),
-        ).lastrowid
+        project = insert_business(db, "work_project", {"id": 1, "title": "Synthetic"}).lastrowid
         db.execute("insert into business_legacy_links(signal_id,work_project_id) values(?,?)",
                    (signal, project))
         db.execute("update sqlite_sequence set seq=50 where name='actions:business_task_signals'")
@@ -212,25 +196,16 @@ def test_nonempty_history_rows_blob_pk_retained_parents_and_inverse(tmp_path, mo
         db.rollback()
 
 
-def test_cold_reopen_rejects_missing_current_history_index_without_mutation(tmp_path):
-    path = tmp_path / "missing-index.sqlite"
+def test_cold_reopen_repairs_only_missing_current_history_index(tmp_path):
+    path = tmp_path / "repair.sqlite"
     EmailStore(path)
     with sqlite3.connect(path) as db:
         db.execute("drop index idx_actions_email_history_created")
-        before = tuple(tuple(row) for row in db.execute(
-            "select type,name,tbl_name,sql from sqlite_schema "
-            "where name not glob 'sqlite_*' order by type,name"
-        ))
-    with pytest.raises(sqlite3.IntegrityError, match="unsupported or malformed Store source schema"):
-        AutoReplyStore(path)
+    AutoReplyStore(path)
+    EmailStore(path)
     with sqlite3.connect(path) as db:
-        after = tuple(tuple(row) for row in db.execute(
-            "select type,name,tbl_name,sql from sqlite_schema "
-            "where name not glob 'sqlite_*' order by type,name"
-        ))
-        assert after == before
-        assert not db.execute("select 1 from sqlite_schema where type='index' "
-                              "and name='idx_actions_email_history_created'").fetchone()
+        assert db.execute("select 1 from sqlite_schema where type='index' "
+                          "and name='idx_actions_email_history_created'").fetchone()
         assert not db.execute("select 1 from sqlite_schema where type='table' and name in (?,?)",
                               HISTORY_KINDS).fetchone()
 

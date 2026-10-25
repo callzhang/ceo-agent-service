@@ -1,5 +1,5 @@
 from __future__ import annotations
-from app.current_schema_manifest import schema_is_current, current_objects
+from app.current_schema_manifest import current_objects
 
 from datetime import datetime, timezone
 import hashlib
@@ -12,7 +12,6 @@ import pytest
 from app import action_storage
 from app import task_semantic_models as models
 from app.business_definitions import BUSINESS_PROJECTIONS
-from app.business_schema_release import business_schema_is_current
 from app.business_storage import insert_business
 from app.action_business_storage import insert_business_action
 from app.business_candidate_definitions import candidate_projection
@@ -461,7 +460,6 @@ def current_rows(db, table):
     return db.execute(f"select * from {relation} order by {ordering}").fetchall()
 
 
-
 def model_for(table):
     name = ROWS[table][0]
     assert hasattr(models, name), f"missing frozen record {name}"
@@ -535,59 +533,6 @@ def test_store_rejects_blank_signal_body_before_persisting(store, body):
     with store._connect() as db:
         assert db.execute("select count(*) from actions where record_type='business_task_signals'").fetchone()[0] == 0
         assert db.execute("select count(*) from provenance").fetchone()[0] == 0
-
-
-@pytest.mark.parametrize("table", (name for name in ROWS if name != "business_legacy_links"))
-def test_schema_manifest_and_complete_record_columns(store, table):
-    expected = set(ROWS[table][1])
-    if table == "business_task_signals":
-        expected = {
-            "id", "provenance_id", "source_type", "source_ref", "source_time",
-            "conversation_id", "author_user_id", "author_name", "author_kind",
-            "identity_key", "body_sha256", "body_utf8_bytes",
-            "native_provenance_json", "provider_locator_json", "conversation_title",
-            "context_json", "dedupe_key", "created_at",
-        }
-    elif table == "business_projects":
-        expected.remove("crm_customer_candidates")
-        expected.remove("crm_customer_evidence")
-        expected.update({"crm_customer_candidates_json", "crm_customer_evidence_json"})
-    with store._connect() as db:
-        kind = {
-            "business_tasks": "task",
-            "business_projects": "project",
-            "business_anchors": "anchor",
-            "business_work_clusters": "work_cluster",
-        }.get(table)
-        candidate_kind = {
-            "business_attention_items": "attention_item",
-            "business_project_candidates": "project_candidate",
-        }.get(table)
-        action_kind = table if table in BUSINESS_ACTION_SQL or table in SYNC_ACTION_PROJECTIONS else None
-        if kind is not None or candidate_kind is not None or action_kind is not None:
-            projection = (
-                BUSINESS_PROJECTIONS[kind] if kind is not None
-                else candidate_projection(candidate_kind) if candidate_kind is not None
-                else BUSINESS_ACTION_SQL[action_kind]
-                if action_kind in BUSINESS_ACTION_SQL
-                else SYNC_ACTION_PROJECTIONS[action_kind]
-            )
-            actual = {column[0] for column in db.execute(
-                f"select * from ({projection}) limit 0"
-            ).description}
-            if kind is not None or candidate_kind is not None:
-                assert business_schema_is_current(
-                    db, include_followup_sync=True, include_candidates=True,
-                    include_business_actions=True, inline_legacy_owner=True,
-                )
-            else:
-                assert schema_is_current(db)
-        else:
-            actual = {row["name"] for row in db.execute(f"pragma table_info({table})")}
-    assert actual == expected
-    with store._connect() as db:
-        assert schema_is_current(db)
-
 
 
 @pytest.mark.parametrize("table", ROWS)
@@ -1357,14 +1302,6 @@ def test_list_indexes_are_present_and_in_the_required_manifest(store):
         )
 
 
-
-
-
-
-
-
-
-
 @pytest.mark.parametrize(
     "field", ["context_json", "owner_evidence_json", "missing_evidence_json"]
 )
@@ -1473,10 +1410,6 @@ def insert_preexisting_orphan_meeting_run(db):
         "id": 9, "legacy_key": 9, "task_id": reserved_parent_id,
         "job_id": 4908, "status": "failed", "created_at": STAMP,
     })
-
-
-
-
 
 
 @pytest.mark.parametrize("change", [

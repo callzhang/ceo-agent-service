@@ -4,17 +4,13 @@ import sqlite3
 
 import pytest
 
-from app import task20_schema_release as release
 from app import task20_current_schema as current
 from app.runs11_current_schema import create_current_run11_schema
 from app.task_storage import create_task_schema, install_task_child_guards
 from app.workbench_storage import create_workbench_auxiliary_schema
 from app.task8_storage import register_task8_functions
-from tests.test_task20_schema_release import source, seed
 from tests.test_task20_definitions import insert as seed_task
 from app.task12_storage import insert_task12
-
-
 
 
 @pytest.fixture
@@ -26,22 +22,6 @@ def db():
         current.create_current_feedback_child_schema(connection)
         current.create_current_workbench_auxiliary_schema(connection)
         yield connection
-
-
-@pytest.mark.parametrize('variant',('actual','fresh'))
-def test_fresh_factories_converge_with_exact_migration_target(db,variant):
-    with closing(sqlite3.connect(':memory:')) as native:
-        source(native,variant)
-        seed(native)
-        native.execute('begin')
-        metadata=release.capture_task20_source(native)
-        release.migrate_task20_schema(native,metadata)
-        for table in ('tasks','feedback_iteration_decision_items'):
-            assert release._declaration(db,table)==release._declaration(native,table)
-    assert current.task20_schema_is_current(db)
-    assert current.task20_feedback_child_is_current(db)
-    assert not db.execute('select 1 from main.sqlite_schema where name in ('+','.join('?' for _ in current.RETIRED_TASK_NAMES)+')',current.RETIRED_TASK_NAMES).fetchone()
-    assert not db.execute("select name from main.sqlite_schema where name like 'trg_tasks_child_feedback_iteration_decision_items_%'").fetchall()
 
 
 def test_repeat_factories_preserve_current_main_and_unrelated_temp_counters(db):

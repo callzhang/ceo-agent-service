@@ -23,9 +23,9 @@ from app.email_store import (
     _schema_identifier, _schema_metadata_text,
 )
 from app.logical_run_current_schema import current_configs_schema_is_current
-from app.provider_state_schema_release import provider_state_schema_is_current
+from app.provider_state_schema_current import provider_state_schema_is_current
 from app.state_definitions import STATE_FIELDS
-from app.state_schema_release import state_schema_is_current
+from app.state_schema_current import state_schema_is_current
 from app.task20_definitions import TASK20_NEW_KINDS
 from app.task_lifecycle_current_schema import task20_schema_is_current
 from app.action_email_storage import finite_target_external_sql

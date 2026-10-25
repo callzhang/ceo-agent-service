@@ -23,8 +23,8 @@ from app.action_task_delivery_storage import (
 )
 from app.business_candidate_storage import _collision
 from app.business_definitions import _definitions as business_definitions
-from app.business_schema_release import _snapshot, _restore_rows
-from app.task_schema_release import _foreign_keys
+from app.business_schema_helpers import _snapshot, _restore_rows
+from app.result_schema_helpers import _foreign_keys
 
 
 SOURCE_HASHES = {

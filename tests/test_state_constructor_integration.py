@@ -7,7 +7,7 @@ import pytest
 
 from app.email_store import EmailStore
 from app.store import AutoReplyStore
-from app.state_schema_release import SOURCE_TABLES, TARGET_INDEXES, state_schema_is_current
+from app.state_schema_current import SOURCE_TABLES, TARGET_INDEXES, state_schema_is_current
 
 
 def state_facts(path):

@@ -1655,7 +1655,7 @@ def _update_email_action(db, kind, identity, values, *, new_source_rowid=_EMAIL_
         identity_args += (*projected_identity, *parameters)
     existing = db.execute("select payload_json from actions where " + predicate, identity_args).fetchone()
     if existing is None:
-        return db.execute("update actions set legacy_key=legacy_key where 0")
+        return db.execute("update main.sqlite_sequence set seq=seq where 0")
     assignments, args, paths = [], [], []
     if new_source_rowid is not _EMAIL_ROWID_UNSET:
         assignments.append("legacy_key=?")
@@ -1775,7 +1775,7 @@ def update_sync_action(db: sqlite3.Connection, kind: str, public_id, values: dic
                           f"(select id from ({projection}) where id=? and ({where_sql}))")
             identity_args.extend((public_id, *parameters))
         if db.execute("select 1 from actions where " + predicate, identity_args).fetchone() is None:
-            return db.execute("update actions set legacy_key=legacy_key where 0")
+            return db.execute("update main.sqlite_sequence set seq=seq where 0")
         assignments, arguments, paths = [], [], []
         if "id" in values:
             assignments.append("legacy_key=?")
@@ -1939,7 +1939,7 @@ def update_task_delivery_action(db: sqlite3.Connection, kind: str, public_id, va
         if identity in values and db.execute(
             "select 1 from actions where " + predicate + " limit 1", identity_args,
         ).fetchone() is None:
-            return db.execute("update actions set legacy_key=legacy_key where 0")
+            return db.execute("update main.sqlite_sequence set seq=seq where 0")
         assignment, arguments = task_delivery_set_parts(kind, values)
         return db.execute("update actions set " + assignment + " where " + predicate,
                           (*arguments, *identity_args))
@@ -2023,7 +2023,7 @@ def _update_reply_action(db, kind, public_id, values, *, where_sql="", parameter
     bound = (*values.values(), *identity_arguments)
     db.execute("update main.sqlite_sequence set seq=seq where 0" + " and ? is null" * len(bound), bound)
     if db.execute(f"select 1 from actions where {predicate} limit 1", identity_arguments).fetchone() is None:
-        return db.execute("update actions set legacy_key=legacy_key where 0")
+        return db.execute("update main.sqlite_sequence set seq=seq where 0")
     assignments, arguments, paths = [], [], []
     for field, value in values.items():
         if field == "id":

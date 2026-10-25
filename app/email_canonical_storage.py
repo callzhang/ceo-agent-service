@@ -10,7 +10,7 @@ from app.action_email_storage import (
     _external_dependencies, _sequence, _set_sequence, _temp_create_sql,
 )
 from app.action_task_delivery_storage import _hash, _quote, _source_declaration
-from app.business_schema_release import _snapshot, _restore_rows
+from app.business_schema_helpers import _snapshot, _restore_rows
 from app.email_canonical_definitions import (
     CLASS_FIELDS, MESSAGE_FIELDS, SHARED_FIELDS, canonical_column, email_projection,
     MESSAGE_METADATA_FIELDS, email_metadata_declaration,
