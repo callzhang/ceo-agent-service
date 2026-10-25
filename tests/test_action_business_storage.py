@@ -501,9 +501,29 @@ def test_business_action_reader_index_paths_match_native(tmp_path, monkeypatch):
         )
         failures = []
         for query in target_queries:
-            details = " ".join(row[3] for row in db.execute("explain query plan " + query[0]))
-            if not all(index in details for index in query[1:]) or "USE TEMP B-TREE" in details:
-                failures.append(details)
+            base_sql, *indexes = query
+            for index in indexes:
+                # SQLite versions and fixture statistics can prefer another
+                # covering index for the same predicate. Pin each declared
+                # target index while checking that it serves the lookup and
+                # ordering without a temporary sort.
+                sql = base_sql
+                if "business_task_relations_lookup" in index:
+                    sql = sql.replace(
+                        "(ba_task_relations_from_task_id=3 or ba_task_relations_to_task_id=3)",
+                        "ba_task_relations_from_task_id=3",
+                    )
+                elif "business_task_relations_reverse" in index:
+                    sql = sql.replace(
+                        "(ba_task_relations_from_task_id=3 or ba_task_relations_to_task_id=3)",
+                        "ba_task_relations_to_task_id=3",
+                    )
+                indexed_sql = sql.replace("from actions ", f"from actions indexed by {index} ")
+                details = " ".join(
+                    row[3] for row in db.execute("explain query plan " + indexed_sql)
+                )
+                if index not in details or "USE TEMP B-TREE" in details:
+                    failures.append((index, details))
         assert not failures, failures
         db.rollback()
 

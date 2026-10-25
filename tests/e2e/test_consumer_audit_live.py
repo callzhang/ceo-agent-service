@@ -283,6 +283,7 @@ class CalendarRunnerContractExecutor:
         lines = [
             json.dumps({"type": "thread.started", "thread_id": session}),
             *(json.dumps(record) for record in records),
+            json.dumps({"type": "turn.completed", "turn": {"id": session}}),
         ]
 
 
