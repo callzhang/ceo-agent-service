@@ -9,7 +9,7 @@ import pytest
 
 from app.action_storage import (
     ACTION_PROJECTIONS, EMAIL_ACTION_PROJECTIONS, create_action_schema,
-    insert_action, ALL_ACTION_TYPES_WITH_REPLY, _action_definitions,
+    insert_action, insert_email_action, ALL_ACTION_TYPES_WITH_REPLY, _action_definitions,
     _references_for,
     _encoded_sqlite_value,
 )
@@ -92,7 +92,8 @@ def test_email_generated_fields_are_null_for_older_actions_and_absent_email_fiel
         db.execute("create table runs(id integer primary key, record_type text, legacy_key text)")
         db.execute("create table email_classifications(id integer primary key)")
         db.execute("insert into runs(id,record_type,legacy_key) values(1,'agent_runs','1')")
-        create_action_schema(db, include_reply=True, reply_variant="fresh_memory_fk", include_email=True)
+        create_action_schema(db, include_reply=True, reply_variant="fresh_memory_fk", include_email=True,
+                             compact_payload=True)
         insert_action(db, "external_action_results", dict(
             external_action_key="older-key", business_object_key="business",
             action_identity="older-identity", operation="send",
@@ -107,8 +108,7 @@ def test_email_generated_fields_are_null_for_older_actions_and_absent_email_fiel
                               None, None, None,
                           )
         cancellation = dict(action_identity="cancel", decision_json="{}")
-        db.execute("insert into actions(record_type,legacy_key,payload_json) values(?,?,?)",
-                   ("email_unsubscribe_cancellations", "1", json.dumps(cancellation)))
+        insert_email_action(db, "email_unsubscribe_cancellations", cancellation)
         assert db.execute("select email_action_identity,email_decision_json,email_status,email_created_at "
                           "from actions where record_type='email_unsubscribe_cancellations'").fetchone() == (
                               "cancel", "{}", None, None,
