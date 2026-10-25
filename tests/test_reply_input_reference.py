@@ -1,9 +1,8 @@
-import json
 import sqlite3
 
 import pytest
 
-from app.store import AutoReplyStore, REPLY_TASK_INPUT_SQL
+from app.store import AutoReplyStore
 from app.task20_definitions import TASK20_COLUMNS
 
 
@@ -25,20 +24,19 @@ def test_parent_has_real_input_foreign_keys_and_no_payload_cache(tmp_path):
     task = store.ensure_reply_task(**values()).id
     with sqlite3.connect(store.path) as db:
         keys = {(r[3], r[2], r[4]) for r in db.execute("pragma foreign_key_list(tasks)")}
-        assert ("current_input_id", "tasks", "id") in keys
-        assert ("claimed_input_id", "tasks", "id") in keys
+        assert ("current_input_id", "task_inputs", "id") in keys
+        assert ("claimed_input_id", "task_inputs", "id") in keys
         parent = db.execute(
-            "select current_input_id,json(payload_json) "
-            "from tasks where record_type='reply_tasks' and cast(legacy_key as integer)=?", (task,)
+            "select current_input_id,parameters_json from tasks where kind='reply' and id=?",
+            (task,),
         ).fetchone()
         assert parent[0] is not None
         parent_fields = {column[0] for column in TASK20_COLUMNS["reply_tasks"]}
         assert parent_fields.isdisjoint({
             "trigger_text", "trigger_message_json", "input_compacted", "input_provenance_json",
         })
-        cached_values = json.loads(parent[1])
-        assert values()["trigger_text"] not in cached_values
-        assert values()["trigger_message_json"] not in cached_values
+        assert values()["trigger_text"].encode() not in parent[1]
+        assert values()["trigger_message_json"].encode() not in parent[1]
 
 
 def test_claim_keeps_exact_input_when_current_context_changes(tmp_path):
@@ -57,7 +55,7 @@ def test_claim_keeps_exact_input_when_current_context_changes(tmp_path):
     assert execution.trigger_message_id == "message"
     with sqlite3.connect(store.path) as db:
         current, original = db.execute(
-            "select current_input_id, claimed_input_id from tasks where record_type='reply_tasks' and cast(legacy_key as integer)=?",
+            "select current_input_id, claimed_input_id from tasks where kind='reply' and id=?",
             (task_id,),
         ).fetchone()
         assert current != original
@@ -75,7 +73,9 @@ def test_terminal_input_persists_no_compact_json_but_projects_old_shape(tmp_path
     assert '"input_compacted":true' in result.trigger_message_json
     with sqlite3.connect(store.path) as db:
         assert db.execute(
-            f"select trigger_text, trigger_message_json, input_compacted from ({REPLY_TASK_INPUT_SQL})"
+            "select trigger_text, trigger_message_json, input_compacted "
+            "from task_inputs where task_id=? order by id limit 1",
+            (task_id,),
         ).fetchone() == ("", "", 1)
     assert (
         store.list_reply_task_inputs(task_id)[0]["trigger_message_json"]

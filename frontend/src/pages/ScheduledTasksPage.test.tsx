@@ -62,6 +62,17 @@ const commandRefs = [{ ...managedRef, position: 0 }, { ...operationRef, position
 const commandRun: ScheduledTaskRun = { ...run, id: 13, scheduled_task_id: 9, execution_kind: "service_command", execution_id: "produce-once", snapshot: { ...run.snapshot, task_id: 9, name: "检查 DingTalk 消息", description: "增量检查 DingTalk 消息并创建后续处理任务。", prompt: commandPrompt, command: "produce-once", runtime_id: "", runtime_options: {}, working_directory: "", skill_refs: commandRefs } };
 const commandTask: TestTask = { ...task, id: 9, migration_key: "dingtalk-message-check-v1", name: "处理新的钉钉消息", description: "发现新的单聊或群聊 @ 消息后，由 Agent 读取最新上下文，决定回复、表态、澄清或不处理。", prompt: commandPrompt, command: "produce-once", runtime_id: "", runtime_options: {}, working_directory: "", skill_refs: commandRefs, recent_run: commandRun };
 
+function runTimeLabel(value: string) {
+  const date = new Date(value);
+  const time = date.toLocaleTimeString("zh-CN", {
+    hour12: false,
+    hour: "2-digit",
+    minute: "2-digit",
+    ...(date.getSeconds() ? { second: "2-digit" } : {}),
+  });
+  return `${date.getMonth() + 1}/${date.getDate()} ${time}`;
+}
+
 function setup(items: TestTask[] = [task], runs = { scheduled_task: task, items: [run], meta: { snapshot_at: "now", page_size: 20, next_cursor: "", has_more: false } }) {
   api.listScheduledTasks.mockResolvedValue({ items, meta: { total: items.length, snapshot_at: "now" } });
   api.getScheduledTaskOptions.mockResolvedValue(options);
@@ -149,7 +160,7 @@ describe("ScheduledTasksPage", () => {
     renderPage();
 
     expect(await screen.findByText("3 次定时检查都没有新内容")).toBeInTheDocument();
-    expect(screen.getByText("9/8 05:12 – 9/8 05:14")).toBeInTheDocument();
+    expect(screen.getByText(`${runTimeLabel("2026-09-08T12:12:00Z")} – ${runTimeLabel("2026-09-08T12:14:00Z")}`)).toBeInTheDocument();
     expect(screen.getByText("最近一次触发 Agent")).toBeInTheDocument();
     expect(screen.getByRole("link", { name: "Attempt #8840 已完成" })).toHaveAttribute("href", "/attempts/8840");
     expect(screen.getAllByText("scheduled_task_previous_execution_active")).toHaveLength(2);

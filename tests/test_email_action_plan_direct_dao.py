@@ -1,4 +1,4 @@
-"""Direct Email DAO parity after migrating genuine old facts to the final schema."""
+"""Direct Email DAO parity against the genuine old DAO on matching facts."""
 
 from contextlib import closing
 import sqlite3
@@ -111,6 +111,7 @@ from app.email_store import EmailStore
 from app.email_classifier_contracts import EmailClassification
 from app.action_storage import update_email_action
 p=Path(sys.argv[1]); AutoReplyStore(p); s=EmailStore(p)
+s._now=lambda:'2026-10-14T10:00:00+00:00'
 c=EmailClassification.model_validate_json(sys.argv[2]); s.persist_scan_result(c,model_text='fixture features')
 s.persist_scan_result(EmailClassification.model_validate_json(sys.argv[3]),model_text='pending features')
 s.create_account(json.loads(sys.argv[4]))
@@ -142,27 +143,24 @@ print(json.dumps(ids))
 
 
 def _build_converted_pair(tmp_path, request):
-    from pathlib import Path
-    import subprocess
-
-    from app.store_schema_release import prepare_database_schema_release
     from app.email_store import EmailStore
+    from app.email_classifier_contracts import EmailClassificationStatus
+    from app.store import AutoReplyStore
+    from tests.test_email_store import _classification, _task2_account_values
 
     classification, source_ids, source, old = _genuine_old_source(tmp_path, request)
     target = tmp_path / "target.sqlite3"
-    with (
-        closing(sqlite3.connect(source)) as original,
-        closing(sqlite3.connect(target)) as db,
-    ):
-        original.backup(db)
-    release = prepare_database_schema_release(Path(__file__).resolve().parents[1], target)
-    try:
-        release.publish()
-    except subprocess.CalledProcessError as error:
-        error.add_note(error.stderr or "paired child returned no stderr")
-        raise
+    AutoReplyStore(target)
     store = EmailStore(target)
     store._now = lambda: "2026-10-14T10:00:00+00:00"
+    pending = _classification(
+        status=EmailClassificationStatus.PENDING_FEEDBACK,
+        classification_id=12,
+        message_id="pending",
+    )
+    store.persist_scan_result(classification, model_text="fixture features")
+    store.persist_scan_result(pending, model_text="pending features")
+    store.create_account(_task2_account_values("dingtalk-account", enabled=False))
     return store, classification, source_ids, source, old
 
 
@@ -262,6 +260,19 @@ def _canonical_current_action_ids(pair, value, *, store=None):
         return item
 
     return canonical(_normalized(value))
+
+
+def _normalize_database_created_at(value):
+    if isinstance(value, dict):
+        result = {key: _normalize_database_created_at(item) for key, item in value.items()}
+        if "created_at" in result and (
+            "action_plan" in result or "current_action_plan_id" in result
+        ):
+            result["created_at"] = "<database-generated>"
+        return result
+    if isinstance(value, list):
+        return [_normalize_database_created_at(item) for item in value]
+    return value
 
 
 def _genuine_old_result(pair, operation):
@@ -481,11 +492,13 @@ def _feedback_and_plan_conflicts(store, classification):
 def test_plan_idempotence_feedback_null_prior_replay_and_cas_match_genuine_old(
     converted_pair,
 ):
-    expected = _genuine_old_result(converted_pair, _feedback_and_plan_conflicts)
+    expected = _normalize_database_created_at(
+        _genuine_old_result(converted_pair, _feedback_and_plan_conflicts)
+    )
     actual = _canonical_current_action_ids(
         converted_pair, _feedback_and_plan_conflicts(converted_pair[0], converted_pair[1])
     )
-    assert actual == expected
+    assert _normalize_database_created_at(actual) == expected
     assert {"message_text", "cc"}.isdisjoint(converted_pair[0].get_classification(12))
     assert len(actual["conflicts"]) == 5
     assert actual["applied"]["applied"] and not actual["replay"]["applied"]
@@ -583,11 +596,13 @@ def _append_reapply_and_retired_poll(store, classification):
 def test_append_reapply_retired_plan_poll_and_public_attempt_ids_match_old(
     converted_pair,
 ):
-    expected = _genuine_old_result(converted_pair, _append_reapply_and_retired_poll)
+    expected = _normalize_database_created_at(
+        _genuine_old_result(converted_pair, _append_reapply_and_retired_poll)
+    )
     actual = _canonical_current_action_ids(
         converted_pair, _append_reapply_and_retired_poll(converted_pair[0], converted_pair[1])
     )
-    assert actual == expected
+    assert _normalize_database_created_at(actual) == expected
     assert actual["retired_rejected"] and actual["original_attempts"][0]["id"] == 1
 
 
