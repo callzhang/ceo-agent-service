@@ -6,7 +6,6 @@ import sqlite3
 
 import pytest
 
-import app.store as store_module
 from app.action_email_history_definitions import HISTORY_FIELDS, HISTORY_KINDS, history_projection
 from app.action_email_history_storage import (
     capture_email_history_source, migrate_email_history_schema,
@@ -14,7 +13,6 @@ from app.action_email_history_storage import (
 )
 from app.action_task_delivery_storage import _hash
 from app.business_schema_helpers import _snapshot
-from app.business_storage import insert_business
 from app.store import AutoReplyStore
 from app.email_store import EmailStore
 
@@ -68,6 +66,7 @@ def _source15_store(path, monkeypatch):
     from pathlib import Path
     from app.action_storage import create_action_schema
     from app.action_business_storage import SOURCE_OPTIONS
+    from app.final_action_schema import BUSINESS_SOURCE_DOCUMENT_SCHEMA
     from app.action_task_delivery_storage import _source_declaration
     from app.configs_storage import create_configs_schema
     from app.schedules_storage import create_schedules_schema
@@ -86,7 +85,7 @@ def _source15_store(path, monkeypatch):
         create_action_schema(db, reply_variant="fresh_memory_fk",
                              **(SOURCE_OPTIONS | {"include_business_actions": True,
                                                   "include_email_history": False}))
-        for sql in store_module.BUSINESS_SOURCE_DOCUMENT_SCHEMA:
+        for sql in BUSINESS_SOURCE_DOCUMENT_SCHEMA:
             db.execute(sql)
         for name, key in (("business", "unchanged_business_parent_declaration"),
                           ("business_legacy_links", "unchanged_legacy_child_declaration")):
@@ -134,7 +133,23 @@ def test_nonempty_history_rows_blob_pk_retained_parents_and_inverse(tmp_path, mo
             "dedupe_key": "synthetic:signal", "context_json": "{}",
             "source_document_id": 1,
         }).lastrowid
-        project = insert_business(db, "work_project", {"id": 1, "title": "Synthetic"}).lastrowid
+        from app.business_definitions import BUSINESS_COMMON, BUSINESS_DEFAULTS, BUSINESS_FIELDS
+        fields = [
+            field for field in BUSINESS_FIELDS["work_project"]
+            if field != "id" and field not in BUSINESS_COMMON
+        ]
+        defaults = BUSINESS_DEFAULTS["work_project"]
+        payload = {
+            field: db.execute(
+                "select " + defaults.get(field, "null")
+            ).fetchone()[0]
+            for field in fields
+        }
+        project = db.execute(
+            "insert into business(record_type,legacy_key,payload_json,title) "
+            "values('work_project','1',?, 'Synthetic')",
+            (json.dumps(payload, ensure_ascii=False, separators=(",", ":")),),
+        ).lastrowid
         db.execute("insert into business_legacy_links(signal_id,work_project_id) values(?,?)",
                    (signal, project))
         db.execute("update sqlite_sequence set seq=50 where name='actions:business_task_signals'")

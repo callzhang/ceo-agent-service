@@ -271,13 +271,15 @@ class CalendarRunnerContractExecutor:
         self.skill_paths = skill_paths
         self.commands: list[list[str]] = []
         self.prompts: list[str] = []
+        self.sessions: list[str] = []
 
     def __call__(self, command, *, prompt: str, on_stdout_line, **_kwargs):
         self.commands.append(list(command))
         self.prompts.append(prompt)
         audit_turn = "Candidate revision\n" in prompt
         records = self._audit_records(prompt) if audit_turn else self._consumer_records(prompt)
-        session = "calendar-audit-session" if audit_turn else "calendar-consumer-session"
+        session = f"calendar-{'audit' if audit_turn else 'consumer'}-{len(self.commands)}"
+        self.sessions.append(session)
         lines = [
             json.dumps({"type": "thread.started", "thread_id": session}),
             *(json.dumps(record) for record in records),
@@ -592,6 +594,7 @@ def test_deterministic_native_runner_calendar_clarification_contract(
         task.execution_generation,
     )
     assert [run.role for run in runs] == [AgentRole.CONSUMER, AgentRole.AUDIT]
+    assert executor.sessions[0] != executor.sessions[1]
     assert all(run.status == "completed" for run in runs)
     assert _persisted_skill_receipts(runs[0]) == {}
     assert _persisted_skill_receipts(runs[1]) == {}

@@ -1,6 +1,6 @@
 from tests.support.legacy_todo_facts import seed_legacy_work_project
-from app.task8_storage import task8_set_parts
-from app.task20_definitions import task20_projection
+from app.store import WORK_SUMMARY_INPUT_SQL
+from app.task_entity_storage import get_task, update_task_cas
 from app.action_error_definitions import error_projection
 from app.action_storage import error_set_parts, update_action
 import json
@@ -89,13 +89,22 @@ def _verified_reply_fixture(conversation, trigger, text):
     }
 
 
-def _update_task_fixture(db, kind, public_id, values):
-    """Set existing native-shaped fixture fields using the current typed writer."""
-    parts = task8_set_parts(kind, values)
-    return db.execute(
-        f"update tasks set {parts.sql} where record_type=? and cast(legacy_key as integer)=?",
-        (*parts.parameters, kind, public_id),
-    ).rowcount
+def _update_task_fixture(db, task_id, values):
+    """Mutate one existing generic Task through the native CAS writer."""
+    db.row_factory = sqlite3.Row
+    task = get_task(db, task_id)
+    if task is None:
+        raise AssertionError(f"expected fixture Task {task_id} to exist")
+    updated = update_task_cas(
+        db,
+        task_id=task_id,
+        expected={"kind": task["kind"], "status": task["status"]},
+        changes=values,
+    )
+    if updated is None:
+        raise AssertionError(f"fixture Task {task_id} changed before update")
+    return 1
+
 
 def test_email_unsubscribe_cancellation_requires_exact_identity_and_explicit_apply():
     arguments = [
@@ -443,6 +452,7 @@ def seed_exhausted_stale_wechat_delivery(store: AutoReplyStore) -> tuple[int, in
         trigger_sender="Alex",
         trigger_text="hi",
     )
+    reply_task = store.claim_reply_tasks(1, channel="wechat")[0]
     attempt_id = store.record_reply_attempt(
         conversation_id="wechat-user-1",
         conversation_title="Alex",
@@ -455,13 +465,15 @@ def seed_exhausted_stale_wechat_delivery(store: AutoReplyStore) -> tuple[int, in
         channel="wechat",
     )
     delivery_id = store.create_wechat_delivery(
-        reply_task_id=1,
+        reply_task_id=reply_task.id,
         account_id="wechat-account-1",
         target_type="direct",
         target_id="wechat-user-1",
         conversation_id="wechat-user-1",
         reply_text="reply",
     )
+    from tests.wechat.support import approve_delivery
+    approve_delivery(store, delivery_id)
     store.mark_wechat_delivery_sending(
         delivery_id,
         now="2026-08-30 17:07:23",
@@ -2267,7 +2279,16 @@ def test_process_okr_reviews_command_does_not_reclaim_active_dispatcher_owner(
     )
     assert claimed is not None
     with store._connect() as db:
-        _update_task_fixture(db, 'okr_review_requests', ((request_id,))[0], {'updated_at': db.execute("select datetime('now', '-31 minutes')").fetchone()[0]})
+        update_task_cas(
+            db,
+            task_id=request_id,
+            expected={"kind": "okr_review", "status": "processing"},
+            changes={
+                "updated_at": db.execute(
+                    "select datetime('now', '-31 minutes')"
+                ).fetchone()[0]
+            },
+        )
     monkeypatch.setattr(cli, "_build_okr_review_runner", lambda *_args: object())
     monkeypatch.setattr(
         "app.okr_review.process_okr_review_request",
@@ -2344,7 +2365,7 @@ def test_process_okr_reviews_command_requeues_stale_processing_request(
     store.claim_okr_review_requests(limit=1)
     assert store.acquire_codex_session_lock("cid-1", f"okr_review:{request_id}")
     with sqlite3.connect(db_path) as db:
-        _update_task_fixture(db, 'okr_review_requests', ((request_id,))[0], {'updated_at': db.execute("select datetime('now', '-31 minutes')").fetchone()[0]})
+        _update_task_fixture(db, request_id, {'updated_at': db.execute("select datetime('now', '-31 minutes')").fetchone()[0]})
 
     processed = process_okr_reviews_command(
         WorkerSettings(db_path=db_path, workspace=tmp_path)
@@ -2577,7 +2598,7 @@ def test_process_work_items_command_processes_claimed_input(tmp_path, monkeypatc
     assert loaded.claim_work_summary_inputs(limit=1) == []
     with loaded._connect() as db:
         status = db.execute(
-            f"select status from ({task20_projection('work_summary_inputs')}) where id=?",
+            f"select status from ({WORK_SUMMARY_INPUT_SQL}) where id=?",
             (input_id,),
         ).fetchone()["status"]
     assert status == "done"
@@ -2628,7 +2649,7 @@ def test_process_work_items_command_leaves_input_pending_when_shared_session_is_
     assert loaded.get_work_summary_input(input_id).status.value == "pending"
     with loaded._connect() as db:
         row = db.execute(
-            f"select attempts from ({task20_projection('work_summary_inputs')}) where id=?",
+            f"select attempts from ({WORK_SUMMARY_INPUT_SQL}) where id=?",
             (input_id,),
         ).fetchone()
     assert row["attempts"] == 0
@@ -2684,7 +2705,7 @@ def test_process_work_items_command_does_not_claim_when_lease_is_lost_before_cla
     assert store.get_work_summary_input(input_id).status.value == "pending"
     with store._connect() as db:
         row = db.execute(
-            f"select attempts from ({task20_projection('work_summary_inputs')}) where id=?",
+            f"select attempts from ({WORK_SUMMARY_INPUT_SQL}) where id=?",
             (input_id,),
         ).fetchone()
     assert row["attempts"] == 0
@@ -2889,7 +2910,7 @@ def test_process_work_items_command_processes_existing_input_without_feature_gat
     assert capsys.readouterr().out == "process-work-items processed=1\n"
     with store._connect() as db:
         assert db.execute(
-            f"select status from ({task20_projection('work_summary_inputs')}) where id=?", (input_id,)
+            f"select status from ({WORK_SUMMARY_INPUT_SQL}) where id=?", (input_id,)
         ).fetchone()["status"] == "done"
 def test_process_work_items_command_reclaims_stale_processing_input(
     tmp_path,
@@ -2964,7 +2985,7 @@ def test_process_work_items_command_reclaims_stale_processing_input(
     )
     claimed = store.claim_work_summary_inputs(limit=1)
     with store._connect() as db:
-        _update_task_fixture(db, 'work_summary_inputs', ((claimed[0].id,))[0], {'updated_at': db.execute("select datetime('now', '-25 minutes')").fetchone()[0]})
+        _update_task_fixture(db, claimed[0].id, {'updated_at': db.execute("select datetime('now', '-25 minutes')").fetchone()[0]})
 
     processed = process_work_items_command(
         WorkerSettings(db_path=db_path, workspace=tmp_path, max_batches=5)
@@ -2975,7 +2996,7 @@ def test_process_work_items_command_reclaims_stale_processing_input(
     assert capsys.readouterr().out == "process-work-items processed=1\n"
     with loaded._connect() as db:
         row = db.execute(
-            f"select status, attempts from ({task20_projection('work_summary_inputs')}) where id=?",
+            f"select status, attempts from ({WORK_SUMMARY_INPUT_SQL}) where id=?",
             (input_id,),
         ).fetchone()
     assert dict(row) == {"status": "done", "attempts": 1}
@@ -3046,7 +3067,7 @@ def test_process_work_items_command_does_not_batch_claim_after_failure(
     assert capsys.readouterr().out == "process-work-items processed=0\n"
     with AutoReplyStore(db_path)._connect() as db:
         rows = db.execute(
-            f"\n            select id as id, status, attempts, error\n            from ({task20_projection('work_summary_inputs')})\n            where id in (?, ?)\n            order by id\n            ",
+            f"\n            select id as id, status, attempts, error\n            from ({WORK_SUMMARY_INPUT_SQL})\n            where id in (?, ?)\n            order by id\n            ",
             (first_id, second_id),
         ).fetchall()
     assert [dict(row) for row in rows] == [
@@ -3109,7 +3130,7 @@ def test_process_work_items_command_backoffs_transient_codex_failure(
     assert capsys.readouterr().out == "process-work-items processed=0\n"
     with AutoReplyStore(db_path)._connect() as db:
         row = db.execute(
-            f"\n            select status, attempts, error, available_at\n            from ({task20_projection('work_summary_inputs')})\n            where id=?\n            ",
+            f"\n            select status, attempts, error, available_at\n            from ({WORK_SUMMARY_INPUT_SQL})\n            where id=?\n            ",
             (input_id,),
         ).fetchone()
     assert row["status"] == "pending"
@@ -3169,7 +3190,7 @@ def test_process_work_items_command_fails_native_codex_missing_auth_header(
     assert capsys.readouterr().out == "process-work-items processed=0\n"
     with AutoReplyStore(db_path)._connect() as db:
         row = db.execute(
-            f"\n            select status, attempts, error, available_at\n            from ({task20_projection('work_summary_inputs')})\n            where id=?\n            ",
+            f"\n            select status, attempts, error, available_at\n            from ({WORK_SUMMARY_INPUT_SQL})\n            where id=?\n            ",
             (input_id,),
         ).fetchone()
     assert row["status"] == "failed"
@@ -3229,7 +3250,7 @@ def test_process_work_items_command_keeps_native_missing_header_terminal_after_l
         item.model_dump_json(),
     )
     with store._connect() as db:
-        _update_task_fixture(db, 'work_summary_inputs', ((input_id,))[0], {'attempts': 3})
+        _update_task_fixture(db, input_id, {'attempts': 3})
 
     processed = process_work_items_command(
         WorkerSettings(db_path=db_path, workspace=tmp_path, max_batches=1)
@@ -3239,7 +3260,7 @@ def test_process_work_items_command_keeps_native_missing_header_terminal_after_l
     assert capsys.readouterr().out == "process-work-items processed=0\n"
     with AutoReplyStore(db_path)._connect() as db:
         row = db.execute(
-            f"\n            select status, attempts, error, available_at\n            from ({task20_projection('work_summary_inputs')})\n            where id=?\n            ",
+            f"\n            select status, attempts, error, available_at\n            from ({WORK_SUMMARY_INPUT_SQL})\n            where id=?\n            ",
             (input_id,),
         ).fetchone()
     assert row["status"] == "failed"
@@ -3290,7 +3311,7 @@ def test_process_work_items_command_fails_codex_transport_failure_after_limit(
         item.model_dump_json(),
     )
     with store._connect() as db:
-        _update_task_fixture(db, 'work_summary_inputs', ((input_id,))[0], {'attempts': 3})
+        _update_task_fixture(db, input_id, {'attempts': 3})
 
     processed = process_work_items_command(
         WorkerSettings(db_path=db_path, workspace=tmp_path, max_batches=1)
@@ -3300,7 +3321,7 @@ def test_process_work_items_command_fails_codex_transport_failure_after_limit(
     assert capsys.readouterr().out == "process-work-items processed=0\n"
     with AutoReplyStore(db_path)._connect() as db:
         row = db.execute(
-            f"\n            select status, attempts, error, available_at\n            from ({task20_projection('work_summary_inputs')})\n            where id=?\n            ",
+            f"\n            select status, attempts, error, available_at\n            from ({WORK_SUMMARY_INPUT_SQL})\n            where id=?\n            ",
             (input_id,),
         ).fetchone()
     assert row["status"] == "failed"
@@ -3354,9 +3375,9 @@ def test_process_work_items_pauses_after_codex_capacity_exhaustion(
         )
     with store._connect() as db:
         [row] = db.execute(
-            f"select id from ({task20_projection('work_summary_inputs')}) where source_ref='1'"
+            f"select id from ({WORK_SUMMARY_INPUT_SQL}) where source_ref='1'"
         ).fetchall()
-        _update_task_fixture(db, 'work_summary_inputs', row['id'], {'attempts': 3})
+        _update_task_fixture(db, row['id'], {'attempts': 3})
 
     assert process_work_items_command(
         WorkerSettings(db_path=db_path, workspace=tmp_path, max_batches=5)
@@ -3365,7 +3386,7 @@ def test_process_work_items_pauses_after_codex_capacity_exhaustion(
 
     with AutoReplyStore(db_path)._connect() as db:
         rows = db.execute(
-            f"select status, attempts, error from ({task20_projection('work_summary_inputs')}) where 1 order by id"
+            f"select status, attempts, error from ({WORK_SUMMARY_INPUT_SQL}) where 1 order by id"
         ).fetchall()
     assert [(row["status"], row["attempts"], row["error"]) for row in rows] == [
         ("pending", 3, "codex_provider_capacity_exhausted"),
@@ -3417,7 +3438,7 @@ def test_work_summary_process_failure_continues_prior_capacity_wait(
         ).model_dump_json(),
     )
     with store._connect() as db:
-        _update_task_fixture(db, 'work_summary_inputs', ((input_id,))[0], {'attempts': 3})
+        _update_task_fixture(db, input_id, {'attempts': 3})
 
     settings = WorkerSettings(db_path=db_path, workspace=tmp_path, max_batches=1)
     assert process_work_items_command(settings) == 0
@@ -3426,14 +3447,14 @@ def test_work_summary_process_failure_continues_prior_capacity_wait(
     state["retry_at"] = "2000-01-01T00:00:00+00:00"
     store.set_service_state("codex_capacity_pause", json.dumps(state))
     with store._connect() as db:
-        _update_task_fixture(db, 'work_summary_inputs', ((input_id,))[0], {'available_at': ''})
+        _update_task_fixture(db, input_id, {'available_at': ''})
 
     assert process_work_items_command(settings) == 0
     capsys.readouterr()
 
     with store._connect() as db:
         row = db.execute(
-            f"select status, attempts, error from ({task20_projection('work_summary_inputs')}) where id=?",
+            f"select status, attempts, error from ({WORK_SUMMARY_INPUT_SQL}) where id=?",
             (input_id,),
         ).fetchone()
     assert (row["status"], row["attempts"], row["error"]) == (
@@ -3486,7 +3507,7 @@ def test_process_work_items_command_fails_typed_external_failure_after_limit(
         item.model_dump_json(),
     )
     with store._connect() as db:
-        _update_task_fixture(db, 'work_summary_inputs', ((input_id,))[0], {'attempts': 3})
+        _update_task_fixture(db, input_id, {'attempts': 3})
 
     processed = process_work_items_command(
         WorkerSettings(db_path=db_path, workspace=tmp_path, max_batches=1)
@@ -3496,7 +3517,7 @@ def test_process_work_items_command_fails_typed_external_failure_after_limit(
     assert capsys.readouterr().out == "process-work-items processed=0\n"
     with AutoReplyStore(db_path)._connect() as db:
         row = db.execute(
-            f"select status, error, available_at from ({task20_projection('work_summary_inputs')}) where id=?",
+            f"select status, error, available_at from ({WORK_SUMMARY_INPUT_SQL}) where id=?",
             (input_id,),
         ).fetchone()
     assert row["status"] == "failed"
@@ -3553,7 +3574,7 @@ def test_process_work_items_command_fails_missing_memory_recall_tool_event(
     assert capsys.readouterr().out == "process-work-items processed=0\n"
     with AutoReplyStore(db_path)._connect() as db:
         row = db.execute(
-            f"\n            select status, attempts, error, available_at\n            from ({task20_projection('work_summary_inputs')})\n            where id=?\n            ",
+            f"\n            select status, attempts, error, available_at\n            from ({WORK_SUMMARY_INPUT_SQL})\n            where id=?\n            ",
             (input_id,),
         ).fetchone()
     assert row["status"] == "failed"
@@ -3611,7 +3632,7 @@ def test_process_work_items_command_discards_cross_project_follow_up_draft(
     assert capsys.readouterr().out == "process-work-items processed=0\n"
     with AutoReplyStore(db_path)._connect() as db:
         row = db.execute(
-            f"\n            select status, attempts, error\n            from ({task20_projection('work_summary_inputs')})\n            where id=?\n            ",
+            f"\n            select status, attempts, error\n            from ({WORK_SUMMARY_INPUT_SQL})\n            where id=?\n            ",
             (input_id,),
         ).fetchone()
     assert row["status"] == "skipped"
@@ -7609,7 +7630,7 @@ def test_run_service_requeues_processing_work_summary_inputs_on_startup(
 
     with store._connect() as db:
         row = db.execute(
-            f"select status, attempts, error from ({task20_projection('work_summary_inputs')}) where id=?",
+            f"select status, attempts, error from ({WORK_SUMMARY_INPUT_SQL}) where id=?",
             (input_id,),
         ).fetchone()
     errors = store.list_errors(limit=10)
@@ -8223,7 +8244,7 @@ def test_process_work_items_waits_for_paused_routes_without_spending_attempts(
         ).model_dump_json(),
     )
     with store._connect() as db:
-        _update_task_fixture(db, 'work_summary_inputs', ((input_id,))[0], {'attempts': 3})
+        _update_task_fixture(db, input_id, {'attempts': 3})
 
     settings = WorkerSettings(db_path=db_path, workspace=tmp_path, max_batches=1)
     assert process_work_items_command(settings) == 0
@@ -8231,7 +8252,7 @@ def test_process_work_items_waits_for_paused_routes_without_spending_attempts(
 
     with store._connect() as db:
         row = db.execute(
-            f"select status, attempts, error, available_at from ({task20_projection('work_summary_inputs')}) where id=?",
+            f"select status, attempts, error, available_at from ({WORK_SUMMARY_INPUT_SQL}) where id=?",
             (input_id,),
         ).fetchone()
         error_rows = db.execute(
@@ -8303,7 +8324,7 @@ def test_process_work_items_waits_for_provider_outage_after_failed_attempt_witho
     store = AutoReplyStore(db_path)
     input_id = _route_outage_work_input(store)
     with store._connect() as db:
-        _update_task_fixture(db, 'work_summary_inputs', ((input_id,))[0], {'attempts': 3})
+        _update_task_fixture(db, input_id, {'attempts': 3})
 
     settings = WorkerSettings(db_path=db_path, workspace=tmp_path, max_batches=1)
     assert process_work_items_command(settings) == 0
@@ -8311,7 +8332,7 @@ def test_process_work_items_waits_for_provider_outage_after_failed_attempt_witho
 
     with store._connect() as db:
         row = db.execute(
-            f"select status, attempts, error, available_at from ({task20_projection('work_summary_inputs')}) where id=?",
+            f"select status, attempts, error, available_at from ({WORK_SUMMARY_INPUT_SQL}) where id=?",
             (input_id,),
         ).fetchone()
         error_rows = db.execute(
@@ -8358,7 +8379,7 @@ def test_process_work_items_keeps_execution_failures_bounded(
     store = AutoReplyStore(db_path)
     input_id = _route_outage_work_input(store)
     with store._connect() as db:
-        _update_task_fixture(db, 'work_summary_inputs', ((input_id,))[0], {'attempts': 3})
+        _update_task_fixture(db, input_id, {'attempts': 3})
 
     settings = WorkerSettings(db_path=db_path, workspace=tmp_path, max_batches=1)
     assert process_work_items_command(settings) == 0
@@ -8366,7 +8387,7 @@ def test_process_work_items_keeps_execution_failures_bounded(
 
     with store._connect() as db:
         row = db.execute(
-            f"select status, attempts, error from ({task20_projection('work_summary_inputs')}) where id=?",
+            f"select status, attempts, error from ({WORK_SUMMARY_INPUT_SQL}) where id=?",
             (input_id,),
         ).fetchone()
         error_rows = db.execute(
