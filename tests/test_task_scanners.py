@@ -1323,6 +1323,69 @@ def test_scan_clears_attention_when_process_moves_to_another_approver(
                    for row in _queue_attention_rows(store))
 
 
+def test_scan_clears_attention_for_paused_task_after_append_task(tmp_path):
+    class FakeDws:
+        def list_pending_oa_approvals(self, *, page, size, start, end):
+            return []
+
+        def get_current_user_id(self):
+            return "principal-user-1"
+
+        def read_oa_approval_tasks(self, process_instance_id):
+            raise AssertionError("the paused original task is not current")
+
+        def read_oa_process_instance_openapi(self, process_instance_id):
+            return {
+                "result": {
+                    "status": "RUNNING",
+                    "tasks": [
+                        {
+                            "taskId": "task-principal",
+                            "userId": "principal-user-1",
+                            "taskStatus": "PAUSED",
+                        },
+                        {
+                            "taskId": "task-added-approver",
+                            "userId": "next-approver",
+                            "taskStatus": "RUNNING",
+                        },
+                    ],
+                }
+            }
+
+    store = AutoReplyStore(tmp_path / "task.sqlite3")
+    key = "oa:proc-append-task:task-principal"
+    store.set_daily_scan_state(
+        "oa_pending",
+        last_success_at="2026-10-12 00:00:00",
+        cursor_json=json.dumps({"pending_business_object_keys": [key]}),
+        last_error="",
+    )
+
+    assert scan_pending_oa_approvals(store, FakeDws()) == 0
+    state = store.get_daily_scan_state("oa_pending")
+    assert state is not None
+    assert key not in json.loads(state["cursor_json"])["pending_business_object_keys"]
+    assert not any(
+        row["category"] == "OA approval" and row["id"] == key
+        for row in _queue_attention_rows(store)
+    )
+    assert _pending_oa_task_ids_for_current_user(
+        {
+            "result": {
+                "tasks": [
+                    {
+                        "taskId": "task-principal",
+                        "userId": "principal-user-1",
+                        "taskStatus": "PAUSED",
+                    }
+                ]
+            }
+        },
+        current_user_id="principal-user-1",
+    ) == []
+
+
 def test_scan_does_not_restore_attention_for_legacy_task_owned_by_another_approver(
     tmp_path,
 ):
