@@ -76,6 +76,7 @@ above supply the previously missing cold-code evidence.
   then passed both deterministic/executable artifact tests (2).
 - Affected readers:79 tests pass across business Console source reconstruction,
   project context, business resolution, Attention and minutes owner backfill.
+- Additional source-callsite scan found stale current semantic Store storage assertions. Five focused groups (14 parameters) passed after preserving all binding/hash/body-free/dedupe/association assertions and moving their storage checks to the selected parent owner; incremental independent QUALITY approved.
 - Scoped Ruff, compilation and diff checks pass. Independent migration SPEC and
   implementation QUALITY reviews approve the candidate; reviewers did not run
   the production-copy proof themselves.
