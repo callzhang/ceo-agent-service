@@ -1025,6 +1025,7 @@ def _replace_replay_input(store, item, payload, *, status):
                 or task["status"] != item.status.value or source is None
                 or source["source_type"] != item.source_type.value
                 or source["source_ref"] != item.source_ref
+                or decode_work_summary_payload(source["payload_json"]) != item.payload_json
                 or source["body_compacted"] != item.body_compacted
                 or source["body_sha256"] != item.body_sha256
                 or source["body_bytes"] != item.body_bytes

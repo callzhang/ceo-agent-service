@@ -19,7 +19,7 @@ def ledger(path, version):
 
 def test_email54_release_target_binds_as_current_for_post_publish_progress(tmp_path):
     from app.current_database_schema import create_current_database_schema
-    from app.current_schema_manifest import create_current_email_migration_ledger
+    from app.current_schema_manifest import STORE_VERSION, create_current_email_migration_ledger
     from app.state_storage import insert_state as insert_current_state
 
     path = tmp_path / "email54.sqlite3"
@@ -29,7 +29,7 @@ def test_email54_release_target_binds_as_current_for_post_publish_progress(tmp_p
         create_current_email_migration_ledger(db)
         db.execute("begin")
         insert_current_state(db, "service_state", {
-            "key": "store_schema_version", "value": "2026-10-23.1",
+            "key": "store_schema_version", "value": STORE_VERSION,
         })
         db.execute("insert into email_schema_migrations values(54,'target')")
         db.commit()

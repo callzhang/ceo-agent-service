@@ -10,7 +10,6 @@ from __future__ import annotations
 from app.provenance_storage import signal_projection
 from app.business_legacy_fields import CURRENT_BUSINESS_PROJECTIONS as BUSINESS_PROJECTIONS
 from app.business_legacy_owner_storage import read_import_task, assign_import_task
-from app.task20_definitions import task20_projection
 from app.business_legacy_fields import CURRENT_SYNC_PROJECTIONS as SYNC_ACTION_PROJECTIONS, current_sync_projection as sync_action_projection
 from app.action_business_definitions import business_action_projection
 
@@ -22,7 +21,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Literal
 
-from app.store import AutoReplyStore
+from app.store import AutoReplyStore, WORK_SUMMARY_INPUT_SQL
 from app.task_semantic_models import BusinessActorKind, FormalTaskBasis
 from app.work_summary_payload import decode_work_summary_payload
 from app.task_semantic_rules import FormalityEvidence
@@ -31,9 +30,6 @@ from app.task_semantic_service import (
     SourceSignal,
     TaskSemanticService,
 )
-
-WORK_SUMMARY_INPUT_SQL = task20_projection('work_summary_inputs')
-
 
 MANIFEST_VERSION = 4
 LEGACY_TABLES = ("work_projects", "work_todos", "work_updates")
@@ -128,10 +124,8 @@ def _source_row(db: sqlite3.Connection, table: LegacyKind, row_id: int) -> dict[
     }
     if table not in projections:
         raise ValueError("unsupported import source table")
-    # Match the ordered corpus scan when digesting a source point lookup.
-    ordering = "(select 1)" if table == "work_updates" else "id"
     row = db.execute(
-        f"select * from ({projections[table]}) where id=? order by {ordering}",
+        f"select * from ({projections[table]}) where id=?",
         (row_id,),
     ).fetchone()
     return dict(row) if row is not None else None

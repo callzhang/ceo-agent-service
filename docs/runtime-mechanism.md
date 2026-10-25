@@ -429,6 +429,14 @@ C1 和 A5a 的发布状态分别以各自验收记录及生产回读为准。
 局部测试、实际 archived Store19.6／Email53 冷启动和 source freeze 范围见
 [专有 Email 动作归属验收](database-redesign-specialized-actions-validation.md)。
 
+Store `2026-10-25.1`／Email54 的 Reply OA 结果只在 Attempt 与同一 Run 祖先链、
+operation、OA process/task identity 及 provider JSON 完全一致，且匹配唯一时，改为
+通过 `reply_attempt_receipt_refs` 读取不可变 provider receipt；无匹配或多匹配仍读取
+Attempt 本地结果。完成写入在同一事务核验 receipt ID 与正文、插入 FK 并清空重复正文。
+History 和详情使用 receipt-aware Attempt 投影，receipt 退休先确认没有 Reply 引用。
+显式 Store `2026-10-23.1`／Email54 发布迁移及 inverse 不保存业务行快照；inverse 从
+当前引用恢复正文后移除关系、恢复原 marker。此处不改变执行、审核或发送政策。
+
 最终紧凑 Tasks／Actions 的既有触发器在生成 schema 时把类型判别和类型不可改写的 UPDATE OF 事件绑定到实际 `_kind`；公开 `record_type` 仍是只读名称。这样避免 SQLite 在仅更新其他列的 BEFORE UPDATE 中遗漏虚拟 NEW 类型值。历史 TEXT 来源工厂不改写。Tasks 声明为数值 legacy_key 的来源身份直接投影其整数表达式（NULL 保持 NULL），来源投影显式包含现有 numeric identity 部分索引的准确谓词。父任务和 canonical 输入均使用现有身份索引定位，避免审查链路扫描无关输入；不新增索引或字段。
 
 Runs 包含原八类执行及搜索会话元数据、分类运行样本、设置事件，共十一种既有类型。

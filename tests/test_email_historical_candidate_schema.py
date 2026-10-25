@@ -29,7 +29,7 @@ def test_deployment_quiet_sources_accept_exact_email53_but_runtime_does_not():
         publication_scheduled_source,
         publication_task_sources,
     )
-    from app.current_schema_manifest import create_current_email_migration_ledger, schema_is_current
+    from app.current_schema_manifest import STORE_VERSION, create_current_email_migration_ledger, schema_is_current
     from app.state_storage import insert_state
 
     db = sqlite3.connect(":memory:")
@@ -38,7 +38,7 @@ def test_deployment_quiet_sources_accept_exact_email53_but_runtime_does_not():
     create_current_email_migration_ledger(db)
     db.execute("begin")
     insert_state(db, "service_state", {
-        "key": "store_schema_version", "value": "2026-10-23.1",
+        "key": "store_schema_version", "value": STORE_VERSION,
     })
     db.execute("insert into email_schema_migrations values(53,'source')")
     assert schema_is_current(db)

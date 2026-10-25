@@ -1,5 +1,115 @@
 # Business model simplification: current completion and closeout
 
+## Refreshed production baseline and next business-model work — 2026-10-25
+
+The prior Task/Run table below is a dated 2026-10-23 checkpoint and is
+superseded by this readback. Production checkout is `a9694da3696e946ad410b58bd3393ddc3f7dae18`;
+`/healthz` returned `{"ok":true,"status":"ok"}`. The live database is
+Store `2026-10-23.1` / Email54 and already has the common `tasks`, `runs`,
+`runtime_attempts`, `task_inputs`, `task_business_keys`, and `work_summary_inputs`
+owners. Counts at read time were 19,672 Tasks, 38,194 Runs, 26,389 Runtime
+Attempts, 8,869 TaskInputs, 8,647 TaskBusinessKeys, and 9,140 WorkSummaryInputs.
+The only `foreign_key_check` result remains `runs(190042) -> tasks` ordinal 1;
+it is preserved and was not repaired. The live database size was 514,969,600
+bytes, with 14,407 free pages (about 56.3 MiB), so reclaimable pages remain an
+optional maintenance opportunity rather than the main business-model goal.
+
+Read-only owner inspection found 975 `work_project`, 3,327 `work_todo`, and
+5,468 `work_updates` facts. The current semantic importer promotes only records
+with its existing source-backed formality evidence; other records remain
+history-only. Their old status values are not current provider readbacks and do
+not authorize bulk promotion, cancellation, or merging. Further retirement
+requires a producer/reader/use crosswalk and a proven owner for each retained
+fact.
+
+The current source removes the two remaining manual `work_summary_inputs`
+readers' dependence on the Task20 compatibility projection. A related point
+lookup in the legacy Project/Todo/Update importer now uses the existing unique
+public-ID index directly and avoids its unnecessary scalar sort. Focused local
+validation on 2026-10-25: semantic-import file 25 passed; minutes owner
+backfill file 9 passed. The affected replay file exposed and now covers a
+fixed-input payload CAS omission: replay had checked the source identity and
+digest metadata but not the decoded stored body before restoring the frozen
+input. With the body comparison, the replay file passes 29/29. Ruff, Python
+parse and compile checks pass. This scoped code cleanup was included in
+`4bae03e41` and deployed. It does not delete these historical records or prove
+a replacement owner for their remaining readers.
+
+## A5b exact Reply receipt ownership — production acceptance, 2026-10-25
+
+The read-only production preflight found 276 non-empty Reply OA result
+snapshots (91,758 SQLite characters / 99,292 UTF-8 bytes). Exactly 46 have one
+byte-identical provider result receipt on the same Run ancestor chain and exact
+operation, process-instance ID, and task ID (28,080 UTF-8 bytes); the remaining
+230 stay local Attempt facts. This is logical duplicate payload only, not a
+physical SQLite file-size reduction claim.
+
+The local Store `2026-10-23.1` / Email54 → `2026-10-25.1` / Email54 release now
+stores those exact links in `reply_attempt_receipt_refs`. New completion writes
+receive the receipt ID from the verified candidate action, validate the exact
+body, write the reference and clear the duplicate Attempt body atomically.
+History/detail projection hydrates the referenced immutable receipt; unlinked
+local values remain inline, and provider receipt retirement checks the new FK.
+The inverse hydrates referenced bodies before dropping the relation and restores
+the original marker and declaration.
+
+Validation: the current-production-derived Store23.1/Email54 copy forwarded 46
+references, preserved the single existing FK finding and passed `quick_check`;
+schema inverse restored the source declaration/marker, and reforward again
+published 46 references. Earlier focused release and writer coverage verified
+all original raw Attempt result bodies through inverse. The post-merge scoped
+selection passed 43 tests, including A5b release, projection, writer, worker,
+Email54 marker, state binding and current deployment-drain fixtures. Fresh Luna
+SPEC and QUALITY reviews both approved.
+
+Real Codex CLI on the migrated copy passed both `approve` and `revision` cases
+with the external provider substituted in memory. The approve case completed
+three Consumer/Audit revisions (6 CLI calls); the revision case recorded
+Audit `return` at revision 0 and `approve` at revision 1 (4 CLI calls). Each
+finished `done` with one business Attempt, one substitute send, one verification
+and one receipt. In each case 48 existing table contents remained unchanged.
+No production send occurred. One first-run harness setup attempt failed only
+its raw-file hash check because separately backed-up SQLite files had different
+physical bytes; the successful runs used an exact closed-file baseline and also
+checked semantic row preservation. After the latest `origin/main` integration,
+the `revision` case passed again against the updated native CLI output reader:
+Audit `return` then `approve`, four CLI calls, one substitute send and receipt,
+and the same 48-table preservation check.
+
+A5b implementation, copy inverse, native CLI acceptance and production
+deployment/readback are complete. The original A5 native acceptance conflict is
+a separate issue and remains open. The old Project/Todo/Update write paths have
+already been retired, while their history readers still have consumers. No
+safe whole-row deletion or source-backed replacement owner has been proven, so
+that cleanup has no authorized data-deletion change in this phase.
+
+Production deployment completed on 2026-10-25 at commit
+`4bae03e41e4d67aa8b759e5d782db4cea784be59`; the running service PID was 9910
+and `/healthz` returned OK. The Store marker is `2026-10-25.1`, Email remains
+54, there are 46 receipt references, `quick_check=ok`, and the sole existing FK
+finding `runs(190042) -> tasks(1)` is unchanged. The SQLite file remains
+514,969,600 bytes; no physical shrink is claimed. Status, Attention, History,
+`/history`, `/scheduled-tasks`, and Attempt #15369 detail returned successfully.
+The Attempt detail rendered the referenced provider receipt after expanding
+“已核验回执”; the scheduled-task screen listed 14 tasks and recent run history.
+No production send occurred during acceptance.
+
+The first standard deployment attempt failed after restart because the release
+object lacked the required `verify_loaded()` method. Automatic inverse and
+checkout rollback completed, restoring Store23.1/Email54 with health recovered.
+The missing readback method and its regression were added; 31 focused release
+and deployment-drain tests passed before the successful second deployment.
+
+The successful deployment backup was verified (`complete` marker, `quick_check`
+and the original FK finding), and is at
+`backups/auto-reply-2026-10-25.sqlite3`. Cleanup of this backup and the 4.8 GB
+task-owned copy directory was authorized by Derek but the file-deletion command
+was rejected by the current automatic approval policy (“approval required,
+AskForApproval is Never”). They remain the only closeout blocker; no alternate
+deletion mechanism was used. Remove them when deletion is enabled, then verify
+both paths are absent. Keep the original A5 native-acceptance conflict and the
+unproven Project/Todo/Update historical-owner mapping as separate open items.
+
 ## Email business-model phase audit — 2026-10-24
 
 The current source already contains the accepted Email B1/B2 model: `emails`

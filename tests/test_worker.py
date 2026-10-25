@@ -9839,11 +9839,13 @@ def test_verified_system_oa_comment_is_persisted_with_approval_history(
     assert metadata["oa_action"] == "comment"
     assert metadata["oa_remark"] == "请补充延期时长、量化目标和复评标准。"
     assert json.loads(metadata["oa_action_result_json"]) == {"success": True, "operationRecordId": "comment-1"}
+    assert isinstance(metadata["oa_action_receipt_id"], int)
+    attempt_metadata = {key: value for key, value in metadata.items() if key != "oa_action_receipt_id"}
     attempt_id = worker.store.record_reply_attempt(
         conversation_id=task.conversation_id, conversation_title=task.conversation_title,
         trigger_message_id=task.trigger_message_id, trigger_sender=task.trigger_sender,
         trigger_text=task.trigger_text, action="agent_run", sensitivity_kind="general",
-        send_status="completed", **metadata,
+        send_status="completed", **attempt_metadata,
     )
     attempt = worker.store.get_reply_attempt(attempt_id)
     assert attempt.oa_process_instance_id == "proc-1"

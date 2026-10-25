@@ -32,6 +32,26 @@ def claim(store):
     )
 
 
+def insert_native_email_classification_task(store, stable_message_identity="message"):
+    from app.task_entity_storage import create_task
+
+    with store._connect() as db:
+        db.execute("begin immediate")
+        now = db.execute("select current_timestamp").fetchone()[0]
+        task = create_task(db, values={
+            "kind": "email_classification", "status": "pending",
+            "available_at": "", "attempts": 0, "error": "",
+            "lease_owner": "", "lease_expires_at": "", "generation": 0,
+            "created_at": now, "updated_at": now,
+        })
+        db.execute(
+            "insert into email_classification_inputs(task_id,channel,stable_message_identity,input_json) "
+            "values(?,?,?,?)",
+            (task["id"], "email", stable_message_identity, "{}"),
+        )
+    return task["id"]
+
+
 def test_drain_blocks_new_claims_but_preserves_intake_and_queued_work(tmp_path):
     from app.deployment_drain import deployment_drain
 
@@ -138,21 +158,9 @@ def test_email_classifier_and_provider_action_claims_pause(tmp_path):
     from app.deployment_drain import deployment_drain
     from tests.test_email_store import _create_action_with_attempts
     from app.email_task_adapter import EmailClassificationTaskAdapter
-    from app.task12_storage import insert_task12
 
     store, action_id = _create_action_with_attempts(tmp_path / "worker.db", ())
-    with store._connect() as db:
-        insert_task12(
-            db,
-            "email_agent_classification_tasks",
-            dict(
-                task_id="classifier",
-                channel="email",
-                stable_message_identity="message",
-                status="pending",
-                input_json="{}",
-            ),
-        )
+    insert_native_email_classification_task(store)
     adapter = EmailClassificationTaskAdapter(store)
     with deployment_drain(store.path):
         assert adapter.claim_next(owner="email") is None
@@ -253,22 +261,10 @@ def test_independent_claims_count_before_any_native_runtime_starts(tmp_path):
     from app.workbench.store import WorkbenchStore
     from tests.test_email_store import _create_action_with_attempts
     from app.email_task_adapter import EmailClassificationTaskAdapter
-    from app.task12_storage import insert_task12
 
     store, action_id = _create_action_with_attempts(tmp_path / "worker.db", ())
     assert in_flight_work(store.path) == 0
-    with store._connect() as db:
-        insert_task12(
-            db,
-            "email_agent_classification_tasks",
-            dict(
-                task_id="classifier",
-                channel="email",
-                stable_message_identity="message",
-                status="pending",
-                input_json="{}",
-            ),
-        )
+    insert_native_email_classification_task(store)
     assert EmailClassificationTaskAdapter(store).claim_next(owner="email") is not None
     assert in_flight_work(store.path) == 1
     wb = WorkbenchStore(store.path)
@@ -474,13 +470,15 @@ def test_direct_email_reply_claim_is_paused_and_counted_before_runtime(
     assert in_flight_work(store.path) == 1
 
 
-def test_quiet_reads_supported_pre_lifecycle_publication_source(tmp_path):
+def test_quiet_rejects_retired_pre_lifecycle_publication_source(tmp_path):
+    import pytest
     from tests.support.predecessor_source import source_database as _source_database
     from app.repository_updater import in_flight_work
 
     path = tmp_path / "store21-1.db"
     _source_database(path)
-    assert in_flight_work(path) == 0
+    with pytest.raises(ValueError, match="unsupported"):
+        in_flight_work(path)
 
 
 def test_email_provider_admission_lock_spans_writer_recheck_and_commit(
@@ -523,41 +521,31 @@ def test_quiet_excludes_only_superseded_runtime_without_live_ownership(
     tmp_path, generation, runtime_lease, expected
 ):
     from app.repository_updater import in_flight_work
-    from app.run_storage import insert_run
+    from tests.support.native_run_rows import insert_native_run, insert_runtime_attempt_row
 
     store = AutoReplyStore(tmp_path / "worker.db")
     enqueue(store)
     with store._immediate_write_transaction() as db:
-        task_id = db.execute(
-            "select id from tasks where record_type='reply_tasks'"
-        ).fetchone()[0]
-        parent = insert_run(
-            db,
-            "agent_runs",
-            {
-                "task_id": task_id,
-                "execution_generation": generation,
-                "role": "consumer",
-                "status": "running",
-            },
-        ).lastrowid
-        insert_run(
-            db,
-            "agent_runtime_attempts",
-            {
-                "parent_id": parent,
-                "workload_kind": "agent_run",
-                "workload_key": str(parent),
-                "attempt_number": 1,
-                "route_name": "primary",
-                "runtime_kind": "codex_cli",
-                "credential_mode": "native",
-                "model": "test",
-                "status": "running",
-                "lease_owner": "native" if runtime_lease else "",
-                "lease_expires_at": "2999-01-01 00:00:00" if runtime_lease else "",
-            },
-        )
+        task_id = db.execute("select id from tasks where kind='reply'").fetchone()[0]
+        parent = insert_native_run(db, {
+            "task_id": task_id,
+            "execution_generation": generation,
+            "role": "consumer",
+            "status": "running",
+        })
+        insert_runtime_attempt_row(db, {
+            "parent_id": parent,
+            "workload_kind": "agent_run",
+            "workload_key": str(parent),
+            "attempt_number": 1,
+            "route_name": "primary",
+            "runtime_kind": "codex_cli",
+            "credential_mode": "native",
+            "model": "test",
+            "status": "running",
+            "lease_owner": "native" if runtime_lease else "",
+            "lease_expires_at": "2999-01-01 00:00:00" if runtime_lease else "",
+        })
     assert in_flight_work(store.path) == expected
 
 

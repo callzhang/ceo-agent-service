@@ -2393,6 +2393,21 @@ def test_finalize_orchestration_preserves_independently_recorded_delivery(
         conversation_id=task.conversation_id, trigger_message_id=task.trigger_message_id,
         reply_text=sent_reply_text, provider_result={'source': 'test'},
     )
+    from app.action_entity_storage import append_action_receipt, create_action
+    oa_result = '{"source":"oa-provider-substitute"}'
+    with store._connect() as db:
+        db.execute("begin immediate")
+        oa_action = create_action(db, values={
+            "operation": "approve", "status": "done",
+            "business_object_key": task.business_object_key,
+            "action_identity": "oa-approve",
+            "external_action_key": "oa-provider-substitute",
+        })
+        oa_receipt_id = append_action_receipt(db, oa_action["id"], values={
+            "operation": "approve", "target": '{"process_instance_id":"test-proc","task_id":"test-task"}',
+            "provider_result_json": oa_result, "result_digest": "oa-test-digest",
+            "agent_run_id": audit.id, "observed_at": "2026-10-25T00:00:00+00:00",
+        })
     attempt_id = store.finalize_orchestrated_reply_task(
         task_id=task.id,
         expected_execution_generation=task.execution_generation,
@@ -2414,6 +2429,11 @@ def test_finalize_orchestration_preserves_independently_recorded_delivery(
         send_status="completed",
         send_error="",
         channel="dingtalk",
+        oa_process_instance_id="test-proc",
+        oa_task_id="test-task",
+        oa_action="approve",
+        oa_action_result_json=oa_result,
+        oa_action_receipt_id=oa_receipt_id,
     )
 
     sent = store.get_sent_reply(task.conversation_id, task.trigger_message_id)
@@ -2424,7 +2444,16 @@ def test_finalize_orchestration_preserves_independently_recorded_delivery(
     assert sent.feedback_token == "spike_1_abcd1234"
     assert attempt is not None
     assert attempt.final_reply_text == ""
+    assert attempt.oa_action_result_json == oa_result
     assert store.count_sent_replies() == 1
+    with store._connect() as db:
+        raw = db.execute(
+            "select a.attempt_oa_action_result_json,ref.receipt_id "
+            "from actions a join reply_attempt_receipt_refs ref on ref.attempt_id=a.id "
+            "where a.record_type='reply_attempts' and cast(a.legacy_key as integer)=?",
+            (attempt_id,),
+        ).fetchone()
+        assert raw[0] == "" and raw[1] == oa_receipt_id
 
 
 def test_finalize_orchestration_never_projects_failed_current_run_as_done(

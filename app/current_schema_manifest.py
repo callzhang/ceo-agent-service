@@ -4,7 +4,7 @@ from functools import lru_cache
 from pathlib import Path
 import sqlite3
 
-STORE_VERSION = "2026-10-23.1"
+STORE_VERSION = "2026-10-25.1"
 EMAIL_VERSION = 54
 EMAIL_LEDGER_SQL = """CREATE TABLE email_schema_migrations (
                 version integer primary key,

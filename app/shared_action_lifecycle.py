@@ -509,9 +509,10 @@ def retire_unreferenced_provider_receipt(db, *, action_id, receipt_id,
         raise ValueError('replaced provider receipt changed before retirement')
     referenced = db.execute(
         'select exists(select 1 from action_receipts where provider_receipt_id=?) '
+        'or exists(select 1 from reply_attempt_receipt_refs where receipt_id=?) '
         'or exists(select 1 from actions where record_type=\'action\' and '
         '(action_delivery_receipt_id=? or action_prepared_receipt_id=?))',
-        (receipt_id, receipt_id, receipt_id),
+        (receipt_id, receipt_id, receipt_id, receipt_id),
     ).fetchone()[0]
     if referenced:
         return False
