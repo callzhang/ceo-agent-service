@@ -5,7 +5,7 @@ import sqlite3
 import pytest
 
 from app.action_storage import _action_definitions, action_payloads
-from app.storage_payload import ACTION_RECORD_TYPES
+from app.storage_payload import SOURCE_ACTION_RECORD_TYPES
 
 
 def declaration(**overrides):
@@ -20,7 +20,7 @@ def declaration(**overrides):
 def test_complete_actual_layouts_and_explicit_reply_variants():
     actual = action_payloads("actual_no_memory_fk")
     fresh = action_payloads("fresh_memory_fk")
-    assert set(actual.layouts) == set(ACTION_RECORD_TYPES.names)
+    assert set(actual.layouts) == set(SOURCE_ACTION_RECORD_TYPES.names)
     assert actual.layouts["feedback_iteration_decision_items"].fields == ()
     assert "conversation_single_chat" in actual.layouts["reply_attempts"].fields
     assert "conversation_single_chat" not in fresh.layouts["reply_attempts"].fields
