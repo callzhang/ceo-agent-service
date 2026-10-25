@@ -510,6 +510,8 @@ reverts committed work they did not author.
 
 ## Current claims
 
+| claude-audit-rule-visibility-20261025 | app/defaults/audit_rules.md (rule 5, one sentence), ci/shared-skills/ceo-weekly-okr-report/SKILL.md (revert my 2026-10-25 audience paragraph), ci/consumer-system-contract-release.json (audit_rules and OKR Skill digests only), tests/test_audit_rules.py, tests/test_weekly_okr_report.py and tests/test_consumer_system_release.py (assertions for those two changes only) | Derek 2026-10-25: not-sensitive content such as weekly reports needs no visibility-scope check, and the rule is general, not OKR-specific. Audit-rule change as its own commit, explicitly requested by Derek; published through the consumer contract release. | 2026-10-25 |
+
 
 
 
