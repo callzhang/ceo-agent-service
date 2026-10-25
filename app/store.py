@@ -7050,7 +7050,8 @@ class AutoReplyStore(LogicalRunStoreMixin, ReviewedCandidateStoreMixin):
                     from app.action_storage import NATIVE_EXTERNAL_ACTION_RESULT_SQL
                     effect_receipt = db.execute(
                         f"select 1 from ({NATIVE_EXTERNAL_ACTION_RESULT_SQL}) actions "
-                        "where task_id=? limit 1", (current["id"],),
+                        "where first_agent_run_id in (select id from runs where task_id=?) limit 1",
+                        (current["id"],),
                     ).fetchone()
                     reopenable = bool(
                         allow_skipped_oa_review

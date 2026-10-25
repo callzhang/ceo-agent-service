@@ -12750,8 +12750,10 @@ def test_scheduled_task_ids_for_reply_tasks_maps_only_reply_task_runs(tmp_path: 
     assert store.scheduled_task_ids_for_reply_tasks(()) == {}
 
 
+@pytest.mark.parametrize("effect_receipt", [False, True])
 def test_manual_rerun_can_reopen_only_feedback_backed_skipped_pending_oa_review(
     tmp_path: Path,
+    effect_receipt: bool,
 ):
     store = AutoReplyStore(tmp_path / "worker.sqlite3")
     process_id = "proc-review"
@@ -12775,6 +12777,21 @@ def test_manual_rerun_can_reopen_only_feedback_backed_skipped_pending_oa_review(
         channel="dingtalk", oa_url=oa_url,
         business_object_key=f"oa:{process_id}:{oa_task_id}",
     )
+    if effect_receipt:
+        # An external effect already recorded for this Task's run forbids a new review.
+        claimed = store.claim_reply_task(task.id)
+        assert claimed is not None
+        audit = _claim_audit_run(
+            store, task.id, task.execution_generation, owner="worker-1"
+        ).run
+        store.complete_agent_run(audit.id, {"outcome": "executed"}, owner="worker-1")
+        store.record_completed_agent_message_delivery(
+            agent_run_id=audit.id, external_action_key="external-oa-effect",
+            business_object_key=task.business_object_key, action_identity="oa-effect",
+            operation="chat +send-to-group", target_identifiers={"group": "cid-1"},
+            conversation_id=task.conversation_id, trigger_message_id=task.trigger_message_id,
+            reply_text="done", provider_result={"message_id": "message-1"},
+        )
     with store._immediate_write_transaction() as db:
         _update_current_task8(
             db, "reply_tasks", {},
@@ -12802,6 +12819,11 @@ def test_manual_rerun_can_reopen_only_feedback_backed_skipped_pending_oa_review(
     )
     with pytest.raises(store_module.ManualRerunConflict):
         store.enqueue_manual_rerun_reply_task(**rerun_args)
+
+    if effect_receipt:
+        with pytest.raises(store_module.ManualRerunConflict):
+            store.enqueue_manual_rerun_reply_task(**rerun_args, allow_skipped_oa_review=True)
+        return
 
     rerun = store.enqueue_manual_rerun_reply_task(
         **rerun_args, allow_skipped_oa_review=True,
