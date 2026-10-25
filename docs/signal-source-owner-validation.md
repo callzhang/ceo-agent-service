@@ -96,8 +96,28 @@ protected tests. Its interface is
 `prepare_signal_source_owner_release(path)` with publish/verify_loaded/rollback/
 finalize. Only the exact frozen25.2/54→25.3/54 pair is approved.
 
+Copy UI verification completed in Chrome against an isolated console on18776,
+with no worker: formal Tasks loaded; Task851 showed source evidence and expanded
+the existing upstream source record; canonical historical project1 rendered
+facts, source conversations,22 retained Todos and historical send receipts; an
+expanded receipt returned its retained provider identity; Dashboard/History
+loaded. Frontend production build passed. This is copy UI evidence, not live
+production readback. The test tab was closed and only its console was stopped.
+
+The execution policy now allowed the previously authorized cleanup. Eleven
+explicit expired test roots were verified unused with lsof, then removed;
+all eleven paths were rechecked absent. Their logical file sizes totaled
+12,246,326,516 bytes (including the later history-test root). The104 pytest
+current-links in the history root all resolved inside that root. Four old API
+outputs (38,162 bytes) were also removed. Production, native trajectories,
+current Signal validation inputs and the active workflow backup were excluded.
+This is artifact cleanup, not a database-model saving or an APFS reclaimed-byte
+measurement. The previous approval-Never rejection is a historical checkpoint;
+it no longer blocks those eleven roots/four outputs.
+
 Integrated Quality, standard deploy, production schema/health/queue/Attention/
-History/source-detail/receipt readback and final artifact cleanup remain pending.
+History/source-detail/receipt readback and current artifact/backup cleanup
+remain pending.
 All completed writes above were confined to disposable copies; no real outbound
 send occurred. The previous A5 native acceptance evidence is retained separately
 and is not replaced by this storage verification.

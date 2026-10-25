@@ -17,7 +17,11 @@ standard release/readback are pending. No protected entrypoint was edited and
 no real test send occurred. Production was read as Store25.2/Email54 with1140
 Signals (110 inline,1030 referenced;172 parents); this is the source checkpoint,
 not a deployment of25.3. Final integrated release/readback and cleanup remain
-pending.
+pending. Copy Chrome verification of formal Tasks, source/raw record, canonical
+legacy detail and provider receipt succeeded; frontend build passed. The eleven
+previously blocked test roots and four API outputs are now deleted and verified
+absent (12,246,364,678 logical bytes); the active Signal inputs/backup await final
+release readback. No physical database saving is attributed to that cleanup.
 
 ## Previous history closeout — production readback, 2026-10-25
 
