@@ -11,6 +11,7 @@ from app.action_business_definitions import (
     business_action_projection,
 )
 from app.action_email_definitions import EMAIL_NUMERIC_SCOPE
+from app.action_business_definitions import BUSINESS_NUMERIC_SCOPE
 from app.action_email_storage import (
     _create_main_index, _external_dependencies, _sequence, _set_sequence,
 )
@@ -412,10 +413,14 @@ def _complete(db, kind, values):
 
 
 def _next_source_rowid(db, kind):
+    if kind not in BUSINESS_ACTION_KINDS:
+        raise ValueError("unsupported Business action kind")
+    # The kind is a fixed literal: a bound record_type cannot satisfy the partial index's
+    # predicate, and without the index SQLite scans the kind through
+    # idx_actions_email_public_key instead of seeking the maximum.
     maximum = db.execute(
-        "select max(cast(legacy_key as integer)) from main.actions where record_type=? and "
-        + EMAIL_NUMERIC_SCOPE,
-        (kind,)).fetchone()[0]
+        "select max(cast(legacy_key as integer)) from main.actions indexed by idx_actions_public_id "
+        f"where record_type='{kind}' and " + BUSINESS_NUMERIC_SCOPE).fetchone()[0]
     if kind not in BUSINESS_ACTION_AUTO:
         if maximum != 2**63 - 1:
             return (maximum or 0) + 1
