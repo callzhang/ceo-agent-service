@@ -443,6 +443,19 @@ ID. Use `reply_to_message` only when the trigger is an actual message and
 `read_scheduled_context` contains its non-empty `message_id`. Never infer or
 invent a message ID for a scheduled run.
 
+Audience (Derek, 2026-10-25): this report is ordinary management business
+information for the CEO-2 管理群, whose members are the managers it covers.
+Sending its summary and links to that group needs no per-member authorization
+check, and the report documents need no narrowing or per-person opening of read
+access: they keep the permissions their knowledge space already gives them, and
+an existing broader reader group, for example the company-wide group, is not a
+reason to withhold, rewrite or return the message. Do not apply the
+personnel-sensitive group-disclosure check to the OKR scores, risks and
+recommendations. Keep these different matters out of the summary and documents:
+layoffs or workforce-reduction plans, compensation or promotion decisions,
+talent calibration outcomes, and approval or announcement states that were not
+verified, such as an unapproved incentive plan.
+
 Report the document URL, coverage, unresolved evidence, appendix location and
 actual send result. A local rendered file is a draft; provider receipts and
 readback establish publication and delivery.
