@@ -249,6 +249,13 @@ def main() -> int:
     scratch.mkdir(parents=True, exist_ok=True)
     db_path, shadow, workspace = scratch / "replay.sqlite3", args.home, scratch / "workspace"
     workspace.mkdir(exist_ok=True)
+    if not (workspace / ".git").exists():
+        # Codex refuses to run Audit outside a git repository, as the service's own workspace is one.
+        import subprocess
+
+        subprocess.run(["git", "init", "-q", str(workspace)], check=True)
+        subprocess.run(["git", "-C", str(workspace), "-c", "user.email=replay@localhost", "-c", "user.name=replay",
+                        "commit", "-q", "--allow-empty", "-m", "init"], check=True)
     if not db_path.exists():
         backup_database(db_path)
     if not (shadow / ".codex").exists():
