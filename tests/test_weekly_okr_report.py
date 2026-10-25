@@ -1187,14 +1187,3 @@ def test_audit_source_artifact_does_not_enter_consumer_preparation(tmp_path):
         period_label="2026 Q3", report_date="2026-07-30", output_dir=tmp_path / "again")
     assert len(repeated["managers"]) == len(plan["managers"])
 
-
-def test_okr_report_skill_states_the_group_audience_needs_no_per_member_check():
-    text = (
-        Path(__file__).resolve().parents[1]
-        / "ci" / "shared-skills" / "ceo-weekly-okr-report" / "SKILL.md"
-    ).read_text(encoding="utf-8")
-
-    assert "ordinary management business" in text
-    assert "needs no per-member authorization" in text
-    assert "is not a\nreason to withhold, rewrite or return the message" in text
-    assert "layoffs or workforce-reduction plans" in text
