@@ -101,6 +101,22 @@ def test_message_triage_skill_verifies_external_target_before_asking_for_disambi
         assert required in text
 
 
+def test_unavailable_contextual_remediation_does_not_fail_an_answerable_original_request():
+    text = (ROOT / "ci/shared-skills/ceo-message-triage/SKILL.md").read_text(
+        encoding="utf-8"
+    )
+
+    for required in (
+        "A later troubleshooting suggestion is context for the triggering request, not a replacement for it",
+        "If you cannot perform a suggested remediation, still answer the original inquiry",
+        "state only the verified observation",
+        "explain the specific limitation",
+        "ask for the next fact or action needed to continue",
+        "Do not return `failed` solely because an optional remediation step is unavailable",
+    ):
+        assert required in text
+
+
 def test_message_triage_skill_reconciles_material_chat_updates_with_live_oa_state():
     text = _skill_text()
 

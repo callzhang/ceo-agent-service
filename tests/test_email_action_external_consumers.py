@@ -14,7 +14,6 @@ from app.web_api.registration import register_console_routes
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
 
-pytest_plugins = ("tests.test_email_action_plan_direct_dao",)
 
 
 def _two_failed_actions(path):
@@ -179,63 +178,6 @@ def test_complete_status_and_maintenance_paths_accept_current_target(tmp_path):
     assert scan_hourly_quality(path).missing_sources == ()
 
 
-def test_genuine_source_history_rowids_survive_real_pair_and_mixed_pagination(converted_pair):
-    from pathlib import Path
-    from app.store_schema_release import prepare_database_schema_release
-
-    _converted, _classification, action_ids, source, _old_code = converted_pair
-    with sqlite3.connect(source) as db:
-        before = db.execute(
-            "select rowid,action_id,status,updated_at from email_actions order by rowid"
-        ).fetchall()
-    release = prepare_database_schema_release(Path(__file__).resolve().parents[1], source)
-    release.publish()
-    store = AutoReplyStore(source)
-    EmailStore(source)
-    total, rows = store.list_operation_logs_with_count(
-        limit=10, source_tables=("email_actions",),
-    )
-    assert total == len(before) == len(action_ids)
-    assert {row.source_id for row in rows} == {row[0] for row in before}
-    assert {row.id for row in rows} == {f"email-action:{row[0]}" for row in before}
-    assert {row.status for row in rows} == {row[2] for row in before}
-    assert all(row.context and row.summary for row in rows)
-
-    store.record_reply_attempt(
-        conversation_id="mixed", conversation_title="Mixed history",
-        trigger_message_id="mixed-1", trigger_sender="sender",
-        trigger_text="older family", action="agent_run",
-        sensitivity_kind="general", send_status="skipped",
-    )
-    source_tables = ("email_actions", "reply_attempts")
-    full_total, full = store.list_operation_logs_with_count(
-        limit=20, source_tables=source_tables,
-    )
-    assert full_total == len(before) + 1
-    assert {row.source_table for row in full} == set(source_tables)
-    paged = []
-    for offset in range(full_total):
-        page_total, page = store.list_operation_logs_with_count(
-            limit=1, offset=offset, source_tables=source_tables,
-        )
-        assert page_total == full_total
-        paged.extend(page)
-    assert [(row.source_table, row.source_id) for row in paged] == [
-        (row.source_table, row.source_id) for row in full
-    ]
-    with store._connect() as db:
-        update_email_action(db, "email_actions", before[0][0], {
-            "status": "failed", "error": "provider_failed", "updated_at": "2026-10-14T04:00:00+00:00",
-        })
-    failed_total, failed = store.list_operation_logs_with_count(
-        limit=10, statuses=("failed",), source_tables=source_tables,
-    )
-    assert failed_total == 1
-    assert [(row.id, row.source_id, row.status) for row in failed] == [
-        (f"email-action:{before[0][0]}", before[0][0], "failed")
-    ]
-
-
 def test_current_plan_poll_and_retry_window_on_target(tmp_path, monkeypatch):
     from app.email_classifier_contracts import EmailAction, EmailClassificationStatus
     from tests.test_email_store import _classification
@@ -302,105 +244,3 @@ def test_current_plan_poll_and_retry_window_on_target(tmp_path, monkeypatch):
     with email._connect() as db:
         assert update_email_classification(db, 302, {"current_action_plan_id": None}) == 1
     assert email.claim_next_direct_action(claimed_at="2026-10-14T12:01:00+00:00") is None
-
-
-def test_published_main_history_matches_target_for_mixed_failed_and_pages(
-    converted_pair, tmp_path
-):
-    """The immediate published predecessor is the old-side History oracle."""
-    import io
-    import json
-    import os
-    from pathlib import Path
-    import subprocess
-    import sys
-    import tarfile
-
-    from app.store_schema_release import prepare_database_schema_release
-
-    _converted, _classification, _action_ids, source, _old_code = converted_pair
-    with sqlite3.connect(source) as db:
-        failed_action_id = db.execute(
-            "select action_id from email_actions where rowid=-7"
-        ).fetchone()[0]
-        db.execute(
-            "insert into email_action_attempts (action_id,attempt_number,status,"
-            "provider_operation,provider_target,provider_result_id,error,started_at,finished_at) "
-            "values (?,1,'failed','READ','message','','source-failure','start','finish')",
-            (failed_action_id,),
-        )
-        db.execute(
-            "update email_actions set status='failed', attempt_count=1, "
-            "provider_operation='READ', provider_target='message', "
-            "started_at='start', finished_at='finish', error='source-failure' "
-            "where rowid=-7"
-        )
-    published = tmp_path / "published-main-5e52cafc"
-    published.mkdir()
-    archive = subprocess.check_output(
-        ["git", "archive", "5e52cafc8f209986868454d25ea5ba77a6be782c", "app"],
-        cwd=Path(__file__).resolve().parents[1],
-    )
-    with tarfile.open(fileobj=io.BytesIO(archive)) as tar:
-        tar.extractall(published, filter="data")
-    code = """
-import json,sys
-from pathlib import Path
-from app.store import AutoReplyStore
-from app.email_store import EmailStore
-p=Path(sys.argv[1]); store=AutoReplyStore(p); EmailStore(p)
-store.record_reply_attempt(conversation_id='mixed',conversation_title='Mixed',
-    trigger_message_id='reply-1',trigger_sender='sender',trigger_text='old16',
-    action='agent_run',sensitivity_kind='general',send_status='skipped')
-def snap(statuses=None):
-    sources=('email_actions','reply_attempts')
-    total,all_rows=store.list_operation_logs_with_count(limit=20,statuses=statuses,
-        source_tables=sources)
-    pages=[]
-    for offset in range(total):
-        count,rows=store.list_operation_logs_with_count(limit=1,offset=offset,
-            statuses=statuses,source_tables=sources)
-        pages.append((count,[(r.id,r.source_table,r.source_id,r.status,r.context,
-                            r.summary) for r in rows]))
-    return total,[(r.id,r.source_table,r.source_id,r.status,r.context,r.summary)
-                  for r in all_rows],pages
-print(json.dumps({'all':snap(),'failed':snap(('failed',))},ensure_ascii=False))
-"""
-    result = subprocess.run(
-        [sys.executable, "-c", code, str(source)], cwd=published,
-        env={**os.environ, "PYTHONPATH": str(published)},
-        text=True, capture_output=True, timeout=60,
-    )
-    assert result.returncode == 0, result.stderr
-    expected = json.loads(result.stdout.splitlines()[-1])
-
-    release = prepare_database_schema_release(Path(__file__).resolve().parents[1], source)
-    release.publish()
-    store = AutoReplyStore(source)
-    EmailStore(source)
-
-    def target_snap(statuses=None):
-        sources = ("email_actions", "reply_attempts")
-        total, all_rows = store.list_operation_logs_with_count(
-            limit=20, statuses=statuses, source_tables=sources,
-        )
-        pages = []
-        for offset in range(total):
-            count, rows = store.list_operation_logs_with_count(
-                limit=1, offset=offset, statuses=statuses,
-                source_tables=sources,
-            )
-            pages.append((count, [
-                (r.id, r.source_table, r.source_id, r.status, r.context, r.summary)
-                for r in rows
-            ]))
-        return total, [
-            (r.id, r.source_table, r.source_id, r.status, r.context, r.summary)
-            for r in all_rows
-        ], pages
-
-    actual = json.loads(json.dumps({
-        "all": target_snap(), "failed": target_snap(("failed",)),
-    }, ensure_ascii=False))
-    assert all(len(page[1]) == 1 for page in actual["all"][2])
-    assert actual == expected

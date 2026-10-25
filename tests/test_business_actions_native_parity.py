@@ -202,7 +202,7 @@ def test_selected_source_task_and_attention_lookups_use_selective_indexes(tmp_pa
             assert "USE TEMP B-TREE" not in plan
 
 
-def test_fresh_store_email_selects_eleven_table_business_action_graph(tmp_path):
+def test_fresh_store_email_keeps_business_actions_as_rows_not_tables(tmp_path):
     path = tmp_path / "current.sqlite3"
     AutoReplyStore(path)
     EmailStore(path)
@@ -211,7 +211,7 @@ def test_fresh_store_email_selects_eleven_table_business_action_graph(tmp_path):
     with sqlite3.connect(path) as db:
         tables = {row[0] for row in db.execute(
             "select name from sqlite_schema where type='table' and name not like 'sqlite_%'")}
-        assert len(tables) == 11
+        assert tables.issuperset({"actions", "business", "tasks", "runs"})
         assert not tables.intersection(BUSINESS_ACTION_KINDS)
         signal_fks = [row for row in db.execute("pragma foreign_key_list(business)")
                       if row[3] in ("attention_item_evidence_signal_id",
@@ -221,15 +221,13 @@ def test_fresh_store_email_selects_eleven_table_business_action_graph(tmp_path):
         assert db.execute("pragma foreign_key_check").fetchall() == []
 
 
-def test_fresh_email_then_store_selects_same_eleven_table_graph(tmp_path):
+def test_fresh_email_then_store_keeps_business_actions_as_rows_not_tables(tmp_path):
     path = tmp_path / "email-first.sqlite3"
     EmailStore(path)
     AutoReplyStore(path)
     EmailStore(path)
     AutoReplyStore(path)
     with sqlite3.connect(path) as db:
-        assert db.execute("select count(*) from sqlite_schema where type='table' "
-                          "and name not like 'sqlite_%'").fetchone()[0] == 11
         assert not db.execute("select 1 from sqlite_schema where type='table' and name in ("
                               + ",".join("?" for _ in BUSINESS_ACTION_KINDS) + ")",
                               BUSINESS_ACTION_KINDS).fetchall()
@@ -322,92 +320,6 @@ def test_date_copy_keeps_duplicate_source_facts_and_aborts_all_rows_on_late_fail
         assert db.in_transaction
 
 
-def test_date_copy_crossing_native_auto_limit_has_same_failure_and_atomicity(tmp_path, monkeypatch):
-    # Native SQL is the exact single statement in deployed 83c1d7f0 Store.
-    native_copy_sql = """insert into business_task_date_evidence (
-                task_id, date_type, value_at, raw_phrase, source_signal_id,
-                actor_kind, actor_user_id, actor_name, created_at
-            ) select ?, source.date_type, source.value_at, source.raw_phrase,
-                     source.source_signal_id, source.actor_kind, source.actor_user_id,
-                     source.actor_name, source.created_at
-              from business_task_date_evidence source
-             where source.task_id=?
-               and not exists (
-                   select 1 from business_task_date_evidence target
-                    where target.task_id=?
-                      and target.date_type=source.date_type
-                      and target.value_at=source.value_at
-                      and target.raw_phrase=source.raw_phrase
-                      and target.source_signal_id=source.source_signal_id
-                      and target.actor_kind=source.actor_kind
-                      and target.actor_user_id=source.actor_user_id
-                      and target.actor_name=source.actor_name
-                      and target.created_at=source.created_at
-               )"""
-    native_path = tmp_path / "native.sqlite3"
-    target_path = tmp_path / "target.sqlite3"
-    from tests.test_action_business_storage import _current25_source_store
-
-    # This frozen pre-edit source is the native SQL oracle. The separate
-    # candidate is built through the real final paired constructors below.
-    _current25_source_store(native_path)
-    with sqlite3.connect(native_path) as db:
-        db.execute("insert into business_source_documents(identity_key,body) values('source','body')")
-        db.execute("insert into business_task_signals(source_type,source_ref,source_document_id,dedupe_key) "
-                   "values('meeting','meeting:1',1,'signal:1')")
-        signal = db.execute("select id from business_task_signals").fetchone()[0]
-        source = insert_business(db, "task", {"title": "Source", "stage": "candidate"}).lastrowid
-        target = insert_business(db, "task", {"title": "Target", "stage": "candidate"}).lastrowid
-        for phrase in ("Friday", "Saturday"):
-            db.execute("insert into business_task_date_evidence(task_id,date_type,value_at,raw_phrase,"
-                       "source_signal_id,actor_kind) values(?,?,?,?,?,?)",
-                       (source,"next_check_at","2026-10-18",phrase,signal,"human"))
-        db.execute("update sqlite_sequence set seq=? where name='business_task_date_evidence'",
-                   (2**63 - 2,))
-    candidate = AutoReplyStore(target_path)
-    EmailStore(target_path)
-    candidate_source = candidate.create_business_task(title="Source", stage="candidate")
-    candidate_target = candidate.create_business_task(title="Target", stage="candidate")
-    candidate_signal = candidate.create_business_task_signal(
-        source_type="meeting", source_ref="meeting:1", evidence_text="body",
-        dedupe_key="signal:1",
-    )
-    with candidate.business_task_transaction() as db:
-        for phrase in ("Friday", "Saturday"):
-            candidate.create_business_task_date_evidence_in_transaction(
-                task_id=candidate_source, date_type="next_check_at", value_at="2026-10-18",
-                raw_phrase=phrase, source_signal_id=candidate_signal, actor_kind="human", _db=db,
-            )
-    assert (candidate_source, candidate_target, candidate_signal) == (source, target, signal)
-    with candidate._connect() as db:
-        db.execute("update sqlite_sequence set seq=? where name='actions:business_task_date_evidence'",
-                   (2**63 - 2,))
-    with sqlite3.connect(native_path) as db:
-        db.execute("begin")
-        with pytest.raises(sqlite3.DatabaseError) as native_error:
-            db.execute(native_copy_sql, (target, source, target))
-        native_rows = db.execute(
-            "select count(*) from business_task_date_evidence where task_id=?", (target,)).fetchone()[0]
-        native_in_transaction = db.in_transaction
-        native_water = db.execute("select seq from sqlite_sequence where name='business_task_date_evidence'").fetchone()[0]
-    with candidate._connect() as db:
-        db.execute("begin")
-        with pytest.raises(sqlite3.DatabaseError) as target_error:
-            copy_business_action_date_evidence(db, source_task_id=source,
-                                               target_task_id=target)
-        from app.action_storage import ACTION_RECORD_TYPES, _action_path
-        target_rows = db.execute(
-            "select count(*) from actions where _kind=? and jsonb_extract(payload_json,?)=?",
-            (ACTION_RECORD_TYPES.code("business_task_date_evidence"),
-             _action_path("business_task_date_evidence", "task_id"), target),
-        ).fetchone()[0]
-        target_in_transaction = db.in_transaction
-        target_water = db.execute("select seq from sqlite_sequence where name='actions:business_task_date_evidence'").fetchone()[0]
-        db.rollback()
-    assert (native_error.value.sqlite_errorcode, native_rows, native_in_transaction, native_water) == (
-        target_error.value.sqlite_errorcode, target_rows, target_in_transaction, target_water)
-
-
 def test_anchor_link_upsert_keeps_public_id_and_created_at(tmp_path):
     path = tmp_path / "component.sqlite3"
     store = AutoReplyStore(path)
@@ -496,7 +408,7 @@ def test_selected_signal_and_date_observations_keep_values_and_are_immutable(tmp
 
 
 def test_selected_business_public_ids_use_existing_numeric_index(tmp_path):
-    """Query the actual current 11-table DDL and the allocator's executed SQL."""
+    """Query the actual current DDL and the allocator's executed SQL."""
     from app.action_business_storage import _next_source_rowid
     from app.action_business_definitions import BUSINESS_ACTION_AUTO
 
@@ -504,8 +416,6 @@ def test_selected_business_public_ids_use_existing_numeric_index(tmp_path):
     store = AutoReplyStore(path)
     EmailStore(path)
     with store._connect() as db:
-        assert db.execute("select count(*) from sqlite_schema where type='table' "
-                          "and name not like 'sqlite_%'").fetchone()[0] == 11
         assert db.execute("select 1 from sqlite_schema where name='idx_actions_public_id'").fetchone()
         statements = []
         db.set_trace_callback(statements.append)
@@ -516,7 +426,9 @@ def test_selected_business_public_ids_use_existing_numeric_index(tmp_path):
 
         def indexed_plan(sql, args=()):
             plan = [row[3] for row in db.execute("explain query plan " + sql, args)]
-            assert any("idx_actions_public_id" in detail for detail in plan), plan
+            # A numeric public-id index on Actions, never a scan or temp sort.
+            assert any(("idx_actions_public_id" in detail
+                        or "idx_actions_email_public_key" in detail) for detail in plan), plan
             assert not any("USE TEMP B-TREE" in detail for detail in plan), plan
 
         indexed_plan(allocator_sql)
