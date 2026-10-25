@@ -313,6 +313,9 @@ def main() -> int:
                 new_id = int(db.execute(
                     "select task_id from task_inputs where channel='wechat' and conversation_id=? and trigger_message_id=?",
                     (task_row["conversation_id"], replay_id)).fetchone()[0])
+            # Each replay starts a fresh Consumer session: the conversation's session
+            # would otherwise carry earlier replays (and older Skill text) into this one.
+            store.clear_conversation_runtime_sessions(task_row["conversation_id"])
             task = store.claim_reply_task(new_id)
             sent.clear()
             proxy.until = as_of(legacy["created_at"])
