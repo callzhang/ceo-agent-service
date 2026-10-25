@@ -13,6 +13,7 @@ SOURCE_FIELDS = (
 REQUIRED_SOURCE_FIELDS = SOURCE_FIELDS[:-2]
 SIGNAL_FACT_FIELDS = ("conversation_title", "context_json", "dedupe_key", "created_at")
 SIGNAL_FIELDS = (*SOURCE_FIELDS, "provenance_id", *SIGNAL_FACT_FIELDS)
+SIGNAL_REFERENCE_FIELDS = ("provenance_id", *SIGNAL_FACT_FIELDS)
 HEX64 = "[0-9a-f]" * 64
 
 
@@ -174,6 +175,29 @@ def physical_signal_checks(column, *, payloads=None):
         f"({c('native_provenance_json')} is null or {c('provider_locator_json')} is null)",
     ]
     return rules
+
+
+def physical_signal_reference_checks(column, *, payloads=None):
+    """Validate the current five-slot Signal payload and its required parent."""
+    def c(field):
+        return column(field)
+
+    fields = SIGNAL_REFERENCE_FIELDS
+    encoded = ([payloads.check("business_task_signals", field) for field in fields]
+               if payloads else [
+                   _encoded_value_check("payload_json", "$." + field) for field in fields
+               ])
+    exact = (payloads.shape("business_task_signals") if payloads else
+             "json_remove(payload_json," + ",".join(
+                 repr("$." + field) for field in fields
+             ) + ")='{}'")
+    return [
+        *encoded,
+        *(f"{c(field)} is not null" for field in fields),
+        exact,
+        f"trim({c('dedupe_key')},{TRIM_WS})<>''",
+        f"json_valid({c('context_json')}) and json_type({c('context_json')})='object'",
+    ]
 
 
 def physical_promotion_trigger(outer_columns, column, *, payloads=None):

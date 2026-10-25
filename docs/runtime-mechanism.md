@@ -503,9 +503,13 @@ Project CRM 搜索、确认和清除关联仍在原业务写事务中；搜索�
 不替代已确认关联，也不写外部 CRM。
 
 原 `business_source_documents` 正文表及数字容器 ID 退休。Signal DAO 仅持久化
-来源身份、精确版本、hash／字节数及 locator；一个 owner 直接内联，第二个 owner
-在原 savepoint 中把同一精确来源提升到共享 provenance，保留 Signal ID 和事实。
-推广失败时整个 savepoint 回滚。证据引语、来源关系和已采用业务事实仍保持原义。
+来源身份、精确版本、hash／字节数及 locator。Store25.3 目标的每个 Signal 都引用既有
+`provenance`，只保存引用与标题、context、dedupe_key、created_at 四项自身事实。首个
+owner 即创建/复用来源，后续写入不推广或修改旧 Signal；parent/Signal 在原 savepoint
+内原子写入，查询只走 parent join。旧17槽只属于显式25.2/54→25.3/54迁移和
+current-data inverse，不进入运行时兼容分支。来源值/类型、Signal身份、业务关联、回执
+及来源不可用语义不变。该目标尚待验收发布；基线生产25.2的两种表示仅是迁移源。
+详见[字段归属和验证](signal-source-owner-unification.md)。
 TaskAgent 按实际生成任务的 runtime attempt、session 和记录范围检查完整原生输入；
 定位器验证 CLI 原始行 hash、JSON leaf、字符范围、完整 UTF-8 hash／字节数。
 单独直接注入的文本仅在明确选择 `plain_utf8` 时按该格式读取；通常来源使用
@@ -1861,6 +1865,8 @@ Task 需要来源明确的、可独立完成的交付物或行动，或由已证
 保留 existing_attention_id 时，assessment 必须引用当前 `current_project_attention.assessment_json.evidence` 中至少一条完全相同的原始证据三元组（signal_id、source_ref、source_excerpt）；新证据只能补充，不能替代卡片原始证明。
 区别职责与行动时，“李四负责核实客户付款排期并反馈”是具体可执行 Task；“王五负责商务对账”若仅描述职能范围则是 ProjectContext。项目级风险的显示型建议可基于已保存职责，也可由唯一 overall_owner 承接跨职能协调，但不构成正式指派。
 
+以下共享正文与 B/C/D 未发布描述属于正文退休前的历史检查点；当前来源归属以本文前面的 Signal DAO 合同为准，现有库不保留该原文表。
+
 `business_source_documents` 保存不可变原文，Signal 通过真实 source_document_id 外键引用。
 只有来源类型/ref/时间、会话、作者 ID/姓名/类型和正文八项完全相同才共享正文；Signal ID、
 dedupe_key、上下文、Task 证据角色与历史仍独立。同 ref 的 memory/session 引文不冒充 observed 原文。
@@ -1883,6 +1889,7 @@ API 使用有类型的来源视图：可用时正文非空且无错误，不可�
 查找现有提示词中的完整来源 JSON 字符串；输出行/内容路径、字符区间和校验值，交给精确读取器。
 部分引文或本轮范围外的匹配不能替代原文，不写 trajectory 或正文副本。当前定位原语尚未接入
 Signal 持久化，新写入路径的完整集成仍属最终迁移验收差项。
+历史实现注记（以下三段是正文退休前的检查点，不是当前运行状态）：
 开发中的无正文 Signal DAO 已使用最终 `_kind` 与固定 JSONB 槽位。首次使用在 Signal 内联来源；第二个使用者才将同一来源提升到 provenance，通过置空来源槽位并设置外键完成，不移动数组槽位，也不改变业务事实和公开 ID。第二次插入失败时，现有调用方事务内的 savepoint 回滚整个提升，其他证据引用保持。该组件不保存原文；Store 尚未选择最终来源结构，历史正文未退休、生产未发布。
 
 AI Minutes 的来源定位包含 transcript_excerpts 时，必须同时记录真实生成格式

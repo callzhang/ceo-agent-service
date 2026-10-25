@@ -12,14 +12,14 @@ from app.action_business_storage import _next_source_rowid
 from app.business_source_reader import SourceVersionBinding
 from app.storage_payload import ACTION_RECORD_TYPES, PayloadLayout
 from app.provenance_definitions import (
-    SOURCE_FIELDS, SIGNAL_FIELDS, SIGNAL_FACT_FIELDS, provenance_objects,
+    SOURCE_FIELDS, SIGNAL_FACT_FIELDS, SIGNAL_REFERENCE_FIELDS, provenance_objects,
 )
 
 
 _KIND = "business_task_signals"
 _COLUMN = "ba_task_signals_"
 _LOGICAL_FIELDS = SOURCE_FIELDS[:-2]
-_LAYOUT = PayloadLayout(SIGNAL_FIELDS)
+_LAYOUT = PayloadLayout(SIGNAL_REFERENCE_FIELDS)
 
 
 def create_provenance_schema(db: sqlite3.Connection) -> None:
@@ -42,9 +42,9 @@ def provenance_schema_is_current(db: sqlite3.Connection) -> bool:
 def signal_projection():
     select = ["cast(a.legacy_key as integer) as id",
               f"a.{_COLUMN}provenance_id as provenance_id"]
-    select += [f"coalesce(p.{field},a.{_COLUMN}{field}) as {field}" for field in SOURCE_FIELDS]
+    select += [f"p.{field} as {field}" for field in SOURCE_FIELDS]
     select += [f"a.{_COLUMN}{field} as {field}" for field in SIGNAL_FACT_FIELDS]
-    return ("select " + ",".join(select) + " from actions a left join provenance p "
+    return ("select " + ",".join(select) + " from actions a join provenance p "
             f"on p.id=a.{_COLUMN}provenance_id where a.record_type='{_KIND}'")
 
 
@@ -68,18 +68,13 @@ def signal_binding(db: sqlite3.Connection, public_id: int) -> SourceVersionBindi
 
 def signals_for_source(db: sqlite3.Connection, *, source_type: str, source_ref: str,
                        source_time: str) -> tuple[int, ...]:
-    """Use the inline and shared source indexes without storing shared duplicates."""
+    """Use the immutable parent source index and referenced-Signal index."""
     rows = db.execute(
-        "select a.business_signal_public_id from actions a indexed by idx_actions_signal_inline_source "
-        "where a.record_type='business_task_signals' and a.ba_task_signals_provenance_id is null "
-        "and a.ba_task_signals_source_type=? and a.ba_task_signals_source_ref=? "
-        "and a.ba_task_signals_source_time=? "
-        "union all "
         "select a.business_signal_public_id from provenance p indexed by idx_provenance_source "
         "join actions a indexed by idx_actions_signal_shared on a.ba_task_signals_provenance_id=p.id "
-        "where a.record_type='business_task_signals' and a.ba_task_signals_provenance_id is not null "
+        "where a.record_type='business_task_signals' "
         "and p.source_type=? and p.source_ref=? and p.source_time=?",
-        (source_type, source_ref, source_time) * 2,
+        (source_type, source_ref, source_time),
     )
     return tuple(row[0] for row in rows)
 
@@ -89,7 +84,7 @@ def _insert_signal(db, payload):
     db.execute(
         "insert into actions(_kind,legacy_key,payload_json) values(?,?,jsonb(?))",
         (ACTION_RECORD_TYPES.code(_KIND), str(public_id),
-         _LAYOUT.pack(dict.fromkeys(SIGNAL_FIELDS) | payload,
+         _LAYOUT.pack(payload,
                       scalar_codec=actions._encoded_native_sqlite_value)),
     )
     return public_id
@@ -105,9 +100,9 @@ def insert_signal_version(
     conversation_title: str = "", context_json: str = "{}",
     created_at: str | None = None,
 ) -> int:
-    """Insert one distinct Signal; promote its exact version on the second owner.
+    """Insert one distinct Signal referencing its immutable source version.
 
-    The caller owns an active transaction. A savepoint makes a failed promotion
+    The caller owns an active transaction. A savepoint makes a failed parent/write
     atomic even when the caller catches the exception and commits other work.
     """
     if not db.in_transaction:
@@ -123,52 +118,23 @@ def insert_signal_version(
             independent["created_at"] = db.execute("select current_timestamp").fetchone()[0]
         else:
             independent["created_at"] = created_at
-        owner = _signal_row(
-            db, f"a.{_COLUMN}identity_key=? and a.{_COLUMN}provenance_id is null",
+        parent = db.execute(
+            "select id," + ",".join(SOURCE_FIELDS)
+            + " from provenance where identity_key=?",
             (binding.identity_key,),
-        )
-        if owner is None:
-            parent = db.execute(
-                "select id from provenance where identity_key=?", (binding.identity_key,),
-            ).fetchone()
-            if parent is not None:
-                owner = _signal_row(db, f"a.{_COLUMN}provenance_id=?", (parent[0],))
-                count = db.execute(
-                    f"select count(*) from actions where record_type='{_KIND}' "
-                    f"and {_COLUMN}provenance_id=?", (parent[0],),
-                ).fetchone()[0]
-                if owner is None or count < 2:
-                    raise sqlite3.IntegrityError("existing shared source version has fewer than two owners")
-        if owner is None:
-            result = _insert_signal(db, {**dict(zip(SOURCE_FIELDS,
-                                                   (getattr(binding, name) for name in SOURCE_FIELDS),
-                                                   strict=True)), **independent})
+        ).fetchone()
+        if parent is None:
+            values = tuple(getattr(binding, name) for name in SOURCE_FIELDS)
+            parent_id = db.execute(
+                "insert into provenance(" + ",".join(SOURCE_FIELDS) + ") values("
+                + ",".join("?" for _ in SOURCE_FIELDS) + ")",
+                values,
+            ).lastrowid
         else:
-            canonical = _binding(owner)
+            parent_id = parent[0]
+            canonical = _binding(dict(zip(SOURCE_FIELDS, parent[1:], strict=True)))
             _same_logical_source(canonical, binding)
-            parent_id = owner["provenance_id"]
-            if parent_id is None:
-                columns = ",".join(SOURCE_FIELDS)
-                values = tuple(getattr(canonical, name) for name in SOURCE_FIELDS)
-                parent_id = db.execute(
-                    "insert into provenance(" + columns + ") values(" + ",".join("?" for _ in SOURCE_FIELDS) + ")",
-                    values,
-                ).lastrowid
-                db.execute(
-                    "update actions set payload_json="
-                    + _LAYOUT.assignments_sql("payload_json", {
-                        **dict.fromkeys(SOURCE_FIELDS, "null"), "provenance_id": "?",
-                    })
-                    + " where record_type=? and business_signal_public_id=?",
-                    (parent_id, _KIND, owner["id"]),
-                )
-            result = _insert_signal(db, {"provenance_id": parent_id, **independent})
-            count = db.execute(
-                f"select count(*) from actions where record_type='{_KIND}' "
-                f"and {_COLUMN}provenance_id=?", (parent_id,),
-            ).fetchone()[0]
-            if count < 2:
-                raise sqlite3.IntegrityError("shared source version has fewer than two owners")
+        result = _insert_signal(db, {"provenance_id": parent_id, **independent})
     except BaseException:
         db.execute("rollback to savepoint provenance_signal_insert")
         db.execute("release savepoint provenance_signal_insert")

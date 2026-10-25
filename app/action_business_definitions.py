@@ -2,7 +2,13 @@
 
 from app.action_email_definitions import EMAIL_NUMERIC_SCOPE, _encoded_value, _encoded_value_check
 from app.business_candidate_definitions import TRIM_WS
-from app.provenance_definitions import SIGNAL_FIELDS, physical_signal_checks, physical_promotion_trigger
+from app.provenance_definitions import (
+    SIGNAL_FIELDS,
+    SIGNAL_REFERENCE_FIELDS,
+    physical_promotion_trigger,
+    physical_signal_checks,
+    physical_signal_reference_checks,
+)
 
 
 BUSINESS_ACTION_FIELDS = {
@@ -99,7 +105,8 @@ def _source_check(kind, field):
     return f"{column} in ({','.join(map(repr, options))})" if options else None
 
 
-def business_action_schema_parts(*, physical_provenance=False, outer_columns=(), payloads=None):
+def business_action_schema_parts(*, physical_provenance=False, outer_columns=(), payloads=None,
+                                 signal_source_references=False):
     """Generated source fields, exact checks/FKs, indexes and native behavior triggers."""
     columns = ["business_signal_public_id integer generated always as "
                "(case when record_type='business_task_signals' then cast(legacy_key as integer) end) virtual"]
@@ -107,8 +114,8 @@ def business_action_schema_parts(*, physical_provenance=False, outer_columns=(),
         "create unique index idx_actions_business_signal_public_id on actions(business_signal_public_id)"
     ], []
     for kind, source_fields in BUSINESS_ACTION_FIELDS.items():
-        fields = (("id", *SIGNAL_FIELDS) if physical_provenance and kind == "business_task_signals"
-                  else source_fields)
+        fields = (("id", *(SIGNAL_REFERENCE_FIELDS if signal_source_references else SIGNAL_FIELDS))
+                  if physical_provenance and kind == "business_task_signals" else source_fields)
         payload_fields = tuple(field for field in fields if field != "id" or kind not in BUSINESS_ACTION_AUTO)
         for field in payload_fields:
             column = business_action_column(kind, field)
@@ -117,7 +124,9 @@ def business_action_schema_parts(*, physical_provenance=False, outer_columns=(),
                            f"(case when record_type='{kind}' then "
                            + (payloads.value(kind, field) if payloads else _encoded_value("payload_json", "$." + field)) + " end) virtual")
         if physical_provenance and kind == "business_task_signals":
-            rules = physical_signal_checks(lambda field: business_action_column(kind, field), payloads=payloads)
+            checker = (physical_signal_reference_checks if signal_source_references
+                       else physical_signal_checks)
+            rules = checker(lambda field: business_action_column(kind, field), payloads=payloads)
         else:
             rules = [*(payloads.check(kind, field) if payloads else _encoded_value_check("payload_json", "$." + field) for field in payload_fields),
                      *(f"{business_action_column(kind, field)} is not null" for field in payload_fields)]
@@ -181,11 +190,14 @@ def business_action_schema_parts(*, physical_provenance=False, outer_columns=(),
         ))),
     ))
     if physical_provenance:
-        indexes.extend((
+        indexes.append(
             "create index idx_actions_signal_shared on actions(ba_task_signals_provenance_id,business_signal_public_id) where record_type='business_task_signals' and ba_task_signals_provenance_id is not null",
+        )
+        if not signal_source_references:
+            indexes.extend((
             "create unique index idx_actions_signal_inline_key on actions(ba_task_signals_identity_key) where record_type='business_task_signals' and ba_task_signals_provenance_id is null",
             "create index idx_actions_signal_inline_source on actions(ba_task_signals_source_type,ba_task_signals_source_ref,ba_task_signals_source_time,business_signal_public_id) where record_type='business_task_signals' and ba_task_signals_provenance_id is null",
-        ))
+            ))
     triggers.extend((
         "create trigger trg_actions_business_date_evidence_immutable_insert before insert on actions "
         "when new.record_type='business_task_date_evidence' and exists(select 1 from actions "
@@ -205,7 +217,7 @@ def business_action_schema_parts(*, physical_provenance=False, outer_columns=(),
         "ba_task_signals_dedupe_key=new.ba_task_signals_dedupe_key)) "
         "begin select raise(abort,'business task signals are immutable: UNIQUE id or dedupe_key'); end",
         (physical_promotion_trigger(outer_columns, lambda field: business_action_column("business_task_signals", field), payloads=payloads)
-         if physical_provenance else
+         if physical_provenance and not signal_source_references else
          "create trigger trg_actions_business_signals_immutable_update before update on actions "
          "when old.record_type='business_task_signals' "
          "begin select raise(abort,'business task signals are immutable'); end"),
@@ -213,7 +225,7 @@ def business_action_schema_parts(*, physical_provenance=False, outer_columns=(),
         "when old.record_type='business_task_signals' "
         "begin select raise(abort,'business task signals are immutable'); end",
     ))
-    if physical_provenance:
+    if physical_provenance and not signal_source_references:
         triggers.append(
             "create trigger trg_actions_business_signals_native_leaf_insert before insert on actions "
             "when new.record_type='business_task_signals' "
