@@ -31,9 +31,9 @@ from app.agent_result import parse_agent_text_result, parse_typed_agent_result
 from app.claude_runtime_adapter import CLAUDE_MAX_TURNS_PER_INVOCATION
 from app.friday_runtime_adapter import FridayExecutionResult, FridayRuntimeError
 from app.process_runner import ProcessRunResult
+from tests.support.native_task_fields import set_native_task_fields
+from tests.support.native_task_seed import seed_okr_review_task
 from app.store import MAX_RUNTIME_RESULT_ENVELOPE_BYTES, AgentRole, AutoReplyStore
-from app.task8_storage import task8_insert_parts, task8_set_parts
-from app.task_storage import task_id_expression
 from tests.runtime_route_env import claude_api_env, codex_api_env, set_env
 from tests.support.native_protocol import install_protocol_native_trajectories
 
@@ -154,62 +154,23 @@ class FakeAdapter:
 
 def seed_structured_parent(store: AutoReplyStore, request_id: int = 12) -> str:
     with store._connect() as db:
-        values = {
-            "legacy_key": str(request_id), "conversation_id": f"cid-{request_id}",
-            "conversation_title": "title", "trigger_message_id": f"msg-{request_id}",
-            "trigger_sender": "sender", "trigger_text": "text", "period_label": "period",
-            "period_start": "start", "period_end": "end", "status": "processing",
-        }
-        parts = task8_insert_parts("okr_review_requests", values)
-        db.execute(f"insert into tasks ({parts.columns}) values ({parts.values})", parts.parameters)
+        seed_okr_review_task(
+            db, request_id, conversation_id=f"cid-{request_id}",
+            trigger_message_id=f"msg-{request_id}", period_label="period",
+        )
     return str(request_id)
 
 
 def seed_agent_run_parent(store: AutoReplyStore, task_id: int = 901) -> int:
     generation = f"generation-{task_id}"
-    with store._connect() as db:
-        parent_values = {
-            "conversation_id": f"wechat-{task_id}",
-            "conversation_title": "WeChat", "single_chat": 1,
-            "trigger_message_id": f"message-{task_id}",
-            "trigger_create_time": "2026-08-20 10:00:00", "trigger_sender": "sender",
-            "execution_generation": generation, "input_version": 1,
-            "claimed_input_version": 1, "status": "processing",
-        }
-        parent_parts = task8_insert_parts("reply_tasks", parent_values)
-        parent_cursor = db.execute(
-            f"insert into tasks (id,{parent_parts.columns}) values (?,{parent_parts.values})",
-            (task_id, *parent_parts.parameters),
-        )
-        parent_id = int(parent_cursor.lastrowid)
-        provenance = store._reply_input_provenance("hello", "{}")
-        input_values = {
-            "parent_id": parent_id, "channel": "dingtalk",
-            "conversation_id": f"wechat-{task_id}", "conversation_title": "WeChat",
-            "single_chat": 1, "trigger_message_id": f"message-{task_id}",
-            "trigger_create_time": "2026-08-20 10:00:00", "trigger_sender": "sender",
-            "trigger_text": "hello", "trigger_message_json": "{}",
-            "business_object_key": "",
-            "input_revision_key": f"fixture-{task_id}",
-            "input_provenance_json": provenance, "input_compacted": 0,
-        }
-        input_parts = task8_insert_parts("reply_task_inputs", input_values)
-        cursor = db.execute(
-            f"insert into tasks ({input_parts.columns}) values ({input_parts.values})",
-            input_parts.parameters,
-        )
-        input_id = int(cursor.lastrowid)
-        pointer_set = task8_set_parts(
-            "reply_tasks", {}, structural_sql={
-                "current_input_id": "?", "claimed_input_id": "?",
-            }, structural_parameters=(input_id, input_id),
-        )
-        db.execute(
-            f"update tasks set {pointer_set.sql} where record_type='reply_tasks' and id=?",
-            (*pointer_set.parameters, parent_id),
-        )
+    assert store.enqueue_reply_task(
+        conversation_id=f"wechat-{task_id}", conversation_title="WeChat", single_chat=True,
+        trigger_message_id=f"message-{task_id}", trigger_create_time="2026-08-20 10:00:00",
+        trigger_sender="sender", trigger_text="hello", execution_generation=generation,
+    ) is True
+    task = store.claim_reply_tasks(limit=1)[0]
     claim = store.claim_agent_run(
-        task_id,
+        task.id,
         generation,
         role=AgentRole.CONSUMER,
         proposal_revision=0,
@@ -1944,11 +1905,7 @@ def test_no_eligible_route_or_terminal_parent_never_starts_process(store, config
         )
 
     with store._connect() as db:
-        failed_set = task8_set_parts("okr_review_requests", {"status": "failed"})
-        db.execute(
-            f"update tasks set {failed_set.sql} where record_type='okr_review_requests' and id={task_id_expression('okr_review_requests', '?')}",
-            (*failed_set.parameters, 12),
-        )
+        set_native_task_fields(db, "okr_review_requests", 12, {"status": "failed"})
     with pytest.raises(ValueError, match="parent"):
         RoutedCodexExecution(
             store=store,
@@ -2006,7 +1963,7 @@ def test_completed_result_is_recovered_by_matching_codec_without_child(
     attempt = store.get_agent_runtime_attempt(first.attempt_id)
     assert attempt is not None
     assert attempt.result_schema_id == "test.integer.v1"
-    assert attempt.result_envelope_json == ""
+    assert "result_envelope_json" not in type(attempt).model_fields
     assert (attempt.transcript_start, attempt.transcript_end) == (0, 3)
     assert (
         store.get_conversation_runtime_session("cid-12", "codex_oauth")
@@ -2122,7 +2079,7 @@ def test_oversize_result_terminalizes_before_durable_completion(store, config):
     assert attempt.status == "failed"
     assert attempt.failure_class == RuntimeFailureClass.RESULT.value
     assert attempt.failure_code == "runtime_result_persistence_failed"
-    assert attempt.result_envelope_json == ""
+    assert "result_envelope_json" not in type(attempt).model_fields
 
 
 def test_oversize_persisted_result_is_rejected_without_child(
