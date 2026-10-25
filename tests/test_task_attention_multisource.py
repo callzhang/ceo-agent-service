@@ -169,7 +169,7 @@ def test_existing_card_assessment_replay_is_idempotent_with_actual_ids(
     class Codex:
         def decide(self, **kwargs):
             assert "evaluation_only_secret_expectation" not in kwargs["prompt"]
-            return TaskAgentDecision.model_validate(
+            decision = TaskAgentDecision.model_validate(
                 {
                     "project_decisions": [],
                     "project_assessments": [
@@ -197,6 +197,8 @@ def test_existing_card_assessment_replay_is_idempotent_with_actual_ids(
                     "task_decisions": [],
                 }
             )
+            store._write_test_native_decision(int(kwargs["workload_key"]), decision.model_dump_json())
+            return decision
 
     runner = tool.scoped_runner(TaskAgentRunner, Codex())
     first = tool.replay_input(
@@ -1432,7 +1434,9 @@ def test_evaluation_checks_both_same_project_actions_are_attention_members(
     class Codex:
         def decide(self, **kwargs):
             assert "required_project_member_counts" not in kwargs["prompt"]
-            return TaskAgentDecision.model_validate(payload)
+            decision = TaskAgentDecision.model_validate(payload)
+            store._write_test_native_decision(int(kwargs["workload_key"]), decision.model_dump_json())
+            return decision
 
     from app.task_agent import TaskAgentRunner
 
@@ -2373,7 +2377,9 @@ def test_recorded_direct_apply_saves_receipt_on_actual_run(tmp_path):
     )
     with store._connect() as db:
         (run,) = db.execute(f"select * from ({TASK_LOGICAL_RUN_SQL})").fetchall()
-    assert run["summary_input_id"] == 8
+    with store._connect() as db:
+        (summary_input_id,) = [row[0] for row in db.execute("select task_id from work_summary_inputs")]
+    assert run["summary_input_id"] == summary_input_id  # native Task id, not the requested 8
     assert run["status"] == "completed"
     assert json.loads(run["projection_json"]) == result.projection_receipt.model_dump()
 
