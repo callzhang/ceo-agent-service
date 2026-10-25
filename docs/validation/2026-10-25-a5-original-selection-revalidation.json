@@ -1,0 +1,75 @@
+{
+  "case": "business-model-specialized-actions-native.v1",
+  "original_evidence": {
+    "trajectory": "/Users/derek/.codex/sessions/2026/10/19/rollout-2026-10-19T20-47-58-01a1576c-50d7-7a62-a69e-8e39799b98e5.jsonl",
+    "trajectory_sha256": "b60070998a580e861bf8c99ff4340cb0d91f44d4670c57a742d32235e51df4b6",
+    "trigger_line": 7,
+    "material_line": 30,
+    "instruction_sha256": "a2463b32f9770d0c550a0932033732493737922f117aa1c6391b58012aa08164",
+    "material_sha256": "61540eeeab07bcd80622c3fbdaec840f403f9b7721943bd57941fe1b99584f48"
+  },
+  "task_id": 4503599627929214,
+  "before_selection_status": "needs_human",
+  "before_selection_provider_calls": 0,
+  "reviews": [
+    {
+      "id": 399429,
+      "review_id": 1513,
+      "decision": "approve",
+      "proposal_revision": 0
+    }
+  ],
+  "status": "done",
+  "selection_id": 1,
+  "provider_calls": 1,
+  "verification_calls": 1,
+  "native_invocations": [
+    {
+      "role": "consumer",
+      "returncode": 0,
+      "timed_out": false,
+      "prompt_sha256": "681a806faa0c69a973fb7876f6314b79cb82b814cd9bc8b1740b09da567a1473"
+    },
+    {
+      "role": "audit",
+      "returncode": 0,
+      "timed_out": false,
+      "prompt_sha256": "88f02d303e5a39f504db8e99131278f4dddfe5e747bbf1fd837651e60bf991cf"
+    }
+  ],
+  "runs": [
+    {
+      "id": 399429,
+      "role": "consumer",
+      "status": "completed",
+      "revision": 0,
+      "session_id": "01a174f3-95b3-75d2-b4dc-cf2a96a91600",
+      "start": 0,
+      "end": 30,
+      "trajectory_available": true
+    },
+    {
+      "id": 399430,
+      "role": "audit",
+      "status": "completed",
+      "revision": 0,
+      "session_id": "01a174f3-fd8c-7d22-9035-2bffd3a8203f",
+      "start": 0,
+      "end": 28,
+      "trajectory_available": true
+    }
+  ],
+  "receipt_count": 1,
+  "foreign_keys": [
+    [
+      "runs",
+      190042,
+      "tasks",
+      1
+    ]
+  ],
+  "original_tables_unchanged": 48,
+  "passed": true,
+  "delivered_body_equals_audited_option": true,
+  "terminal_reopen_preserved": true
+}
