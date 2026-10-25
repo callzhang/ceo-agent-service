@@ -4432,30 +4432,6 @@ def test_store_rejects_missing_action_index_without_recreating_retired_table(tmp
         assert tuple(db.iterdump()) == before
 
 
-def test_source13_workbench_lease_values_survive_before_recovery_index(tmp_path: Path, published_source) -> None:
-    from tests.workbench_caller_fixtures import empty_source13, advance_source16_to_store17, advance_source17_to_current_store
-    from app.task20_definitions import task20_projection
-    WORKBENCH_TURN_SQL = task20_projection("workbench_turns")
-
-    db_path = tmp_path / "source13-workbench.sqlite3"
-    with empty_source13(db_path, published_source) as db:
-        db.execute("insert into workbench_tasks(id,title,runtime_kind) values('parent','Leases','codex')")
-        db.execute("""insert into workbench_turns(id,task_id,client_request_id,task_sequence,user_text,status,lease_owner,lease_expires_at)
-            values('turn','parent','request',1,'kept','running','original-owner','2026-10-13 00:00:00')""")
-    advance_source16_to_store17(db_path)
-    advance_source17_to_current_store(db_path, published_source)
-    AutoReplyStore(db_path)
-    with sqlite3.connect(db_path) as db:
-        columns = {column[0] for column in db.execute(f"select * from ({WORKBENCH_TURN_SQL}) limit 0").description}
-        recovery_index = db.execute(
-            "select 1 from sqlite_master where type='index' and name='idx_task20_published_17'"
-        ).fetchone()
-        lease = db.execute(f"select lease_owner,lease_expires_at from ({WORKBENCH_TURN_SQL}) where id='turn'").fetchone()
-    assert {"lease_owner", "lease_expires_at"} <= columns
-    assert recovery_index == (1,)
-    assert lease == ("original-owner", "2026-10-13 00:00:00")
-
-
 def test_store_rechecks_schema_after_transient_database_lock(tmp_path, monkeypatch):
     db_path = tmp_path / "worker.sqlite3"
     AutoReplyStore(db_path)

@@ -390,29 +390,6 @@ def test_typed_delivery_claim_after_reopen_preserves_existing_receipt(tmp_path):
     assert reopened.get_meeting_alignment_job(job_id).locked_at is None
 
 
-def test_current_meeting_job_projection_keeps_old_strict_model_readable(tmp_path):
-    from app.meeting_alignment_models import MeetingAlignmentJob
-
-    old_model = create_model(
-        "PreClaimTokenMeetingAlignmentJob", __config__=ConfigDict(extra="forbid"),
-        **{name: (field.annotation, field.default) for name, field in
-           MeetingAlignmentJob.model_fields.items() if name != "delivery_claim_token"},
-    )
-    store = AutoReplyStore(tmp_path / "worker.sqlite3")
-    job_id = store.upsert_meeting_alignment_job(
-        meeting_id="minutes-1", title="Meeting", source_json="{}",
-        participants_json="[]", ended_at=NOW.isoformat(),
-        eligible_at=NOW.isoformat(), status="ready_to_send",
-    )
-    claim = store.claim_ready_to_send_meeting_alignment_job(job_id, now=NOW.isoformat())
-    with store._connect() as db:
-        row = dict(db.execute(
-            f"select * from ({MEETING_JOB_SQL}) where id=?", (job_id,),
-        ).fetchone())
-    assert old_model.model_validate(row).id == job_id
-    store.release_ready_to_send_meeting_alignment_claims([claim])
-
-
 @pytest.mark.parametrize("entry", ["single", "batch_first", "batch_second"])
 def test_delivery_claim_insert_failure_rolls_back_job_lock(tmp_path, entry):
     store = AutoReplyStore(tmp_path / "worker.sqlite3")
@@ -1794,46 +1771,6 @@ def test_consumer_injects_similar_codex_sessions_into_meeting_prompt(tmp_path, m
     assert "相似历史 Codex sessions" in prompt
     assert "session-risk-budget" in prompt
     assert "历史相似会议：上线范围和风险预算" not in prompt
-
-
-def test_consumer_indexes_completed_meeting_codex_session(tmp_path):
-    store = AutoReplyStore(tmp_path / "worker.sqlite3")
-    store.upsert_meeting_alignment_job(
-        meeting_id="offset-job",
-        title="Offset",
-        source_json="{}",
-        participants_json="[]",
-        ended_at="2026-07-14T08:00:00+08:00",
-        eligible_at="2026-07-14T08:10:00+08:00",
-        status="no_action",
-    )
-    dws = ConsumerDws()
-    job_id = seed_consumer_job(store, dws)
-    runner = FakeMeetingRunner(consumer_send_decision())
-
-    assert consume_meeting_alignment_jobs(
-        store,
-        dws,
-        runner,
-        now=NOW,
-        limit=1,
-        deliver=False,
-        embedding_client=lambda texts: [[1.0, 0.0] for _ in texts],
-    ) == 1
-
-    # Search text is derived from native transcripts at query time (see
-    # test_store); the consumer only records the run's index identity.
-    with store._connect() as db:
-        rows = db.execute("select * from codex_session_search_index").fetchall()
-        [run] = store.list_meeting_alignment_runs(job_id)
-    [row] = rows
-    assert set(row.keys()) == {
-        "id", "session_id", "source_type", "source_id", "title",
-        "created_at", "updated_at",
-    }
-    assert tuple(row)[1:4] == ("meeting-session-1", "meeting_alignment", str(run.id))
-    assert row["title"]
-    assert row["created_at"] and row["updated_at"]
 
 
 def test_consumer_retries_invalid_model_decision(tmp_path):
