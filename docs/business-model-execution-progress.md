@@ -1,5 +1,22 @@
 # Business model simplification: current completion and closeout
 
+## Dangling Action trigger retirement — 2026-10-25
+
+The exact Store25.1 declaration retained one invalid candidate-reference trigger.
+All four reported schema-rename failures were reproduced. The Store25.2 target
+retires only `trg_actions_public_reference_update`; it keeps all data, native
+FKs and other guards. The 51-test focused selection passed, and the current
+production-derived copy passed typed-data/sequence comparison across 49 tables,
+forward/inverse, new Task/Action/receipt preservation, real Store25.1 code cold
+read/write, and reforward. The original FK finding is unchanged; no sends were
+performed. Standard deployment completed at `bf27bfaeb`; production reads
+Store25.2/Email54, the trigger is absent, read-only public-key update compilation
+passes, health is OK, and failed remains 26. History and referenced receipt
+readback passed. Cleanup of the new 508 MiB validation root and the verified
+491 MiB backup was authorized but rejected by automatic approval policy Never;
+those files remain. Details and the exact scope are in
+[trigger retirement validation](action-reference-trigger-retirement-validation.md).
+
 ## Refreshed production baseline and next business-model work — 2026-10-25
 
 The prior Task/Run table below is a dated 2026-10-23 checkpoint and is

@@ -29,6 +29,7 @@ RETIRED_ACTION_INDEXES = frozenset({
     "idx_actions_execution_candidate",
     "idx_actions_attempt_sequence", "idx_actions_external_key",
 })
+RETIRED_CANDIDATE_REFERENCE_GUARDS = frozenset({"trg_actions_public_reference_update"})
 
 # These retained Action references previously depended on Task/Run discriminator
 # columns that do not exist in the unified native owners. The Feedback parents
@@ -157,7 +158,8 @@ def _action_objects():
     rows = [("actions", table)]
     rows.extend((_object_name(sql), sql) for sql in (*indexes, *triggers))
     rows = [(name, sql) for name, sql in rows
-            if name not in RETIRED_ACTION_INDEXES | RETIRED_SOURCE_FEEDBACK_PARENT_GUARDS]
+            if name not in (RETIRED_ACTION_INDEXES | RETIRED_SOURCE_FEEDBACK_PARENT_GUARDS
+                            | RETIRED_CANDIDATE_REFERENCE_GUARDS)]
     for name, sql in ACTION_PARENT_GUARDS.items():
         rows = [(key, value) for key, value in rows if key != name]
         rows.append((name, sql))
