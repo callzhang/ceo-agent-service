@@ -228,9 +228,8 @@ def business_action_schema_parts(*, physical_provenance=False, outer_columns=(),
     return columns, checks, indexes, triggers
 
 
-# idx_actions_public_id is partial on record_type<>'action' as well; SQLite cannot derive
-# that from record_type='<kind>', so the Business numeric-id readers state it explicitly.
-BUSINESS_NUMERIC_SCOPE = "record_type<>'action' and " + EMAIL_NUMERIC_SCOPE
+# The shared numeric scope now carries record_type<>'action' (see EMAIL_NUMERIC_SCOPE).
+BUSINESS_NUMERIC_SCOPE = EMAIL_NUMERIC_SCOPE
 
 
 def business_action_projection(kind, *, source_variant="actual", include_rowid=False,

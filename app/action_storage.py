@@ -1223,7 +1223,7 @@ def _identity_predicate(kind):
         return "record_type=? and channel=? and delivery_key=?"
     if kind == "external_action_results":
         return "record_type=? and legacy_key=?"
-    return ("record_type=? and record_type<>'external_action_results' "
+    return ("record_type=? and record_type<>'action' and record_type<>'external_action_results' "
             f"and record_type not in ({_POSTFIX_TYPES_SQL}) "
             "and record_type<>'sent_reply_observers' and cast(legacy_key as integer)=?")
 
