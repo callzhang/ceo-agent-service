@@ -8,7 +8,7 @@ import sqlite3
 
 import pytest
 
-from app.store_schema_release import prepare_store_schema_release
+from app.store_schema_release import prepare_database_schema_release, prepare_store_schema_release
 from tests.test_task_schema_release import target_and_source
 from tests.test_task_storage import fingerprint
 
@@ -45,3 +45,33 @@ def test_current_store_factory_noops_for_already_current_marker(tmp_path):
     assert prepare_store_schema_release(root, path) is None
     with sqlite3.connect(path) as db:
         assert fingerprint(db) == before
+
+
+@pytest.mark.parametrize("source_version,email_version", [
+    ("2026-10-19.12", 53),
+    ("2026-10-21.1", 54),
+])
+def test_database_release_rejects_retired_action_sources_without_mutation(
+    tmp_path, source_version, email_version
+):
+    from pathlib import Path
+
+    from app.state_storage import upsert_state
+    from app.store import AutoReplyStore
+
+    root = Path(__file__).resolve().parents[1]
+    path = tmp_path / "retired-action-source.sqlite3"
+    AutoReplyStore(path)
+    with sqlite3.connect(path) as db:
+        db.execute("begin")
+        upsert_state(db, "service_state", {"key": "store_schema_version", "value": source_version},
+                     {"value": "json_quote(excluded.value)"})
+        db.execute("update email_schema_migrations set version=?", (email_version,))
+        db.commit()
+        before = tuple(db.iterdump())
+
+    with pytest.raises(ValueError, match="unsupported current Action source schema"):
+        prepare_database_schema_release(root, path)
+
+    with sqlite3.connect(path) as db:
+        assert tuple(db.iterdump()) == before
