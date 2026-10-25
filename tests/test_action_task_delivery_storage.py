@@ -573,3 +573,118 @@ def test_task_delivery_parent_kind_and_claim_cascade():
         assert db.execute("select 1 from actions where record_type='meeting_alignment_delivery_claims'").fetchone() is None
 
 
+@pytest.mark.parametrize("variant", ("actual", "fresh"))
+@pytest.mark.usefixtures("_frozen_task_delivery_text_writer")
+def test_four_families_round_trip_current_facts_and_allocator(variant, monkeypatch):
+    import historical_action_text_fixture
+    from app import action_task_delivery_storage as delivery
+
+    historical_action_text_fixture.install(monkeypatch)
+
+    with closing(sqlite3.connect(":memory:")) as db:
+        db.execute("pragma foreign_keys=off")
+        db.execute("create table tasks(id integer primary key,record_type text not null)")
+        db.execute("create table runs(id integer primary key,record_type text not null)")
+        db.execute("create table business_legacy_links(work_update_id integer,task_id integer)")
+        db.execute("insert into tasks values(4,'meeting_alignment_jobs'),(5,'reply_tasks')")
+        for definition in SOURCE[variant].values():
+            for obj in sorted(definition["objects"], key=lambda item: item[0] != "table"):
+                if obj[3]:
+                    db.execute(obj[3])
+        action_storage.create_action_schema(
+            db, include_reply=True,
+            reply_variant="actual_no_memory_fk" if variant == "actual" else "fresh_memory_fk",
+            include_email=True, include_followup_sync=True, include_business_sync=True,
+        )
+        for sql in LINK_TRIGGER_SQL[:2]:
+            db.execute(sql)
+        db.execute("insert into actions(record_type,legacy_key,payload_json) "
+                   "values('native_reply_dispatches','[\"dingtalk\",\"old\"]',"
+                   "'{\"created_at\":\"2026-10-17\"}')")
+        existing_action = db.execute(
+            "select id,record_type,legacy_key,payload_json from actions"
+        ).fetchone()
+        db.execute("insert into meeting_alignment_delivery_claims values(4,'claim-a')")
+        db.execute("insert into meeting_memory_write_events(id,meeting_job_id,execution_generation,payload_json,status) "
+                   "values(7,4,'',?,'unrecognized')", (sqlite3.Binary(b'raw-payload'),))
+        db.execute("insert into task_memory_write_events(id,reply_task_id,execution_generation,memories_json) "
+                   "values(7,5,'one',?)", (sqlite3.Binary(b'raw-memories'),))
+        db.execute("insert into wechat_deliveries(id,reply_task_id,account_id,target_type,target_id,reply_text,evidence_json) "
+                   "values(7,5,'a','contact','t','text',?)", (sqlite3.Binary(b'raw-evidence'),))
+        db.execute("update sqlite_sequence set seq=31 where name='wechat_deliveries'")
+        baseline = {name: delivery._source_declaration(db, name)
+                    for name in delivery.TASK_DELIVERY_KINDS}
+        old_rows = {name: db.execute(f"select * from {name}").fetchall()
+                    for name in delivery.TASK_DELIVERY_KINDS}
+        old_seq = dict(db.execute("select name,seq from sqlite_sequence"))
+        old_schema = tuple(db.execute(
+            "select type,name,tbl_name,sql from sqlite_schema "
+            "where sql is not null order by type,name"))
+        db.commit()
+        db.execute("begin")
+        source = delivery.capture_task_delivery_source(db)
+        state = delivery.migrate_task_delivery_schema(db, source)
+        assert all(db.execute("select 1 from sqlite_schema where name=?", (name,)).fetchone() is None
+                   for name in delivery.TASK_DELIVERY_KINDS)
+        assert db.execute("select count(*) from actions where record_type in (?,?,?,?)",
+                          delivery.TASK_DELIVERY_KINDS).fetchone()[0] == 4
+        action_storage.insert_action(db, "native_reply_dispatches", {
+            "channel": "dingtalk", "delivery_key": "new", "created_at": "2026-10-17",
+        })
+        assert action_storage.update_action(
+            db, "native_reply_dispatches", ("dingtalk", "new"),
+            {"created_at": "2026-10-18"},
+        ).rowcount == 1
+        assert db.execute("select id,record_type,legacy_key,payload_json from actions "
+                          "where record_type='native_reply_dispatches' and legacy_key='[\"dingtalk\",\"old\"]'").fetchone() == existing_action
+        assert db.execute("select count(*) from actions where record_type='native_reply_dispatches'").fetchone()[0] == 2
+        inserted = action_storage.insert_task_delivery_action(
+            db, "wechat_deliveries",
+            {"reply_task_id": 5, "account_id": "a", "target_type": "contact",
+             "target_id": "t", "reply_text": "second", "execution_generation": "two"},
+        )
+        assert inserted.lastrowid == 32
+        assert action_storage.update_task_delivery_action(
+            db, "wechat_deliveries", 32, {"status": "unrecognized-later"},
+            where_sql="status='ready_to_send'",
+        ).rowcount == 1
+        duplicate_generation = {
+            "id": 33, "reply_task_id": 5, "account_id": "a", "target_type": "contact",
+            "target_id": "t", "reply_text": "third", "execution_generation": "initial",
+        }
+        if variant == "actual":
+            with pytest.raises(sqlite3.IntegrityError):
+                action_storage.insert_task_delivery_action(
+                    db, "wechat_deliveries", duplicate_generation)
+        else:
+            action_storage.insert_task_delivery_action(db, "wechat_deliveries", duplicate_generation)
+            assert action_storage.delete_task_delivery_action(
+                db, "wechat_deliveries", 33).rowcount == 1
+        db.execute("update actions set payload_json=json_set(payload_json,'$.status','sent') "
+                   "where record_type='wechat_deliveries' and legacy_key='7'")
+        delivery.restore_task_delivery_schema(db, state)
+        assert tuple(db.execute(
+            "select type,name,tbl_name,sql from sqlite_schema "
+            "where sql is not null order by type,name")) == old_schema
+        assert db.execute("select id,record_type,legacy_key,payload_json from actions "
+                          "where record_type='native_reply_dispatches' and legacy_key='[\"dingtalk\",\"old\"]'").fetchone() == existing_action
+        assert db.execute("select count(*) from actions where record_type='native_reply_dispatches'").fetchone()[0] == 2
+        assert {name: delivery._source_declaration(db, name)
+                for name in delivery.TASK_DELIVERY_KINDS} == baseline
+        assert db.execute("select status from wechat_deliveries where id=7").fetchone()[0] == "sent"
+        assert db.execute("select status from wechat_deliveries where id=32").fetchone()[0] == "unrecognized-later"
+        assert {name: db.execute(f"select * from {name}").fetchall()
+                for name in delivery.TASK_DELIVERY_KINDS if name != "wechat_deliveries"} == {
+                    name: old_rows[name] for name in delivery.TASK_DELIVERY_KINDS if name != "wechat_deliveries"
+                }
+        assert dict(db.execute("select name,seq from sqlite_sequence")) == {
+            **old_seq, "wechat_deliveries": 32 if variant == "actual" else 33,
+        }
+        reforward = delivery.capture_task_delivery_source(db)
+        delivery.migrate_task_delivery_schema(db, reforward)
+        assert db.execute("select count(*) from actions where record_type='wechat_deliveries'").fetchone()[0] == 2
+        assert db.execute("select seq from sqlite_sequence where name='actions:wechat_deliveries'").fetchone()[0] == (32 if variant == "actual" else 33)
+        assert action_storage.delete_action(
+            db, "native_reply_dispatches", ("dingtalk", "new"),
+        ).rowcount == 1
+        db.rollback()
