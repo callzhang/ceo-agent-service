@@ -510,6 +510,8 @@ reverts committed work they did not author.
 
 ## Current claims
 
+| claude-okr-report-audience-20261025 | ci/shared-skills/ceo-weekly-okr-report/SKILL.md (one audience paragraph), ci/consumer-system-contract-release.json (that Skill's new digest only), a Skill-text assertion in the OKR report tests | Derek 2026-10-25: the CEO-2 weekly OKR report is not sensitive; no per-member authorization check and no per-person opening of the report document before sending to the CEO-2 group. Separate Skill-only commit; publish through the consumer contract release. | 2026-10-25 |
+
 
 
 
