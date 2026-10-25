@@ -1,6 +1,6 @@
 # Qwen 最终输出定位（2026-10-24）
 
-结论：原最小探针卡在“已获得来源后，选择再次读工具还是输出原生结果”，不是来源变化、截断或服务重试。它只有最小 Audit 提示，没有模型可见的完整字段说明；原生 schema 主要约束可生成的结果，不保证模型知道如何填它。当前完整 Audit Developer 的冷启动和同 session 续跑均已得到严格有效结果。因此不能从原探针推导“生产 Audit 指令需要修补”，本次没有改 prompt、provider、路线、权限或重试。
+阶段性结论（最终修复见后续节）：原最小探针卡在“已获得来源后，选择再次读工具还是输出原生结果”，不是来源变化、截断或服务重试。它只有最小 Audit 提示，没有模型可见的完整字段说明；原生 schema 主要约束可生成的结果，不保证模型知道如何填它。当前完整 Audit Developer 的冷启动和同 session 续跑均已得到严格有效结果。因此不能从原探针推导“生产 Audit 指令需要修补”，本次没有改 prompt、provider、路线、权限或重试。
 
 这不是全部 Qwen 验收：完整指令续跑仍读了19次，效率未收口；生产 service API Audit 当前未选原生 schema，Consumer 当前完整矩阵也没有由这次 Audit 测试代替。
 
@@ -39,3 +39,25 @@ session `01a16f62-9cfd-7951-9809-d66c12895639`：
 | 同 session 续跑 | 累计184行，SHA `4c4cd21a66390301a4c34fb9c4a1f7943051120adb19efa17f715c4ac2a6e9d9`；续轮19次读取 | 最终 approve，引用当前 resume 来源，完整解析通过 |
 
 续轮候选保留旧 cold 引用，而当前工具返回 resume 引用；推理在核对二者。它最终用当前事实确认相同已处理状态，但19次读取仍冗余，不能全部归因为 schema 不可见。保留该效率问题；本轮不新增读取上限、自动停止或场景规则。准确结论是：**原最小探针的无限读取不能作为完整生产指令的失败证据；当前完整 Audit 原生路径能结束，效率及生产启用矩阵仍有边界。**
+
+
+## 最终根因与组合修复
+
+仅让格式可见曾取得一次冷/续成功，但另一次正式装配结束于reasoning-only、没有最终消息；仅修grammar的私有canary仍持续读取。两者都不是可发布的单独修复，原失败记录保留。
+
+确定性根因之一在provider：旧表达式为 `Or(Sequence(reasoning,required_tool),final_json)`。实际xgrammar matcher拒绝 `reasoning</think>\n\n{"ok":true}`，却接受同一前缀后的工具调用。修复使用原生reasoning前缀，组合为 `Sequence(reasoning,Or(required_tool,final_json))`，错误字段/类型及未声明工具仍拒绝。代码属于[llm-gateway修复fce6e9f](https://github.com/callzhang/llm-gateway/commit/fce6e9f)，不在CEO中按Qwen分支。
+
+另一端是服务输入只保留schema哈希，却继续描述应用层扁平wire字段，模型不知道实际decoder的decision包装。修复从同一native schema文件提供紧凑JSON，哈希及严格schema不变，不恢复重复的Pydantic业务schema。general增加11,656字符的schema正文及小标题说明，必需格式不作推测性截断；不报告性能节省。保留可解析的指纹标题和后续Markdown分段，不改变session选择。
+
+两项组合在独立GPU0/环回9020 canary验证，生产共享解析器当时仍为旧SHA；客户端只用标准SSH端口转发读取私有后端，同一模型/原邮件事实/假只读MCP，不永久修改路由。session `01a171e0-a846-7762-bbf9-6c6c0ba5730a` 冷启动57行SHA `81482acf3fdf946a33fb4257b9127f41eb3a628d77951c954a641dce5b73cb03`；续跑累计79行SHA `b8d38173618759f04e325e0f61a749af58cbb5b520947b6e2d83b6b13840e761`。两轮均读取当前假消息、完整解析no_action，没有外发动作，分别5次与1次成功只读调用。Developer SHA为 `88726efa0dda2d8e6d2031e09b9a2a968702eb80d6b80166cb27d453c2d603ff`。完整结果见[验收文件](../evals/trajectory_optimization/qwen_consumer_native_output_fix.results.v1.json)。
+
+测试：两个purpose的新增契约可见性回归先失败；指纹段落解析回归发现并纠正候选格式问题。native Consumer/保存会话/装配47项通过，实际Consumer续会话路径1项通过；独立审查另核对其中19项（重叠，不相加）。provider三项CPU测试先红后绿，涵盖正向工具/JSON和严格负例。旧Settings native-preview测试12例仍在fixture建库时因不存在record_type列失败，未到达本改动、文件未改；未顺手修数据库测试。没有重跑其他业务模型案例。
+
+发布：provider已备份并安装候选源码SHA `9bcfe24914a52cb4f4cd2fc45f47cdc0f62f1c4695172b0815f953a4b2d2be5f`，旧文件SHA `fe609579...` 保存在 `/home/derek/.local/state/llm-gateway/qwen-native-output-20261025/`；这是文件安装阶段的记录，不代表当时已加载；实际切换与CEO部署见下方及最终对账第12节。API429仍阻塞，API Audit原生启用和G1自然失败样本不属于本次变更。
+
+
+## 最终上线回读
+
+CEO正式部署到3fb2ce3ad，新PID33493，general Consumer预览中的完整native格式与实际schema文件等值。提供商在已知请求与等待数均0后通过现有管理器切换slot1一次；周期请求使最初自然卸载方案无法收口，未新增排空机制。操作不保证原子阻断新请求，竞态在执行前明确披露；检查窗口内未见推理5xx。旧PID2362797退出，新PID2861779在安装候选后启动并就绪。
+
+当前生产入口额外一次匿名同案例回读严格no_action：session01a171f1-acc3-7b62-9074-53cf042d5a75，70行SHA01d95910cadcc8dfec5237806d3a90422cc9ed23cde106a3275da86302274275。冷/续验收已在隔离canary通过，此处只补生产加载证据，没有全矩阵重跑。Qwen Consumer本项已完成；API429、API Audit启用和G1自然失败样本仍各自保留。

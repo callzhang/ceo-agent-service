@@ -7296,6 +7296,18 @@ class AutoReplyStore(LogicalRunStoreMixin, ReviewedCandidateStoreMixin):
             and str(existing_parameters.get("manual_rerun_revision_key") or "") == revision_key
         ):
             return cls._reply_task_from_native(existing)
+        if attempt_id > 0:
+            manual_reruns = int(
+                db.execute(
+                    "select count(*) from task_inputs where input_revision_key like ?",
+                    (f"manual:%:{revision_key}",),
+                ).fetchone()[0]
+            )
+            if manual_reruns >= MAX_AUTOMATIC_RETRIES:
+                raise ManualRerunConflict(
+                    f"three manual retries already used for source Attempt {attempt_id} "
+                    "and this reviewer revision"
+                )
         execution_generation = uuid4().hex
         if existing is not None:
             now_text = str(db.execute("select current_timestamp").fetchone()[0])
@@ -14392,8 +14404,10 @@ class AutoReplyStore(LogicalRunStoreMixin, ReviewedCandidateStoreMixin):
                 return None
             delivery_key = get_meeting_delivery_key(db, job_id)
             target_key_prefix = delivery_key + ":target:"
+            # Safety gate: a prepared outbound message (sent or not) for this Meeting's
+            # delivery key, its ':sensitive' key or any ':target:' key blocks replay.
             if db.execute(
-                f"select 1 from ({OUTBOUND_POSTFIX_RECEIPT_SQL}) outbound "
+                f"select 1 from ({OUTBOUND_POSTFIX_SQL}) outbound "
                 "where outbound.channel='dingtalk' and (outbound.delivery_key in (?,?) "
                 "or substr(outbound.delivery_key,1,length(?))=?) limit 1",
                 (delivery_key, delivery_key + ":sensitive", target_key_prefix, target_key_prefix),

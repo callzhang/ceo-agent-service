@@ -1028,7 +1028,9 @@ def _replace_replay_input(store, item, payload, *, status):
                 or decode_work_summary_payload(source["payload_json"]) != item.payload_json
                 or source["body_compacted"] != item.body_compacted
                 or source["body_sha256"] != item.body_sha256
-                or source["body_bytes"] != item.body_bytes):
+                or source["body_bytes"] != item.body_bytes
+                # The stored body itself must still be the one the item was read with.
+                or decode_work_summary_payload(source["payload_json"]) != item.payload_json):
             raise ValueError("fixed source version changed before replay")
         updated = update_task_cas(
             db, task_id=item.id,

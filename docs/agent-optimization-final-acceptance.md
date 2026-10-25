@@ -2,7 +2,7 @@
 
 核查日期：2026-10-24，America/Los_Angeles。本文是本次批准的六项目标对账，不是新一轮优化计划。
 
-**整体结论：不能宣布整轮完成。** 按任务装配与 Settings 输入可追溯已有实现、固定案例和发布证据；首次对账发现的 DWS 补丁覆盖问题已在续做时定位并修复打包；文档自然行为验收和API/路线完整原生输出仍有缺口。第10节已补齐当前OAuth六个固定场景及反馈后的验收证据，并定位Qwen原最小探针的问题。以下区分历史验收、当前实现、生产发布和业务结果，不把它们互相替代。
+**整体结论：不能宣布整轮完成。** 按任务装配与 Settings 输入可追溯已有实现、固定案例和发布证据；首次对账发现的 DWS 补丁覆盖问题已在续做时定位并修复打包；文档自然行为验收和API/路线完整原生输出仍有缺口。第10节补齐当前OAuth六个固定场景；第12节完成Qwen Consumer组合修复与上线回读。以下区分历史验收、当前实现、生产发布和业务结果，不把它们互相替代。
 
 ## 1. 基准、范围与状态口径
 
@@ -19,7 +19,7 @@
 | 指令精简与按需注入 | **已验收**，限定为装配机制与已完成的固定对照 | 通用 Developer/角色/Profile 与每轮 Task 分开；任务流程由选定 Skill 承载，目录不预载依赖正文。原六场景有相同条件的前后对照和反馈闭环；后续 Consumer 原生 schema 去重也有独立验证。当前页面和预览仍使用分段来源。 | 不等于当前全部文字已最短、每条常识已删净，也不承诺当前任意任务的输入或费用都减少。当前业务变化的验证见第5项，不再为“更短”扩展改动。 |
 | Settings 输入可追溯 | **已验收** | 当前 UI 解释各 prompt 的用途和拼接关系；模板渲染、公共预览、任务绑定及历史输入有明确区分。本轮三个历史 API 输入与对应原生记录逐字节相等，两份任务绑定输入可定位到保存的 run。 | 本轮无新增缺口。历史缺失的配置细分与渲染时间仍明确未记录；公共预览不冒充实际执行或完整模型上下文。 |
 | session 与续跑 | **已上线待行为验收** | Consumer 按会话、路线、选定 Skill 和输出契约条件复用；Audit 有同任务/代次续会话。已有自然案例证明工件保留、反馈修订和最终投递；文档交接修复与“写入即成功”已发布。 | 服务回执修改已上线。续做已确认dev构建触发每日升级并恢复带SemVer元数据的DWS补丁；最新自然报告已验证创建和不同正文的反馈覆盖；未遇到已写入但核验失败。G1仅缺该失败状态的自然行为验收，见第11节。 |
-| 原生结构化输出 | **未完成**，针对“所有当前配置路线均完整验收”的原目标 | Codex Consumer 原生 schema、OAuth Audit 原生 schema、动态 JSON 无损还原及严格业务校验已在主线；OAuth 和 Claude 有分阶段匿名冷启动/续会话证据。 | 续做已补OAuth带工具冷启动/续会话；API仍429；Qwen最小Audit探针已定位，完整Audit冷/续原生验证通过；第11节补跑Consumer仍未输出有效结果，不能验收该路线。API Audit当前还不选用原生schema。按 G2 收口，不能以 PR31 草稿或一次合法 JSON 代替。 |
+| 原生结构化输出 | **未完成**，针对“所有当前配置路线均完整验收”的原目标 | Codex Consumer 原生 schema、OAuth Audit 原生 schema、动态 JSON 无损还原及严格业务校验已在主线；OAuth 和 Claude 有分阶段匿名冷启动/续会话证据。 | 续做已补OAuth带工具冷启动/续会话；API仍429；Qwen最小Audit探针已定位，完整Audit冷/续原生验证通过；第11节Consumer失败已由第12节组合修复关闭，冷/续与上线匿名回读通过。API Audit当前还不选用原生schema。按 G2 收口，不能以 PR31 草稿或一次合法 JSON 代替。 |
 | 任务事实与业务行为 | **已验收**，限定当前OAuth原六个固定场景及反馈闭环 | 第10节以当前角色装配、当前schema、原事实/判断标准补7个阶段，保留首轮部分通过及夹具排除。跨午夜补取边界证据后闭环；工作跟踪收紧Skill绑定后通过。 | 不等于各路线业务覆盖、历史A/B重新复现或生产文档写入恢复；对应缺口分别保留于G2、G1。 |
 | 发布与实际收益 | **已上线待行为验收** | 已有多个正式部署回读；文档修复在当前生产祖先链上。相同固定输入下的服务字符缩减有实测，见第6节。 | 已上线与字符减少不证明重复覆盖已停止，也不证明整体 token、费用或墙钟提速。G1/G3 关闭相应业务缺口；没有测得的收益保持“未测得”，不新增性能实验作为门槛。 |
 
@@ -222,3 +222,24 @@ Qwen完整读取124行：第28行已明确判断邮件已处理、应no_action�
 本轮终点：已补缺失的自然报告和可运行路线证据，G3不重开；**G1仍缺指定自然失败状态，G2明确因Qwen Consumer无有效结果、API429和API Audit未启用而不能验收。** 整轮仍不能宣布完成。无新增性能实验或其他trajectory优化。
 
 独立审查核对自然文档两次回执、原生摘要、Qwen18次调用与API两次429，认可上述边界。评测新增continue入口的Audit候选查找改用source_phase，避免不存在的continue事实阶段；实际Consumer探针不受影响，无需重跑。Ruff、fixture检查和diff检查通过。收尾集成的OA append_task主线增量未改变通用Consumer原生schema、Audit schema或文档写入路径，不为无关改动重复验收。
+
+
+## 12. Qwen Consumer定向修复与发布
+
+只处理第11节确认的Qwen Consumer原生收尾问题。API429保持阻塞，G1等自然样本，已通过的G3/OAuth/Qwen Audit未重跑。
+
+原生格式传达与provider grammar各有独立证据缺陷：前者只给指纹、模型仍按扁平wire准备；后者把reasoning前缀绑在required-tool分支，排除了思考后的最终JSON。最终组合保留完整业务schema/严格校验和相同路线，通过显示实际native格式与修正provider组合解决，不加Qwen专属任务逻辑、停止提示、fallback或重试。
+
+同一匿名邮件案例在私有canary的冷/续均no_action，当前来源读取完整，无重复回复提案；57/79行原生摘要和5/1次工具调用见[完整修复记录](qwen-final-output-investigation.md#最终根因与组合修复)。失败诊断和连接不可达运行分开保留，不把基础设施失败计为模型退化；两项单独候选均未作为发布依据。general服务输入为精确格式增加约1.17万字符，不声称继续精简或提速；必需协议不能由哈希替代。
+
+当前状态：**Qwen Consumer组合修复已验收、已上线并完成匿名生产入口回读。** 这关闭本次指定的Qwen Consumer缺口，不宣称G2整体完成；API及API Audit原生启用缺口保持独立。
+
+
+### 第12节发布与最终回读
+
+- CEO修复提交 `37415c6cd`，经 `3fb2ce3ad3a43795a9d8970ae6fd08181626ba40` 合入main，正式 `python -m app.deploy` 返回 `deployed 549f471b -> 3fb2ce3a`。生产源码工作树干净，launchd新PID33493；healthz/status/Attention/History均HTTP200，Attention5、History38125，Reply及Attempt失败均13、Meeting失败0，dispatcher当时无在途、scheduled pending2。system_health另有1项Meeting停止推进及1份native delivery不可读的既有finding，相关Meeting更新时间06:48早于本次新进程；本轮未扩展修复，不把HTTP200说成全系统无告警。
+- Settings当前general Consumer / qwen_gpu4公共预览中的native JSON与生产schema文件完整相等；Developer41794字符，SHA `cc4adc4df30e9ca01f660236a97485a5df9669b45ba720dcc2e263667ac0a54e`。本次未新增OA任务绑定预览验收。general格式段实际增加11813字符；不作token/费用/提速推断。
+- 提供商代码[llm-gateway fce6e9f](https://github.com/callzhang/llm-gateway/commit/fce6e9f)及[发布记录eb1ac0c](https://github.com/callzhang/llm-gateway/commit/eb1ac0c)。已知请求持续刷新自然空闲计时，因此没有无限等待或修改管理器；按本次修复上线授权，在active/in-flight/waiting均0后通过现有admin_switch切换slot1一次，提前披露非原子准入竞态，不承诺零中断。无管理员重启、无新排空策略。旧PID2362797已退出，新PID2861779启动晚于源码安装且ready=true；已安装parser SHA `9bcfe24914a52cb4f4cd2fc45f47cdc0f62f1c4695172b0815f953a4b2d2be5f` 与验收候选相同，检查区间没有推理POST 5xx。旧源码已验证备份保留一份。
+- 最后仅通过当前配置的生产入口补一次原匿名邮件cold回读，没有再次跑已通过cold/resume矩阵：session `01a171f1-acc3-7b62-9074-53cf042d5a75`，70行SHA `01d95910cadcc8dfec5237806d3a90422cc9ed23cde106a3275da86302274275`，5次成功只读调用，完整解析no_action，无回复提案。这是生产提供商/新代码的匿名回读，不是真实业务任务重放，也不替代G1自然失败恢复。
+
+**本次用户指定的Qwen Consumer修复已完成。** 私有canary、SSH转发及临时目录已清理；provider回滚源码保留，CLI原生证据与精简验收摘要保留。G2剩余仍是API429阻塞和API Audit原生启用缺口；G1继续等指定自然样本。没有开启其他trajectory优化。
