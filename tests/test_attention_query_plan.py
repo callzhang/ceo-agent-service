@@ -59,6 +59,33 @@ def insert_task(db, kind, values):
     raise AssertionError(f"unsupported fixture task kind: {kind}")
 
 
+def _executed_table_column_reads(db, query):
+    objects = {
+        int(row[3]): (str(row[0]), str(row[1]))
+        for row in db.execute(
+            "select type,name,tbl_name,rootpage from sqlite_schema where rootpage>0"
+        )
+    }
+    columns = {}
+    cursors = {}
+    for instruction in db.execute("explain " + query):
+        opcode, cursor, operand = instruction[1], int(instruction[2]), int(instruction[3])
+        if opcode == "OpenRead":
+            schema_object = objects.get(operand)
+            cursors[cursor] = (
+                schema_object[1]
+                if schema_object is not None and schema_object[0] == "table"
+                else None
+            )
+        elif opcode == "OpenDup":
+            cursors[cursor] = cursors.get(operand)
+        elif opcode == "Column" and cursors.get(cursor) is not None:
+            table = cursors[cursor]
+            column = db.execute(f'pragma table_info("{table}")').fetchall()[operand]
+            columns.setdefault(table, set()).add(str(column[1]))
+    return columns
+
+
 def _update_task(db, kind, values, where="1", parameters=()):
     ids = [row[0] for row in db.execute(
         f"select id from tasks where kind=? and {where}", (_TASK_KINDS[kind], *parameters))]
@@ -250,12 +277,18 @@ def test_failure_diagnostics_do_not_scan_queue_payloads(
             )
         plan = [row[3] for row in db.execute("explain query plan " + query)]
     if surface == 'reply_error':
-        # Main evaluates the current-business projection once. Its table scan
-        # reads scalar metadata, and never joins canonical input bodies.
+        # Main materializes the current-business projection once and reads only
+        # its metadata from the native TaskInput owner.
         assert ('tasks', 'error') in read_columns
         assert not {'payload_json', 'trigger_text', 'trigger_message_json'} & {
             column for name, column in read_columns if name == 'tasks'
         }
+        with store._connect() as db:
+            actual_reads = _executed_table_column_reads(db, query)
+        assert actual_reads.get('task_inputs', set()) <= {'task_id', 'business_object_key'}, actual_reads
+        assert not {'trigger_text', 'trigger_message_json'} & actual_reads.get('task_inputs', set()), actual_reads
+        assert any("SEARCH inputs USING INTEGER PRIMARY KEY (rowid=?)" in step for step in plan), plan
+        assert not any(step.startswith("SCAN inputs") for step in plan), plan
         assert any('MATERIALIZE current' in step for step in plan), plan
         return
     if surface == 'work_attention':
@@ -276,6 +309,11 @@ def test_failure_diagnostics_do_not_scan_queue_payloads(
         }
     else:
         assert ('tasks', 'error') in read_columns
+        with store._connect() as db:
+            actual_reads = _executed_table_column_reads(db, query)
+        assert 'payload_json' not in actual_reads.get('work_summary_inputs', set()), actual_reads
+        assert any("SEARCH w USING INTEGER PRIMARY KEY (rowid=?)" in step for step in plan), plan
+        assert not any(step.startswith("SCAN w") for step in plan), plan
         assert any("SEARCH t USING INDEX idx_tasks_claim_due (kind=?)" in step for step in plan), plan
     assert not any(step.startswith(f"SCAN {table}") and "USING INDEX" not in step for step in plan), plan
 
@@ -344,6 +382,8 @@ def test_reply_queue_snapshot_reads_metadata_in_one_source_pass(
     with store._connect() as db:
         plan = [row[3] for row in db.execute("explain query plan " + query)]
     assert sum("SEARCH tasks USING INDEX idx_tasks_claim_due (kind=?)" in step for step in plan) == 1, plan
+    assert any("SEARCH inputs USING INTEGER PRIMARY KEY (rowid=?)" in step for step in plan), plan
+    assert not any(step.startswith("SCAN inputs") for step in plan), plan
 
     assert ("tasks", "error") in read_columns
     assert {column for name, column in read_columns if name == "tasks"} <= {
@@ -352,6 +392,10 @@ def test_reply_queue_snapshot_reads_metadata_in_one_source_pass(
         "execution_generation", "input_version", "locked_at", "parameters_json",
     }
     assert any(name == "task_inputs" for name, column in read_columns)
+    with store._connect() as db:
+        actual_reads = _executed_table_column_reads(db, query)
+    assert actual_reads.get("task_inputs", set()) <= {"id", "task_id", "business_object_key"}, actual_reads
+    assert not {"trigger_text", "trigger_message_json"} & actual_reads.get("task_inputs", set()), actual_reads
     assert any("MATERIALIZE current" in step for step in plan), plan
 
 
