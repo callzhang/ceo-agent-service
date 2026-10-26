@@ -2151,6 +2151,52 @@ class DwsClient:
             single_chat=conversation.single_chat,
         )
 
+    def read_complete_recent_conversations(
+        self, start: str, end: str,
+    ) -> dict[str, Any]:
+        """Return the original active-conversation result only after full pagination."""
+        if not start.strip() or not end.strip():
+            raise ValueError("conversation window is required")
+        payload = self.run_json([
+            self.dws_bin, "chat", "+recent-conversations", "--start", start,
+            "--end", end, "--page-limit", "50", "--format", "json",
+        ])
+        data = payload.get("data") if isinstance(payload, dict) else None
+        meta = payload.get("meta") if isinstance(payload, dict) else None
+        pagination = meta.get("pagination") if isinstance(meta, dict) else None
+        if not isinstance(data, dict) or not isinstance(pagination, dict):
+            raise DwsError("recent conversation window is not a structured result")
+        conversations = data.get("conversations")
+        actual_start = self._datetime_string_to_epoch_ms(str(data.get("start") or ""))
+        actual_end = self._datetime_string_to_epoch_ms(str(data.get("end") or ""))
+        expected_start = self._datetime_string_to_epoch_ms(start)
+        expected_end = self._datetime_string_to_epoch_ms(end)
+        page_size = data.get("pageSize")
+        unknown_type_count = data.get("unknownTypeCount")
+        if (
+            payload.get("ok") is not True
+            or payload.get("outcome") != "success"
+            or data.get("complete") is not True
+            or pagination.get("endpoint_exhausted") is not True
+            or pagination.get("next_token") not in (None, "")
+            or data.get("rangeSemantics") != "[start,end)"
+            or expected_start <= 0
+            or expected_end <= expected_start
+            or actual_start != expected_start
+            or actual_end != expected_end
+            or type(data.get("count")) is not int
+            or not isinstance(conversations, list)
+            or data.get("count") != len(conversations)
+            or type(data.get("pagesFetched")) is not int
+            or data.get("pagesFetched", 0) < 1
+            or type(page_size) is not int
+            or not 1 <= page_size <= 100
+            or type(unknown_type_count) is not int
+            or not 0 <= unknown_type_count <= data.get("count", -1)
+        ):
+            raise DwsError("recent conversation window is incomplete or inconsistent")
+        return payload
+
     def read_unread_messages(
         self, conversation: DingTalkConversation
     ) -> list[DingTalkMessage]:

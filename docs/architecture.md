@@ -875,7 +875,7 @@ Codex Consumer 使用按当前 purpose 选择的原生输出 Schema（general �
 
 已发送的微信 Attempt 不能从普通重跑入口再次入队。历史详情仅对当前最新的已发送 Attempt、且原始输入未被精简时提供独立的“再次发送”操作；操作展示原消息内容和 ID，并把该 ID 随请求提交。服务在同一事务中核对来源 Attempt、会话、原消息 ID、最新 Attempt 与之前的再次发送记录，然后创建新执行代际。相同来源在新代际待处理时重复提交复用它，完成后不能再次使用旧 Attempt 发起。精简后缺少可执行原文的历史任务不提供该操作。失败 Attempt 的普通重跑、其他渠道和现有 Sender 投递规则不变。
 
-微信回复任务统一走标准流程（Derek 2026-10-25：不要开关，统一逻辑，不留旧逻辑）：`worker.process_claimed_wechat_task` 用 Reader 读到的近期会话和已存的触发消息构建上下文，Consumer 以 `plan` 提议唯一一个目标固定为触发会话的 `wechat / send_message`，服务在送审前把正文预备成最终正文（含署名与反馈链接），Audit 审核后由 `WechatSendMessageHandler` 经放行判定发送。原来的 `WechatReplyConsumer`、`WechatDecisionRunner`、`WechatDeliveryAuditor`、`finalize_wechat_reply_task`、`create_wechat_delivery`、`record_wechat_delivery_review`、`wechat consume-once` 命令和 `wechat_audit_rejected` 状态已于同日删除。离线回放用 `scripts/replay_wechat_standard_pipeline.py`，只读线上、不发送。
+微信回复任务统一走标准流程（Derek 2026-10-25：不要开关，统一逻辑，不留旧逻辑）：`worker.process_claimed_wechat_task` 用 Reader 读到的近期会话和已存的触发消息构建上下文，Consumer 以 `plan` 提议唯一一个目标固定为触发会话的 `wechat / send_message`，服务在送审前把正文预备成最终正文（含署名与反馈链接），Audit 审核后由 `WechatSendMessageHandler` 经放行判定发送。原来的 `WechatReplyConsumer`、`WechatDecisionRunner`、`WechatDeliveryAuditor`、`finalize_wechat_reply_task`、`create_wechat_delivery`、`record_wechat_delivery_review`、`wechat consume-once` 命令和 `wechat_audit_rejected` 状态已于同日删除。`plan` 的提案在候选里只保留一份：服务预备最终正文后，Consumer 自带的 `purpose_output.payload` 若仍是它原来的提案，就换成预备后的提案，Audit 不会看到两段不同的正文（此前签名与反馈链接只出现在 `proposal` 里，Audit 曾因此把正确的候选退回，适用于所有渠道）。离线回放用 `scripts/replay_wechat_standard_pipeline.py`，只读线上、不发送。
 
 ```text
 pending -> processing -> done
@@ -1829,7 +1829,7 @@ Skill。
 
 Consumer 新会话的 Developer 只给出通用 Skill 使用指令；当前 Task 中的目录携带已安装业务
 Skill 的名称、读取入口和至少一次业务 Skill 读取的协议前置条件。目录只声明可用能力，不替 Agent
-选择领域；选择仍由 A 根据完整上下文完成。Codex 续会话沿用原生会话开场保存的 Developer，而本轮 Task 指令重新提交。Consumer 仅在已选 Skill 来源兼容、且原生会话保存的 Pydantic wire schema 与本轮 purpose schema 相同时续用该路线 session；旧 schema 或无法核实来源时，在该路线开启带完整当前输入的新 session。普通 prompt 文案和目录展示变化不因此重置兼容会话；Audit 会话不受此 Consumer 判断影响。
+选择领域；选择仍由 A 根据完整上下文完成。Codex 续会话沿用原生会话开场保存的 Developer，而本轮 Task 指令重新提交。Consumer 仅在已选 Skill 来源、当前 Developer 指令合同及原生会话保存的 Pydantic wire schema 均兼容时续用该路线 session；任一不匹配或无法核实时，在该路线开启带完整当前输入的新 session，避免旧 Developer 指令覆盖本轮规则。目录展示变化不重置兼容会话；Audit 会话不受此 Consumer 判断影响。
 
 Service 也不读取正文后替 Agent 解释业务材料。它只传递 trigger、上下文、原始 process/task ID、
 链接、本地受控材料引用和可执行的精确读取命令。文档、文件夹、图片、表格、日历、听记和 OA
@@ -4467,3 +4467,22 @@ remain distinct; metadata membership/order/session binding and FTS/embedding are
 unchanged. The redundant latest_standalone_ref/exact_standalone_ref/legacy_codex_ref
 helpers and their old alias projections are retired. `latest_task_ref` remains
 used by current Task inspection/replay tools. See `native-reference-reader-unification.md`.
+
+### DWS document permission pagination (2026-10-26)
+
+The shared Consumer/Audit document-collaborator reader uses `dws drive permission list`.
+It returns one original provider page and accepts `next_token` for the next page;
+callers retain `hasMore`/`nextToken` rather than treating the first 50 members as complete.
+No permissions are changed by this reader.
+
+
+### Complete recent-conversation discovery (2026-10-26)
+
+The shared `recent_dingtalk_conversations` reader retains the scheduled-trigger cutoff,
+then calls `DwsClient.read_complete_recent_conversations`. A result is usable as a full
+discovery only when the provider reports success, an exhausted cursor and complete
+pagination, a matching half-open time window, and consistent collection/page counts.
+Incomplete or inconsistent discovery raises `DwsError` rather than looking like an
+empty or exhaustive conversation list. The original successful provider ledger is
+returned unchanged; this reader adds no retry, continuation loop or business action.
+Existing direct/group message-reading paths are unchanged.

@@ -2191,16 +2191,21 @@ def build_role_server(
         from app.dws_client import DwsClient
         return DwsClient().doc_info(node_id)
 
-    def read_dingtalk_document_permissions(node_id: str) -> dict[str, object]:
-        """Read an exact document's current collaborators and roles."""
+    def read_dingtalk_document_permissions(
+        node_id: str, next_token: str = ""
+    ) -> dict[str, object]:
+        """Read one page of an exact document's current collaborators and roles."""
         from app.dws_client import DwsClient
         if not node_id.strip():
             raise ValueError("document node is required")
         dws = DwsClient()
-        return dws.run_json([
-            dws.dws_bin, "doc", "permission", "list", "--node", node_id,
-            "--limit", "50", "--format", "json",
-        ])
+        command = [
+            dws.dws_bin, "drive", "permission", "list", "--node", node_id,
+            "--limit", "50",
+        ]
+        if next_token.strip():
+            command.extend(("--next-token", next_token))
+        return dws.run_json(command + ["--format", "json"])
 
     def read_dingtalk_drive_info(node_id: str, space_id: str = "") -> dict[str, object]:
         """Read an exact drive file's metadata before deciding how to open it."""
@@ -2560,16 +2565,12 @@ def build_role_server(
     def recent_dingtalk_conversations(
         start: str, end: str,
     ) -> dict[str, object]:
-        """List conversations in a bounded window, capped at a scheduled trigger."""
+        """Read complete conversation discovery, capped at a scheduled trigger."""
         from app.dws_client import DwsClient
         if not start.strip() or not end.strip():
             raise ValueError("conversation window is required")
         _validate_scheduled_read_window(db_path, task_id, start, end)
-        dws = DwsClient()
-        return dws.run_json([
-            dws.dws_bin, "chat", "+recent-conversations", "--start", start,
-            "--end", end, "--page-limit", "50", "--format", "json",
-        ])
+        return DwsClient().read_complete_recent_conversations(start, end)
 
     def read_dingtalk_messages_in_window(
         conversation_id: str, start: str, end: str,

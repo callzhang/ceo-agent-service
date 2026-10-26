@@ -742,10 +742,11 @@ Consumer 会话兼容键还绑定本轮实际选中的 Skill 正文：冻结 Ski
 的 Consumer 会话仍按原连续会话行为处理。Codex Consumer 在续用前读取原生会话开场实际保存的
 Developer 中的原生输出 schema SHA-256 指纹，并与本轮 purpose 的服务 schema 比较；一致才续接。
 Codex 的原生结构化 schema 通过 CLI 参数传入，不会完整保存在 Developer 文本里，因此 Developer 只记录
-精简指纹；旧会话仍可通过完整 Pydantic wire schema 精确核验。指纹不匹配或缺失时，只清除该路线的会话
-指针，本轮携完整事实和当前 Developer 开新 session。原生指纹后可以继续出现以 `## ` 开始的独立 Developer
+精简指纹；旧会话仍可通过完整 Pydantic wire schema 精确核验。Consumer 会话键同时绑定本轮实际提交的
+Developer 指令摘要；新 Developer 与持久化会话合同不匹配时，不复用旧会话，本轮携完整事实和当前 Developer
+开新 session。原生指纹后可以继续出现以 `## ` 开始的独立 Developer
 段落；任意其他尾随文本仍视为格式无效，不能用来判定 session schema 兼容。
-仅普通 Developer 文案或 Work Profile 变化不会触发此检查失败。Claude 每轮重新提交当前
+Work Profile 变化仅在已进入会话合同的相应字段变化时影响复用。Claude 每轮重新提交当前
 Developer，Audit 会话规则、审批权限和动作门槛不变；旧原生会话与历史运行记录仍保留。
 
 Consumer 遇到明确 `retryable=true`、`session_continuable=true` 的结果校验失败时，同一执行代次和
@@ -3776,7 +3777,7 @@ OA 评论出现未知效果后，System 只读原实例的正式 detail；摘要
 
 未精简任务的当前配置预览从原任务结构化输入识别冻结 Skill，使用任务内读取入口并标明冻结/当前目录来源；冻结材料不需要在当前安装目录存在。已结算回复输入的冻结正文精简后明确不可用。历史模式只展示选定原生 invocation 保存的服务 Task 正文，不追加任何新入口，也不由当前 Skill 或精简来源记录重建正文。
 
-一次角色 invocation 只读取一次 Developer/User/Profile 正文，供组装、静态指纹与重试共用；Audit 不读取无关 User 模板。实际路线和工具命令确定后，再追加 Runtime Context。静态配置 SHA 写入运行期 runtime.prompt invocation facts，仅作来源回执；原生历史未保存这些元数据时不重建 SHA；Consumer 继续按 `conversation_id + route` 复用原 session，配置或 contract hash 变化不创建新会话，Audit 的独立 session 不与 Consumer 合并。
+一次角色 invocation 只读取一次 Developer/User/Profile 正文，供组装、静态指纹与重试共用；Audit 不读取无关 User 模板。实际路线和工具命令确定后，再追加 Runtime Context。静态配置 SHA 写入运行期 runtime.prompt invocation facts，仅作来源回执；原生历史未保存这些元数据时不重建 SHA；Consumer 按 `conversation_id + route` 查找原 session，并要求所选 Skill 合同和当前 Developer 指令合同与保存值一致，否则新建 session；Audit 的独立 session 不与 Consumer 合并。
 
 默认 User 的 Rendered preview 使用明确标记的合成完整任务，不读取业务材料；Developer/Profile 渲染同一份已保存正文。完整运行输入仍在独立只读页签，当前配置 Developer 与所选已保存历史 Task 的来源分别标注，历史模式不重新渲染。读取设置/预览不创建或覆盖配置文件。已存在模板不在读取时自动升级；部署使用 `python -m app.deploy --publish-prompt-templates`，仅在既有停止/备份窗口根据 `ci/prompt-template-release.json` 的精确旧/新 SHA 发布默认 Developer/User。本次默认 Developer 发布只接受上一版精确默认 SHA（3ccd6261291b6610aa95a4764d4fd81b7c232011f8ca7dbc52b18639703fb457），移除全局日历专项段；原规则逐字保留在实际 authored calendar Skill，User 默认和工作人格不变。自定义模板须明确迁移，不能覆盖；文件备份、发布与回退沿用 RepositoryUpdater 的 publication 协议。该发布不修改工作人格。
 
@@ -5562,3 +5563,22 @@ remain distinct; metadata membership/order/session binding and FTS/embedding are
 unchanged. The redundant latest_standalone_ref/exact_standalone_ref/legacy_codex_ref
 helpers and their old alias projections are retired. `latest_task_ref` remains
 used by current Task inspection/replay tools. See `native-reference-reader-unification.md`.
+
+### DWS document permission pagination (2026-10-26)
+
+The shared Consumer/Audit document-collaborator reader uses `dws drive permission list`.
+It returns one original provider page and accepts `next_token` for the next page;
+callers retain `hasMore`/`nextToken` rather than treating the first 50 members as complete.
+No permissions are changed by this reader.
+
+
+### Complete recent-conversation discovery (2026-10-26)
+
+The shared `recent_dingtalk_conversations` reader retains the scheduled-trigger cutoff,
+then calls `DwsClient.read_complete_recent_conversations`. A result is usable as a full
+discovery only when the provider reports success, an exhausted cursor and complete
+pagination, a matching half-open time window, and consistent collection/page counts.
+Incomplete or inconsistent discovery raises `DwsError` rather than looking like an
+empty or exhaustive conversation list. The original successful provider ledger is
+returned unchanged; this reader adds no retry, continuation loop or business action.
+Existing direct/group message-reading paths are unchanged.

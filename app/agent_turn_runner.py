@@ -137,6 +137,22 @@ def _runtime_result_schema_id(
     ).hexdigest()
 
 
+def _consumer_session_contract_hash(
+    conversation_contract_hash: str, developer_instructions: str
+) -> str:
+    """Bind a reusable Consumer session to the exact Developer instructions it saved."""
+    contract = {
+        "conversation_contract_hash": conversation_contract_hash,
+        "developer_instructions_sha256": hashlib.sha256(
+            developer_instructions.encode("utf-8")
+        ).hexdigest(),
+    }
+    encoded = json.dumps(contract, sort_keys=True, separators=(",", ":"))
+    return "selected-skills:consumer-developer:" + hashlib.sha256(
+        encoded.encode("utf-8")
+    ).hexdigest()
+
+
 def _native_output_schema_for_route(
     runtime_kind: RuntimeKind | str,
     role: AgentRole,
@@ -929,7 +945,7 @@ class AgentTurnProcess(Generic[ResultT]):
                         self.task.conversation_id,
                         active_route.name,
                         new_session,
-                        conversation_contract_hash,
+                        session_contract_hash_for_route(active_route),
                     )
                 if not is_claude and (
                     persist_conversation_session
@@ -1048,6 +1064,14 @@ class AgentTurnProcess(Generic[ResultT]):
         def developer_instructions_for(runtime_kind: RuntimeKind | str) -> str:
             kind = runtime_kind.value if isinstance(runtime_kind, RuntimeKind) else runtime_kind
             return (developer_instructions_by_runtime or {}).get(kind, developer_instructions)
+
+        def session_contract_hash_for_route(active_route: RuntimeRoute) -> str:
+            if run.role is not AgentRole.CONSUMER:
+                return conversation_contract_hash
+            return _consumer_session_contract_hash(
+                conversation_contract_hash,
+                developer_instructions_for(active_route.runtime_kind),
+            )
 
         def execution_contract_digest_for(runtime_kind: RuntimeKind | str) -> str:
             contract = {
@@ -1185,7 +1209,7 @@ class AgentTurnProcess(Generic[ResultT]):
                 role=run.role,
                 run=run,
                 requested_session_id=session_id,
-                conversation_contract_hash=conversation_contract_hash,
+                conversation_contract_hash=session_contract_hash_for_route(route),
                 force_new_session=force_new_session,
             )
             attempt_is_preclaimed = False
@@ -1563,7 +1587,7 @@ class AgentTurnProcess(Generic[ResultT]):
                             initial_session_id=session_id,
                             failed_session_id=failed_session_id,
                         ),
-                        conversation_contract_hash=conversation_contract_hash,
+                        conversation_contract_hash=session_contract_hash_for_route(route),
                     )
                 successor = self._claim_and_start_attempt(
                     run,
