@@ -11,7 +11,11 @@ from app.action_email_storage import _columns, _fingerprint
 from app.email_canonical_storage import _action_objects
 from app.reviewed_candidate_store import _json
 from app.storage_payload import ACTION_RECORD_TYPES
-from tests.support.historical_action_storage import db as db
+from tests.support.historical_action_storage import (
+    db as db,
+    insert_historical_reply,
+    seed_historical_task,
+)
 
 
 SOURCE_HASHES = {
@@ -36,9 +40,8 @@ def _add(db, kind, physical_id, public_id, values, *, references=None, target=Fa
 
 
 def _seed(db, *, options=None, branch=None):
-    from tests.test_action_vector_writes import seed_task
     from app.run_storage import insert_run
-    seed_task(db)
+    seed_historical_task(db)
     for run_id in (2, 3, 4):
         insert_run(db, "agent_runs", dict(id=run_id, task_id=1, proposal_revision=run_id,
             execution_generation="generation", role="audit" if run_id % 2 == 0 else "consumer"))
@@ -63,7 +66,7 @@ def _seed(db, *, options=None, branch=None):
         lease_expires_at="", result_json=' { "kept": 1 } ', created_at="created", updated_at="updated"),
         references={"candidate_id": 101, "review_id": 301, "selection_id": 501})
     actions.insert_error_action(db, dict(kind="worker", detail=b"\x00\xff"))
-    actions.insert_action(db, "reply_attempts", dict(conversation_id="chat",
+    insert_historical_reply(db, dict(conversation_id="chat",
         conversation_title="title", trigger_message_id="input", trigger_sender="person",
         trigger_text="text", action="reply", sensitivity_kind="none", send_status="pending",
         retry_count=-0.0))
@@ -73,6 +76,19 @@ def _seed(db, *, options=None, branch=None):
     db.execute("update actions set payload_json=jsonb_set(payload_json,?,jsonb(?)) where record_type='reply_attempts'",
                (path, _json(actions._encoded_native_sqlite_value(-0.0))))
     db.execute("insert into sqlite_sequence(name,seq) values('actions:unrelated-water',987654)")
+
+
+def _historical_selected_branch(db, selection_id):
+    from app.model_action_schema import candidate_option
+
+    row = db.execute("""select c.candidate_json,s.option_key
+        from actions s join actions c
+          on c.id=s.candidate_id and c.record_type='review_candidates'
+        where s.record_type='candidate_selections' and s.legacy_key=?""",
+        (str(selection_id),)).fetchone()
+    if row is None:
+        raise ValueError("selection or its exact candidate is missing")
+    return candidate_option(row[0], row[1])
 
 
 def _raw(db):
@@ -117,7 +133,7 @@ def test_target_constructor_rejects_old_reserved_slot(db):
 
 
 def test_forward_removes_column_and_slot_preserving_other_raw_facts(db):
-    from app.model_action_schema import migrate_selection_references, selected_branch
+    from app.model_action_schema import migrate_selection_references
     _seed(db)
     before = _raw(db)
     water = _snapshot(db)[2]
@@ -128,7 +144,7 @@ def test_forward_removes_column_and_slot_preserving_other_raw_facts(db):
     assert db.execute("select json(payload_json) from actions where id=501").fetchone() == (
         '["approve","selected","selection-clock"]',)
     assert [row for row in _raw(db) if row[0] != 501] == [row for row in before if row[0] != 501]
-    assert selected_branch(db, 51) == APPROVE
+    assert _historical_selected_branch(db, 51) == APPROVE
     assert db.execute("select candidate_id,review_id,selection_id from actions where id=601").fetchone() == (101, 301, 501)
     assert _snapshot(db)[2] == water
     assert db.execute("pragma foreign_key_check").fetchall() == foreign == []
@@ -139,7 +155,7 @@ def test_forward_removes_column_and_slot_preserving_other_raw_facts(db):
 
 
 def test_current_new_selection_survives_inverse_and_reforward(db):
-    from app.model_action_schema import migrate_selection_references, restore_selection_references, selected_branch
+    from app.model_action_schema import migrate_selection_references, restore_selection_references
     _seed(db)
     old_objects = actions._objects(db, "actions")
     old_selection = db.execute("select payload_json from actions where id=501").fetchone()
@@ -148,7 +164,7 @@ def test_current_new_selection_survives_inverse_and_reforward(db):
          references={"candidate_id": 202, "review_id": 302}, target=True)
     db.execute("update sqlite_sequence set seq=987655 where name='actions:unrelated-water'")
     target = _snapshot(db)
-    assert selected_branch(db, 52) == STOP
+    assert _historical_selected_branch(db, 52) == STOP
     restore_selection_references(db, metadata)
     assert actions._objects(db, "actions") == old_objects
     assert db.execute("select branch_json from actions where id=502").fetchone() == (_json(STOP),)
