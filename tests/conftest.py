@@ -51,8 +51,7 @@ MEMORY_LIMIT = MemoryLimit(2 * 1024**3, time_limit_seconds=5 * 60)
 
 
 def pytest_configure(config):
-    del config
-    MEMORY_LIMIT.start()
+    MEMORY_LIMIT.start(config.pluginmanager.getplugin("capturemanager"))
     from app.email_store import EmailStore
     from app.store import AutoReplyStore
     from tests.support import store_template

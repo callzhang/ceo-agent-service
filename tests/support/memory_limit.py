@@ -48,10 +48,22 @@ class MemoryLimit:
         self.time_limit_seconds = time_limit_seconds
         self.current_test = "(before the first test)"
         self.started_at = time.monotonic()
+        self.capture = None
 
-    def start(self) -> None:
+    def start(self, capture=None) -> None:
+        """``capture`` is pytest's capture manager: it is suspended before a message
+        is written, otherwise pytest swallows the message when the process ends."""
+        self.capture = capture
         self.started_at = time.monotonic()
         threading.Thread(target=self._watch, name="test-memory-limit", daemon=True).start()
+
+    def _say(self, message: str) -> None:
+        if self.capture is not None:
+            try:
+                self.capture.suspend_global_capture()
+            except Exception:
+                pass
+        os.write(2, message.encode())
 
     def _watch(self) -> None:
         while True:
@@ -64,7 +76,7 @@ class MemoryLimit:
                     "The limit is fixed and must not be raised. Fix the test, or the code it runs, "
                     "so it stays under the limit.\n"
                 )
-                os.write(2, message.encode())
+                self._say(message)
                 os._exit(EXIT_CODE)
             elapsed = time.monotonic() - self.started_at
             if self.time_limit_seconds is not None and elapsed > self.time_limit_seconds:
@@ -74,5 +86,5 @@ class MemoryLimit:
                     "The limit is fixed and must not be raised. Make the tests faster, or run fewer "
                     "of them, so the run finishes inside the limit.\n"
                 )
-                os.write(2, message.encode())
+                self._say(message)
                 os._exit(TIME_EXIT_CODE)

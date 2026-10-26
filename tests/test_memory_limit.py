@@ -124,3 +124,31 @@ def test_process_inside_the_time_limit_is_left_alone(tmp_path):
         [sys.executable, str(script)], capture_output=True, text=True, timeout=30, env={"PYTHONPATH": "."},
     )
     assert result.returncode == 0 and result.stdout.strip() == "ok"
+
+
+def test_the_message_reaches_the_terminal_when_pytest_captures_output(tmp_path):
+    """Regression: pytest's fd capture swallowed the message, leaving only exit code 71."""
+    (tmp_path / "conftest.py").write_text(
+        textwrap.dedent(
+            """
+            import pytest
+            from tests.support.memory_limit import MemoryLimit
+
+            LIMIT = MemoryLimit(2 * 1024**3, time_limit_seconds=1)
+
+            def pytest_configure(config):
+                LIMIT.start(config.pluginmanager.getplugin("capturemanager"))
+
+            def pytest_runtest_logstart(nodeid, location):
+                LIMIT.current_test = nodeid
+            """
+        )
+    )
+    (tmp_path / "test_slow.py").write_text("import time\n\ndef test_sleeps():\n    time.sleep(10)\n")
+    result = subprocess.run(
+        [sys.executable, "-m", "pytest", "-q", "-p", "no:cacheprovider", str(tmp_path / "test_slow.py")],
+        capture_output=True, text=True, timeout=60, cwd=tmp_path, env={"PYTHONPATH": str(Path.cwd())},
+    )
+    assert result.returncode == TIME_EXIT_CODE
+    assert "TIME LIMIT EXCEEDED" in result.stdout + result.stderr
+    assert "test_slow.py::test_sleeps" in result.stdout + result.stderr
