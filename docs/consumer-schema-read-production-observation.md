@@ -28,3 +28,11 @@
 至少6个已完成session发生多次确认读取，说明session复用不保证schema文本不重读。该频率不证明读取必要，也不证明没有读取就会失败；没有做因果对照，不发起新评测。这里只核对调用事实，不修改prompt、工具或模型配置。
 
 原生范围、逐次调用/返回行号、run/attempt/session、返回摘要及失败wrapper分类见[版本化证据](../evals/trajectory_optimization/consumer_schema_read_production.results.v1.json)。
+
+## 用户后续决定：删除重复查询工具
+
+Derek要求确认原生schema注入后删除该工具。已核对Consumer runner为Codex选择实际schema，CodexRunner冷启动与resume均传入`--output-schema`，与session是否保有旧说明无关。本次删除agent_cli查询函数和注册、Consumer工具目录名称及prompt中的查询提示，保留原生schema、短格式说明、指纹和完整业务校验；不增加替代工具、不修改schema或续跑策略。历史调用统计保留，不能改写为工具删除后的行为。
+
+回归先确认原生general/OA冷启动与resume四种命令均含准确schema；删除前另四项工具/提示缺席断言如预期失败。删除后的测试、审查和正式生产加载结果待追加。无新增模型评测或任务重放。
+
+本次本地验证：原生general/OA×cold/resume四项交付检查先通过；另四项工具/提示缺席检查先失败后通过。三份受影响测试文件49项通过，适配器参数和指纹兼容定向9项通过；Ruff及diff检查通过。上述均为本地确定性测试，无模型调用、无新增生产业务操作。实际代码删除12行查询函数/注册相关内容和目录条目；prompt保留短格式与schema SHA，未替换为完整schema文本。正式发布及进程加载结果待追加。
