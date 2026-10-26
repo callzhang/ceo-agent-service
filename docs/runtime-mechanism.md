@@ -1007,9 +1007,13 @@ empty) filters the catalog through the existing per-path helper. Existing
 always-on/plugin entries may remain visible; empty does not mean zero native Skills.
 The page-judgement Codex command also sets `project_doc_max_bytes=0`, omitting
 the unrelated checkout `AGENTS.md` project document from this no-file task.
-The page states, verbatim evidence contract, route, approval, sandbox and
-unsubscribe execution rules are unchanged. Native global memory and AGENTS
-instructions remain CLI-owned and are not represented as service prompt text.
+An `unknown` judgement may return empty evidence only when the page has no
+reliable sentence supporting a state; every explicit state still requires
+nonblank copied page evidence. Unknown maps to the existing page-state-unknown
+browser failure, records no success receipt, performs no click, and follows
+the existing external retry/backoff policy. Approval, sandbox and unsubscribe
+execution rules are unchanged. Native global memory and AGENTS instructions
+remain CLI-owned and are not represented as service prompt text.
 A conditional consequence such as “By unsubscribing, you will no longer
 receive…” does not establish completion and cannot override `action_required`.
 Explicit completion and existing unconditioned tracker-host receipt wording

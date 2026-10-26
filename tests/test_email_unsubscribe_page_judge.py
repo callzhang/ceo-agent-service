@@ -52,6 +52,16 @@ def test_long_evidence_is_cut_and_whitespace_collapsed() -> None:
     assert "  " not in parsed.evidence
 
 
+def test_unknown_judgement_can_have_no_citable_page_evidence() -> None:
+    routed = _Routed('{"state": "unknown", "evidence": ""}')
+    judge = build_page_judge(routed)
+
+    judgement = judge(ACTION, "github.com", "GitHub navigation and footer", [])
+
+    assert judgement.state is None
+    assert judgement.evidence == ""
+
+
 def test_the_prompt_carries_the_host_and_a_bounded_page_never_the_link() -> None:
     prompt = build_prompt(
         "substack.com", "Sign in " + "x" * (MAX_PAGE_TEXT_CHARS * 2), ["button:unsubscribe"]

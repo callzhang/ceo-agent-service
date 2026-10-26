@@ -19,7 +19,7 @@ from hashlib import sha256
 import json
 from typing import Literal
 
-from pydantic import BaseModel, ConfigDict, Field, field_validator
+from pydantic import BaseModel, ConfigDict, field_validator, model_validator
 
 from app.agent_runtime_router import (
     CodexCommandFactory,
@@ -53,7 +53,7 @@ state, exactly one of:
 - action_required: the page still needs the recipient to do something to unsubscribe, and controls are listed below.
 - unknown: you cannot tell.
 
-evidence: the sentence or sentences of the page text that decided it, copied as written, at most {max_evidence} characters. Navigation menus and footers are not evidence.
+evidence: the sentence or sentences of the page text that decided it, copied as written, at most {max_evidence} characters. Navigation menus and footers are not evidence. If state is unknown and no reliable sentence supports a conclusion, return an empty string.
 
 Host: {host}
 Controls the service can operate: {controls}
@@ -78,15 +78,19 @@ class UnsubscribePageJudgementResult(BaseModel):
         "action_required",
         "unknown",
     ]
-    evidence: str = Field(min_length=1)
+    evidence: str
 
     @field_validator("evidence")
     @classmethod
     def evidence_is_short_and_nonblank(cls, value: str) -> str:
         value = " ".join(value.split())
-        if not value:
-            raise ValueError("evidence must be nonblank")
         return value[:MAX_EVIDENCE_CHARS]
+
+    @model_validator(mode="after")
+    def explicit_states_require_evidence(self) -> UnsubscribePageJudgementResult:
+        if self.state != "unknown" and not self.evidence:
+            raise ValueError("evidence must be nonblank unless state is unknown")
+        return self
 
 
 #: What each state means to the browser. `expired` and `unknown` decide nothing
