@@ -65,3 +65,43 @@ browser jobs and passed the previously failing Action Entity preflight. Python
 shards then stopped at stale current receipt-caller setup/projection assertions,
 one nonempty-unknown-schema bootstrap test, and the two E2E wire fixtures. This
 run is still red; the local 50 executions do not substitute for final Quality.
+
+## Current Action tests — owner correction
+
+The current DAO fixture now constructs the selected AutoReplyStore schema; Task
+and Run parents use native entity storage. Native execution identity is checked
+independently against the Consumer-role `runs` row and its adopted result, rather
+than inferring it from two projected aliases. WorkUpdate checks retain summary,
+defaults, guarded updates, creation time and BLOB storage and explicitly exclude
+the two retired fields.
+
+The first single-file runs passed 10 Action-vector, 6 Sent-result and 1 execution
+case. Two additional ownership/retired-field assertions were then added during
+SPEC review; their exact nodes still require a fresh run. No runtime or schema
+behavior changed in this unit.
+
+Only obsolete direct representations were retired:
+
+| Retired test representation | Existing current coverage / disposition |
+| --- | --- |
+| Direct `review_candidates` Action writer | Native adopted-result and reviewed execution Store tests; frozen migration fixtures remain explicit. |
+| Direct Email plan/claim bootstrap in the generic vector test | `test_email_action_unsubscribe_dao.py` retains continuation upsert, scalar codec and complete Store-cycle coverage. |
+| Direct `sent_replies` insertion/projection | Current completed-delivery Action/Receipt public readback and pointer-chain tests. |
+| Mutating a Sent external key between different owners | Not a current API contract; current Action identity/idempotency/conflict tests remain. |
+| Copying shared receipt bodies into retired Sent/attempt rows | `test_model_result_references.py::test_receipt_correction_preserves_other_attempts_original_meaning` and `test_action_entity_storage.py` retain correction and independent Sent-pointer semantics. |
+| Immutable execution alias bytes and split public/physical identity | The alias was retired. Current test retains claim, lease renewal, exact Consumer Run identity, receipt ownership, terminal result, no re-claim and FK checks. |
+| Old Sent-result indexes and page-cost formula | Current external-key index plan is checked; historical index cardinality is not a current contract. |
+
+The raw string vector still preserves whitespace, scalar/array/object text, NUL
+and Unicode bytes through current receipt storage and the Sent pointer chain.
+SQL NULL is tested as a distinct valid current value. The retired writer's NULL,
+numeric and BLOB rejection rules are not reintroduced. Current native readback
+proves the one actual substitute dispatch; the seeded historical case proves
+stable effect identities and idempotence, without inventing a send counter.
+
+Independent SPEC re-review and QUALITY approved the current owner test unit.
+The four changed assertion nodes were rerun after review: WorkUpdate and native
+Task-delivery 2 passed; indexed Sent lookup 1 passed; native execution 1 passed.
+The lookup requires a keyed `SEARCH`, and Task-delivery uses returned native
+parent IDs. Scoped Ruff and diff checks pass. These runs extend, rather than
+replace, the preceding 10/6/1 single-file evidence.
