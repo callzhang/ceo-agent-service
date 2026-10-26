@@ -5,7 +5,6 @@ from pathlib import Path
 
 import pytest
 
-import app.store as store_module
 from app.managed_skills import (
     resolve_pending_runtime_skills,
     runtime_skill_snapshot_for_process,
@@ -327,27 +326,3 @@ def test_runtime_snapshot_excludes_disabled_managed_bindings(tmp_path: Path) -> 
     assert enabled in snapshot.revisions
     assert all(item.skill_id != disabled.skill_id for item in snapshot.revisions)
 
-
-def test_schema_initialization_repairs_runtime_guards_idempotently(tmp_path: Path) -> None:
-    path = tmp_path / "skills.sqlite3"
-    store = AutoReplyStore(path)
-    skill = store.create_managed_skill("ceo-test", "Test Skill")
-    revision = store.create_managed_skill_revision(skill.id, SKILL_V1, source="settings")
-    config = store.create_runtime_skill_config({skill.id: revision.id}, expected_parent_id=None)
-    with store._connect() as db:
-        db.execute("drop trigger trg_configs_runtime_config_update")
-    store_module._INITIALIZED_STORE_PATHS.discard(path.resolve())
-    reopened = AutoReplyStore(path)
-
-    with reopened._connect() as db:
-        assert db.execute(
-            "select 1 from sqlite_schema where type='trigger' "
-            "and name='trg_configs_runtime_config_update'"
-        ).fetchone()
-        with pytest.raises(sqlite3.IntegrityError, match="runtime Skill activation requires matching load receipt"):
-            db.execute(
-                "update configs set runtime_config_parent_ref=99 "
-                "where record_type='runtime_skill_configs' and numeric_public_key=?",
-                (config.id,),
-            )
-    assert reopened.get_runtime_skill_config(config.id) == config

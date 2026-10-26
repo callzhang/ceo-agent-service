@@ -27,20 +27,20 @@ from app.workbench.models import (
 def surface(tmp_path: Path):
     timestamp = "2026-10-16 00:00:00"
     task = WorkbenchTask(
-        id=str(uuid4()), title="Native work", runtime_kind="codex",
+        id="11", title="Native work", runtime_kind="codex",
         created_at=timestamp, updated_at=timestamp,
     )
     turn = WorkbenchTurn(
-        id=str(uuid4()), task_id=task.id, client_request_id="request",
+        id="12", task_id=task.id, client_request_id="request",
         task_sequence=4, user_text="Inspect", status="stopped",
         created_at=timestamp, updated_at=timestamp,
     )
     artifact = WorkbenchArtifact(
-        id=str(uuid4()), turn_id=turn.id, label="Output", path="unused",
+        id="13", turn_id=turn.id, label="Output", path="unused",
         media_type="text/plain", created_at=timestamp,
     )
     attachment = WorkbenchAttachment(
-        id=str(uuid4()), task_id=task.id, filename="input.txt",
+        id="14", task_id=task.id, filename="input.txt",
         media_type="text/plain", size_bytes=4, created_at=timestamp,
     )
     calls = []

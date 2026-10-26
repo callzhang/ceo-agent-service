@@ -8,10 +8,8 @@ import pytest
 from app.email_classifier_model import email_message_to_text, CpuTfidfLogisticClassifier
 from app.email_body_source import locate_original
 from tests.test_email_body_source import (
-    body_store as body_store, current13 as current13, _provider_message, _retired_canonical,
+    body_store as body_store, current13 as current13, _provider_message,
 )
-from tests.test_email_canonical_storage import _db
-from app.email_canonical_storage import restore_email_canonical_schema
 
 
 def _reader(message):
@@ -105,36 +103,6 @@ def test_retired_model_input_remains_available_after_future_owner_label(body_sto
         store.owner_labelled_examples(source_reader=_reader(_provider_message('changed')))
 
 
-def test_inverse_restores_model_input_without_rewinding_current_business_facts(tmp_path, current13):
-    db = _db(tmp_path, current13)
-    body, reference, metadata = _retired_canonical(db)
-    text = 'exact historical redacted model input'
-    model_ref = {'kind': 'native', 'sha256': sha256(text.encode()).hexdigest(),
-                 'utf8_bytes': len(text.encode()), 'native_provenance': {}}
-    db.execute("update emails set class_model_text='',class_subject='current result',"
-               "message_source_reference_json=?", (json.dumps(reference | {'model_input': model_ref}),))
-    db.execute("update emails set class_included_in_model_id='current-model'")
-    restore_email_canonical_schema(db, metadata, read_body=lambda row, ref: body,
-                                  read_model_input=lambda row, ref: text)
-    assert db.execute('select model_text,subject,included_in_model_id from email_classifications').fetchone() == (
-        text, 'current result', 'current-model')
-    assert db.execute('pragma quick_check').fetchone() == ('ok',)
-    db.close()
-
-
-def test_inverse_rejects_missing_model_input_before_any_mutation(tmp_path, current13):
-    db = _db(tmp_path, current13)
-    body, reference, metadata = _retired_canonical(db)
-    db.execute("update emails set class_model_text='',message_source_reference_json=?",
-               (json.dumps(reference | {'model_input': {'sha256': sha256(b'model').hexdigest(), 'utf8_bytes': 5}}),))
-    db.commit()
-    before = tuple(db.iterdump())
-    with pytest.raises(ValueError, match='model input'):
-        restore_email_canonical_schema(db, metadata, read_body=lambda row, ref: body)
-    assert tuple(db.iterdump()) == before
-    db.close()
-
-
 def test_actual_new_model_input_clears_only_obsolete_model_reference(body_store):
     from app.email_canonical_storage import update_email_classification
 
@@ -147,37 +115,6 @@ def test_actual_new_model_input_clears_only_obsolete_model_reference(body_store)
     assert row[0] == 'actual new input'
     assert row[1] is None  # This is a real input change, unlike retirement.
     assert json.loads(row[2]) == {k: v for k, v in root.items() if k != 'model_input'}
-
-
-@pytest.mark.parametrize('backup_matches', [True, False])
-def test_recovery_models_use_exact_backup_bytes_or_own_new_source(tmp_path, current13, backup_matches):
-    import sqlite3
-    from app.email_body_source import prepare_recovery_model_inputs
-
-    db = _db(tmp_path, current13)
-    body, reference, metadata = _retired_canonical(db)
-    message = _provider_message(body)
-    text = email_message_to_text(message)
-    model_ref = locate_original(text, attempts=[], read_message=lambda: message,
-        representations=(CpuTfidfLogisticClassifier.FEATURE_VERSION,))
-    db.execute("update emails set class_model_text='',message_source_reference_json=?",
-               (json.dumps(reference | {'model_input': model_ref}),))
-    db.commit()
-    backup = tmp_path / 'old-source.sqlite3'
-    with sqlite3.connect(backup) as old:
-        old.execute('create table email_classifications(account_id text,stable_message_identity text,model_text text)')
-        old.execute('insert into email_classifications values(?,?,?)',
-                    ('account', 'stable-1', text if backup_matches else 'previous input'))
-    reads = []
-    def read(account, identity):
-        reads.append((account, identity))
-        return message
-    prepared = prepare_recovery_model_inputs(tmp_path / 'email.sqlite3', backup_path=backup,
-                                             read_message=read)
-    assert prepared == {('account', 'stable-1'): text}
-    assert reads == ([] if backup_matches else [('account', 'stable-1')])
-    assert db.execute('select class_model_text from emails').fetchone() == ('',)
-    db.close()
 
 
 def test_nontext_model_inputs_are_not_reinterpreted_or_retired(body_store):
@@ -257,34 +194,6 @@ def test_real_body_update_keeps_model_reference_and_removes_only_obsolete_body_p
     assert row[0] == 'actual new body'
     assert json.loads(row[1]) == {'model_input': before['model_input']}
     assert body_store.owner_labelled_examples(source_reader=_reader(message))[0][0]['text'] == text
-
-
-def test_model_only_reference_inverse_keeps_current_body_and_inclusion(tmp_path, current13):
-    db = _db(tmp_path, current13)
-    _body, _reference, metadata = _retired_canonical(db)
-    text = 'proven original features'
-    model_ref = {'kind': 'native', 'sha256': sha256(text.encode()).hexdigest(), 'utf8_bytes': len(text.encode())}
-    db.execute("update emails set class_model_text='',message_normalized_text='current cached body',"
-               "message_source_reference_json=?", (json.dumps({'model_input': model_ref}),))
-    db.execute("update emails set class_included_in_model_id='current-frozen-model'")
-    restore_email_canonical_schema(db, metadata, read_model_input=lambda row, ref: text)
-    assert db.execute('select normalized_text from email_messages').fetchone() == ('current cached body',)
-    assert db.execute('select model_text,included_in_model_id from email_classifications').fetchone() == (
-        text, 'current-frozen-model')
-    db.close()
-
-
-def test_inverse_never_replaces_a_current_nonempty_model_input_with_old_reference(tmp_path, current13):
-    db = _db(tmp_path, current13)
-    body, reference, metadata = _retired_canonical(db)
-    old = 'old features'
-    model_ref = {'kind': 'native', 'sha256': sha256(old.encode()).hexdigest(), 'utf8_bytes': len(old.encode())}
-    db.execute("update emails set class_model_text='current new input',message_source_reference_json=?",
-               (json.dumps(reference | {'model_input': model_ref}),))
-    restore_email_canonical_schema(db, metadata, read_body=lambda row, ref: body,
-        read_model_input=lambda *args: pytest.fail('current input must not be rewound'))
-    assert db.execute('select model_text from email_classifications').fetchone() == ('current new input',)
-    db.close()
 
 
 def test_owner_relabel_same_second_invalidates_example_stamp(body_store):

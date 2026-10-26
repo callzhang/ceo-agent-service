@@ -1,11 +1,10 @@
 """Selected reviewed choices retain identity when source facts change."""
 from app.agent_orchestrator import AgentOrchestrator
 from app.reviewed_sources import capture_candidate_sources
-from app.store import AutoReplyStore
+from app.store import CANDIDATE_SELECTION_SQL, REVIEW_CANDIDATE_SQL, AutoReplyStore
+from tests.support.native_task_fields import set_native_task_fields
 from app.system_executor import ActionOutcome, SystemExecutor
 from tests.test_reviewed_orchestration import Audit, Consumer, candidate, setup
-
-from app.action_storage import CANDIDATE_SELECTION_SQL, REVIEW_CANDIDATE_SQL
 
 
 class Source:
@@ -51,7 +50,7 @@ def test_selected_question_with_changed_native_form_reopens_same_stage_and_keeps
     original_json = reviewed["candidate_json"]
     selection = store.select_candidate_option(reviewed["id"], reviewed["review_id"], "send")
     with store._connect() as db:
-        db.execute("update tasks set status='needs_human' where record_type='reply_tasks' and cast(legacy_key as integer)=?", (task.id,))
+        set_native_task_fields(db, "reply_tasks", task.id, {"status": "needs_human"})
     store.wake_selected_candidate_execution(reviewed["id"], reviewed["review_id"])
     source.amount = "900"
     reopened = AutoReplyStore(store.path)
@@ -87,7 +86,7 @@ def test_selected_question_after_restart_executes_exact_branch_without_new_agent
     ).process(task, context, refresh_context=lambda: context).status == "needs_human"
     reviewed = store.current_reviewed_candidate(task.id, task.execution_generation)
     with store._connect() as db:
-        db.execute("update tasks set status='needs_human' where record_type='reply_tasks' and cast(legacy_key as integer)=?", (task.id,))
+        set_native_task_fields(db, "reply_tasks", task.id, {"status": "needs_human"})
     store.select_candidate_option(reviewed["id"], reviewed["review_id"], "send")
     store.wake_selected_candidate_execution(reviewed["id"], reviewed["review_id"])
     reopened = AutoReplyStore(store.path)

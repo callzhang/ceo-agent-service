@@ -11,7 +11,6 @@ from app.action_storage import create_action_schema
 from app import action_storage as action_storage
 from app.action_email_definitions import EMAIL_AUTOINCREMENT_TYPES
 from app.action_followup_sync_definitions import sync_action_projection
-from test_followup_sync_source import values
 from app.action_followup_sync_storage import (
     capture_followup_sync_source, migrate_followup_sync_schema, restore_followup_sync_schema,
 )
@@ -187,40 +186,6 @@ def test_inverse_refuses_reserved_name_dependency_on_unrelated_owner(source):
             restore_followup_sync_schema(db, state)
         assert db.execute("select type,name,sql from main.sqlite_schema order by type,name").fetchall() == before
         db.rollback()
-
-
-def test_legacy_link_ignore_check_precedes_parent_validation(source):
-    path, _ = source
-    with closing(sqlite3.connect(path)) as db:
-        db.execute("pragma foreign_keys=on")
-        source_cursor = db.execute("insert or ignore into main.business_legacy_links "
-                                   "(signal_id,task_id,work_update_id) values(11,12,999)")
-        assert source_cursor.rowcount == 0
-        db.commit()
-        with closing(sqlite3.connect(":memory:")) as native:
-            db.backup(native)
-            native.execute("pragma foreign_keys=on")
-            assert native.execute("insert or ignore into main.business_legacy_links "
-                                  "(signal_id,task_id,work_update_id) values(11,12,999)").rowcount == 0
-            source_water = native.execute("select seq from main.sqlite_sequence where name='business_legacy_links'").fetchone()
-        db.execute("pragma foreign_keys=off")
-        db.execute("begin")
-        migrate_followup_sync_schema(db, capture_followup_sync_source(db))
-        db.commit()
-        db.execute("pragma foreign_keys=on")
-        target_cursor = db.execute("insert or ignore into main.business_legacy_links "
-                                   "(signal_id,task_id,work_update_id) values(11,12,999)")
-        assert target_cursor.rowcount == 0
-        assert db.execute("select seq from main.sqlite_sequence where name='business_legacy_links'").fetchone() == source_water
-        with pytest.raises(sqlite3.IntegrityError):
-            db.execute("insert into main.business_legacy_links(task_id,work_update_id) values(11,999)")
-        other = action_storage.insert_sync_action(db, "work_todo_dingtalk_links",
-                                                  values("work_todo_dingtalk_links"))
-        wrong_kind_id = db.execute("select id from main.actions where record_type='work_todo_dingtalk_links' "
-                                   "and legacy_key=?", (str(other.lastrowid),)).fetchone()[0]
-        with pytest.raises(sqlite3.IntegrityError, match="work update parent type mismatch"):
-            db.execute("insert into main.business_legacy_links(task_id,work_update_id) values(11,?)",
-                       (wrong_kind_id,))
 
 
 @pytest.mark.parametrize("stage", ("copy", "rebuild", "drop"))

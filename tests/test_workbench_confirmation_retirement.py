@@ -14,8 +14,10 @@ from app.workbench.runtime import RuntimeEvent, RuntimeRegistry
 def test_current_workbench_contract_removes_confirmation_resources():
     assert not hasattr(models, "ConfirmationStatus")
     assert not hasattr(models, "WorkbenchConfirmation")
+    # waiting_confirmation stays a readable/countable historical status
+    # (docs/runtime-mechanism.md) but no confirmation workflow remains.
     assert {item.value for item in models.TurnStatus} == {
-        "queued", "running", "completed", "stopped", "failed"
+        "queued", "running", "completed", "stopped", "failed", "waiting_confirmation"
     }
     assert not hasattr(WorkbenchExecutor, "confirm")
     assert not hasattr(WorkbenchExecutor, "cancel")
@@ -79,7 +81,6 @@ def test_recovery_keeps_non_lock_sqlite_errors(tmp_path: Path):
 
 def test_recovery_requeues_expired_turn_without_touching_live_or_stopped_turns(tmp_path: Path):
     from app.workbench.store import WorkbenchStore
-    from app.task8_storage import task8_set_parts
 
     store = WorkbenchStore(tmp_path / "workbench.sqlite3")
     turns = []
@@ -89,10 +90,9 @@ def test_recovery_requeues_expired_turn_without_touching_live_or_stopped_turns(t
             task.id, user_text="work", client_request_id=f"request-{index}",
         ))
         with store._connect() as db:
-            parts = task8_set_parts("workbench_turns", {"created_at": f"2026-08-12 00:00:0{index}"})
             db.execute(
-                f"update tasks set {parts.sql} where record_type='workbench_turns' and legacy_key=?",
-                (*parts.parameters, turns[-1].id),
+                "update tasks set created_at=? where id=?",
+                (f"2026-08-12 00:00:0{index}", int(turns[-1].id)),
             )
     assert store.claim_next_turn(owner="dead", lease_seconds=1, now="2026-08-13T00:00:00Z").id == turns[0].id
     assert store.claim_next_turn(owner="live", lease_seconds=10, now="2026-08-13T00:00:00Z").id == turns[1].id
