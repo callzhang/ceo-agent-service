@@ -8,7 +8,12 @@ import sqlite3
 
 import pytest
 
-from tests.support.historical_action_storage import binding as binding, db as db
+from tests.support.historical_action_storage import (
+    binding as binding,
+    db as db,
+    insert_historical_reply,
+    seed_historical_task,
+)
 from app import action_storage as actions
 from app.action_business_storage import _next_source_rowid
 from app.business_source_reader import SourceVersionBinding
@@ -80,49 +85,6 @@ def insert_signal_version(db, binding, *, dedupe_key, conversation_title="", con
         )),
     )
     return public_id
-
-
-def seed_historical_task(db):
-    from app.run_storage import insert_run
-    from app.storage_payload import TASK_RECORD_TYPES
-    from app.task20_definitions import TASK20_DEFAULTS, TASK20_LAYOUTS
-    from app.task8_storage import register_task8_functions
-
-    register_task8_functions(db)
-    kind = "reply_tasks"
-    values = dict(conversation_id="chat", conversation_title="title", single_chat=0,
-                  trigger_message_id="message", trigger_create_time="time", trigger_sender="author")
-    for field in TASK20_LAYOUTS[kind].fields:
-        if field not in values:
-            expression = TASK20_DEFAULTS[kind].get(field, "null")
-            values[field] = db.execute("select " + expression).fetchone()[0]
-    payload = TASK20_LAYOUTS[kind].pack(
-        values, scalar_codec=actions._encoded_native_sqlite_value,
-    )
-    db.execute(
-        "insert into tasks(_kind,legacy_key,payload_json) values(?,?,jsonb(?))",
-        (TASK_RECORD_TYPES.code(kind), "1", payload),
-    )
-    insert_run(db, "agent_runs", dict(
-        id=1, task_id=1, execution_generation="generation", role="consumer",
-    ))
-
-
-def insert_historical_reply(db, values):
-    kind = "reply_attempts"
-    now = db.execute("select current_timestamp").fetchone()[0]
-    layout = actions.action_payloads(
-        actions._reply_variant_for(db), physical_provenance=True,
-    ).layouts[kind]
-    data = dict.fromkeys(layout.fields)
-    data.update({field: value for field, value in (
-        actions._ATTEMPT_DEFAULTS | {"created_at": now, "updated_at": now} | values
-    ).items() if field in data})
-    payload = layout.pack(data, scalar_codec=actions._encoded_native_sqlite_value)
-    db.execute(
-        "insert into actions(_kind,legacy_key,payload_json) values(?,?,jsonb(?))",
-        (actions.ACTION_RECORD_TYPES.code(kind), "1", payload),
-    )
 
 
 def test_reply_inverse_finite_real_json_keeps_sqlite_value():
