@@ -11,6 +11,14 @@ from app.deploy import TEST_GATE_ARGS, TEST_GATE_MANIFEST, require_green_suite
 from tests.test_repository_updater import fixture_repo
 
 
+@pytest.fixture(autouse=True)
+def _gate_work_directories_stay_inside_the_test(tmp_path, monkeypatch):
+    """The gate keeps its directory when it refuses; do not leave those in the system temp."""
+    import tempfile
+
+    monkeypatch.setattr(tempfile, "tempdir", str(tmp_path))
+
+
 def _runner(*, pytest_code=0, pytest_output="", checkout_code=0, timeout=False):
     calls = []
 
