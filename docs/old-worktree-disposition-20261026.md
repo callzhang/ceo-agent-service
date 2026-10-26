@@ -360,3 +360,19 @@ The snapshot/phase distinction mattered: `archived_worktree` attachment metadata
 ## Mainline and release status
 
 The two independent fixes were pushed to main through merge `77434ed2c`, preserving concurrent main commit `df94db274` without rebasing or force-pushing. An existing deploy from another session targeted `df94db274` and exited at its fixed five-minute test ceiling before changing production. A single normal deploy for the new current main was then started; no quiet-window or test gate was skipped. The final result is appended below.
+
+
+## Production readback and final closure
+
+The normal deploy started by this task targeted `e8b470ba` and stopped at the immutable 300-second test-process ceiling, before making production changes. The last running test was `tests/test_project_candidate_refresh.py::test_report_confirmation_refreshes_existing_card_peer_without_swallowing_other_tasks`; this identifies the interruption point, not a proven root cause in that test. Gate log SHA-256: `38f065e011c7b183165da9585dd3badda8d0a18965a0d720a2e7a7c11799a7fb`. The task-owned throwaway gate directory is removed after preserving this concise failure evidence. No timeout increase, gate bypass or repeated deploy is used.
+
+Meanwhile another session updated production to `134af324cfd10fe5f0e32fe1da24e26f006b7b1d`, which contains both `928a38e9f` and `440347a21`. Read-only confirmation found a clean production worktree and exact equality of both affected runtime files against the verified commits:
+
+- `app/agent_cli.py`: `aa6ea0d01208f03ae3eb54dcf6d16babd27bd7e9255f09d309f3f661647199d0`.
+- `app/dws_client.py`: `28ba9bc72a938fb214b7230e4e9bbdd47c5352445942b5ceec5a6aff91c50f5d`.
+
+launchd PID `29433` started at 2026-10-26 03:01:32 America/Los_Angeles (10:01:32 UTC) from `/Users/derek/Services/ceo-agent-service`; source writes occurred at approximately 10:01:30 UTC, before this process. Thus the actual process has loaded code containing the fixes, independently of this task's unsuccessful deployment attempt. No additional restart is needed.
+
+2026-10-26 03:02:48–03:02:51 America/Los_Angeles (10:02:48–10:02:51 UTC): healthz HTTP200/ok; queue HTTP200 (active4, queued7); Attention HTTP200/count9; History HTTP200/total38461. Counts are snapshots, not proof of an empty queue or resolution of historical findings. No production task replay, document write, outgoing message or new model evaluation was performed for acceptance.
+
+**Closure:** both requested mechanisms are absorbed into main and loaded by the live process; all eleven old checkouts and ten obsolete named local branches have been removed. Every other old proposal is explicitly discarded or already superseded, with no retained candidate. The fixed affected regressions and readback are complete. The separate global gate timeout is recorded honestly and is not repaired incidentally in this change. The final documentation-only commit needs no deployment.
