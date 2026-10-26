@@ -1580,15 +1580,14 @@ def _message_receipt_feedback(result: ConsumerAgentResult) -> AuditFeedback | No
         rule="A message send without a verified provider receipt is not successful.",
         observation=(
             "System Execution accepted this message action but could not verify delivery. "
-            "Do not repeat or replace the send. First query the provider send task using its "
-            "openTaskId when available. If there is no queryable task, read the complete "
-            "original conversation window once with read_dingtalk_messages_in_window. "
-            "A unique exact message from the authenticated sender, with exact authored body "
-            "and quoted trigger identity, confirms delivery. The provider may omit the service "
-            "feedback callback suffix; ignore only that exact generated suffix when comparing "
-            "the authored body. A complete, failure-free negative readback "
-            "confirms non-delivery; an incomplete, truncated, failed, or ambiguous readback "
-            "leaves the outcome uncertain."
+            "Do not repeat or replace the send until you know whether it went out. Use dws "
+            "to look in the conversation for the message itself, by whatever reliable means "
+            "fits (its send task, the message list for the window, a search), and compare the "
+            "exact authored body from the authenticated sender and the quoted trigger identity. "
+            "The provider may omit the service feedback callback suffix; ignore only that exact "
+            "generated suffix when comparing the authored body. A unique exact message confirms "
+            "delivery. A complete, failure-free negative result confirms non-delivery; an "
+            "incomplete, truncated, failed, or ambiguous result leaves the outcome uncertain."
         ),
         requested_revision=(
             "Return no_action when delivery is confirmed. If complete negative readback proves "
