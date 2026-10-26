@@ -638,7 +638,8 @@ def _encoded_value_check(document, path):
             f"and ({blob} or {nonfinite} or {finite})),0) else 0 end")
 
 
-def email_schema_parts(reply_value_check, *, payloads=None, shared_lifecycle=False, retired_types=()):
+def email_schema_parts(reply_value_check, *, payloads=None, shared_lifecycle=False, retired_types=(),
+                       signal_source_references=False):
     """Return only the finite Email additions to the existing actions declaration."""
     retired_types = frozenset(retired_types)
     fields_by_kind = {kind: fields for kind, fields in EMAIL_FIELDS.items() if kind not in retired_types}
@@ -780,7 +781,12 @@ def email_schema_parts(reply_value_check, *, payloads=None, shared_lifecycle=Fal
     if shared_lifecycle:
         triggers = triggers[2:]  # Count is now the attempt ledger's derived value.
     if "email_actions" in retired_types:
-        triggers = [sql for sql in triggers if "email_attempt_count" not in sql and "email_action_id=new.email_action_id" not in sql]
+        triggers = [
+            sql for sql in triggers
+            if not sql.startswith("create trigger trg_actions_email_attempt_count_")
+            and (signal_source_references
+                 or not sql.startswith("create trigger trg_actions_email_retry_immutable_insert "))
+        ]
     if shared_lifecycle:
         if "email_actions" not in retired_types:
             checks.append("check(record_type<>'email_actions' or (email_status='processing' or email_started_at=''))")

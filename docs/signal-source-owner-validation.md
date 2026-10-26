@@ -11,8 +11,8 @@ meaning. No Audit, authorization, retry or external-send policy was changed.
 |---|---|
 | Source | Store2026-10-25.2 / Email54;478 objects |
 | Source manifest SHA256 | `7b4c91875faf9cf1bc57f912fc692b7c2a3966a03b9b2e384b2d8470ce0c832b` |
-| Target | Store2026-10-25.3 / Email54;475 objects |
-| Target manifest SHA256 | `acf0537ba1aba7cabb8439599b1a9a1aed7f2b48ec061482a7baf600da72c316` |
+| Target | Store2026-10-25.3 / Email54;476 objects |
+| Target manifest SHA256 | `234e17843afc171b4fa8cb42f3e1d959ef2ba415f43e295dc7db640ab3d02221` |
 | Frozen standalone source Actions scaffold | 215 objects;`679e4bd4a5b9166a10754884a7dcab0b7b33b5c9137e01d270888b5cc2ff46a0` |
 | Production-derived source cohort | 1140 Signals:110 inline,1030 referenced;172 provenance parents |
 | Existing FK exception | `('runs',190042,'tasks',1)`;unchanged |
@@ -20,6 +20,8 @@ meaning. No Audit, authorization, retry or external-send policy was changed.
 The full manifest, rather than the standalone scaffold, is the release source.
 The target removes12 inline-source generated columns, two inline source indexes
 and the Signal leaf trigger; locator validation stays on the immutable parent.
+The current Actions target retains the immutable Email retry-request insert
+guard; this schema guard is distinct from the Signal migration transformation.
 The Signal payload contains its required reference and four own facts. No new
 physical table or original-body storage is introduced. These are model/DDL
 changes; no physical database shrinkage is claimed.

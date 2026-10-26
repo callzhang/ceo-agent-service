@@ -72,10 +72,12 @@ import hashlib,json
 from app import action_storage as a
 from app.email_canonical_storage import ACTION_OPTIONS
 from app.task_lifecycle_current_schema import task_lifecycle_objects
+from app.task_storage import TASK_INDEX_DDL, TASK_TABLE_DDL, TASK_TRIGGER_DDL
 from app.task20_current_schema import _current_objects
 def digest(value):
  return hashlib.sha256(json.dumps(value,sort_keys=True,separators=(',',':')).encode()).hexdigest()
-result={'C1_tasks':digest(task_lifecycle_objects()),'source_tasks':digest(_current_objects())}
+result={'C1_tasks':digest(task_lifecycle_objects()),'source_tasks':digest(_current_objects()),
+ 'task_storage_ddl':digest((TASK_TABLE_DDL,TASK_INDEX_DDL,TASK_TRIGGER_DDL))}
 for variant in a.REPLY_VARIANTS:
  options=dict(reply_variant=variant,inline_legacy_owner=True,physical_provenance=True,
   compact_payload=True,canonical_email=True,**ACTION_OPTIONS)
@@ -86,7 +88,18 @@ print(json.dumps(result))
 """
     assert _old_process(archived_source, code) == _old_process(ROOT, code)
     manifest = json.loads((ROOT / "docs/superpowers/specs/2026-10-19-task-lifecycle-frozen-sources.json").read_text())
-    paths = {entry["path"] for entry in manifest["files"]} - {"app/action_storage.py"}
-    paths |= {str(p.relative_to(ROOT)) for p in (ROOT / "app").glob("task_lifecycle*.py")}
+    paths = {entry["path"] for entry in manifest["files"]} - {
+        "app/action_storage.py", "app/task_storage.py",
+    }
+    # These helpers gained opt-in behavior, task_storage gained a current-run
+    # reader, and some manifest files have since been retired. Generated Task
+    # DDL remains compared directly above; only the manifest's remaining files
+    # are required to stay byte-exact.
+    additive_helpers = {
+        "app/email_canonical_definitions.py",
+        "app/shared_action_definitions.py",
+    }
     for name in sorted(paths):
+        if name in additive_helpers or not (ROOT / name).is_file():
+            continue
         assert hashlib.sha256((ROOT / name).read_bytes()).digest() == hashlib.sha256((archived_source / name).read_bytes()).digest()

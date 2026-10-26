@@ -841,6 +841,8 @@ task13 自然运行 **401164** 在 2026-10-24T19:00Z 触发，使用不可变任
 
 无正文证据：[task13 run 401164](../evals/scheduled_task_generic/task13-run401164-evidence.json)。
 
+2026-10-25 续核实：runbook 中确有 401164 需要的分钟、会话、群聊与业务文档查询顺序；完整 trajectory 显示 Consumer 没有调用这些已注册工具，且没有任何 provider 错误。因此根因是 Agent 在查询前自行结束，网络不是本次失败原因。修复候选 Skill SHA-256 为 `64f0f6bf0494d492dcd8eb8c7cabf76acd10a988fd9bc4c2a89a7f7ec7955f51`，runbook SHA-256 为 `7f7941046608c835ec03db8c2d10cc4c8d5a9bda61360b02d79b60c83d992171`。本地契约与发布摘要测试 **33 项通过**，其中包含“未实际查询不得返回 `operation_unavailable`”和候选文件摘要一致性；这不是原生 Agent 行为验收，候选仍未发布，也未声称 401164 已修复。完整候选自然运行仍待下一次正常 task13 调度核验。
+
 
 ### 2026-10-24/25 task13 手动运行与 task14 自然日报复核
 

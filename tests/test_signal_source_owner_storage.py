@@ -201,10 +201,13 @@ def test_current_target_manifest_has_exact_25_3_count_and_digest():
 
     objects = current_objects(email_ledger=True)
     encoded = json.dumps(objects, ensure_ascii=False, separators=(",", ":")).encode()
-    assert len(objects) == 475
+    assert len(objects) == 476
     assert hashlib.sha256(encoded).hexdigest() == (
-        "acf0537ba1aba7cabb8439599b1a9a1aed7f2b48ec061482a7baf600da72c316"
+        "234e17843afc171b4fa8cb42f3e1d959ef2ba415f43e295dc7db640ab3d02221"
     )
+    assert "trg_actions_email_retry_immutable_insert" in {
+        name for object_type, name, *_ in objects if object_type == "trigger"
+    }
 
 
 def test_current_actions_have_no_inline_signal_source_columns_or_promotion_trigger(current_db):

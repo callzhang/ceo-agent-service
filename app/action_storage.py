@@ -460,7 +460,8 @@ def _action_definitions(include_receipts=False, include_postfix=False, include_d
         kinds += tuple(kind for kind in EMAIL_TYPES_ORDER if kind not in retired_types)
         email_generated, email_checks, email_fks, email_indexes, email_triggers = email_schema_parts(
             lambda field: _encoded_value_check("payload_json", "$." + field), payloads=payloads,
-            shared_lifecycle=shared_lifecycle, retired_types=retired_types)
+            shared_lifecycle=shared_lifecycle, retired_types=retired_types,
+            signal_source_references=signal_source_references)
     if include_followup_sync:
         kinds += SYNC_TYPES_ORDER
     if include_task_delivery:

@@ -8,7 +8,7 @@ Source: Store `2026-10-25.2`, Email54, code baseline `dc07ddcbe`. Source manifes
 
 The old Signal payload has17 ordered slots: the12 existing `SOURCE_FIELDS`, `provenance_id`, then `conversation_title`, `context_json`, `dedupe_key`, `created_at`. A sole owner stores source metadata inline; two owners share `provenance`. The target Store `2026-10-25.3` / Email54 stores only the existing `provenance_id` plus those four own facts (five slots). Every source, including a sole owner, lives in the existing immutable `provenance` table. No body, new business field or generic history container is introduced.
 
-Target declaration:475 objects, canonical JSON SHA256 `acf0537ba1aba7cabb8439599b1a9a1aed7f2b48ec061482a7baf600da72c316`. It removes the two inline source indexes and Signal leaf trigger; locator validation remains on the immutable provenance parent. Actions table/checks and immutable-update trigger change to the reference representation.
+Target declaration:476 objects, canonical JSON SHA256 `234e17843afc171b4fa8cb42f3e1d959ef2ba415f43e295dc7db640ab3d02221`. It removes the two inline source indexes and Signal leaf trigger; locator validation remains on the immutable provenance parent. The current Actions target also retains the declared immutable retry-request insert guard; that generic current-schema guard is separate from Signal migration behavior. Actions table/checks and immutable-update trigger change to the reference representation.
 
 ## Exact ownership and retirement
 

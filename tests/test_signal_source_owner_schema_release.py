@@ -70,8 +70,8 @@ def test_frozen_source_digest():
     assert hashlib.sha256(data).hexdigest() == '7b4c91875faf9cf1bc57f912fc692b7c2a3966a03b9b2e384b2d8470ce0c832b'
     from app.signal_source_owner_schema_release import target_objects
     target = target_objects()
-    assert len(target) == 475
-    assert hashlib.sha256(json.dumps(target, ensure_ascii=False, separators=(',', ':')).encode()).hexdigest() == 'acf0537ba1aba7cabb8439599b1a9a1aed7f2b48ec061482a7baf600da72c316'
+    assert len(target) == 476
+    assert hashlib.sha256(json.dumps(target, ensure_ascii=False, separators=(',', ':')).encode()).hexdigest() == '234e17843afc171b4fa8cb42f3e1d959ef2ba415f43e295dc7db640ab3d02221'
 
 
 def test_forward_new_signals_current_data_inverse_reforward(tmp_path):
