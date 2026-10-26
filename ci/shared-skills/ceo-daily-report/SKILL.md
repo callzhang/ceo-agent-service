@@ -43,13 +43,13 @@ DingTalk document and send Derek (磊哥) a short direct message pointing to it.
 - **Meetings**: when a meeting in the facts needs more than its follow-up
   message, load `dingtalk-minutes` and read its summary.
 
-Do not write the report or propose its notification while any required group
-conversation has not been read. Not attempted is not a source failure. A group
-conversation may be recorded as unavailable or partial only when its read
-operation actually fails, times out, or returns an incomplete page; record the
-conversation, requested window, and exact error or incomplete marker. In that
-case the report is still written and delivered with the limitation disclosed.
-Missing optional material never turns the run into a question for Derek.
+Try every accessible group conversation. Whatever could not be read (not
+attempted, failed, timed out or returned an incomplete page) is a coverage
+gap, not a reason to hold the report: write it and deliver it anyway, and list
+each such conversation in 覆盖说明 with the requested window and the exact
+error, incomplete marker or `not attempted`. This is the general rule for
+missing data in the base Developer prompt. Missing material never turns the
+run into a question for Derek.
 
 ## Report
 
@@ -66,7 +66,7 @@ Title: `CEO 每日总结 YYYY-MM-DD`, using the window script's `report_date`. S
    active `attention` items of category `push` and `watch`.
 6. **管理建议** — judgment drawn from the sections above; mark it as judgment.
 7. **覆盖说明** — today's exact Beijing window, counts per source, and what
-   failed or was partial.
+   was not read, failed or was partial.
 8. **补报覆盖** — when a catch-up window exists, identify its exact interval and
    summarize its separately sourced items; otherwise omit this section.
 
@@ -101,11 +101,9 @@ group, change Tasks, or message anyone else.
 Before approving the document and direct-message proposal, Audit must check the
 primary and optional catch-up windows against `scheduled_for`, and verify that
 the single `source_window_utc` read covers both logical windows without a gap.
-If an inventory contains an accessible conversation with no
-`read_dingtalk_messages_in_window` attempt and no provider error, return the
-proposal: this is unattempted required coverage, not an allowed partial-source
-case. If a read was attempted and the provider returned an error, timeout, or
-incomplete page, verify the exact limitation is disclosed before approving the
+A conversation that was not read, or read only partly, is a disclosed gap, not
+a reason to return the proposal: verify that 覆盖说明 names it with the window
+and the exact error, incomplete marker or `not attempted` before approving the
 otherwise valid report. Do not merge catch-up facts into today's coverage
 counts. Do not require a second send or a new report to correct an audit return;
 the normal revision flow keeps the original run and action.

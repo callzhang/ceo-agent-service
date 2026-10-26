@@ -46,7 +46,7 @@ def test_repository_consumer_release_manifest_tracks_oa_skill_digest():
 
     # The released candidate is a no-op baseline. Pin the exact old target
     # digest here; deployment independently checks the actual installed file.
-    assert entry["old_sha256"] == "a4510031a9cc912def6d56529c0eb9be754f8445fb3868b1104982bf82c7b705"
+    assert entry["old_sha256"] == "af81e071875dfb2d12388730df95b940187bf7610b52a5a947cf6e28d30412bd"
     assert entry["new_sha256"] == _digest((root / entry["source"]).read_bytes())
     assert "old_managed_sha256" not in entry
     skill = (root / entry["source"]).read_text(encoding="utf-8").lower()
@@ -108,7 +108,7 @@ def test_release_manifest_pins_current_finance_card_and_active_managed_skill_has
     } == {
         "ci/shared-skills/ceo-calendar-invite/SKILL.md": "b76b913b63c9b2f3eaba5e90eb64e5dd1a58cf123330815a07d7c32c01451175",
         "ci/shared-skills/ceo-message-triage/SKILL.md": "25d20c2c53a5e7fdaa947f825db506ae6f0865d24da3eb6599978c2e158baddc",
-        "ci/shared-skills/ceo-weekly-report/SKILL.md": "4507e1d54af92b6b84b60168abc82d572b147d6730b545361ff61d4e52df821e",
+        "ci/shared-skills/ceo-weekly-report/SKILL.md": "240255b37c9febef394c13546978a2902482e5261daf5587e11136ffb1af7952",
     }
 
 
