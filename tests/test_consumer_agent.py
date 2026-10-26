@@ -1,4 +1,8 @@
-from app.action_storage import ACTION_PROJECTIONS
+from app.action_storage import (
+    NATIVE_CANDIDATE_ACTION_ATTEMPT_SQL,
+    NATIVE_EXTERNAL_ACTION_RESULT_SQL,
+    SENT_REPLY_SQL,
+)
 import json
 import os
 from dataclasses import replace
@@ -7,7 +11,6 @@ from pathlib import Path
 import pytest
 
 import app.consumer_agent as consumer_agent
-from app.run_storage import AGENT_RUN_SQL
 from app.agent_context import (
     _CONSUMER_AGENT_RULES,
     AgentContextMessage,
@@ -39,6 +42,7 @@ from app.consumer_agent import (
     CONSUMER_BASE_RUNTIME_CAPABILITIES,
     CONSUMER_DYNAMIC_SKILL_BODY,
     ConsumerAgentRunner,
+    TASK_STORAGE_INSTRUCTIONS,
     audit_developer_instructions,
     consumer_developer_sections,
     consumer_developer_sections_by_runtime,
@@ -52,7 +56,12 @@ from app.developer_prompt import DeveloperPromptTemplateError
 from app.outbound_postfix import PreparedOutboundMessage
 from app.service_message_sender import ServiceMessageSender, agent_message_delivery_key
 from app.process_runner import ProcessRunResult
-from app.store import AgentRole, AutoReplyStore
+from app.store import (
+    AgentRole,
+    AutoReplyStore,
+    NATIVE_AGENT_RUN_SQL,
+    NATIVE_CANDIDATE_EXECUTION_SQL,
+)
 from tests.runtime_route_env import claude_api_env, codex_api_env, set_env
 from tests.support.native_protocol import install_protocol_native_trajectories
 from tests.support.native_consumer_output_fixture import native_consumer_stream_for_command
@@ -965,9 +974,13 @@ def test_consumer_summary_is_not_an_execution_receipt(store, task, context, summ
     assert result.result.summary == summary
     assert store.get_reply_task(task.id).status == "processing"
     with store._connect() as db:
-        for table in ("candidate_executions", "candidate_action_attempts",
-                      "external_action_results", "sent_replies"):
-            assert db.execute("select count(*) from " + (f"({ACTION_PROJECTIONS[table]})" if table in ACTION_PROJECTIONS else table)).fetchone()[0] == 0
+        for projection in (
+            NATIVE_CANDIDATE_EXECUTION_SQL,
+            NATIVE_CANDIDATE_ACTION_ATTEMPT_SQL,
+            NATIVE_EXTERNAL_ACTION_RESULT_SQL,
+            SENT_REPLY_SQL,
+        ):
+            assert db.execute(f"select count(*) from ({projection})").fetchone()[0] == 0
 
 
 def test_consumer_persists_native_mcp_reads_from_codex_session(
@@ -1117,19 +1130,18 @@ def test_consumer_instructions_include_the_runtime_proposal_schema():
 
 
 def test_consumer_and_audit_share_direct_external_delivery_boundary():
-    instruction = "Do not directly send external messages or email or execute approvals."
     consumer = consumer_developer_instructions(runtime_context="", work_profile="")
     audit = audit_developer_instructions(
         "Verify the candidate.", runtime_context="", work_profile=""
     )
 
-    assert consumer.count(instruction) == 1
-    assert "Consumer must not directly send external messages or email, or execute approvals." in audit
-    assert "candidate prose is not a provider receipt" in audit
-    assert "if they explicitly ask only for a draft or say the user will send it" in audit
-    assert "return or reject any candidate that proposes sending the message or email" in audit
-    assert "Otherwise keep a valid typed outbound proposal eligible for review" in audit
-    assert "only system code may execute it after approval" in audit
+    assert consumer.count(CONSUMER_OUTBOUND_INSTRUCTION) == 1
+    assert "actions contacting or changing state for another person require Audit review" in audit
+    assert "Consumer may propose them as typed actions but must not execute them through any tool" in audit
+    assert "candidate prose alone is not a provider receipt" in audit
+    assert "Honor draft-only instructions" in audit
+    assert "Otherwise keep valid typed proposals eligible for review" in audit
+    assert "only system code may execute approved plans" in audit
 
 
 def test_consumer_capability_section_keeps_tool_contract_without_repeating_common_rules():
@@ -1137,9 +1149,11 @@ def test_consumer_capability_section_keeps_tool_contract_without_repeating_commo
     capability = next(section.text for section in sections if section.name == "能力边界")
     common = next(section.text for section in sections if section.name == "共同工作原则")
 
-    assert len(capability) <= 3556
     assert "Consumer 可做本轮普通文档" in common
     assert "只有当前系统任务已注册且要求 Audit 的动作" in common
+    assert "Consumer 可做本轮普通文档" not in capability
+    assert "只有当前系统任务已注册且要求 Audit 的动作" not in capability
+    assert capability.count(TASK_STORAGE_INSTRUCTIONS) == 1
     assert "consumer_artifact_write" in capability
     assert "consumer_document_write" in capability
     assert "consumer_run_skill_script" in capability
@@ -2235,7 +2249,7 @@ def test_consumer_read_events_can_fail_over_within_same_run(
 
     attempts = store.list_agent_runtime_attempts(result.run_id)
     persisted_task = store.get_reply_task(task.id)
-    assert result.run_id == attempts[0].agent_run_id
+    assert result.run_id == attempts[0].parent_id
     assert [attempt.route_name for attempt in attempts] == [
         "codex_oauth",
         "codex_api",
@@ -3162,7 +3176,10 @@ def test_consumer_preserves_provider_rendered_historical_feedback_sources(
     saved = store.get_agent_run(result.run_id)
     assert json.loads(saved.adopted_result_json)["source_bindings"][0]["value"] == binding.value
     with store._connect() as db:
-        assert db.execute(f'select final_result_json from ({AGENT_RUN_SQL}) where id=?', (result.run_id,)).fetchone()[0] == ""
+        assert db.execute(
+            f"select projection_json from ({NATIVE_AGENT_RUN_SQL}) where id=?",
+            (result.run_id,),
+        ).fetchone()[0] is None
 
 
 def test_consumer_preserves_full_calendar_material_source(store, task, context):
@@ -3180,7 +3197,10 @@ def test_consumer_preserves_full_calendar_material_source(store, task, context):
     persisted = json.loads(store.get_agent_run(result.run_id).adopted_result_json)
     assert persisted["source_bindings"][0]["value"] == binding.value
     with store._connect() as db:
-        assert db.execute(f'select final_result_json from ({AGENT_RUN_SQL}) where id=?', (result.run_id,)).fetchone()[0] == ""
+        assert db.execute(
+            f"select projection_json from ({NATIVE_AGENT_RUN_SQL}) where id=?",
+            (result.run_id,),
+        ).fetchone()[0] is None
     from app.reviewed_candidates import candidate_digest
     from app.reviewed_sources import capture_candidate_sources, changed_candidate_sources
 

@@ -20,17 +20,15 @@ def test_frozen_questions_and_settings():
         'external_facts': 'synthetic-inline-only',
     }
     for case in manifest['cases']:
-        deliberately_invalid_new_output = case['expected_audit'] != ['approve']
         subject = review.business.normalize_review_subject(
             review.ROOT, case['consumer_result'],
-            persisted_evidence=deliberately_invalid_new_output,
+            persisted_evidence=True,
         )
         assert subject['ok'], case['id']
-        if deliberately_invalid_new_output:
-            current = review.business.normalize_review_subject(
-                review.ROOT, case['consumer_result'],
-            )
-            assert not current['ok']
+        current = review.business.normalize_review_subject(
+            review.ROOT, case['consumer_result'],
+        )
+        assert not current['ok'], case['id']
         assert subject['result']['outcome'] == 'needs_human'
         assert subject['digest']
 
@@ -39,7 +37,7 @@ def test_native_audit_binding_and_outcome_are_both_required(monkeypatch):
     manifest = json.loads(review.MANIFEST.read_text())
     manifest['cases'] = manifest['cases'][:1]
     subject = review.business.normalize_review_subject(
-        review.ROOT, manifest['cases'][0]['consumer_result'])
+        review.ROOT, manifest['cases'][0]['consumer_result'], persisted_evidence=True)
     monkeypatch.setattr(review.business, 'run_role', lambda **kwargs: {
         'ok': True, 'result': {}, 'tool_item_types': [],
     })
@@ -57,7 +55,7 @@ def test_native_audit_binding_and_outcome_are_both_required(monkeypatch):
 
 def test_corrected_open_input_stimulus_is_frozen_without_invented_options():
     from copy import deepcopy
-    from app.agent_contracts import ConsumerAgentResult
+    from app.agent_contracts import parse_persisted_consumer_result
 
     v2_path = review.ROOT / 'evals/consumer_audit_human_review/v2.json'
     assert sha256(v2_path.read_bytes()).hexdigest() == "ebddd919f764a244c30b08fcc726bcfedfc4c4b535e897bc5f4af20e055228a8"
@@ -66,7 +64,7 @@ def test_corrected_open_input_stimulus_is_frozen_without_invented_options():
     manifest = json.loads(review.MANIFEST.read_text())
     candidate = next(case['consumer_result'] for case in manifest['cases']
                      if case['id'] == 'valid_principal_only_fact')
-    result = ConsumerAgentResult.model_validate(candidate)
+    result = parse_persisted_consumer_result(candidate)
     assert candidate['rule_coverage'] == 0.0
     assert result.decision_options == ()
     assert result.requested_input

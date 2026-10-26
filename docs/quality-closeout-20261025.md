@@ -340,3 +340,18 @@ within each shard's unchanged2GB/5minute budget. The12-shard complete suite,
 worker count, collection, passing standard and production gate are unchanged.
 This avoids repeating a whole remote round after only one failure per shard;
 it does not skip tests or make a failing/capped run acceptable.
+
+The frozen human-review eval unit also used historical stimuli as fresh output.
+The actual runner already parses all frozen subjects as persisted evidence.
+The test now mirrors that path, separately asserts all eight obsolete shapes
+are rejected as new output, and retains every frozen case/hash/setting and Audit
+binding expectation. Three tests pass; no evaluation manifest or policy changes.
+
+Consumer file exploration found167 passes,4 unchanged skips and12 failures.
+The12 repaired cases now pass together: native execution/receipt projections,
+RuntimeAttempt parent_id, exact adopted historical source values with absent
+physical projection duplication, and current approved instruction ownership.
+The obsolete3556-character capability budget is replaced by exact common-rule
+nonduplication and one Task storage contract; tool contracts remain asserted.
+Consumer/Audit outbound constraints are asserted using their current actual
+instructions, without restoring superseded wording or altering application policy.
