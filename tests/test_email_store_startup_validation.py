@@ -35,14 +35,14 @@ def test_durable_validation_projects_away_email_bodies_and_classifier_inputs(
 
     normalized = [" ".join(statement.casefold().split()) for statement in statements]
     assert any(
-        "from email_classifications" in statement
+        statement.startswith("select stable_message_identity, account_id, folder")
         and "select *" not in statement
         and "model_text" not in statement
         for statement in normalized
     )
     assert any(
-        "from email_agent_classification_tasks" in statement
+        statement.startswith("select stable_message_identity, status, owner")
+        and "from tasks" in statement
         and "json_extract(input_json" in statement
-        and "from email_agent_classification_tasks" in statement
         for statement in normalized
     )

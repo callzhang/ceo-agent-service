@@ -13,7 +13,7 @@ from app.email_current_schema import create_current_email_non_action_schema
 from app.email_store import EmailStore
 from app.configs_definitions import config_projection
 from app.configs_storage import create_configs_schema, insert_config, update_config
-from app.action_storage import create_action_schema
+from app.current_action_schema import create_current_action_schema
 
 
 _FIXED = datetime(2026, 10, 14, 10, tzinfo=timezone.utc)
@@ -195,8 +195,7 @@ def test_fresh_helper_boundary_preserves_existing_config_set_and_promotion(
             ("existing-promotion", 0.92, 0.91, 25, 250.0, _FIXED.isoformat()),
         )))
         if has_revision:
-            create_action_schema(db, include_reply=True, reply_variant="fresh_memory_fk",
-                                 include_email=True, include_skill_config_receipts=True)
+            create_current_action_schema(db)
             row = db.execute(config_projection("email_category_configs")).fetchone()
             store._append_category_description_revision(db, row, current=True)
             rowid = db.execute(

@@ -11,20 +11,14 @@ from app.email_canonical_storage import insert_email_message, insert_email_class
 from app.email_training_labeler import _all_classified_identities
 from app.email_classifier_contracts import EmailClassificationStatus
 from app.store import AutoReplyStore
+from tests.support.current_inventory import CURRENT_TABLES
 from tests.test_email_store import _classification, _persist_scan
-
-
-CURRENT11_ORDINARY_TABLES = {
-    "actions", "business", "provenance",
-    "configs", "emails", "email_schema_migrations", "provider_state",
-    "runs", "schedules", "state", "tasks",
-}
 
 
 def _assert_selected_graph(db):
     objects = {(row[1], row[2]) for row in db.execute("pragma table_list")
                if row[0] == "main" and not row[1].startswith("sqlite_")}
-    assert objects == {(name, "table") for name in CURRENT11_ORDINARY_TABLES}
+    assert objects == {(name, "table") for name in CURRENT_TABLES}
 
 
 def test_fresh_public_constructors_select_eleven_table_email_graph(tmp_path):
@@ -58,7 +52,7 @@ def test_cold_email_constructor_refuses_mixed_native_parent_before_mutation(tmp_
         db.execute("create table email_messages(unrelated integer)")
         before = tuple(db.iterdump())
         schema_version = db.execute("pragma schema_version").fetchone()[0]
-    with pytest.raises(sqlite3.IntegrityError, match="malformed current provider/config declaration"):
+    with pytest.raises(sqlite3.IntegrityError, match="unsupported or malformed Store source schema"):
         EmailStore(path)
     with sqlite3.connect(path) as db:
         assert tuple(db.iterdump()) == before
@@ -103,7 +97,7 @@ def test_selected_direct_claim_uses_action_and_email_indexes(tmp_path):
         steps = [item[3] for statement in statements
                  if statement.lstrip().lower().startswith("select")
                  for item in db.execute("explain query plan " + statement)]
-    assert any("idx_actions_email_email_actions" in step for step in steps), steps
+    assert any("SEARCH a USING INDEX idx_actions_email_" in step for step in steps), steps
     assert any("SEARCH main.emails USING INDEX sqlite_autoindex_emails_1 "
                "(classification_id=?)" in step for step in steps), steps
     assert not any(step.startswith("SCAN main.emails") for step in steps), steps

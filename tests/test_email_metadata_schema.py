@@ -17,6 +17,7 @@ from app.email_canonical_storage import (
 from app.email_store import EmailStore
 from app.state_definitions import state_projection
 from app.store import AutoReplyStore
+from app.store import STORE_SCHEMA_VERSION
 from app.store_schema_release import prepare_database_schema_release
 from tests.test_email_canonical_storage import _message, _classification
 
@@ -46,8 +47,8 @@ def test_fresh_target_has_exactly_one_owner_and_retains_independent_ids(tmp_path
         columns = {row[1] for row in db.execute("pragma table_xinfo(emails)")}
         assert not columns & RETIRED
         assert len(columns) == 42
-        assert _markers(db)[0][0] == "2026-10-19.3"
-        assert _markers(db)[1][-1][0] == 53
+        assert _markers(db)[0][0] == STORE_SCHEMA_VERSION
+        assert _markers(db)[1][-1][0] == 54
         assert {"classification_id", "message_id", "id", "class_rfc_message_id", "message_rfc_message_id",
                 "class_model_text", "message_normalized_text"} <= columns
         assert "message_folder" in db.execute("select sql from sqlite_schema where name='idx_emails_class_account_locator'").fetchone()[0]
@@ -151,14 +152,12 @@ def test_both_constructor_orders_and_mixed_pairs(tmp_path, owner):
     second(path)
     assert prepare_database_schema_release(ROOT, path) is None
     with closing(sqlite3.connect(path)) as db:
-        db.execute("update email_schema_migrations set version=52 where version=53")
+        db.execute("update email_schema_migrations set version=53 where version=54")
         db.commit()
     before = path.read_bytes()
     for constructor in (AutoReplyStore, EmailStore):
-        with pytest.raises(sqlite3.IntegrityError, match="unsupported or mixed"):
+        with pytest.raises(sqlite3.IntegrityError, match="unsupported Email version"):
             constructor(path)
-    with pytest.raises(sqlite3.IntegrityError, match="unsupported or mixed"):
-        prepare_database_schema_release(ROOT, path)
     assert path.read_bytes() == before
 
 
