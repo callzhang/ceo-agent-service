@@ -181,6 +181,60 @@ def _tc(value):
     return ["tc", {}, ["p", {}, ["span", {"data-type": "text"}, value]]]
 
 
+class NoDataTests(unittest.TestCase):
+    """Derek 2026-10-26: no data is never a reason to block or fail a report."""
+
+    def report(self):
+        return {
+            "as_of": "2026-10-26",
+            "ceo_judgment": [{"text": "本周判断"}],
+            "company_metrics": [
+                {"name": "确认收入", "current": "无数据", "decision_critical": True},
+                {"name": "回款", "target": "", "previous": None, "current": ""},
+            ],
+            "issues": [{"id": "SALES-001", "question": "销售漏斗是否健康？"}],
+        }
+
+    def test_empty_fields_validate_and_render_as_no_data(self):
+        from scripts.validate_run import validate_render_input
+
+        report = self.report()
+        self.assertEqual(validate_render_input(report), [])
+        before = ["root", {}, ["p", {}, "议程"]]
+        rendered = render_meeting_document(before, report)
+        self.assertEqual(check_document(rendered), [])
+        flat = str(rendered)
+        self.assertIn("确认收入", flat)
+        self.assertIn("待确认负责人", flat)
+        self.assertEqual(flat.count("无数据") >= 8, True)
+
+    def test_a_decision_critical_gap_without_an_owner_still_renders(self):
+        rendered = render_meeting_document(["root", {}], self.report())
+        self.assertNotIn("待补：", str(rendered))
+        self.assertEqual(check_document(rendered), [])
+
+    def test_the_full_draft_renders_with_no_business_lines_at_all(self):
+        rendered = render_draft(self.report())
+        self.assertEqual(check_document(rendered), [])
+        for label in ("MorningStar", "Friday", "国际业务", "世界模型/营销线"):
+            self.assertIn(label, str(rendered))
+
+    def test_main_exits_zero_for_a_report_with_no_data(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            (root / "before.json").write_text(json.dumps(["root", {}, ["p", {}, "议程"]]), encoding="utf-8")
+            (root / "report.json").write_text(json.dumps(self.report()), encoding="utf-8")
+            argv = [
+                "render", "--before", str(root / "before.json"), "--report", str(root / "report.json"),
+                "--meeting-document", "--output", str(root / "target.jsonml"),
+                "--draft-output", str(root / "draft.jsonml"),
+            ]
+            with mock.patch("sys.argv", argv):
+                self.assertEqual(main(), 0)
+            self.assertTrue((root / "target.jsonml").exists())
+            self.assertTrue((root / "draft.jsonml").exists())
+
+
 class MeetingDocumentTests(unittest.TestCase):
     def setUp(self):
         base = RendererTests()

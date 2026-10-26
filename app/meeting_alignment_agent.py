@@ -399,13 +399,23 @@ class MeetingAlignmentCodexRunner:
 def _encode_meeting_alignment_audit_result(
     raw: str, *, expected_candidate_sha256: str,
 ) -> str:
+    # Typed so the router runs its one same-session correction turn instead of
+    # terminalizing the attempt as runtime_result_invalid. The messages are
+    # logged by the router, so they carry field paths, never the raw output.
     try:
-        payload = json.loads(raw)
-    except json.JSONDecodeError:
-        payload = json.loads(parse_agent_text_result(raw))
-    result = MeetingAlignmentAuditResult.model_validate(payload)
+        try:
+            payload = json.loads(raw)
+        except json.JSONDecodeError:
+            payload = json.loads(parse_agent_text_result(raw))
+        result = MeetingAlignmentAuditResult.model_validate(payload)
+    except ValueError as exc:
+        raise RoutedResultValidationError(
+            "MeetingAlignmentAuditResult schema mismatch", raw_output=raw
+        ) from exc
     if result.candidate_sha256 != expected_candidate_sha256:
-        raise ValueError("Meeting Audit output candidate digest does not match input")
+        raise RoutedResultValidationError(
+            "Meeting Audit output candidate digest does not match input", raw_output=raw
+        )
     return result.model_dump_json()
 
 

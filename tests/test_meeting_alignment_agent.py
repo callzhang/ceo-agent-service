@@ -222,6 +222,145 @@ def test_meeting_audit_uses_separate_read_only_bound_runtime_call():
     assert "independent, read-only Audit role" in call["command_factory"].developer_instructions
 
 
+def _audit_result_json(digest: str) -> str:
+    return json.dumps({
+        "outcome": "approve",
+        "candidate_sha256": digest,
+        "summary": "candidate is supported",
+        "feedback": None,
+    })
+
+
+def test_audit_parser_marks_digest_mismatch_and_schema_failure_as_validation_failures():
+    """A typed failure is what lets the router run its one correction turn."""
+    from app.agent_runtime_router import RoutedResultValidationError
+    from app.meeting_alignment_agent import _encode_meeting_alignment_audit_result
+
+    digest = "a" * 64
+    one_char_off = "a" * 63 + "b"
+
+    with pytest.raises(RoutedResultValidationError) as raised:
+        _encode_meeting_alignment_audit_result(
+            _audit_result_json(one_char_off), expected_candidate_sha256=digest,
+        )
+    assert "candidate digest does not match input" in str(raised.value)
+    assert one_char_off not in str(raised.value)
+
+    for raw in ("not json", json.dumps({"outcome": "approve"})):
+        with pytest.raises(RoutedResultValidationError) as raised:
+            _encode_meeting_alignment_audit_result(raw, expected_candidate_sha256=digest)
+        assert raised.value.raw_output == raw
+
+    assert json.loads(_encode_meeting_alignment_audit_result(
+        _audit_result_json(digest), expected_candidate_sha256=digest,
+    ))["candidate_sha256"] == digest
+
+
+def _run_audit_with_replies(tmp_path, replies, digest):
+    """Drive MeetingAlignmentCodexRunner.audit through the real router; return (result|error, attempts)."""
+    from app.agent_runtime_config import load_runtime_config
+    from app.agent_runtime_contracts import RuntimeCapabilitySnapshot
+    from app.agent_runtime_router import RoutedCodexExecution, RoutedCodexExecutionError
+    from app.meeting_alignment_agent import MEETING_RUNTIME_CAPABILITIES
+    from app.process_runner import ProcessRunResult
+    from app.store import AutoReplyStore
+    from tests.test_routed_codex_execution import NOW, FakeAdapter, make_router
+
+    store = AutoReplyStore(tmp_path / "meeting-audit-correction.sqlite3")
+    config = load_runtime_config(
+        {
+            "CEO_AGENT_RUNTIME_ROUTES": "codex_oauth,codex_api",
+            **codex_api_env("configured-secret"),
+        }
+    )
+    store.upsert_meeting_alignment_job(
+        meeting_id="minutes-1", title="上线范围评审", source_json="{}",
+        participants_json="[]", ended_at=NOW.isoformat(),
+        eligible_at=NOW.isoformat(), status="pending",
+    )
+    [job] = store.claim_meeting_alignment_jobs(limit=1, now=NOW.isoformat())
+    run_id = store.claim_professional_run(job.id)
+    snapshots = {
+        route.name: RuntimeCapabilitySnapshot(
+            route_name=route.name,
+            capabilities=MEETING_RUNTIME_CAPABILITIES,
+            healthy=True,
+            checked_at="2026-08-20T09:59:00+00:00",
+            expires_at="2026-08-20T10:05:00+00:00",
+        )
+        for route in config.routes
+    }
+    prompts = []
+
+    def executor(command, **kwargs):
+        prompts.append(kwargs["prompt"])
+        reply = replies[min(len(prompts), len(replies)) - 1]
+        return ProcessRunResult(
+            0,
+            "\n".join([
+                json.dumps({"type": "thread.started", "thread_id": "audit-session-1"}),
+                agent_message_jsonl_text(reply),
+            ]),
+            "",
+        )
+
+    class AuditAdapter(FakeAdapter):
+        def build_command(self, **kwargs):
+            assert kwargs.pop("project_doc_max_bytes") == 0
+            # model_only post-processing rewrites a real `codex exec` command line.
+            return [*super().build_command(**kwargs), "exec", "--json"]
+
+    runner = MeetingAlignmentCodexRunner(
+        routed_execution=RoutedCodexExecution(
+            store=store, config=config,
+            router=make_router(store, config, snapshots=snapshots),
+            adapter=AuditAdapter(), executor=executor,
+            session_line_counter=lambda _session_id: 2,
+        )
+    )
+    try:
+        outcome = runner.audit(prompt="Review exact candidate", run_id=run_id, candidate_sha256=digest)
+    except RoutedCodexExecutionError as exc:
+        outcome = exc
+    attempts = store.list_runtime_operation_attempts("meeting_audit", str(run_id))
+    return outcome, attempts, prompts
+
+
+def agent_message_jsonl_text(text: str) -> str:
+    return json.dumps({
+        "type": "response_item",
+        "payload": {
+            "type": "message",
+            "role": "assistant",
+            "content": [{"type": "output_text", "text": text}],
+        },
+    })
+
+
+def test_audit_digest_mismatch_gets_one_correction_turn_that_can_pass(tmp_path):
+    digest = "a" * 64
+    outcome, attempts, prompts = _run_audit_with_replies(
+        tmp_path, [_audit_result_json("a" * 63 + "b"), _audit_result_json(digest)], digest,
+    )
+
+    assert outcome.candidate_sha256 == digest
+    assert "preserve the exact candidate_sha256" in prompts[1]
+    assert [a.attempt_purpose for a in attempts] == ["normal", "result_validation_correction"]
+    assert [a.status for a in attempts] == ["superseded", "completed"]
+    assert attempts[0].failure_code == "runtime_result_validation_failed"
+
+
+def test_audit_second_digest_mismatch_still_fails_terminally(tmp_path):
+    digest = "a" * 64
+    wrong = _audit_result_json("a" * 63 + "b")
+    outcome, attempts, prompts = _run_audit_with_replies(tmp_path, [wrong, wrong], digest)
+
+    assert getattr(outcome, "failure_code", None) == "runtime_result_validation_failed"
+    assert len(prompts) == 2
+    assert [a.attempt_purpose for a in attempts] == ["normal", "result_validation_correction"]
+    assert attempts[-1].status == "failed"
+
+
 def test_meeting_audit_treats_explicit_followup_assignment_as_limited_share_evidence():
     decision = MeetingAlignmentDecision.model_validate(valid_send_decision())
     meeting_source_payload = source().model_dump(mode="json")
