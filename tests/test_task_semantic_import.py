@@ -478,13 +478,12 @@ def test_per_item_transaction_rechecks_supporting_source_before_write(
     tmp_path, monkeypatch, changed_source
 ):
     store = AutoReplyStore(tmp_path / "legacy.sqlite3")
-    _source_backed_todo(
+    project_id, _todo_id, _update_id = _source_backed_todo(
         store, basis="explicit_assignment", source_type="reply_attempt",
         author_user_id="assigner",
     )
-    for project in store.list_work_projects():
-        _update_business(store.path, "work_project", project.id,
-                         {"last_activity_at": "2026-01-01 00:00:00"})
+    _update_business(store.path, "work_project", project_id,
+                     {"last_activity_at": "2026-01-01 00:00:00"})
     with sqlite3.connect(store.path) as db:
         db.execute("begin immediate")
         update_sync_action(db, "work_updates", 1, {"created_at": "2026-01-01 00:00:00"})

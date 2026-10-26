@@ -2,7 +2,7 @@ import { Send } from "lucide-react";
 import { useEffect, useState } from "react";
 import { Link } from "react-router-dom";
 
-import { getBusinessTaskDetail, getLegacyProjectDetail, sendBusinessTaskFollowUp, type BusinessTaskDetail, type TaskDetail } from "../api/console";
+import { getBusinessTaskDetail, getLegacyProjectDetail, sendBusinessTaskFollowUp, type BusinessTaskDetail, type LegacyProjectDetail } from "../api/console";
 import { ConsolePageLayout } from "../components/layout/ConsolePageLayout";
 import { SnapshotBadge } from "../components/status/SnapshotBadge";
 import { CandidateAction, CitationList, DetailSection, signalSourceLink, TaskSkeleton } from "./TaskParts";
@@ -83,7 +83,7 @@ function LegacyRawRecord({ label, value }: { label: string; value: unknown }) {
   return <details className="business-source-raw"><summary>{label}</summary><pre>{typeof content === "string" ? content : JSON.stringify(content, null, 2)}</pre></details>;
 }
 
-function LegacyProjectHistory({ detail }: { detail: TaskDetail }) {
+function LegacyProjectHistory({ detail }: { detail: LegacyProjectDetail }) {
   return <>
     <SourceRecordList title="历史事实" rows={detail.facts.map((fact) => ({
       id: fact.id,
@@ -236,7 +236,7 @@ export function TaskDetailPage({ taskId }: { taskId: string }) {
 }
 
 export function LegacyProjectDetailPage({ legacyProjectId }: { legacyProjectId: string }) {
-  const [detail, setDetail] = useState<TaskDetail | null>(null);
+  const [detail, setDetail] = useState<LegacyProjectDetail | null>(null);
   const [error, setError] = useState("");
   useEffect(() => {
     const controller = new AbortController();

@@ -9,8 +9,8 @@ import { LegacyProjectDetailPage } from "./TaskDetailPage";
 describe("LegacyProjectDetailPage", () => {
   it("shows retained historical records, provenance and receipts with canonical anchors and no actions", async () => {
     getLegacyProjectDetail.mockResolvedValue({ item: {
-      id: "17", title: "历史客户交付项目", category: "customer", status: "active", owner: "王五", progress: "0/1", todo_count: 1, state_summary: "", next_summary: "",
-      description: "旧项目说明", background: "历史背景", blocker: "曾经受阻", tags: [], facts: [
+      id: "17", title: "历史客户交付项目", status: "active", owner: "王五",
+      description: "旧项目说明", facts: [
         { id: "fact-1", description: "客户要求先做小范围试点", source: "meeting-71", created: "2026-09-01", updated: "2026-09-02" },
       ],
       source_conversations: [{ id: "conversation-1", title: "客户试点讨论", source_ref: "chat-80" }],

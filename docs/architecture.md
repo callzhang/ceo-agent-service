@@ -495,10 +495,16 @@ legacy-project 深链接保留。D1b 不改变物理声明或旧记录。独立 
 Project CRM 搜索、确认和清除关联仍在原业务写事务中；搜索只存本地候选，
 不替代已确认关联，也不写外部 CRM。
 
+前端只保留专用 `LegacyProjectDetail` 历史详情适配器，不再把正式 Task 列表映射为旧 Project 摘要，也不从历史 Todo 推算当前进度。无调用的三个 Work Project/Todo 批量列表 Store API 已退休；精确历史 getter、来源、事实与回执读取保留。
+
 原 `business_source_documents` 正文表及数字容器 ID 退休。Signal DAO 仅持久化
-来源身份、精确版本、hash／字节数及 locator；一个 owner 直接内联，第二个 owner
-在原 savepoint 中把同一精确来源提升到共享 provenance，保留 Signal ID 和事实。
-推广失败时整个 savepoint 回滚。证据引语、来源关系和已采用业务事实仍保持原义。
+来源身份、精确版本、hash／字节数及 locator。Store25.3 目标把所有来源版本统一交给既有
+`provenance` owner；Signal 仅保存必需 `provenance_id` 与标题、context、dedupe_key、created_at
+四项自身事实。首个 Signal 即创建或复用 parent，第二个 Signal 不修改第一个 Signal；
+父来源与 Signal 插入失败时原 savepoint 整体回滚。运行读取只走 parent join，无 inline
+兼容或 promotion。显式25.2→25.3发布与当前数据 inverse 保留来源值/类型、公开与物理
+身份、关联和回执；旧17槽仅供迁移/回退工具。该目标尚待副本验收和标准发布，基线生产仍是25.2。
+证据引语、来源关系和已采用业务事实保持原义。详见[Signal来源归属](signal-source-owner-unification.md)。
 TaskAgent 按实际生成任务的 runtime attempt、session 和记录范围检查完整原生输入；
 定位器验证 CLI 原始行 hash、JSON leaf、字符范围、完整 UTF-8 hash／字节数。
 单独直接注入的文本仅在明确选择 `plain_utf8` 时按该格式读取；通常来源使用
@@ -1871,6 +1877,8 @@ Task 需要来源明确的、可独立完成的交付物或行动，或由已证
 “X负责Y”仅描述职责，即使 Y 是独立业务领域，也不自动生成 Task；需要来源明确的独立行动/交付要求或真实行动项记录。
 保留 existing_attention_id 时，assessment 必须引用当前 `current_project_attention.assessment_json.evidence` 中至少一条完全相同的原始证据三元组（signal_id、source_ref、source_excerpt）；新证据只能补充，不能替代卡片原始证明。
 区别职责与行动时，“李四负责核实客户付款排期并反馈”是具体可执行 Task；“王五负责商务对账”若仅描述职能范围则是 ProjectContext。项目级风险的显示型建议可基于已保存职责，也可由唯一 overall_owner 承接跨职能协调，但不构成正式指派。
+
+以下共享正文存储与 B/C/D 未发布描述属于正文退休前的历史检查点；当前来源归属以本文前面的 Signal DAO 合同为准，现有库不保留该原文表。
 
 `business_source_documents` 保存不可变原文，Signal 通过真实 source_document_id 外键引用。
 只有来源类型/ref/时间、会话、作者 ID/姓名/类型和正文八项完全相同才共享正文；Signal ID、

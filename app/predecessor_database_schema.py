@@ -4,7 +4,7 @@ This factory is migration-only. Runtime construction uses the assembled native
 Task/Run declaration in ``current_database_schema``.
 """
 from app.business_legacy_fields import current_business_declaration
-from app.current_action_schema import create_current_action_schema
+from app.current_action_schema import create_source_current_action_schema
 from app.business_schema_helpers import _create_auxiliary
 from app.configs_storage import create_configs_schema
 from app.schedules_storage import create_schedules_schema
@@ -40,7 +40,7 @@ def create_store_2026_10_21_1_schema(db):
     create_current_run11_schema(db)
     create_provenance_schema(db)
     _create_emails(db, metadata_owner=True, action_owner=True)
-    create_current_action_schema(db)
+    create_source_current_action_schema(db)
     business = current_business_declaration()
     db.execute(business["sql"])
     _create_auxiliary(db, business)

@@ -2,6 +2,14 @@
 
 ## 数据库结构与迁移合同
 
+当前发布选择器只处理当前 Store／Email 声明、明确的单一上一版本迁移和仅 Email 变化的迁移。当前 Signal 发布的上一版是 Store `2026-10-25.2`／Email54；更早的 Store `2026-10-19.12`／Email53 Action Entity 路径已退出自动发布分派。不能把旧 marker 当成可直接迁移的证据；不匹配的 schema 在任何写入前失败关闭。下方更早的阶段记录描述的是当时的候选与已完成工作，不代表当前可自动升级范围。
+
+历史 Action Entity 工具仅以固定 Store19.12／Email53 source 与 Store21.1／Email53 target 声明，并从该发布版本生成的固定 schema fixtures 读取；它保留为显式历史工具与迁移回归，不由部署选择器调用，也不声称能迁移到后续 Task／Run schema。
+
+Store25.3／Email54 的标准发布选择器只接受精确的 Store25.2／Email54 Signal 来源声明，
+调用配对的来源归属迁移并沿用现有发布、加载后核验、回滚和最终核验流程。其余旧版或
+混合版本仍失败关闭。此代码提交不代表生产切换；生产版本以标准部署读回为准。
+
 ### 历史业务读取归一（2026-10-25）
 
 当前业务库存与筛选只使用已有 Business Task／正式项目模型；旧 Project／Todo／Update
@@ -273,7 +281,7 @@ created_at 及整个原始 JSONB payload 不改写。三个 nullable TEXT 物理
 只有 prepared 父类型可持有它们。SQL NULL 表示不存在的子事实，文本 `null`／`{}`
 保留为已存在的 provider 字符串；claim 与 receipt 的时钟独立于准备时钟。
 
-Task3（2026-10-21）将 reviewed、direct-email、prepared-message 与 Sent 执行恢复切换到同一 Action owner。调用方保留原事务、审批、provider 核验和不确定结果恢复边界；prepared 的准备、claim、接受回执仍在各自原有提交边界。prepared Action 在真实发送调用时才记录 provider operation；prepared facts 不借用 Sent 或 provider 时钟。审查执行在每个 execution/action_index 保留一个可更新的当前观察，旧执行的观察与 provider receipt 仍独立保留。direct-email retry 复用原 Action identity 并追加各次执行观察。Sent 历史缺失的 canonical operation、target、digest 或 action identity 保持 NULL；已核验的 failed-Audit 恢复可把这些事实绑定到原 provider body receipt，不复制正文、不重发。canonical provider 结果通过 reference-only metadata receipt 直接指向当前 immutable body；普通 provider receipt 不会仅因 ID 较新而改变该绑定。复杂 unsubscribe 保留原专有流程；这次切换不改变任何审批、授权、核验或重试规则。
+Task3（2026-10-21）将 reviewed、direct-email、prepared-message 与 Sent 执行恢复切换到同一 Action owner。调用方保留原事务、审批、provider 核验和不确定结果恢复边界；prepared 的准备、claim、接受回执仍在各自原有提交边界。prepared Action 在真实发送调用时才记录 provider operation；prepared facts 不借用 Sent 或 provider 时钟。审查执行在每个 execution/action_index 保留一个可更新的当前观察，旧执行的观察与 provider receipt 仍独立保留。direct-email retry 复用原 Action identity 并追加各次执行观察；retry request 是不可替换的追加事实，同一 Action identity 与 attempt number 的再次插入会被拒绝。Sent 历史缺失的 canonical operation、target、digest 或 action identity 保持 NULL；已核验的 failed-Audit 恢复可把这些事实绑定到原 provider body receipt，不复制正文、不重发。canonical provider 结果通过 reference-only metadata receipt 直接指向当前 immutable body；普通 provider receipt 不会仅因 ID 较新而改变该绑定。复杂 unsubscribe 保留原专有流程；这次切换不改变任何审批、授权、核验或重试规则。
 
 Task4（2026-10-21，候选）将 direct-email History、Attention、队列快照、重要邮件清单及邮件分类可观测性读取切换到 Action 与 Action Receipt。发送详情以 Action 的物理 ID、正文、准确 Sent 回执和 `observed_at` 展示；provider 正文只从该 Action 的 provider receipt 读取，缺失的 operation/target 显示为未提供，不合成来源事实。多个 Run observer 仍对应一条发送效果。撤回只更新同一 Action 的撤回字段，不新增发送或改写原发送回执；feedback token 从同一 Action 取得，并继续按其原 conversation/trigger 身份关联消息和反馈。邮件退订仍走其专有流程。
 
@@ -510,9 +518,13 @@ Project CRM 搜索、确认和清除关联仍在原业务写事务中；搜索�
 不替代已确认关联，也不写外部 CRM。
 
 原 `business_source_documents` 正文表及数字容器 ID 退休。Signal DAO 仅持久化
-来源身份、精确版本、hash／字节数及 locator；一个 owner 直接内联，第二个 owner
-在原 savepoint 中把同一精确来源提升到共享 provenance，保留 Signal ID 和事实。
-推广失败时整个 savepoint 回滚。证据引语、来源关系和已采用业务事实仍保持原义。
+来源身份、精确版本、hash／字节数及 locator。Store25.3 目标的每个 Signal 都引用既有
+`provenance`，只保存引用与标题、context、dedupe_key、created_at 四项自身事实。首个
+owner 即创建/复用来源，后续写入不推广或修改旧 Signal；parent/Signal 在原 savepoint
+内原子写入，查询只走 parent join。旧17槽只属于显式25.2/54→25.3/54迁移和
+current-data inverse，不进入运行时兼容分支。来源值/类型、Signal身份、业务关联、回执
+及来源不可用语义不变。该目标尚待验收发布；基线生产25.2的两种表示仅是迁移源。
+详见[字段归属和验证](signal-source-owner-unification.md)。
 TaskAgent 按实际生成任务的 runtime attempt、session 和记录范围检查完整原生输入；
 定位器验证 CLI 原始行 hash、JSON leaf、字符范围、完整 UTF-8 hash／字节数。
 单独直接注入的文本仅在明确选择 `plain_utf8` 时按该格式读取；通常来源使用
@@ -1874,6 +1886,8 @@ Task 需要来源明确的、可独立完成的交付物或行动，或由已证
 保留 existing_attention_id 时，assessment 必须引用当前 `current_project_attention.assessment_json.evidence` 中至少一条完全相同的原始证据三元组（signal_id、source_ref、source_excerpt）；新证据只能补充，不能替代卡片原始证明。
 区别职责与行动时，“李四负责核实客户付款排期并反馈”是具体可执行 Task；“王五负责商务对账”若仅描述职能范围则是 ProjectContext。项目级风险的显示型建议可基于已保存职责，也可由唯一 overall_owner 承接跨职能协调，但不构成正式指派。
 
+以下共享正文与 B/C/D 未发布描述属于正文退休前的历史检查点；当前来源归属以本文前面的 Signal DAO 合同为准，现有库不保留该原文表。
+
 `business_source_documents` 保存不可变原文，Signal 通过真实 source_document_id 外键引用。
 只有来源类型/ref/时间、会话、作者 ID/姓名/类型和正文八项完全相同才共享正文；Signal ID、
 dedupe_key、上下文、Task 证据角色与历史仍独立。同 ref 的 memory/session 引文不冒充 observed 原文。
@@ -1896,6 +1910,7 @@ API 使用有类型的来源视图：可用时正文非空且无错误，不可�
 查找现有提示词中的完整来源 JSON 字符串；输出行/内容路径、字符区间和校验值，交给精确读取器。
 部分引文或本轮范围外的匹配不能替代原文，不写 trajectory 或正文副本。当前定位原语尚未接入
 Signal 持久化，新写入路径的完整集成仍属最终迁移验收差项。
+历史实现注记（以下三段是正文退休前的检查点，不是当前运行状态）：
 开发中的无正文 Signal DAO 已使用最终 `_kind` 与固定 JSONB 槽位。首次使用在 Signal 内联来源；第二个使用者才将同一来源提升到 provenance，通过置空来源槽位并设置外键完成，不移动数组槽位，也不改变业务事实和公开 ID。第二次插入失败时，现有调用方事务内的 savepoint 回滚整个提升，其他证据引用保持。该组件不保存原文；Store 尚未选择最终来源结构，历史正文未退休、生产未发布。
 
 AI Minutes 的来源定位包含 transcript_excerpts 时，必须同时记录真实生成格式
@@ -5416,3 +5431,6 @@ Consumer 的原生输出段仅保留 schema 指纹、JSON/decision 包装说明�
 ### DWS 文档格式核验与字面内容
 
 Consumer共用文档工具继续提交原始Markdown/JSONML工件；已执行写入算写入成功，核验状态独立保留，不因未核验自动重写。当前本机DWS核验按钉钉Markdown的双等号高亮语义处理作者输入，要求完整JSONML证明相同文字、规范化词间边界、高亮范围与颜色，再执行整体内容及表格对齐检查；不全局删除标记或忽略内容差异。需要保留双等号的标识符使用代码格式或转义，说明位于按需读取的dingtalk-doc Skill，不增加通用prompt。DWS源码修复仅提交外部PR，本机版本化发布与自然行为验收分别记录于document-write-recovery-validation.md；无新增写入重试、Audit规则或session机制。
+### Historical console adapter ownership — 2026-10-25
+
+The console uses the dedicated `LegacyProjectDetail` adapter for retained legacy project details. It does not map the current Business Task list to old Project summaries or compute operational progress from historical Todos. Callerless Work Project/Todo batch-list Store methods are retired; exact historical project/todo getters and the source/fact/receipt detail path remain. This cleanup has no schema or data migration.

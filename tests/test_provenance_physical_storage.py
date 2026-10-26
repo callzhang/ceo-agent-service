@@ -10,11 +10,11 @@ from tempfile import TemporaryDirectory
 import pytest
 
 from app.email_canonical_storage import _action_objects
-from app.email_canonical_definitions import EMAILS_TABLE_SQL, EMAILS_INDEX_SQL, EMAILS_TRIGGER_SQL
 from app.business_source_reader import SourceVersionBinding
 from app.business_storage import insert_business
 from app.business_candidate_storage import insert_business_candidate
-from app.action_storage import action_payloads, _encoded_native_sqlite_value
+from app.action_storage import _encoded_native_sqlite_value
+from app.current_action_schema import current_action_payloads
 from app.storage_payload import ACTION_RECORD_TYPES
 from app.provenance_definitions import SOURCE_FIELDS
 from app.provenance_storage import (
@@ -44,40 +44,13 @@ def test_physical_actions_shape_is_available_without_changing_default(variant):
     assert any(obj["name"] == "idx_actions_business_signal_public_id" for obj in physical)
 
 
-@pytest.fixture(scope="module")
-def current_schema_bytes():
-    with TemporaryDirectory(prefix="provenance-physical-source-", dir="/tmp") as directory:
-        path = Path(directory) / "current.sqlite3"
-        AutoReplyStore(path)
-        with sqlite3.connect(path) as db:
-            db.execute("pragma journal_mode=delete")
-            db.execute("pragma foreign_keys=off")
-            db.execute("drop table actions")
-            db.execute(EMAILS_TABLE_SQL)
-            for sql in (*EMAILS_INDEX_SQL, *EMAILS_TRIGGER_SQL):
-                db.execute(sql)
-            create_provenance_schema(db)
-            objects = _action_objects("fresh_memory_fk", target=True, inline_legacy_owner=True,
-                                      physical_provenance=True, compact_payload=True)
-            for kind in ("table", "index", "trigger"):
-                for obj in objects:
-                    if obj["type"] == kind:
-                        db.execute(obj["sql"])
-            db.commit()
-            assert db.execute("pragma foreign_key_check").fetchall() == []
-        return path.read_bytes()
-
-
 @pytest.fixture
-def db(current_schema_bytes):
-    with TemporaryDirectory(prefix="provenance-physical-case-", dir="/tmp") as directory:
-        path = Path(directory) / "case.sqlite3"
-        path.write_bytes(current_schema_bytes)
-        with sqlite3.connect(path) as connection:
-            connection.execute("pragma foreign_keys=on")
-            connection.execute("begin")
-            yield connection
-            connection.rollback()
+def db(tmp_path):
+    store = AutoReplyStore(tmp_path / "provenance-physical.sqlite3")
+    with store._connect() as connection:
+        connection.execute("begin")
+        yield connection
+        connection.rollback()
 
 
 @pytest.fixture
@@ -95,16 +68,14 @@ def binding():
     )
 
 
-_LAYOUTS = action_payloads("fresh_memory_fk", physical_provenance=True)
+_LAYOUTS = current_action_payloads()
 
 
 def _payload(db, public_id):
     encoded = db.execute(
         "select json(payload_json) from actions where business_signal_public_id=?", (public_id,),
     ).fetchone()[0]
-    values = _LAYOUTS.layouts["business_task_signals"].unpack(encoded)
-    absent = {"provenance_id"} if values["provenance_id"] is None else set(SOURCE_FIELDS)
-    return {name: value for name, value in values.items() if name not in absent}
+    return _LAYOUTS.layouts["business_task_signals"].unpack(encoded)
 
 
 def _signal_payload(values):
@@ -112,19 +83,20 @@ def _signal_payload(values):
     # arrays instead of being repaired by the fixture encoder.
     layout = _LAYOUTS.layouts["business_task_signals"]
     fields = list(layout.fields)
-    if "identity_key" not in values:
-        fields.remove("identity_key")
+    missing = values.get("_missing")
+    if missing is not None:
+        fields.remove(missing)
     encoded = [_encoded_native_sqlite_value(values.get(name)) for name in fields]
     if "unexpected" in values:
         encoded.append(values["unexpected"])
     return json.dumps(encoded, ensure_ascii=False, allow_nan=False)
 
 
-def test_inline_second_and_third_owner_preserve_binding_and_public_ids(db, binding):
+def test_first_second_and_third_owner_reference_parent_and_preserve_public_ids(db, binding):
     first = insert_signal_version(db, binding, dedupe_key="a", conversation_title="first")
-    assert db.execute("select count(*) from provenance").fetchone()[0] == 0
-    assert set(_payload(db, first)) == set(SOURCE_FIELDS) | {
-        "conversation_title", "context_json", "dedupe_key", "created_at",
+    assert db.execute("select count(*) from provenance").fetchone()[0] == 1
+    assert set(_payload(db, first)) == {
+        "provenance_id", "conversation_title", "context_json", "dedupe_key", "created_at",
     }
     assert signals_for_source(db, source_type=binding.source_type,
                               source_ref=binding.source_ref,
@@ -149,7 +121,7 @@ def test_inline_second_and_third_owner_preserve_binding_and_public_ids(db, bindi
     assert db.execute("pragma foreign_key_check").fetchall() == []
 
 
-def test_different_complete_version_stays_inline_and_duplicate_dedupe_fails(db, binding):
+def test_different_complete_version_gets_own_parent_and_duplicate_dedupe_fails(db, binding):
     first = insert_signal_version(db, binding, dedupe_key="a")
     changed = replace(binding, source_time="time-2", identity_key=source_document_key(
         source_type=binding.source_type, source_ref=binding.source_ref, source_time="time-2",
@@ -159,12 +131,12 @@ def test_different_complete_version_stays_inline_and_duplicate_dedupe_fails(db, 
     ))
     second = insert_signal_version(db, changed, dedupe_key="b")
     assert (first, second) == (1, 2)
-    assert db.execute("select count(*) from provenance").fetchone()[0] == 0
+    assert db.execute("select count(*) from provenance").fetchone()[0] == 2
     with pytest.raises(sqlite3.IntegrityError):
         insert_signal_version(db, binding, dedupe_key="a")
     assert db.in_transaction
-    assert _payload(db, first)["identity_key"] == binding.identity_key
-    assert db.execute("select count(*) from provenance").fetchone()[0] == 0
+    assert signal_binding(db, first) == binding
+    assert db.execute("select count(*) from provenance").fetchone()[0] == 2
 
 
 def test_same_ref_changed_body_time_or_author_are_separate_versions(db, binding):
@@ -185,22 +157,21 @@ def test_same_ref_changed_body_time_or_author_are_separate_versions(db, binding)
     ids = [insert_signal_version(db, item, dedupe_key=f"version:{index}")
            for index, item in enumerate(versions)]
     assert ids == [1, 2, 3, 4]
-    assert db.execute("select count(*) from provenance").fetchone()[0] == 0
+    assert db.execute("select count(*) from provenance").fetchone()[0] == 4
     assert [signal_binding(db, public_id) for public_id in ids] == list(versions)
 
 
-def test_failed_second_insert_rolls_back_promotion_inside_caller_transaction(db, binding):
+def test_failed_second_insert_keeps_existing_parent_inside_caller_transaction(db, binding):
     first = insert_signal_version(db, binding, dedupe_key="a")
     with pytest.raises(sqlite3.IntegrityError):
         insert_signal_version(db, binding, dedupe_key="a")
     db.commit()
-    assert _payload(db, first)["identity_key"] == binding.identity_key
-    assert db.execute("select count(*) from provenance").fetchone()[0] == 0
+    assert signal_binding(db, first) == binding
+    assert db.execute("select count(*) from provenance").fetchone()[0] == 1
 
 
-def test_promotion_guard_covers_every_writable_outer_column(db, binding):
+def test_signal_immutability_covers_every_writable_outer_column(db, binding):
     first = insert_signal_version(db, binding, dedupe_key="a")
-    insert_signal_version(db, binding, dedupe_key="b")
     columns = [row[1] for row in db.execute("pragma table_xinfo(actions)")
                if row[6] == 0 and row[1] != "payload_json"]
     assert {"id", "_kind", "legacy_key", "memory_attempt_ref"} <= set(columns)
@@ -228,19 +199,24 @@ def test_promotion_guard_covers_every_writable_outer_column(db, binding):
                    "author_name,author_kind,identity_key,body_sha256,body_utf8_bytes from provenance")
 
 
-def test_full_payload_rejects_missing_extra_wrong_type_and_bad_locator(db, binding):
-    baseline = {name: getattr(binding, name) for name in SOURCE_FIELDS} | {
+def test_current_payload_rejects_missing_extra_wrong_parent_and_bad_facts(db, binding):
+    parent_id = db.execute(
+        "insert into provenance(" + ",".join(SOURCE_FIELDS) + ") values("
+        + ",".join("?" for _ in SOURCE_FIELDS) + ")",
+        tuple(getattr(binding, name) for name in SOURCE_FIELDS),
+    ).lastrowid
+    baseline = {
+        "provenance_id": parent_id,
         "conversation_title": "", "context_json": "{}", "dedupe_key": "direct",
         "created_at": "created",
     }
     bad = [
         baseline | {"unexpected": "field"},
-        {name: value for name, value in baseline.items() if name != "identity_key"},
-        baseline | {"body_utf8_bytes": "thirteen"},
-        baseline | {"identity_key": "A" * 64},
-        baseline | {"native_provenance_json": "{}"},
-        baseline | {"provider_locator_json": '{"kind":"ai_minutes"}'},
+        baseline | {"_missing": "provenance_id"},
+        baseline | {"provenance_id": "one"},
+        baseline | {"provenance_id": parent_id + 1},
         baseline | {"context_json": "[]"},
+        baseline | {"dedupe_key": ""},
     ]
     for index, payload in enumerate(bad):
         try:
@@ -257,7 +233,7 @@ def test_same_key_with_changed_source_fact_is_rejected(db, binding):
     insert_signal_version(db, binding, dedupe_key="a")
     with pytest.raises(ValueError, match="collides"):
         insert_signal_version(db, replace(binding, source_ref="another"), dedupe_key="b")
-    assert db.execute("select count(*) from provenance").fetchone()[0] == 0
+    assert db.execute("select count(*) from provenance").fetchone()[0] == 1
 
 
 def _valid_native():
@@ -326,25 +302,24 @@ def test_parent_requires_explicit_formatter_only_for_minutes_excerpt_locator(bin
             insert()
 
 
-def test_inline_rejects_missing_wrong_type_and_malformed_coordinates(db, binding):
-    base = {name: getattr(binding, name) for name in SOURCE_FIELDS} | {
-        "conversation_title": "", "context_json": "{}", "dedupe_key": "direct",
-        "created_at": "created",
-    }
-    bad = [
-        base | {"body_utf8_bytes": 1.5},
-        base | {"provider_locator_json": '{"kind":"ai_minutes","minutes_id":"source-1"}'},
-        base | {"provider_locator_json": '{"kind":"ai_minutes","minutes_id":"source-1","components":null}'},
-        base | {"provider_locator_json": '{"kind":"ai_minutes","minutes_id":"wrong","components":["meeting","todos"]}'},
-        base | {"native_provenance_json": '{"runtime_kind":"codex_cli"}', "provider_locator_json": None},
-        base | {"native_provenance_json": json.dumps(_valid_native() | {"leaf_path": [True]}),
-                "provider_locator_json": None},
-    ]
-    for index, payload in enumerate(bad):
+def test_runtime_rejects_invalid_source_parent_facts_atomically(db, binding):
+    bad = (
+        replace(binding, body_utf8_bytes=1.5),
+        replace(binding, provider_locator_json='{"kind":"ai_minutes","minutes_id":"source-1"}'),
+        replace(binding, provider_locator_json='{"kind":"ai_minutes","minutes_id":"source-1","components":null}'),
+        replace(binding, provider_locator_json='{"kind":"ai_minutes","minutes_id":"wrong","components":["meeting","todos"]}'),
+        replace(binding, native_provenance_json='{"runtime_kind":"codex_cli"}',
+                provider_locator_json=None),
+        replace(binding, native_provenance_json=json.dumps(
+            _valid_native() | {"leaf_path": [True]}
+        ), provider_locator_json=None),
+    )
+    for index, invalid in enumerate(bad):
         with pytest.raises(sqlite3.IntegrityError, match="CHECK|invalid"):
-            db.execute("insert into actions(_kind,legacy_key,payload_json) values(?,?,jsonb(?))",
-                       (ACTION_RECORD_TYPES.code("business_task_signals"), "1", _signal_payload(payload)))
+            insert_signal_version(db, invalid, dedupe_key=f"invalid:{index}")
+        assert db.in_transaction
     assert db.execute("select count(*) from actions where record_type='business_task_signals'").fetchone()[0] == 0
+    assert db.execute("select count(*) from provenance").fetchone()[0] == 0
 
 
 def test_weekly_empty_url_is_a_valid_existing_source_coordinate(db, binding):
@@ -418,15 +393,15 @@ def test_all_existing_signal_public_id_links_survive_promotion(db, binding):
     assert db.execute("pragma foreign_key_check").fetchall() == []
 
 
-def test_existing_unowned_parent_is_rejected_without_inserting_inline(db, binding):
+def test_existing_unowned_parent_is_reused_by_first_signal(db, binding):
     columns = ",".join(SOURCE_FIELDS)
     slots = ",".join("?" for _ in SOURCE_FIELDS)
     db.execute(f"insert into provenance({columns}) values({slots})",
                tuple(getattr(binding, name) for name in SOURCE_FIELDS))
-    with pytest.raises(sqlite3.IntegrityError, match="fewer than two owners"):
-        insert_signal_version(db, binding, dedupe_key="malformed-parent")
+    signal_id = insert_signal_version(db, binding, dedupe_key="existing-parent")
     assert db.execute("select count(*) from provenance").fetchone()[0] == 1
-    assert db.execute("select count(*) from actions where record_type='business_task_signals'").fetchone()[0] == 0
+    assert _payload(db, signal_id)["provenance_id"] == 1
+    assert signal_binding(db, signal_id) == binding
 
 
 def test_existing_native_receipt_coordinate_fields_are_supported(db, binding):
@@ -479,7 +454,7 @@ def test_native_reader_empty_dictionary_key_is_valid_parent_coordinate(monkeypat
         directory.cleanup()
 
 
-def test_native_reader_empty_dictionary_key_is_valid_inline_coordinate(db, monkeypatch, binding):
+def test_native_reader_empty_dictionary_key_is_valid_runtime_parent_coordinate(db, monkeypatch, binding):
     directory, body, locator = _empty_key_native_locator(monkeypatch)
     try:
         assert native_trajectory.read_native_source_body(locator) == body

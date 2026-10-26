@@ -1,6 +1,25 @@
 # Business model simplification: current completion and closeout
 
-## Current authoritative status — production readback, 2026-10-25
+## Current work — adapter retirement and Signal source ownership
+
+The new authorized unit follows the prior history closeout. Adapter retirement
+is implemented, independently reviewed and committed as `d2dc7c6c3`; its44 API,
+9 page and66 backend focused tests pass. It has not been separately deployed.
+Signal source ownership is implemented as candidate Store25.3/Email54 with the
+[frozen field/DDL/reverse contract](signal-source-owner-unification.md).
+Independent SPEC/QUALITY reviews, scoped tests, complete production-derived copy
+forward/current-data inverse/real old-code cold read/write/reforward and a
+second inverse-source continuation proof all passed. The [acceptance record](signal-source-owner-validation.md)
+keeps exact cohort sizes, manifest digests, overlapping test counts and the two
+baseline ABI failures separate. The generated full SQL artifact is refreshed.
+The other task owns selector/publication integration; its Quality work and
+standard release/readback are pending. No protected entrypoint was edited and
+no real test send occurred. Production was read as Store25.2/Email54 with1140
+Signals (110 inline,1030 referenced;172 parents); this is the source checkpoint,
+not a deployment of25.3. Final integrated release/readback and cleanup remain
+pending.
+
+## Previous history closeout — production readback, 2026-10-25
 
 | Area | Verified state | Evidence / remaining boundary |
 |---|---|---|
@@ -13,11 +32,9 @@
 | Known data exception | Original sole FK finding `('runs',190042,'tasks',1)` remains unchanged. | Last value is FK ordinal; no inferred Task, NULL repair or deletion. Separate from this read-model change. |
 | Artifact cleanup | Latest workflow backup verified complete/quick_check OK; exact cleanup still blocked by platform approval Never. | 11 owned test roots, one backup and four API files rechecked present; about11.86GiB. Authorization already exists; no alternate deletion mechanism. |
 
-This table is the current status source. Sections below retain dated checkpoints;
+This table records the previous completed history closeout. The new work status above is authoritative for the adapter/Signal scope. Sections below retain dated checkpoints;
 old production versions, unactivated constructors and pending release statements
-must not be read as current state. Scope implementation, reviews, copy checks,
-native acceptance and release/readback are complete; artifact cleanup is the
-remaining closeout blocker. The broader historical non-green test result is not
+must not be read as current state. For that previous history scope, implementation, reviews, copy checks, native acceptance and release/readback are complete; artifact cleanup remained blocked at that checkpoint. The broader historical non-green test result is not
 rewritten by this scoped acceptance.
 
 ## Artifact cleanup authorization and recheck — 2026-10-25

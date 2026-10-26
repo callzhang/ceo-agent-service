@@ -187,7 +187,6 @@ def test_selected_source_task_and_attention_lookups_use_selective_indexes(tmp_pa
         source_query = next(sql for sql in statements
                             if sql.lstrip().lower().startswith("select a.business_signal_public_id"))
         plan = " ".join(str(row[3]) for row in db.execute("explain query plan " + source_query))
-        assert "idx_actions_signal_inline_source" in plan
         assert "idx_provenance_source" in plan
         assert "idx_actions_signal_shared" in plan
         assert "USE TEMP B-TREE" not in plan
