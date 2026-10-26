@@ -18,6 +18,7 @@ tests/test_business_schema_release.py
 tests/test_business_skills.py
 tests/test_business_storage.py
 tests/test_calendar_timezone.py
+tests/test_capability_prompt_missing_tool.py
 tests/test_ceo_minutes_sync_skill.py
 tests/test_claude_runtime_probe_tool.py
 tests/test_codex_capacity.py
