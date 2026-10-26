@@ -8521,6 +8521,7 @@ class EmailStore:
                     "category": str(row["confirmed_category"]),
                 }
                 for row in rows
+                if (row["account_id"], row["stable_message_identity"]) in inputs
             ],
             stamp,
         )

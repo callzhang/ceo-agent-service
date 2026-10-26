@@ -59,6 +59,7 @@ tests/test_email_fasttext_model.py
 tests/test_email_folder_truth.py
 tests/test_email_important.py
 tests/test_email_lineage_provenance_owner.py
+tests/test_email_model_input_reader.py
 tests/test_embedding_config.py
 tests/test_external_retry.py
 tests/test_feedback_skill_contract.py

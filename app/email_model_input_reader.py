@@ -31,7 +31,14 @@ def read_owner_model_inputs(store, rows, *, source_reader=None):
     for account, values in provider_rows.items():
         for start in range(0, len(values), 50):
             batch = values[start:start + 50]
-            messages = source_reader.read_many(account, [row['stable_message_identity'] for row, _ in batch])
+            try:
+                messages = source_reader.read_many(
+                    account, [row['stable_message_identity'] for row, _ in batch]
+                )
+            except LookupError:
+                # These historical examples are supplemental. A stale provider
+                # source must not fail classification of the current message.
+                continue
             for row, reference in batch:
                 identity = row['stable_message_identity']
                 texts[(account, identity)] = verify_original(
