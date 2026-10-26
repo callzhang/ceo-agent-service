@@ -55,13 +55,18 @@ def test_published_boolean_json_representation_is_unchanged(value):
     assert json.loads(codec._native_payload({"value": value}))["value"] is value
 
 
-@pytest.mark.parametrize("integer", (NativeInt, MaskedInt))
-@pytest.mark.parametrize("number", (-(2**63)-1, 2**63))
-def test_invalid_integer_lease_candidate_preserves_outer_work(pair, integer, number):
+def between_the_two_databases():
+    """Hook for the regression test below; a no-op in the ordinary test."""
+
+
+def _lease_candidate_preserves_outer_work(pair, integer, number):
     source, target, variant = pair
     kind = "dispatcher_claim_leases"
-    sentinel = {"key": "caller", "value": "pending"}
+    # A fixed time: the column defaults to current_timestamp, which has one-second
+    # resolution, so two writes that straddle a second would otherwise differ.
+    sentinel = {"key": "caller", "value": "pending", "updated_at": "2026-10-16T00:00:00Z"}
     native_insert(source, "service_state", sentinel)
+    between_the_two_databases()
     # The target prior write is owned by this same outer transaction.
     upsert_state(target, "service_state", sentinel, {"value": state_json_field("value")})
     values = required(variant, kind, "binding") | {"owner_pid": integer(number)}
@@ -72,3 +77,20 @@ def test_invalid_integer_lease_candidate_preserves_outer_work(pair, integer, num
     assert facts(source, kind) == facts(target, kind, True) == []
     assert facts(source, "service_state") == facts(target, "service_state", True)
     assert source.in_transaction and target.in_transaction
+
+
+@pytest.mark.parametrize("integer", (NativeInt, MaskedInt))
+@pytest.mark.parametrize("number", (-(2**63)-1, 2**63))
+def test_invalid_integer_lease_candidate_preserves_outer_work(pair, integer, number):
+    _lease_candidate_preserves_outer_work(pair, integer, number)
+
+
+def test_outer_work_comparison_does_not_depend_on_the_clock(pair, monkeypatch):
+    """Regression: the two writes landing in different seconds made the rows differ."""
+    import time
+
+    def cross_a_second_boundary():
+        time.sleep(1.0 - (time.time() % 1.0) + 0.05)
+
+    monkeypatch.setitem(globals(), "between_the_two_databases", cross_a_second_boundary)
+    _lease_candidate_preserves_outer_work(pair, NativeInt, 2**63)
