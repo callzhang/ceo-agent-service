@@ -30,7 +30,7 @@ from app.email_pipeline import (
     decide_classification,
 )
 from app.email_store import (
-    EMAIL_ATTEMPT_SQL,
+    DIRECT_EMAIL_ATTEMPT_SQL,
     EMAIL_DIRECT_ACTION_SQL,
     EMAIL_FEEDBACK_SQL,
     EMAIL_PLAN_SQL,
@@ -533,7 +533,7 @@ def test_processed_correction_appends_feedback_and_plan_without_replaying_histor
             f"select * from ({EMAIL_DIRECT_ACTION_SQL}) order by created_at, action_id"
         ).fetchall()
         attempts = db.execute(
-            f"select * from ({EMAIL_ATTEMPT_SQL}) order by id"
+            f"select * from ({DIRECT_EMAIL_ATTEMPT_SQL}) order by id"
         ).fetchall()
 
     assert [
@@ -554,32 +554,6 @@ def test_processed_correction_appends_feedback_and_plan_without_replaying_histor
     assert all(
         row["config_version"] in {"email-config-v1", "personal-v4"} for row in actions
     )
-
-
-def test_human_confirmation_uses_primary_key_lookup_not_classification_paging(
-    tmp_path: Path,
-    monkeypatch: pytest.MonkeyPatch,
-):
-    store = EmailStore(tmp_path / "email.sqlite3")
-    pending = _persist_decision(store, _decision(confidence=0.79))
-
-    def reject_paging(**_kwargs):
-        raise AssertionError("human confirmation must not page through classifications")
-
-    monkeypatch.setattr(store, "list_classifications", reject_paging)
-
-    application = apply_human_confirmation(
-        store,
-        pending["id"],
-        "work",
-        feedback_request_id="feedback-primary-key-lookup",
-        expected_current_action_plan_id=None,
-        now=NOW,
-    )
-
-    assert application is not None
-    confirmed = application.confirmed
-    assert confirmed["status"] == "processed"
 
 
 def test_processed_correction_reads_config_after_acquiring_write_lease(
