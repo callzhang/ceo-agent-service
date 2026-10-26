@@ -652,6 +652,16 @@ with this same status projection and hydrates only the selected Attempt IDs
 through it; count, status and displayed rows therefore use the same current
 state.
 
+Attempt detail uses the owning Task's current execution generation consistently
+for its reviewed result, Audit summary, System Execution, runtime steps and
+external-action evidence. When a later generation replaces an older Attempt's
+failed processing, the original run, error and source-closure evidence remain
+available in a separate historical section. An OA decision is shown from the
+reviewed action for the exact process/task, together with its own canonical
+action receipt; a terminal Task alone does not prove approval or rejection.
+Source-only terminal closure is described in plain language rather than exposing
+the stored JSON as the current outcome. This is a read-only display projection.
+
 An operator may reconcile one existing uncertain OA return through the dedicated
 History endpoint. It requires the exact current reviewed candidate/review, an
 Attempt linked to that Audit run (and matching any OA identity fields already

@@ -862,6 +862,16 @@ Each resolution records the source state and preserves the original failure
 reason; delivery remains unverified. Missing, partial, mismatched, nonterminal
 or failed reads do not change History or enable a replay.
 
+Attempt detail shows the current generation's reviewed decision, Audit summary,
+execution receipts and Agent steps together. A subsequent OA approval therefore
+shows its actual decision, reason, remark and verified receipt even when opened
+through an older failed Attempt. That older run/error/resolution remains in the
+historical section. An OA decision belongs to the exact reviewed process/task
+action; without its canonical receipt, the page states that execution remains
+unverified. Terminal-source closure JSON is rendered as a readable closure
+explanation, never as evidence that an approval or a message send succeeded.
+The projection does not write state or execute external actions.
+
 Audit handoff includes System-produced JSON type facts for each current action's
 target and payload fields, including human-option plans. The facts come from the
 exact validated candidate; they do not authorize an action or prove live
