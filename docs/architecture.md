@@ -1295,17 +1295,17 @@ agent run 通过 `sent_reply_observers` 关联到它。History 因此既能显�
 
 消息 provider 返回稳定消息 ID，即构成已完成的发送事实；应用层不再要求额外 read-back
 证据才能写入投影。投影按 `action_identity` 精确关联 proposal action，不能从动作数组中猜正文，
-也不能要求发送目标会话等于源任务会话。会议跟进优先发送到 Agent 选定的业务群；该群不存在、
-已解散或不可发送时，使用会议上下文中已经存在的组织者 `user_id` 或 `open_dingtalk_id` 发送
-单聊。服务不得根据组织者姓名搜索或猜测身份；上下文没有稳定组织者标识时保留任务重试，不发送。
-群发与组织者单聊使用同一个稳定业务投递键，因此重试或新 run 不会重复投递。服务启动后
+也不能要求发送目标会话等于源任务会话。业务会议跟进必须发送到 Agent 选定并经实时核验的
+业务群；普通业务总结不得选择个人收件人。该群不存在、已解散或不可发送时，本次投递失败并保留
+原目标，不得改发组织者或其他个人。个人事项只允许完整日历 1:1 发给另一位参会人；人员敏感内容仍可
+按独立授权拆分为单独私聊。群消息与敏感私聊各自保留稳定投递键，因此重试或新 run 不会重复投递。服务启动后
 会从 append-only Consumer/Audit typed results 修复缺失的 `external_action_results`、`sent_replies`
 与 observer；该修复不重放 provider 动作，也不改写历史 run/event。
 
 会议总结按受众拆分内容。业务会议的普通结论、安排和行动发送到 Agent 根据实时业务承接证据
 选择的群；人员评价、绩效、薪酬、晋升、去留、候选人结论、健康或请假内容不得进入该群消息，
-而是作为可选的独立私聊消息发送给经实时身份与职责确认的参会 HR/人员负责人，无法确认时发给
-当前负责人本人。若 DWS 实时群发现确认目标是 HR 专属或已匹配的群，且敏感讨论面向会议中的 HR
+而是仅在收件人身份、职责和披露授权均有实时证据时，作为可选的独立私聊消息发送给经核验的
+参会人员。无法核验授权时不发送敏感私聊。若 DWS 实时群发现确认目标是 HR 专属或已匹配的群，且敏感讨论面向会议中的 HR
 共同受众而非针对具体个人，则允许敏感详情随 HR 群消息发送，并不再重复发送私聊；群受众不明确、
 含非授权成员或讨论针对具体个人时仍按脱敏群消息加敏感私聊处理。群消息与敏感私聊使用不同的稳定投递键，任一发送重试都会复用已成功的另一条，
 日历描述只写群消息版本。
@@ -2223,7 +2223,7 @@ Derek 的设计决定：Consumer 运行在各 CLI 的原生 auto 模式里（Cod
 
 ### 微信发送动作 `wechat / send_message`（阶段 2，Derek 2026-10-24）
 
-标准流水线通过 `wechat / send_message` 动作发微信：目标是 `account_id`、`target_type`（`direct` 或 `group`）、`target_id`、`conversation_id`，参数只有 `text`，且 `text` 必须逐字等于已持久化的预备正文（与钉钉一致，渠道为 `wechat`，投递键由 `agent_message_delivery_key` 生成）。`WechatSendMessageHandler` 的 `dispatch`：确认任务是微信任务 → 核对预备正文 → 发送开关（`CEO_WECHAT_SENDER_ENABLED` 且 `CEO_WECHAT_SEND_MODE=auto`，否则直接 `failed` 且不创建投递）→ 用 `create_standard_wechat_delivery` 从被批准的动作创建投递 → 放行判定复核标准审核 → 沿用现有的当前会话取证、绑定核对和 `WechatSender.send`（可传入预备消息）。结果完全取自投递状态：`sent`→verified，`sending`／`send_unknown`→uncertain（交给现有的只读对账，从不重发），发送前失败→failed（重试可再次发送），被取代→business_state_changed。发送循环保留，只负责恢复和对账。本阶段没有任何路径提议这个动作，线上行为不变；候选的预备正文、微信 Consumer 和路由在阶段 3。
+标准流水线通过 `wechat / send_message` 动作发微信：目标是 `account_id`、`target_type`（`direct` 或 `group`）、`target_id`、`conversation_id`，参数只有 `text`，且 `text` 必须逐字等于已持久化的预备正文（与钉钉一致，渠道为 `wechat`，投递键由 `agent_message_delivery_key` 生成）。`WechatSendMessageHandler` 的 `dispatch`：确认任务是微信任务 → 核对预备正文 → 发送开关（`CEO_WECHAT_SENDER_ENABLED` 且 `CEO_WECHAT_SEND_MODE=auto`，否则直接 `failed` 且不创建投递）→ 用 `create_standard_wechat_delivery` 从被批准的动作创建投递 → 放行判定复核标准审核 → 沿用现有的当前会话取证、绑定核对和 `WechatSender.send`（传入预备消息）。后台 sender loop 在 `auto` 模式重试已审核的 `ready_to_send` 投递时，按投递里的候选、审核和动作身份读取该代次已保存的预备消息；只有目标正文逐字匹配的记录才调用发送器。旧投递可使用 `wechat:{delivery_id}` 键，但不能新建或重构正文；证据不全或正文不匹配时保持待发送，由正式任务重试路径处理。结果完全取自投递状态：`sent`→verified，`sending`／`send_unknown`→uncertain（交给现有的只读对账，不从未知状态重发），发送前失败→failed（重试可再次发送），被取代→business_state_changed。sender loop 只在 `auto` 且发送开关启用时消费投递；`confirm` 模式保留显式确认流程。
 
 ### 任务长期记忆
 

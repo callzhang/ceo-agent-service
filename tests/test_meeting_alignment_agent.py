@@ -551,17 +551,17 @@ def test_prompt_schema_does_not_override_generic_audience_policy():
     assert "业务私信必须非空" in schema["$defs"]["DeliveryTarget"]["properties"]["direct_user_id"]["description"]
 
 
-def test_business_dm_accepts_exact_non_organizer_participant_despite_prior_group():
+def test_business_summary_rejects_exact_non_organizer_direct_recipient():
     payload = summary_payload()
     payload["target"] = {
         "kind": "direct", "conversation_id": "", "direct_user_id": "mina",
         "title": "Avery", "candidates": [],
     }
     payload["audit_summary"] = "Current role and content evidence authorize Avery alone."
-    decision = MeetingAlignmentAgent(FakeMeetingCodex(payload)).decide(
-        source(), group_candidates=[{"verified_recurring_group": True, "title": "Old group"}]
-    )
-    assert decision.target.direct_user_id == "mina"
+    with pytest.raises(MeetingAlignmentTargetError, match="business summary requires a verified group target"):
+        MeetingAlignmentAgent(FakeMeetingCodex(payload)).decide(
+            source(), group_candidates=[{"verified_recurring_group": True, "title": "Old group"}]
+        )
 
 
 @pytest.mark.parametrize("private", [False, True])
@@ -579,7 +579,10 @@ def test_agent_rejects_principal_as_business_or_sensitive_dm(private):
     else:
         payload["target"] = target
     meeting = source().model_copy(update={"creator": source().participants[0]})
-    with pytest.raises(MeetingAlignmentTargetError, match="principal"):
+    with pytest.raises(
+        MeetingAlignmentTargetError,
+        match="principal" if private else "business summary requires a verified group target",
+    ):
         MeetingAlignmentAgent(FakeMeetingCodex(payload)).decide(meeting)
 
 
@@ -706,6 +709,8 @@ def test_prompt_contains_scheduled_consumer_prompt_and_targeted_skills():
     assert "使用 $ceo-meeting-work 处理真实会议。" in prompt
     assert "# Targeted Meeting Skill" in prompt
     assert "audience_scope=business" in prompt
+    assert "会议总结必须选择经过核验的业务群（target.kind=group）" in prompt
+    assert "不得把普通业务总结私发给组织者、参会人或其他个人" in prompt
     assert "target.kind=group" in prompt
     assert "audience_scope=personal" in prompt
     assert "完整日历 1:1" in prompt
@@ -805,7 +810,7 @@ def test_prompt_allows_personal_direct_only_for_complete_calendar_one_to_one():
     assert "target.kind=direct" in prompt
 
 
-def test_agent_accepts_business_direct_fallback_to_calendar_organizer():
+def test_agent_repairs_business_direct_target_to_group():
     target = {
         "kind": "direct",
         "conversation_id": "",
@@ -813,12 +818,20 @@ def test_agent_accepts_business_direct_fallback_to_calendar_organizer():
         "title": "Alex",
         "candidates": [],
     }
-    decision = MeetingAlignmentAgent(
-        FakeMeetingCodex(send_payload_with_target(target))
-    ).decide(source())
+    codex = SequencedMeetingCodex([
+        send_payload_with_target(target),
+        send_payload_with_target({
+            "kind": "group",
+            "conversation_id": "cid-project",
+            "direct_user_id": "",
+            "title": "项目群",
+            "candidates": [{"conversation_id": "cid-project", "title": "项目群", "evidence": ["承接当前业务行动"]}],
+        }),
+    ])
+    decision = MeetingAlignmentAgent(codex).decide(source())
     assert decision.target is not None
-    assert decision.target.kind == "direct"
-    assert decision.target.direct_user_id == "alex"
+    assert decision.target.kind == "group"
+    assert len(codex.prompts) == 2
 
 
 def test_agent_does_not_force_recurring_group_over_explicit_verified_recipient():
@@ -854,46 +867,45 @@ def test_agent_does_not_force_recurring_group_over_explicit_verified_recipient()
         ],
     )
     assert decision.target is not None
-    assert decision.target.direct_user_id == "alex"
-    assert len(codex.prompts) == 1
+    assert decision.target.kind == "group"
+    assert len(codex.prompts) == 2
 
 
-def test_agent_does_not_force_a_group_based_only_on_attendee_coverage():
+def test_agent_rejects_business_direct_even_when_group_has_low_attendee_precision():
     direct = {
         "kind": "direct", "conversation_id": "", "direct_user_id": "alex",
         "title": "Alex", "candidates": [],
     }
-    codex = FakeMeetingCodex(send_payload_with_target(direct))
+    with pytest.raises(
+        MeetingAlignmentTargetError,
+        match="business summary requires a verified group target",
+    ):
+        MeetingAlignmentAgent(FakeMeetingCodex(send_payload_with_target(direct))).decide(
+            source(),
+            group_candidates=[{
+                "conversation_id": "cid-project", "title": "项目群",
+                "member_precision": "3/4",
+                "member_count": 4,
+            }],
+        )
 
-    decision = MeetingAlignmentAgent(codex).decide(
-        source(),
-        group_candidates=[{
-            "conversation_id": "cid-project", "title": "项目群",
-            "member_precision": "3/4",
-            "member_count": 4,
-        }],
-    )
 
-    assert decision.target is not None
-    assert decision.target.kind == "direct"
-
-
-def test_agent_allows_direct_fallback_when_group_roster_does_not_match():
+def test_agent_rejects_business_direct_when_no_matching_group_is_verified():
     direct = {
         "kind": "direct", "conversation_id": "", "direct_user_id": "alex",
         "title": "Alex", "candidates": [],
     }
-    decision = MeetingAlignmentAgent(
-        FakeMeetingCodex(send_payload_with_target(direct))
-    ).decide(
-        source(),
-        group_candidates=[{
-            "conversation_id": "cid-unrelated", "title": "项目群",
-            "member_precision": "1/8", "member_count": 8,
-        }],
-    )
-    assert decision.target is not None
-    assert decision.target.kind == "direct"
+    with pytest.raises(
+        MeetingAlignmentTargetError,
+        match="business summary requires a verified group target",
+    ):
+        MeetingAlignmentAgent(FakeMeetingCodex(send_payload_with_target(direct))).decide(
+            source(),
+            group_candidates=[{
+                "conversation_id": "cid-unrelated", "title": "项目群",
+                "member_precision": "1/8", "member_count": 8,
+            }],
+        )
 
 
 def test_business_direct_identity_error_is_typed_and_preserves_decision():
@@ -968,7 +980,7 @@ def test_business_direct_rejects_empty_id_without_delivery_name_search():
         }
     )
 
-    with pytest.raises(MeetingAlignmentTargetError, match="explicit stable user_id"):
+    with pytest.raises(MeetingAlignmentTargetError, match="business summary requires a verified group target"):
         MeetingAlignmentAgent(
             FakeMeetingCodex(send_payload_with_target(target))
         ).decide(source_without_identity)
@@ -1027,10 +1039,10 @@ def test_agent_retries_source_aware_target_error_before_failing():
     assert decision.target.kind == "group"
     assert len(codex.prompts) == 2
     assert "上一次目标选择没有通过实时会议来源校验" in codex.prompts[1]
-    assert "one meeting participant or verified calendar organizer" in codex.prompts[1]
+    assert "business summary requires a verified group target" in codex.prompts[1]
 
 
-def test_agent_accepts_explicit_business_participant_without_calendar_organizer():
+def test_agent_rejects_business_direct_participant_without_calendar_organizer():
     target = {
         "kind": "direct",
         "conversation_id": "",
@@ -1039,8 +1051,8 @@ def test_agent_accepts_explicit_business_participant_without_calendar_organizer(
         "candidates": [],
     }
     agent = MeetingAlignmentAgent(FakeMeetingCodex(send_payload_with_target(target)))
-    decision = agent.decide(source(participant_count=2))
-    assert decision.target.direct_user_id == "alex"
+    with pytest.raises(MeetingAlignmentTargetError, match="business summary requires a verified group target"):
+        agent.decide(source(participant_count=2))
 
 
 def test_agent_accepts_business_group_target_for_incomplete_transcript_roster():
