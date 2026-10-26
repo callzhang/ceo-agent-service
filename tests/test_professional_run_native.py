@@ -116,14 +116,20 @@ def test_okr_audit_summary_comes_from_native_envelope(native_store, monkeypatch)
     assert run["audit_summary"] == "reviewed"
 
 
-def test_native_task_reader_selects_latest_completed_child_attempt(native_store):
+@pytest.mark.parametrize(("task_kind", "source_type", "workload_kind", "other_kind"), [
+    ("meeting_alignment", "meeting_alignment_runs", "meeting", "meeting_audit"),
+    ("work_summary", "task_agent_runs", "task", "meeting"),
+])
+def test_native_task_reader_selects_latest_completed_child_attempt(
+    native_store, task_kind, source_type, workload_kind, other_kind,
+):
     from app.native_standalone import native_run_ref
 
     store = native_store
-    parent = task(store.db, "meeting_alignment", "processing")
+    parent = task(store.db, task_kind, "processing")
     run_id = store.claim_professional_run(parent["id"])
     attempt = {
-        "parent_id": run_id, "workload_kind": "agent_run", "workload_key": str(run_id),
+        "parent_id": run_id, "workload_kind": workload_kind, "workload_key": str(run_id),
         "attempt_number": 1, "route_name": "route-a", "runtime_kind": "codex_cli",
         "credential_mode": "oauth", "model": "gpt-6-luna", "session_mode": "fresh",
         "source_session_id": "", "attempt_purpose": "normal", "validation_retry_policy_id": "",
@@ -141,7 +147,10 @@ def test_native_task_reader_selects_latest_completed_child_attempt(native_store)
         "session_id": "session-two", "transcript_reference": "trace-two",
         "transcript_start": 5, "transcript_end": 9,
     })
-    ref = native_run_ref(store.db, run_id, "meeting_alignment_runs")
+    create_runtime_attempt(store.db, values={
+        **attempt, "workload_kind": other_kind, "session_id": "different-role",
+    })
+    ref = native_run_ref(store.db, run_id, source_type)
     assert (ref.session_id, ref.start, ref.end) == ("session-two", 5, 9)
     assert first["parent_id"] == run_id
 

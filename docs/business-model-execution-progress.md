@@ -35,6 +35,13 @@ NULL-parent/current-parent pages and APIs pass, and the installed one-off tool
 is absent. Test artifacts and the verified workflow backup are removed.
 See [repair and retirement evidence](orphan-meeting-run-reference-repair.md).
 
+Next current-code unit: native reference selection is unified across Meeting
+search/detail. Three redundant old selectors are retired; current Run parent+
+execution workload selects the right call.795 existing indexed locators are
+preserved;58 mixed-role Meeting references are corrected, with two real native
+trajectory reproductions.39+25 focused cases and independent review pass;
+standard deployment/readback remain pending. See [native reader evidence](native-reference-reader-unification.md).
+
 [Exact structured readback](validation/2026-10-26-signal-owner-production-readback.json),
 [Signal contract and copy evidence](signal-source-owner-validation.md), and
 [Quality iterations/retirement mapping](quality-closeout-20261025.md) retain the

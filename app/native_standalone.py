@@ -286,10 +286,11 @@ def native_run_ref(
 ) -> NativeStandaloneRef | None:
     """Resolve native child attempts by their native Run or Task identity."""
     if source_type in {"task_agent_runs", "meeting_alignment_runs"}:
+        workload_kind = "task" if source_type == "task_agent_runs" else "meeting"
         attempt = db.execute(
             "select status,runtime_kind,session_id,transcript_start,transcript_end "
-            "from runtime_attempts where parent_id=? "
-            "order by (status='completed') desc,id desc limit 1", (run_id,),
+            "from runtime_attempts where parent_id=? and workload_kind=? "
+            "order by (status='completed') desc,id desc limit 1", (run_id, workload_kind),
         ).fetchone()
         if attempt is not None:
             return ref_from_attempt(attempt) if attempt["status"] == "completed" else None
@@ -347,56 +348,6 @@ def native_run_ref(
     start, end = int(run["transcript_start"] or 0), int(run["transcript_end"] or 0)
     return NativeStandaloneRef("codex_cli", session_id, start, end) if session_id and end > start else None
 
-
-def latest_standalone_ref(
-    db: sqlite3.Connection, *, workload_kind: str, workload_key: str,
-    legacy_row: sqlite3.Row | None = None,
-) -> NativeStandaloneRef | None:
-    attempt = db.execute(
-        "select status,runtime_kind,session_id,transcript_start,transcript_end "
-        "from runtime_attempts where workload_kind=? and workload_key=? "
-        "order by (status='completed') desc,id desc limit 1",
-        (workload_kind, workload_key),
-    ).fetchone()
-    if attempt is None:
-        return legacy_codex_ref(legacy_row) if legacy_row is not None else None
-    if attempt["status"] != "completed":
-        return None
-    return ref_from_attempt(attempt)
-
-
-def exact_standalone_ref(
-    db: sqlite3.Connection, *, workload_kind: str, workload_key: str,
-    row: sqlite3.Row,
-) -> NativeStandaloneRef | None:
-    """Bind one stored run to its own completed native session and range."""
-    attempt = db.execute(
-        "select runtime_kind,session_id,transcript_start,transcript_end "
-        "from runtime_attempts where workload_kind=? and workload_key=? "
-        "and status='completed' and session_id=? and transcript_start=? "
-        "and transcript_end=? order by id desc limit 1",
-        (
-            workload_kind, workload_key, row["codex_session_id"],
-            row["codex_transcript_start_line"], row["codex_transcript_end_line"],
-        ),
-    ).fetchone()
-    if attempt is not None:
-        return ref_from_attempt(attempt)
-    exists = db.execute(
-        "select 1 from runtime_attempts where workload_kind=? and workload_key=? limit 1",
-        (workload_kind, workload_key),
-    ).fetchone()
-    return legacy_codex_ref(row) if exists is None else None
-
-
-def legacy_codex_ref(row: sqlite3.Row) -> NativeStandaloneRef | None:
-    """Use a complete historical Codex range only when no completed attempt exists."""
-    session_id = str(row["codex_session_id"] or "")
-    start = int(row["codex_transcript_start_line"] or 0)
-    end = int(row["codex_transcript_end_line"] or 0)
-    if not session_id or end <= start:
-        return None
-    return NativeStandaloneRef("codex_cli", session_id, start, end)
 
 
 def ref_from_attempt(attempt: sqlite3.Row | None) -> NativeStandaloneRef | None:

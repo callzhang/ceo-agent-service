@@ -196,8 +196,10 @@ turn／operation／lease／start，仍为 SQL NULL；Task 缺少的 transcript r
 lease；workload_kind／完整 workload_key／parent_id 原值不变。plain Task Run key
 与 `decision_repair.N` 仍指向该 typed Run；`deadline_backfill[.N]` 和
 `memory_backfill` 分别保留旧 Todo／Project 父归属。operation attempt 的 parent_id
-保持 NULL，其 owner/expiry fence 不变。native 读取保留原 latest_task_ref、
-latest_standalone_ref 和 exact_standalone_ref 选择；来源不可用继续明确返回不可用。
+保持 NULL，其 owner/expiry fence 不变。该阶段使用的 latest/exact standalone
+包装已退休；当前专业运行与会议搜索共用 `native_run_ref`。它按当前
+RuntimeAttempt 的 parent_id 和执行 workload_kind 读取；Task 用 task、Meeting
+用 meeting，不把 meeting_audit 当成执行结果。来源不可用仍明确返回不可用。
 
 C2 的配对发布只接受准确 Store19.9／Email53，目标 Store19.10／Email53。
 逆迁从当前共同 owner 重建旧来源事实，包括正迁后的新 Run；只用 TEMP 暂存，
@@ -4450,3 +4452,18 @@ failed RuntimeAttempt167325 and original Run facts remain. The complete FK
 finding set is empty; schema and runtime behavior are unchanged. Exact dated
 copy/rollback/cold-read and production/UI evidence is in
 `orphan-meeting-run-reference-repair.md`.
+
+### Native reference owner unification — 2026-10-26
+
+Meeting detail and both search surfaces use the same current `native_run_ref`.
+Task/Meeting execution references require their Run parent and existing execution
+workload kind; completed-first/id order remains unchanged. Audit attempts remain
+independent observed calls and are not decoded as execution output. No Audit,
+authorization, retry or provider policy changes. Current Run session/range facts
+remain available when there is no recorded Meeting execution attempt; failed or
+running execution attempts remain unavailable. OKR exact-parent/session semantics
+are unchanged. History metadata search and Meeting-native candidate enumeration
+remain distinct; metadata membership/order/session binding and FTS/embedding are
+unchanged. The redundant latest_standalone_ref/exact_standalone_ref/legacy_codex_ref
+helpers and their old alias projections are retired. `latest_task_ref` remains
+used by current Task inspection/replay tools. See `native-reference-reader-unification.md`.

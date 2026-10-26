@@ -102,7 +102,7 @@ def test_meeting_multiturn_reference_is_unavailable(tmp_path, monkeypatch):
     assert decision.reason == "native_source_unavailable"
 
 
-def test_meeting_legacy_complete_range_is_read_without_attempt(tmp_path, monkeypatch):
+def test_meeting_current_run_range_is_read_without_attempt(tmp_path, monkeypatch):
     store = AutoReplyStore(tmp_path / "store.sqlite3")
     native = tmp_path / "meeting.jsonl"
     native.write_text(_message(summary_decision().model_dump_json()) + "\n")
@@ -129,6 +129,58 @@ def test_meeting_legacy_complete_range_is_read_without_attempt(tmp_path, monkeyp
     [search] = store.search_codex_sessions(fts_query="Planning")
     assert search.summary_text == ""
     assert search.native_reason == "native_reference_unavailable"
+
+
+@pytest.mark.parametrize("meeting_native_only", [False, True])
+def test_meeting_search_and_detail_share_execution_parent_not_audit_or_other_run(
+    tmp_path, monkeypatch, meeting_native_only,
+):
+    from app.meeting_alignment_models import MeetingSource
+    from app.native_standalone import native_run_ref
+
+    store = AutoReplyStore(tmp_path / "native-owner.sqlite3")
+    source = MeetingSource.model_validate({
+        "meeting_id": "native-owner", "title": "Native planning", "status": "ended",
+        "started_at": "2026-10-26T07:00:00+00:00", "ended_at": "2026-10-26T08:00:00+00:00",
+        "participants": [{"name": "Alex", "user_id": "alex"}],
+        "attendee_evidence": "calendar", "attendee_roster_complete": True,
+        "current_user_id": "alex", "summary": "Native source", "transcript": [],
+    })
+    decision = summary_decision().model_copy(update={"final_message": "own execution result"})
+    native = tmp_path / "execution.jsonl"
+    native.write_text(json.dumps({"type": "response_item", "payload": {
+        "type": "message", "role": "user", "content": [{
+            "type": "input_text", "text": "完整会议来源 JSON：\n" + source.model_dump_json(),
+        }],
+    }}) + "\n" + _message(decision.model_dump_json()) + "\n")
+    audit = tmp_path / "audit.jsonl"
+    audit.write_text(_message('{"outcome":"approve"}') + "\n")
+    paths = {"execution": native, "audit": audit}
+    monkeypatch.setattr(native_trajectory, "find_codex_session_path", lambda session, **_kw: paths.get(session))
+    owner = store.upsert_meeting_alignment_job(
+        meeting_id=source.meeting_id, title=source.title, source_json="{}", participants_json="[]",
+        ended_at=source.ended_at, eligible_at=source.ended_at, status="no_action",
+    )
+    other = store.upsert_meeting_alignment_job(
+        meeting_id="other-owner", title="Other", source_json="{}", participants_json="[]",
+        ended_at=source.ended_at, eligible_at=source.ended_at, status="no_action",
+    )
+    run_id = store.create_professional_run(owner, status="no_action", session_id="execution",
+                                           transcript_start=0, transcript_end=2)
+    other_run = store.create_professional_run(other, status="no_action")
+    with store._connect() as db:
+        _attempt(db, run_id, str(run_id), "execution", 0, 2, 1, kind="meeting")
+        _attempt(db, other_run, str(run_id), "unrelated", 0, 2, 2, kind="meeting")
+        _attempt(db, run_id, str(run_id), "audit", 0, 1, 1, kind="meeting_audit")
+        ref = native_run_ref(db, run_id, "meeting_alignment_runs")
+    assert (ref.session_id, ref.start, ref.end) == ("execution", 0, 2)
+    store.upsert_codex_session_search_index(
+        session_id="execution", source_type="meeting_alignment", source_id=str(run_id), title=source.title,
+    )
+    [found] = store.search_codex_sessions(fts_query="Native", meeting_native_only=meeting_native_only)
+    assert found.source_id == str(run_id)
+    assert "own execution result" in found.summary_text
+    assert found.native_reason == ""
 
 
 def test_friday_original_artifact_read_uses_existing_adapter_and_reports_unavailable(tmp_path, monkeypatch):

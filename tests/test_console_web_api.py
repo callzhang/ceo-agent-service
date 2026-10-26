@@ -1169,7 +1169,7 @@ def test_meeting_history_page_uses_adopted_message_without_reading_native_run(
     def reject_native_run(*_args, **_kwargs):
         raise AssertionError("History list must not hydrate a native meeting run")
 
-    monkeypatch.setattr("app.native_standalone.latest_standalone_ref", reject_native_run)
+    monkeypatch.setattr("app.native_standalone.native_run_ref", reject_native_run)
     with _client(tmp_path) as client:
         first = client.get("/api/console/history?object_type=meeting&page=1&page_size=1")
         second = client.get("/api/console/history?object_type=meeting&page=2&page_size=1")
