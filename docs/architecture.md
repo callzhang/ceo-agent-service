@@ -1827,7 +1827,7 @@ Skill。
 
 Consumer 新会话的 Developer 只给出通用 Skill 使用指令；当前 Task 中的目录携带已安装业务
 Skill 的名称、读取入口和至少一次业务 Skill 读取的协议前置条件。目录只声明可用能力，不替 Agent
-选择领域；选择仍由 A 根据完整上下文完成。Codex 续会话沿用原生会话开场保存的 Developer，而本轮 Task 指令重新提交。Consumer 仅在已选 Skill 来源兼容、且原生会话保存的 Pydantic wire schema 与本轮 purpose schema 相同时续用该路线 session；旧 schema 或无法核实来源时，在该路线开启带完整当前输入的新 session。普通 prompt 文案和目录展示变化不因此重置兼容会话；Audit 会话不受此 Consumer 判断影响。
+选择领域；选择仍由 A 根据完整上下文完成。Codex 续会话沿用原生会话开场保存的 Developer，而本轮 Task 指令重新提交。Consumer 仅在已选 Skill 来源、当前 Developer 指令合同及原生会话保存的 Pydantic wire schema 均兼容时续用该路线 session；任一不匹配或无法核实时，在该路线开启带完整当前输入的新 session，避免旧 Developer 指令覆盖本轮规则。目录展示变化不重置兼容会话；Audit 会话不受此 Consumer 判断影响。
 
 Service 也不读取正文后替 Agent 解释业务材料。它只传递 trigger、上下文、原始 process/task ID、
 链接、本地受控材料引用和可执行的精确读取命令。文档、文件夹、图片、表格、日历、听记和 OA
