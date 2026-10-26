@@ -925,7 +925,7 @@ CLI 原生 `auto_review` 是 Codex 对 `codex-auto-review` 模型的一次额外
 
 审核 Agent 只能反馈规则、观察结果和具体修改要求，不能直接改写执行 Agent 的业务正文。执行 Agent 必须基于反馈生成新 revision；原 run 不覆盖、不删除。一个任务最多允许十个内容反馈周期（Audit 的 return/reject，2026-10-26 Derek 由三次放宽；被打回是正常业务流程，不是重试），基础设施和技术失败不消耗反馈周期，技术重试另有各自的预算。反馈次数耗尽本身是自动闭环失败，不是人工决策依据。Consumer 和 Audit 必须按固定顺序对新候选应用质量门槛：`information_completeness < 0.5` 时先 ask_back；否则仅 `(risk=high 且 confidence < 0.5) 或 rule_coverage < 0.5` 才可进入 `needs_human`；其他情况按适用规则自主处理。Consumer 的新结果类型化校验会拒绝不满足门槛的 `needs_human`；Audit 在审核候选前及校验其绑定结果时独立重算同一门槛，不符合时拒绝该新候选。已持久化候选在恢复、拒绝分支比较、已审核动作执行及历史读回时按历史证据解析，不重新套用新准入门槛；这保留原始 run 与已审核决定，且不会重新执行已确认动作。历史解析不能让新模型输出绕过 Consumer/Audit 校验。Audit 必须核对新结果分类与四项分值一致；不满足门槛的人工升级不得通过。
 
-消息发送回执仍为 `uncertain` 时，后续 Audit 批准的 Consumer `no_action` 不得关闭任务；编排器继续以原不确定执行为依据向 Consumer 提供回执核对反馈：只给目标和判定标准（要先弄清消息有没有真的发出去，再决定是否重新提案；用 dws 以任何可靠方式在会话里找这条消息，不规定先查 `openTaskId` 还是读回），不重发。若核对满三轮（`MAX_UNCERTAIN_DELIVERY_REVISIONS`）后仍未形成可审计的新提案，任务以 `external_action_uncertain` 失败并保留 Attention；来源审批已终止时仍由精确 OA 终态核对路径将任务置为 `skipped`，不误报送达或要求人工处理。完整负向回读只证明原消息未送达，任何新消息仍须形成新候选并经过 Audit。
+消息发送回执仍为 `uncertain` 时，后续 Audit 批准的 Consumer `no_action` 不得关闭任务；编排器继续以原不确定执行为依据向 Consumer 提供回执核对反馈：只给目标和结果映射（先用 dws 弄清消息有没有真的发出去，没弄清不重发；已发出或看不清就 `no_action` 并说明，确认没发出且来源请求仍有效才重新提案；怎么查由 Consumer 自己决定，不规定顺序）。若核对满三轮（`MAX_UNCERTAIN_DELIVERY_REVISIONS`）后仍未形成可审计的新提案，任务以 `external_action_uncertain` 失败并保留 Attention；来源审批已终止时仍由精确 OA 终态核对路径将任务置为 `skipped`，不误报送达或要求人工处理。完整负向回读只证明原消息未送达，任何新消息仍须形成新候选并经过 Audit。
 
 修订后的 Audit 输入从当前 Consumer 的持久父链读取促成该修订的已采用 return/reject，传入原 proposal_revision、candidate_digest 和完整 feedback。该段在当前事实和候选之前，明确只是修订背景，不是事实来源或业务授权；不复制旧 summary 或分值。Audit 对照上次要求复核当前候选，先前要求本身有误时应说明依据并纠正，遵从反馈不能证明事实成立。初轮和已批准执行后的新阶段不带该段；进程恢复及技术重试从同一采用记录恢复，不依赖原生轨迹可用性。三轮上限、候选绑定、状态和外部动作权限保持原样。
 

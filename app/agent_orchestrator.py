@@ -1579,23 +1579,16 @@ def _message_receipt_feedback(result: ConsumerAgentResult) -> AuditFeedback | No
     return AuditFeedback(
         rule="A message send without a verified provider receipt is not successful.",
         observation=(
-            "System Execution accepted this message action but could not verify delivery. "
-            "Do not repeat or replace the send until you know whether it went out. Use dws "
-            "to look in the conversation for the message itself, by whatever reliable means "
-            "fits (its send task, the message list for the window, a search), and compare the "
-            "exact authored body from the authenticated sender and the quoted trigger identity. "
-            "The provider may omit the service feedback callback suffix; ignore only that exact "
-            "generated suffix when comparing the authored body. A unique exact message confirms "
-            "delivery. A complete, failure-free negative result confirms non-delivery; an "
-            "incomplete, truncated, failed, or ambiguous result leaves the outcome uncertain."
+            "System Execution accepted this message action but could not verify that it "
+            "was delivered."
         ),
         requested_revision=(
-            "Return no_action when delivery is confirmed. If complete negative readback proves "
-            "non-delivery and the source request is still current, prepare a new proposal for "
-            "Audit to review before any send. If the source request has expired or its OA source "
-            "is terminal, return no_action so the system can skip the task without Attention. "
-            "If evidence is incomplete or ambiguous, return no_action and preserve uncertainty; "
-            "never claim sent or dispatch from this follow-up."
+            "Check with dws whether the message was actually sent, and do not resend until "
+            "you know. If it was sent, or you cannot tell, return no_action and say which. "
+            "If it was not sent and the source request is still current, propose it again "
+            "for Audit to review. If the source request has expired or its OA source is "
+            "terminal, return no_action. Never claim a send you did not see; the provider "
+            "may return the message without the service's feedback-link suffix."
         ),
     )
 
