@@ -405,9 +405,13 @@ not use shell or local `dws` commands. If the read or OCR call fails, preserve
 its concrete tool/provider error.
 """.strip()
 _CAPABILITY_COMMON_TAIL = """
-If no declared tool or callable selected Skill script can perform a required
-operation, return failed with error_code `operation_unavailable`. A declared
-tool that fails is a different error; preserve its actual failure code.
+If no declared tool or callable selected Skill script can perform an operation,
+first decide whether the task can still be completed from the information
+already available. If it can, complete it, say which operation was missing and
+what it would have added, and do not fail. Return failed with error_code
+`operation_unavailable` only when the missing operation is itself the required
+effect, or the result cannot be made truthful without it. A declared tool that
+fails is a different error; preserve its actual failure code.
 When a required DWS, MCP, or other external-source read actually fails because
 the dependency is unavailable, return failed with error_code
 `dependency_read_unavailable` and preserve the exact underlying error in the
