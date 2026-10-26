@@ -4450,3 +4450,11 @@ failed RuntimeAttempt167325 and original Run facts remain. The complete FK
 finding set is empty; schema and runtime behavior are unchanged. Exact dated
 copy/rollback/cold-read and production/UI evidence is in
 `orphan-meeting-run-reference-repair.md`.
+
+
+### DWS document permission pagination (2026-10-26)
+
+The shared Consumer/Audit document-collaborator reader uses `dws drive permission list`.
+It returns one original provider page and accepts `next_token` for the next page;
+callers retain `hasMore`/`nextToken` rather than treating the first 50 members as complete.
+No permissions are changed by this reader.

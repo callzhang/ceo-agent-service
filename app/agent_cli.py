@@ -2191,16 +2191,21 @@ def build_role_server(
         from app.dws_client import DwsClient
         return DwsClient().doc_info(node_id)
 
-    def read_dingtalk_document_permissions(node_id: str) -> dict[str, object]:
-        """Read an exact document's current collaborators and roles."""
+    def read_dingtalk_document_permissions(
+        node_id: str, next_token: str = ""
+    ) -> dict[str, object]:
+        """Read one page of an exact document's current collaborators and roles."""
         from app.dws_client import DwsClient
         if not node_id.strip():
             raise ValueError("document node is required")
         dws = DwsClient()
-        return dws.run_json([
-            dws.dws_bin, "doc", "permission", "list", "--node", node_id,
-            "--limit", "50", "--format", "json",
-        ])
+        command = [
+            dws.dws_bin, "drive", "permission", "list", "--node", node_id,
+            "--limit", "50",
+        ]
+        if next_token.strip():
+            command.extend(("--next-token", next_token))
+        return dws.run_json(command + ["--format", "json"])
 
     def read_dingtalk_drive_info(node_id: str, space_id: str = "") -> dict[str, object]:
         """Read an exact drive file's metadata before deciding how to open it."""
