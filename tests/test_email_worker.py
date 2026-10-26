@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from tests.support.email_listing_oracle import StoredEmailListingOracle
+from tests.support.native_task_fields import set_native_task_fields
 import json
 import imaplib
 import sqlite3
@@ -23,14 +24,10 @@ import pytest
 from app.agent_runtime_contracts import RuntimeFailureClass
 from app.agent_runtime_router import RoutedCodexExecutionError
 from app.action_storage import (
-    delete_email_action,
     email_action_projection,
     insert_email_action,
     update_email_action,
 )
-from app.task20_definitions import task20_column
-from app.task12_storage import task12_set_parts
-from app.run_storage import AGENT_RUN_SQL
 from app.agent_context import AgentTaskContext
 from app.agent_contracts import ProposedAction
 from app.email_classifier_contracts import (
@@ -47,7 +44,7 @@ from app.email_imap_readonly import (
     parse_rfc822_message,
 )
 from app.email_store import (
-    EMAIL_ATTEMPT_SQL,
+    DIRECT_EMAIL_ATTEMPT_SQL,
     EMAIL_DIRECT_ACTION_SQL,
     EMAIL_PLAN_SQL,
     email_action_identity,
@@ -65,7 +62,7 @@ from app.email_unsubscribe import (
     extract_unsubscribe_entries,
 )
 from app.email_unsubscribe_audit import EmailUnsubscribeAuditOperation
-from app.store import AgentRole, AutoReplyStore
+from app.store import AGENT_RUN_SQL, AgentRole, AutoReplyStore
 from app.email_store import EmailStore
 from app.email_provider_folders import FolderRole, ProviderFolder
 from app.email_classifier_runtime import (
@@ -88,14 +85,28 @@ from app.email_store import StoredEmailLocator
 
 
 def _update_task_facts(db, kind: str, public_id: int, values: dict[str, object]) -> None:
-    from app.task8_storage import task8_set_parts
-    from app.task_storage import task_id_expression
+    if kind == "reply_task_inputs":
+        public_id = db.execute(
+            "select task_id from task_inputs where id=?", (public_id,)
+        ).fetchone()[0]
+    set_native_task_fields(db, "reply_tasks", public_id, values)
 
-    parts = task8_set_parts(kind, values, payload_source="tasks.payload_json")
-    assert db.execute(
-        f"update tasks set {parts.sql} where id={task_id_expression(kind, '?')}",
-        (*parts.parameters, public_id),
-    ).rowcount == 1
+
+def _schedule_failed_mark_read_retry(store) -> None:
+    from app import shared_action_lifecycle
+
+    with store._connect() as db:
+        db.execute("begin immediate")
+        for (action_id,) in db.execute(
+            f"select action_id from ({EMAIL_DIRECT_ACTION_SQL}) where action_type='mark_read'"
+        ).fetchall():
+            assert shared_action_lifecycle.schedule_direct_email_action(
+                db,
+                action_id=action_id,
+                expected_status="failed",
+                next_attempt_at="2020-01-01T00:00:00+00:00",
+                updated_at="2020-01-01T00:00:00+00:00",
+            ) is not None
 
 
 def _module():
@@ -273,7 +284,7 @@ def test_model_primary_result_uses_existing_history_and_action_queue(tmp_path):
     assert direct.action_type is EmailAction.MOVE
     with sqlite3.connect(tmp_path / "model-result.sqlite3") as db:
         assert db.execute(
-            "select count(*) from tasks where record_type='email_agent_classification_tasks'"
+            "select count(*) from tasks where kind='email_classification'"
         ).fetchone()[0] == 0
 
 
@@ -312,7 +323,7 @@ def test_rejected_model_result_enters_pending_feedback_without_any_task(tmp_path
         assert db.execute(f"select count(*) from ({EMAIL_PLAN_SQL})").fetchone()[0] == 0
         assert db.execute(f"select count(*) from ({EMAIL_DIRECT_ACTION_SQL})").fetchone()[0] == 0
         assert db.execute(
-            "select count(*) from tasks where record_type='email_agent_classification_tasks'"
+                "select count(*) from tasks where kind='email_classification'"
         ).fetchone()[0] == 0
 
 
@@ -503,11 +514,11 @@ def test_model_accept_partial_commit_repairs_action_and_task_without_agent(
         persist_calls += 1
         if persist_calls == 1:
             with sqlite3.connect(database) as db:
-                rows = db.execute(
-                    f"select rowid from ({email_action_projection('email_actions', include_rowid=True)})"
+                action_ids = db.execute(
+                    f"select action_id from ({EMAIL_DIRECT_ACTION_SQL})"
                 ).fetchall()
-                for (source_rowid,) in rows:
-                    delete_email_action(db, "email_actions", source_rowid)
+                for (action_id,) in action_ids:
+                    db.execute("delete from actions where id=?", (action_id,))
             raise RuntimeError("crash after durable plan")
         return persisted
 
@@ -1141,7 +1152,7 @@ def test_production_scan_account_model_primary_closure_persists_without_agent(
         assert "sender@example.com" not in stored_text
         assert "__subject__" in stored_text
         assert db.execute(
-            "select count(*) from tasks where record_type='email_agent_classification_tasks'"
+                "select count(*) from tasks where kind='email_classification'"
         ).fetchone()[0] == 0
 
 
@@ -1674,18 +1685,7 @@ def test_failed_historical_mark_read_stays_processing_and_reconcile_finishes_onc
     assert outcome == HistoricalActionResult("provider_action_failed", is_read=False)
     assert len(store.list_processing_historical_operations()) == 1
     assert store.list_historical_classification_history() == []
-    with sqlite3.connect(store.path) as db:
-        rows = db.execute(
-            f"select rowid from ({email_action_projection('email_actions', include_rowid=True)}) "
-            "where action_type='mark_read'"
-        ).fetchall()
-        for (source_rowid,) in rows:
-            update_email_action(
-                db,
-                "email_actions",
-                source_rowid,
-                {"next_attempt_at": "2020-01-01T00:00:00+00:00"},
-            )
+    _schedule_failed_mark_read_retry(store)
     assert _module().reconcile_historical_operations(
         store,
         lambda _account_id: Executor(),
@@ -2346,12 +2346,11 @@ def test_run_historical_once_uses_provider_rereads_cached_batch_and_durable_hist
         np.array([1.0, 0.0], dtype=np.float32),
     )
     with sqlite3.connect(settings.db_path) as db:
-        retry = task12_set_parts("email_historical_candidates",
-            {"next_retry_at": "2020-01-01T00:00:00+00:00"})
-        db.execute("update tasks set " + retry.sql
-            + " where record_type='email_historical_candidates' and "
-            + task20_column("email_historical_candidates", "stable_message_identity") + "=?",
-            (*retry.parameters, "account-1:message-id:<history-0@example.com>"))
+        db.execute(
+            "update email_historical_candidates set next_retry_at=? "
+            "where stable_message_identity=?",
+            ("2020-01-01T00:00:00+00:00", "account-1:message-id:<history-0@example.com>"),
+        )
     third = dependencies.run_historical_once(
         "email-embedding-mlp-ready", account_id="account-1"
     )
@@ -2777,11 +2776,9 @@ def test_historical_candidate_already_decided_by_agent_or_user_is_skipped_not_fa
     )
 
     assert [item.action_outcome for item in outcomes] == ["durable_conflict"]
-    from app.task12_storage import task12_projection
-
     with sqlite3.connect(settings.db_path) as db:
         state, reason = db.execute(
-            f"select state, reason from ({task12_projection('email_historical_candidates')}) "
+                "select state, reason from email_historical_candidates "
             "where stable_message_identity=?",
             ("account-1:message-id:<already-decided@example.com>",),
         ).fetchone()
@@ -3552,18 +3549,7 @@ def test_historical_junk_mark_read_failure_recovers_without_repeating_trash(tmp_
     )
     assert outcome.outcome == "provider_action_failed"
     assert len(store.list_processing_historical_operations()) == 1
-    with sqlite3.connect(store.path) as db:
-        rows = db.execute(
-            f"select rowid from ({email_action_projection('email_actions', include_rowid=True)}) "
-            "where action_type='mark_read'"
-        ).fetchall()
-        for (source_rowid,) in rows:
-            update_email_action(
-                db,
-                "email_actions",
-                source_rowid,
-                {"next_attempt_at": "2020-01-01T00:00:00+00:00"},
-            )
+    _schedule_failed_mark_read_retry(store)
     reopened = EmailStore(store.path)
     assert module.reconcile_historical_operations(
         reopened,
@@ -4182,10 +4168,10 @@ def test_classification_worker_retries_after_production_crash_and_deduplicates_t
     [first_audited_task] = task_store.list_reply_tasks(channel="email")
 
     with email_store._connect() as db:
-        expiry = task12_set_parts("email_agent_classification_tasks",
-            {"lease_expires_at": "2000-01-01T00:00:00+00:00"})
-        db.execute("update tasks set " + expiry.sql
-            + " where record_type='email_agent_classification_tasks'", expiry.parameters)
+        db.execute(
+            "update tasks set lease_expires_at='2000-01-01T00:00:00+00:00' "
+            "where kind='email_classification'"
+        )
     assert real_adapter.recover_running_tasks() == 1
     outcome = _module().run_email_classification_task_once(
         real_adapter,
@@ -4705,10 +4691,10 @@ def test_classification_worker_recovers_crash_before_task_production_without_age
 
     assert task_store.list_reply_tasks(channel="email") == []
     with email_store._connect() as db:
-        expiry = task12_set_parts("email_agent_classification_tasks",
-            {"lease_expires_at": "2000-01-01T00:00:00+00:00"})
-        db.execute("update tasks set " + expiry.sql
-            + " where record_type='email_agent_classification_tasks'", expiry.parameters)
+        db.execute(
+            "update tasks set lease_expires_at='2000-01-01T00:00:00+00:00' "
+            "where kind='email_classification'"
+        )
     assert adapter.recover_running_tasks() == 1
 
     outcome = _module().run_email_classification_task_once(
@@ -7801,18 +7787,10 @@ def test_generation_replacement_after_inventory_is_not_failed_and_blocks_agent(
             if self.rotated:
                 return
             with sqlite3.connect(database) as db:
-                from app.task8_storage import task8_set_parts
-                from app.task_storage import task_id_expression
-
-                parts = task8_set_parts(
-                    "reply_tasks",
-                    {"execution_generation": "replacement-generation"},
-                    payload_source="tasks.payload_json",
-                )
                 db.execute(
-                    "update tasks set "
-                    f"{parts.sql} where id={task_id_expression('reply_tasks', '?')}",
-                    (*parts.parameters, legacy.id),
+                    "update tasks set execution_generation='replacement-generation' "
+                    "where id=? and kind='reply'",
+                    (legacy.id,),
                 )
             self.rotated = True
 
@@ -8628,12 +8606,9 @@ def test_final_empty_inventory_clears_bootstrap_unresolved_after_safe_replacemen
         payload = json.loads(legacy.trigger_message_json)
         payload["lifecycle_version"] = "email_unsubscribe_audited_v2"
         with sqlite3.connect(database) as db:
-            from app.task20_definitions import task20_projection
-
             input_id = db.execute(
-                f"select id from ({task20_projection('reply_task_inputs')}) "
-                f"where reply_task_id=? and id=(select current_input_id from ({task20_projection('reply_tasks')}) where id=?)",
-                (legacy.id, legacy.id),
+                "select current_input_id from tasks where id=? and kind='reply'",
+                (legacy.id,),
             ).fetchone()[0]
             _update_task_facts(
                 db, "reply_task_inputs", input_id,
@@ -8734,39 +8709,31 @@ def test_safe_replacement_after_inventory_is_unchanged_and_does_not_block_agent(
                 elif replacement == "audited-v2":
                     payload = json.loads(legacy.trigger_message_json)
                     payload["lifecycle_version"] = "email_unsubscribe_audited_v2"
-                    from app.task20_definitions import task20_projection
-
                     input_id = db.execute(
-                        f"select id from ({task20_projection('reply_task_inputs')}) "
-                        f"where reply_task_id=? and id=(select current_input_id from ({task20_projection('reply_tasks')}) where id=?)",
-                        (legacy.id, legacy.id),
+                        "select current_input_id from tasks where id=? and kind='reply'",
+                        (legacy.id,),
                     ).fetchone()[0]
                     _update_task_facts(
                         db, "reply_task_inputs", input_id,
                         {"trigger_message_json": json.dumps(payload)},
                     )
                 elif replacement == "non-email":
-                    _update_task_facts(db, "reply_tasks", legacy.id, {"channel": "dingtalk"})
-                elif replacement == "malformed":
-                    from app.task20_definitions import task20_projection
-
                     input_id = db.execute(
-                        f"select id from ({task20_projection('reply_task_inputs')}) "
-                        f"where reply_task_id=? and id=(select current_input_id from ({task20_projection('reply_tasks')}) where id=?)",
-                        (legacy.id, legacy.id),
+                        "select current_input_id from tasks where id=? and kind='reply'",
+                        (legacy.id,),
+                    ).fetchone()[0]
+                    _update_task_facts(db, "reply_task_inputs", input_id, {"channel": "dingtalk"})
+                elif replacement == "malformed":
+                    input_id = db.execute(
+                        "select current_input_id from tasks where id=? and kind='reply'",
+                        (legacy.id,),
                     ).fetchone()[0]
                     _update_task_facts(
                         db, "reply_task_inputs", input_id,
                         {"trigger_message_json": "{malformed"},
                     )
                 else:
-                    from app.task_storage import task_id_expression
-
-                    db.execute(
-                        "delete from tasks where id="
-                        f"{task_id_expression('reply_tasks', '?')}",
-                        (legacy.id,),
-                    )
+                    db.execute("delete from tasks where id=? and kind='reply'", (legacy.id,))
             self.replaced = True
 
         def list_nonterminal_legacy_unsubscribe_task_attempts(self):
@@ -9318,7 +9285,7 @@ def test_direct_action_executes_without_email_task_consumer_or_audit_run(tmp_pat
     )
     assert task_store.list_reply_tasks(channel="email") == []
     with sqlite3.connect(database) as db:
-        assert db.execute(f'select count(*) from ({AGENT_RUN_SQL})').fetchone()[0] == 0
+        assert db.execute(f"select count(*) from ({AGENT_RUN_SQL})").fetchone()[0] == 0
     locator = email_store.get_stored_email_locator(901)
     assert locator is not None
     assert (locator.folder, locator.uidvalidity, locator.uid) == ("Archive", 10, 41)
@@ -9391,7 +9358,7 @@ def test_direct_action_locator_completion_rolls_back_on_scanner_race(
     ) == expected_message
     with sqlite3.connect(database) as db:
         assert (
-            db.execute(f"select count(*) from ({EMAIL_ATTEMPT_SQL})").fetchone()[0] == 0
+            db.execute(f"select count(*) from ({DIRECT_EMAIL_ATTEMPT_SQL})").fetchone()[0] == 0
         )
 
 

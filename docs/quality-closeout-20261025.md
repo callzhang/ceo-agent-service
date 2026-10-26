@@ -433,3 +433,21 @@ controls plus in-flight/continuation/exact-conflict cases pass:12 in22.07s.
 Independent reviews approved both fixes after catching the missing caller
 projection, which was corrected before commit. No schema, original-body
 restoration, provider call, retry, Audit or authorization-policy change.
+
+Terminal snapshot validation also had the retired-body read. It now reads
+existing compacted provenance/entry references, preserving all original Audit
+and owner predicates. New valid/malformed/wrong-identity snapshot controls and
+existing exact-conflict/compacted cases pass11 in11.97s. Direct plan status-map
+keys were incorrectly text while all callers use native integer Action IDs:
+RED2 cases prove the mismatch, then8 focused status/recovery cases pass8.28s
+after returning the original native type. No new effect-reconciliation policy.
+
+Email Worker/Web fixtures now exercise canonical direct Actions, native Task
+inputs/Runs and the actual source-reader API. Old row-shaped mutations are
+replaced with existing lifecycle writers, preserving no-send, retry and exact
+lineage assertions. The Web current-contract groups and extra owner paths are
+green; the Worker remaining21-case group is covered by its initial10 passes and
+11 historical-recovery passes20.80s after the status-map identity fix. Earlier
+24 initial corrections, schema/progress8, extra lineage3 and compacted terminal1
+also pass. Root reviewed current-owner mutations, receipt/private-value
+assertions and source-backed full search separately from list previews.
