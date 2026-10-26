@@ -4336,11 +4336,24 @@ def test_store_initializes_same_path_once_per_process(tmp_path: Path, monkeypatc
     assert calls == [db_path.resolve()]
 
 
-def test_store_skips_schema_work_when_another_process_finished_it(
+def test_store_cold_open_does_not_initialize_existing_current_schema(
     tmp_path: Path, monkeypatch
 ):
     db_path = tmp_path / "worker.sqlite3"
     AutoReplyStore(db_path)
+    store_module._INITIALIZED_STORE_PATHS.discard(db_path.resolve())
+    with sqlite3.connect(db_path) as db:
+        before = tuple(db.iterdump())
+
+    def unexpected_initialize(_self: AutoReplyStore) -> None:
+        raise AssertionError("an existing current schema must not be initialized")
+
+    monkeypatch.setattr(AutoReplyStore, "_initialize", unexpected_initialize)
+    reopened = AutoReplyStore(db_path)
+
+    assert reopened._schema_is_current()
+    with sqlite3.connect(db_path) as db:
+        assert tuple(db.iterdump()) == before
 
 
 def test_store_rejects_missing_action_index_without_recreating_retired_table(tmp_path):
@@ -7067,7 +7080,7 @@ def test_oa_comment_aliases_the_known_node_on_current_schema(tmp_path: Path):
         assert [tuple(row) for row in db.execute(f"select business_object_key,reply_task_id from ({store_module.NATIVE_REPLY_BUSINESS_KEY_SQL})")] == [("oa:proc-1:task-1", original.id)]
 
 
-def test_schema_upgrade_preserves_unchanged_business_object_mapping_rows(
+def test_current_cold_open_preserves_business_object_mapping_rows(
     tmp_path: Path,
 ) -> None:
     db_path = tmp_path / "worker.sqlite3"
@@ -7088,14 +7101,10 @@ def test_schema_upgrade_preserves_unchanged_business_object_mapping_rows(
             "select business_key, task_id, created_at, updated_at "
             "from task_business_keys order by business_key"
         )]
-        update_state_rows(db, "service_state", {"value": store_module.STORE_SCHEMA_VERSION},
-                          where_sql="key=?", parameters=(store_module.STORE_SCHEMA_VERSION_KEY,))
-    # The core is current; exercise the retained business migration directly.
-    store._initialize()
     store_module._INITIALIZED_STORE_PATHS.discard(db_path.resolve())
 
-    upgraded = AutoReplyStore(db_path)
-    with upgraded._connect() as db:
+    reopened = AutoReplyStore(db_path)
+    with reopened._connect() as db:
         after = [tuple(row) for row in db.execute(
             "select business_key, task_id, created_at, updated_at "
             "from task_business_keys order by business_key"

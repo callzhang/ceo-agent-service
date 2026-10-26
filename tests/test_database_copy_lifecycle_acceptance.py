@@ -341,10 +341,10 @@ def test_work_summary_input_applies_business_result_and_keeps_provenance(copied_
             f'select id from ({BUSINESS_PROJECTIONS["task"]}) where title=?',
             (source_ref,),
         ).fetchall()
-        row = db.execute("select payload_json,body_compacted,body_sha256,body_bytes,source_ref from tasks where record_type='work_summary_inputs' and id=?", (input_id,)).fetchone()
+        row = db.execute("select w.payload_json,w.body_compacted,w.body_sha256,w.body_bytes,w.source_ref,t.status from work_summary_inputs w join tasks t on t.id=w.task_id where t.kind='work_summary' and w.task_id=?", (input_id,)).fetchone()
         run = db.execute(f"select status from ({TASK_LOGICAL_RUN_SQL}) where summary_input_id=?", (input_id,)).fetchone()
     assert len(business) == 1 and run[0] == "completed"
-    assert row[0] == "{}" and row[1] == 1 and row[2] and row[3] > 0 and row[4] == source_ref
+    assert row[0] == "{}" and row[1] == 1 and row[2] and row[3] > 0 and row[4] == source_ref and row[5] == "done"
     assert store.enqueue_work_summary_input(item.source.type.value, source_ref, item.model_dump_json()) == input_id
     reopened = AutoReplyStore(store.path)
     assert reopened.get_work_summary_input(input_id).status.value == "done"
@@ -415,6 +415,6 @@ def test_workbench_creation_api_persists_task_turn_and_idempotent_request(copied
     assert reopened.get_task(task["id"]).title == "Copy-only API task"
     assert reopened.get_turn(first.json()["id"]).user_text == "Copy-only turn"
     with store._connect() as db:
-        row = db.execute("select id from tasks where record_type='workbench_tasks' and legacy_key=?", (task["id"],)).fetchone()
-        turns = db.execute("select count(*) from tasks where record_type='workbench_turns' and parent_id=?", (row[0],)).fetchone()[0]
+        row = db.execute("select id from workbench_tasks where id=?", (task["id"],)).fetchone()
+        turns = db.execute("select count(*) from workbench_turns w join tasks t on t.id=w.task_id where w.workbench_task_id=? and t.kind='workbench_turn'", (row[0],)).fetchone()[0]
     assert turns == 1

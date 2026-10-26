@@ -1,0 +1,705 @@
+{
+  "date": "2026-10-26",
+  "baseline_commit": "3c59ce281",
+  "scope": "Unmarked current-model test fixtures and contracts; not a full-suite result",
+  "runtime_or_schema_changes": false,
+  "production_writes": false,
+  "external_sends": false,
+  "sql_candidate_counts": {
+    "predecessor_converter_oracle": 73,
+    "sql_fragment_mock": 4,
+    "strict_rejection": 4,
+    "current_schema": 4,
+    "current_runtime_obsolete": 2
+  },
+  "sql_candidates": [
+    {
+      "file": "tests/test_task12_insert_expression.py",
+      "test": "test_subquery_is_not_preselected_or_evaluated_by_parts",
+      "line": 90,
+      "category": "predecessor_converter_oracle",
+      "reason": "frozen predecessor schema, migration/inverse handoff or source-equivalence fixture"
+    },
+    {
+      "file": "tests/test_email_action_storage.py",
+      "test": "test_email_generated_fields_are_null_for_older_actions_and_absent_email_fields",
+      "line": 88,
+      "category": "predecessor_converter_oracle",
+      "reason": "frozen predecessor schema, migration/inverse handoff or source-equivalence fixture"
+    },
+    {
+      "file": "tests/test_email_action_storage.py",
+      "test": "test_email_rows_reject_all_unrelated_physical_parent_references",
+      "line": 119,
+      "category": "predecessor_converter_oracle",
+      "reason": "frozen predecessor schema, migration/inverse handoff or source-equivalence fixture"
+    },
+    {
+      "file": "tests/test_email_action_storage.py",
+      "test": "test_every_frozen_field_projects_with_native_value_and_storage_class",
+      "line": 242,
+      "category": "predecessor_converter_oracle",
+      "reason": "frozen predecessor schema, migration/inverse handoff or source-equivalence fixture"
+    },
+    {
+      "file": "tests/test_email_action_storage.py",
+      "test": "test_nullable_blob_public_keys_and_native_parent_constraints",
+      "line": 290,
+      "category": "predecessor_converter_oracle",
+      "reason": "frozen predecessor schema, migration/inverse handoff or source-equivalence fixture"
+    },
+    {
+      "file": "tests/test_email_worker.py",
+      "test": "test_direct_unsubscribe_exhaustion_keeps_the_category_that_names_an_external_cause",
+      "line": 7119,
+      "category": "sql_fragment_mock",
+      "reason": "one-column reply_tasks table supplies SQL expression alias"
+    },
+    {
+      "file": "tests/test_email_worker.py",
+      "test": "test_external_unsubscribe_failure_with_operation_context_is_classified",
+      "line": 7177,
+      "category": "sql_fragment_mock",
+      "reason": "one-column reply_tasks table supplies SQL expression alias"
+    },
+    {
+      "file": "tests/test_email_action_writes.py",
+      "test": "test_two_connections_allocate_distinct_rowids_and_preserve_updates",
+      "line": 265,
+      "category": "predecessor_converter_oracle",
+      "reason": "frozen predecessor schema, migration/inverse handoff or source-equivalence fixture"
+    },
+    {
+      "file": "tests/test_email_action_writes.py",
+      "test": "test_email_max_lookup_cost_stays_bounded_as_one_family_grows",
+      "line": 394,
+      "category": "predecessor_converter_oracle",
+      "reason": "frozen predecessor schema, migration/inverse handoff or source-equivalence fixture"
+    },
+    {
+      "file": "tests/test_reply_attempt_action_forward_inverse.py",
+      "test": "test_forward_target_name_collision_is_refused_without_schema_write",
+      "line": 66,
+      "category": "predecessor_converter_oracle",
+      "reason": "frozen predecessor schema, migration/inverse handoff or source-equivalence fixture"
+    },
+    {
+      "file": "tests/test_run_adoption_inverse_rows.py",
+      "test": "test_adopted_feedback_transition_workbench_refs_roundtrip_with_typed_task_handoff",
+      "line": 44,
+      "category": "predecessor_converter_oracle",
+      "reason": "frozen predecessor schema, migration/inverse handoff or source-equivalence fixture"
+    },
+    {
+      "file": "tests/test_task_storage.py",
+      "test": "test_exact_forward_inverse_preserves_overlaps_claim_raw_blob_and_source_ddl",
+      "line": 209,
+      "category": "predecessor_converter_oracle",
+      "reason": "frozen predecessor schema, migration/inverse handoff or source-equivalence fixture"
+    },
+    {
+      "file": "tests/test_task_storage.py",
+      "test": "test_unmapped_sqlite_scalars_and_source_status_survive_without_normalization",
+      "line": 275,
+      "category": "predecessor_converter_oracle",
+      "reason": "frozen predecessor schema, migration/inverse handoff or source-equivalence fixture"
+    },
+    {
+      "file": "tests/test_task_storage.py",
+      "test": "test_source_typed_null_constraints_and_fk_namespace_are_retained",
+      "line": 318,
+      "category": "predecessor_converter_oracle",
+      "reason": "frozen predecessor schema, migration/inverse handoff or source-equivalence fixture"
+    },
+    {
+      "file": "tests/test_action_feedback_storage.py",
+      "test": "test_feedback_roundtrip",
+      "line": 97,
+      "category": "predecessor_converter_oracle",
+      "reason": "frozen predecessor schema, migration/inverse handoff or source-equivalence fixture"
+    },
+    {
+      "file": "tests/test_action_feedback_storage.py",
+      "test": "test_feedback_helpers_and_constraints",
+      "line": 220,
+      "category": "predecessor_converter_oracle",
+      "reason": "frozen predecessor schema, migration/inverse handoff or source-equivalence fixture"
+    },
+    {
+      "file": "tests/test_action_feedback_storage.py",
+      "test": "test_feedback_parent_endpoints_and_wrong_kind_guards",
+      "line": 300,
+      "category": "predecessor_converter_oracle",
+      "reason": "frozen predecessor schema, migration/inverse handoff or source-equivalence fixture"
+    },
+    {
+      "file": "tests/test_action_feedback_storage.py",
+      "test": "test_feedback_ordinary_rowid_reuse_and_overflow",
+      "line": 318,
+      "category": "predecessor_converter_oracle",
+      "reason": "frozen predecessor schema, migration/inverse handoff or source-equivalence fixture"
+    },
+    {
+      "file": "tests/test_action_feedback_storage.py",
+      "test": "test_feedback_event_upsert_preserves_existing_creation_and_resolution",
+      "line": 345,
+      "category": "predecessor_converter_oracle",
+      "reason": "frozen predecessor schema, migration/inverse handoff or source-equivalence fixture"
+    },
+    {
+      "file": "tests/test_action_feedback_storage.py",
+      "test": "test_feedback_bound_null_id_allocates_with_existing_family_rows",
+      "line": 431,
+      "category": "predecessor_converter_oracle",
+      "reason": "frozen predecessor schema, migration/inverse handoff or source-equivalence fixture"
+    },
+    {
+      "file": "tests/test_action_receipt_storage.py",
+      "test": "test_receipt_schema_creates_native_sequence_without_persisting_an_extra_table",
+      "line": 60,
+      "category": "predecessor_converter_oracle",
+      "reason": "frozen predecessor schema, migration/inverse handoff or source-equivalence fixture"
+    },
+    {
+      "file": "tests/test_task20_definitions.py",
+      "test": "test_extra_payload_slot_rejected",
+      "line": 248,
+      "category": "predecessor_converter_oracle",
+      "reason": "frozen predecessor schema, migration/inverse handoff or source-equivalence fixture"
+    },
+    {
+      "file": "tests/test_task20_definitions.py",
+      "test": "test_stored_task_type_change_preserves_existing_immutability",
+      "line": 612,
+      "category": "predecessor_converter_oracle",
+      "reason": "frozen predecessor schema, migration/inverse handoff or source-equivalence fixture"
+    },
+    {
+      "file": "tests/test_email_action_validation.py",
+      "test": "test_source_phase_external_installer_is_transactional_idempotent_and_nonrepairing",
+      "line": 43,
+      "category": "predecessor_converter_oracle",
+      "reason": "frozen predecessor schema, migration/inverse handoff or source-equivalence fixture"
+    },
+    {
+      "file": "tests/test_sent_delivery_action_storage.py",
+      "test": "test_sent_full_error_matches_source_transaction_effect",
+      "line": 121,
+      "category": "predecessor_converter_oracle",
+      "reason": "frozen predecessor schema, migration/inverse handoff or source-equivalence fixture"
+    },
+    {
+      "file": "tests/test_reply_attempt_action_storage.py",
+      "test": "test_old_layout_remains_unchanged",
+      "line": 106,
+      "category": "predecessor_converter_oracle",
+      "reason": "frozen predecessor schema, migration/inverse handoff or source-equivalence fixture"
+    },
+    {
+      "file": "tests/test_reply_attempt_action_storage.py",
+      "test": "test_full_rolls_back_the_same_native_scope",
+      "line": 185,
+      "category": "predecessor_converter_oracle",
+      "reason": "frozen predecessor schema, migration/inverse handoff or source-equivalence fixture"
+    },
+    {
+      "file": "tests/test_reply_attempt_action_storage.py",
+      "test": "test_bad_update_binding_opens_native_deferred_transaction",
+      "line": 346,
+      "category": "predecessor_converter_oracle",
+      "reason": "frozen predecessor schema, migration/inverse handoff or source-equivalence fixture"
+    },
+    {
+      "file": "tests/test_reply_attempt_action_storage.py",
+      "test": "test_autocommit_update_holds_writer_lock_through_predicate_scan",
+      "line": 374,
+      "category": "predecessor_converter_oracle",
+      "reason": "frozen predecessor schema, migration/inverse handoff or source-equivalence fixture"
+    },
+    {
+      "file": "tests/test_reply_attempt_action_storage.py",
+      "test": "test_failed_update_preserves_caller_transaction",
+      "line": 408,
+      "category": "predecessor_converter_oracle",
+      "reason": "frozen predecessor schema, migration/inverse handoff or source-equivalence fixture"
+    },
+    {
+      "file": "tests/test_reply_attempt_action_storage.py",
+      "test": "test_bad_update_binding_does_not_take_writer_lock",
+      "line": 438,
+      "category": "predecessor_converter_oracle",
+      "reason": "frozen predecessor schema, migration/inverse handoff or source-equivalence fixture"
+    },
+    {
+      "file": "tests/test_reply_attempt_action_storage.py",
+      "test": "test_bad_reply_insert_binding_matches_native_transaction_and_lock",
+      "line": 483,
+      "category": "predecessor_converter_oracle",
+      "reason": "frozen predecessor schema, migration/inverse handoff or source-equivalence fixture"
+    },
+    {
+      "file": "tests/test_reply_attempt_action_storage.py",
+      "test": "test_fresh_explicit_insert_parent_failure_transaction_matches_source",
+      "line": 528,
+      "category": "predecessor_converter_oracle",
+      "reason": "frozen predecessor schema, migration/inverse handoff or source-equivalence fixture"
+    },
+    {
+      "file": "tests/test_task12_storage.py",
+      "test": "test_batch_update_replace_preserves_other_referenced_endpoint",
+      "line": 287,
+      "category": "predecessor_converter_oracle",
+      "reason": "frozen predecessor schema, migration/inverse handoff or source-equivalence fixture"
+    },
+    {
+      "file": "tests/test_followup_sync_action_storage.py",
+      "test": "test_all_150_source_fields_round_trip_direct_storage",
+      "line": 64,
+      "category": "predecessor_converter_oracle",
+      "reason": "frozen predecessor schema, migration/inverse handoff or source-equivalence fixture"
+    },
+    {
+      "file": "tests/test_followup_sync_action_storage.py",
+      "test": "test_source_key_uniqueness_and_typed_business_draft_parent",
+      "line": 121,
+      "category": "predecessor_converter_oracle",
+      "reason": "frozen predecessor schema, migration/inverse handoff or source-equivalence fixture"
+    },
+    {
+      "file": "tests/test_followup_sync_action_storage.py",
+      "test": "test_provider_id_uniqueness_is_legacy_only_and_raw_scalar_bytes_survive",
+      "line": 152,
+      "category": "predecessor_converter_oracle",
+      "reason": "frozen predecessor schema, migration/inverse handoff or source-equivalence fixture"
+    },
+    {
+      "file": "tests/test_followup_sync_action_storage.py",
+      "test": "test_legacy_send_attempt_draft_id_matches_native_scalar_not_null",
+      "line": 199,
+      "category": "predecessor_converter_oracle",
+      "reason": "frozen predecessor schema, migration/inverse handoff or source-equivalence fixture"
+    },
+    {
+      "file": "tests/test_task_entity_meeting_delivery_identity.py",
+      "test": "test_meeting_delivery_key_survives_two_portable_inverse_cycles_and_old_allocator_write",
+      "line": 14,
+      "category": "predecessor_converter_oracle",
+      "reason": "frozen predecessor schema, migration/inverse handoff or source-equivalence fixture"
+    },
+    {
+      "file": "tests/test_task_entity_meeting_delivery_identity.py",
+      "test": "test_deleted_source_meeting_does_not_replay_stale_delivery_key_edge",
+      "line": 80,
+      "category": "predecessor_converter_oracle",
+      "reason": "frozen predecessor schema, migration/inverse handoff or source-equivalence fixture"
+    },
+    {
+      "file": "tests/test_external_failures.py",
+      "test": "test_detailed_external_unsubscribe_failure_stays_out_of_internal_attention",
+      "line": 14,
+      "category": "sql_fragment_mock",
+      "reason": "one-column reply_tasks table supplies SQL expression alias"
+    },
+    {
+      "file": "tests/test_external_failures.py",
+      "test": "test_detailed_internal_unsubscribe_failure_stays_in_internal_attention",
+      "line": 33,
+      "category": "sql_fragment_mock",
+      "reason": "one-column reply_tasks table supplies SQL expression alias"
+    },
+    {
+      "file": "tests/test_store.py",
+      "test": "test_current_source_with_retired_result_body_is_rejected_without_erasing_payload",
+      "line": 10891,
+      "category": "strict_rejection",
+      "reason": "retired agent_runs result column must be rejected on reopen"
+    },
+    {
+      "file": "tests/test_run_entity_schema.py",
+      "test": "test_task_first_new_run_facts_survive_old_write_and_two_json_cycles",
+      "line": 1618,
+      "category": "predecessor_converter_oracle",
+      "reason": "frozen predecessor schema, migration/inverse handoff or source-equivalence fixture"
+    },
+    {
+      "file": "tests/test_workbench_typed_callers.py",
+      "test": "test_incomplete_workbench_declaration_is_rejected_without_mutation",
+      "line": 29,
+      "category": "strict_rejection",
+      "reason": "source13 malformed declaration and current corruption rejection"
+    },
+    {
+      "file": "tests/test_task_entity_schema.py",
+      "test": "test_native_reply_dto_preserves_source_pydantic_parsing_for_current_and_claimed_inputs",
+      "line": 134,
+      "category": "predecessor_converter_oracle",
+      "reason": "frozen predecessor schema, migration/inverse handoff or source-equivalence fixture"
+    },
+    {
+      "file": "tests/test_task_entity_schema.py",
+      "test": "test_native_reply_dto_preserves_source_pydantic_fractional_attempts_error",
+      "line": 200,
+      "category": "predecessor_converter_oracle",
+      "reason": "frozen predecessor schema, migration/inverse handoff or source-equivalence fixture"
+    },
+    {
+      "file": "tests/test_task_entity_schema.py",
+      "test": "test_remapped_reply_task_rebinds_current_and_claimed_source_input_ids",
+      "line": 273,
+      "category": "predecessor_converter_oracle",
+      "reason": "frozen predecessor schema, migration/inverse handoff or source-equivalence fixture"
+    },
+    {
+      "file": "tests/test_task_entity_schema.py",
+      "test": "test_inverse_handoff_json_preserves_blob_workbench_artifact_identity",
+      "line": 600,
+      "category": "predecessor_converter_oracle",
+      "reason": "frozen predecessor schema, migration/inverse handoff or source-equivalence fixture"
+    },
+    {
+      "file": "tests/test_task_entity_schema.py",
+      "test": "test_new_native_workbench_artifact_inverse_allocates_numeric_source_legacy_key",
+      "line": 638,
+      "category": "predecessor_converter_oracle",
+      "reason": "frozen predecessor schema, migration/inverse handoff or source-equivalence fixture"
+    },
+    {
+      "file": "tests/test_task_entity_schema.py",
+      "test": "test_current_fact_inverse_restores_all_twenty_families_and_sql_types",
+      "line": 779,
+      "category": "predecessor_converter_oracle",
+      "reason": "frozen predecessor schema, migration/inverse handoff or source-equivalence fixture"
+    },
+    {
+      "file": "tests/test_task_entity_schema.py",
+      "test": "test_native_input_new_fact_below_global_water_keeps_canonical_id_on_reforward",
+      "line": 911,
+      "category": "predecessor_converter_oracle",
+      "reason": "frozen predecessor schema, migration/inverse handoff or source-equivalence fixture"
+    },
+    {
+      "file": "tests/test_task_entity_schema.py",
+      "test": "test_native_input_below_kind_highwater_but_in_source_gap_gets_new_source_identity",
+      "line": 1011,
+      "category": "predecessor_converter_oracle",
+      "reason": "frozen predecessor schema, migration/inverse handoff or source-equivalence fixture"
+    },
+    {
+      "file": "tests/test_task_entity_schema.py",
+      "test": "test_native_business_key_collision_uses_predecessor_hidden_rowid_allocator",
+      "line": 1036,
+      "category": "predecessor_converter_oracle",
+      "reason": "frozen predecessor schema, migration/inverse handoff or source-equivalence fixture"
+    },
+    {
+      "file": "tests/test_task_entity_schema.py",
+      "test": "test_native_workbench_session_collision_and_turn_preserve_source_uuid_and_opaque_session_ref",
+      "line": 1193,
+      "category": "predecessor_converter_oracle",
+      "reason": "frozen predecessor schema, migration/inverse handoff or source-equivalence fixture"
+    },
+    {
+      "file": "tests/test_task_entity_schema.py",
+      "test": "test_meeting_identity_index_preserves_source_blob_marker_text_and_text_affinity",
+      "line": 1310,
+      "category": "predecessor_converter_oracle",
+      "reason": "frozen predecessor schema, migration/inverse handoff or source-equivalence fixture"
+    },
+    {
+      "file": "tests/test_task_entity_schema.py",
+      "test": "test_composite_task_identity_indexes_preserve_every_source_component_through_migration",
+      "line": 1368,
+      "category": "predecessor_converter_oracle",
+      "reason": "frozen predecessor schema, migration/inverse handoff or source-equivalence fixture"
+    },
+    {
+      "file": "tests/test_task_entity_schema.py",
+      "test": "test_inverse_preserves_hidden_task12_rowid_legacy_key_for_natural_key_owner",
+      "line": 1447,
+      "category": "predecessor_converter_oracle",
+      "reason": "frozen predecessor schema, migration/inverse handoff or source-equivalence fixture"
+    },
+    {
+      "file": "tests/test_task_entity_schema.py",
+      "test": "test_reply_retry_auth_and_defer_facts_survive_native_inverse_reforward",
+      "line": 1843,
+      "category": "predecessor_converter_oracle",
+      "reason": "frozen predecessor schema, migration/inverse handoff or source-equivalence fixture"
+    },
+    {
+      "file": "tests/test_configs_schema_transfer.py",
+      "test": "test_skill_receipt_transfer_needs_email_scaffold_without_followup_types",
+      "line": 108,
+      "category": "predecessor_converter_oracle",
+      "reason": "frozen predecessor schema, migration/inverse handoff or source-equivalence fixture"
+    },
+    {
+      "file": "tests/test_task_run_entity_definitions.py",
+      "test": "test_workbench_client_request_identity_is_global_and_sequence_is_unique_per_task",
+      "line": 73,
+      "category": "current_schema",
+      "reason": "task_run_entity_objects creates current typed tasks and workbench tables"
+    },
+    {
+      "file": "tests/test_task_run_entity_definitions.py",
+      "test": "test_workbench_active_turn_partial_unique_contract_only_blocks_queued_or_running",
+      "line": 85,
+      "category": "current_schema",
+      "reason": "task_run_entity_objects creates current typed tasks and workbench tables"
+    },
+    {
+      "file": "tests/test_task_run_entity_definitions.py",
+      "test": "test_workbench_active_turn_task_id_reassignment_checks_new_task_but_excludes_old_row",
+      "line": 103,
+      "category": "current_schema",
+      "reason": "task_run_entity_objects creates current typed tasks and workbench tables"
+    },
+    {
+      "file": "tests/test_task_run_entity_definitions.py",
+      "test": "test_workbench_attachment_ids_are_never_reused_after_highest_row_deletion",
+      "line": 241,
+      "category": "current_schema",
+      "reason": "task_run_entity_objects creates current typed tasks and workbench tables"
+    },
+    {
+      "file": "tests/test_database_copy_lifecycle_acceptance.py",
+      "test": "test_work_summary_input_applies_business_result_and_keeps_provenance",
+      "line": 315,
+      "category": "current_runtime_obsolete",
+      "reason": "current store or API write followed by predecessor physical tasks query"
+    },
+    {
+      "file": "tests/test_database_copy_lifecycle_acceptance.py",
+      "test": "test_workbench_creation_api_persists_task_turn_and_idempotent_request",
+      "line": 386,
+      "category": "current_runtime_obsolete",
+      "reason": "current store or API write followed by predecessor physical tasks query"
+    },
+    {
+      "file": "tests/test_okr_weekly_task_storage.py",
+      "test": "test_exact_all_columns_raw_values_public_references_and_untouched_items",
+      "line": 94,
+      "category": "predecessor_converter_oracle",
+      "reason": "frozen predecessor schema, migration/inverse handoff or source-equivalence fixture"
+    },
+    {
+      "file": "tests/test_workbench_native_parent.py",
+      "test": "test_native_attachment_inverse_stages_source_locator_and_preserves_bytes",
+      "line": 400,
+      "category": "predecessor_converter_oracle",
+      "reason": "frozen predecessor schema, migration/inverse handoff or source-equivalence fixture"
+    },
+    {
+      "file": "tests/test_workbench_native_parent.py",
+      "test": "test_highest_reconciled_attachment_identity_is_not_reused_across_portable_inverse",
+      "line": 668,
+      "category": "predecessor_converter_oracle",
+      "reason": "frozen predecessor schema, migration/inverse handoff or source-equivalence fixture"
+    },
+    {
+      "file": "tests/test_task2d9_domain_leaves.py",
+      "test": "test_domain_leaf_facts_survive_current_inverse_and_reforward",
+      "line": 359,
+      "category": "predecessor_converter_oracle",
+      "reason": "frozen predecessor schema, migration/inverse handoff or source-equivalence fixture"
+    },
+    {
+      "file": "tests/test_task8_storage.py",
+      "test": "test_bound_insert_and_update_match_native_affinity_and_constraints",
+      "line": 204,
+      "category": "predecessor_converter_oracle",
+      "reason": "frozen predecessor schema, migration/inverse handoff or source-equivalence fixture"
+    },
+    {
+      "file": "tests/test_run_storage.py",
+      "test": "test_forward_inverse_preserves_colliding_public_ids_and_new_receipt",
+      "line": 31,
+      "category": "predecessor_converter_oracle",
+      "reason": "frozen predecessor schema, migration/inverse handoff or source-equivalence fixture"
+    },
+    {
+      "file": "tests/test_run_storage.py",
+      "test": "test_nonempty_retired_source_is_rejected_without_schema_rows_or_marker_changes",
+      "line": 292,
+      "category": "strict_rejection",
+      "reason": "intentionally rejects retired or malformed predecessor before mutation"
+    },
+    {
+      "file": "tests/test_run_storage.py",
+      "test": "test_inverse_preserves_deleted_replacement_allocation_without_changing_baseline_sequences",
+      "line": 444,
+      "category": "predecessor_converter_oracle",
+      "reason": "frozen predecessor schema, migration/inverse handoff or source-equivalence fixture"
+    },
+    {
+      "file": "tests/test_run_storage.py",
+      "test": "test_unsupported_or_malformed_store_source_is_rejected_before_bootstrap",
+      "line": 557,
+      "category": "strict_rejection",
+      "reason": "intentionally rejects retired or malformed predecessor before mutation"
+    },
+    {
+      "file": "tests/test_task12_native_parts.py",
+      "test": "test_bulk_constraint_abort_keeps_original_rows_and_earlier_work",
+      "line": 123,
+      "category": "predecessor_converter_oracle",
+      "reason": "frozen predecessor schema, migration/inverse handoff or source-equivalence fixture"
+    },
+    {
+      "file": "tests/test_action_task_delivery_storage.py",
+      "test": "test_task_delivery_schema_has_four_typed_kinds_and_source_constraints",
+      "line": 191,
+      "category": "predecessor_converter_oracle",
+      "reason": "frozen predecessor schema, migration/inverse handoff or source-equivalence fixture"
+    },
+    {
+      "file": "tests/test_action_task_delivery_storage.py",
+      "test": "test_task_delivery_set_parts_uses_original_row_values_and_statement_clock",
+      "line": 216,
+      "category": "predecessor_converter_oracle",
+      "reason": "frozen predecessor schema, migration/inverse handoff or source-equivalence fixture"
+    },
+    {
+      "file": "tests/test_action_task_delivery_storage.py",
+      "test": "test_wechat_allocator_uses_main_sequence_with_unrelated_temp_autoincrement",
+      "line": 253,
+      "category": "predecessor_converter_oracle",
+      "reason": "frozen predecessor schema, migration/inverse handoff or source-equivalence fixture"
+    },
+    {
+      "file": "tests/test_action_task_delivery_storage.py",
+      "test": "test_unmatched_wechat_update_does_not_evaluate_invalid_primary_key",
+      "line": 297,
+      "category": "predecessor_converter_oracle",
+      "reason": "frozen predecessor schema, migration/inverse handoff or source-equivalence fixture"
+    },
+    {
+      "file": "tests/test_action_task_delivery_storage.py",
+      "test": "test_claim_writer_requires_explicit_non_null_job_id",
+      "line": 317,
+      "category": "predecessor_converter_oracle",
+      "reason": "frozen predecessor schema, migration/inverse handoff or source-equivalence fixture"
+    },
+    {
+      "file": "tests/test_action_task_delivery_storage.py",
+      "test": "test_fresh_task_delivery_rejects_unowned_reply_attempt_reference_for_all_kinds",
+      "line": 339,
+      "category": "predecessor_converter_oracle",
+      "reason": "frozen predecessor schema, migration/inverse handoff or source-equivalence fixture"
+    },
+    {
+      "file": "tests/test_action_task_delivery_storage.py",
+      "test": "test_auto_id_full_preserves_source_and_target_caller_transaction",
+      "line": 381,
+      "category": "predecessor_converter_oracle",
+      "reason": "frozen predecessor schema, migration/inverse handoff or source-equivalence fixture"
+    },
+    {
+      "file": "tests/test_action_task_delivery_storage.py",
+      "test": "test_wrong_parent_kind_precedes_full_auto_id_as_in_source",
+      "line": 444,
+      "category": "predecessor_converter_oracle",
+      "reason": "frozen predecessor schema, migration/inverse handoff or source-equivalence fixture"
+    },
+    {
+      "file": "tests/test_action_task_delivery_storage.py",
+      "test": "test_source_capture_requires_exact_actual_or_fresh_declaration",
+      "line": 513,
+      "category": "predecessor_converter_oracle",
+      "reason": "frozen predecessor schema, migration/inverse handoff or source-equivalence fixture"
+    },
+    {
+      "file": "tests/test_action_task_delivery_storage.py",
+      "test": "test_task_delivery_parent_kind_and_claim_cascade",
+      "line": 546,
+      "category": "predecessor_converter_oracle",
+      "reason": "frozen predecessor schema, migration/inverse handoff or source-equivalence fixture"
+    },
+    {
+      "file": "tests/test_action_task_delivery_storage.py",
+      "test": "test_four_families_round_trip_current_facts_and_allocator",
+      "line": 584,
+      "category": "predecessor_converter_oracle",
+      "reason": "frozen predecessor schema, migration/inverse handoff or source-equivalence fixture"
+    }
+  ],
+  "verification": [
+    {
+      "scope": "tests/test_consumer_agent.py",
+      "passed": 179,
+      "seconds": 65.12,
+      "runner": "bounded implementer run"
+    },
+    {
+      "scope": "tests/test_consumer_session_prompt_fingerprint.py",
+      "passed": 4,
+      "seconds": 3.31,
+      "runner": "bounded implementer run"
+    },
+    {
+      "scope": "Current metadata lock/native trajectory/native-only/reviewed candidate/result validation files",
+      "passed": 82,
+      "seconds": 28.45,
+      "runner": "bounded read-only audit run"
+    },
+    {
+      "scope": "Audit file and selected runtime-worker manual/retry state/exception nodes",
+      "passed": 62,
+      "seconds": 19.45,
+      "runner": "bounded read-only audit run"
+    },
+    {
+      "scope": "Six Store initialization/cold-open/strict rejection nodes",
+      "passed": 6,
+      "seconds": 3.09,
+      "runner": "root run"
+    },
+    {
+      "scope": "Two copy lifecycle WorkSummary/Workbench nodes",
+      "passed": 2,
+      "seconds": 3.22,
+      "runner": "implementer red/green with synthetic source; root verification recorded in closeout"
+    },
+    {
+      "scope": "Two exact route-contract nodes plus four fingerprint cases after review correction",
+      "passed": 6,
+      "seconds": 3.28,
+      "repeat_not_added_to_distinct_total": true
+    },
+    {
+      "scope": "Two synthetic copy lifecycle cases, root independent verification",
+      "passed": 2,
+      "seconds": 3.64,
+      "repeat_not_added_to_distinct_total": true
+    }
+  ],
+  "retained_contracts": [
+    "Explicit predecessor migration/inverse/source oracles are not runtime compatibility",
+    "Strict old-schema rejection tests must preserve their deliberately malformed input",
+    "SQL fragment aliases and current native trajectory DTO projections are not retired storage",
+    "Opt-in snapshot module gate is preserved; source is synthetic current Store+Email, no production snapshot"
+  ],
+  "limitations": [
+    "No full local test suite",
+    "No real CLI/model or provider send in this test-only follow-up",
+    "Inventory is candidate-driven static inspection plus focused execution, not proof of all repository tests"
+  ],
+  "distinct_focused_cases_passed": 335,
+  "review": {
+    "spec": "approved after exact contract assertion correction",
+    "quality": "approved after exact contract assertion correction"
+  },
+  "cleanup": {
+    "verified_absent": [
+      "/private/tmp/ceo-current-unmarked-tests.xv9VDU",
+      "/private/tmp/ceo-copy-lifecycle.HGGtwA"
+    ],
+    "open_files_before_cleanup": 0,
+    "external_symlinks_before_cleanup": 0,
+    "synthetic_source_sha_unchanged": true,
+    "synthetic_source_quick_check": "ok",
+    "synthetic_source_fk_findings": 0,
+    "production_backup_created": false,
+    "approximate_mib_removed": 10.7
+  }
+}

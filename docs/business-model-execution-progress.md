@@ -2,6 +2,15 @@
 
 ## Authoritative completion — 2026-10-26
 
+Unmarked-test follow-up is test/documentation only: current Consumer session
+fixtures and exact route-contract assertions, two current copy-lifecycle owner
+queries and two Store cold-open checks are corrected. Focused verification
+covers335 distinct cases; independent SPEC/QUALITY review passes after replacing
+a weak hash-prefix check with exact digest and cross-route isolation assertions.
+No application/schema/policy change or production send is made. See
+[scope and evidence](current-unmarked-test-cleanup.md); this is not a full-suite
+pass or a new runtime release checkpoint.
+
 Current-model marker cleanup is deployed as a8d3aba6d (20:58 UTC). Five current
 behaviors are restored, six retired marked contracts removed; no xfail or
 unconditional skip decorators remain. The29 retained conditional/dependency

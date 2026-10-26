@@ -3,6 +3,7 @@ from app.action_storage import (
     NATIVE_EXTERNAL_ACTION_RESULT_SQL,
     SENT_REPLY_SQL,
 )
+import hashlib
 import json
 import os
 from dataclasses import replace
@@ -512,7 +513,6 @@ def test_resumed_consumer_turn_uses_current_selected_frozen_skill_entry(
     store, task, context, protocol_source, protocol_present, fact_source
 ):
     import hashlib
-    store.upsert_conversation(task.conversation_id, "Group", False, "session-selected")
     selected_context = replace(
         context,
         skill_names=("ceo-document-review",),
@@ -536,18 +536,7 @@ def test_resumed_consumer_turn_uses_current_selected_frozen_skill_entry(
             }
         })
     })
-    selected_skill_sources = consumer_agent.consumer_selected_skill_source_fingerprints(
-        selected_context.skill_names,
-        consumer_agent.frozen_task_skill_binding(
-            selected_task.trigger_message_json
-        ).materials,
-    )
-    store.set_codex_session_contract_hash(
-        task.conversation_id,
-        consumer_agent.consumer_selected_skill_session_contract_hash(
-            selected_skill_sources
-        ),
-    )
+    _seed_consumer_session(store, selected_task, selected_context, "session-selected")
     executor = CapturingExecutor(_result_jsonl(session="session-selected"))
 
     result = ConsumerAgentRunner(
@@ -1700,14 +1689,34 @@ def context(task):
 
 
 
+def _seed_consumer_session(store, task, context, session_id, *, route="codex_oauth"):
+    store.enqueue_reply_task(
+        conversation_id=task.conversation_id, conversation_title=task.conversation_title,
+        single_chat=task.single_chat, trigger_message_id=f"seed-{route}",
+        trigger_create_time=task.trigger_create_time, trigger_sender=task.trigger_sender,
+        trigger_text=task.trigger_text, execution_generation="seed-generation",
+    )
+    seed_task = store.claim_reply_tasks(limit=1)[0].model_copy(
+        update={"trigger_message_json": task.trigger_message_json}
+    )
+    seed_context = replace(context, task_id=seed_task.id)
+    config, router, adapter = _consumer_runtime_dependencies(store, routes=route)
+    first = CapturingExecutor(_result_jsonl(session=session_id))
+    ConsumerAgentRunner(
+        store=store, workspace=Path("/workspace"), executor=first,
+        runtime_config=config, runtime_router=router, codex_adapter=adapter,
+        codex_session_exists=lambda _: True,
+    ).run(seed_task, seed_context, proposal_revision=0, parent_agent_run_id=None)
+    assert store.get_conversation_runtime_session(task.conversation_id, route) == session_id
+
+
 @pytest.mark.parametrize("saved_schema", [
     {"properties": {"outcome": {"type": "string"}}}, None,
 ])
 def test_consumer_starts_fresh_when_saved_native_wire_schema_is_old_or_missing(
     store, task, context, saved_schema
 ):
-    store.upsert_conversation(task.conversation_id, "Group", False, "session-old")
-    store.set_codex_session_contract_hash(task.conversation_id, "old-contract")
+    _seed_consumer_session(store, task, context, "session-old")
     executor = CapturingExecutor(_result_jsonl(session="session-new"))
 
     ConsumerAgentRunner(
@@ -1728,6 +1737,7 @@ def test_consumer_starts_fresh_when_saved_native_wire_schema_is_old_or_missing(
 def test_consumer_default_path_rejects_incompatible_native_wire_before_resume(
     store, task, context, monkeypatch, tmp_path
 ):
+    _seed_consumer_session(store, task, context, "session-old")
     session = tmp_path / "old-session.jsonl"
     developer = (
         "## Pydantic Wire Contract\n"
@@ -1749,7 +1759,6 @@ def test_consumer_default_path_rejects_incompatible_native_wire_before_resume(
         "app.native_prompt_input.native.find_codex_session_path",
         lambda *_args, **_kwargs: session,
     )
-    store.upsert_conversation(task.conversation_id, "Group", False, "session-old")
     executor = CapturingExecutor(_result_jsonl(session="session-new"))
 
     ConsumerAgentRunner(
@@ -1771,6 +1780,7 @@ def test_consumer_default_path_rejects_incompatible_native_wire_before_resume(
 def test_consumer_default_path_resumes_native_schema_with_later_developer_sections(
     store, task, context, monkeypatch, tmp_path
 ):
+    _seed_consumer_session(store, task, context, "session-old")
     session = tmp_path / "native-session.jsonl"
     schema_hash = consumer_agent.sha256(
         native_output_schema_path("consumer").read_bytes()
@@ -1794,8 +1804,6 @@ def test_consumer_default_path_resumes_native_schema_with_later_developer_sectio
         "app.native_prompt_input.native.find_codex_session_path",
         lambda *_args, **_kwargs: session,
     )
-    store.upsert_conversation(task.conversation_id, "Group", False, "session-old")
-    store.set_codex_session_contract_hash(task.conversation_id, "old-contract")
     executor = CapturingExecutor(_result_jsonl(session="session-old"))
 
     ConsumerAgentRunner(
@@ -1808,10 +1816,7 @@ def test_consumer_default_path_resumes_native_schema_with_later_developer_sectio
 
 
 def test_consumer_forced_rerun_resumes_the_compatible_session(store, task, context):
-    store.upsert_conversation(task.conversation_id, "Group", False, "session-old")
-    store.set_codex_session_contract_hash(
-        task.conversation_id, consumer_wire_contract_hash()
-    )
+    _seed_consumer_session(store, task, context, "session-old")
     executor = CapturingExecutor(_result_jsonl(session="session-old"))
 
     ConsumerAgentRunner(
@@ -1834,10 +1839,7 @@ def test_consumer_forced_rerun_resumes_the_compatible_session(store, task, conte
 def test_consumer_service_restart_recovery_continues_existing_session(
     store, task, context
 ):
-    store.upsert_conversation(task.conversation_id, "Group", False, "session-old")
-    store.set_codex_session_contract_hash(
-        task.conversation_id, consumer_wire_contract_hash()
-    )
+    _seed_consumer_session(store, task, context, "session-old")
     executor = CapturingExecutor(_result_jsonl(session="session-old"))
     recovered_task = task.model_copy(
         update={
@@ -1898,6 +1900,7 @@ def test_consumer_retry_after_invalid_result_carries_validation_locations(
 def test_consumer_retries_recoverable_invalid_result_in_same_session(
     store, task, context
 ):
+    _seed_consumer_session(store, task, context, "session-invalid-result")
     claim = store.claim_agent_run(
         task.id,
         task.execution_generation,
@@ -1911,12 +1914,6 @@ def test_consumer_retries_recoverable_invalid_result_in_same_session(
     assert claim.claimed
     store.set_agent_run_session(
         claim.run.id, "session-invalid-result", owner="consumer-invalid-result"
-    )
-    store.upsert_conversation_runtime_session(
-        task.conversation_id,
-        "codex_oauth",
-        "session-invalid-result",
-        consumer_wire_contract_hash(),
     )
     store.fail_agent_run(
         claim.run.id,
@@ -2010,7 +2007,7 @@ def test_consumer_accepts_read_only_session_handoff(store, task, context):
     assert store.get_codex_session_id(task.conversation_id) == "session-final"
 
 
-def test_consumer_resumes_session_when_agent_capability_contract_changes(
+def test_consumer_starts_fresh_when_agent_capability_contract_changes(
     store, task, context, monkeypatch
 ):
     monkeypatch.setattr(
@@ -2018,15 +2015,14 @@ def test_consumer_resumes_session_when_agent_capability_contract_changes(
         "AGENT_CAPABILITY_INSTRUCTIONS",
         "previous capability contract",
     )
-    old_contract = consumer_agent.consumer_wire_contract_hash()
-    store.upsert_conversation(task.conversation_id, "Group", False, "session-old")
-    store.set_codex_session_contract_hash(task.conversation_id, old_contract)
+    _seed_consumer_session(store, task, context, "session-old")
+    old_contract = store.get_conversation_runtime_session_contract_hash(task.conversation_id, "codex_oauth")
     monkeypatch.setattr(
         consumer_agent,
         "AGENT_CAPABILITY_INSTRUCTIONS",
         "current capability contract",
     )
-    executor = CapturingExecutor(_result_jsonl(session="session-old"))
+    executor = CapturingExecutor(_result_jsonl(session="session-new"))
 
     ConsumerAgentRunner(
         store=store,
@@ -2035,12 +2031,9 @@ def test_consumer_resumes_session_when_agent_capability_contract_changes(
         codex_session_exists=lambda _: True,
     ).run(task, context, proposal_revision=0, parent_agent_run_id=None)
 
-    assert executor.commands[0][3:5] == ["exec", "resume"]
-    assert executor.commands[0][-2:] == ["session-old", "-"]
-    assert store.get_codex_session_id(task.conversation_id) == "session-old"
-    assert store.get_codex_session_contract_hash(task.conversation_id) == (
-        consumer_agent.consumer_wire_contract_hash()
-    )
+    assert "resume" not in executor.commands[0]
+    assert store.get_codex_session_id(task.conversation_id) == "session-new"
+    assert store.get_conversation_runtime_session_contract_hash(task.conversation_id, "codex_oauth") != old_contract
 
 
 def test_service_agent_instructions_skip_interactive_memory_bootstrap() -> None:
@@ -2054,10 +2047,7 @@ def test_service_agent_instructions_skip_interactive_memory_bootstrap() -> None:
 def test_consumer_retryable_failure_without_tool_progress_preserves_session(
     store, task, context
 ):
-    store.upsert_conversation(task.conversation_id, "Group", False, "session-old")
-    store.set_codex_session_contract_hash(
-        task.conversation_id, consumer_wire_contract_hash()
-    )
+    _seed_consumer_session(store, task, context, "session-old")
     failed = {
         "outcome": "failed",
         "summary": "Could not start the required read.",
@@ -2451,15 +2441,7 @@ def test_retryable_consumer_turn_uses_the_current_conversation_session(
             codex_session_exists=lambda _: True,
         ).run(task, context, proposal_revision=0, parent_agent_run_id=None)
     store.close_runtime_route_pause("codex_oauth")
-    store.upsert_conversation(
-        task.conversation_id,
-        task.conversation_title,
-        task.single_chat,
-        "session-new",
-    )
-    store.set_codex_session_contract_hash(
-        task.conversation_id, consumer_wire_contract_hash()
-    )
+    _seed_consumer_session(store, task, context, "session-new")
     executor = CapturingExecutor(_result_jsonl(session="session-new"))
 
     ConsumerAgentRunner(
@@ -2513,25 +2495,19 @@ def test_retry_turn_parse_failure_preserves_original_run_session_lineage(
             codex_session_exists=lambda _: True,
         ).run(task, context, proposal_revision=0, parent_agent_run_id=None)
     store.close_runtime_route_pause("codex_oauth")
-    store.upsert_conversation(
-        task.conversation_id,
-        task.conversation_title,
-        task.single_chat,
-        "session-new",
-    )
-    store.set_codex_session_contract_hash(
-        task.conversation_id, consumer_wire_contract_hash()
-    )
+    _seed_consumer_session(store, task, context, "session-new")
     missing_result = json.dumps({"type": "turn.failed"})
 
+    executor = CapturingExecutor(missing_result)
     with pytest.raises(ResultParseError, match="no valid typed result"):
         ConsumerAgentRunner(
             store=store,
             workspace=Path("/workspace"),
-            executor=CapturingExecutor(missing_result),
+            executor=executor,
             codex_session_exists=lambda _: True,
         ).run(task, context, proposal_revision=0, parent_agent_run_id=None)
 
+    assert executor.commands[0][-2:] == ["session-new", "-"]
     assert store.get_codex_session_id(task.conversation_id) == "session-new"
     failed = store.get_agent_run_for_turn(
         task.id,
@@ -2590,15 +2566,7 @@ def test_retry_after_missing_result_creates_new_run_in_same_session(store, task,
 def test_repeated_identical_result_failure_restarts_consumer_session(
     store, task, context
 ):
-    store.upsert_conversation(
-        task.conversation_id,
-        task.conversation_title,
-        task.single_chat,
-        "session-stuck",
-    )
-    store.set_codex_session_contract_hash(
-        task.conversation_id, consumer_wire_contract_hash()
-    )
+    _seed_consumer_session(store, task, context, "session-stuck")
     failure = {
         "code": "codex_result_invalid",
         "retryable": True,
@@ -3788,22 +3756,8 @@ def test_consumer_turn_capabilities_start_from_the_shared_baseline(store, contex
 def test_api_retry_without_progress_clears_only_api_consumer_session(
     store, task, context
 ):
-    store.upsert_conversation(task.conversation_id, "Group", False, "oauth-keep")
-    store.upsert_conversation_runtime_session(
-        task.conversation_id,
-        "codex_oauth",
-        "oauth-keep",
-        consumer_wire_contract_hash(),
-    )
-    store.upsert_conversation_runtime_session(
-        task.conversation_id,
-        "codex_api",
-        "api-old",
-        consumer_wire_contract_hash(),
-    )
-    store.set_codex_session_contract_hash(
-        task.conversation_id, consumer_wire_contract_hash()
-    )
+    _seed_consumer_session(store, task, context, "oauth-keep")
+    _seed_consumer_session(store, task, context, "api-old", route="codex_api")
     config, router, adapter = _consumer_runtime_dependencies(store, routes="codex_api")
     failed = {
         "outcome": "failed",
@@ -3842,6 +3796,7 @@ def test_api_retry_without_progress_clears_only_api_consumer_session(
         codex_session_exists=lambda _: True,
     ).run(task, context, proposal_revision=0, parent_agent_run_id=None)
 
+    assert executor.commands[0][-2:] == ["api-old", "-"]
     assert (
         store.get_conversation_runtime_session(task.conversation_id, "codex_api")
         == "api-failed"
@@ -3855,32 +3810,15 @@ def test_api_retry_without_progress_clears_only_api_consumer_session(
 @pytest.mark.parametrize(
     "invalidation", ["wire_mismatch", "missing_session"]
 )
-def test_api_consumer_preserves_a_live_session_across_contract_updates(
+def test_api_consumer_starts_fresh_for_incompatible_or_missing_session(
     store, task, context, invalidation
 ):
-    store.upsert_conversation(task.conversation_id, "Group", False, "oauth-keep")
-    store.upsert_conversation_runtime_session(
-        task.conversation_id,
-        "codex_oauth",
-        "oauth-keep",
-        consumer_wire_contract_hash(),
-    )
-    store.upsert_conversation_runtime_session(
-        task.conversation_id,
-        "codex_api",
-        "api-old",
-        (
-            "outdated-contract"
-            if invalidation == "wire_mismatch"
-            else consumer_wire_contract_hash()
-        ),
-    )
-    store.set_codex_session_contract_hash(
-        task.conversation_id,
-        "outdated-contract"
-        if invalidation == "wire_mismatch"
-        else consumer_wire_contract_hash(),
-    )
+    _seed_consumer_session(store, task, context, "oauth-keep")
+    _seed_consumer_session(store, task, context, "api-old", route="codex_api")
+    if invalidation == "wire_mismatch":
+        store.upsert_conversation_runtime_session(
+            task.conversation_id, "codex_api", "api-old", "outdated-contract"
+        )
     config, router, adapter = _consumer_runtime_dependencies(store, routes="codex_api")
     executor = CapturingExecutor(_result_jsonl(session="api-new"))
     ConsumerAgentRunner(
@@ -3898,11 +3836,7 @@ def test_api_consumer_preserves_a_live_session_across_contract_updates(
     ).run(task, context, proposal_revision=0, parent_agent_run_id=None)
 
     assert executor.commands[0][3] == "exec"
-    if invalidation == "wire_mismatch":
-        assert executor.commands[0][3:5] == ["exec", "resume"]
-        assert executor.commands[0][-2:] == ["api-old", "-"]
-    else:
-        assert "resume" not in executor.commands[0]
+    assert "resume" not in executor.commands[0]
     assert store.get_conversation_runtime_session(
         task.conversation_id, "codex_api"
     ) == "api-new"
@@ -3915,13 +3849,7 @@ def test_api_consumer_preserves_a_live_session_across_contract_updates(
 def test_api_consumer_force_rerun_reuses_existing_session_with_new_generation(
     store, task, context
 ):
-    store.upsert_conversation(task.conversation_id, "Group", False, "")
-    store.upsert_conversation_runtime_session(
-        task.conversation_id,
-        "codex_api",
-        "api-keep",
-        consumer_wire_contract_hash(),
-    )
+    _seed_consumer_session(store, task, context, "api-keep", route="codex_api")
     config, router, adapter = _consumer_runtime_dependencies(store, routes="codex_api")
     executor = CapturingExecutor(_result_jsonl(session="api-keep"))
     selected_task = task.model_copy(update={"force_new_decision": True})
@@ -3943,11 +3871,34 @@ def test_api_consumer_force_rerun_reuses_existing_session_with_new_generation(
     ) == "api-keep"
 
 
+def _expected_empty_skill_session_contract(executor, context):
+    # These cases select no Skills, so the base contract is the current wire contract.
+    assert not context.skill_names
+    setting = next(
+        value for value in executor.commands[0]
+        if value.startswith("developer_instructions=")
+    )
+    submitted = json.loads(setting.partition("=")[2])
+    developer, marker, _runtime_context = submitted.rpartition(
+        "\n\n## 运行环境与能力说明（Runtime Context）"
+    )
+    assert marker
+    contract = {
+        "conversation_contract_hash": consumer_wire_contract_hash(),
+        "developer_instructions_sha256": hashlib.sha256(
+            developer.encode("utf-8")
+        ).hexdigest(),
+    }
+    encoded = json.dumps(contract, sort_keys=True, separators=(",", ":"))
+    return "selected-skills:consumer-developer:" + hashlib.sha256(
+        encoded.encode("utf-8")
+    ).hexdigest()
+
+
 def test_api_contract_refresh_keeps_each_route_session_current(
     store, task, context
 ):
     old_hash = "old-wire-contract"
-    current_hash = consumer_wire_contract_hash()
     store.upsert_conversation(task.conversation_id, "Group", False, "oauth-old")
     store.upsert_conversation_runtime_session(
         task.conversation_id, "codex_oauth", "oauth-old", old_hash
@@ -3970,9 +3921,10 @@ def test_api_contract_refresh_keeps_each_route_session_current(
         codex_session_exists=lambda _: True,
     ).run(task, context, proposal_revision=0, parent_agent_run_id=None)
 
-    assert store.get_conversation_runtime_session_contract_hash(
+    api_hash = store.get_conversation_runtime_session_contract_hash(
         task.conversation_id, "codex_api"
-    ) == current_hash
+    )
+    assert api_hash == _expected_empty_skill_session_contract(api_executor, context)
     assert store.get_conversation_runtime_session_contract_hash(
         task.conversation_id, "codex_oauth"
     ) == old_hash
@@ -3991,16 +3943,17 @@ def test_api_contract_refresh_keeps_each_route_session_current(
         codex_session_exists=lambda _: True,
     ).run(task, context, proposal_revision=0, parent_agent_run_id=None)
 
-    assert api_executor.commands[0][3:5] == ["exec", "resume"]
-    assert api_executor.commands[0][-2:] == ["api-old", "-"]
-    assert oauth_executor.commands[0][3:5] == ["exec", "resume"]
-    assert oauth_executor.commands[0][-2:] == ["oauth-old", "-"]
-    assert store.get_conversation_runtime_session_contract_hash(
+    assert "resume" not in api_executor.commands[0]
+    assert "resume" not in oauth_executor.commands[0]
+    oauth_hash = store.get_conversation_runtime_session_contract_hash(
         task.conversation_id, "codex_oauth"
-    ) == current_hash
+    )
+    assert oauth_hash == _expected_empty_skill_session_contract(oauth_executor, context)
+    assert store.get_conversation_runtime_session_contract_hash(
+        task.conversation_id, "codex_api"
+    ) == api_hash
 
-
-def test_route_session_without_contract_hash_is_resumed(store, task, context):
+def test_route_session_without_contract_hash_starts_fresh(store, task, context):
     store.upsert_conversation_runtime_session(
         task.conversation_id, "codex_api", "upgraded-row-without-hash"
     )
@@ -4017,11 +3970,11 @@ def test_route_session_without_contract_hash_is_resumed(store, task, context):
         codex_session_exists=lambda _: True,
     ).run(task, context, proposal_revision=0, parent_agent_run_id=None)
 
-    assert executor.commands[0][3:5] == ["exec", "resume"]
-    assert executor.commands[0][-2:] == ["upgraded-row-without-hash", "-"]
+    assert "resume" not in executor.commands[0]
+    assert store.get_conversation_runtime_session(task.conversation_id, "codex_api") == "api-new"
     assert store.get_conversation_runtime_session_contract_hash(
         task.conversation_id, "codex_api"
-    ) == consumer_wire_contract_hash()
+    ) == _expected_empty_skill_session_contract(executor, context)
 
 
 def test_claude_route_session_is_not_checked_as_local_codex_history(store, task):
@@ -4433,7 +4386,7 @@ def test_source_capture_native_oa_failure_envelope_persists_diagnostics(
     assert run.status == "failed" and not run.final_result_json
 
 
-def test_saved_prompt_changes_update_input_and_hash_without_replacing_route_session(store, task, context, tmp_path, monkeypatch):
+def test_saved_prompt_changes_update_input_and_start_new_route_session(store, task, context, tmp_path, monkeypatch):
     developer = tmp_path / 'developer.md'
     user = tmp_path / 'user.md'
     profile = tmp_path / 'profile.md'
@@ -4443,25 +4396,23 @@ def test_saved_prompt_changes_update_input_and_hash_without_replacing_route_sess
     monkeypatch.setenv('CEO_DEVELOPER_PROMPT_TEMPLATE_PATH', str(developer))
     monkeypatch.setenv('CEO_USER_PROMPT_TEMPLATE_PATH', str(user))
     monkeypatch.setenv('CEO_WORK_PROFILE_PATH', str(profile))
-    before_hash = consumer_wire_contract_hash()
-    store.upsert_conversation_runtime_session(task.conversation_id, 'codex_api', 'existing-conversation-session', before_hash)
+    _seed_consumer_session(store, task, context, 'existing-conversation-session', route='codex_api')
+    before_hash = store.get_conversation_runtime_session_contract_hash(task.conversation_id, 'codex_api')
     developer.write_text('Changed shared principle')
     user.write_text('Configured task wrapper\n{{task_context}}')
-    after_hash = consumer_wire_contract_hash()
-    assert after_hash != before_hash
     config, router, adapter = _consumer_runtime_dependencies(store, routes='codex_api')
-    executor = CapturingExecutor(_result_jsonl(session='existing-conversation-session'))
+    executor = CapturingExecutor(_result_jsonl(session='new-conversation-session'))
 
     result = ConsumerAgentRunner(store=store, workspace=Path('/workspace'), executor=executor,
         runtime_config=config, runtime_router=router, codex_adapter=adapter, codex_session_exists=lambda _: True,
     ).run(task, context, proposal_revision=0, parent_agent_run_id=None)
 
-    assert executor.commands[0][3:5] == ['exec', 'resume']
-    assert executor.commands[0][-2:] == ['existing-conversation-session', '-']
+    assert 'resume' not in executor.commands[0]
+    assert store.get_conversation_runtime_session(task.conversation_id, 'codex_api') == 'new-conversation-session'
     assert 'Changed shared principle' in '\n'.join(executor.commands[0])
     assert executor.prompts[0].startswith('Configured task wrapper\n')
     assert context.trigger_text in executor.prompts[0]
-    assert store.get_conversation_runtime_session_contract_hash(task.conversation_id, 'codex_api') == after_hash
+    assert store.get_conversation_runtime_session_contract_hash(task.conversation_id, 'codex_api') != before_hash
     saved = store.get_agent_run(result.run_id)
     snapshot = next(event for event in _prompt_observations(store, saved.id) if event.get('type') == 'runtime.prompt')
     assert snapshot['task_prompt'] == executor.prompts[0]
