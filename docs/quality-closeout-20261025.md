@@ -655,3 +655,10 @@ positive/negative controls and service-owned Audit binding; its decision options
 also retain main's explicit task-class scope. It creates native events directly
 rather than repairing malformed ones. The entire affected file passes103 cases
 in39.33s, with Ruff/diff clean. No application or release declarations changed.
+
+Main's subsequent test-only `e3c72c903` is also normally reconciled: native
+projection and physical Action/Receipt emptiness checks both remain, as do
+current source-binding no-copy controls and explicit absence of the retired
+Run result column. Current prompt de-duplication/exact-once assertions remain;
+no arbitrary character-budget relaxation was introduced. The affected file
+passes179 cases with4 existing skips in58.17s; Ruff/diff clean.

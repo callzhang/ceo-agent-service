@@ -22,8 +22,8 @@ checks. The final pinned target is476 objects, SHA256
 Its fresh production-derived copy passed forward/current-data inverse/actual
 predecessor cold reads and writes/reforward:1140 original Signals,1147 final
 Signals,48 other typed table snapshots preserved and the original FK finding set
-unchanged. Real provider calls were zero. Current-head Quality and standard
-release/readback are still pending; the earlier475-object evidence does not
+unchanged. Real provider calls were zero. Complete Quality passed at the
+exact integration checkpoint below; standard release/readback remain pending; the earlier475-object evidence does not
 substitute for this final476-object proof. No real test send occurred. Production was read as Store25.2/Email54 with1140
 Signals (110 inline,1030 referenced;172 parents); this is the source checkpoint,
 not a deployment of25.3. Final integrated release/readback and cleanup remain
@@ -44,7 +44,9 @@ release readback. No physical database saving is attributed to that cleanup.
   finding, zero real provider calls.
 - The standard clean-clone gate passes at `e9b6c0a55`; full app/tests Ruff passes.
   The26 file/installed-target/current managed-revision publication preflight
-  passes. Only the two originally planned weekly-report assets differ.
+  passes. The two originally planned weekly-report assets and the subsequently
+  main-authorized OA Skill source digest differ; the separate release owner
+  supplied and verified that digest-only manifest update.
 - Complete Quality now passes51/51 jobs at `a28858637` (`40283440575`, actual
   merge-refdbb25a8c8/base193ddd06b):48 Python shards plus lint/frontend/browser.
   The later read-only main Attempt detail and release-owner manifest patch are
@@ -53,8 +55,8 @@ release readback. No physical database saving is attributed to that cleanup.
   and artifact cleanup remain pending.
 - The temporary production connection refusal coincided with a separate
   standard deploy to `9e7308ee5`; subsequent health readback returned200/ok.
-  The Signal migration has not been deployed by this task. Final Quality,
-  standard deployment, production feature readback and artifact cleanup remain.
+  The Signal migration has not been deployed by this task at this checkpoint.
+  Standard deployment, production feature readback and artifact cleanup remain.
 
 ## Previous history closeout — production readback, 2026-10-25
 

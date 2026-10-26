@@ -981,6 +981,9 @@ def test_consumer_summary_is_not_an_execution_receipt(store, task, context, summ
             SENT_REPLY_SQL,
         ):
             assert db.execute(f"select count(*) from ({projection})").fetchone()[0] == 0
+        # A Consumer summary is not an execution: no Action and no Action receipt exists.
+        for table in ("actions", "action_receipts"):
+            assert db.execute(f"select count(*) from {table}").fetchone()[0] == 0
 
 
 def test_consumer_persists_native_mcp_reads_from_codex_session(
@@ -1130,16 +1133,19 @@ def test_consumer_instructions_include_the_runtime_proposal_schema():
 
 
 def test_consumer_and_audit_share_direct_external_delivery_boundary():
+    instruction = "Consumer Agent A gathers facts and proposes a typed candidate"
     consumer = consumer_developer_instructions(runtime_context="", work_profile="")
     audit = audit_developer_instructions(
         "Verify the candidate.", runtime_context="", work_profile=""
     )
 
     assert consumer.count(CONSUMER_OUTBOUND_INSTRUCTION) == 1
+    assert consumer.count(instruction) == 1
     assert "actions contacting or changing state for another person require Audit review" in audit
     assert "Consumer may propose them as typed actions but must not execute them through any tool" in audit
     assert "candidate prose alone is not a provider receipt" in audit
     assert "Honor draft-only instructions" in audit
+    assert "Return or reject claims that such effects occurred outside the typed, Audit-reviewed path" in audit
     assert "Otherwise keep valid typed proposals eligible for review" in audit
     assert "only system code may execute approved plans" in audit
 
@@ -3176,6 +3182,13 @@ def test_consumer_preserves_provider_rendered_historical_feedback_sources(
     saved = store.get_agent_run(result.run_id)
     assert json.loads(saved.adopted_result_json)["source_bindings"][0]["value"] == binding.value
     with store._connect() as db:
+        run_columns = [
+            column[0]
+            for column in db.execute(
+                f"select * from ({NATIVE_AGENT_RUN_SQL}) limit 0"
+            ).description
+        ]
+        assert "final_result_json" not in run_columns
         assert db.execute(
             f"select projection_json from ({NATIVE_AGENT_RUN_SQL}) where id=?",
             (result.run_id,),
@@ -3197,6 +3210,13 @@ def test_consumer_preserves_full_calendar_material_source(store, task, context):
     persisted = json.loads(store.get_agent_run(result.run_id).adopted_result_json)
     assert persisted["source_bindings"][0]["value"] == binding.value
     with store._connect() as db:
+        run_columns = [
+            column[0]
+            for column in db.execute(
+                f"select * from ({NATIVE_AGENT_RUN_SQL}) limit 0"
+            ).description
+        ]
+        assert "final_result_json" not in run_columns
         assert db.execute(
             f"select projection_json from ({NATIVE_AGENT_RUN_SQL}) where id=?",
             (result.run_id,),
