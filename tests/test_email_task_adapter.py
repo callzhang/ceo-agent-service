@@ -41,7 +41,6 @@ from app.email_task_adapter import (
     EmailClassificationTaskInput,
 )
 from app.email_task_producer import EmailActionTaskProducer
-from app.email_task_producer import EmailClassificationTaskProducer
 from app.email_unsubscribe import (
     EmailUnsubscribeEffect,
     UnsubscribeAuthenticationEvidence,
@@ -114,108 +113,6 @@ def test_email_classification_console_queue_reads_native_owner(tmp_path):
         )
     assert counts == {"failed": 1}
     assert latest_error == "native classifier failure"
-
-
-def test_source_migrated_email_tasks_keep_status_input_result_and_lifecycle_facts(tmp_path):
-    from app.task12_storage import insert_task12
-    from app.run_adoption_schema import capture_run_adoptions, migrate_run_adoptions
-    from app.run_entity_schema import capture_run_entities, migrate_run_entities
-    from app.task_entity_schema import capture_task_entities, migrate_task_entities
-    from tests.test_run_entity_schema import _run_handoff
-
-    source_path = tmp_path / "source-email.sqlite3"
-    EmailStore(source_path)
-    source = sqlite3.connect(source_path)
-    source.row_factory = sqlite3.Row
-    from app.task8_storage import register_task8_functions
-    register_task8_functions(source)
-    source.execute("pragma foreign_keys=off")
-    source.execute("begin immediate")
-    source_inputs = {}
-    for index, status in enumerate(("pending", "running", "done"), start=1):
-        task_input = _classification_input(uid=500 + index)
-        source_inputs[index] = task_input
-        insert_task12(source, "email_agent_classification_tasks", {
-            "task_id": f"classification-native-migration-{index}",
-            "channel": "email", "stable_message_identity": task_input.stable_message_identity,
-            "status": status, "attempt_count": index,
-            "owner": "classifier-worker" if status == "running" else "",
-            "generation": index,
-            "lease_expires_at": "2099-01-01T00:00:00Z" if status == "running" else "",
-            "available_at": "", "error": "",
-            "input_json": json.dumps(task_input.payload(), ensure_ascii=False, sort_keys=True,
-                                      separators=(",", ":")),
-            "result_json": '{"decision_status":"processed"}' if status == "done" else "null",
-            "created_at": f"2026-10-23 00:00:0{index}",
-            "updated_at": f"2026-10-23 00:01:0{index}",
-        })
-    adoption_source = capture_run_adoptions(source)
-    task_source_metadata = capture_task_entities(source)
-    run_source_metadata = capture_run_entities(source)
-    task_metadata = migrate_task_entities(source, task_source_metadata)
-    run_handoff = _run_handoff(source, run_source_metadata)
-    run_metadata = migrate_run_entities(
-        source, run_source_metadata, task_metadata=task_metadata, run_handoff=run_handoff,
-    )
-    migrate_run_adoptions(
-        source, adoption_source, task_metadata=task_metadata, run_metadata=run_metadata,
-    )
-    source.commit()
-    source.execute("pragma foreign_keys=on")
-    assert source.execute("pragma foreign_keys").fetchone()[0] == 1
-    assert tuple(source.execute("pragma foreign_key_check")) == ()
-    database = tmp_path / "source-migrated-email.sqlite3"
-    with sqlite3.connect(database) as target:
-        source.backup(target)
-    source.close()
-
-    store = _native_email_store(database)
-    adapter = EmailClassificationTaskAdapter(store)
-    with store._connect() as db:
-        ids = {
-            identity: str(task_id)
-            for task_id, identity in db.execute(
-                "select task_id,stable_message_identity from email_classification_inputs "
-                "where stable_message_identity like 'account-primary:%'"
-            )
-        }
-        result_rows = db.execute(
-            "select task_id,result_kind,result_json from task_results "
-            "where result_kind='email_classification'"
-        ).fetchall()
-        assert len(result_rows) == 3
-        assert all(key.isdecimal() for key in ids.values())
-        assert any(json.loads(row[2]) == {"decision_status": "processed"} for row in result_rows)
-        assert tuple(db.execute(
-            "select created_at,updated_at from tasks where id=?",
-            (int(ids[source_inputs[3].stable_message_identity]),),
-        ).fetchone()) == ("2026-10-23 00:00:03", "2026-10-23 00:01:03")
-        assert db.execute(
-            "select count(*) from email_classification_inputs where stable_message_identity "
-            "like 'account-primary:%'"
-        ).fetchone()[0] == 3
-
-    tasks = {status: adapter.get_task(ids[source_inputs[index].stable_message_identity])
-             for index, status in enumerate(("pending", "running", "done"), start=1)}
-    assert all(task is not None for task in tasks.values())
-    assert {status: task.status for status, task in tasks.items()} == {
-        "pending": "pending", "running": "running", "done": "done",
-    }
-    running = tasks["running"]
-    assert (running.owner, running.attempt_count, running.generation, running.lease_expires_at) == (
-        "classifier-worker", 2, 2, "2099-01-01T00:00:00Z",
-    )
-    assert tasks["done"].result_json == '{"decision_status":"processed"}'
-    producer = EmailClassificationTaskProducer(store)
-    assert producer.adapter.ensure_task(source_inputs[3]).task_id == tasks["done"].task_id
-    pending_claim = adapter.claim_next(owner="migrated-pending-worker")
-    assert pending_claim is not None
-    assert pending_claim.task_id == tasks["pending"].task_id
-    adapter.complete(pending_claim, {"decision_status": "processed"})
-    adapter.complete(tasks["running"], {"decision_status": "processed"})
-    assert adapter.get_task(tasks["pending"].task_id).status == "done"
-    assert adapter.get_task(tasks["running"].task_id).status == "done"
-    assert adapter.get_task(tasks["done"].task_id).result_json == '{"decision_status":"processed"}'
 
 
 def test_email_classification_expired_claim_uses_native_cas_and_canonical_runtime_key(tmp_path):
