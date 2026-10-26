@@ -693,7 +693,27 @@ def test_audit_runner_fails_when_required_trusted_instructions_are_missing(setup
         audit_agent._trusted_agent_instruction_sections()
 
 
-def test_oa_audit_runner_selects_read_only_ocr_handoff_from_task_skill(setup):
+def test_oa_audit_runner_selects_read_only_ocr_handoff_from_task_skill(
+    setup, tmp_path, monkeypatch
+):
+    from app import consumer_agent
+    from app.business_skills import installed_runtime_skills
+
+    skill_root = tmp_path / "skills"
+    skill_path = skill_root / "dingtalk-oa-approval" / "SKILL.md"
+    skill_path.parent.mkdir(parents=True)
+    skill_path.write_text(
+        (
+            Path(__file__).parents[1]
+            / "ci/shared-skills/dingtalk-oa-approval/SKILL.md"
+        ).read_text(encoding="utf-8"),
+        encoding="utf-8",
+    )
+    monkeypatch.setattr(
+        consumer_agent,
+        "default_task_skill_catalog",
+        lambda names=(): installed_runtime_skills(skill_root, names=names),
+    )
     _store, task, parent, context, _config, _router = setup
     context = replace(context, task=replace(
         context.task, skill_names=("dingtalk-oa-approval",),
@@ -814,7 +834,11 @@ def test_audit_reads_frozen_prepared_parent_when_native_proposal_differs(setup, 
         ]}}) + '\n')
     monkeypatch.setattr(native_trajectory, 'find_codex_session_path', lambda *a, **k: path)
     with store._connect() as db:
-        db.execute("update runs set session_id='native-consumer',transcript_end=1 where record_type='agent_runs' and cast(legacy_key as integer)=?", (parent.id,))
+        updated = db.execute(
+            "update runs set session_id='native-consumer',transcript_end=1 where id=?",
+            (parent.id,),
+        )
+        assert updated.rowcount == 1
     assert json.loads(store.get_agent_run(parent.id).final_result_json) != context.candidate.model_dump(mode='json')
     captured = {}
     monkeypatch.setattr(AgentTurnProcess, 'execute', lambda _self, **kwargs: captured.update(kwargs))

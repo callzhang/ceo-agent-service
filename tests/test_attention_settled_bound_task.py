@@ -27,9 +27,17 @@ def test_attention_follows_original_run_task_after_scanner_trigger_changes(tmp_p
             "role": "audit", "status": "completed",
         }).lastrowid
         update_action(db, "reply_attempts", attempt_id, {"agent_run_id": run_id})
-        _update_reply_task_fixture(db, task.id, {
-            "status": task_status, "trigger_message_id": "updated-card",
-        })
+        _update_reply_task_fixture(db, task.id, {"status": task_status})
+        owner = db.execute(
+            "select current_input_id, claimed_input_id from tasks where id=?",
+            (task.id,),
+        ).fetchone()
+        input_id = owner["claimed_input_id"] or owner["current_input_id"]
+        assert input_id is not None
+        assert db.execute(
+            "update task_inputs set trigger_message_id=? where id=? and task_id=?",
+            ("updated-card", input_id, task.id),
+        ).rowcount == 1
     original = store.get_reply_attempt(attempt_id)
 
     expected = [attempt_id] if task_status == "failed" else []

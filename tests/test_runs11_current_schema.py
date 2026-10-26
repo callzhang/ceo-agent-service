@@ -5,23 +5,17 @@ import sqlite3
 
 import pytest
 
+from app.current_schema_manifest import schema_is_current
 from app.store import AutoReplyStore
+from tests.support.current_inventory import CURRENT_TABLES
 from app.email_store import EmailStore
 from app.workbench.store import WorkbenchStore
 from app.runs11_current_schema import (
     create_current_run11_schema, current_run11_schema_is_current,
 )
 from app.configs_run_schema import _declarations as source_runs8
-from app.runs11_definitions import RUN11_NEW_KINDS
 
 CONSTRUCTORS = (AutoReplyStore, EmailStore, WorkbenchStore)
-RETIRED = (*RUN11_NEW_KINDS, 'codex_session_search_fts')
-FINAL_TABLES = {
-    'tasks', 'runs', 'actions', 'business', 'emails', 'provenance', 'configs',
-    'provider_state', 'schedules', 'state', 'email_schema_migrations',
-}
-
-
 @pytest.mark.parametrize('order', tuple(permutations(CONSTRUCTORS)))
 def test_cold_orders_and_reopen_are_final_inventory(tmp_path: Path, order):
     path = tmp_path / 'current.sqlite3'
@@ -32,26 +26,10 @@ def test_cold_orders_and_reopen_are_final_inventory(tmp_path: Path, order):
     with sqlite3.connect(path) as db:
         tables = {name for (name,) in db.execute(
             "select name from sqlite_schema where type='table' and name not like 'sqlite_%'")}
-        assert tables == FINAL_TABLES
-        assert not tables.intersection(RETIRED)
-        assert current_run11_schema_is_current(db)
+        assert tables == CURRENT_TABLES
+        assert schema_is_current(db)
         assert db.execute('pragma foreign_key_check').fetchall() == []
-        assert db.execute('select max(version) from email_schema_migrations').fetchone()[0] == 52
-
-
-def test_missing_runs11_index_repairs_without_counter_reset(tmp_path: Path):
-    path = tmp_path / 'repair.sqlite3'
-    EmailStore(path)
-    with sqlite3.connect(path) as db:
-        db.execute("insert into sqlite_sequence(name,seq) values('runs:codex_session_search_index',700)")
-        db.execute('drop index idx_runs11_metadata_source')
-        before = tuple(db.execute('select name,seq from sqlite_sequence order by name'))
-    assert not _current(path)
-    assert _current(path, allow_missing=True)
-    AutoReplyStore(path)
-    with sqlite3.connect(path) as db:
-        assert tuple(db.execute('select name,seq from sqlite_sequence order by name')) == before
-        assert current_run11_schema_is_current(db)
+        assert db.execute('select max(version) from email_schema_migrations').fetchone()[0] == 54
 
 
 def _current(path, *, allow_missing=False):

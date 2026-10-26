@@ -5,14 +5,13 @@ import sqlite3
 
 import pytest
 
-from app.schedules_storage import create_schedules_schema
 from app.configs_definitions import config_projection
 from app.configs_storage import (
-    create_configs_schema, delete_config, insert_config, update_config,
+    delete_config, insert_config, update_config,
 )
 from tests.configs_source_fixtures import capture, insert as source_insert
 from tests.test_configs_storage import VALID
-from tests.test_email_action_writes import _databases
+from app.store import AutoReplyStore
 
 pytest_plugins = ("test_native_copy_lifecycle_harness",)
 
@@ -77,11 +76,12 @@ def _assert_account_state(source, target, *, key, display, bindings):
     assert source_binding_count == target_binding_count == (bindings,)
 
 
-def test_published_fresh_account_update_and_delete_cascade(old_email_copy):
+def test_published_fresh_account_update_and_delete_cascade(old_email_copy, tmp_path):
     _, source_path = old_email_copy
-    old_stub, target = _databases(include_skill_config_receipts=True)
-    with closing(old_stub), closing(target), closing(sqlite3.connect(source_path)) as source:
+    target_store = AutoReplyStore(tmp_path / "current-target.sqlite3")
+    with closing(sqlite3.connect(target_store.path)) as target, closing(sqlite3.connect(source_path)) as source:
         source.execute("pragma foreign_keys=on")
+        target.execute("pragma foreign_keys=on")
         predecessors = {
             "email_actions", "email_reply_dispatch_claims",
             "email_unsubscribe_claims",
@@ -96,8 +96,6 @@ def test_published_fresh_account_update_and_delete_cascade(old_email_copy):
             "and tbl_name='email_accounts' and name like '%blocks_account_%'"
         ).fetchall()) == 6
 
-        create_schedules_schema(target)
-        create_configs_schema(target)
         target.commit()
         target.execute("begin")
         account = VALID["email_accounts"] | {"account_id": OLD_KEY}

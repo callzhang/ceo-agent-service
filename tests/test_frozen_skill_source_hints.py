@@ -85,7 +85,7 @@ def test_discovery_hash_matches_exact_task_reader_receipt(tmp_path, role):
     payload = _context(material).to_payload()
     db = tmp_path / "task.sqlite3"
     _task_db(db, scheduled_consumer=payload)
-    server = build_role_server(role, task_id=7, db_path=db, execution_generation="first")
+    server = build_role_server(role, task_id=1, db_path=db, execution_generation="first")
     receipt = server._tool_manager.get_tool("read_task_skill").fn(name=material.name)
     binding = frozen_task_skill_binding(json.dumps({"raw_payload": {"scheduled_consumer": payload}}))
     rendered = render_task_skill_discovery(

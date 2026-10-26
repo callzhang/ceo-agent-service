@@ -9,7 +9,8 @@ import pytest
 from mcp.shared.memory import create_connected_server_and_client_session
 
 from app.agent_cli import build_role_server
-from app.task_storage import create_task_schema, insert_task
+from app.store import AutoReplyStore
+from tests.support.native_task_fields import set_native_task_fields
 from app.agent_cron.commands import (
     ServiceCommandConsumerContext,
     ServiceCommandSkillMaterial,
@@ -18,38 +19,24 @@ from app.wechat.codex_safety import make_role_agent_command
 
 
 def _task_db(path, *, scheduled_consumer: dict[str, object], generation="first"):
+    """A fresh Store holding reply Task 1 whose trigger carries the frozen payload."""
     trigger = json.dumps(
         {"raw_payload": {"scheduled_consumer": scheduled_consumer}},
         ensure_ascii=False,
     )
-    with sqlite3.connect(path) as db:
-        create_task_schema(db)
-        insert_task(db, "reply_tasks", {
-            "id": 7,
-            "channel": "dingtalk",
-            "conversation_id": "scheduled-conversation",
-            "conversation_title": "Scheduled task",
-            "single_chat": 0,
-            "trigger_message_id": "scheduled-message",
-            "trigger_create_time": "",
-            "trigger_sender": "",
-            "execution_generation": generation,
-        })
-        insert_task(db, "reply_task_inputs", {
-            "id": 13,
-            "parent_id": 7,
-            "channel": "dingtalk",
-            "conversation_id": "scheduled-conversation",
-            "conversation_title": "Scheduled task",
-            "single_chat": 0,
-            "trigger_message_id": "scheduled-message",
-            "trigger_create_time": "",
-            "trigger_sender": "",
-            "trigger_text": "",
-            "trigger_message_json": trigger,
-            "business_object_key": "",
-        })
-        db.execute("update tasks set claimed_input_id=13 where record_type='reply_tasks' and id=7")
+    store = AutoReplyStore(path)
+    assert store.enqueue_reply_task(
+        conversation_id="scheduled-conversation",
+        conversation_title="Scheduled task",
+        single_chat=False,
+        trigger_message_id="scheduled-message",
+        trigger_create_time="",
+        trigger_sender="",
+        trigger_text="",
+        trigger_message_json=trigger,
+        execution_generation=generation,
+    )
+    assert [task.id for task in store.claim_reply_tasks(limit=1)] == [1]
 
 
 def _context(*materials: ServiceCommandSkillMaterial) -> ServiceCommandConsumerContext:
@@ -117,7 +104,7 @@ def test_read_task_skill_returns_only_the_frozen_task_material(role, tmp_path):
     installed.write_text("LATER INSTALLED BODY", encoding="utf-8")
     tool = build_role_server(
         role,
-        task_id=7,
+        task_id=1,
         db_path=db,
         execution_generation="first",
     )._tool_manager.get_tool("read_task_skill")
@@ -147,7 +134,7 @@ def test_read_task_skill_native_response_keeps_one_complete_copy(role, tmp_path,
     monkeypatch.setattr("app.agent_cli._read_bound_task_skill", lambda *_: expected)
     server = build_role_server(
         role,
-        task_id=7,
+        task_id=1,
         db_path=tmp_path / "unused.sqlite3",
         execution_generation="first",
     )
@@ -176,7 +163,7 @@ def test_read_task_skill_fails_for_missing_unknown_ambiguous_or_stale_material(
     )
     _task_db(db, scheduled_consumer=context.to_payload())
     server = build_role_server(
-        "consumer", task_id=7, db_path=db, execution_generation="first"
+        "consumer", task_id=1, db_path=db, execution_generation="first"
     )
     read = server._tool_manager.get_tool("read_task_skill").fn
 
@@ -187,17 +174,14 @@ def test_read_task_skill_fails_for_missing_unknown_ambiguous_or_stale_material(
 
     with sqlite3.connect(db) as connection:
         empty = _context().to_payload()
-        connection.execute(
-            "update tasks set trigger_message_json=? where record_type='reply_task_inputs' and parent_id=7",
-            (json.dumps({"raw_payload": {"scheduled_consumer": empty}}),),
-        )
+        set_native_task_fields(connection, "reply_tasks", 1, {
+            "trigger_message_json": json.dumps({"raw_payload": {"scheduled_consumer": empty}}),
+        })
     with pytest.raises(ValueError, match="unavailable"):
         read("ceo-calendar-invite")
 
     with sqlite3.connect(db) as connection:
-        connection.execute(
-            "update tasks set execution_generation='second' where record_type='reply_tasks' and id=7"
-        )
+        set_native_task_fields(connection, "reply_tasks", 1, {"execution_generation": "second"})
     with pytest.raises(ValueError, match="generation changed"):
         read("ceo-calendar-invite")
 
@@ -212,7 +196,7 @@ def test_read_task_skill_rejects_material_inside_invalid_service_wrapper(tmp_pat
     db = tmp_path / "service.sqlite3"
     _task_db(db, scheduled_consumer=invalid)
     read = build_role_server(
-        "consumer", task_id=7, db_path=db, execution_generation="first"
+        "consumer", task_id=1, db_path=db, execution_generation="first"
     )._tool_manager.get_tool("read_task_skill").fn
 
     with pytest.raises(ValueError, match="scheduled consumer context is invalid"):

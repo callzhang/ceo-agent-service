@@ -1,6 +1,5 @@
 from __future__ import annotations
 from tests.support.native_task_fields import set_native_task_fields
-from app.run_storage import SCHEDULED_RUN_SQL
 from app.store import REPLY_TASK_SQL
 
 from concurrent.futures import Future, ThreadPoolExecutor
@@ -28,6 +27,7 @@ from app.worker import DingTalkAutoReplyWorker
 
 
 NOW = datetime(2026, 9, 8, 12, 0, tzinfo=UTC)
+SCHEDULED_RUN_SQL = "select * from schedule_occurrences"
 
 
 def _store(tmp_path: Path) -> AutoReplyStore:
@@ -163,32 +163,31 @@ def _update_task_facts(db, kind: str, public_id: int, values: dict[str, object])
     set_native_task_fields(db, kind, public_id, values)
 
 
+_DISPATCH_TASK_KINDS = {
+    "reply": "reply", "scheduled_execution": "reply", "meeting": "meeting_alignment",
+    "work_summary": "work_summary", "okr_review": "okr_review",
+}
+
+
 def _insert_claim_lease(
     db, values: dict[str, object], *, source_rowid: int | None = None
 ) -> None:
-    from app.state_storage import insert_state, update_state_rows
-    from app.task_lifecycle_definitions import DISPATCH_KINDS, eligible_adapter
-    from app.task_lifecycle_storage import acquire_claim
+    """Record a ledger lease; when the source Task exists its lease facts move with it."""
+    from app.state_storage import insert_state
 
     adapter = values["adapter_name"]
     source_id = str(values["source_id"])
-    exists = adapter in DISPATCH_KINDS and db.execute(
-        "select 1 from tasks where record_type=? and legacy_key=? and "
-        + eligible_adapter() + "=?", (DISPATCH_KINDS[adapter], source_id, adapter),
-    ).fetchone()
-    if exists:
-        if source_rowid is not None:
-            insert_state(db, "dispatcher_claim_leases", values, source_rowid=source_rowid)
-        generation = acquire_claim(db, adapter_name=adapter, source_id=source_id,
-            owner=values["owner"], owner_pid=values["owner_pid"],
-            lease_expires_at=values["lease_expires_at"], now=values["updated_at"])
-        assert generation == values["generation"]
-        update_state_rows(db, "dispatcher_claim_leases", values,
-            where_sql="adapter_name=? and source_id=?", parameters=(adapter, source_id))
-        if source_rowid is not None:
-            assert db.execute("select legacy_key from state where record_type='dispatcher_claim_leases' "
-                "and adapter_name=? and source_id=?", (adapter, source_id)).fetchone()[0] == str(source_rowid)
-    elif source_rowid is None:
+    kind = _DISPATCH_TASK_KINDS.get(adapter)
+    if kind and source_id.isdigit() and db.execute(
+        "select 1 from tasks where kind=? and id=?", (kind, int(source_id)),
+    ).fetchone():
+        db.execute(
+            "update tasks set lease_owner=?, owner_pid=?, generation=?, "
+            "lease_expires_at=?, adapter_name=? where id=?",
+            (values["owner"], values["owner_pid"], values["generation"],
+             values["lease_expires_at"], adapter, int(source_id)),
+        )
+    if source_rowid is None:
         insert_state(db, "dispatcher_claim_leases", values)
     else:
         insert_state(db, "dispatcher_claim_leases", values, source_rowid=source_rowid)
@@ -1838,7 +1837,7 @@ def test_scheduled_metrics_exclude_terminal_source_failures_from_latest_error(
     run = _scheduled_run(store)
     with store._connect() as db:
         db.execute(
-            "update runs set dispatch_status='failed', skip_or_error_reason='real scheduler failure' where record_type='scheduled_task_runs' and cast(legacy_key as integer)=?",
+            "update schedule_occurrences set dispatch_status='failed', skip_or_error_reason='real scheduler failure' where id=?",
             (run.id,),
         )
     task_id = run.scheduled_task_id
@@ -1850,7 +1849,7 @@ def test_scheduled_metrics_exclude_terminal_source_failures_from_latest_error(
     )
     with store._connect() as db:
         db.execute(
-            "update runs set dispatch_status='skipped', skip_or_error_reason='scheduled_task_previous_execution_active' where record_type='scheduled_task_runs' and cast(legacy_key as integer)=?",
+            "update schedule_occurrences set dispatch_status='skipped', skip_or_error_reason='scheduled_task_previous_execution_active' where id=?",
             (skipped.id,),
         )
 
@@ -1946,7 +1945,7 @@ def test_expired_live_owner_hides_dispatcher_error_until_owner_is_dead(
             f"select id from ({REPLY_TASK_SQL}) where channel='scheduled'"
         ).fetchone()[0]
         db.execute(
-            "update runs set skip_or_error_reason='scheduled error' where record_type='scheduled_task_runs' and cast(legacy_key as integer)=?",
+            "update schedule_occurrences set skip_or_error_reason='scheduled error' where id=?",
             (scheduled_id,),
         )
         _update_task_facts(db, "reply_tasks", reply_id, {"error": "reply error"})
@@ -2114,7 +2113,7 @@ def test_dispatcher_metrics_only_report_errors_from_actionable_sources(
     with store._connect() as db:
         now_text = NOW.strftime("%Y-%m-%d %H:%M:%S")
         db.execute(
-            "update runs set dispatch_status='failed', skip_or_error_reason='terminal scheduled failure' where record_type='scheduled_task_runs' and cast(legacy_key as integer)=?",
+            "update schedule_occurrences set dispatch_status='failed', skip_or_error_reason='terminal scheduled failure' where id=?",
             (scheduled.id,),
         )
 
@@ -2234,15 +2233,15 @@ def test_scheduled_metrics_clear_latest_error_after_a_recovered_dispatch(
     )
     with store._connect() as db:
         db.execute(
-            "update runs set dispatch_status='failed', skip_or_error_reason='real scheduler failure' where record_type='scheduled_task_runs' and cast(legacy_key as integer)=?",
+            "update schedule_occurrences set dispatch_status='failed', skip_or_error_reason='real scheduler failure' where id=?",
             (failed.id,),
         )
         db.execute(
-            "update runs set dispatch_status='dispatched', execution_kind='service_command', execution_id='produce-once' where record_type='scheduled_task_runs' and cast(legacy_key as integer)=?",
+            "update schedule_occurrences set dispatch_status='dispatched', execution_kind='service_command', execution_id='produce-once' where id=?",
             (recovered.id,),
         )
         db.execute(
-            "update runs set dispatch_status='skipped', skip_or_error_reason='scheduled_task_previous_execution_active' where record_type='scheduled_task_runs' and cast(legacy_key as integer)=?",
+            "update schedule_occurrences set dispatch_status='skipped', skip_or_error_reason='scheduled_task_previous_execution_active' where id=?",
             (overlap.id,),
         )
 

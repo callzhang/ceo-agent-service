@@ -315,3 +315,28 @@ thread business delays are still observed, including0.2. A dedicated background
 versus main-thread sleep regression passes. No test budget is raised or disabled.
 The full AgentTurnProcess runner file passes44 cases. Final remote Quality is
 still required for this integrated follow-up.
+
+## Audit/current-owner continuation and main retirement review
+
+After the preceding fixes, Quality40269792086 progressed to the next current
+fixtures. Audit36 cases pass after physical Run addressing and a real copied
+OA Skill frontmatter fixture; Audit idle-session handoff2 cases pass using the
+existing native Audit encoder. Settled-bound Attention3 cases preserve original
+Run→Task identity while editing the actual claimed/current TaskInput owner.
+Config-account parity uses a true current Store target against the genuine
+frozen predecessor; exact values/types/signed IDs, rename FK rejection and
+binding/account cascade remain. Account plus confirmed-meeting8 cases pass.
+
+Normal main reconciliation preserves the current five-slot provenance tests.
+Independent review rejected an initial conflict resolution that deleted eight
+selection migration functions' tests while their explicit application tools
+still ship. The entire already-reviewed branch test file is restored, rather
+than accepting that coverage loss. All three meeting receipt fixtures now use
+the actual send_message operation; the retained bound-envelope2 cases pass.
+A wrong node-name invocation ran zero tests and is not acceptance evidence.
+
+CI now appends --maxfail=0 to the existing test command to report all failures
+within each shard's unchanged2GB/5minute budget. The12-shard complete suite,
+worker count, collection, passing standard and production gate are unchanged.
+This avoids repeating a whole remote round after only one failure per shard;
+it does not skip tests or make a failing/capped run acceptable.

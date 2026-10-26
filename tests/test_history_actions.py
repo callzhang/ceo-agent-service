@@ -73,7 +73,7 @@ def test_pending_retry_uses_persisted_backoff_without_human_actions():
     assert state.kind == "automatic_recovery"
     assert state.reason == "Codex provider unavailable"
     assert state.retry_attempt == 2
-    assert state.retry_limit == 3
+    assert state.retry_limit == 4
     assert state.retry_at == "2026-08-11 05:14:00"
     assert [action.key for action in state.actions] == ["details"]
 
@@ -385,7 +385,7 @@ def test_retrying_meeting_uses_persisted_retry_plan():
     assert state is not None
     assert state.kind == "automatic_recovery"
     assert state.retry_attempt == 2
-    assert state.retry_limit == 3
+    assert state.retry_limit == 4
     assert [action.key for action in state.actions] == ["details"]
 
 

@@ -7,9 +7,9 @@ from app.email_store import EmailStore
 
 
 @pytest.mark.parametrize('ddl', (
-    'drop index idx_actions_candidates_task',
+    'drop index idx_actions_public_id',
     'drop trigger trg_configs_skill_revision_update',
-    'drop index idx_task20_published_13',
+    'drop index idx_tasks_claim_due',
 ))
 @pytest.mark.parametrize('constructor', (AutoReplyStore, EmailStore))
 def test_missing_current_object_is_rejected_without_mutation(tmp_path, ddl, constructor):

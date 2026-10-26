@@ -239,8 +239,8 @@ def _scheduled_run(
     from app.scheduled_config_storage import intern_scheduled_config
 
     at = f"2026-09-25T08:{minute:02d}:00+00:00"
-    from app.run_storage import insert_run
-    insert_run(db, "scheduled_task_runs", {
+    from tests.support.native_run_rows import insert_scheduled_occurrence
+    insert_scheduled_occurrence(db, {
         "event_id": f"event-{task_id}-{minute}",
         "scheduled_task_id": task_id,
         "trigger_kind": "scheduled",

@@ -36,9 +36,7 @@ def test_only_confirmed_receipt_restores_exact_body_without_new_send(tmp_path, s
         body="Original delivered content", original_text="", target_kind="user", target_id="u-a",
         feedback_base_url="")
     receipt = {"result": {"openTaskId": "exact-original-task"}}
-    store.record_outbound_postfix_receipt(
-        "dingtalk", key, receipt, operation="meeting_alignment"
-    )
+    store.record_outbound_postfix_receipt("dingtalk", key, receipt, operation="send_message")
     class Provider:
         def verify_message_send_result(self, value):
             assert value == receipt
@@ -76,18 +74,13 @@ def test_restore_cas_rejects_source_change_and_ignores_unrelated_claim(tmp_path)
         body="Delivered body", original_text="", target_kind="user", target_id="u-a",
         feedback_base_url="")
     receipt = {"result": {"openMessageId": "original-message"}}
-    store.record_outbound_postfix_receipt(
-        "dingtalk", key, receipt, operation="meeting_alignment"
-    )
+    store.record_outbound_postfix_receipt("dingtalk", key, receipt, operation="send_message")
     job = store.get_meeting_alignment_job(job_id)
     result_json = MeetingDeliveryResult(target_kind="direct", target_id="u-a", target_title="A",
         resolved_mentions=[], unresolved_mention_names=[], send_result=receipt,
         message_text=prepared.final_body).model_dump_json()
-    from app.task8_storage import task8_set_parts
     from app.state_storage import insert_state
-    with store._connect() as db:
-        db.execute("update tasks set " + task8_set_parts("meeting_alignment_jobs", {}, update_sql={"source_json": "?"}).sql + " where record_type='meeting_alignment_jobs' and cast(legacy_key as integer)=?",
-                   ('{"event":"different"}', job_id))
+    store.update_meeting_alignment_job(job_id, source_json='{"event":"different"}')
     assert not store.restore_confirmed_meeting_delivery(job, key=key, prepared=prepared,
         receipt=receipt, result_json=result_json)
     job = store.get_meeting_alignment_job(job_id)
@@ -146,7 +139,7 @@ def test_confirmed_receipt_recovery_parses_only_a_bound_audit_envelope(
     )
     receipt = {"result": {"openMessageId": "confirmed-original-message"}}
     store.record_outbound_postfix_receipt(
-        "dingtalk", key, receipt, operation="meeting_alignment"
+        "dingtalk", key, receipt, operation="send_message"
     )
     job = store.get_meeting_alignment_job(job_id)
     result_json = MeetingDeliveryResult(
