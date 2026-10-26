@@ -7,7 +7,7 @@ import pytest
 
 from app.store import AutoReplyStore
 from app.business_storage import update_business
-from app.task_agent import apply_task_agent_decision, build_task_agent_prompt
+from app.task_agent import apply_task_agent_decision
 from app.task_business_resolution import BusinessResolutionService
 from app.task_models import ProjectProposal, TaskAgentDecision, WorkItem
 
@@ -257,12 +257,11 @@ def test_only_active_official_exact_title_project_is_reused(tmp_path, source_typ
 
 
 def test_project_guidance_resolves_current_authoritative_name_before_existing_link():
-    item, _ = source_registration("project_weekly_report", 1)
-    text = build_task_agent_prompt(item, "当前已有项目上下文")
+    # Business guidance lives in the Skill; the prompt carries only transport.
     skill = (
         Path(__file__).parents[1] / "ci/shared-skills/ceo-work-tracking/SKILL.md"
     ).read_text()
-    for guidance in (text, skill):
+    for guidance in (skill,):
         guidance = " ".join(guidance.split())
         assert (
             "Adopt the exact current authoritative Project definition with registration to register or reuse"
