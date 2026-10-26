@@ -388,3 +388,17 @@ GitHub npm test先执行Ruff，所以这些错误使pytest尚未启动；app.dep
 此前7项测试失败、1项收集错误及44条lint诊断仍作为历史维护事实保存，没有改标通过。主线随后已独立提交旧完整门禁暂停fbd0c89bb（TEST_GATE_ENABLED=False）；本次未改门禁、未重复发布或重启，不再把旧失败或API中转商作为当前G2前提。生产尚未包含的其他主线变更也不在本次发布范围。完整加载/摘要/进程/回读记录见既有G2 JSON的final_acceptance。
 
 **本轮终点已达到：PR已合并，当前生产进程已加载，当前CLI证据有效，生产回读及验收记录齐全。** G1自然样本验收独立保留，整轮Agent优化仍不能据此全部宣布完成；不自动开启其他trajectory优化。
+
+## 18. G1 自然样本有限续查（2026-10-25 19:54 PDT）
+
+已同步最新main `1e840a685`后，只读检查修复安装后的18项已完成Consumer/Audit运行（上界Run399448），18个attempt、15个session、完整1141行非重复原生范围；包含从attempt恢复的Run399433，不因runs空session遗漏。全部工具调用及17次exec实际参数没有文档写入。DWS修复二进制版本、SHA与第15节一致，生产HEAD为`1e53f41793e63d8da6ab8bd51d80a7f96c084307`。
+
+**结论：G1仍缺修复后自然文档调用，保持“已上线待行为验收”。** 这不是已确认的新回归，也不能以没有文档调用证明无效覆盖已停止。原服务成功语义、完整JSONML/高亮/字面内容与严格负例证据继续有效，不重复验证。下一步仍只核对首个自然相关文档写入的实际回执和后续行为；本轮无人工重放、业务写入、模型调用、运行代码变更或部署。G2关闭状态不变，整轮未全部完成。
+
+详见[自然文档回读记录](document-write-recovery-validation.md)及[现有G1发布证据](../evals/trajectory_optimization/g1_highlight_semantics_release.results.v1.json)的最后一项`natural_followup_checks`（记录精确UTC查询时间、逐attempt范围及SHA）。
+
+### G1 自然样本续查（2026-10-25 20:06 PDT）
+
+接上次Run399448上界，本次只检查399449–399456共8项已结束自然Consumer/Audit运行（7项completed、1项failed），逐attempt完整解析498行原生记录及9次exec调用参数；有文档搜索/读取，没有`consumer_document_write`或直接DWS写入。查询截止2026-10-26 03:06:24 UTC；后续尚在途运行不计作完成样本。安装后累计已检查26项已结束运行、1639行互不重复记录，仍无相关自然写入。
+
+当前生产HEAD为`1e840a6858a8b39394ea090df26acb0b2f5baba1`；DWS二进制SHA仍与已验收`ceo-docfmt.6747c671`一致。新增逐attempt范围、SHA及调用摘要已追加至G1发布JSON的`natural_followup_checks`，未保存业务正文。**G1保持已发布、生产非重复行为待验收**：本轮没有写入样本，不能核验写入格式回执或同正文后续覆盖，也不据此认定存在新回归。唯一下一步仍是首个自然相关文档调用的回执与后续行为；无重放、业务写入、代码变更、模型/测试重跑或部署。

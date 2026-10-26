@@ -295,6 +295,881 @@
       ],
       "scope": "Only metadata read for not-yet-executed leased occurrences; not a completed Agent or document-write sample. No additional natural-run polling, passed tests or model calls.",
       "conclusion": "No related post-install natural trajectory available; G1 remains deployed awaiting production non-repetition acceptance. G2 not started."
+    },
+    {
+      "checked_at_utc": "2026-10-26T02:53:59.749279+00:00",
+      "window_start_utc": "2026-10-25T22:39:26.025392+00:00",
+      "run_upper_bound": 399448,
+      "runs": [
+        {
+          "id": 399429,
+          "role": "consumer",
+          "status": "completed"
+        },
+        {
+          "id": 399430,
+          "role": "audit",
+          "status": "completed"
+        },
+        {
+          "id": 399431,
+          "role": "consumer",
+          "status": "completed"
+        },
+        {
+          "id": 399432,
+          "role": "audit",
+          "status": "completed"
+        },
+        {
+          "id": 399433,
+          "role": "consumer",
+          "status": "completed"
+        },
+        {
+          "id": 399436,
+          "role": "consumer",
+          "status": "completed"
+        },
+        {
+          "id": 399437,
+          "role": "audit",
+          "status": "completed"
+        },
+        {
+          "id": 399438,
+          "role": "consumer",
+          "status": "completed"
+        },
+        {
+          "id": 399439,
+          "role": "audit",
+          "status": "completed"
+        },
+        {
+          "id": 399440,
+          "role": "consumer",
+          "status": "completed"
+        },
+        {
+          "id": 399441,
+          "role": "consumer",
+          "status": "completed"
+        },
+        {
+          "id": 399442,
+          "role": "audit",
+          "status": "completed"
+        },
+        {
+          "id": 399443,
+          "role": "audit",
+          "status": "completed"
+        },
+        {
+          "id": 399444,
+          "role": "consumer",
+          "status": "completed"
+        },
+        {
+          "id": 399445,
+          "role": "audit",
+          "status": "completed"
+        },
+        {
+          "id": 399446,
+          "role": "consumer",
+          "status": "completed"
+        },
+        {
+          "id": 399447,
+          "role": "audit",
+          "status": "completed"
+        },
+        {
+          "id": 399448,
+          "role": "consumer",
+          "status": "completed"
+        }
+      ],
+      "attempts": [
+        {
+          "id": 399134,
+          "parent_id": 399429,
+          "session_id": "01a1756d-1519-7ea0-9343-562299b3a654",
+          "transcript_start": 0,
+          "transcript_end": 59,
+          "status": "completed",
+          "range_sha256": "962c31aafd3038aa5bb4a2c8d70f01da65498db213fc31de6c0cddb1980290a4",
+          "call_names": [
+            "exec",
+            "read_task_skill",
+            "read_task_skill",
+            "exec",
+            "read_dingtalk_messages",
+            "read_consumer_output_schema"
+          ],
+          "document_write_call_lines": []
+        },
+        {
+          "id": 399135,
+          "parent_id": 399430,
+          "session_id": "01a1756d-8785-7850-9d30-0e48f8b68c06",
+          "transcript_start": 0,
+          "transcript_end": 45,
+          "status": "completed",
+          "range_sha256": "f73a8ba194adc8cc8e008b8216509a007f4109ee431a87a3f4aeb1240e01b8e7",
+          "call_names": [
+            "exec",
+            "read_task_skill",
+            "read_task_skill",
+            "read_dingtalk_messages"
+          ],
+          "document_write_call_lines": []
+        },
+        {
+          "id": 399139,
+          "parent_id": 399431,
+          "session_id": "01a175f2-b11c-7161-a415-136a8e70605c",
+          "transcript_start": 0,
+          "transcript_end": 92,
+          "status": "completed",
+          "range_sha256": "bc85ae4f55279590a9328fe5c5626d6b8912532956fe4e6e4c4f85b2f8c0a625",
+          "call_names": [
+            "exec",
+            "read_task_skill",
+            "read_task_skill",
+            "read_skill",
+            "read_skill",
+            "read_dingtalk_messages",
+            "read_skill",
+            "read_skill",
+            "read_consumer_output_schema",
+            "read_system_action_contract"
+          ],
+          "document_write_call_lines": []
+        },
+        {
+          "id": 399140,
+          "parent_id": 399432,
+          "session_id": "01a175f3-9cc9-7382-b23f-0d6fec8a5225",
+          "transcript_start": 0,
+          "transcript_end": 74,
+          "status": "completed",
+          "range_sha256": "d40e3ab20db0f5cf37905b3b557bdc47bc013f55703776ba5f863db3e249506d",
+          "call_names": [
+            "exec",
+            "read_task_skill",
+            "read_task_skill",
+            "read_skill",
+            "read_skill",
+            "read_skill",
+            "read_system_action_contract",
+            "read_dingtalk_messages",
+            "read_skill"
+          ],
+          "document_write_call_lines": []
+        },
+        {
+          "id": 399141,
+          "parent_id": 399433,
+          "session_id": "01a175f4-8022-77a3-a5da-490aa3985ee4",
+          "transcript_start": 0,
+          "transcript_end": 24,
+          "status": "completed",
+          "range_sha256": "a2ed0261620be345adfdd26ac740dd195f0dcc7e4528ddd39cc47a564a26f040",
+          "call_names": [
+            "exec"
+          ],
+          "document_write_call_lines": []
+        },
+        {
+          "id": 399148,
+          "parent_id": 399436,
+          "session_id": "01a17617-8ba3-7ab0-a6c8-7e40301dbcc0",
+          "transcript_start": 0,
+          "transcript_end": 95,
+          "status": "completed",
+          "range_sha256": "617836d1d2a57462678ef8276befcd5c2e47b2370897ebc919e78fc6064acdd7",
+          "call_names": [
+            "exec",
+            "read_task_skill",
+            "read_task_skill",
+            "read_task_skill",
+            "read_dingtalk_messages",
+            "read_skill",
+            "search_dingtalk_contacts",
+            "search_dingtalk_messages",
+            "read_consumer_output_schema",
+            "read_system_action_contract",
+            "read_skill",
+            "read_skill"
+          ],
+          "document_write_call_lines": []
+        },
+        {
+          "id": 399149,
+          "parent_id": 399437,
+          "session_id": "01a17618-8afd-71c0-9c7d-eb76d6114f84",
+          "transcript_start": 0,
+          "transcript_end": 59,
+          "status": "completed",
+          "range_sha256": "2937260a2ef76ac1da05452afffadd871aff1d063629639a773177877409a8f8",
+          "call_names": [
+            "exec",
+            "read_task_skill",
+            "read_task_skill",
+            "read_system_action_contract",
+            "read_dingtalk_messages",
+            "search_dingtalk_contacts"
+          ],
+          "document_write_call_lines": []
+        },
+        {
+          "id": 399150,
+          "parent_id": 399438,
+          "session_id": "01a17618-a48d-78f1-b42c-6285b398b9bb",
+          "transcript_start": 0,
+          "transcript_end": 62,
+          "status": "completed",
+          "range_sha256": "f67a49b7947097cf5fff7f235275b5ee897875b16d197ce14e31f1686e133e82",
+          "call_names": [
+            "exec",
+            "read_task_skill",
+            "read_task_skill",
+            "read_dingtalk_messages",
+            "read_system_action_contract",
+            "read_consumer_output_schema"
+          ],
+          "document_write_call_lines": []
+        },
+        {
+          "id": 399151,
+          "parent_id": 399439,
+          "session_id": "01a17619-562a-79c3-a86c-76961145adae",
+          "transcript_start": 0,
+          "transcript_end": 52,
+          "status": "completed",
+          "range_sha256": "f97e799a81bebbca37fef4605b6548c7ab4741e2d1f11e7088a22f942918a9db",
+          "call_names": [
+            "exec",
+            "read_task_skill",
+            "read_task_skill",
+            "read_system_action_contract",
+            "read_dingtalk_messages"
+          ],
+          "document_write_call_lines": []
+        },
+        {
+          "id": 399152,
+          "parent_id": 399440,
+          "session_id": "01a17619-abdd-7dd1-a080-fc98e63c132a",
+          "transcript_start": 0,
+          "transcript_end": 89,
+          "status": "completed",
+          "range_sha256": "7460f53cbcaa7b81e56940b7623bd5cc5efe61226c4a1bd4d3f5003867f1cd6e",
+          "call_names": [
+            "exec",
+            "exec",
+            "read_task_skill",
+            "read_task_skill",
+            "read_dingtalk_messages",
+            "read_skill",
+            "read_skill",
+            "read_skill",
+            "read_system_action_contract",
+            "read_consumer_output_schema"
+          ],
+          "document_write_call_lines": []
+        },
+        {
+          "id": 399153,
+          "parent_id": 399441,
+          "session_id": "01a1761a-d39b-72c2-b90a-0e009ad84130",
+          "transcript_start": 0,
+          "transcript_end": 79,
+          "status": "completed",
+          "range_sha256": "26b42f2fce39e293f31dc428106f5f06c5baa006ad88264a38c90d954ea50e49",
+          "call_names": [
+            "exec",
+            "read_task_skill",
+            "read_task_skill",
+            "read_dingtalk_calendar_event",
+            "list_dingtalk_calendar_events",
+            "read_task_skill",
+            "exec",
+            "read_system_action_contract",
+            "read_consumer_output_schema"
+          ],
+          "document_write_call_lines": []
+        },
+        {
+          "id": 399154,
+          "parent_id": 399442,
+          "session_id": "01a1761b-2ed6-7131-b1cd-06ea36e1ae8f",
+          "transcript_start": 0,
+          "transcript_end": 72,
+          "status": "completed",
+          "range_sha256": "13a855c42ea016a1ba24197292b398c14a37c963549b079a00888ffd2b30f093",
+          "call_names": [
+            "exec",
+            "read_task_skill",
+            "read_task_skill",
+            "read_skill",
+            "read_skill",
+            "read_dingtalk_messages",
+            "read_system_action_contract"
+          ],
+          "document_write_call_lines": []
+        },
+        {
+          "id": 399155,
+          "parent_id": 399443,
+          "session_id": "01a1761c-61f4-74c3-a4e4-f6144f921785",
+          "transcript_start": 0,
+          "transcript_end": 69,
+          "status": "completed",
+          "range_sha256": "e87388480d6fd7208e594cbcbac6f692479311d557cf53a4a99b9c306c40c301",
+          "call_names": [
+            "exec",
+            "read_task_skill",
+            "read_task_skill",
+            "read_task_skill",
+            "read_dingtalk_calendar_event",
+            "read_dingtalk_messages",
+            "read_system_action_contract",
+            "list_dingtalk_calendar_events"
+          ],
+          "document_write_call_lines": []
+        },
+        {
+          "id": 399156,
+          "parent_id": 399444,
+          "session_id": "01a17619-abdd-7dd1-a080-fc98e63c132a",
+          "transcript_start": 89,
+          "transcript_end": 137,
+          "status": "completed",
+          "range_sha256": "c5bf10715a0185c0e6bdd39aeac5ceece2343ab40a203d789577a2afa637c08e",
+          "call_names": [
+            "health",
+            "read_task_skill",
+            "read_task_skill",
+            "read_skill",
+            "read_dingtalk_messages"
+          ],
+          "document_write_call_lines": []
+        },
+        {
+          "id": 399157,
+          "parent_id": 399445,
+          "session_id": "01a1761b-2ed6-7131-b1cd-06ea36e1ae8f",
+          "transcript_start": 72,
+          "transcript_end": 101,
+          "status": "completed",
+          "range_sha256": "66b83e5bf72bef6b82d40707cb8f63c3bb93821620db5cd2c3406be43ac6a6ac",
+          "call_names": [
+            "ocr_document",
+            "read_dingtalk_messages"
+          ],
+          "document_write_call_lines": []
+        },
+        {
+          "id": 399158,
+          "parent_id": 399446,
+          "session_id": "01a17618-a48d-78f1-b42c-6285b398b9bb",
+          "transcript_start": 62,
+          "transcript_end": 114,
+          "status": "completed",
+          "range_sha256": "889be36b1aebd9a95e0963a171f5fcd4378fe97356e86c017bf4f223322715b7",
+          "call_names": [
+            "read_task_skill",
+            "read_task_skill",
+            "read_dingtalk_messages",
+            "read_system_action_contract",
+            "read_consumer_output_schema"
+          ],
+          "document_write_call_lines": []
+        },
+        {
+          "id": 399159,
+          "parent_id": 399447,
+          "session_id": "01a1761e-f1f5-7fd1-aabf-7ad084965d8e",
+          "transcript_start": 0,
+          "transcript_end": 46,
+          "status": "completed",
+          "range_sha256": "8084cf58a3fa2a9ac6056a0f967f7d44644a815c513a58d53d68b683ddc0653e",
+          "call_names": [
+            "read_task_skill",
+            "read_task_skill",
+            "read_system_action_contract",
+            "read_dingtalk_messages"
+          ],
+          "document_write_call_lines": []
+        },
+        {
+          "id": 399160,
+          "parent_id": 399448,
+          "session_id": "01a1761f-08ea-7ca1-8ea0-2e8bc1032776",
+          "transcript_start": 0,
+          "transcript_end": 95,
+          "status": "completed",
+          "range_sha256": "2aa3d84127298a7dad0b3223d3dea753575a189269801af91485c3888f96118b",
+          "call_names": [
+            "read_task_skill",
+            "read_text_file",
+            "read_task_skill",
+            "read_task_skill",
+            "read_dingtalk_calendar_event",
+            "list_dingtalk_calendar_events",
+            "read_dingtalk_messages",
+            "read_system_action_contract",
+            "convert_dingtalk_calendar_time",
+            "exec",
+            "read_consumer_output_schema"
+          ],
+          "document_write_call_lines": []
+        }
+      ],
+      "exec_tool_inspection": [
+        {
+          "run_id": 399429,
+          "line": 16,
+          "tool_refs": [
+            "exec_command"
+          ],
+          "contains_dws": false,
+          "contains_document_write": false,
+          "arguments_sha256": "b974df607cedad57c8df025dd288d2552b1e20d8c4130ac7b91dbdb1a994f6ef"
+        },
+        {
+          "run_id": 399429,
+          "line": 35,
+          "tool_refs": [
+            "mcp__agent_cli__read_dingtalk_messages",
+            "mcp__agent_cli__read_consumer_output_schema"
+          ],
+          "contains_dws": false,
+          "contains_document_write": false,
+          "arguments_sha256": "7aa8e73b95eff6bb40ecaad87bebc8e03237d0bb5742414d2b92d8b3b9ee2230"
+        },
+        {
+          "run_id": 399430,
+          "line": 16,
+          "tool_refs": [],
+          "contains_dws": false,
+          "contains_document_write": false,
+          "arguments_sha256": "613fdf92ca5e33c17ab9729fc9d4ede766ab7c5183b01ef1d06d9ab969ed614b"
+        },
+        {
+          "run_id": 399431,
+          "line": 16,
+          "tool_refs": [
+            "exec_command"
+          ],
+          "contains_dws": false,
+          "contains_document_write": false,
+          "arguments_sha256": "893e926e0c6464e160d985de776cac1e40431c0d1eba2c34a099fac886f846cd"
+        },
+        {
+          "run_id": 399432,
+          "line": 16,
+          "tool_refs": [],
+          "contains_dws": false,
+          "contains_document_write": false,
+          "arguments_sha256": "506d9412be1098bc499450a1939b95cb77ee5e14253c0310b40b8c2f6a4d414e"
+        },
+        {
+          "run_id": 399433,
+          "line": 14,
+          "tool_refs": [],
+          "contains_dws": false,
+          "contains_document_write": false,
+          "arguments_sha256": "9f6412de5bb39bff79adb9d32a6a397244c014b87f6eec5f4d3b30c5c33473de"
+        },
+        {
+          "run_id": 399436,
+          "line": 14,
+          "tool_refs": [],
+          "contains_dws": false,
+          "contains_document_write": false,
+          "arguments_sha256": "8393108b61c8bad00d371bfb3a1b7b1b1caa8ee7dc1a990ff0583af362a1e26d"
+        },
+        {
+          "run_id": 399437,
+          "line": 16,
+          "tool_refs": [],
+          "contains_dws": false,
+          "contains_document_write": false,
+          "arguments_sha256": "3b0e2c8809b74e87109570b9635d08ff703ea084101775603d8d2ffe5262e887"
+        },
+        {
+          "run_id": 399438,
+          "line": 16,
+          "tool_refs": [
+            "exec_command"
+          ],
+          "contains_dws": false,
+          "contains_document_write": false,
+          "arguments_sha256": "189b5e09b222d6069c5d11aa0796562801aa3dbb6b245efa8d002c6e6c18d58a"
+        },
+        {
+          "run_id": 399439,
+          "line": 16,
+          "tool_refs": [],
+          "contains_dws": false,
+          "contains_document_write": false,
+          "arguments_sha256": "41e05d1c031d5c0fcbbf2ac87d6645434256fb2e1bb7ed328316213abeb31b34"
+        },
+        {
+          "run_id": 399440,
+          "line": 16,
+          "tool_refs": [
+            "exec_command"
+          ],
+          "contains_dws": false,
+          "contains_document_write": false,
+          "arguments_sha256": "715fafe273eff3f150661ce046195fd94380de964057d08e9814dd33de3ab5bd"
+        },
+        {
+          "run_id": 399440,
+          "line": 23,
+          "tool_refs": [
+            "mcp__agent_cli__read_task_skill",
+            "mcp__agent_cli__read_task_skill",
+            "mcp__agent_cli__read_consumer_output_schema",
+            "mcp__agent_cli__read_dingtalk_messages"
+          ],
+          "contains_dws": false,
+          "contains_document_write": false,
+          "arguments_sha256": "9b11ee52e573d8535b1e1a55fe7a9f6f97491ee067653dfa6b9041c93f4fde48"
+        },
+        {
+          "run_id": 399441,
+          "line": 14,
+          "tool_refs": [],
+          "contains_dws": false,
+          "contains_document_write": false,
+          "arguments_sha256": "2a3c8b381984135e062527945c0523f1c094cc8aa630e1cadf8d6252aa4d8e8f"
+        },
+        {
+          "run_id": 399441,
+          "line": 55,
+          "tool_refs": [
+            "mcp__agent_cli__read_system_action_contract",
+            "mcp__agent_cli__read_consumer_output_schema"
+          ],
+          "contains_dws": false,
+          "contains_document_write": false,
+          "arguments_sha256": "d930e4088a99b12c5cdfccfa795dddab1f76e1116f743522c45824d8a4ca1228"
+        },
+        {
+          "run_id": 399442,
+          "line": 16,
+          "tool_refs": [],
+          "contains_dws": false,
+          "contains_document_write": false,
+          "arguments_sha256": "d21b32b6b90af3069b517da7928295d584b7fe1dd2574a3a88fdd454a0bf13c6"
+        },
+        {
+          "run_id": 399443,
+          "line": 16,
+          "tool_refs": [],
+          "contains_dws": false,
+          "contains_document_write": false,
+          "arguments_sha256": "d660a2c11b4e1639263f7e5f624d5a6b8a7dae8d1ee3134dda884959fb62645f"
+        },
+        {
+          "run_id": 399448,
+          "line": 75,
+          "tool_refs": [
+            "exec_command"
+          ],
+          "contains_dws": false,
+          "contains_document_write": false,
+          "arguments_sha256": "189b5e09b222d6069c5d11aa0796562801aa3dbb6b245efa8d002c6e6c18d58a"
+        }
+      ],
+      "production_head": "1e53f41793e63d8da6ab8bd51d80a7f96c084307",
+      "development_main": "1e840a6858a8b39394ea090df26acb0b2f5baba1",
+      "binary_sha256": "3105fda34b277732a91070c38b677ad37162b8f3e70804fbec378bcbab74e97c",
+      "conclusion": "No document-write calls in completed Consumer/Audit natural attempts through run399448; no relevant G1 behavior sample. Running later attempts excluded. Neither absence of regression nor failure-path production acceptance established.",
+      "unique_sessions": 15,
+      "total_nonoverlapping_lines": 1141
+    },
+    {
+      "checked_at_utc": "2026-10-26T03:06:24.411264+00:00",
+      "run_lower_bound_exclusive": 399448,
+      "run_upper_bound": 399456,
+      "runs": [
+        {
+          "id": 399449,
+          "role": "consumer",
+          "status": "completed",
+          "started_at": "2026-10-26 02:52:30",
+          "completed_at": "2026-10-26 02:53:12"
+        },
+        {
+          "id": 399450,
+          "role": "audit",
+          "status": "completed",
+          "started_at": "2026-10-26 02:52:48",
+          "completed_at": "2026-10-26 02:53:28"
+        },
+        {
+          "id": 399451,
+          "role": "audit",
+          "status": "completed",
+          "started_at": "2026-10-26 02:53:17",
+          "completed_at": "2026-10-26 02:53:53"
+        },
+        {
+          "id": 399452,
+          "role": "consumer",
+          "status": "completed",
+          "started_at": "2026-10-26 02:56:54",
+          "completed_at": "2026-10-26 02:57:29"
+        },
+        {
+          "id": 399453,
+          "role": "audit",
+          "status": "completed",
+          "started_at": "2026-10-26 02:57:33",
+          "completed_at": "2026-10-26 02:58:07"
+        },
+        {
+          "id": 399454,
+          "role": "consumer",
+          "status": "failed",
+          "started_at": "2026-10-26 03:00:48",
+          "completed_at": "2026-10-26 03:01:25"
+        },
+        {
+          "id": 399455,
+          "role": "consumer",
+          "status": "completed",
+          "started_at": "2026-10-26 03:01:13",
+          "completed_at": "2026-10-26 03:01:54"
+        },
+        {
+          "id": 399456,
+          "role": "audit",
+          "status": "completed",
+          "started_at": "2026-10-26 03:01:56",
+          "completed_at": "2026-10-26 03:02:37"
+        }
+      ],
+      "attempts": [
+        {
+          "id": 399161,
+          "parent_id": 399449,
+          "session_id": "01a1761f-b515-7e33-b849-ca827a90984b",
+          "transcript_start": 0,
+          "transcript_end": 67,
+          "status": "completed",
+          "range_sha256": "84f401f4dc2f0975f809a9c18a0ffa441e473ba611686d6674841f166b326764",
+          "call_names": [
+            "exec",
+            "read_task_skill",
+            "read_task_skill",
+            "read_dingtalk_messages",
+            "search_dingtalk_documents",
+            "read_system_action_contract",
+            "read_consumer_output_schema"
+          ],
+          "document_write_call_lines": [],
+          "exec_inspection": [
+            {
+              "line": 16,
+              "arguments_sha256": "189b5e09b222d6069c5d11aa0796562801aa3dbb6b245efa8d002c6e6c18d58a",
+              "inspection": "read/discovery calls only; no document write or direct DWS command"
+            }
+          ]
+        },
+        {
+          "id": 399162,
+          "parent_id": 399450,
+          "session_id": "01a1761f-fb11-74b0-9257-9fdcc383626f",
+          "transcript_start": 0,
+          "transcript_end": 65,
+          "status": "completed",
+          "range_sha256": "9e0a84340b9c9aef86002a5de4e83dae7b516b6d41d32ad5c9568bd209f98940",
+          "call_names": [
+            "read_task_skill",
+            "read_task_skill",
+            "read_task_skill",
+            "read_dingtalk_calendar_event",
+            "list_dingtalk_calendar_events",
+            "read_dingtalk_messages",
+            "read_system_action_contract"
+          ],
+          "document_write_call_lines": [],
+          "exec_inspection": []
+        },
+        {
+          "id": 399163,
+          "parent_id": 399451,
+          "session_id": "01a17620-6b89-7d72-afc4-86c16b98f7b5",
+          "transcript_start": 0,
+          "transcript_end": 59,
+          "status": "completed",
+          "range_sha256": "c42ad948cae652c30c6ff84741e47039124a6ef87042d97698955d27e5a8d9c5",
+          "call_names": [
+            "read_task_skill",
+            "read_task_skill",
+            "exec",
+            "read_system_action_contract",
+            "read_dingtalk_messages",
+            "read_dingtalk_group_members"
+          ],
+          "document_write_call_lines": [],
+          "exec_inspection": [
+            {
+              "line": 28,
+              "arguments_sha256": "f5789c858f823a7fcd99f7d72f9e9e10b16b95df340a8cd6a4f050956b550f76",
+              "inspection": "read/discovery calls only; no document write or direct DWS command"
+            }
+          ]
+        },
+        {
+          "id": 399164,
+          "parent_id": 399452,
+          "session_id": "01a17618-a48d-78f1-b42c-6285b398b9bb",
+          "transcript_start": 114,
+          "transcript_end": 162,
+          "status": "completed",
+          "range_sha256": "833facf915966948282b785f133932044996987d1f48dde19e2528e51e530477",
+          "call_names": [
+            "read_task_skill",
+            "read_task_skill",
+            "read_dingtalk_messages",
+            "read_system_action_contract",
+            "read_consumer_output_schema"
+          ],
+          "document_write_call_lines": [],
+          "exec_inspection": []
+        },
+        {
+          "id": 399165,
+          "parent_id": 399453,
+          "session_id": "01a17624-543c-73b0-a226-c3d8f30e8dcc",
+          "transcript_start": 0,
+          "transcript_end": 58,
+          "status": "completed",
+          "range_sha256": "a15eb6eff8396d769993ecc78126a9bf2f65b676f0d2c1f83dfed5afd118ba86",
+          "call_names": [
+            "read_task_skill",
+            "read_task_skill",
+            "exec",
+            "read_dingtalk_messages",
+            "read_system_action_contract"
+          ],
+          "document_write_call_lines": [],
+          "exec_inspection": [
+            {
+              "line": 28,
+              "arguments_sha256": "39ff412e0b4cc799e63bfbc47e72652174bca6180f0da35170275f81452c170d",
+              "inspection": "read/discovery calls only; no document write or direct DWS command"
+            }
+          ]
+        },
+        {
+          "id": 399166,
+          "parent_id": 399454,
+          "session_id": "01a17627-4e7c-7370-a25d-ac07e6125e56",
+          "transcript_start": 0,
+          "transcript_end": 65,
+          "status": "failed",
+          "range_sha256": "079f83b739a9e656464143560285738dd28fc31fdb049ee9acdc20d43be6ab2e",
+          "call_names": [
+            "exec",
+            "exec",
+            "exec",
+            "exec",
+            "exec"
+          ],
+          "document_write_call_lines": [],
+          "exec_inspection": [
+            {
+              "line": 16,
+              "arguments_sha256": "f10827c8a32e3e9064785a7c13c268efde790ec54ff26bd1e6d1af7b7a3de4ef",
+              "inspection": "read/discovery calls only; no document write or direct DWS command"
+            },
+            {
+              "line": 23,
+              "arguments_sha256": "5ade0aa35dd756c29ddccbe186291b25cde25e1f6a94d3644b86d3470f2eaf15",
+              "inspection": "read/discovery calls only; no document write or direct DWS command"
+            },
+            {
+              "line": 35,
+              "arguments_sha256": "9d99a9a484154e4331629e0d50e06f84660d819bf2d988c4ef20ac88dcebb788",
+              "inspection": "read/discovery calls only; no document write or direct DWS command"
+            },
+            {
+              "line": 45,
+              "arguments_sha256": "6d820a11fcaded24d270650a6fc5111cad210c64b949b509a49904019e090d6d",
+              "inspection": "read/discovery calls only; no document write or direct DWS command"
+            },
+            {
+              "line": 52,
+              "arguments_sha256": "26611b40d36395fd62611aaaf7129d28b8070c181fd488a6bc0212470cc25875",
+              "inspection": "read/discovery calls only; no document write or direct DWS command"
+            }
+          ]
+        },
+        {
+          "id": 399167,
+          "parent_id": 399455,
+          "session_id": "01a1761f-b515-7e33-b849-ca827a90984b",
+          "transcript_start": 67,
+          "transcript_end": 138,
+          "status": "completed",
+          "range_sha256": "85da807bed879752ddf0c056e3ec2aedf4f5f560eadf8291ba1442f3d75e21e9",
+          "call_names": [
+            "read_task_skill",
+            "read_task_skill",
+            "exec",
+            "read_dingtalk_messages",
+            "search_dingtalk_documents",
+            "search_dingtalk_documents",
+            "search_dingtalk_messages",
+            "read_system_action_contract",
+            "read_consumer_output_schema"
+          ],
+          "document_write_call_lines": [],
+          "exec_inspection": [
+            {
+              "line": 92,
+              "arguments_sha256": "5747111affb297263997aef07f422aade3b297cc2488e9a5d356b798575b62b7",
+              "inspection": "read/discovery calls only; no document write or direct DWS command"
+            }
+          ]
+        },
+        {
+          "id": 399168,
+          "parent_id": 399456,
+          "session_id": "01a17628-5790-7362-bd8a-3aead03ff3eb",
+          "transcript_start": 0,
+          "transcript_end": 65,
+          "status": "completed",
+          "range_sha256": "81d4ac282703331cbaa90e30e54b537772ab37a29701780440c3d0b3a64c8991",
+          "call_names": [
+            "read_task_skill",
+            "read_task_skill",
+            "read_system_action_contract",
+            "read_dingtalk_messages",
+            "search_dingtalk_documents",
+            "read_dingtalk_document",
+            "read_dingtalk_group_members"
+          ],
+          "document_write_call_lines": [],
+          "exec_inspection": []
+        }
+      ],
+      "total_nonoverlapping_lines": 498,
+      "production_head": "1e840a6858a8b39394ea090df26acb0b2f5baba1",
+      "development_main": "929456df41954304cd5c989fb33561e973702d16",
+      "binary_sha256": "3105fda34b277732a91070c38b677ad37162b8f3e70804fbec378bcbab74e97c",
+      "conclusion": "8 newly ended natural runs (7 completed,1 failed),498 full native lines; no document writes. Later running runs excluded. G1 production nonrepeat acceptance remains pending; no replay or new tests."
     }
   ]
 }

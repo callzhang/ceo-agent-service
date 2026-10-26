@@ -202,9 +202,9 @@ def _target_matching_doc_changes(
 #: the service database or credentials.
 TEST_GATE_MANIFEST = "tests/gate_files.txt"
 TEST_GATE_ARGS = ("-m", "pytest", "-q", "-p", "no:cacheprovider", "--tb=short")
-#: Derek, 2026-10-25: suspended until the new gate suite is live, then set back
-#: to True. A source constant on purpose: no option or environment variable.
-TEST_GATE_ENABLED = False
+#: Derek, 2026-10-25: on. It was off from 2026-10-25 until tests/gate_files.txt
+#: was live. A source constant on purpose: no option or environment variable.
+TEST_GATE_ENABLED = True
 TEST_GATE_TIMEOUT_SECONDS = 6 * 60
 _TEST_GATE_ENV_KEYS = ("PATH", "HOME", "USER", "LANG", "LC_ALL", "TMPDIR", "VIRTUAL_ENV")
 

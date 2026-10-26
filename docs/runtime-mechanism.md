@@ -41,7 +41,7 @@ Derek于2026-10-24批准分阶段退役历史迁移链：部署路径 `prepare_d
 2026-10-24 第二阶段：27 个历史 `*_schema_release` 模块（`action_email`、`task20`、`runs11`、`confirmation`、`selection`、`result`、`email_metadata`、`execution_owner`、`sent_result`、`shared_action`、`specialized_action`、`prepared_action`、`logical_run`、`business_legacy_field`、`business`、`configs`、`state`、`provider_state`、`task`、`run`、`workbench`、`action`、`action_delivery`、`action_postfix`、`action_receipt`、`action_reply`、`task_lifecycle`）及其测试、`scripts/validate_*_copy.py` 与 `scripts/retire_verified_email_inputs.py` 已删除。现行存储仍用到的辅助函数迁入 `app/business_schema_helpers.py`、`app/configs_schema_current.py`、`app/provider_state_schema_current.py`、`app/result_schema_helpers.py`、`app/runs11_schema_helpers.py`、`app/state_schema_current.py`，代码逐字复制，没有改行为。部署路径只剩 `store_schema_release`、`action_entity_schema_release`、`task_run_entity_schema_release`、`email_schema_release`、`current_action_schema_release`；`app/email_publication_sources.py` 和 `scheduled_config_storage.publication_scheduled_source` 无运行时调用方，一并删除。
 同日第二阶段补充：只被已删迁移链引用的 13 个历史结构模块也已删除（`business_legacy_field_schema`、`email_metadata_schema`、`email_training_migration`、`execution_owner_schema`、`final_source_migration`、`logical_run_schema`、`model_result_schema`、`prepared_action_schema`、`sent_result_schema`、`shared_action_schema`、`specialized_action_schema`、`task_lifecycle_schema`、`state_publication_sources`），其测试随之退役。
 
-（2026-10-25 Derek 要求暂停：`app/deploy.py` 的 `TEST_GATE_ENABLED = False`，新闸门测试上线后单独提交改回 `True`；暂停期间部署不跑任何测试。）
+（2026-10-25 起已恢复：`TEST_GATE_ENABLED = True`，5 分钟真实时间到即自动停止。）
 Derek于2026-10-25决定：`python -m app.deploy` 在停服务或改动任何东西之前，先在临时克隆里用干净环境对要安装的提交跑闸门测试（`tests/gate_files.txt` 列出的文件，单进程，`tests/conftest.py` 限制 2 GB 和 5 分钟，当前约 95 秒），有任何一个失败就拒绝部署，没有绕过选项。
 清单缺失或为空、运行超过 6 分钟、或无法检出该提交，同样拒绝。失败时保留日志并在报错里给出路径。`--restart` 不运行新代码，不受此限。实现见 `app/deploy.py` 的 `require_green_suite`。
 
@@ -3318,6 +3318,12 @@ message key, rather than rescanning all historical Attempts for each problem
 candidate; cross-channel grouping and existing result ordering are unchanged.
 Email provider-action aggregation scans actions before seeking their exact
 classification primary keys, retaining the same processed/current-plan filter.
+
+Attempt detail HTML and the React detail API resolve stable public Attempt IDs
+first. If an old link instead contains the physical `actions.id`, HTML redirects
+and the API resolves the row only when that number has no public-ID match, using
+the persisted public `legacy_key`. This read-only compatibility path does not
+turn skipped or otherwise non-failed Attempts into Failed History or Attention.
 
 Audit web startup does not scan and cache History lists or charts. History
 pages are computed when requested. The list counts and sorts compact source

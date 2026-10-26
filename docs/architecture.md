@@ -43,7 +43,7 @@ Derek于2026-10-24批准分阶段退役历史迁移链：部署路径 `prepare_d
 2026-10-24 第二阶段：27 个历史 `*_schema_release` 模块（`action_email`、`task20`、`runs11`、`confirmation`、`selection`、`result`、`email_metadata`、`execution_owner`、`sent_result`、`shared_action`、`specialized_action`、`prepared_action`、`logical_run`、`business_legacy_field`、`business`、`configs`、`state`、`provider_state`、`task`、`run`、`workbench`、`action`、`action_delivery`、`action_postfix`、`action_receipt`、`action_reply`、`task_lifecycle`）及其测试、`scripts/validate_*_copy.py` 与 `scripts/retire_verified_email_inputs.py` 已删除。现行存储仍用到的辅助函数迁入 `app/business_schema_helpers.py`、`app/configs_schema_current.py`、`app/provider_state_schema_current.py`、`app/result_schema_helpers.py`、`app/runs11_schema_helpers.py`、`app/state_schema_current.py`，代码逐字复制，没有改行为。部署路径只剩 `store_schema_release`、`action_entity_schema_release`、`task_run_entity_schema_release`、`email_schema_release`、`current_action_schema_release`；`app/email_publication_sources.py` 和 `scheduled_config_storage.publication_scheduled_source` 无运行时调用方，一并删除。
 同日第二阶段补充：只被已删迁移链引用的 13 个历史结构模块也已删除（`business_legacy_field_schema`、`email_metadata_schema`、`email_training_migration`、`execution_owner_schema`、`final_source_migration`、`logical_run_schema`、`model_result_schema`、`prepared_action_schema`、`sent_result_schema`、`shared_action_schema`、`specialized_action_schema`、`task_lifecycle_schema`、`state_publication_sources`），其测试随之退役。
 
-（2026-10-25 Derek 要求暂停，`TEST_GATE_ENABLED = False`，新闸门测试上线后改回；暂停期间部署不跑测试。）
+（2026-10-25 起已恢复：`TEST_GATE_ENABLED = True`，5 分钟真实时间到即自动停止。）
 Derek于2026-10-25决定：`python -m app.deploy` 在停服务或改动任何东西之前，先在临时克隆里用干净环境对要安装的提交跑闸门测试（`tests/gate_files.txt`，单进程，2 GB 和 5 分钟），有任何一个失败就拒绝部署，没有绕过选项（`--restart` 不受此限）。运行时机制见 `docs/runtime-mechanism.md`。
 
 以下生产数据是 2026-10-22 Phase 1 验收时的历史读回：Store `2026-10-21.1`／Email53，共 14 张普通表；运行时代码 `87a34d299d5749af1af454bfdd01c48a936799a4`，PID 2903；健康、状态、队列、Attention 和 History 均返回 HTTP 200；Action、Receipt、Observer 分别为 15,472、18,621、506 条，七个已退休来源类型为零。本轮没有重新读取生产状态，Task/Run Phase 2 也没有部署。该次读回保留了 `foreign_key_check` finding `('runs', 190042, 'tasks', 1)`；末项 `1` 是 `foreign_key_list` 的约束序号，不是 Task ID。2026-10-23 对冻结 `source.sqlite3` 的只读核对发现 runs 190042 的 `task_id=404225`、`source_type='meeting_alignment_runs'`、`legacy_key='2298'`、`job_id=4908`，而 Task 404225 不存在；这是该冻结快照中的真实缺失 Task，不等于 finding 末项。此证据不是当前生产读回，也不授权修复、伪造 Task、置空或删除事实。准确 Phase 1 发布边界见[Phase 1 生产验收](action-entity-production-acceptance.md)。
@@ -4181,6 +4181,11 @@ resolve the latest Attempt through the task's current execution generation and
 AgentRun identity. Meetings use their latest Meeting Attempt ID. A Task ID is
 never substituted for an Attempt ID; a record without a persisted Attempt says
 so in its expanded details. Membership, terminal states and retry policy do not change.
+Attempt detail HTML and the React detail API accept stable public Attempt IDs. For compatibility,
+if a requested number is not a public ID but is an existing `actions.id` for a
+reply Attempt, it redirects to that row's public `legacy_key`; a public-ID match
+always takes precedence. This read-only alias does not change the Attempt or its
+Failed/Attention classification.
 
 
 ### Work Summary retry budget
