@@ -9,7 +9,6 @@ from app.email_store import EmailStore
 from app.store import AutoReplyStore
 from app.action_error_definitions import error_projection
 from app.action_error_storage import SOURCE_TABLE_SQL
-from app.action_storage import _native_payload
 
 
 def test_current_store_error_roundtrip_uses_actions(tmp_path):
@@ -53,16 +52,9 @@ def test_public_error_id_point_range_and_recent_reads_use_bounded_index(tmp_path
             "insert into errors(id,kind,detail) values(?, 'test', 'detail')",
             ((i,) for i in range(1, 3001)),
         )
+        for _ in range(3000):
+            store.record_error(None, None, "test", "detail")
         with store._connect() as db:
-            db.executemany(
-                "insert into actions(record_type,legacy_key,payload_json) values('errors',?,?)",
-                ((str(i), _native_payload({
-                    "conversation_id": None, "message_id": None,
-                    "kind": "test", "detail": "detail",
-                    "created_at": "2026-10-17 00:00:00",
-                    "resolved_at": "", "resolution": "",
-                })) for i in range(1, 3001)),
-            )
             cases = (
                 ("where id=?", "where id=?", (2799,)),
                 ("where id>? order by id limit 20",
