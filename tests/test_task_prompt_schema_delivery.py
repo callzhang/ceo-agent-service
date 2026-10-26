@@ -31,10 +31,11 @@ class RecordingExecution:
         )
 
 
-def prompt_and_factory(monkeypatch):
-    monkeypatch.setattr(
-        "app.task_agent.load_skill_text", lambda paths: "FULL_SKILL_RULE"
-    )
+def prompt_and_factory(monkeypatch, tmp_path):
+    skill_path = tmp_path / "ceo-work-tracking" / "SKILL.md"
+    skill_path.parent.mkdir()
+    skill_path.write_text("FULL_SKILL_RULE", encoding="utf-8")
+    monkeypatch.setattr("app.task_agent.WORK_TRACKING_SKILL_PATH", skill_path)
     work = WorkItem.model_validate(
         {
             "summary": "Source fact",
@@ -66,8 +67,8 @@ def schema_occurrences(text, schema):
     return count
 
 
-def test_single_message_task_route_receives_one_complete_schema(monkeypatch):
-    prompt, call = prompt_and_factory(monkeypatch)
+def test_single_message_task_route_receives_one_complete_schema(monkeypatch, tmp_path):
+    prompt, call = prompt_and_factory(monkeypatch, tmp_path)
     factory = call["command_factory"]
     schema = task_agent_output_schema()
     assert json.loads(factory.output_schema_path.read_text()) == schema
@@ -78,8 +79,8 @@ def test_single_message_task_route_receives_one_complete_schema(monkeypatch):
     assert schema_occurrences(submitted, schema) == 1
 
 
-def test_codex_task_schema_is_out_of_band_and_business_input_remains(monkeypatch):
-    prompt, call = prompt_and_factory(monkeypatch)
+def test_codex_task_schema_is_out_of_band_and_business_input_remains(monkeypatch, tmp_path):
+    prompt, call = prompt_and_factory(monkeypatch, tmp_path)
     factory = call["command_factory"]
     assert factory.use_output_schema is True
     assert (
@@ -91,8 +92,8 @@ def test_codex_task_schema_is_out_of_band_and_business_input_remains(monkeypatch
     assert "TaskAgentDecision Pydantic JSON schema:" not in prompt
 
 
-def test_task_factory_forwards_its_native_skill_selection(monkeypatch):
-    prompt, call = prompt_and_factory(monkeypatch)
+def test_task_factory_forwards_its_native_skill_selection(monkeypatch, tmp_path):
+    prompt, call = prompt_and_factory(monkeypatch, tmp_path)
     factory = call["command_factory"]
     calls = []
     adapter = SimpleNamespace(

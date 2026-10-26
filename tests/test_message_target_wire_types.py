@@ -6,10 +6,12 @@ from jsonschema import Draft202012Validator
 from jsonschema.exceptions import ValidationError as JsonSchemaValidationError
 from pydantic import ValidationError
 
-from app.agent_contracts import ConsumerAgentResult
+from app.agent_contracts import parse_persisted_consumer_result
 from app.consumer_agent import ConsumerAgentRunner
 from tests import test_consumer_agent as consumer_tests
 from app.agent_result import ResultParseError
+from app.native_agent_output import native_output_schema
+from tests.support.native_consumer_output_fixture import native_consumer_stream_for_command
 from app.agent_wire_contracts import ConsumerAgentWireResult, parse_consumer_agent_wire_result
 from tests.test_agent_contracts import _consumer_wire_payload, _proposal
 
@@ -25,7 +27,7 @@ def payload_for(target):
     proposal = _proposal()
     proposal["actions"][0].update(
         capability="dingtalk-chat", operation="send_direct_message",
-        target=target, payload={"content": "Your materials have been received."},
+        target=target, payload={"content": "Your materials have been received."}, effect="external",
     )
     return _consumer_wire_payload(outcome="proposal", proposal=proposal)
 
@@ -66,26 +68,30 @@ def test_native_jsonl_parser_rejects_numeric_recipient_before_audit():
 
 def test_historical_domain_result_keeps_original_numeric_target_readable():
     payload = payload_for({"open_dingtalk_id": 104265682397})
-    domain = {k: v for k, v in payload.items() if not k.startswith("error_")}
-    domain["error"] = {"code": "", "retryable": False, "authorization_required": False}
-    result = ConsumerAgentResult.model_validate_json(json.dumps(domain))
+    domain = {key: payload[key] for key in (
+        "summary", "decision_options", "risk", "confidence", "rule_coverage",
+        "information_completeness",
+    )}
+    domain.update(outcome="proposal", proposal=payload["payload"],
+                  error={"code": "", "retryable": False, "authorization_required": False})
+    result = parse_persisted_consumer_result(domain)
     assert result.proposal.actions[0].target["open_dingtalk_id"] == 104265682397
 
 
 def test_other_capabilities_keep_json_target_values():
     payload = payload_for({"open_dingtalk_id": {"vendor": [7, None, False]}})
-    payload["proposal"]["actions"][0]["capability"] = "extension-tool"
+    payload["payload"]["actions"][0]["capability"] = "extension-tool"
     ConsumerAgentWireResult.model_validate(payload)
     Draft202012Validator(ConsumerAgentWireResult.model_json_schema()).validate(payload)
 
 
 def test_new_wire_validates_executable_human_branches():
-    proposal = payload_for({"open_dingtalk_id": 104265682397})["proposal"]
+    proposal = payload_for({"open_dingtalk_id": 104265682397})["payload"]
     options = [
         {"key": "send", "label": "Notify", "instruction": "Use the selected rule",
-         "consequence": "Recipient receives the notice", "plan": proposal},
+         "consequence": "Recipient receives the notice", "applies_to": "task_class", "plan": proposal},
         {"key": "stop", "label": "Stop", "instruction": "Do not send",
-         "consequence": "No message", "terminal_outcome": "skipped", "reason": "Not required"},
+         "consequence": "No message", "applies_to": "task_class", "terminal_outcome": "skipped", "reason": "Not required"},
     ]
     payload = _consumer_wire_payload(outcome="needs_human", decision_options=options)
     with pytest.raises(ValidationError, match="open_dingtalk_id"):
@@ -101,16 +107,35 @@ context = consumer_tests.context
 def test_numeric_identifier_enters_existing_result_correction_before_audit(
     store, task, context, tmp_path
 ):
-    payload = payload_for({"open_dingtalk_id": 104265682397})
+    payload = ConsumerAgentWireResult.model_validate(
+        payload_for({"open_dingtalk_id": "104265682397"})
+    ).model_dump(mode="json")
     stream = "\n".join((
         json.dumps({"type": "thread.started", "thread_id": "numeric-target-fixture"}),
         json.dumps({"type": "item.completed", "item": {
             "type": "agent_message", "text": json.dumps(payload),
         }}),
     ))
+    class NumericNativeExecutor(consumer_tests.CapturingExecutor):
+        def __call__(self, command, *, on_stdout_line, **kwargs):
+            native = native_consumer_stream_for_command(self.stdout, command)
+            validator = Draft202012Validator(native_output_schema("consumer", purpose="general"))
+            events = [json.loads(line) for line in native.splitlines()]
+            for event in events:
+                if event.get("type") == "item.completed":
+                    output = json.loads(event["item"]["text"])
+                    assert validator.is_valid(output)
+                    [target] = output["decision"]["payload"]["actions"][0]["target"]["entries"]
+                    assert target["key"] == "open_dingtalk_id"
+                    target["value"] = 104265682397
+                    assert validator.is_valid(output)
+                    event["item"]["text"] = json.dumps(output)
+            self.stdout = "\n".join(json.dumps(event) for event in events)
+            return super().__call__(command, on_stdout_line=on_stdout_line, **kwargs)
+
     runner = ConsumerAgentRunner(
         store=store, workspace=Path(tmp_path),
-        executor=consumer_tests.CapturingExecutor(stream),
+        executor=NumericNativeExecutor(stream),
     )
     with pytest.raises(ResultParseError):
         runner.run(task, context, proposal_revision=0, parent_agent_run_id=None)

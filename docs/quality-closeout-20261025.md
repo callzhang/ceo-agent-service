@@ -394,3 +394,13 @@ checks on the branch are stronger. Representative storage/vector/role39 cases
 pass. Main's separately scoped Meeting waiting/retry dispatch correction is
 preserved, with its3 due/early/release regression cases passing. Source478 and
 target476 pins and26 asset preflight inputs remain exact.
+
+### Current wire and purpose fixtures — 2026-10-26
+
+Five directly affected test files now use the current purpose wire, actual Skill
+path contract and existing four-failure budget. All83 cases pass in7.43s, with
+an independent83-case rerun in6.56s. Numeric target validation has a valid native
+envelope positive control before the identifier mutation; strict role parsing
+still rejects it before Audit. Technical errors still cannot become human
+choices, and all four native effect/result projections remain empty after the
+existing retry budget. No application or policy changes are included.
