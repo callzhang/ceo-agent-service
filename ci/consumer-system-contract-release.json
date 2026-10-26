@@ -5,7 +5,7 @@
       "source": "ci/shared-skills/ceo-weekly-report/SKILL.md",
       "target": "skills/ceo-weekly-report/SKILL.md",
       "old_sha256": "8e44ebd02e497b210ce3e4ba69841e80dea48e16472765c6b2de9d125ec5878f",
-      "new_sha256": "4507e1d54af92b6b84b60168abc82d572b147d6730b545361ff61d4e52df821e",
+      "new_sha256": "240255b37c9febef394c13546978a2902482e5261daf5587e11136ffb1af7952",
       "old_managed_sha256": "8e44ebd02e497b210ce3e4ba69841e80dea48e16472765c6b2de9d125ec5878f"
     },
     {
