@@ -648,3 +648,10 @@ Store migration overlap. Its84 directly related backend/publication cases pass
 28.53s and46 Attempt-page cases pass2.83s. All26 installed/managed publication
 preconditions pass; frozen source478/target476 digests remain exact. The final
 standard deploy and production readback/cleanup have not yet run at this entry.
+
+Main's later test-only `a1418dd8a` was normally reconciled before publication.
+The merged native protocol fixture retains the complete existing current-wire
+positive/negative controls and service-owned Audit binding; its decision options
+also retain main's explicit task-class scope. It creates native events directly
+rather than repairing malformed ones. The entire affected file passes103 cases
+in39.33s, with Ruff/diff clean. No application or release declarations changed.

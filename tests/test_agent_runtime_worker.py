@@ -25,16 +25,14 @@ from app.dingtalk_models import DingTalkConversation, DingTalkMessage
 from app.dws_client import DwsClient
 from app.native_cli_metadata import describe_native_command
 from tests.support.native_task_fields import set_native_task_fields
+from tests.support.native_consumer_output_fixture import native_consumer_stream_for_command
 from app.store import AgentRole, AutoReplyStore
 from app.system_executor import SystemExecutor
 from app.process_runner import ProcessRunResult
 from app.runtime_environment import central_python
 from app.worker import ORCHESTRATION_ATTEMPT_STATUS, DingTalkAutoReplyWorker
 from tests.support.image_bytes import TINY_PNG
-from tests.support.native_consumer_output_fixture import (
-    native_consumer_stream_for_command,
-)
-from tests.test_agent_contracts import _decision_options
+from tests.test_agent_contracts import _decision_options as _contract_decision_options
 from tests.support.native_protocol import install_protocol_native_trajectories
 
 from app.business_skills import bundled_business_skills_root
@@ -902,6 +900,11 @@ def test_native_audit_fixture_keeps_binding_owned_by_service(forbidden_field, va
     assert adopted.candidate_digest == "a" * 64
     with pytest.raises(ValidationError, match=forbidden_field):
         AuditAgentWireResult.model_validate({**payload, forbidden_field: value})
+
+
+def _decision_options():
+    # A needs_human result offers two to four reusable rules for the task class.
+    return [{**option, "applies_to": "task_class"} for option in _contract_decision_options()]
 
 
 def _agent_result_event(result) -> dict[str, object]:
