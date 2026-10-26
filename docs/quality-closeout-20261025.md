@@ -418,3 +418,18 @@ recursion. After separating the two source checkouts, those14 plus the current
 publication case passed in38.20s. All218 collected nodes are covered; no app or
 feedback-policy change. Root reviewed the field ownership, corruption setup,
 source separation and retained assertions.
+
+### Current Email input-owner corrections — 2026-10-26
+
+Two real owner regressions are repaired without changing eligibility or review
+predicates. Existing Consumer-direct legacy terminalization read absent Task
+top-level input fields (RED KeyError); it now reads the current TaskInput. Three
+new positive/negative controls plus two existing configuration cases pass in3.71s.
+Completed Email observability parsed the correctly retired empty input body
+(RED missing Consumer/Audit IDs); it now reads retained provenance identity
+facts when compacted. The current-task query selects the same owner for
+classification/action filtering and projects its metadata. Three new source
+controls plus in-flight/continuation/exact-conflict cases pass:12 in22.07s.
+Independent reviews approved both fixes after catching the missing caller
+projection, which was corrected before commit. No schema, original-body
+restoration, provider call, retry, Audit or authorization-policy change.

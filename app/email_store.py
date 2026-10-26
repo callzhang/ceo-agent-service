@@ -286,6 +286,8 @@ _AUDITED_UNSUBSCRIBE_LINEAGE_SQL = f"""
            tasks.conversation_id as task_conversation_id,
            tasks.trigger_message_id,
            tasks.trigger_message_json,
+           tasks.input_compacted,
+           tasks.input_provenance_json,
            tasks.execution_generation as task_execution_generation,
            tasks.status as task_status
     from ({EMAIL_UNSUBSCRIBE_EFFECT_SQL}) as effects
@@ -1158,7 +1160,10 @@ def _audited_unsubscribe_lineage(
     if current_plan is None:
         return None
     try:
-        payload = json.loads(lineage["trigger_message_json"])
+        payload = json.loads(
+            AutoReplyStore._compact_reply_input_json(lineage["input_provenance_json"])
+            if lineage["input_compacted"] else lineage["trigger_message_json"]
+        )
         plan_actions = _json_load(
             current_plan["actions_json"],
             field="actions_json",
@@ -1300,7 +1305,10 @@ def _current_unsubscribe_task_lineage(
     if current_plan is None:
         return None
     try:
-        payload = json.loads(str(task["trigger_message_json"]))
+        payload = json.loads(
+            AutoReplyStore._compact_reply_input_json(task["input_provenance_json"])
+            if task["input_compacted"] else str(task["trigger_message_json"])
+        )
         actions = _json_load(
             current_plan["actions_json"],
             field="actions_json",
@@ -8887,17 +8895,20 @@ class EmailStore:
                 task_rows = db.execute(
                     f"""
                     select id, conversation_id, trigger_message_id,
-                           trigger_message_json, execution_generation,
-                           status, error, created_at
-                    from ({REPLY_TASK_CURRENT_SQL}) as reply_tasks
-                    where channel='email'
-                      and json_valid(trigger_message_json)
-                      and json_extract(
-                            trigger_message_json, '$.classification_id'
-                          )=?
-                      and json_extract(
-                            trigger_message_json, '$.action_type'
-                          )='unsubscribe'
+                           trigger_message_json, input_compacted, input_provenance_json,
+                           execution_generation, status, error, created_at
+                    from (
+                        select reply_tasks.*,
+                               case when input_compacted=1 then
+                                   case when json_valid(input_provenance_json) then
+                                       json_extract(input_provenance_json, '$.source') end
+                                   else trigger_message_json end as lineage_source_json
+                        from ({REPLY_TASK_CURRENT_SQL}) as reply_tasks
+                        where channel='email'
+                    )
+                    where json_valid(lineage_source_json)
+                      and json_extract(lineage_source_json, '$.classification_id')=?
+                      and json_extract(lineage_source_json, '$.action_type')='unsubscribe'
                     order by created_at, id
                     """,
                     (classification_id,),

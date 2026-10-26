@@ -4366,3 +4366,16 @@ Consumer 的原生输出段仅保留 schema 指纹、JSON/decision 包装说明�
 ### DWS 文档格式核验与字面内容
 
 Consumer共用文档工具继续提交原始Markdown/JSONML工件；已执行写入算写入成功，核验状态独立保留，不因未核验自动重写。当前本机DWS核验按钉钉Markdown的双等号高亮语义处理作者输入，要求完整JSONML证明相同文字、规范化词间边界、高亮范围与颜色，再执行整体内容及表格对齐检查；不全局删除标记或忽略内容差异。需要保留双等号的标识符使用代码格式或转义，说明位于按需读取的dingtalk-doc Skill，不增加通用prompt。DWS源码修复仅提交外部PR，本机版本化发布与自然行为验收分别记录于document-write-recovery-validation.md；无新增写入重试、Audit规则或session机制。
+
+
+Native Reply input owner correction: the existing exact Consumer-direct Email
+unsubscribe terminal operation reads channel and trigger JSON from the Task's
+current TaskInput. Task lifecycle/generation remain on the Task. Its existing
+status, generation, schema and lifecycle predicates are unchanged; the audited
+lifecycle and unrelated channels remain ineligible for that operation.
+
+Email observability reads completed Reply input identity facts from the retained
+TaskInput provenance when its body has been compacted. In-flight inputs continue
+to use their existing body. Classification/action filtering and exact account,
+plan, Task, generation and Audit bindings use that same owner; malformed or
+mismatched provenance does not expose a lineage. Input bodies are not restored.

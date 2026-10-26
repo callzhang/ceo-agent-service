@@ -55,6 +55,7 @@ tests/test_email_embedding_warmup.py
 tests/test_email_fasttext_model.py
 tests/test_email_folder_truth.py
 tests/test_email_important.py
+tests/test_email_lineage_provenance_owner.py
 tests/test_embedding_config.py
 tests/test_external_retry.py
 tests/test_feedback_skill_contract.py
@@ -67,6 +68,7 @@ tests/test_gate_manifest.py
 tests/test_group_discovery.py
 tests/test_hourly_dry_run_launchd.py
 tests/test_leak_check.py
+tests/test_legacy_email_task_input_owner.py
 tests/test_main_launchd_resource_class.py
 tests/test_meeting_alignment_source.py
 tests/test_meeting_audience_eval.py

@@ -5453,3 +5453,16 @@ Consumer共用文档工具继续提交原始Markdown/JSONML工件；已执行写
 ### Historical console adapter ownership — 2026-10-25
 
 The console uses the dedicated `LegacyProjectDetail` adapter for retained legacy project details. It does not map the current Business Task list to old Project summaries or compute operational progress from historical Todos. Callerless Work Project/Todo batch-list Store methods are retired; exact historical project/todo getters and the source/fact/receipt detail path remain. This cleanup has no schema or data migration.
+
+
+Native Reply input owner correction: the existing exact Consumer-direct Email
+unsubscribe terminal operation reads channel and trigger JSON from the Task's
+current TaskInput. Task lifecycle/generation remain on the Task. Its existing
+status, generation, schema and lifecycle predicates are unchanged; the audited
+lifecycle and unrelated channels remain ineligible for that operation.
+
+Email observability reads completed Reply input identity facts from the retained
+TaskInput provenance when its body has been compacted. In-flight inputs continue
+to use their existing body. Classification/action filtering and exact account,
+plan, Task, generation and Audit bindings use that same owner; malformed or
+mismatched provenance does not expose a lineage. Input bodies are not restored.

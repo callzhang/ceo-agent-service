@@ -10915,10 +10915,10 @@ class AutoReplyStore(LogicalRunStoreMixin, ReviewedCandidateStoreMixin):
             task = self._native_current_reply_task(db, task_id)
             if (task is None or task["status"] != expected_status
                     or task["execution_generation"] != expected_execution_generation
-                    or task["channel"] != "email"):
+                    or task["current_input"]["channel"] != "email"):
                 return False
             try:
-                trigger = json.loads(task["trigger_message_json"] or "{}")
+                trigger = json.loads(task["current_input"]["trigger_message_json"] or "{}")
             except (TypeError, json.JSONDecodeError):
                 return False
             if (not isinstance(trigger, dict)
