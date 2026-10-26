@@ -1,6 +1,5 @@
 from tests.support.legacy_todo_facts import seed_legacy_work_project
 from tests.support.native_task_fields import set_native_task_fields
-from app.task8_storage import task8_set_parts
 from app.store import WORK_SUMMARY_INPUT_SQL
 from app.action_error_definitions import error_projection
 from app.action_storage import error_set_parts, update_action
@@ -56,6 +55,7 @@ from app.external_retry import ExternalDependencyError
 from app.store import AgentRunLeaseLostError, AutoReplyStore
 from app.task_agent_session import TASK_AGENT_SESSION_SCOPE_ID, TaskAgentSessionLeaseLost
 from app.task_models import TaskAgentDecision, WorkItem
+from tests.wechat.support import approve_delivery
 
 
 
@@ -452,14 +452,18 @@ def seed_exhausted_stale_wechat_delivery(store: AutoReplyStore) -> tuple[int, in
         send_status="pending",
         channel="wechat",
     )
+    task = store.get_reply_task_for_message(
+        "wechat-user-1", "wechat-message-1", channel="wechat"
+    )
     delivery_id = store.create_wechat_delivery(
-        reply_task_id=1,
+        reply_task_id=task.id,
         account_id="wechat-account-1",
         target_type="direct",
         target_id="wechat-user-1",
         conversation_id="wechat-user-1",
         reply_text="reply",
     )
+    approve_delivery(store, delivery_id)
     store.mark_wechat_delivery_sending(
         delivery_id,
         now="2026-08-30 17:07:23",
@@ -4629,11 +4633,10 @@ def test_send_attempt_command_rotates_pending_task_with_previous_error(
     )
     first = send_attempt_command(settings, attempt_id)
     with sqlite3.connect(settings.db_path) as db:
-        parts = task8_set_parts('reply_tasks', {
-            'error': 'reviewed_write_not_authorized', 'available_at': '2099-01-01 00:00:00',
+        _update_task_fixture(db, "reply_tasks", first["task_id"], {
+            "error": "reviewed_write_not_authorized",
+            "available_at": "2099-01-01 00:00:00",
         })
-        db.execute(f"update tasks set {parts.sql} where record_type='reply_tasks' and id=?",
-                   (*parts.parameters, first['task_id']))
     second = send_attempt_command(settings, attempt_id)
     updated = store.get_reply_task(int(second["task_id"]))
 
@@ -7933,7 +7936,7 @@ def _wechat_sender_loop_store(tmp_path, monkeypatch):
     )
     monkeypatch.setattr("app.wechat.service.build_reader", lambda *a, **k: object())
     monkeypatch.setattr("app.wechat.service.build_sender", lambda *a, **k: object())
-    return store, SimpleNamespace(db_path=db)
+    return store, WorkerSettings(db_path=db)
 
 
 class _StopLoop(Exception):
@@ -7941,17 +7944,37 @@ class _StopLoop(Exception):
 
 
 def _stop_after(monkeypatch, count):
+    import threading
     import time
 
     sleeps = []
+    original_sleep = time.sleep
+    loop_thread = threading.get_ident()
 
     def sleep(seconds):
+        if threading.get_ident() != loop_thread:
+            return original_sleep(seconds)
         sleeps.append(seconds)
         if len(sleeps) >= count:
             raise _StopLoop
 
     monkeypatch.setattr(time, "sleep", sleep)
     return sleeps
+
+
+def test_sender_sleep_fixture_preserves_background_and_records_each_business_delay(monkeypatch):
+    import threading
+    import time
+
+    sleeps = _stop_after(monkeypatch, 1)
+    background = threading.Thread(target=lambda: time.sleep(0.001))
+    background.start()
+    background.join(timeout=1)
+    assert not background.is_alive()
+    assert sleeps == []
+    with pytest.raises(_StopLoop):
+        time.sleep(0.2)
+    assert sleeps == [0.2]
 
 
 def _deliveries_raise(monkeypatch, factory):

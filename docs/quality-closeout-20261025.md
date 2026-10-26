@@ -299,3 +299,19 @@ without changing application review or execution policy:
 
 Attention query-plan corrections and the next complete candidate Quality result
 remain pending; these focused counts do not turn the failed run green.
+
+Attention's follow-up `53221bc3b` restores the input-owner field and primary-key
+lookup guards. It uses EXPLAIN VDBE column operations rather than compile-time
+authorizer references, which also report pruned subquery columns. All17 file
+cases pass with original VM limits, native input PK lookups, no input full scans
+and no TaskInput/work-summary body reads in metadata summaries.
+
+CLI file exploration found284 passes and seven sender-loop fixtures missing
+current settings. Exact eligible stale delivery setup now uses its real Task
+identity and the existing reviewed-delivery helper; the loop uses WorkerSettings.
+The nine loop cases pass. Its test sleep replacement now affects only the loop
+thread, so the memory/time watcher retains real sleep and enforcement; all main
+thread business delays are still observed, including0.2. A dedicated background
+versus main-thread sleep regression passes. No test budget is raised or disabled.
+The full AgentTurnProcess runner file passes44 cases. Final remote Quality is
+still required for this integrated follow-up.
