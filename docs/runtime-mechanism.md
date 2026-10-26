@@ -5417,7 +5417,7 @@ End of historical Task/Run Phase 2 candidate notes. The following sections descr
 
 ### 原生输出格式与解码契约一致
 
-Consumer 的原生输出段仅保留 schema 指纹、JSON/decision 包装说明及 `agent_cli.read_consumer_output_schema(purpose=...)` 按需查询入口，不全量注入 native 或 Pydantic 业务 schema。该 Consumer metadata 查询通过现有 agent_cli 传输返回与解码器同一文件的完整紧凑 JSON，单一文本块、无重复 structured output；仅接受声明 purpose，不扩大任意文件、shell 或 Audit 权限。业务模型、无损还原、严格校验、路线、重试和 session 选择保持不变。公共/任务预览与实际提交复用同一装配；每轮保留当前入口与可解析指纹，不假设压缩后的 session 永久保有完整规则。冷启动查询仍占工具上下文，默认 prompt 减少不代表总 token 或耗时减少。
+Consumer 的原生输出段仅保留 schema 指纹及 JSON/decision 包装说明，不全量注入 native 或 Pydantic 业务 schema。Codex Consumer 在冷启动和同 session 续跑时都通过 `--output-schema` 提交当前原生 schema；重复的 `read_consumer_output_schema` 工具、工具目录条目及 prompt 查询提示已删除，不新增替代查询入口。原生解码、完整业务校验、schema 指纹、路线、重试和 session 选择不变。公共/任务预览与实际提交继续复用同一装配，历史已保存输入保留原样；不以 session 历史作为 schema 交付依据，也不预先宣称删除查询后 token 或耗时必然减少。
 
 
 ### DWS 文档格式核验与字面内容
