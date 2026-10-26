@@ -105,3 +105,42 @@ Task-delivery 2 passed; indexed Sent lookup 1 passed; native execution 1 passed.
 The lookup requires a keyed `SEARCH`, and Task-delivery uses returned native
 parent IDs. Scoped Ruff and diff checks pass. These runs extend, rather than
 replace, the preceding 10/6/1 single-file evidence.
+
+## Final 476-object current-data copy acceptance — passed
+
+The final pinned 476-object release was exercised on a fresh consistent read-only
+production-derived copy using the committed validator and the actual `dc07ddcbe`
+predecessor code. The complete run exited successfully in 954.1 seconds:
+
+- 1,140 original Signals and 172 original shared provenance parents.
+- Forward manifest/integrity verification, new current Signal writes and a
+  synthetic stored Action receipt (no provider call).
+- Current-data inverse with typed comparisons, then actual predecessor cold
+  reads and writes, including continuation of both sole/shared sources.
+- Re-forward with 1,147 final Signals and identical required facts, identities,
+  allocation watermarks, references and 48 unrelated table snapshots.
+- Original FK finding set remains exactly `runs / 190042 / tasks / 1`; no Task
+  was fabricated and no exception was silently deleted or repaired.
+- Real provider calls: zero. This is storage/old-code acceptance, not a new real
+  CLI or provider-delivery run. Current-head Quality and production readback
+  remain separate gates.
+
+## Native receipt callers — final 15-case proof
+
+The current caller file uses native Task/Run CAS, native adopted-candidate
+invalidation, native receipt/Run projections and existing retained-fact fixture
+helpers. The failed-Audit assertion now selects the canonical binding to the exact
+provider-body receipt, rather than accidentally selecting the Sent fact.
+
+An intermediate test edit moved generation advancement after the ACK. Review
+rejected that weaker sequence. The final test retains invalidation and generation
+advancement **before** the late ACK. It independently reads back the ACK-owned
+verified attempt/body/pointer/original Run; the generic current-candidate outcome
+method still rejects its now-stale generation, while the already-dispatched old
+execution can finish and the new Task remains pending. No runtime policy changed.
+
+Final single-file run: `tests/test_action_receipt_callers.py`, 15 passed in
+13.50 seconds. The first sandboxed attempt also hit process-table access denial
+in the maintenance test; the authorized read-only process-table rerun passed.
+Ruff and scoped diff checks pass. Independent final SPEC and QUALITY approved after the late-ACK sequencing
+correction.
