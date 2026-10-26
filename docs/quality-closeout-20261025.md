@@ -472,3 +472,15 @@ Status snapshot fixtures use the same canonical direct Action lifecycle as the
 worker, including typed integer tie order. All9 cases pass2.17s, preserving
 uppercase-status rejection, current-plan/classification, retry exhaustion,
 invalid dates, latest error and real query-plan assertions.
+
+### Explicit converter source freeze — 2026-10-26
+
+The first proposed fixture mock was rejected and fully removed. Archive proof
+shows predecessor b78604e32 Actions and today's frozen source factory are the
+same215-object catalog (SHA256054f8f8686987e3d6cf85cf3e136f7edf2489a88090fb73742bf57e1a2921cfb).
+Signal commit5ac89d3e froze the predecessor factory but missed two converter
+oracles that still followed current runtime Actions. Those two explicit-tool
+reads now use the existing frozen factory, with no source acceptance widening.
+The genuine predecessor fixture and all existing type/FK/receipt/inverse checks
+remain. New exact pin and two bounded files pass28 in34.21s. Root independently
+reviewed original source history and both minimal oracle changes.

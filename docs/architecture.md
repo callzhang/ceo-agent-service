@@ -4385,3 +4385,9 @@ compaction, including the original entry-reference bindings; Audit/owner/effect
 validation is unchanged. Direct Email plan status maps use native integer
 Action IDs, matching plan and historical-operation readers, so existing done
 receipts are recognized by the original recovery flow.
+
+Explicit Run-adoption conversion/inverse tools compare their historical
+predecessor Actions against the existing frozen Signal-source declaration,
+rather than the evolving runtime Actions declaration. The exact source catalog
+and all row/type/identity/receipt/inverse checks remain required. These tools
+are not constructor or runtime compatibility paths.

@@ -406,9 +406,9 @@ def retained_action_source_rows(db: sqlite3.Connection, source_metadata: dict, *
         raise ValueError("retained Action translation requires caller-owned FK-off transaction")
     if type(source_metadata) is not dict or type(source_metadata.get("action_catalog")) is not list:
         raise ValueError("retained Action translation requires source Action catalog")
-    from app.current_action_schema import current_action_objects
+    from app.current_action_schema import signal_source_action_objects
     from app.task_run_entity_assembly import _action_objects
-    source_objects = current_action_objects()
+    source_objects = signal_source_action_objects()
     source_catalog = sorted((item["type"], item["name"], item["sql"])
                             for item in source_objects)
     if source_catalog != sorted(tuple(item) for item in source_metadata["action_catalog"]):

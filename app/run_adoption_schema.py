@@ -48,9 +48,9 @@ def capture_run_adoptions(db: sqlite3.Connection) -> dict:
            for name in (_CAPTURE, _OBSERVER_CAPTURE, _ACTION_CAPTURE, _ALL_ACTION_CAPTURE)):
         raise ValueError("adoption capture already exists")
     action_catalog = _catalog(db, "actions")
-    from app.current_action_schema import current_action_objects, _action_entity_objects
+    from app.current_action_schema import signal_source_action_objects, _action_entity_objects
     expected_actions = sorted((row["type"], row["name"], row["sql"])
-                              for row in current_action_objects())
+                              for row in signal_source_action_objects())
     if action_catalog != expected_actions:
         raise ValueError("unsupported current Action declaration")
     receipts = _catalog(db, "action_receipts")
