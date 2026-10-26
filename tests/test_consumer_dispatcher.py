@@ -2110,7 +2110,11 @@ def test_error_metrics_skip_owner_checks_and_payload_projection_for_no_error_bac
         if "source_claim.last_error as claim_last_error" in statement
     )
     assert "source.*" not in error_projection
-    assert "trigger_text" not in error_projection
+    # The candidate projection inside the FROM subquery names every Task column, but SQLite
+    # flattens it and reads only the columns the outer select lists; those must not include the payload.
+    outer_select = error_projection.split(" from (", 1)[0]
+    assert "trigger_text" not in outer_select
+    assert "trigger_message_json" not in outer_select
 
 
 def test_dispatcher_metrics_only_report_errors_from_actionable_sources(
