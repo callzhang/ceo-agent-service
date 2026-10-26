@@ -41,6 +41,35 @@ function SystemExecutionProgress({ detail }: { detail: AttemptDetail }) {
   </section>;
 }
 
+function ApprovalDecision({ detail }: { detail: AttemptDetail }) {
+  const decision = detail.oa.decision;
+  if (!decision) return null;
+  return <section className="console-card attempt-detail-section" aria-label="审批决定">
+    <h2>审批决定</h2>
+    <dl>
+      <div><dt>决定</dt><dd>{decision.label}</dd></div>
+      <div><dt>执行结果</dt><dd>{executionStatusLabels[decision.status] || decision.status}</dd></div>
+      <div><dt>判断理由</dt><dd>{decision.reason || "未记录"}</dd></div>
+      <div><dt>审批意见</dt><dd>{decision.remark || "未记录"}</dd></div>
+    </dl>
+    {decision.receipt && <details><summary>审批核验回执</summary><pre>{JSON.stringify(decision.receipt.provider_result, null, 2)}</pre></details>}
+  </section>;
+}
+
+function HistoricalAttempt({ detail }: { detail: AttemptDetail }) {
+  const original = detail.historical_attempt;
+  if (!original) return null;
+  return <section className="console-card attempt-detail-section">
+    <details><summary>原始处理记录（历史）</summary>
+      <p>当前结果来自后续处理。以下保留最初这次处理的状态和问题。</p>
+      <p>原始状态：<StatusBadge value={original.status} /></p>
+      {original.error && <p>原始问题：{original.error}</p>}
+      {original.session_url && <Link to={original.session_url}>查看原始 Agent 记录</Link>}
+      {Boolean(original.resolution) && <details><summary>原始收口证据</summary><pre>{typeof original.resolution === "string" ? original.resolution : JSON.stringify(original.resolution, null, 2)}</pre></details>}
+    </details>
+  </section>;
+}
+
 type AuditParts = {
   reviewerFeedback: string;
   originalAmbiguity: string;
@@ -562,6 +591,7 @@ export function AttemptDetailPage() {
       </section>
       <div className="attempt-detail-layout attempt-review-grid">
         <div className="attempt-detail-main">
+          <ApprovalDecision detail={detail} />
           <section className="console-card attempt-review-main"><div className="reply-meta" aria-label="处理状态">{detail.action_pills.map((pill) => <StatusBadge key={`${pill.label}-${pill.status}`} value={pill.status} />)}</div><ReviewBlock title={detail.trigger.title} value={detail.trigger.text} /><AuditExplanation detail={detail} /><ReviewBlock title={detail.generated_reply.title} value={detail.generated_reply.text} className="attempt-generated-reply" /></section>
           {detail.delivery && <section className="console-card" aria-label="Action 投递回执"><h2>投递回执</h2><dl className="attempt-email-grid"><div><dt>Action</dt><dd>#{detail.delivery.action_id}</dd></div><div><dt>外部消息</dt><dd>{detail.delivery.provider_message_id || "未提供"}</dd></div><div><dt>发送时间</dt><dd>{detail.delivery.sent_at || "未提供"}</dd></div><div><dt>来源事实</dt><dd>{detail.delivery.source_label}</dd></div><div><dt>操作</dt><dd>{detail.delivery.operation || "未提供"}</dd></div><div><dt>目标</dt><dd>{detail.delivery.target || "未提供"}</dd></div><div><dt>回执</dt><dd>{detail.delivery.provider_receipt.available ? `#${detail.delivery.provider_receipt.id}` : "未记录"}</dd></div><div><dt>撤回状态</dt><dd>{detail.delivery.recall_status || "未撤回"}{detail.delivery.recalled_at ? ` · ${detail.delivery.recalled_at}` : ""}</dd></div></dl>{detail.delivery.provider_receipt.available && <details><summary>Provider 回执正文</summary><pre>{detail.delivery.provider_receipt.body}</pre></details>}</section>}
           <EmailContext email={detail.email} />
@@ -571,6 +601,7 @@ export function AttemptDetailPage() {
           {(detail.oa.process_instance_id || detail.oa.task_id || detail.oa.action || detail.oa.remark) && <DetailSection title="OA 信息" value={[detail.oa.process_instance_id, detail.oa.task_id, detail.oa.action, detail.oa.remark].filter(Boolean).join("\n")} />}
           {(detail.calendar.event_id || detail.calendar.response_status) && <DetailSection title="日历信息" value={[detail.calendar.event_id, detail.calendar.response_status, displayValue(detail.calendar.result)].filter(Boolean).join("\n")} />}
           <SystemExecutionProgress detail={detail} />
+          <HistoricalAttempt detail={detail} />
           {detail.quality_warnings.length > 0 && <section className="console-card attempt-quality-warning"><h2>Audit quality warnings</h2><ul>{detail.quality_warnings.map((warning) => <li key={warning}>{warning}</li>)}</ul></section>}
           <ProcessingPanel detail={detail} />
         </div>

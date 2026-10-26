@@ -106,6 +106,26 @@ describe("AttemptDetailPage", () => {
     command.mockResolvedValue({ ok: true, message: "反馈已保存", meta: { updated_at: "" } });
   });
 
+  it("shows the approval decision and keeps a superseded failure in history", async () => {
+    getAttemptDetail.mockResolvedValue({ item: {
+      ...detail,
+      oa: { ...detail.oa, process_instance_id: "process-current", decision: {
+        label: "同意", operation: "approve", status: "verified",
+        reason: "已核实病假证明与交接安排。", remark: "同意一天病假。",
+        receipt: { external_action_key: "receipt-1", provider_result: { readback: { taskResult: "AGREE" } } },
+      } },
+      historical_attempt: { run_id: 1, status: "skipped", error: "operation_unavailable", resolution: { delivery: "unverified; no delivery conclusion" }, session_url: "/codex/original" },
+    }, meta: { snapshot_at: "2026-10-26T06:00:00Z" } });
+    renderPage();
+    const decision = await screen.findByRole("region", { name: "审批决定" });
+    expect(within(decision).getByText("同意")).toBeInTheDocument();
+    expect(within(decision).getByText("已核验完成")).toBeInTheDocument();
+    expect(within(decision).getByText("已核实病假证明与交接安排。")).toBeInTheDocument();
+    expect(within(decision).getByText("同意一天病假。")).toBeInTheDocument();
+    expect(screen.getByText("原始处理记录（历史）")).toBeInTheDocument();
+    expect(screen.getByRole("link", { name: "查看原始 Agent 记录" })).toHaveAttribute("href", "/codex/original");
+  });
+
   it("renders one generated reply section and hides internal session identifiers", async () => {
     renderPage();
 

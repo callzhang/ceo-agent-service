@@ -1604,6 +1604,96 @@ def test_resolved_terminal_oa_attempt_has_no_history_rerun_action(tmp_path: Path
     assert "The source OA task was verified terminal." in response_body
 
 
+@pytest.mark.parametrize("execution_status", ["done", "uncertain"])
+def test_old_oa_attempt_displays_current_decision_and_keeps_original_failure(
+    tmp_path: Path, execution_status: str,
+):
+    store = AutoReplyStore(tmp_path / "current-oa-result.sqlite3")
+    task = _consumer_result_task(store)
+    failed = store.claim_agent_run(
+        task.id, task.execution_generation, role=AgentRole.CONSUMER,
+        proposal_revision=0, turn_attempt=0, parent_agent_run_id=None,
+        operation_id="", owner="original",
+    ).run
+    store.fail_agent_run(failed.id, {"code": "operation_unavailable"}, owner="original")
+    original_id = store.record_reply_attempt(
+        conversation_id=task.conversation_id, conversation_title=task.conversation_title,
+        trigger_message_id=task.trigger_message_id, trigger_sender="Derek OA",
+        trigger_text="Review leave.", action="agent_run", sensitivity_kind="general",
+        send_status="skipped",
+        oa_process_instance_id="process-current", oa_task_id="task-current",
+        oa_action="review",
+    )
+    resolution = json.dumps({
+        "source": "exact original DingTalk OA process and task readback",
+        "delivery": "unverified; no delivery conclusion",
+        "process_status": "COMPLETED", "oa_task_status": "COMPLETED",
+        "process_instance_id": "process-current", "oa_task_id": "task-current",
+        "external_action_count": 0,
+    })
+    with store._connect() as db:
+        update_action(db, "reply_attempts", original_id, {
+            "agent_run_id": failed.id, "send_error": "operation_unavailable",
+            "resolved_at": "2026-10-26 05:00:30",
+            "resolution": resolution,
+        })
+        db.execute("update tasks set execution_generation='current-oa' where id=?", (task.id,))
+        db.execute("update task_inputs set trigger_message_id='new-oa-trigger' where task_id=?", (task.id,))
+    task = store.get_reply_task(task.id)
+    target = {"process_instance_id": "process-current", "task_id": "task-current"}
+    body = _consumer_result_payload(confidence=0.93, information_completeness=1.0, risk="low")
+    body["summary"] = "建议同意一天病假。"
+    body["proposal"]["authored_judgment"] = "已读病假证明，交接安排符合要求。"
+    body["proposal"]["actions"] = [{
+        "action_identity": "approve-leave", "capability": "dingtalk-oa",
+        "operation": "approve", "description": "同意病假", "target": target,
+        "payload": {"remark": "同意。病假证明与交接安排齐备。"},
+    }]
+    consumer = _complete_consumer_run(store, task, owner="current-consumer", payload=body)
+    candidate = store.adopted_candidate_for_consumer_run(consumer.id)
+    audit = _complete_audit_run(store, task, consumer, owner="current-audit")
+    reviewed = store.current_reviewed_candidate(task.id, task.execution_generation)
+    execution = store.claim_candidate_execution(candidate["id"], reviewed["review_id"], "executor", 60)
+    store.begin_candidate_action(execution["id"], "executor", 0, "leave-receipt")
+    if execution_status == "done":
+        store.record_candidate_external_action(
+            execution["id"], "executor", 0, "leave-receipt", "approve", target,
+            {"readback": {"taskResult": "AGREE", "taskStatus": "COMPLETED"}},
+        )
+    else:
+        store.record_candidate_action_outcome(
+            execution["id"], "executor", 0, "uncertain", {"reason": "timeout"},
+        )
+    store.finish_candidate_execution(execution["id"], "executor", execution_status, {})
+    _finalize_consumer_result_attempt(store, task, audit)
+
+    _, item = build_attempt_detail(store, original_id)
+
+    assert item["system_execution"]["candidate_id"] == consumer.id
+    assert item["system_execution"]["is_current"] is True
+    decision = item["oa"]["decision"]
+    assert decision["label"] == "同意"
+    assert decision["status"] == ("verified" if execution_status == "done" else "uncertain")
+    assert decision["reason"] == body["proposal"]["authored_judgment"]
+    assert decision["remark"] == "同意。病假证明与交接安排齐备。"
+    assert decision["receipt"] is not None if execution_status == "done" else decision["receipt"] is None
+    assert "unverified" not in item["status"]["message"]
+    assert "unverified" not in item["actions"]["rerun_block_reason"]
+    assert item["consumer_result"]["error_reason"] == ""
+    assert item["consumer_result"]["confidence"] == "93%"
+    assert item["historical_attempt"]["run_id"] == failed.id
+    assert item["historical_attempt"]["resolution"] == json.loads(resolution)
+    assert item["historical_attempt"]["error"] == "operation_unavailable"
+    assert store.get_reply_attempt(original_id).send_status == "skipped"
+    assert store.get_reply_attempt(original_id).resolution == resolution
+    if execution_status == "done":
+        assert "审批已同意" in item["status"]["message"]
+        assert item["what_happened"]["reached_the_outside_world"] is True
+    else:
+        assert item["status"]["raw"] == "uncertain"
+        assert "尚未核验" in item["status"]["message"]
+
+
 def test_failed_attempt_does_not_inherit_another_business_objects_refusal(tmp_path: Path):
     store = AutoReplyStore(tmp_path / 'worker.sqlite3')
     task = _consumer_result_task(store)

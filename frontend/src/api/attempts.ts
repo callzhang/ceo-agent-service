@@ -195,7 +195,14 @@ export interface AttemptDetail {
   tool_uses: AttemptToolUse[];
   agent_execution_record: boolean;
   revision_count: number;
-  oa: { process_instance_id: string; task_id: string; url: string; action: string; remark: string; result: unknown };
+  historical_attempt?: { run_id: number | null; status: string; error: string; resolution: unknown; session_url: string } | null;
+  oa: {
+    process_instance_id: string; task_id: string; url: string; action: string; remark: string; result: unknown;
+    decision?: {
+      operation: string; label: string; status: string; reason: string; remark: string;
+      receipt: { external_action_key: string; provider_result: unknown } | null;
+    } | null;
+  };
   calendar: { event_id: string; response_status: string; result: unknown };
   actions: {
     can_rerun: boolean;

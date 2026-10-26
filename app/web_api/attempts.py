@@ -10,7 +10,7 @@ from urllib.parse import quote
 from app.wechat.models import principal_reply_supersession
 from app.attempt_rerun_presentation import RerunPresentation, attempt_rerun_presentation
 from app.attempt_projection import terminal_oa_source_closure_is_skipped
-from app.attempt_what_happened import build_what_happened, stopped_because
+from app.attempt_what_happened import build_what_happened, deciding_scores, stopped_because
 from app.history_actions import can_reopen_skipped_oa_review
 from app.web_api.common import json_safe, normalize_display_value
 from app.agent_contracts import parse_persisted_consumer_result
@@ -55,6 +55,9 @@ def _status_message(
             False,
         )
     if getattr(attempt, "resolved_at", "") and getattr(attempt, "resolution", ""):
+        evidence = _stored_json(attempt.resolution, {})
+        if isinstance(evidence, dict) and evidence.get("source") == "exact original DingTalk OA process and task readback":
+            return "原 OA 流程或节点已结束，此历史处理已跳过；该收口记录未包含具体审批决定。", False
         return str(attempt.resolution), False
     if status == "sent":
         return "这条回复已发送，无需你操作。", False
@@ -749,6 +752,42 @@ def _system_execution_payload(
     }
 
 
+def _oa_decision_payload(
+    attempt: Any, reviewed: dict[str, Any] | None,
+    execution: dict[str, Any] | None,
+) -> dict[str, Any] | None:
+    """Show the reviewed OA decision with its own action receipt, not Task status."""
+    if reviewed is None or execution is None:
+        return None
+    from app.model_action_schema import candidate_option
+
+    candidate = _stored_json(reviewed["candidate_json"], {})
+    branch = (candidate_option(reviewed["candidate_json"], reviewed["option_key"])
+              if reviewed.get("selection_id") else None)
+    plan = branch.get("plan") if branch else candidate.get("proposal")
+    if not isinstance(plan, dict):
+        return None
+    labels = {"approve": "同意", "reject": "拒绝", "revert_task": "退回"}
+    decisions = []
+    for index, action in enumerate(plan.get("actions", [])):
+        target = action.get("target", {})
+        if (
+            action.get("capability") != "dingtalk-oa"
+            or action.get("operation") not in labels
+            or str(target.get("process_instance_id") or "") != attempt.oa_process_instance_id
+            or str(target.get("task_id") or "") != attempt.oa_task_id
+        ):
+            continue
+        result = execution["actions"][index]
+        decisions.append({
+            "operation": action["operation"], "label": labels[action["operation"]],
+            "status": result["status"], "receipt": result["receipt"],
+            "reason": str(plan.get("authored_judgment") or candidate.get("summary") or ""),
+            "remark": str(action.get("payload", {}).get("remark") or ""),
+        })
+    return decisions[0] if len(decisions) == 1 else None
+
+
 def _oa_permission_wait_projection(
     store: Any,
     task: Any,
@@ -926,8 +965,8 @@ def build_attempt_detail(
         else None
     )
     current_execution = (
-        store.get_candidate_execution(current_reviewed["id"])
-        if current_reviewed is not None else None
+        store.get_candidate_execution(current_task_reviewed["id"])
+        if current_task_reviewed is not None else None
     )
     projected_status = project_attempt_status(
         attempt,
@@ -945,6 +984,27 @@ def build_attempt_detail(
         reply_task is not None and terminal_run is not None
         and reply_task.execution_generation != terminal_run.execution_generation
     )
+    if current_generation_changed and current_execution is not None and current_execution["status"] == "uncertain":
+        projected_status = "uncertain"
+    display_runs = current_agent_runs if current_generation_changed else agent_runs
+    display_reviewed = current_task_reviewed if current_generation_changed else decision_reviewed
+    display_terminal_run = (
+        next((run for run in reversed(display_runs)
+              if display_reviewed is not None and run.id == display_reviewed["audit_run_id"]), None)
+        if current_generation_changed else terminal_run
+    )
+    historical_record = None
+    if current_generation_changed:
+        historical_record = {
+            "run_id": historical_attempt.agent_run_id,
+            "status": historical_attempt.send_status,
+            "error": historical_attempt.send_error,
+            "resolution": _stored_json(historical_attempt.resolution, historical_attempt.resolution),
+            "session_url": (
+                f"/codex/{quote(historical_attempt.codex_session_id, safe='')}"
+                if historical_attempt.codex_session_id else ""
+            ),
+        }
     current_stop_execution = (
         store.get_candidate_execution(current_task_reviewed["id"])
         if current_generation_changed and current_task_reviewed is not None else None
@@ -972,8 +1032,13 @@ def build_attempt_detail(
         decision_options=_needs_human_decision_options(store, attempt),
     )
     rerun_block_reason = _attempt_rerun_block_reason(historical_attempt, agent_runs)
-    runtime_attempts = _runtime_payload(agent_runs, store)
-    agent_sessions = _agent_sessions(attempt, agent_runs)
+    if rerun_block_reason and rerun_block_reason == historical_attempt.resolution:
+        rerun_block_reason = _status_message(historical_attempt, None)[0]
+    runtime_attempts = _runtime_payload(display_runs, store)
+    agent_sessions = _agent_sessions(
+        attempt.model_copy(update={"codex_session_id": ""}) if current_generation_changed else attempt,
+        display_runs,
+    )
     feedback_token = _feedback_token_for_sent_reply(sent_reply)
     feedback_events = store.list_feedback_events_for_tokens([feedback_token]).get(feedback_token, [])
     delivery = None
@@ -1058,9 +1123,9 @@ def build_attempt_detail(
             )
     human_decision = _human_decision_payload(decision_reviewed)
     system_execution = _system_execution_payload(
-        store, decision_reviewed, is_current=current_reviewed is not None,
+        store, display_reviewed, is_current=display_reviewed is not None and display_reviewed == current_task_reviewed,
     )
-    if current_reviewed is not None:
+    if display_reviewed is not None and display_reviewed == current_task_reviewed:
         # A previous stage's send is evidence for that stage, never completion
         # of the current reviewed question or selected plan.
         status_message, _ = _status_message(attempt, attention)
@@ -1092,6 +1157,16 @@ def build_attempt_detail(
         audit_explanation = _attempt_reason_text(attempt)
     except RuntimeError:
         audit_explanation = attempt.codex_reason or attempt.send_error
+    if current_generation_changed and display_terminal_run is not None:
+        audit_explanation = str(_stored_json(display_terminal_run.adopted_result_json, {}).get("summary") or "")
+    oa_decision = _oa_decision_payload(attempt, display_reviewed, system_execution)
+    if oa_decision is not None:
+        if oa_decision["receipt"] is not None:
+            status_message = f"审批已{oa_decision['label']}，操作结果已核验。"
+        else:
+            status_message = f"审批方案：{oa_decision['label']}；尚未核验操作完成。"
+        if historical_record is not None and historical_attempt.resolved_at:
+            rerun_block_reason = "原始处理已结束；当前审批决定和执行结果见下方。"
     oa_permission_wait = _oa_permission_wait_projection(
         store,
         reply_task,
@@ -1126,10 +1201,23 @@ def build_attempt_detail(
     current_failure_reason = _agent_failure_reason_text(attempt, current_agent_runs)
     if current_generation_changed and not current_agent_runs and attempt.send_status == "failed":
         current_failure_reason = attempt.audit_summary or attempt.send_error
-    what_happened = build_what_happened(agent_runs, store=store, stop_reason=stop_reason)
+    what_happened = build_what_happened(display_runs, store=store, stop_reason=stop_reason)
+    if current_generation_changed and display_reviewed is not None:
+        displayed_candidate = _stored_json(display_reviewed["candidate_json"], {})
+        what_happened["deciding_scores"] = {
+            **{field: displayed_candidate.get(field) for field in (
+                "confidence", "information_completeness", "rule_coverage", "risk",
+            )},
+            "from_run_id": display_reviewed["candidate_id"],
+        }
+    metric_evidence = (
+        {"deciding_scores": deciding_scores(agent_runs)}
+        if current_generation_changed and display_reviewed is None else what_happened
+    )
+    oa_action = oa_decision["operation"] if oa_decision is not None else attempt.oa_action
     action_pills = [{"label": _attempt_action_label_text(attempt), "status": attempt.send_status}]
-    if attempt.oa_action.strip():
-        action_pills.append({"label": f"🧾 {attempt.oa_action.strip()}", "status": attempt.oa_action})
+    if oa_action.strip():
+        action_pills.append({"label": f"🧾 {oa_action.strip()}", "status": oa_action})
     if attempt.calendar_response_status.strip():
         action_pills.append({"label": f"📆 {attempt.calendar_response_status.strip()}", "status": attempt.calendar_response_status})
     if _route_failure_recovery_state(attempt, reply_task):
@@ -1211,9 +1299,9 @@ def build_attempt_detail(
         # material" for an approval decided at 100%.
         "consumer_result": _consumer_result_with_deciding_scores(
             _consumer_result_payload(
-                terminal_run, agent_runs, current_agent_runs, reply_task
+                display_terminal_run or terminal_run, display_runs or agent_runs, current_agent_runs, reply_task
             ),
-            what_happened,
+            metric_evidence,
         ),
         "trigger": {
             "title": "Trigger",
@@ -1251,18 +1339,22 @@ def build_attempt_detail(
         "quality_warnings": [normalize_display_value(item) for item in _quality_warnings(attempt)],
         "context_only_info": normalize_display_value(_attempt_info_tooltip(attempt)),
         "tool_uses": tool_uses,
+        "historical_attempt": historical_record,
         # The three questions a person opens this page with, answered from
         # the generation's own record rather than any one channel's fields.
         "what_happened": what_happened,
-        "agent_execution_record": bool(agent_runs or attempt.codex_session_id),
-        "revision_count": len({getattr(run, "proposal_revision", "") for run in agent_runs if getattr(run, "role", None) and getattr(run, "proposal_revision", "")}),
+        "agent_execution_record": bool(display_runs or attempt.codex_session_id),
+        "revision_count": len({getattr(run, "proposal_revision", "") for run in display_runs if getattr(run, "role", None) and getattr(run, "proposal_revision", "")}),
         "oa": {
             "process_instance_id": normalize_display_value(attempt.oa_process_instance_id),
             "task_id": normalize_display_value(attempt.oa_task_id),
             "url": normalize_display_value(_oa_url(attempt, reply_task)),
-            "action": normalize_display_value(attempt.oa_action),
-            "remark": normalize_display_value(attempt.oa_remark),
-            "result": _stored_json(attempt.oa_action_result_json, {}),
+            "action": normalize_display_value(oa_action),
+            "remark": oa_decision["remark"] if oa_decision is not None else normalize_display_value(attempt.oa_remark),
+            "result": (
+                oa_decision["receipt"]["provider_result"] if oa_decision["receipt"] else {}
+            ) if oa_decision is not None else _stored_json(attempt.oa_action_result_json, {}),
+            "decision": oa_decision,
         },
         "calendar": {
             "event_id": normalize_display_value(attempt.calendar_event_id),

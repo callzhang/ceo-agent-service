@@ -670,6 +670,16 @@ with this same status projection and hydrates only the selected Attempt IDs
 through it; count, status and displayed rows therefore use the same current
 state.
 
+Attempt detail uses the owning Task's current execution generation consistently
+for its reviewed result, Audit summary, System Execution, runtime steps and
+external-action evidence. When a later generation replaces an older Attempt's
+failed processing, the original run, error and source-closure evidence remain
+available in a separate historical section. An OA decision is shown from the
+reviewed action for the exact process/task, together with its own canonical
+action receipt; a terminal Task alone does not prove approval or rejection.
+Source-only terminal closure is described in plain language rather than exposing
+the stored JSON as the current outcome. This is a read-only display projection.
+
 An operator may reconcile one existing uncertain OA return through the dedicated
 History endpoint. It requires the exact current reviewed candidate/review, an
 Attempt linked to that Audit run (and matching any OA identity fields already
@@ -3155,7 +3165,7 @@ For the same substantive, applicant- or responsible-party-resolvable fact gap, c
 
 Historical OA review is an as-of review: use source versions that show what was demonstrably available at the original decision or return time. A tracker or document updated later cannot establish its earlier contents unless version history or another timestamped source reconstructs them; otherwise the earlier state is unknown and cannot prove an applicant gap or count an effective return.
 
-Before applying the repeated-return threshold, reconcile the complete source-timestamped DWS `REDIRECT_PROCESS` timeline against local execution receipts and the effective-return count. A local Attempt marked `skipped` or `uncertain` does not erase a return verified in the complete DWS timeline; match its timestamp, process/task evidence and actual DWS remark to the local receipt where possible. Provider success without DWS action readback is not sufficient. Then assess whether the actual request addressed the same correctable gap using evidence available at that time, and whether a later response left that gap unresolved. Explain every excluded return and any difference between total redirects and valid rounds. If the full timeline or a difference cannot be verified, do not claim the threshold is met.
+Before applying the repeated-return threshold, reconcile the complete source-timestamped DWS `REDIRECT_PROCESS` timeline against local execution receipts and the effective-return count. For the first two returns, state all known, decision-relevant correctable gaps together with actionable requests; a genuinely new gap revealed by later evidence is explained when it appears, not backdated to an earlier return. A local Attempt marked `skipped` or `uncertain` does not erase a return verified in the complete DWS timeline; match its timestamp, process/task evidence and actual DWS remark to the local receipt where possible. Provider success without DWS action readback is not sufficient. Then assess whether the actual request addressed the same correctable gap using evidence available at that time, and whether a later response left that gap unresolved. Explain every excluded return and any difference between total redirects and valid rounds. If the full timeline or a difference cannot be verified, do not claim the threshold is met.
 
 OA Attention keeps process instances present in the latest successful pending scan visible even after the local Consumer task has completed a comment or return action. Its fallback detail states only that the latest scan still sees the DingTalk process pending; it does not infer that no return receipt exists. History/System Execution and live DWS readback remain the sources for action receipt and active-node detail.
 
