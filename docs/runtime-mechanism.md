@@ -161,7 +161,7 @@ Task-backed adapter 的 State 引用在显式 Task 转换边界通过类型化�
 已将触达的 Reply terminal settlement、error reconciliation、rerun、requeue 和相关读取
 改为 native Task／TaskInput／Run／RuntimeAttempt／adopted-result／Action／Receipt owner；
 这是仍未启用的候选路径。`replace_pending_single_chat_reply_task_trigger` 已以原生
-Task／TaskInput／TaskBusinessKey 完成合并，WeChat 独立审核校验使用原生 Task、Run 与
+Task／TaskInput／TaskBusinessKey 完成合并，WeChat 审核校验使用原生 Task、Run 与
 delivery Action。共享 History／Attention、WeChat delivery 及其他 Reply 列表／详情读取仍使用来源投影。公共 Email
 unsubscribe receipt reconciliation 仍受全局 manifest 可用性门槛约束；精确方法与验证边界
 见 `task-reply-terminal-closure-report.md`。

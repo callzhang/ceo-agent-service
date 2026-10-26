@@ -5,6 +5,7 @@ from fastapi.testclient import TestClient
 from app.store import AutoReplyStore
 from app.wechat.audit_web import register_wechat_tutorial_routes
 from app.wechat.memory import ExtractedMemoryCandidate
+from tests.wechat.support import create_wechat_delivery
 
 
 class FakeSetup:
@@ -88,7 +89,7 @@ def _seed_delivery(store):
         channel="wechat", conversation_id="g@chatroom", conversation_title="G",
         single_chat=False, trigger_message_id="m1", trigger_create_time="2026-07-18T10:00:00",
         trigger_sender="X", trigger_text="hi")
-    store.create_wechat_delivery(
+    create_wechat_delivery(store,
         reply_task_id=1, account_id="acct-1", target_type="group", target_id="g@chatroom",
         conversation_id="g@chatroom", reply_text="草稿回复")
     return store.get_wechat_delivery_for_task(1)

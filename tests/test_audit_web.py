@@ -78,6 +78,7 @@ from app.meeting_alignment import DEFAULT_MEETING_MAX_ATTEMPTS
 from app.worker import MAX_REPLY_TASK_ATTEMPTS
 from tests.support.native_task_fields import set_native_task_fields
 from tests.wechat.support import approve_delivery
+from tests.wechat.support import create_wechat_delivery
 
 
 
@@ -1876,7 +1877,7 @@ def _seed_wechat_pending(store: AutoReplyStore) -> int:
         trigger_text="大家怎么看 RAG？",
     )
     task = store.list_reply_tasks(statuses=("pending",), limit=10)[-1]
-    store.create_wechat_delivery(
+    create_wechat_delivery(store,
         reply_task_id=task.id,
         account_id="acct-1",
         target_type="group",

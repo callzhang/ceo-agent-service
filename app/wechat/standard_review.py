@@ -1,9 +1,7 @@
 """Binding of a WeChat delivery to the standard Consumer -> Audit review.
 
 A delivery may be sent only after an independent review approved exactly the
-text and target being sent. The original WeChat pipeline records that approval
-in the delivery's own evidence (``WechatDeliveryAuditor``). A delivery created
-from the standard pipeline is bound instead to the standard review of the
+text and target being sent. A delivery is bound to the standard review of the
 candidate that proposed it: ``standard_candidate_id`` and ``standard_review_id``
 name the adopted candidate and its Audit review, and
 ``standard_action_identity`` names the proposed action inside that candidate.
