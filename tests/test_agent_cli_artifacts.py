@@ -6,24 +6,34 @@ import pytest
 
 from app.agent_cli import MAX_CLI_OUTPUT_BYTES, build_role_server
 from app import task_artifacts
-from app.task20_current_schema import create_current_task20_schema
-from app.task8_storage import (
-    register_task8_functions,
-    task8_insert_parts,
-    task8_set_parts,
+from app.current_database_schema import create_current_database_schema
+from app.task_entity_storage import (
+    append_task_input,
+    bind_claimed_input,
+    bind_current_input,
+    update_task_cas,
 )
+from tests.support.native_task_seed import seed_native_task
 
 
 def _task_db(path, generation="first"):
     with sqlite3.connect(path) as db:
-        create_current_task20_schema(db)
+        db.row_factory = sqlite3.Row
+        create_current_database_schema(db)
         _insert_task(db, 7, generation)
 
 
 def _insert_task(db, task_id, generation):
-    register_task8_functions(db)
-    parts = task8_insert_parts("reply_tasks", {
-        "legacy_key": str(task_id),
+    db.row_factory = sqlite3.Row
+    seed_native_task(db, task_id, "reply", "pending")
+    task = update_task_cas(
+        db,
+        task_id=task_id,
+        expected={"status": "pending"},
+        changes={"execution_generation": generation},
+    )
+    assert task is not None
+    task_input, inserted = append_task_input(db, task_id=task_id, values={
         "channel": "dingtalk",
         "conversation_id": f"conversation-{task_id}",
         "conversation_title": "Artifact test",
@@ -31,17 +41,38 @@ def _insert_task(db, task_id, generation):
         "trigger_message_id": f"message-{task_id}",
         "trigger_create_time": "",
         "trigger_sender": "",
-        "execution_generation": generation,
+        "trigger_text": "",
+        "trigger_message_json": "{}",
+        "oa_url": "",
+        "business_object_key": f"artifact-test-{task_id}",
+        "input_revision_key": f"artifact-test-{task_id}",
+        "input_provenance_json": "{}",
+        "input_compacted": 0,
     })
-
-    db.execute(f"insert into tasks(id,{parts.columns}) values(?,{parts.values})",
-               (task_id, *parts.parameters))
+    assert inserted
+    assert bind_current_input(
+        db,
+        task_id=task_id,
+        input_id=task_input["id"],
+        expected_input_version=None,
+        input_version=1,
+    ) is not None
+    assert bind_claimed_input(
+        db,
+        task_id=task_id,
+        input_id=task_input["id"],
+        claimed_input_version=1,
+    ) is not None
 
 
 def _set_generation(db, value):
-    parts = task8_set_parts("reply_tasks", {"execution_generation": value})
-    db.execute(f"update tasks set {parts.sql} where record_type='reply_tasks' and id=7",
-               parts.parameters)
+    db.row_factory = sqlite3.Row
+    assert update_task_cas(
+        db,
+        task_id=7,
+        expected={"execution_generation": "first"},
+        changes={"execution_generation": value},
+    ) is not None
 
 
 def _tool(role, name, db):

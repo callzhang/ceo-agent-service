@@ -144,3 +144,33 @@ Final single-file run: `tests/test_action_receipt_callers.py`, 15 passed in
 in the maintenance test; the authorized read-only process-table rerun passed.
 Ruff and scoped diff checks pass. Independent final SPEC and QUALITY approved after the late-ACK sequencing
 correction.
+
+## Integration iterations
+
+The complete 50d20cd candidate was pushed and checked by Quality run
+`40259719674`. Lint, frontend and browser jobs passed; Python still failed in a
+current artifact fixture using the historical Task20 container, two stale schema
+fixture/inventory assertions, and two deterministic E2E cases. These findings are
+not counted as green or hidden by a narrower test command. The artifact fixture
+belongs to the root task; the two schema test files and E2E diagnosis belong to
+the release-coordination task.
+
+Current main then supplied the independently owned schema-read cache, fresh Store
+and Email test templates, and fixed 2 GB / 5 minute process budgets. The root
+integrated those commits normally, preserving the existing top-level MemoryLimit
+import and the newer fixed limits. This does not change the Signal source/target
+DDL. Main's deploy gate manifest and enabled/suspended state are used as committed;
+this task does not bypass or redefine them. Final candidate Quality is still
+required independently before publication.
+
+## Native Task-bound artifact fixture
+
+The current artifact/tool tests now install the actual native schema, use the
+existing native Task seed with exact IDs 7/8 and the original `pending` status,
+create real TaskInputs, bind current/claimed inputs and rotate the generation by
+Task CAS. No runtime, tool-access or Audit behavior changed. Independent SPEC
+comparison confirms all ten original test bodies are unchanged: eleven nodes,
+28 original assertions and nine exception checks remain; five fixture-integrity
+assertions were added. The final pending-status version passed all 11 nodes in
+13.88 seconds under the current fixed 2 GB / 5 minute limits. Ruff/diff pass;
+independent final QUALITY review approved.
