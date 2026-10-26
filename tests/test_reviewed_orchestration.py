@@ -311,15 +311,18 @@ def test_rejected_pre_gate_human_parent_allows_changed_revision(tmp_path):
     assert handler.calls and len(handler.calls) == 1
 
 
-def test_four_business_returns_fail_without_human_question(tmp_path):
+def test_exhausted_business_returns_fail_without_human_question(tmp_path):
+    from app.agent_orchestrator import MAX_CONTENT_FEEDBACK_CYCLES
+
+    turns = MAX_CONTENT_FEEDBACK_CYCLES + 1
     store, task, context = setup(tmp_path)
-    consumer = Consumer(store, *[candidate(str(i)) for i in range(4)])
+    consumer = Consumer(store, *[candidate(str(i)) for i in range(turns)])
     result = AgentOrchestrator(
-        store=store, consumer=consumer, audit=Audit(store, *["return"] * 4)
+        store=store, consumer=consumer, audit=Audit(store, *["return"] * turns)
     ).process(task, context, refresh_context=lambda: context)
     assert result.status == "failed_terminal"
     assert result.error.code == "audit_revision_exhausted"
-    assert len(consumer.calls) == 4
+    assert len(consumer.calls) == turns
     assert result.consumer_result.decision_options == ()
 
 
