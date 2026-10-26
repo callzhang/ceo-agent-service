@@ -7,6 +7,7 @@ import sqlite3
 
 import pytest
 
+from app.action_email_history_storage import insert_email_history
 from app.email_store import EmailStore
 from app.store import AutoReplyStore
 
@@ -92,17 +93,15 @@ def test_public_begin_preserves_native_insert_or_ignore_conflicts(tmp_path):
     path = tmp_path / "conflicts.sqlite"
     email = EmailStore(path)
     with sqlite3.connect(path) as db:
-        db.execute("insert into actions(record_type,legacy_key,payload_json) values(?,?,?)", (
-            "email_historical_operations", "1", json.dumps({
-                "operation_id": "different", "account_id": "account",
-                "stable_message_identity": "same", "model_id": "model",
-                "classification_id": 1, "action_plan_id": "plan",
-                "action_ids_json": "[]", "predicted_category": "custom",
-                "threshold": .5, "probability": .5, "important": 1,
-                "status": "processing", "action_outcome": "",
-                "created_at": "time", "updated_at": "time",
-            }),
-        ))
+        insert_email_history(db, "email_historical_operations", {
+            "operation_id": "different", "account_id": "account",
+            "stable_message_identity": "same", "model_id": "model",
+            "classification_id": 1, "action_plan_id": "plan",
+            "action_ids_json": "[]", "predicted_category": "custom",
+            "threshold": .5, "probability": .5, "important": 1,
+            "status": "processing", "action_outcome": "",
+            "created_at": "time", "updated_at": "time",
+        })
     args = dict(account_id="account", stable_message_identity="same",
                 model_id="model", classification_id=1, action_plan_id="plan",
                 action_ids=("one",), predicted_category="custom",
