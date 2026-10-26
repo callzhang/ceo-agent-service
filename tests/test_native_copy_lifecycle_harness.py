@@ -146,11 +146,15 @@ def test_native_target_baseline_rejects_changed_or_lost_original_row(tmp_path, d
     with sqlite3.connect(path) as db:
         if damage == "change":
             db.execute(
-                "update service_state set value='changed' where key='store_schema_version'"
+                "update state set payload_json=json_set(payload_json,'$.value','changed') "
+                "where record_type='service_state' and json_extract(payload_json,'$.key')='store_schema_version'"
             )
         else:
-            db.execute("delete from service_state where key='store_schema_version'")
-    with pytest.raises(AssertionError, match="service_state"):
+            db.execute(
+                "delete from state where record_type='service_state' "
+                "and json_extract(payload_json,'$.key')='store_schema_version'"
+            )
+    with pytest.raises(AssertionError, match="state"):
         original_rows_unchanged(baseline, path)
 
 
@@ -240,14 +244,14 @@ def test_fixture_task_reservation_handles_empty_allocator_and_separate_copies(tm
     assert len(set(reservations)) == 2
 
 
-def test_fixture_task_reservation_refuses_nonordinary_source_without_mutation(tmp_path):
+def test_fixture_task_reservation_refuses_unrepresentable_source_without_mutation(tmp_path):
     from scripts.validate_native_copy_lifecycle import _reserve_fixture_task_ids
 
     path = tmp_path / "high-source.sqlite3"
     with sqlite3.connect(path) as db:
         db.execute("create table tasks(id integer primary key autoincrement)")
-        db.execute("insert into tasks(id) values(?)", (2**52,))
+        db.execute("insert into tasks(id) values(?)", (2**53 - 2**20,))
     before = hashlib.sha256(path.read_bytes()).digest()
-    with pytest.raises(AssertionError, match="ordinary source Task allocator"):
+    with pytest.raises(AssertionError, match="no longer exactly representable"):
         _reserve_fixture_task_ids(path)
     assert hashlib.sha256(path.read_bytes()).digest() == before

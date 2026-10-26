@@ -34,7 +34,7 @@ from app.email_action_reconcile import (
 from app.email_classifier_contracts import EmailAction, EmailClassificationStatus
 from app.email_provider_actions import ImapDeterministicProvider
 from app.email_store import (
-    EMAIL_ATTEMPT_SQL,
+    DIRECT_EMAIL_ATTEMPT_SQL,
     EMAIL_CLASSIFICATION_SQL,
     EMAIL_DIRECT_ACTION_SQL,
     EMAIL_MESSAGE_SQL,
@@ -156,7 +156,7 @@ def _snapshot(path: Path) -> list[tuple]:
             tuple(row)
             for query in (
                 f"select * from ({EMAIL_DIRECT_ACTION_SQL}) order by 1",
-                f"select * from ({EMAIL_ATTEMPT_SQL}) order by 1",
+                f"select * from ({DIRECT_EMAIL_ATTEMPT_SQL}) order by 1",
                 f"select * from ({EMAIL_CLASSIFICATION_SQL}) order by id",
                 f"select * from ({EMAIL_MESSAGE_SQL}) order by id",
             )
@@ -474,14 +474,14 @@ def test_store_reopens_cleanly_and_keeps_its_invariants_after_apply(
             f"""
             select count(*) from ({EMAIL_DIRECT_ACTION_SQL}) as a
             where a.status='pending' and (a.attempt_count != 0 or exists (
-                select 1 from ({EMAIL_ATTEMPT_SQL}) t where t.action_id=a.action_id))
+                select 1 from ({DIRECT_EMAIL_ATTEMPT_SQL}) t where t.action_id=a.action_id))
             """
         ).fetchone()[0]
         drift = db.execute(
             f"""
             select count(*) from ({EMAIL_DIRECT_ACTION_SQL}) as a
             where a.attempt_count != (
-                select count(*) from ({EMAIL_ATTEMPT_SQL}) t where t.action_id=a.action_id)
+                select count(*) from ({DIRECT_EMAIL_ATTEMPT_SQL}) t where t.action_id=a.action_id)
             """
         ).fetchone()[0]
         statuses = sorted(r[0] for r in db.execute(f"select status from ({EMAIL_DIRECT_ACTION_SQL})"))
@@ -532,7 +532,8 @@ def test_limit_and_after_page_through_failed_rows(db_path: Path) -> None:
         after = report.next_after
     assert [_run(store, session, limit=2, after_action_id="").examined] == [2]
     assert len(seen) == 3
-    assert seen == sorted(seen)
+    # Action ids are the numeric Action owner ids; paging order is numeric.
+    assert seen == sorted(seen, key=int)
     assert _run(store, session, limit=2, after_action_id=seen[-1]).examined == 0
 
 
@@ -557,21 +558,21 @@ def test_claim_for_reconciliation_only_takes_the_same_failed_row(db_path: Path) 
 
     assert (
         store.claim_failed_direct_action_for_reconciliation(
-            action_id=action_id,
+            action_id=str(action_id),
             expected_attempt_count=0,
             claimed_at="2026-09-25T10:00:00+00:00",
         )
         is None
     ), "a stale view of the attempt count is refused"
     claimed = store.claim_failed_direct_action_for_reconciliation(
-        action_id=action_id,
+        action_id=str(action_id),
         expected_attempt_count=1,
         claimed_at="2026-09-25T10:00:00+00:00",
     )
     assert claimed is not None and claimed.attempt_number == 2
     assert (
         store.claim_failed_direct_action_for_reconciliation(
-            action_id=action_id,
+            action_id=str(action_id),
             expected_attempt_count=1,
             claimed_at="2026-09-25T10:00:01+00:00",
         )
@@ -601,7 +602,7 @@ def test_pending_and_done_rows_are_not_listed_or_claimable(db_path: Path) -> Non
     )
     assert (
         store.claim_failed_direct_action_for_reconciliation(
-            action_id=pending_id,
+            action_id=str(pending_id),
             expected_attempt_count=0,
             claimed_at="2026-09-25T10:00:00+00:00",
         )

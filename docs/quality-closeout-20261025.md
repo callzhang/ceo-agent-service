@@ -385,3 +385,12 @@ regression checks that configured indices match the selection denominator and
 all positions are assigned exactly once; five repo-layout cases pass. Verbose
 node names retain actionable failures even if a process is stopped. This changes
 scheduling and diagnostic visibility, not test selection or passing criteria.
+
+Integration with main075435e20 preserves nine reviewed branch files rather than
+accepting stale-scaffold deletions: current native fixtures and the explicit
+still-shipped conversion/inverse proofs remain. Independent review confirms
+main introduced no missing positive assertion in those conflict hunks; registry
+checks on the branch are stronger. Representative storage/vector/role39 cases
+pass. Main's separately scoped Meeting waiting/retry dispatch correction is
+preserved, with its3 due/early/release regression cases passing. Source478 and
+target476 pins and26 asset preflight inputs remain exact.

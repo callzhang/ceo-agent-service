@@ -791,7 +791,7 @@ def test_reply_reconciliation_recovers_only_exact_compacted_trigger_readback():
         def get_outbound_postfix_receipt(self, channel, delivery_key):
             return None
 
-        def record_outbound_postfix_receipt(self, channel, delivery_key, receipt):
+        def record_outbound_postfix_receipt(self, channel, delivery_key, receipt, *, operation):
             self.recorded_receipt = (channel, delivery_key, receipt)
 
     class Dws:
