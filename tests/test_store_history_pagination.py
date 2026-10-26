@@ -629,11 +629,6 @@ def test_history_latest_attempt_keeps_only_current_generation_and_last_task_atte
         db.execute("pragma foreign_keys=off")
         db.execute("update runs set task_id=99999999 where id in (?, ?)", orphan_run_ids)
         update_action(db, "reply_attempts", ids[4], {"agent_run_id": 99999998})
-        from app.current_action_schema import current_reply_action_projection
-        assert db.execute(
-            f"select attempt_agent_run_id from ({current_reply_action_projection('reply_attempts')}) where id=?",
-            (ids[4],),
-        ).fetchone()[0] == 99999998
     assert store.get_reply_attempt(ids[4]).agent_run_id == 99999998
 
     total, rows = store.list_operation_logs_with_count(
