@@ -529,3 +529,13 @@ DDL changes. The native-copy harness rejects any catalog difference from the
 is the actual47 excluding the ledger, replacing the obsolete10/11 assumption.
 Three focused files pass31 in3.86s; independent rerun31 in3.76s and exact
 artifact/catalog review pass.
+
+Retained current-runtime tests are repaired rather than blindly retired:
+Meeting delivery facts originate from a genuine predecessor through real
+Task/Run/adoption forwards, then exact Action/receipt/State rows survive
+inverse/reforward. WeChat public/physical identity collision is covered on the
+current standard Consumer/Audit path after main removed the original pipeline.
+Reply DTO BLOB/type/input parsing parity uses the actual frozen Task20 input
+projection. All5 original nodes pass4.93s; the three-file run passes144 and
+reveals one separate composed-cycle fixture missing reply_attempt_receipt_refs.
+That remaining node is registered for correction, not declared green.

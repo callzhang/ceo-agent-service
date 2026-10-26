@@ -105,11 +105,35 @@ def _source():
     return db
 
 
+def _source_reply_task_projection(*, claimed: bool) -> str:
+    """Project the frozen predecessor Reply Task through its owned input."""
+    parent = task20_definitions.task20_projection("reply_tasks")
+    canonical = task20_definitions.task20_projection("reply_task_inputs")
+    if claimed:
+        return f"""select canonical.channel, canonical.conversation_id,
+            canonical.conversation_title, canonical.single_chat,
+            canonical.trigger_message_id, canonical.trigger_create_time,
+            canonical.trigger_sender, canonical.oa_url, canonical.business_object_key,
+            parent.*, canonical.trigger_text, canonical.trigger_message_json,
+            canonical.input_provenance_json, canonical.input_compacted
+            from ({parent}) as parent
+            join ({canonical}) as canonical
+              on canonical.id=parent.claimed_input_id
+             and canonical.reply_task_id=parent.id"""
+    return f"""select parent.*, canonical.trigger_text,
+        case when canonical.input_compacted=1
+             then json_extract(canonical.input_provenance_json, '$.source')
+             else canonical.trigger_message_json end as trigger_message_json,
+        canonical.input_provenance_json, canonical.input_compacted
+        from ({parent}) as parent
+        join ({canonical}) as canonical
+          on canonical.id=parent.current_input_id
+         and canonical.reply_task_id=parent.id"""
+
+
 def test_native_reply_dto_preserves_source_pydantic_parsing_for_current_and_claimed_inputs():
     from app import task_entity_storage
-    from app.store import (
-        AutoReplyStore, REPLY_TASK_CLAIMED_SQL, REPLY_TASK_CURRENT_SQL,
-    )
+    from app.store import AutoReplyStore
 
     with closing(_source()) as db:
         db.row_factory = sqlite3.Row
@@ -138,9 +162,8 @@ def test_native_reply_dto_preserves_source_pydantic_parsing_for_current_and_clai
             ("blob", b"typed claimed text", "blob", b'{"typed":"claimed"}'),
         ]
         source_dtos = {}
-        for claimed, projection in (
-            (False, REPLY_TASK_CURRENT_SQL), (True, REPLY_TASK_CLAIMED_SQL),
-        ):
+        for claimed in (False, True):
+            projection = _source_reply_task_projection(claimed=claimed)
             row = db.execute(
                 f"select * from ({projection}) where id=201",
             ).fetchone()
@@ -176,7 +199,7 @@ def test_native_reply_dto_preserves_source_pydantic_parsing_for_current_and_clai
 
 def test_native_reply_dto_preserves_source_pydantic_fractional_attempts_error():
     from app import task_entity_storage
-    from app.store import AutoReplyStore, REPLY_TASK_CURRENT_SQL
+    from app.store import AutoReplyStore
     from pydantic import ValidationError
 
     with closing(_source()) as db:
@@ -188,7 +211,7 @@ def test_native_reply_dto_preserves_source_pydantic_fractional_attempts_error():
         )
         db.commit()
         source_row = db.execute(
-            f"select * from ({REPLY_TASK_CURRENT_SQL}) where id=201",
+            f"select * from ({_source_reply_task_projection(claimed=False)}) where id=201",
         ).fetchone()
         with pytest.raises(ValidationError):
             AutoReplyStore._reply_task_from_row(source_row)
