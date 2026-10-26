@@ -1,9 +1,14 @@
-"""Hard memory ceiling for a test process.
+"""Hard memory and time budget for a test process.
 
 Derek, 2026-10-23: a parallel full run put six pytest workers at 13-23 GB each
 (about 80 GB together) and froze the machine. A test process that reaches the
 ceiling is ended at once, with the test it was running in the message, so the
 run fails loudly instead of taking the machine down.
+
+Derek, 2026-10-25: a test run must also finish within a fixed time. A process
+that has been running longer than the budget is ended the same way. Both
+limits are constants in tests/conftest.py with no environment variable or
+option to change them.
 """
 
 import ctypes
@@ -14,6 +19,7 @@ import time
 
 POLL_SECONDS = 0.2
 EXIT_CODE = 70
+TIME_EXIT_CODE = 71
 
 
 def footprint_bytes() -> int:
@@ -37,11 +43,14 @@ def footprint_bytes() -> int:
 
 
 class MemoryLimit:
-    def __init__(self, limit_bytes: int) -> None:
+    def __init__(self, limit_bytes: int, time_limit_seconds: float | None = None) -> None:
         self.limit_bytes = limit_bytes
+        self.time_limit_seconds = time_limit_seconds
         self.current_test = "(before the first test)"
+        self.started_at = time.monotonic()
 
     def start(self) -> None:
+        self.started_at = time.monotonic()
         threading.Thread(target=self._watch, name="test-memory-limit", daemon=True).start()
 
     def _watch(self) -> None:
@@ -57,3 +66,13 @@ class MemoryLimit:
                 )
                 os.write(2, message.encode())
                 os._exit(EXIT_CODE)
+            elapsed = time.monotonic() - self.started_at
+            if self.time_limit_seconds is not None and elapsed > self.time_limit_seconds:
+                message = (
+                    f"\nTIME LIMIT EXCEEDED: this test process has run {elapsed:.0f} s "
+                    f"(limit {self.time_limit_seconds:.0f} s) and was running {self.current_test}.\n"
+                    "The limit is fixed and must not be raised. Make the tests faster, or run fewer "
+                    "of them, so the run finishes inside the limit.\n"
+                )
+                os.write(2, message.encode())
+                os._exit(TIME_EXIT_CODE)
