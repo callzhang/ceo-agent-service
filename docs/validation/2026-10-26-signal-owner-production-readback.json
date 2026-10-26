@@ -1,0 +1,636 @@
+{
+  "scope": "PR294 adapter retirement and Signal provenance ownership",
+  "target_commit": "62b4da19b3563b05e2baa3e9da23d2aca43c0442",
+  "pre_deploy": {
+    "at": "2026-10-26T07:25:15.847853+00:00",
+    "code": "9a256fa77b37a18543571a64a95faacb709862eb",
+    "health": {
+      "code": 200,
+      "json": {
+        "ok": true,
+        "status": "ok"
+      }
+    },
+    "summary": {
+      "queue_count": 11,
+      "pending": 35,
+      "processing": 1,
+      "failed": 34,
+      "retryable": 9,
+      "attention": 8
+    },
+    "queues": [
+      {
+        "name": "Reply tasks",
+        "pending": 0,
+        "processing": 0,
+        "failed": 16,
+        "retryable": 0
+      },
+      {
+        "name": "Reply attempts",
+        "pending": 0,
+        "processing": 0,
+        "failed": 16,
+        "retryable": 0
+      },
+      {
+        "name": "Work items",
+        "pending": 0,
+        "processing": 0,
+        "failed": 0,
+        "retryable": 0
+      },
+      {
+        "name": "Email classifications",
+        "pending": 0,
+        "processing": 0,
+        "failed": 1,
+        "retryable": 0
+      },
+      {
+        "name": "Follow-ups",
+        "pending": 0,
+        "processing": 0,
+        "failed": 0,
+        "retryable": 0
+      },
+      {
+        "name": "Meeting jobs",
+        "pending": 1,
+        "processing": 1,
+        "failed": 1,
+        "retryable": 0
+      },
+      {
+        "name": "OKR reviews",
+        "pending": 0,
+        "processing": 0,
+        "failed": 0,
+        "retryable": 0
+      },
+      {
+        "name": "Memory writes",
+        "pending": 0,
+        "processing": 0,
+        "failed": 0,
+        "retryable": 0
+      },
+      {
+        "name": "WeChat deliveries",
+        "pending": 0,
+        "processing": 0,
+        "failed": 0,
+        "retryable": 0
+      },
+      {
+        "name": "Email provider actions",
+        "pending": 34,
+        "processing": 0,
+        "failed": 0,
+        "retryable": 9
+      },
+      {
+        "name": "Email unsubscribe tasks",
+        "pending": 0,
+        "processing": 0,
+        "failed": 3,
+        "retryable": 0
+      }
+    ]
+  },
+  "verification": {
+    "full_quality": {
+      "run": 40283440575,
+      "branch": "a28858637",
+      "actual_merge_ref": "dbb25a8c8",
+      "successful_jobs": 51,
+      "python_shards": 48
+    },
+    "later_scoped_tests": {
+      "backend_and_publication": 84,
+      "attempt_page": 46,
+      "runtime_worker": 103,
+      "consumer_agent": 179,
+      "consumer_existing_skips": 4
+    },
+    "copy": {
+      "source_signals": 1140,
+      "final_signals": 1147,
+      "preserved_typed_tables": 48,
+      "seconds": 103.68,
+      "real_provider_calls": 0,
+      "inverse_real_old_code_read_write_reforward": true
+    },
+    "mandatory_standard_gate": {
+      "target": "62b4da19b3563b05e2baa3e9da23d2aca43c0442",
+      "passed": true,
+      "fixed_memory_bytes": 2147483648,
+      "fixed_test_seconds": 300,
+      "evidence": "standard deploy returned exit0 and deployed 9a256fa7 -> 62b4da19; updater cannot proceed before gate success"
+    }
+  },
+  "post_deploy": {
+    "at": "2026-10-26T07:39:21.443739+00:00",
+    "code": "62b4da19b3563b05e2baa3e9da23d2aca43c0442",
+    "pid": 94797,
+    "health": {
+      "code": 200,
+      "json": {
+        "ok": true,
+        "status": "ok"
+      }
+    },
+    "status": {
+      "code": 200,
+      "json": {
+        "summary": {
+          "queue_count": 11,
+          "pending": 33,
+          "processing": 2,
+          "failed": 34,
+          "retryable": 9,
+          "attention": 8
+        },
+        "queues": [
+          {
+            "name": "Reply tasks",
+            "pending": 0,
+            "processing": 0,
+            "failed": 16,
+            "retryable": 0
+          },
+          {
+            "name": "Reply attempts",
+            "pending": 0,
+            "processing": 0,
+            "failed": 16,
+            "retryable": 0
+          },
+          {
+            "name": "Work items",
+            "pending": 0,
+            "processing": 0,
+            "failed": 0,
+            "retryable": 0
+          },
+          {
+            "name": "Email classifications",
+            "pending": 0,
+            "processing": 0,
+            "failed": 1,
+            "retryable": 0
+          },
+          {
+            "name": "Follow-ups",
+            "pending": 0,
+            "processing": 0,
+            "failed": 0,
+            "retryable": 0
+          },
+          {
+            "name": "Meeting jobs",
+            "pending": 0,
+            "processing": 1,
+            "failed": 1,
+            "retryable": 0
+          },
+          {
+            "name": "OKR reviews",
+            "pending": 0,
+            "processing": 0,
+            "failed": 0,
+            "retryable": 0
+          },
+          {
+            "name": "Memory writes",
+            "pending": 0,
+            "processing": 0,
+            "failed": 0,
+            "retryable": 0
+          },
+          {
+            "name": "WeChat deliveries",
+            "pending": 0,
+            "processing": 0,
+            "failed": 0,
+            "retryable": 0
+          },
+          {
+            "name": "Email provider actions",
+            "pending": 33,
+            "processing": 1,
+            "failed": 0,
+            "retryable": 9
+          },
+          {
+            "name": "Email unsubscribe tasks",
+            "pending": 0,
+            "processing": 0,
+            "failed": 3,
+            "retryable": 0
+          }
+        ]
+      }
+    },
+    "attention": {
+      "code": 200,
+      "json": {
+        "count": 8
+      }
+    },
+    "history": {
+      "code": 200,
+      "json": {
+        "meta": {
+          "snapshot_at": "2026-10-26T07:39:23.532667Z",
+          "page": 1,
+          "page_size": 1,
+          "total": 38422,
+          "next_cursor": "2",
+          "has_more": true
+        },
+        "returned": 1
+      }
+    },
+    "database": {
+      "store": "2026-10-25.3",
+      "email": 54,
+      "objects": 476,
+      "sha256": "234e17843afc171b4fa8cb42f3e1d959ef2ba415f43e295dc7db640ab3d02221",
+      "signals": 1140,
+      "signals_without_parent": 0,
+      "fk_findings": [
+        [
+          "runs",
+          190042,
+          "tasks",
+          1
+        ]
+      ]
+    }
+  },
+  "cleanup": {
+    "status": "completed",
+    "targets": [
+      {
+        "path": "/tmp/ceo-quality-closeout.AufxJe",
+        "canonical_path": "/private/tmp/ceo-quality-closeout.AufxJe",
+        "exists": true,
+        "uid": 501,
+        "allocated_bytes": 1386082304,
+        "absent_after_cleanup": true
+      },
+      {
+        "path": "/tmp/ceo-signal-owner.9rj11P",
+        "canonical_path": "/private/tmp/ceo-signal-owner.9rj11P",
+        "exists": true,
+        "uid": 501,
+        "allocated_bytes": 1751916544,
+        "absent_after_cleanup": true
+      },
+      {
+        "path": "/tmp/ceo-email-quality690.Z0HVNn",
+        "canonical_path": "/private/tmp/ceo-email-quality690.Z0HVNn",
+        "exists": true,
+        "uid": 501,
+        "allocated_bytes": 4550656,
+        "absent_after_cleanup": true
+      },
+      {
+        "path": "/tmp/ceo-human-review-eval.WO3hc7",
+        "canonical_path": "/private/tmp/ceo-human-review-eval.WO3hc7",
+        "exists": true,
+        "uid": 501,
+        "allocated_bytes": 4096,
+        "absent_after_cleanup": true
+      },
+      {
+        "path": "/tmp/ceo-agent-turn-store-wire-20261026",
+        "canonical_path": "/private/tmp/ceo-agent-turn-store-wire-20261026",
+        "exists": true,
+        "uid": 501,
+        "allocated_bytes": 11685888,
+        "absent_after_cleanup": true
+      },
+      {
+        "path": "/tmp/ceo-agent-turn-store-wire-rerun-20261026",
+        "canonical_path": "/private/tmp/ceo-agent-turn-store-wire-rerun-20261026",
+        "exists": true,
+        "uid": 501,
+        "allocated_bytes": 11685888,
+        "absent_after_cleanup": true
+      },
+      {
+        "path": "/tmp/ceo-agent-turn-store-wire-final-20261026",
+        "canonical_path": "/private/tmp/ceo-agent-turn-store-wire-final-20261026",
+        "exists": true,
+        "uid": 501,
+        "allocated_bytes": 5873664,
+        "absent_after_cleanup": true
+      },
+      {
+        "path": "/tmp/ceo-agent-turn-store-wire-terminal-20261026",
+        "canonical_path": "/private/tmp/ceo-agent-turn-store-wire-terminal-20261026",
+        "exists": true,
+        "uid": 501,
+        "allocated_bytes": 0,
+        "absent_after_cleanup": true
+      },
+      {
+        "path": "/private/tmp/pr294-closeout-current-20261026",
+        "canonical_path": "/private/tmp/pr294-closeout-current-20261026",
+        "exists": true,
+        "uid": 501,
+        "allocated_bytes": 189145088,
+        "absent_after_cleanup": true
+      },
+      {
+        "path": "/private/tmp/oa-approval-manifest-sync-20261026",
+        "canonical_path": "/private/tmp/oa-approval-manifest-sync-20261026",
+        "exists": true,
+        "uid": 501,
+        "allocated_bytes": 178868224,
+        "absent_after_cleanup": true
+      }
+    ],
+    "open_reference_checks": [
+      {
+        "path": "/private/tmp/ceo-quality-closeout.AufxJe",
+        "exists": true,
+        "returncode": 1,
+        "open_rows": 0,
+        "error": ""
+      },
+      {
+        "path": "/private/tmp/ceo-signal-owner.9rj11P",
+        "exists": true,
+        "returncode": 1,
+        "open_rows": 0,
+        "error": ""
+      },
+      {
+        "path": "/private/tmp/ceo-email-quality690.Z0HVNn",
+        "exists": true,
+        "returncode": 1,
+        "open_rows": 0,
+        "error": ""
+      },
+      {
+        "path": "/private/tmp/ceo-human-review-eval.WO3hc7",
+        "exists": true,
+        "returncode": 1,
+        "open_rows": 0,
+        "error": ""
+      },
+      {
+        "path": "/private/tmp/ceo-agent-turn-store-wire-20261026",
+        "exists": true,
+        "returncode": 1,
+        "open_rows": 0,
+        "error": ""
+      },
+      {
+        "path": "/private/tmp/ceo-agent-turn-store-wire-rerun-20261026",
+        "exists": true,
+        "returncode": 1,
+        "open_rows": 0,
+        "error": ""
+      },
+      {
+        "path": "/private/tmp/ceo-agent-turn-store-wire-final-20261026",
+        "exists": true,
+        "returncode": 1,
+        "open_rows": 0,
+        "error": ""
+      },
+      {
+        "path": "/private/tmp/ceo-agent-turn-store-wire-terminal-20261026",
+        "exists": true,
+        "returncode": 1,
+        "open_rows": 0,
+        "error": ""
+      },
+      {
+        "path": "/private/tmp/pr294-closeout-current-20261026",
+        "exists": true,
+        "returncode": 1,
+        "open_rows": 0,
+        "error": ""
+      },
+      {
+        "path": "/private/tmp/oa-approval-manifest-sync-20261026",
+        "exists": true,
+        "returncode": 1,
+        "open_rows": 0,
+        "error": ""
+      },
+      {
+        "path": "/private/var/folders/74/yj2lxqs162q7rqzm0mj8nv1c0000gn/T/pytest-of-derek/pytest-4816",
+        "exists": false
+      },
+      {
+        "path": "/private/var/folders/74/yj2lxqs162q7rqzm0mj8nv1c0000gn/T/pytest-of-derek/pytest-4817",
+        "exists": false
+      },
+      {
+        "path": "/private/var/folders/74/yj2lxqs162q7rqzm0mj8nv1c0000gn/T/pytest-of-derek/pytest-4818",
+        "exists": false
+      },
+      {
+        "path": "/private/var/folders/74/yj2lxqs162q7rqzm0mj8nv1c0000gn/T/pytest-of-derek/pytest-4819",
+        "exists": false
+      },
+      {
+        "path": "/Users/derek/Library/Application Support/ceo-agent-service/backups/auto-reply-2026-10-26.sqlite3",
+        "exists": true,
+        "returncode": 1,
+        "open_rows": 0,
+        "error": ""
+      }
+    ],
+    "preserved": [
+      "production database",
+      "native ~/.codex trajectories",
+      "unrelated worktrees and dws-docfmt backup subtree"
+    ],
+    "verified_at": "2026-10-26T07:48:37.814846+00:00",
+    "backup_absent": true,
+    "root_level_predeployment_snapshots": [],
+    "registered_worktrees_removed": [
+      "/private/tmp/pr294-closeout-current-20261026",
+      "/private/tmp/oa-approval-manifest-sync-20261026"
+    ],
+    "additional_owned_pytest_roots": [
+      {
+        "path": "/private/var/folders/74/yj2lxqs162q7rqzm0mj8nv1c0000gn/T/pytest-of-derek/pytest-5027",
+        "exists": true,
+        "uid": 501,
+        "allocated_bytes": 100716544,
+        "returncode": 1,
+        "open_rows": 0,
+        "error": "",
+        "absent_after_cleanup": true
+      },
+      {
+        "path": "/private/var/folders/74/yj2lxqs162q7rqzm0mj8nv1c0000gn/T/pytest-of-derek/pytest-5028",
+        "exists": true,
+        "uid": 501,
+        "allocated_bytes": 362479616,
+        "returncode": 1,
+        "open_rows": 0,
+        "error": "",
+        "absent_after_cleanup": true
+      }
+    ],
+    "removed_owned_directory_count": 12
+  },
+  "publication": {
+    "installed_contracts": [
+      {
+        "target": "skills/ceo-weekly-report/SKILL.md",
+        "matches": true
+      },
+      {
+        "target": "skills/ceo-weekly-report/scripts/report_contract.py",
+        "matches": true
+      },
+      {
+        "target": "skills/ceo-weekly-report/scripts/validate_run.py",
+        "matches": true
+      },
+      {
+        "target": "skills/ceo-weekly-report/references/dingtalk-runbook.md",
+        "matches": true
+      },
+      {
+        "target": "audit_rules",
+        "matches": true
+      },
+      {
+        "target": "skills/ceo-calendar-invite/SKILL.md",
+        "matches": true
+      },
+      {
+        "target": "skills/ceo-daily-report/SKILL.md",
+        "matches": true
+      },
+      {
+        "target": "skills/ceo-document-review/SKILL.md",
+        "matches": true
+      },
+      {
+        "target": "skills/ceo-mail-review/SKILL.md",
+        "matches": true
+      },
+      {
+        "target": "skills/ceo-message-triage/SKILL.md",
+        "matches": true
+      },
+      {
+        "target": "skills/ceo-wechat/SKILL.md",
+        "matches": true
+      },
+      {
+        "target": "skills/dingtalk-oa-approval/SKILL.md",
+        "matches": true
+      },
+      {
+        "target": "skills/stardust-oa-finance-review/SKILL.md",
+        "matches": true
+      },
+      {
+        "target": "skills/stardust-oa-finance-review/references/finance-rule-cards.md",
+        "matches": true
+      },
+      {
+        "target": "skills/stardust-oa-people-review/SKILL.md",
+        "matches": true
+      },
+      {
+        "target": "skills/stardust-oa-attendance-travel-review/SKILL.md",
+        "matches": true
+      },
+      {
+        "target": "skills/ceo-daily-report/scripts/destination.py",
+        "matches": true
+      },
+      {
+        "target": "skills/ceo-daily-report/scripts/window.py",
+        "matches": true
+      },
+      {
+        "target": "skills/ceo-weekly-okr-report/SKILL.md",
+        "matches": true
+      },
+      {
+        "target": "skills/ceo-weekly-okr-report/scripts/analysis.schema.json",
+        "matches": true
+      },
+      {
+        "target": "skills/ceo-weekly-okr-report/scripts/report.py",
+        "matches": true
+      },
+      {
+        "target": "skills/ceo-weekly-report/scripts/jsonml_check.py",
+        "matches": true
+      },
+      {
+        "target": "skills/ceo-weekly-report/scripts/materials.py",
+        "matches": true
+      },
+      {
+        "target": "skills/ceo-weekly-report/scripts/render_dingtalk_jsonml.py",
+        "matches": true
+      },
+      {
+        "target": "skills/ceo-weekly-okr-report/scripts/destination.py",
+        "matches": true
+      },
+      {
+        "target": "skills/ceo-weekly-report/README.md",
+        "matches": true
+      }
+    ],
+    "backup": {
+      "path": "/Users/derek/Library/Application Support/ceo-agent-service/backups/auto-reply-2026-10-26.sqlite3",
+      "bytes": 514969600,
+      "complete_marker": true,
+      "integrity": "ok",
+      "store": "2026-10-25.3",
+      "schema_objects": 476
+    }
+  },
+  "ui": {
+    "production_browser": "Chrome",
+    "checks": [
+      {
+        "path": "/tasks?view=formal",
+        "result": "396 formal Tasks; native Task detail links"
+      },
+      {
+        "path": "/tasks/item/851",
+        "result": "source evidence, original locator, fetched raw record and task change expand successfully"
+      },
+      {
+        "path": "/tasks/legacy-project/1",
+        "result": "history-only label, 4 facts, 22 retained Todos, exact historical provider receipt expands"
+      },
+      {
+        "path": "/attempts/16072",
+        "result": "current decision, verified AGREE/COMPLETED receipt and Consumer/Audit revision history readable; original history retained"
+      },
+      {
+        "path": "/history",
+        "result": "service running, grouped existing failures, queued tab and 38422 History rows load"
+      },
+      {
+        "path": "/tasks",
+        "result": "business Attention cards load"
+      }
+    ],
+    "writes": 0,
+    "production_test_sends": 0,
+    "ephemeral_tab_closed": true
+  }
+}

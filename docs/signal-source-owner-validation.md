@@ -1,5 +1,21 @@
 # Signal source owner acceptance — 2026-10-25
 
+## Final publication — 2026-10-26
+
+The final476-object candidate is deployed as `62b4da19b`; Store25.3/Email54,
+PID94797 and health200/ok were read back at07:39 UTC. All1140 production Signals
+have a retained provenance parent; the complete target digest below is exact.
+The final refreshed copy proof preserves48 other typed tables and the sole prior
+FK finding through forward/new-facts/real old-code inverse-read-write/reforward
+(1140→1147 copy Signals,103.68s, zero provider calls). Complete Quality passes
+51/51 jobs at a28858637; later scoped integration tests and the exact installed
+commit's mandatory standard gate pass. Production UI source/raw-record, formal
+Tasks, exact legacy detail, History and provider receipts were actually opened.
+Twelve owned temporary roots and the integrity-verified workflow backup were removed
+after readback. [Structured final evidence](validation/2026-10-26-signal-owner-production-readback.json).
+The prior ABI failures and pending items below are chronological historical
+observations, now superseded by complete Quality and this release/readback.
+
 ## Scope and exact declarations
 
 The adapter cleanup is separate commit `d2dc7c6c3`. The Signal candidate moves the

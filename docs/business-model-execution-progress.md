@@ -1,62 +1,34 @@
 # Business model simplification: current completion and closeout
 
-## Current work — adapter retirement and Signal source ownership
+## Authoritative completion — 2026-10-26
 
-The new authorized unit follows the prior history closeout. Adapter retirement
-is implemented, independently reviewed and committed as `d2dc7c6c3`; its44 API,
-9 page and66 backend focused tests pass. It has not been separately deployed.
-Signal source ownership is implemented as candidate Store25.3/Email54 with the
-[frozen field/DDL/reverse contract](signal-source-owner-unification.md).
-Independent SPEC/QUALITY reviews, scoped tests, complete production-derived copy
-forward/current-data inverse/real old-code cold read/write/reforward and a
-second inverse-source continuation proof all passed. The [acceptance record](signal-source-owner-validation.md)
-keeps exact cohort sizes, manifest digests, overlapping test counts and the two
-baseline ABI failures separate. The generated full SQL artifact is refreshed.
-The release-coordination task owns the protected selector and explicit historical
-release-tool corrections; the root business-model task is now the sole owner of
-final integration, Quality, standard deploy, production readback and cleanup.
-[Current Quality closeout](quality-closeout-20261025.md) records each failed
-iteration, fixture retirement mapping, independent reviews and completed focused
-checks. The final pinned target is476 objects, SHA256
+PR [294](https://github.com/callzhang/ceo-agent-service/pull/294) is merged and
+standard deployment completed `9a256fa77 → 62b4da19b`. The production readback at
+07:39 UTC verified PID94797, health200/ok, Store `2026-10-25.3` / Email54 and the
+exact476-object manifest SHA256
 `234e17843afc171b4fa8cb42f3e1d959ef2ba415f43e295dc7db640ab3d02221`.
-Its fresh production-derived copy passed forward/current-data inverse/actual
-predecessor cold reads and writes/reforward:1140 original Signals,1147 final
-Signals,48 other typed table snapshots preserved and the original FK finding set
-unchanged. Real provider calls were zero. Complete Quality passed at the
-exact integration checkpoint below; standard release/readback remain pending; the earlier475-object evidence does not
-substitute for this final476-object proof. No real test send occurred. Production was read as Store25.2/Email54 with1140
-Signals (110 inline,1030 referenced;172 parents); this is the source checkpoint,
-not a deployment of25.3. Final integrated release/readback and cleanup remain
-pending. Copy Chrome verification of formal Tasks, source/raw record, canonical
-legacy detail and provider receipt succeeded; frontend build passed. The eleven
-previously blocked test roots and four API outputs are now deleted and verified
-absent (12,246,364,678 logical bytes); the active Signal inputs/backup await final
-release readback. No physical database saving is attributed to that cleanup.
+These are dated release facts, not a permanent assertion about the live PID.
 
-## Integration checkpoint — 2026-10-26
+| Scope | Completed evidence |
+|---|---|
+| Console cleanup | Obsolete frontend adapters/callerless old queries retired; exact historical project detail remains separate from current Business Tasks. |
+| Signal source owner | All1140 production Signals retained; every Signal has its provenance parent; inline source fields/indexes/leaf trigger retired. Business facts, IDs and receipts retain their meaning. |
+| Copy and current-data inverse | Final frozen478→476 proof passed with new facts/substitute receipt, real old-code cold read/write and reforward;1140→1147 copy Signals,48 other typed tables preserved, same FK findings, zero provider calls. |
+| Quality | Complete run40283440575:51/51 jobs (48 Python shards, lint/frontend/browser). Later separately scoped main changes:84 backend/publication,46 page,103 runtime-worker and179 Consumer cases pass (4 existing skips). Fixed2GB/5minute limits retained. |
+| Standard release | Exact62b4da19b clean-clone mandatory gate passed; quiet drain, verified backup, explicit migration, frontend build and health check completed. Installed26 publication files match their declared new hashes. |
+| Production UI | Formal list396 Tasks; Task851 source locator/raw-record/change expansion; history-only Project1 with4 facts/22 Todos and old provider receipt; Attempt16072 verified receipt/current decision/revision history; Dashboard/Queued, History38422 and business Attention load. No production test write/send. |
+| Existing issues | Failed34 and Attention8 match pre-deploy counts; sole FK finding `('runs',190042,'tasks',1)` remains unchanged. No replay, fabricated Task or silent repair. |
+| Cleanup | Twelve task-owned temporary roots, including two registered test worktrees, removed after readback; verified workflow backup removed. Four separately named pytest roots were already absent. Production DB/native trajectories/unrelated work are preserved. |
 
-- Main through `f867d5c43` is integrated normally, preserving reviewed current
-  identity/type/receipt and explicit inverse coverage. Genuine current owner
-  regressions and stale fixtures are tracked separately in the closeout record.
-- A fresh production-derived copy again passes the entire forward/new-facts/
-  substitute-receipt/current-data inverse/actual old-code cold read-write/
-  reforward sequence:103.68s,1140→1147 Signals,48 tables, unchanged sole FK
-  finding, zero real provider calls.
-- The standard clean-clone gate passes at `e9b6c0a55`; full app/tests Ruff passes.
-  The26 file/installed-target/current managed-revision publication preflight
-  passes. The two originally planned weekly-report assets and the subsequently
-  main-authorized OA Skill source digest differ; the separate release owner
-  supplied and verified that digest-only manifest update.
-- Complete Quality now passes51/51 jobs at `a28858637` (`40283440575`, actual
-  merge-refdbb25a8c8/base193ddd06b):48 Python shards plus lint/frontend/browser.
-  The later read-only main Attempt detail and release-owner manifest patch are
-  normally integrated with84 backend/publication and46 page cases passing.
-  This names the exact evidence boundary; final standard deployment/readback
-  and artifact cleanup remain pending.
-- The temporary production connection refusal coincided with a separate
-  standard deploy to `9e7308ee5`; subsequent health readback returned200/ok.
-  The Signal migration has not been deployed by this task at this checkpoint.
-  Standard deployment, production feature readback and artifact cleanup remain.
+[Exact structured readback](validation/2026-10-26-signal-owner-production-readback.json),
+[Signal contract and copy evidence](signal-source-owner-validation.md), and
+[Quality iterations/retirement mapping](quality-closeout-20261025.md) retain the
+completion boundaries. No physical DB shrinkage is attributed to artifact cleanup.
+
+All following sections are historical checkpoints. Their old pending/unactivated
+statements describe the state at that time and are superseded by this table for
+this scope. Prior A5 native revalidation remains separately recorded; no new
+fact-check tool, review policy or outbound authorization change was introduced.
 
 ## Previous history closeout — production readback, 2026-10-25
 

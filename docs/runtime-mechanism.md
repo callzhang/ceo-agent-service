@@ -5510,3 +5510,17 @@ processing leases retain the same separate branch. The temporary normalized
 status CASE and its redundant eligibility predicates are retired together;
 no source phase or eligibility is reinterpreted. Email plan/operation readers
 and their status-map lookups use the same native integer Action identity.
+
+### Signal source publication — 2026-10-26 checkpoint
+
+The previously described Signal source-owner and console-adapter cleanup is
+published in62b4da19b (Store2026-10-25.3/Email54). Signal readers reconstruct the
+source exclusively from the existing provenance parent; the Signal retains its
+reference and own business facts. Old Project history uses its dedicated detail
+adapter and is not an operational Business Task projection. Complete Quality,
+current-data inverse/actual predecessor cold read-write/reforward, mandatory
+standard deployment gate and actual production source/receipt UI readback are
+recorded in `validation/2026-10-26-signal-owner-production-readback.json` and
+`business-model-execution-progress.md`. Earlier unactivated/pending phase notes
+remain historical implementation checkpoints. No review, retry, authorization
+or test outbound-send policy changed in this publication.

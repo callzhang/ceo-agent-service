@@ -1,6 +1,25 @@
 # PR #294 Quality closeout
 
-## Ownership and evidence boundary
+## Final accepted state — 2026-10-26
+
+PR294 merged as `62b4da19b3563b05e2baa3e9da23d2aca43c0442` and standard
+deployment completed successfully. The exact target mandatory clean-clone gate
+passed before the quiet drain, verified backup, migration and restart. Production
+PID94797 read back health200/ok, Store25.3/Email54 and the exact476-object target.
+All1140 Signals retain their source parent; the original FK exception is unchanged.
+Actual production Task/source/history/receipt/queue UI readback passed. Installed
+26 publication assets match their declared new hashes. Failed34/Attention8 match
+the pre-deploy baseline. Twelve owned temporary roots and the verified workflow
+backup are deleted; production and native trajectory originals are preserved.
+
+The full Quality acceptance is51/51 jobs at a28858637, followed by the explicitly
+scoped main integration checks recorded below and the standard gate on the exact
+deployed target. This does not claim every future main revision has that same
+full-suite result. [Structured final evidence](validation/2026-10-26-signal-owner-production-readback.json).
+All sections below record chronological checkpoints; their pending/red statements
+are historical and do not override this accepted final state.
+
+## Historical ownership and evidence boundary
 
 The release checkpoint is `8e8c62716048136f810213c78ef373f8e5054b20`.
 The Signal target is Store `2026-10-25.3` / Email 54, 476 schema objects,
