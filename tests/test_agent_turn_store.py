@@ -36,7 +36,7 @@ from app.codex_runtime_adapter import CodexRuntimeAdapter
 from app.friday_runtime_adapter import FridayExecutionResult
 from app.process_runner import ProcessRunResult
 from app.service_codex_config import ServiceMcpServer
-from app.run_storage import AGENT_RUN_SQL, RUN_STATE_EVENT_SQL
+from app.run_storage import AGENT_RUN_SQL
 from app.store import (
     AgentRole,
     AgentRuntimeAttemptStartConflictError,
