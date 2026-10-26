@@ -366,3 +366,22 @@ The five directly affected files pass20 cases after all markers are resolved.
 The merged consumer asset manifest verifies26 installed inputs with2 changed
 sources, and frozen Signal source478/target476 digests still match. No production
 migration or deploy has occurred at this checkpoint.
+
+## Fixed-budget complete-suite partition and clock isolation
+
+Candidateac8a126cb passed the standard clean-clone deployment gate. Its full
+Quality40272708907 passes lint/frontend/browser, but Python shards hit the
+unchanged300-second ceiling; shard11 reached only36% before master timeout.
+It also first falsely reported807seconds inside a simulated15-minute publication
+wait: that fixture replaced process-global time.monotonic/time.sleep, which the
+real-time test-budget watcher also uses. The fixture now replaces only the
+publication module's time binding; five existing wait/digest cases retain all
+assertions and a new positive control prevents watchdog clock replacement.
+Six cases pass, with no changes to production waits or resource enforcement.
+
+The same complete node-ID suite is now partitioned48 ways rather than12, with
+one worker per runner, fixed2GB/5minutes and no bypass. A matrix-consistency
+regression checks that configured indices match the selection denominator and
+all positions are assigned exactly once; five repo-layout cases pass. Verbose
+node names retain actionable failures even if a process is stopped. This changes
+scheduling and diagnostic visibility, not test selection or passing criteria.

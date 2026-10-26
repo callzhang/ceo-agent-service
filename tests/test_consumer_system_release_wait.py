@@ -9,6 +9,7 @@ import pytest
 
 import app.consumer_system_release as release_module
 from app.consumer_system_release import ConsumerSystemPublication, MANAGED_NAMES
+from tests.support import memory_limit
 
 
 class _Clock:
@@ -22,6 +23,18 @@ class _Clock:
     def sleep(self, seconds: float) -> None:
         self.sleeps.append(seconds)
         self.now += seconds
+
+
+@pytest.fixture
+def release_clock(monkeypatch):
+    clock = _Clock()
+    monkeypatch.setattr(release_module, "time", clock)
+    return clock
+
+
+def test_release_wait_clock_does_not_replace_process_budget_clock(release_clock):
+    assert memory_limit.time.monotonic.__self__ is not release_clock
+    assert memory_limit.time.sleep.__self__ is not release_clock
 
 
 class _Store:
@@ -94,75 +107,57 @@ def _publication(tmp_path: Path, *, active=True, receipt=True, wrong_digest=Fals
     return publication, store, expected
 
 
-def test_verify_loaded_waits_for_activation_and_worker_receipt(tmp_path, monkeypatch):
+def test_verify_loaded_waits_for_activation_and_worker_receipt(tmp_path, release_clock):
     publication, store, expected = _publication(tmp_path, active=True, receipt=True)
     active = store.config_reads[0]
     store.config_reads = [None, active]
     receipt = SimpleNamespace(pid=os.getpid(), error=None, loaded_json=json.dumps(expected))
     store.receipt_reads = [[], [receipt]]
-    clock = _Clock()
-    monkeypatch.setattr(release_module.time, "monotonic", clock.monotonic)
-    monkeypatch.setattr(release_module.time, "sleep", clock.sleep)
-
     publication.verify_loaded()
 
-    assert clock.sleeps == [1, 1]
+    assert release_clock.sleeps == [1, 1]
 
 
 def test_verify_loaded_times_out_after_fifteen_minutes_waiting_for_activation(
-    tmp_path, monkeypatch,
+    tmp_path, release_clock,
 ):
     publication, store, _expected = _publication(tmp_path, active=False, receipt=False)
-    clock = _Clock()
-    monkeypatch.setattr(release_module.time, "monotonic", clock.monotonic)
-    monkeypatch.setattr(release_module.time, "sleep", clock.sleep)
 
     with pytest.raises(ValueError, match="did not activate within 15 minutes"):
         publication.verify_loaded()
 
-    assert clock.now == 15 * 60
+    assert release_clock.now == 15 * 60
 
 
 def test_verify_loaded_times_out_after_fifteen_minutes_waiting_for_worker_receipt(
-    tmp_path, monkeypatch,
+    tmp_path, release_clock,
 ):
     publication, _store, _expected = _publication(tmp_path, active=True, receipt=False)
-    clock = _Clock()
-    monkeypatch.setattr(release_module.time, "monotonic", clock.monotonic)
-    monkeypatch.setattr(release_module.time, "sleep", clock.sleep)
 
     with pytest.raises(ValueError, match="load receipt did not appear within 15 minutes"):
         publication.verify_loaded()
 
-    assert clock.now == 15 * 60
+    assert release_clock.now == 15 * 60
 
 
-def test_verify_loaded_keeps_digest_mismatch_immediate(tmp_path, monkeypatch):
+def test_verify_loaded_keeps_digest_mismatch_immediate(tmp_path, release_clock):
     publication, _store, _expected = _publication(
         tmp_path, active=True, receipt=True, wrong_digest=True,
     )
-    clock = _Clock()
-    monkeypatch.setattr(release_module.time, "monotonic", clock.monotonic)
-    monkeypatch.setattr(release_module.time, "sleep", clock.sleep)
-
     with pytest.raises(ValueError, match="active Skill revision mismatch"):
         publication.verify_loaded()
 
-    assert clock.sleeps == []
+    assert release_clock.sleeps == []
 
 
 def test_verify_loaded_keeps_worker_receipt_digest_mismatch_immediate(
-    tmp_path, monkeypatch,
+    tmp_path, release_clock,
 ):
     publication, store, _expected = _publication(tmp_path, active=True, receipt=True)
     store.receipt_reads = [[SimpleNamespace(
         pid=os.getpid(), error=None, loaded_json=json.dumps({"wrong": "digest"}),
     )]]
-    clock = _Clock()
-    monkeypatch.setattr(release_module.time, "monotonic", clock.monotonic)
-    monkeypatch.setattr(release_module.time, "sleep", clock.sleep)
-
     with pytest.raises(ValueError, match="load receipt digest mismatch"):
         publication.verify_loaded()
 
-    assert clock.sleeps == []
+    assert release_clock.sleeps == []

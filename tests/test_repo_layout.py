@@ -55,3 +55,21 @@ def test_cli_import_is_warning_free_on_python_312():
     )
 
     assert completed.returncode == 0, completed.stderr
+
+
+def test_quality_matrix_partitions_every_position_once():
+    import yaml
+
+    workflow = yaml.safe_load((REPO_ROOT / ".github/workflows/quality.yml").read_text())
+    job = workflow["jobs"]["python-tests"]
+    shards = job["strategy"]["matrix"]["shard"]
+    count = int(job["env"]["CEO_PYTEST_SHARD"].rsplit("/", 1)[1])
+    assert sorted(shards) == list(range(count))
+    assert str(job["env"]["CEO_PYTEST_WORKERS"]) == "1"
+    invocation = job["steps"][-1]["run"]
+    assert "--verbosity=1" in invocation.split()
+    assert "--maxfail=0" in invocation.split()
+    positions = range(count * 3 + 7)
+    assigned = [position for shard in shards for position in positions if position % count == shard]
+    assert sorted(assigned) == list(positions)
+    assert len(assigned) == len(set(assigned))
