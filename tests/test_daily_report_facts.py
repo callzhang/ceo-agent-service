@@ -11,8 +11,6 @@ from app.service_activity import collect_service_activity, scheduled_context
 from app.email_store import EmailStore
 from app.action_storage import insert_sync_action, update_action
 from app.store import AutoReplyStore
-from app.task_storage import task_physical_id
-from app.task8_storage import task8_set_parts
 
 
 _window_path = (
@@ -350,16 +348,11 @@ def test_meetings_are_the_sent_follow_ups_of_meetings_that_ended_today(
             status="sent",
         )
         with store._connect() as db:
-            parts = task8_set_parts(
-                "meeting_alignment_jobs", {"final_message": f"{meeting_id} 的会后跟进"}
-            )
-            db.execute(
-                f"update tasks set {parts.sql} where record_type='meeting_alignment_jobs' and id=?",
-                (
-                    *parts.parameters,
-                    task_physical_id(db, "meeting_alignment_jobs", job_id),
-                ),
-            )
+            assert db.execute(
+                "update task_results set final_message=? "
+                "where task_id=? and result_kind='meeting_alignment'",
+                (f"{meeting_id} 的会后跟进", job_id),
+            ).rowcount == 1
 
     facts = collect_service_activity(store, EmailStore(store.path), DAY.start, DAY.end)
 

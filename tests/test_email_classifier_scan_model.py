@@ -16,6 +16,7 @@ from app.email_classifier_contracts import (
     EmailClassificationStatus,
     INITIAL_EMAIL_CATEGORY_KEYS,
 )
+from app.email_canonical_storage import email_classification_projection, email_message_projection
 from app.email_classifier_model import CpuTfidfLogisticClassifier
 from app.email_classifier_scan import (
     AgentScanContext,
@@ -905,7 +906,7 @@ def test_agent_scan_extracts_real_html_candidate_ephemerally_without_persistence
     assert private_url.encode() not in database.read_bytes()
     with store._connect() as db:
         payload = db.execute(
-            "select input_json from email_agent_classification_tasks"
+            "select input_json from email_classification_inputs"
         ).fetchone()[0]
     assert "body_html_https" in payload
     assert "unsubscribe-entry:" in payload
@@ -956,7 +957,7 @@ def test_agent_scan_preserves_verified_one_click_candidate_metadata(
 
     with store._connect() as db:
         payload = db.execute(
-            "select input_json from email_agent_classification_tasks"
+            "select input_json from email_classification_inputs"
         ).fetchone()[0]
     assert '"source":"header_one_click_https"' in payload
     assert private_url not in payload
@@ -1438,11 +1439,13 @@ def test_classification_failure_does_not_persist_message_or_advance_cursor(
         )
 
     assert store.get_scan_cursor("dingtalk-account", "INBOX") is None
-    with sqlite3.connect(tmp_path / "email.sqlite3") as db:
-        assert db.execute("select count(*) from email_messages").fetchone()[0] == 0
-        assert (
-            db.execute("select count(*) from email_classifications").fetchone()[0] == 0
-        )
+    with store._connect() as db:
+        assert db.execute(
+            f"select count(*) from ({email_message_projection()})"
+        ).fetchone()[0] == 0
+        assert db.execute(
+            f"select count(*) from ({email_classification_projection()})"
+        ).fetchone()[0] == 0
 
 
 @pytest.mark.parametrize(

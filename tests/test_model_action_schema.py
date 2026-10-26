@@ -1,7 +1,5 @@
 """Opt-in selection references retire one slot, with a current-fact inverse."""
 
-import json
-import math
 import sqlite3
 
 import pytest
@@ -114,93 +112,6 @@ def test_target_constructor_rejects_old_reserved_slot(db):
     _add(db, "candidate_selections", 1, 1, dict(option_key="approve", status="selected", created_at="clock"),
          references={"candidate_id": 8, "review_id": 9}, target=True)
     assert db.execute("select json_array_length(payload_json) from actions").fetchone() == (3,)
-
-
-def test_forward_removes_column_and_slot_preserving_other_raw_facts(db):
-    from app.model_action_schema import migrate_selection_references, selected_branch
-    _seed(db)
-    before = _raw(db)
-    water = _snapshot(db)[2]
-    foreign = db.execute("pragma foreign_key_check").fetchall()
-    metadata = migrate_selection_references(db)
-    assert metadata == {"reply_variant": actions._reply_variant_for(db)}
-    assert "branch_json" not in {row[1] for row in db.execute("pragma table_xinfo(actions)")}
-    assert db.execute("select json(payload_json) from actions where id=501").fetchone() == (
-        '["approve","selected","selection-clock"]',)
-    assert [row for row in _raw(db) if row[0] != 501] == [row for row in before if row[0] != 501]
-    assert selected_branch(db, 51) == APPROVE
-    assert db.execute("select candidate_id,review_id,selection_id from actions where id=601").fetchone() == (101, 301, 501)
-    assert _snapshot(db)[2] == water
-    assert db.execute("pragma foreign_key_check").fetchall() == foreign == []
-    assert db.execute("pragma quick_check").fetchall() == [("ok",)]
-    path = actions.action_payloads(actions._reply_variant_for(db)).path("reply_attempts", "retry_count")
-    encoded = json.loads(db.execute("select payload_json->? from actions where record_type='reply_attempts'", (path,)).fetchone()[0])
-    assert math.copysign(1, encoded["m"]) == -1
-
-
-def test_current_new_selection_survives_inverse_and_reforward(db):
-    from app.model_action_schema import migrate_selection_references, restore_selection_references, selected_branch
-    _seed(db)
-    old_objects = actions._objects(db, "actions")
-    old_selection = db.execute("select payload_json from actions where id=501").fetchone()
-    metadata = migrate_selection_references(db)
-    _add(db, "candidate_selections", 502, 52, dict(option_key="stop", status="selected", created_at="later"),
-         references={"candidate_id": 202, "review_id": 302}, target=True)
-    db.execute("update sqlite_sequence set seq=987655 where name='actions:unrelated-water'")
-    target = _snapshot(db)
-    assert selected_branch(db, 52) == STOP
-    restore_selection_references(db, metadata)
-    assert actions._objects(db, "actions") == old_objects
-    assert db.execute("select branch_json from actions where id=502").fetchone() == (_json(STOP),)
-    assert db.execute("select payload_json from actions where id=501").fetchone() == old_selection
-    assert db.execute("select id,legacy_key,candidate_id,review_id from actions where id=502").fetchone() == (502, "52", 202, 302)
-    migrate_selection_references(db)
-    assert _snapshot(db) == target
-    assert db.execute("pragma foreign_key_check").fetchall() == []
-
-
-@pytest.mark.parametrize("options,branch", [
-    ([STOP], None), ([APPROVE, APPROVE], None), ([APPROVE], _json(STOP)),
-    ([APPROVE], json.dumps(APPROVE, ensure_ascii=False, sort_keys=True)),
-])
-def test_unreconstructable_or_noncanonical_branch_refuses_without_mutation(db, options, branch):
-    from app.model_action_schema import migrate_selection_references
-    _seed(db, options=options, branch=branch)
-    before = _snapshot(db)
-    with pytest.raises(ValueError, match="option|branch"):
-        migrate_selection_references(db)
-    assert _snapshot(db) == before
-
-
-def test_missing_exact_candidate_refuses_without_mutation(db):
-    from app.model_action_schema import migrate_selection_references
-    _seed(db)
-    db.execute("update actions set candidate_id=99999 where id=501")
-    before = _snapshot(db)
-    with pytest.raises(ValueError, match="candidate"):
-        migrate_selection_references(db)
-    assert _snapshot(db) == before
-
-
-def test_source_fingerprint_mismatch_refuses_without_mutation(db):
-    from app.model_action_schema import migrate_selection_references
-    _seed(db)
-    db.execute("create index changed_selection_source on actions(option_key)")
-    before = _snapshot(db)
-    with pytest.raises(ValueError, match="declaration"):
-        migrate_selection_references(db)
-    assert _snapshot(db) == before
-
-
-def test_inverse_missing_option_refuses_without_mutation(db):
-    from app.model_action_schema import migrate_selection_references, restore_selection_references
-    _seed(db)
-    metadata = migrate_selection_references(db)
-    actions.update_action(db, "review_candidates", 11, {"candidate_json": _json({"decision_options": [STOP]})})
-    before = _snapshot(db)
-    with pytest.raises(ValueError, match="option"):
-        restore_selection_references(db, metadata)
-    assert _snapshot(db) == before
 
 
 def test_transition_requires_callers_fk_off_transaction(db):

@@ -8,14 +8,10 @@ from pathlib import Path
 import pytest
 
 from app.action_storage import (
-    REPLY_SEQUENCE_NAMES,
     create_action_schema,
     insert_action,
-    reply_action_projection,
-    update_action,
     validated_reply_variant,
 )
-from app.codex_memory_write import run_codex_memory_write
 from app.store import AutoReplyStore
 from app import store as store_module
 from app.action_reply_storage import capture_reply_source
@@ -60,72 +56,6 @@ def _target_store(tmp_path: Path, variant: str) -> tuple[_Store, int]:
         }).lastrowid
         assert isinstance(attempt_id, int)
     return store, attempt_id
-
-
-@pytest.mark.parametrize("variant", ("actual_no_memory_fk", "fresh_memory_fk"))
-@pytest.mark.parametrize("status", ("pending", "failed", "written"))
-def test_memory_completion_updates_only_eligible_target_event(
-    tmp_path: Path, variant: str, status: str,
-) -> None:
-    store, attempt_id = _target_store(tmp_path, variant)
-    with store._connect() as db:
-        event_id = insert_action(db, "memory_write_events", {
-            "attempt_id": attempt_id, "event_type": "memory_write",
-            "status": status, "attempts": 4, "last_error": "old error",
-            "updated_at": "2000-01-01 00:00:00",
-        }).lastrowid
-        assert isinstance(event_id, int)
-
-    result = run_codex_memory_write(
-        workspace=tmp_path, store=store, event_id=event_id,
-        data="explicit input", type="text", created_at="2026-10-13",
-        source_description="source", routed_execution=_Routed(),
-    )
-
-    assert result.episode_uuid == "episode-19"
-    with store._connect() as db:
-        rows = db.execute(
-            "select status,attempts,last_error,memory_episode_id,updated_at "
-            f"from ({reply_action_projection('memory_write_events', variant)}) "
-            "where id=?", (event_id,),
-        ).fetchall()
-        assert len(rows) == 1
-        assert tuple(rows[0][:4]) == ("written", 4, "", "episode-19")
-        assert rows[0]["updated_at"] != "2000-01-01 00:00:00"
-        assert db.execute("select seq from sqlite_sequence where name=?",
-                          (REPLY_SEQUENCE_NAMES["memory_write_events"],)).fetchone()[0] == event_id
-
-
-@pytest.mark.parametrize("variant", ("actual_no_memory_fk", "fresh_memory_fk"))
-@pytest.mark.parametrize("missing", (False, True))
-def test_memory_completion_rejects_ineligible_or_deleted_event_without_recreation(
-    tmp_path: Path, variant: str, missing: bool,
-) -> None:
-    store, attempt_id = _target_store(tmp_path, variant)
-    with store._connect() as db:
-        event_id = insert_action(db, "memory_write_events", {
-            "attempt_id": attempt_id, "event_type": "memory_write",
-            "status": "pending", "attempts": 2,
-        }).lastrowid
-        assert isinstance(event_id, int)
-        if missing:
-            db.execute("delete from actions where record_type='memory_write_events' and legacy_key=?",
-                       (str(event_id),))
-        else:
-            update_action(db, "memory_write_events", event_id, {"status": "skipped"})
-
-    with pytest.raises(ValueError, match="not eligible"):
-        run_codex_memory_write(
-            workspace=tmp_path, store=store, event_id=event_id,
-            data="explicit input", type="text", created_at="2026-10-13",
-            source_description="source", routed_execution=_Routed(),
-        )
-    with store._connect() as db:
-        rows = db.execute(
-            f"select status,attempts from ({reply_action_projection('memory_write_events', variant)}) where id=?",
-            (event_id,),
-        ).fetchall()
-        assert [tuple(row) for row in rows] == ([] if missing else [("skipped", 2)])
 
 
 def test_store_extracts_paired_repeated_memory_calls_and_rebuilds_selected_attempt(

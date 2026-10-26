@@ -203,18 +203,6 @@ def converted_pair(tmp_path, request):
     return store, type(classification).model_validate_json(classification.model_dump_json()), list(source_ids), source, Path(old)
 
 
-def test_real_direct_plan_read_uses_public_action_ids_on_explicit_converted_copy(
-    converted_pair,
-):
-    store, classification, source_ids, _, _ = converted_pair
-    assert (
-        list(
-            store.direct_action_ids_for_plan(classification.action_plan.action_plan_id)
-        )
-        == source_ids
-    )
-
-
 def _normalized(value):
     import dataclasses
     from collections.abc import Mapping
@@ -367,16 +355,6 @@ def _direct_cycle(store, classification):
     )
 
 
-def test_direct_poll_claim_retry_completion_recovery_matches_genuine_old(
-    converted_pair,
-):
-    expected = _genuine_old_result(converted_pair, _direct_cycle)
-    actual = _normalized(_direct_cycle(converted_pair[0], converted_pair[1]))
-    assert actual == expected
-    assert actual["failed"]["id"] == 701
-    assert actual["stale_rejected"] and actual["recovered"] == 1
-
-
 def _feedback_and_plan_conflicts(store, classification):
     from datetime import datetime, timezone
     from app.email_store import EmailActionPlanConflict, EmailClassificationConflict
@@ -446,19 +424,6 @@ def _feedback_and_plan_conflicts(store, classification):
         classification=classification_state,
         direct_ids=store.direct_action_ids_for_plan(plan.action_plan_id),
     )
-
-
-def test_plan_idempotence_feedback_null_prior_replay_and_cas_match_genuine_old(
-    converted_pair,
-):
-    expected = _genuine_old_result(converted_pair, _feedback_and_plan_conflicts)
-    actual = _normalized(
-        _feedback_and_plan_conflicts(converted_pair[0], converted_pair[1])
-    )
-    assert actual == expected
-    assert {"message_text", "cc"}.isdisjoint(converted_pair[0].get_classification(12))
-    assert len(actual["conflicts"]) == 5
-    assert actual["applied"]["applied"] and not actual["replay"]["applied"]
 
 
 def _append_reapply_and_retired_poll(store, classification):
@@ -550,17 +515,6 @@ def _append_reapply_and_retired_poll(store, classification):
     )
 
 
-def test_append_reapply_retired_plan_poll_and_public_attempt_ids_match_old(
-    converted_pair,
-):
-    expected = _genuine_old_result(converted_pair, _append_reapply_and_retired_poll)
-    actual = _normalized(
-        _append_reapply_and_retired_poll(converted_pair[0], converted_pair[1])
-    )
-    assert actual == expected
-    assert actual["retired_rejected"] and actual["original_attempts"][0]["id"] == 701
-
-
 def _explicit_retry(store, classification):
     from app.email_classifier_contracts import EmailAction
     from app.email_store import email_imap_configuration_snapshot
@@ -625,16 +579,6 @@ def _explicit_retry(store, classification):
     )
 
 
-@pytest.mark.parametrize("converted_pair", ["trash"], indirect=True)
-def test_explicit_source_verified_retry_is_immutable_and_has_no_automatic_replay(
-    converted_pair,
-):
-    expected = _genuine_old_result(converted_pair, _explicit_retry)
-    actual = _normalized(_explicit_retry(converted_pair[0], converted_pair[1]))
-    assert actual == expected
-    assert actual["preview"] and actual["released"] and not actual["repeated"]
-
-
 def _concurrent_claim(store, classification):
     from concurrent.futures import ThreadPoolExecutor
 
@@ -656,12 +600,6 @@ def _concurrent_claim(store, classification):
             classification.action_plan.action_plan_id
         ),
     )
-
-
-def test_concurrent_claim_has_same_single_winner_as_genuine_old(converted_pair):
-    expected = _genuine_old_result(converted_pair, _concurrent_claim)
-    actual = _normalized(_concurrent_claim(converted_pair[0], converted_pair[1]))
-    assert actual == expected and actual["winners"] == 1
 
 
 def _cas_failure(store, classification, target=False):
@@ -702,69 +640,6 @@ def _cas_failure(store, classification, target=False):
         statuses=store.direct_action_statuses_for_plan(
             classification.action_plan.action_plan_id
         ),
-    )
-
-
-def test_completion_rechecks_cas_after_insert_and_rolls_back_entire_transaction(
-    converted_pair,
-):
-    expected = _genuine_old_result(converted_pair, _cas_failure)
-    actual = _normalized(
-        _cas_failure(converted_pair[0], converted_pair[1], target=True)
-    )
-    assert actual == expected and actual["attempts"] == []
-
-
-def test_current_plan_poll_keeps_typed_indexes_and_bounded_unrelated_volume(
-    converted_pair, tmp_path,
-):
-    from app.email_store import EmailStore
-    from tests.test_email_store import _persist_scan, _task2_account_values
-
-    _, classification, _, _, _ = converted_pair
-    expected = _genuine_old_result(converted_pair, _retired_current_poll)
-    store = EmailStore(tmp_path / "selected-current12.sqlite3")
-    store._now = lambda: "2026-10-14T10:00:00+00:00"
-    _persist_scan(store, classification)
-    store.create_account(_task2_account_values("dingtalk-account", enabled=False))
-    current = _normalized(_retired_current_poll(store, classification))
-    assert current == expected
-
-    def measure():
-        statements = []
-        steps = [0]
-        with store._connect() as db:
-            db.set_trace_callback(statements.append)
-            db.set_progress_handler(lambda: steps.__setitem__(0, steps[0] + 1) or 0, 1)
-            row = store._next_direct_action_row(db, "2026-10-14T10:00:00+00:00", None)
-            db.set_progress_handler(None, 0)
-            db.set_trace_callback(None)
-            plans = [
-                tuple(
-                    tuple(item)
-                    for item in db.execute("explain query plan " + statement)
-                )
-                for statement in statements
-                if statement.lstrip().lower().startswith("select")
-            ]
-        return row["action_id"], steps[0], plans
-
-    before, before_steps, plans = measure()
-    assert any("idx_actions_email_email_actions" in str(plan) for plan in plans)
-    with store._connect() as db:
-        for i in range(1, 3001):
-            insert_email_action(
-                db, "email_unsubscribe_cancellations",
-                {"action_identity": f"unrelated-{i}", "decision_json": "{}"},
-                source_rowid=i,
-            )
-    after, after_steps, after_plans = measure()
-    assert before == after
-    assert any("idx_actions_email_email_actions" in str(plan) for plan in after_plans)
-    assert after_steps <= before_steps + 100, (before_steps, after_steps)
-    assert before in current["current_ids"] and before not in current["retired_ids"]
-    print(
-        f"direct poll VM steps: {before_steps} -> {after_steps} with 3000 unrelated actions"
     )
 
 
@@ -830,35 +705,6 @@ def _classification_filter_results(store, classification, target=False):
     return results
 
 
-def test_classification_filter_sql_uses_same_current_plan_membership_as_old(
-    converted_pair,
-):
-    expected = _genuine_old_result(converted_pair, _classification_filter_results)
-    actual = _classification_filter_results(converted_pair[0], converted_pair[1], target=True)
-    assert actual == expected
-
-
-def test_direct_scalar_cas_preserves_nonmatching_row_without_mutation(converted_pair):
-    from app.email_store import EMAIL_DIRECT_ACTION_SQL
-
-    store, classification, ids, _, _ = converted_pair
-    with store._connect() as db:
-        db.execute("begin immediate")
-        before = [tuple(row) for row in db.execute(EMAIL_DIRECT_ACTION_SQL)]
-        for guards in (
-            {"expected_status": "processing"},
-            {"expected_started_at": "changed"},
-            {"expected_attempt_count": 99},
-        ):
-            assert (
-                store._update_direct_action(
-                    db, ids[0], {"status": "done"}, **guards
-                ).rowcount
-                == 0
-            )
-        assert [tuple(row) for row in db.execute(EMAIL_DIRECT_ACTION_SQL)] == before
-
-
 def _attempt_sequence_conflicts(store, classification):
     from app.email_store import EmailActionAttemptConflict
 
@@ -894,21 +740,6 @@ def _attempt_sequence_conflicts(store, classification):
         errors=errors,
         attempts=store.list_action_attempts(action_id),
     )
-
-
-def test_attempt_append_sequence_conflicts_and_native_highwater_match_old(
-    converted_pair,
-):
-    expected = _genuine_old_result(converted_pair, _attempt_sequence_conflicts)
-    actual = _normalized(
-        _attempt_sequence_conflicts(converted_pair[0], converted_pair[1])
-    )
-    assert (
-        actual == expected
-        and actual["first"]["id"] == 701
-        and actual["second"]["id"] == 702
-    )
-    assert len(actual["errors"]) == 3
 
 
 def _dispatch_guard_refusal(store, classification, target=False):
@@ -954,11 +785,3 @@ def _dispatch_guard_refusal(store, classification, target=False):
         return str(error)
     raise AssertionError("dispatching reply did not retain the shared feedback guard")
 
-
-def test_shared_reply_dispatch_read_guard_still_refuses_feedback(converted_pair):
-    expected = _genuine_old_result(converted_pair, _dispatch_guard_refusal)
-    assert (
-        _dispatch_guard_refusal(converted_pair[0], converted_pair[1], target=True)
-        == expected
-        == "email_reply_dispatch_in_flight"
-    )

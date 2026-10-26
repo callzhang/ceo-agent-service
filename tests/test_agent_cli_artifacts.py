@@ -6,46 +6,35 @@ import pytest
 
 from app.agent_cli import MAX_CLI_OUTPUT_BYTES, build_role_server
 from app import task_artifacts
-from app.task20_current_schema import create_current_task20_schema
-from app.task8_storage import (
-    register_task8_functions,
-    task8_insert_parts,
-    task8_set_parts,
-)
+from app.store import AutoReplyStore
+from tests.support.native_task_fields import set_native_task_fields
 
 
 def _task_db(path, generation="first"):
-    with sqlite3.connect(path) as db:
-        create_current_task20_schema(db)
-        _insert_task(db, 7, generation)
+    """A fresh Store holding reply Task 1."""
+    _insert_task(AutoReplyStore(path), generation)
 
 
-def _insert_task(db, task_id, generation):
-    register_task8_functions(db)
-    parts = task8_insert_parts("reply_tasks", {
-        "legacy_key": str(task_id),
-        "channel": "dingtalk",
-        "conversation_id": f"conversation-{task_id}",
-        "conversation_title": "Artifact test",
-        "single_chat": 0,
-        "trigger_message_id": f"message-{task_id}",
-        "trigger_create_time": "",
-        "trigger_sender": "",
-        "execution_generation": generation,
-    })
-
-    db.execute(f"insert into tasks(id,{parts.columns}) values(?,{parts.values})",
-               (task_id, *parts.parameters))
+def _insert_task(store, generation, name="message"):
+    """Enqueue one reply Task; Store numbers them 1, 2 in a fresh database."""
+    assert store.enqueue_reply_task(
+        conversation_id="conversation",
+        conversation_title="Artifact test",
+        single_chat=False,
+        trigger_message_id=name,
+        trigger_create_time="",
+        trigger_sender="",
+        trigger_text="Artifact test",
+        execution_generation=generation,
+    )
 
 
 def _set_generation(db, value):
-    parts = task8_set_parts("reply_tasks", {"execution_generation": value})
-    db.execute(f"update tasks set {parts.sql} where record_type='reply_tasks' and id=7",
-               parts.parameters)
+    set_native_task_fields(db, "reply_tasks", 1, {"execution_generation": value})
 
 
 def _tool(role, name, db):
-    return build_role_server(role, task_id=7, db_path=db)._tool_manager.get_tool(name).fn
+    return build_role_server(role, task_id=1, db_path=db)._tool_manager.get_tool(name).fn
 
 
 def _patch_artifact_root(tmp_path, monkeypatch):
@@ -69,7 +58,7 @@ def test_consumer_writes_and_reads_back_only_its_task_generation(tmp_path, monke
     assert written["sha256"] == read("analysis.py")["sha256"]
     assert read("analysis.py")["content"] == written["content"]
     assert list_files()["files"] == [{"name": "analysis.py", "sha256": written["sha256"]}]
-    assert (task_artifact_root / "7/first/analysis.py").read_text() == written["content"]
+    assert (task_artifact_root / "1/first/analysis.py").read_text() == written["content"]
     assert not (tmp_path / "workspace/consumer-artifacts").exists()
 
     with sqlite3.connect(db) as connection:
@@ -81,8 +70,8 @@ def test_consumer_writes_and_reads_back_only_its_task_generation(tmp_path, monke
     assert _tool("consumer", "list_task_artifacts", db)()["files"] == []
     new_write = _tool("consumer", "consumer_artifact_write", db)
     assert new_write("new.md", "current")["content"] == "current"
-    assert (task_artifact_root / "7/second/new.md").read_text() == "current"
-    assert not (task_artifact_root / "7/second/analysis.py").exists()
+    assert (task_artifact_root / "1/second/new.md").read_text() == "current"
+    assert not (task_artifact_root / "1/second/analysis.py").exists()
 
 
 def test_legacy_task_artifacts_move_to_tmp_before_role_read(tmp_path, monkeypatch):
@@ -91,15 +80,15 @@ def test_legacy_task_artifacts_move_to_tmp_before_role_read(tmp_path, monkeypatc
     workspace = tmp_path / "workspace"
     monkeypatch.setattr("app.config.workspace_path", lambda: workspace)
     task_artifact_root = _patch_artifact_root(tmp_path, monkeypatch)
-    legacy = workspace / "consumer-artifacts/7/first"
+    legacy = workspace / "consumer-artifacts/1/first"
     legacy.mkdir(parents=True)
     (legacy / "notes.md").write_text("existing task evidence")
 
     result = _tool("audit", "read_task_artifact", db)("notes.md")
 
     assert result["content"] == "existing task evidence"
-    assert (task_artifact_root / "7/first/notes.md").read_text() == result["content"]
-    assert not (workspace / "consumer-artifacts/7").exists()
+    assert (task_artifact_root / "1/first/notes.md").read_text() == result["content"]
+    assert not (workspace / "consumer-artifacts/1").exists()
 
 
 def test_audit_can_read_and_list_but_cannot_write_task_files(tmp_path, monkeypatch):
@@ -109,7 +98,7 @@ def test_audit_can_read_and_list_but_cannot_write_task_files(tmp_path, monkeypat
     monkeypatch.setattr("app.config.workspace_path", lambda: tmp_path / "workspace")
     _tool("consumer", "consumer_artifact_write", db)("notes.md", "facts\n")
 
-    audit = build_role_server("audit", task_id=7, db_path=db)
+    audit = build_role_server("audit", task_id=1, db_path=db)
     assert audit._tool_manager.get_tool("read_task_artifact").fn("notes.md")["content"] == "facts\n"
     assert audit._tool_manager.get_tool("list_task_artifacts").fn()["files"][0]["name"] == "notes.md"
     assert audit._tool_manager.get_tool("consumer_artifact_write") is None
@@ -126,26 +115,25 @@ def test_task_files_reject_unbound_and_escaping_paths(tmp_path, monkeypatch):
         with pytest.raises(ValueError):
             write(name, "bad")
     with pytest.raises(ValueError):
-        build_role_server("consumer", task_id=8, db_path=db)
+        build_role_server("consumer", task_id=2, db_path=db)
     assert not (tmp_path / "outside").exists()
 
 
 def test_task_artifacts_do_not_cross_task_or_follow_file_links(tmp_path, monkeypatch):
     db = tmp_path / "service.sqlite3"
     _task_db(db)
-    with sqlite3.connect(db) as connection:
-        _insert_task(connection, 8, "first")
+    _insert_task(AutoReplyStore(db), "first", name="other-message")
     task_artifact_root = _patch_artifact_root(tmp_path, monkeypatch)
     monkeypatch.setattr("app.config.workspace_path", lambda: tmp_path / "workspace")
     _tool("consumer", "consumer_artifact_write", db)("own.md", "task seven")
-    other = build_role_server("consumer", task_id=8, db_path=db)
+    other = build_role_server("consumer", task_id=2, db_path=db)
     assert other._tool_manager.get_tool("list_task_artifacts").fn()["files"] == []
     with pytest.raises(ValueError):
         other._tool_manager.get_tool("read_task_artifact").fn("own.md")
 
     outside = tmp_path / "outside.md"
     outside.write_text("untouched")
-    artifact_dir = task_artifact_root / "7/first"
+    artifact_dir = task_artifact_root / "1/first"
     (artifact_dir / "linked.md").symlink_to(outside)
     with pytest.raises(ValueError, match="linked"):
         _tool("consumer", "read_task_artifact", db)("linked.md")
@@ -159,9 +147,9 @@ def test_task_artifact_list_omits_atomic_write_temporary_files(tmp_path, monkeyp
     _task_db(db)
     task_artifact_root = _patch_artifact_root(tmp_path, monkeypatch)
     monkeypatch.setattr("app.config.workspace_path", lambda: tmp_path / "workspace")
-    server = build_role_server("consumer", task_id=7, db_path=db)
+    server = build_role_server("consumer", task_id=1, db_path=db)
     server._tool_manager.get_tool("consumer_artifact_write").fn("ready.md", "complete")
-    artifact_dir = task_artifact_root / "7/first"
+    artifact_dir = task_artifact_root / "1/first"
     (artifact_dir / ".task-artifact-incomplete").write_text("partial")
     assert [item["name"] for item in server._tool_manager.get_tool("list_task_artifacts").fn()["files"]] == ["ready.md"]
 
@@ -180,7 +168,7 @@ def test_old_consumer_server_cannot_write_report_after_generation_changes(
         "app.agent_cli._bound_scheduled_run",
         lambda db_path, task_id: (object(), object()),
     )
-    old = build_role_server("consumer", task_id=7, db_path=db)
+    old = build_role_server("consumer", task_id=1, db_path=db)
     write_report = old._tool_manager.get_tool("consumer_document_write").fn
 
     with sqlite3.connect(db) as connection:
@@ -189,7 +177,7 @@ def test_old_consumer_server_cannot_write_report_after_generation_changes(
         write_report(artifact_name="report.md", title="Any")
     assert called == []
 
-    current = build_role_server("consumer", task_id=7, db_path=db)
+    current = build_role_server("consumer", task_id=1, db_path=db)
     assert current._tool_manager.get_tool("consumer_document_write").fn(
         artifact_name="report.md", title="Any"
     ) == {"operation": "updated"}
@@ -210,7 +198,7 @@ def test_task_artifact_returns_large_content_in_complete_pages(
     _task_db(db)
     task_artifact_root = _patch_artifact_root(tmp_path, monkeypatch)
     monkeypatch.setattr("app.config.workspace_path", lambda: tmp_path / "workspace")
-    server = build_role_server("consumer", task_id=7, db_path=db)
+    server = build_role_server("consumer", task_id=1, db_path=db)
     write = server._tool_manager.get_tool("consumer_artifact_write").fn
     first = write("large.md", content)
     chunks = [first["content"]]
@@ -221,7 +209,7 @@ def test_task_artifact_returns_large_content_in_complete_pages(
         chunks.append(page["content"])
         next_offset = page["next_offset"]
     assert "".join(chunks) == content
-    assert (task_artifact_root / "7/first/large.md").read_text() == content
+    assert (task_artifact_root / "1/first/large.md").read_text() == content
 
 
 def test_task_artifact_read_pages_escaped_content_within_output_budget(
@@ -230,7 +218,7 @@ def test_task_artifact_read_pages_escaped_content_within_output_budget(
 ):
     db = tmp_path / "service.sqlite3"
     _task_db(db)
-    root = _patch_artifact_root(tmp_path, monkeypatch) / "7/first"
+    root = _patch_artifact_root(tmp_path, monkeypatch) / "1/first"
     root.mkdir(parents=True)
     (root / "large.md").write_text("\n" * (MAX_CLI_OUTPUT_BYTES // 2))
     read = _tool("audit", "read_task_artifact", db)
@@ -244,6 +232,6 @@ def test_role_startup_cannot_rebind_an_old_claim_to_new_generation(tmp_path):
     db = tmp_path / "service.sqlite3"
     _task_db(db, generation="rotated")
     with pytest.raises(ValueError, match="generation changed"):
-        build_role_server("consumer", task_id=7, db_path=db, execution_generation="original")
+        build_role_server("consumer", task_id=1, db_path=db, execution_generation="original")
     with pytest.raises(ValueError, match="generation changed"):
-        build_role_server("audit", task_id=7, db_path=db, execution_generation="original")
+        build_role_server("audit", task_id=1, db_path=db, execution_generation="original")

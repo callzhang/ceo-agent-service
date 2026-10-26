@@ -337,6 +337,9 @@ def _deploy_once(
         )
     if TEST_GATE_ENABLED:
         require_green_suite(root, target)
+        # The gate tested exactly this commit; main may have moved during the run.
+        # Install what was tested, not whatever main is now.
+        target_commit = target
     operation = UpgradeOperation(
         operation_id=operation_id or f"deploy-{uuid4()}",
         expected_fingerprint=repository.fingerprint(BRANCH, current, target, records),

@@ -1,10 +1,10 @@
 import pytest
 
+from tests.support.native_task_fields import set_native_task_fields
 from app import history_types
 from app.action_storage import insert_action, update_action
-from app.run_storage import insert_run
+from tests.support.native_run_rows import insert_run_row
 from app.store import AutoReplyStore, REPLY_TASK_SQL
-from app.task8_storage import task8_set_parts
 
 
 @pytest.mark.parametrize("legacy_status", [
@@ -21,11 +21,9 @@ def test_failed_history_includes_projected_oa_failures(tmp_path, legacy_status):
     )
     with store._connect() as db:
         task_id = db.execute(f"select id from ({REPLY_TASK_SQL})").fetchone()[0]
-        parts = task8_set_parts("reply_tasks", {"status": "failed"})
-        assert db.execute(
-            f"update tasks set {parts.sql} where record_type='reply_tasks' and cast(legacy_key as integer)=?",
-            (*parts.parameters, task_id),
-        ).rowcount == 1
+        set_native_task_fields(
+            db, "reply_tasks", task_id, {"status": "failed"},
+        )
         attempt_id = insert_action(db, "reply_attempts", {
             "conversation_id": "oa-current", "conversation_title": "Approval",
             "trigger_message_id": "trigger", "trigger_sender": "sender",
@@ -62,14 +60,12 @@ def test_failed_history_uses_current_oa_status(tmp_path, scenario):
     with store._connect() as db:
         if scenario != "orphan_after_terminal":
             task_id = db.execute(f"select id from ({REPLY_TASK_SQL})").fetchone()[0]
-            parts = task8_set_parts("reply_tasks", {
+            set_native_task_fields(
+                db, "reply_tasks", task_id, {
                 "status": "failed" if scenario == "uncertain" else "pending",
                 "error": "external_action_uncertain" if scenario == "uncertain" else "",
-            })
-            assert db.execute(
-                f"update tasks set {parts.sql} where record_type='reply_tasks' and cast(legacy_key as integer)=?",
-                (*parts.parameters, task_id),
-            ).rowcount == 1
+            },
+            )
         values = {
             "conversation_id": "oa-current", "conversation_title": "Approval",
             "trigger_message_id": "trigger", "trigger_sender": "sender",
@@ -81,7 +77,7 @@ def test_failed_history_uses_current_oa_status(tmp_path, scenario):
         if scenario == "orphan_after_terminal":
             insert_action(db, "reply_attempts", {**values, "send_status": "completed"})
         elif scenario == "pending":
-            run_id = insert_run(db, "agent_runs", {
+            run_id = insert_run_row(db, {
                 "task_id": task_id, "execution_generation": "generation",
                 "role": "consumer", "status": "completed",
             }).lastrowid
@@ -129,14 +125,12 @@ def test_failed_oa_history_uses_verified_execution_while_followup_is_pending(tmp
             "send_error": "external_action_uncertain",
             "agent_run_id": review["audit_run_id"],
         }).lastrowid
-        task_parts = task8_set_parts("reply_tasks", {
+        set_native_task_fields(
+            db, "reply_tasks", task.id, {
             "status": "pending",
             "error": "external_action_uncertain",
-        })
-        assert db.execute(
-            f"update tasks set {task_parts.sql} where record_type='reply_tasks' and cast(legacy_key as integer)=?",
-            (*task_parts.parameters, task.id),
-        ).rowcount == 1
+        },
+        )
 
     pending_total, pending_rows = store.list_operation_logs_with_count(
         limit=20,
@@ -189,14 +183,12 @@ def test_failed_oa_history_keeps_current_uncertain_execution_uncertain(tmp_path)
             "send_error": "external_action_uncertain",
             "agent_run_id": review["audit_run_id"],
         }).lastrowid
-        task_parts = task8_set_parts("reply_tasks", {
+        set_native_task_fields(
+            db, "reply_tasks", task.id, {
             "status": "failed",
             "error": "external_action_uncertain",
-        })
-        assert db.execute(
-            f"update tasks set {task_parts.sql} where record_type='reply_tasks' and cast(legacy_key as integer)=?",
-            (*task_parts.parameters, task.id),
-        ).rowcount == 1
+        },
+        )
 
     uncertain_total, uncertain_rows = store.list_operation_logs_with_count(
         limit=20,

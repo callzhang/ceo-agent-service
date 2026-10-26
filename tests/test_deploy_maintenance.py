@@ -1,16 +1,12 @@
 import pytest
-from app.action_storage import insert_action
 
-from app.run_storage import AGENT_RUN_SQL, RUNTIME_ATTEMPT_SQL, insert_run
-from app.task_storage import task_id_expression
-from app.task20_definitions import task20_projection
-from app.task8_storage import register_task8_functions, task8_set_parts
+from app.store import AGENT_RUN_SQL, REPLY_TASK_SQL
+from app.task8_storage import register_task8_functions
+from tests.support.native_run_rows import insert_runtime_attempt_row
+from tests.support.native_task_fields import set_native_task_fields
 from app.state_definitions import state_projection
 
 from app.deploy import deploy
-
-
-REPLY_TASK_SQL = task20_projection("reply_tasks")
 
 
 @pytest.mark.parametrize('lease,expected_owners', [
@@ -123,12 +119,12 @@ def test_real_interrupted_recovery_preserves_identity_and_verified_backup(tmp_pa
     native_end = native_events(path, task_id, monkeypatch, {'type': 'AgentMessage', 'text': 'preparing'})
     with sqlite3.connect(path) as db:
         register_task8_functions(db)
-        parts = task8_set_parts("reply_tasks", {"status": "processing"})
-        db.execute("update tasks set " + parts.sql + " where record_type='reply_tasks' and cast(legacy_key as integer)=?", (*parts.parameters, task_id))
-        db.execute(f"update runs set status='running',completed_at='' where record_type='agent_runs' and task_id={task_id_expression('reply_tasks', '?')}", (task_id,))
+        db.row_factory = sqlite3.Row
+        set_native_task_fields(db, "reply_tasks", task_id, {"status": "processing"})
+        db.execute("update runs set status='running',completed_at='' where task_id=?", (task_id,))
         run_id = db.execute(f'select id from ({AGENT_RUN_SQL}) where reply_task_id=?', (task_id,)).fetchone()[0]
-        insert_run(
-            db, 'agent_runtime_attempts', {
+        insert_runtime_attempt_row(
+            db, {
                 'parent_id': run_id,
                 'workload_kind': 'agent_run',
                 'workload_key': str(run_id),
@@ -142,13 +138,13 @@ def test_real_interrupted_recovery_preserves_identity_and_verified_backup(tmp_pa
                 'transcript_end': native_end,
             },
         )
-        before = db.execute(f'select execution_generation,input_version,business_object_key,attempts from ({REPLY_TASK_SQL}) where id=?', (task_id,)).fetchone()
+        before = tuple(db.execute(f'select execution_generation,input_version,business_object_key,attempts from ({REPLY_TASK_SQL}) where id=?', (task_id,)).fetchone())
     prepare_maintenance(path, (task_id,), 'test-maintenance', check_maintenance(path, (task_id,)))
     with sqlite3.connect(path) as db:
         assert db.execute(f'select execution_generation,input_version,business_object_key,attempts from ({REPLY_TASK_SQL}) where id=?', (task_id,)).fetchone() == before
         assert db.execute(f'select status from ({REPLY_TASK_SQL}) where id=?', (task_id,)).fetchone()[0] == 'pending'
         assert db.execute(f'select status from ({AGENT_RUN_SQL}) where id=?', (run_id,)).fetchone()[0] == 'failed'
-        assert db.execute(f'select failure_code from ({RUNTIME_ATTEMPT_SQL}) where agent_run_id=?', (run_id,)).fetchone()[0] == 'service_restart_interrupted'
+        assert db.execute('select failure_code from runtime_attempts where parent_id=?', (run_id,)).fetchone()[0] == 'service_restart_interrupted'
         receipt = json.loads(db.execute(f"select value from ({state_projection('service_state')}) where key='deployment_maintenance_receipt'").fetchone()[0])
     from pathlib import Path
     backup = Path(receipt['verified_backup'])
@@ -170,13 +166,19 @@ def test_post_stop_race_rejected_before_recovery_or_backup(tmp_path, monkeypatch
     snapshot = check_maintenance(path, (task_id,))
     with sqlite3.connect(path) as db:
         if effect == 'receipt':
-            insert_action(db, 'sent_replies', {'conversation_id':'cid-deferral','trigger_message_id':'mid-deferral','reply_text':'sent'})
+            from app.store import AutoReplyStore
+            from tests.sent_fixtures import historical_sent_delivery
+            run_id = db.execute('select id from runs where task_id=?', (task_id,)).fetchone()[0]
+            historical_sent_delivery(
+                AutoReplyStore(path), agent_run_id=run_id, external_action_key='deferral-sent',
+                conversation_id='cid-deferral', trigger_message_id='mid-deferral',
+                reply_text='sent', provider_result={'verification': {'state': 'sent'}},
+            )
         elif effect == 'unknown_tool':
             native_events(path, task_id, monkeypatch, {'type': 'CommandExecution'})
         else:
             register_task8_functions(db)
-            parts = task8_set_parts("reply_tasks", {"status": "processing"})
-            db.execute("update tasks set " + parts.sql + " where record_type='reply_tasks' and cast(legacy_key as integer)=?", (*parts.parameters, task_id))
+            set_native_task_fields(db, "reply_tasks", task_id, {"status": "processing"})
     allowed = () if effect == 'other_task' else (task_id,)
     with pytest.raises(UpgradePreconditionError):
         prepare_maintenance(path, allowed, 'rejected', snapshot)

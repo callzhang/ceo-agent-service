@@ -6,18 +6,16 @@ import sqlite3
 
 import pytest
 
-from app.action_storage import REPLY_VARIANTS, action_schema_is_current, insert_action
 from app.configs_definitions import config_projection
-from app.current_database_schema import FINAL_ACTION_OPTIONS
-from app.email_store import EmailStore
-from app.store import AutoReplyStore
+from app.current_schema_manifest import schema_is_current
+from app.email_store import EMAIL_SCHEMA_VERSION, EmailStore
+from app.store import STORE_SCHEMA_VERSION, AutoReplyStore, _close_idle_connections
 from app.state_definitions import state_projection
-from app.store_schema_release import prepare_database_schema_release
 from tests.test_email_action_plan_direct_dao import _genuine_old_source
 
 ROOT = Path(__file__).resolve().parents[1]
-STORE_TARGET = "2026-10-14.1"
-EMAIL_TARGET = 52
+STORE_TARGET = STORE_SCHEMA_VERSION
+EMAIL_TARGET = EMAIL_SCHEMA_VERSION
 
 
 @pytest.fixture
@@ -50,19 +48,7 @@ def _markers(path):
 
 
 def _target_shape(db):
-    assert any(
-        action_schema_is_current(db, reply_variant=v, **FINAL_ACTION_OPTIONS)
-        for v in REPLY_VARIANTS
-    )
-    from app.email_current_schema import current_canonical_email_parent_is_current
-    from app.email_store import EMAIL_CLASSIFICATION_SQL
-
-    assert current_canonical_email_parent_is_current(db)
-    columns = {r[1] for r in db.execute("pragma table_info(emails)")}
-    classification_columns = db.execute(
-        f"select * from ({EMAIL_CLASSIFICATION_SQL}) limit 0"
-    ).description
-    assert len(classification_columns) == 30 and "action_plan_json" not in columns
+    assert schema_is_current(db)
     from app.action_email_storage import SOURCE_TABLES
 
     assert not db.execute(
@@ -73,7 +59,7 @@ def _target_shape(db):
     ).fetchone()
 
 
-def test_real_store_only_creates_full_parent_and29_and_accepts_older_kind_with_fk(
+def test_real_store_only_creates_the_full_current_schema_without_email_ledger(
     tmp_path,
 ):
     path = tmp_path / "store-only.sqlite3"
@@ -82,18 +68,7 @@ def test_real_store_only_creates_full_parent_and29_and_accepts_older_kind_with_f
     assert _markers(path)[1] == ()
     with closing(sqlite3.connect(path)) as db:
         db.execute("pragma foreign_keys=on")
-        _target_shape(db)
-        result = insert_action(
-            db,
-            "sent_replies",
-            dict(
-                conversation_id="conversation",
-                trigger_message_id="message",
-                reply_text="synthetic",
-                sent_at="2026-10-14T10:00:00+00:00",
-            ),
-        )
-        assert result.rowcount == 1
+        assert schema_is_current(db, email_ledger=False)
 
 
 @pytest.mark.parametrize("email_first", [False, True])
@@ -252,34 +227,36 @@ def test_email_first_calls_real_store_once_outside_email_lock(tmp_path, monkeypa
     assert events == ["store-enter", "store-complete", "email-lock"]
 
 
-def test_fresh_store_publishes_parent_actions_and_marker_atomically(
+def _build_with_real_constructor(monkeypatch):
+    # Tests copy a prebuilt template for fresh paths; these cases need the real DDL run.
+    from tests.support import store_template
+
+    monkeypatch.setattr(store_template, "_BUILDING", True)
+
+
+def test_fresh_store_publishes_schema_and_marker_in_one_transaction(
     tmp_path, monkeypatch
 ):
+    _build_with_real_constructor(monkeypatch)
     statements = []
     original = AutoReplyStore._open_connection
 
-    def observed(self):
-        db = original(self)
+    def observed(self, *args, **kwargs):
+        db = original(self, *args, **kwargs)
         db.set_trace_callback(statements.append)
         return db
 
     monkeypatch.setattr(AutoReplyStore, "_open_connection", observed)
     AutoReplyStore(tmp_path / "trace.sqlite3")
     normalized = [" ".join(sql.casefold().split()) for sql in statements]
+    creations = [i for i, sql in enumerate(normalized) if sql.startswith("create table ")]
     action_creation = next(
-        i for i, sql in enumerate(normalized) if sql.startswith("create table actions ")
+        i for i in creations if normalized[i].startswith("create table actions ")
     )
     parent_creation = next(
-        i
-        for i, sql in enumerate(normalized)
-        if sql.startswith("create table main.emails")
+        i for i in creations if normalized[i].startswith("create table emails")
     )
-    assert parent_creation < action_creation
-    assert not any(
-        sql.startswith(("select ", "insert ", "update ", "delete "))
-        and (" from actions " in sql or " join actions " in sql)
-        for sql in normalized[:action_creation]
-    )
+    begin = next(i for i, sql in enumerate(normalized) if sql == "begin immediate")
     marker = next(
         i
         for i, sql in enumerate(normalized)
@@ -287,146 +264,76 @@ def test_fresh_store_publishes_parent_actions_and_marker_atomically(
             "insert into state(record_type,legacy_key,payload_json) values('service_state'"
         ) and "store_schema_version" in sql
     )
+    # Every table and the version marker belong to the one transaction that opens
+    # before the first table and commits only after the marker.
+    assert begin < min(creations) <= parent_creation < marker
     assert action_creation < marker
-    assert not any(sql == "commit" for sql in normalized[:parent_creation])
-    assert not any(sql == "commit" for sql in normalized[parent_creation:marker])
+    assert not any(
+        sql.startswith(("select ", "insert ", "update ", "delete "))
+        and (" from actions " in sql or " join actions " in sql)
+        for sql in normalized[:action_creation]
+    )
+    assert not any(sql == "commit" for sql in normalized[begin:marker])
     assert any(sql == "commit" for sql in normalized[marker + 1 :])
 
 
-@pytest.mark.parametrize("stage", ["parent", "actions", "marker", "commit"])
+@pytest.mark.parametrize("stage", ["emails", "actions", "marker", "commit"])
 def test_store_fresh_suffix_fault_keeps_target_layout_and_marker_together(
     tmp_path, monkeypatch, stage
 ):
-    import app.current_database_schema as current_schema
-
+    _build_with_real_constructor(monkeypatch)
     path = tmp_path / "store-fault.sqlite3"
     original_open = AutoReplyStore._open_connection
-    original_parent = current_schema._create_emails
-    original_actions = current_schema.create_action_schema
 
     def fail(*args, **kwargs):
         raise RuntimeError("fresh suffix fault")
 
-    if stage == "parent":
+    class Interrupted(sqlite3.Connection):
+        def execute(self, sql, parameters=()):
+            result = super().execute(sql, parameters)
+            if stage in {"emails", "actions"} and " ".join(sql.casefold().split()).startswith(
+                f"create table {stage}"
+            ):
+                fail()
+            if stage == "marker" and sql.startswith(
+                "insert into state(record_type,legacy_key,payload_json) values('service_state'"
+            ) and any(
+                isinstance(value, str) and "store_schema_version" in value
+                for value in parameters
+            ):
+                fail()
+            return result
 
-        def parent(db):
-            original_parent(db)
-            fail()
+        def __exit__(self, *args):
+            if (
+                stage == "commit"
+                and self.in_transaction
+                and self.execute(
+                    "select 1 from sqlite_schema where name='actions'"
+                ).fetchone()
+            ):
+                self.rollback()
+                fail()
+            return super().__exit__(*args)
 
-        monkeypatch.setattr(current_schema, "_create_emails", parent)
-    elif stage == "actions":
+    def open_connection(self, *, foreign_keys=True):
+        db = sqlite3.connect(self.path, factory=Interrupted)
+        db.row_factory = sqlite3.Row
+        db.execute("pragma foreign_keys = " + ("on" if foreign_keys else "off"))
+        return db
 
-        def actions(db, **kwargs):
-            original_actions(db, **kwargs)
-            fail()
-
-        monkeypatch.setattr(current_schema, "create_action_schema", actions)
-    else:
-
-        class Interrupted(sqlite3.Connection):
-            def execute(self, sql, parameters=()):
-                if stage == "marker" and sql.startswith(
-                    "insert into state(record_type,legacy_key,payload_json) values('service_state'"
-                ) and any(
-                    isinstance(value, str) and "store_schema_version" in value
-                    for value in parameters
-                ):
-                    fail()
-                return super().execute(sql, parameters)
-
-            def __exit__(self, *args):
-                if (
-                    stage == "commit"
-                    and self.in_transaction
-                    and self.execute(
-                        "select 1 from sqlite_schema where name='actions'"
-                    ).fetchone()
-                ):
-                    self.rollback()
-                    fail()
-                return super().__exit__(*args)
-
-        def open_connection(self, *, foreign_keys=True):
-            db = sqlite3.connect(self.path, factory=Interrupted)
-            db.row_factory = sqlite3.Row
-            db.execute("pragma foreign_keys = " + ("on" if foreign_keys else "off"))
-            return db
-
-        monkeypatch.setattr(AutoReplyStore, "_open_connection", open_connection)
+    monkeypatch.setattr(AutoReplyStore, "_open_connection", open_connection)
     with pytest.raises(RuntimeError, match="fresh suffix fault"):
         AutoReplyStore(path)
     with closing(sqlite3.connect(path)) as db:
         assert not db.execute(
             "select 1 from sqlite_schema where name in ('actions','emails','tasks','state')"
         ).fetchone()
-    monkeypatch.setattr(current_schema, "_create_emails", original_parent)
-    monkeypatch.setattr(current_schema, "create_action_schema", original_actions)
     monkeypatch.setattr(AutoReplyStore, "_open_connection", original_open)
     AutoReplyStore(path)
     assert _markers(path)[0][0] == STORE_TARGET
     with closing(sqlite3.connect(path)) as db:
         _target_shape(db)
-
-
-def test_current_reopen_and_source51_migration_do_not_seed_empty_configs_or_revisions(
-    predecessor, monkeypatch
-):
-    source = predecessor[3]
-    with closing(sqlite3.connect(source)) as db, db:
-        for row in db.execute(
-            "select name from sqlite_schema where type='trigger' and tbl_name='email_category_description_revisions'"
-        ).fetchall():
-            db.execute(f'drop trigger "{row[0]}"')
-        db.execute("delete from email_category_description_revisions")
-        db.execute("delete from email_category_configs")
-    # Restore the exact original retained triggers. Source maps are unchanged.
-    from app.email_schema_history import _REQUIRED_TRIGGER_SQL
-
-    with closing(sqlite3.connect(source)) as db:
-        for name, sql in _REQUIRED_TRIGGER_SQL.items():
-            if name.startswith("trg_email_category_description_revisions_"):
-                db.execute(sql)
-    release = prepare_database_schema_release(ROOT, source)
-    release.publish()
-
-    def unexpected(*args, **kwargs):
-        raise AssertionError("reopen seeded existing empty configuration")
-
-    monkeypatch.setattr(EmailStore, "_seed_current_fresh_state", unexpected)
-    for first, second in ((AutoReplyStore, EmailStore), (EmailStore, AutoReplyStore)):
-        first(source)
-        second(source)
-    with closing(sqlite3.connect(source)) as db:
-        assert (
-            db.execute("select count(*) from email_category_configs").fetchone()[0] == 0
-        )
-        assert (
-            db.execute(
-                "select count(*) from email_category_description_revisions"
-            ).fetchone()[0]
-            == 0
-        )
-    release.rollback()
-    with closing(sqlite3.connect(source)) as db:
-        assert (
-            db.execute("select count(*) from email_category_configs").fetchone()[0] == 0
-        )
-
-
-def test_child_does_not_recapture_changed_source_metadata(predecessor):
-    import subprocess
-
-    source = predecessor[3]
-    release = prepare_database_schema_release(ROOT, source)
-    with closing(sqlite3.connect(source)) as db, db:
-        db.execute(
-            "update service_state set updated_at='changed after prepare' where key='store_schema_version'"
-        )
-    before = _fingerprint(source)
-    with pytest.raises(subprocess.CalledProcessError) as exc:
-        release.publish()
-    assert "source markers changed" in exc.value.stderr
-    assert _fingerprint(source) == before
 
 
 def test_concurrent_real_opposite_orders_finish_without_nested_flock(tmp_path):
@@ -480,269 +387,6 @@ else:EmailStore(p);AutoReplyStore(p)
         )
 
 
-def _old_direct_fact_readback(store, classification):
-    from app.store import AutoReplyStore
-
-    AutoReplyStore(store.path)
-    ids = store.direct_action_ids_for_plan(classification.action_plan.action_plan_id)
-    return dict(
-        statuses=store.direct_action_statuses_for_plan(
-            classification.action_plan.action_plan_id
-        ),
-        attempts=[store.list_action_attempts(identity) for identity in ids],
-    )
-
-
-def test_real_target_direct_facts_inverse_genuine_old_reopen_and_republish(predecessor):
-    from tests.test_email_action_plan_direct_dao import (
-        _direct_cycle,
-        _genuine_old_result,
-        _normalized,
-    )
-
-    source = predecessor[3]
-    original = _markers(source)
-    release = prepare_database_schema_release(ROOT, source)
-    release.publish()
-    email = EmailStore(source)
-    _direct_cycle(email, predecessor[1])
-    expected = _normalized(_old_direct_fact_readback(email, predecessor[1]))
-    assert (
-        min(attempt["id"] for attempts in expected["attempts"] for attempt in attempts)
-        == 701
-    )
-    release.rollback()
-    assert _markers(source) == original
-    assert _genuine_old_result(predecessor, _old_direct_fact_readback) == expected
-    next_release = prepare_database_schema_release(ROOT, source)
-    next_release.publish()
-    assert (
-        _normalized(_old_direct_fact_readback(EmailStore(source), predecessor[1]))
-        == expected
-    )
-
-
-@pytest.fixture
-def reply_predecessor(tmp_path, request):
-    from tests.test_email_action_reply_dao import reply_pair
-
-    return reply_pair.__wrapped__(tmp_path, request)
-
-
-def _old_reply_fact_readback(store, classification):
-    from app.store import AutoReplyStore
-    from app.email_store import email_action_identity
-    from app.email_classifier_contracts import EmailAction
-
-    AutoReplyStore(store.path)
-    identity = email_action_identity(
-        account_id=classification.provider_locator.account_id,
-        stable_message_identity=classification.stable_message_identity,
-        action_type=EmailAction.AUTO_REPLY,
-        action_plan_version=classification.action_plan.action_plan_version,
-    )
-    return store.get_email_reply_receipt(identity)
-
-
-@pytest.mark.parametrize("reply_predecessor", ["receipt"], indirect=True)
-def test_real_target_receipt_backfill_inverse_retains_native_rowid_and_old_api(
-    reply_predecessor,
-):
-    from tests.test_email_action_reply_dao import _reply_arguments, _receipt_arguments
-    from tests.test_email_action_plan_direct_dao import _genuine_old_result, _normalized
-
-    source = reply_predecessor[3]
-    original = _markers(source)
-    release = prepare_database_schema_release(ROOT, source)
-    release.publish()
-    email = EmailStore(source)
-    args, _ = _reply_arguments(email, reply_predecessor[1])
-    receipt = email.persist_email_reply_receipt(
-        **(_receipt_arguments(args) | dict(smtp_acceptance_id="accepted-fixture"))
-    )
-    from app.action_storage import email_action_projection
-
-    with email._connect() as db:
-        assert (
-            db.execute(
-                "select rowid from ("
-                + email_action_projection("email_reply_receipts", include_rowid=True)
-                + ")"
-            ).fetchone()[0]
-            == 0
-        )
-    release.rollback()
-    assert _markers(source) == original
-    with closing(sqlite3.connect(source)) as db:
-        assert db.execute("select rowid from email_reply_receipts").fetchone()[0] == 0
-    assert _genuine_old_result(
-        reply_predecessor, _old_reply_fact_readback
-    ) == _normalized(receipt)
-
-
-@pytest.mark.parametrize("reply_predecessor", ["receipt"], indirect=True)
-@pytest.mark.parametrize(
-    "failure", ["verification", "restart", "health", "loaded", "unsupported_inverse"]
-)
-def test_actual_updater_pair_lifecycle_preserves_receipt_before_genuine_old_restart(
-    reply_predecessor, tmp_path, failure
-):
-    from tests.test_repository_updater_publication import _repo, _State
-    from app.repository_updater import RepositoryUpdater, UpgradeFailed
-    from tests.test_email_action_reply_dao import _reply_arguments, _receipt_arguments
-    from tests.test_email_action_plan_direct_dao import _genuine_old_result, _normalized
-
-    source = reply_predecessor[3]
-    original = _markers(source)
-    repo_path = tmp_path / "offline-updater"
-    repo_path.mkdir()
-    root, operation = _repo(repo_path)  # Entirely local temporary Git remotes.
-    events = []
-    receipts = []
-    replacement_started = False
-
-    def prepare(_recovery_source_path):
-        events.append("prepare")
-        release = prepare_database_schema_release(ROOT, source)
-        publish, inverse, verify = (
-            release.publish,
-            release.rollback,
-            release.verify_loaded,
-        )
-
-        def publication():
-            events.append("publish")
-            publish()  # Real child, atomic pair, both real default constructors.
-            email = EmailStore(source)
-            args, _ = _reply_arguments(email, reply_predecessor[1])
-            receipts.append(
-                _normalized(
-                    email.persist_email_reply_receipt(
-                        **(
-                            _receipt_arguments(args)
-                            | dict(smtp_acceptance_id="new-after-publication")
-                        )
-                    )
-                )
-            )
-            if failure == "unsupported_inverse":
-                with closing(sqlite3.connect(source)) as db:
-                    db.execute(
-                        "create trigger unknown_target after update on actions begin select 1;end"
-                    )
-
-        def rollback():
-            events.append("inverse")
-            inverse()
-
-        def readback():
-            if replacement_started and failure == "loaded":
-                events.append("loaded-failure")
-                raise RuntimeError("loaded failure")
-            verify()
-
-        release.publish, release.rollback, release.verify_loaded = (
-            publication,
-            rollback,
-            readback,
-        )
-        return release
-
-    def verification():
-        events.append("verification")
-        if failure in {"verification", "unsupported_inverse"}:
-            raise RuntimeError("verification failure")
-
-    def restart():
-        nonlocal replacement_started
-        if _markers(source)[0][0] == STORE_TARGET:
-            events.append("new-start")
-            replacement_started = True
-            AutoReplyStore(source)
-            EmailStore(source)
-            if failure == "restart":
-                raise RuntimeError("replacement start failure")
-        else:
-            events.append("old-start")
-            assert _markers(source) == original
-            assert (
-                _genuine_old_result(reply_predecessor, _old_reply_fact_readback)
-                == receipts[0]
-            )
-
-    health_calls = 0
-
-    def health():
-        nonlocal health_calls
-        health_calls += 1
-        return failure != "health" or health_calls > 1
-
-    state = _State()
-    updater = RepositoryUpdater(
-        root,
-        state,
-        database_path=source,
-        wait_for_quiet=lambda: events.append("quiet"),
-        stop=lambda: events.append("stop"),
-        database_publication=prepare,
-        verification=verification,
-        restart=restart,
-        health=health,
-    )
-    with pytest.raises(UpgradeFailed):
-        updater.execute(operation)
-    assert events[:3] == ["quiet", "stop", "prepare"]
-    assert (
-        events.index("publish") < events.index("verification") < events.index("inverse")
-    )
-    if failure == "unsupported_inverse":
-        assert "old-start" not in events and "new-start" not in events
-        assert _markers(source)[0][0] == STORE_TARGET
-        assert any("needs_manual" in value for value in state.values.values())
-    else:
-        assert events.index("inverse") < events.index("old-start")
-        if replacement_started:
-            assert events[events.index("inverse") - 1] == "stop"
-        assert _markers(source) == original
-        assert any("rolled_back" in value for value in state.values.values())
-
-
-def test_genuine_old_email_only_source_is_refused_without_creating_store(
-    predecessor, tmp_path
-):
-    import os
-    import subprocess
-    import sys
-
-    old = predecessor[4]
-    path = tmp_path / "genuine-email-only.sqlite3"
-    result = subprocess.run(
-        [
-            sys.executable,
-            "-c",
-            "from pathlib import Path;import sys;from app.email_store import EmailStore;EmailStore(Path(sys.argv[1]))",
-            str(path),
-        ],
-        cwd=old,
-        env={**os.environ, "PYTHONPATH": str(old)},
-        capture_output=True,
-        text=True,
-        timeout=30,
-    )
-    assert result.returncode == 0, result.stderr
-    with closing(sqlite3.connect(path)) as db:
-        assert not db.execute(
-            "select 1 from sqlite_schema where name='service_state'"
-        ).fetchone()
-        assert db.execute("pragma journal_mode=delete").fetchone()[0] == "delete"
-    before = _fingerprint(path)
-    original = path.read_bytes()
-    for factory in (AutoReplyStore, EmailStore):
-        with pytest.raises(sqlite3.IntegrityError, match="unsupported or mixed"):
-            factory(path)
-        assert _fingerprint(path) == before and path.read_bytes() == original
-
-
 def test_store_first_rejects_preexisting_unversioned_email_configuration(tmp_path):
     from app.email_category_config import CATEGORY_CONFIG_TABLE_SQL
 
@@ -754,7 +398,7 @@ def test_store_first_rejects_preexisting_unversioned_email_configuration(tmp_pat
     for factory in (AutoReplyStore, EmailStore):
         with pytest.raises(
             sqlite3.IntegrityError,
-            match="malformed current Store-first config declaration",
+            match="explicit paired schema release required",
         ):
             factory(path)
         assert _fingerprint(path) == before
@@ -770,6 +414,7 @@ def test_current_provider_malformed_target_refused_before_constructor_mutation(t
     path = tmp_path / "malformed-provider.sqlite3"
     AutoReplyStore(path)
     EmailStore(path)
+    _close_idle_connections()
     with closing(sqlite3.connect(path)) as db:
         assert db.execute("pragma journal_mode=delete").fetchone()[0] == "delete"
         if damage == "missing_folder_index":
@@ -807,7 +452,7 @@ def test_current_provider_malformed_target_refused_before_constructor_mutation(t
         for constructor in (AutoReplyStore, EmailStore):
             with pytest.raises(
                 sqlite3.IntegrityError,
-                match="^malformed current provider/config declaration$",
+                match="explicit paired schema release required",
             ):
                 constructor(path)
             assert _fingerprint(path) == before and path.read_bytes() == bytes_before

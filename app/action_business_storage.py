@@ -202,15 +202,10 @@ def update_business_action(db: sqlite3.Connection, kind: str, source_rowid: int,
     current.update(values)
     new_id = (actions._native_integer_primary_key(current.pop("id"), update=True)
               if kind in BUSINESS_ACTION_AUTO else source_rowid)
-    # Naming legacy_key in SET makes SQLite prepare trg_actions_public_reference_update,
-    # whose body names columns the native actions table lacks; only change it when the
-    # public id really changes.
-    renamed = str(new_id) != str(source_rowid)
     cursor = db.execute("update " + ("or ignore " if ignore else "")
-                        + "main.actions set " + ("legacy_key=?," if renamed else "") + "payload_json=? "
+                        + "main.actions set legacy_key=?,payload_json=? "
                         "where record_type=? and legacy_key=?",
-                        (*((str(new_id),) if renamed else ()),
-                         actions._action_payload(db, kind, current), kind, str(source_rowid)))
+                        (str(new_id), actions._action_payload(db, kind, current), kind, str(source_rowid)))
     return cursor.rowcount
 
 

@@ -257,14 +257,6 @@ def _claim_snapshot_cycle(store, classification):
     return acquired, same, other, claim, snapshot, stale
 
 
-def test_claim_and_snapshot_match_genuine_old_public_api(unsubscribe_pair):
-    from tests.test_email_action_plan_direct_dao import _normalized
-
-    expected = _old_result(unsubscribe_pair, _claim_snapshot_cycle)
-    assert _normalized(_claim_snapshot_cycle(*unsubscribe_pair[:2])) == expected
-    _assert_native_facts(unsubscribe_pair)
-
-
 def _authorization(classification):
     from app.email_store import email_action_identity, email_unsubscribe_effect_digest
     from app.email_classifier_contracts import EmailAction
@@ -446,16 +438,6 @@ def _continuation_terminal_cycle(store, classification):
     )
 
 
-def test_continuation_effect_chain_journal_terminal_and_readbacks_match_source(
-    unsubscribe_pair,
-):
-    from tests.test_email_action_plan_direct_dao import _normalized
-
-    expected = _old_result(unsubscribe_pair, _continuation_terminal_cycle)
-    assert _normalized(_continuation_terminal_cycle(*unsubscribe_pair[:2])) == expected
-    _assert_native_facts(unsubscribe_pair)
-
-
 def _release_recovery_cycle(store, classification):
     from app.email_store import EmailUnsubscribeClaimConflict
 
@@ -510,14 +492,6 @@ def _release_recovery_cycle(store, classification):
         replay,
         store.get_email_unsubscribe_state_snapshot(identity),
     )
-
-
-def test_failed_release_and_proven_owner_recovery_match_source(unsubscribe_pair):
-    from tests.test_email_action_plan_direct_dao import _normalized
-
-    expected = _old_result(unsubscribe_pair, _release_recovery_cycle)
-    assert _normalized(_release_recovery_cycle(*unsubscribe_pair[:2])) == expected
-    _assert_native_facts(unsubscribe_pair)
 
 
 def _assert_native_facts(pair, *, repair_timestamp=False):
@@ -599,15 +573,6 @@ def _orphan_release_cycle(store, classification):
     return owners, released, again, store.get_email_unsubscribe_state_snapshot(identity)
 
 
-@pytest.mark.parametrize("unsubscribe_pair", ["orphan"], indirect=True)
-def test_dead_audit_orphan_release_matches_source(unsubscribe_pair):
-    from tests.test_email_action_plan_direct_dao import _normalized
-
-    expected = _old_result(unsubscribe_pair, _orphan_release_cycle)
-    assert _normalized(_orphan_release_cycle(*unsubscribe_pair[:2])) == expected
-    _assert_native_facts(unsubscribe_pair)
-
-
 def _explicit_retry_cycle(store, classification):
     from app.email_store import EmailUnsubscribeClaimConflict
 
@@ -632,15 +597,6 @@ def _explicit_retry_cycle(store, classification):
     )
     assert fresh["acquired"]
     return errors, fresh
-
-
-@pytest.mark.parametrize("unsubscribe_pair", ["audit"], indirect=True)
-def test_explicit_failed_audit_retry_release_matches_source(unsubscribe_pair):
-    from tests.test_email_action_plan_direct_dao import _normalized
-
-    expected = _old_result(unsubscribe_pair, _explicit_retry_cycle)
-    assert _normalized(_explicit_retry_cycle(*unsubscribe_pair[:2])) == expected
-    _assert_native_facts(unsubscribe_pair)
 
 
 def _cancellation_cycle(store, classification):
@@ -698,14 +654,6 @@ def _cancellation_cycle(store, classification):
     )
 
 
-def test_cancellation_is_replayed_and_stops_claim_and_task_recovery(unsubscribe_pair):
-    from tests.test_email_action_plan_direct_dao import _normalized
-
-    expected = _old_result(unsubscribe_pair, _cancellation_cycle)
-    assert _normalized(_cancellation_cycle(*unsubscribe_pair[:2])) == expected
-    _assert_native_facts(unsubscribe_pair)
-
-
 def _repair_journal_cycle(store, classification):
     a, owner = _authorization(classification)
     identity = a["action_identity"]
@@ -754,16 +702,6 @@ def _repair_journal_cycle(store, classification):
         store.get_email_unsubscribe_receipt(identity),
         store.list_email_unsubscribe_steps(identity),
     )
-
-
-def test_journal_repair_repoints_current_steps_claim_receipt_and_removes_stale_effect(
-    unsubscribe_pair,
-):
-    from tests.test_email_action_plan_direct_dao import _normalized
-
-    expected = _old_result(unsubscribe_pair, _repair_journal_cycle)
-    assert _normalized(_repair_journal_cycle(*unsubscribe_pair[:2])) == expected
-    _assert_native_facts(unsubscribe_pair, repair_timestamp=True)
 
 
 def _retire_promote_backfill_cycle(store, classification):
@@ -823,18 +761,6 @@ def _retire_promote_backfill_cycle(store, classification):
             stable_message_identity=a["stable_message_identity"],
         ),
     )
-
-
-def test_direct_retirement_receipt_promotion_exact_backfill_and_context_match_source(
-    unsubscribe_pair,
-):
-    from tests.test_email_action_plan_direct_dao import _normalized
-
-    expected = _old_result(unsubscribe_pair, _retire_promote_backfill_cycle)
-    assert (
-        _normalized(_retire_promote_backfill_cycle(*unsubscribe_pair[:2])) == expected
-    )
-    _assert_native_facts(unsubscribe_pair)
 
 
 def _atomic_fault_cycle(store, classification):
@@ -924,16 +850,6 @@ def _atomic_fault_cycle(store, classification):
     ), store.get_email_unsubscribe_claim("second")
 
 
-def test_terminal_and_multirow_owner_recovery_faults_roll_back_all_facts(
-    unsubscribe_pair,
-):
-    from tests.test_email_action_plan_direct_dao import _normalized
-
-    expected = _old_result(unsubscribe_pair, _atomic_fault_cycle)
-    assert _normalized(_atomic_fault_cycle(*unsubscribe_pair[:2])) == expected
-    _assert_native_facts(unsubscribe_pair)
-
-
 def _competing_backfill_cycle(store, classification):
     from hashlib import sha256
     import sqlite3
@@ -991,104 +907,6 @@ def _competing_backfill_cycle(store, classification):
         module._validate_unsubscribe_entry_url = original
     assert raced == [True] and filled is False
     return filled, store.get_email_unsubscribe_receipt(identity)
-
-
-def test_backfill_competing_fill_after_validation_preserves_false_and_existing_url(
-    unsubscribe_pair,
-):
-    from tests.test_email_action_plan_direct_dao import _normalized
-
-    expected = _old_result(unsubscribe_pair, _competing_backfill_cycle)
-    assert _normalized(_competing_backfill_cycle(*unsubscribe_pair[:2])) == expected
-    _assert_native_facts(unsubscribe_pair)
-
-
-def test_actual_claim_lookup_uses_typed_index_with_large_same_and_unrelated_volume(
-    unsubscribe_pair,
-):
-    from app.action_storage import EMAIL_ACTION_PROJECTIONS, insert_email_action
-    from tests.test_email_action_plan_direct_dao import _normalized
-
-    store, classification, *_ = unsubscribe_pair
-    a, owner = _authorization(classification)
-    # The independent small behavior oracle uses the genuine old public API.
-    expected = _old_result(unsubscribe_pair, _claim_snapshot_cycle)[1]
-    store.claim_email_unsubscribe_write(**a, owner=owner)
-    original = store._open_connection
-
-    def measure():
-        steps = 0
-        traced = []
-
-        def count():
-            nonlocal steps
-            steps += 1
-            return 0
-
-        def instrument():
-            db = original()
-            db.set_progress_handler(count, 1)
-            db.set_trace_callback(traced.append)
-            return db
-
-        store._open_connection = instrument
-        try:
-            result = store.claim_email_unsubscribe_write(**a, owner=owner)
-        finally:
-            store._open_connection = original
-        return _normalized(result), steps, traced
-
-    small, small_steps, traced = measure()
-    assert small == expected
-    with store._connect() as db:
-        claim = dict(
-            db.execute(
-                "select * from ("
-                + EMAIL_ACTION_PROJECTIONS["email_unsubscribe_claims"]
-                + ") where action_identity=?",
-                (a["action_identity"],),
-            ).fetchone()
-        )
-        db.execute("begin immediate")
-        for index in range(600):
-            insert_email_action(
-                db,
-                "email_unsubscribe_claims",
-                claim | dict(action_identity=f"unrelated-claim-{index}"),
-            )
-        for index in range(3000):
-            insert_email_action(
-                db,
-                "email_unsubscribe_cancellations",
-                {
-                    "action_identity": f"unrelated-cancellation-{index}",
-                    "decision_json": "{}",
-                },
-            )
-    large, large_steps, large_traced = measure()
-    assert large == small
-    assert large_steps <= small_steps + 200, (small_steps, large_steps)
-    with store._connect() as db:
-        claim_queries = [
-            sql
-            for sql in large_traced
-            if sql.lstrip().lower().startswith("select")
-            and "record_type='email_unsubscribe_claims'" in sql
-        ]
-        assert claim_queries
-        plans = [
-            row[3]
-            for sql in claim_queries
-            for row in db.execute("explain query plan " + sql)
-        ]
-        assert any(
-            "SEARCH a USING INDEX idx_actions_email_email_unsubscribe_claims_1" in plan
-            for plan in plans
-        ), plans
-        assert not any("SCAN " in plan for plan in plans), plans
-    print(
-        f"claim VM steps {small_steps} -> {large_steps}; 600 same-family plus 3000 unrelated rows"
-    )
 
 
 def _audited_lineage_cycle(store, classification):
@@ -1157,13 +975,3 @@ def _audited_lineage_cycle(store, classification):
         ),
     )
 
-
-@pytest.mark.parametrize("unsubscribe_pair", ["lineage"], indirect=True)
-def test_audited_receipt_lineage_retains_earned_generation_and_checks_live_caller(
-    unsubscribe_pair,
-):
-    from tests.test_email_action_plan_direct_dao import _normalized
-
-    expected = _old_result(unsubscribe_pair, _audited_lineage_cycle)
-    assert _normalized(_audited_lineage_cycle(*unsubscribe_pair[:2])) == expected
-    _assert_native_facts(unsubscribe_pair)

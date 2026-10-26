@@ -10,7 +10,6 @@ approved action verified; anything else is still counted as an error.
 import test_reviewed_human_decision as fixtures
 
 from app.quality_gate import _check_feedback
-from app.task12_storage import insert_task12
 
 BEFORE_EXECUTION = "2000-01-01T00:00:00+00:00"
 AFTER_EXECUTION = "2099-01-01T00:00:00+00:00"
@@ -90,9 +89,13 @@ def test_reopened_feedback_is_an_error_again(tmp_path):
     key = f"manual:{attempt_id}"
     store.upsert_feedback_event(key=key, feedback_token="", received_at=BEFORE_EXECUTION)
     with store._connect() as db:
-        insert_task12(db, "feedback_processing_rounds", {
-            "feedback_key": key, "round_number": 1, "batch_id": "batch-1",
-            "status": "resolved", "reopened_at": "2026-10-24 09:00:00",
-            "reopen_reason": "still wrong",
-        })
+        db.execute(
+            "insert into feedback_processing_rounds(feedback_key,round_number,batch_id,status,"
+            "workbench_task_id,workbench_turn_id,attempt_id,agent_run_id,commit_sha,"
+            "test_evidence_json,restart_evidence_json,health_evidence_json,backlog_evidence_json,"
+            "receipt_version,note,started_at,resolved_at,reopened_at,reopen_reason,created_at,"
+            "updated_at,scope_receipt_json) values(?,1,'batch-1','resolved','','',0,0,'','{}','{}','{}','{}',"
+            "1,'','','','2026-10-24 09:00:00','still wrong','2026-10-24 08:00:00','2026-10-24 09:00:00','{}')",
+            (key,),
+        )
     assert _gate(store) == ([("unresolved", 1)], [])

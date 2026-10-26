@@ -1,5 +1,6 @@
 from datetime import datetime, timezone
 from pathlib import Path
+from types import SimpleNamespace
 import sqlite3
 
 from fastapi import FastAPI
@@ -71,7 +72,14 @@ def test_processed_work_to_legal_creates_user_plan_version_and_keeps_old_plan(
 ) -> None:
     store, old_plan_id = _processed_store(tmp_path / "reclassification.sqlite3")
     app = FastAPI()
-    register_email_routes(app, lambda: store)
+    view = {"message_text": "正文", "cc": "", "recipients": []}
+    register_email_routes(
+        app, lambda: store,
+        email_source_reader_factory=lambda: SimpleNamespace(
+            read_view=lambda account, identity: view,
+            read_views=lambda account, identities: {i: view for i in identities},
+        ),
+    )
     client = TestClient(app)
 
     detail = client.get("/api/console/email/classifications/501")

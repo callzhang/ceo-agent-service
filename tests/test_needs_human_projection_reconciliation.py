@@ -1,4 +1,4 @@
-from app.task8_storage import task8_set_parts
+from tests.support.native_task_fields import set_native_task_fields
 import json
 
 from app.agent_contracts import (
@@ -153,10 +153,7 @@ def _approved_current_projection(path, candidate_result=None):
     )
     with store._connect() as db:
         update_action(db, "reply_attempts", attempt_id, {"agent_run_id": audit.id})
-        db.execute(
-            f"update tasks set {task8_set_parts('reply_tasks', {'status': 'needs_human'}).sql} where record_type='reply_tasks' and id=?",
-            (*task8_set_parts('reply_tasks', {'status': 'needs_human'}).parameters, task.id,),
-        )
+        set_native_task_fields(db, 'reply_tasks', task.id, {'status': 'needs_human'})
     return store, task, attempt_id, candidate["id"], audit.id
 
 

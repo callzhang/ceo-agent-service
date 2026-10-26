@@ -1,9 +1,8 @@
-from app.run_storage import AGENT_RUN_SQL
 import sqlite3
 
 import pytest
 
-from app.store import AgentRole, AutoReplyStore
+from app.store import AGENT_RUN_SQL, AgentRole, AutoReplyStore
 
 
 @pytest.mark.parametrize("operation", ["claim", "completed_claim", "renew", "session", "expire"])
@@ -52,10 +51,10 @@ def test_agent_metadata_hydration_releases_writer_and_preserves_snapshot(
                 (row["id"],),
             ).fetchone()
             assert persisted == (
-                row["status"], row["codex_session_id"], row["lease_expires_at"],
+                row["status"], row["session_id"], row["lease_expires_at"],
             )
             other.execute(
-                "update runs set updated_at='concurrent' where record_type='agent_runs' and id=?",
+                "update runs set updated_at='concurrent' where id=?",
                 (row["id"],),
             )
             other.commit()

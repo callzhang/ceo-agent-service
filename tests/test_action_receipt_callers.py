@@ -7,21 +7,17 @@ import json
 
 import pytest
 
-from app.task8_storage import task8_set_parts
 from app.action_storage import EXTERNAL_ACTION_RESULT_SQL, insert_action, update_action
-from app.run_storage import AGENT_RUN_SQL
-from app.store import AgentRole, AutoReplyStore
+from app.store import AGENT_RUN_SQL, AgentRole, AutoReplyStore
+from tests.support.native_task_fields import set_native_task_fields
 from tests.test_action_receipt_source import source_values
 from tests.test_agent_turn_store import _claim_consumer, _task
 from tests.test_reviewed_candidate_store import _reviewed
 
 
 def _update_reply_task_fixture(db, task_id, values):
-    parts = task8_set_parts("reply_tasks", values)
-    return db.execute(
-        f"update tasks set {parts.sql} where record_type='reply_tasks' and id=?",
-        (*parts.parameters, task_id),
-    ).rowcount
+    set_native_task_fields(db, "reply_tasks", task_id, values)
+    return 1
 
 
 @pytest.fixture

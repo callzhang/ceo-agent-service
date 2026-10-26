@@ -11,7 +11,8 @@ _CREATED_AT = datetime.fromisoformat("2026-09-16T07:27:13+00:00")
 
 
 def persist_classification(store, *, classification_id, status, action=EmailAction.MOVE,
-                           account_id="acct", config_version="v1"):
+                           account_id="acct", config_version="v1",
+                           sender="sender@example.com", subject=None):
     """Persist one classification (with its ActionPlan when processed); return the plan id."""
     plan = None
     if status is EmailClassificationStatus.PROCESSED:
@@ -35,14 +36,16 @@ def persist_classification(store, *, classification_id, status, action=EmailActi
             config_version=config_version, status=status,
             classification_source="model", action_plan=plan,
         ),
-        sender="sender@example.com", subject=f"Subject {classification_id}",
+        sender=sender,
+        subject=f"Subject {classification_id}" if subject is None else subject,
         normalized_text="body", preview="body", model_text="body",
         received_at="Mon, 08 Sep 2025 12:08:13 +0000",
     )
     return None if plan is None else plan.action_plan_id
 
 
-def fail_action(store: EmailStore, action_id, *, attempts, retryable_last):
+def fail_action(store: EmailStore, action_id, *, attempts, retryable_last,
+                error="imap_timeout"):
     """Claim and fail `attempts` times, like the worker; the last may leave a retry scheduled."""
     base = datetime.fromisoformat("2026-09-16T07:00:00+00:00")
     for number in range(1, attempts + 1):
@@ -52,7 +55,20 @@ def fail_action(store: EmailStore, action_id, *, attempts, retryable_last):
         store.complete_direct_action_attempt(
             action, status="failed", provider_operation="READ",
             provider_target=action.locator.stable_message_identity,
-            provider_result_id="", error="imap_timeout",
+            provider_result_id="", error=error,
             finished_at=(claimed_at + timedelta(seconds=75)).isoformat(),
             retryable=number < attempts or retryable_last,
         )
+
+
+def complete_action(store: EmailStore, action_id):
+    """Claim and complete one action as done, like the worker after a verified readback."""
+    claimed_at = datetime.fromisoformat("2026-09-16T07:00:00+00:00")
+    action = store.claim_direct_action(action_id=action_id, claimed_at=claimed_at.isoformat())
+    assert action is not None
+    store.complete_direct_action_attempt(
+        action, status="done", provider_operation="READ",
+        provider_target=action.locator.stable_message_identity,
+        provider_result_id="receipt-1", error="",
+        finished_at=(claimed_at + timedelta(seconds=75)).isoformat(),
+    )

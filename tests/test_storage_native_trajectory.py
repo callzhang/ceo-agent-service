@@ -1,7 +1,7 @@
 import json
 import sqlite3
 
-from app.run_storage import AGENT_RUN_SQL, insert_run
+from tests.support.native_run_rows import insert_runtime_attempt_row
 from app.store import AutoReplyStore
 from tests.test_agent_turn_store import _task, _claim_consumer
 from tests.run_reader_fixtures import assert_no_core_native_storage
@@ -28,7 +28,7 @@ def test_get_agent_run_reads_native_events_and_result_after_sqlite_closes(
     run = _claim_consumer(store, _task(store)).run
     with store._connect() as db:
         db.execute(
-            "update runs set status='completed', session_id=?, transcript_start=0, transcript_end=1 where record_type='agent_runs' and cast(legacy_key as integer)=?",
+            "update runs set status='completed', session_id=?, transcript_start=0, transcript_end=1 where id=?",
             ("native-session", run.id),
         )
 
@@ -82,7 +82,7 @@ def test_oversized_event_uses_native_after_live_cache_limit(tmp_path, monkeypatc
     path.write_text("\n".join(json.dumps({"type": "event_msg", "payload": {"type": "item_completed", "item": {"type": "CommandExecution", "id": call_id, "exit_code": 0, "aggregated_output": output}}}) for call_id, output in (("A", "small"), ("B", "large" * 200))) + "\n")
     monkeypatch.setattr(native_trajectory, "find_codex_session_path", lambda *a, **k: path)
     with store._connect() as db:
-        db.execute("update runs set session_id='native-session',transcript_end=2 where record_type='agent_runs' and cast(legacy_key as integer)=?", (run.id,))
+        db.execute("update runs set session_id='native-session',transcript_end=2 where id=?", (run.id,))
     assert [event["item"]["id"] for event in store.get_agent_run(run.id).tool_events] == ["A", "B"]
 
 
@@ -98,7 +98,7 @@ def test_restart_preserves_receipts_before_attempt_finishes(tmp_path, monkeypatc
     path.write_text(json.dumps({"type": "event_msg", "payload": {"type": "item_completed", "item": {**event["item"], "type": "CommandExecution"}}}) + "\n")
     monkeypatch.setattr(native_trajectory, "find_codex_session_path", lambda *a, **k: path)
     with store._connect() as db:
-        db.execute("update runs set session_id='native-session',transcript_end=1 where record_type='agent_runs' and cast(legacy_key as integer)=?", (run.id,))
+        db.execute("update runs set session_id='native-session',transcript_end=1 where id=?", (run.id,))
     monkeypatch.setattr(native_trajectory, "_LIVE_EVENTS", OrderedDict())
     assert provider_receipts(store.get_agent_run(run.id).tool_events) == ("receipt-before-crash",)
     later = {"type": "item.completed", "item": {"type": "command_execution", "id": "call-2", "exit_code": 0, "aggregated_output": '{"result":{"openMessageId":"receipt-after-restart"}}'}}
@@ -121,7 +121,7 @@ def test_generation_list_restores_prior_write_after_restart(tmp_path, monkeypatc
     path = tmp_path / "native.jsonl"
     path.write_text(json.dumps({"type": "event_msg", "payload": {"type": "item_completed", "item": {**event["item"], "id": "native-1", "type": "CommandExecution"}}}))
     with store._connect() as db:
-        db.execute("update runs set status='completed',session_id='session',transcript_start=0,transcript_end=1 where record_type='agent_runs' and cast(legacy_key as integer)=?", (run.id,))
+        db.execute("update runs set status='completed',session_id='session',transcript_start=0,transcript_end=1 where id=?", (run.id,))
     monkeypatch.setattr(native_trajectory, "find_codex_session_path", lambda *a, **kw: path)
     monkeypatch.setattr(native_trajectory, "_LIVE_EVENTS", OrderedDict())
     earlier = store.list_agent_runs_for_task_generation(task.id, task.execution_generation)[0]
@@ -157,8 +157,9 @@ def test_complete_native_event_evidence_normalizes_mcp_call_for_scheduled_audit_
         "type": "McpToolCall", "id": "write-native-1", "server": "agent_cli",
         "tool": "consumer_document_write", "arguments": {"content": "private report"},
         "result": {"structuredContent": {
+            "ok": True, "status": "success",
             "operation": "updated", "node_id": "doc-7", "title": "Weekly report",
-            "readback": {"content": "private report"},
+            "provider_result": {"node_id": "doc-7", "revision": 3},
         }},
     }
     native_record = {"type": "event_msg", "payload": {"type": "item_completed", "item": item}}
@@ -204,8 +205,8 @@ def test_zero_native_range_does_not_read_reused_session(tmp_path, monkeypatch):
     store = AutoReplyStore(tmp_path / "runs.sqlite3")
     run = _claim_consumer(store, _task(store)).run
     with store._connect() as db:
-        db.execute("update runs set session_id='reused' where record_type='agent_runs' and cast(legacy_key as integer)=?", (run.id,))
-        row = db.execute(f'select * from ({AGENT_RUN_SQL}) where id=?', (run.id,)).fetchone()
+        db.execute("update runs set session_id='reused' where id=?", (run.id,))
+        row = db.execute('select * from runs where id=?', (run.id,)).fetchone()
         monkeypatch.setattr(native_trajectory, "read_codex_events", lambda *a, **k: (_ for _ in ()).throw(AssertionError("read unrelated later turn")))
         assert native_trajectory.read_run_events(db, row) == []
 
@@ -272,7 +273,7 @@ def test_delivery_reconciliation_after_restart_reads_interrupted_native_turn(tmp
         }}) + "\n")
         paths[consumer_session] = consumer_path
         with store._connect() as db:
-            db.execute("update runs set session_id=?, transcript_end=1 where record_type='agent_runs' and cast(legacy_key as integer)=?", (consumer_session, consumer_id))
+            db.execute("update runs set session_id=?, transcript_end=1 where id=?", (consumer_session, consumer_id))
         for run_id in (arguments["send_run_id"], arguments["readback_run_id"]):
             events = captured_events.get(run_id, [])
             session_id = f"run-{run_id}"
@@ -290,8 +291,8 @@ def test_delivery_reconciliation_after_restart_reads_interrupted_native_turn(tmp
             path.write_text("\n".join(json.dumps(record) for record in records))
             paths[session_id] = path
             with store._connect() as db:
-                insert_run(
-                    db, 'agent_runtime_attempts', {
+                insert_runtime_attempt_row(
+                    db, {
                         'parent_id': run_id,
                         'workload_kind': 'agent_run',
                         'workload_key': str(run_id),

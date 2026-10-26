@@ -844,6 +844,11 @@ def test_run_setup_service_config_creates_env_and_directories(tmp_path: Path):
     payload = json.loads(service_manifest.read_text(encoding="utf-8"))
     assert payload == {
         "servers": {
+            "ai_services": {
+                "url": "https://ai-services.preseen.ai/mcp",
+                "startup_timeout_sec": 120,
+                "tool_timeout_sec": 300,
+            },
             "exa": {"url": "https://mcp.exa.ai/mcp"},
             "xiaoqing_interview": {
                 "url": "https://interview.hr.startask.net/api/mcp",
@@ -855,7 +860,7 @@ def test_run_setup_service_config_creates_env_and_directories(tmp_path: Path):
     assert [
         server.name
         for server in load_service_mcp_servers(service_manifest, env={})
-    ] == ["exa", "xiaoqing_interview"]
+    ] == ["ai_services", "exa", "xiaoqing_interview"]
 
 
 def test_run_setup_service_config_defaults_database_to_application_support(
@@ -923,6 +928,11 @@ def test_run_setup_mcp_writes_service_manifest_and_environment(tmp_path: Path):
     manifest = tmp_path / "data" / "config" / "service-mcp.json"
     assert json.loads(manifest.read_text(encoding="utf-8")) == {
         "servers": {
+            "ai_services": {
+                "url": "https://ai-services.preseen.ai/mcp",
+                "startup_timeout_sec": 120,
+                "tool_timeout_sec": 300,
+            },
             "exa": {"url": "https://mcp.exa.ai/mcp"},
             "xiaoqing_interview": {
                 "url": "https://interview.hr.startask.net/api/mcp",
@@ -967,7 +977,7 @@ def test_run_setup_mcp_adds_only_fully_configured_optional_servers(tmp_path: Pat
                 "CEO_XIAOQING_MCP_ARGS_JSON": "[]",
             },
         )
-    ] == ["exa", "memory_connector", "xiaoqing_interview"]
+    ] == ["ai_services", "exa", "memory_connector", "xiaoqing_interview"]
 
 
 def test_run_setup_cli_components_runs_bootstrap_script(monkeypatch, tmp_path: Path):
@@ -1190,6 +1200,11 @@ def test_run_setup_mcp_uses_os_service_path_and_redacts_output(
     assert event.status == "done"
     assert json.loads(service_config.read_text(encoding="utf-8")) == {
         "servers": {
+            "ai_services": {
+                "url": "https://ai-services.preseen.ai/mcp",
+                "startup_timeout_sec": 120,
+                "tool_timeout_sec": 300,
+            },
             "exa": {"url": "https://mcp.exa.ai/mcp"},
             "xiaoqing_interview": {
                 "url": "https://interview.hr.startask.net/api/mcp",
@@ -1304,6 +1319,7 @@ def test_run_setup_mcp_blank_submissions_preserve_persisted_optional_servers(
         (tmp_path / "data/config/service-mcp.json").read_text(encoding="utf-8")
     )
     assert set(manifest["servers"]) == {
+        "ai_services",
         "exa",
         "memory_connector",
         "xiaoqing_interview",
@@ -1329,6 +1345,11 @@ def test_run_setup_mcp_reports_missing_memory_url(monkeypatch, tmp_path: Path):
     manifest = tmp_path / "data/config/service-mcp.json"
     assert json.loads(manifest.read_text(encoding="utf-8")) == {
         "servers": {
+            "ai_services": {
+                "url": "https://ai-services.preseen.ai/mcp",
+                "startup_timeout_sec": 120,
+                "tool_timeout_sec": 300,
+            },
             "exa": {"url": "https://mcp.exa.ai/mcp"},
             "xiaoqing_interview": {
                 "url": "https://interview.hr.startask.net/api/mcp",

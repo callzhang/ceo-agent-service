@@ -1937,6 +1937,9 @@ def test_current_schema_initialization_preserves_delete_journal_mode(
         "pragma main.foreign_key_list",
         "pragma main.index_list",
         "pragma main.index_xinfo",
+        # The read-schema cache compares the file's schema version.
+        "pragma database_list",
+        "pragma main.schema_version",
     )
     rejected = [
         statement

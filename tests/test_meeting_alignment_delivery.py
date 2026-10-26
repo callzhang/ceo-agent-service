@@ -1,3 +1,4 @@
+import json
 from hashlib import sha256
 
 import pytest
@@ -34,6 +35,21 @@ class _MemoryPostfixStore:
         self.targets[key] = target
         return prepared
 
+    def resolve_meeting_alignment_delivery_key(self, delivery_key, *, target_kind, target_id):
+        legacy_key = delivery_key.strip()
+        key = ("dingtalk", legacy_key)
+        target = (target_kind, target_id.strip())
+        bound = self.targets.get(key)
+        prepared = self.messages.get(key)
+        if bound == target and prepared is not None:
+            return legacy_key
+        if bound is not None and prepared is None:
+            raise ValueError("meeting prepared target binding conflicts")
+        if bound is None and (prepared is not None or key in self.receipts):
+            raise ValueError("meeting prepared target is unverified")
+        target_json = json.dumps({"kind": target_kind, "id": target[1]}, sort_keys=True)
+        return f"{legacy_key}:target:{sha256(target_json.encode()).hexdigest()}"
+
     def verify_meeting_alignment_target(self, delivery_key, *, target_kind, target_id):
         if self.targets.get(("dingtalk", delivery_key)) != (target_kind, target_id.strip()):
             raise ValueError("meeting prepared target binding conflicts")
@@ -56,7 +72,7 @@ class _MemoryPostfixStore:
     def get_outbound_postfix_receipt(self, channel, delivery_key):
         return self.receipts.get((channel, delivery_key))
 
-    def record_outbound_postfix_receipt(self, channel, delivery_key, provider_result):
+    def record_outbound_postfix_receipt(self, channel, delivery_key, provider_result, *, operation):
         return self.receipts.setdefault((channel, delivery_key), provider_result)
 
 
@@ -511,7 +527,7 @@ def test_changed_prose_recovers_confirmed_primary_without_resending(tmp_path):
     prepared = sender.prepare_meeting_alignment(target_kind="user", target_id="u-a",
         delivery_key="confirmed-original", body="Original delivered body")
     store.record_outbound_postfix_receipt("dingtalk", "confirmed-original",
-        {"result": {"openMessageId": "original-message"}})
+        {"result": {"openMessageId": "original-message"}}, operation="send_message")
     result = deliver_meeting_alignment(decision, source, dws,
         message_sender=sender, delivery_key="confirmed-original")
     assert result.message_text == prepared.final_body
@@ -563,9 +579,18 @@ def test_recovery_never_borrows_receipt_for_a_different_target(tmp_path, slot):
     else:
         payload["sensitive_private_message"]["target"] = payload["target"]
     changed = MeetingAlignmentDecision.model_validate(payload)
-    with pytest.raises(MeetingDeliveryError, match="target"):
+    if slot == "primary":
+        # A changed primary target gets its own target-scoped delivery key: it never
+        # reuses the first target's prepared message or receipt, so it is a new
+        # delivery and the two original sends stay untouched.
         deliver_meeting_alignment(changed, meeting_source(), dws, message_sender=sender, delivery_key="target-binding")
-    assert len(dws.sent) == 2
+        assert len(dws.sent) > 2
+    else:
+        # The sensitive part keeps its key derived from the bound primary key, so a
+        # different recipient for it is refused before any send.
+        with pytest.raises(MeetingDeliveryError, match="target binding conflicts"):
+            deliver_meeting_alignment(changed, meeting_source(), dws, message_sender=sender, delivery_key="target-binding")
+        assert len(dws.sent) == 2
 
 
 def test_legacy_prepared_target_is_not_backfilled_from_a_new_decision(tmp_path):
@@ -575,7 +600,7 @@ def test_legacy_prepared_target_is_not_backfilled_from_a_new_decision(tmp_path):
     decision = send_decision(target="direct", mention_names=[]).model_copy(update={"audience_scope": "business"})
     body = meeting_alignment_delivery.meeting_followup_message(decision, meeting_source())
     prepared = sender.prepare(channel="dingtalk", delivery_key="legacy", body=body)
-    with pytest.raises(MeetingDeliveryError, match="target is unverified"):
+    with pytest.raises(ValueError, match="target is unverified"):
         deliver_meeting_alignment(decision, meeting_source(), dws, message_sender=sender, delivery_key="legacy")
     assert store.get_outbound_postfix("dingtalk", "legacy") == prepared
     assert store.get_service_state("meeting_delivery_target:v1:dingtalk:legacy") is None
@@ -1418,7 +1443,7 @@ def test_cross_version_prepared_title_is_never_resent(confirmed):
     )
     if confirmed:
         receipt = {"result": {"openMessageId": "original-confirmed"}}
-        store.record_outbound_postfix_receipt("dingtalk", key, receipt)
+        store.record_outbound_postfix_receipt("dingtalk", key, receipt, operation="send_message")
         result = deliver_meeting_alignment(decision, source, dws,
             message_sender=sender, delivery_key=key)
         assert result.send_result == receipt

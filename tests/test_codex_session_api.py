@@ -5,9 +5,8 @@ from fastapi import FastAPI
 from fastapi.testclient import TestClient
 
 from app.action_storage import insert_action
-from app.run_storage import insert_run
-from app.store import AutoReplyStore
-from app.task_storage import REPLY_TASK_SQL, task_physical_id
+from app.store import REPLY_TASK_SQL, AutoReplyStore
+from tests.support.native_run_rows import insert_run_row
 from app.web_api.attempts import _runtime_payload
 from app.web_api.registration import register_console_routes
 
@@ -45,9 +44,9 @@ def _seed_task_history(store: AutoReplyStore) -> tuple[int, int]:
             ).fetchone()[0]
         )
         historical_audit_run_id = int(
-            insert_run(
-                db, 'agent_runs', {
-                    'task_id': task_physical_id(db, 'reply_tasks', task_id),
+            insert_run_row(
+                db, {
+                    'task_id': task_id,
                     'execution_generation': 'historical-generation',
                     'role': 'audit',
                     'status': 'completed',
@@ -56,9 +55,9 @@ def _seed_task_history(store: AutoReplyStore) -> tuple[int, int]:
             ).lastrowid
         )
         current_consumer_run_id = int(
-            insert_run(
-                db, 'agent_runs', {
-                    'task_id': task_physical_id(db, 'reply_tasks', task_id),
+            insert_run_row(
+                db, {
+                    'task_id': task_id,
                     'execution_generation': 'current-generation',
                     'role': 'consumer',
                     'status': 'completed',
@@ -67,9 +66,9 @@ def _seed_task_history(store: AutoReplyStore) -> tuple[int, int]:
             ).lastrowid
         )
         current_audit_run_id = int(
-            insert_run(
-                db, 'agent_runs', {
-                    'task_id': task_physical_id(db, 'reply_tasks', task_id),
+            insert_run_row(
+                db, {
+                    'task_id': task_id,
                     'execution_generation': 'current-generation',
                     'role': 'audit',
                     'status': 'completed',
