@@ -78,7 +78,8 @@ def test_consumer_core_prompt_contains_only_runtime_invariants():
     assert text.startswith("## Application Result Contract\n")
     assert "## Dynamic Skill" in text
     assert "proposal_json" not in text
-    assert "stable action_identity" in text
+    assert "a later revision may write a different one" in text.lower()
+    assert "stable action_identity" not in text
     assert "result.values" not in text
     assert "dws auth status.user_id" not in text
     assert "without start/end filters" not in text
@@ -89,6 +90,9 @@ def test_audit_core_prompt_contains_only_runtime_invariants():
     assert text.startswith("## Application Result Contract\n")
     assert "## Dynamic Skill" in text
     assert "candidate_digest" in text
+    # Derek 2026-10-26: a changed action_identity is not, by itself, a reason to return a candidate.
+    assert "do not return or reject a candidate only because an action_identity differs" in text.lower()
+    assert "preserve action_identity" not in text.lower()
     assert "without executing actions" in text
     assert "reusable rule choices" in text
     assert "current-instance decision" in text

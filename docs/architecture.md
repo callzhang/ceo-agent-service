@@ -1275,10 +1275,11 @@ resolution。相同规则也适用于同一 trigger 已有更晚的完成或无�
 
 ### 外部动作身份、顺序与发送投影
 
-Consumer 为每个 ProposedAction 返回 `action_identity`。同一业务对象中，同一预期外部
-结果在 feedback revision、服务重试和新 agent run 之间必须复用该身份；预期结果、目标或
-用途改变时必须使用新身份。服务根据 `business_object_key + action_identity + operation + target`
-生成 `external_action_key`，而不是用 run id 或 revision 做去重。
+Consumer 为每个 ProposedAction 返回 `action_identity`，只是同一提案内唯一的短标签。后续 revision 或
+新 agent run 可以写不同的标识，Audit 不得仅因标识与前一版不同而退回或驳回（Derek 2026-10-26：
+一封消息正常只发一次，发送与回执都有轨迹记录；任务 417543 曾因模型逐版重写标识而被 Audit 退满修订次数）。
+服务根据 `business_object_key + action_identity + operation + target` 生成 `external_action_key`，而不是用
+run id 或 revision 做去重；已批准并持久化的计划按其自身标识执行和重试，不受后续候选影响。
 
 钉钉消息 target 在 wire 边界只使用一套服务字段：群发使用 `conversation_id`，引用回复
 同时使用 `conversation_id` 与 `message_id`，单聊使用 `open_dingtalk_id` 等稳定接收人
@@ -1320,9 +1321,9 @@ agent run 通过 `sent_reply_observers` 关联到它。History 因此既能显�
 
 钉钉消息在交给 Audit 前生成带服务后缀的最终候选正文。这个准备记录按
 `execution_generation + proposal_revision` 区分：同一 revision 的进程重试复用同一正文，Audit
-要求修改后生成的下一 revision 使用修正后的新正文。外部动作的 `action_identity` 和
-`external_action_key` 仍跨 revision 保持稳定；如果 provider 成功结果已经存在，后续 revision
-复用该成功结果而不再次发送。
+要求修改后生成的下一 revision 使用修正后的新正文。外部动作的 `action_identity` 不再要求跨 revision
+保持一致；同一个已批准并持久化的计划重试时仍用它自己的标识，如果它的 provider 成功结果已经存在，
+重试复用该成功结果而不再次发送。
 
 `sent_replies` 和 provider 成功结果的优先级高于后来失败的 attempt current projection。即使
 结构化结果解析、服务重启或后续 Agent turn 失败，下一轮也会收到真实的已发送记录，并把该
