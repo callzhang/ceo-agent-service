@@ -64,10 +64,11 @@ class ExistingReadOnlyEmailStore(EmailStore):
         with self._connect() as db:
             self._validate_durable_state(db)
 
-    def _open_connection(self) -> sqlite3.Connection:
+    def _open_connection(self, *, foreign_keys: bool = True) -> sqlite3.Connection:
         db = sqlite3.connect(self.path.resolve().as_uri() + "?mode=ro", uri=True, timeout=30)
         db.row_factory = sqlite3.Row
         db.execute("pragma busy_timeout=30000")
+        db.execute("pragma foreign_keys = " + ("on" if foreign_keys else "off"))
         return db
 
 _READ_ONLY_UID_COMMANDS = frozenset({"FETCH", "SEARCH"})
