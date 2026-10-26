@@ -81,15 +81,6 @@ def prepare_database_schema_release(root: Path, path: Path, *, recovery_source_p
         from app.state_definitions import state_projection
         with closing(sqlite3.connect(path.resolve().as_uri() + "?mode=ro", uri=True)) as db:
             db.execute("begin")
-            tables = {row[0] for row in db.execute(
-                "select name from main.sqlite_schema where type='table'")}
-            marker = db.execute(
-                f"select value from ({state_projection('service_state')}) where key=?",
-                (VERSION_KEY,),
-            ).fetchone() if "state" in tables else None
-        from app.state_definitions import state_projection
-        with closing(sqlite3.connect(path.resolve().as_uri() + "?mode=ro", uri=True)) as db:
-            db.execute("begin")
             tables = {row[0] for row in db.execute("select name from main.sqlite_schema where type='table'")}
             marker = db.execute(f"select value from ({state_projection('service_state')}) where key=?",
                                 (VERSION_KEY,)).fetchone() if "state" in tables else None
