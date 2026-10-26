@@ -57,9 +57,11 @@ def _seed_with_attempt(store, *, task_id=1):
 class FakeSender:
     def __init__(self):
         self.sent = []
+        self.prepared = []
 
     def send(self, delivery, scope, *, prepared=None):
         self.sent.append(delivery.id)
+        self.prepared.append(prepared)
         return SendOutcome("sent")
 
 
@@ -183,6 +185,77 @@ def test_auto_mode_reuses_exact_audited_candidate_preparation(monkeypatch):
     )
 
     assert count == 1
+    assert sender.sent == [(146, prepared)]
+
+
+def test_failed_delivery_retry_api_reuses_exact_audited_candidate_preparation():
+    candidate = {
+        "task_id": 41,
+        "execution_generation": "generation-9",
+        "current_generation": "generation-9",
+        "proposal_revision": 3,
+        "business_object_key": "reply:melody115:m41",
+        "channel": "wechat",
+        "invalidated_at": "",
+    }
+    action_identity = "wechat:melody115:approved-reply"
+    key = agent_message_delivery_key(
+        business_object_key=candidate["business_object_key"],
+        action_identity=action_identity,
+        execution_generation=candidate["execution_generation"],
+        proposal_revision=candidate["proposal_revision"],
+    )
+    prepared = SimpleNamespace(
+        channel="wechat", delivery_key=key, final_body="审核后的固定消息",
+    )
+    delivery = SimpleNamespace(
+        id=146,
+        task_id=41,
+        account_id="acct-1",
+        target_type="direct",
+        target_id="melody115",
+        conversation_id="melody115",
+        execution_generation="generation-9",
+        evidence={
+            "standard_candidate_id": "401",
+            "standard_review_id": "702",
+            "standard_action_identity": action_identity,
+        },
+        reply_text=prepared.final_body,
+    )
+
+    class Store:
+        @staticmethod
+        def get_wechat_delivery_by_id(delivery_id):
+            return delivery if delivery_id == delivery.id else None
+
+        @staticmethod
+        def get_review_candidate(candidate_id):
+            return candidate if candidate_id == 401 else None
+
+        @staticmethod
+        def get_outbound_postfix(channel, delivery_key):
+            return prepared if (channel, delivery_key) == ("wechat", key) else None
+
+        @staticmethod
+        def get_wechat_reply_scope(*_args):
+            return SimpleNamespace(target_type="direct", binding_status="verified")
+
+        @staticmethod
+        def requeue_expired_wechat_delivery_for_user(delivery_id):
+            assert delivery_id == delivery.id
+            return delivery
+
+    class Sender:
+        def __init__(self):
+            self.sent = []
+
+        def send(self, item, _scope, *, prepared):
+            self.sent.append((item.id, prepared))
+            return SendOutcome("sent")
+
+    sender = Sender()
+    assert service.retry_expired_wechat_delivery(Store(), sender, 146) == "sent"
     assert sender.sent == [(146, prepared)]
 
 
@@ -427,6 +500,7 @@ def test_approve_sends_specific_pending(tmp_path):
     sender = FakeSender()
     assert service.approve_wechat_delivery(store, sender, d.id) == "sent"
     assert sender.sent == [d.id]
+    assert sender.prepared[0].final_body == d.reply_text
 
 
 def test_reject_marks_failed_without_send(tmp_path):
@@ -552,8 +626,9 @@ def test_user_can_retry_expired_pre_action_wechat_delivery(tmp_path):
     )
 
     class RetryingSender(FakeSender):
-        def send(self, item, scope):
+        def send(self, item, scope, *, prepared=None):
             self.sent.append(item.id)
+            self.prepared.append(prepared)
             store.mark_wechat_delivery_sending(item.id)
             store.set_wechat_delivery_status(item.id, "sent")
             return SendOutcome("sent")
@@ -561,8 +636,31 @@ def test_user_can_retry_expired_pre_action_wechat_delivery(tmp_path):
     sender = RetryingSender()
     assert service.retry_expired_wechat_delivery(store, sender, delivery.id) == "sent"
     assert sender.sent == [delivery.id]
+    assert sender.prepared[0].final_body == delivery.reply_text
     assert store.get_wechat_delivery_for_task(1).status == "sent"
     assert store.get_reply_attempt(attempt_id).send_status == "sent"
+
+
+def test_expired_delivery_retry_without_exact_preparation_does_not_requeue(
+    tmp_path, monkeypatch,
+):
+    store = AutoReplyStore(tmp_path / "w.sqlite3")
+    delivery, _attempt_id = _seed_with_attempt(store)
+    _exhaust_pre_action_retries(store, delivery.id, "target_open_failed")
+    store.skip_exhausted_stale_wechat_delivery(
+        delivery.id,
+        expected_execution_generation=delivery.execution_generation,
+        reason="expired_after_target_open_retries",
+        inactive_before="2999-01-01 00:00:00",
+    )
+    monkeypatch.setattr(store, "get_outbound_postfix", lambda *_args: None)
+    sender = FakeSender()
+
+    with pytest.raises(ValueError, match="prepared WeChat delivery is required"):
+        service.retry_expired_wechat_delivery(store, sender, delivery.id)
+
+    assert store.get_wechat_delivery_by_id(delivery.id).status == "skipped"
+    assert sender.sent == []
 
 
 def test_user_can_retry_wechat_delivery_after_readback_proves_absence(tmp_path):
@@ -576,8 +674,9 @@ def test_user_can_retry_wechat_delivery_after_readback_proves_absence(tmp_path):
     )
 
     class RetryingSender(FakeSender):
-        def send(self, item, scope):
+        def send(self, item, scope, *, prepared=None):
             self.sent.append(item.id)
+            self.prepared.append(prepared)
             store.mark_wechat_delivery_sending(item.id)
             store.set_wechat_delivery_status(item.id, "sent")
             return SendOutcome("sent")
@@ -590,6 +689,7 @@ def test_user_can_retry_wechat_delivery_after_readback_proves_absence(tmp_path):
         == "sent"
     )
     assert sender.sent == [delivery.id]
+    assert sender.prepared[0].final_body == delivery.reply_text
     assert store.get_wechat_delivery_for_task(1).status == "sent"
     assert store.get_reply_attempt(attempt_id).send_status == "sent"
 

@@ -297,7 +297,10 @@ def approve_wechat_delivery(store, sender, delivery_id: int) -> str:
     scope = _scope_for_delivery(store, delivery)
     if scope is None:
         raise ValueError("no reply scope for delivery target")
-    return sender.send(delivery, scope).status
+    prepared = _prepared_delivery_message(store, delivery)
+    if prepared is None:
+        raise ValueError("prepared WeChat delivery is required")
+    return sender.send(delivery, scope, prepared=prepared).status
 
 
 def retry_expired_wechat_delivery(store, sender, delivery_id: int) -> str:
@@ -308,8 +311,11 @@ def retry_expired_wechat_delivery(store, sender, delivery_id: int) -> str:
     scope = _scope_for_delivery(store, previous)
     if scope is None:
         raise ValueError("no reply scope for delivery target")
+    prepared = _prepared_delivery_message(store, previous)
+    if prepared is None:
+        raise ValueError("prepared WeChat delivery is required")
     delivery = store.requeue_expired_wechat_delivery_for_user(delivery_id)
-    return sender.send(delivery, scope).status
+    return sender.send(delivery, scope, prepared=prepared).status
 
 
 def retry_readback_absent_wechat_delivery(store, sender, delivery_id: int) -> str:
@@ -320,8 +326,11 @@ def retry_readback_absent_wechat_delivery(store, sender, delivery_id: int) -> st
     scope = _scope_for_delivery(store, previous)
     if scope is None:
         raise ValueError("no reply scope for delivery target")
+    prepared = _prepared_delivery_message(store, previous)
+    if prepared is None:
+        raise ValueError("prepared WeChat delivery is required")
     delivery = store.requeue_readback_absent_wechat_delivery_for_user(delivery_id)
-    return sender.send(delivery, scope).status
+    return sender.send(delivery, scope, prepared=prepared).status
 
 
 def reject_wechat_delivery(store, delivery_id: int) -> None:
