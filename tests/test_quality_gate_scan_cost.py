@@ -5,24 +5,26 @@ from datetime import datetime, timezone
 import pytest
 
 from app import leak_check, quality_gate
-from app.run_storage import create_run_schema, insert_run
-from app.action_storage import create_action_schema, insert_action, reply_action_projection
+from app.store import AutoReplyStore
+from tests.support.native_run_rows import insert_runtime_attempt_row
 
 
-def runtime_history(*, count=30, model="model"):
-    db = sqlite3.connect(":memory:")
-    create_run_schema(db)
+def runtime_history(tmp_path, *, count=30, model="model"):
+    store = AutoReplyStore(tmp_path / "runtime-history.sqlite3")
+    db = store._open_connection()
+    db.row_factory = sqlite3.Row
     for index in range(count):
-        insert_run(db, 'agent_runtime_attempts', {
+        insert_runtime_attempt_row(db, {
             'workload_kind': 'task', 'workload_key': str(index), 'attempt_number': 1,
             'status': 'completed', 'route_name': 'route', 'runtime_kind': 'runtime',
             'credential_mode': 'oauth', 'model': model, 'session_id': 'session',
             'transcript_reference': 'session:reference',
         })
+    db.commit()
     return db
 
 
-def test_runtime_history_resolves_path_configuration_once_per_scan(monkeypatch):
+def test_runtime_history_resolves_path_configuration_once_per_scan(monkeypatch, tmp_path):
     calls = []
 
     def prefixes():
@@ -31,14 +33,14 @@ def test_runtime_history_resolves_path_configuration_once_per_scan(monkeypatch):
 
     monkeypatch.setattr(leak_check, "forbidden_path_prefixes", prefixes)
     monkeypatch.setattr(quality_gate, "forbidden_path_prefixes", prefixes, raising=False)
-    with runtime_history() as db:
+    with runtime_history(tmp_path) as db:
         issues = []
         quality_gate._check_runtime_attempt_invariants(db, issues)
     assert issues == []
     assert len(calls) == 1
 
 
-def test_runtime_history_checks_identical_values_once_per_scan(monkeypatch):
+def test_runtime_history_checks_identical_values_once_per_scan(monkeypatch, tmp_path):
     credential_calls = Counter()
     path_calls = Counter()
     credential_check = quality_gate.contains_credential
@@ -54,7 +56,7 @@ def test_runtime_history_checks_identical_values_once_per_scan(monkeypatch):
 
     monkeypatch.setattr(quality_gate, "contains_credential", credential)
     monkeypatch.setattr(quality_gate, "contains_local_runtime_leak", local_path)
-    with runtime_history() as db:
+    with runtime_history(tmp_path) as db:
         issues = []
         quality_gate._check_runtime_attempt_invariants(db, issues)
 
@@ -73,18 +75,18 @@ def test_runtime_history_checks_identical_values_once_per_scan(monkeypatch):
 @pytest.mark.parametrize("unsafe_value", [
     "Bearer synthetic-test-credential", "/tmp/runtime-evidence",
 ])
-def test_repeated_unsafe_values_still_count_every_runtime_row(column, unsafe_value):
-    with runtime_history(count=4) as db:
-        db.execute(f"update runs set {column}=?", (unsafe_value,))
+def test_repeated_unsafe_values_still_count_every_runtime_row(column, unsafe_value, tmp_path):
+    with runtime_history(tmp_path, count=4) as db:
+        db.execute(f"update runtime_attempts set {column}=?", (unsafe_value,))
         issues = []
         quality_gate._check_runtime_attempt_invariants(db, issues)
 
     assert [(issue.code, issue.count) for issue in issues] == [("runtime_secret_leak", 4)]
 
 
-def test_runtime_history_reads_new_configuration_on_each_scan(monkeypatch):
+def test_runtime_history_reads_new_configuration_on_each_scan(monkeypatch, tmp_path):
     monkeypatch.setenv("CEO_FORBIDDEN_PATH_PREFIXES", "/first-private/")
-    with runtime_history(count=1, model="/first-private/model") as db:
+    with runtime_history(tmp_path, count=1, model="/first-private/model") as db:
         first = []
         quality_gate._check_runtime_attempt_invariants(db, first)
         monkeypatch.setenv("CEO_FORBIDDEN_PATH_PREFIXES", "/second-private/")
@@ -178,30 +180,21 @@ def test_latest_reply_candidates_match_original_window_partitions_and_order(monk
 
 @pytest.mark.parametrize("history_shape", ["terminal", "repeated_candidates", "many_candidate_keys"])
 def test_latest_reply_candidates_bound_terminal_and_repeated_candidate_history(
-    monkeypatch, history_shape,
+    monkeypatch, history_shape, tmp_path,
 ):
-    db = sqlite3.connect(":memory:")
-    db.execute("create table tasks(id integer primary key,record_type text)")
-    create_run_schema(db)
-    create_action_schema(db, include_receipts=True, include_postfix=True,
-                         include_delivery=True, include_reply=True,
-                         reply_variant="fresh_memory_fk", compact_payload=True)
-    insert_action(db, "reply_attempts", {
-        "id": 1, "conversation_id": "chat", "conversation_title": "Chat",
-        "trigger_message_id": "seed", "trigger_sender": "Sender", "trigger_text": "text",
-        "action": "send_reply", "sensitivity_kind": "normal", "send_status": "sent",
-        "updated_at": "2026-10-14 00:00:00",
-    })
-    cursor = db.execute("select * from (" + reply_action_projection("reply_attempts", "fresh_memory_fk") + ") where id=1")
-    payload = dict(zip([column[0] for column in cursor.description], cursor.fetchone(), strict=True))
+    store = AutoReplyStore(tmp_path / "reply-history.sqlite3")
     repeated_candidates = history_shape == "repeated_candidates"
     history_count = 200 if repeated_candidates else 2000
     first_failure = history_count - 48 if history_shape == "many_candidate_keys" else history_count + 1
-    for identity in range(2, history_count + 2):
-        item = {**payload, "id": identity, "trigger_message_id": "seed" if repeated_candidates else f"message-{identity}"}
-        if repeated_candidates or identity >= first_failure:
-            item["send_status"] = "failed"
-        insert_action(db, "reply_attempts", item)
+    for identity in range(1, history_count + 2):
+        failed = identity >= 2 and (repeated_candidates or identity >= first_failure)
+        trigger = "seed" if repeated_candidates or identity == 1 else f"message-{identity}"
+        store.record_reply_attempt(
+            conversation_id="chat", conversation_title="Chat",
+            trigger_message_id=trigger, trigger_sender="Sender", trigger_text="text",
+            action="send_reply", sensitivity_kind="normal",
+            send_status="failed" if failed else "sent",
+        )
     cte = _current_latest_cte(monkeypatch)
     steps = 0
 
@@ -210,6 +203,7 @@ def test_latest_reply_candidates_bound_terminal_and_repeated_candidate_history(
         steps += 100
         return 0
 
+    db = store._open_connection()
     db.set_progress_handler(progress, 100)
     rows = db.execute(cte + """select id,channel,conversation_id,trigger_message_id,
         action,send_status,updated_at,reviewed_at,resolved_at,agent_run_id
