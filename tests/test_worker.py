@@ -6081,12 +6081,6 @@ def test_orchestration_finalize_is_atomic_after_generation_switch(
 
 
 
-@pytest.mark.skip(reason="obsolete receipt-ledger recovery contract")
-
-
-@pytest.mark.skip(reason="obsolete receipt-ledger recovery contract")
-
-
 def test_consume_once_retries_execution_generation_mismatch(
     tmp_path: Path, monkeypatch
 ):
@@ -17395,68 +17389,6 @@ def test_mail_reply_action_executes_before_chat_and_persists_result(
     assert attempt.action == "agent_run"
     assert attempt.send_status == "completed"
     assert worker.store.get_agent_run(1).status == "completed"
-
-
-@pytest.mark.skip(reason="obsolete side-effect receipt retry contract")
-def test_retry_after_chat_failure_does_not_send_mail_twice(tmp_path: Path, monkeypatch):
-    trigger = message("@Alex Chen(明哥) 审批并回复这封邮件")
-    dws = FakeDws(
-        [conversation()], {"cid-1": [trigger]}, send_error=DwsError("chat down")
-    )
-    decision = CodexDecision(
-        action=CodexAction.SEND_REPLY,
-        reply_text="邮件已审阅并回复。",
-        system_actions=[
-            {
-                "type": "dws_mail_reply",
-                "mailbox": "derek@example.com",
-                "message_id": "mail-1",
-                "subject": "Re: 评奖结果",
-                "content": "确认无误，可以发布。",
-            }
-        ],
-    )
-    worker = make_worker(tmp_path, dws, FakeCodex(decision), monkeypatch)
-    script_agent_result(
-        worker,
-        explicit_agent_result(
-            ScriptOutcome.FAILED,
-            "Mail completed, but the chat reply outcome is unknown.",
-            code="chat_result_unknown",
-        ),
-        receipts=(execution_receipt("mail-1", "mail message reply", "d" * 64),),
-    )
-
-    worker.run_once()
-    assert dws.mail_replies == []
-    attempt = worker.store.get_reply_attempt(1)
-    assert attempt is not None
-    assert attempt.action == "agent_run"
-    assert attempt.send_status == "failed"
-    assert attempt.send_error == "chat_result_unknown"
-    run = worker.store.get_agent_run(1)
-    assert run is not None
-    assert run.status == "unknown"
-
-    assert worker.store.count_reply_attempts() == 1
-    persisted = worker.store.get_agent_run(run.id)
-    assert persisted is not None and persisted.status == "unknown"
-    task = worker.store.get_reply_task(run.reply_task_id)
-    assert task is not None and task.status == "pending"
-    assert (
-        _get_audit_run(
-            worker.store,
-            run.reply_task_id,
-            run.execution_generation,
-        ).id
-        == run.id
-    )
-
-
-
-
-
-
 
 
 def test_historical_audit_claim_without_canonical_provider_receipt_does_not_project_send(tmp_path):

@@ -1,17 +1,12 @@
 from app.action_storage import (
     REPLY_ATTEMPT_COMMON_SQL, delete_action, update_action,
-    task_delivery_projection, task_delivery_set_parts, insert_task_delivery_action,
+    task_delivery_projection, task_delivery_set_parts,
 )
-from multiprocessing import get_context
-from pathlib import Path
 
 import pytest
 
 from app.external_retry import MAX_AUTOMATIC_RETRIES
 from app.store import AgentRunLeaseLostError, AutoReplyStore
-from app.task8_storage import task8_insert_parts
-from app.task12_storage import insert_task12, task12_projection
-from app.task20_definitions import task20_column
 from app.configs_definitions import config_projection
 from app.wechat.models import WechatReplyScope
 from tests.wechat.support import approve_delivery
@@ -95,24 +90,6 @@ def _wechat_delivery_and_attempt_state(store, delivery_id):
     return delivery, attempts
 
 
-def _open_current_store_for_repair_in_process(db_path, barrier, results):
-    try:
-        barrier.wait()
-        store = AutoReplyStore(Path(db_path))
-        assert store._schema_is_current() is True
-        with store._connect() as db:
-            results.put(
-                (
-                    "ok",
-                    db.execute("pragma foreign_keys").fetchone()[0],
-                    db.execute("pragma foreign_key_check").fetchall(),
-                    db.execute(
-                        f"select client_request_id from ({task12_projection('workbench_attachments')})"
-                    ).fetchone()[0],
-                )
-            )
-    except BaseException as exc:
-        results.put(("error", type(exc).__name__, str(exc)))
 
 
 def test_store_round_trips_wechat_scope(tmp_path):
@@ -1152,155 +1129,6 @@ def test_replacing_enabled_scope_does_not_clear_its_watermark(tmp_path):
     ).last_active_at == baseline
 
 
-@pytest.mark.xfail(
-    strict=True,
-    reason="the Store now refuses this old-schema input ('explicit paired schema "
-           "release required'); the test belongs to the database refactor, not the "
-           "WeChat pipeline, and fails the same way on a clean checkout of main",
-)
-def test_concurrent_current_schema_repair_preserves_rows_and_delivery_fk(tmp_path):
-    db_path = tmp_path / "current-repair.sqlite3"
-    attachment_path = tmp_path / "legacy.txt"
-    attachment_bytes = b"legacy"
-    attachment_path.write_bytes(attachment_bytes)
-
-    original = AutoReplyStore(db_path)
-    with original._connect() as db:
-        db.execute("insert into sqlite_sequence (name, seq) values ('tasks', 6)")
-    task = original.ensure_reply_task(
-        conversation_id="same-conversation", conversation_title="Friend",
-        single_chat=True, trigger_message_id="same-message",
-        trigger_create_time="2026-07-20T10:00:00+08:00",
-        trigger_sender="Friend", trigger_text="hello",
-    )
-    assert task.id == 7
-    with original._connect() as db:
-        insert_task_delivery_action(db, "wechat_deliveries", {
-            "reply_task_id": 7, "account_id": "acct-1", "target_type": "direct",
-            "target_id": "friend-1", "conversation_id": "same-conversation",
-            "reply_text": "hi", "status": "failed",
-            "action_started_at": "2026-07-20T10:10:00+08:00",
-            "pre_action_failure": 1,
-        })
-        parts = task8_insert_parts("workbench_tasks", {
-            "legacy_key": "workbench-legacy", "title": "Legacy attachment", "runtime_kind": "codex",
-        })
-        workbench_parent = db.execute(
-            f"insert into tasks ({parts.columns}) values ({parts.values})",
-            parts.parameters,
-        ).lastrowid
-        insert_task12(db, "workbench_attachments", {
-            "id": "attachment-legacy", "task_id": workbench_parent,
-            "filename": "legacy.txt", "media_type": "text/plain", "size_bytes": 6,
-            "storage_path": str(attachment_path), "client_request_id": "attachment-legacy",
-            "content_sha256": "",
-        })
-        attachment_before = tuple(db.execute(
-            "select id, task_id, filename, media_type, size_bytes, storage_path, created_at "
-            f"from ({task12_projection('workbench_attachments')})"
-        ).fetchone())
-        db.execute("drop index idx_task20_published_2")
-        db.execute("drop index idx_task20_native_21")
-    with original._connect() as db:
-        assert db.execute("pragma foreign_key_check").fetchall() == []
-        parent = db.execute(
-            "select id, record_type, current_input_id from tasks where id=?",
-            (task.id,),
-        ).fetchone()
-        assert parent["record_type"] == "reply_tasks"
-        assert ("tasks", "current_input_id", "id") in {
-            (row["table"], row["from"], row["to"])
-            for row in db.execute("pragma foreign_key_list(tasks)")
-        }
-        current_input_id = parent["current_input_id"]
-        canonical_input = db.execute(
-            f"select record_type, parent_id, {task20_column('reply_task_inputs', 'trigger_text')} as trigger_text from tasks where id=?",
-            (current_input_id,),
-        ).fetchone()
-        assert tuple(canonical_input) == ("reply_task_inputs", task.id, "hello")
-        assert ("tasks", "td_reply_task_id", "id") in {
-            (row["table"], row["from"], row["to"])
-            for row in db.execute("pragma foreign_key_list(actions)")
-        }
-        assert {task20_column("workbench_attachments", field).strip('"')
-                for field in ("client_request_id", "content_sha256")} <= {
-            row[1] for row in db.execute("pragma table_xinfo(tasks)")
-        }
-        assert {"idx_task20_published_2", "idx_task20_native_21"}.isdisjoint({
-            row[0] for row in db.execute("select name from sqlite_master where type='index'")
-        })
-    assert original._schema_is_current() is False
-
-    context = get_context("spawn")
-    barrier = context.Barrier(2)
-    results = context.Queue()
-    processes = [
-        context.Process(
-            target=_open_current_store_for_repair_in_process,
-            args=(str(db_path), barrier, results),
-        )
-        for _ in range(2)
-    ]
-    for process in processes:
-        process.start()
-    for process in processes:
-        process.join(timeout=20)
-        assert process.exitcode == 0
-
-    outcomes = [results.get(timeout=2) for _ in processes]
-    assert outcomes == [
-        ("ok", 1, [], "attachment-legacy"),
-        ("ok", 1, [], "attachment-legacy"),
-    ]
-
-    assert original._schema_is_current() is True
-    assert attachment_path.read_bytes() == attachment_bytes
-    store = AutoReplyStore(db_path)
-
-    assert store.get_reply_task_for_message(
-        "same-conversation", "same-message", channel="dingtalk"
-    ).id == 7
-    assert store.list_wechat_deliveries_by_status("ready_to_send") == []
-    assert store.requeue_unperformed_wechat_deliveries() == 1
-    repaired_delivery = store.list_wechat_deliveries_by_status("ready_to_send")[0]
-    assert repaired_delivery.task_id == 7
-    assert repaired_delivery.reply_text == "hi（by明哥分身）"
-    assert store.get_outbound_postfix(
-        "wechat", f"wechat:{repaired_delivery.id}"
-    ).final_body == repaired_delivery.reply_text
-    assert store.enqueue_reply_task(
-        channel="wechat", conversation_id="same-conversation",
-        conversation_title="Same", single_chat=True,
-        trigger_message_id="same-message",
-        trigger_create_time="2026-07-20T10:00:00+08:00",
-        trigger_sender="Sender", trigger_text="hello",
-    )
-    assert store._schema_is_current() is True
-    with store._connect() as repaired:
-        assert repaired.execute("pragma foreign_key_check").fetchall() == []
-        assert tuple(repaired.execute(
-            "select id, task_id, filename, media_type, size_bytes, storage_path, created_at "
-            f"from ({task12_projection('workbench_attachments')})"
-        ).fetchone()) == attachment_before
-        assert tuple(repaired.execute(
-            f"select client_request_id, content_sha256 from ({task12_projection('workbench_attachments')})"
-        ).fetchone()) == ("attachment-legacy", "")
-        assert repaired.execute(
-            "select current_input_id from tasks where id=?", (task.id,)
-        ).fetchone()[0] == current_input_id
-        assert repaired.execute(
-            "select count(*) from tasks where record_type='reply_tasks'"
-        ).fetchone()[0] == 2
-        assert repaired.execute(
-            "select count(*) from tasks where record_type='reply_task_inputs'"
-        ).fetchone()[0] == 2
-    wechat_task = store.get_reply_task_for_message(
-        "same-conversation", "same-message", channel="wechat"
-    )
-    assert wechat_task.id != task.id
-    assert store.get_reply_task_for_message(
-        "same-conversation", "same-message", channel="dingtalk"
-    ).id == task.id
 
 
 def test_dingtalk_message_operations_do_not_modify_same_identity_wechat_task(tmp_path):

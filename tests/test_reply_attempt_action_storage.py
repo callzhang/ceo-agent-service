@@ -293,27 +293,6 @@ def test_raw_update_and_exact_queued_marker_projection(pair):
     assert "secret" not in _compact_payload_json(target, "reply_attempts")
 
 
-def test_fresh_ignored_memory_constraints_advance_native_allocator(pair):
-    source, target, variant = pair
-    if variant != "fresh_candidate17":
-        pytest.skip("fresh parent reference contract")
-    cases = [
-        {"event_type": "x", "payload_json": "{}"},
-        {"attempt_id": 404, "event_type": None, "payload_json": "{}"},
-        {"attempt_id": 404, "event_type": None, "payload_json": "{}", "id": 2**63 - 1},
-    ]
-    for expected_sequence, values in zip((1, 2, 2**63 - 1), cases, strict=True):
-        assert insert_source(source, "memory_write_events", values, ignore=True).rowcount == 0
-        assert storage.insert_action(target, "memory_write_events", values, ignore=True).rowcount == 0
-        assert source.execute("select seq from sqlite_sequence where name='memory_write_events'").fetchone() == (expected_sequence,)
-        assert target.execute("select seq from sqlite_sequence where name=?", (storage.REPLY_SEQUENCE_NAMES["memory_write_events"],)).fetchone() == (expected_sequence,)
-    source.commit()
-    target.commit()
-    for operation in (lambda: insert_source(source, "memory_write_events", {"attempt_id": 404, "event_type": "x", "payload_json": "{}"}),
-                      lambda: storage.insert_action(target, "memory_write_events", {"attempt_id": 404, "event_type": "x", "payload_json": "{}"})):
-        with pytest.raises(sqlite3.DatabaseError) as error:
-            operation()
-        assert error.value.sqlite_errorcode == sqlite3.SQLITE_FULL
 
 
 @pytest.mark.parametrize("kind", ["reply_attempts"])

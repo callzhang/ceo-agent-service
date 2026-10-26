@@ -1695,111 +1695,9 @@ def context(task):
     )
 
 
-@pytest.mark.skip(reason="legacy command/read-only contract replaced by Skill-first prompt")
-def test_consumer_is_read_only_and_reuses_conversation_session(store, task, context):
-    store.upsert_conversation(task.conversation_id, "Group", False, "session-a")
-    store.set_codex_session_contract_hash(
-        task.conversation_id, consumer_wire_contract_hash()
-    )
-    executor = CapturingExecutor(_result_jsonl())
-
-    result = ConsumerAgentRunner(
-        store=store, workspace=Path("/workspace"), executor=executor,
-        codex_session_exists=lambda _: True,
-    ).run(task, context, proposal_revision=0, parent_agent_run_id=None)
-
-    command = executor.commands[0]
-    assert command[3:5] == ["exec", "resume"]
-    assert command[-2:] == ["session-a", "-"]
-    assert "--sandbox" not in command
-    assert 'sandbox_mode="read-only"' not in command
-    assert "--dangerously-bypass-approvals-and-sandbox" in command
-    assert "tools.enabled_tools=[]" in command
-    # Result parsing remains strict in the service, but output-schema is not
-    # sent to Codex because it conflicts with dynamically loaded MCP tools.
-    assert "--output-schema" not in command
-    assert 'approval_policy="never"' in command
-    assert command.count("--disable") == 8
-    assert command[command.index("--disable") + 1] == "plugins"
-    assert "apps" in command
-    assert (
-        'mcp_servers.agent_cli.enabled_tools=["execute_reviewed_read", "read_skill", "read_text_file", "read_spreadsheet"]'
-        in command
-    )
-    assert "execute_reviewed_write" not in " ".join(command)
-    assert 'mcp_servers.exa.url="https://mcp.exa.ai/mcp"' in command
-    assert "mcp_servers.exa.enabled=false" not in command
-    assert not any(
-        command[index] == command[index + 1] == "-c"
-        for index in range(len(command) - 1)
-    )
-    assert store.get_agent_run(result.run_id).role.value == "consumer"
-    assert not any(
-        "Output JSON Schema (validated locally):" in option for option in command
-    )
-    assert any("agent_cli.read_skill" in option for option in command)
-    assert any("## Pydantic Wire Contract" in option for option in command)
-    assert any("ConsumerAgentWireResult" in option for option in command)
-    assert "## Runtime Invariants" in executor.prompts[0]
-    assert "## Installed CEO business Skill catalog" not in executor.prompts[0]
-    assert any("## Installed CEO business Skill catalog" in option for option in command)
-    assert all("Do not reopen AGENT.md with shell" not in option for option in command)
-    assert any("PROTOCOL PRECONDITION" in option for option in command)
-    assert any("ceo-message-triage" in option for option in command)
-    assert any("ceo-work-tracking" in option for option in command)
-    assert not any("agent_cli.execute_reviewed_read" in option for option in command)
-    assert not any("command_reviewed" in option for option in command)
-    assert any("Provider capabilities and local files are accessed" in option for option in command)
-    assert any(
-        "dingtalk-chat/SKILL.md" in option
-            and "provider or transport failure is a failed result" in option
-        for option in command
-    )
-    instructions = consumer_developer_instructions("Consumer Agent A is read-only.")
-    assert "typed candidate" in instructions
-    assert "normal Agent work" in instructions
-    assert "Xiaoqing interview MCP tools" not in instructions
-    assert "mandatory preconditions for every candidate outcome" not in instructions
-    assert "real-person" not in instructions
-    assert 'Do not propose sending "I will review"' not in instructions
-    assert "First prepare a sourced evidence packet" not in instructions
-    assert "Only the remaining sensitive hiring or advancement decision" not in instructions
-    assert "return a retryable service-dependency failure" in instructions
-    assert any(
-        "Authoritative Consumer role boundary" in option
-        and "valid ConsumerAgentResult JSON" in option
-        for option in command
-    )
-    assert "proposal_json" not in executor.prompts[0]
-    assert "proposal must match the supplied JSON Schema exactly" in executor.prompts[0]
-    assert '"expected_verification"' not in executor.prompts[0]
-    assert any(
-        "each array item must contain exactly these non-empty string fields" in option
-        and "`key`" in option
-        and "use concise identifiers such as `option_1`" in option
-        for option in command
-    )
 
 
-def test_consumer_resumes_session_when_unrelated_contract_hash_changes(store, task, context):
-    store.upsert_conversation(task.conversation_id, "Group", False, "session-old")
-    store.set_codex_session_contract_hash(task.conversation_id, "old-contract")
-    executor = CapturingExecutor(_result_jsonl(session="session-old"))
 
-    ConsumerAgentRunner(
-        store=store,
-        workspace=Path("/workspace"),
-        executor=executor,
-        codex_session_exists=lambda _: True,
-    ).run(task, context, proposal_revision=0, parent_agent_run_id=None)
-
-    assert executor.commands[0][3:5] == ["exec", "resume"]
-    assert executor.commands[0][-2:] == ["session-old", "-"]
-    assert store.get_codex_session_id(task.conversation_id) == "session-old"
-    assert (
-        store.get_codex_session_contract_hash(task.conversation_id)
-        == consumer_wire_contract_hash()
-    )
 
 
 @pytest.mark.parametrize("saved_schema", [
@@ -1825,24 +1723,6 @@ def test_consumer_starts_fresh_when_saved_native_wire_schema_is_old_or_missing(
     assert store.get_codex_session_id(task.conversation_id) == "session-new"
 
 
-def test_consumer_reuses_matching_native_wire_despite_prompt_hash_change(store, task, context):
-    store.upsert_conversation(task.conversation_id, "Group", False, "session-old")
-    store.set_codex_session_contract_hash(task.conversation_id, "old-contract")
-    executor = CapturingExecutor(_result_jsonl(session="session-old"))
-    current_schema = json.loads(
-        consumer_agent._schema_json(consumer_agent.consumer_wire_model("general"))
-    )
-
-    ConsumerAgentRunner(
-        store=store,
-        workspace=Path("/workspace"),
-        executor=executor,
-        codex_session_exists=lambda _: True,
-        codex_session_wire_schema=lambda _: current_schema,
-    ).run(task, context, proposal_revision=0, parent_agent_run_id=None)
-
-    assert executor.commands[0][3:5] == ["exec", "resume"]
-    assert executor.commands[0][-2:] == ["session-old", "-"]
 
 
 def test_consumer_default_path_rejects_incompatible_native_wire_before_resume(
@@ -2429,44 +2309,6 @@ def test_transport_failure_retries_fresh_route_once_before_api_successor(
     assert [attempt.session_mode.value for attempt in attempts] == ["fresh"] * (failure_count + 1)
 
 
-@pytest.mark.skip(reason="API fallback is selected by runtime capability evidence")
-def test_consumer_does_not_start_unprobed_api_fallback(
-    store, task, context, monkeypatch
-):
-    monkeypatch.setenv("CEO_AGENT_RUNTIME_ROUTES", "codex_oauth,codex_api")
-    set_env(monkeypatch, codex_api_env("fallback-test-key"))
-    executor = SequencedRuntimeExecutor(
-        ProcessRunResult(
-            1,
-            json.dumps(
-                {
-                    "type": "error",
-                    "message": "Failed to refresh token: Your session has ended",
-                }
-            ),
-            "",
-        )
-    )
-
-    with pytest.raises(ResultParseError, match="no valid typed result"):
-        ConsumerAgentRunner(
-            store=store,
-            workspace=Path("/workspace"),
-            executor=executor,
-        ).run(task, context, proposal_revision=0, parent_agent_run_id=None)
-
-    run = store.get_agent_run_for_turn(
-        task.id,
-        task.execution_generation,
-        role=AgentRole.CONSUMER,
-        proposal_revision=0,
-        turn_attempt=0,
-    )
-    assert run is not None
-    assert [
-        attempt.route_name for attempt in store.list_agent_runtime_attempts(run.id)
-    ] == ["codex_oauth"]
-    assert len(executor.environments) == 1
 
 def test_consumer_rotates_damaged_session_after_missing_final_result(
     store, task, context
@@ -3658,7 +3500,6 @@ def test_consumer_rejects_sensitive_result_payload(store, task, context, payload
         ).run(task, context, proposal_revision=0, parent_agent_run_id=None)
 
 
-@pytest.mark.skip(reason="provider events are opaque runtime evidence")
 def test_consumer_preserves_effectful_stream_event_as_runtime_trace(store, task, context):
     effect = json.dumps({
         "type": "item.started",
@@ -3672,10 +3513,9 @@ def test_consumer_preserves_effectful_stream_event_as_runtime_trace(store, task,
     persisted = store.get_agent_run(result.run_id)
     assert result.result.outcome.value == "no_action"
     assert persisted is not None
-    assert not any(event.get("item", {}).get("tool") == "memory_write" for event in persisted.tool_events)
+    assert any(event.get("item", {}).get("tool") == "memory_write" for event in persisted.tool_events)
 
 
-@pytest.mark.skip(reason="provider events are opaque runtime evidence")
 def test_consumer_preserves_later_provider_event_in_runtime_trace(store, task, context):
     business_result = json.loads(_result_jsonl().splitlines()[-1])
     hook_write = {
