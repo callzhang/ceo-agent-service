@@ -1,5 +1,5 @@
-def test_consumer_system_release_imports_frozen_run_sql_from_run_storage():
+def test_consumer_system_release_imports_current_reply_task_sql_from_store():
     import app.consumer_system_release as release
-    from app.run_storage import SCHEDULED_RUN_SQL
+    from app.store import NATIVE_REPLY_TASK_CURRENT_SQL
 
-    assert release.SCHEDULED_RUN_SQL is SCHEDULED_RUN_SQL
+    assert release.NATIVE_REPLY_TASK_CURRENT_SQL is NATIVE_REPLY_TASK_CURRENT_SQL

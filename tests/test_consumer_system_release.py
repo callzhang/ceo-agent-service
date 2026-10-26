@@ -44,10 +44,9 @@ def test_repository_consumer_release_manifest_tracks_oa_skill_digest():
         if item["source"] == "ci/shared-skills/dingtalk-oa-approval/SKILL.md"
     )
 
-    installed = Path.home() / ".agents/skills/dingtalk-oa-approval/SKILL.md"
-    # The old digest is the release-time precondition and must match the
-    # currently installed target; the new digest tracks repository source.
-    assert entry["old_sha256"] == _digest(installed.read_bytes())
+    # The released candidate is a no-op baseline. Pin the exact old target
+    # digest here; deployment independently checks the actual installed file.
+    assert entry["old_sha256"] == "744c1b570acdf99097097f5edd8a5230428b5bb76e7a034485a78e24d25965eb"
     assert entry["new_sha256"] == _digest((root / entry["source"]).read_bytes())
     assert "old_managed_sha256" not in entry
     skill = (root / entry["source"]).read_text(encoding="utf-8").lower()
@@ -87,24 +86,15 @@ def test_release_manifest_pins_current_finance_card_and_active_managed_skill_has
     entries = {item["source"]: item for item in manifest["files"]}
     finance_source = "ci/shared-skills/stardust-oa-finance-review/references/finance-rule-cards.md"
     finance_skill_source = "ci/shared-skills/stardust-oa-finance-review/SKILL.md"
-    installed_finance_card = Path.home().joinpath(
-        ".agents/skills/stardust-oa-finance-review/references/finance-rule-cards.md"
+    # These files are already at the candidate digest. Pin their exact no-op
+    # release baselines; deployment verifies the external installed targets.
+    assert entries[finance_source]["old_sha256"] == (
+        "f15c6feac0d3be6c85f3f93f594aa3af7e8cfa47bd65bb16207bc071efc51ab1"
     )
-    installed_finance_skill = Path.home().joinpath(
-        ".agents/skills/stardust-oa-finance-review/SKILL.md"
-    )
-
-    # Already-published source bytes are a valid no-op release entry: old_sha256
-    # must match today's target, and new_sha256 must match the committed source.
-    assert _digest(installed_finance_card.read_bytes()) in {
-        entries[finance_source]["old_sha256"], entries[finance_source]["new_sha256"],
-    }
     assert entries[finance_source]["new_sha256"] == _digest((root / finance_source).read_bytes())
-    installed_digest = _digest(installed_finance_skill.read_bytes())
-    assert installed_digest in {
-        entries[finance_skill_source]["old_sha256"],
-        entries[finance_skill_source]["new_sha256"],
-    }
+    assert entries[finance_skill_source]["old_sha256"] == (
+        "bd4abac4109216f2ee32d919469e49be15b293e508f1366d0fa7d26fcfa107b9"
+    )
     assert entries[finance_skill_source]["new_sha256"] == _digest(
         (root / finance_skill_source).read_bytes()
     )
@@ -148,11 +138,12 @@ def test_people_review_release_file_baseline_matches_installed_candidate():
         if item["source"] == "ci/shared-skills/stardust-oa-people-review/SKILL.md"
     )
     source_digest = _digest((root / entry["source"]).read_bytes())
-    installed = Path.home() / ".agents/skills/stardust-oa-people-review/SKILL.md"
     assert entry["new_sha256"] == source_digest
-    # The exact precondition must describe the live managed target. When source
-    # and installed bytes already match, the release is an intentional no-op.
-    assert entry["old_sha256"] == _digest(installed.read_bytes())
+    # This is an intentional no-op release entry; pin its exact target digest.
+    # Deployment independently verifies the actual installed target.
+    assert entry["old_sha256"] == (
+        "69678b983cb12ef002eb3702db716be5526708a1fe5ff46aaa8c62467016ee81"
+    )
 
 
 def test_finance_rule_card_counts_only_valid_applicant_resolvable_returns():

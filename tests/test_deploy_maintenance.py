@@ -82,7 +82,8 @@ def test_maintenance_deploy_stops_and_recovers_before_quiet(tmp_path, monkeypatc
     monkeypatch.setattr(module, 'wait_for_health', lambda: True)
     monkeypatch.setattr(module, 'build_frontend', lambda *a: None)
     monkeypatch.setattr(module, 'verify_imports', lambda *a: None)
-    monkeypatch.setattr(module, 'wait_until_quiet', lambda *a: calls.append('quiet'))
+    monkeypatch.setattr(module, 'wait_until_quiet', lambda *a, **_kwargs: calls.append('quiet'))
+    monkeypatch.setattr(module, 'in_flight_work', lambda *_args: 0)
     monkeypatch.setattr(module, 'prepare_maintenance', lambda *a: calls.append('recover'), raising=False)
     deploy(local, tmp_path/'missing.sqlite3', maintenance_tasks=(10,))
     assert calls == ['stop', 'recover', 'quiet', 'start']
@@ -199,7 +200,8 @@ def test_publication_rollback_failure_keeps_service_stopped(tmp_path, monkeypatc
     monkeypatch.setattr(module, '_default_stop', lambda: calls.append('stop'))
     monkeypatch.setattr(module, '_default_start', lambda: calls.append('start'))
     monkeypatch.setattr(module, 'wait_for_health', lambda: True)
-    monkeypatch.setattr(module, 'wait_until_quiet', lambda *a: None)
+    monkeypatch.setattr(module, 'wait_until_quiet', lambda *a, **_kwargs: None)
+    monkeypatch.setattr(module, 'in_flight_work', lambda *_args: 0)
     monkeypatch.setattr(module, 'build_frontend', lambda *a: None)
     monkeypatch.setattr(module, 'verify_imports', lambda *a: None)
     class Publication:

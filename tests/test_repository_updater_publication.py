@@ -227,10 +227,8 @@ def test_deploy_output_shows_publication_finalization_error_without_changing_suc
 
     local, _operation = _repo(tmp_path)
     db = tmp_path / "old-service.sqlite3"
-    with sqlite3.connect(db) as connection:
-        connection.execute(
-            "create table service_state (key text primary key, value text not null, updated_at text)"
-        )
+    from app.store import AutoReplyStore
+    AutoReplyStore(db)
 
     class FinalizeFails(_Receipt):
         def finalize(self) -> None:
@@ -239,7 +237,7 @@ def test_deploy_output_shows_publication_finalization_error_without_changing_suc
     monkeypatch.setattr(deploy_module, "ensure_production_guards", lambda _root: None)
     monkeypatch.setattr(deploy_module, "unlock_source_tree", lambda _root: None)
     monkeypatch.setattr(deploy_module, "lock_source_tree", lambda _root: None)
-    monkeypatch.setattr(deploy_module, "wait_until_quiet", lambda _db: None)
+    monkeypatch.setattr(deploy_module, "wait_until_quiet", lambda _db, **_kwargs: None)
     monkeypatch.setattr(deploy_module, "_default_stop", lambda: None)
     monkeypatch.setattr(deploy_module, "_default_start", lambda: None)
     monkeypatch.setattr(deploy_module, "build_frontend", lambda _root, _changed: None)
@@ -264,14 +262,15 @@ def test_formal_deploy_does_not_migrate_live_database_before_backup(
 
     local, _operation = _repo(tmp_path)
     db = tmp_path / "old-service.sqlite3"
+    from app.store import AutoReplyStore
+    from app.current_schema_manifest import schema_objects
+    AutoReplyStore(db)
     with sqlite3.connect(db) as connection:
-        connection.execute(
-            "create table service_state (key text primary key, value text not null, updated_at text)"
-        )
+        before = schema_objects(connection)
     monkeypatch.setattr(deploy_module, "ensure_production_guards", lambda _root: None)
     monkeypatch.setattr(deploy_module, "unlock_source_tree", lambda _root: None)
     monkeypatch.setattr(deploy_module, "lock_source_tree", lambda _root: None)
-    monkeypatch.setattr(deploy_module, "wait_until_quiet", lambda _db: None)
+    monkeypatch.setattr(deploy_module, "wait_until_quiet", lambda _db, **_kwargs: None)
     monkeypatch.setattr(deploy_module, "_default_stop", lambda: None)
     monkeypatch.setattr(deploy_module, "_default_start", lambda: None)
     monkeypatch.setattr(deploy_module, "build_frontend", lambda _root, _changed: None)
@@ -282,10 +281,7 @@ def test_formal_deploy_does_not_migrate_live_database_before_backup(
 
     assert result.startswith("deployed ")
     with sqlite3.connect(db) as connection:
-        tables = {row[0] for row in connection.execute(
-            "select name from sqlite_master where type='table'"
-        )}
-    assert tables == {"service_state"}
+        assert schema_objects(connection) == before
 
 
 def test_partial_publish_failure_restores_receipt_before_old_service_start(tmp_path):

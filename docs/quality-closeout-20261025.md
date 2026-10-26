@@ -484,3 +484,11 @@ reads now use the existing frozen factory, with no source acceptance widening.
 The genuine predecessor fixture and all existing type/FK/receipt/inverse checks
 remain. New exact pin and two bounded files pass28 in34.21s. Root independently
 reviewed original source history and both minimal oracle changes.
+
+Release/config fixtures: the six-file current-contract run passed94 nodes before
+exposing obsolete empty/standalone-service_state DB fixtures. Actual current
+Stores replace those source fakes; the five directly affected publication/
+finalization/no-schema-mutation cases then pass3.59s. Orchestration-only
+maintenance fakes include the existing in-flight probe; real maintenance tests
+retain actual probes and backup assertions. Worker native Run/notification
+fixtures pass4 in2.67s with no application or retry-policy change.

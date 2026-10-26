@@ -59,7 +59,6 @@ from app.dws_client import (
 from app.outbound_postfix import compose_outbound_postfix
 from app.action_storage import insert_action, update_action
 from app.store import AgentRole, AutoReplyStore, REPLY_TASK_SQL
-from app.task12_storage import task12_projection
 from app.skill_features import FeatureRegistry
 from app.runtime_environment import central_python
 from app.worker import (
@@ -10287,7 +10286,7 @@ def test_ding_approval_reminder_is_processed_by_audit_agent(
     assert worker.store.count_reply_attempts() == 0
     with worker.store._connect() as db:
         event = db.execute(
-            f"select event_kind, requires_reply from ({task12_projection('oa_notification_events')}) "
+            "select event_kind, requires_reply from oa_notification_events "
             "where trigger_message_id=?",
             (trigger.open_message_id,),
         ).fetchone()
@@ -12971,7 +12970,7 @@ def test_stale_codex_resume_retries_same_thread_before_opening_new_thread(
             update_sql={"locked_at": "datetime('now', '-31 minutes')"},
         )
         db.execute(
-            "update runs set lease_expires_at=datetime('now', '-1 minute') where record_type='agent_runs' and cast(legacy_key as integer)=?",
+            "update runs set lease_expires_at=datetime('now', '-1 minute') where id=?",
             (claim.run.id,),
         )
     worker.now_provider = lambda: (
@@ -13069,7 +13068,7 @@ def test_stale_codex_resume_clears_session_and_retries_with_new_user_message(
             update_sql={"locked_at": "datetime('now', '-31 minutes')"},
         )
         db.execute(
-            "update runs set lease_expires_at=datetime('now', '-1 minute') where record_type='agent_runs' and cast(legacy_key as integer)=?",
+            "update runs set lease_expires_at=datetime('now', '-1 minute') where id=?",
             (claim.run.id,),
         )
     worker.now_provider = lambda: (

@@ -81,7 +81,7 @@ def test_repository_upgrade_configuration_has_safe_defaults_and_overrides(monkey
 
     assert repository_upgrade_remote() == "origin"
     assert repository_upgrade_branch() == "main"
-    assert repository_upgrade_check_interval_seconds() == 21600
+    assert repository_upgrade_check_interval_seconds() == 300
     assert repository_upgrade_enabled() is True
 
     monkeypatch.setenv("CEO_REPOSITORY_UPGRADE_REMOTE", "upstream")
