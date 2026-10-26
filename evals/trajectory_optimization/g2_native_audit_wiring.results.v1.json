@@ -68,7 +68,7 @@
     "consequence": "Previously passed CLI same-session probes do not establish production non-OAuth Audit continuation.",
     "status": "Fixed in PR325 followup candidate under explicit user authorization; local validation passed, unmerged/undeployed."
   },
-  "release_status": "Draft PR325, not merged/deployed. Latest bounded API continue still429 with0tools; missing valid API cold/resume remains blocked. Quality is also red:44 lint errors in12 unchanged files identical to current main,0 in PR-changed files. No unrelated fixes or additional deploy started.",
+  "release_status": "Draft PR325, not merged/deployed. Provider root cause confirmed as relay429/model_not_found/no available channel for gpt-5.6-luna in default group, not a demonstrated schema or prompt error. Shared44-error main lint gate also unresolved. No route/model changes or unrelated fixes.",
   "session_continuation_followup": {
     "base": "1045b3fbbff013fb015149310ae4c53e56131c2b",
     "changes": [
@@ -158,6 +158,128 @@
       "After API capacity is restored, validate only missing configured API valid cold/resume Consumer/Audit cases.",
       "Resolve shared main Quality lint gate in its owning scope or reuse upstream correction; do not bundle unrelated12-file cleanup into PR325.",
       "Once gates pass, update branch, merge PR325 and use formal deployment gate and production readback."
+    ]
+  },
+  "blocker_root_cause_20261025": {
+    "provider": {
+      "checked_at": "2026-10-26T01:07:56.705299+00:00",
+      "route": "codex_api",
+      "base_url": "https://api.kksj.org/v1",
+      "model": "gpt-5.6-luna",
+      "scope": "one minimal Responses POST, no schema/tools/business facts; one read-only models GET; no retries",
+      "responses": {
+        "status": 429,
+        "headers": {
+          "date": "Mon, 26 Oct 2026 01:07:59 GMT"
+        },
+        "error": {
+          "type": "new_api_error",
+          "code": "model_not_found",
+          "message": "No available channel for model gpt-5.6-luna under group default (distributor) (request id: 202610260107593008780698268d9d6gjl1su4r)",
+          "param": ""
+        }
+      },
+      "models": {
+        "status": 200,
+        "headers": {
+          "date": "Mon, 26 Oct 2026 01:07:59 GMT"
+        },
+        "count": 227,
+        "configured_model_listed": true,
+        "similar_listed_models": [
+          "gpt-5.6-luna",
+          "gpt-5.6-sol",
+          "gpt-5.6-terra",
+          "gpt-6-astra",
+          "gpt-6-luna",
+          "gpt-6-sol",
+          "gpt-6.1-sol"
+        ]
+      }
+    },
+    "conclusion": "The configured relay returns429/new_api_error/model_not_found: no available channel for configured gpt-5.6-luna in default distributor group. Minimal request has no schema or tools; no source evidence for ordinary frequency throttling or insufficient balance. Model catalog presence is not channel availability. Underlying channel inventory/health/group mapping needs provider administrative evidence.",
+    "quality": {
+      "counts": {
+        "F401": 30,
+        "F811": 2,
+        "F541": 2,
+        "E402": 9,
+        "F841": 1
+      },
+      "examples": [
+        {
+          "file": "app/agent_contracts.py",
+          "line": 1,
+          "code": "F401",
+          "line_commit": "1498683bbd7ff5dc95b1ceab6ff34b0252e350e7",
+          "commit_summary": "feat(memory): the Consumer names durable memories, the service writes them",
+          "source": "from datetime import datetime"
+        },
+        {
+          "file": "app/reply_task_deferral.py",
+          "line": 28,
+          "code": "F811",
+          "line_commit": "b78604e32ce7165e714d2f0e31edadadc49d9804",
+          "commit_summary": "Complete shared Task Run publication checkpoint",
+          "source": "AGENT_EFFECT_INTENT_SQL,"
+        },
+        {
+          "file": "app/reply_task_deferral.py",
+          "line": 288,
+          "code": "F541",
+          "line_commit": "b78604e32ce7165e714d2f0e31edadadc49d9804",
+          "commit_summary": "Complete shared Task Run publication checkpoint",
+          "source": "db.execute(f\"\"\"update tasks set status='pending',available_at=?,locked_at=null,updated_at=? where id=? and kind='reply' and status in ('pending','processing')\"\"\","
+        },
+        {
+          "file": "tests/conftest.py",
+          "line": 47,
+          "code": "E402",
+          "line_commit": "cfe3a1686b0fc48e37d598a16717384764ec01e5",
+          "commit_summary": "test: end any test process that passes a fixed 3 GB memory ceiling",
+          "source": "from tests.support.memory_limit import MemoryLimit"
+        },
+        {
+          "file": "tests/test_action_business_storage.py",
+          "line": 3,
+          "code": "F401",
+          "line_commit": "7ecee0a6927e385143a70358acb41ee652a719e8",
+          "commit_summary": "feat(storage): consolidate core schema and exact source references",
+          "source": "import hashlib"
+        },
+        {
+          "file": "tests/test_email_action_external_consumers.py",
+          "line": 3,
+          "code": "F401",
+          "line_commit": "7dcbe2278e615341effc10790d097ef4a22453dc",
+          "commit_summary": "Convert active Email action consumers to typed current sources",
+          "source": "import sqlite3"
+        },
+        {
+          "file": "tests/test_error_code_migration.py",
+          "line": 31,
+          "code": "F841",
+          "line_commit": "1fd657e91afe1c8f36bac67f8fe8c62249d94187",
+          "commit_summary": "Merge remote-tracking branch 'origin/main' into codex/task-run-entity-phase2-speed-20261023",
+          "source": "run_id = store.create_professional_run(job_id, status=\"failed\", error=\"runtime_effect_policy_violation\")"
+        },
+        {
+          "file": "tests/test_store.py",
+          "line": 36,
+          "code": "E402",
+          "line_commit": "f2db64d6a95961062aa4fe738ed05f76c31c0165",
+          "commit_summary": "test(database): adapt Store fixtures to final typed storage",
+          "source": "from app.store import ERROR_SQL, WORK_SUMMARY_INPUT_SQL"
+        }
+      ],
+      "conclusion": "44static lint errors across12files identical to main. Confirmed leftover imports after deletions2ef930ee3 and feb963fc2, duplicate imports and placeholder-free f-strings from b78604e32, import-order violations and unused assignment. No PR325 code introduced them.",
+      "gate_distinction": "GitHub npm test runs Ruff before pytest. app.deploy TEST_GATE_ARGS runs pytest only; a passing deploy test gate does not establish Ruff success. No gate changes proposed or made."
+    },
+    "actions_taken": "diagnostics and evidence only; no routing/model/config change, unrelated lint edits, passed model-case reruns, merge or deployment",
+    "minimal_resolution": [
+      "Provider operator must supply an available channel for gpt-5.6-luna in this key group, or separately authorize and validate another configured model/route. No silent switch.",
+      "Separate shared lint cleanup must retain side-effecting setup calls,3GB ceiling and production-checkout refusal; rerun static check, without treating it as behavioral acceptance.",
+      "After provider channel is usable, run only still-missing API cold/resume checks; then normal merge/deploy/readback."
     ]
   }
 }

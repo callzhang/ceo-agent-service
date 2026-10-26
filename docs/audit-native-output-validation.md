@@ -44,3 +44,15 @@ Audit 使用现有 `AuditAgentWireResult` 生成 Codex 原生 Schema。为满足
 现有[Quality检查](https://github.com/callzhang/ceo-agent-service/actions/runs/40248553539)在Ruff阶段失败，测试未启动。本地只重现静态检查，得到相同44条lint错误、12个文件；逐个Git blob核对，这12个文件与当前main dd3c4933bbf02b7b89f74d704bb2368bc028bc05完全相同，PR修改文件中的错误为0。它是主线共有门禁缺口，不能冒充本PR通过，也不将无关12文件清理夹进本修复。
 
 **发布条件未满足：PR325保持草稿，未合并、未部署、未作生产验收声明。** 核查时另有既有部署PID50850在运行，未启动第二个部署。有限下一步仍为：API恢复后仅补缺失的有效Consumer/Audit冷启动与续跑；复用主线后续修正来关闭Quality门禁；满足后再合并、正式部署并读回生产版本/PID/健康/队列/Attention/History。既有G1自然样本及其他优化不在本轮扩展范围内。
+
+### 阻塞根因定位（2026-10-25 18:08 PDT）
+
+**429已定位到中转商的模型渠道选择。** 对当前配置https://api.kksj.org/v1/responses只发送一次极简“Return exactly OK.”（相同凭据与gpt-5.6-luna，不带schema/工具/业务事实、无重试）。返回HTTP429、type=new_api_error、code=model_not_found，明确正文：`No available channel for model gpt-5.6-luna under group default (distributor)`；request id=202610260107593008780698268d9d6gjl1su4r。一次只读GET /models返回200，列有该模型（目录共227项），证明“目录列出”不能证明本凭据分组存在可用渠道。
+
+这修正了先前笼统的“容量阻塞”描述：已确认的失败层是当前中转商的模型渠道不可用；不能据此认定普通请求频率限流、余额不足或OpenAI原生schema不兼容。未查实的是中转商后台为何没有可用渠道（分组映射、渠道配置/健康或上游状态）；需要该request id对应的提供商管理员日志，现有推理接口返回不包含这些证据。继续发送continue不能补出缺失渠道。
+
+**Quality根因是主线共有的静态检查残留，非测试用例失败。** 44项=30未使用import(F401)、2重复import(F811)、2无占位符f-string(F541)、9导入顺序(E402)、1未使用局部赋值(F841)。具体重复import与f-string定位至b78604e32；tests/conftest.py的MemoryLimit导入位于可执行设置之后，行来源cfe3a1686；tests/test_store.py常量赋值插在后续import之前，行来源f2db64d6a；tests/test_error_code_migration.py未使用run_id赋值来源1fd657e91。2ef930ee3与feb963fc2删除测试后留下的import已通过提交diff核实；其余行来源与最小例子见JSON证据，不将“最后修改该文件的提交”冒充全部错误的引入提交。
+
+GitHub npm test先执行Ruff，所以这些错误使pytest尚未启动；app.deploy的TEST_GATE_ARGS仅执行pytest，不能把部署测试通过当成Ruff已通过。没有变更或绕过任何门禁。修复静态残留时必须保留建样本调用的副作用、3GB上限和生产checkout拒绝逻辑。
+
+当前有限处理方向：优先由中转商修复本凭据default分组下gpt-5.6-luna的可用渠道；若要换模型/路线需独立明确决定并验证，不能自动切换。主线lint清理独立处理，不夹入PR325。渠道恢复后仅补缺失API冷/续，门禁通过再合并、部署与生产回读。本次没有改代码、模型/路由/凭据或生产服务，也没有重跑通过的案例。
