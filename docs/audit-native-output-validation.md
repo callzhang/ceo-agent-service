@@ -64,3 +64,13 @@ GitHub npm test先执行Ruff，所以这些错误使pytest尚未启动；app.dep
 当前Consumer/Audit冷/续来源分别为session01a16cf9-864c-7b11-8a2b-5e3982577263（45行SHA dd159059404a29b9b3e9911607bde1f62c0937abfe9835c1aae996819616834a）与01a16cf2-63d7-7720-b89d-a9b58d436ef9（49行SHA2470451a1159c0bd751e772cc07c559fae4e785d461aca10d9726b275d81f647）。本次只读重新核对保存前缀SHA相等；当前Consumer/Audit schema仍为72ee1044…/ca522ed1…。工具调用、业务解析和候选绑定结论复用原记录；接续变化复用前述10项受影响测试及原生接线6项，不重新调用已通过模型案例。当前CLI行为验收条件已具备，发布及生产回读尚未完成。
 
 主线共有44条lint诊断保留独立记录，不冒称通过，也不夹入本PR；正常仓库合并与正式部署门禁照常执行。部署脚本要求在隔离副本对准确目标提交运行pytest全套，不能跳过；该强制发布门禁与重复模型评测不同。只在发布回执和版本/PID/健康/队列/Attention/History回读完成后报告上线，不扩大G1或其他优化。
+
+### PR325合并与正式发布门禁回执（2026-10-25 18:40 PDT）
+
+当前CLI验收范围已按用户决定生效，API不再作为发布条件。PR325正常合并为bd3c8eb44cb58165dcf1e476a193ef870f8c1613（01:28:51 UTC）；与最新main合并时仅处理claims末尾双方追加行，全部保留，相关运行代码/parser/测试5文件与已验证250c39867逐Git blob相同。既有16项本地验证和当前gpt-6-luna冷/续轨迹复用，无模型重跑。
+
+执行标准python -m app.deploy，准确目标bd3c8eb44。隔离pytest门禁出现失败后正常中止本次自有测试，以保留报告而不继续运行已知不能放行的全套；部分结果为7 failed、748 passed、6 warnings、1 collection error、507.09s，不冒称全套完成。部署返回“the test suite fails … nothing was deployed”，在服务停止/备份/切换之前退出，没有跳过门禁。
+
+具体缺口仅定位到主线已有三份测试：test_action_delivery_bootstrap.py仍断言旧schema2026-10-14.1并操作已删除索引idx_actions_sent_history；test_cli.py存在旧tasks.payload_json、ceo_task_restore函数注册及WeChat可领取夹具问题；test_reply_input_reference.py导入已移除REPLY_TASK_INPUT_SQL，收集失败。三份测试及app/cli.py、app/store.py与合并前main dd3c4933b内容完全相同，未夹入PR325修改；完整失败节点及日志摘要SHA保存在既有JSON证据。没有顺手修改这些模块或重启服务。
+
+门禁失败后生产回读：HEAD仍dc07ddcbed7ee48896879db37b06d162a97a98d5，工作树干净；launchd PID92610 running，healthz200/ok，queues/Attention/History均HTTP200，Attention4、History38259。该PID只表示回读当刻存活，不能把并行会话造成的进程变化归为本次部署；本次自身在测试阶段退出。**当前CLI行为已验收、PR已合并，生产发布仍未完成。** 有限下一步是所属范围内修复上述主线测试/夹具与当前数据模型的差异，随后重新走正式部署和生产回读；不再处理API，也不重跑模型矩阵。

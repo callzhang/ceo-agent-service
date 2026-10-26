@@ -68,7 +68,7 @@
     "consequence": "Previously passed CLI same-session probes do not establish production non-OAuth Audit continuation.",
     "status": "Fixed in PR325 followup candidate under explicit user authorization; local validation passed, unmerged/undeployed."
   },
-  "release_status": "Current CLI acceptance reused and verified; API gate explicitly removed by latest user scope decision. PR325 publication pending normal merge/deployment gate/readback. Shared lint findings remain separately documented, not silently marked green.",
+  "release_status": "Current Codex CLI local OAuth/gpt-6-luna behavioral acceptance passed using existing evidence; PR325 merged. Production deployment not completed: mandatory pytest gate observed7failures and1collection error in unchanged main tests; no bypass or API prerequisite. Production remaineddc07ddcbe and healthy at recorded readback.",
   "session_continuation_followup": {
     "base": "1045b3fbbff013fb015149310ae4c53e56131c2b",
     "changes": [
@@ -298,6 +298,85 @@
       "prior_local_session_passes": 10,
       "model_reruns": 0
     },
-    "release": "pending ordinary merge, formal deployment gate and production readback; no API wait or unrelated lint cleanup"
+    "release": "PR325 merged as bd3c8eb44; standard deployment refused by existing main test/model fixtures. No API gate; current CLI acceptance remains valid."
+  },
+  "current_cli_publication_attempt": {
+    "pr": 325,
+    "merged_at": "2026-10-26T01:28:51Z",
+    "merge_commit": "bd3c8eb44cb58165dcf1e476a193ef870f8c1613",
+    "reconciled_code_blobs_unchanged_from": "250c398675849f0ef1b0f1d17933741009a2f456",
+    "deploy_command": "python -m app.deploy",
+    "target": "bd3c8eb44cb58165dcf1e476a193ef870f8c1613",
+    "result": "refused before service stop/backup/checkout; no bypass",
+    "suite": {
+      "partial": true,
+      "stopped_after_observed_failures": "own isolated pytest controller interrupted gracefully; gate retained failure and refused deployment",
+      "summary": "7 failed,748 passed,6 warnings,1 collection error in507.09s",
+      "failed_nodes": [
+        "tests/test_action_delivery_bootstrap.py::test_fresh_store_uses_delivery_actions_without_old_sent_tables",
+        "tests/test_action_delivery_bootstrap.py::test_delivery_auxiliary_repair_preserves_layout",
+        "tests/test_cli.py::test_skip_stale_wechat_delivery_command_closes_exact_eligible_delivery",
+        "tests/test_cli.py::test_send_attempt_command_refuses_unavailable_original_without_queue[compacted]",
+        "tests/test_cli.py::test_send_attempt_command_refuses_unavailable_original_without_queue[invalid]",
+        "tests/test_cli.py::test_send_attempt_email_requires_exact_uncompacted_action_payload[True]",
+        "tests/test_cli.py::test_send_attempt_command_rotates_pending_task_with_previous_error"
+      ],
+      "collection_error": "tests/test_reply_input_reference.py imports removed REPLY_TASK_INPUT_SQL from app.store",
+      "error_families": [
+        "stale schema version2026-10-14.1 vs current2026-10-25.2",
+        "removed idx_actions_sent_history index",
+        "WeChat delivery is not claimable",
+        "removed tasks.payload_json column",
+        "unregistered ceo_task_restore SQLite function in fixture"
+      ],
+      "log_sha256": "56443ef568e2aa663e0571764837e13497438afe57a53a261d266f7db0f5441c",
+      "failure_files_and_cli_store_blobs_identical_to_pre_pr_main": true
+    },
+    "production_readback": {
+      "at": "2026-10-26T01:39:47.974303+00:00",
+      "production_head": "dc07ddcbed7ee48896879db37b06d162a97a98d5",
+      "production_dirty": false,
+      "launchd": [
+        "state = running",
+        "pid = 92610",
+        "last exit code = (never exited)",
+        "state = active",
+        "state = active"
+      ],
+      "health": {
+        "http": 200,
+        "meta": {},
+        "ok": true
+      },
+      "queues": {
+        "http": 200,
+        "meta": {
+          "page": 1,
+          "page_size": 20,
+          "total": 1,
+          "snapshot_at": "2026-10-26T01:39:48.170352+00:00"
+        },
+        "queue_count": 1
+      },
+      "attention": {
+        "http": 200,
+        "meta": {
+          "snapshot_at": "2026-10-26T01:39:48.872194Z",
+          "page": null,
+          "page_size": null,
+          "total": 4
+        }
+      },
+      "history": {
+        "http": 200,
+        "meta": {
+          "snapshot_at": "2026-10-26T01:39:49.602874Z",
+          "page": 1,
+          "page_size": 1,
+          "total": 38259
+        }
+      }
+    },
+    "next_minimal_step": "Resolve shared-main test/fixture mismatches in the three named files in their own scope, then rerun formal deployment gate and publish/read back. No repeated model cases or API work."
   }
 }
