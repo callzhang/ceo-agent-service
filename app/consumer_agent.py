@@ -1161,9 +1161,32 @@ def _prepare_reviewable_candidate(parsed, *, store, task, context, proposal_revi
         context=context, proposal_revision=proposal_revision)
     prepared = _prepare_outgoing_wechat_messages(prepared, store=store, task=task,
         context=context, proposal_revision=proposal_revision)
+    prepared = _align_plan_purpose_output(parsed, prepared)
     if prepared.outcome is ConsumerOutcome.FAILED:
         return prepared
     return capture_candidate_sources(prepared, context, source_client)
+
+
+def _align_plan_purpose_output(parsed: ConsumerAgentResult, prepared: ConsumerAgentResult) -> ConsumerAgentResult:
+    """Keep one copy of the plan: the candidate must not say two different texts.
+
+    A ``plan`` carries its proposal twice, as the Consumer wrote it
+    (``purpose_output.payload``) and as the service prepared it (``proposal``, with
+    the final body). After preparation the two differ by the service's own signature
+    and feedback links, which made Audit send a correct candidate back for being
+    inconsistent. When the copy still is the Consumer's proposal, replace it by the
+    prepared one; any other shape is left as it is.
+    """
+    output = prepared.purpose_output
+    if (not output or output.get("action") != "plan"
+            or parsed.proposal is None or prepared.proposal is None):
+        return prepared
+    original = json.loads(parsed.proposal.model_dump_json())
+    if output.get("payload") != original:
+        return prepared
+    return prepared.model_copy(update={"purpose_output": {
+        **output, "payload": json.loads(prepared.proposal.model_dump_json()),
+    }})
 
 
 def _prepare_outgoing_dingtalk_messages(
