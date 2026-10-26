@@ -1,0 +1,78 @@
+{
+  "repair_commit": "d598a3618",
+  "copy_validation": {
+    "pass": true,
+    "typed_tables_preserved": 49,
+    "schema_unchanged": true,
+    "exact_file_rollback": true,
+    "old_code_cold_read": true,
+    "only_changed_cell": "runs[190042].task_id:404225->NULL",
+    "retained_source_job_id": 4908,
+    "runtime_attempt_preserved": 167325,
+    "fk_before": 1,
+    "fk_after": 0,
+    "real_provider_calls": 0,
+    "seconds": 23.44
+  },
+  "production": {
+    "at": "2026-10-26T09:02:01.351520+00:00",
+    "run": [
+      190042,
+      null,
+      "retry",
+      "{\"kind\": \"meeting_alignment_service_startup_requeue\", \"message\": \"service restarted while meeting work was claimed\"}",
+      "2026-09-18 22:02:59",
+      "2026-09-18 22:05:38"
+    ],
+    "source": [
+      "meeting_alignment_runs",
+      4908
+    ],
+    "runtime_attempt": [
+      167325,
+      190042,
+      "failed",
+      "01a0b68b-652c-7280-8eda-73ae9fa0b1f5"
+    ],
+    "task404225_exists": false,
+    "fk_findings": [],
+    "integrity": "ok",
+    "schema_objects": 476,
+    "schema_sha256": "234e17843afc171b4fa8cb42f3e1d959ef2ba415f43e295dc7db640ab3d02221",
+    "health": {
+      "http": 200,
+      "value": {
+        "ok": true,
+        "status": "ok"
+      }
+    },
+    "detail": {
+      "http": 200,
+      "value": {
+        "id": 190042,
+        "task_id": null,
+        "source_job_id": 4908,
+        "task_available": false,
+        "title": "Meeting Task unavailable"
+      }
+    }
+  },
+  "ui": {
+    "path": "/meeting-attempts/190042",
+    "opened": true,
+    "source_job_id_visible": 4908,
+    "task_unavailable_visible": true,
+    "runtime_details_expanded": true,
+    "original_startup_requeue_error_visible": true,
+    "temporary_tab_closed": true
+  },
+  "schema_changed": false,
+  "service_restart": false,
+  "real_provider_calls": 0,
+  "cleanup": {
+    "path": "/tmp/ceo-orphan-run-repair.qlRpw7",
+    "status": "completed",
+    "absent": true,
+    "verified_at": "2026-10-26T09:03:55.365805+00:00"
+  }
+}

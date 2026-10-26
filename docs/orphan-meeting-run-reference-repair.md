@@ -45,11 +45,26 @@ A current production-derived copy (Store25.3/Email54,476 objects) passed in23.44
   with `Meeting Task unavailable` and original source Job4908.
 - Real provider calls:0.
 
-## Production and cleanup
+## Production readback and cleanup
 
-Pending the independently reviewed maintenance operation. No runtime deployment
-or restart is necessary for this data-only correction. The production operation
-will refresh and verify its backup, execute the explicit single-row transaction,
-read back FK/integrity/schema/Run/child and live UI/API state, then remove all
-of this repair's backups and disposable test copies under Derek's existing
-cleanup authorization. Earlier release evidence remains dated historical fact.
+Explicit repair commit `d598a3618` was independently reviewed without blockers
+and pushed before execution. A fresh production recovery backup passed complete
+marker and full integrity checks. The exact CLI transaction committed at02:02
+America/Los_Angeles on2026-10-26, reporting one changed row and FK findings1→0.
+
+Fresh readback confirmed `runs[190042].task_id=NULL`, unchanged retry/error/time
+facts, original Job4908 and failed RuntimeAttempt167325/session identity, no
+fabricated Task404225, empty complete foreign_key_check and integrity_check=ok.
+The exact476-object schema digest remains
+`234e17843afc171b4fa8cb42f3e1d959ef2ba415f43e295dc7db640ab3d02221`.
+Health and the real Meeting detail API return200. Chrome opened the actual
+Meeting190042 page and expanded Runtime details: Task unavailable, source Job4908,
+original retry status and startup-interruption error all remain visible. The
+unavailable native process record was not reconstructed or represented as found.
+No provider call, business replay, schema change, runtime deployment or service
+restart was performed; this is a data-only maintenance correction.
+
+The task-owned temporary root (test outputs, verified source, working copy and
+fresh production recovery backup) was deleted after readback and verified absent. Concise
+[structured evidence](validation/2026-10-26-orphan-run-reference-repair.json)
+remains; original production/native trajectory files are preserved.

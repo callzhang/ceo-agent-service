@@ -5533,3 +5533,10 @@ means unavailable; it does not enqueue or retry the old Job. The explicit
 `scripts/repair_orphan_meeting_run.py` is maintenance-only, with a rollback
 rehearsal by default and a separate commit flag. Store initialization, dispatcher,
 Audit and delivery behavior are unchanged. See `orphan-meeting-run-reference-repair.md`.
+
+The explicitly authorized2026-10-26 maintenance repair of Run190042 is now
+complete: only the absent native Task404225 pointer became NULL; source Job4908,
+failed RuntimeAttempt167325 and original Run facts remain. The complete FK
+finding set is empty; schema and runtime behavior are unchanged. Exact dated
+copy/rollback/cold-read and production/UI evidence is in
+`orphan-meeting-run-reference-repair.md`.

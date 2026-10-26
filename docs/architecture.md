@@ -4441,3 +4441,10 @@ They remain inspectable and do not become executable Tasks. The explicit
 `scripts/repair_orphan_meeting_run.py` can detach an independently verified missing
 Task pointer inside a maintenance transaction; it is not runtime auto-healing.
 See `orphan-meeting-run-reference-repair.md` for the separate authorized repair.
+
+The explicitly authorized2026-10-26 maintenance repair of Run190042 is now
+complete: only the absent native Task404225 pointer became NULL; source Job4908,
+failed RuntimeAttempt167325 and original Run facts remain. The complete FK
+finding set is empty; schema and runtime behavior are unchanged. Exact dated
+copy/rollback/cold-read and production/UI evidence is in
+`orphan-meeting-run-reference-repair.md`.

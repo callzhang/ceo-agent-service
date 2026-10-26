@@ -17,7 +17,7 @@ These are dated release facts, not a permanent assertion about the live PID.
 | Quality | Complete run40283440575:51/51 jobs (48 Python shards, lint/frontend/browser). Later separately scoped main changes:84 backend/publication,46 page,103 runtime-worker and179 Consumer cases pass (4 existing skips). Fixed2GB/5minute limits retained. |
 | Standard release | Exact62b4da19b clean-clone mandatory gate passed; quiet drain, verified backup, explicit migration, frontend build and health check completed. Installed26 publication files match their declared new hashes. |
 | Production UI | Formal list396 Tasks; Task851 source locator/raw-record/change expansion; history-only Project1 with4 facts/22 Todos and old provider receipt; Attempt16072 verified receipt/current decision/revision history; Dashboard/Queued, History38422 and business Attention load. No production test write/send. |
-| Existing issues | Failed34 and Attention8 match pre-deploy counts; sole FK finding `('runs',190042,'tasks',1)` remains unchanged. No replay, fabricated Task or silent repair. |
+| Existing issues | Failed34 and Attention8 match pre-deploy counts; the separately authorized historical Run reference repair now has zero FK findings. Original Run/Job/call history retained; no replay or fabricated Task. See [repair evidence](orphan-meeting-run-reference-repair.md). |
 | Cleanup | Twelve task-owned temporary roots, including two registered test worktrees, removed after readback; verified workflow backup removed. Four separately named pytest roots were already absent. Production DB/native trajectories/unrelated work are preserved. |
 
 [Exact structured readback](validation/2026-10-26-signal-owner-production-readback.json),
