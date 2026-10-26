@@ -144,6 +144,8 @@ def test_codex_roles_scope_native_execution_and_select_service_tools(tmp_path, m
     assert "list_task_artifacts" in consumer_tools + audit_tools
     assert "read_dingtalk_oa_process_attachment" in consumer_tools
     assert "read_dingtalk_oa_process_attachment" in audit_tools
+    assert "read_dingtalk_oa_form_image" in consumer_tools
+    assert "read_dingtalk_oa_form_image" in audit_tools
     assert "send_approved_dingtalk_message" not in consumer_tools + audit_tools
     assert "unsubscribe_email" not in consumer_tools + audit_tools
 
@@ -300,6 +302,9 @@ def test_agent_cli_role_catalogue_excludes_controlled_effects() -> None:
     assert "OA form attachment" in audit_catalogue[
         "read_dingtalk_oa_process_attachment"
     ].description
+    assert "exact OA form" in audit_catalogue[
+        "read_dingtalk_oa_form_image"
+    ].description
     assert "ocr_page_numbers" in audit_catalogue[
         "read_dingtalk_oa_comment_attachment"
     ].description
@@ -315,6 +320,7 @@ def test_agent_cli_role_catalogue_excludes_controlled_effects() -> None:
         "read_dingtalk_oa_records", "read_dingtalk_oa_tasks",
         "read_dingtalk_oa_comment_attachment",
         "read_dingtalk_oa_comment_image",
+        "read_dingtalk_oa_form_image",
         "read_dingtalk_oa_revert_activities", "search_dingtalk_documents",
         "read_dingtalk_document_info", "read_dingtalk_document_permissions",
         "read_dingtalk_drive_info", "read_dingtalk_drive_file", "list_dingtalk_sheets",

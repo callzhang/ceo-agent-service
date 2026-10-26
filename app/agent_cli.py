@@ -824,6 +824,23 @@ def _materialize_oa_attachment(
         raise
 
 
+def _contains_exact_form_value(value: object, expected: str) -> bool:
+    """Match an exact string in nested OA form data, including JSON values."""
+    if isinstance(value, str):
+        if value == expected:
+            return True
+        try:
+            decoded = json.loads(value)
+        except (TypeError, ValueError):
+            return False
+        return decoded != value and _contains_exact_form_value(decoded, expected)
+    if isinstance(value, dict):
+        return any(_contains_exact_form_value(item, expected) for item in value.values())
+    if isinstance(value, list):
+        return any(_contains_exact_form_value(item, expected) for item in value)
+    return False
+
+
 def _download_dingtalk_oa_comment_image(
     *,
     process_instance_id: str,
@@ -1978,6 +1995,47 @@ def build_role_server(
     bound.add_tool(
         read_dingtalk_oa_process_attachment,
         name="read_dingtalk_oa_process_attachment",
+        annotations=read,
+    )
+
+    def read_dingtalk_oa_form_image(
+        process_instance_id: str,
+        image_url: str,
+    ) -> dict[str, object]:
+        """Read a DingTalk image URL that is present in this exact OA form.
+
+        Use when the live form detail contains a static DingTalk media URL
+        instead of a file ID. The exact URL must occur in the form values for
+        the supplied process instance; only then is it fetched through the
+        bounded image and OCR-input path. This is read-only and does not alter
+        attachment permissions or OA state.
+        """
+        nonlocal drive_material_directory
+        if not process_instance_id.strip():
+            raise AgentReadOnlyViolationError("oa_form_image_process_identity_required")
+        from app.dws_client import DwsClient
+        detail = DwsClient().read_oa_approval_detail(process_instance_id)
+        process = detail.get("result") if isinstance(detail, dict) else None
+        if (
+            not isinstance(process, dict)
+            or process.get("processInstanceId") != process_instance_id
+            or not isinstance(process.get("formValueVOS"), list)
+        ):
+            raise AgentReadOnlyViolationError("oa_form_image_process_readback_mismatch")
+        if not _contains_exact_form_value(process["formValueVOS"], image_url):
+            raise AgentReadOnlyViolationError("oa_form_image_not_in_process")
+        if drive_material_directory is None:
+            drive_material_directory = tempfile.TemporaryDirectory(prefix="oa-review-")
+            atexit.register(drive_material_directory.cleanup)
+        return _download_dingtalk_oa_comment_image(
+            process_instance_id=process_instance_id,
+            image_url=image_url,
+            material_root=Path(drive_material_directory.name),
+        )
+
+    bound.add_tool(
+        read_dingtalk_oa_form_image,
+        name="read_dingtalk_oa_form_image",
         annotations=read,
     )
 
