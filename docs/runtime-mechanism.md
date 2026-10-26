@@ -1016,6 +1016,12 @@ DWS CLI's read-only `attachment download-url` command, limits downloaded bytes,
 and shares the same extraction, OCR-page handoff, temporary lifetime and response
 size checks. Generic Drive access denial does not prove that this OA-scoped read
 is unavailable. This path does not call `authorize-preview` or modify access.
+Some OA image fields are represented directly as DingTalk static media URLs rather
+than file IDs. Consumer and Audit can use `read_dingtalk_oa_form_image` for these
+fields; the reader first verifies the exact URL is present in the live form values
+for the supplied process instance, then applies the same origin, redirect, size,
+OCR and temporary-file bounds as OA comment images. A URL from another process is
+rejected before any network fetch.
 
 When the premium comment download is unavailable (for example the tenant's OA
 Premium benefit has expired) or the form download is refused, the Consumer runs
@@ -3288,11 +3294,11 @@ candidate; cross-channel grouping and existing result ordering are unchanged.
 Email provider-action aggregation scans actions before seeking their exact
 classification primary keys, retaining the same processed/current-plan filter.
 
-The HTML Attempt detail route resolves stable public Attempt IDs first. If an old
-link instead contains the physical `actions.id`, it redirects only when that
-number has no public-ID match, using the persisted public `legacy_key`. The alias
-is read-only and does not turn skipped or otherwise non-failed Attempts into
-Failed History or Attention records.
+Attempt detail HTML and the React detail API resolve stable public Attempt IDs
+first. If an old link instead contains the physical `actions.id`, HTML redirects
+and the API resolves the row only when that number has no public-ID match, using
+the persisted public `legacy_key`. This read-only compatibility path does not
+turn skipped or otherwise non-failed Attempts into Failed History or Attention.
 
 Audit web startup does not scan and cache History lists or charts. History
 pages are computed when requested. The list counts and sorts compact source

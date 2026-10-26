@@ -50,6 +50,7 @@ AGENT_CLI_READ_TOOLS = (
     "read_dingtalk_drive_info",
     "read_dingtalk_drive_file",
     "read_dingtalk_oa_process_attachment",
+    "read_dingtalk_oa_form_image",
     "list_dingtalk_sheets",
     "read_dingtalk_sheet_info",
     "read_dingtalk_sheet_range",

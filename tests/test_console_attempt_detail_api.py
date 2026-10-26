@@ -9,11 +9,7 @@ import pytest
 from fastapi.testclient import TestClient
 
 from app.action_storage import insert_action, update_action
-from app.audit_web import (
-    create_audit_app,
-    handle_rerun_attempt_post,
-    resolve_attempt_detail_reference,
-)
+from app.audit_web import create_audit_app, handle_rerun_attempt_post
 from app.store import AgentRole, AutoReplyStore
 from app.web_api.attempts import (
     _consumer_result_payload as build_consumer_result_payload,
@@ -21,6 +17,7 @@ from app.web_api.attempts import (
     _oa_permission_wait_projection,
     _runtime_payload,
     build_attempt_detail,
+    resolve_attempt_detail_reference,
 )
 
 from app.store import NATIVE_CANDIDATE_EXECUTION_SQL

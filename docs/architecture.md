@@ -2255,6 +2255,8 @@ transport，还用 `disabled_servers` 列出后台 Agent 不得使用的个人�
 
 OA 表单附件的临时文件路径由下载材料层直接返回；表格抽取结果本身可以没有 `path`，角色读取器仍以该真实临时文件缓存来源并返回表格内容、原审批实例/文件 ID 和原字节 SHA-256。此路径修复不改变 OA 下载权限、钉盘拒绝结果或审核动作。
 
+部分 OA 表单图片字段直接保存 DingTalk static media URL，而不是附件 file ID。两角色可用 `read_dingtalk_oa_form_image` 读取；工具先从该流程的实时表单值确认 URL 完全匹配，再使用评论图片相同的域名、重定向、大小、OCR 和临时文件限制。跨流程 URL 在请求网络前被拒绝。
+
 Codex 后台角色固定 `features.plugins=false`；`codex exec` 固定带 `--disable hooks`（Derek 2026-09-24）。插件 Stop hook 曾使结构化结果重复；长期记忆由执行 Consumer 在回合内通过 Memory Connector 写入，历史 `durable_memories` 字段读取后丢弃，见「任务长期记忆」。Consumer 生成候选并按共享 Audit Rules 自检；Audit 只读独立审核；System Executor 执行已持久化审核通过的受控动作。普通工具工作不因产生材料而自动注册为系统受控动作。个人对话中的小青面试或上传没有对应后台系统任务，不设置服务审核项。
 
 Agent 不执行 `auth login`、`reset` 或 `logout`。MCP 实际返回未授权时，任务保留认证失败，不把它解释为材料缺失。
@@ -4157,7 +4159,7 @@ resolve the latest Attempt through the task's current execution generation and
 AgentRun identity. Meetings use their latest Meeting Attempt ID. A Task ID is
 never substituted for an Attempt ID; a record without a persisted Attempt says
 so in its expanded details. Membership, terminal states and retry policy do not change.
-The HTML Attempt detail route accepts stable public Attempt IDs. For compatibility,
+Attempt detail HTML and the React detail API accept stable public Attempt IDs. For compatibility,
 if a requested number is not a public ID but is an existing `actions.id` for a
 reply Attempt, it redirects to that row's public `legacy_key`; a public-ID match
 always takes precedence. This read-only alias does not change the Attempt or its
