@@ -722,6 +722,28 @@ def test_legacy_source_leases_recover_with_fencing_and_monotonic_generation(
         assert third.generation > second.generation
 
 
+@pytest.mark.parametrize("status", ["waiting", "pending", "retry"])
+def test_meeting_dispatcher_claims_waiting_pending_and_retry_once_eligible(
+    tmp_path: Path, status: str,
+) -> None:
+    store = _store(tmp_path)
+    job_id = _meeting(store)
+    with store._connect() as db:
+        db.execute("update tasks set status=? where id=?", (status, job_id))
+    adapter = MeetingQueueAdapter(store)
+
+    assert adapter.metrics(NOW).due == 1
+    envelope = adapter.claim(NOW, owner="owner-a", lease=timedelta(seconds=1))
+    assert envelope is not None and envelope.source_id == str(job_id)
+    adapter.release(envelope, owner="owner-a", now=NOW)
+
+    # Release parks the job in retry; it is claimable again, but not before eligible_at.
+    assert adapter.metrics(NOW).due == 1
+    assert adapter.metrics(NOW - timedelta(hours=1)).due == 0
+    assert adapter.claim(NOW - timedelta(hours=1), owner="owner-b", lease=timedelta(seconds=1)) is None
+    assert adapter.claim(NOW, owner="owner-b", lease=timedelta(seconds=1)) is not None
+
+
 @pytest.mark.parametrize(
     "adapter_name",
     (

@@ -143,7 +143,11 @@ def dispatch_task_projection(adapter_name):
     if adapter_name not in DISPATCH_TASK_KINDS:
         raise ValueError("not a Task-backed dispatcher adapter")
     task_kind = DISPATCH_TASK_KINDS[adapter_name]
-    columns = ["task.id", "task.status as task_status", "task.status", "task.available_at",
+    # task_status is the dispatcher's lifecycle phase: a Meeting Task waiting for its settle time
+    # or retrying after a failure is pending work (`task.status` keeps the exact value).
+    columns = ["task.id",
+               "case when task.status in ('waiting','retry') then 'pending' else task.status end as task_status",
+               "task.status", "task.available_at",
                "task.attempts", "task.error", "task.created_at", "task.updated_at",
                "task.locked_at", "task.lease_owner as claim_owner",
                "task.owner_pid as claim_owner_pid", "task.generation as claim_generation",
