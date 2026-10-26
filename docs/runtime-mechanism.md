@@ -2816,6 +2816,10 @@ trigger 记录里，一次外部抖动不会在每分钟的命令上刷出成串
 `scheduled_task_service_command_unavailable` 跳过。服务命令任务不经过 Runtime、Skill、
 Consumer 或 Audit，也不产生 reply task、agent run 或 reply_attempt。
 
+定时服务命令结果保存并完成 trigger 后，成功或失败都会发送桌面通知；Agent 形式任务在
+Reply task 的 `done` 或 `failed` 终态保存后发送通知。标题包含任务名，正文包含命令结果摘要、
+Agent 结果摘要或失败原因。等待重试、跳过、仍在执行及单纯派发不通知；通知不改变持久化状态。
+
 DingTalk 的分钟级 `produce-once` / `calendar-invites-once` 与 `recover-recent-messages`
 共用锁，避免同一 producer 并发读取。若恢复扫描正在进行，分钟级命令不等待锁，而是返回
 `deferred=producer_busy` 并结束本次 trigger；下一个分钟级定时触发会补做增量扫描。恢复扫描仍会
