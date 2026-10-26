@@ -1,5 +1,5 @@
 from fastapi.testclient import TestClient
-from app.task8_storage import task8_set_parts
+from tests.support.native_task_fields import set_native_task_fields
 
 from app.audit_web import create_audit_app
 from app.store import AutoReplyStore
@@ -21,10 +21,9 @@ def test_operator_can_skip_uncertain_failed_reply_task_without_claiming_success(
     )
     [task] = store.claim_reply_tasks(limit=1)
     with store._connect() as db:
-        db.execute(
-            f"update tasks set {task8_set_parts('reply_tasks', {'status': 'failed', 'error': 'external_action_uncertain'}).sql} "
-            "where record_type='reply_tasks' and id=?",
-            (*task8_set_parts('reply_tasks', {'status': 'failed', 'error': 'external_action_uncertain'}).parameters, task.id,),
+        set_native_task_fields(
+            db, 'reply_tasks', task.id,
+            {'status': 'failed', 'error': 'external_action_uncertain'},
         )
 
     client = TestClient(create_audit_app(database))
@@ -63,10 +62,9 @@ def test_skip_uncertain_reply_task_requires_reason_and_current_generation(
     )
     [task] = store.claim_reply_tasks(limit=1)
     with store._connect() as db:
-        db.execute(
-            f"update tasks set {task8_set_parts('reply_tasks', {'status': 'failed', 'error': 'external_action_uncertain'}).sql} "
-            "where record_type='reply_tasks' and id=?",
-            (*task8_set_parts('reply_tasks', {'status': 'failed', 'error': 'external_action_uncertain'}).parameters, task.id,),
+        set_native_task_fields(
+            db, 'reply_tasks', task.id,
+            {'status': 'failed', 'error': 'external_action_uncertain'},
         )
 
     client = TestClient(create_audit_app(database))
