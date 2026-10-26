@@ -1,5 +1,7 @@
 # Codex Audit 原生输出格式验证
 
+**当前状态（2026-10-25 19:22 PDT）：G2／PR325已在当前Codex CLI、本机OAuth、gpt-6-luna范围验收关闭。生产fba909db9已包含并加载修复，进程及生产回读见文末最终验收。以下此前的“未合并／未部署／等待API”等为带日期的历史结论，不代表当前状态；原测试失败仍未改标通过。**
+
 本次只处理 Codex Audit 的结构化输出传输。当前 main 的完整 Audit trajectory 曾出现零宽字符污染 JSON，以及 `return` 结果缺少必填 `feedback`；后者已由既有严格 Audit wire/Pydantic parser 拒绝，但模型格式失败会导致该轮无法完成。Consumer 原生输出修复已在当前 main，本次不改 Consumer 结构或行为。
 
 Audit 使用现有 `AuditAgentWireResult` 生成 Codex 原生 Schema。为满足 Codex 最外层必须是 object 的限制，`outcome` 与 `feedback` 放在 `decision` 对象中，服务解析后还原成原 wire 结构。候选 revision/digest 仍从当前 `AuditTurnContext` 注入，候选字段断言仍经过原校验；业务审核和反馈规则没有变化。动态 JSON 值使用键值条目表示，并在严格 Pydantic 验证前还原。
@@ -74,3 +76,17 @@ GitHub npm test先执行Ruff，所以这些错误使pytest尚未启动；app.dep
 具体缺口仅定位到主线已有三份测试：test_action_delivery_bootstrap.py仍断言旧schema2026-10-14.1并操作已删除索引idx_actions_sent_history；test_cli.py存在旧tasks.payload_json、ceo_task_restore函数注册及WeChat可领取夹具问题；test_reply_input_reference.py导入已移除REPLY_TASK_INPUT_SQL，收集失败。三份测试及app/cli.py、app/store.py与合并前main dd3c4933b内容完全相同，未夹入PR325修改；完整失败节点及日志摘要SHA保存在既有JSON证据。没有顺手修改这些模块或重启服务。
 
 门禁失败后生产回读：HEAD仍dc07ddcbed7ee48896879db37b06d162a97a98d5，工作树干净；launchd PID92610 running，healthz200/ok，queues/Attention/History均HTTP200，Attention4、History38259。该PID只表示回读当刻存活，不能把并行会话造成的进程变化归为本次部署；本次自身在测试阶段退出。**当前CLI行为已验收、PR已合并，生产发布仍未完成。** 有限下一步是所属范围内修复上述主线测试/夹具与当前数据模型的差异，随后重新走正式部署和生产回读；不再处理API，也不重跑模型矩阵。
+
+## G2／PR #325 最终验收关闭（2026-10-25 19:22 PDT）
+
+**G2已验收并关闭，限定当前Codex CLI、本机OAuth、gpt-6-luna。** PR325合并提交bd3c8eb44已由后续发布包含于生产fba909db929c05ab2fa7e3f4135e5f71f741fcd0。生产工作树干净，三个相关运行文件与已验证250c39867逐字节相等，Consumer/Audit实际生产schema与已验收文件一致。没有将“生产包含提交”单独充当加载证明。
+
+加载确认：launchd主进程99011（app.service_supervisor）及工作进程99030/99031/99032（app.cli）均在2026-10-26 01:42:02 UTC启动，cwd全部为/Users/derek/Services/ceo-agent-service；作业CEO_SERVICE_ROOT相同。最新相关代码写入时间为01:41:58.078 UTC，早于所有这些进程启动。回读结束PID仍99011、生产HEAD仍fba909db9，确认当前进程从包含修复的代码启动，无需重启。
+
+当前配置仍为codex_oauth/local_oauth/gpt-6-luna。保存的Consumer45行与Audit49行cold/resume前缀SHA再次匹配，实际生产schema摘要仍为72ee1044…/ca522ed1…。完整行为判定及六项原生输出、十项接续测试与独立审查复用前述记录；本次没有重跑模型或测试，没有改代码、配置、prompt或权限。
+
+生产回读：healthz200/ok，queues200（02:20:45 UTC），Attention200/4（02:20:57 UTC）。History首个10秒请求超时，如实保留；只补一次40秒上限回读，于02:22:29 UTC返回200、总数38269，未循环轮询。各接口计数是对应采样时刻的值，不宣称队列归零或全部历史问题已清理。
+
+此前7项测试失败、1项收集错误及44条lint诊断仍作为历史维护事实保存，没有改标通过。主线随后已独立提交旧完整门禁暂停fbd0c89bb（TEST_GATE_ENABLED=False）；本次未改门禁、未重复发布或重启，不再把旧失败或API中转商作为当前G2前提。生产尚未包含的其他主线变更也不在本次发布范围。完整加载/摘要/进程/回读记录见既有G2 JSON的final_acceptance。
+
+**本轮终点已达到：PR已合并，当前生产进程已加载，当前CLI证据有效，生产回读及验收记录齐全。** G1自然样本验收独立保留，整轮Agent优化仍不能据此全部宣布完成；不自动开启其他trajectory优化。

@@ -10670,7 +10670,13 @@ def create_audit_app(
 
     @app.get("/attempts/{attempt_id}", response_class=HTMLResponse)
     def attempt_detail(attempt_id: int) -> HTMLResponse:
-        status, html = render_attempt_detail(AutoReplyStore(db_path), attempt_id)
+        from app.web_api.attempts import resolve_attempt_detail_reference
+
+        store = AutoReplyStore(db_path)
+        canonical_id = resolve_attempt_detail_reference(store, attempt_id)
+        if canonical_id is not None and canonical_id != attempt_id:
+            return RedirectResponse(f"/attempts/{canonical_id}", status_code=307)
+        status, html = render_attempt_detail(store, attempt_id)
         return HTMLResponse(html, status_code=status)
 
     @app.get("/oa-approvals/{process_instance_id:path}", response_class=HTMLResponse)

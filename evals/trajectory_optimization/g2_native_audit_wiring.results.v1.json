@@ -59,16 +59,16 @@
   },
   "existing_service_session_gap": {
     "function": "AgentTurnProcess._session_for_route",
-    "fact": "For Audit, requested session is returned only when route.name == codex_oauth; all other routes return None. Candidate does not alter this mechanism.",
+    "fact": "Historical before the session fix: For Audit, requested session is returned only when route.name == codex_oauth; all other routes return None. Candidate does not alter this mechanism.",
     "read_only_diagnostic": {
       "route": "qwen_gpu4",
       "requested": "anonymous-existing-session",
       "selected": null
     },
     "consequence": "Previously passed CLI same-session probes do not establish production non-OAuth Audit continuation.",
-    "status": "Fixed in PR325 followup candidate under explicit user authorization; local validation passed, unmerged/undeployed."
+    "status": "Resolved and published in production fba909db9; current CLI scope accepted and closed."
   },
-  "release_status": "Current Codex CLI local OAuth/gpt-6-luna behavioral acceptance passed using existing evidence; PR325 merged. Production deployment not completed: mandatory pytest gate observed7failures and1collection error in unchanged main tests; no bypass or API prerequisite. Production remaineddc07ddcbe and healthy at recorded readback.",
+  "release_status": "G2 closed for current Codex CLI local OAuth/gpt-6-luna: PR325 merged and loaded in production fba909db9; fresh PID/start/cwd/source/schema and health/queues/Attention/History readbacks verified. Prior deploy/test/lint failures retained as historical independent maintenance, not marked passed. G1 remains open.",
   "session_continuation_followup": {
     "base": "1045b3fbbff013fb015149310ae4c53e56131c2b",
     "changes": [
@@ -298,7 +298,7 @@
       "prior_local_session_passes": 10,
       "model_reruns": 0
     },
-    "release": "PR325 merged as bd3c8eb44; standard deployment refused by existing main test/model fixtures. No API gate; current CLI acceptance remains valid."
+    "release": "Closed: production includes PR325; actual service processes loaded verified code, current CLI evidence reused, production readback complete. No repeated publish."
   },
   "current_cli_publication_attempt": {
     "pr": 325,
@@ -378,5 +378,140 @@
       }
     },
     "next_minimal_step": "Resolve shared-main test/fixture mismatches in the three named files in their own scope, then rerun formal deployment gate and publish/read back. No repeated model cases or API work."
+  },
+  "final_acceptance": {
+    "status": "closed",
+    "scope": "G2/PR325 only: current Codex CLI local OAuth/gpt-6-luna",
+    "confirmed_at": "2026-10-26T02:25:05.100241+00:00",
+    "merge_commit": "bd3c8eb44cb58165dcf1e476a193ef870f8c1613",
+    "production_loading": {
+      "at": "2026-10-26T02:18:48.927445+00:00",
+      "head": "fba909db929c05ab2fa7e3f4135e5f71f741fcd0",
+      "contains_pr325": true,
+      "dirty": false,
+      "job": {
+        "working_directory": null,
+        "service_root": "/Users/derek/Services/ceo-agent-service"
+      },
+      "processes": [
+        {
+          "pid": 99011,
+          "started_at": "2026-10-26T01:42:02+00:00",
+          "start_epoch": 1792978922.0,
+          "cwd": "/Users/derek/Services/ceo-agent-service",
+          "module": "app.service_supervisor"
+        },
+        {
+          "pid": 99030,
+          "started_at": "2026-10-26T01:42:02+00:00",
+          "start_epoch": 1792978922.0,
+          "cwd": "/Users/derek/Services/ceo-agent-service",
+          "module": "app.cli"
+        },
+        {
+          "pid": 99031,
+          "started_at": "2026-10-26T01:42:02+00:00",
+          "start_epoch": 1792978922.0,
+          "cwd": "/Users/derek/Services/ceo-agent-service",
+          "module": "app.cli"
+        },
+        {
+          "pid": 99032,
+          "started_at": "2026-10-26T01:42:02+00:00",
+          "start_epoch": 1792978922.0,
+          "cwd": "/Users/derek/Services/ceo-agent-service",
+          "module": "app.cli"
+        }
+      ],
+      "files": {
+        "app/agent_turn_runner.py": {
+          "matches_verified_candidate": true,
+          "sha256": "df6bd5792be03f196f4681dd05bf94b5016bd3c1b0881b0e0c74745b759834d0",
+          "mtime_epoch": 1792978918.0780132
+        },
+        "app/native_agent_output.py": {
+          "matches_verified_candidate": true,
+          "sha256": "a6435aae1a34f2b5367e08c35440758c396bb050491223c0959dc84cfe9eece2",
+          "mtime_epoch": 1792703676.4974782
+        },
+        "app/agent_wire_contracts.py": {
+          "matches_verified_candidate": true,
+          "sha256": "def62d0c6a4d1d295c6afd35df25491bef2a0612aa00f6a9955f2811bda822df",
+          "mtime_epoch": 1792824070.8355367
+        }
+      },
+      "all_recorded_processes_started_after_relevant_code_write": true,
+      "all_recorded_processes_use_production_cwd": true
+    },
+    "production_readback": {
+      "at": "2026-10-26T02:20:30.615572+00:00",
+      "production_head": "fba909db929c05ab2fa7e3f4135e5f71f741fcd0",
+      "route": {
+        "name": "codex_oauth",
+        "auth": "local_oauth",
+        "model": "gpt-6-luna"
+      },
+      "reused_evidence": [
+        {
+          "role": "consumer",
+          "session": "01a16cf9-864c-7b11-8a2b-5e3982577263",
+          "prefix_lines": 45,
+          "prefix_sha_matches": true,
+          "schema_sha256": "72ee10446972dde404f738df395701188a39d9d5e10005312a66fec3b11e9d7b",
+          "production_schema_equal": true
+        },
+        {
+          "role": "audit",
+          "session": "01a16cf2-63d7-7720-b89d-a9b58d436ef9",
+          "prefix_lines": 49,
+          "prefix_sha_matches": true,
+          "schema_sha256": "ca522ed193ce692fae5a06177240203e4a3c0cf803b93b7e977382eebacd6937",
+          "production_schema_equal": true
+        }
+      ],
+      "health": {
+        "http": 200,
+        "meta": {},
+        "ok": true
+      },
+      "queues": {
+        "http": 200,
+        "meta": {
+          "total": 2,
+          "snapshot_at": "2026-10-26T02:20:45.228387+00:00"
+        }
+      },
+      "attention": {
+        "http": 200,
+        "meta": {
+          "snapshot_at": "2026-10-26T02:20:57.279977Z",
+          "total": 4
+        }
+      },
+      "history": {
+        "error": "ReadTimeout"
+      },
+      "pid_after_readback": 99011
+    },
+    "history_bounded_retry": {
+      "at": "2026-10-26T02:22:22.752095+00:00",
+      "scope": "one bounded History readback retry after10s timeout; no task execution",
+      "http": 200,
+      "meta": {
+        "snapshot_at": "2026-10-26T02:22:29.073344Z",
+        "total": 38269
+      }
+    },
+    "prior_tests_reused": {
+      "native_output": 6,
+      "session_continuation": 10,
+      "independent_reviews": "previous accepted code and recovery reviews; not rerun"
+    },
+    "runtime_or_config_changes_this_closeout": false,
+    "model_calls_this_closeout": 0,
+    "repeated_test_runs_this_closeout": 0,
+    "repeated_deploy_or_restart_this_closeout": false,
+    "maintenance_records": "Previous failed deployment gate/old schema tests and44lint findings preserved historically; no claim of full-suite success. Latest main gate suspension is an independent existing change fbd0c89bb, not changed here.",
+    "remaining_outside_scope": "G1 natural post-fix document behavior acceptance remains independent and open; no new optimization started."
   }
 }

@@ -18,14 +18,11 @@ from app.workbench.runtime import (
     RuntimeResult,
     _release_runtime_owner,
 )
-from app.task20_definitions import task20_projection
-from app.task8_storage import task8_set_parts
 
-from app.run_storage import WORKBENCH_EVENT_SQL
+from app.workbench.store import WORKBENCH_ATTACHMENT_SQL, WORKBENCH_EVENT_SQL, WORKBENCH_TURN_SQL
 from app.workbench.store import WorkbenchStore
 
 
-WORKBENCH_TURN_SQL = task20_projection("workbench_turns")
 
 
 class FakeRuntime:
@@ -343,11 +340,7 @@ def test_failed_runtime_keeps_service_code_without_copying_native_diagnostic(tmp
     assert row["error_code"] == "provider_process_failed"
     assert "PRIVATE_TOKEN" not in row["error_detail"]
     with store._connect() as db:
-        parts = task8_set_parts("workbench_turns", {"error_detail": ""})
-        db.execute(
-            f"update tasks set {parts.sql} where record_type='workbench_turns' and legacy_key=?",
-            (*parts.parameters, turn.id),
-        )
+        db.execute("update workbench_turns set error_detail='' where task_id=?", (int(turn.id),))
     assert store.get_turn(turn.id).error_detail
     executor.close()
 
@@ -434,9 +427,14 @@ def test_runtime_request_uses_validated_attachment_and_image_paths(tmp_path: Pat
 
     request = runtime.requests[0]
     assert len(request.attachment_paths) == 1
-    assert request.attachment_paths[0].name == document.id
+    with store._connect() as db:
+        locator = {
+            row["id"]: Path(row["storage_path"])
+            for row in db.execute(f"select id,storage_path from ({WORKBENCH_ATTACHMENT_SQL}) as workbench_attachments")
+        }
+    assert request.attachment_paths[0] == locator[document.id]
     assert len(request.image_paths) == 1
-    assert request.image_paths[0].name == image.id
+    assert request.image_paths[0] == locator[image.id]
     executor.close()
 
 

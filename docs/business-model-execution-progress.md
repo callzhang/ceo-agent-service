@@ -12,9 +12,19 @@ forward/current-data inverse/real old-code cold read/write/reforward and a
 second inverse-source continuation proof all passed. The [acceptance record](signal-source-owner-validation.md)
 keeps exact cohort sizes, manifest digests, overlapping test counts and the two
 baseline ABI failures separate. The generated full SQL artifact is refreshed.
-The other task owns selector/publication integration; its Quality work and
-standard release/readback are pending. No protected entrypoint was edited and
-no real test send occurred. Production was read as Store25.2/Email54 with1140
+The release-coordination task owns the protected selector and explicit historical
+release-tool corrections; the root business-model task is now the sole owner of
+final integration, Quality, standard deploy, production readback and cleanup.
+[Current Quality closeout](quality-closeout-20261025.md) records each failed
+iteration, fixture retirement mapping, independent reviews and completed focused
+checks. The final pinned target is476 objects, SHA256
+`234e17843afc171b4fa8cb42f3e1d959ef2ba415f43e295dc7db640ab3d02221`.
+Its fresh production-derived copy passed forward/current-data inverse/actual
+predecessor cold reads and writes/reforward:1140 original Signals,1147 final
+Signals,48 other typed table snapshots preserved and the original FK finding set
+unchanged. Real provider calls were zero. Current-head Quality and standard
+release/readback are still pending; the earlier475-object evidence does not
+substitute for this final476-object proof. No real test send occurred. Production was read as Store25.2/Email54 with1140
 Signals (110 inline,1030 referenced;172 parents); this is the source checkpoint,
 not a deployment of25.3. Final integrated release/readback and cleanup remain
 pending. Copy Chrome verification of formal Tasks, source/raw record, canonical

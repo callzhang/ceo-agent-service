@@ -65,3 +65,112 @@ browser jobs and passed the previously failing Action Entity preflight. Python
 shards then stopped at stale current receipt-caller setup/projection assertions,
 one nonempty-unknown-schema bootstrap test, and the two E2E wire fixtures. This
 run is still red; the local 50 executions do not substitute for final Quality.
+
+## Current Action tests — owner correction
+
+The current DAO fixture now constructs the selected AutoReplyStore schema; Task
+and Run parents use native entity storage. Native execution identity is checked
+independently against the Consumer-role `runs` row and its adopted result, rather
+than inferring it from two projected aliases. WorkUpdate checks retain summary,
+defaults, guarded updates, creation time and BLOB storage and explicitly exclude
+the two retired fields.
+
+The first single-file runs passed 10 Action-vector, 6 Sent-result and 1 execution
+case. Two additional ownership/retired-field assertions were then added during
+SPEC review; their exact nodes still require a fresh run. No runtime or schema
+behavior changed in this unit.
+
+Only obsolete direct representations were retired:
+
+| Retired test representation | Existing current coverage / disposition |
+| --- | --- |
+| Direct `review_candidates` Action writer | Native adopted-result and reviewed execution Store tests; frozen migration fixtures remain explicit. |
+| Direct Email plan/claim bootstrap in the generic vector test | `test_email_action_unsubscribe_dao.py` retains continuation upsert, scalar codec and complete Store-cycle coverage. |
+| Direct `sent_replies` insertion/projection | Current completed-delivery Action/Receipt public readback and pointer-chain tests. |
+| Mutating a Sent external key between different owners | Not a current API contract; current Action identity/idempotency/conflict tests remain. |
+| Copying shared receipt bodies into retired Sent/attempt rows | `test_model_result_references.py::test_receipt_correction_preserves_other_attempts_original_meaning` and `test_action_entity_storage.py` retain correction and independent Sent-pointer semantics. |
+| Immutable execution alias bytes and split public/physical identity | The alias was retired. Current test retains claim, lease renewal, exact Consumer Run identity, receipt ownership, terminal result, no re-claim and FK checks. |
+| Old Sent-result indexes and page-cost formula | Current external-key index plan is checked; historical index cardinality is not a current contract. |
+
+The raw string vector still preserves whitespace, scalar/array/object text, NUL
+and Unicode bytes through current receipt storage and the Sent pointer chain.
+SQL NULL is tested as a distinct valid current value. The retired writer's NULL,
+numeric and BLOB rejection rules are not reintroduced. Current native readback
+proves the one actual substitute dispatch; the seeded historical case proves
+stable effect identities and idempotence, without inventing a send counter.
+
+Independent SPEC re-review and QUALITY approved the current owner test unit.
+The four changed assertion nodes were rerun after review: WorkUpdate and native
+Task-delivery 2 passed; indexed Sent lookup 1 passed; native execution 1 passed.
+The lookup requires a keyed `SEARCH`, and Task-delivery uses returned native
+parent IDs. Scoped Ruff and diff checks pass. These runs extend, rather than
+replace, the preceding 10/6/1 single-file evidence.
+
+## Final 476-object current-data copy acceptance — passed
+
+The final pinned 476-object release was exercised on a fresh consistent read-only
+production-derived copy using the committed validator and the actual `dc07ddcbe`
+predecessor code. The complete run exited successfully in 954.1 seconds:
+
+- 1,140 original Signals and 172 original shared provenance parents.
+- Forward manifest/integrity verification, new current Signal writes and a
+  synthetic stored Action receipt (no provider call).
+- Current-data inverse with typed comparisons, then actual predecessor cold
+  reads and writes, including continuation of both sole/shared sources.
+- Re-forward with 1,147 final Signals and identical required facts, identities,
+  allocation watermarks, references and 48 unrelated table snapshots.
+- Original FK finding set remains exactly `runs / 190042 / tasks / 1`; no Task
+  was fabricated and no exception was silently deleted or repaired.
+- Real provider calls: zero. This is storage/old-code acceptance, not a new real
+  CLI or provider-delivery run. Current-head Quality and production readback
+  remain separate gates.
+
+## Native receipt callers — final 15-case proof
+
+The current caller file uses native Task/Run CAS, native adopted-candidate
+invalidation, native receipt/Run projections and existing retained-fact fixture
+helpers. The failed-Audit assertion now selects the canonical binding to the exact
+provider-body receipt, rather than accidentally selecting the Sent fact.
+
+An intermediate test edit moved generation advancement after the ACK. Review
+rejected that weaker sequence. The final test retains invalidation and generation
+advancement **before** the late ACK. It independently reads back the ACK-owned
+verified attempt/body/pointer/original Run; the generic current-candidate outcome
+method still rejects its now-stale generation, while the already-dispatched old
+execution can finish and the new Task remains pending. No runtime policy changed.
+
+Final single-file run: `tests/test_action_receipt_callers.py`, 15 passed in
+13.50 seconds. The first sandboxed attempt also hit process-table access denial
+in the maintenance test; the authorized read-only process-table rerun passed.
+Ruff and scoped diff checks pass. Independent final SPEC and QUALITY approved after the late-ACK sequencing
+correction.
+
+## Integration iterations
+
+The complete 50d20cd candidate was pushed and checked by Quality run
+`40259719674`. Lint, frontend and browser jobs passed; Python still failed in a
+current artifact fixture using the historical Task20 container, two stale schema
+fixture/inventory assertions, and two deterministic E2E cases. These findings are
+not counted as green or hidden by a narrower test command. The artifact fixture
+belongs to the root task; the two schema test files and E2E diagnosis belong to
+the release-coordination task.
+
+Current main then supplied the independently owned schema-read cache, fresh Store
+and Email test templates, and fixed 2 GB / 5 minute process budgets. The root
+integrated those commits normally, preserving the existing top-level MemoryLimit
+import and the newer fixed limits. This does not change the Signal source/target
+DDL. Main's deploy gate manifest and enabled/suspended state are used as committed;
+this task does not bypass or redefine them. Final candidate Quality is still
+required independently before publication.
+
+## Native Task-bound artifact fixture
+
+The current artifact/tool tests now install the actual native schema, use the
+existing native Task seed with exact IDs 7/8 and the original `pending` status,
+create real TaskInputs, bind current/claimed inputs and rotate the generation by
+Task CAS. No runtime, tool-access or Audit behavior changed. Independent SPEC
+comparison confirms all ten original test bodies are unchanged: eleven nodes,
+28 original assertions and nine exception checks remain; five fixture-integrity
+assertions were added. The final pending-status version passed all 11 nodes in
+13.88 seconds under the current fixed 2 GB / 5 minute limits. Ruff/diff pass;
+independent final QUALITY review approved.

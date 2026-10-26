@@ -6,15 +6,11 @@ import pytest
 
 from tests.support.native_run_rows import insert_runtime_attempt_row
 from app.workbench import native_events
-from app.task_storage import task_id_expression
-from app.task20_definitions import task20_projection
-from app.task8_storage import task8_set_parts
 
-from app.run_storage import WORKBENCH_EVENT_SQL
+from app.workbench.store import WORKBENCH_EVENT_SQL, WORKBENCH_TURN_SQL
 from app.workbench.store import WorkbenchStore
 
 
-WORKBENCH_TURN_SQL = task20_projection("workbench_turns")
 
 
 def _turn_with_tools(tmp_path: Path):
@@ -331,16 +327,16 @@ def test_native_messages_replay_as_completed_messages_with_stable_event_pages(tm
     assert "WRONG TURN" not in json.dumps([event.payload for event in pages])
     with replay_store._connect() as db:
         db.execute(
-            "update runs set transcript_end=7 where record_type='agent_runtime_attempts' and workload_kind='workbench' and workload_key=?", (turn.id,)
+            "update runtime_attempts set transcript_end=7 where workload_kind='workbench' and workload_key=?", (turn.id,)
         )
     assert "不可用" in replay_store.get_turn(turn.id).final_text
     assert "不可用" in replay_store.events_after(turn.id)[-2].payload["text"]
     with replay_store._connect() as db:
         db.execute(
-            "update runs set transcript_end=4 where record_type='agent_runtime_attempts' and workload_kind='workbench' and workload_key=?", (turn.id,)
+            "update runtime_attempts set transcript_end=4 where workload_kind='workbench' and workload_key=?", (turn.id,)
         )
         db.execute(
-            f"update runs set payload_json='{{}}' where record_type='workbench_events' and task_id={task_id_expression('workbench_turns', '?')} and event_type='text_delta'", (turn.id,)
+            "update workbench_events set payload_json='{}' where task_id=? and event_type='text_delta'", (int(turn.id),)
         )
     legacy = WorkbenchStore(store.path).events_after(turn.id)
     assert [event.payload["text"] for event in legacy if event.event_type == "text_delta"] == [
@@ -500,11 +496,7 @@ def test_terminal_cache_release_follows_commit_and_rollback_keeps_live_observati
     with pytest.raises(RuntimeError, match="rollback"):
         with store._connect() as db:
             db.execute("begin immediate")
-            parts = task8_set_parts("workbench_turns", {"status": "failed"})
-            db.execute(
-                f"update tasks set {parts.sql} where record_type='workbench_turns' and legacy_key=?",
-                (*parts.parameters, turn.id),
-            )
+            db.execute("update tasks set status='failed' where id=? and kind='workbench_turn'", (int(turn.id),))
             raise RuntimeError("rollback")
     assert store.get_turn(turn.id).status.value == "running"
     assert store.events_after(turn.id)[1].payload["text"] == "observed"

@@ -17,9 +17,10 @@ Two sessions deploying at
 once are serialized by the repository lock; the second finds the checkout
 already moved and stops.
 
-Before it stops or changes anything, a deploy runs the whole test suite at the
-target commit in a throwaway clone and is refused if a single test fails
-(Derek, 2026-10-25); ``--restart`` runs no new code and is not gated.
+Before it stops or changes anything, a deploy runs the gate suite
+(tests/gate_files.txt, at most 2 GB and 5 minutes) at the target commit in a
+throwaway clone and is refused if a single test fails (Derek, 2026-10-25);
+``--restart`` runs no new code and is not gated.
 """
 
 from __future__ import annotations
@@ -193,18 +194,18 @@ def _target_matching_doc_changes(
     return paths
 
 
-#: Derek, 2026-10-25: a deploy is refused unless the whole test suite passes at
-#: the commit being deployed. There is no bypass option. The suite runs in a
-#: throwaway clone, never in the production checkout, with a clean environment
-#: so it cannot reach the service database or credentials.
-TEST_GATE_ARGS = (
-    "-m", "pytest", "-q", "-n", "2", "-p", "no:cacheprovider",
-    "tests", "--ignore=tests/browser", "--ignore=tests/e2e",
-)
-#: Derek, 2026-10-25: suspended until the new gate suite is live, then set back
-#: to True. A source constant on purpose: no option or environment variable.
-TEST_GATE_ENABLED = False
-TEST_GATE_TIMEOUT_SECONDS = 3 * 60 * 60
+#: Derek, 2026-10-25: a deploy is refused unless the gate suite passes at the
+#: commit being deployed. There is no bypass option. The gate suite is the test
+#: files listed in tests/gate_files.txt, run in one process; tests/conftest.py
+#: ends that process at 2 GB or 5 minutes. The suite runs in a throwaway clone,
+#: never in the production checkout, with a clean environment so it cannot reach
+#: the service database or credentials.
+TEST_GATE_MANIFEST = "tests/gate_files.txt"
+TEST_GATE_ARGS = ("-m", "pytest", "-q", "-p", "no:cacheprovider", "--tb=short")
+#: Derek, 2026-10-25: on. It was off from 2026-10-25 until tests/gate_files.txt
+#: was live. A source constant on purpose: no option or environment variable.
+TEST_GATE_ENABLED = True
+TEST_GATE_TIMEOUT_SECONDS = 6 * 60
 _TEST_GATE_ENV_KEYS = ("PATH", "HOME", "USER", "LANG", "LC_ALL", "TMPDIR", "VIRTUAL_ENV")
 
 
@@ -227,23 +228,28 @@ def require_green_suite(root: Path, commit: str, *, run=subprocess.run) -> None:
                     f"could not check out {commit[:8]} to run the tests; nothing was deployed: "
                     + done.stderr.decode(errors="replace").strip()
                 )
+        manifest = clone / TEST_GATE_MANIFEST
+        files = manifest.read_text().split() if manifest.is_file() else []
+        if not files:
+            keep = True
+            raise SystemExit(f"{TEST_GATE_MANIFEST} is missing or empty at {commit[:8]}; nothing was deployed")
         with log_path.open("wb") as log:
             try:
                 done = run(
-                    [sys.executable, *TEST_GATE_ARGS], cwd=clone, env=env, stdout=log,
+                    [sys.executable, *TEST_GATE_ARGS, *files], cwd=clone, env=env, stdout=log,
                     stderr=subprocess.STDOUT, timeout=TEST_GATE_TIMEOUT_SECONDS,
                 )
             except subprocess.TimeoutExpired:
                 keep = True
                 raise SystemExit(
-                    f"the test suite did not finish in {TEST_GATE_TIMEOUT_SECONDS // 60} minutes "
+                    f"the gate suite did not finish in {TEST_GATE_TIMEOUT_SECONDS // 60} minutes "
                     f"at {commit[:8]}; nothing was deployed. Log: {log_path}"
                 ) from None
         if done.returncode != 0:
             keep = True
             summary = log_path.read_text(errors="replace").strip().splitlines()[-1:] or ["no output"]
             raise SystemExit(
-                f"the test suite fails at {commit[:8]} ({summary[0]}); nothing was deployed. "
+                f"the gate suite fails at {commit[:8]} ({summary[0]}); nothing was deployed. "
                 f"Fix the tests, then deploy again. Log: {log_path}"
             )
     finally:
