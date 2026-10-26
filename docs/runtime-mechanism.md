@@ -5486,3 +5486,9 @@ expression to seek the existing schedule-occurrence expression index. SQLite
 compares the CAST type token for expression-index matching; its casing is kept
 identical to the declaration. Existing integer conversion, latest-dispatched
 selection and Attention eligibility are unchanged.
+
+Native Task due/metrics reads expose the physical status bound implied by the
+existing pending-phase and processing branches. This lets the existing
+kind/status/available-at index seek without scanning terminal history hidden
+behind the normalized lifecycle CASE. The same pending-phase owner is reused;
+all original source eligibility, time, lease and live-owner checks remain.

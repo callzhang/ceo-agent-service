@@ -582,3 +582,12 @@ revised card remains unseen and requeue/no-repeat assertions stay exact. FD
 measurement samples one fixed watcher cycle and includes an explicit+1 open
 sentinel and exact close control; final executor FD non-growth is unchanged.
 Those2 cases pass3.07s.
+
+The3 Task due/metrics failures were a real runtime plan regression: normalized
+CASE status prevented raw status index seeks. The original pending phases plus
+the original processing branch now provide an equivalent raw upper bound,
+restoring kind/status searches with no qualification change. Independent review
+proved the two old branch sets and the new bound are equal; existing timing,
+lease, live-owner, terminal/backoff and Meeting phase controls remain. All15
+lifecycle cases pass1.67s. Plan assertions accept covering-index spelling while
+still requiring the exact kind/status SEARCH and rejecting scans/materialization.
