@@ -33,6 +33,26 @@ previously blocked test roots and four API outputs are now deleted and verified
 absent (12,246,364,678 logical bytes); the active Signal inputs/backup await final
 release readback. No physical database saving is attributed to that cleanup.
 
+## Integration checkpoint — 2026-10-26
+
+- Main through `f867d5c43` is integrated normally, preserving reviewed current
+  identity/type/receipt and explicit inverse coverage. Genuine current owner
+  regressions and stale fixtures are tracked separately in the closeout record.
+- A fresh production-derived copy again passes the entire forward/new-facts/
+  substitute-receipt/current-data inverse/actual old-code cold read-write/
+  reforward sequence:103.68s,1140→1147 Signals,48 tables, unchanged sole FK
+  finding, zero real provider calls.
+- The standard clean-clone gate passes at `e9b6c0a55`; full app/tests Ruff passes.
+  The26 file/installed-target/current managed-revision publication preflight
+  passes. Only the two originally planned weekly-report assets differ.
+- Complete48-shard Quality at `b4ce543c1` is still running (`40279241126`).
+  Its obsolete unused-import lint failure is corrected in `e9b6c0a55`;
+  frontend and browser jobs pass. Python results are not yet complete.
+- The temporary production connection refusal coincided with a separate
+  standard deploy to `9e7308ee5`; subsequent health readback returned200/ok.
+  The Signal migration has not been deployed by this task. Final Quality,
+  standard deployment, production feature readback and artifact cleanup remain.
+
 ## Previous history closeout — production readback, 2026-10-25
 
 | Area | Verified state | Evidence / remaining boundary |

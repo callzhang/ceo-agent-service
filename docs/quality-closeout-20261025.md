@@ -554,3 +554,20 @@ after the frozen source). No source schema is fabricated. The original full
 Reply result/receipt and two portable inverse/reforward cycles pass1 in3.03s.
 Together with the prior144 passing nodes, the145-node three-file scope is
 covered without repeating its86-second green set.
+
+### Complete b4 diagnostic — 2026-10-26
+
+Run40279241126 validates the normally merged business commitb4ce543c1. Frontend
+and browser pass. Its lint failure is an unused WeChat import left by upstream
+retirement, removed ine9b6c0a55; complete app/tests Ruff and the standard
+clean-clone gate pass there. Completed Python shards initially expose8 current
+failures across query plan, History count, calendar recovery, static assets, FD
+measurement and one obsolete negative source fixture; all are explicitly
+assigned for repair. This is not a complete-Quality-green claim.
+
+The obsolete negative fixture called a valid current Store without an optional
+Email ledger “incomplete.” It now creates real current paired storage and
+removes either the Email table or its version facts. Both cases reject with the
+exact existing IntegrityError and preserve the input catalog/ledger;2 pass1.69s.
+The supported53→54 transition is deliberately not used as a negative case.
+No app, publication guard or schema acceptance rule changed.
