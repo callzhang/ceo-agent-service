@@ -457,7 +457,7 @@ curl -sS -X POST "https://api.dingtalk.com/v1.0/workflow/processInstances/spaces
   -d '{"processInstanceId":"<processInstanceId>","fileId":"<fileId>"}'
 ```
 
-接口返回 `result.downloadUri` 后，用该临时地址下载二进制附件，再按 `fileType` 抽取正文：`docx` 解 `word/document.xml`，`xlsx` 读工作表 XML/sharedStrings，`pdf` 用 PDF 文本抽取，图片用 OCR 或人工查看。下载地址通常短期有效，且可能含签名；不得写入日志、SQLite、审批评论、DingTalk 回复或 agent 输出。
+接口返回 `result.downloadUri` 后，用该临时地址下载二进制附件，再按 `fileType` 抽取正文：`docx` 解 `word/document.xml`，`xlsx` 读工作表 XML/sharedStrings，`pdf` 用 PDF 文本抽取；`pptx` 先提取可见文本，并检查嵌入图片；图片用 OCR 或人工查看。下载地址通常短期有效，且可能含签名；不得写入日志、SQLite、审批评论、DingTalk 回复或 agent 输出。
 
 在 `ceo-agent-service` 中，只有 worker 已真实注入并可核对来源的 `downloaded_attachment.text` 才可视为已读正文；Consumer/Audit 没有通用附件下载器，不要让角色自行调用 `DwsClient.download_oa_process_attachment` 或把 `fileId` 当 drive node。Consumer 可按本 Skill 明确记录的 `dws` 读取/预览授权路径补足具名接口未覆盖的读取；不得使用任意 shell/OpenAPI 绕过角色边界，Audit 不使用 shell 或 `dws`。
 
@@ -509,7 +509,7 @@ PDF 附件读取失败时，先判断是“真的不可读”还是“PDF 结构
 
 ### 审批 OCR 路径
 
-审批中的扫描 PDF、图片附件、发票/完税证明截图、合同扫描件、盖章扫描件、报销凭证、验收单等，如果没有可用文本层，Consumer 和 Audit 必须使用其 MCP 工具目录中的 `ai_services.ocr_document` 读取。`read_dingtalk_drive_file` 对扫描件会返回精确来源的 `ocr_input_base64`、MIME 类型、PDF 页码和 SHA-256；将二进制传给 OCR MCP，保留返回的页码、置信度和警告。不得改用本地 OCR 脚本或 `magick + tesseract` 绕过该 MCP 路径。
+审批中的扫描 PDF、图片附件、含嵌入图片的 PPTX、发票/完税证明截图、合同扫描件、盖章扫描件、报销凭证、验收单等，如果没有可用文本层，Consumer 和 Audit 必须使用其 MCP 工具目录中的 `ai_services.ocr_document` 读取。`read_dingtalk_drive_file` 和 `read_dingtalk_oa_process_attachment` 会返回精确来源的 OCR 页码及 SHA-256；PPTX 图片页按阅读顺序编号，并保留对应幻灯片号。对返回的每个页码调用同一读取工具的 `page_number` 参数，取得有界 JPEG，再传给 OCR MCP；保留原页码、置信度和警告。不得改用本地 OCR 脚本或 `magick + tesseract` 绕过该 MCP 路径。
 
 OCR 前提：
 

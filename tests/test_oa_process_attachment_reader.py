@@ -1,4 +1,5 @@
 import asyncio
+import base64
 import hashlib
 import json
 from io import BytesIO
@@ -11,6 +12,129 @@ from mcp.server.fastmcp.exceptions import ToolError
 from app import agent_cli
 from app import dws_client
 from app.dws_client import DwsClient
+
+
+def _image_only_pptx(*, extra_member_size: int = 0) -> bytes:
+    from PIL import Image
+
+    image = BytesIO()
+    Image.new("RGB", (32, 24), "white").save(image, format="PNG")
+    package = BytesIO()
+    with ZipFile(package, "w") as archive:
+        archive.writestr(
+            "[Content_Types].xml",
+            '<Types xmlns="http://schemas.openxmlformats.org/package/2006/content-types">'
+            '<Default Extension="png" ContentType="image/png"/>'
+            '<Override PartName="/ppt/presentation.xml" ContentType="application/vnd.openxmlformats-officedocument.presentationml.presentation.main+xml"/>'
+            '<Override PartName="/ppt/slides/slide1.xml" ContentType="application/vnd.openxmlformats-officedocument.presentationml.slide+xml"/>'
+            '</Types>',
+        )
+        archive.writestr(
+            "ppt/presentation.xml",
+            '<p:presentation xmlns:p="http://schemas.openxmlformats.org/presentationml/2006/main"/>',
+        )
+        archive.writestr(
+            "ppt/slides/slide1.xml",
+            '<p:sld xmlns:p="http://schemas.openxmlformats.org/presentationml/2006/main" '
+            'xmlns:a="http://schemas.openxmlformats.org/drawingml/2006/main" '
+            'xmlns:r="http://schemas.openxmlformats.org/officeDocument/2006/relationships">'
+            '<p:cSld><p:spTree><p:pic><p:blipFill><a:blip r:embed="rId1"/>'
+            '</p:blipFill></p:pic></p:spTree></p:cSld></p:sld>',
+        )
+        archive.writestr(
+            "ppt/slides/_rels/slide1.xml.rels",
+            '<Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships">'
+            '<Relationship Id="rId1" '
+            'Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/image" '
+            'Target="../media/image1.png"/>'
+            '</Relationships>',
+        )
+        archive.writestr("ppt/media/image1.png", image.getvalue())
+        if extra_member_size:
+            archive.writestr(
+                "ppt/media/extra.bin", b"\x00" * extra_member_size,
+                compress_type=0,
+            )
+    return package.getvalue()
+
+
+def test_oa_pptx_attachment_uses_presentation_size_bound(tmp_path, monkeypatch):
+    body = _image_only_pptx(extra_member_size=21 * 1024 * 1024)
+    assert len(body) > agent_cli.MAX_SPREADSHEET_BYTES
+    captured = {}
+
+    class FakeDws:
+        def download_oa_process_attachment_via_cli(
+            self, _process_instance_id, _file_id, *, max_bytes,
+        ):
+            captured["max_bytes"] = max_bytes
+            return body
+
+    monkeypatch.setattr(agent_cli, "TEXT_MATERIAL_ROOTS", (tmp_path,))
+    result = agent_cli._download_dingtalk_oa_process_attachment(
+        dws=FakeDws(), process_instance_id="process-1", file_id="file-1",
+        file_name="receipts.pptx", material_root=tmp_path,
+    )
+
+    assert captured["max_bytes"] > agent_cli.MAX_SPREADSHEET_BYTES
+    assert captured["max_bytes"] == agent_cli.MAX_PPTX_BYTES
+    assert result["format"] == "pptx"
+    assert result["ocr_required"] is True
+    assert result["ocr_page_numbers"] == [1]
+
+
+def test_pptx_text_and_ocr_pages_follow_numeric_slide_order():
+    package = BytesIO()
+    with ZipFile(package, "w") as archive:
+        for number, label in ((1, "first"), (2, "second"), (10, "tenth")):
+            archive.writestr(
+                f"ppt/slides/slide{number}.xml",
+                '<p:sld xmlns:p="http://schemas.openxmlformats.org/presentationml/2006/main" '
+                'xmlns:a="http://schemas.openxmlformats.org/drawingml/2006/main">'
+                f'<a:t>{label}</a:t></p:sld>',
+            )
+
+    with ZipFile(BytesIO(package.getvalue())) as archive:
+        result = agent_cli._read_presentation_workbook(archive)
+
+    assert [slide["text"] for slide in result["slides"]] == [
+        "first", "second", "tenth",
+    ]
+
+
+@pytest.mark.parametrize("role", ["consumer", "audit"])
+def test_oa_pptx_process_reader_returns_bounded_slide_ocr_input(
+    role, tmp_path, monkeypatch,
+):
+    body = _image_only_pptx()
+    monkeypatch.setattr(agent_cli, "TEXT_MATERIAL_ROOTS", (tmp_path,))
+    monkeypatch.setattr(agent_cli.tempfile, "tempdir", str(tmp_path))
+
+    class FakeDws:
+        def download_oa_process_attachment_via_cli(self, *_args, **_kwargs):
+            return body
+
+    monkeypatch.setattr("app.dws_client.DwsClient", lambda: FakeDws())
+    tool = agent_cli.build_role_server(role)._tool_manager.get_tool(
+        "read_dingtalk_oa_process_attachment"
+    )
+    initial = asyncio.run(tool.run({
+        "process_instance_id": "process-1", "file_id": "file-1",
+        "file_name": "receipts.pptx",
+    }, convert_result=True))
+    payload = json.loads(initial[0][0].text)
+    assert payload["ocr_page_numbers"] == [1]
+
+    page = asyncio.run(tool.run({
+        "process_instance_id": "process-1", "file_id": "file-1",
+        "file_name": "receipts.pptx", "page_number": 1,
+    }, convert_result=True))
+    page_payload = json.loads(page[0][0].text)
+    image_bytes = base64.b64decode(page_payload["ocr_input_base64"])
+    assert image_bytes.startswith(b"\xff\xd8")
+    assert page_payload["ocr_original_page_number"] == 1
+    assert page_payload["ocr_source_sha256"] == hashlib.sha256(body).hexdigest()
+    assert len(image_bytes) <= agent_cli.MAX_OCR_AGENT_INPUT_BYTES
 
 
 def test_process_attachment_cli_download_uses_exact_instance_and_bounded_signed_url(monkeypatch):

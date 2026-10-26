@@ -9,6 +9,7 @@ import errno
 import json
 import mimetypes
 import os
+import posixpath
 import shutil
 import sqlite3
 import stat
@@ -70,6 +71,8 @@ MAX_MCP_MATERIAL_RESPONSE_BYTES = 1024 * 1024 - 1024
 MAX_SKILL_BYTES = 256 * 1024
 MAX_TEXT_MATERIAL_BYTES = 512 * 1024
 MAX_SPREADSHEET_BYTES = 20 * 1024 * 1024
+MAX_PPTX_BYTES = 128 * 1024 * 1024
+MAX_PPTX_EXPANDED_BYTES = 160 * 1024 * 1024
 MAX_PDF_BYTES = 64 * 1024 * 1024
 MAX_SPREADSHEET_ROWS = 200
 MAX_SPREADSHEET_COLUMNS = 64
@@ -355,9 +358,9 @@ def read_skill(path: str) -> dict[str, str]:
 
 
 class _MaterialZipFile(zipfile.ZipFile):
-    def __init__(self, file):
+    def __init__(self, file, *, max_expanded_bytes=MAX_SPREADSHEET_BYTES):
         super().__init__(file)
-        self._remaining_material_bytes = MAX_SPREADSHEET_BYTES
+        self._remaining_material_bytes = max_expanded_bytes
 
     def read(self, name, pwd=None):
         member = name if isinstance(name, zipfile.ZipInfo) else self.getinfo(name)
@@ -436,9 +439,13 @@ def read_text_file(path: str) -> dict[str, object]:
             material_path.suffix.casefold() == ".pdf"
             or material_file.read(5) == b"%PDF-"
         )
+        is_pptx = material_path.suffix.casefold() == ".pptx"
         material_file.seek(0)
         if is_pdf:
             if file_stat.st_size > MAX_PDF_BYTES:
+                raise AgentReadOnlyViolationError("material_file_too_large")
+        elif is_pptx:
+            if file_stat.st_size > MAX_PPTX_BYTES:
                 raise AgentReadOnlyViolationError("material_file_too_large")
         elif file_stat.st_size > MAX_TEXT_MATERIAL_BYTES:
             if file_stat.st_size > MAX_SPREADSHEET_BYTES:
@@ -449,7 +456,12 @@ def read_text_file(path: str) -> dict[str, object]:
         if zipfile.is_zipfile(material_file):
             material_file.seek(0)
             try:
-                with _MaterialZipFile(material_file) as workbook:
+                with _MaterialZipFile(
+                    material_file,
+                    max_expanded_bytes=(
+                        MAX_PPTX_EXPANDED_BYTES if is_pptx else MAX_SPREADSHEET_BYTES
+                    ),
+                ) as workbook:
                     if {"[Content_Types].xml", "xl/workbook.xml"}.issubset(
                         workbook.namelist()
                     ):
@@ -765,8 +777,13 @@ def _download_dingtalk_oa_process_attachment(
         raise AgentReadOnlyViolationError("oa_process_attachment_identity_required")
     if not _task_file_component(file_name) or len(file_name) > 255:
         raise AgentReadOnlyViolationError("oa_process_attachment_file_name_invalid")
-    is_pdf = Path(file_name).suffix.casefold() == ".pdf"
-    max_bytes = MAX_PDF_BYTES if is_pdf else MAX_SPREADSHEET_BYTES
+    suffix = Path(file_name).suffix.casefold()
+    is_pdf = suffix == ".pdf"
+    max_bytes = (
+        MAX_PDF_BYTES if is_pdf
+        else MAX_PPTX_BYTES if suffix == ".pptx"
+        else MAX_SPREADSHEET_BYTES
+    )
     contents = dws.download_oa_process_attachment_via_cli(
         process_instance_id, file_id, max_bytes=max_bytes,
     )
@@ -784,10 +801,14 @@ def _materialize_oa_attachment(
     material_root.mkdir(parents=True, exist_ok=True)
     if len(contents) > max_bytes:
         raise AgentReadOnlyViolationError(f"{error_prefix}_file_too_large")
+    is_pptx = Path(file_name).suffix.casefold() == ".pptx"
     package_source = BytesIO(contents)
     if zipfile.is_zipfile(package_source):
         with zipfile.ZipFile(package_source) as package:
-            if sum(member.file_size for member in package.infolist()) > MAX_SPREADSHEET_BYTES:
+            expanded_limit = (
+                MAX_PPTX_EXPANDED_BYTES if is_pptx else MAX_SPREADSHEET_BYTES
+            )
+            if sum(member.file_size for member in package.infolist()) > expanded_limit:
                 raise AgentReadOnlyViolationError(
                     f"{error_prefix}_expanded_package_too_large"
                 )
@@ -952,11 +973,8 @@ def _read_presentation_workbook(workbook: zipfile.ZipFile) -> dict[str, object]:
     slides: list[dict[str, object]] = []
     remaining_chars = MAX_SPREADSHEET_PREVIEW_CHARS
     truncated_text = False
-    slide_names = sorted(
-        name
-        for name in workbook.namelist()
-        if name.startswith("ppt/slides/slide") and name.endswith(".xml")
-    )
+    ocr_page_sources: list[dict[str, object]] = []
+    slide_names = _presentation_slide_names(workbook)
     for index, name in enumerate(slide_names, start=1):
         root = ElementTree.fromstring(workbook.read(name))
         text = "\n".join(
@@ -968,13 +986,137 @@ def _read_presentation_workbook(workbook: zipfile.ZipFile) -> dict[str, object]:
         text = text[:remaining_chars]
         remaining_chars -= len(text)
         slides.append({"index": index, "text": text})
+        for member in _presentation_slide_images(workbook, name, root):
+            ocr_page_sources.append({
+                "page_number": len(ocr_page_sources) + 1,
+                "slide_number": index,
+                "member": member,
+            })
         if remaining_chars == 0:
             break
     return {
         "format": "pptx",
         "slides": slides,
+        "ocr_required": bool(ocr_page_sources),
+        "ocr_page_numbers": [entry["page_number"] for entry in ocr_page_sources],
+        "ocr_page_sources": ocr_page_sources,
         "truncated": truncated_text or len(slides) < len(slide_names),
     }
+
+
+def _presentation_slide_names(workbook: zipfile.ZipFile) -> list[str]:
+    names = [
+        name for name in workbook.namelist()
+        if name.startswith("ppt/slides/slide") and name.endswith(".xml")
+    ]
+
+    def slide_number(name: str) -> int:
+        suffix = Path(name).stem.removeprefix("slide")
+        if not suffix.isdecimal():
+            raise AgentReadOnlyViolationError("pptx_slide_name_invalid")
+        return int(suffix)
+
+    return sorted(names, key=slide_number)
+
+
+def _presentation_slide_images(
+    workbook: zipfile.ZipFile, slide_name: str, slide_root: ElementTree.Element,
+) -> list[str]:
+    relationships_name = posixpath.join(
+        posixpath.dirname(slide_name), "_rels", posixpath.basename(slide_name) + ".rels",
+    )
+    try:
+        relationships = ElementTree.fromstring(workbook.read(relationships_name))
+    except KeyError:
+        return []
+    targets = {
+        relation.attrib.get("Id", ""): relation.attrib.get("Target", "")
+        for relation in relationships
+        if relation.tag.endswith("}Relationship")
+        and relation.attrib.get("Type", "").endswith("/image")
+        and relation.attrib.get("TargetMode") != "External"
+    }
+    members: list[str] = []
+    for node in slide_root.iter():
+        if not node.tag.endswith("}blip"):
+            continue
+        relationship_id = next(
+            (value for key, value in node.attrib.items() if key.endswith("}embed")),
+            "",
+        )
+        target = targets.get(relationship_id, "")
+        if not target:
+            continue
+        member = posixpath.normpath(posixpath.join(posixpath.dirname(slide_name), target))
+        if member.startswith("../") or member.startswith("/"):
+            raise AgentReadOnlyViolationError("pptx_image_path_invalid")
+        members.append(member)
+    return members
+
+
+def _pptx_page_ocr_input(
+    material_path: Path, *, page_number: int, source_sha256: str,
+) -> dict[str, object]:
+    """Render one embedded presentation image as a bounded OCR MCP input."""
+    if type(page_number) is not int or page_number < 1:
+        raise AgentReadOnlyViolationError("pptx_ocr_page_number_invalid")
+    try:
+        with material_path.open("rb") as source, _MaterialZipFile(
+            source, max_expanded_bytes=MAX_PPTX_EXPANDED_BYTES,
+        ) as workbook:
+            slide_names = _presentation_slide_names(workbook)
+            image_sources: list[tuple[int, str]] = []
+            for slide_number, slide_name in enumerate(slide_names, start=1):
+                root = ElementTree.fromstring(workbook.read(slide_name))
+                image_sources.extend(
+                    (slide_number, member)
+                    for member in _presentation_slide_images(workbook, slide_name, root)
+                )
+            if page_number > len(image_sources):
+                raise AgentReadOnlyViolationError("pptx_ocr_page_number_invalid")
+            slide_number, image_member = image_sources[page_number - 1]
+            image_bytes = workbook.read(image_member)
+    except AgentReadOnlyViolationError:
+        raise
+    except Exception as exc:
+        raise AgentReadOnlyViolationError("pptx_ocr_page_read_failed") from exc
+
+    try:
+        from PIL import Image, ImageOps
+
+        with Image.open(BytesIO(image_bytes)) as source_image:
+            image = ImageOps.exif_transpose(source_image).convert("RGB")
+        if max(image.size) > 3000:
+            image.thumbnail((3000, 3000))
+        try:
+            for scale in (1.0, 0.85, 0.7, 0.55):
+                current = image.copy()
+                try:
+                    if scale < 1.0:
+                        current.thumbnail((int(image.width * scale), int(image.height * scale)))
+                    for quality in (88, 80, 72, 64):
+                        encoded = BytesIO()
+                        current.save(encoded, format="JPEG", quality=quality, optimize=True)
+                        payload = encoded.getvalue()
+                        if len(payload) <= MAX_OCR_AGENT_INPUT_BYTES:
+                            return {
+                                "format": "image",
+                                "ocr_required": True,
+                                "ocr_input_base64": base64.b64encode(payload).decode("ascii"),
+                                "ocr_mime_type": "image/jpeg",
+                                "ocr_original_page_number": page_number,
+                                "ocr_source_slide_number": slide_number,
+                                "ocr_source_sha256": source_sha256,
+                            }
+                finally:
+                    current.close()
+        finally:
+            image.close()
+    except AgentReadOnlyViolationError:
+        raise
+    except Exception as exc:
+        raise AgentReadOnlyViolationError("pptx_ocr_page_render_failed") from exc
+    raise AgentReadOnlyViolationError("pptx_ocr_page_image_too_large")
 
 
 def _xlsx_shared_strings(workbook: zipfile.ZipFile) -> list[str]:
@@ -1936,8 +2078,9 @@ def build_role_server(
         """Read one exact OA form attachment through the process-scoped download.
 
         Use the process instance and file ID from read_dingtalk_oa, even when
-        generic Drive access is denied. Scanned PDFs return one-based
-        ocr_page_numbers; pass a listed page_number for bounded OCR input.
+        generic Drive access is denied. Scanned PDFs and image-bearing PPTX
+        files return one-based ocr_page_numbers; pass a listed page_number for
+        bounded OCR input. PPTX page numbers follow embedded-image reading order.
         """
         nonlocal drive_material_directory
         if not process_instance_id.strip() or not file_id.strip():
@@ -1949,14 +2092,19 @@ def build_role_server(
             material_path = oa_process_material_paths.get(key)
             if material_path is None or not material_path.is_file():
                 raise AgentReadOnlyViolationError("oa_process_attachment_page_source_unavailable")
-            if material_path.suffix.casefold() != ".pdf":
-                raise AgentReadOnlyViolationError("oa_process_attachment_page_requires_pdf")
             with material_path.open("rb") as source:
                 source_sha256 = hashlib.file_digest(source, "sha256").hexdigest()
-            return _pdf_page_ocr_input(
-                material_path, page_number=page_number,
-                source_sha256=source_sha256,
-            )
+            if material_path.suffix.casefold() == ".pdf":
+                return _pdf_page_ocr_input(
+                    material_path, page_number=page_number,
+                    source_sha256=source_sha256,
+                )
+            if material_path.suffix.casefold() == ".pptx":
+                return _pptx_page_ocr_input(
+                    material_path, page_number=page_number,
+                    source_sha256=source_sha256,
+                )
+            raise AgentReadOnlyViolationError("oa_process_attachment_page_requires_pdf_or_pptx")
         if drive_material_directory is None:
             drive_material_directory = tempfile.TemporaryDirectory(prefix="oa-review-")
             atexit.register(drive_material_directory.cleanup)

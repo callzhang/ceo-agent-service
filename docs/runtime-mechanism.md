@@ -1058,6 +1058,12 @@ DWS CLI's read-only `attachment download-url` command, limits downloaded bytes,
 and shares the same extraction, OCR-page handoff, temporary lifetime and response
 size checks. Generic Drive access denial does not prove that this OA-scoped read
 is unavailable. This path does not call `authorize-preview` or modify access.
+PPTX attachments have a separate 128 MiB compressed and 160 MiB expanded bound;
+they do not inherit the 20 MiB spreadsheet limit. The initial read returns visible
+slide text and indexes embedded images in reading order. A `page_number` read
+returns one embedded image as a bounded JPEG with its original source digest and
+slide number, so Consumer/Audit can send it directly to the configured OCR MCP.
+This enlarged presentation path is limited to process-scoped OA form attachments.
 Some OA image fields are represented directly as DingTalk static media URLs rather
 than file IDs. Consumer and Audit can use `read_dingtalk_oa_form_image` for these
 fields; the reader first verifies the exact URL is present in the live form values
@@ -2313,7 +2319,7 @@ Consumer 的权限模型设计为 CLI 原生 auto 模式而不是只读／工作
 
 Codex 角色使用原生 code_mode_only 和 V8 host。Consumer 的内建 functions 命令与补丁接口在当前 task/generation 的 `/tmp/ceo-agent-service-task-artifacts/<task_id>/<generation>` 目录运行，使用 CLI 自带 workspace-write 沙箱，命令网络关闭、额外 writable_roots 为空；MCP agent_cli 的 cwd 仍是服务源码目录。任务终态清理该任务全部代次目录；未到终态时保留工件供恢复及 Audit 读取。Audit 使用 read-only 沙箱并排除 functions namespace，只有具名读取。两角色的 `read_dingtalk_drive_file` 只下载调用方明确指定的已授权钉盘节点；`read_dingtalk_oa_process_attachment` 按审批实例和表单文件 ID 走 DWS 只读下载地址，不要求通用钉盘节点权限，也不执行授权写入；预览授权不再有服务工具：Consumer 在自己的 shell 里运行 `dws oa approval attachment authorize-preview` 为指定附件开通预览，再用 `read_dingtalk_drive_file` 或 `dws drive +download` 读取（Audit 没有 shell）（评论附件的高级版下载不可用时使用）；`read_dingtalk_oa_comment_attachment` 只按当前审批记录提供的流程实例、评论附件 ID 和文件名走官方 Premium 只读下载；`read_dingtalk_oa_comment_image` 读取审批记录 `images[]` 中没有 file ID 的钉钉图片 URL。该 URL 读取只接受 HTTPS `static.dingtalk.com/media/`，拒绝重定向，并限制下载时长和响应大小。所有材料工具均抽取可读文本；扫描 PDF 的无文本页和受支持的图片材料返回有界的精确源 base64、MIME 类型、PDF 页码与 SHA-256，由 Consumer/Audit 通过服务清单中的原生 `ai_services.ocr_document` MCP 读取。普通 Consumer/非 OA Audit 的 direct-only MCP 命名空间同时包含 `mcp__agent_cli` 和 `mcp__ai_services`。OA Consumer/Audit 把这两个已授权工具放进同一个 CodeMode 调用；OA Audit 的其他已配置 MCP 保持 direct-only，内建命名空间被排除，在 JS 内存中将附件读取结果直接交给 `ai_services.ocr_document`；不把 base64 打印给模型或要求它在下一轮重写。OA 专属会话合同变化只使 OA Consumer 一次性换到兼容的新 session；OA Audit 在 CodeMode 内排除 functions、image_gen、multi_agent_v1、web；其他 Audit 保持 functions 排除，所有任务的既有 session 复用路径不变。服务角色清单仍仅暴露 `ai_services.ocr_document`，其他 AI Services 工具不可见。工具审批配置只对经批准的 AI Services 工具逐工具应用，不改全局审批策略，也不放宽其他 MCP 工具；工具可用性以本轮真实调用为准。保留 OCR 页码、置信度与警告；读取失败返回技术错误，不能解释为申请人未提供材料。MCP 进程退出时清理目录。受控发送与 OA 等注册操作没有暴露给角色 MCP，仍由审核后的 System 执行。所有任务类型的 Consumer 都不得通过 shell、CLI、MCP、browser 或其他工具直接联系他人或执行影响他人的外部动作（包括消息、邮件和审批）；文档写入保持允许。Consumer 只能提交 typed candidate，由 Audit 审核，System 只执行审核通过的持久化方案。Claude 没有普通 shell 执行能力，Friday 仍不具备角色能力。实际工具调用与文件回读证明执行，无工具固定合成业务比较仅证明判断。
 
-`read_dingtalk_oa_process_attachment` 下载后的临时文件路径由材料层显式返回，不依赖 PDF/图片/表格抽取器是否自行附带 `path`。因此表格正文已成功抽取时，两角色都能缓存该准确来源；实例 ID、文件 ID、原字节摘要、大小上限、OCR 分页和 provider 失败语义保持原样。
+`read_dingtalk_oa_process_attachment` 下载后的临时文件路径由材料层显式返回，不依赖 PDF/图片/表格抽取器是否自行附带 `path`。因此表格正文已成功抽取时，两角色都能缓存该准确来源；实例 ID、文件 ID、原字节摘要、大小上限、OCR 分页和 provider 失败语义保持原样。PPTX 使用独立的压缩/解压上限，并为嵌入图片提供按阅读顺序编号的逐页读取；`page_number` 返回来源幻灯片号、原文件摘要及有界 JPEG，由原生 OCR MCP 逐页识别，不把整份大演示文稿塞入一次工具响应。
 
 Codex Consumer/Audit 显式启用原生 `features.code_mode.enabled`。普通 Consumer 和非 OA Audit 将任务 MCP 声明为 direct-only；OA Consumer/Audit 的任务读取与 OCR 由同一个 CodeMode JS 调用衔接。角色工具选择、Audit functions 排除、沙箱和路线不变。超长直接调用结果可能被原生运行时截断，因而不能要求模型复制其中的 base64。
 

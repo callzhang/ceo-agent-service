@@ -510,6 +510,8 @@ reverts committed work they did not author.
 
 ## Current claims
 
+| codex-oa-pptx-ocr-large-attachment-20261026 | app/agent_cli.py (OA form PPTX bounded download, per-slide OCR input only); app/dws_client.py (bounded process attachment read only); tests/test_oa_process_attachment_reader.py; docs/architecture.md and docs/runtime-mechanism.md (OA presentation OCR behavior only); ci/shared-skills/dingtalk-oa-approval/SKILL.md and its release digest; this row | Fix Attempt 16100's confirmed technical failure: exact OA form attachment is a 75,924,064-byte image-only PPTX, while current reader caps non-PDF attachments at 20 MiB and offers no page-level OCR input for presentation slides. Keep exact process/file identity, bounded package expansion, one slide per OCR call, MCP OCR only, no applicant blame, and no OA decision/action or status edits. | active 2026-10-26 |
+
 
 
 
