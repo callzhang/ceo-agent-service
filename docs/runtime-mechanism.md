@@ -5091,7 +5091,9 @@ in emails.message_source_reference_json (full UTF-8 hash/length, exact native or
 provider location and serialization form). The explicit Store compactor first
 checks actual native task attempts, then verifies the accurate provider original.
 Only processed rows without unfinished classification/reply/action/dispatch
-input dependencies can retire their original bytes; missing/changed sources keep
+input dependencies can retire their original bytes (a direct Action is a
+`record_type='action'` row with an email operation whose `action_status` is not
+`done`/`skipped`; the original stays until the last one finishes); missing/changed sources keep
 the bytes. The update compares the original, state, source clocks and current
 plan, preserving model features, business results and receipts. Native original references remain authoritative byte proofs; Console views and
 structured execution context obtain real provider headers for recipient roles
