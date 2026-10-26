@@ -404,3 +404,17 @@ envelope positive control before the identifier mutation; strict role parsing
 still rejects it before Audit. Technical errors still cannot become human
 choices, and all four native effect/result projections remain empty after the
 existing retry budget. No application or policy changes are included.
+
+### Native feedback ownership — 2026-10-26
+
+Feedback corruption and lineage fixtures now mutate native item/round/batch
+owners and Task lifecycle through the actual CAS writer. Orphan, malformed,
+receipt-version, digest, atomicity and timestamp assertions remain. Current
+schema damage is rejected rather than auto-repaired. The published-release
+source is pinned to real Store25.2 commitd2dc7c6c3, separately from the archived
+predecessor used by historical cases. The final full-file run passed204 nodes;
+the remaining14 archived cases failed only from a shared-source fixture
+recursion. After separating the two source checkouts, those14 plus the current
+publication case passed in38.20s. All218 collected nodes are covered; no app or
+feedback-policy change. Root reviewed the field ownership, corruption setup,
+source separation and retained assertions.
