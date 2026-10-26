@@ -1183,6 +1183,9 @@ business_object（稳定业务对象，例如一条 OA 审批节点）
   WeChat 的 `read_wechat_messages` 不接收会话选择参数，只读取已领取 TaskInput 中绑定的会话，
   因此执行期间新输入成为 current 时仍使用本轮 claimed 会话及其 generation。
   已结算输入不另存从 provenance 可生成的精简 JSON；API 按来源摘要投影原有展示形式。
+  微信语音（Derek 2026-10-26）：语音消息的 `kind` 是 `voice`，`text` 是占位 `[语音N秒·未转写，用 read_wechat_voice 取音频再转写]`，因此语音不是空消息，直接聊天里每条入站语音和入站文字一样成为回复触发（群聊仍只认 @）。
+  音频不在消息行里：Reader 的 `read_voice` 按 `message_id` 在该会话自己的表里确认它是语音，再按 `server_id` 到 `media_N.db` 的 `VoiceInfo`（最新的分片先查）取 SILK 字节，最大 2 MiB；找不到、过大、不是语音都返回 `voice_unavailable`。
+  `read_wechat_voice(message_id)`（Consumer 与 Audit，与 `read_wechat_messages` 同一份读取工具清单、同样不接收会话参数）在服务环境用 `pilk` 把 SILK 转成 WAV，返回 base64，由 Agent 调用原生 `ai_services.transcribe_audio`；读不到或解不开时抛出「could not read the voice message」，Reader 不可用则按原样抛出，两者都不会表现为空或已回复。转写结果不缓存：Consumer 与 Audit 各自可能转写同一条语音。
 - Provider 若原地更新同一个 DingTalk 日程卡片而继续复用消息 ID，近期消息恢复会把
   `input_revision_key` 不同的新快照追加到 `reply_task_inputs`，同时更新同一个
   `reply_task` 的当前投影和 `input_version`。只有卡片内容变化、日程仍有效且本人仍待响应时

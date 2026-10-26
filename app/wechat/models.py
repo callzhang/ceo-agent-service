@@ -54,6 +54,10 @@ class WechatReplyScope(WechatReplyTarget):
         return self
 
 
+class WechatVoiceUnavailable(LookupError):
+    """The audio of a voice message cannot be read; it is never an empty voice."""
+
+
 class WechatMessage(BaseModel):
     model_config = ConfigDict(frozen=True)
     account_id: str
@@ -64,7 +68,7 @@ class WechatMessage(BaseModel):
     conversation_type: TargetType
     direction: Literal["inbound", "outbound"]
     sent_at: str
-    kind: Literal["text", "image", "file", "quote", "system", "unknown"]
+    kind: Literal["text", "voice", "image", "file", "quote", "system", "unknown"]
     text: str = ""
     mentioned_user_ids: frozenset[str] = Field(default_factory=frozenset)
     source_version: str

@@ -3,8 +3,11 @@ import shutil
 import sqlite3
 from datetime import datetime, timedelta
 
+import pytest
+
 from app.wechat import schema
 from app.wechat.backend import WcdbReaderBackend
+from app.wechat.models import WechatVoiceUnavailable
 
 
 class CopyCipher:
@@ -161,3 +164,112 @@ def test_shared_article_is_returned_as_text(tmp_path):
         conversation_id=conversation_id, conversation_type="direct", since="", limit=1)
     assert rows[0]["kind"] == "text"
     assert "https://example.com/a" in rows[0]["text"]
+
+
+def _add_voice_message(path, conversation_id, *, local_id, server_id, local_type=34):
+    table = schema.table_for(conversation_id)
+    with sqlite3.connect(path) as db:
+        db.execute(
+            f'insert into "{table}" values (?, ?, ?, 1, 1000, ?, 0, ?, 0)',
+            (local_id, server_id, local_type, b"<msg><voicemsg voicelength=\"3000\"/></msg>", b""),
+        )
+
+
+def _create_media_db(path, voices):
+    with sqlite3.connect(path) as db:
+        db.execute(
+            "create table VoiceInfo(chat_name_id integer, create_time integer, "
+            "local_id integer, svr_id integer, voice_data blob, data_index text)"
+        )
+        db.executemany(
+            "insert into VoiceInfo values (1, 1000, 1, ?, ?, '0')", voices,
+        )
+
+
+def _voice_backend(tmp_path, *, media=None):
+    conversation_id = "friend-1"
+    shards = tmp_path / "db_storage/message"
+    _create_message_db(shards / "message_0.db", conversation_id, [(1, 11, 1000, "hi")])
+    _add_voice_message(shards / "message_0.db", conversation_id, local_id=2, server_id=22)
+    _add_voice_message(shards / "message_0.db", conversation_id, local_id=3, server_id=33)
+    for name, voices in (media or {}).items():
+        _create_media_db(shards / name, voices)
+    return conversation_id, WcdbReaderBackend(tmp_path / "mirror", cipher=CopyCipher())
+
+
+def test_voice_audio_is_found_in_the_newest_media_shard_that_holds_it(tmp_path):
+    conversation_id, backend = _voice_backend(tmp_path, media={
+        "media_0.db": [(22, b"\x02#!SILK_V3 old"), (33, b"\x02#!SILK_V3 shared-old")],
+        "media_1.db": [(33, b"\x02#!SILK_V3 new")],
+    })
+    read = lambda message_id: backend.read_voice(  # noqa: E731
+        tmp_path / "db_storage", b"key", conversation_id=conversation_id, message_id=message_id,
+    )
+
+    assert read("22") == b"\x02#!SILK_V3 old"
+    assert read("33") == b"\x02#!SILK_V3 new"
+    assert read("message_0.db:2") == b"\x02#!SILK_V3 old"
+
+
+def test_voice_without_audio_or_of_another_kind_or_conversation_is_unavailable(tmp_path):
+    conversation_id, backend = _voice_backend(tmp_path, media={
+        "media_1.db": [(33, b"\x02#!SILK_V3 new")],
+    })
+
+    def read(message_id, conversation=conversation_id):
+        return backend.read_voice(
+            tmp_path / "db_storage", b"key", conversation_id=conversation, message_id=message_id,
+        )
+
+    with pytest.raises(WechatVoiceUnavailable, match="not stored"):
+        read("22")                      # voice message whose audio is not on this Mac
+    with pytest.raises(WechatVoiceUnavailable, match="not a voice"):
+        read("11")                      # a text message
+    with pytest.raises(WechatVoiceUnavailable, match="not in this conversation"):
+        read("33", conversation="friend-2")   # another conversation's table
+    with pytest.raises(WechatVoiceUnavailable, match="not in this conversation"):
+        read("nope")
+
+
+def test_oversized_voice_audio_is_unavailable(tmp_path, monkeypatch):
+    conversation_id, backend = _voice_backend(tmp_path, media={
+        "media_1.db": [(33, b"x" * 100)],
+    })
+    monkeypatch.setattr("app.wechat.backend.MAX_VOICE_BYTES", 10)
+    with pytest.raises(WechatVoiceUnavailable, match="too large"):
+        backend.read_voice(
+            tmp_path / "db_storage", b"key", conversation_id=conversation_id, message_id="33",
+        )
+
+
+def test_streaming_decrypt_matches_a_whole_file_decrypt(tmp_path):
+    from app.wechat import cipher
+
+    passphrase = b"p" * 32
+    salt = b"s" * 16
+    key = cipher.enc_key_from_passphrase(passphrase, salt)
+    plain_pages = [bytes([i]) * (cipher.IV_OFF - (16 if i == 0 else 0)) for i in range(3)]
+    from cryptography.hazmat.primitives.ciphers import Cipher, algorithms, modes
+
+    mac_key = cipher._mac_key(key, salt)
+    encrypted = bytearray()
+    import hashlib, hmac, struct
+    for index, plain in enumerate(plain_pages):
+        iv = bytes([index + 1]) * 16
+        enc = Cipher(algorithms.AES(key), modes.CBC(iv)).encryptor()
+        body = enc.update(plain) + enc.finalize()
+        page_prefix = salt if index == 0 else b""
+        covered = body + iv
+        mac = hmac.new(mac_key, covered + struct.pack("<I", index + 1), hashlib.sha512).digest()
+        encrypted += page_prefix + covered + mac
+        encrypted += b"\x00" * (cipher.PAGE - (len(page_prefix) + len(covered) + len(mac)))
+    source = tmp_path / "enc.db"
+    source.write_bytes(bytes(encrypted) + b"partial-tail")
+    out = cipher.WcdbCipherBackend().decrypt(source, passphrase, tmp_path / "plain.db")
+
+    data = out.read_bytes()
+    assert len(data) == 3 * cipher.PAGE
+    assert data[:16] == cipher.SQLITE_HDR
+    assert data[16:cipher.IV_OFF] == plain_pages[0]
+    assert data[cipher.PAGE:cipher.PAGE + cipher.IV_OFF] == plain_pages[1]
+

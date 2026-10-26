@@ -1,13 +1,20 @@
 """A WeChat task reads only its own conversation, through the standard agent tools."""
 
+import base64
+import math
 import sqlite3
+import struct
+import wave
+from io import BytesIO
 
+import pilk
 import pytest
 
 from app.agent_cli import build_role_server
 from app.store import AutoReplyStore, REPLY_TASK_SQL
 from app.wechat import service
-from app.wechat.models import WechatMessage
+from app.wechat.models import WechatMessage, WechatVoiceUnavailable
+from app.wechat.reader_ipc import ReaderIpcError
 
 
 def _message(index, *, direction="inbound", text=None):
@@ -155,3 +162,86 @@ def test_wechat_read_needs_a_ready_account(tmp_path, monkeypatch):
 
     with pytest.raises(ValueError, match="no ready WeChat account"):
         _tool("consumer", db_path, task_id)()
+
+
+def _voice_tool(role, db_path, task_id, generation="generation-one"):
+    return build_role_server(
+        role, task_id=task_id, db_path=db_path, execution_generation=generation,
+    )._tool_manager.get_tool("read_wechat_voice").fn
+
+
+def _silk(tmp_path):
+    pcm, silk = tmp_path / "t.pcm", tmp_path / "t.silk"
+    pcm.write_bytes(b"".join(
+        struct.pack("<h", int(8000 * math.sin(n / 20))) for n in range(24000)
+    ))
+    pilk.encode(str(pcm), str(silk), pcm_rate=24000, tencent=True)
+    return silk.read_bytes()
+
+
+class VoiceReader:
+    def __init__(self, result):
+        self.result, self.calls = result, []
+
+    def read_voice(self, account, **kwargs):
+        self.calls.append((account, kwargs))
+        if isinstance(self.result, Exception):
+            raise self.result
+        return self.result
+
+
+@pytest.mark.parametrize("role", ["consumer", "audit"])
+def test_wechat_voice_returns_a_wav_for_the_transcription_tool(tmp_path, monkeypatch, role):
+    db_path, task_id = _bound_task(tmp_path)
+    reader = VoiceReader(_silk(tmp_path))
+    monkeypatch.setattr(service, "build_reader", lambda **_kw: reader)
+
+    result = _voice_tool(role, db_path, task_id)("m7")
+
+    assert result["filename"] == "wechat-voice-m7.wav"
+    assert result["message_id"] == "m7"
+    assert result["duration_seconds"] == pytest.approx(1, abs=0.1)
+    with wave.open(BytesIO(base64.b64decode(result["audio_base64"]))) as audio:
+        assert audio.getframerate() == 24000
+    account, kwargs = reader.calls[0]
+    assert account.account_id == "acct-1"
+    assert kwargs == {"conversation_id": "u9", "message_id": "m7"}
+
+
+@pytest.mark.parametrize("failure", [
+    ReaderIpcError("the voice audio is not stored on this Mac", code="voice_unavailable"),
+    WechatVoiceUnavailable("the voice audio is too large to read"),
+    b"bytes that are not a silk voice",
+])
+def test_unreadable_voice_is_an_explicit_error_never_an_empty_result(
+    tmp_path, monkeypatch, failure,
+):
+    db_path, task_id = _bound_task(tmp_path)
+    monkeypatch.setattr(service, "build_reader", lambda **_kw: VoiceReader(failure))
+
+    with pytest.raises(ValueError, match="could not read the voice message"):
+        _voice_tool("consumer", db_path, task_id)("m7")
+
+
+def test_reader_outage_is_not_reported_as_an_unreadable_voice(tmp_path, monkeypatch):
+    db_path, task_id = _bound_task(tmp_path)
+    outage = ReaderIpcError("WeChat reader unavailable", code="unavailable")
+    monkeypatch.setattr(service, "build_reader", lambda **_kw: VoiceReader(outage))
+
+    with pytest.raises(ReaderIpcError, match="unavailable"):
+        _voice_tool("consumer", db_path, task_id)("m7")
+
+
+def test_wechat_voice_cannot_name_another_conversation(tmp_path):
+    db_path, task_id = _bound_task(tmp_path)
+
+    with pytest.raises(TypeError):
+        _voice_tool("consumer", db_path, task_id)("m7", conversation_id="someone-else")
+
+
+def test_wechat_voice_refuses_a_non_wechat_task(tmp_path, monkeypatch):
+    db_path, task_id = _bound_task(tmp_path, channel="dingtalk")
+    monkeypatch.setattr(service, "build_reader", lambda **_kw: pytest.fail("must not read"))
+
+    with pytest.raises(ValueError, match="not a WeChat conversation"):
+        _voice_tool("consumer", db_path, task_id)("m7")

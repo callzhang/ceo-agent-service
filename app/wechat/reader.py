@@ -26,6 +26,9 @@ class ReaderBackend(Protocol):
         self, db_dir: str, passphrase: bytes, *,
         kind: str, query: str, limit: int, offset: int,
     ) -> list[dict]: ...
+    def read_voice(
+        self, db_dir: str, passphrase: bytes, *, conversation_id: str, message_id: str,
+    ) -> bytes: ...
 
 
 class WechatReaderNotReady(RuntimeError):
@@ -122,4 +125,17 @@ class WechatReader:
         passphrase = self._require_ready(account)
         return self.backend.list_targets(
             account.db_dir, passphrase, kind=kind, query=query, limit=limit, offset=offset,
+        )
+
+    def read_voice(
+        self, account: WechatAccount, *, conversation_id: str, message_id: str,
+    ) -> bytes:
+        """SILK audio of one voice message of ``conversation_id``.
+
+        Raises ``WechatVoiceUnavailable`` when the audio cannot be read.
+        """
+        passphrase = self._require_ready(account)
+        return self.backend.read_voice(
+            account.db_dir, passphrase,
+            conversation_id=conversation_id, message_id=message_id,
         )

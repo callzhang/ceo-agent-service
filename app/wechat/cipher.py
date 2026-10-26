@@ -83,24 +83,24 @@ class WcdbCipherBackend:
         return validates(snapshot, passphrase)
 
     def decrypt(self, snapshot: Path, passphrase: bytes, dest: Path) -> Path:
-        data = Path(snapshot).read_bytes()
-        if len(data) < PAGE:
-            raise CipherError("file too small to be a SQLCipher database")
-        salt = data[:16]
-        enc_key = enc_key_from_passphrase(passphrase, salt)
-        if not validates(snapshot, passphrase):
-            raise CipherError("passphrase did not validate page 1")
-        out = bytearray()
-        npages = len(data) // PAGE
-        for i in range(npages):
-            page = data[i * PAGE:(i + 1) * PAGE]
-            off = 16 if i == 0 else 0
-            ct = page[off:IV_OFF]
-            iv = page[IV_OFF:IV_OFF + 16]
-            if len(ct) % 16:
-                ct = ct[:len(ct) - (len(ct) % 16)]
-            dec = _aes_cbc_decryptor(enc_key, iv)
-            pt = dec.update(ct) + dec.finalize()
-            out += (SQLITE_HDR + pt if i == 0 else pt) + b"\x00" * RESERVE
-        Path(dest).write_bytes(out)
+        # Page by page: the media database is hundreds of MB.
+        with open(snapshot, "rb") as source:
+            first = source.read(PAGE)
+            if len(first) < PAGE:
+                raise CipherError("file too small to be a SQLCipher database")
+            enc_key = enc_key_from_passphrase(passphrase, first[:16])
+            if not validates(snapshot, passphrase):
+                raise CipherError("passphrase did not validate page 1")
+            with open(dest, "wb") as out:
+                page, index = first, 0
+                while len(page) == PAGE:
+                    off = 16 if index == 0 else 0
+                    ct = page[off:IV_OFF]
+                    iv = page[IV_OFF:IV_OFF + 16]
+                    if len(ct) % 16:
+                        ct = ct[:len(ct) - (len(ct) % 16)]
+                    dec = _aes_cbc_decryptor(enc_key, iv)
+                    pt = dec.update(ct) + dec.finalize()
+                    out.write((SQLITE_HDR + pt if index == 0 else pt) + b"\x00" * RESERVE)
+                    page, index = source.read(PAGE), index + 1
         return Path(dest)

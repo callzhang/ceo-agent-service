@@ -7,6 +7,7 @@ resources and exposes only the small allowlist implemented by
 """
 from __future__ import annotations
 
+import base64
 import json
 import errno
 import os
@@ -17,7 +18,9 @@ import threading
 from pathlib import Path
 from typing import Any, Callable
 
-from app.wechat.models import WechatAccount, WechatCapability, WechatMessage
+from app.wechat.models import (
+    WechatAccount, WechatCapability, WechatMessage, WechatVoiceUnavailable,
+)
 
 
 PROTOCOL_VERSION = 1
@@ -31,6 +34,13 @@ class ReaderIpcError(RuntimeError):
     def __init__(self, message: str, *, code: str = "reader_error"):
         super().__init__(message)
         self.code = code
+
+
+class VoiceUnavailable(ReaderIpcError):
+    """The audio of a voice message cannot be read; the reader says why."""
+
+    def __init__(self, message: str):
+        super().__init__(message, code="voice_unavailable")
 
 
 def _account(value: Any) -> WechatAccount:
@@ -104,6 +114,16 @@ class WechatReaderRpcService:
                     order=order,
                 )
                 return [message.model_dump(mode="json") for message in messages]
+            if method == "read_voice":
+                try:
+                    audio = self.reader.read_voice(
+                        _account(params.get("account")),
+                        conversation_id=_bounded_text(params, "conversation_id", maximum=512),
+                        message_id=_bounded_text(params, "message_id", maximum=128),
+                    )
+                except WechatVoiceUnavailable as exc:
+                    raise VoiceUnavailable(str(exc)) from exc
+                return base64.b64encode(audio).decode("ascii")
         raise ReaderIpcError(f"unsupported method: {method}")
 
 
@@ -128,6 +148,8 @@ class _ReaderRequestHandler(socketserver.StreamRequestHandler):
                 request.get("method", ""), request.get("params", {})
             )
             self._reply({"ok": True, "result": result})
+        except VoiceUnavailable as exc:
+            self._reply_error(exc.code, str(exc))
         except ReaderIpcError as exc:
             self._reply_error("invalid_request", str(exc))
         except PermissionError:
@@ -301,3 +323,19 @@ class WechatReaderClient:
             "order": order,
         })
         return [WechatMessage.model_validate(item) for item in result]
+
+    def read_voice(
+        self, account: WechatAccount, *, conversation_id: str, message_id: str,
+    ) -> bytes:
+        """SILK audio of a voice message; ``voice_unavailable`` means it cannot be read."""
+        result = self._request("read_voice", {
+            "account": account.model_dump(mode="json"),
+            "conversation_id": conversation_id,
+            "message_id": message_id,
+        })
+        if not isinstance(result, str):
+            raise ReaderIpcError("invalid voice response")
+        try:
+            return base64.b64decode(result, validate=True)
+        except ValueError as exc:
+            raise ReaderIpcError("invalid voice response") from exc

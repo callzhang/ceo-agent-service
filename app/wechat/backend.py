@@ -17,6 +17,9 @@ from zoneinfo import ZoneInfo
 
 from app.wechat.cipher import WcdbCipherBackend
 from app.wechat import schema
+from app.wechat.models import WechatVoiceUnavailable
+
+MAX_VOICE_BYTES = 2 * 1024 * 1024
 
 
 class WcdbReaderBackend:
@@ -78,6 +81,13 @@ class WcdbReaderBackend:
 
     def _message_shards(self, db_dir: str | Path) -> list[Path]:
         return sorted(Path(p) for p in glob.glob(str(Path(db_dir) / "message" / "message_[0-9]*.db")))
+
+    def _media_shards(self, db_dir: str | Path) -> list[Path]:
+        """Voice shards, newest first: a recent voice is in the small last one."""
+        def number(path: Path) -> int:
+            return int(path.stem.rsplit("_", 1)[1])
+        found = glob.glob(str(Path(db_dir) / "message" / "media_[0-9]*.db"))
+        return sorted((Path(p) for p in found), key=number, reverse=True)
 
     def detect_self_username(self, db_dir, passphrase) -> str:
         """Self wxid = the non-'filehelper' sender in the 文件传输助手 self-chat.
@@ -246,6 +256,61 @@ class WcdbReaderBackend:
             key=lambda row: (row["sent_at"], row["message_id"]), reverse=True
         )
         return rows[:limit]
+
+    def _voice_server_id(self, db_dir, passphrase, table: str, message_id: str) -> int:
+        """Server id of the voice message ``message_id`` in this conversation.
+
+        Only the conversation's own table is searched, so a message of another
+        conversation can never be read through this one.
+        """
+        shard_name, _, local_text = message_id.rpartition(":")
+        for shard in self._message_shards(db_dir):
+            conn, _ = self._connection(shard, passphrase)
+            if not conn.execute(
+                "SELECT 1 FROM sqlite_master WHERE type='table' AND name=?", (table,)
+            ).fetchone():
+                continue
+            if shard_name:
+                if shard.name != shard_name or not local_text.isdigit():
+                    continue
+                where, key = "local_id", int(local_text)
+            elif message_id.isdigit():
+                where, key = "server_id", int(message_id)
+            else:
+                break
+            row = conn.execute(
+                f'SELECT local_type, server_id FROM "{table}" WHERE {where} = ?', (key,)
+            ).fetchone()
+            if row is None:
+                continue
+            if (row[0] & 0xFFFFFFFF) != 34:
+                raise WechatVoiceUnavailable("the message is not a voice message")
+            if not row[1]:
+                raise WechatVoiceUnavailable("the voice message has no server id")
+            return row[1]
+        raise WechatVoiceUnavailable("the voice message is not in this conversation")
+
+    def read_voice(self, db_dir, passphrase, *, conversation_id, message_id) -> bytes:
+        server_id = self._voice_server_id(
+            db_dir, passphrase, schema.table_for(conversation_id), message_id,
+        )
+        for shard in self._media_shards(db_dir):
+            conn, _ = self._connection(shard, passphrase)
+            if not conn.execute(
+                "SELECT 1 FROM sqlite_master WHERE type='table' AND name='VoiceInfo'"
+            ).fetchone():
+                continue
+            row = conn.execute(
+                "SELECT length(voice_data) FROM VoiceInfo WHERE svr_id = ?", (server_id,)
+            ).fetchone()
+            if row is None or not row[0]:
+                continue
+            if row[0] > MAX_VOICE_BYTES:
+                raise WechatVoiceUnavailable("the voice audio is too large to read")
+            return bytes(conn.execute(
+                "SELECT voice_data FROM VoiceInfo WHERE svr_id = ?", (server_id,)
+            ).fetchone()[0])
+        raise WechatVoiceUnavailable("the voice audio is not stored on this Mac")
 
     def list_targets(self, db_dir, passphrase, *, kind, query, limit, offset) -> list[dict]:
         contact_src = Path(db_dir) / "contact" / "contact.db"

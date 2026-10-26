@@ -1,8 +1,8 @@
 """Turn newly-read WeChat messages into channel-isolated reply tasks.
 
 Eligibility is a pure function so it is trivially testable and auditable: direct
-chats reply to every inbound text; selected groups only reply on an *exact*
-structured mention of the current account (never inferred from display-name
+chats reply to every inbound text or voice message; selected groups only reply
+on an *exact* structured mention of the current account (never inferred from display-name
 text). Enqueue is idempotent via the reply_tasks (channel, conversation_id,
 trigger_message_id) uniqueness, so repeated scans never duplicate.
 """
@@ -25,7 +25,7 @@ def is_reply_candidate(
 ) -> bool:
     if scope is None or not scope.enabled:
         return False
-    if message.direction != "inbound" or message.kind != "text":
+    if message.direction != "inbound" or message.kind not in {"text", "voice"}:
         return False
     if message.conversation_type == "direct":
         return scope.trigger_mode == "every_inbound_text" and bool(message.text.strip())

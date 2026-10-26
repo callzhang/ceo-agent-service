@@ -2459,6 +2459,48 @@ def build_role_server(
             ],
         }
 
+    def read_wechat_voice(message_id: str) -> dict[str, object]:
+        """Read the audio of a voice message of this task's WeChat conversation.
+
+        Pass the message_id of a "[语音…]" message. The result is a WAV as
+        base64: call ai_services.transcribe_audio with `filename` and
+        `audio_base64` to get what was said. An unreadable voice raises an
+        error; it is neither empty nor answered.
+        """
+        from app.wechat import service
+        from app.wechat.models import WechatVoiceUnavailable
+        from app.wechat.reader_ipc import ReaderIpcError
+        from app.wechat.voice import silk_to_wav
+
+        if not isinstance(message_id, str) or not 1 <= len(message_id) <= 128:
+            raise ValueError("voice message id is invalid")
+        conversation_id, _ = _bound_wechat_conversation(
+            db_path, task_id, artifact_generation,
+        )
+        from app.store import AutoReplyStore
+
+        state = service.ready_account_state(AutoReplyStore(db_path))
+        if state is None:
+            raise ValueError("no ready WeChat account")
+        try:
+            silk = service.build_reader().read_voice(
+                service.account_from_state(state),
+                conversation_id=conversation_id, message_id=message_id,
+            )
+            wav, seconds = silk_to_wav(silk)
+        except WechatVoiceUnavailable as exc:
+            raise ValueError(f"could not read the voice message: {exc}") from exc
+        except ReaderIpcError as exc:
+            if exc.code != "voice_unavailable":
+                raise
+            raise ValueError(f"could not read the voice message: {exc}") from exc
+        return {
+            "message_id": message_id,
+            "filename": f"wechat-voice-{message_id}.wav",
+            "duration_seconds": round(seconds, 1),
+            "audio_base64": base64.b64encode(wav).decode("ascii"),
+        }
+
     def read_dingtalk_messages(
         conversation_id: str, title: str = "", single_chat: bool = False,
         limit: int = 50, direct_open_dingtalk_id: str = "",
@@ -2838,6 +2880,7 @@ def build_role_server(
         ("search_dingtalk_documents", search_dingtalk_documents),
         ("read_dingtalk_messages", read_dingtalk_messages),
         ("read_wechat_messages", read_wechat_messages),
+        ("read_wechat_voice", read_wechat_voice),
         ("search_dingtalk_messages", search_dingtalk_messages),
         ("read_dingtalk_thread_replies", read_dingtalk_thread_replies),
         ("search_dingtalk_conversations", search_dingtalk_conversations),

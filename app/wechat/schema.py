@@ -101,6 +101,8 @@ def decode_message(content, ct_flag, local_type) -> str:
     raw = decode_content(content, ct_flag)
     if (local_type & 0xFFFFFFFF) == 1:
         return raw
+    if (local_type & 0xFFFFFFFF) == 34:
+        return voice_placeholder(raw)
     if "<appmsg" in raw or "<title>" in raw:
         tm = _APPMSG_TITLE.search(raw)
         dm = _APPMSG_DES.search(raw)
@@ -118,6 +120,20 @@ def decode_message(content, ct_flag, local_type) -> str:
     return ""
 
 
+_VOICE_LENGTH = re.compile(r'voicelength="(\d+)"')
+
+
+def voice_placeholder(raw: str) -> str:
+    """Text standing in for a voice message until the Agent transcribes it.
+
+    The audio is not in the message row, so the text must say that the message
+    has content that was not read; an empty text would look like nothing to answer.
+    """
+    match = _VOICE_LENGTH.search(raw)
+    seconds = f"{max(1, round(int(match.group(1)) / 1000))}秒" if match else ""
+    return f"[语音{seconds}·未转写，用 read_wechat_voice 取音频再转写]"
+
+
 def table_for(conversation_username: str) -> str:
     return "Msg_" + hashlib.md5(conversation_username.encode()).hexdigest()
 
@@ -133,6 +149,8 @@ def kind_for(local_type: int, decoded_text: str = "") -> str:
     base_type = local_type & 0xFFFFFFFF
     if base_type == 1 or (base_type == 49 and decoded_text.startswith("[链接]")):
         return "text"
+    if base_type == 34:
+        return "voice"
     return "unknown" if local_type != 10000 else "system"
 
 

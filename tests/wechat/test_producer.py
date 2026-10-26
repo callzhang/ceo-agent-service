@@ -247,6 +247,19 @@ def test_outbound_and_nontext_ignored(producer, reader):
     assert producer.run_once() == 0
 
 
+def test_direct_voice_message_is_enqueued_with_its_placeholder(producer, reader, store):
+    reader.messages = [direct_message("v1", text="[语音3秒·未转写，用 read_wechat_voice 取音频再转写]", kind="voice")]
+    assert producer.run_once() == 1
+    task = store.list_reply_tasks(channel="wechat")[0]
+    assert task.trigger_message_id == "v1"
+    assert "read_wechat_voice" in task.trigger_text
+
+
+def test_outbound_voice_is_ignored(producer, reader):
+    reader.messages = [direct_message("v2", text="[语音3秒·未转写]", kind="voice", direction="outbound")]
+    assert producer.run_once() == 0
+
+
 def test_shared_link_decoded_as_text_is_enqueued(producer, reader, store):
     reader.messages = [direct_message("d6", text="[链接]《Article》 https://example.com/a")]
     assert producer.run_once() == 1

@@ -7,7 +7,9 @@ from uuid import uuid4
 
 import pytest
 
-from app.wechat.models import WechatAccount, WechatCapability, WechatMessage
+from app.wechat.models import (
+    WechatAccount, WechatCapability, WechatMessage, WechatVoiceUnavailable,
+)
 from app.wechat.reader_ipc import (
     ReaderIpcError,
     WechatReaderClient,
@@ -52,6 +54,12 @@ class FakeLocalReader:
             "display_name": "Alice",
             "last_active_at": "2026-07-21T08:00:00+08:00",
         }]
+
+    def read_voice(self, account, *, conversation_id, message_id):
+        del account
+        if (conversation_id, message_id) != ("friend-1", "42"):
+            raise WechatVoiceUnavailable("the voice audio is not stored on this Mac")
+        return b"\x02#!SILK_V3 audio"
 
     def read_messages(self, account, **kwargs):
         del kwargs
@@ -212,3 +220,30 @@ def test_socket_reports_app_data_permission_without_leaking_paths():
         server.shutdown()
         server.server_close()
         thread.join(timeout=2)
+
+
+def test_voice_audio_round_trips_and_unreadable_voice_has_its_own_error_code(tmp_path, rpc_service):
+    socket_path = _short_socket_path()
+    server = WechatReaderUnixServer(socket_path, rpc_service)
+    thread = threading.Thread(target=server.serve_forever, daemon=True)
+    thread.start()
+    try:
+        client = WechatReaderClient(socket_path, timeout_seconds=2)
+        assert client.read_voice(
+            _account(), conversation_id="friend-1", message_id="42",
+        ) == b"\x02#!SILK_V3 audio"
+        with pytest.raises(ReaderIpcError, match="not stored") as raised:
+            client.read_voice(_account(), conversation_id="friend-1", message_id="43")
+        assert raised.value.code == "voice_unavailable"
+    finally:
+        server.shutdown()
+        server.server_close()
+        thread.join(timeout=2)
+
+
+def test_voice_request_arguments_are_bounded(rpc_service):
+    with pytest.raises(ReaderIpcError, match="message_id"):
+        rpc_service.dispatch("read_voice", {
+            "account": _account().model_dump(), "conversation_id": "friend-1",
+            "message_id": "9" * 129,
+        })

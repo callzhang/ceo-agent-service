@@ -56,3 +56,23 @@ def test_shared_article_is_text_eligible_after_decoding():
 
 def test_image_remains_non_text_without_media_input():
     assert schema.kind_for(3, "") == "unknown"
+
+
+VOICE_XML = (
+    b'<msg><voicemsg endflag="1" voiceformat="4" voicelength="27280" length="21060" '
+    b'fromusername="wxid_friend" /></msg>'
+)
+
+
+def test_voice_is_its_own_kind_with_a_placeholder_that_is_never_empty():
+    text = schema.decode_message(VOICE_XML, 0, 34)
+    assert schema.kind_for(34, text) == "voice"
+    assert text.startswith("[语音27秒")
+    assert "read_wechat_voice" in text
+
+
+def test_group_voice_with_sender_prefix_and_missing_length_still_has_a_placeholder():
+    text = schema.decode_message(b"wxid_a:\n<msg><voicemsg /></msg>", 0, 34)
+    assert schema.kind_for(34, text) == "voice"
+    assert text.startswith("[语音·未转写")
+

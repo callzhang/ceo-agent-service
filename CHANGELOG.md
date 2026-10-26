@@ -46,6 +46,10 @@
 - **限制**：Codex 路线的 Consumer 有 `memory_connector` 全部工具；Claude 路线的 Consumer 只连 `agent_cli`，没有 Memory 工具，走该路线的任务不会写长期记忆。会议结论仍由服务写入，未改动。
 - 历史 `task_memory_write_events` 行与索引保留（删除需要数据库迁移）；旧结果里的 `durable_memories` 读回时被丢弃。
 
+## 2026-10-26 — 微信语音
+
+- 语音消息不再是空文本：`kind=voice` 加非空占位，直接聊天的入站语音触发回复。新增 Reader IPC `read_voice` 和 Agent 工具 `read_wechat_voice`（SILK→WAV，交给原生 `ai_services.transcribe_audio`）。图片不在本次范围，转写不缓存。新依赖 `pilk==0.2.4`；Reader 需要重建才有 `read_voice`。
+
 ## 2026-10-24 — 微信统一路径：阶段 0 与阶段 1
 
 - **阶段 0（测试，无行为变化）**：`tests/wechat` 在 main 上原有 66 个失败（发送前没有独立 Audit 批准、直接访问重构前的旧表、写死旧重试上限），已通过真实 store 接口修复；新增端到端特征测试与黄金输出文件，固定微信流水线今天的行为，并记录一个潜在问题：审核器的 `wechat_audit_candidate_changed`、`wechat_audit_unavailable` 关闭路径会抛 `AgentRunLeaseLostError`，会挡住排在后面的投递。

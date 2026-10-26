@@ -73,3 +73,20 @@ def test_reader_uses_account_self_id_for_direction_even_if_helper_started_withou
     reader = WechatReader(backend, StaticTestKeyProvider(b"secret"))
 
     assert reader.read_messages(account, conversation_id="filehelper")[0].direction == "outbound"
+
+
+def test_reader_reads_voice_audio_only_when_ready(fake_account):
+    import pytest
+    from app.wechat.reader import WechatReaderNotReady
+
+    class VoiceBackend(FakeCipherBackend):
+        def read_voice(self, db_dir, passphrase, *, conversation_id, message_id):
+            assert (conversation_id, message_id, passphrase) == ("u1", "42", b"k")
+            return b"silk"
+
+    ready = WechatReader(VoiceBackend(tables=["Msg_x"]), StaticTestKeyProvider(b"k"))
+    assert ready.read_voice(fake_account, conversation_id="u1", message_id="42") == b"silk"
+
+    blocked = WechatReader(VoiceBackend(tables=[]), StaticTestKeyProvider(b"k"))
+    with pytest.raises(WechatReaderNotReady):
+        blocked.read_voice(fake_account, conversation_id="u1", message_id="42")
