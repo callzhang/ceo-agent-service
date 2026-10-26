@@ -1,5 +1,6 @@
 import { useEffect, useLayoutEffect, useMemo, useRef, useState, type CSSProperties, type FocusEvent, type MouseEvent } from "react";
 import { createPortal } from "react-dom";
+import { Bell, BellOff, CalendarClock } from "lucide-react";
 import { Link, useSearchParams } from "react-router-dom";
 
 import {
@@ -211,6 +212,7 @@ function removeSkillToken(prompt: string, skillName: string) {
 
 function TaskListItem({ task, selected, onSelect }: { task: ScheduledTask; selected: boolean; onSelect: () => void }) {
   return <button type="button" className={`scheduled-task-list-item${selected ? " is-selected" : ""}`} aria-pressed={selected} onClick={onSelect}>
+    <span className={`scheduled-task-notification-mark${task.notify_on_completion ? " is-on" : ""}`} role="img" aria-label={task.notify_on_completion ? "已开启完成通知" : "已关闭完成通知"} title={task.notify_on_completion ? "已开启完成通知" : "已关闭完成通知"}>{task.notify_on_completion ? <Bell size={15} /> : <BellOff size={15} />}</span>
     <span className="scheduled-task-list-title"><strong>{task.name}</strong><span className={`scheduled-task-enabled${task.enabled ? "" : " is-paused"}`}>{task.enabled ? "运行中" : "已暂停"}</span></span>
     <small>{task.description}</small>
     <span>{task.schedule_description}</span>
@@ -477,7 +479,8 @@ function TaskReadOnlyDetail({ task, commandOption, choices }: { task: ScheduledT
   return <section className="scheduled-task-readonly" aria-label="定时任务详情">
     <dl>
       <div><dt>任务描述</dt><dd>{task.description}</dd></div>
-      <div><dt>执行计划</dt><dd>{task.schedule_description}</dd></div>
+      <div><dt>执行计划</dt><dd><span className="scheduled-task-schedule-value"><CalendarClock size={16} />{task.schedule_description}</span></dd></div>
+      <div><dt>完成通知</dt><dd><span className={`scheduled-task-notification-state${task.notify_on_completion ? " is-on" : ""}`}>{task.notify_on_completion ? <Bell size={16} /> : <BellOff size={16} />}{task.notify_on_completion ? "已开启" : "已关闭"}</span></dd></div>
       <div><dt>执行任务</dt><dd>{task.command ? commandOption?.display_name || task.command : "直接运行 Agent"}</dd></div>
       {task.command && commandOption && <div><dt>任务说明</dt><dd>{commandOption.description}</dd></div>}
     </dl>
@@ -710,6 +713,25 @@ export function ScheduledTasksPage() {
     } finally { if (generation === contextGeneration.current) setMutationState("idle"); }
   }
 
+  async function toggleNotification(enabled: boolean) {
+    if (!selected) return;
+    if (editing) { updateDraft("notify_on_completion", enabled); return; }
+    const generation = contextGeneration.current;
+    const taskId = selected.id;
+    setMutationState("saving"); setError(""); setMessage("");
+    try {
+      const result = await updateScheduledTask(taskId, { ...taskDraft(selected), notify_on_completion: enabled, version: selected.version });
+      if (result.item.id !== taskId) throw new Error("定时任务响应与请求不匹配");
+      setTasks((current) => current.map((item) => item.id === result.item.id && result.item.version >= item.version ? result.item : item));
+      if (generation !== contextGeneration.current) return;
+      setDraft(taskDraft(result.item));
+    } catch (reason) {
+      if (generation !== contextGeneration.current) return;
+      if (isConflict(reason)) { setConflict(true); setError("其他页面已更新这个任务。请重新加载最新版本。"); }
+      else setError(errorMessage(reason, "通知设置更新失败"));
+    } finally { if (generation === contextGeneration.current) setMutationState("idle"); }
+  }
+
   async function runNow() {
     if (!selected) return;
     const generation = contextGeneration.current;
@@ -770,16 +792,16 @@ export function ScheduledTasksPage() {
   if (loadState === "error") return <main className="console-page scheduled-tasks-page"><section className="console-card page-state page-state-error" role="alert"><p>{error}</p><button type="button" className="secondary-button" onClick={() => void load()}>重试加载</button></section></main>;
 
   return <main className="console-page scheduled-tasks-page">
-    <header className="console-page-header"><div><h1 className="sr-only">定时任务</h1><p className="muted">配置 Cron、Agent Skills 与执行 Runtime；服务命令任务由服务进程直接执行。Connector 只提供连接能力。</p></div><button type="button" className="primary-button" onClick={beginCreate}>新建任务</button></header>
+    <header className="console-page-header"><div><p className="scheduled-task-eyebrow">AUTOMATION</p><h1>定时任务</h1><p className="muted">用固定计划自动运行服务命令或 Agent 任务，并在这里查看每次运行结果。</p></div><button type="button" className="primary-button" onClick={beginCreate}>新建任务</button></header>
     {message && <p className="scheduled-task-notice" role="status">{message}</p>}
     <div className="scheduled-task-workspace">
       <section className="scheduled-task-master" aria-label="定时任务列表">
-        <div className="scheduled-task-pane-heading"><h2>任务</h2><span>{tasks.length}</span></div>
+        <div className="scheduled-task-pane-heading"><div><h2>任务清单</h2><small>{tasks.filter((task) => task.enabled).length} 个运行中</small></div><span className="scheduled-task-count">{tasks.length}</span></div>
         {tasks.length ? <div className="scheduled-task-list">{tasks.map((task) => <TaskListItem key={task.id} task={task} selected={task.id === selectedId} onSelect={() => chooseTask(task)} />)}</div> : <div className="scheduled-task-empty"><strong>还没有定时任务</strong><p>新建后，系统会按 Cron 触发 Agent 执行。</p><button type="button" className="secondary-button" onClick={beginCreate}>创建第一个任务</button></div>}
       </section>
       <section className="scheduled-task-detail" aria-label={creating ? "新建定时任务" : editing ? "定时任务编辑器" : "定时任务详情"}>
         {(creating || selected) ? <>
-          <div className="scheduled-task-pane-heading"><div><h2>{creating ? "新建定时任务" : selected?.name}</h2>{selected && <small>版本 {selected.version}</small>}</div>{selected && <div className="scheduled-task-actions">{editing ? <button type="button" className="secondary-button" disabled={mutationState === "saving"} onClick={() => { setDraft(taskDraft(selected)); setEditing(false); setError(""); setConflict(false); setSkillMenuOpen(false); }}>取消编辑</button> : <><button type="button" className="primary-button" disabled={mutationState === "saving"} onClick={() => setEditing(true)}>编辑任务</button><button type="button" className="secondary-button" disabled={mutationState === "saving" || (!selected.enabled && Boolean(runtimeBlockReason))} onClick={() => void toggleEnabled()}>{selected.enabled ? "暂停任务" : "启用任务"}</button><button type="button" className="secondary-button" disabled={mutationState === "saving" || Boolean(runtimeBlockReason)} onClick={() => void runNow()}>立即运行</button><button ref={deleteTriggerRef} type="button" className="danger-button" disabled={mutationState === "saving"} onClick={() => setConfirmDelete(true)}>删除任务</button></>}</div>}</div>
+          <div className="scheduled-task-pane-heading"><div><h2>{creating ? "新建定时任务" : selected?.name}</h2>{selected && <small>版本 {selected.version}</small>}</div>{selected && <div className="scheduled-task-actions">{editing ? <><label className="scheduled-task-toolbar-notification"><input aria-label="发送完成通知" type="checkbox" checked={draft.notify_on_completion} onChange={(event) => void toggleNotification(event.target.checked)} /><span>发送完成通知</span></label><button type="button" className="secondary-button" disabled={mutationState === "saving"} onClick={() => { setDraft(taskDraft(selected)); setEditing(false); setError(""); setConflict(false); setSkillMenuOpen(false); }}>取消编辑</button></> : <><label className="scheduled-task-toolbar-notification"><input aria-label="发送完成通知" type="checkbox" checked={selected.notify_on_completion} disabled={mutationState === "saving"} onChange={(event) => void toggleNotification(event.target.checked)} /><span>发送完成通知</span></label><button type="button" className="primary-button" disabled={mutationState === "saving"} onClick={() => setEditing(true)}>编辑任务</button><button type="button" className="secondary-button" disabled={mutationState === "saving" || (!selected.enabled && Boolean(runtimeBlockReason))} onClick={() => void toggleEnabled()}>{selected.enabled ? "暂停任务" : "启用任务"}</button><button type="button" className="secondary-button" disabled={mutationState === "saving" || Boolean(runtimeBlockReason)} onClick={() => void runNow()}>立即运行</button><button ref={deleteTriggerRef} type="button" className="danger-button" disabled={mutationState === "saving"} onClick={() => setConfirmDelete(true)}>删除任务</button></>}</div>}</div>
           {confirmDelete && <div className="scheduled-task-delete-confirm" role="alertdialog" aria-modal="true" aria-label="确认删除定时任务" aria-describedby="scheduled-task-delete-description" onKeyDown={handleDeleteDialogKeyDown}><p id="scheduled-task-delete-description">删除后任务不会再触发，历史记录仍会保留。</p><div><button type="button" className="danger-button" onClick={() => void remove()}>确认删除</button><button ref={deleteCancelRef} type="button" className="secondary-button" onClick={() => setConfirmDelete(false)}>取消</button></div></div>}
           {error && <div className="scheduled-task-form-error" role="alert"><span>{error}</span>{conflict && <button type="button" className="secondary-button" onClick={() => void load()}>重新加载最新版本</button>}</div>}
           {editing || creating ? <form className="scheduled-task-form" onSubmit={(event) => { event.preventDefault(); void save(); }}>
@@ -796,7 +818,7 @@ export function ScheduledTasksPage() {
             </div>
             <div className="scheduled-task-skill-block"><div className="scheduled-task-section-heading"><h3>{commandTask ? "Consumer Agent Skills" : "Agent Skills"}</h3><span>由 Prompt 中的 $skill 确定性提取</span></div>{draft.skill_refs.length ? <div className="scheduled-task-skill-chips">{draft.skill_refs.map((ref, index) => { const choice = choices.find((item) => item.key === refKey(ref)); const label = choice?.label || ref.skill_name; return <SkillReference key={`${refKey(ref)}:${index}:${choice?.previewKey || ""}`} ref={ref} label={label} expectedSha256={choice?.sha256} removable onRemove={() => removeSkill(index)} />; })}</div> : <p className="scheduled-task-empty-copy">输入 <code>$</code> 搜索并选择至少一个 Skill。</p>}</div>
             </>}
-            <label className="scheduled-task-notification-toggle"><input aria-label="发送完成通知" type="checkbox" checked={draft.notify_on_completion} onChange={(event) => updateDraft("notify_on_completion", event.target.checked)} /><span>发送完成通知</span></label>
+            {creating && <label className="scheduled-task-notification-toggle"><input aria-label="发送完成通知" type="checkbox" checked={draft.notify_on_completion} onChange={(event) => updateDraft("notify_on_completion", event.target.checked)} /><span>发送完成通知</span></label>}
             <button type="submit" className="primary-button" disabled={mutationState === "saving" || Boolean(runtimeBlockReason)}>{mutationState === "saving" ? "保存中…" : creating ? "创建任务" : "保存更改"}</button>
           </form> : <TaskReadOnlyDetail task={selected!} commandOption={options?.service_command_options.find((item) => item.name === selected?.command)} choices={choices} />}
           {!creating && <RunHistory runs={runs} latestAttemptRun={latestAttemptRun} hasMore={historyHasMore} loading={historyLoading} onMore={() => void loadMoreRuns()} />}

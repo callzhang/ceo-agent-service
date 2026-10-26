@@ -528,6 +528,24 @@ describe("ScheduledTasksPage", () => {
     ));
   });
 
+  it("shows completion notification in the read-only details and list, and toggles it beside Edit", async () => {
+    const user = userEvent.setup();
+    setup([{ ...task, notify_on_completion: false }, { ...taskB, notify_on_completion: true }]);
+    api.updateScheduledTask.mockImplementation(async (_id, draft) => ({ item: { ...task, ...draft, version: 4 }, meta: { snapshot_at: "now" } }));
+    renderPage();
+
+    expect(await screen.findByText("已关闭")).toBeInTheDocument();
+    expect(screen.getByRole("img", { name: "已关闭完成通知" })).toBeInTheDocument();
+    expect(screen.getByRole("img", { name: "已开启完成通知" })).toBeInTheDocument();
+    const toggle = screen.getByRole("checkbox", { name: "发送完成通知" });
+    expect(toggle).not.toBeChecked();
+    await user.click(toggle);
+    await waitFor(() => expect(api.updateScheduledTask).toHaveBeenCalledWith(
+      task.id,
+      expect.objectContaining({ notify_on_completion: true, version: task.version }),
+    ));
+  });
+
   it("defaults a new draft from the first available Runtime capability", async () => {
     setup([]);
     api.getScheduledTaskOptions.mockResolvedValueOnce({
