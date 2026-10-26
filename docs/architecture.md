@@ -4433,14 +4433,16 @@ recorded in `validation/2026-10-26-signal-owner-production-readback.json` and
 remain historical implementation checkpoints. No review, retry, authorization
 or test outbound-send policy changed in this publication.
 
-### Explicit historical Run reference maintenance
+### Current Meeting Run reference contract
 
 Historical Meeting Runs whose original Task is unavailable retain the source
 Job in `run_provenance.job_id` and use NULL for the optional native `runs.task_id`.
-They remain inspectable and do not become executable Tasks. The explicit
-`scripts/repair_orphan_meeting_run.py` can detach an independently verified missing
-Task pointer inside a maintenance transaction; it is not runtime auto-healing.
-See `orphan-meeting-run-reference-repair.md` for the separate authorized repair.
+They remain inspectable through the current schema and do not become executable
+Tasks. A non-NULL Task reference must resolve to a real current Task. HTML/API
+detail and session-related history do not catch a broken lookup and reinterpret
+it as unavailable history. The one-off repair tool and its tool-only tests were
+removed after the completed repair; there is no persistent repair entry point.
+See `orphan-meeting-run-reference-repair.md` for dated execution evidence.
 
 The explicitly authorized2026-10-26 maintenance repair of Run190042 is now
 complete: only the absent native Task404225 pointer became NULL; source Job4908,

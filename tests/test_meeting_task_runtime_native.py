@@ -593,30 +593,19 @@ def test_orphan_meeting_run_details_remain_inspectable_in_html_and_api(tmp_path)
     from app.web_api.registration import register_console_routes
 
     store = _AssembledMeetingStore(tmp_path / "assembled-orphan-run.sqlite3")
-    task_ids = [store.upsert_meeting_alignment_job(
-        meeting_id=f"meeting-orphan-{index}", title="Orphan fixture",
-        source_json="{}", participants_json="[]", ended_at="2026-10-23T10:00:00",
-        eligible_at="2026-10-23T10:01:00", status="processing",
-    ) for index in range(2)]
-    run_ids = []
-    for task_id, detached_task_id in zip(task_ids, (None, 90225), strict=True):
-        run_id = store.claim_professional_run(task_id)
-        store.finish_professional_run(run_id, status="failed", error="trajectory unavailable")
-        # The second case reproduces a historical dangling parent that current
-        # schema guards correctly prevent creating; remove only those guards in
-        # this isolated fixture before preserving its actual non-NULL parent ID.
-        store.db.execute("drop trigger if exists trg_run_provenance_job_mapping_update")
-        store.db.execute("drop trigger if exists trg_runs_task_kind_update")
-        if detached_task_id is not None:
-            store.db.execute("pragma foreign_keys=off")
-        store.db.execute("update runs set task_id=null where id=?", (run_id,))
-        store.db.execute("update run_provenance set job_id=4908 where run_id=?", (run_id,))
-        if detached_task_id is not None:
-            store.db.execute("update runs set task_id=? where id=?", (detached_task_id, run_id))
-        store.db.commit()
-        if detached_task_id is not None:
-            store.db.execute("pragma foreign_keys=on")
-        run_ids.append(run_id)
+    from app.run_entity_storage import create_run, set_run_provenance
+
+    run_id = create_run(store.db, values={
+        "task_id": None, "status": "failed", "error": "trajectory unavailable",
+        "created_at": "2026-09-18 22:02:59", "updated_at": "2026-09-18 22:05:38",
+    })["id"]
+    set_run_provenance(
+        store.db, run_id=run_id, source_type="meeting_alignment_runs", job_id=4908,
+    )
+    store.db.commit()
+    with pytest.raises(sqlite3.IntegrityError, match="Run source and Task kind mismatch"):
+        store.db.execute("update runs set task_id=90225 where id=?", (run_id,))
+    assert store.db.execute("pragma foreign_key_check").fetchall() == []
 
     app = FastAPI()
     store.count_pending_user_feedback_items = lambda: 0
@@ -634,31 +623,68 @@ def test_orphan_meeting_run_details_remain_inspectable_in_html_and_api(tmp_path)
     )
     endpoint = next(route.endpoint for route in app.routes
                     if getattr(route, "path", "") == "/api/console/meeting-attempts/{run_id}")
-    for run_id in run_ids:
-        run = store.get_meeting_alignment_run(run_id)
-        assert run is not None
-        assert run.job_id == 4908
-        assert run.task_id in (None, 90225)
-        assert run.error == "trajectory unavailable"
+    run = store.get_meeting_alignment_run(run_id)
+    assert run is not None
+    assert run.job_id == 4908
+    assert run.task_id is None
+    assert run.error == "trajectory unavailable"
 
-        html_status, html = render_meeting_attempt_detail(store, run_id)
-        assert html_status == 200
-        assert f"Meeting attempt #{run_id}" in html
-        assert "Meeting Task unavailable" in html
-        assert "source provenance job id: 4908" in html
-        assert "trajectory unavailable" in html
-        response = endpoint(run_id)
-        item = response["item"]
-        assert item["id"] == run_id
-        assert item["task_id"] == run.task_id
-        assert item["source_job_id"] == 4908
-        assert item["task_available"] is False
-        assert item["title"] == "Meeting Task unavailable"
-        assert item["runtime"]["error"] == "trajectory unavailable"
+    html_status, html = render_meeting_attempt_detail(store, run_id)
+    assert html_status == 200
+    assert f"Meeting attempt #{run_id}" in html
+    assert "Meeting Task unavailable" in html
+    assert "source provenance job id: 4908" in html
+    assert "trajectory unavailable" in html
+    response = endpoint(run_id)
+    item = response["item"]
+    assert item["id"] == run_id
+    assert item["task_id"] == run.task_id
+    assert item["source_job_id"] == 4908
+    assert item["task_available"] is False
+    assert item["title"] == "Meeting Task unavailable"
+    assert item["runtime"]["error"] == "trajectory unavailable"
 
-    html_status, _html = render_meeting_attempt_detail(store, max(run_ids) + 100)
+    html_status, _html = render_meeting_attempt_detail(store, run_id + 100)
     assert html_status == 404
-    missing = endpoint(max(run_ids) + 100)
+    missing = endpoint(run_id + 100)
     assert missing.status_code == 404
-    assert 4908 not in looked_up_task_ids
-    assert 90225 in looked_up_task_ids
+    assert looked_up_task_ids == []
+
+
+@pytest.mark.parametrize("reader_name", ["html", "api", "related"])
+def test_meeting_detail_does_not_hide_broken_native_task_lookup(tmp_path, reader_name):
+    from fastapi import FastAPI
+
+    from app.audit_web import render_meeting_attempt_detail
+    from app.web_api.registration import register_console_routes
+
+    store = _AssembledMeetingStore(tmp_path / "native-task-lookup.sqlite3")
+    task_id = store.upsert_meeting_alignment_job(
+        meeting_id="native-task", title="Native Task", source_json="{}",
+        participants_json="[]", ended_at="2026-10-23T10:00:00",
+        eligible_at="2026-10-23T10:01:00", status="processing",
+    )
+    run_id = store.claim_professional_run(task_id)
+    store.finish_professional_run(run_id, status="failed", error="original error")
+
+    def unavailable_task(_task_id):
+        raise ValueError(f"meeting alignment job not found: {_task_id}")
+
+    store.get_meeting_alignment_job = unavailable_task
+    store.count_pending_user_feedback_items = lambda: 0
+    app = FastAPI()
+    register_console_routes(
+        app, store_factory=lambda: store, status_payload_factory=lambda: {},
+        feedback_backlog_factory=lambda: [], attention_rows_factory=lambda: [],
+    )
+    endpoint = next(route.endpoint for route in app.routes
+                    if getattr(route, "path", "") == "/api/console/meeting-attempts/{run_id}")
+    from app.audit_web import _meeting_related_history_card
+
+    reader = {
+        "html": lambda: render_meeting_attempt_detail(store, run_id),
+        "api": lambda: endpoint(run_id),
+        "related": lambda: _meeting_related_history_card([store.get_meeting_alignment_run(run_id)], store),
+    }[reader_name]
+    with pytest.raises(ValueError, match="meeting alignment job not found"):
+        reader()

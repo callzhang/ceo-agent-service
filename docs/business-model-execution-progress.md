@@ -20,6 +20,13 @@ These are dated release facts, not a permanent assertion about the live PID.
 | Existing issues | Failed34 and Attention8 match pre-deploy counts; the separately authorized historical Run reference repair now has zero FK findings. Original Run/Job/call history retained; no replay or fabricated Task. See [repair evidence](orphan-meeting-run-reference-repair.md). |
 | Cleanup | Twelve task-owned temporary roots, including two registered test worktrees, removed after readback; verified workflow backup removed. Four separately named pytest roots were already absent. Production DB/native trajectories/unrelated work are preserved. |
 
+Current-code follow-up: the completed Run-reference maintenance script and its
+obsolete tool-only tests are retired. All three Meeting detail/related-history
+readers now use the current native Task reference directly; only NULL represents
+an unavailable Task, and a broken non-NULL lookup is no longer hidden by a legacy
+fallback. Focused37 current-contract cases pass; reader deployment/readback is
+pending. See [repair and retirement evidence](orphan-meeting-run-reference-repair.md).
+
 [Exact structured readback](validation/2026-10-26-signal-owner-production-readback.json),
 [Signal contract and copy evidence](signal-source-owner-validation.md), and
 [Quality iterations/retirement mapping](quality-closeout-20261025.md) retain the

@@ -19,11 +19,11 @@ a Task, guess a replacement by integer/title, remove the Run or its call/error
 history, change its retry status, or replay it. No schema/version, runtime,
 review, authorization or provider change is required.
 
-`scripts/repair_orphan_meeting_run.py` is an explicit maintenance tool, never
-called from Store initialization. It requires the exact Run/missing-Task/source-
-Job identities, rejects a live Task or active Run/call, and only updates the one
-pointer. The CLI defaults to a real transaction followed by rollback; `--apply`
-commits. The caller supplies a verified backup before production maintenance.
+The one-off maintenance script used for this repair was removed after successful
+production readback. It is no longer an available code path. Its source and
+execution history remain in the dated repair commit, not in the current tree.
+The current schema/readers retain the already normalized facts; no legacy
+schema reader, auto-healing branch or persistent repair command is necessary.
 
 ## Verification before production
 
@@ -68,3 +68,20 @@ The task-owned temporary root (test outputs, verified source, working copy and
 fresh production recovery backup) was deleted after readback and verified absent. Concise
 [structured evidence](validation/2026-10-26-orphan-run-reference-repair.json)
 remains; original production/native trajectory files are preserved.
+
+## Current-code cleanup — 2026-10-26
+
+Derek explicitly requires no old structure compatibility or old runtime logic.
+The completed repair script and its eight tool-only parameterized test cases
+are removed. Historical execution evidence above remains; it is not an active
+command guide. The current native contract tests replace the obsolete broken-
+structure fixture: create a valid NULL-parent Run with source Job4908 through
+current owners; keep all guards/FKs enabled; require a non-NULL missing Task
+update to fail. HTML/API/session-related history still render valid source
+facts, while errors reading a non-NULL current Task propagate. Each of the three
+catch-and-continue branches had a failing regression before its removal.
+
+The37 focused current Meeting/professional/related-history cases pass in15.43s;
+Ruff and diff checks pass. Standard deployment and live readback of this reader
+cleanup are pending at this checkpoint. No schema or production data change is
+part of this cleanup; no external test send is used.

@@ -5525,14 +5525,16 @@ recorded in `validation/2026-10-26-signal-owner-production-readback.json` and
 remain historical implementation checkpoints. No review, retry, authorization
 or test outbound-send policy changed in this publication.
 
-### Explicit historical Run reference maintenance
+### Current Meeting Run reference contract
 
 Historical Meeting Runs without a native Task keep their original source Job
 and Run/RuntimeAttempt/error history. NULL in the optional native Task reference
-means unavailable; it does not enqueue or retry the old Job. The explicit
-`scripts/repair_orphan_meeting_run.py` is maintenance-only, with a rollback
-rehearsal by default and a separate commit flag. Store initialization, dispatcher,
-Audit and delivery behavior are unchanged. See `orphan-meeting-run-reference-repair.md`.
+means unavailable; it does not enqueue or retry the old Job. Non-NULL Task
+references use the current Task reader directly in HTML detail, API detail and
+session-related history; lookup errors are not silently converted into historical
+unavailability. The completed one-off repair script and its dedicated tests are
+retired. Store initialization, dispatcher, Audit and delivery policy are unchanged.
+See `orphan-meeting-run-reference-repair.md` for dated execution evidence.
 
 The explicitly authorized2026-10-26 maintenance repair of Run190042 is now
 complete: only the absent native Task404225 pointer became NULL; source Job4908,

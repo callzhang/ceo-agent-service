@@ -7830,12 +7830,7 @@ def render_meeting_attempt_detail(
             f"<p>Meeting attempt #{run_id} does not exist.</p>",
             active_nav="history",
         )
-    try:
-        job = store.get_meeting_alignment_job(run.task_id) if run.task_id is not None else None
-    except ValueError as exc:
-        if not str(exc).startswith("meeting alignment job not found:"):
-            raise
-        job = None
+    job = store.get_meeting_alignment_job(run.task_id) if run.task_id is not None else None
     run_status = _meeting_run_display_status(
         run.status,
         job.status if job is not None else "",
@@ -12124,10 +12119,7 @@ def _meeting_related_history_card(runs, store: AutoReplyStore) -> str:
     rows = []
     for run in runs:
         # The Run's Task is the Meeting job; run.job_id is provenance for orphan Runs only.
-        try:
-            job = None if run.task_id is None else store.get_meeting_alignment_job(run.task_id)
-        except ValueError:
-            job = None
+        job = None if run.task_id is None else store.get_meeting_alignment_job(run.task_id)
         title = "unavailable" if job is None else job.title
         result = (
             "unavailable" if job is None else _meeting_run_display_status(

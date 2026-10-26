@@ -1010,12 +1010,7 @@ def register_console_routes(
         run = store.get_meeting_alignment_run(run_id)
         if run is None:
             return JSONResponse({"ok": False, "code": "not_found", "message": "Meeting attempt not found", "details": {}}, status_code=404)
-        try:
-            job = store.get_meeting_alignment_job(run.task_id) if run.task_id is not None else None
-        except ValueError as exc:
-            if not str(exc).startswith("meeting alignment job not found:"):
-                raise
-            job = None
+        job = store.get_meeting_alignment_job(run.task_id) if run.task_id is not None else None
         task_unavailable = job is None
         title = job.title if job is not None else "Meeting Task unavailable"
         meeting_id = job.meeting_id if job is not None else "unavailable"
