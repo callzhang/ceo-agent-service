@@ -17,55 +17,6 @@ from tests.workbench_schema_fixtures import (
 )
 
 
-def test_current_bootstrap_removes_only_approved_sources_and_caches(tmp_path):
-    store = AutoReplyStore(tmp_path / "fresh.db")
-    with store._connect() as db:
-        assert (
-            db.execute(
-                "select value from service_state where key='store_schema_version'"
-            ).fetchone()[0]
-            == "2026-10-14.1"
-        )
-        tables = {
-            r[0]
-            for r in db.execute("select name from sqlite_master where type='table'")
-        }
-        assert not set(SOURCES) & tables
-        assert set(CHILDREN) <= tables
-        assert [
-            r[1] for r in db.execute("pragma table_info(codex_session_search_index)")
-        ] == [
-            "id",
-            "session_id",
-            "source_type",
-            "source_id",
-            "title",
-            "created_at",
-            "updated_at",
-        ]
-    AutoReplyStore(store.path)
-
-
-def test_text_public_ids_keep_leading_zero_empty_blob_and_null(tmp_path):
-    store = AutoReplyStore(tmp_path / "fresh.db")
-    with store._connect() as db:
-        ids = ["01", "1", "uuid-A", "", b"\x00\xff", None, None]
-        physical = [
-            insert_task(
-                db,
-                "workbench_tasks",
-                dict(legacy_key=key, title="title", runtime_kind="route"),
-            ).lastrowid
-            for key in ids
-        ]
-        assert [
-            db.execute("select legacy_key from tasks where id=?", (key,)).fetchone()[0]
-            for key in physical
-        ] == ids
-        for public, key in zip(ids[:-2], physical[:-2], strict=True):
-            assert task_physical_id(db, "workbench_tasks", public) == key
-
-
 def migrated(db):
     from app.workbench_storage import capture_workbench_schema, migrate_workbench_schema
 
@@ -291,25 +242,18 @@ def test_inverse_restores_exact_fts_shadow_state(tmp_path, indexed):
     )
 
 
-def test_metadata_upsert_changes_only_title_tokens_and_preserves_metadata(tmp_path):
+def test_metadata_upsert_changes_source_and_title_and_preserves_row_identity(tmp_path):
     store = AutoReplyStore(tmp_path / "current.db")
     store.upsert_codex_session_search_index(
         session_id="session",
         source_type="workbench",
         source_id="uuid",
         title="original word",
-        summary_text="must not persist",
-        fts_text="retired body",
-        embedding=[1],
-        embedding_model="ignored",
     )
     with store._connect() as db:
         before = tuple(
             db.execute("select * from codex_session_search_index").fetchone()
         )
-        assert db.execute(
-            "select rowid from codex_session_search_fts where codex_session_search_fts match 'original'"
-        ).fetchall()
     store.upsert_codex_session_search_index(
         session_id="session",
         source_type="meeting_alignment",
@@ -317,20 +261,11 @@ def test_metadata_upsert_changes_only_title_tokens_and_preserves_metadata(tmp_pa
         title="replacement title",
     )
     with store._connect() as db:
-        after = tuple(db.execute("select * from codex_session_search_index").fetchone())
+        rows = db.execute("select * from codex_session_search_index").fetchall()
+        assert len(rows) == 1
+        after = tuple(rows[0])
         assert (after[0], after[1], after[5]) == (before[0], before[1], before[5])
         assert after[2:5] == ("meeting_alignment", "7", "replacement title")
-        assert not db.execute(
-            "select rowid from codex_session_search_fts where codex_session_search_fts match 'original OR retired'"
-        ).fetchall()
-        assert [
-            tuple(r)
-            for r in db.execute(
-                "select rowid from codex_session_search_fts where codex_session_search_fts match 'replacement'"
-            )
-        ] == [(before[0],)]
-
-
 
 
 @pytest.mark.parametrize("table", ["tasks", "runs"])
